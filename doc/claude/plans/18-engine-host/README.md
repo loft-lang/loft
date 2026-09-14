@@ -198,3 +198,21 @@ exploration; graduated to this plan). Its load-bearing sections:
   pump-mechanics work (phase 00b) as cross-linked commits
 - [LAVITION.md](../../LAVITION.md) § Engine runtime architecture — the canonical
   architecture this builds
+
+## Tier 0 and overload sets (@PLN162 step 14, 2026-09-14)
+
+`LOFT_LIVE_RELOAD=1` is the language's OPEN profile: under it every call into an overload set
+(`Disp-Key`) is lowered to a per-(name, spelling) synthesised function — the `__dyn_`
+dispatcher a dynamic site already had, a `__sel_` stub at a static site — so that a `fn`
+block ADDED to a watched file mid-run can join the set: the reload host parses it under its
+own name, rebuilds every specialisation of the name in the new world and swaps each in behind
+its old def through the same patch a body edit takes.  Refused, naming the cure: an add that
+leaves a served tuple ambiguous or undecided, a removed or re-signatured overload, and a
+second definition of a name that was one function.  The watcher keys blocks by their
+declaration head, so a body edit reaches the overload it belongs to.  `LOFT_RELOAD_DEBUG=1`
+lists every def a reload generated, with its parameters, and every swap.  The shadow session
+parses the program exactly as the running program was parsed — `Parser::between_passes` and
+`after_pass2` are one home each — because the parity check at install compares names only,
+and a definition with one more hidden parameter in the running program than in the shadow is
+a body that reads its buffer off the wrong slot.  `tests/live_world.rs`;
+`doc/claude/plans/162-multiple-dispatch/IMPL.md` § Step 14.

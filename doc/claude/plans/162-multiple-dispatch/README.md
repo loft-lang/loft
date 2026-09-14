@@ -53,7 +53,7 @@ compile time to a direct call wherever the argument types are statically concret
 
 - **Effort:** H — six rules, a new selection pass, a lowering, three backends, two profiles.
 - **Design:** ~ (partial) — the rules are written; three open questions gate the first phase.
-- **Last touched:** 2026-09-14 (IMPL.md steps 1–13 done; phases 4 and 6 green; D-disp-1 open for `self`-only sets)
+- **Last touched:** 2026-09-14 (IMPL.md steps 1–14 done; every phase green; D-disp-1 open for `self` sets)
 
 ## Composition matrix — Stage A
 
@@ -317,8 +317,8 @@ half-done state to compare against — see [§ Phase cutting](#phase-cutting-why
 | **4** — the acceptance program through dispatch | DESIGN.md §Worked example | the same 12 rows phase 0 recorded, now via dispatch, three backends | **Done 2026-09-14** — `162-step4-…-through-dispatch.loft` (arguments held at their variant types) and `162-step6-…` (the every-pair loop, held at the enum), both backends |
 | **5** — DCE / slim-artifact property | DESIGN.md §The two profiles | an unreferenced method is absent from the stripped artifact; artifact size unchanged vs. the `match` form | **Done 2026-09-14** — the release lane emits only the called overloads (`tests/introspect_dispatch.rs`, with the semantics lane as the control that emits all); the dispatched source is smaller than the `match` form, not larger |
 | **6** — `Disp-Dynamic` | DESIGN.md §Runtime resolution | a heterogeneous `vector<Entity>` reproduces phase 0's rows; plus a control that a concrete site still emits a direct call and no table | **Done 2026-09-14** — `162-step6-every-pair-through-dispatch.loft` ends the world where step 0's `match` did, removals in order; the direct-call control is `tests/introspect_dispatch.rs` |
-| **7** — `Disp-World` (open profile) | DESIGN.md §Disp-World | add a method mid-run; the new selection is taken AND a marker in the stale specialisation's body never appears | Open |
-| **8** — `Disp-Match-Equiv` in the differential oracle | DESIGN.md §Disp-Match-Equiv | a dispatch set and its canonical `match` compared as two programs, per the oracle's existing shape | Open |
+| **7** — `Disp-World` (open profile) | DESIGN.md §Disp-World | add a method mid-run; the new selection is taken AND a marker in the stale specialisation's body never appears | **Done 2026-09-14** — on tier-0 live reload, there being no promoter: under `LOFT_LIVE_RELOAD=1` every call into a set is a per-spelling synthesised function, rebuilt and swapped in when an overload is added mid-run; `tests/live_world.rs` drives a running loop through the add, a refused tie, a body edit of the first overload, a refused re-signature and a skipped new name.  Five defects met at the reload boundary and fixed — [IMPL.md § Step 14](IMPL.md) |
+| **8** — `Disp-Match-Equiv` in the differential oracle | DESIGN.md §Disp-Match-Equiv | a dispatch set and its canonical `match` compared as two programs, per the oracle's existing shape | **Done 2026-09-14** — `tests/oracle/34-dispatch-set.loft` declares `@ORACLE_TWIN: 34-dispatch-set-as-match.loft`; the sweep holds the pair to one stdout, with a positive control |
 
 ## Phase cutting — why these, and not the design's four
 

@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN162 step 14 (@PLN89 differential-oracle corpus) — the TWIN of `34-dispatch-set.loft`:
+// the same three definitions as ONE function over the enum whose body is the canonical
+// `match` of `Disp-Match-Equiv` — one arm per definition, in specificity order, the total
+// fallback as `_`.  Same calls, same assertions, same stdout; the sweep compares the two
+// programs' output line for line (`@ORACLE_TWIN` on the set's side).
+
+enum Entity {
+  Fireball { n: integer },
+  IceWall { n: integer },
+  Crate { n: integer },
+}
+
+fn hit(a: Entity, b: Entity, k: integer = 7) -> text {
+  match (a, b) {
+    (Fireball, IceWall) => "fire-wall {a.n}{b.n} {k}",
+    (Fireball, Crate) => "fire-crate {a.n}{b.n} {k}",
+    _ => "any-any {a.n}{b.n} {k}",
+  }
+}
+
+fn main() {
+  s = hit(Fireball { n: 1 }, IceWall { n: 2 });
+  assert(s == "fire-wall 12 7", "static site, omitted default: got {s}");
+  print("{s}\n");
+  es: vector<Entity> = [Fireball { n: 3 }, IceWall { n: 4 }, Crate { n: 5 }];
+  out = "";
+  for a in es {
+    for b in es {
+      out += hit(a, b) + ";";
+    }
+  }
+  assert(out == "any-any 33 7;fire-wall 34 7;fire-crate 35 7;any-any 43 7;any-any 44 7;any-any 45 7;any-any 53 7;any-any 54 7;any-any 55 7;", "every pair through the match: got {out}");
+  print("{out}\n");
+  x: Entity = Fireball { n: 6 };
+  y: Entity = IceWall { n: 8 };
+  t = hit(x, y, 9);
+  assert(t == "fire-wall 68 9", "supplied trailing argument: got {t}");
+  print("{t}\n");
+}

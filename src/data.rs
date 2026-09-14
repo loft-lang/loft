@@ -5983,6 +5983,15 @@ impl Data {
                     .collect()
             };
             self.definitions.truncate(keep as usize);
+            // `Disp-Key` (@PLN162): an overload that joined a set and is now dropped must
+            // leave the set too, or the name's dispatcher carries a routine number nothing
+            // defines — a stale member every later selection would rank.
+            for d in &mut self.definitions {
+                if d.def_type == DefType::Dynamic {
+                    d.attributes
+                        .retain(|a| !matches!(a.typedef.base(), Type::Routine(r) if *r >= keep));
+                }
+            }
             self.rebuild_indices();
             for (name, src, nr) in expected {
                 assert_eq!(
@@ -7625,7 +7634,13 @@ impl Data {
             }
         } else if d_nr == u32::MAX
             && !(is_self || is_both)
-            && self.source != STD_SOURCE
+            // The stdlib PRELUDE never joins — by its FILE, not its source id: a REPL or
+            // live-reload shadow session parses the user's program under source 0 as well,
+            // and keyed on the id a third overload there registered as a fresh `n_<name>`,
+            // the first overload's pass-2 body then read *Unknown variable* for its own
+            // parameter, and every program with three overloads lost its watcher
+            // (measured, @PLN162 step 14).
+            && !crate::portable_path::is_stdlib_source(&lexer.pos().file)
             && o_nr != u32::MAX
             && self.def(o_nr).def_type == DefType::Dynamic
             && self.def(o_nr).source == self.source

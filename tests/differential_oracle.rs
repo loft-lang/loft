@@ -280,6 +280,35 @@ fn wasm_divergences(interp: &ModeRun, wasm: &ModeRun) -> Vec<String> {
     d
 }
 
+/// Two PROGRAMS that must agree — `Disp-Match-Equiv` (@PLN162 step 14): a dispatch set and
+/// its canonical `match` are two notations for one meaning, so beside holding each program to
+/// its own three backends the sweep holds the pair to one stdout.  Compared on the
+/// interpreter, the reference backend; each program's own backends are compared by the
+/// ordinary run.  Labelled so a failure names the twin.
+fn twin_divergences(program: &ModeRun, twin: &ModeRun, twin_name: &str) -> Vec<String> {
+    let mut d = Vec::new();
+    let p = normalise_stdout(&program.stdout);
+    let t = normalise_stdout(&twin.stdout);
+    if p != t {
+        d.push(format!(
+            "twin {twin_name} stdout differs:\n    program = {p:?}\n    twin    = {t:?}"
+        ));
+    }
+    if program.exit_code != twin.exit_code {
+        d.push(format!(
+            "twin {twin_name} exit code differs: program={:?} twin={:?}",
+            program.exit_code, twin.exit_code
+        ));
+    }
+    d
+}
+
+/// The twin a corpus program declares, when it declares one: `// @ORACLE_TWIN: <file>` in the
+/// header names another program of this corpus whose stdout must equal this one's.
+fn twin_of(path: &Path) -> Option<String> {
+    marker(path, "@ORACLE_TWIN:")
+}
+
 /// The corpus: every `.loft` under `tests/oracle/`, in alphabetical order.
 fn corpus() -> Vec<PathBuf> {
     let dir = workspace_root().join("tests/oracle");
@@ -429,6 +458,18 @@ fn oracle_corpus_agrees_across_backends() {
                 _ => {}
             }
         }
+        // Two programs that must agree (`Disp-Match-Equiv`): the declared twin's interpreter
+        // run must print what this program printed.  The twin is a corpus program itself, so
+        // its own backends are held to each other by its own turn of this loop.
+        if let Some(twin) = twin_of(&path) {
+            let twin_path = path.with_file_name(&twin);
+            assert!(
+                twin_path.exists(),
+                "{name} declares `@ORACLE_TWIN: {twin}`, which is not in tests/oracle/"
+            );
+            let t = run_mode("--interpret", &twin_path, &[]);
+            d.extend(twin_divergences(&interp, &t, &twin));
+        }
         // THIRD backend: headless WASM (wasm32-wasip2 / wasmtime), when the toolchain is present.
         // wasm shares the native Rust generator, so a shape that compiles native but breaks wasm —
         // OR breaks BOTH (the compound-&& / format-hook / text-if class this cycle) — is caught here.
@@ -536,6 +577,27 @@ mod tests {
         assert!(
             !divergences(&run("x=1\n", "Warning: 1 stores not freed", Some(0)), &base).is_empty(),
             "an interpreter store leak must be caught"
+        );
+    }
+
+    /// Twin positive control — two programs printing the same lines agree; a line that
+    /// differs, or a different exit, is caught and names the twin.
+    #[test]
+    fn positive_control_twin_disagreement_is_detected() {
+        let a = run("fire-wall 12\n", "", Some(0));
+        assert!(
+            twin_divergences(&a, &run("fire-wall 12\n", "warning: x", Some(0)), "t.loft")
+                .is_empty(),
+            "the same stdout and exit agree, whatever stderr says"
+        );
+        let d = twin_divergences(&a, &run("any-any 12\n", "", Some(0)), "t.loft");
+        assert!(
+            d.len() == 1 && d[0].contains("twin t.loft stdout differs"),
+            "a differing line is caught and names the twin: {d:?}"
+        );
+        assert!(
+            !twin_divergences(&a, &run("fire-wall 12\n", "", Some(1)), "t.loft").is_empty(),
+            "a differing exit is caught"
         );
     }
 

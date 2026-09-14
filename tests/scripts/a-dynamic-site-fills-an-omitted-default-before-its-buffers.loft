@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `Disp-Dynamic` × a defaulted trailing parameter (@PLN162 step 14, a step-13 defect met on
+// the way): the synthesised dispatcher builds each leaf call positionally and forwards its
+// text buffers to the leaf.  Appended straight after the supplied arguments, a buffer landed
+// in the OMITTED parameter's slot, and a program whose set carries `k: integer = 7` beside a
+// text return was refused *expected integer, got &text on argument 2* — on both backends, a
+// wrong refusal of a valid program.  The leaf's omitted defaults are filled first now, as at a
+// direct call; the supplied form is the control that the ordinary shape never moved.
+// @falsified-at: b79d4e192 — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — on the control (step 13's dispatcher) the program is refused at parse,
+//   *expected integer, got &text on argument 2 of call to tag*, on both backends; here it runs
+//   and every cell passes.  Not assert, not leak: a program the control cannot compile.
+//   ARMED: no instrument — a plain run on either backend reads it.
+//   WITNESS: `tag(e)` over `[Fireball, IceWall]` with `k` omitted: refused there, `fire 1
+//   7;any 2 7;` here.
+//   HOLDS: the supplied-argument cell answers the same on both trees (a complete argument
+//   list never put a buffer in a parameter's slot); the leak channel is `none` on both.
+//   (No durable patch: the control is 902 source lines away, and a diff against it would
+//   carry everything fixed in between.)
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+enum Entity {
+  Fireball { n: integer },
+  IceWall { n: integer },
+}
+
+fn tag(f: Fireball, k: integer = 7) -> text { "fire {f.n} {k}" }
+fn tag(e: Entity, k: integer = 7) -> text { "any {e.n} {k}" }
+
+fn test_omitted_default_through_a_dynamic_site() {
+  es: vector<Entity> = [Fireball { n: 1 }, IceWall { n: 2 }];
+  out = "";
+  for e in es { out += tag(e) + ";"; }
+  assert(out == "fire 1 7;any 2 7;", "omitted default through a dynamic site: got {out}");
+}
+
+fn test_supplied_argument_through_a_dynamic_site() {
+  es: vector<Entity> = [Fireball { n: 1 }, IceWall { n: 2 }];
+  out = "";
+  for e in es { out += tag(e, 9) + ";"; }
+  assert(out == "fire 1 9;any 2 9;", "supplied through a dynamic site: got {out}");
+}
+
+fn main() {
+  test_omitted_default_through_a_dynamic_site();
+  test_supplied_argument_through_a_dynamic_site();
+}

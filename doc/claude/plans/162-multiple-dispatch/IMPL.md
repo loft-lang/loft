@@ -553,10 +553,115 @@ runtime variant's; both pinned as measured.  Closing them means treating `t_<V>_
 variants of one enum and `t_<E>_name` as one set.  The `Entity?` position (a nullable enum)
 stays static — its runtime variant is the next cell.
 
-### Step 14 — `Disp-World`, then `Disp-Match-Equiv` in the oracle  ·  M + S
+### Step 14 — `Disp-World`, then `Disp-Match-Equiv` in the oracle  ·  M + S  ·  DONE 2026-09-14
 
 Open profile only; then pair a dispatch set with its canonical `match` as two programs that
 must agree.
+
+**The promote path, read (closes § What I did not verify's last item).**  There is no
+interpret-then-promote path in the tree.  What exists is @PLN18's tier 0 — `LOFT_LIVE_RELOAD=1`
+watches every parsed file, and a changed **body** of an existing named fn is re-parsed under a
+versioned temp name in a shadow session, its bytecode appended, and the original def's
+dispatch targets patched (`fn_positions` + every recorded `OpCall` operand) — and the S2 flip,
+by which a `--native` binary routes a compiled fn into a parked interpreter.  Nothing adds a
+script at runtime: a brand-new `fn` block is skipped with the comment *"nothing calls it yet"*.
+The design's premise *"already adds scripts at runtime and promotes them"* is therefore a
+claim about the tree that does not hold, and Disp-World lands on tier 0, not on a promoter.
+
+**Measured on the tree with an overload set (a `hit` set called from a running loop):**
+
+1. Appending a more specific `hit(Slime, IceWall)` mid-run is refused as *`'hit' is not a
+   known fn; skipped`* — the watcher keys `fn` blocks by NAME, so the add read as an edit of
+   "hit", and `n_hit` is the set's `Dynamic` dispatcher, not a function — and the stale
+   selection keeps running.  Silent for a set: the comment's *"nothing calls it yet"* is
+   false there, every site of the set is a caller.  This is the runs-right-once-wrong-later
+   family `Disp-World` exists for.
+2. Editing the body of the FIRST overload of the name is skipped in silence (the name-keyed
+   map holds only the last block); editing the LAST block is refused with the same wrong
+   message.
+
+**Design (built here):** the open profile is `LOFT_LIVE_RELOAD=1`, read once, and under it
+every call into an overload set lowers to a call of a per-(name, spelling) synthesised
+function — the dynamic sites already did (`n_<name>__dyn_<spelling>`, step 13); a static site
+now calls `n_<name>__sel_<spelling>`, whose body is the one direct call `Disp-Select` picked.
+That function IS the specialisation `Disp-World` speaks of: the world is the reload host's
+version, and an add rebuilds every specialisation of the name in the new world and swaps it
+in through tier 0's own patch, so the running loop's next call takes the new selection and no
+body selected in an earlier world runs again.  The closed profile is untouched — the env var
+is unset, the lowering is step 11's direct call, and the corpus is byte-identical.  Refusals,
+all naming the cure (restart): an add that would make a served tuple ambiguous (Q3 — the ADD
+is refused, the running world unchanged, as the design proposes and RULES.md's principle
+requires); a removed or re-signatured overload; an add that would make a single definition a
+set the program did not start with.  The watcher keys blocks by their declaration head, so an
+overload's body edit reaches the overload it belongs to.
+
+**Found on the way — each fixed here, none of them dispatch's own (the reload boundary is
+where two parses of one program meet, and every disagreement between them is a frame
+mismatch):**
+
+1. **The shadow session's parse pipeline was a subset of `parse`'s.**  `parse_source`,
+   `parse_virtual`, `parse_str` (the REPL's and the shadow's whole-program load) and
+   `parse_snippet` (tier 0's per-edit parse) ran three of the six between-pass promotions
+   (`promote_late_text_buffers` and `reserve_late_return_buffers` among the missing) and
+   none of the post-pass-2 text-return promotion (@PLN104's `report_tret_promotions` +
+   `targeted_tret_promotion`).  So a definition had FEWER hidden parameters in the shadow
+   than in the running program — the synthesised dispatcher, an owned text return, is
+   promoted to a `___tret` retbuf by `parse` and was not by `parse_str` — and a body
+   generated from the shadow and called from the running program's sites read its buffer
+   off the wrong slot: `SIGSEGV` at the first `OpAppendText`.  Now `Parser::between_passes`
+   and `Parser::after_pass2` are the ONE home of each tail and every two-pass entry runs
+   both; the parity check at install (names only) could not see this and still cannot — the
+   pipeline being one function is what closes it.
+2. **The REPL and the shadow parsed the user's program under source 0, the prelude's id,
+   where `parse` and `parse_source` use `MAIN_SOURCE`** — so every gate keyed on "is this
+   the stdlib?" by id misfired on user code.  Measured: the third overload of a name
+   registered as a fresh `n_<name>` there (the set-join branch was guarded by the id), the
+   first overload's pass-2 body then read *Unknown variable* for its own parameter, and
+   every program with three overloads lost its watcher at install.  `parse_str` now parses
+   under `MAIN_SOURCE`, and the join guard tests the FILE (`is_stdlib_source`), not the id.
+3. **The dynamic dispatcher mis-ordered a defaulted trailing parameter behind a forwarded
+   text buffer** (step 13's own, closed profile, both backends): `tag(e)` over
+   `tag(f: Fireball, k: integer = 7) -> text` beside `tag(e: Entity, k: integer = 7) -> text`
+   was refused *expected integer, got &text on argument 2* — the leaf call appended the
+   dispatcher's buffers straight after the supplied arguments, into `k`'s slot.  The leaf's
+   omitted defaults are filled first now, as at a direct call.  Guarded by the oracle pair
+   below, whose set carries the default.
+4. **The watcher's entry file was recorded under source 0** — harmless while every lookup
+   fell back to the global one, wrong for a set: `MAIN_SOURCE` now, the file's own id.
+5. **A rolled-back definition stayed a member of its set** — `Data::rollback_to` truncated
+   the definitions and left the dispatcher's `Routine(r)` attribute pointing past the end;
+   every later selection would have ranked a routine nothing defines.  The rollback prunes
+   them now (one home: the REPL's failed statement had the same hole).
+
+**Measured — the matrix, each cell a running program observed through its stdout
+(`tests/live_world.rs`, four sessions):** (a) a static site in the live `main` loop with
+arguments at their variants and (b) a dynamic site with two positions held at the enum both
+print the added definition's answer from the next round on, and the old answer never appears
+again for that pair, while (c) the control pair the add does not serve is unchanged; (d) an
+add that ties a served pair is refused naming the tuple, and the loop keeps its selections;
+(e) a body edit of the FIRST overload reaches that overload and the other is untouched;
+(f) a re-signatured overload is refused and the last good body serves; (g) a brand-new name
+reports nothing and changes nothing.  `LOFT_RELOAD_DEBUG=1` lists every def a reload
+generated with its parameters and every swap — the instrument that found the frame
+mismatches above.  Closed profile: `introspect_diff.sh` IDENTICAL 1522/1522 against the
+step-13 binary (the defaulted-parameter fix restored the three dispatcher files to identity
+once it filled defaults by hand rather than minting dead buffers); every dispatch guard green
+on both backends, and on the interpreter under the open profile too; tier 0's own tests
+green after one of them was re-shaped — its module edit called its importer's `double`,
+which a fresh parse refuses, so the reload had been accepting a program the language refuses.
+
+**Step 14b — `Disp-Match-Equiv` in the oracle:** `tests/oracle/34-dispatch-set.loft` (the
+set: a static site, a dynamic site over every pair of a `vector<Entity>`, the omitted and the
+supplied defaulted parameter) declares `@ORACLE_TWIN: 34-dispatch-set-as-match.loft` (the
+same three definitions as ONE function over the canonical `match`, arms in specificity order,
+the fallback as `_`); the sweep now holds a program and its declared twin to one stdout on the
+interpreter, with a positive control that a differing line or exit is caught.  The full sweep
+is green with the pair in it.
+
+**Not reached, recorded:** the native live-flip binary — a compiled caller keeps the world it
+was built in until it is flipped (S3's contract), and `LOFT_LIVE_FNS` lists no `f_` overload
+(step 11's finding), so an add under `LOFT_LIVE_FLIP=1` reaches only flipped callers; and a
+`self` set (D-disp-1's remainder), whose @F20 dispatcher is not a set specialisation.
 
 ---
 
@@ -621,4 +726,5 @@ verification step that is fixed on the spot.
   step 3 owes a probe before it is written.
 - ~~**Whether a variant can be spelled as a parameter type in every position**~~ — verified
   by step 0 (finding 5): `fn hit(f: Fireball, w: IceWall)` compiles as a free function.
-- **`Disp-World` against the actual promote path** — its current shape is unread.
+- ~~**`Disp-World` against the actual promote path** — its current shape is unread.~~ Read at
+  step 14: there is no promote path; tier 0 is the boundary, and the rule landed on it.

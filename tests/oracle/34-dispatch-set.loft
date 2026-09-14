@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN162 step 14 (@PLN89 differential-oracle corpus) — AXIS: `Disp-Match-Equiv`.  A
+// dispatch set and its canonical `match` are two notations for one meaning, so they are
+// two PROGRAMS that must agree: this one is the SET, `34-dispatch-set-as-match.loft` is
+// the `match` — one arm per definition in specificity order, the fallback as `_` — and
+// `@ORACLE_TWIN` holds the two to the same stdout on top of holding each to its own three
+// backends.  Cells: a static site at the variants (`Disp-Closed`); a dynamic site over a
+// `vector<Entity>`, two positions, the pairs the specific definitions name and the pairs
+// only the fallback takes (`Disp-Dynamic`); and an omitted defaulted trailing parameter
+// through the dynamic site — a text return forwards its buffer BEHIND the default, the
+// shape step 14 found refused with *expected integer, got &text*.
+// @ORACLE_TWIN: 34-dispatch-set-as-match.loft
+
+enum Entity {
+  Fireball { n: integer },
+  IceWall { n: integer },
+  Crate { n: integer },
+}
+
+fn hit(f: Fireball, w: IceWall, k: integer = 7) -> text { "fire-wall {f.n}{w.n} {k}" }
+fn hit(f: Fireball, c: Crate, k: integer = 7) -> text { "fire-crate {f.n}{c.n} {k}" }
+fn hit(a: Entity, b: Entity, k: integer = 7) -> text { "any-any {a.n}{b.n} {k}" }
+
+fn main() {
+  s = hit(Fireball { n: 1 }, IceWall { n: 2 });
+  assert(s == "fire-wall 12 7", "static site, omitted default: got {s}");
+  print("{s}\n");
+  es: vector<Entity> = [Fireball { n: 3 }, IceWall { n: 4 }, Crate { n: 5 }];
+  out = "";
+  for a in es {
+    for b in es {
+      out += hit(a, b) + ";";
+    }
+  }
+  assert(out == "any-any 33 7;fire-wall 34 7;fire-crate 35 7;any-any 43 7;any-any 44 7;any-any 45 7;any-any 53 7;any-any 54 7;any-any 55 7;", "every pair through the dynamic site: got {out}");
+  print("{out}\n");
+  x: Entity = Fireball { n: 6 };
+  y: Entity = IceWall { n: 8 };
+  t = hit(x, y, 9);
+  assert(t == "fire-wall 68 9", "dynamic site, supplied trailing argument: got {t}");
+  print("{t}\n");
+}

@@ -2299,22 +2299,7 @@ impl Parser {
         // worker" only fills as pass 1 reaches each par site.  Promote those here, so
         // the boxing lands before `reserve_late_return_buffers` hands the now-heap
         // return its `__retbuf` and before the H5 snapshot counts attributes.
-        self.promote_par_worker_tuple_returns();
-        // loft#944 — every declaration has now been seen, so a forward reference the parser
-        // left as a stub has been adopted.  Point the stored `Type::Unknown(stub)` values at
-        // the real type, then promote the tuple RETURNS that could not be judged while a
-        // member was unresolved — both before `reserve_late_return_buffers` below, so a
-        // newly-heap return gets its `__retbuf` in the same breath.
-        let adopted = self.data.resolve_adopted_stubs(&mut self.lexer);
-        self.refuse_forward_tuple_returns(&adopted);
-        self.refuse_forward_ref_tuple_params(&adopted);
-        // @PLN125 — the same class, one step earlier in the chain: a bound-method stub's
-        // hidden parameters are decided from the INTERFACE method's return type, which on
-        // pass 1 can still be an unresolved forward reference.  Re-derive here, before the
-        // buffers below and before the H5 snapshot.
-        self.refresh_bound_method_stubs();
-        self.promote_late_text_buffers();
-        self.reserve_late_return_buffers();
+        self.between_passes();
         let pass1_attr_counts: Vec<usize> = (0..self.data.definitions.len())
             .map(|d| self.data.attributes(d as u32))
             .collect();
@@ -2340,22 +2325,7 @@ impl Parser {
             // graph) at compile time, before it can hang at runtime.  Post-parse over pass-2 edges.
             self.check_subrule_wellformedness();
             self.assert_pass2_def_attr_stable(&pass1_attr_counts);
-            // @PLN104 P2 — oracle pass: flag frame-local text returns the interpreter would
-            // orphan (#568) into `force_tret` (default-on; opt out with LOFT_NO_TRET_FIX).
-            self.report_tret_promotions();
-            // @PLN104 P3 — the targeted promotion: promote each flagged frame-local text
-            // return (`force_tret`) to a `__tret` retbuf IN PLACE on the pass-2 IR and patch
-            // only its direct callers to push the buffer.  The promotion set is decided BEFORE
-            // this (in `report_tret_promotions`), so every caller — forward- OR backward-ref —
-            // gets the retbuf without an ABI-growth crash; post-H5, so the extra attrs never
-            // trip the pass1==pass2 contract.  This replaced a whole-file re-parse ("third
-            // pass") whose non-idempotent re-lowering corrupted unrelated defs (var__vec /
-            // diagnostics / s5-s7); touching only the promoted defs + their callers removes
-            // that collateral class by construction.  See
-            // doc/claude/plans/104-tret-promotion/targeted-promotion-design.md.
-            if !self.force_tret.is_empty() {
-                self.targeted_tret_promotion();
-            }
+            self.after_pass2();
         }
         self.backfill_native_symbol_crates();
         // Plan-07 phase 4h — emit `not null` field-reminder hints
@@ -2595,6 +2565,68 @@ impl Parser {
             );
         }
     }
+    /// What pass 2 owes the program, in one place — the signature work that can only be
+    /// judged on the lowered IR, and so grows a definition's attribute list AFTER every
+    /// call to it was lowered:
+    ///
+    /// @PLN104 P2 — the oracle pass flags every frame-local text return the interpreter would
+    /// orphan (#568) into `force_tret` (default-on; opt out with `LOFT_NO_TRET_FIX`); P3 — the
+    /// targeted promotion gives each flagged def a `__tret` retbuf IN PLACE on the pass-2 IR
+    /// and patches only its direct callers to push the buffer.  The set is decided BEFORE the
+    /// promotion, so every caller — forward- or backward-ref — gets the retbuf without an
+    /// ABI-growth crash; post-H5, so the extra attrs never trip the pass1==pass2 contract.
+    /// This replaced a whole-file re-parse ("third pass") whose non-idempotent re-lowering
+    /// corrupted unrelated defs; touching only the promoted defs + their callers removes that
+    /// collateral class by construction — `plans/104-tret-promotion/targeted-promotion-design.md`.
+    ///
+    /// Like [`between_passes`](Self::between_passes), every two-pass entry runs it: a
+    /// definition promoted here in the running program and NOT in a shadow session's parse
+    /// of the same file has one more parameter in the running program than the shadow
+    /// believes, and a body generated from the shadow reads its buffer off the wrong slot
+    /// (@PLN162 step 14 — the synthesised dispatcher, an owned text return, was promoted by
+    /// `parse` and not by `parse_str`).  `force_tret` is cleared first: the set is narrowed
+    /// to the promoted defs and never drained, and promoting a def twice would give it two
+    /// buffers.
+    pub(crate) fn after_pass2(&mut self) {
+        self.force_tret.clear();
+        self.report_tret_promotions();
+        if !self.force_tret.is_empty() {
+            self.targeted_tret_promotion();
+        }
+    }
+
+    /// What pass 1 owes pass 2, in one place: every declaration has been seen, so the
+    /// signatures pass 2 will call through are completed here — a par worker's tuple return
+    /// boxed, a forward-referenced stub adopted and the tuple returns it held back judged, a
+    /// bound-method stub's hidden parameters re-derived (@PLN125), a late text tail's buffer
+    /// promoted to a hidden parameter, and a heap return's `__retbuf` reserved.  Every
+    /// two-pass entry runs it — `parse`, `parse_source`, `parse_virtual` AND `parse_snippet` —
+    /// because the ATTRIBUTE LIST of a definition is the frame its callers push, and two
+    /// parses of one program that disagree on it disagree on every call between them.
+    /// Measured (@PLN162 step 14): the live-reload shadow session loaded the program through
+    /// `parse_source`, which ran three of these six, so a text-returning definition had one
+    /// hidden buffer there and two in the running program; a body generated from the shadow
+    /// and called from the running program's sites read its return buffer off the wrong slot
+    /// and faulted at the first `OpAppendText`.
+    fn between_passes(&mut self) {
+        self.promote_par_worker_tuple_returns();
+        // loft#944 — every declaration has now been seen, so a forward reference the parser
+        // left as a stub has been adopted.  Point the stored `Type::Unknown(stub)` values at
+        // the real type, then promote the tuple RETURNS that could not be judged while a
+        // member was unresolved — both before `reserve_late_return_buffers` below, so a
+        // newly-heap return gets its `__retbuf` in the same breath.
+        let adopted = self.data.resolve_adopted_stubs(&mut self.lexer);
+        self.refuse_forward_tuple_returns(&adopted);
+        self.refuse_forward_ref_tuple_params(&adopted);
+        // @PLN125 — the same class, one step earlier in the chain: a bound-method stub's
+        // hidden parameters are decided from the INTERFACE method's return type, which on
+        // pass 1 can still be an unresolved forward reference.  Re-derive here, before the
+        // buffers below and before the H5 snapshot.
+        self.refresh_bound_method_stubs();
+        self.promote_late_text_buffers();
+        self.reserve_late_return_buffers();
+    }
+
     fn promote_par_worker_tuple_returns(&mut self) {
         let mut workers: Vec<u32> = self.par_worker_defs.iter().copied().collect();
         workers.sort_unstable(); // deterministic `__tuple<…>` def order across runs
@@ -3338,18 +3370,7 @@ impl Parser {
         self.lexer.parse_string(content, filename);
         self.parse_file();
         self.resolve_deferred_unknowns();
-        // loft#808 — the same between-passes promotion `parse` does, so a program
-        // handed over as a STRING boxes a par worker's tuple return identically to
-        // one read from a file.
-        self.promote_par_worker_tuple_returns();
-        // loft#944 — every declaration has now been seen, so a forward reference the parser
-        // left as a stub has been adopted.  Point the stored `Type::Unknown(stub)` values at
-        // the real type, then promote the tuple RETURNS that could not be judged while a
-        // member was unresolved — both before `reserve_late_return_buffers` below, so a
-        // newly-heap return gets its `__retbuf` in the same breath.
-        let adopted = self.data.resolve_adopted_stubs(&mut self.lexer);
-        self.refuse_forward_tuple_returns(&adopted);
-        self.refuse_forward_ref_tuple_params(&adopted);
+        self.between_passes();
         let lvl = self.lexer.diagnostics().level();
         if lvl != Level::Error && lvl != Level::Fatal {
             self.first_pass = false;
@@ -3367,6 +3388,8 @@ impl Parser {
             self.parse_file();
             self.resolve_deferred_unknowns();
             // @PLN130 F9 (loft#779) — see `parse`.
+            self.check_subrule_wellformedness();
+            self.after_pass2();
             if !default {
                 self.check_reshape_under_reference();
                 self.synth_drop_cascades();
@@ -3398,18 +3421,7 @@ impl Parser {
         self.lexer.parse_string(content, filename);
         self.parse_file();
         self.resolve_deferred_unknowns();
-        // loft#808 — the same between-passes promotion `parse` does, so a program
-        // handed over as a STRING boxes a par worker's tuple return identically to
-        // one read from a file.
-        self.promote_par_worker_tuple_returns();
-        // loft#944 — every declaration has now been seen, so a forward reference the parser
-        // left as a stub has been adopted.  Point the stored `Type::Unknown(stub)` values at
-        // the real type, then promote the tuple RETURNS that could not be judged while a
-        // member was unresolved — both before `reserve_late_return_buffers` below, so a
-        // newly-heap return gets its `__retbuf` in the same breath.
-        let adopted = self.data.resolve_adopted_stubs(&mut self.lexer);
-        self.refuse_forward_tuple_returns(&adopted);
-        self.refuse_forward_ref_tuple_params(&adopted);
+        self.between_passes();
         let lvl = self.lexer.diagnostics().level();
         if lvl != Level::Error && lvl != Level::Fatal {
             self.first_pass = false;
@@ -3424,6 +3436,8 @@ impl Parser {
             self.parse_file();
             self.resolve_deferred_unknowns();
             // @PLN130 F9 (loft#779) — see `parse`.
+            self.check_subrule_wellformedness();
+            self.after_pass2();
             if !default {
                 self.check_reshape_under_reference();
                 self.synth_drop_cascades();
@@ -3530,6 +3544,13 @@ impl Parser {
         self.deferred_unknown.clear();
         self.resolutions.clear();
         self.data.reset();
+        // The program parses under `MAIN_SOURCE`, as `parse` and `parse_source` parse it:
+        // this is the REPL's and the live-reload shadow session's entry, and under the
+        // prelude's source 0 every gate keyed on "is this the stdlib?" by id misfired on
+        // the user's own definitions (@PLN162 step 14 — `report_tret_promotions` skips a
+        // def whose source is not MAIN, so a text return promoted in the running program
+        // was not promoted in the shadow, and a body generated there faulted).
+        self.data.source = crate::data::MAIN_SOURCE;
         self.lambda_counter = 0;
         self.fn_lambdas.clear();
         self.declared_capabilities.clear();
@@ -3543,16 +3564,7 @@ impl Parser {
         self.pending_param_locks.clear();
         self.parse_file();
         self.resolve_deferred_unknowns();
-        // loft#808 — the same between-passes promotion `parse` does; see there.
-        self.promote_par_worker_tuple_returns();
-        // loft#944 — every declaration has now been seen, so a forward reference the parser
-        // left as a stub has been adopted.  Point the stored `Type::Unknown(stub)` values at
-        // the real type, then promote the tuple RETURNS that could not be judged while a
-        // member was unresolved — both before `reserve_late_return_buffers` below, so a
-        // newly-heap return gets its `__retbuf` in the same breath.
-        let adopted = self.data.resolve_adopted_stubs(&mut self.lexer);
-        self.refuse_forward_tuple_returns(&adopted);
-        self.refuse_forward_ref_tuple_params(&adopted);
+        self.between_passes();
         let lvl = self.lexer.diagnostics().level();
         if lvl == Level::Error || lvl == Level::Fatal {
             self.diagnostics.fill(self.lexer.diagnostics());
@@ -3562,6 +3574,7 @@ impl Parser {
         self.deferred_unknown.clear();
         self.resolutions.clear();
         self.data.reset();
+        self.data.source = crate::data::MAIN_SOURCE;
         self.lambda_counter = 0;
         self.fn_lambdas.clear();
         self.lexer.parse_string(text, filename);
@@ -3571,6 +3584,7 @@ impl Parser {
         self.resolve_deferred_unknowns();
         // @PLN35 PC3 — reject a left-recursive sub-rule grammar (see `check_subrule_termination`).
         self.check_subrule_wellformedness();
+        self.after_pass2();
         // @PLN130 F9 (loft#779) — see `parse`.
         self.check_reshape_under_reference();
         self.synth_drop_cascades();
@@ -3612,6 +3626,7 @@ impl Parser {
         self.data.source = source;
         self.parse_file();
         self.resolve_deferred_unknowns();
+        self.between_passes();
         let lvl = self.lexer.diagnostics().level();
         if lvl == Level::Error || lvl == Level::Fatal {
             self.diagnostics.fill(self.lexer.diagnostics());
@@ -3627,6 +3642,7 @@ impl Parser {
         self.data.source = source;
         self.parse_file();
         self.resolve_deferred_unknowns();
+        self.after_pass2();
         // @PLN130 F9 (loft#779) — see `parse`.
         self.check_reshape_under_reference();
         self.synth_drop_cascades();

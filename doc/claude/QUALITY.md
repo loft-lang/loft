@@ -2554,7 +2554,12 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 800 | 458 | 5 | **337** |
+| 803 | 461 | 5 | **337** |
+
+(2026-09-14, @PLN162 step 14: `Parser::build_specialisation` and `stub_admissible` in
+`dispatch.rs`, and the reload host's `set_members` in `live_reload.rs`, are new and read
+`Type::Routine` / `Type::Enum` off a `.base()` — the wrapper-aware column: 800 → 803 total,
+458 → 461 aware, the opaque column and the ratchet unmoved.)
 
 (2026-09-14, @PLN162 step 13: `Parser::dynamic_positions` and `report_dynamic_leaf` are new
 and read `Type` variants — the nullable question spelled first, the shape then read through

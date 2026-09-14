@@ -276,10 +276,20 @@ fn live_reload_module_file_with_lib_and_cross_file_calls() {
     let dir = std::env::temp_dir().join(format!("eh_reload_libs_{}", std::process::id()));
     let src = dir.join("src");
     std::fs::create_dir_all(&src).unwrap();
+    // The module resolves what ITS file imports — the library and a sibling module — and
+    // nothing of the file that `use`s it: a fresh parse refuses a module calling its
+    // importer's `double`, and a reload that accepted it was accepting a program the
+    // language refuses (the shadow session used to parse the program under the prelude's
+    // source id, where every name read as global — @PLN162 step 14).
     let module = src.join("viewmod.loft");
     std::fs::write(
         &module,
-        "pub fn view_msg(n: integer) -> text {\n    \"view {n}\"\n}\n",
+        "use engine_host;\nuse mathmod;\n\npub fn view_msg(n: integer) -> text {\n    \"view {n}\"\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("mathmod.loft"),
+        "pub fn double(n: integer) -> integer {\n    n * 2\n}\n",
     )
     .unwrap();
     let main = src.join("main.loft");
@@ -287,10 +297,6 @@ fn live_reload_module_file_with_lib_and_cross_file_calls() {
         &main,
         r#"use viewmod;
 use engine_host;
-
-pub fn double(n: integer) -> integer {
-    n * 2
-}
 
 fn main() {
     frames = 0;
@@ -343,7 +349,7 @@ fn main() {
     // The MODULE edit: lib-qualified + cross-file calls in the new body.
     std::fs::write(
         &module,
-        "pub fn view_msg(n: integer) -> text {\n    \"VIEW c={engine_host::clients()} d={double(n)}\"\n}\n",
+        "use engine_host;\nuse mathmod;\n\npub fn view_msg(n: integer) -> text {\n    \"VIEW c={engine_host::clients()} d={double(n)}\"\n}\n",
     )
     .unwrap();
     assert!(

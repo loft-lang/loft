@@ -301,15 +301,57 @@ impl Parser {
             return None;
         }
         let positions = self.dynamic_positions(main, routed);
-        if positions.is_empty() {
+        // `Disp-World` (@PLN162 step 14): in the OPEN profile a static site calls a
+        // per-spelling stub too — the one direct call `Disp-Select` picked, as its own
+        // function — so that an overload added mid-run has one place per spelling to rebuild
+        // and swap; the closed profile keeps step 11's direct call.
+        if positions.is_empty() && !(open_world() && self.stub_admissible(main)) {
             return None;
         }
         let spelling = self.data.full_spelling(routed.iter())?;
-        let dyn_name = format!("{name}__dyn_{spelling}");
+        let kind = if positions.is_empty() { "sel" } else { "dyn" };
+        let dyn_name = format!("{name}__{kind}_{spelling}");
         let existing = self.data.def_nr(&format!("n_{dyn_name}"));
         if existing != u32::MAX {
             return Some(existing);
         }
+        self.build_specialisation(source, name, routed, &positions, &dyn_name)
+    }
+
+    /// Can a static call of the set `main` take the open profile's per-spelling stub?  Only a
+    /// set the reload host can GROW is worth one: the stdlib is never watched, and a set with
+    /// a generic member, or a call inside a generic body, is instantiated per use — a stub
+    /// over a type parameter is the wrong shape (measured: the stdlib's `len(both: vector)`
+    /// refused its own stub, *expected vector<T>, got vector<T>*).
+    fn stub_admissible(&self, main: u32) -> bool {
+        if crate::portable_path::is_stdlib_source(&self.data.def(main).position().file) {
+            return false;
+        }
+        if self.context == u32::MAX || self.data.def_type(self.context) == DefType::Generic {
+            return false;
+        }
+        self.data
+            .def(main)
+            .attributes
+            .iter()
+            .all(|a| match a.typedef.base() {
+                Type::Routine(r) => self.data.def_type(*r) == DefType::Function,
+                _ => true,
+            })
+    }
+
+    /// The body of a specialisation of `name` for the routed types: one leaf per variant
+    /// tuple over `positions`, each the definition `Disp-Select` picks for that tuple, under
+    /// the discriminant tests that reach it — or, with no dynamic position (the open profile's
+    /// static stub), the one leaf as the whole body.  Registered as `dyn_name`.
+    fn build_specialisation(
+        &mut self,
+        source: u16,
+        name: &str,
+        routed: &[Type],
+        positions: &[(usize, u32)],
+        dyn_name: &str,
+    ) -> Option<u32> {
         // Every variant tuple over the dynamic positions, each with the definition
         // `Disp-Select` picks for it — computed before anything is built, so a refused leaf
         // builds nothing.
@@ -347,6 +389,11 @@ impl Parser {
             match self.select_overload(source, name, &leaf_types) {
                 Selection::One(d) => leaves.push((tuple.clone(), d, leaf_types)),
                 sel @ (Selection::Ambiguous(_) | Selection::NoneApplicable) => {
+                    // A static stub has nothing to enumerate: its caller already holds the
+                    // verdict for these types, and the ladder answers a name no set decides.
+                    if positions.is_empty() {
+                        return None;
+                    }
                     self.report_dynamic_leaf(name, routed, &leaf_types, &sel);
                     self.reported_dynamic_refusal = true;
                     return None;
@@ -399,9 +446,9 @@ impl Parser {
         // aside and restored, whatever the outcome.
         let saved_context = self.context;
         let file = self.lexer.pos().file.clone();
-        let saved_vars = std::mem::replace(&mut self.vars, Function::new(&dyn_name, &file));
+        let saved_vars = std::mem::replace(&mut self.vars, Function::new(dyn_name, &file));
         let saved_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
-        let fn_nr = self.data.add_fn(&mut self.lexer, &dyn_name, &args);
+        let fn_nr = self.data.add_fn(&mut self.lexer, dyn_name, &args);
         let built = if fn_nr == u32::MAX {
             None
         } else {
@@ -442,6 +489,24 @@ impl Parser {
                 // The leaf's static types: the variant at each dynamic position, which is what
                 // the tag test just established, so the argument check sees no conversion.
                 let mut call_types: Vec<Type> = leaf_types.clone();
+                // An omitted defaulted parameter takes its default here, exactly as at a
+                // direct call, BEFORE the dispatcher's buffers follow: the call is built
+                // positionally, and appended straight after the supplied arguments a
+                // forwarded buffer landed in the omitted parameter's slot (measured:
+                // *expected integer, got &text on argument 2*, on a set with `k: integer = 7`).
+                let omitted: Vec<(Value, Type)> = self
+                    .data
+                    .def(*d)
+                    .attributes
+                    .iter()
+                    .filter(|a| !a.hidden)
+                    .skip(leaf_types.len())
+                    .map(|a| (a.value.clone(), a.typedef.clone()))
+                    .collect();
+                for (v, t) in omitted {
+                    call_args.push(v);
+                    call_types.push(t);
+                }
                 if self.data.def(*d).attributes.iter().any(|a| a.hidden) {
                     for (v, t) in &hidden_vars {
                         call_args.push(v.clone());
@@ -460,16 +525,21 @@ impl Parser {
                     &arg_pos,
                     Some(&at),
                 );
-                let ret_call = v_block(vec![Value::Return(Box::new(code))], Type::Void, "ret");
-                ls.push(v_if(
-                    cond.expect("a dynamic position"),
-                    ret_call,
-                    Value::Null,
-                ));
+                match cond {
+                    Some(c) => {
+                        let ret_call =
+                            v_block(vec![Value::Return(Box::new(code))], Type::Void, "ret");
+                        ls.push(v_if(c, ret_call, Value::Null));
+                    }
+                    // The static stub: no tag to test, the one leaf is the body.
+                    None => ls.push(Value::Return(Box::new(code))),
+                }
             }
-            // Unreachable when every tuple has a leaf, which the refusals above guarantee;
-            // the typed-null return keeps both backends' bodies well-formed.
-            ls.push(Value::Return(Box::new(Value::Null)));
+            if !positions.is_empty() {
+                // Unreachable when every tuple has a leaf, which the refusals above
+                // guarantee; the typed-null return keeps both backends' bodies well-formed.
+                ls.push(Value::Return(Box::new(Value::Null)));
+            }
             self.data.definitions[fn_nr as usize].code = v_block(ls, ret, "dynamic_fn");
             self.data.definitions[fn_nr as usize].variables = self.vars.clone();
             Some(fn_nr)
@@ -478,6 +548,51 @@ impl Parser {
         self.vars = saved_vars;
         self.expected = saved_expected;
         built
+    }
+}
+
+/// Is this run the OPEN profile (`Disp-World`, @PLN162 step 14) — the one whose method sets
+/// grow while the program runs?  It is `LOFT_LIVE_RELOAD=1`, the same switch that arms tier-0
+/// live reload (`live_reload.rs`), read once: the running program and the reload host's shadow
+/// session must lower a call the same way, and both read it here.  Off, the lowering is the
+/// closed profile's direct call and nothing in this file is reached for a static site.
+pub(crate) fn open_world() -> bool {
+    static OPEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OPEN.get_or_init(|| std::env::var("LOFT_LIVE_RELOAD").is_ok_and(|v| v != "0"))
+}
+
+impl Parser {
+    /// `Disp-World` (@PLN162 step 14): the specialisation `old` — a `__sel_` stub or a
+    /// `__dyn_` dispatcher — built AGAIN in world `world`, as a new def `<old>__w<world>` over
+    /// the same routed types with every leaf selected from the set as it is now, for the
+    /// reload host to swap in behind the old def's number.  `None` when the new world cannot
+    /// take it: a tuple the set no longer decides is reported exactly as at a dynamic site,
+    /// and the host then refuses the add that caused it.
+    pub(crate) fn rebuild_specialisation(&mut self, old: u32, world: u32) -> Option<u32> {
+        let def = self.data.def(old);
+        let full = def.name.clone();
+        let source = def.source;
+        // The routed positions are the `d<i>` parameters; the buffers a text return forwards
+        // (`__work_…`, `___tret_…`) are the specialisation's own and are minted again.
+        let routed: Vec<Type> = def
+            .attributes
+            .iter()
+            .filter(|a| !a.hidden && !a.name.starts_with("__"))
+            .map(|a| a.typedef.clone())
+            .collect();
+        let bare = full.strip_prefix("n_")?;
+        let name = bare
+            .split_once("__dyn_")
+            .or_else(|| bare.split_once("__sel_"))?
+            .0
+            .to_string();
+        let main = self.data.source_nr(source, &name);
+        if main == u32::MAX || self.data.def_type(main) != DefType::Dynamic {
+            return None;
+        }
+        let positions = self.dynamic_positions(main, &routed);
+        let dyn_name = format!("{bare}__w{world}");
+        self.build_specialisation(source, &name, &routed, &positions, &dyn_name)
     }
 }
 

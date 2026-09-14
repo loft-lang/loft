@@ -14,7 +14,8 @@ a 100 % deviation.
 ## Unchanged from DESIGN.md
 
 `Disp-Applicable` · `Disp-Select` · `Disp-Ambiguous` · `Disp-Closed` · `Disp-Dynamic` ·
-`Disp-World` · `Disp-Match-Equiv` — as written there.
+`Disp-World` · `Disp-Match-Equiv` — as written there (the last two have an implementation
+form under § New, which says where each landed in the tree).
 
 ## The principle the rules keep landing on
 
@@ -278,6 +279,34 @@ overload set that no definition takes, and that today's ladder cannot resolve ei
 method is refused by that method's own argument check, which names the parameter; the two
 messages differ in wording and agree in verdict.  The enumerated-pairs ADVICE the rule text
 above proposes (`dispatch-pairs-uncovered`) is not built.
+
+**Disp-World, implementation form (IMPL.md step 14, 2026-09-14).**  The open profile is
+`LOFT_LIVE_RELOAD=1`, and there is no promoter under it — the tree's "interpret, then
+promote" is @PLN18's tier 0, a body swap of an existing named fn.  So the rule lands on that
+boundary.  Under the open profile every call into an overload set is lowered to a
+per-(name, spelling) synthesised function — the `__dyn_` dispatcher a dynamic site already
+had (step 13), and a `__sel_` stub at a static site whose body is the one direct call
+`Disp-Select` picked; the closed profile keeps step 11's direct call and is byte-identical.
+That function IS the specialisation the rule speaks of, and the world counter is the reload
+host's version: an overload added mid-run joins the shadow session's set, every
+specialisation of the name is rebuilt in the new world and swapped in behind its old def
+through tier 0's own patch (`fn_positions` + every recorded call operand), so the running
+loop's next call selects in the new world and a body selected in an earlier world never runs
+again — invalidation is eager, so no specialisation needs to carry the world it was built in.
+The whole add is one transaction.  **Q3 answered as the design proposes, from the principle
+above: the ADD is refused** — a rebuild that leaves a served tuple ambiguous, or one no
+definition takes, is reported naming the tuple and the world is unchanged; a removed or
+re-signatured overload is refused too (the world only grows, and a signature is the frame a
+call site embeds); and a second definition of a name that was ONE function is refused,
+because its sites were direct calls with nothing to rebuild.  Not reached: a `self` set
+(D-disp-1's remainder), and the native live-flip binary, whose compiled callers keep the
+world they were built in until flipped — recorded, not closed.
+
+**Disp-Match-Equiv, in the oracle (IMPL.md step 14, 2026-09-14).**  A dispatch set and its
+canonical `match` are two programs of the differential-oracle corpus, `tests/oracle/34-…`,
+and the set's side declares `@ORACLE_TWIN: <the match>`: the sweep holds the pair to one
+stdout on top of holding each to its own three backends, with a positive control that a
+differing line or exit is caught.
 
 ## Deviations
 
