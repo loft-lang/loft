@@ -482,6 +482,10 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 |---:|---:|---:|
 | 488 | 464 | **24** |
 
+(2026-09-15: @PLN157 § V-an's `hoist::dropped_reads` — the positional walk that finds a
+value local's dropped reads — unspans at its one discriminating site; the opaque count is
+unchanged.)
+
 (2026-09-14, THE JOINED TREE — @PLN162 step 14 + @PLN157 through § V-am + the quality
 stream through D-bind-37: 488 · 464 · 24, re-measured rather than carried.  The join had
 left both sides' rows standing (476 · 452 and 485 · 461); neither was the union's.)
@@ -2567,6 +2571,11 @@ and who does not.
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
 | 815 | 473 | 5 | **337** |
+
+(2026-09-15, later: @PLN157 § V-an — `hoist::dropped_reads` tests a block's result through
+`.base()` (the peeling column) and `object_own_return` reads the buffer a block's result
+names through `Type::depend`, the keystone; the opaque column fell by one and the
+`@FR-N-Shape` ratchet is re-pinned at 336.)
 
 (2026-09-15, loft#1532: `Scopes::member_write` is new and asks the tuple's `Type::Tuple` off a
 `.base()`, and the literal's transfer in `scan_set` makes the same peeled ask inside a function
