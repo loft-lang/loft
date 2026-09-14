@@ -785,8 +785,12 @@ record-returning call on native.  It was opt-in for two days because its call-si
 did not hold over the script corpus (376 compile errors, 218 of them the fn-ref
 DISPATCH: every arm of the `match` a `CallRef` emits shares one return type); the gate
 now declines every arm by reading the arm set from `fnref::dispatch_arms`, the
-emitter's own home for that question, and the two other classes (a `__lift_` temp, a
-mixed-arm branch) are declined by shape.
+emitter's own home for that question, and the two other classes (a `__lift_` temp bound
+from a CALL, a mixed-arm branch) are declined by shape.  A `__lift_` temp bound from a
+VIEW — a selecting tail's arm over a by-value parameter — is a value local bound to the
+view's field tuple and never a view leaf (read as one it leaked the store its copy
+mints, one record per call; found 2026-09-15 with the generic instance's statement join,
+whose arms bind the join local the same way and did not compile).
 `LOFT_TRACE_VALUEREC=1` names each admission and decline.
 **`LOFT_POISON_CLAIM=1`** (`Store::poison_fill`) fills a freshly CLAIMED payload with
 `0xDEADBEEF` instead of zeros — the claim-side twin of `LOFT_POISON`'s poison-on-free, and

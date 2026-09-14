@@ -1026,7 +1026,10 @@ closure over `+`/`-`/`*` is worth a further −17 % as the checked non-null fami
 −50 % as plain operators, measured on the final emission, and is not a rewrite's to take
 (it would diverge from the interpreter after a reported overflow).  The non-tap floor —
 32 ms of premultiply, prefill, growth ladder and two per-pixel vectors, 1.8× the whole
-reference by itself — is the other half, unprobed beyond the profile.
+reference by itself — is the other half, unprobed beyond the profile.  Then `filled` — a `w*h` `vector<integer>` grown by `+=` per pixel, which § V-ae's
+slice fill cannot reach because there is no vector yet to fill (a pre-sized fill is the
+op the library wants).  Then `parse`'s store churn, which is the § V-af / § V-ah class one
+level up: per-op temporaries that could be value locals or dead buffers.
 
 *The table after § V-aj + § V-ak* (this box, `--repeat 3`, **`--n-ref 500 --n-native 500`**,
 14/14 hashes agree):
@@ -1051,10 +1054,22 @@ that itself moves between 304 and 400 ns/op run to run.  Judge this row at ≥ 5
 (the consumer's `compare.py` takes `--n-native`), and read the switch bisect as clean:
 with `LOFT_NO_VECTOR_BASE=1` the standalone kernel is 1 092–1 154 against 1 131–1 140 with
 bases, and `hash` 119–159 µs against 113–133 — the base unit is neutral to positive on
-both, and a fifty-call table is what moved.  Then `filled` — a `w*h` `vector<integer>` grown by `+=` per pixel, which § V-ae's
-slice fill cannot reach because there is no vector yet to fill (a pre-sized fill is the
-op the library wants).  Then `parse`'s store churn, which is the § V-af / § V-ah class one
-level up: per-op temporaries that could be value locals or dead buffers.
+both, and a fifty-call table is what moved.
+
+*The morning after (§ V-ah, two defects the gate had not seen; 2026-09-15).*  The GitHub
+gate on e8101f6e was red: `tests/docs/25-generics.loft` does not compile natively — a
+generic INSTANCE's selecting tail lowers as a statement join whose arms bind the join
+local from a parameter's view, and the value form typed the join as its tuple while the
+arms still minted and deep-copied into it (t14, `expected DbRef, found (i64,)` ×6).
+Fixing it, the probe's leak check found the second: the SOURCE-level selecting tail over
+parameters lifts each arm's read into a `__lift_N` copy that the oracle calls a view and
+the lowering mints — one record leaked per call, on `const` parameters too (t15).  Both
+closed in `hoist.rs` / `dispatch.rs`: a lift is a value local when bound from a view and
+never a view leaf; a whole-record bind INTO a value local is the tuple assignment; the
+admission round grows optimistically and prunes, so the join and its lifts admit each
+other.  Both shapes now mint nothing at all.  `tests/value_record.rs` pins the emissions;
+`tests/scripts/157-value-tail.loft` carries both receipts.  The gate's other red,
+`src/generation/fnref.rs` uncatalogued, is an `@I68` tag.
 
 **2026-09-14, later — HAND-OFF FOR THE QUIET BOX: `smooth`, the last judged row over the
 bar.**  Written on `tuxedo` (x86-64, three checkouts sharing it) for an agent on the quiet

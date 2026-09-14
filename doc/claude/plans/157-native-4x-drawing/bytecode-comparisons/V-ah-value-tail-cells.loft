@@ -185,6 +185,47 @@ fn t13() {
   println("t13 {d0.ptx} {d0.pty} {d1.ptx} {d1.pty}");
 }
 
+// t14 — a GENERIC instance's selecting tail.  The instance's `if` is lowered as a
+// STATEMENT join (`if c { __ret_join = a } else { __ret_join = b }`), so each arm is a
+// Set of the join local FROM A PARAMETER'S VIEW — a value local assigned a view, where
+// the record form mints a store per call and deep-copies the view into it.  The value
+// form reads the view's fields into the tuple and mints nothing.  Admits `t_2Pt_gpick`
+// and `t_4Coin_gmax` (a ONE-field record: the `(i64,)` tuple — the shape the generics
+// doc compiles).  The arguments are literals bound to locals, not `pt(..)` calls: a
+// builder's result passed as an argument would decline the builder (t13).
+fn gpick<T>(a: T, b: T, c: boolean) -> T { if c { a } else { b } }
+struct Coin { cents: integer }
+fn OpLt(self: Coin, other: Coin) -> boolean { self.cents < other.cents }
+fn gmax<T: Ordered>(x: T, y: T) -> T { if x > y { x } else { y } }
+fn t14() {
+  p = Pt { ptx: 1.5, pty: 2.5 };
+  q = Pt { ptx: 3.5, pty: 4.5 };
+  r = gpick(p, q, false);
+  s = gpick(p, q, true);
+  m = gmax(Coin { cents: 3 }, Coin { cents: 7 });
+  assert(r.ptx == 3.5 && r.pty == 4.5 && s.ptx == 1.5 && s.pty == 2.5 && m.cents == 7, "t14 {r.ptx} {r.pty} {s.ptx} {s.pty} {m.cents}");
+  println("t14 {r.ptx} {r.pty} {s.ptx} {s.pty} {m.cents}");
+}
+
+// t15 — the SOURCE-LEVEL selecting tail over parameters, by value (`sel15`) and `const`
+// (`sel15c`).  The parser lifts each arm's parameter read into a `__lift_N` temp — a COPY,
+// so the caller's record never aliases the result — and the join local views the lift; the
+// record form hands the lift's store up as the result.  Read as a VIEW leaf, the lift's
+// store was minted and never freed (one record per call, the leak channel again); the
+// lift is an owner by construction and is a leaf only as a VALUE LOCAL, which the value
+// form binds to the tuple of the parameter's reads — no mint at all.  The join and the
+// lift admit each other, so the admission round grows optimistically and prunes.
+fn sel15(a: Pt, b: Pt, c: boolean) -> Pt { if c { a } else { b } }
+fn sel15c(a: const Pt, b: const Pt, c: boolean) -> Pt { if c { a } else { b } }
+fn t15() {
+  p = Pt { ptx: 1.25, pty: 2.25 };
+  q = Pt { ptx: 3.25, pty: 4.25 };
+  r = sel15(p, q, false);
+  s = sel15c(p, q, true);
+  assert(r.ptx == 3.25 && r.pty == 4.25 && s.ptx == 1.25 && s.pty == 2.25, "t15 {r.ptx} {r.pty} {s.ptx} {s.pty}");
+  println("t15 {r.ptx} {r.pty} {s.ptx} {s.pty}");
+}
+
 fn main() {
-  t1(); t2(); t3(); t4(); t5(); t6(); t7(); t8(); t9(); t10(); t11(); t12(); t13();
+  t1(); t2(); t3(); t4(); t5(); t6(); t7(); t8(); t9(); t10(); t11(); t12(); t13(); t14(); t15();
 }

@@ -1138,9 +1138,20 @@ impl Output<'_> {
         // a nullable whole-value bind reached neither this arm nor any other and fell
         // through to `let mut var_d = var_s;`, a pointer copy: an ALIAS, where `@FR-B-Copy`
         // says the bound variable is INDEPENDENT (loft#1319).
+        //
+        // @PLN157 § V-ah (`@FR-R-ValueRecord`) — a VALUE LOCAL is a tuple in registers,
+        // never a store: a whole-record bind INTO one takes the plain assignment below, and
+        // its right-hand side — a view the gate admitted, registered as a leaf by
+        // `collect_leaves` — emits as the tuple of the view's field reads.  The mint and
+        // the deep copy this arm spells are the store the value form exists to drop.  A
+        // generic INSTANCE's selecting tail is the shape: its `if` lowers as a statement
+        // join whose arms each bind the join local from a parameter's view, where the
+        // source-level function lifts each arm into an expression the tuple path already
+        // read (`tests/scripts/157-value-tail.loft` t14 — E0308 without this line).
         if let (Some(d_nr), Value::Var(src)) =
             (variables.tp(var).base().heap_def_nr(), to_unspanned)
             && variables.tp(*src).base().heap_def_nr().is_some()
+            && !self.value_record_locals.contains_key(&var)
         {
             let src_name = sanitize(variables.name(*src));
             let tp_nr = self.data.def(d_nr).known_type();

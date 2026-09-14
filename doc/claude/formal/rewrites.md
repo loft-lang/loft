@@ -700,7 +700,21 @@ and loses only the innermost frame NAME from the chain.  Switch
                  reads the fields back out of it, and a library's CDYLIB BRIDGE
                  materialises the tuple into the destination record it already owns —
                  so the C ABI is unchanged while loft-to-loft calls inside the library
-                 take the value path.
+                 take the value path.  A compiler `__lift_` temp is never a VIEW leaf:
+                 it owns the store its whole-record bind mints (the record form hands
+                 that store up as the result), so read as a view it leaks one record
+                 per call; bound from a bare view it is a VALUE LOCAL — the tuple of the
+                 view's reads — and a whole-value read of a value local at a value
+                 position (the tail of a branch arm, the right of a value local, a
+                 return) is a use the tuple serves.  A body's value locals are admitted
+                 TOGETHER — the join local of a selecting branch and the lifts its arms
+                 bind justify each other — by an optimistic growth from the body's
+                 views, admitted calls and `Object` builds, pruned to a consistent set.
+                 And a whole-record bind INTO a value local takes the plain assignment:
+                 the mint and the deep copy `@FR-B-Copy` spells for a record local are
+                 the store the value form exists to drop (a generic instance's
+                 selecting tail lowers as a statement join whose arms each bind the
+                 join local from a parameter's view).
 
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a

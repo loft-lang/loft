@@ -2574,6 +2574,40 @@ measurement before any design.
    direct-write unit, −3 % rustc-first), the frame prelude `floor_mod` costs `ctrl`
    (−3 %), and the segment loop's four unhoisted element reads.
 
+   *Two defects the gate had not seen (2026-09-15).*  The GitHub gate on e8101f6e was
+   red in the heavy shard: `tests/docs/25-generics.loft` does not compile natively.  A
+   generic INSTANCE (`!! INSERT` in the IR) lowers its selecting tail as a STATEMENT
+   join — `if c { __ret_join = a } else { __ret_join = b }`, each arm a `Set` of the
+   join local from a parameter's view — where the source-level function lifts each arm
+   into an expression.  The gate admitted the join as a value local (every assignment a
+   view, its one use the return), the prologue typed it as its tuple, and the Set's
+   whole-record COPY arm in `dispatch.rs` still minted a store and deep-copied into it:
+   `expected DbRef, found (i64,)` ×6.  The arm now yields to a value local, whose bind is
+   the plain assignment of the view's tuple — no mint, no copy (t14, the `(i64,)`
+   one-field shape included).  Running the fix's probe under `LOFT_NATIVE_LEAK_CHECK`
+   found the second: the SOURCE-level tail `if c { a } else { b }` over by-value
+   parameters leaked one `Pt` per call, on `const` parameters too.  Its arms are
+   `{ __lift_1 = a; __lift_1 }`: the lift is the copy `@FR-B-Copy` owes (the caller's
+   record must not alias the result), the join local VIEWS the lift, and the record form
+   hands the lift's store up as the result — so the IR frees it nowhere.  The ownership
+   oracle derives the un-minted `__lift_1 = a` from `a` and answers Borrowed, the gate
+   read the lift as a view leaf, and the value form minted the copy, read its fields into
+   the tuple and left the store behind.  Closed by construction: a `__lift_` temp is
+   never a view leaf (`scopes::new_lift_var` makes owners), and one bound from a bare
+   view is a VALUE LOCAL — the tuple of the view's reads — which needs two more things
+   the gate lacked: a whole-value read of a value local at a value position (the arm's
+   tail) as a use the tuple serves, and an admission round that can admit the join and
+   its lifts TOGETHER (each justifies the other; the least step over admitted locals
+   alone reached neither): the round now grows optimistically from the body's views,
+   admitted calls and `Object` builds — every candidate traces to a source outside the
+   set — and prunes to a consistent set.  The lift class is exactly the `__lift_` shape
+   the 2026-09-14 census declined whole; the exclusion narrows to a lift bound from a
+   CALL, whose set lowering reads `.store_nr` off the value.  Cells t14/t15; the
+   `sel15`/`sel15c`/`t_2Pt_gpick`/`t_4Coin_gmax` pins in `tests/value_record.rs` assert
+   the emission has no `OpDatabase` and no `OpCopyRecord`; the guard records both
+   receipts (a compile error and a leak, neither a wrong value — the value channel never
+   saw either).
+
 ## V-k — the append path's bookkeeping (2026-09-09)
 
 **Found by** profiling the `lock` row on the § V-j runtime with callers: the per-append

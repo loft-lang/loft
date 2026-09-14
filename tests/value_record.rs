@@ -54,6 +54,10 @@ const TAIL_EXPECTED: &[(&str, bool)] = &[
     ("n_pt12", false),      // t12: delivered into a field / element through a `__lift_` temp
     ("n_pt13", false),      // t13: its result is passed as an argument (`disc(given)`)
     ("n_disc", false),      // t13: a JOIN tail — a view on one arm, a mint on the other
+    ("t_2Pt_gpick", true),  // t14: a generic instance's statement-join selecting tail
+    ("t_4Coin_gmax", true), // t14: the same over a ONE-field record — the `(i64,)` tuple
+    ("n_sel15", true),      // t15: a lifted selecting tail over by-value parameters
+    ("n_sel15c", true),     // t15: the same over `const` parameters
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
@@ -176,6 +180,34 @@ fn each_tail_cell_returns_by_value_exactly_where_predicted() {
         t5.contains("OpFreeRef(cell,var___ref_1"),
         "t5's live buffer is still freed"
     );
+    // A generic instance's selecting tail binds its join local from a parameter's VIEW in
+    // each statement arm (t14): the value form reads the view's fields into the tuple and
+    // neither mints a store for the join nor deep-copies into it.
+    for name in ["t_2Pt_gpick", "t_4Coin_gmax"] {
+        let body = body_of(name);
+        assert!(
+            !body.contains("OpDatabase(cell,") && !body.contains("OpCopyRecord(cell,"),
+            "{name}'s join local is a tuple: no mint, no copy"
+        );
+        assert!(
+            body.contains("var____ret_join_1 = ("),
+            "{name}'s join local is bound to the view's field tuple"
+        );
+    }
+    // The source-level selecting tail lifts each arm's parameter read into a `__lift_N`
+    // copy (t15): the lift is a value local bound to the parameter's field tuple, so the
+    // arm mints nothing and the store the record form hands up is never made.
+    for name in ["n_sel15", "n_sel15c"] {
+        let body = body_of(name);
+        assert!(
+            !body.contains("OpDatabase(cell,") && !body.contains("OpCopyRecord(cell,"),
+            "{name}'s lifts are tuples: no mint, no copy"
+        );
+        assert!(
+            body.contains("var___lift_1 = (") && body.contains("let mut var___lift_1: (f64, f64)"),
+            "{name}'s lift is bound to the view's field tuple"
+        );
+    }
     let _ = std::fs::remove_file(&out);
 }
 

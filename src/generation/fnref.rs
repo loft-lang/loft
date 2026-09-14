@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator
 //! The dispatch ARMS of a fn-ref call: which definitions a call through a `fn(…) -> τ`
 //! value can reach.  ONE home, read by two askers — the emitter, to build the `match` a
 //! `CallRef` becomes (every arm shares that one argument list and one return type), and

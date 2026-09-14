@@ -4378,7 +4378,18 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u32> {
             }
             let own = ctx.own?;
             let rec = own_record(ctx)?;
-            let tp = ctx.data.def(ctx.def_nr).variables().tp(*var);
+            let vars = ctx.data.def(ctx.def_nr).variables();
+            // A compiler `__lift_` temp OWNS what it is bound to (`scopes::new_lift_var`):
+            // its whole-record bind from a view MINTS a store and copies into it, and the
+            // record form hands that store UP as the result (the join local it feeds is a
+            // view of it, so nothing in the frame frees it).  The oracle reads the
+            // un-minted bind as Borrowed of its source — the one answer a leaf must not
+            // rest on: read as a view, the store the lowering mints is nobody's, one
+            // leaked record per call (t15).  A lift is a leaf only as a VALUE LOCAL, above.
+            if vars.name(*var).starts_with("__lift_") {
+                return None;
+            }
+            let tp = vars.tp(*var);
             // A VIEW by the ownership oracle (`@FR-O-Oracle`), not by the dep list: then_v
             // `__ret_N` typed `ref(P)["then_v"]` holds the parameter's store on one arm and then_v
             // minted default on the other (`Own::Join`), and reading it as then_v tuple would
@@ -4406,15 +4417,23 @@ pub struct ValueLeaves {
     /// `Object` leaves, by the `Block`'s address (the `Box`'s content, which is what the
     /// block emitter is handed).
     pub objects: HashSet<usize>,
+    /// EVERY `Var` node at a value position, view or value local, by both addresses — the
+    /// whole-value reads a tuple serves, which is what [`local_uses_ok`] accounts a value
+    /// local's read at the tail of a branch arm against.
+    pub reads: HashSet<usize>,
 }
 
 fn collect_leaves(body: &Value, locals: &HashMap<u16, u32>, own: bool) -> ValueLeaves {
     let mut out = ValueLeaves::default();
     fn leaves(v: &Value, locals: &HashMap<u16, u32>, out: &mut ValueLeaves) {
         match v.unspan() {
-            Value::Var(w) if !locals.contains_key(w) => {
-                out.views.insert(std::ptr::from_ref(v) as usize);
-                out.views.insert(std::ptr::from_ref(v.unspan()) as usize);
+            Value::Var(w) => {
+                out.reads.insert(std::ptr::from_ref(v) as usize);
+                out.reads.insert(std::ptr::from_ref(v.unspan()) as usize);
+                if !locals.contains_key(w) {
+                    out.views.insert(std::ptr::from_ref(v) as usize);
+                    out.views.insert(std::ptr::from_ref(v.unspan()) as usize);
+                }
             }
             Value::Block(bl) if bl.name == "Object" => {
                 out.objects.insert(std::ptr::from_ref(&**bl) as usize);
@@ -4530,12 +4549,17 @@ fn retbuf_uses_ok(v: &Value, rb: u16, c: &ShapeCtx, objects: &HashSet<usize>) ->
 
 /// Which locals of `def_nr` hold a value-returned record — every non-null assignment a
 /// value shape, every use one the tuple serves ([`local_uses_ok`]), never a parameter and
-/// never a compiler `__lift_` temp — mapped to the function whose tuple they carry.  ONE
-/// home: the gate decides admission over it and the emitter types the locals from it.
+/// never a compiler `__lift_` temp bound from a CALL — mapped to the function whose tuple
+/// they carry.  ONE home: the gate decides admission over it and the emitter types the
+/// locals from it.
 ///
-/// A `__lift_` temp is excluded because its set lowering emits its own displacement
-/// guard, reading `.store_nr` off the value — a use no IR walk can see, because it is
-/// not an IR node.  A fixpoint, because a leaf may name another value local.
+/// A `__lift_` temp bound from a call is excluded because that set lowering emits its own
+/// displacement guard, reading `.store_nr` off the value — a use no IR walk can see,
+/// because it is not an IR node.  A lift bound from a bare `Var` — the copy of a
+/// parameter's view a selecting arm returns — has no such lowering: its bind is the
+/// whole-record copy arm, which a value local turns into the tuple of the view's reads,
+/// and a lift read as a VIEW leaf instead leaks the store that copy mints (t15).  A
+/// fixpoint, because a leaf may name another value local.
 #[must_use]
 pub fn value_locals_in(data: &Data, def_nr: u32, admitted: &HashSet<u32>) -> HashMap<u16, u32> {
     let def = data.def(def_nr);
@@ -4548,16 +4572,30 @@ pub fn value_locals_in(data: &Data, def_nr: u32, admitted: &HashSet<u32>) -> Has
     if body.any_node(&mut |n| matches!(n, Value::Yield(_))) {
         return locals;
     }
-    loop {
+    // A `__lift_` temp with an assignment that is not a bare `Var` keeps its buffer (see
+    // above); the set is fixed for the body, so it is read once.
+    let mut call_bound: HashSet<u16> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(v, rhs) = n
+            && !matches!(rhs.unspan(), Value::Null | Value::Var(_))
+        {
+            call_bound.insert(*v);
+        }
+        false
+    });
+    let eligible = |v: u16| {
+        !vars.is_argument(v) && (!vars.name(v).starts_with("__lift_") || !call_bound.contains(&v))
+    };
+    // Per local, GIVEN a locals set: the tuple its assignments carry, or `None` once ANY
+    // assignment is not a value shape (the declaration's `null` aside).
+    let shapes_given = |locals: &HashMap<u16, u32>| -> HashMap<u16, Option<u32>> {
         let c = ShapeCtx {
             data,
             def_nr,
             admitted,
-            locals: &locals,
+            locals,
             own,
         };
-        // Per local: the tuple its assignments carry, or `None` once ANY assignment is not a
-        // value shape (the declaration's `null` aside).
         let mut shapes: HashMap<u16, Option<u32>> = HashMap::new();
         body.any_node(&mut |n| {
             if let Value::Set(v, rhs) = n
@@ -4575,38 +4613,80 @@ pub fn value_locals_in(data: &Data, def_nr: u32, admitted: &HashSet<u32>) -> Has
             }
             false
         });
-        let mut next = locals.clone();
-        for (v, s) in shapes {
-            if let Some(d) = s
-                && !locals.contains_key(&v)
-                && !vars.is_argument(v)
-                && !vars.name(v).starts_with("__lift_")
-                && local_uses_ok(body, v, data, own.is_some())
-            {
-                next.insert(v, d);
+        shapes
+    };
+    let joined = |locals: &HashMap<u16, u32>, cands: &HashMap<u16, u32>| -> HashMap<u16, u32> {
+        let mut with = locals.clone();
+        with.extend(cands.iter().map(|(v, d)| (*v, *d)));
+        with
+    };
+    loop {
+        // GROW: this round's candidates, admitted optimistically.  A candidate's shape may
+        // rest on ANOTHER candidate — the join local of a selecting branch reads the lift
+        // each arm binds, and the lift's read stands at that join's right — so a step over
+        // `locals` alone reaches neither.  Every candidate still traces to a source outside
+        // the set: the first pass admits from `locals`, views and admitted calls only, and
+        // each later pass only from what the pass before found.
+        let mut cands: HashMap<u16, u32> = HashMap::new();
+        loop {
+            let mut grown = cands.clone();
+            for (v, s) in shapes_given(&joined(&locals, &cands)) {
+                if let Some(d) = s
+                    && !locals.contains_key(&v)
+                    && eligible(v)
+                {
+                    grown.insert(v, d);
+                }
+            }
+            if grown.len() == cands.len() {
+                break;
+            }
+            cands = grown;
+        }
+        // PRUNE to a consistent set: a candidate whose uses the tuple cannot serve, or
+        // whose shape rested on a candidate just pruned, leaves — until nothing else does.
+        loop {
+            let with = joined(&locals, &cands);
+            let shapes = shapes_given(&with);
+            let reads = collect_leaves(body, &with, own.is_some()).reads;
+            let kept: HashMap<u16, u32> = cands
+                .keys()
+                .filter_map(|v| {
+                    let d = shapes.get(v).copied().flatten()?;
+                    local_uses_ok(body, *v, data, &reads).then_some((*v, d))
+                })
+                .collect();
+            let stable = kept.len() == cands.len();
+            cands = kept;
+            if stable {
+                break;
             }
         }
-        if next.len() == locals.len() {
+        if cands.is_empty() {
             return locals;
         }
-        locals = next;
+        locals.extend(cands);
     }
 }
 
 /// Is every use of local `v` in `body` one a TUPLE can serve?  A scalar field read at a
 /// constant offset (the tuple index), a free of it (nothing to release), a store-identity
 /// test or a free guarded by one against it (the tuple is in no store, so always
-/// distinct), a copy FROM it (the tuple is materialised into the destination), and — in
-/// an admitted body — a `return` of it.  Any other use — an argument, an append, a copy
-/// INTO it, a whole-value read — needs the record, so the local keeps its buffer.
-fn local_uses_ok(body: &Value, v: u16, data: &Data, own: bool) -> bool {
+/// distinct), a copy FROM it (the tuple is materialised into the destination), and a
+/// whole-value read at a VALUE POSITION (`reads`: a return tail of an admitted body, the
+/// right of a value local, the tail of a branch arm either stands at — consumed as the
+/// tuple).  Any other use — an argument, an append, a copy INTO it, a whole-value read
+/// anywhere else — needs the record, so the local keeps its buffer.
+fn local_uses_ok(body: &Value, v: u16, data: &Data, reads: &HashSet<usize>) -> bool {
     let mut mentions = 0u32;
     let mut accounted = 0u32;
     body.any_node(&mut |n| {
         match n {
-            Value::Var(w) if *w == v => mentions += 1,
-            Value::Return(x) if own && matches!(x.unspan(), Value::Var(w) if *w == v) => {
-                accounted += 1;
+            Value::Var(w) if *w == v => {
+                mentions += 1;
+                if reads.contains(&(std::ptr::from_ref(n) as usize)) {
+                    accounted += 1;
+                }
             }
             Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
                 let name = data.def(*d).name();
