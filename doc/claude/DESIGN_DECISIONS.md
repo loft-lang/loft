@@ -3795,4 +3795,10 @@ under the checked tier with no fault noted (the fault ledger `note_integer_overf
 `LOFT_DEV_SOFT_HALT` already count and name them), never a declaration and never a
 default.  It is not in @PLN157's scope and nothing is built for it; NATIVE.md §
 Optimisation tiers names it as the tier that does not exist yet, and C67 keeps every
-machine-dependent SCOPE or TYPE closed.
+machine-dependent SCOPE or TYPE closed.  And it is heavier than a switch, which is the
+second half of the same day's ruling: *"I will never want to publish a binary without the
+added protection layer"* — a published artefact, a program's or a library's, always
+carries the checks, so the tier could only be a whole-build, from-source, LOCAL mode in
+which every library the game uses is recompiled at that level beside it, never a
+published one.  That is why the proofs come first: a check retired by a proof is retired
+inside the library's ordinary build and ships with it.

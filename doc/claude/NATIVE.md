@@ -79,9 +79,13 @@ stay the default because a starting programmer must never be handed a random-loo
 number they cannot debug.  What may come, and is deliberately not built: an OPT-IN
 "proven program" tier for a game that has already run fine with the checks on — licensed
 by the evidence of its own fault-free runs under the checked tier, never by a
-declaration — that emits the plain arithmetic the processor does.  Until it exists, the
-only way a check is retired is a PROOF that the value cannot be the sentinel
-(`@FR-R-Counter`, the range proofs @PLN157 queues), which is portable by construction.
+declaration — that emits the plain arithmetic the processor does.  It could only be a
+whole-build, from-source, LOCAL mode: a published binary, a program's or a library's,
+always carries the checks (owner, the same day), so every library the game uses would
+be recompiled at that level beside it, and the tier is a build, not a switch.  Until it
+exists, the only way a check is retired is a PROOF that the value cannot be the sentinel
+(`@FR-R-Counter`, the range proofs @PLN157 queues), which is portable by construction
+and — the point — retires the check inside a library's ordinary build, so it ships.
 
 ## Current State
 
