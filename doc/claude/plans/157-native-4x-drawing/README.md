@@ -964,6 +964,78 @@ its assumptions are written as a rule and checkable by both.
 
 ## Where to resume
 
+**2026-09-14, later — HAND-OFF FOR THE QUIET BOX: `smooth`, the last judged row over the
+bar.**  Written on `tuxedo` (x86-64, three checkouts sharing it) for an agent on the quiet
+Ubuntu laptop; everything below that is a TIMING is to be re-measured there first.
+
+*Where things stand.*  § V-ai shipped (`fronds` under the bar on x86-64 too — nine of ten
+judged rows on both lanes), `make ci` green on 0fe0878f (4 915 tests), branch pushed.
+`smooth` reads 9.5–10.2× on x86-64 by `compare.py` (a reference under its 100 ns floor) and
+8.44× on aarch64; the honest converged x86 ratio was ≈ 9.6× on 09-12, **44 ns per output
+point against Rust's 4**, per-call cost ~4 % of the row.  Reaching 4× on x86 needs ≈ −58 %,
+and no single unit measured so far reaches that: this is a stack, ranked below by what is
+measured.
+
+*Why this box could not finish the measurement.*  A sibling checkout's `rustc` ran through
+every timing attempt after the gate (load 12–60); the four-kernel probe read
+3047 / 1685 / 1847 / 1010 ns/op on one run and 2597 / 4711 / 2021 / 2914 on the next.  The
+PROFILE shares are usable — `perf` counts only the process's own cycles — the ns/op are not.
+**First job on the quiet box: run the two probes below and replace the numbers here.**
+Quiet means `ps -eo pcpu,comm --sort=-pcpu | head` shows nothing but you; `uptime` lags.
+
+*The profile on x86-64 at 0fe0878f* (`scripts/profile.sh --engine --calls -- --native-release
+<abs>/sm_only.loft --n 2000000`; `sm_only.loft` is the scratch clone's `bench/bench.loft`
+with every `print_row` but `bench_smooth` deleted): `n_smooth_pts` 24.0 %, **`n_pt` 19.1 %**,
+`set_free_protected` 7.7 %, `n_half_chord` 5.5 %, `get_vector` 4.75 %, `OpFreeRef` 3.4 %,
+`n_ctrl` 3.4 %, protect/unprotect 3.4 %, `op_database_inner` 2.3 %, `enum_parent_size` 1.4 %,
+`clear` 1.2 %, `database_named` 1.2 %.  Callers: `n_pt`'s 19 % is the per-POINT call from
+the k-loop, and inside it `offset_in_bounds` (a claim-header `read<i32>` per write) 3.5 %,
+`strict_stores` + its atomic load 5.0 %, `index_mut` 2.45 % — the two
+`store_mut(&db).set_float` writes re-validate a slot the push header already addresses.
+`set_free_protected`'s 7.7 % is all under `n_half_chord → n_protect_store_frees`, 3.1 % of
+it the `Cow<'static, str>` origin conversion/drop per bracket.
+
+*What the emission says* (`--native-release --native-emit <out.rs>` of `sm_only.loft`; read
+`n_smooth_pts`, `n_ctrl`, `n_half_chord`, `n_pt`).  The k-loop is already lean on READS —
+the eight `sp_a/sp_b/sp_ta/sp_tb` fields are hoisted per segment (`__vs_3..10`) and the
+append is `push_record_hoisted` (§ V-t) — but the element is filled by CALLING
+`n_pt(cell, x, y, elm)`, then a `store_nr` compare and a conditional `OpCopyRecord`, then
+`push_record_finish`.  Per segment, `pts[ia]?`, `pts[ib]?`, `flags[ia]?`, `flags[ib]?` are
+UNHOISTED `get_vector` reads: the loop calls `n_half_chord`, which takes no twin (`pts` is a
+plain vector parameter to a BORROW-returning callee).  Per call: four `OpDatabase` mints
+for the join buffers `__ref_1..4` (§ V-af) and four `OpFreeRef` at exit, plus the reset.
+
+*Ranked, with ceilings* (the four-kernel probe is `smooth-literal-push.bench.loft`,
+committed beside `smooth-field-return.bench.loft`; its numbers here are ONE run under load):
+
+| # | unit | mechanism | ceiling | state / next step |
+|---|---|---|---|---|
+| 1 | **the push-slot write** — the element's fields written INTO the push header's slot without `store_mut` + `valid` per field (the write twin of `get_elem_hoisted`), and the `n_pt` CALL inlined into that write (§ V-p's twin applied to a record DESTINATION) | emission: `hoist.rs` / `Output`, both the call form and the literal form | A → A+literal read −45 % (3047 → 1685) under load; the profile's `n_pt` share says −15…−20 % for inlining the call alone, the direct write on top | unbuilt.  Measure the direct write rustc-first: hand-edit `n_smooth_b_lit`'s k-loop in the emitted Rust to write through `__ph_1`'s store (`stores.allocations[h.store_nr as usize].write(rec, pos, v)`), link as loft does (`main.rs` ~11099 / 11173: `-C opt-level=3 -C codegen-units=1 --extern loft=target/release/libloft.rlib --extern loft_ffi=<deps>`), ABAB against the unedited emission |
+| 2 | **§ V-ah stages 2 + 3** — `half_chord` forwards a tuple, `ctrl` selects its fields at the return | `hoist::value_records` + `scopes` (stage 3 changes who frees) | **−40 %** (the plan's B form on aarch64, 1 227–1 279 → 740–757); here B read 1847 against A 3047 under load | blocked on stage 1: `Output::output_call_ref`'s arm scan needs ONE home the gate reads (corpus at four scripts, DESIGN.md § V-ah) |
+| 3 | the protect bracket's origin — `n_protect_store_frees` builds and `set_free_protected` stores a `Cow<'static, str>` per bracket | runtime, one function | ≤ 3 % on its own; moot once #2 removes the calls | XS: a `&'static str` origin, the formatted form only under `lock_trace_enabled()` |
+| 4 | per-call store lifecycle — four join-buffer mints + frees per activation (`op_database_inner`, `database_named`, `clear`, `enum_parent_size` ≈ 6 %) | `@FR-R-Reuse` extended to the join buffers: allocate once per SITE | ≤ 6 % at 61 points a call; the size sweep puts per-call cost at ~4 % of the row | unprobed |
+| 5 | the segment loop's four unhoisted element reads (`get_vector` 4.75 %) | the hoist gate declines a header when a borrow-returning callee takes the vector; admit one for a `const` parameter the callee only reads | ≤ 5 % | unprobed |
+
+*Order.*  #1 first: emission-only, no ownership change, and both its halves have a
+rustc-first ceiling measurable in an hour.  Then #2's stage-1 refactor (the corpus is four
+scripts from green).  **#1 + #2 together are the only path that reaches 4× on x86**
+(≈ −58 % needed); either alone does not, and #3–#5 are the tail.
+
+*Instruments, in order of use.*  (1) `cargo build --release --lib --bin loft` — the native
+lane links the rlib, `cargo build --bin loft` does not rebuild it.  (2) A SCRATCH clone of
+`loft-libs-graphics` branch `drawing-lock` (at 250b2cd here), never the consumer's own
+checkout; `rm -rf bench/.loft native-auto` after every rebuild of loft or any
+generation-time switch.  (3) `python3 bench/compare.py --loft <tree>/target/release/loft
+--skip-interp --repeat 5` from its `drawing/` — the table; 14/14 hashes must agree.
+(4) `sm_only.loft` as above; profile with `--calls --keep`, then `perf report -i
+~/.cache/tmp/loft-profile/perf.data --stdio --no-children -g caller,0.5,callee
+--symbol-filter=<sym>` for who calls a hot runtime symbol.  (5) The two committed probes
+(`loft --native-release <probe>`; every hash must agree across kernels).  (6)
+`LOFT_VALUE_RECORD=1 LOFT_TRACE_VALUEREC=1` on the emit: today it says `n_ctrl` /
+`n_half_chord`: *tail is not an Object build*.  (7) `scripts/emission_audit.py <emitted.rs>`
+before trusting a hand-edited emission.  **Label every number with the machine** — the two
+lanes already disagree on which rows fail, and a ratio from a loaded box is not a number.
+
 **2026-09-14, end of session — state, in one place.**
 
 *The scoreboard.*  Nine of the ten judged rows are UNDER the 4× bar on this box (aarch64
@@ -997,7 +1069,7 @@ rules the rewrites already stood on were missing and are now written: `@FR-H-Roo
 | `smooth` stage 1 — § V-aa default-on | two of three classes closed, corpus 376 errors → 4 scripts | give `Output::output_call_ref`'s arm scan ONE home the gate also reads; do not spell it twice |
 | `smooth` stage 2 — a forwarding tail | blocked on stage 1 | admit a tail that calls another admitted fn; needs the branch-bound local handled too (gate, `value_record_locals`, and the `if` emitting as a tuple) |
 | `smooth` stage 3 — a selecting tail | blocked on stage 2 | carries an ownership change: a guarded free declines exactly when the buffer IS the result, so a result that stops escaping leaves it nobody's |
-| `n_pt`, 14.9 % of `smooth` | unprobed | § V-p's twin applied to a record DESTINATION; measure a ceiling first |
+| `n_pt`, 19.1 % of `smooth` on x86-64 | profiled + emission read (the hand-off above, #1) | the push-slot write: fields written through the push header, the `n_pt` call inlined; rustc-first ceiling on `smooth-literal-push.bench.loft` |
 | § 3d item 1 — assert what the header proved | ceiling measured, unbuilt | validate the vector's extent once at derivation, answer `len: 0` on failure so corruption degrades to the checked path |
 | § 3d items 2–4 | unprobed | item 3 (a real slice per store) wants the same rustc-first probe |
 | a tail fast path that survives holes | unprobed (§ V-ai shipped the reset-capacity half: `fronds` under the bar on x86-64 too) | a claim no hole fits still walks the tree to reach the tail; the sub-call buffers' holes (§ V-j) are what it would price — measure a ceiling on `fr_only` first |
