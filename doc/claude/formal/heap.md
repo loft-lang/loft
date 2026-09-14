@@ -914,7 +914,9 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
    - **OPEN — the branch not taken.**  `x = mk(); if c { x = p; }` with `c` false still loses
      `mk()` (`p_h6`): the hand-off armed inside the arm suppresses `x`'s own release on the path
      that never copied.  loft#1515's per-path flag answers exactly this for a SOURCE-side hand-off;
-     a destination-side one (a copy off a parameter) is not given the flag.
+     a destination-side one (a copy off a parameter) is not given the flag.  A written-out join
+     reaches the same residual: `x = if c { a } else { p }` on `c` true never releases `x`'s copy
+     of `a`, because the parameter arm's copy stops `x` on every path.
 4. **A projection copied into a container** — `s.h`, `vs[0]` or `tt.0` into a field, an enum
    payload, a vector or a tuple member (`c_field_*`, `c_elem_*`, `c_tuple_*`): twice.  The same
    projection bound to a LOCAL is a `(B-View)` view and releases once; placed in a container it
@@ -976,40 +978,47 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
      disarm reads the same ownership fact the drop hand-off reads.  Gate cells `p_g1`–`p_g5`,
      `c_literal_arm`, `c_callproj_arm`; the corpus-wide emission diff is identical in all 1495
      files, so no existing program used the shape.
-7. **A reassignment from a branch join** — `x = mk(9); x = if c { a } else { b }` with `a` and `b`
-   owned locals: on `c` true neither the displaced `mk(9)` nor the untaken `b` is released; on `c`
-   false `a` is lost (`p_s1`, `p_s2`).  Both backends, plain and under `LOFT_POISON=1`.  The same
-   join written by the author as a statement, `x = mk(9); if c { x = a } else { x = b }`, is clean
-   (`p_s3`).
-   - **Same form, different timing.**  A reassignment from a value branch is lowered to exactly
-     that statement form (`scopes::sink_set_into_arms`, `@FR-O-Complete` / `@FR-B-Copy`), so the
-     failing spelling is meant to become the correct one.  The rewrite happens inside the scan,
-     and two facts the author's form has are then missing:
-     - **the per-path flags** — loft#1515's `__hoff_a` / `__hoff_b` are minted from the pre-scan
-       IR, where only `Set(x, <branch>)` exists, so a static hand-off stops both sources and the
-       untaken one is never released;
-     - **the first arm's displaced release** — the parser types the binding with the join's deps
-       (`[a, b]`), and the scan clears them at the first arm's own copy, AFTER that arm has asked
-       whether the binding owns the record it displaces (`proxy_says_owned`).  The first arm
-       answers no and takes no snapshot; the second sees the cleared deps and takes one.
-       `LOFT_LOG=type_timeline:x` shows the two writes.
-   - ✓ **The `??` and scalar-`match` spellings — CLOSED 2026-09-14 for what they add.**
-     `x = mk(9); x = a ?? mk(2)` (`c_coalesce_reassign`) and `x = mk(9); x = match k { 0 => … }`
-     crashed the interpreter under poison and did not compile natively (`E0425: cannot find value
-     var___disp_2`), and the `??` present path released `a` twice.  One cause for all three: those
-     lowerings write their arms WITHOUT a block, so a lowered arm's displaced-release snapshot was
-     registered at the ENCLOSING scope and released at that scope's exit on every path — reading
-     an uninitialised slot on the paths that skipped the arm.  On the plain interpreter the slot
-     happened to hold a reference to the kept record, which is the second release.  This entry
-     first attributed that release to the missing flag; it was inferred, not measured, and it was
-     wrong — giving such an arm a block of its own (`sink_set_into_arms`) closed all three with no
-     flag in play.  Guard: `tests/scripts/a-reassignment-from-a-bare-arm-releases-its-snapshot-in-that-arm.loft`.
-     The corpus-wide emission diff differs in 28 files, every one by the added block alone: the
-     interpreter's bytecode is identical in all of them.  A `match` whose arms are LOCALS still
-     loses releases like the `if` spelling above.
-   - Not this family: `x = mk(9); x = if c { a } else { mk(2) }` keeps the value form (the call
-     arm's tail is a compiler work-ref), so the binding is typed as a view of `a` for its whole
-     life and its earlier owned record is freed with no hook on both paths (`p_j1`/`p_j2`).
+7. ✓ **A reassignment from a branch join — CLOSED 2026-09-14.**  `x = mk(9); x = if c { a } else
+   { b }` with `a` and `b` owned locals lost the displaced `mk(9)` and the untaken `b` on `c` true,
+   and `a` on `c` false (`p_s1`, `p_s2`), both backends, plain and under `LOFT_POISON=1`; the same
+   join written by the author as a statement, `if c { x = a } else { x = b }`, was clean (`p_s3`).
+   A reassignment from a value branch is lowered to exactly that statement form
+   (`scopes::sink_set_into_arms`, `@FR-O-Complete` / `@FR-B-Copy`), but inside the scan, and the
+   written-out arms lacked three things the author's arms have:
+   - **the per-path flags** — loft#1515's `__hoff_a` / `__hoff_b` were minted from the pre-scan
+     IR, where only `Set(x, <branch>)` exists, so a static hand-off stopped both sources and the
+     untaken one was never released.  The site that writes the arms out now registers its own
+     pairs and mints their flags before the first arm is scanned: it is the one site that knows
+     those copies exist.  Family 8's cure is what made that safe — before it, a flag replaced every
+     static stop of its source.
+   - **the first arm's displaced release** — the parser typed the binding with the join's deps
+     (`[a, b]`), and the scan cleared them at the first arm's own copy, AFTER that arm asked whether
+     the binding owns the record it displaces (`proxy_says_owned`), so only the second arm took a
+     snapshot (`LOFT_LOG=type_timeline:x` shows the two writes).  The same site now strips the arm
+     tails' deps first, through the predicate the bind itself uses (`var_copy_owns`).
+   - **a block per arm** — the `??` and scalar-`match` lowerings write their arms without one, so a
+     written-out arm's snapshot temp was registered at the ENCLOSING scope and released at that
+     scope's exit on every path, reading an uninitialised slot where the arm never ran: an
+     interpreter crash under poison, a native compile refusal (`E0425: cannot find value
+     var___disp_2`, `c_coalesce_reassign`), and on the plain interpreter whatever the slot held — a
+     second release of `a` on the `??` present path.  This entry first attributed that release to
+     the missing flag; that was inferred, not measured, and wrong.  Such an arm is now given a block
+     (`tests/scripts/a-reassignment-from-a-bare-arm-releases-its-snapshot-in-that-arm.loft`).
+     Landed alone, that change CONVERTED one failure rather than fixing it: `x = a ?? b` with a
+     local default and `a` present went from releasing `a` twice to losing `b` (`p_s6`) — `b`'s old
+     release had been the uninitialised slot — and the flags above closed it.
+   - Measured: every local-arm spelling — an `if`, an `if` chain, a scalar `match`, an `if` nested
+     in a `match` arm, a nullable binding, inside a loop, with the arm locals read afterwards —
+     releases each resource once, on both backends, plain and under poison.  The gate retires
+     `p_s1`, `p_s2`, `p_s6` and `c_coalesce_reassign`.  The block change's emission diff differs in
+     28 files by the added block alone (the interpreter's bytecode identical in all 28); the flags'
+     differs in one, the new guard.
+   - **Not this family, and still open.**  `x = mk(9); x = if c { a } else { mk(2) }` keeps the value
+     form (the call arm's tail is a compiler work-ref), so the binding is typed as a view of `a` for
+     its whole life and its earlier owned record is freed with no hook on both paths
+     (`p_j1`/`p_j2`).  And an arm that copies a PARAMETER (`x = if c { a } else { p }`) stops the
+     DESTINATION with no flag, so on the path that took `a` its copy is never released — family 3's
+     branch-not-taken residual, reached through the written-out form.
 8. ✓ **A per-path hand-off hid a later hand-off of the same source — CLOSED 2026-09-14.**
    loft#1515 guards a source's release on a flag that records whether its per-path copy ran, and
    the flag REPLACED the static suppression rather than joining it.  So a later unconditional
@@ -1044,15 +1053,15 @@ release does to the store table reaches later frames.  That is why the gate runs
 a process of its own, and why a cell's verdict inside a batch is not a measurement of that cell.
 
 **Closes when** every line of `tests/ownership_drop_gate.baseline` and its native twin is gone,
-each retired in the commit of the fix that moved it.  Closed so far: families 5, 6 and 8 whole,
-family 3 for sequential code and a taken branch, family 1's present path, and family 7's `??` and
-scalar-`match` spellings with the native refusal they caused.  Still open, each with its answer
-in the rules: family 1's absent path and family 3's two residuals (the loop and the branch not
-taken), which wait on the carrier question — a resolver given a VARIABLE where the answer belongs
-to an ASSIGNMENT.  Family 2 has its answer too, but reaching it needs a fact about the caller.
-Family 4 waits on D-heap-1's design call.  Family 7 is next: its lowered form needs the per-path
-flags, which family 8's cure made safe to mint, and its binding needs the join deps gone before
-its first arm asks who owns the displaced record.
+each retired in the commit of the fix that moved it.  Closed so far: families 5, 6, 7 and 8
+whole, family 3 for sequential code and a taken branch, and family 1's present path.  Still open,
+each with its answer in the rules: family 1's absent path and family 3's two residuals (the loop,
+and the branch not taken — reached also through a written-out join whose other arm copies a
+parameter), which wait on the carrier question — a resolver given a VARIABLE where the answer
+belongs to an ASSIGNMENT.  Family 2 has its answer too, but reaching it needs a fact about the
+caller.  Family 4 waits on D-heap-1's design call.  And one shape recorded beside family 7 and
+not in it: a reassignment from a join with a CALL arm (`p_j1`/`p_j2`), whose binding is typed as
+a view for its whole life, so its earlier owned record is freed without its hook.
 
 ### D-heap-3 — OPENED AND CLOSED (2026-09-10): a struct field projected off a CALL result releases twice
 

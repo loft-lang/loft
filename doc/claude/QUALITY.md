@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 474 | 450 | **24** |
+| 475 | 451 | **24** |
 
 | 485 | 461 | **24** |
 
@@ -489,7 +489,8 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 the aware side; the opaque count is unchanged.  Re-measured at the § V-aa tip: +3 sites,
 all three on the peel side, **24** opaque still.  2026-09-14: `scopes::construction_work_refs`
 (`formal/heap.md` D-heap-7 family 6) peels `Span` — +1 site, on the peel side, **24** opaque
-still.)
+still.  `scopes::branch_tail_vars` (family 7) peels `Span` — +1 site, on the peel side, **24**
+opaque still.)
 
 
 
@@ -2624,7 +2625,12 @@ schema through `Parts`, not `Type`, and loft#1519's wrapper-identity guard asks 
 column and the ratchet's `337 · 1317` have not moved.  That guard is worth the note: written the
 obvious way it matched the attribute type bare, which put it in the OPAQUE column and made
 `make optional-ratchet` fail — a new test is as able to grow this count as new code is.
-§ V-aa's sites land on the see-through side for the same reason.)
+§ V-aa's sites land on the see-through side for the same reason.  2026-09-14:
+`scopes::var_copy_owns` (`formal/heap.md` D-heap-7 family 7, the bind's dep-strip test moved out
+of `scan_set` whole) asks through `.base()` — +1 function, on the see-through side, with the
+opaque column and the ratchet's `337 · 1317` unchanged.  The same change first added an opaque
+function and test, a block-result check its tail walker repeated from `sinkable` where it was
+redundant; it was removed rather than the ratchet raised.)
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2112** shape tests, **1317** of them opaque

@@ -2141,6 +2141,27 @@ fn copy_carries_drop(function: &Function, data: &Data, v: u16, src_tp: &Type) ->
     data.copies_as(d, sd) && data.drop_cascade_nr(d) != u32::MAX
 }
 
+/// Does the plain bind `v = src` between two record locals make `v` the OWNER of its copy, so
+/// that the binding names no store as a dep?  Both must be the same record — through `base()`,
+/// because `S?` is the same storage behind a nullability marker (`@FR-L-Null`).
+///
+/// Not for a CAPTURED or never-free `v` (`@FR-L-CapHeap`): a captured heap value is SHARED — the
+/// closure holds the store at capture time — so making it an owner frees a store the closure
+/// still reads (`x: S? = a; f = fn(){ x }; x = x.next` then `f()` read null).
+///
+/// One home for the two sites that ask it about the same copy: the bind itself, and a
+/// reassignment written out per arm, which strips its arm tails before the first arm reads the
+/// binding's type.
+fn var_copy_owns(function: &Function, v: u16, src: u16) -> bool {
+    let (Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _)) = function.tp(v).base() else {
+        return false;
+    };
+    let (Type::Reference(src_d, _) | Type::Enum(src_d, true, _)) = function.tp(src).base() else {
+        return false;
+    };
+    d_nr == src_d && !function.is_captured(v) && !function.is_skip_free(v)
+}
+
 /// The `(destination, source)` pairs of whole-value copies written inside a branch ARM.
 ///
 /// A copy that only some runs perform cannot move a release on all of them
@@ -2167,6 +2188,51 @@ fn per_path_handoffs(code: &Value) -> HashSet<(u16, u16)> {
             arm(e, &mut out);
         }
     });
+    out
+}
+
+/// Does a whole-value copy `dst = src` written in a branch arm take `src`'s release on the path
+/// that runs it?  Those are the copies loft#1515 gives a per-path flag.  A copy off a PARAMETER
+/// stops the destination instead ([`copy_moves_drop_from`]) and gets no flag.
+fn per_path_moves_source(function: &Function, data: &Data, dst: u16, src: u16) -> bool {
+    copy_moves_drop_from(function, data, dst, src, false) == Some(src)
+}
+
+/// The locals a value branch hands back as its arm tails — the sources the statement form
+/// `if c { x = a } else { x = b }` copies from.
+///
+/// Walks exactly the shapes `Scopes::sink_set_into_arms` writes out: an `if`'s two arms, a
+/// block's and an `Insert`'s last operator.  It is asked only about a value that function
+/// accepted, so every block on a tail path is already known to be a value block and is not
+/// tested again here.  Any other node is a tail that is not a variable (a call, `null`), so it
+/// names no source whose release could move.
+fn branch_tail_vars(node: &Value) -> Vec<u16> {
+    fn walk(n: &Value, out: &mut Vec<u16>) {
+        match n.unspan() {
+            Value::Var(x) => {
+                if !out.contains(x) {
+                    out.push(*x);
+                }
+            }
+            Value::If(_, t, f) => {
+                walk(t, out);
+                walk(f, out);
+            }
+            Value::Block(bl) => {
+                if let Some(last) = bl.operators.last() {
+                    walk(last, out);
+                }
+            }
+            Value::Insert(ops) => {
+                if let Some(last) = ops.last() {
+                    walk(last, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(node, &mut out);
     out
 }
 
@@ -3198,17 +3264,13 @@ fn run_scan_phase(
     // copy did not run (heap.md `D-heap-7`, the branch not taken).
     scopes.per_path_pairs = per_path_handoffs(orig_code)
         .into_iter()
-        .filter(|&(dst, src)| copy_moves_drop_from(&function, data, dst, src, false) == Some(src))
+        .filter(|&(dst, src)| per_path_moves_source(&function, data, dst, src))
         .collect();
     let mut handed_sources: Vec<u16> = scopes.per_path_pairs.iter().map(|&(_, src)| src).collect();
     handed_sources.sort_unstable();
     handed_sources.dedup();
     for src in handed_sources {
-        let name = format!("__hoff_{}", function.name(src));
-        let flag = function.add_temp_var(&name, &Type::Boolean);
-        scopes.var_scope.insert(flag, 0);
-        scopes.var_order.push(flag);
-        scopes.handed_off.insert(src, flag);
+        scopes.mint_handoff_flag(&mut function, src);
     }
     let displace_locals = nullable_locals_that_displace(orig_code, &function, data);
     for &v in &displace_locals {
@@ -7364,6 +7426,21 @@ fn check_arg_ref_allocs(ir: &Value, function: &Function, fn_name: &str) {
 }
 
 impl Scopes<'_> {
+    /// The per-path flag of `src` (loft#1515): `false` at function entry, set where a copy that
+    /// takes `src`'s release runs, read at `src`'s scope-end release and at a rebind of it.  One
+    /// per source however many copies share it, so a second request returns the first.
+    fn mint_handoff_flag(&mut self, function: &mut Function, src: u16) -> u16 {
+        if let Some(&flag) = self.handed_off.get(&src) {
+            return flag;
+        }
+        let name = format!("__hoff_{}", function.name(src));
+        let flag = function.add_temp_var(&name, &Type::Boolean);
+        self.var_scope.insert(flag, 0);
+        self.var_order.push(flag);
+        self.handed_off.insert(src, flag);
+        flag
+    }
+
     /// The type's scope-end hook for `v`, unless a MOVE-copy already released `v`'s
     /// store — see [`collect_drop_transferred`].  `@FR-H-Drop`: the owner's scope-end
     /// clause.  One home for the rule, because
@@ -8003,6 +8080,23 @@ impl Scopes<'_> {
             )
             && let Some(sunk) = Self::sink_set_into_arms(v, ov, value, function)
         {
+            // The written-out arms are copies the author could have spelled, so they get what
+            // that spelling gets, BEFORE the first arm is scanned: a per-path flag for each source
+            // a copy hands off (loft#1515 — minted here, because the pre-scan pass saw one
+            // `Set(v, <branch>)` and no copies), and a binding whose type no longer names those
+            // sources, because the first arm reads that type to decide whether it owns the record
+            // it displaces.
+            for src in branch_tail_vars(value) {
+                if !per_path_moves_source(function, data, v, src) {
+                    continue;
+                }
+                self.per_path_pairs.insert((ov, src));
+                self.per_path_pairs.insert((v, src));
+                self.mint_handoff_flag(function, src);
+                if var_copy_owns(function, v, src) {
+                    function.make_independent(v, src);
+                }
+            }
             return self.scan(&sunk, function, data);
         }
         // #316 — capture BEFORE put_scope below: an ownership-transition free
@@ -8914,19 +9008,7 @@ impl Scopes<'_> {
         // typed it with once the branch was written out per arm, and the per-arm copies
         // then read as borrows: an alias on both backends, where the dense twin copied.
         if let Value::Var(src) = unspanned_value
-            && let Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) =
-                function.tp(v).base().clone()
-            && let Type::Reference(src_d, _) | Type::Enum(src_d, true, _) =
-                function.tp(*src).base()
-            && d_nr == *src_d
-            // Not a CAPTURED or never-free local (@FR-L-CapHeap): the peel above widened this
-            // strip to the nullable spelling, and a captured heap value is SHARED — the
-            // closure holds the store at capture time — so making it an owner frees a store
-            // the closure still reads (`x: S? = a; f = fn(){ x }; x = x.next` then `f()` read
-            // null).  The dense spelling never reached this because a captured local is bound
-            // by literal, not var-copy; the nullable one did.
-            && !function.is_captured(v)
-            && !function.is_skip_free(v)
+            && var_copy_owns(function, v, *src)
         {
             // @PLN130 F1 — this strip is LOAD-BEARING FOR NATIVE, which is why the obvious
             // narrowing does not work.  Skipping it when both sides are borrows fixes the
