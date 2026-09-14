@@ -897,6 +897,53 @@ its assumptions are written as a rule and checkable by both.
 
 ## Where to resume
 
+**2026-09-14, end of session — state, in one place.**
+
+*The scoreboard.*  Nine of the ten judged rows are UNDER the 4× bar on this box (aarch64
+Linux, host `lima-default`), against six when the session began: `fill_circle` 1.67×,
+`fill_star` 1.76×, `hair` 2.01×, `hash` 2.55×, `wide_line` 2.93×, `composite` 3.14×,
+`fronds` 3.42×, `lock` 3.44×, `lock_curved` 3.67×.  **`smooth` at 8.44× is the only row
+still over it.**  Ratios drift with the reference lane between runs, so compare absolute
+ns/op within a session.
+
+*Shipped, in order, all on `157-native-4x`:* § V-ac (a vector parameter's header crosses
+the call), § V-ad (a null-discharge buffer stops blocking the hoist), § V-ae (a filling loop
+is one slice fill), § V-af (a value branch witnesses every arm's buffer), § V-ag (clearing a
+store-root vector resets its store).  Each has cells, an emission or IR pin, a values guard,
+a switch and a falsification; each was measured against its own switch on one binary.
+
+*The direction changed mid-session and it is written down:*
+[PERFORMANCE.md § Native vs Rust 3e](../../PERFORMANCE.md) — the remaining speed is loft
+knowing what a store is FOR, not what LLVM can be told.  § 3d bounds the LLVM side (four
+reachable levers; the best is measured at −20 % on `composite` and is unbuilt).  Three store
+rules the rewrites already stood on were missing and are now written: `@FR-H-RootExtent`,
+`@FR-O-Buffer`, `@FR-R-Reuse`.
+
+*Open work, ranked by what is known about it:*
+
+| item | state | next step |
+|---|---|---|
+| `smooth` stage 1 — § V-aa default-on | two of three classes closed, corpus 376 errors → 4 scripts | give `Output::output_call_ref`'s arm scan ONE home the gate also reads; do not spell it twice |
+| `smooth` stage 2 — a forwarding tail | blocked on stage 1 | admit a tail that calls another admitted fn; needs the branch-bound local handled too (gate, `value_record_locals`, and the `if` emitting as a tuple) |
+| `smooth` stage 3 — a selecting tail | blocked on stage 2 | carries an ownership change: a guarded free declines exactly when the buffer IS the result, so a result that stops escaping leaves it nobody's |
+| `n_pt`, 14.9 % of `smooth` | unprobed | § V-p's twin applied to a record DESTINATION; measure a ceiling first |
+| § 3d item 1 — assert what the header proved | ceiling measured, unbuilt | validate the vector's extent once at derivation, answer `len: 0` on failure so corruption degrades to the checked path |
+| § 3d items 2–4 | unprobed | item 3 (a real slice per store) wants the same rustc-first probe |
+| store ROLES as rules | unnamed | nothing says what a discharge buffer, a comprehension accumulator, a worker's read-only borrow or the const store guarantees |
+
+*Instruments, and where they live.*  The consumer table is a SCRATCH clone of
+`loft-libs-graphics` branch `drawing-lock`; the per-row probes (`wl_only.loft`,
+`sm_only.loft`, `fr_only.loft`) are that clone's `bench.loft` with a one-row `main`, rebuilt
+in a minute (§ V-ad records the recipe, including that `perf` needs
+`kernel.perf_event_paranoid ≤ 2` and an iteration count high enough that the program, not
+loft's own front end, dominates).  The one probe worth keeping is committed:
+`smooth-field-return.bench.loft`, the § V-ah ceiling.
+
+*Branch state.*  `157-native-4x`, never PR'd — the owner opens PRs.  The last full gate ran
+on 078fb230 and was green apart from one advisory job that failed downloading its tool over
+the network.
+
+
 **2026-09-14 — `smooth` run down, the last judged row over the bar: DESIGN.md § V-ah
 (designed, ceiling measured, NOT built).**  Of the row's own time, `ctrl` and `half_chord`
 carry ~26 %, and almost none of it is arithmetic: `ctrl` returns a BORROWED VIEW of an
