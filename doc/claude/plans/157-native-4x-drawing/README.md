@@ -897,6 +897,23 @@ its assumptions are written as a rule and checkable by both.
 
 ## Where to resume
 
+**2026-09-14 — the direction, and it is not LLVM: PERFORMANCE.md § Native vs Rust 3e.**
+The LLVM levers are bounded and one of them is now measured (3d below); the remaining
+factor comes from loft knowing what a store is FOR and spending that itself.  Read against
+the arc's own results this is what already happened: every unit that moved a row by more
+than a few percent won on a fact LLVM cannot have — this loop writes no store, this callee
+writes only in place, this allocation is a discharge buffer, this store is a return buffer
+or an appended element or a branch arm's delivery.  A store has a ROLE, a CONTENT TYPE, a
+LIFETIME and an ACCESS PATTERN, all known to the emitter and all discarded by a runtime
+written for the general case.  `fronds` is the standing proof: about 39 % of the row is
+allocator and free-tree machinery serving temporaries that are born and die inside one
+activation, and no annotation reaches that.  The queue under this heading is
+[P8](../../PERFORMANCE.md) for what an op does to a store,
+[N1](../../PERFORMANCE.md) for a collection that never needed to be a store, and role and
+lifetime work that has no design doc yet.  Note that step 1 of the 3d ranking converged on
+the same principle by itself: its content is not a hint to LLVM but a loft-level decision,
+check the extent once where the header is derived.
+
 **2026-09-14 — the LLVM question, evaluated and written up: PERFORMANCE.md § Native vs
 Rust 3d.**  Whether `rustc` can be told enough about loft's memory to hoist for us, and
 which regions can carry which claim.  The short answer is that region marking is worth

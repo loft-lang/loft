@@ -946,6 +946,60 @@ one kernel's runtime path to take a real slice per store, rebuild with the flags
 uses, and compare. If that does not move a row, region marking will not move it either,
 because the guard sits upstream of the alias question.
 
+**3e. The runtime is general where the program is specific — and this, not LLVM, is where
+the remaining speed is**
+
+3d bounds what `rustc` can be told: four reachable levers, one of them now measured. Read
+the arc's own results against that bound and the conclusion is structural. **Every unit that
+moved a row by more than a few percent won by using something loft knows and LLVM cannot
+know** — not by phrasing the same code so the optimiser could see further:
+
+| unit | the fact loft had | LLVM could not have it because |
+|---|---|---|
+| loft#885, P4a–P4d | this loop cannot write any store | it would have to prove it across opaque calls |
+| § V-l, § V-p, § V-ac | this callee writes only in place, so the caller's facts survive the call | the callee is behind a call it must treat as a clobber |
+| § V-ad | this allocation targets a hidden discharge buffer, which no header names | the buffer is an ordinary allocation to it |
+| § V-ae | this loop is one contiguous fill | the address arithmetic is guarded and opaque |
+| § V-t, § V-u, § V-z, § V-af | this store is a return buffer, an appended element, a branch arm's delivery | these are ROLES, and the type system does not carry them |
+
+The pattern is the point. A store is not memory in general: it has a **role**, a **content
+type**, a **lifetime** and an **access pattern**, and every one of those is known to the
+compiler that emitted the code. The runtime then discards all four and treats every store
+the same way — a red-black free tree, a claims bitset, per-type default prefill, a generic
+element walk — because it is written for the general case. That gap is a root cause of its
+own, and it is not one an optimiser can close from the outside.
+
+**The standing proof is `fronds`**, the row still furthest over the bar after the drawing
+arc. Profiled on this box its cost is not its own arithmetic: `claim` 9.1 %, the free-list
+tree 14.8 %, the append pair 6.9 %, the record pair 3.2 %, `memset` 3.6 %, against
+`n_fronds` itself at 8.4 %. About 39 % of the row is allocator and free-tree machinery
+serving a program whose temporaries are born and die inside one activation. No LLVM
+annotation reaches that. A region freed whole, or an element layout with no per-element
+record at all, does.
+
+**What loft knows and does not yet spend:**
+
+- **Role.** A return buffer, a discharge default, a comprehension accumulator, a worker's
+  read-only borrow and the const store have different lifetimes and different access
+  patterns, and the emitter knows which is which. They share one implementation.
+- **Content type.** `Store::known_type` is already recorded. A store of fixed-width,
+  heap-free elements needs no free tree, no per-element walk and no default prefill.
+  § V-f and § V-i spent part of this; the rest is untouched.
+- **Lifetime.** A function activation's temporaries could come from a region released in
+  one step rather than tracked individually. This is what the `fronds` profile is asking
+  for.
+- **Element layout.** A vector of no-heap records could be a flat run of bytes with no
+  per-element record bookkeeping.
+
+So read 3d as a bounded, worthwhile errand and not as the direction: its ceiling is
+measured and finite. Note too that step 1's own design converged on the same principle —
+its content is not an LLVM hint but a loft-level decision, *check the vector's extent once
+where the header is derived, because that is where loft knows it*. The route to the
+remaining factor is [P8](#design-p8--store-effect-classifier) for what an op does to a
+store, [N1](#design-n1--direct-emit-local-collections-in-native-codegen) for a collection
+that never needed to be a store, and the role and lifetime work above, which has no design
+doc yet.
+
 **4. Float near-parity — the target model**
 
 Newton sqrt (06, 1.05×) and Mandelbrot (05, 1.17×) show what the native pipeline
