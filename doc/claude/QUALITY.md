@@ -480,9 +480,11 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 476 | 452 | **24** |
+| 488 | 464 | **24** |
 
-| 485 | 461 | **24** |
+(2026-09-14, THE JOINED TREE — @PLN162 step 14 + @PLN157 through § V-am + the quality
+stream through D-bind-37: 488 · 464 · 24, re-measured rather than carried.  The join had
+left both sides' rows standing (476 · 452 and 485 · 461); neither was the union's.)
 
 (2026-09-12: § V-x's `flat_lit_member`/`lit_part_invariant`/`lit_init_invariant` and
 § V-y's `complete_writes`/`group_covers_type` all peel `Span` — every arrival lands on
@@ -2560,7 +2562,12 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 803 | 461 | 5 | **337** |
+| 809 | 467 | 5 | **337** |
+
+(2026-09-14, THE JOINED TREE: 809 · 467 · 5 · 337, re-measured rather than carried — each
+side's row counted its own change against a base the other had moved; the ratchet's
+`opaque_tests` is 1317 on the joined tree and on BOTH sources, so the pin @PLN157 took at
+1317 is the union's too.)
 
 (2026-09-15: @PLN157 § V-ah's three bare tests — `hoist::ret_buffer_attr` on the hidden
 buffer's `typedef`, `value_shape` and `site_walk` on a block's `result` — moved from the
