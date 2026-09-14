@@ -803,6 +803,76 @@ pub fn get_vector_hoisted<const VERIFY: bool>(
     }
 }
 
+/// @PLN157 § V-ak (`@FR-R-Base`) — the address of element 0 of the vector `h` describes,
+/// or null for an absent vector.  Bound once beside a header in a loop the emitter proved
+/// GROWS NO STORE, so the buffer the address points into cannot be reallocated while the
+/// loop runs; [`get_elem_at`] and `Stores::vec_set_at` then reach an element with one
+/// bounds test and one address computation.  `LOFT_HOIST_VERIFY=1` re-derives it at every
+/// use and panics when a store moved under it.
+#[must_use]
+#[inline]
+pub fn vec_base(h: &VecHeader, stores: &[Store]) -> *const u8 {
+    if h.rec == 0 {
+        std::ptr::null()
+    } else {
+        stores[h.store_nr as usize].elem_base(h.rec)
+    }
+}
+
+/// [`get_elem_hoisted`]'s twin through a hoisted BASE (`@FR-R-Base`): the same bounds test
+/// against the header's length, then a single unaligned load at `base + from * size + fld`.
+/// The cold path — an index outside the vector — is the same one.
+///
+/// # Safety
+///
+/// `base` must be [`vec_base`] of `h` taken while `h` described `db`, and no store may
+/// have been reallocated since — the growth-free proof the emitter makes for the loop that
+/// binds it (`@FR-R-Base`).  Under `VERIFY` both are checked.
+///
+/// # Panics
+///
+/// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header or the base no longer matches
+/// a fresh derivation — a store grew or moved under the loop.  Never in the emitted default.
+// The eight arguments are `get_elem_hoisted`'s seven plus the base, and the emitter spells
+// both calls from one site; a struct would name nothing.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+#[inline]
+pub unsafe fn get_elem_at<T: Copy, const VERIFY: bool>(
+    h: &VecHeader,
+    base: *const u8,
+    db: &DbRef,
+    size: u32,
+    from: i64,
+    fld: u32,
+    absent: T,
+    stores: &[Store],
+) -> T {
+    if from >= 0 && from < i64::from(h.len) {
+        if VERIFY {
+            assert_eq!(
+                *h,
+                vec_header(db, stores),
+                "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
+            );
+            assert!(
+                std::ptr::eq(base, vec_base(h, stores)),
+                "hoisted vector base is stale — a store grew or moved under the loop"
+            );
+        }
+        // SAFETY: `base` is element 0 of a live vector record in a store the loop cannot
+        // grow (the emitter's growth-free proof), and `from < len` keeps the address inside
+        // the record's claim; `read_unaligned` because an element offset need not be
+        // aligned for `T` (loft#1481).
+        return unsafe {
+            base.add(from as usize * size as usize + fld as usize)
+                .cast::<T>()
+                .read_unaligned()
+        };
+    }
+    get_elem_hoisted_cold::<T>(db, size, from, fld, absent, stores)
+}
+
 /// One indexed element read against an already-derived [`VecHeader`]: the bounds test and
 /// the typed load, with no `DbRef` built between them (loft#885 stage 2).
 ///

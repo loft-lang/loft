@@ -3254,6 +3254,19 @@ impl Store {
         at
     }
 
+    /// The address of ELEMENT 0 of the vector record `rec` — the record's word plus the
+    /// 8-byte length header — for a loop that proved this store cannot grow while it holds
+    /// the pointer (@PLN157 § V-ak, `@FR-R-Base`).  Pointer arithmetic only: `rec` is a
+    /// claimed record, so `rec * 8 + 8` is inside the allocation or one past its end, and
+    /// every read through the result is bounded by the header's length before it happens.
+    #[inline]
+    #[must_use]
+    pub fn elem_base(&self, rec: u32) -> *const u8 {
+        // SAFETY: `rec` is a word index below `size`, so the offset stays within (or one
+        // past) the allocation `ptr` was made for.
+        unsafe { self.ptr.add(rec as usize * 8 + 8) }
+    }
+
     /// Write a field INTO the store.  The mirror of [`Store::read`], and the ordinary way to
     /// store a value.
     ///

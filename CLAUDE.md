@@ -765,6 +765,16 @@ append relocates the element's bytes (heap handles included — they never chang
 zeroes the source, and the buffer's free is record-level — and is the bisect step for a
 wrong element, a leak or a double free out of a loop that appends a dying temporary's
 elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
+**`LOFT_NO_VECTOR_BASE=1`** (@PLN157 § V-ak, `@FR-R-Base`, default-ON) makes a
+growth-free loop's fused element reads and writes resolve the store per element again —
+with it off, a loop that grows no store (no push, no mint push, no null-discharge buffer)
+binds the address of each hoisted vector's element 0 beside its header and every read
+or write is one bounds test and one load or store through it (the resample probe −14 %)
+— and is the first bisect step for a wrong element read or write inside a growth-free
+loop; `LOFT_HOIST_VERIFY=1` re-derives every base at every use and panics when a store
+grew under one, and `LOFT_TRACE_BASE=1` prints each loop's growth-free verdict.
+`LOFT_NO_NN_FAST=1` (P3c) also restores the nullable-aware counter step and the guarded
+literal division that § V-aj (`@FR-R-Counter`, `@FR-R-LitDiv`) replaced.
 **`LOFT_NO_VALUE_RECORD=1`** (@PLN157 § V-aa, default-ON since 2026-09-14) makes a
 function whose result is a plain no-heap record of ≤6 scalar fields return it through
 the buffer again — with it off, such a function whose every call site reads fields off

@@ -3954,6 +3954,94 @@ If a phase lands and its column does not move as predicted, attribute before
 proceeding: `make profile PROFILE_FLAGS=--engine` on the standalone.
 
 
+## V-aj — a counted loop's counters are never null; a division by a literal is one test (2026-09-14)
+
+**The evidence.**  The four bench rows that had no reference were given one the same
+evening (README § the four unjudged rows), and the graphics package's Lanczos resample
+carried three of them — 82 % of `resize`, 70 % of `render_marks`, 57 % of `render_lock`.
+Its emission was read first: the tap loop already hoisted every header (§ V-h), every read
+was fused, every write in place.  What each of the ~19 million taps per resize still paid
+was in front of the arithmetic: `op_add_int` / `op_mul_int` — the nullable-aware helpers,
+two sentinel tests and an overflow check each — on every index step and on the
+accumulate, plus a `?` discharge per read.
+
+**The ceiling, hand-measured first on the emitted Rust** (`rs_probe.loft`, the resample
+lifted verbatim with the bench's row, hash `77de7581` on every variant):
+
+| stage, on the shipped emission | ns/op | vs shipped |
+|---|---:|---:|
+| shipped | 141–151 ms | — |
+| counters as the non-null checked add | 130–133 | −8 % |
+| the `?` discharge fused into the read's absent value | 136–138 | −3 % |
+| tap arithmetic as the non-null CHECKED variants | 122–127 | −14 % |
+| tap arithmetic as PLAIN operators | 98 | −32 % |
+| raw element reads (a base pointer per header) | 115–119 | −20 % |
+| raw reads + plain arithmetic + plain counters | 46–48 | −67 % |
+| the tap loops removed entirely (the non-tap floor) | 32 | — |
+
+The non-tap floor alone is 1.8× the whole Rust reference (18 ms): the premultiply loop's
+three divisions per pixel, the `rl_mid` prefill, the growth ladder of the planes, and two
+per-pixel vectors in the vertical pass.
+
+**Two rules that are sound landed (`@FR-R-Counter`, `@FR-R-LitDiv`).**  A counted range's
+`#index`, `next` counter and loop variable are seeded non-sentinel in
+`non_sentinel_vars`: an exclusive range steps its counter to at most its end, so the step
+cannot overflow; an inclusive one is admitted when its end is a literal below the maximum
+(the `..=MAX` edge is loft#1525's and stays out).  The range's shape is read from
+`hoist::range_counters`, the fill rewrite's parser moved verbatim into one home.  And a
+division or remainder by a literal that is neither 0 nor −1 emits as `if x == MIN { MIN }
+else { x / k }`, the template's exact value, needing no proof of the dividend — LLVM turns
+it into a multiply-and-shift.  Probe 139 → 130 ms; `LOFT_NN_VERIFY=1` clean.
+
+**The rule NOT taken, with its price.**  The integer closure — the result of `+`/`-`/`*`
+over proven operands counted proven, which is what would carry `_nn` through the index
+chain and the accumulator — is what `non_sentinel.rs` already declines on purpose:
+`formal/types.md` C85 makes an overflow's sentinel propagate onward as null on both
+backends ("yields null and keeps running"), so a native closure would answer a NUMBER
+after a reported overflow where the interpreter answers null — a divergence after a
+fault.  Measured on the final emission of this unit and § V-ak: the closure as the checked
+`_nn` family is worth −17 % on the resample (109 → 89–93 ms) and as plain wrapping
+operators −50 % (→ 55 ms).  That is the price of the C85 line on this row, and moving the
+line is the owner's call, not a rewrite's.
+
+## V-ak — a growth-free loop reads and writes through the element base (2026-09-14)
+
+**Invariant (`@FR-R-Base`, formal/rewrites.md).**  A loop that GROWS no store — no push,
+no mint push, no null-discharge buffer minted in its body — binds beside each hoisted
+header the address of its vector's element 0 (`vector::vec_base`), and every fused element
+read and write of the path is one bounds test against the header's length and one
+unaligned load or store through it (`get_elem_at`, `Stores::vec_set_at`): no store lookup,
+no record offset, no claim-header test per element.  A base is valid exactly while no
+store's buffer is reallocated, which is what growth-freeness secures — every other op the
+header admission lets through (in-place sets, store-free ops, store-free or in-place-only
+callees, a free, a mint of a NEW store) leaves every existing buffer where it is.  An
+inner growth-free loop under a growing outer one derives a base from the header the outer
+loop HOLDS, for the inner extent alone.  The base is the header's address, not a second
+derivation of the path: `scripts/emission_audit.py` binds it as a holder of the header's
+path and validates every base-aware use against a live base (R-Base), and R-State does
+not count it.
+
+**What the build corrected.**  The growth-free fact was first computed at the END of
+`hoist::hoistable` — after the early return a loop with no record scalars to hoist takes,
+which is exactly what a pixel loop is — so the first build bound one base in the whole
+probe (in `fnv`'s loop) and the profile did not move.  It is decided right after the push
+section now, before either early return.
+
+**Cells** `bytecode-comparisons/V-ak-vector-base-cells.loft` (b1–b8, hand-computed, both
+backends exact under `LOFT_HOIST_VERIFY`, `LOFT_NATIVE_LEAK_CHECK`, `LOFT_NO_VECTOR_BASE`):
+the tap shape (three bases), a pushing loop (none), a growth-free inner loop under a
+pushing outer one (the held header's base), a `?`-discharged record element (none), a
+store-free callee (kept), a read at and past the vector's end through the base (the absent
+element exactly as before), and the two § V-aj spellings.  `tests/vector_base.rs` pins the
+emission; `tests/scripts/157-vector-base.loft` carries the values with its sabotage
+receipt.  Switch `LOFT_NO_VECTOR_BASE` (generation time); `LOFT_HOIST_VERIFY=1` re-derives
+every base at every use; `LOFT_TRACE_BASE=1` prints each loop's verdict.
+
+**Measured** (the resample probe, quiet x86-64, hashes exact): 130 → **111–113 ms/op**
+(−14 %; −20 % against the day's start at 139); 8 of the tap loops' 10 element reads and
+its one in-place write go through bases (the two that do not sit in the element-iteration
+`next` block, a separate emit site).  With § V-aj: 6.2× against the reference, from 7.6×.
+
 ## V-ai — the reset buffer keeps the capacity it reached (2026-09-14)
 
 **SHIPPED, default-on, BOTH backends (a runtime fact; switch `LOFT_NO_RESET_CAPACITY`,

@@ -1169,6 +1169,19 @@ pub fn null_buffer_hoist_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_NULL_BUFFER_HOIST"))
 }
 
+/// @PLN157 § V-ak (`@FR-R-Base`): a loop that GROWS no store binds, beside each hoisted
+/// vector header, the address of the vector's element 0, and every fused element read
+/// and write in the loop is a bounds test and one load or store through it — no store
+/// lookup, no record offset, no claim-header test per element — **DEFAULT ON**.  Opt OUT
+/// with `LOFT_NO_VECTOR_BASE` (read at GENERATION time): the header-only form again, the
+/// first bisect step for a wrong element read or write in a growth-free loop.
+/// `LOFT_HOIST_VERIFY=1` is the falsifier: every read re-derives the base and panics when a
+/// store moved under it.
+pub fn vector_base_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_VECTOR_BASE"))
+}
+
 /// @PLN157 § V-d: a vector-literal element that is a buffer-returning call is built IN the
 /// element's record, and a promoted return buffer honours an offered record — **DEFAULT
 /// ON**.  Opt OUT with `LOFT_NO_APPEND_IN_PLACE`: the before-half of the A/B on one binary

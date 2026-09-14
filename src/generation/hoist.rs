@@ -372,6 +372,12 @@ pub struct LoopHoist {
     /// through (the slot from the header, the length bump at the finish).  A mint that does
     /// not qualify stays a plain mover (§ V-s: admitted, no holder, templates per element).
     pub mint_pushes: Vec<(PathKey, Value)>,
+    /// @PLN157 § V-ak (`@FR-R-Base`) — the loop GROWS no store: no push, no mint push,
+    /// no null-discharge buffer minted in its body.  Everything else the admission lets
+    /// through — in-place sets, store-free ops, store-free or in-place-only callees, a
+    /// free — leaves every store's buffer where it is, so a hoisted header may carry the
+    /// address of its vector's element 0 for the loop's whole extent.
+    pub growth_free: bool,
 }
 
 /// The vector headers and the record scalars `body` may derive once up front.
@@ -410,6 +416,7 @@ pub fn hoistable(
         scalars: Vec::new(),
         pushes: Vec::new(),
         mint_pushes: Vec::new(),
+        growth_free: false,
     };
     let vars = data.def(def_nr).variables();
     let rebound = rebound_vars(body);
@@ -564,6 +571,22 @@ pub fn hoistable(
             .filter_map(|(p, expr, q)| q.then_some((p, expr)))
             .collect();
     }
+    // `@FR-R-Base` — decided here, before either early return below: a loop with no
+    // record scalars to hoist is exactly the shape a pixel loop has.
+    let null_buf = mints_null_buffer(body, data, vars);
+    out.growth_free = out.pushes.is_empty() && out.mint_pushes.is_empty() && !null_buf;
+    if std::env::var("LOFT_TRACE_BASE").is_ok() {
+        eprintln!(
+            "base: {} loop {} growth_free={} (pushes {}, mint pushes {}, null buffer {}, headers {})",
+            data.def(def_nr).name(),
+            body.scope,
+            out.growth_free,
+            out.pushes.len(),
+            out.mint_pushes.len(),
+            null_buf,
+            out.vectors.len()
+        );
+    }
     if found.is_empty() {
         return out;
     }
@@ -592,6 +615,19 @@ pub fn hoistable(
         .map(|(key, _, call)| (key, call))
         .collect();
     out
+}
+
+/// Does the body mint a § V-ad null-discharge buffer — the one store allocation the
+/// header admission lets through?  It moves no header's record, but it is a growth, and
+/// `@FR-R-Base` asks for none.
+fn mints_null_buffer(body: &Block, data: &Data, vars: &crate::variables::Function) -> bool {
+    body.operators.iter().any(|op| {
+        op.any_node(&mut |n| {
+            matches!(n, Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && null_buffer_alloc(data.def(*d).name(), args, Some(vars), data).is_some())
+        })
+    })
 }
 
 /// The schema type of a variable that names a PLAIN struct record — a `Reference` to a
@@ -1515,7 +1551,11 @@ pub struct RangeCounters<'a> {
 }
 
 /// Parse a `For loop` block's iterator into its counters, or say which part of the shape
-/// it is not (the trace the fill rewrite prints).
+/// it is not.
+///
+/// # Errors
+///
+/// The reason the block is not a counted range — the trace the fill rewrite prints.
 pub fn range_counters<'a>(lp: &'a Block, data: &Data) -> Result<RangeCounters<'a>, String> {
     let decline = |why: &str| -> Result<RangeCounters<'a>, String> { Err(why.to_string()) };
     if lp.operators.len() != 2 {

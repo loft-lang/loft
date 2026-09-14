@@ -31,10 +31,13 @@ import sys
 BIND_HEADER = re.compile(r"^\s*let (__vh_\d+) = vector::vec_header\(&\((.*)\), &stores\.allocations\);")
 BIND_PUSH = re.compile(r"^\s*let mut (__ph_\d+) = vector::push_header\(&\((.*)\), &stores\.allocations\);")
 BIND_VIEW = re.compile(r"^\s*let (__vh_\d+) = .*//@PLN157 § V-n view header for (\S+?)(?:,| |$)")
+# R-Base (@PLN157 § V-ak): an element base is derived FROM a live holder of the same path —
+# never a second derivation of the path — and only in a loop that grows no store.
+BIND_BASE = re.compile(r"^\s*let (__vb_\d+): \*const u8 = vector::vec_base\(&([\w.]+), &stores\.allocations\);")
 BIND_SCALAR = re.compile(r"^\s*let (__vs_\d+) = (.*);")
 SCALAR_KEY = re.compile(r"let db = \((var_\w+)\);.*db\.pos \+ \((\d+)_i64\)")
 FN_HEAD = re.compile(r"^fn (\w+)\((.*)\)")
-USE_ELEM = re.compile(r"(get_elem_hoisted|vec_set_hoisted_or_raise_runtime)::<[^>]*>\(&([\w.]+), &\((.*?)\), \(\d+_i64\) as u32")
+USE_ELEM = re.compile(r"(get_elem_hoisted|vec_set_hoisted_or_raise_runtime|get_elem_at|vec_set_at)::<[^>]*>\(&([\w.]+), (?:(__vb_\d+), )?&\((.*?)\), \(\d+_i64\) as u32")
 USE_PUSH = re.compile(r"push_hoisted::<[^>]*>\(&mut (__ph_\d+), &\((.*?)\), \d+, __pv\)")
 USE_PUSHREC = re.compile(r"push_record_(?:hoisted|finish)::<[^>]*>\(&mut (__ph_\d+), &\((.*?)\)(?:, \d+)?\)")
 MOVER_MINT = re.compile(r"\b(OpNewRecord|OpFinishRecord)\(cell, (var_\w+),")
@@ -86,6 +89,20 @@ def audit(text, quiet=False):
         mp = BIND_PUSH.match(line)
         mv = BIND_VIEW.match(line)
         ms = BIND_SCALAR.match(line)
+        mb = BIND_BASE.match(line)
+        if mb:
+            # A base holds the path of the header it was derived from; that header must be
+            # live here (R-Base), and the base is a SECOND holder of the path on purpose —
+            # it is the header's address, not another derivation — so R-State does not
+            # count it.
+            src = live(mb.group(2))
+            if src is None:
+                violations.append(f"{fn}:{nr}: R-Base — {mb.group(1)} derives a base from {mb.group(2)}, which is not live here")
+            holders.append(Holder(mb.group(1), "base", src.path if src else None, depth, nr))
+            bound_total += 1
+            depth += code.count("{") - code.count("}")
+            holders = [h for h in holders if h.depth <= depth]
+            continue
         if mp:
             bound = Holder(mp.group(1), "push", mp.group(2), depth, nr)
         elif mv:
@@ -106,7 +123,9 @@ def audit(text, quiet=False):
             uses_total += (len(USE_ELEM.findall(code)) + len(USE_PUSH.findall(code))
                            + len(USE_PUSHREC.findall(code))
                            + len(USE_LEN.findall(code)) + len(USE_SCALAR.findall(code)))
-            for kind, name, path in USE_ELEM.findall(code):
+            for kind, name, base, path in USE_ELEM.findall(code):
+                if base and live(base) is None:
+                    violations.append(f"{fn}:{nr}: R-Base — {kind} through {base}, which is not live here")
                 h = live(name)
                 if h is None:
                     violations.append(f"{fn}:{nr}: R-State — {kind} names {name}, which is not live here")

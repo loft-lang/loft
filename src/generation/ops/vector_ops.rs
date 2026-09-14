@@ -84,10 +84,20 @@ impl OpEmitter for FusedElementReadEmitter {
         };
         let (header, ty, absent) = (header.to_string(), fused.rust_type, fused.absent);
         let verify = verify(ctx);
-        write!(
-            ctx.w,
-            "vector::get_elem_hoisted::<{ty}, {verify}>(&{header}, &("
-        )?;
+        // @PLN157 § V-ak (`@FR-R-Base`) — a growth-free loop holds the element base too;
+        // the read through it is `unsafe` at the call, which is where the proof lives.
+        let base = ctx.output.active_vec_base(&fused.path).map(str::to_owned);
+        if let Some(base) = &base {
+            write!(
+                ctx.w,
+                "unsafe {{ vector::get_elem_at::<{ty}, {verify}>(&{header}, {base}, &("
+            )?;
+        } else {
+            write!(
+                ctx.w,
+                "vector::get_elem_hoisted::<{ty}, {verify}>(&{header}, &("
+            )?;
+        }
         ctx.emit(fused.vector)?;
         write!(ctx.w, "), (")?;
         ctx.emit(fused.size)?;
@@ -95,7 +105,11 @@ impl OpEmitter for FusedElementReadEmitter {
         ctx.emit(fused.index)?;
         write!(ctx.w, ", (")?;
         ctx.emit(fused.fld)?;
-        write!(ctx.w, ") as u32, {absent}, &stores.allocations)")
+        write!(ctx.w, ") as u32, {absent}, &stores.allocations)")?;
+        if base.is_some() {
+            write!(ctx.w, " }}")?;
+        }
+        Ok(())
     }
 }
 
@@ -180,16 +194,30 @@ impl OpEmitter for FusedElementWriteEmitter {
         ctx.emit(fused.index)?;
         write!(ctx.w, "); let __wv = (")?;
         ctx.emit(fused.val)?;
-        write!(
-            ctx.w,
-            "); stores.vec_set_hoisted_or_raise_runtime::<{ty}, {verify}>(&{header}, &("
-        )?;
+        // @PLN157 § V-ak (`@FR-R-Base`) — the write through the held base, when there is
+        // one; `unsafe` at the call, which is where the growth-free proof lives.
+        let base = ctx.output.active_vec_base(&fused.path).map(str::to_owned);
+        if let Some(base) = &base {
+            write!(
+                ctx.w,
+                "); unsafe {{ stores.vec_set_at::<{ty}, {verify}>(&{header}, {base}, &("
+            )?;
+        } else {
+            write!(
+                ctx.w,
+                "); stores.vec_set_hoisted_or_raise_runtime::<{ty}, {verify}>(&{header}, &("
+            )?;
+        }
         ctx.emit(fused.vector)?;
         write!(ctx.w, "), (")?;
         ctx.emit(fused.size)?;
         write!(ctx.w, ") as u32, __wi, (")?;
         ctx.emit(fused.fld)?;
-        write!(ctx.w, ") as u32, __wv) }}")
+        write!(ctx.w, ") as u32, __wv)")?;
+        if base.is_some() {
+            write!(ctx.w, " }}")?;
+        }
+        write!(ctx.w, " }}")
     }
 }
 

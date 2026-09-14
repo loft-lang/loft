@@ -1871,6 +1871,61 @@ impl Stores {
         }
     }
 
+    /// [`Self::vec_set_hoisted_or_raise_runtime`]'s twin through a hoisted BASE (@PLN157
+    /// § V-ak, `@FR-R-Base`): the same bounds test, then one unaligned store at
+    /// `base + index * size + fld`.  The cold path — an index outside the vector — is the
+    /// same one.
+    ///
+    /// # Safety
+    ///
+    /// `base` must be [`crate::vector::vec_base`] of `h` taken while `h` described `db`,
+    /// and no store may have been reallocated since — the growth-free proof the emitter
+    /// makes for the loop that binds it (`@FR-R-Base`).  Under `VERIFY` both are checked.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header or the base no longer
+    /// matches a fresh derivation.  Never in the emitted default.
+    // The eight arguments are `vec_set_hoisted_or_raise_runtime`'s seven plus the base,
+    // and the emitter spells both calls from one site; a struct would name nothing.
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn vec_set_at<T: crate::vector::HoistScalar, const VERIFY: bool>(
+        &mut self,
+        h: &crate::vector::VecHeader,
+        base: *const u8,
+        db: &crate::keys::DbRef,
+        size: u32,
+        index: i64,
+        fld: u32,
+        val: T,
+    ) {
+        if index >= 0 && index < i64::from(h.len) {
+            if VERIFY {
+                assert_eq!(
+                    *h,
+                    crate::vector::vec_header(db, &self.allocations),
+                    "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
+                );
+                assert!(
+                    std::ptr::eq(base, crate::vector::vec_base(h, &self.allocations)),
+                    "hoisted vector base is stale — a store grew or moved under the loop"
+                );
+            }
+            // SAFETY: as `get_elem_at` — a live record in a store the loop cannot grow,
+            // the index bounded by the header's length; the pointer carries the store
+            // buffer's own provenance (it was derived from the raw `ptr` field, not from a
+            // shared reference to the data), so writing through it is the store's write.
+            unsafe {
+                base.cast_mut()
+                    .add(index as usize * size as usize + fld as usize)
+                    .cast::<T>()
+                    .write_unaligned(val);
+            }
+        } else {
+            self.vec_set_hoisted_cold::<T>(db, size, index, fld, val);
+        }
+    }
+
     /// The write twin of [`Self::vec_get_hoisted_or_raise_runtime`] (@PLN157 P4b): one
     /// indexed element WRITE against an already-derived [`crate::vector::VecHeader`] —
     /// in range, one bounds test and one typed store, with no `DbRef` built between

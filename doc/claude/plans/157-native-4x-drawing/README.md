@@ -1014,7 +1014,19 @@ one-row cut of `bench/bench.loft`, this box):
 loop of exactly the shape § V-h, § V-q and § V-ae were built for — read its emission
 before anything (does the four-deep nest hoist the `rl_pre` / `hk` / `rl_mid` headers,
 and is the `?` discharge on an INTEGER element the blocker § V-ad closed for records
-only?).  Then `filled` — a `w*h` `vector<integer>` grown by `+=` per pixel, which § V-ae's
+only?).
+
+*Done the same night (DESIGN.md § V-aj, § V-ak).*  The four-deep nest DOES hoist every
+header; what each tap paid was the nullable-aware arithmetic and the per-read store
+resolution.  Shipped: a counted range's counters seeded non-sentinel (`@FR-R-Counter`), a
+division by a literal as one test and a divide (`@FR-R-LitDiv`), and the element BASE
+beside every header of a growth-free loop (`@FR-R-Base`) — the resample probe 139 →
+**111–113 ms/op**, 7.6× → 6.2×.  What is left on the row is the C85 line: the integer
+closure over `+`/`-`/`*` is worth a further −17 % as the checked non-null family and
+−50 % as plain operators, measured on the final emission, and is not a rewrite's to take
+(it would diverge from the interpreter after a reported overflow).  The non-tap floor —
+32 ms of premultiply, prefill, growth ladder and two per-pixel vectors, 1.8× the whole
+reference by itself — is the other half, unprobed beyond the profile.  Then `filled` — a `w*h` `vector<integer>` grown by `+=` per pixel, which § V-ae's
 slice fill cannot reach because there is no vector yet to fill (a pre-sized fill is the
 op the library wants).  Then `parse`'s store churn, which is the § V-af / § V-ah class one
 level up: per-op temporaries that could be value locals or dead buffers.

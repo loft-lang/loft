@@ -664,6 +664,10 @@ pub struct Output<'a> {
     /// other read emits unchanged. One frame is pushed per `Value::Loop`, so a frame is
     /// popped exactly where the local it names goes out of scope.
     pub vec_headers: Vec<HashMap<hoist::PathKey, String>>,
+    /// @PLN157 § V-ak (`@FR-R-Base`) — per loop frame, the element BASE bound beside a
+    /// hoisted header when the loop grows no store (`hoist::LoopHoist::growth_free`);
+    /// an empty frame for a loop that does.  Pushed and popped beside `vec_headers`.
+    pub vec_bases: Vec<HashMap<hoist::PathKey, String>>,
     /// @PLN157 P4c — record scalars hoisted out of the enclosing loops, innermost last:
     /// `(variable, field offset)` → the Rust local holding the value the prelude read
     /// once.  Pushed and popped beside [`Self::vec_headers`], one frame per `Value::Loop`.
@@ -1720,6 +1724,7 @@ impl<'a> Output<'a> {
             dup_fn_names: HashSet::new(),
             loop_stack: Vec::new(),
             vec_headers: Vec::new(),
+            vec_bases: Vec::new(),
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
             scalar_hoist_disabled: std::env::var("LOFT_NO_SCALAR_HOIST").is_ok_and(|v| v != "0"),
@@ -2054,6 +2059,7 @@ impl Output<'_> {
         self.predeclared.clear();
         self.next_format_count = 0;
         self.vec_headers.clear();
+        self.vec_bases.clear();
         self.scalar_hoists.clear();
         self.push_headers.clear();
         self.mint_push_headers.clear();
@@ -2184,7 +2190,10 @@ impl Output<'_> {
             scalars,
             pushes,
             mint_pushes,
+            growth_free,
         } = hoisted;
+        let bind_bases = growth_free && crate::keys::vector_base_enabled();
+        let mut base_frame: HashMap<hoist::PathKey, String> = HashMap::new();
         let mut push_frame: HashMap<hoist::PathKey, String> = HashMap::new();
         let mut mint_frame: HashMap<hoist::PathKey, String> = HashMap::new();
         let mut lines: Vec<String> = Vec::new();
@@ -2232,6 +2241,23 @@ impl Output<'_> {
         }
         for (path, expr) in candidates {
             if self.vec_headers.iter().any(|f| f.contains_key(&path)) {
+                // `@FR-R-Base` — an enclosing frame holds the header (a plain one, or a
+                // push header's `.h` where the enclosing loop pushes the path).  This loop
+                // grows nothing, so for ITS extent the vector cannot move and a base may be
+                // derived from the held header — the enclosing loop's push, if any, happens
+                // outside this extent.
+                if bind_bases
+                    && self.active_vec_base(&path).is_none()
+                    && !self.coroutine_persistent_fields.contains_key(&path.0)
+                    && let Some(held) = self.active_vec_header(&path).map(str::to_owned)
+                {
+                    self.hoist_counter += 1;
+                    let base = format!("__vb_{}", self.hoist_counter);
+                    lines.push(format!(
+                        "let {base}: *const u8 = vector::vec_base(&{held}, &stores.allocations); //@PLN157 § V-ak element base of the held header"
+                    ));
+                    base_frame.insert(path, base);
+                }
                 continue;
             }
             // A generator's locals live on the generator struct and are named `self.var_x`
@@ -2251,6 +2277,15 @@ impl Output<'_> {
             lines.push(format!(
                 "let {name} = vector::vec_header(&({operand}), &stores.allocations);"
             ));
+            // @PLN157 § V-ak (`@FR-R-Base`) — in a growth-free loop the header's vector
+            // cannot move, so its element base is derived once beside it.
+            if bind_bases {
+                let base = format!("__vb_{}", self.hoist_counter);
+                lines.push(format!(
+                    "let {base}: *const u8 = vector::vec_base(&{name}, &stores.allocations); //@PLN157 § V-ak element base"
+                ));
+                base_frame.insert(path.clone(), base);
+            }
             frame.insert(path, name);
         }
         for (key, call) in scalars {
@@ -2282,6 +2317,7 @@ impl Output<'_> {
             self.indent(w)?;
         }
         self.vec_headers.push(frame);
+        self.vec_bases.push(base_frame);
         self.scalar_hoists.push(scalar_frame);
         self.push_headers.push(push_frame);
         self.mint_push_headers.push(mint_frame);
@@ -2291,6 +2327,7 @@ impl Output<'_> {
     /// Close what [`Self::begin_vector_hoist`] opened.
     fn end_vector_hoist(&mut self, w: &mut dyn Write, opened: bool) -> std::io::Result<()> {
         self.vec_headers.pop();
+        self.vec_bases.pop();
         self.scalar_hoists.pop();
         self.push_headers.pop();
         self.mint_push_headers.pop();
@@ -2493,6 +2530,18 @@ impl Output<'_> {
     #[must_use]
     pub fn active_vec_header(&self, path: &hoist::PathKey) -> Option<&str> {
         self.vec_headers
+            .iter()
+            .rev()
+            .find_map(|f| f.get(path).map(String::as_str))
+    }
+
+    /// @PLN157 § V-ak (`@FR-R-Base`) — the element base held for `path`, when the loop
+    /// that bound its header grows no store.  Frames are searched innermost first, as the
+    /// headers are, and a base is only ever bound in the frame that bound the header, so
+    /// the two answers name the same vector.
+    #[must_use]
+    pub fn active_vec_base(&self, path: &hoist::PathKey) -> Option<&str> {
+        self.vec_bases
             .iter()
             .rev()
             .find_map(|f| f.get(path).map(String::as_str))

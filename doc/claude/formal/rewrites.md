@@ -128,6 +128,46 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
 ### A vector reached by a pure path has one header for a loop that cannot move it
 
 ```
+  (R-Base)       in a loop that GROWS no store — no push, no mint push, no
+                 null-discharge buffer minted in its body; in-place sets, store-free
+                 ops, store-free or in-place-only callees and frees may run — a
+                 hoisted header (R-Header) is accompanied by the address of its
+                 vector's element 0, derived once beside it, and every fused element
+                 read and write of the path in the loop is one bounds test against
+                 the header's length and one load or store through that address.
+                 The base is the header's address, never a second derivation of the
+                 path (R-State counts it with its header), and an inner growth-free
+                 loop may derive one from a header an enclosing, growing loop holds,
+                 for the inner loop's extent alone: the enclosing loop's growth
+                 happens outside it.  A base is valid exactly while no store's buffer
+                 is reallocated, which is what "grows no store" secures; the verify
+                 form re-derives it at every use.
+
+  (R-Counter)    a counted range's counters — its `#index`, the `next` counter of a
+                 computed start, and the loop variable — are never the sentinel: an
+                 exclusive range steps its counter to at most its end, so the step
+                 cannot overflow, and an inclusive range is admitted when its end is
+                 a literal below the type's maximum.  The counters are seeded into
+                 the non-sentinel proof from the one parser that reads a range's
+                 shape, so the step emits as the non-null checked add and every
+                 index built from the counter alone loses its operand pre-tests.  The
+                 INTEGER CLOSURE — the result of `+`/`-`/`*` over non-sentinel
+                 operands counted non-sentinel — is deliberately NOT taken: C85 makes
+                 an overflow's sentinel propagate onward as null on both backends,
+                 and a native closure would answer a number there, a divergence after
+                 a reported fault.  Its price is measured (§ V-aj), and it is the
+                 owner's line to move.
+
+  (R-LitDiv)     a division or remainder by a LITERAL that is neither 0 nor -1 emits
+                 as one sentinel test and the plain operator — `if x == MIN { MIN }
+                 else { x / k }` — which is the guarded template's exact value: the
+                 null a `/` mints comes from a zero divisor, from `MIN / -1`, or from
+                 a null operand, and the literal rules out the first two at
+                 generation time.  It needs no proof of the dividend, which is what
+                 lets it fire on an arithmetic result the proof never trusts; the
+                 template's fault note is dropped with it, since it fires only when
+                 the result is the sentinel while neither operand is.
+
   (R-Header)     in a loop body that writes no store, a vector reached by a PURE
                  PATH P — a variable, or const-offset fields over one — has one
                  header (store, record, length) for the whole loop: the emitter
