@@ -220,6 +220,12 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
         "OpSRightInt",
         "OpConvFloatFromInt",
         "OpConvBoolFromInt",
+        // Division and remainder: plain behind one sentinel test when the divisor is a
+        // literal (`int_arith::literal_divisor_form`); the template otherwise.
+        "OpDivInt",
+        "OpDivIntNullable",
+        "OpRemInt",
+        "OpRemIntNullable",
     ] {
         r.insert(op, Box::new(int_arith::IntArithEmitter));
     }

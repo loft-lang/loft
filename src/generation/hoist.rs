@@ -1501,23 +1501,23 @@ fn is_inclusive_stop_guard(v: &Value, data: &Data) -> bool {
 /// invariant.  `<cmp>` is `OpLtInt` for an inclusive range and `OpLeInt` for an exclusive
 /// one.  Reports shape only; the emitter confirms the path has a header.
 /// Enforces `@FR-R-Fill`.
-pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
-    let trace = std::env::var("LOFT_TRACE_FILL").is_ok();
-    let decline = |why: &str| -> Option<FillLoop<'a>> {
-        if trace {
-            eprintln!("fill: loop {} declined — {why}", lp.scope);
-        }
-        None
-    };
-    let kinds = |ops: &[Value]| -> String {
-        ops.iter()
-            .map(|o| kind_of(o.unspan()))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    if lp.name != "For loop" {
-        return None;
-    }
+/// The counters of a counted `for` loop, as the parser lowers `for v in a..b`: the loop
+/// variable, the `#index` it yields, the `next` counter of the two-counter form (a
+/// computed start, § V-ab; `None` in the single-counter form, P3b), whether the range is
+/// inclusive, and its end operand.  ONE home — the fill rewrite reads the shape here and
+/// so does the non-sentinel pass, which seeds these counters as never-null off the bound.
+pub struct RangeCounters<'a> {
+    pub loop_var: u16,
+    pub index: u16,
+    pub next: Option<u16>,
+    pub inclusive: bool,
+    pub hi: &'a Value,
+}
+
+/// Parse a `For loop` block's iterator into its counters, or say which part of the shape
+/// it is not (the trace the fill rewrite prints).
+pub fn range_counters<'a>(lp: &'a Block, data: &Data) -> Result<RangeCounters<'a>, String> {
+    let decline = |why: &str| -> Result<RangeCounters<'a>, String> { Err(why.to_string()) };
     if lp.operators.len() != 2 {
         return decline(&format!("loop has {} statements", lp.operators.len()));
     }
@@ -1572,6 +1572,7 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
         _ => return decline(&format!("iterator has {} statements", ops.len())),
     };
     let counter = next_var.unwrap_or(seed_index);
+    let loop_var = *loop_var;
     // The step: counter = counter + 1.
     let Value::Call(sd, sargs) = step else {
         return decline("the step is not a call");
@@ -1605,6 +1606,38 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
     if !matches!(yielded.unspan(), Value::Var(y) if *y == seed_index) {
         return decline("the iterator does not yield the index");
     }
+    Ok(RangeCounters {
+        loop_var,
+        index: seed_index,
+        next: next_var,
+        inclusive,
+        hi: &cargs[0],
+    })
+}
+
+pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
+    let trace = std::env::var("LOFT_TRACE_FILL").is_ok();
+    let decline = |why: &str| -> Option<FillLoop<'a>> {
+        if trace {
+            eprintln!("fill: loop {} declined — {why}", lp.scope);
+        }
+        None
+    };
+    let kinds = |ops: &[Value]| -> String {
+        ops.iter()
+            .map(|o| kind_of(o.unspan()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if lp.name != "For loop" {
+        return None;
+    }
+    let rc = match range_counters(lp, data) {
+        Ok(rc) => rc,
+        Err(why) => return decline(&why),
+    };
+    let (loop_var, seed_index, next_var, inclusive, hi) =
+        (rc.loop_var, rc.index, rc.next, rc.inclusive, rc.hi);
     // The body: one fusable scalar set over the loop variable's index.
     let Value::Block(body) = lp.operators[1].unspan() else {
         return decline("the body is not a block");
@@ -1663,16 +1696,16 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
     let Some(path) = vector_path(data, vector) else {
         return decline("the vector is not a pure path");
     };
-    let mut banned = vec![*loop_var, seed_index];
+    let mut banned = vec![loop_var, seed_index];
     if let Some(nx) = next_var {
         banned.push(nx);
     }
     banned.push(path.0);
     // The index: the loop variable, or `invariant + variable` either way round.
     let base = match index.unspan() {
-        Value::Var(x) if *x == *loop_var => None,
+        Value::Var(x) if *x == loop_var => None,
         Value::Call(d, args) if data.def(*d).name() == "OpAddInt" && args.len() == 2 => {
-            let is_var = |a: &Value| matches!(a.unspan(), Value::Var(x) if *x == *loop_var);
+            let is_var = |a: &Value| matches!(a.unspan(), Value::Var(x) if *x == loop_var);
             if is_var(&args[0]) && simple_invariant(&args[1], data, &banned) {
                 Some(&args[1])
             } else if is_var(&args[1]) && simple_invariant(&args[0], data, &banned) {
@@ -1686,7 +1719,7 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
     if !simple_invariant(val, data, &banned) {
         return decline("the value is not a simple invariant");
     }
-    if !simple_invariant(&cargs[0], data, &banned) {
+    if !simple_invariant(hi, data, &banned) {
         return decline("the range's end is not a simple invariant");
     }
     Some(FillLoop {
@@ -1695,7 +1728,7 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
         rust_type,
         size: width,
         base,
-        hi: &cargs[0],
+        hi,
         inclusive,
         index_var: seed_index,
         next_var,

@@ -34,6 +34,35 @@ use super::{EmitCtx, OpEmitter};
 use crate::data::Value;
 use std::io;
 
+/// Division or remainder by a LITERAL that is neither `0` nor `-1`, as the plain Rust
+/// operator behind one sentinel test.  The null a `/` or `%` mints comes from a zero
+/// divisor, from the `MIN / -1` overflow, or from a null operand; a literal rules the first
+/// two out at generation time, so the template's guarded call is exactly
+/// `if x == MIN { MIN } else { x / k }` — and needs no proof of the dividend, which is
+/// what lets it fire on an arithmetic result the non-sentinel pass never trusts.  LLVM
+/// turns the plain division by a constant into a multiply-and-shift; the guarded call
+/// never became one.  The template's fault note is dropped with it: it fires only when the
+/// result is the sentinel while neither operand is, which a literal divisor makes
+/// impossible.
+fn literal_divisor_form(op_name: &str, args: &[Value]) -> Option<&'static str> {
+    let [_, k] = args else {
+        return None;
+    };
+    let ok = match k.unspan() {
+        Value::Int(k) => *k != 0 && *k != -1,
+        Value::Long(k) => *k != 0 && *k != -1,
+        _ => false,
+    };
+    if !ok {
+        return None;
+    }
+    match op_name {
+        "OpDivIntNullable" | "OpDivInt" => Some("/"),
+        "OpRemIntNullable" | "OpRemInt" => Some("%"),
+        _ => None,
+    }
+}
+
 /// How a proven-operand op is emitted.
 enum Fast {
     /// `ops::<helper>(a, b)` / `ops::<helper>(a)` — checked arithmetic
@@ -71,6 +100,18 @@ pub struct IntArithEmitter;
 
 impl OpEmitter for IntArithEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        if !ctx.output.nn_fast_disabled
+            && let Some(sym) = literal_divisor_form(ctx.def_fn.name(), args)
+        {
+            write!(ctx.w, "{{ let _d = (")?;
+            ctx.emit(&args[0])?;
+            write!(
+                ctx.w,
+                "); if _d == i64::MIN {{ i64::MIN }} else {{ _d {sym} ("
+            )?;
+            ctx.emit(&args[1])?;
+            return write!(ctx.w, ") }} }}");
+        }
         let Some(fast) = fast_form(ctx.def_fn.name(), args) else {
             return super::default::DefaultEmitter.emit(ctx, args);
         };
