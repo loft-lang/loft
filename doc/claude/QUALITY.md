@@ -2556,6 +2556,12 @@ and who does not.
 |---:|---:|---:|---:|
 | 803 | 461 | 5 | **337** |
 
+(2026-09-15: @PLN157 § V-ah's three bare tests — `hoist::ret_buffer_attr` on the hidden
+buffer's `typedef`, `value_shape` and `site_walk` on a block's `result` — moved from the
+opaque column to the peeling one; the `@FR-N-Shape` ratchet on the GitHub gate refused
+them at 340 → 337 and the emission over the value-record cell corpora is byte-identical
+either way.)
+
 (2026-09-14, @PLN162 step 14: `Parser::build_specialisation` and `stub_admissible` in
 `dispatch.rs`, and the reload host's `set_members` in `live_reload.rs`, are new and read
 `Type::Routine` / `Type::Enum` off a `.base()` — the wrapper-aware column: 800 → 803 total,
