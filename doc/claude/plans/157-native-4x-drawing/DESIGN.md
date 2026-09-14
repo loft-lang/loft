@@ -2418,12 +2418,32 @@ record-returning and once returning the two floats as a tuple; identical output,
 
 **So the unit stages, and the split says the cheap stage is worth most of it.**
 
-1. **§ V-aa default-on.**  Everything below needs it, and it is opt-in today because its
-   CALL-SITE gate fails three shapes in the script corpus (a result used as a `DbRef`, a
-   buffer argument kept for a signature that dropped it, a `match` joining a tuple arm with
-   a record arm) — those generate a crate that does not compile.  Make the gate DECLINE
-   them, prove it over the corpus, flip the default.  Already ranked first in the
-   `lock_curved` evaluation for its own −4 %.
+1. **§ V-aa default-on.**  Everything below needs it, and it is opt-in because its
+   CALL-SITE gate admits shapes that generate a crate rustc rejects.  **Measured 2026-09-14
+   rather than taken from the note**: with the switch on, the script corpus reports 376
+   compile errors, and they are not three independent shapes — they are three, but of very
+   unequal weight, and the error text names each:
+
+   | class | errors | what it is |
+   |---|---:|---|
+   | fn-ref DISPATCH | 218 E0061 + most E0308 | the `match` a `CallRef` emits takes its arms from a signature scan, so every arm shares one argument list and one return type; converting one arm to a tuple drops the buffer argument the others still take and breaks the join |
+   | a LIFT temp | 8 E0609 + some E0308 | the result lands in a compiler `__lift_N` whose set lowering emits its own displacement guard, reading `.store_nr` off the value — a use no IR walk can see, because it is not an IR node |
+   | a MIXED-arm branch | the rest | a value branch joining an admitted call with a record expression |
+
+   Two of the three are now closed (2026-09-14): a candidate referenced by a `FnRef`, or
+   whose record a `CallRef`'s function type returns, is declined; and a result bound into a
+   `__lift_` temp is declined.  That takes the corpus from **376 errors to four scripts**,
+   all of them the same remainder — a lambda that reaches a dispatch WITHOUT a `FnRef` node
+   or a typed fn variable this gate can read.
+
+   **The remainder needs a refactor, not a patch, and that is the finding.**  The dispatch's
+   arm set is computed inside `Output::output_call_ref` by scanning every definition against
+   the fn variable's `Type::Function`.  The gate has to ask that same question, and asking it
+   a second way is how the five drifted mutation lists in § Design: P8 happened.  So the step
+   is to give that scan ONE home both callers read — the emitter to build the match, the gate
+   to decline every arm — and only then flip the default.  A blunt "any fn-ref in the program
+   declines everything" was measured and rejected: the drawing bench contains one, so it
+   would cost the very rows this is for.
 2. **A forwarding tail** — a body whose tail is a CALL to another admitted value-record
    function — is admitted and forwards the tuple.  This is `half_chord`, it needs no
    ownership change, and it is **−24 %** of the kernel.

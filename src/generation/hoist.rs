@@ -4090,7 +4090,12 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                 Value::Set(v, inner) => {
                     if let Value::Call(d, _) = inner.unspan()
                         && cand.contains_key(d)
-                        && !local_read_fieldwise(cdef.code(), *v, data, vars)
+                        && (!local_read_fieldwise(cdef.code(), *v, data, vars)
+                            // A compiler LIFT temp is bound by a set lowering that emits its
+                            // own displacement guard, reading `.store_nr` off the value — a
+                            // use no IR walk can see, because it is not an IR node.  The
+                            // result must stay a `DbRef` there.
+                            || vars.name(*v).starts_with("__lift_"))
                     {
                         cand.remove(d);
                     }
@@ -4115,6 +4120,69 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                 _ => {}
             }
             false
+        });
+    }
+    // A function reachable through a FN-REF cannot change its ABI.  The dispatch a `CallRef`
+    // emits is a `match` whose arms are every definition a signature scan admits, so all of
+    // them share one argument list and one return type; converting one arm to a tuple breaks
+    // the join and drops the buffer argument the others still take.  The scan is keyed on the
+    // signature, not on an explicit reference, so the test is by RETURNED RECORD: a candidate
+    // whose result a fn-ref signature also returns is declined.  Over-broad on purpose — it
+    // can decline a function no dispatch would ever reach, which costs the rewrite and never
+    // correctness (`@FR-R-ValueRecord`).
+    let mut referenced: HashSet<u32> = HashSet::new();
+    let mut ref_returns: HashSet<u32> = HashSet::new();
+    for d_nr in 0..data.definitions.len() as u32 {
+        let def = data.def(d_nr);
+        if matches!(def.code(), Value::Null) {
+            continue;
+        }
+        let vars = def.variables();
+        def.code().any_node(&mut |n| {
+            match n {
+                Value::FnRef(target, _, _) => {
+                    if let Ok(t) = u32::try_from(*target)
+                        && (t as usize) < data.definitions.len()
+                    {
+                        referenced.insert(t);
+                        if let Some(rec) = data.def(t).returned().heap_def_nr() {
+                            ref_returns.insert(rec);
+                        }
+                    }
+                }
+                // The dispatch a `CallRef` emits picks its arms by scanning definitions
+                // against the fn variable's own `Type::Function`, so the RETURN type of that
+                // variable names every record a dispatch could join.
+                Value::CallRef(v, _) => {
+                    if *v < vars.count()
+                        && let Type::Function(_, r, _) = vars.tp(*v)
+                        && let Some(rec) = r.heap_def_nr()
+                    {
+                        ref_returns.insert(rec);
+                    }
+                }
+                _ => {}
+            }
+            false
+        });
+    }
+    if !referenced.is_empty() {
+        cand.retain(|d_nr, _| {
+            // The referenced function itself, and every other candidate returning the same
+            // record — the scan can put those in the same dispatch beside it.
+            let keep = !referenced.contains(d_nr)
+                && data
+                    .def(*d_nr)
+                    .returned()
+                    .heap_def_nr()
+                    .is_none_or(|rec| !ref_returns.contains(&rec));
+            if !keep && trace {
+                crate::loft_eprintln!(
+                    "[valuerec] {}: reachable through a fn-ref dispatch",
+                    data.def(*d_nr).name()
+                );
+            }
+            keep
         });
     }
     out.fns = cand;

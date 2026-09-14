@@ -916,6 +916,17 @@ a SELECTING tail by reading the fields at the return, which is `ctrl` and the re
 buffer is the returned value; stop the result escaping and that buffer becomes nobody's).
 Separately, `n_pt` is 14.9 % of the row and is a different question: § V-p's twin applied to
 a record DESTINATION, and it wants its own ceiling first.
+**Stage 1 started 2026-09-14 and is two-thirds done** (DESIGN.md § V-ah, the table): the
+corpus with the switch on reports 376 compile errors in three classes, not the three
+independent shapes the note described.  The fn-ref DISPATCH class is 218 of them — the
+`match` a `CallRef` emits takes its arms from a signature scan, so all arms share one ABI —
+and the LIFT-temp class is the next, a result whose set lowering reads `.store_nr` off it
+where no IR walk can see.  Both are now declined and the corpus is down to **four scripts**,
+all the same remainder: a lambda reaching a dispatch without a `FnRef` node or a readable fn
+variable type.  **That remainder is a refactor, not a patch** — the dispatch's arm set lives
+inside `Output::output_call_ref`, and the gate must read the SAME scan rather than a second
+spelling of it (§ Design: P8's drifted lists are what asking twice looks like).  A blunt
+"any fn-ref declines everything" was measured and rejected: the drawing bench has one.
 
 **2026-09-14 — § V-ag SHIPPED, the first unit built under the 3e direction, and `fronds` is
 UNDER THE BAR** (DESIGN.md § V-ag).  Re-profiling the row on the current tip put **27.9 %**
