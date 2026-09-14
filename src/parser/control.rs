@@ -1345,11 +1345,7 @@ impl Parser {
         // eval fn gains nothing from the leak-opt anyway.
         let do_tret_bind = context == "return from block"
             && matches!(result.base(), Type::Text(_))
-            && !self
-                .data
-                .def(self.context)
-                .original_name()
-                .starts_with("replmain_")
+            && !self.data.def(self.context).is_reentered_eval()
             && l.last().is_some_and(|tail| self.tret_bind_ok(tail, &l))
             // Pass-stability gate.  `do_tret_bind` promotes `__tret` to a hidden
             // `&text` SIGNATURE buffer, so it MUST fire IDENTICALLY on both passes
@@ -1443,11 +1439,7 @@ impl Parser {
         let do_if_acc = !do_tret_bind
             && context == "return from block"
             && matches!(result.base(), Type::Text(_))
-            && !self
-                .data
-                .def(self.context)
-                .original_name()
-                .starts_with("replmain_")
+            && !self.data.def(self.context).is_reentered_eval()
             && l.last().is_some_and(Self::if_tail_yields_text)
             // Pass-stability gate — the same one `do_tret_bind` carries above, for the same
             // reason and by the same means.  This promotion grows a hidden `&text`
@@ -11517,7 +11509,15 @@ impl Parser {
         let mut flagged: Vec<u32> = Vec::new();
         for d in 0..self.data.definitions() {
             let def = self.data.def(d);
-            if def.def_type != DefType::Function || def.source != crate::data::MAIN_SOURCE {
+            // The reader's own definitions: the program's source under `parse`, and under a
+            // session's `parse_str` (the REPL, the live-reload shadow, the test harness) the
+            // stdlib's id on a file that is not the stdlib.  Asked by FILE there, because the
+            // id cannot tell the two apart, and the shadow must promote exactly what the
+            // running program promoted (@PLN162 step 14).  A session's eval is never promoted.
+            let owned = def.source == crate::data::MAIN_SOURCE
+                || (def.source == crate::data::STD_SOURCE
+                    && !crate::portable_path::is_stdlib_source(&def.position.file));
+            if def.def_type != DefType::Function || !owned || def.is_reentered_eval() {
                 continue;
             }
             // The #568 orphan predicate lives in ONE place (`use_analysis`) so this oracle

@@ -617,8 +617,14 @@ mismatch):**
    the stdlib?" by id misfired on user code.  Measured: the third overload of a name
    registered as a fresh `n_<name>` there (the set-join branch was guarded by the id), the
    first overload's pass-2 body then read *Unknown variable* for its own parameter, and
-   every program with three overloads lost its watcher at install.  `parse_str` now parses
-   under `MAIN_SOURCE`, and the join guard tests the FILE (`is_stdlib_source`), not the id.
+   every program with three overloads lost its watcher at install.  The join guard
+   tests the FILE (`is_stdlib_source`), not the id, and so does the text-return promotion's
+   owner test (`report_tret_promotions`).  `parse_str` KEEPS source 0: the REPL, the
+   debugger's eval and the test harness resolve under that scope, and seven pinned
+   diagnostics (a definition colliding with a stdlib one) depend on it — moving it to
+   `MAIN_SOURCE` was tried and the gate refused it.  A session's synthetic eval
+   (`replmain_`, `__eval_`) is never promoted: `Definition::is_reentered_eval` is the one
+   home, since `parse_snippet` now runs the post-pass promotion too.
 3. **The dynamic dispatcher mis-ordered a defaulted trailing parameter behind a forwarded
    text buffer** (step 13's own, closed profile, both backends): `tag(e)` over
    `tag(f: Fireball, k: integer = 7) -> text` beside `tag(e: Entity, k: integer = 7) -> text`
@@ -627,7 +633,8 @@ mismatch):**
    omitted defaults are filled first now, as at a direct call.  Guarded by the oracle pair
    below, whose set carries the default.
 4. **The watcher's entry file was recorded under source 0** — harmless while every lookup
-   fell back to the global one, wrong for a set: `MAIN_SOURCE` now, the file's own id.
+   fell back to the global one, wrong for a set: it is now read off the
+   shadow's own definitions of that file.
 5. **A rolled-back definition stayed a member of its set** — `Data::rollback_to` truncated
    the definitions and left the dispatcher's `Routine(r)` attribute pointing past the end;
    every later selection would have ranked a routine nothing defines.  The rollback prunes

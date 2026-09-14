@@ -149,13 +149,17 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
     // `--lib` packages, bundles), except the stdlib and synthetic sources.
     // Pair each file with its def-source id for source-aware fn lookup.
     let stdlib_prefix = crate::portable_path::plain_canonical_str(stdlib_dir);
+    // The entry file's id in the SHADOW, read off its own definitions: a snippet parses under
+    // it and an overload set is looked up by it, and the shadow's `parse_str` does not use the
+    // id the running program's `parse` did.
+    let entry_source = (0..shadow.definitions())
+        .map(|d| shadow.def(d))
+        .find(|def| def.position.file == path)
+        .map_or(crate::data::STD_SOURCE, |def| def.source);
     let mut files: Vec<WatchedFile> = vec![WatchedFile {
         path: path.to_string(),
         last_content: content,
-        // The entry file parses under `MAIN_SOURCE`, distinct from the stdlib prelude's 0
-        // (`Parser::parse`); the id is what a snippet parses under and what an overload set
-        // is looked up by, so it has to be the file's own.
-        source: crate::data::MAIN_SOURCE,
+        source: entry_source,
     }];
     for d in 0..shadow.definitions() {
         let def = shadow.def(d);

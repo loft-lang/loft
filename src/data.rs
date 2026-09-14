@@ -5071,6 +5071,18 @@ impl Definition {
         self.synthetic
     }
 
+    /// Is this a session's synthetic EVAL function — a REPL line (`replmain_<n>`) or a
+    /// debugger evaluation (`__eval_<n>`, `__evalinfer_<n>`)?  Such a function is called
+    /// through the frame-reenter path, which reads an OWNED text result back and pushes no
+    /// hidden buffer, so a text-return promotion that grows its signature leaves the caller
+    /// passing nothing and the callee reading an undefined slot.  Every promotion that
+    /// grows a `&text` parameter asks this, and only this.
+    #[must_use]
+    pub fn is_reentered_eval(&self) -> bool {
+        let n = self.original_name();
+        n.starts_with("replmain_") || n.starts_with("__eval_") || n.starts_with("__evalinfer_")
+    }
+
     #[must_use]
     pub fn is_operator(&self) -> bool {
         matches!(self.def_type, DefType::Function)

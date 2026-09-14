@@ -3544,13 +3544,11 @@ impl Parser {
         self.deferred_unknown.clear();
         self.resolutions.clear();
         self.data.reset();
-        // The program parses under `MAIN_SOURCE`, as `parse` and `parse_source` parse it:
-        // this is the REPL's and the live-reload shadow session's entry, and under the
-        // prelude's source 0 every gate keyed on "is this the stdlib?" by id misfired on
-        // the user's own definitions (@PLN162 step 14 — `report_tret_promotions` skips a
-        // def whose source is not MAIN, so a text return promoted in the running program
-        // was not promoted in the shadow, and a body generated there faulted).
-        self.data.source = crate::data::MAIN_SOURCE;
+        // The source stays the stdlib's, 0: this is the REPL session's entry, where every
+        // later input and a debugger's eval resolve their names under that scope, and where
+        // a definition colliding with a stdlib one is a collision of ONE key.  A gate that
+        // asks "is this the reader's code?" therefore reads the definition's FILE, not this
+        // id — `Data::is_owned_def`.
         self.lambda_counter = 0;
         self.fn_lambdas.clear();
         self.declared_capabilities.clear();
@@ -3574,7 +3572,6 @@ impl Parser {
         self.deferred_unknown.clear();
         self.resolutions.clear();
         self.data.reset();
-        self.data.source = crate::data::MAIN_SOURCE;
         self.lambda_counter = 0;
         self.fn_lambdas.clear();
         self.lexer.parse_string(text, filename);
