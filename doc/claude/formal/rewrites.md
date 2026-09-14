@@ -186,6 +186,24 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  rewrite owns — an invariant literal, an element-first pair, a move
                  host, the adopted result's witness — is left to that rewrite.
 
+  (R-PushFill)   a counted loop (`for … in lo..hi`, `lo..=hi`) whose body pushes k
+                 scalars to ONE pure path at its top level every iteration — nothing
+                 in the body can leave the loop early or loop again, no push to the
+                 path stands under a branch, no other write reaches the path, the
+                 range's end is a simple invariant — RESERVES k times its trip count
+                 once before it runs, over the push header the loop holds, and
+                 re-derives that header (the reserve may move the record).  Observably
+                 nothing: a reservation is capacity, and the pushes write as before.
+                 When the body is that one push of a SIMPLE INVARIANT and nothing
+                 else, the loop is ONE fill of the vector's tail — the room reserved,
+                 the elements written with one bounds check at each end, the length
+                 bumped once — guarded so that a range the fill declines (empty,
+                 negative, an absent owner, an element width not the value's) runs the
+                 per-element loop instead, and the counters are left as that loop
+                 would leave them (`R-Fill`'s own tail).  The trip count is the range's
+                 end less its start — the `next` counter's current value or `#index +
+                 1` — plus one for an inclusive range, taken at loop entry.
+
   (R-Header)     in a loop body that writes no store, a vector reached by a PURE
                  PATH P — a variable, or const-offset fields over one — has one
                  header (store, record, length) for the whole loop: the emitter

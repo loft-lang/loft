@@ -76,6 +76,16 @@ receipt is the value channel.  Consumer lane (500 calls per row, 14/14 hashes):
 `resize` 5.66 → **5.36×**, `render_marks` 8.40 → **7.82×**, `render_lock` 5.67 →
 **5.31×**, the rest within noise.  Switch `LOFT_NO_LOOP_BUFFER_REUSE`, trace
 `LOFT_TRACE_LOOP_BUFFER`.
+**§ V-am SHIPPED 2026-09-15** (DESIGN.md § V-am): a counted push loop RESERVES its pushes
+times its trip count once before it runs, and a counted loop that is one push of an
+invariant is ONE fill of the vector's tail (the per-element loop its fallback, the
+counters left as the loop would).  The resample's `rl_mid` prefill is the fill and its
+premultiply plane the reserve: the probe 97.5 → **95.4 ms/op** (−2.2 %, hash exact).
+Eleven hand-derived cells on both backends under the falsifiers and the switch; the
+guard's receipt is the value channel.  Consumer lane with § V-al and § V-am together
+(500 calls per row, 14/14 hashes): `resize` 105.4 → **93.5 ms/op** (5.36×),
+`render_marks` 7.46 → **6.70 ms/op** (7.57×), `render_lock` 16.26 → **14.84 ms/op**
+(5.20×).  Switch `LOFT_NO_PUSH_FILL`, trace `LOFT_TRACE_PUSH_FILL`.
 Scoreboard vs the issue baseline, consumer lane on the SHIPPED tier (lean, fully
 optimised — the release default since 2026-09-08, DESIGN.md § The shipped tier):
 `hash` 10.9× → **2.2–2.5×** consumer / 1.2× gate row (under the bar; the spread

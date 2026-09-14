@@ -2112,6 +2112,58 @@ impl Stores {
     /// declined to inline it across the rlib boundary, and every in-capacity push — a
     /// bounds test, one store and a length bump — paid a real call (23.8 % of the
     /// `lock_curved` row's self time sat in the helper).
+    /// @PLN157 § V-am (`@FR-R-PushFill`) — push `count` copies of `val` in one step: the
+    /// counted loop `for _ in lo..hi { v += [c] }` over a held push header.  Reserves the
+    /// room once, fills the tail with one bounds check at each end (`Store::fill`), bumps
+    /// the length once and re-derives the push header (the reserve may have moved the
+    /// record).  Answers `false` — and does nothing — for a non-positive count, an element
+    /// width that is not `T`'s, or an absent owner slot, so the caller's per-element loop
+    /// runs instead and leaves every counter as it would.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the push header no longer describes
+    /// `db` — the point of the switch.  Never in the emitted default.
+    pub fn push_fill<T: crate::vector::HoistScalar, const VERIFY: bool>(
+        &mut self,
+        p: &mut crate::vector::PushHeader,
+        db: &crate::keys::DbRef,
+        size: u32,
+        count: i64,
+        val: T,
+    ) -> bool {
+        if count <= 0 || size != std::mem::size_of::<T>() as u32 {
+            return false;
+        }
+        let Ok(n) = u32::try_from(count) else {
+            return false;
+        };
+        if VERIFY {
+            assert_eq!(
+                *p,
+                crate::vector::push_header(db, &self.allocations),
+                "hoisted push header is stale — the loop moved the vector it fills"
+            );
+        }
+        if db.is_null() || db.rec == 0 || db.pos == 0 {
+            return false;
+        }
+        let len = p.h.len;
+        let Some(total) = len.checked_add(n) else {
+            return false;
+        };
+        crate::vector::reserve_vector(db, i64::from(total), size, &mut self.allocations);
+        let h = crate::vector::vec_header(db, &self.allocations);
+        if h.rec == 0 {
+            return false;
+        }
+        let store = &mut self.allocations[h.store_nr as usize];
+        store.fill::<T>(h.rec, crate::vector::checked_vec_pos(len, size), n, val);
+        store.write::<u32>(h.rec, 4, total);
+        *p = crate::vector::push_header(db, &self.allocations);
+        true
+    }
+
     #[cold]
     #[inline(never)]
     fn push_hoisted_grow<T: crate::vector::HoistScalar>(

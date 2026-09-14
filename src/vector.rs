@@ -224,6 +224,18 @@ pub fn reserve_vector(db: &DbRef, count: i64, elem_size: u32, stores: &mut [Stor
     }
 }
 
+/// @PLN157 § V-am (`@FR-R-PushFill`) — reserve room for `extra` MORE elements beyond the
+/// vector's current length: the reservation a counted push loop makes once before it runs
+/// instead of growing per push.  A non-positive `extra` reserves nothing; an absent owner
+/// slot reserves nothing (the pushes' own growth handles it, as before).
+pub fn reserve_more(db: &DbRef, extra: i64, elem_size: u32, stores: &mut [Store]) {
+    if extra <= 0 {
+        return;
+    }
+    let len = i64::from(vec_header(db, stores).len);
+    reserve_vector(db, len.saturating_add(extra), elem_size, stores);
+}
+
 /// Make room for one more element at the end of the vector `db` points at, and
 /// answer where to write it.  Grows the backing record ~2x when it is full, and
 /// follows the record if the grow had to move it.

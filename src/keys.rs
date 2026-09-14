@@ -1193,6 +1193,18 @@ pub fn loop_buffer_reuse_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_BUFFER_REUSE"))
 }
 
+/// @PLN157 § V-am (`@FR-R-PushFill`): a counted loop whose body pushes k scalars to one
+/// vector RESERVES k times its trip count before it runs, and a counted loop whose body is
+/// one push of an invariant scalar is ONE fill of the vector's tail — **DEFAULT ON**.  Opt
+/// OUT with `LOFT_NO_PUSH_FILL` (read at GENERATION time): the per-push growth ladder and
+/// the per-element loop again, the first bisect step for a wrong element or length out of
+/// a counted push loop on native.  `LOFT_HOIST_VERIFY=1` re-derives the push header at
+/// the fill.
+pub fn push_fill_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PUSH_FILL"))
+}
+
 /// @PLN157 § V-d: a vector-literal element that is a buffer-returning call is built IN the
 /// element's record, and a promoted return buffer honours an offered record — **DEFAULT
 /// ON**.  Opt OUT with `LOFT_NO_APPEND_IN_PLACE`: the before-half of the A/B on one binary

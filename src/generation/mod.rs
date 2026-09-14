@@ -783,6 +783,9 @@ pub struct Output<'a> {
     /// `LOFT_NO_LOOP_BUFFER_REUSE` (generation time): every such buffer re-mints per
     /// iteration again.
     pub loop_buffer_disabled: bool,
+    /// `LOFT_NO_PUSH_FILL` (generation time): a counted push loop reserves nothing and
+    /// fills nothing — the per-push ladder and the per-element loop again (§ V-am).
+    pub push_fill_disabled: bool,
     /// @PLN157 § V-u (`@FR-R-RetAdopt`) — the function being emitted whose result local
     /// ADOPTS the hidden return buffer ([`hoist::ret_adopt`]); `None` for every other.
     pub ret_adopt: Option<hoist::RetAdopt>,
@@ -1764,6 +1767,7 @@ impl<'a> Output<'a> {
             element_first_disabled: std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"),
             loop_buffers: HashSet::new(),
             loop_buffer_disabled: !crate::keys::loop_buffer_reuse_enabled(),
+            push_fill_disabled: !crate::keys::push_fill_enabled(),
             ret_adopt: None,
             retbuf_adopt_disabled: std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0"),
             in_adopt_delivery: 0,
@@ -2162,15 +2166,30 @@ impl Output<'_> {
         lp: &crate::data::Block,
     ) -> std::io::Result<()> {
         let f = hoist::fill_loop(lp, self.data).expect("the shape that emitted the fill");
+        self.range_tail(w, f.index_var, f.next_var, f.hi, f.inclusive)
+    }
+
+    /// The counters of a counted range after it ran to its end, written as the `else` arm
+    /// of a fast path's guard: `#index` at the last index yielded (P3b's single counter one
+    /// past it), the `next` counter one past.  Shared by the fill (§ V-ae) and the push
+    /// fill (§ V-am), so the two cannot leave a counter differently.
+    fn range_tail(
+        &mut self,
+        w: &mut dyn Write,
+        index_var: u16,
+        next_var: Option<u16>,
+        hi: &Value,
+        inclusive: bool,
+    ) -> std::io::Result<()> {
         let variables = self.data.def(self.def_nr).variables();
-        let idx = format!("var_{}", sanitize(variables.name(f.index_var)));
-        let hi = self.expr_string(f.hi)?;
-        let last = if f.inclusive {
+        let idx = format!("var_{}", sanitize(variables.name(index_var)));
+        let hi = self.expr_string(hi)?;
+        let last = if inclusive {
             format!("({hi})")
         } else {
             format!("(({hi}) - 1_i64)")
         };
-        match f.next_var {
+        match next_var {
             Some(nx) => {
                 let next = format!("var_{}", sanitize(variables.name(nx)));
                 writeln!(
@@ -2180,6 +2199,67 @@ impl Output<'_> {
             }
             None => writeln!(w, "\n}} else {{ {idx} = {last} + 1_i64; }}"),
         }
+    }
+
+    /// @PLN157 § V-am (`@FR-R-PushFill`) — when `lp` is a counted push loop over a path a
+    /// push header is held for, RESERVE its pushes times its trip count before it runs
+    /// (and re-derive the header, since the reserve may move the record); when the loop
+    /// is one push of an invariant, emit the guarded `let __pf_N = stores.push_fill(…)`
+    /// instead and answer `true` — the caller then emits the per-element loop under
+    /// `if !__pf_N` and [`Self::push_fast_path_tail`] leaves the counters as the loop
+    /// would.  The trip count is the range's end less its start (the `next` counter's
+    /// current value, § V-ab, or `#index + 1`, P3b), plus one for an inclusive range.
+    fn push_fast_path(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<bool> {
+        if self.push_fill_disabled {
+            return Ok(false);
+        }
+        let Some(p) = hoist::push_loop(lp, self.data) else {
+            return Ok(false);
+        };
+        let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) else {
+            return Ok(false);
+        };
+        let variables = self.data.def(self.def_nr).variables();
+        let idx = format!("var_{}", sanitize(variables.name(p.index_var)));
+        let lo = match p.next_var {
+            Some(nx) => format!("var_{}", sanitize(variables.name(nx))),
+            None => format!("ops::op_add_int(({idx}), (1_i64))"),
+        };
+        let vec = self.expr_string(p.vector)?;
+        let hi = self.expr_string(p.hi)?;
+        let incl = if p.inclusive { "1_i64" } else { "0_i64" };
+        let count = format!("(({hi}) as i64).saturating_sub(({lo}) as i64).saturating_add({incl})");
+        let verify = if self.hoist_verify { "true" } else { "false" };
+        self.indent(w)?;
+        if let Some(val) = p.fill {
+            let val = self.expr_string(val)?;
+            writeln!(
+                w,
+                "let __pf_{} = stores.push_fill::<{}, {verify}>(&mut {hdr}, &({vec}), {}_u32, {count}, ({val})); //@PLN157 § V-am push fill",
+                lp.scope, p.rust_type, p.size
+            )?;
+            return Ok(true);
+        }
+        writeln!(
+            w,
+            "{{ let _pn = {count}; if _pn > 0 {{ vector::reserve_more(&({vec}), _pn.saturating_mul({}_i64), {}_u32, &mut stores.allocations); {hdr} = vector::push_header(&({vec}), &stores.allocations); }} }} //@PLN157 § V-am push reserve",
+            p.pushes, p.size
+        )?;
+        Ok(false)
+    }
+
+    /// The `else` arm of the push fill's guard — [`Self::range_tail`] over the push loop.
+    fn push_fast_path_tail(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<()> {
+        let p = hoist::push_loop(lp, self.data).expect("the shape that emitted the push fill");
+        self.range_tail(w, p.index_var, p.next_var, p.hi, p.inclusive)
     }
 
     fn begin_vector_hoist(

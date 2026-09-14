@@ -785,6 +785,16 @@ a vector declared inside a loop on native.  Only for elements that own no heap (
 vector keeps the re-mint: a length reset would strand what its elements own), a buffer no
 other call reaches, and a declaration outside the loop.  `LOFT_TRACE_LOOP_BUFFER=1` names
 each buffer kept and each declined.
+**`LOFT_NO_PUSH_FILL=1`** (@PLN157 § V-am, `@FR-R-PushFill`, default-ON, generation time)
+makes a counted push loop grow per push again — with it off, `for i in a..b { v += [x, y] }`
+reserves two elements times its trip count once before it runs, and `for _ in a..b
+{ v += [c] }` with `c` invariant is ONE fill of the vector's tail with the per-element
+loop as its fallback (the resample's plane prefill: −2 % on the row) — and is the first
+bisect step for a wrong element or length out of a counted push loop on native.  A body
+that can `break`, `return` or loop again, a push under a branch, another write to the
+path, or a range end that is not a simple invariant declines the loop.
+`LOFT_TRACE_PUSH_FILL=1` names each decline; `LOFT_HOIST_VERIFY=1` re-derives the push
+header at the fill.
 **`LOFT_NO_VALUE_RECORD=1`** (@PLN157 § V-aa, default-ON since 2026-09-14) makes a
 function whose result is a plain no-heap record of ≤6 scalar fields return it through
 the buffer again — with it off, such a function whose every call site reads fields off

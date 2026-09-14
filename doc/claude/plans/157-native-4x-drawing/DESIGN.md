@@ -4137,6 +4137,56 @@ agree): `resize` 5.66 → **5.36×** (105.4 → 96.0 ms/op), `render_marks` 8.40
 (7.46 → 6.91 ms/op), `render_lock` 5.67 → **5.31×** (16.26 → 15.22 ms/op); every other
 row within its lane's noise (`hash` 0.99×, `smooth` 3.52× against a 320 ns reference).
 
+## V-am — a counted push loop reserves once, and a constant one is a fill (2026-09-15)
+
+**The evidence.**  The same floor split (README § Where to resume) priced the `rl_mid`
+prefill — 786 432 pushes of `0` through the push header — at 2 % of the resample row and
+the growth ladder under the premultiply's 2.4 M-element plane at 1.4 %.  Both loops are
+counted ranges whose trip count is known before the first iteration; the pushes paid a
+capacity test each and a re-derivation at every doubling, and the prefill paid a store
+per element for a value that never changes.  A Rust port writes `vec![0; n]` and
+`Vec::with_capacity(n)` for the same two lines.
+
+**The rule (`@FR-R-PushFill`).**  A counted loop whose body pushes k scalars to one pure
+path at its top level, every iteration — nothing that can leave early or loop again, no
+push under a branch, no other write reaching the path, a simple-invariant end — RESERVES
+k × its trip count once before it runs (`vector::reserve_more` over the push header the
+loop holds, which is then re-derived because a reserve may move the record).  When the
+body is that one push of a simple invariant and nothing else, the loop is ONE fill of the
+tail: `stores.push_fill` reserves, writes the elements with one bounds check at each end
+(`Store::fill`, the § V-ae primitive), bumps the length once and re-derives the header;
+it answers `false` for a range it declines — empty, negative, an absent owner slot, an
+element width that is not the value's — and the per-element loop runs under `if !__pf_N`
+with the counters left as it would leave them, through the tail § V-ae already owns
+(`range_tail`, one home for both).  The trip count is the range's end less its start —
+the `next` counter's current value (§ V-ab) or `#index + 1` (P3b) — plus one for an
+inclusive range, taken at loop entry with saturating arithmetic.  Switch
+`LOFT_NO_PUSH_FILL` (generation time); trace `LOFT_TRACE_PUSH_FILL`.
+
+**What the build corrected.**  The parser emits the path's `OpPreAllocVector(path, 1, 8)`
+BEFORE the push it reserves for, and the first recogniser counted that statement as
+foreign because the path was not yet known when it was visited — so every constant push
+loop took the reserve and none the fill, green on every cell.  The resample's emission
+had no `__pf_` line where the design said one belonged; the count is taken once the path
+is known.  A trace that says *declined — the body has one plain statement* for a body of
+exactly a push is the tell.
+
+**Cells** `bytecode-comparisons/V-am-push-fill-cells.loft` (p1–p11, hand-computed, both
+backends exact under `LOFT_HOIST_VERIFY`, `LOFT_POISON`, `LOFT_POISON_CLAIM`,
+`LOFT_STRICT_STORES`, `LOFT_NATIVE_LEAK_CHECK` and the switch): the fill over a fresh and
+over a non-empty vector, the empty and the negative range, three computed pushes per
+iteration, a `break` (declined), a float fill, a value on the loop variable (reserve, not
+fill), an inclusive range with a computed start, a call for the end (declined), a nested
+counted loop, and a fill into a § V-al loop buffer.  `tests/scripts/157-push-fill.loft`
+carries the sabotage receipt (the fill's length one short); `tests/push_fill.rs` pins the
+emission.
+
+**Measured** (the resample probe, quiet x86-64, best of 3 at 20 iterations, hash
+`77de7581`): 97.5 → **95.4 ms/op** (−2.2 %).  Consumer table (500 calls per row,
+`--repeat 3`, 14/14 hashes agree, both § V-al and § V-am in): `resize` 5.66 → **5.36×**
+(105.4 → 93.5 ms/op), `render_marks` 8.40 → **7.57×** (7.46 → 6.70 ms/op), `render_lock`
+5.67 → **5.20×** (16.26 → 14.84 ms/op); every other row within its lane's noise.
+
 ## V-ai — the reset buffer keeps the capacity it reached (2026-09-14)
 
 **SHIPPED, default-on, BOTH backends (a runtime fact; switch `LOFT_NO_RESET_CAPACITY`,

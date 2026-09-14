@@ -638,6 +638,14 @@ impl Output<'_> {
                     self.indent(w)?;
                     writeln!(w, "if !__fill_{} {{", lp.scope)?;
                 }
+                // @PLN157 § V-am (`@FR-R-PushFill`) — a counted push loop reserves its
+                // pushes times its trip count first; one push of an invariant is one fill
+                // of the tail, the per-element loop its fallback exactly as the fill's.
+                let pushed = self.push_fast_path(w, lp)?;
+                if pushed {
+                    self.indent(w)?;
+                    writeln!(w, "if !__pf_{} {{", lp.scope)?;
+                }
                 self.loop_stack.push(lp.scope);
                 writeln!(w, "'l{}: loop {{ //{}_{}", lp.scope, lp.name, lp.scope)?;
                 for v in &lp.operators {
@@ -650,6 +658,9 @@ impl Output<'_> {
                 self.indent(w)?;
                 write!(w, "}} /*{}_{}*/", lp.name, lp.scope)?;
                 self.loop_stack.pop();
+                if pushed {
+                    self.push_fast_path_tail(w, lp)?;
+                }
                 if fill {
                     self.fill_fast_path_tail(w, lp)?;
                 }

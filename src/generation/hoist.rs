@@ -1776,6 +1776,179 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
     })
 }
 
+/// @PLN157 § V-am (`@FR-R-PushFill`) — a counted loop that PUSHES: `k` scalar pushes to
+/// one pure path at the top level of its body, every iteration, with nothing that can
+/// leave the loop early and no other write reaching the path.  The reserve form holds for
+/// any such loop (`pushes` × the trip count, once, before the loop); the FILL form is the
+/// body that is that one push of a simple invariant and nothing else.
+pub struct PushLoop<'a> {
+    pub path: PathKey,
+    pub vector: &'a Value,
+    pub rust_type: &'static str,
+    pub size: u32,
+    pub hi: &'a Value,
+    pub inclusive: bool,
+    pub index_var: u16,
+    pub next_var: Option<u16>,
+    /// The pushes per iteration.
+    pub pushes: u32,
+    /// The invariant value when the body is ONE push of it — the fill form.
+    pub fill: Option<&'a Value>,
+}
+
+/// Recognise the counted push loop (`@FR-R-PushFill`).  Declines, and says why under
+/// `LOFT_TRACE_PUSH_FILL=1`, whenever the trip count cannot be known before the loop runs
+/// or the pushes per iteration cannot be counted: a `break`, a `return`, a `continue`, an
+/// inner loop, a push under a branch, a push to a second path, an append or any other
+/// write reaching the path, a range end that is not a simple invariant.  The fallback is
+/// `None` — the loop runs as it did, which costs the reserve and never a value.
+#[must_use]
+pub fn push_loop<'a>(lp: &'a Block, data: &Data) -> Option<PushLoop<'a>> {
+    let trace = std::env::var("LOFT_TRACE_PUSH_FILL").is_ok();
+    let decline = |why: &str| -> Option<PushLoop<'a>> {
+        if trace {
+            eprintln!("push-fill: loop {} declined — {why}", lp.scope);
+        }
+        None
+    };
+    if lp.name != "For loop" {
+        return None;
+    }
+    let rc = match range_counters(lp, data) {
+        Ok(rc) => rc,
+        Err(why) => return decline(&why),
+    };
+    let Value::Block(body) = lp.operators[1].unspan() else {
+        return decline("the body is not a block");
+    };
+    let stmts: Vec<&Value> = body
+        .operators
+        .iter()
+        .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+        .collect();
+    let push_kind = |d: &u32| -> Option<(&'static str, u32)> {
+        if (*d as usize) >= data.definitions.len() {
+            return None;
+        }
+        let name = data.def(*d).name();
+        FUSABLE_PUSHES
+            .iter()
+            .find(|(n, _, _)| *n == name)
+            .map(|(_, rt, w)| (*rt, *w))
+    };
+    // The pushes at the top level of the body.
+    let mut path: Option<PathKey> = None;
+    let mut vector: Option<&'a Value> = None;
+    let mut rust_type = "";
+    let mut size = 0u32;
+    let mut vals: Vec<&'a Value> = Vec::new();
+    for s in &stmts {
+        if let Value::Call(d, args) = s.unspan()
+            && let Some((rt, w)) = push_kind(d)
+            && args.len() == 2
+            && let Some(p) = vector_path(data, &args[0])
+        {
+            match &path {
+                Some(pp) if *pp != p => return decline("the pushes reach two paths"),
+                Some(_) => {}
+                None => {
+                    path = Some(p);
+                    vector = Some(&args[0]);
+                    rust_type = rt;
+                    size = w;
+                }
+            }
+            vals.push(&args[1]);
+        }
+    }
+    let (Some(path), Some(vector)) = (path, vector) else {
+        return decline("no push at the top level of the body");
+    };
+    // The statements that are neither a counted push nor the path's own reservation (which
+    // the parser emits BEFORE the push, so it is counted once the path is known).
+    let plain = stmts
+        .iter()
+        .filter(|s| {
+            !matches!(s.unspan(), Value::Call(d, a)
+                if (push_kind(d).is_some()
+                    || ((*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpPreAllocVector"))
+                    && a.first().and_then(|f| vector_path(data, f)).as_ref() == Some(&path))
+        })
+        .count();
+    let mut early = false;
+    lp.operators[1].any_node(&mut |n| {
+        if matches!(
+            n,
+            Value::Break(_)
+                | Value::Return(_)
+                | Value::Continue(_)
+                | Value::Loop(_)
+                | Value::Yield(_)
+                | Value::Parallel(_)
+        ) {
+            early = true;
+            return true;
+        }
+        false
+    });
+    if early {
+        return decline("the body can leave early, or loops");
+    }
+    // Every push to the path is one of the counted ones, and nothing else writes it.
+    let mut all = 0usize;
+    let mut other = false;
+    lp.operators[1].any_node(&mut |n| {
+        if let Value::Call(d, args) = n
+            && (*d as usize) < data.definitions.len()
+            && let Some(first) = args.first()
+            && vector_path(data, first).as_ref() == Some(&path)
+        {
+            let name = data.def(*d).name();
+            if push_kind(d).is_some() {
+                all += 1;
+            } else if !(name == "OpPreAllocVector"
+                || name.starts_with("OpGet")
+                || name.starts_with("OpLength"))
+            {
+                other = true;
+            }
+        }
+        false
+    });
+    if other {
+        return decline("another write reaches the path");
+    }
+    if all != vals.len() {
+        return decline("a push stands under a branch");
+    }
+    let mut banned = vec![rc.loop_var, rc.index, path.0];
+    if let Some(nx) = rc.next {
+        banned.push(nx);
+    }
+    if !simple_invariant(rc.hi, data, &banned) {
+        return decline("the range's end is not a simple invariant");
+    }
+    let fill = if vals.len() == 1 && plain == 0 && simple_invariant(vals[0], data, &banned) {
+        Some(vals[0])
+    } else {
+        None
+    };
+    let pushes = u32::try_from(vals.len()).ok()?;
+    Some(PushLoop {
+        path,
+        vector,
+        rust_type,
+        size,
+        hi: rc.hi,
+        inclusive: rc.inclusive,
+        index_var: rc.index,
+        next_var: rc.next,
+        pushes,
+        fill,
+    })
+}
+
 /// Recognise `OpPreAllocVector(path, count, size)` over a pure path (@PLN157 § V-q): the
 /// reservation the parser emits before a push to a LOCAL vector.  It claims a record only
 /// for an ABSENT vector and never moves an existing one, so it cannot stale a header; with a

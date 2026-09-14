@@ -67,7 +67,10 @@ fn emit(out: &Path, env: &[(&str, &str)]) -> String {
     std::fs::read_to_string(out).expect("read the emitted Rust")
 }
 
-/// Per emitted function: `(vector headers, push headers)` derived in its body.
+/// Per emitted function: `(vector headers, push headers)` BOUND in its body — the
+/// prelude's `let __vh_N` / `let mut __ph_N`.  A re-derivation into an existing binding
+/// (§ V-am re-derives a push header after its reserve, `__ph_N = vector::push_header(…)`)
+/// is the same header the loop holds, not another one.
 fn headers(rust: &str) -> HashMap<String, (usize, usize)> {
     let mut map: HashMap<String, (usize, usize)> = HashMap::new();
     let mut current = String::new();
@@ -79,10 +82,10 @@ fn headers(rust: &str) -> HashMap<String, (usize, usize)> {
             map.entry(current.clone()).or_default();
             continue;
         }
-        if line.contains("vector::vec_header(&(") {
+        if line.contains("let __vh_") && line.contains("vector::vec_header(&(") {
             map.entry(current.clone()).or_default().0 += 1;
         }
-        if line.contains("vector::push_header(&(") {
+        if line.contains("let mut __ph_") && line.contains("vector::push_header(&(") {
             map.entry(current.clone()).or_default().1 += 1;
         }
     }
