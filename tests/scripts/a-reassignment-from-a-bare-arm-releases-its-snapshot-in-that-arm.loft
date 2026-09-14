@@ -1,0 +1,83 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A reassignment of a record local from a value branch is written out per arm —
+// `x = if c { a } else { b }` becomes `if c { x = a } else { x = b }` (`ownership.md
+// (O-Complete)`, `binding.md (B-Copy)`) — and each arm's assignment takes a snapshot of the record
+// it displaces and releases it after the new value lands (`heap.md (H-Drop)`, the reassignment
+// clause).  The snapshot's temp belongs to the scope that assignment runs in.  So an arm the
+// lowering writes without a block of its own — every arm of a `??`, and of a `match` over a
+// scalar — is given one: otherwise the temp would belong to the enclosing scope, whose exit runs
+// on every path, including the paths where the arm and the temp's declaration never ran.
+//
+// Each cell hands nothing off on one path only, so its trace depends on that placement alone: the
+// displaced record once, then the record the local holds, once.
+//
+// @falsified-at: 9d4ce2c79 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, interpret 1 stack-store free refusal(s) (BUG #306) -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-reassignment-from-a-bare-arm-releases-its-snapshot-in-that-arm.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, interpret 1 stack-store free refusal(s) (BUG #306) -> 0, native exit 1 -> 0
+//
+// CHANNEL: native compilation — a temp used outside the Rust block that declared it
+//   (`E0425: cannot find value var___disp_N`); the plain interpreter, where the release read an
+//   uninitialised slot — on the `??` present path it held a reference to the kept record, released
+//   a second time (the assertion), and elsewhere a stack store, whose free is refused (`BUG #306`);
+//   and the interpreter under `LOFT_POISON=1`, where the hook ran on the poison pattern and panicked.
+// HOLDS: leak and panic are unmoved on the plain run of both trees — the poison panic is outside
+//   what `falsify.sh` runs, and was measured by hand on the build before the fix.
+//
+// The trace file is this guard's own.
+
+fn trace_path() -> text { return "loft_bare_arm_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct BaH { id: integer }
+fn OpDrop(self: BaH) { note("{self.id}"); }
+fn ba(id: integer) -> BaH { return BaH { id: id }; }
+
+// `??` with its subject present: the local keeps a copy of the subject, which releases once.
+fn c_coalesce_present() { a: BaH? = ba(1); x = ba(9); x = a ?? ba(2); note("V{x.id}"); }
+// `??` with its subject absent: the default is the local's.
+fn c_coalesce_absent() { a: BaH? = null; x = ba(19); x = a ?? ba(12); note("V{x.id}"); }
+// A `match` over a scalar, every arm a call: one snapshot per arm, each in its own arm.
+fn c_match(k: integer) { x = ba(29); x = match k { 0 => ba(21), 1 => ba(22), _ => ba(23) }; note("V{x.id}"); }
+// A value `if` inside a bare `match` arm: the `if`'s arms are wrapped, the `if` itself is not.
+fn c_nested(k: integer, c: boolean) { x = ba(39); x = match k { 0 => if c { ba(31) } else { ba(32) }, _ => ba(33) }; note("V{x.id}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  c_coalesce_present(); got = drain();
+  assert(got == "9,V1,1", "a `??` reassignment, subject present: {got}");
+  c_coalesce_absent(); got = drain();
+  assert(got == "19,V12,12", "a `??` reassignment, subject absent: {got}");
+  c_match(0); got = drain();
+  assert(got == "29,V21,21", "a scalar `match` reassignment, first arm: {got}");
+  c_match(1); got = drain();
+  assert(got == "29,V22,22", "a scalar `match` reassignment, middle arm: {got}");
+  c_match(2); got = drain();
+  assert(got == "29,V23,23", "a scalar `match` reassignment, catch-all arm: {got}");
+  c_nested(0, true); got = drain();
+  assert(got == "39,V31,31", "an `if` inside a `match` arm, then: {got}");
+  c_nested(0, false); got = drain();
+  assert(got == "39,V32,32", "an `if` inside a `match` arm, else: {got}");
+  c_nested(1, true); got = drain();
+  assert(got == "39,V33,33", "the `match` arm beside the nested `if`: {got}");
+  println("bare arm ok");
+}
