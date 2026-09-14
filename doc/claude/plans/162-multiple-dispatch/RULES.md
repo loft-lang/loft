@@ -105,6 +105,12 @@ name.  Three consequences worth stating:
   no `x.f(…)` spelling (step 10 found the synthesiser hanging a dispatcher on one and the
   uncovered call reading as *did you mean the method*).
 
+- **`Disp-Closed` holds by construction (IMPL.md step 11, measured 2026-09-14):** selection
+  runs at parse time, so a statically-concrete site is a plain `Call` of the selected
+  definition in IR, bytecode and native — byte-identical to a hand-monomorphised twin once
+  the callee names are normalised (`tests/introspect_dispatch.rs`).  No runtime table exists
+  for such a site.
+
 **Disp-Specific** *(amended — the abstract position is the ENUM, not an interface).*  The
 design says *"a concrete struct is more specific than any interface it implements"*.  Measured
 2026-09-11: **an interface cannot be a parameter type** — `fn describe(x: Shape)` is refused

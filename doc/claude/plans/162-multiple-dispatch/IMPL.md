@@ -459,11 +459,25 @@ today.
 
 ## Phase C — the profiles (steps 11–14)
 
-### Step 11 — `Disp-Closed` lowering  ·  M, **measure before building**
+### Step 11 — `Disp-Closed` lowering  ·  M, **measure before building**  ·  DONE 2026-09-14 (a test, not a change)
 
 A statically-concrete call site lowers to a direct call.  This may already fall out of phase
 B — exact-key resolution at parse time *is* a direct call.  If `introspect` already shows one
 after step 6, this step is a test, not a change.
+
+**Measured, and it does:** `loft introspect` on a dispatched program (`hit` over three
+overloads, two statically-concrete sites) shows each site as a plain `Call(d_nr=…,
+fn=f_16Fireball#IceWall_hit)` — no table, no dispatcher — and the native `main` calls the
+selected function directly.  Against the hand-monomorphised twin (unique names, no overload
+set) the whole dump differs only in the callee names, the def numbers (shifted by the
+dispatcher's own def) and the live-reload table.  `tests/introspect_dispatch.rs` pins it: the
+dispatched `main`'s bytecode is byte-identical to the twin's once the callee names are
+normalised, both sites name their overload, and no enum-level dispatcher is synthesised.
+
+**Finding for step 14:** the emitted live-reload table `LOFT_LIVE_FNS` lists neither
+`f_`-keyed overload where the twin lists both `hit_fw` and `hit_fc` — the promote path
+enumerates functions by name shape, so an overload cannot be live-flipped today.  Recorded
+here, measured there.
 
 ### Step 12 — the DCE property  ·  S
 
