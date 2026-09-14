@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A struct projection bound to a local VIEWS its container (`binding.md (B-View)`): a write through
+// the local reaches the container.  Where the container is reassigned while the view is still live,
+// the local instead keeps the value it named (`(B-Disturb)`, materialised at the bind).  Both hold
+// per PATH and for every spelling of the same assignment: a plain bind, a reassignment from a value
+// `if`, and the author's own statement form that assigns the local inside one arm and something
+// else in the other.
+//
+// The branch spellings are where the two backends and the spellings used to part ways: the value
+// join's reassignment is lowered to the statement form, and the analyses that decide the owner
+// witness and the materialisation now read that form (`binding.md` D-bind-34); the materialisation
+// walk treats the two arms as alternatives, so an assignment in one arm does not end a view the other
+// arm binds (D-bind-35).
+//
+// @falsified-at: 4742e139c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-projection-assigned-in-an-arm-views-until-its-container-is-reassigned.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
+// CHANNEL: the assertions — the value read through the container and through the local.
+
+struct Pay { a: integer, b: text }
+struct Hold { inner: Pay, t: text }
+fn mk(n: integer) -> Pay { Pay{a: n, b: "n{n}"} }
+
+// Undisturbed: the value join's projection arm is a view, on both backends.
+fn value_join_views(k: integer) -> text {
+  h = Hold{inner: mk(1), t: "h"}; x = mk(4); x = if k > 0 { h.inner } else { mk(0) }; x.a = 9;
+  "{h.inner.a},{x.a}"
+}
+// The same in a loop: each pass's write reaches the container.
+fn value_join_views_in_a_loop() -> text {
+  h = Hold{inner: mk(1), t: "h"}; x = mk(4); s = "";
+  for i in 0..2 { x = if i >= 0 { h.inner } else { mk(0) }; x.a = 10 + i; s += "{h.inner.a}{x.a};"; }
+  s
+}
+// Disturbed after the value join: the local keeps what it named.
+fn value_join_materialises(k: integer) -> text {
+  h = Hold{inner: mk(1), t: "h"}; x = mk(4); x = if k > 0 { h.inner } else { mk(0) };
+  h = Hold{inner: mk(5), t: "k"};
+  "{h.inner.a},{x.a}"
+}
+// The author's statement form, the view in the FIRST arm: disturbed after, the local keeps it.
+fn view_in_the_first_arm(k: integer) -> text {
+  h = Hold{inner: mk(1), t: "h"}; x = mk(4); if k > 0 { x = h.inner; } else { x = mk(0); }
+  h = Hold{inner: mk(5), t: "k"};
+  "{h.inner.a},{x.a}"
+}
+// The view in the SECOND arm, the control the first-arm cell is measured against.
+fn view_in_the_second_arm(k: integer) -> text {
+  h = Hold{inner: mk(1), t: "h"}; x = mk(4); if k > 0 { x = mk(0); } else { x = h.inner; }
+  h = Hold{inner: mk(5), t: "k"};
+  "{h.inner.a},{x.a}"
+}
+// Undisturbed statement form: still a view.
+fn statement_form_views(k: integer) -> text {
+  h = Hold{inner: mk(1), t: "h"}; x = mk(4); if k > 0 { x = h.inner; } else { x = mk(0); } x.a = 9;
+  "{h.inner.a},{x.a}"
+}
+
+fn main() {
+  assert(value_join_views(1) == "9,9", "the value join's projection arm views: {value_join_views(1)}");
+  assert(value_join_views(0) == "1,9", "the value join's call arm owns: {value_join_views(0)}");
+  assert(value_join_views_in_a_loop() == "1010;1111;", "each pass views: {value_join_views_in_a_loop()}");
+  assert(value_join_materialises(1) == "5,1", "a disturbed value-join view keeps its value: {value_join_materialises(1)}");
+  assert(view_in_the_first_arm(1) == "5,1", "a first-arm view keeps its value: {view_in_the_first_arm(1)}");
+  assert(view_in_the_first_arm(0) == "5,0", "the other path owns its record: {view_in_the_first_arm(0)}");
+  assert(view_in_the_second_arm(0) == "5,1", "a second-arm view keeps its value: {view_in_the_second_arm(0)}");
+  assert(statement_form_views(1) == "9,9", "the undisturbed statement form views: {statement_form_views(1)}");
+  println("arm views ok");
+}

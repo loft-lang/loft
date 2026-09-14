@@ -375,7 +375,12 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
   disturbed, and a literal key only where both agree.  Found by D-bind-34's closure, which lowers the
   value join to exactly that statement form.  The walk's imprecision in the other direction is
   unchanged and deliberate: a view bound before the `if` and disturbed on one path only is
-  materialised on both, and the author is told.  Guard
+  materialised on both, and the author is told.  On `--native` the newly materialised copy then
+  LEAKED: a displacement free emptied the slot first, so the copy landed in a fresh store, and the
+  generator's owner tracker records a copy only on a first declaration — the reassignment branch
+  left it unnamed, and nothing released it.  Falsifying the guard caught it in the leak column; that
+  branch now asks `materialises_element` too, the question the first declaration already asked.
+  Guard
   `tests/scripts/a-projection-assigned-in-an-arm-views-until-its-container-is-reassigned.loft`.
 * **D-bind-34** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-View)` and `(O-NoDiverge)`: a REASSIGNMENT from a
   value join whose taken arm is a struct PROJECTION copies on `--interpret` and views on `--native`.

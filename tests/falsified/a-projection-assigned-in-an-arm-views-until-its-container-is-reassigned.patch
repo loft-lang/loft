@@ -1,0 +1,258 @@
+diff --git b/src/generation/dispatch.rs a/src/generation/dispatch.rs
+index ce125deed..3ff594865 100644
+--- b/src/generation/dispatch.rs
++++ a/src/generation/dispatch.rs
+@@ -90,17 +90,8 @@ impl Output<'_> {
+                 "; if _own_store_{name}.store_nr != u16::MAX \
+                  && _own_store_{name}.store_nr != var_{name}.store_nr \
+                  {{ OpFreeRef(cell, _own_store_{name}, \"{name}(owned)\"); \
+-                 _own_store_{name} = DbRef::NULL; }}"
++                 _own_store_{name} = DbRef::NULL; }} }}"
+             )?;
+-            // A projection the oracle reports as a borrow is still COPIED when
+-            // `materialises_element` selects the copy arm, and that copy is this local's own
+-            // store — the owner the first-decl branch below teaches the tracker about.  Name
+-            // it here too: where a displacement free emptied the slot before the bind, the
+-            // copy lands in a FRESH store, and a tracker left null releases nobody.
+-            if self.materialises_element(var, to) {
+-                write!(w, " _own_store_{name} = var_{name};")?;
+-            }
+-            write!(w, " }}")?;
+             return Ok(());
+         }
+         if reassign && owned && to.reads_var(var) {
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 091c2ef3c..af1405fc9 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -299,10 +299,6 @@ struct Scopes<'s> {
+     /// keeps this from going stale. A `Scopes` is built per scan phase, so a
+     /// second phase re-derives it.
+     fn_defs: Option<crate::use_analysis::Defs>,
+-    /// The reassignments this scan writes out per arm, as (the address of the `Set`'s value node
+-    /// inside the code the scan was handed, the variable).  `run_scan_phase` returns them, and its
+-    /// caller rewrites exactly those before scanning again (`rewrite_written_out`).
+-    written_out: Vec<(usize, u16)>,
+ }
+ 
+ /// Perform scope analysis on all currently known functions.
+@@ -1361,48 +1357,13 @@ impl ViewWalk<'_> {
+             Value::If(cond, t, e) => {
+                 // The condition is evaluated before either branch and is not part of one.
+                 self.leaf(cond);
+-                // The arms are ALTERNATIVES (`(B-Disturb)` holds per path), so each starts from
+-                // the views open before the `if`, and a rebind in one arm does not end a view
+-                // the other arm binds.  What is open or shaken afterwards is what EITHER path
+-                // leaves; a literal key survives only where both paths agree, because a key may
+-                // only spare a view it proves names a different record (loft#1460).
+-                let open_before = self.open.clone();
+-                let shaken_before = self.shaken.clone();
+-                let keys_before = self.view_keys.clone();
+-                let mut ends = Vec::with_capacity(2);
+                 for branch in [t.unspan(), e.unspan()] {
+-                    self.open.clone_from(&open_before);
+-                    self.shaken.clone_from(&shaken_before);
+-                    self.view_keys.clone_from(&keys_before);
+                     match branch {
+                         Value::Block(b) => self.scoped(&b.operators),
+                         Value::Insert(ops) => self.scoped(ops),
+                         other => self.leaf(other),
+                     }
+-                    ends.push((
+-                        std::mem::take(&mut self.open),
+-                        std::mem::take(&mut self.shaken),
+-                        std::mem::take(&mut self.view_keys),
+-                    ));
+-                }
+-                let (e_open, e_shaken, e_keys) = ends.pop().expect("an else arm");
+-                let (mut open, mut shaken, t_keys) = ends.pop().expect("a then arm");
+-                for (frame, extra) in open.iter_mut().zip(e_open) {
+-                    for item in extra {
+-                        if !frame.contains(&item) {
+-                            frame.push(item);
+-                        }
+-                    }
+                 }
+-                for (v, d) in e_shaken {
+-                    shaken.entry(v).or_insert(d);
+-                }
+-                self.open = open;
+-                self.shaken = shaken;
+-                self.view_keys = t_keys
+-                    .into_iter()
+-                    .filter(|(v, k)| e_keys.get(v) == Some(k))
+-                    .collect();
+             }
+             // A `Set` whose VALUE carries statements — a value `if` or `match`, a block —
+             // runs them BEFORE the target is written, so they are walked in that order and
+@@ -3146,47 +3107,6 @@ fn buffer_call_uses(ops: &[Value], av: u16, data: &Data) -> usize {
+     n
+ }
+ 
+-/// Rewrites the reassignments a first scan wrote out per arm into that per-arm statement form, in
+-/// `code` itself, and removes from `vars` the deps the parser gave each such binding for its local
+-/// arms.  A rescan from the result reads, in every analysis that runs before the scan, what the
+-/// author's own per-arm spelling gives it (`formal/binding.md` D-bind-34, `heap.md` D-heap-7).
+-/// Returns whether anything was rewritten.
+-///
+-/// Each site is found by the address of its `Set`'s value node, which the scan recorded while
+-/// reading this same tree, together with the variable — the scan's own decision, never
+-/// re-derived: a structural "is this a reassignment" disagreed with the scan at 52 of 899 corpus
+-/// sites.  Children are rewritten before their parent, so a recorded site nested inside another's
+-/// arm still has its recorded address when it is reached.  A site the scan reached only inside a
+-/// tree it had built itself is not in `code`; the rescan writes that one out as the scan did.
+-fn rewrite_written_out(code: &mut Value, vars: &mut Function, written: &[(usize, u16)]) -> bool {
+-    fn walk(n: &mut Value, vars: &mut Function, written: &[(usize, u16)], hit: &mut bool) {
+-        n.for_each_child_mut(&mut |c| walk(c, vars, written, hit));
+-        let stmt = match &*n {
+-            Value::Set(t, val)
+-                if written.contains(&(std::ptr::from_ref::<Value>(val).addr(), *t)) =>
+-            {
+-                let stmt = Scopes::sink_set_into_arms(*t, *t, val, vars, true);
+-                if stmt.is_some() {
+-                    for src in branch_tail_vars(val) {
+-                        if var_copy_owns(vars, *t, src) {
+-                            vars.make_independent(*t, src);
+-                        }
+-                    }
+-                }
+-                stmt
+-            }
+-            _ => None,
+-        };
+-        if let Some(stmt) = stmt {
+-            *n = stmt;
+-            *hit = true;
+-        }
+-    }
+-    let mut hit = false;
+-    walk(code, vars, written, &mut hit);
+-    hit
+-}
+-
+ fn run_scan_phase(
+     data: &mut Data,
+     database: &mut crate::database::Stores,
+@@ -3194,7 +3114,7 @@ fn run_scan_phase(
+     orig_code: &Value,
+     orig_vars: &Function,
+     confined: &HashMap<u16, u16>,
+-) -> Vec<(usize, u16)> {
++) {
+     // @PLN85 `local_source` over-free fix (gated): the heap slots whose OWNED store
+     // is displaced by a later borrow/join reassignment. Computed on the pre-scope
+     // code so the dep classification is read before any dep-strip below mutates it.
+@@ -3261,7 +3181,6 @@ fn run_scan_phase(
+         per_path_pairs: HashSet::new(),
+         free_transferred: HashSet::new(),
+         fn_defs: None,
+-        written_out: Vec::new(),
+     };
+     let mut function = Function::copy(orig_vars);
+     for a in function.arguments() {
+@@ -3483,13 +3402,11 @@ fn run_scan_phase(
+         &data.definitions[d_nr as usize].returned.clone(),
+         data,
+     );
+-    let written_out = std::mem::take(&mut scopes.written_out);
+     for (v_nr, scope) in scopes.var_scope {
+         data.definitions[d_nr as usize]
+             .variables
+             .set_scope(v_nr, scope);
+     }
+-    written_out
+ }
+ 
+ /// True if `op` is the null-init `Set(vdb, Null)` — a work-ref's `first_def`.
+@@ -5837,10 +5754,10 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+             continue;
+         }
+         let free_ref_nr = data.def_nr("OpFreeRef");
+-        let mut orig_code = data.definitions[d_nr as usize].code.clone();
+-        let mut orig_vars = Function::copy(&data.def(d_nr).variables);
++        let orig_code = data.definitions[d_nr as usize].code.clone();
++        let orig_vars = Function::copy(&data.def(d_nr).variables);
+         // Phase 1: the normal scan → apply → set-scope pass.
+-        let written_out = run_scan_phase(
++        run_scan_phase(
+             data,
+             database,
+             d_nr,
+@@ -5848,21 +5765,6 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+             &orig_vars,
+             &HashMap::new(),
+         );
+-        // A reassignment the scan wrote out per arm was seen in its VALUE form by every analysis
+-        // that ran before the scan.  Rewrite exactly those and scan again, so those analyses read
+-        // the per-arm form; the confinement rescan below starts from the rewritten pair too.
+-        if !written_out.is_empty()
+-            && rewrite_written_out(&mut orig_code, &mut orig_vars, &written_out)
+-        {
+-            run_scan_phase(
+-                data,
+-                database,
+-                d_nr,
+-                &orig_code,
+-                &orig_vars,
+-                &HashMap::new(),
+-            );
+-        }
+         // Plan-57 cluster I-a — two-phase scan.  If a vector store is block-confined,
+         // re-scan registering its `__vdb` (+ backed local) at the confined block scope
+         // so the block-exit `free_vars` sweep frees the store there, then relocate the
+@@ -8166,22 +8068,15 @@ impl Scopes<'_> {
+         // runtime fact (`Own::Join`), not a copy — except a call arm the parser gave an owner for
+         // the value form, which is written out as the call itself, because that owner served the
+         // join.  RECORDS only: a vector keeps the value form, which already copies the chosen arm.
+-        let writes_out = self.var_scope.contains_key(&v)
++        if self.var_scope.contains_key(&v)
+             && Self::is_value_branch(value)
+             && !matches!(function.tp(v), Type::RefVar(_))
+             && matches!(
+                 function.tp(v).base(),
+                 Type::Reference(_, _) | Type::Enum(_, true, _)
+-            );
+-        // Recorded by the address of the value node, the node inside the code this scan was
+-        // handed, for `rewrite_written_out` — with every arm shape the rewrite accepts, a
+-        // projection arm beside an owned call included: the rescan's analyses see that
+-        // projection's assignment, which this scan's could not.
+-        if writes_out && Self::sink_set_into_arms(v, ov, value, function, true).is_some() {
+-            self.written_out
+-                .push((std::ptr::from_ref(value).addr(), ov));
+-        }
+-        if writes_out && let Some(sunk) = Self::sink_set_into_arms(v, ov, value, function, false) {
++            )
++            && let Some(sunk) = Self::sink_set_into_arms(v, ov, value, function)
++        {
+             // The written-out arms are copies the author could have spelled, so they get what
+             // that spelling gets, BEFORE the first arm is scanned: a per-path flag for each source
+             // a copy hands off (loft#1515 — minted here, because the pre-scan pass saw one
+@@ -13105,18 +13000,7 @@ impl Scopes<'_> {
+     /// it displaces, and that temp is registered at the scope the `Set` runs in and released at
+     /// that scope's exit.  Without a block that scope is the ENCLOSING one, whose exit also runs on
+     /// the paths where this arm, and the temp's declaration with it, never ran.
+-    ///
+-    /// `beside_any` also writes out a call arm's owner block beside a PROJECTION arm.  The scan
+-    /// declines that shape — the analyses before it read the value form, so the written-out
+-    /// projection would lack the view facts its own assignment gets — and the rewrite ahead of a
+-    /// rescan accepts it (`rewrite_written_out`), because there those analyses run afterwards.
+-    fn sink_set_into_arms(
+-        v: u16,
+-        ov: u16,
+-        value: &Value,
+-        function: &Function,
+-        beside_any: bool,
+-    ) -> Option<Value> {
++    fn sink_set_into_arms(v: u16, ov: u16, value: &Value, function: &Function) -> Option<Value> {
+         fn sinkable(tail: &Value, v: u16, ov: u16, function: &Function) -> bool {
+             match tail.unspan() {
+                 Value::Var(x) => {
+@@ -13219,7 +13103,7 @@ impl Scopes<'_> {
+                 }
+             }
+         }
+-        if !sinkable(value, v, ov, function) || (!beside_any && !owners_beside_locals_only(value)) {
++        if !sinkable(value, v, ov, function) || !owners_beside_locals_only(value) {
+             return None;
+         }
+         let mut out = value.clone();

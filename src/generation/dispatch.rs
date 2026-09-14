@@ -90,8 +90,17 @@ impl Output<'_> {
                 "; if _own_store_{name}.store_nr != u16::MAX \
                  && _own_store_{name}.store_nr != var_{name}.store_nr \
                  {{ OpFreeRef(cell, _own_store_{name}, \"{name}(owned)\"); \
-                 _own_store_{name} = DbRef::NULL; }} }}"
+                 _own_store_{name} = DbRef::NULL; }}"
             )?;
+            // A projection the oracle reports as a borrow is still COPIED when
+            // `materialises_element` selects the copy arm, and that copy is this local's own
+            // store — the owner the first-decl branch below teaches the tracker about.  Name
+            // it here too: where a displacement free emptied the slot before the bind, the
+            // copy lands in a FRESH store, and a tracker left null releases nobody.
+            if self.materialises_element(var, to) {
+                write!(w, " _own_store_{name} = var_{name};")?;
+            }
+            write!(w, " }}")?;
             return Ok(());
         }
         if reassign && owned && to.reads_var(var) {
