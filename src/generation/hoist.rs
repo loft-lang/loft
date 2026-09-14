@@ -4292,7 +4292,11 @@ pub const VALUE_RECORD_MAX_FIELDS: usize = 6;
 #[must_use]
 pub fn ret_buffer_attr(def: &crate::data::Definition) -> Option<usize> {
     def.attributes().iter().rposition(|a| {
-        a.hidden && matches!(a.typedef, Type::Reference(_, _) | Type::Enum(_, true, _))
+        a.hidden
+            && matches!(
+                a.typedef.base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            )
     })
 }
 
@@ -4361,7 +4365,7 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u32> {
             (plain_record_type(ctx.data, &bl.result) == Some(rec)).then_some(own)
         }
         Value::Block(bl) => {
-            if matches!(bl.result, Type::Void) {
+            if matches!(bl.result.base(), Type::Void) {
                 return None;
             }
             value_shape(bl.operators.last()?, ctx)
@@ -4758,7 +4762,7 @@ fn site_walk(node: &Value, pos: Pos, ctx: &ShapeCtx, declined: &mut HashSet<u32>
         Value::Block(bl) => {
             let count = bl.operators.len();
             for (idx, op) in bl.operators.iter().enumerate() {
-                let pos_here = if idx + 1 == count && !matches!(bl.result, Type::Void) {
+                let pos_here = if idx + 1 == count && !matches!(bl.result.base(), Type::Void) {
                     pos
                 } else {
                     Pos::Discard
