@@ -843,15 +843,26 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
    mechanism: a tuple-member or branch-arm destination is clean in all 18 rows of the coalesce
    family, a struct-field destination releases twice in all 18 — including the absent path,
    where the default is a fresh call — and a local destination releases twice on the present
-   path and LOSES a fresh-call default on the absent one.  Read off the IR of
-   `a: H? = mk(1); x = a ?? mk(2)`: the coalesce lowers to
-   `if a { __lift_1 = a; __lift_1 } else n_mk(2, __ref_2)`, `x` is typed `deps=[__lift_1]`, and
-   scope end drops both `__lift_1` and `a`.  So on the present path the arm lift's copy never
-   moves the release off `a` — the per-path hand-off `ownership.md (O-Complete)` describes, and
-   one where suppressing `a` outright is admissible, because on the absent path `a` is null and
-   the drop is liveness-guarded.  On the absent path `x` holds `__ref_2`'s record while its deps
-   name only `__lift_1`, so nothing releases it: a value `if` whose deps are not the union of
-   its arms.
+   path and LOSES a fresh-call default on the absent one.  The same join spelled as an `if`
+   (`if a != null { a } else { mk(2) }` — `a ?? d` lowers to exactly that) releases once on
+   both paths and both backends, so the `if` spelling's IR is the working form, and the two
+   mechanisms are the differences from it:
+   - ✓ **The present path — CLOSED 2026-09-14.**  The `??` arm lifts `__lift_1 = a` and records
+     the per-path hand-off, and the statement scan then RETIRED that hand-off as if it were an
+     unconditional reassignment: the retirement reads scope depth as "certain to run", and a
+     `??` arm is a bare `Insert` that opens no scope, so the Set arrived at the temp's own
+     depth.  (Measured with a probe at the retirement: it fired on both `??` paths and never on
+     the `if` spelling, whose arms are blocks.)  The retirement now skips `arm_lift_temps`,
+     the per-path fact the hand-off was recorded under.  A `match` with bare arms and a boolean
+     `if` never reached the misfire.
+   - **The absent path — OPEN.**  `x` holds the default's record while its deps name only
+     `__lift_1`, so nothing releases it.  The `??` builder types its result from the subject's
+     DECLARED type, which carries no dep on the subject, so it decides the join OWNS and gives a
+     call default no owner — and the scopes lift then makes `x` a borrow of the lift temp.  The
+     `if` spelling's join type carries `a`, so its call arm is given an owner
+     (`own_joined_call_arms`) before the lift runs.  The missing piece is that TYPE fact, not a
+     second owner decision: giving the default an owner under the owned type would release it
+     twice wherever the lift declines.
 2. **A parameter copied out of its callee** — `p` or `p.h` into a field, an enum payload, a
    vector or the return (`c_param_*`, `c_pfield_*`): twice, and the callee's release runs BEFORE
    the caller's own later read.  The rule gives the answer — a copy off a PARAMETER moves

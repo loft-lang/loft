@@ -2,11 +2,8 @@
 # committed this file.  Each line is an open (H-Drop) defect: `cell KIND,KIND`.
 # Regenerate only after reading the diff: LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate
 c_callproj_arm DOUBLE
-c_coalesce_annot DOUBLE
 c_coalesce_enum DOUBLE
 c_coalesce_field DOUBLE
-c_coalesce_local DOUBLE
-c_coalesce_nullable DOUBLE
 c_coalesce_push DOUBLE
 c_coalesce_reassign REFUSED
 c_coalesce_veclit DOUBLE
@@ -36,6 +33,7 @@ c_tuple_push DOUBLE
 c_tuple_ret DOUBLE,EARLY
 c_tuple_tuplem DOUBLE
 c_tuple_veclit DOUBLE
+p_l2 LOST
 p_o1 DOUBLE
 p_o2 DOUBLE,EARLY
 p_o3 DOUBLE,EARLY
@@ -55,14 +53,12 @@ q_default_local_call_local LOST
 q_default_local_literal_field DOUBLE
 q_default_local_literal_push DOUBLE
 q_default_local_var_field DOUBLE
-q_default_local_var_local DOUBLE
 q_default_local_var_push DOUBLE
 q_default_param_call_field DOUBLE
 q_default_param_call_local LOST
 q_default_param_literal_field DOUBLE
 q_default_param_literal_push DOUBLE
 q_default_param_var_field DOUBLE
-q_default_param_var_local DOUBLE
 q_default_param_var_push DOUBLE
 q_present_field_call_field DOUBLE
 q_present_field_call_push DOUBLE
@@ -74,24 +70,18 @@ q_present_field_var_field DOUBLE
 q_present_field_var_push DOUBLE
 q_present_field_var_ret DOUBLE,EARLY
 q_present_local_call_field DOUBLE
-q_present_local_call_local DOUBLE
 q_present_local_call_push DOUBLE
 q_present_local_literal_field DOUBLE
-q_present_local_literal_local DOUBLE
 q_present_local_literal_push DOUBLE
 q_present_local_var_field DOUBLE
-q_present_local_var_local DOUBLE
 q_present_local_var_push DOUBLE
 q_present_local_var_ret LOST
 q_present_param_call_field DOUBLE
-q_present_param_call_local DOUBLE
 q_present_param_call_push DOUBLE
 q_present_param_call_ret DOUBLE
 q_present_param_literal_field DOUBLE
-q_present_param_literal_local DOUBLE
 q_present_param_literal_push DOUBLE
 q_present_param_literal_ret DOUBLE
 q_present_param_var_field DOUBLE
-q_present_param_var_local DOUBLE
 q_present_param_var_push DOUBLE
 q_present_param_var_ret DOUBLE,LOST

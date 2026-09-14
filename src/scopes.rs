@@ -7935,7 +7935,16 @@ impl Scopes<'_> {
         // what `v` holds from here on is its own to release again.  A reassignment inside a
         // deeper scope (one arm of a branch, a loop body) is not certain to run, so the
         // hand-off stays — the leak direction, never a second release.
-        if was_in_scope && *value != Value::Null && self.var_scope.get(&v) == Some(&self.scope) {
+        //
+        // Scope depth only stands in for "certain to run", and an arm lift temp is where the
+        // stand-in fails: its Set IS the per-path copy its hand-off was recorded for
+        // (`arm_lift_temps`, `@FR-O-Complete`), and a `??` arm is a bare `Insert` that opens
+        // no scope of its own, so that Set arrives at the temp's own scope depth.
+        if was_in_scope
+            && *value != Value::Null
+            && self.var_scope.get(&v) == Some(&self.scope)
+            && !self.arm_lift_temps.contains(&v)
+        {
             self.drop_transferred.remove(&v);
         }
         // A redundant re-init `Set(v, Null)` for an already-in-scope var is

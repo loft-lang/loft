@@ -161,6 +161,16 @@ fn p_o4() { d = mk(15); r = p_o4_m(d); println("R{r.id}"); }"#,
             r#"fn p_o5_m(p: (H, integer)) { c = Hold { h: p.0 }; println("R{c.h.id}"); }
 fn p_o5() { t = (mk(16), 1); p_o5_m(t); println("R{t.0.id}"); }"#,
         ),
+        // A `??` result bound inside a loop body: the arm lift temp is Set again on every
+        // iteration, on both paths.
+        cell(
+            "p_l1",
+            r#"fn p_l1() { a: H? = mk(24); for i in 0..2 { x = a ?? mk(25 + i); println("R{x.id}"); } }"#,
+        ),
+        cell(
+            "p_l2",
+            r#"fn p_l2() { a: H? = null; for i in 0..2 { x = a ?? mk(27 + i); println("R{x.id}"); } }"#,
+        ),
         // (H-Drop-Not): the language releases nothing for the X-marked id.
         cell(
             "p_n1",
