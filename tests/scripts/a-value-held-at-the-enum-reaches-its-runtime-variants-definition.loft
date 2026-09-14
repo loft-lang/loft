@@ -1,0 +1,90 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `Disp-Dynamic` (@PLN162 step 13): a call whose argument is held at the ENUM reaches the
+// definition its runtime variant picks — the compiler synthesises, per site shape, the
+// canonical `match` of `Disp-Match-Equiv` over every enum-held position, each leaf calling
+// what `Disp-Select` picks for that variant tuple.  Cells: one dynamic position over the
+// elements of a `vector<Entity>`; two dynamic positions over every ordered pair, the total
+// fallback for the pairs no definition names; a mixed site — one position held at the enum,
+// one at a variant, a struct parameter written through; a direct call on a local held at the
+// enum; and a nullable enum position, which stays static (its runtime variant is the next
+// cell).  A `self` set whose enum-level member the author wrote is D-disp-1's remainder and is
+// pinned as measured there.  Until this held, every enum-held call reached the enum-level
+// definition.
+// @falsified-at: 51395d496 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-value-held-at-the-enum-reaches-its-runtime-variants-definition.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: assert — on the control (static selection only) the first dynamic cell answers
+//   the enum-level definition and its assertion fails; here every cell passes.  Not leak.
+//   ARMED: no instrument — a plain run on either backend reads it.
+//   WITNESS: on the control `tag(e)` over `[Fireball, IceWall, Crate]` answers
+//   `other 1;other 2;other 3;` where the file says `fire 1;wall 2;other 3;`.
+//   HOLDS: the nullable-position cell answers the same on both trees; the leak channel is
+//   `none` on both and does not move.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+enum Entity {
+  Fireball { n: integer },
+  IceWall { n: integer },
+  Crate { n: integer },
+}
+
+struct World { hits: integer }
+
+fn tag(f: Fireball) -> text { "fire {f.n}" }
+fn tag(w: IceWall) -> text { "wall {w.n}" }
+fn tag(e: Entity) -> text { "other {e.n}" }
+
+fn hit(f: Fireball, w: IceWall) -> text { "fire-wall" }
+fn hit(f: Fireball, c: Crate) -> text { "fire-crate" }
+fn hit(a: Entity, b: Entity) -> text { "any-any" }
+
+fn mark(f: Fireball, w: IceWall, world: World) -> text { world.hits += 1; "fire-wall {world.hits}" }
+fn mark(a: Entity, b: Entity, world: World) -> text { "any-any {world.hits}" }
+
+fn opt(f: Fireball) -> text { "fire" }
+fn opt(e: Entity?) -> text { if e { "opt-any" } else { "opt-null" } }
+
+fn test_one_position_over_a_vector() {
+  es: vector<Entity> = [Fireball { n: 1 }, IceWall { n: 2 }, Crate { n: 3 }];
+  out = "";
+  for e in es { out += "{tag(e)};"; }
+  assert(out == "fire 1;wall 2;other 3;", "one dynamic position: got {out}");
+}
+
+fn test_two_positions_over_every_pair() {
+  es: vector<Entity> = [Fireball { n: 1 }, IceWall { n: 2 }, Crate { n: 3 }];
+  out = "";
+  for a in es { for b in es if a#index != b#index { out += "{hit(a, b)};"; } }
+  assert(out == "fire-wall;fire-crate;any-any;any-any;any-any;any-any;", "two dynamic positions: got {out}");
+}
+
+fn test_mixed_static_and_dynamic() {
+  w = World { hits: 0 };
+  f: Entity = Fireball { n: 1 };
+  i: Entity = IceWall { n: 2 };
+  a = mark(f, i, w);
+  b = mark(i, f, w);
+  c = mark(f, IceWall { n: 3 }, w);
+  assert(a == "fire-wall 1" && b == "any-any 1" && c == "fire-wall 2", "mixed site, the struct written through: got {a} / {b} / {c}");
+}
+
+fn test_direct_call_on_a_local() {
+  e: Entity = Fireball { n: 4 };
+  assert(tag(e) == "fire 4", "a local held at the enum: got {tag(e)}");
+}
+
+fn test_nullable_enum_position_stays_static() {
+  p: Entity? = Fireball { n: 7 };
+  z: Entity? = null;
+  assert(opt(p) == "opt-any", "a present Entity? takes the τ? definition: got {opt(p)}");
+  assert(opt(z) == "opt-null", "a null takes it too: got {opt(z)}");
+}
+
+fn main() {
+  test_one_position_over_a_vector();
+  test_two_positions_over_every_pair();
+  test_mixed_static_and_dynamic();
+  test_direct_call_on_a_local();
+  test_nullable_enum_position_stays_static();
+}

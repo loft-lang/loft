@@ -2554,7 +2554,13 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 798 | 456 | 5 | **337** |
+| 800 | 458 | 5 | **337** |
+
+(2026-09-14, @PLN162 step 13: `Parser::dynamic_positions` and `report_dynamic_leaf` are new
+and read `Type` variants — the nullable question spelled first, the shape then read through
+`.base()` — so they land in the wrapper-aware column: 798 → 800 total, 456 → 458 aware,
+the opaque column and the ratchet unmoved.  The first cut matched a def's `returned()` type
+bare in a guard clause and the ratchet refused it.)
 
 (2026-09-14, @PLN162 step 8: `src/parser/dispatch.rs` is new — `dispatch_rank`,
 `ranked_overloads` and `report_selection` read a `Type` variant, every one through `.base()`

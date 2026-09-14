@@ -5,19 +5,17 @@
 // — the parser's own `can_convert`, so a VARIANT satisfies its enum (@FR-C-Var) and a present
 // value satisfies a `τ?` slot — and among the definitions that take it the one that is exact
 // where another widened wins, position by position; the most general one, the enum at every
-// position, is the fallback (`Disp-Fallback`).  A value held STATICALLY at the enum reaches
-// the enum-level definition; what its runtime variant would pick is step 13's cell.
-// @falsified-at: 41ce4eb62 — interpret exit 1 -> 0, native exit 1 -> 0
-// @falsified-by: tests/falsified/a-variant-is-more-specific-than-its-enum.patch — interpret exit 1 -> 0, native exit 1 -> 0
-//   CHANNEL: exit — on the control (exact-spelling selection only) a call taken only by a
-//   widening finds no definition and the program is refused before a cell runs; here every
-//   cell passes.  Not assert, not leak: a program the control cannot compile.
-//   ARMED: no instrument — a plain run on either backend reads it.
-//   WITNESS: on the control `near(Slime {…}, IceWall {…})` reports *no definition of `near`
-//   takes (Slime, IceWall) — declared: near(Fireball, IceWall), near(Entity, IceWall)*; here it
-//   answers `any-wall 4`.
-//   HOLDS: the exact cells (`near(Fireball, IceWall)`, `tag(f)` on a Fireball) answer the same
-//   on both trees; the leak channel is `none` on both and does not move.
+// position, is the fallback (`Disp-Fallback`).  A value held at the enum reaches the
+// definition its RUNTIME variant picks (`Disp-Dynamic`, step 13) — the last cell.
+// @falsified-at: 51395d496 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-variant-is-more-specific-than-its-enum.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: assert — on the control (static selection only) `at(f, e)` with a Fireball held
+//   at `Entity` answers `any-any` where the file says `fire-any 8`; here every cell passes.
+//   ARMED: no instrument.
+//   WITNESS: `at(f, e)`: `any-any` there, `fire-any 8` here.  (Re-measured at step 13; the
+//   earlier receipt, at 41ce4eb62, pinned the static cells, which still hold on both trees.)
+//   HOLDS: the near-miss, the matrix with a fallback and the variant/enum/`τ?` cells answer
+//   the same on both trees; the leak channel is `none` on both.
 //
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
 
@@ -53,11 +51,18 @@ fn test_matrix_with_fallback() {
   assert(hit(Slime { n: 1 }, Crate { n: 2 }) == "any-any", "(Slime, Crate) reaches the fallback: got {hit(Slime { n: 1 }, Crate { n: 2 })}");
 }
 
-fn test_held_at_the_enum_reaches_the_enum_level() {
+// a tie-free set for the enum-held cells: `hit` above carries the design's ambiguous pair,
+// which a dynamic site over the whole enum must refuse (see the refusal guards)
+fn at(f: Fireball, d: Entity) -> text { "fire-any {f.n}" }
+fn at(a: Entity, b: Entity) -> text { "any-any" }
+
+fn test_held_at_the_enum_dispatches_at_runtime() {
+  // `Disp-Dynamic` (step 13): what a value held at the enum reaches is decided by its
+  // runtime variant — until then this cell read the enum-level definition, as it then said.
   e: Entity = Crate { n: 9 };
   f: Entity = Fireball { n: 8 };
-  assert(hit(e, e) == "any-any", "two values held at Entity: got {hit(e, e)}");
-  assert(hit(f, e) == "any-any", "a Fireball held at Entity is an Entity here (step 13 is the runtime cell): got {hit(f, e)}");
+  assert(at(e, e) == "any-any", "two Crates held at Entity: got {at(e, e)}");
+  assert(at(f, e) == "fire-any 8", "a Fireball held at Entity reaches the Fireball definition: got {at(f, e)}");
 }
 
 fn test_variant_enum_and_nullable() {
@@ -74,6 +79,6 @@ fn test_variant_enum_and_nullable() {
 fn main() {
   test_near_miss_picks_the_concrete();
   test_matrix_with_fallback();
-  test_held_at_the_enum_reaches_the_enum_level();
+  test_held_at_the_enum_dispatches_at_runtime();
   test_variant_enum_and_nullable();
 }

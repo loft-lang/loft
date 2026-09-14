@@ -891,6 +891,9 @@ pub struct Parser {
     /// so those need no push.)  Consolidating the former four `*_hint` fields is
     /// [formal/types.md D1](../../doc/claude/formal/types.md) — one judgment, not four side-channels.
     pub(crate) expected: Type,
+    /// Set by `dynamic_dispatcher` when it refused a leaf, so the call site returns rather
+    /// than falling to the ladder and reporting the same site a second way.
+    pub(crate) reported_dynamic_refusal: bool,
     /// Set by `iter_op` when `#fields` is encountered. Holds the struct `def_nr`.
     /// Checked by `parse_for` to take the unrolling path. Reset after use.
     pub(crate) fields_of: u32,
@@ -1484,6 +1487,7 @@ impl Parser {
             fn_ref_read_attr: None,
             lambda_counter: 0,
             expected: Type::Unknown(0),
+            reported_dynamic_refusal: false,
             fields_of: u32::MAX,
             capture_context: Vec::new(),
             capture_owner: std::collections::HashMap::new(),
@@ -2862,8 +2866,19 @@ impl Parser {
             // every pass-1 def number is untouched and the numbering contract H5 protects
             // holds.
             let lazy_tuple = matches!(dt, DefType::Struct) && name.starts_with("__tuple<");
+            // @PLN162 — the fifth legal append: a synthesised DYNAMIC DISPATCHER
+            // (`parser::dispatch::dynamic_dispatcher`).  Pass-2-only by design for the
+            // reason an instantiation is: the overload set it enumerates is complete only
+            // after pass 1, so pass 1 keeps the static selection and never emits it.  The
+            // same append shape too — name-keyed, idempotent, at the end.
+            let lazy_dispatcher = matches!(dt, DefType::Function)
+                && self.data.def(d as u32).synthetic() == Some("dynamic_dispatcher");
             assert!(
-                lazy_wrapper || lazy_instantiation || lazy_bound_stub || lazy_tuple,
+                lazy_wrapper
+                    || lazy_instantiation
+                    || lazy_bound_stub
+                    || lazy_tuple
+                    || lazy_dispatcher,
                 "H5: pass-2-only definition `{name}` (#{d}, {dt:?}) is not a lazy vector \
                  wrapper or generic instantiation — a real cross-pass divergence \
                  (pass1={}, pass2={})",
@@ -5934,15 +5949,33 @@ impl Parser {
             // the unknown-function site below names the set when that finds nothing either.
             let routed = self.data.routed_types(types);
             let d = match self.select_overload(source, name, &routed) {
-                crate::parser::dispatch::Selection::One(d) => d,
+                crate::parser::dispatch::Selection::One(d) => {
+                    // `Disp-Dynamic`: a position held at the enum where the set decides by
+                    // variant calls the synthesised dispatcher instead.
+                    self.dynamic_dispatcher(source, name, &routed).unwrap_or(d)
+                }
                 sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
                     if !self.first_pass {
                         self.report_selection(name, &routed, &sel, Some(name_pos));
                     }
                     return Type::Unknown(0);
                 }
-                crate::parser::dispatch::Selection::NoneApplicable
-                | crate::parser::dispatch::Selection::NotDecidable => {
+                crate::parser::dispatch::Selection::NoneApplicable => {
+                    // `Disp-Exhaustive` over the closed enum: no definition takes the static
+                    // types, but the set may cover every variant tuple of the enum-held
+                    // positions — then the dispatcher is total and the call is covered; a
+                    // tuple it does not cover is refused naming that tuple, and the ladder
+                    // answers for a name that is no dynamic site at all.
+                    match self.dynamic_dispatcher(source, name, &routed) {
+                        Some(dd) => dd,
+                        None if !self.first_pass && self.reported_dynamic_refusal => {
+                            self.reported_dynamic_refusal = false;
+                            return Type::Unknown(0);
+                        }
+                        None => self.data.select_fn(source, name, types),
+                    }
+                }
+                crate::parser::dispatch::Selection::NotDecidable => {
                     self.data.select_fn(source, name, types)
                 }
             };

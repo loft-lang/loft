@@ -59,20 +59,15 @@ fn id_of(e: Entity) -> integer {
   }
 }
 
-fn damage(p: Entity) -> integer {
-  match p {
-    Fireball => 3,
-    IceBolt => 2,
-    Arrow => 1,
-    _ => 0,
-  }
-}
+// the design's own `damage` overloads — one per projectile, selected by the variant
+fn damage(f: Fireball) -> integer { 3 + f.id * 0 }
+fn damage(b: IceBolt) -> integer { 2 + b.id * 0 }
+fn damage(a: Arrow) -> integer { 1 + a.id * 0 }
 
-// The function matcher: one definition per pair that does something, the two fallbacks the
-// design names — any entity versus the player (the design's `Projectile` bound is the ENUM
-// here), and the total one — and `damage` still a `match`, because inside `hit(p: Entity, …)`
-// the projectile is held at `Entity` and only the runtime cell (step 13) could pick
-// `damage(Fireball)` there.
+// The function matcher: one definition per pair that does something, the three projectile-
+// versus-player definitions the design lists (its `Projectile` BOUND has no parameter spelling
+// in loft yet — an enum-level `hit(p: Entity, t: Player, …)` is wider, and over every pair a
+// Slime hitting the player would count), and the total fallback.
 fn hit(f: Fireball, w: IceWall, world: World) {
   w.status.hp -= 3;
   world.spawned += [Steam { id: 8, pos: Vec2 { x: f.pos.x, y: f.pos.y } }];
@@ -85,7 +80,9 @@ fn hit(a: Arrow, w: IceWall, world: World) { world.removed += [a.id]; }         
 fn hit(f: Fireball, s: Slime, world: World) { s.status.hp -= 6; world.removed += [f.id]; }   // fire weakness
 fn hit(b: IceBolt, s: Slime, world: World) { s.status.frozen = true; world.removed += [b.id]; }
 fn hit(f: Fireball, b: IceBolt, world: World) { world.removed += [f.id]; world.removed += [b.id]; }  // cancel mid-air
-fn hit(p: Entity, t: Player, world: World) { t.status.hp -= damage(p); world.removed += [id_of(p)]; }  // ANY entity vs player
+fn hit(f: Fireball, t: Player, world: World) { t.status.hp -= damage(f); world.removed += [f.id]; }
+fn hit(b: IceBolt, t: Player, world: World) { t.status.hp -= damage(b); world.removed += [b.id]; }
+fn hit(a: Arrow, t: Player, world: World) { t.status.hp -= damage(a); world.removed += [a.id]; }
 fn hit(a: Entity, b: Entity, world: World) { }                                          // nothing else interacts
 
 // Fresh entities for every row, held at their VARIANT types — the static rows: a constructor

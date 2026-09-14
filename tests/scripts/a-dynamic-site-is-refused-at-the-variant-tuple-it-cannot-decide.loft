@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `Disp-Dynamic` over a CLOSED enum (@PLN162 step 13): every variant tuple of a dynamic site is
+// enumerated at compile time, so a tuple no definition takes (`Disp-Exhaustive`) or two take
+// without ranking (`Disp-Ambiguous`) is refused there, worded from the call the author wrote
+// down to the tuple — the first one in variant order — that the author never spelled.  The second cell is DESIGN.md's ambiguity program met at runtime: held at
+// the enum, `(Fireball, IceWall)` is one of the pairs the site would have to decide.
+// @falsified-at: 51395d496 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-dynamic-site-is-refused-at-the-variant-tuple-it-cannot-decide.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — on the control neither line is met: `hit(a, b)` is refused
+//   there too but at the static types (*no definition of `hit` takes (Entity, Entity)*), and
+//   `tie(a, b)` is not refused at all — it silently takes the total fallback, the design's
+//   ambiguous pair never enumerated.  Here both are refused naming the pair.
+//   ARMED: no instrument — the refusals are parse-time on either backend.
+//   WITNESS: on the control `tie(a, b)` compiles and would answer `any-any`; here it is
+//   refused at `(Fireball, IceWall)` naming the two definitions that take it.
+//   HOLDS: the program is refused on both trees; the leak channel is `none` on both.
+// @EXPECT_ERROR: `hit(Entity, Entity)` has no definition for the pair (Fireball, Fireball) — declared: hit(Fireball, IceWall), hit(Crate, IceWall)
+// @EXPECT_ERROR: `tie(Entity, Entity)` is ambiguous at (Fireball, IceWall) — that pair is taken by tie(Fireball, Entity) and tie(Entity, IceWall)
+
+enum Entity {
+  Fireball { n: integer },
+  IceWall { n: integer },
+  Crate { n: integer },
+}
+
+fn hit(f: Fireball, w: IceWall) -> text { "fire-wall {f.n}{w.n}" }
+fn hit(c: Crate, w: IceWall) -> text { "crate-wall {c.n}{w.n}" }
+
+fn tie(f: Fireball, d: Entity) -> text { "fire-any {f.n}{d.n}" }
+fn tie(p: Entity, w: IceWall) -> text { "any-wall {p.n}{w.n}" }
+fn tie(a: Entity, b: Entity) -> text { "any-any {a.n}{b.n}" }
+
+fn main() {
+  a: Entity = Fireball { n: 1 };
+  b: Entity = IceWall { n: 2 };
+  hit(a, b);
+  tie(a, b);
+}

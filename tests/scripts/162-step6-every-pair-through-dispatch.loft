@@ -1,0 +1,153 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN162 phase 6 — the acceptance program's RUNTIME rows: the design's physics loop, every
+// ordered pair of a `vector<Entity>` through the one `hit` overload set, both arguments held at
+// the enum, so `Disp-Dynamic` decides each call by the pair's runtime variants and the world
+// ends exactly where step 0's hand-written `match` left it — the same end state, the same
+// removals in the same visiting order (`Disp-Match-Equiv`, the runtime half).  The synthesised
+// dispatcher is the canonical `match` built by the compiler: one leaf per variant pair, each
+// calling what `Disp-Select` picks for that pair, the total fallback for the rest.
+// @falsified-at: 51395d496 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/162-step6-every-pair-through-dispatch.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: assert — on the control (static selection only) every pair reaches the total
+//   fallback, nothing in the world changes, and the first assertion (player hp 4) fails; here
+//   the world ends where step 0's `match` left it.  Not leak.
+//   ARMED: no instrument — a plain run on either backend reads it.
+//   WITNESS: on the control the player's hp reads 10 where the file says 4.
+//   HOLDS: the leak channel is `none` on both trees and does not move.
+//
+// Cross-backend; `main` runs the scenario so the leak gate reads the file.
+
+struct Vec2 { x: integer, y: integer }
+
+// The mutable state of an entity.  A record, because a `match` binding of a record is a view
+// of the matched value where a binding of a bare scalar is a copy.
+struct Status {
+  hp: integer = 0,
+  frozen: boolean = false,
+  burning: boolean = false,
+  stuck: boolean = false,
+}
+
+enum Entity {
+  Player   { id: integer, status: Status, pos: Vec2 },
+  Slime    { id: integer, status: Status, pos: Vec2 },
+  IceWall  { id: integer, status: Status, pos: Vec2 },
+  Crate    { id: integer, status: Status, pos: Vec2 },
+  Fireball { id: integer, pos: Vec2, vel: Vec2 },
+  IceBolt  { id: integer, pos: Vec2, vel: Vec2 },
+  Arrow    { id: integer, status: Status, pos: Vec2, vel: Vec2 },
+  Steam    { id: integer, pos: Vec2 },
+}
+
+struct World {
+  removed: vector<integer>,
+  spawned: vector<Entity>,
+}
+
+fn id_of(e: Entity) -> integer {
+  match e {
+    Player { id } => id,
+    Slime { id } => id,
+    IceWall { id } => id,
+    Crate { id } => id,
+    Fireball { id } => id,
+    IceBolt { id } => id,
+    Arrow { id } => id,
+    Steam { id } => id,
+  }
+}
+
+// the design's own `damage` overloads — one per projectile, selected by the variant
+fn damage(f: Fireball) -> integer { 3 + f.id * 0 }
+fn damage(b: IceBolt) -> integer { 2 + b.id * 0 }
+fn damage(a: Arrow) -> integer { 1 + a.id * 0 }
+
+// The function matcher: one definition per pair that does something, the three projectile-
+// versus-player definitions the design lists (its `Projectile` BOUND has no parameter spelling
+// in loft yet — an enum-level `hit(p: Entity, t: Player, …)` is wider, and over every pair a
+// Slime hitting the player would count), and the total fallback.
+fn hit(f: Fireball, w: IceWall, world: World) {
+  w.status.hp -= 3;
+  world.spawned += [Steam { id: 8, pos: Vec2 { x: f.pos.x, y: f.pos.y } }];
+  world.removed += [f.id];
+}
+fn hit(b: IceBolt, w: IceWall, world: World) { w.status.hp += 2; }                    // ice reinforces ice
+fn hit(f: Fireball, c: Crate, world: World) { c.status.burning = true; world.removed += [f.id]; }
+fn hit(a: Arrow, c: Crate, world: World) { a.status.stuck = true; }                   // embeds, retrievable
+fn hit(a: Arrow, w: IceWall, world: World) { world.removed += [a.id]; }               // shatters
+fn hit(f: Fireball, s: Slime, world: World) { s.status.hp -= 6; world.removed += [f.id]; }   // fire weakness
+fn hit(b: IceBolt, s: Slime, world: World) { s.status.frozen = true; world.removed += [b.id]; }
+fn hit(f: Fireball, b: IceBolt, world: World) { world.removed += [f.id]; world.removed += [b.id]; }  // cancel mid-air
+fn hit(f: Fireball, t: Player, world: World) { t.status.hp -= damage(f); world.removed += [f.id]; }
+fn hit(b: IceBolt, t: Player, world: World) { t.status.hp -= damage(b); world.removed += [b.id]; }
+fn hit(a: Arrow, t: Player, world: World) { t.status.hp -= damage(a); world.removed += [a.id]; }
+fn hit(a: Entity, b: Entity, world: World) { }                                          // nothing else interacts
+
+// Fresh entities for every row, held at their VARIANT types — the static rows: a constructor
+// returning `Entity` would hold every argument at the enum and every row would reach the
+// fallback, which is the runtime cell's shape (step 13), not this file's.
+fn player() -> Player { Player { id: 1, status: Status { hp: 10 }, pos: Vec2 { x: 0, y: 0 } } }
+fn slime() -> Slime { Slime { id: 2, status: Status { hp: 10 }, pos: Vec2 { x: 1, y: 0 } } }
+fn ice_wall() -> IceWall { IceWall { id: 3, status: Status { hp: 10 }, pos: Vec2 { x: 2, y: 0 } } }
+fn crate_() -> Crate { Crate { id: 4, status: Status { hp: 10 }, pos: Vec2 { x: 3, y: 0 } } }
+fn fireball() -> Fireball { Fireball { id: 5, pos: Vec2 { x: 7, y: 9 }, vel: Vec2 { x: 1, y: 0 } } }
+fn ice_bolt() -> IceBolt { IceBolt { id: 6, pos: Vec2 { x: 8, y: 9 }, vel: Vec2 { x: -1, y: 0 } } }
+fn arrow() -> Arrow { Arrow { id: 7, status: Status {}, pos: Vec2 { x: 9, y: 9 }, vel: Vec2 { x: 0, y: 1 } } }
+fn world() -> World { World { removed: [], spawned: [] } }
+
+fn hp_of(e: Entity) -> integer {
+  match e {
+    Player { status } => status.hp,
+    Slime { status } => status.hp,
+    IceWall { status } => status.hp,
+    Crate { status } => status.hp,
+    _ => -1,
+  }
+}
+
+fn frozen_of(e: Entity) -> boolean { match e { Slime { status } => status.frozen, _ => false } }
+fn burning_of(e: Entity) -> boolean { match e { Crate { status } => status.burning, _ => false } }
+fn stuck_of(e: Entity) -> boolean { match e { Arrow { status } => status.stuck, _ => false } }
+
+// Which ids the world removed, as one text — so a row asserts identity, not a count.
+fn removed_ids(w: World) -> text {
+  out = "";
+  for id in w.removed { out += "{id},"; }
+  out
+}
+
+fn steam_at(w: World) -> text {
+  if len(w.spawned) != 1 { return "none"; }
+  match w.spawned[0] {
+    Steam { pos } => "steam@{pos.x},{pos.y}",
+    _ => "other",
+  }
+}
+
+// The physics loop the design keeps unchanged: every ordered pair of a heterogeneous
+// collection through the one `hit`, and the whole world's state read back at the end.
+fn scenario_every_pair() {
+  es: vector<Entity> = [player(), slime(), ice_wall(), crate_(), fireball(), ice_bolt(), arrow()];
+  w = world();
+  for a in es {
+    for b in es if a#index != b#index {
+      hit(a, b, w);
+    }
+  }
+  // In visiting order the fireball meets the player, slime, wall, crate and bolt; the ice bolt
+  // the player, slime and wall; the arrow the player, wall and crate — every row of the table
+  // exactly once, plus the pairs no arm names.
+  assert(hp_of(es[0]) == 4, "scenario player hp 10-3-2-1: got {hp_of(es[0])}");
+  assert(hp_of(es[1]) == 4, "scenario slime hp 10-6: got {hp_of(es[1])}");
+  assert(frozen_of(es[1]), "scenario slime frozen: got {frozen_of(es[1])}");
+  assert(hp_of(es[2]) == 9, "scenario wall hp 10-3+2: got {hp_of(es[2])}");
+  assert(burning_of(es[3]), "scenario crate burning: got {burning_of(es[3])}");
+  assert(stuck_of(es[6]), "scenario arrow stuck: got {stuck_of(es[6])}");
+  assert(steam_at(w) == "steam@7,9", "scenario one steam: got {steam_at(w)}");
+  assert(removed_ids(w) == "5,5,5,5,5,6,6,6,7,7,", "scenario removals in visiting order: got {removed_ids(w)}");
+}
+
+fn main() {
+  scenario_every_pair();
+}

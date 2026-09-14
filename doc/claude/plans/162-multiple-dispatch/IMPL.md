@@ -499,12 +499,59 @@ body.  `tests/introspect_dispatch.rs` pins both lanes.  The plan's "artifact siz
 cell is subsumed: the emitted-function list is the property's direct witness, where a byte
 count would also move with anything else in the file.
 
-### Step 13 — `Disp-Dynamic`  ·  M
+### Step 13 — `Disp-Dynamic`  ·  M  ·  DONE 2026-09-14
 
 Runtime selection for heterogeneous sites.  Measured today: with `f: Entity = Fire{…}`,
 `f.hit()` selects the `Entity` definition — dispatch is on the static type — so this is
 genuinely new machinery.  `Disp-Exhaustive` makes it a lookup with a guaranteed answer rather
 than a search.
+
+**Done — and the machinery was not new after all, only one position deep.**  @F20's
+synthesised enum dispatcher already IS `Disp-Match-Equiv`'s canonical `match` built by the
+compiler for a `self` set: a match on the receiver's discriminant whose arms call the name
+with the variant's type in the argument position, so each arm's callee is what selection
+picks for that static type.  `parser::dispatch::dynamic_dispatcher` is that shape over ANY
+position: for a call whose routed types hold an enum at a position the set decides by variant,
+it synthesises — once per (name, spelling), on pass 2 only, because the set is complete only
+then — an ordinary function over the routed types whose body tests the discriminant at each
+dynamic position and, for every variant tuple, calls the definition `Disp-Select` picks for
+those types.  Both backends compile it as any function; the runtime answer equals the static
+one for the runtime types, deterministically; a tuple no definition takes, or two take without
+ranking, is refused at compile time naming the tuple.  A set that covers every variant tuple
+without an enum-level definition is admitted as covered — the closed enum's version of
+`Disp-Exhaustive`, and D-disp-1's closure for every set that owns its dispatch.
+
+Three things the tree forced, all measured: an enum VALUE has two spellings — `Enum(e, true,
+…)` for a local, `Reference(e, …)` for an element of a `vector<E>` — and a position test keyed
+on one was blind to the loop over a collection, the design's very shape; H5's two-pass
+contract refuses a pass-2-only definition unless it is one of the lazy kinds, and the
+dispatcher is a fifth of the same shape (name-keyed, idempotent, appended), admitted by its
+`synthetic` mark; and the dispatcher is built as its own function inside a call site, so the
+caller's parsing context is put aside and restored around it.
+
+**Measured:** one position, two positions over the elements of a `vector<Entity>`, a mixed
+static-plus-dynamic site with a struct parameter, the method spelling — on both backends;
+and **phase 6 is green**: `tests/scripts/162-step6-every-pair-through-dispatch.loft` runs the
+design's physics loop, every ordered pair of a `vector<Entity>` through the `hit` set, and the
+world ends exactly where step 0's `match` left it, removals in the same visiting order.  Two
+interim guards flipped as they said they would (the enum-held cells that read the enum-level
+definition now read the runtime variant's), and the corpus differs from the pre-step binary
+only at files that hold a dynamic site.
+
+**A transcription flaw the runtime rows exposed:** the design's *any PROJECTILE versus
+player* is a BOUND, and the enum-level `hit(p: Entity, t: Player, …)` the static rows carried
+is wider — over every pair a Slime hitting the player counted.  Loft has no bound at a
+parameter today (README Q1; the generics ranking is deferred, not declined), so the acceptance
+program spells the three projectile definitions the design itself lists, and `damage` becomes
+the design's own three overloads.  Step 0's `match` had exactly those three arms.
+
+**Left open, narrowed:** D-disp-1 for `self` sets over variants, in two facets — the `self`-only
+set, where @F20's warning and empty value stand pending the owner's compatibility decision, and
+the `self` set WITH an enum-level member, which has no bare dispatcher (its keys never collide),
+so @F20 yields and an enum-held receiver reaches the enum-level definition rather than its
+runtime variant's; both pinned as measured.  Closing them means treating `t_<V>_name` over the
+variants of one enum and `t_<E>_name` as one set.  The `Entity?` position (a nullable enum)
+stays static — its runtime variant is the next cell.
 
 ### Step 14 — `Disp-World`, then `Disp-Match-Equiv` in the oracle  ·  M + S
 

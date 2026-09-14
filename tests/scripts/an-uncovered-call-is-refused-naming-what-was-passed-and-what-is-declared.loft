@@ -4,23 +4,23 @@
 // takes its STATIC argument types; an uncovered call is refused at compile time, naming what
 // was passed and what is declared, so the cure — add the definition, or fix the argument — is
 // one read away.  Three uncovered shapes: a variant pair no definition names; two values held
-// at the ENUM where no enum-level definition exists (the soundness clause: every runtime
-// variant is a subtype of the static type, so covering the static type covers every run — and
-// nothing covers `(Entity, Entity)` here); and a scalar set asked for a type it lacks.  The
-// twin file adds the total case and the same calls compile.
-// @falsified-at: 0af9e3cfd — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+// at the ENUM where no enum-level definition exists — since step 13 the closed enum is
+// enumerated and the refusal names the first pair no definition takes, the site being covered
+// only when every pair is; and a scalar set asked for a type it lacks.  The twin file adds the
+// total case and the same calls compile.
+// @falsified-at: 51395d496 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
 // @falsified-by: tests/falsified/an-uncovered-call-is-refused-naming-what-was-passed-and-what-is-declared.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
-//   CHANNEL: expectations — on the control the two `hit` lines are unmet: @F20 had hung a
-//   synthesised dispatcher on the free set, so the first call read *Unknown function hit — did
-//   you mean the method `x.hit(…)`* and the second *expected IceWall, got Entity on argument 2*;
-//   here both name what was passed and what is declared.  Not leak and not assert.
-//   ARMED: no instrument — the refusals are parse-time on either backend.
-//   WITNESS: the control's first message offers a method spelling for free functions that have
-//   none; this tree's names the declared definitions.
-//   HOLDS: the `show(boolean)` line is met on both trees and does not move; the program is
-//   refused on both; the leak channel is `none` on both.
+//   CHANNEL: expectations — on the control the enum-held line is unmet: the call is refused
+//   there at the static types (*no definition of `hit` takes (Entity, Entity)*) where here the
+//   closed enum is enumerated and the refusal names the first pair no definition takes.
+//   (Re-measured at step 13; the earlier receipt, at 0af9e3cfd, pinned the pre-enumeration
+//   wording.)  Not leak and not assert.
+//   ARMED: no instrument.
+//   WITNESS: the control's message names `(Entity, Entity)`; this tree's names `(Fireball,
+//   Fireball)`.
+//   HOLDS: the other two lines are met on both trees; the program is refused on both.
 // @EXPECT_ERROR: no definition of `hit` takes (Crate, IceWall) — declared: hit(Fireball, IceWall), hit(IceBolt, IceWall)
-// @EXPECT_ERROR: no definition of `hit` takes (Entity, Entity) — declared: hit(Fireball, IceWall), hit(IceBolt, IceWall)
+// @EXPECT_ERROR: `hit(Entity, Entity)` has no definition for the pair (Fireball, Fireball) — declared: hit(Fireball, IceWall), hit(IceBolt, IceWall)
 // @EXPECT_ERROR: no definition of `show` takes (boolean) — declared: show(integer), show(text)
 
 enum Entity {

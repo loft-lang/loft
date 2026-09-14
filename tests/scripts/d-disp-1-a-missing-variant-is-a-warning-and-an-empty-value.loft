@@ -4,8 +4,11 @@
 // says no runtime "no method" path exists, and @F20's synthesised enum dispatcher has one.
 // With `tag(self: Fireball)` and `tag(self: IceWall)` declared and `Crate` left out, `c.tag()`
 // on a `Crate` held at `Entity` is a compile-time WARNING and at runtime an EMPTY value — not
-// null, not a refusal — on both backends.  Step 13's rule closes it, and this file is what
-// flips then: a closure that leaves it green has changed nothing.
+// null, not a refusal — on both backends.  Its second facet, measured at step 13: a `self` set
+// WITH an enum-level member (`kind(self: Fireball)` beside `kind(self: Entity)`) has no bare
+// dispatcher, so @F20 yields and an enum-held receiver reaches the ENUM-level definition, not
+// its runtime variant's — `Disp-Dynamic` does not reach `self` sets yet.  The closure flips
+// this file; a closure that leaves it green has changed nothing.
 // @falsified-at: none — pins a deviation's measured behaviour; its closure is what falsifies it
 // @EXPECT_WARNING: no implementation of 'tag' for variant 'Crate'
 
@@ -18,7 +21,13 @@ enum Entity {
 fn tag(self: Fireball) -> text { "fire {self.n}" }
 fn tag(self: IceWall) -> text { "wall {self.n}" }
 
+fn kind(self: Fireball) -> text { "self-fire {self.n}" }
+fn kind(self: Entity) -> text { "self-other {self.n}" }
+
 fn main() {
+  f: Entity = Fireball { n: 5 };
+  assert(f.kind() == "self-other 5", "D-disp-1 as measured: an enum-held receiver on a self set with an enum-level member reaches the enum-level definition, got {f.kind()}");
+  assert(kind(f) == "self-other 5", "D-disp-1 as measured: and so does the bare spelling, got {kind(f)}");
   c: Entity = Crate { n: 3 };
   r = c.tag();
   assert(r == "", "D-disp-1 as measured: the missing variant answers an empty text, got [{r}]");

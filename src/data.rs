@@ -7162,7 +7162,10 @@ impl Data {
     /// a definition on today's keys.  Two `vector<τ>` spell alike — the element type is not
     /// in a key today either.
     #[must_use]
-    fn full_spelling<'a>(&self, params: impl Iterator<Item = &'a Type>) -> Option<String> {
+    pub(crate) fn full_spelling<'a>(
+        &self,
+        params: impl Iterator<Item = &'a Type>,
+    ) -> Option<String> {
         let mut parts = Vec::new();
         for tp in params {
             parts.push(self.type_spelling(tp)?);

@@ -2,20 +2,19 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // `Disp-Exhaustive`'s other half (@PLN162 step 10): the same overload set as the refusal
 // twin, plus the total case — a definition at the enum in every position — and the very
-// calls the twin refuses compile and reach it: a variant pair no specific definition names,
-// and two values held at the enum.  The specific pairs still reach their own definitions,
+// calls the twin refuses compile: a variant pair no specific definition names reaches it, and
+// two values held at the enum reach what their runtime variants pick (`Disp-Dynamic`).  The specific pairs still reach their own definitions,
 // which is `Disp-Fallback`: the most general TYPE is the fallback, not an untyped parameter.
-// @falsified-at: 41ce4eb62 — interpret exit 1 -> 0, native exit 1 -> 0
-// @falsified-by: tests/falsified/a-total-case-covers-every-pair.patch — interpret exit 1 -> 0, native exit 1 -> 0
-//   CHANNEL: exit — on the control (exact-spelling selection only) `hit(Crate {…}, IceWall
-//   {…})` finds no definition, the total case taking it only through a widening, and the
-//   program is refused; here every cell passes.  Not assert, not leak.
-//   ARMED: no instrument — a plain run on either backend reads it.
-//   WITNESS: on the control the diagnostic is *no definition of `hit` takes (Crate, IceWall)
-//   — declared: hit(Fireball, IceWall), hit(IceBolt, IceWall), hit(Entity, Entity)*; here the
-//   call answers `any-any 12`.
-//   HOLDS: the specific pairs (`(Fireball, IceWall)`, `(IceBolt, IceWall)`) answer the same on
-//   both trees; the leak channel is `none` on both and does not move.
+// @falsified-at: 51395d496 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-total-case-covers-every-pair.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: assert — on the control (static selection only) the enum-held cell answers the
+//   total case, `any-any 34`, where the file says `fire-wall 34`; here every cell passes.
+//   ARMED: no instrument.
+//   WITNESS: `hit(a, b)` with a Fireball and an IceWall held at `Entity`: `any-any 34` there,
+//   `fire-wall 34` here.  (Re-measured at step 13; the earlier receipt, at 41ce4eb62, pinned
+//   the interim reading this cell then stated.)
+//   HOLDS: the unnamed-pair cell and the specific-pair cells answer the same on both trees;
+//   the leak channel is `none` on both.
 //
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
 
@@ -35,11 +34,16 @@ fn test_unnamed_pair_reaches_the_total_case() {
   assert(r == "any-any 12", "(Crate, IceWall): got {r}");
 }
 
-fn test_held_at_the_enum_reaches_the_total_case() {
+fn test_held_at_the_enum_dispatches_at_runtime() {
+  // `Disp-Dynamic` (step 13): a value held at the enum reaches the definition its RUNTIME
+  // variant picks — until then this cell read the total case, as its name then said.
   a: Entity = Fireball { n: 3 };
   b: Entity = IceWall { n: 4 };
   r = hit(a, b);
-  assert(r == "any-any 34", "(Entity, Entity): got {r}");
+  assert(r == "fire-wall 34", "(Entity, Entity) holding a Fireball and an IceWall: got {r}");
+  c: Entity = Crate { n: 5 };
+  s = hit(c, a);
+  assert(s == "any-any 53", "(Entity, Entity) holding a pair no definition names: got {s}");
 }
 
 fn test_specific_pairs_still_reach_their_own() {
@@ -49,6 +53,6 @@ fn test_specific_pairs_still_reach_their_own() {
 
 fn main() {
   test_unnamed_pair_reaches_the_total_case();
-  test_held_at_the_enum_reaches_the_total_case();
+  test_held_at_the_enum_dispatches_at_runtime();
   test_specific_pairs_still_reach_their_own();
 }

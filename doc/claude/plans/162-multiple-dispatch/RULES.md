@@ -99,8 +99,12 @@ name.  Three consequences worth stating:
   `Disp-Select` is the unique minimal one, a tie is `Disp-Ambiguous`, none is the ladder and
   then `Disp-Exhaustive`.  The `(F-Recv)` nullability routing runs before ranking.  What a
   value held STATICALLY at the enum reaches is the enum-level definition; its runtime
-  variant is step 13's question.  And @F20's synthesised enum dispatcher yields to an
-  author's enum-level definition of the name — `Disp-Fallback`'s most general type is the
+  variant is step 13's answer: `parser::dispatch::dynamic_dispatcher` synthesises, per
+  (name, spelling) and on pass 2, the canonical `match` over every enum-held position, each
+  leaf calling what `Disp-Select` picks for that variant tuple (`Disp-Dynamic`), a tuple no
+  definition takes or two take without ranking refused naming it, and a set covering every
+  tuple admitted without an enum-level definition.  And @F20's synthesised enum dispatcher
+  yields to an author's enum-level definition of the name — `Disp-Fallback`'s most general type is the
   author's to write — and to a FREE overload set over variants, which is no method and gets
   no `x.f(…)` spelling (step 10 found the synthesiser hanging a dispatcher on one and the
   uncovered call reading as *did you mean the method*).
@@ -279,8 +283,14 @@ above proposes (`dispatch-pairs-uncovered`) is not built.
 
 OPEN: **1**.
 
-- **D-disp-1 — OPEN 2026-09-14.**  `Disp-Exhaustive` says no runtime *"no method"* path
-  exists, and @F20's synthesised enum dispatcher has one: with `tag(self: Fireball)` and
+- **D-disp-1 — OPEN 2026-09-14, NARROWED the same day by step 13.**  For every set that
+  owns its dispatch (a free member, or an enum-level definition) the dynamic dispatcher
+  refuses a missing tuple at compile time; what remains is the `self` set over variants, in
+  two facets — the one below, and a `self` set WITH an enum-level member (`kind(self:
+  Fireball)` beside `kind(self: Entity)`), which has no bare dispatcher, so @F20 yields and an
+  enum-held receiver reaches the enum-level definition rather than its runtime variant's.
+  Both pinned as measured in one file.  `Disp-Exhaustive` says no runtime *"no method"* path exists, and @F20's synthesised
+  enum dispatcher has one: with `tag(self: Fireball)` and
   `tag(self: IceWall)` declared and `Crate` left out, `c.tag()` on a `Crate` held at `Entity`
   is a compile-time WARNING (*no implementation of 'tag' for variant 'Crate'*) and at runtime
   an EMPTY value — not null, not a refusal — on both backends, pinned AS MEASURED by

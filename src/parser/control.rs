@@ -18158,7 +18158,11 @@ impl Parser {
                 with_receiver.extend_from_slice(types.get(1..).unwrap_or(&[]));
                 let routed = self.data.routed_types(&with_receiver);
                 match self.select_overload(u16::MAX, name, &routed) {
-                    crate::parser::dispatch::Selection::One(d) => return d,
+                    crate::parser::dispatch::Selection::One(d) => {
+                        return self
+                            .dynamic_dispatcher(u16::MAX, name, &routed)
+                            .unwrap_or(d);
+                    }
                     sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
                         if !self.first_pass {
                             self.report_selection(name, &routed, &sel, None);
