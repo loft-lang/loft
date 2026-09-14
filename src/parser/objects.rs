@@ -122,7 +122,7 @@ impl Parser {
     /// bare `Shape` slot beside it was accepted. Whether the slot may be ABSENT says
     /// nothing about which variants it can hold.
     pub(crate) fn enum_context(&self, tp: &Type) -> bool {
-        match tp.base() {
+        match tp.peel_link() {
             Type::Enum(_, _, _) => true,
             Type::Reference(d_nr, _) => self.data.def_type(*d_nr) == DefType::Enum,
             _ => false,
@@ -888,18 +888,19 @@ impl Parser {
         // `Type::Reference(enum)` (typed decl / reassignment / field init / call
         // arg / return).  emit_variant_value picks the right discriminant (and
         // the mixed-enum allocation form) for that enum.
-        // Read through `base()`: whether the target may be ABSENT says nothing about
-        // which variants it can hold, so `v: vector<Color?> = [Green]` has to resolve
+        // Read through `peel_link()`: whether the target may be ABSENT, or is a `&` link to
+        // its source, says nothing about which variants it can hold, so `v: vector<Color?> =
+        // [Green]` and `c = &e; c = Green` have to resolve
         // `Green` exactly as the dense spelling beside it does.  Asked bare, a nullable
         // element type fell past both arms and the bare variant was reported as having no
         // type at all — the same peel `enum_context` already does to decide there IS an
         // enum context here (loft#1065 one site over, loft#1416).
-        } else if let Type::Enum(enr, _, _) = parent_tp.base()
+        } else if let Type::Enum(enr, _, _) = parent_tp.peel_link()
             && self.data.def(*enr).attr_names.contains_key(name)
         {
             let enr = *enr;
             t = self.emit_variant_value(enr, name, code);
-        } else if let Type::Reference(enr, _) = parent_tp.base()
+        } else if let Type::Reference(enr, _) = parent_tp.peel_link()
             && self.data.def_type(*enr) == DefType::Enum
             && self.data.def(*enr).attr_names.contains_key(name)
         {

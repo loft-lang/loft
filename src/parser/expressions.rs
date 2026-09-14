@@ -3393,16 +3393,10 @@ use a separate collection or add after the loop"
             // fell past every arm below and the `&` was silently a copy: `p = 7` left
             // `x: integer?` unchanged on both backends (`@FR-B-Ref-Reshape`: loft declines a
             // link it cannot honour, it never downgrades it to a copy).
-            let is_scalar = |t: &Type| {
-                matches!(
-                    t.base(),
-                    Type::Integer(..)
-                        | Type::Float
-                        | Type::Single
-                        | Type::Boolean
-                        | Type::Character
-                )
-            };
+            // The shared predicate, which counts a value enum: `(T-Ref-El)` names it a scalar
+            // tuple element, and its slot and store place are one byte read and written with
+            // the enum ops, so it links like any other scalar.
+            let is_scalar = crate::data::is_scalar;
             // L1 / #2 — a scalar stack LOCAL source (`b = &a` / `b: &T = a`).
             // L5 — a HEAP whole-value source (`p = &o`, `o: Reference`): a NON-OWNING
             // alias of the source's record.  A heap local COPIES on `p = o` (value type),
@@ -3464,6 +3458,16 @@ use a separate collection or add after the loop"
             }
             let heap_ref = if stack_src.is_none() && is_scalar(&s_type) {
                 match code.unspan() {
+                    // The bare element op IS the place.  An enum element arrives in this
+                    // spelling on the first pass, before its enum getter wraps it; without
+                    // this arm the first pass typed the local as the enum and the second as
+                    // its link.  It sits above the `OpGet*` arm, whose prefix test would
+                    // otherwise take `OpGetVector` itself.
+                    Value::Call(g, _)
+                        if matches!(self.data.def(*g).name(), "OpGetVector" | "OpVectorRef") =>
+                    {
+                        Some(code.unspan().clone())
+                    }
                     Value::Call(g, gargs) if self.data.def(*g).name().starts_with("OpGet") => {
                         if gargs.first().is_some_and(|a| {
                             matches!(a.unspan(), Value::Call(d, _)

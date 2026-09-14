@@ -4632,7 +4632,9 @@ impl State {
                 // codegen — the natural shape for a two-state out-parameter, next
                 // to an `&integer` that worked (loft#655).
                 Type::Boolean => stack.add_op("OpGetBoolean", self),
-                Type::Enum(_, false, _) => stack.add_op("OpGetByte", self),
+                // `OpGetEnum`, not `OpGetByte`: the byte op also takes a range `min`, and the
+                // one operand written below would leave the next code word read as it.
+                Type::Enum(_, false, _) => stack.add_op("OpGetEnum", self),
                 Type::Text(_) => stack.add_op("OpGetStackText", self),
                 // `@FR-B-Ref-Intro` — the READ twin of the `&fn(…)` write.  A fn-ref is 20
                 // bytes on the stack, so neither `OpGetStackRef` (12) nor `OpGetStackText`
@@ -5117,7 +5119,9 @@ impl State {
                 // storage ↔ two-state expression conversion, which `OpSetByte`
                 // would skip.
                 Type::Boolean => stack.add_op("OpSetBoolean", self),
-                Type::Enum(_, false, _) => stack.add_op("OpSetByte", self),
+                // `OpSetEnum` for the same reason as the read: `OpSetByte` takes a `min` operand
+                // this site does not write.
+                Type::Enum(_, false, _) => stack.add_op("OpSetEnum", self),
                 // A KEYED collection joins the store-backed kinds: its slot holds a DbRef
                 // exactly as a vector's does, so the write-back repoints it the same way.
                 // The list was Vector/Reference/Enum and a `&hash<T[k]>` fell into the

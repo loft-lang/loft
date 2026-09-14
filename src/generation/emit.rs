@@ -367,6 +367,8 @@ impl Output<'_> {
                             // handed to a `fn(…)` parameter — rustc E0308, `expected
                             // (u32, DbRef), found *mut (u32, DbRef)`.
                             | Type::Function(_, _, _)
+                            // A value enum link is a `*mut u8` and reads as the byte behind it.
+                            | Type::Enum(_, false, _)
                     )
                 {
                     // @PLN87 L1 — a local scalar `&`-link holds `*mut T` (raw); deref

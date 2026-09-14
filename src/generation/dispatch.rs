@@ -468,6 +468,10 @@ impl Output<'_> {
                     // matched, the bind emitted no right-hand side (`let mut var_pd: … =
                     // as …;`) and rustc reported that instead of the missing case.
                     | Type::Function(_, _, _)
+                    // A value enum is one storage byte, `u8` in the frame and in a store,
+                    // so its link is a `*mut u8` like any other scalar's.  Left out, the bind
+                    // emitted no right-hand side.
+                    | Type::Enum(_, false, _)
             )
         {
             let name = sanitize(variables.name(var));
