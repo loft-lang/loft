@@ -1020,6 +1020,11 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
      (`p_j1`/`p_j2`), and the binding ALIASED `a` on the path that took it, a `(B-Copy)` violation
      recorded as `binding.md` D-bind-33.  Such an arm is now written out as its call beside local
      arms, and the gate retires `p_j1` and `p_j2`.
+   - **The mechanism since (2026-09-14):** the first scan records each reassignment it writes out;
+     that reassignment is rewritten in the original code and the function is scanned again, so every
+     analysis before the scan reads the per-arm form (`binding.md` D-bind-34).  The fixes at the
+     write-out site above stay: a reassignment nested inside another's arm is reached only through
+     the first scan's own copy, is not recorded, and is still written out there.
    - **Still open.**  An arm that copies a PARAMETER (`x = if c { a } else { p }`) stops the
      DESTINATION with no flag, so on the path that took `a` its copy is never released — family 3's
      branch-not-taken residual, reached through the written-out form.

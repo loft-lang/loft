@@ -363,9 +363,21 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 0.**
 
-* **D-bind-34** *(opened 2026-09-14, OPEN)* — `(B-View)` and `(O-NoDiverge)`: a REASSIGNMENT from a
+* **D-bind-35** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Disturb)` did not hold for a view
+  bound inside ONE ARM of an `if` whose other arm assigns the same local: `x = mk(4); if k > 0 { x =
+  h.inner } else { x = mk(0) }; h = Hold{…}` left `x` reading the new container on both backends,
+  where the unbranched bind and the value join materialise.  The materialisation walk (`ViewWalk`)
+  walked the two arms one after the other, so the second arm's assignment ended the view the first
+  arm had bound — the same program with the arms swapped materialised.  The arms are now walked as
+  alternatives: each from the views open before the `if`, keeping what either leaves open or
+  disturbed, and a literal key only where both agree.  Found by D-bind-34's closure, which lowers the
+  value join to exactly that statement form.  The walk's imprecision in the other direction is
+  unchanged and deliberate: a view bound before the `if` and disturbed on one path only is
+  materialised on both, and the author is told.  Guard
+  `tests/scripts/a-projection-assigned-in-an-arm-views-until-its-container-is-reassigned.loft`.
+* **D-bind-34** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-View)` and `(O-NoDiverge)`: a REASSIGNMENT from a
   value join whose taken arm is a struct PROJECTION copies on `--interpret` and views on `--native`.
   `h = Hold{inner: mk(1), …}; x = mk(4); x = if k > 0 { h.inner } else { mk(0) }; x.a = 9` leaves
   `h.inner.a` at 1 on the interpreter and at 9 natively, while the unbranched `x = h.inner` and the
@@ -383,6 +395,13 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
   assignment was itself a view views on the interpreter too.  It is the third fact a pass before the
   scan reads off the join where the author's spelling has it (family 7's per-path flags and
   D-bind-33's call-arm owner were the other two, `heap.md` D-heap-7).
+  **Closed by carrying the scan's own decision.**  The first scan records, by the address of each
+  `Set`'s value node, the reassignments it writes out per arm; the caller rewrites exactly those in
+  the original code, strips the arm locals' deps the parser gave the binding, and scans again — so
+  every analysis before the scan, the owner witness among them, reads the per-arm form.  A structural
+  "is this a reassignment" was measured first and rejected: it disagreed with the scan at 52 of 899
+  corpus sites.  The lowered family-7 cells now emit exactly what their author-written twins emit,
+  and the value join views on both backends.  Closing it exposed D-bind-35.
 * **D-bind-33** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Copy)` did not hold for a
   REASSIGNMENT from a join whose other arm is an owning CALL.  `a = mk(1); x = mk(9); x = if c { a }
   else { mk(2) }; x.id = 77` changed `a` on the path that took it, and a later write to `a` showed
