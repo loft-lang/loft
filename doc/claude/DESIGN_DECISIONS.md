@@ -3797,8 +3797,12 @@ default.  It is not in @PLN157's scope and nothing is built for it; NATIVE.md §
 Optimisation tiers names it as the tier that does not exist yet, and C67 keeps every
 machine-dependent SCOPE or TYPE closed.  And it is heavier than a switch, which is the
 second half of the same day's ruling: *"I will never want to publish a binary without the
-added protection layer"* — a published artefact, a program's or a library's, always
-carries the checks, so the tier could only be a whole-build, from-source, LOCAL mode in
-which every library the game uses is recompiled at that level beside it, never a
-published one.  That is why the proofs come first: a check retired by a proof is retired
-inside the library's ordinary build and ships with it.
+added protection layer"* — a LIBRARY published to the registry always carries the
+checks.  The tier is therefore a RELEASE BUILD PASS FOR GAMES: after extended in-house
+testing under the checked build, the game is compiled once more from every source it
+uses — its own and its libraries', recompiled at that level inside the game's build,
+never taken as the registry's binaries — into the less safe artefact that ships to Steam
+or the browser.  The evidence that licenses it is the in-house testing's fault-free
+ledger; the registry's own artefacts never lose the layer.  That is also why the proofs
+come first: a check retired by a proof is retired inside the library's ordinary build
+and reaches every consumer, checks intact.
