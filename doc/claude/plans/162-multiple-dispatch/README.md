@@ -52,7 +52,7 @@ compile time to a direct call wherever the argument types are statically concret
 
 - **Effort:** H — six rules, a new selection pass, a lowering, three backends, two profiles.
 - **Design:** ~ (partial) — the rules are written; three open questions gate the first phase.
-- **Last touched:** 2026-09-14 (IMPL.md steps 1–2 done)
+- **Last touched:** 2026-09-14 (IMPL.md steps 1–3 done)
 
 ## Composition matrix — Stage A
 
@@ -289,6 +289,12 @@ The first four (2026-09-11) follow one principle — *refusal is the only revers
    ([RULES.md](RULES.md) says why that last one is the property that matters).  One thing
    this decision hands to step 7 of [IMPL.md](IMPL.md): how a defaulted parameter and the
    arity component of `Disp-Key` meet.
+
+**Decided in implementation, from the principle (not an owner decision — reversible):**
+IMPL.md step 3's hint circularity is closed by **`Disp-Hint`** in [RULES.md](RULES.md): a
+name with several definitions offers no parse hint, and an argument that needs one is refused
+naming the cure.  The permissive alternative (hint where every candidate agrees) is additive
+and can follow.
 
 The gain from (4) is the one worth restating: closedness is not a cost accepted reluctantly,
 it is what lets the compiler enumerate every reachable variant pair and report **which reach

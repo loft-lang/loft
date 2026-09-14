@@ -7794,6 +7794,28 @@ impl Data {
         Vec::new()
     }
 
+    /// The definition a BARE call `name(arg, …)` resolves to, given EVERY argument's type —
+    /// `Disp-Select`'s entry point (@PLN162).  Today the receiver is the FIRST argument, and a
+    /// `both`/`self`-dispatched function takes uniform-nullability parameters, so the call is
+    /// routed to the `τ?` overload when ANY argument is nullable: `max(5, a?)` reaches the same
+    /// overload as `max(a?, 5)`, and null propagates regardless of position (@PLN25 F1b(b)).
+    /// An empty list, or a `null` literal first, has no receiver and asks for the free
+    /// `n_<name>`.  [`Self::candidates`] over that receiver must then yield exactly one.
+    #[must_use]
+    pub fn select_fn(&self, source: u16, fn_name: &str, types: &[Type]) -> u32 {
+        let unknown = Type::Unknown(0);
+        let nullable_holder;
+        let dispatch_tp: &Type = if types.is_empty() || types[0] == Type::Null {
+            &unknown
+        } else if types.iter().any(|t| matches!(t, Type::Optional(_))) {
+            nullable_holder = Type::optional(types[0].base().clone());
+            &nullable_holder
+        } else {
+            &types[0]
+        };
+        self.find_fn(source, fn_name, dispatch_tp)
+    }
+
     /// The ONE definition `fn_name` resolves to for a receiver of type `tp`, or `u32::MAX`
     /// when [`Self::candidates`] yields none — or more than one, which nothing here can
     /// choose between (a bound holder carrying the name at two arities).

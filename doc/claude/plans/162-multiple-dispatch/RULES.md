@@ -189,6 +189,24 @@ reason is narrower than either argument: no more complexity on `fn` definitions,
 `match` kept as the home of every value-shaped decision.  A parameter DEFAULT is the one
 optionality a definition already has and keeps.
 
+**Disp-Hint** *(new — the hint circularity, decided at IMPL.md step 3, 2026-09-14).*
+Parsing an argument is TYPE-DIRECTED by the definition being called: a `|x|` lambda takes its
+parameter types from the parameter, a vector literal takes its element width from it, a named
+argument is matched against its name.  That hint is the ONE definition of the name.  **A name
+with several definitions offers no hint**: its arguments parse from their own spelling alone,
+and an argument that cannot be typed without one is refused at the call, naming the
+definitions considered and the cure — the typed lambda form (`fn(x: integer) { … }`), a
+literal carrying its width, the argument spelled positionally.
+
+Chosen over the alternative — hinting wherever every candidate AGREES on that parameter's
+type — by [the principle](#the-principle-the-rules-keep-landing-on): refusal is the only
+reversible direction.  Agreement-hinting can be added later and only ever admits programs;
+shipping it first fixes a meaning for programs the refusal would have kept open.  It is also
+the cheaper half: under `Disp-Key` a multi-definition name has no `n_<name>` key, and the hint
+sites (`parser/control.rs`, the two `hint_d_nr` lookups) consult nothing else, so the refusal
+falls out with no code and the message is the whole work.  A single-definition name — every
+program that compiles today — keeps its hint unchanged.
+
 ## Consequences worth stating
 
 - **No runtime "no method" path exists.**  `Disp-Exhaustive` at compile time plus

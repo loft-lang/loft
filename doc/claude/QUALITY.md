@@ -2554,7 +2554,16 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 792 | 450 | 5 | **337** |
+| 793 | 451 | 5 | **337** |
+
+(2026-09-14, @PLN162 step 3: `Data::select_fn` is a new function holding the `Type::Optional`
+routing `Parser::call` did inline, and it names the variant exactly as the moved code did, so
+it lands in the wrapper-aware column — 792 → 793 total, 450 → 451 aware; `find_fn` stopped
+discriminating when step 2 moved its ladder into `candidates`, which discriminates in its
+place, so those two cancel.  The opaque column and the ratchet do not move.  The step is a
+byte-identical refactor, so the moved test was kept literal rather than routed through
+`is_nullable_wrapper`, whose answer over the synthetic `__nullable<S>` is not proven to be the
+same question.)
 
 (2026-09-14, THE JOINED TREE: 792 · 450 · 5 · 337, re-measured rather than carried.  Neither
 branch's row was right — this side read `792 · 449 · 6 · 337` and @PLN157's `791 · 449 · 5 · 337`

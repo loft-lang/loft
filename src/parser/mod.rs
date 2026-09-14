@@ -5922,21 +5922,9 @@ impl Parser {
         let mut d_nr = if self.default && is_op(name) {
             self.data.def_nr(name)
         } else {
-            // @PLN25 F1b(b): a `both`/`self`-dispatched function takes uniform-nullability
-            // params, so dispatch on whether ANY argument is nullable — not just arg0. This
-            // routes `max(5, a?)` to the `τ?` overload the same as `max(a?, 5)`, so null
-            // propagates regardless of position. (arg0-only dispatch missed the arg1 case.)
-            let unknown = Type::Unknown(0);
-            let nullable_holder;
-            let dispatch_tp: &Type = if types.is_empty() || types[0] == Type::Null {
-                &unknown
-            } else if types.iter().any(|t| matches!(t, Type::Optional(_))) {
-                nullable_holder = Type::optional(types[0].base().clone());
-                &nullable_holder
-            } else {
-                &types[0]
-            };
-            let d = self.data.find_fn(source, name, dispatch_tp);
+            // The whole argument list goes to selection; today it reads the receiver off the
+            // first argument and the nullability off all of them (`Data::select_fn`).
+            let d = self.data.select_fn(source, name, types);
             // loft#788 — a bare CALL is ambiguous the same way a bare type is,
             // and worse: both import orders compile and RUN, answering
             // differently. The key is the mangled one, since that is what a

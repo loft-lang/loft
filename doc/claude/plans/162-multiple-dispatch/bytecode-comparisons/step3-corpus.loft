@@ -1,0 +1,81 @@
+// @PLN162 step 3 — one function per shape of the BARE call path's argument list, the list
+// `Parser::call` now hands whole to `Data::select_fn`: the nullability routing that picks the
+// `τ?` overload when ANY argument is nullable (@PLN25 F1b(b)), an empty list, a `null` literal
+// first, and the two arguments that need the definition's HINT to parse — a lambda and a
+// width-carrying vector literal.  `main` runs them all, so the file is also an end-to-end
+// check on both backends.
+
+struct P { x: integer, y: integer }
+
+// a `both` function with a `τ?` overload beside the dense one
+fn far(both: P, o: P) -> integer { both.x + o.x }
+fn far(both: P?, o: P?) -> integer { if both && o { 1000 + both.x? + o.x? } else { -1 } }
+
+fn zero() -> integer { 0 }
+
+fn shape(v: vector<u8>) -> integer { len(v) }
+
+fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }
+
+fn tagged(label: text, n: integer = 7) -> text { "{label}{n}" }
+
+fn test_dense_call() {
+  a = P { x: 1, y: 0 };
+  b = P { x: 2, y: 0 };
+  assert(far(a, b) == 3, "dense args take the dense overload: got {far(a, b)}");
+}
+
+fn test_nullable_in_position_0() {
+  a: P? = P { x: 1, y: 0 };
+  b = P { x: 2, y: 0 };
+  assert(far(a, b) == 1003, "τ? in position 0 routes to the τ? overload: got {far(a, b)}");
+}
+
+fn test_nullable_in_position_1() {
+  a = P { x: 1, y: 0 };
+  b: P? = P { x: 2, y: 0 };
+  assert(far(a, b) == 1003, "τ? in position 1 routes to the τ? overload too: got {far(a, b)}");
+}
+
+fn test_null_in_position_1() {
+  a = P { x: 1, y: 0 };
+  b: P? = null;
+  assert(far(a, b) == -1, "a null in position 1 reaches the τ? overload: got {far(a, b)}");
+}
+
+fn test_stdlib_both_overload() {
+  n: integer? = null;
+  m: integer? = 9;
+  assert(max(5, m) == 9, "stdlib max with τ? in position 1: got {max(5, m)}");
+  r = max(5, n);
+  assert(!r, "stdlib max with a null in position 1 propagates null: got {r}");
+}
+
+fn test_empty_argument_list() {
+  assert(zero() == 0, "no arguments: got {zero()}");
+}
+
+fn test_width_carrying_literal() {
+  assert(shape([1, 2, 3]) == 3, "the vector literal takes the parameter's element width: got {shape([1, 2, 3])}");
+}
+
+fn test_lambda_argument() {
+  assert(apply(|v| { v * 3 }, 4) == 12, "the lambda takes the parameter's fn type: got {apply(|v| { v * 3 }, 4)}");
+}
+
+fn test_defaulted_argument() {
+  assert(tagged("a") == "a7", "an omitted defaulted argument: got {tagged("a")}");
+  assert(tagged("b", 2) == "b2", "and a supplied one: got {tagged("b", 2)}");
+}
+
+fn main() {
+  test_dense_call();
+  test_nullable_in_position_0();
+  test_nullable_in_position_1();
+  test_null_in_position_1();
+  test_stdlib_both_overload();
+  test_empty_argument_list();
+  test_width_carrying_literal();
+  test_lambda_argument();
+  test_defaulted_argument();
+}

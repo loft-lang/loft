@@ -168,7 +168,7 @@ Proven: `bytecode-comparisons/step2-corpus.loft` (step 1's cells plus a user `ne
 the name two callers resolve) byte-identical before/after and clean on both backends with the
 leak checks armed; `scripts/introspect_diff.sh` **IDENTICAL 1504/1504**.
 
-### Step 3 — the BARE path passes the whole type list  ·  S
+### Step 3 — the BARE path passes the whole type list  ·  S  ·  DONE 2026-09-14
 
 `parser/mod.rs:5922` already holds `types`; stop collapsing it to `types[0]` and hand the
 whole list to selection.  With one candidate the answer is unchanged.
@@ -180,6 +180,21 @@ it, and write the decision into RULES.md — it is user-visible in error message
   argument and a width-carrying vector literal must still infer.
 - **Compared against:** `introspect` byte-identical, **and the diagnostic corpus unmoved**.
   ⚠ The error-message comparison is the one that matters; the IR is the easy half.
+
+**Done:** `Data::select_fn(source, name, &[Type])` is `Disp-Select`'s entry point; it holds
+the collapse `Parser::call` used to do inline (the receiver off the first argument, the `τ?`
+routing off ALL of them — @PLN25 F1b(b)) and asks `find_fn`.  **Decided: (b)**, as
+`Disp-Hint` in [RULES.md](RULES.md) — a multi-definition name offers no hint and an argument
+that needs one is refused naming the cure; chosen by the principle (refusal is reversible,
+agreement-hinting is additive) and because it falls out of `Disp-Key` for free (no `n_<name>`
+key, nothing else for the hint sites to consult).  Nothing user-visible moves at this step: a
+single-definition name keeps its hint, and `introspect_diff.sh` compares stderr too, so the
+diagnostic corpus is proven unmoved by the same run.  Proven:
+`bytecode-comparisons/step3-corpus.loft` (a `both` fn with a `τ?` overload called with the
+nullable in position 0, position 1 and as a null; the stdlib `max` the same way; an empty
+list; a width-carrying literal; a lambda; a defaulted argument) byte-identical before/after and
+clean on both backends with the leak checks armed; `scripts/introspect_diff.sh`
+**IDENTICAL 1504/1504**.
 
 ### Step 4 — the METHOD path selects after its arguments  ·  M
 
