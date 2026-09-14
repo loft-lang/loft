@@ -1470,6 +1470,28 @@ fn is_break_block(v: &Value) -> bool {
     }
 }
 
+/// The `if index == hi { break }` an INCLUSIVE range emits before its step (loft#1525) — the
+/// stop decided on the value just yielded, so `hi + 1` never has to exist.  Recognised by SHAPE
+/// (an equality whose arms are a break and a null), never by position alone, so an ordinary
+/// leading statement is not mistaken for it.
+fn is_inclusive_stop_guard(v: &Value, data: &Data) -> bool {
+    let Value::If(cond, on_true, on_false) = v.unspan() else {
+        return false;
+    };
+    if !is_break_block(on_true) || !matches!(on_false.unspan(), Value::Null) {
+        return false;
+    }
+    // The EQUALITY is what tells this guard from the range's own break test, and the
+    // distinction is load-bearing: the two-counter form is `[test, index, step, yield]`, whose
+    // leading statement is ALSO an if-break over a two-argument call.  Matching on the shape
+    // alone peeled that test and read the remainder as the single-counter form — a different
+    // loop, silently.  The range tests with `OpLtInt`/`OpLeInt`; only the stop guard is `==`.
+    matches!(
+        cond.unspan(),
+        Value::Call(d, args) if args.len() == 2 && data.def(*d).name() == "OpEqInt"
+    )
+}
+
 /// Recognise the fill idiom in a `For loop` body (@PLN157 § V-ae): the iterator block of a
 /// counted range in either lowering — the two-counter form `[if hi <cmp> next { break };
 /// index = next; next = next + 1; index]` (§ V-ab) or the single-counter form `[index =
@@ -1508,8 +1530,22 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
     if it.name != "Iter range" {
         return decline(&format!("iterator block is `{}`, not a range", it.name));
     }
+    // loft#1525 — an INCLUSIVE range decides its stop on the value just YIELDED, so its
+    // iterator carries one extra leading statement: `if index == hi { break }`, emitted before
+    // the step so the loop never has to represent `hi + 1`.  Peel it, because the loop under it
+    // is the same fill: the guard changes when the loop ENDS, not which elements it writes.
+    //
+    // Safe to drop rather than carry, and `fill_hoisted` is why — it declines (returns false,
+    // falling back to this very loop) whenever the span does not fit the vector, including the
+    // `end >= h.len` and `u32::try_from` edges an unbounded end reaches.  So the fill applies
+    // only where the guard would never have fired, and where it would fire the fallback is the
+    // corrected loop.
+    let ops: &[Value] = match &it.operators[..] {
+        [first, rest @ ..] if rest.len() >= 3 && is_inclusive_stop_guard(first, data) => rest,
+        all => all,
+    };
     // The three statements and the yield, in one of the two orders.
-    let (test, seed_index, step, yielded, next_var) = match &it.operators[..] {
+    let (test, seed_index, step, yielded, next_var) = match ops {
         [a, b, c, d] => {
             // § V-ab: [if …; index = next; next = next + 1; index]
             let Value::Set(xi, from) = b.unspan() else {
@@ -1533,7 +1569,7 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
             };
             (b, *xi, step.unspan(), c, None)
         }
-        _ => return decline(&format!("iterator has {} statements", it.operators.len())),
+        _ => return decline(&format!("iterator has {} statements", ops.len())),
     };
     let counter = next_var.unwrap_or(seed_index);
     // The step: counter = counter + 1.
