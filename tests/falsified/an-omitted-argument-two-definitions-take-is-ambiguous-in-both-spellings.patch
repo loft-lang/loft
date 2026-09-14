@@ -1,0 +1,201 @@
+diff --git b/src/data.rs a/src/data.rs
+index a07fa2c18..2aacd3002 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -7224,36 +7224,6 @@ impl Data {
+         self.definitions[main as usize].attributes[a_nr].constant = true;
+     }
+ 
+-    /// One overload as a reader sees it, `name(τ₁, τ₂)` over its declared parameters — the
+-    /// ONE rendering both call spellings' diagnostics use.
+-    #[must_use]
+-    pub fn overload_signature(&self, fn_name: &str, r: u32) -> String {
+-        let params: Vec<String> = self
+-            .def(r)
+-            .attributes
+-            .iter()
+-            .filter(|p| !p.hidden)
+-            .map(|p| p.typedef.source_name(self))
+-            .collect();
+-        format!("{fn_name}({})", params.join(", "))
+-    }
+-
+-    /// [`Self::exact_overloads`] for the METHOD spelling: `dispatch` (the receiver's type with
+-    /// its nullability) stands in for `types[0]`, as in [`Self::select_method`].
+-    #[must_use]
+-    pub fn exact_method_overloads(
+-        &self,
+-        source: u16,
+-        fn_name: &str,
+-        dispatch: &Type,
+-        types: &[Type],
+-    ) -> Option<Vec<u32>> {
+-        let mut with_receiver: Vec<Type> = Vec::with_capacity(types.len().max(1));
+-        with_receiver.push(dispatch.clone());
+-        with_receiver.extend_from_slice(types.get(1..).unwrap_or(&[]));
+-        self.exact_overloads(source, fn_name, &with_receiver)
+-    }
+-
+     /// The overloads of `fn_name` whose declared parameters spell EXACTLY the argument
+     /// types `args` (receiver first) — every position equal, a trailing parameter admitted
+     /// when it has a default.  `None` when the name has no overload set or an argument has
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 227678e00..a48d6642e 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -18138,7 +18138,7 @@ impl Parser {
+     /// with its nullability) and the argument types, or `fallback`, the attribute slot's
+     /// routine, when that names no `t_` method (a free `n_<name>` and the operator map are
+     /// not candidates on a receiver that carries the method).
+-    fn select_method_def(&mut self, select: &MethodSelect, types: &[Type]) -> u32 {
++    fn select_method_def(&self, select: &MethodSelect, types: &[Type]) -> u32 {
+         match select {
+             MethodSelect::Fixed(d_nr) => *d_nr,
+             MethodSelect::ByName {
+@@ -18148,35 +18148,10 @@ impl Parser {
+             } => {
+                 let found = self.data.select_method(u16::MAX, name, dispatch, types);
+                 if found != u32::MAX && self.data.def(found).name.starts_with("t_") {
+-                    return found;
+-                }
+-                // `Disp-Ambiguous` (@PLN162): more than one overload takes the call — a
+-                // defaulted trailing parameter beside a shorter definition — and nothing
+-                // ranks them.  The bare spelling refuses this; the method spelling used to
+-                // take the slot's routine in silence, one call with two answers by spelling.
+-                // The refusal stands alone: the call still binds to the slot's routine so
+-                // nothing cascades, and the diagnostic is what refuses the program.
+-                if !self.first_pass
+-                    && let Some(taken) =
+-                        self.data
+-                            .exact_method_overloads(u16::MAX, name, dispatch, types)
+-                    && taken.len() > 1
+-                {
+-                    let given: Vec<String> =
+-                        types.iter().map(|t| t.source_name(&self.data)).collect();
+-                    let by: Vec<String> = taken
+-                        .iter()
+-                        .map(|&r| self.data.overload_signature(name, r))
+-                        .collect();
+-                    diagnostic!(
+-                        self.lexer,
+-                        Level::Error,
+-                        "`{name}({})` is ambiguous — it is taken by {} and nothing ranks them; give the call the arguments that pick one, or drop one definition",
+-                        given.join(", "),
+-                        by.join(" and ")
+-                    );
++                    found
++                } else {
++                    *fallback
+                 }
+-                *fallback
+             }
+         }
+     }
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index aac42b6ba..d2207cb2b 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -6330,47 +6330,66 @@ impl Parser {
+                                 Type::Routine(r) => Some(*r),
+                                 _ => None,
+                             })
+-                            .map(|r| self.data.overload_signature(name, r))
++                            .map(|r| {
++                                let params: Vec<String> = self
++                                    .data
++                                    .def(r)
++                                    .attributes
++                                    .iter()
++                                    .filter(|p| !p.hidden)
++                                    .map(|p| p.typedef.source_name(&self.data))
++                                    .collect();
++                                format!("{name}({})", params.join(", "))
++                            })
+                             .collect()
+                     } else {
+                         Vec::new()
+                     };
+-                let given: Vec<String> = types.iter().map(|t| t.source_name(&self.data)).collect();
+-                // `Disp-Ambiguous` (@PLN162) is asked FIRST, whatever kind the overloads are:
+-                // more than one takes the call — a defaulted trailing parameter beside a
+-                // shorter definition — and nothing ranks them.  Asked after the method-receiver
+-                // hint, a `both` pair reported *did you mean the method `x.pg(…)`* for a call
+-                // two of its methods took.  The method spelling refuses the same way
+-                // (`select_method_def`), with the same rendering.
+-                let taken = self
+-                    .data
+-                    .exact_overloads(source, name, types)
+-                    .unwrap_or_default();
+-                if taken.len() > 1 {
+-                    let by: Vec<String> = taken
+-                        .iter()
+-                        .map(|&r| self.data.overload_signature(name, r))
+-                        .collect();
+-                    diagnostic_at!(
+-                        self.lexer,
+-                        name_pos,
+-                        Level::Error,
+-                        "`{name}({})` is ambiguous — it is taken by {} and nothing ranks them; give the call the arguments that pick one, or drop one definition",
+-                        given.join(", "),
+-                        by.join(" and ")
+-                    );
+-                } else if method_types.is_empty() && !overloads.is_empty() {
+-                    // `Disp-Exhaustive` (@PLN162): the name has an overload set and none of
+-                    // its definitions takes these argument types.  Name what was passed and
+-                    // what is declared, so the cure is one read away.
+-                    diagnostic_at!(
+-                        self.lexer,
+-                        name_pos,
+-                        Level::Error,
+-                        "no definition of `{name}` takes ({}) — declared: {}",
+-                        given.join(", "),
+-                        overloads.join(", ")
+-                    );
++                if method_types.is_empty() && !overloads.is_empty() {
++                    // `Disp-Key` (@PLN162): the name has an overload set.  Either none of its
++                    // definitions takes these argument types (`Disp-Exhaustive`), or more than
++                    // one does and nothing here ranks them (`Disp-Ambiguous` — today a
++                    // defaulted trailing parameter beside a shorter definition).  Name what
++                    // was passed and what is declared, so the cure is one read away.
++                    let given: Vec<String> =
++                        types.iter().map(|t| t.source_name(&self.data)).collect();
++                    let taken = self
++                        .data
++                        .exact_overloads(source, name, types)
++                        .unwrap_or_default();
++                    if taken.len() > 1 {
++                        let by: Vec<String> = taken
++                            .iter()
++                            .map(|&r| {
++                                let params: Vec<String> = self
++                                    .data
++                                    .def(r)
++                                    .attributes
++                                    .iter()
++                                    .filter(|p| !p.hidden)
++                                    .map(|p| p.typedef.source_name(&self.data))
++                                    .collect();
++                                format!("{name}({})", params.join(", "))
++                            })
++                            .collect();
++                        diagnostic_at!(
++                            self.lexer,
++                            name_pos,
++                            Level::Error,
++                            "`{name}({})` is ambiguous — it is taken by {} and nothing ranks them; give the call the arguments that pick one, or drop one definition",
++                            given.join(", "),
++                            by.join(" and ")
++                        );
++                    } else {
++                        diagnostic_at!(
++                            self.lexer,
++                            name_pos,
++                            Level::Error,
++                            "no definition of `{name}` takes ({}) — declared: {}",
++                            given.join(", "),
++                            overloads.join(", ")
++                        );
++                    }
+                 } else if method_types.is_empty() {
+                     // @PLN13 phase 6 (diagnostics slice): the name may simply be
+                     // unimported rather than wrong.  An EXACT hit in a published

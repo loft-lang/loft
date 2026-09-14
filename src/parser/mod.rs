@@ -6330,66 +6330,47 @@ impl Parser {
                                 Type::Routine(r) => Some(*r),
                                 _ => None,
                             })
-                            .map(|r| {
-                                let params: Vec<String> = self
-                                    .data
-                                    .def(r)
-                                    .attributes
-                                    .iter()
-                                    .filter(|p| !p.hidden)
-                                    .map(|p| p.typedef.source_name(&self.data))
-                                    .collect();
-                                format!("{name}({})", params.join(", "))
-                            })
+                            .map(|r| self.data.overload_signature(name, r))
                             .collect()
                     } else {
                         Vec::new()
                     };
-                if method_types.is_empty() && !overloads.is_empty() {
-                    // `Disp-Key` (@PLN162): the name has an overload set.  Either none of its
-                    // definitions takes these argument types (`Disp-Exhaustive`), or more than
-                    // one does and nothing here ranks them (`Disp-Ambiguous` — today a
-                    // defaulted trailing parameter beside a shorter definition).  Name what
-                    // was passed and what is declared, so the cure is one read away.
-                    let given: Vec<String> =
-                        types.iter().map(|t| t.source_name(&self.data)).collect();
-                    let taken = self
-                        .data
-                        .exact_overloads(source, name, types)
-                        .unwrap_or_default();
-                    if taken.len() > 1 {
-                        let by: Vec<String> = taken
-                            .iter()
-                            .map(|&r| {
-                                let params: Vec<String> = self
-                                    .data
-                                    .def(r)
-                                    .attributes
-                                    .iter()
-                                    .filter(|p| !p.hidden)
-                                    .map(|p| p.typedef.source_name(&self.data))
-                                    .collect();
-                                format!("{name}({})", params.join(", "))
-                            })
-                            .collect();
-                        diagnostic_at!(
-                            self.lexer,
-                            name_pos,
-                            Level::Error,
-                            "`{name}({})` is ambiguous — it is taken by {} and nothing ranks them; give the call the arguments that pick one, or drop one definition",
-                            given.join(", "),
-                            by.join(" and ")
-                        );
-                    } else {
-                        diagnostic_at!(
-                            self.lexer,
-                            name_pos,
-                            Level::Error,
-                            "no definition of `{name}` takes ({}) — declared: {}",
-                            given.join(", "),
-                            overloads.join(", ")
-                        );
-                    }
+                let given: Vec<String> = types.iter().map(|t| t.source_name(&self.data)).collect();
+                // `Disp-Ambiguous` (@PLN162) is asked FIRST, whatever kind the overloads are:
+                // more than one takes the call — a defaulted trailing parameter beside a
+                // shorter definition — and nothing ranks them.  Asked after the method-receiver
+                // hint, a `both` pair reported *did you mean the method `x.pg(…)`* for a call
+                // two of its methods took.  The method spelling refuses the same way
+                // (`select_method_def`), with the same rendering.
+                let taken = self
+                    .data
+                    .exact_overloads(source, name, types)
+                    .unwrap_or_default();
+                if taken.len() > 1 {
+                    let by: Vec<String> = taken
+                        .iter()
+                        .map(|&r| self.data.overload_signature(name, r))
+                        .collect();
+                    diagnostic_at!(
+                        self.lexer,
+                        name_pos,
+                        Level::Error,
+                        "`{name}({})` is ambiguous — it is taken by {} and nothing ranks them; give the call the arguments that pick one, or drop one definition",
+                        given.join(", "),
+                        by.join(" and ")
+                    );
+                } else if method_types.is_empty() && !overloads.is_empty() {
+                    // `Disp-Exhaustive` (@PLN162): the name has an overload set and none of
+                    // its definitions takes these argument types.  Name what was passed and
+                    // what is declared, so the cure is one read away.
+                    diagnostic_at!(
+                        self.lexer,
+                        name_pos,
+                        Level::Error,
+                        "no definition of `{name}` takes ({}) — declared: {}",
+                        given.join(", "),
+                        overloads.join(", ")
+                    );
                 } else if method_types.is_empty() {
                     // @PLN13 phase 6 (diagnostics slice): the name may simply be
                     // unimported rather than wrong.  An EXACT hit in a published

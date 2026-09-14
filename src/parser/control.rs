@@ -18138,7 +18138,7 @@ impl Parser {
     /// with its nullability) and the argument types, or `fallback`, the attribute slot's
     /// routine, when that names no `t_` method (a free `n_<name>` and the operator map are
     /// not candidates on a receiver that carries the method).
-    fn select_method_def(&self, select: &MethodSelect, types: &[Type]) -> u32 {
+    fn select_method_def(&mut self, select: &MethodSelect, types: &[Type]) -> u32 {
         match select {
             MethodSelect::Fixed(d_nr) => *d_nr,
             MethodSelect::ByName {
@@ -18148,10 +18148,35 @@ impl Parser {
             } => {
                 let found = self.data.select_method(u16::MAX, name, dispatch, types);
                 if found != u32::MAX && self.data.def(found).name.starts_with("t_") {
-                    found
-                } else {
-                    *fallback
+                    return found;
                 }
+                // `Disp-Ambiguous` (@PLN162): more than one overload takes the call — a
+                // defaulted trailing parameter beside a shorter definition — and nothing
+                // ranks them.  The bare spelling refuses this; the method spelling used to
+                // take the slot's routine in silence, one call with two answers by spelling.
+                // The refusal stands alone: the call still binds to the slot's routine so
+                // nothing cascades, and the diagnostic is what refuses the program.
+                if !self.first_pass
+                    && let Some(taken) =
+                        self.data
+                            .exact_method_overloads(u16::MAX, name, dispatch, types)
+                    && taken.len() > 1
+                {
+                    let given: Vec<String> =
+                        types.iter().map(|t| t.source_name(&self.data)).collect();
+                    let by: Vec<String> = taken
+                        .iter()
+                        .map(|&r| self.data.overload_signature(name, r))
+                        .collect();
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`{name}({})` is ambiguous — it is taken by {} and nothing ranks them; give the call the arguments that pick one, or drop one definition",
+                        given.join(", "),
+                        by.join(" and ")
+                    );
+                }
+                *fallback
             }
         }
     }

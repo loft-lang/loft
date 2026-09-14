@@ -1,0 +1,73 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A defaulted parameter is the one optionality a definition carries (owner, 2026-09-14), and
+// it meets `Disp-Key`'s arity here (@PLN162 step 7): beside a shorter definition of the same
+// name, or beside another defaulted definition of the same arity, the call that SUPPLIES the
+// argument reaches the one definition that takes it — free, `self` (both spellings) and
+// `both` (both spellings), whichever was declared first.  The call that omits it is the
+// ambiguity its refusal twin pins.
+// @falsified-at: 73f6cdc67 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-supplied-argument-picks-the-defaulted-definition.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — the control REFUSES the program at each pair's second definition
+//   (*Cannot redefine 'pf'*, and the method pairs as *cannot redefine method*) and exits 1
+//   before a cell runs; here every cell passes and it exits 0.  Not assert, not leak.
+//   ARMED: no instrument — a plain run on either backend reads it.
+//   WITNESS: on the control the first diagnostic is *Cannot redefine 'pf' (already defined
+//   at …:16)*, the defaulted twin of the first pair.
+//   HOLDS: the leak channel is `none` on both trees and does not move; a name with ONE
+//   definition is untouched (`introspect_diff.sh`: the corpus differs only at the new guards).
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct A { n: integer }
+
+// free: short declared first
+fn pf(a: A) -> text { "pf-short {a.n}" }
+fn pf(a: A, k: integer = 1) -> text { "pf-long {a.n} {k}" }
+
+// free: long declared first
+fn pg(a: A, k: integer = 1) -> text { "pg-long {a.n} {k}" }
+fn pg(a: A) -> text { "pg-short {a.n}" }
+
+// free: two defaults at one arity, different types
+fn pk(a: A, k: integer = 1) -> text { "pk-int {a.n} {k}" }
+fn pk(a: A, t: text = "x") -> text { "pk-text {a.n} {t}" }
+
+// `self`: short beside defaulted
+fn pm(self: A) -> text { "pm-short {self.n}" }
+fn pm(self: A, k: integer = 1) -> text { "pm-long {self.n} {k}" }
+
+// `both`: short beside defaulted
+fn pb(both: A) -> text { "pb-short {both.n}" }
+fn pb(both: A, k: integer = 1) -> text { "pb-long {both.n} {k}" }
+
+fn test_free_supplied() {
+  a = A { n: 1 };
+  assert(pf(a, 5) == "pf-long 1 5", "short first, supplied: got {pf(a, 5)}");
+  assert(pg(a, 6) == "pg-long 1 6", "long first, supplied: got {pg(a, 6)}");
+}
+
+fn test_two_defaults_supplied() {
+  a = A { n: 2 };
+  assert(pk(a, 7) == "pk-int 2 7", "integer picks the integer default: got {pk(a, 7)}");
+  assert(pk(a, "y") == "pk-text 2 y", "text picks the text default: got {pk(a, \"y\")}");
+}
+
+fn test_self_supplied_both_spellings() {
+  a = A { n: 3 };
+  assert(a.pm(8) == "pm-long 3 8", "method spelling, supplied: got {a.pm(8)}");
+  assert(pm(a, 9) == "pm-long 3 9", "bare spelling, supplied: got {pm(a, 9)}");
+}
+
+fn test_both_supplied_both_spellings() {
+  a = A { n: 4 };
+  assert(a.pb(8) == "pb-long 4 8", "method spelling, supplied: got {a.pb(8)}");
+  assert(pb(a, 9) == "pb-long 4 9", "bare spelling, supplied: got {pb(a, 9)}");
+}
+
+fn main() {
+  test_free_supplied();
+  test_two_defaults_supplied();
+  test_self_supplied_both_spellings();
+  test_both_supplied_both_spellings();
+}

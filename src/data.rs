@@ -7224,6 +7224,36 @@ impl Data {
         self.definitions[main as usize].attributes[a_nr].constant = true;
     }
 
+    /// One overload as a reader sees it, `name(τ₁, τ₂)` over its declared parameters — the
+    /// ONE rendering both call spellings' diagnostics use.
+    #[must_use]
+    pub fn overload_signature(&self, fn_name: &str, r: u32) -> String {
+        let params: Vec<String> = self
+            .def(r)
+            .attributes
+            .iter()
+            .filter(|p| !p.hidden)
+            .map(|p| p.typedef.source_name(self))
+            .collect();
+        format!("{fn_name}({})", params.join(", "))
+    }
+
+    /// [`Self::exact_overloads`] for the METHOD spelling: `dispatch` (the receiver's type with
+    /// its nullability) stands in for `types[0]`, as in [`Self::select_method`].
+    #[must_use]
+    pub fn exact_method_overloads(
+        &self,
+        source: u16,
+        fn_name: &str,
+        dispatch: &Type,
+        types: &[Type],
+    ) -> Option<Vec<u32>> {
+        let mut with_receiver: Vec<Type> = Vec::with_capacity(types.len().max(1));
+        with_receiver.push(dispatch.clone());
+        with_receiver.extend_from_slice(types.get(1..).unwrap_or(&[]));
+        self.exact_overloads(source, fn_name, &with_receiver)
+    }
+
     /// The overloads of `fn_name` whose declared parameters spell EXACTLY the argument
     /// types `args` (receiver first) — every position equal, a trailing parameter admitted
     /// when it has a default.  `None` when the name has no overload set or an argument has

@@ -84,8 +84,12 @@ name.  Three consequences worth stating:
 - **Selection today is EXACT:** a call reaches the overloads whose parameters spell its
   argument types position for position, a trailing parameter admitted when it has a default;
   one is the answer, none falls to the old ladder (`Disp-Exhaustive`'s message when that
-  finds nothing), more than one is `Disp-Ambiguous` (today only the defaulted-trailing shape
-  can produce it — step 7's question).  Steps 9–10 widen "exactly" to the enum lattice.
+  finds nothing), more than one is `Disp-Ambiguous`.  Today only a DEFAULT can produce more
+  than one — a defaulted trailing parameter beside a shorter definition, or two defaulted
+  parameters at one arity, for the call that omits the argument — and it is refused naming
+  both, in both call spellings (IMPL.md step 7; the method spelling took the slot's routine
+  in silence until then).  Ranking the exact-arity definition above the default-filled one is
+  additive and may follow.  Steps 9–10 widen "exactly" to the enum lattice.
 
 **Disp-Specific** *(amended — the abstract position is the ENUM, not an interface).*  The
 design says *"a concrete struct is more specific than any interface it implements"*.  Measured

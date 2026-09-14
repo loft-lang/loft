@@ -328,7 +328,7 @@ programs safe by construction.
   single-definition name; `self` still giving method sugar and a non-`self` definition still
   not.
 
-### Step 7 — arity in the key  ·  XS
+### Step 7 — arity in the key  ·  XS  ·  DONE 2026-09-14
 
 `f(a)` and `f(a, b)` become distinct rather than colliding, following `bound_stub_name`.
 
@@ -343,6 +343,27 @@ step) is the control this step compares against.
 
 - **Compared against:** the stdlib's existing same-name/different-arity pairs, unmoved; and
   the defaulted pair above, before/after.
+
+**Done — the arity half landed with step 6** (the full spelling carries every parameter, so
+`cast(Fire)` / `cast(Fire, integer)` and a `both` at two arities are distinct keys, guarded
+there), and the defaulted half is decided as the principle says: **a call that omits an
+argument two definitions can take — a defaulted trailing parameter beside a shorter
+definition, or two defaulted parameters at one arity — is `Disp-Ambiguous`, refused naming
+both, in BOTH call spellings; a call that supplies the argument reaches the one definition
+that takes it.**  Declaration order plays no part.  The control the plan asked for does not
+exist: before step 6 such a pair could not be written (the second definition was a
+redefinition), so nothing about today's programs moves.  The alternative — rank the
+exact-arity definition above the default-filled one — is additive and can follow; refusing
+first keeps it open.
+
+**What the measurement found, and this step fixed:** the METHOD spelling of the ambiguous
+call, `a.pg()`, took the attribute slot's routine (the incumbent) in silence where the bare
+`pg(a)` refused — `select_method_def` fell back to the slot whenever selection had no single
+answer.  It now refuses with the same message, rendered by one `Data::overload_signature`
+both spellings use; the call still binds to the slot so nothing cascades, the diagnostic is
+what refuses the program.  And for a `both` pair the bare site reported *did you mean the
+method `x.pg(…)`*, because the method-receiver hint outranked the ambiguity check — the
+ambiguity is asked first now.
 
 ### Step 8 — `Disp-Ambiguous`  ·  S
 
