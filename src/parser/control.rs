@@ -18146,35 +18146,30 @@ impl Parser {
                 dispatch,
                 fallback,
             } => {
+                // Selection over the name's overload set first (`parser::dispatch`,
+                // @PLN162), with the receiver's `dispatch` type standing in for `types[0]`.
+                // `Disp-Ambiguous` is reported here: the bare spelling refuses it, and the
+                // method spelling used to take the slot's routine in silence.  The call still
+                // binds to the slot so nothing cascades; the diagnostic refuses the program.
+                // None applicable is NOT reported here: the slot's routine then refuses the
+                // argument itself, naming the parameter, as it always did.
+                let mut with_receiver: Vec<Type> = Vec::with_capacity(types.len().max(1));
+                with_receiver.push(dispatch.clone());
+                with_receiver.extend_from_slice(types.get(1..).unwrap_or(&[]));
+                let routed = self.data.routed_types(&with_receiver);
+                match self.select_overload(u16::MAX, name, &routed) {
+                    crate::parser::dispatch::Selection::One(d) => return d,
+                    sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
+                        if !self.first_pass {
+                            self.report_selection(name, &routed, &sel, None);
+                        }
+                        return *fallback;
+                    }
+                    _ => {}
+                }
                 let found = self.data.select_method(u16::MAX, name, dispatch, types);
                 if found != u32::MAX && self.data.def(found).name.starts_with("t_") {
                     return found;
-                }
-                // `Disp-Ambiguous` (@PLN162): more than one overload takes the call — a
-                // defaulted trailing parameter beside a shorter definition — and nothing
-                // ranks them.  The bare spelling refuses this; the method spelling used to
-                // take the slot's routine in silence, one call with two answers by spelling.
-                // The refusal stands alone: the call still binds to the slot's routine so
-                // nothing cascades, and the diagnostic is what refuses the program.
-                if !self.first_pass
-                    && let Some(taken) =
-                        self.data
-                            .exact_method_overloads(u16::MAX, name, dispatch, types)
-                    && taken.len() > 1
-                {
-                    let given: Vec<String> =
-                        types.iter().map(|t| t.source_name(&self.data)).collect();
-                    let by: Vec<String> = taken
-                        .iter()
-                        .map(|&r| self.data.overload_signature(name, r))
-                        .collect();
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "`{name}({})` is ambiguous — it is taken by {} and nothing ranks them; give the call the arguments that pick one, or drop one definition",
-                        given.join(", "),
-                        by.join(" and ")
-                    );
                 }
                 *fallback
             }

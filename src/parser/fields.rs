@@ -617,11 +617,7 @@ impl Parser {
             // `Disp-Hint` (@PLN162): the arguments parse under the ONE `t_` candidate the name
             // has at this receiver, else under the slot's routine; the definition the call
             // reaches is selected once the argument types exist (`parse_method_selecting`).
-            let hint_nr = match self
-                .data
-                .candidates(u16::MAX, &field, &dispatch, &[])
-                .as_slice()
-            {
+            let hint_nr = match self.data.candidates(u16::MAX, &field, &dispatch).as_slice() {
                 [one] if self.data.def(*one).name.starts_with("t_") => *one,
                 _ => r_nr,
             };

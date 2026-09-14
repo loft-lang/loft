@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `Disp-Ambiguous` (@PLN162 step 8) — DESIGN.md's ambiguity program in loft's terms, the
+// abstract position being the ENUM: with `hit(Fireball, Entity)` and `hit(Entity, IceWall)`
+// both declared, a `(Fireball, IceWall)` call is taken by both and neither is more specific
+// (each is exact where the other widened), so it is refused naming both.  A total fallback
+// `hit(Entity, Entity)` beside them changes nothing: it is less specific than either, and a
+// third definition more specific than BOTH is what the rule would need to settle the tie.
+// @falsified-at: 41ce4eb62 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/an-ambiguous-pair-is-refused-naming-both.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — on the control neither `@EXPECT_ERROR` line is met: the call is
+//   refused there too, but as *no definition of `hit` takes (Fireball, IceWall)*, because
+//   exact-spelling selection saw no definition take it at all; here it is refused as
+//   ambiguous, naming both.  Not leak and not assert: a parse-time verdict.
+//   ARMED: no instrument — the refusals are parse-time on either backend.
+//   WITNESS: the control's message names NO definition; this tree's names two.
+//   HOLDS: the program is refused on both trees (exit 1 there, the suite's 1 -> 0 here being
+//   its verdict on the declared lines); the leak channel is `none` on both.
+// @EXPECT_ERROR: `hit(Fireball, IceWall)` is ambiguous — it is taken by hit(Fireball, Entity) and hit(Entity, IceWall)
+// @EXPECT_ERROR: `tie(Fireball, IceWall)` is ambiguous — it is taken by tie(Fireball, Entity) and tie(Entity, IceWall)
+
+enum Entity {
+  Fireball { n: integer },
+  IceWall { n: integer },
+  Crate { n: integer },
+}
+
+fn hit(f: Fireball, d: Entity) -> text { "fire-any {f.n}{d.n}" }
+fn hit(p: Entity, w: IceWall) -> text { "any-wall {p.n}{w.n}" }
+
+fn tie(f: Fireball, d: Entity) -> text { "fire-any {f.n}{d.n}" }
+fn tie(p: Entity, w: IceWall) -> text { "any-wall {p.n}{w.n}" }
+fn tie(a: Entity, b: Entity) -> text { "any-any {a.n}{b.n}" }
+
+fn main() {
+  hit(Fireball { n: 1 }, IceWall { n: 2 });
+  tie(Fireball { n: 1 }, IceWall { n: 2 });
+}

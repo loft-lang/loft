@@ -1,0 +1,79 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `Disp-Applicable` / `Disp-Specific` / `Disp-Select` over the ENUM lattice, the static half
+// (@PLN162 steps 8–9): a definition takes a call when every argument may satisfy its parameter
+// — the parser's own `can_convert`, so a VARIANT satisfies its enum (@FR-C-Var) and a present
+// value satisfies a `τ?` slot — and among the definitions that take it the one that is exact
+// where another widened wins, position by position; the most general one, the enum at every
+// position, is the fallback (`Disp-Fallback`).  A value held STATICALLY at the enum reaches
+// the enum-level definition; what its runtime variant would pick is step 13's cell.
+// @falsified-at: 41ce4eb62 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-variant-is-more-specific-than-its-enum.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — on the control (exact-spelling selection only) a call taken only by a
+//   widening finds no definition and the program is refused before a cell runs; here every
+//   cell passes.  Not assert, not leak: a program the control cannot compile.
+//   ARMED: no instrument — a plain run on either backend reads it.
+//   WITNESS: on the control `near(Slime {…}, IceWall {…})` reports *no definition of `near`
+//   takes (Slime, IceWall) — declared: near(Fireball, IceWall), near(Entity, IceWall)*; here it
+//   answers `any-wall 4`.
+//   HOLDS: the exact cells (`near(Fireball, IceWall)`, `tag(f)` on a Fireball) answer the same
+//   on both trees; the leak channel is `none` on both and does not move.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+enum Entity {
+  Fireball { n: integer },
+  IceWall { n: integer },
+  Crate { n: integer },
+  Slime { n: integer },
+}
+
+// the near-miss of the design's ambiguity program: one parameter made concrete
+fn near(f: Fireball, w: IceWall) -> text { "fire-wall {f.n}{w.n}" }
+fn near(p: Entity, w: IceWall) -> text { "any-wall {w.n}" }
+
+// the matrix with a total fallback: specific on position 0, on position 1, on neither
+fn hit(f: Fireball, d: Entity) -> text { "fire-any {f.n}" }
+fn hit(p: Entity, w: IceWall) -> text { "any-wall {w.n}" }
+fn hit(a: Entity, b: Entity) -> text { "any-any" }
+
+// the enum lattice beside nullability: a variant, its enum, and the enum's `τ?`
+fn tag(f: Fireball) -> text { "fire {f.n}" }
+fn tag(e: Entity) -> text { "any" }
+fn tag(e: Entity?) -> text { if e { "opt-any" } else { "opt-null" } }
+
+fn test_near_miss_picks_the_concrete() {
+  assert(near(Fireball { n: 1 }, IceWall { n: 2 }) == "fire-wall 12", "concrete beats enum on position 0: got {near(Fireball { n: 1 }, IceWall { n: 2 })}");
+  assert(near(Slime { n: 3 }, IceWall { n: 4 }) == "any-wall 4", "only the enum one takes a Slime: got {near(Slime { n: 3 }, IceWall { n: 4 })}");
+}
+
+fn test_matrix_with_fallback() {
+  assert(hit(Fireball { n: 1 }, Crate { n: 2 }) == "fire-any 1", "(Fireball, Crate): got {hit(Fireball { n: 1 }, Crate { n: 2 })}");
+  assert(hit(Slime { n: 1 }, IceWall { n: 2 }) == "any-wall 2", "(Slime, IceWall): got {hit(Slime { n: 1 }, IceWall { n: 2 })}");
+  assert(hit(Slime { n: 1 }, Crate { n: 2 }) == "any-any", "(Slime, Crate) reaches the fallback: got {hit(Slime { n: 1 }, Crate { n: 2 })}");
+}
+
+fn test_held_at_the_enum_reaches_the_enum_level() {
+  e: Entity = Crate { n: 9 };
+  f: Entity = Fireball { n: 8 };
+  assert(hit(e, e) == "any-any", "two values held at Entity: got {hit(e, e)}");
+  assert(hit(f, e) == "any-any", "a Fireball held at Entity is an Entity here (step 13 is the runtime cell): got {hit(f, e)}");
+}
+
+fn test_variant_enum_and_nullable() {
+  f = Fireball { n: 1 };
+  w: Entity = IceWall { n: 2 };
+  o: Entity? = IceWall { n: 3 };
+  z: Entity? = null;
+  assert(tag(f) == "fire 1", "a variant takes its own definition: got {tag(f)}");
+  assert(tag(w) == "any", "held at the enum, dense: got {tag(w)}");
+  assert(tag(o) == "opt-any", "held at the enum, present τ?: got {tag(o)}");
+  assert(tag(z) == "opt-null", "held at the enum, null: got {tag(z)}");
+}
+
+fn main() {
+  test_near_miss_picks_the_concrete();
+  test_matrix_with_fallback();
+  test_held_at_the_enum_reaches_the_enum_level();
+  test_variant_enum_and_nullable();
+}

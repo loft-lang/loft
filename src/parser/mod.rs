@@ -1280,6 +1280,7 @@ pub(super) mod builtins;
 pub(super) mod collections;
 pub(super) mod control;
 pub(super) mod definitions;
+pub(super) mod dispatch;
 pub(super) mod expressions;
 pub(super) mod fields;
 pub(super) mod fit;
@@ -5922,9 +5923,29 @@ impl Parser {
         let mut d_nr = if self.default && is_op(name) {
             self.data.def_nr(name)
         } else {
-            // The whole argument list goes to selection; today it reads the receiver off the
-            // first argument and the nullability off all of them (`Data::select_fn`).
-            let d = self.data.select_fn(source, name, types);
+            // Selection over the name's overload set first (`parser::dispatch`, @PLN162), on
+            // the routed argument types; a name with no set falls to today's ladder.  A
+            // refusal here is the whole answer: the arguments are parsed, nothing else is owed.
+            // Selection over the name's overload set first (`parser::dispatch`, @PLN162), on
+            // the routed argument types.  A tie is the whole answer: the arguments are parsed
+            // and nothing else is owed.  None applicable, and a name with no set, fall to
+            // today's ladder — the free `n_<name>` that coexists beside a `both` set (the
+            // stdlib's `exists(text)` beside `exists(File)`), then the operator map — and
+            // the unknown-function site below names the set when that finds nothing either.
+            let routed = self.data.routed_types(types);
+            let d = match self.select_overload(source, name, &routed) {
+                crate::parser::dispatch::Selection::One(d) => d,
+                sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
+                    if !self.first_pass {
+                        self.report_selection(name, &routed, &sel, Some(name_pos));
+                    }
+                    return Type::Unknown(0);
+                }
+                crate::parser::dispatch::Selection::NoneApplicable
+                | crate::parser::dispatch::Selection::NotDecidable => {
+                    self.data.select_fn(source, name, types)
+                }
+            };
             // loft#788 — a bare CALL is ambiguous the same way a bare type is,
             // and worse: both import orders compile and RUN, answering
             // differently. The key is the mangled one, since that is what a
@@ -6319,58 +6340,17 @@ impl Parser {
                 // P07.5: when no method receiver is found EITHER, fall back to
                 // a similar-name suggestion across all user functions.
                 let (method_types, from_stdlib) = self.find_method_receivers(name);
-                let bare = self.data.def_nr(name);
-                let overloads: Vec<String> =
-                    if bare != u32::MAX && self.data.def_type(bare) == DefType::Dynamic {
-                        self.data
-                            .def(bare)
-                            .attributes
-                            .iter()
-                            .filter_map(|a| match a.typedef.base() {
-                                Type::Routine(r) => Some(*r),
-                                _ => None,
-                            })
-                            .map(|r| self.data.overload_signature(name, r))
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
-                let given: Vec<String> = types.iter().map(|t| t.source_name(&self.data)).collect();
-                // `Disp-Ambiguous` (@PLN162) is asked FIRST, whatever kind the overloads are:
-                // more than one takes the call — a defaulted trailing parameter beside a
-                // shorter definition — and nothing ranks them.  Asked after the method-receiver
-                // hint, a `both` pair reported *did you mean the method `x.pg(…)`* for a call
-                // two of its methods took.  The method spelling refuses the same way
-                // (`select_method_def`), with the same rendering.
-                let taken = self
-                    .data
-                    .exact_overloads(source, name, types)
-                    .unwrap_or_default();
-                if taken.len() > 1 {
-                    let by: Vec<String> = taken
-                        .iter()
-                        .map(|&r| self.data.overload_signature(name, r))
-                        .collect();
-                    diagnostic_at!(
-                        self.lexer,
-                        name_pos,
-                        Level::Error,
-                        "`{name}({})` is ambiguous — it is taken by {} and nothing ranks them; give the call the arguments that pick one, or drop one definition",
-                        given.join(", "),
-                        by.join(" and ")
-                    );
-                } else if method_types.is_empty() && !overloads.is_empty() {
-                    // `Disp-Exhaustive` (@PLN162): the name has an overload set and none of
-                    // its definitions takes these argument types.  Name what was passed and
-                    // what is declared, so the cure is one read away.
-                    diagnostic_at!(
-                        self.lexer,
-                        name_pos,
-                        Level::Error,
-                        "no definition of `{name}` takes ({}) — declared: {}",
-                        given.join(", "),
-                        overloads.join(", ")
-                    );
+                // `Disp-Exhaustive` (@PLN162): the name has an overload set, none of its
+                // definitions takes these argument types, and the ladder found nothing else
+                // either.  Name what was passed and what is declared.
+                let routed = self.data.routed_types(types);
+                let none_applicable = matches!(
+                    self.select_overload(source, name, &routed),
+                    crate::parser::dispatch::Selection::NoneApplicable
+                );
+                if none_applicable && method_types.is_empty() {
+                    let sel = crate::parser::dispatch::Selection::NoneApplicable;
+                    self.report_selection(name, &routed, &sel, Some(name_pos));
                 } else if method_types.is_empty() {
                     // @PLN13 phase 6 (diagnostics slice): the name may simply be
                     // unimported rather than wrong.  An EXACT hit in a published

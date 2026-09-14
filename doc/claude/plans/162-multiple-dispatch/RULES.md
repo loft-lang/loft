@@ -89,7 +89,19 @@ name.  Three consequences worth stating:
   parameters at one arity, for the call that omits the argument — and it is refused naming
   both, in both call spellings (IMPL.md step 7; the method spelling took the slot's routine
   in silence until then).  Ranking the exact-arity definition above the default-filled one is
-  additive and may follow.  Steps 9–10 widen "exactly" to the enum lattice.
+  additive and may follow.
+
+- **Selection over the enum lattice (IMPL.md steps 8–9, 2026-09-14), the static half:**
+  `Disp-Applicable` is the parser's own `can_convert`, so a variant satisfies its enum
+  (@FR-C-Var) and a present value a `τ?` slot; `Disp-Specific` ranks each position — exact,
+  widened (variant to enum, `τ` into `τ?`), lossy (`τ?` into `τ`), converted — and a
+  definition is more specific when no worse at every position and better at one;
+  `Disp-Select` is the unique minimal one, a tie is `Disp-Ambiguous`, none is the ladder and
+  then `Disp-Exhaustive`.  The `(F-Recv)` nullability routing runs before ranking.  What a
+  value held STATICALLY at the enum reaches is the enum-level definition; its runtime
+  variant is step 13's question.  And @F20's synthesised enum dispatcher yields to an
+  author's enum-level definition of the name — `Disp-Fallback`'s most general type is the
+  author's to write.
 
 **Disp-Specific** *(amended — the abstract position is the ENUM, not an interface).*  The
 design says *"a concrete struct is more specific than any interface it implements"*.  Measured

@@ -365,14 +365,55 @@ what refuses the program.  And for a `both` pair the bare site reported *did you
 method `x.pg(…)`*, because the method-receiver hint outranked the ambiguity check — the
 ambiguity is asked first now.
 
-### Step 8 — `Disp-Ambiguous`  ·  S
+### Step 8 — `Disp-Ambiguous`  ·  S  ·  DONE 2026-09-14 (with step 9's static half)
 
 Two applicable definitions, neither more specific: refuse, naming both.
 
 - **Red on its own:** DESIGN.md's ambiguity program must fail to compile with both names in
   the message; the near-miss control (one parameter made concrete) must still compile.
 
-### Step 9 — `Disp-Specific` over the ENUM lattice  ·  M
+**Done — and it could not go red on its own after all**, because the design's program has
+two definitions that both take a call only through a WIDENING (a variant to its enum), and an
+overload set matched exactly, step 6's rung, could not see either.  So steps 8 and 9's static
+half landed together, in `src/parser/dispatch.rs`:
+
+- **`Disp-Applicable`** is the parser's own `can_convert` — the one home of *"may this value
+  satisfy that slot"*, `@FR-C-Var` (a variant satisfies its enum) among its arms — and not a
+  second spelling of it.  That is why selection moved up from `Data` to the parser: the
+  predicate lives there.
+- **`Disp-Specific`** is a rank per position — exact 0, a widening 1 (variant to enum, `τ`
+  into `τ?`), a lossy discharge 2 (`τ?` into `τ`, `(N-Store)`), any other conversion 3 — and
+  a definition is more specific when it is no worse at every position and better at one.
+  **`Disp-Select`** is the unique minimal element; two minimal ones nothing ranks are
+  **`Disp-Ambiguous`**, refused naming both, in both call spellings; none applicable falls to
+  today's ladder (the free `n_<name>` beside a `both` set, the operator map) and is
+  `Disp-Exhaustive`'s message only when that finds nothing either — the first cut refused
+  right there and the stdlib stopped loading at `exists("…")` beside `exists(File)`.
+- **The nullability routing runs FIRST** (`Data::routed_types`, uniform `τ?` when any argument
+  is nullable), so `(F-Recv)`'s argument clause holds: without it `mix(p, n?)` ranked
+  `(0, 2)` against `(1, 0)` and read as ambiguous.
+- **@F20's synthesised enum dispatcher yields to an author's enum-level definition.**  A free
+  overload set over variants retires `n_<name>`, so `enum_fn` found no enum-level definition
+  and synthesised `hit(self: Entity, …)` beside the author's `hit(p: Entity, …)` — the
+  missing-variant warnings, then a redefinition.  When the set carries a definition RECEIVING
+  the enum (`Disp-Fallback`'s most general type), nothing is synthesised.
+
+**Measured:** DESIGN.md's ambiguity program refuses naming both (with and without a total
+fallback beside it); the near-miss picks the concrete definition; the 3-by-2 matrix with a
+fallback answers every cell as hand-computed; a variant, its enum and the enum's `τ?` rank
+in that order; a value held STATICALLY at the enum reaches the enum-level definition.  And
+**phase 4's static rows are green**: `tests/scripts/162-step4-pairwise-interaction-through-
+dispatch.loft` reaches step 0's twelve rows and its control through a `hit` overload set,
+arguments held at their variant types, on both backends — `Disp-Match-Equiv` measured for
+every static cell.  `damage` stays a `match` inside `hit(p: Entity, t: Player, …)`, because
+there the projectile is held at `Entity`: the runtime cell.  Every existing program is
+byte-identical (`introspect_diff.sh` IDENTICAL 1513/1513).
+
+**Filed, not fixed:** loft#1528 — a `Fireball?` passed to an `Entity?` parameter warns as
+stored into the dense `Entity` (a false `(N-Store)` warning after a correct selection;
+pre-existing on both binaries).
+
+### Step 9 — `Disp-Specific` over the ENUM lattice  ·  M  ·  static half DONE 2026-09-14 (see step 8)
 
 The partial order: a VARIANT is more specific than its ENUM.  **Not interfaces** — fact 6
 measured that an interface cannot be a parameter type, so the design's interface-based

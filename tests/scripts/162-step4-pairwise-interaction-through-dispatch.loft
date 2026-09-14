@@ -1,0 +1,264 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN162 phase 4, the STATIC rows — the acceptance program THROUGH DISPATCH: the same twelve
+// rows step 0 recorded through a hand-written central `match`, now reached by a `hit` overload
+// set (`Disp-Match-Equiv`: the two programs must agree), every call's arguments held at their
+// VARIANT types so `Disp-Select` decides at compile time (`Disp-Closed`), plus the reversed-pair
+// control.  The every-pair scenario over a `vector<Entity>` — the design's physics loop — is
+// the runtime cell and lives with step 13; here a value held at `Entity` reaches the fallback.
+// @falsified-at: 41ce4eb62 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/162-step4-pairwise-interaction-through-dispatch.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — on the control (exact-spelling selection only) row 10's `hit(Fireball,
+//   Player, World)` finds no definition, since only `hit(Entity, Player, …)` takes it and
+//   only through a widening, and the program is refused; here every row passes.
+//   ARMED: no instrument.
+//   WITNESS: on the control the diagnostic is *no definition of `hit` takes (Fireball, Player,
+//   World) — declared: …*; here rows 1–13 assert the values step 0 recorded.
+//   HOLDS: the rows the control CAN reach exactly (1–9, 12) answer the same on both trees;
+//   the leak channel is `none` on both and does not move.
+//
+// Cross-backend; `main` runs every row so the leak gate reads the file.
+
+struct Vec2 { x: integer, y: integer }
+
+// The mutable state of an entity.  A record, because a `match` binding of a record is a view
+// of the matched value where a binding of a bare scalar is a copy.
+struct Status {
+  hp: integer = 0,
+  frozen: boolean = false,
+  burning: boolean = false,
+  stuck: boolean = false,
+}
+
+enum Entity {
+  Player   { id: integer, status: Status, pos: Vec2 },
+  Slime    { id: integer, status: Status, pos: Vec2 },
+  IceWall  { id: integer, status: Status, pos: Vec2 },
+  Crate    { id: integer, status: Status, pos: Vec2 },
+  Fireball { id: integer, pos: Vec2, vel: Vec2 },
+  IceBolt  { id: integer, pos: Vec2, vel: Vec2 },
+  Arrow    { id: integer, status: Status, pos: Vec2, vel: Vec2 },
+  Steam    { id: integer, pos: Vec2 },
+}
+
+struct World {
+  removed: vector<integer>,
+  spawned: vector<Entity>,
+}
+
+fn id_of(e: Entity) -> integer {
+  match e {
+    Player { id } => id,
+    Slime { id } => id,
+    IceWall { id } => id,
+    Crate { id } => id,
+    Fireball { id } => id,
+    IceBolt { id } => id,
+    Arrow { id } => id,
+    Steam { id } => id,
+  }
+}
+
+fn damage(p: Entity) -> integer {
+  match p {
+    Fireball => 3,
+    IceBolt => 2,
+    Arrow => 1,
+    _ => 0,
+  }
+}
+
+// The function matcher: one definition per pair that does something, the two fallbacks the
+// design names — any entity versus the player (the design's `Projectile` bound is the ENUM
+// here), and the total one — and `damage` still a `match`, because inside `hit(p: Entity, …)`
+// the projectile is held at `Entity` and only the runtime cell (step 13) could pick
+// `damage(Fireball)` there.
+fn hit(f: Fireball, w: IceWall, world: World) {
+  w.status.hp -= 3;
+  world.spawned += [Steam { id: 8, pos: Vec2 { x: f.pos.x, y: f.pos.y } }];
+  world.removed += [f.id];
+}
+fn hit(b: IceBolt, w: IceWall, world: World) { w.status.hp += 2; }                    // ice reinforces ice
+fn hit(f: Fireball, c: Crate, world: World) { c.status.burning = true; world.removed += [f.id]; }
+fn hit(a: Arrow, c: Crate, world: World) { a.status.stuck = true; }                   // embeds, retrievable
+fn hit(a: Arrow, w: IceWall, world: World) { world.removed += [a.id]; }               // shatters
+fn hit(f: Fireball, s: Slime, world: World) { s.status.hp -= 6; world.removed += [f.id]; }   // fire weakness
+fn hit(b: IceBolt, s: Slime, world: World) { s.status.frozen = true; world.removed += [b.id]; }
+fn hit(f: Fireball, b: IceBolt, world: World) { world.removed += [f.id]; world.removed += [b.id]; }  // cancel mid-air
+fn hit(p: Entity, t: Player, world: World) { t.status.hp -= damage(p); world.removed += [id_of(p)]; }  // ANY entity vs player
+fn hit(a: Entity, b: Entity, world: World) { }                                          // nothing else interacts
+
+// Fresh entities for every row, held at their VARIANT types — the static rows: a constructor
+// returning `Entity` would hold every argument at the enum and every row would reach the
+// fallback, which is the runtime cell's shape (step 13), not this file's.
+fn player() -> Player { Player { id: 1, status: Status { hp: 10 }, pos: Vec2 { x: 0, y: 0 } } }
+fn slime() -> Slime { Slime { id: 2, status: Status { hp: 10 }, pos: Vec2 { x: 1, y: 0 } } }
+fn ice_wall() -> IceWall { IceWall { id: 3, status: Status { hp: 10 }, pos: Vec2 { x: 2, y: 0 } } }
+fn crate_() -> Crate { Crate { id: 4, status: Status { hp: 10 }, pos: Vec2 { x: 3, y: 0 } } }
+fn fireball() -> Fireball { Fireball { id: 5, pos: Vec2 { x: 7, y: 9 }, vel: Vec2 { x: 1, y: 0 } } }
+fn ice_bolt() -> IceBolt { IceBolt { id: 6, pos: Vec2 { x: 8, y: 9 }, vel: Vec2 { x: -1, y: 0 } } }
+fn arrow() -> Arrow { Arrow { id: 7, status: Status {}, pos: Vec2 { x: 9, y: 9 }, vel: Vec2 { x: 0, y: 1 } } }
+fn world() -> World { World { removed: [], spawned: [] } }
+
+fn hp_of(e: Entity) -> integer {
+  match e {
+    Player { status } => status.hp,
+    Slime { status } => status.hp,
+    IceWall { status } => status.hp,
+    Crate { status } => status.hp,
+    _ => -1,
+  }
+}
+
+fn frozen_of(e: Entity) -> boolean { match e { Slime { status } => status.frozen, _ => false } }
+fn burning_of(e: Entity) -> boolean { match e { Crate { status } => status.burning, _ => false } }
+fn stuck_of(e: Entity) -> boolean { match e { Arrow { status } => status.stuck, _ => false } }
+
+// Which ids the world removed, as one text — so a row asserts identity, not a count.
+fn removed_ids(w: World) -> text {
+  out = "";
+  for id in w.removed { out += "{id},"; }
+  out
+}
+
+fn steam_at(w: World) -> text {
+  if len(w.spawned) != 1 { return "none"; }
+  match w.spawned[0] {
+    Steam { pos } => "steam@{pos.x},{pos.y}",
+    _ => "other",
+  }
+}
+
+// Row 1 — Fireball × IceWall: wall.hp 10→7, one Steam spawned at the fireball, fireball removed.
+fn row_fireball_ice_wall() {
+  a = fireball(); b = ice_wall(); w = world();
+  hit(a, b, w);
+  assert(hp_of(b) == 7, "row 1 wall hp: got {hp_of(b)}");
+  assert(steam_at(w) == "steam@7,9", "row 1 steam: got {steam_at(w)}");
+  assert(removed_ids(w) == "5,", "row 1 removed: got {removed_ids(w)}");
+}
+
+// Row 2 — IceBolt × IceWall: wall.hp 10→12, nothing removed, nothing spawned.
+fn row_ice_bolt_ice_wall() {
+  a = ice_bolt(); b = ice_wall(); w = world();
+  hit(a, b, w);
+  assert(hp_of(b) == 12, "row 2 wall hp: got {hp_of(b)}");
+  assert(removed_ids(w) == "", "row 2 removed: got {removed_ids(w)}");
+  assert(len(w.spawned) == 0, "row 2 spawned: got {len(w.spawned)}");
+}
+
+// Row 3 — Fireball × Crate: crate.burning, fireball removed, crate hp untouched.
+fn row_fireball_crate() {
+  a = fireball(); b = crate_(); w = world();
+  hit(a, b, w);
+  assert(burning_of(b), "row 3 burning: got {burning_of(b)}");
+  assert(hp_of(b) == 10, "row 3 crate hp: got {hp_of(b)}");
+  assert(removed_ids(w) == "5,", "row 3 removed: got {removed_ids(w)}");
+}
+
+// Row 4 — Arrow × Crate: arrow.stuck, arrow KEPT.
+fn row_arrow_crate() {
+  a = arrow(); b = crate_(); w = world();
+  hit(a, b, w);
+  assert(stuck_of(a), "row 4 stuck: got {stuck_of(a)}");
+  assert(removed_ids(w) == "", "row 4 the arrow is kept: got {removed_ids(w)}");
+  assert(hp_of(b) == 10, "row 4 crate hp: got {hp_of(b)}");
+}
+
+// Row 5 — Arrow × IceWall: arrow removed, wall untouched.
+fn row_arrow_ice_wall() {
+  a = arrow(); b = ice_wall(); w = world();
+  hit(a, b, w);
+  assert(removed_ids(w) == "7,", "row 5 removed: got {removed_ids(w)}");
+  assert(hp_of(b) == 10, "row 5 wall hp: got {hp_of(b)}");
+  assert(!stuck_of(a), "row 5 not stuck: got {stuck_of(a)}");
+}
+
+// Row 6 — Fireball × Slime: slime.hp 10→4, fireball removed.
+fn row_fireball_slime() {
+  a = fireball(); b = slime(); w = world();
+  hit(a, b, w);
+  assert(hp_of(b) == 4, "row 6 slime hp: got {hp_of(b)}");
+  assert(removed_ids(w) == "5,", "row 6 removed: got {removed_ids(w)}");
+  assert(!frozen_of(b), "row 6 not frozen: got {frozen_of(b)}");
+}
+
+// Row 7 — IceBolt × Slime: slime.frozen, ice bolt removed, slime hp untouched.
+fn row_ice_bolt_slime() {
+  a = ice_bolt(); b = slime(); w = world();
+  hit(a, b, w);
+  assert(frozen_of(b), "row 7 frozen: got {frozen_of(b)}");
+  assert(hp_of(b) == 10, "row 7 slime hp: got {hp_of(b)}");
+  assert(removed_ids(w) == "6,", "row 7 removed: got {removed_ids(w)}");
+}
+
+// Row 8 — Fireball × IceBolt: both removed (a concrete pair beats projectile × projectile).
+fn row_fireball_ice_bolt() {
+  a = fireball(); b = ice_bolt(); w = world();
+  hit(a, b, w);
+  assert(removed_ids(w) == "5,6,", "row 8 both removed: got {removed_ids(w)}");
+  assert(len(w.spawned) == 0, "row 8 spawned: got {len(w.spawned)}");
+}
+
+// Row 9 — Arrow × IceBolt: nothing (the projectile × projectile fallback).
+fn row_arrow_ice_bolt() {
+  a = arrow(); b = ice_bolt(); w = world();
+  hit(a, b, w);
+  assert(removed_ids(w) == "", "row 9 removed: got {removed_ids(w)}");
+  assert(!stuck_of(a), "row 9 not stuck: got {stuck_of(a)}");
+  assert(len(w.spawned) == 0, "row 9 spawned: got {len(w.spawned)}");
+}
+
+// Row 10 — Fireball × Player: player.hp 10→7 (damage(Fireball) = 3), fireball removed.
+fn row_fireball_player() {
+  a = fireball(); b = player(); w = world();
+  hit(a, b, w);
+  assert(hp_of(b) == 7, "row 10 player hp: got {hp_of(b)}");
+  assert(removed_ids(w) == "5,", "row 10 removed: got {removed_ids(w)}");
+}
+
+// Row 11 — Arrow × Player: player.hp 10→9 (damage(Arrow) = 1), arrow removed.
+fn row_arrow_player() {
+  a = arrow(); b = player(); w = world();
+  hit(a, b, w);
+  assert(hp_of(b) == 9, "row 11 player hp: got {hp_of(b)}");
+  assert(removed_ids(w) == "7,", "row 11 removed: got {removed_ids(w)}");
+  assert(!stuck_of(a), "row 11 not stuck: got {stuck_of(a)}");
+}
+
+// Row 12 — Slime × Crate: nothing (the total fallback).
+fn row_slime_crate() {
+  a = slime(); b = crate_(); w = world();
+  hit(a, b, w);
+  assert(hp_of(a) == 10, "row 12 slime hp: got {hp_of(a)}");
+  assert(hp_of(b) == 10, "row 12 crate hp: got {hp_of(b)}");
+  assert(!burning_of(b), "row 12 not burning: got {burning_of(b)}");
+  assert(removed_ids(w) == "", "row 12 removed: got {removed_ids(w)}");
+}
+
+// Row 13 — the control the table does not carry: the pair REVERSED reaches the fallback.
+// A `match` matching every pair passes rows 1 to 12 through their first arm's side effects
+// only where they happen to coincide; this row is where it cannot.
+fn row_reversed_pair_is_the_fallback() {
+  a = ice_wall(); b = fireball(); w = world();
+  hit(a, b, w);
+  assert(hp_of(a) == 10, "row 13 wall hp: got {hp_of(a)}");
+  assert(removed_ids(w) == "", "row 13 removed: got {removed_ids(w)}");
+  assert(len(w.spawned) == 0, "row 13 spawned: got {len(w.spawned)}");
+}
+
+fn main() {
+  row_fireball_ice_wall();
+  row_ice_bolt_ice_wall();
+  row_fireball_crate();
+  row_arrow_crate();
+  row_arrow_ice_wall();
+  row_fireball_slime();
+  row_ice_bolt_slime();
+  row_fireball_ice_bolt();
+  row_arrow_ice_bolt();
+  row_fireball_player();
+  row_arrow_player();
+  row_slime_crate();
+  row_reversed_pair_is_the_fallback();
+}

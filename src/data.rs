@@ -7149,7 +7149,7 @@ impl Data {
     /// a definition's parameter contributes to its key, and what a call's argument is matched
     /// against.  `None` for a type with no def to name (a `Function`).
     #[must_use]
-    fn type_spelling(&self, tp: &Type) -> Option<String> {
+    pub(crate) fn type_spelling(&self, tp: &Type) -> Option<String> {
         let tn = self.type_def_nr(tp);
         (tn != u32::MAX).then(|| Self::sig_type_name(&self.key_type_name(tn), tp))
     }
@@ -7168,6 +7168,30 @@ impl Data {
             parts.push(self.type_spelling(tp)?);
         }
         Some(parts.join("#"))
+    }
+
+    /// Does `name`'s overload set carry a definition whose RECEIVER is the enum `e_nr` itself
+    /// (`hit(e: Entity, …)`, dense or `Entity?`)?  Then the enum-level definition of the name
+    /// is the author's — `Disp-Fallback`'s most general type — and @F20 synthesises none over
+    /// it (@PLN162).
+    #[must_use]
+    pub fn overload_set_takes_enum(&self, name: &str, e_nr: u32) -> bool {
+        let main = self.def_nr(name);
+        if main == u32::MAX || self.def(main).def_type != DefType::Dynamic {
+            return false;
+        }
+        self.def(main)
+            .attributes
+            .iter()
+            .any(|a| match a.typedef.base() {
+                Type::Routine(r) => self
+                    .def(*r)
+                    .attributes
+                    .iter()
+                    .find(|p| !p.hidden)
+                    .is_some_and(|p| matches!(p.typedef.base(), Type::Enum(e, _, _) if *e == e_nr)),
+                _ => false,
+            })
     }
 
     /// The full spelling of a registered definition's declared parameters.
@@ -7236,66 +7260,6 @@ impl Data {
             .map(|p| p.typedef.source_name(self))
             .collect();
         format!("{fn_name}({})", params.join(", "))
-    }
-
-    /// [`Self::exact_overloads`] for the METHOD spelling: `dispatch` (the receiver's type with
-    /// its nullability) stands in for `types[0]`, as in [`Self::select_method`].
-    #[must_use]
-    pub fn exact_method_overloads(
-        &self,
-        source: u16,
-        fn_name: &str,
-        dispatch: &Type,
-        types: &[Type],
-    ) -> Option<Vec<u32>> {
-        let mut with_receiver: Vec<Type> = Vec::with_capacity(types.len().max(1));
-        with_receiver.push(dispatch.clone());
-        with_receiver.extend_from_slice(types.get(1..).unwrap_or(&[]));
-        self.exact_overloads(source, fn_name, &with_receiver)
-    }
-
-    /// The overloads of `fn_name` whose declared parameters spell EXACTLY the argument
-    /// types `args` (receiver first) — every position equal, a trailing parameter admitted
-    /// when it has a default.  `None` when the name has no overload set or an argument has
-    /// no spelling; an empty set when it has one and nothing matches.
-    #[must_use]
-    pub fn exact_overloads(&self, source: u16, fn_name: &str, args: &[Type]) -> Option<Vec<u32>> {
-        let main = self.source_nr(source, fn_name);
-        if main == u32::MAX || self.def(main).def_type != DefType::Dynamic {
-            return None;
-        }
-        let want: Vec<String> = args
-            .iter()
-            .map(|t| self.type_spelling(t))
-            .collect::<Option<Vec<String>>>()?;
-        let mut hits = Vec::new();
-        for a in &self.def(main).attributes {
-            // Read through `τ?` (@FR-N-Shape), though a dispatcher's attribute is never wrapped.
-            let Type::Routine(r) = a.typedef.base() else {
-                continue;
-            };
-            let r = *r;
-            let declared: Vec<&Attribute> = self
-                .def(r)
-                .attributes
-                .iter()
-                .filter(|p| !p.hidden)
-                .collect();
-            if want.len() > declared.len() {
-                continue;
-            }
-            let positional = declared[..want.len()]
-                .iter()
-                .zip(&want)
-                .all(|(p, w)| self.type_spelling(&p.typedef).as_deref() == Some(w.as_str()));
-            let rest_defaulted = declared[want.len()..]
-                .iter()
-                .all(|p| p.value != Value::Null);
-            if positional && rest_defaulted {
-                hits.push(r);
-            }
-        }
-        Some(hits)
     }
 
     #[must_use]
@@ -7940,19 +7904,7 @@ impl Data {
     /// selection is "exactly one", so [`Self::find_fn`] answers that and every caller is
     /// unchanged; the set is the concept the later steps widen.
     #[must_use]
-    pub fn candidates(&self, source: u16, fn_name: &str, tp: &Type, args: &[Type]) -> Vec<u32> {
-        // `Disp-Key` (@PLN162): a name with SEVERAL definitions is a bare `Dynamic` dispatcher
-        // whose attributes are its overloads.  With the call's full argument list in hand —
-        // only the two real call paths have one — the overloads whose parameters spell the
-        // argument types EXACTLY are the candidates and the ladder is not consulted; without
-        // one (no dispatcher, an argument with no spelling, no exact overload) the ladder
-        // answers as it always has.  Steps 9–10 widen "exactly" to the enum lattice.
-        if !args.is_empty()
-            && let Some(hits) = self.exact_overloads(source, fn_name, args)
-            && !hits.is_empty()
-        {
-            return hits;
-        }
+    pub fn candidates(&self, source: u16, fn_name: &str, tp: &Type) -> Vec<u32> {
         let free = || -> Vec<u32> {
             let d_nr = self.source_nr(source, &format!("n_{fn_name}"));
             if d_nr == u32::MAX {
@@ -8073,36 +8025,44 @@ impl Data {
         Vec::new()
     }
 
-    /// The definition a call resolves to, given EVERY argument's type with the receiver
-    /// first — `Disp-Select`'s entry point (@PLN162), and one rule for both call spellings
-    /// (`@FR-F-Recv`).  Today the receiver is `types[0]`, and a `both`/`self`-dispatched
-    /// function takes uniform-nullability parameters, so the call is routed to the `τ?`
-    /// overload when ANY argument is nullable — `max(5, a?)` reaches the overload `max(a?, 5)`
-    /// does and `p.mix(n?)` the one `mix(p, n?)` does, and null propagates regardless of
-    /// position and of spelling (@PLN25 F1b(b); D-call-21 closed the method spelling, which
-    /// read the receiver alone).  An empty list, or a `null` literal first, has no receiver
-    /// and asks for the free `n_<name>`.  [`Self::candidates`] over that receiver must then
+    /// The argument types as DISPATCHED: `(F-Recv)`'s argument clause — a `both`/`self`
+    /// overload pair takes uniform nullability, so when ANY argument is nullable every
+    /// position is asked for as `τ?`, and null propagates regardless of position and of
+    /// spelling (@PLN25 F1b(b); D-call-21 closed the method spelling).  An empty list, or a
+    /// `null` literal first, has no receiver: the first position becomes `Unknown`, which
+    /// asks for the free `n_<name>`.
+    #[must_use]
+    pub fn routed_types(&self, types: &[Type]) -> Vec<Type> {
+        if types.is_empty() || types[0] == Type::Null {
+            let mut out = vec![Type::Unknown(0)];
+            out.extend_from_slice(types.get(1..).unwrap_or(&[]));
+            return out;
+        }
+        if types.iter().any(|t| matches!(t, Type::Optional(_))) {
+            types
+                .iter()
+                .map(|t| {
+                    if matches!(t, Type::Optional(_)) {
+                        t.clone()
+                    } else {
+                        Type::optional(t.base().clone())
+                    }
+                })
+                .collect()
+        } else {
+            types.to_vec()
+        }
+    }
+
+    /// The definition a call resolves to by today's LADDER, given EVERY argument's type with
+    /// the receiver first — the entry point for a name with no overload set, and the fallback
+    /// when selection over one decided nothing (`parser::dispatch`).  The receiver is
+    /// `types[0]` as routed ([`Self::routed_types`]), and [`Self::candidates`] over it must
     /// yield exactly one.
     #[must_use]
     pub fn select(&self, source: u16, fn_name: &str, types: &[Type]) -> u32 {
-        let unknown = Type::Unknown(0);
-        let nullable_holder;
-        let dispatch_tp: &Type = if types.is_empty() || types[0] == Type::Null {
-            &unknown
-        } else if types.iter().any(|t| matches!(t, Type::Optional(_))) {
-            nullable_holder = Type::optional(types[0].base().clone());
-            &nullable_holder
-        } else {
-            &types[0]
-        };
-        // The routed list: the receiver as dispatched, every other argument as parsed.
-        let mut routed: Vec<Type> = Vec::with_capacity(types.len());
-        routed.push(dispatch_tp.clone());
-        routed.extend_from_slice(types.get(1..).unwrap_or(&[]));
-        match self
-            .candidates(source, fn_name, dispatch_tp, &routed)
-            .as_slice()
-        {
+        let routed = self.routed_types(types);
+        match self.candidates(source, fn_name, &routed[0]).as_slice() {
             [one] => *one,
             _ => u32::MAX,
         }
@@ -8137,7 +8097,7 @@ impl Data {
     /// choose between (a bound holder carrying the name at two arities).
     #[must_use]
     pub fn find_fn(&self, source: u16, fn_name: &str, tp: &Type) -> u32 {
-        match self.candidates(source, fn_name, tp, &[]).as_slice() {
+        match self.candidates(source, fn_name, tp).as_slice() {
             [one] => *one,
             _ => u32::MAX,
         }

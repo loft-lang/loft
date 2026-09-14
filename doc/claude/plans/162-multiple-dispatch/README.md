@@ -53,7 +53,7 @@ compile time to a direct call wherever the argument types are statically concret
 
 - **Effort:** H — six rules, a new selection pass, a lowering, three backends, two profiles.
 - **Design:** ~ (partial) — the rules are written; three open questions gate the first phase.
-- **Last touched:** 2026-09-14 (IMPL.md steps 1–7 done — the first dispatch code is in the tree)
+- **Last touched:** 2026-09-14 (IMPL.md steps 1–8 done, 9's static half; phase 4's static rows green)
 
 ## Composition matrix — Stage A
 
@@ -311,10 +311,10 @@ half-done state to compare against — see [§ Phase cutting](#phase-cutting-why
 | Item | Source | Verify | Status |
 |---|---|---|---|
 | **0** — verify the design's claims about the tree; record the canonical-`match` answers | [DESIGN.md](DESIGN.md) §Where it lands, §Worked example | the 12-row expected-results table, measured through a hand-written `match`, identical on all three backends — **before** dispatch exists | **Done 2026-09-14** — `tests/scripts/162-step0-pairwise-interaction-as-a-central-match.loft`: the 12 rows, a reversed-pair control and an every-pair scenario over a `vector<Entity>`, green on all three backends.  Three deviations met on the way, one of them a silent wrong answer fixed in the same step — [IMPL.md § Step 0](IMPL.md) |
-| **1** — `Disp-Applicable` / `Disp-Specific` / `Disp-Select` / `Disp-Fallback` as a pure function over a method table, no lowering | DESIGN.md §Semantics | a unit test over synthetic signatures asserting the selected definition per argument tuple, ambiguous tuples included | Open |
-| **2** — `Disp-Ambiguous` as a compile-time refusal | DESIGN.md §Ambiguity check | the ambiguity program fails to compile, and the message names **both** definitions | Open |
-| **3** — `Disp-Closed` lowering for statically-concrete sites | DESIGN.md §Static resolution | `loft introspect` byte-identical to the hand-monomorphised equivalent; and the 1-definition matrix row byte-identical to today | Open |
-| **4** — the acceptance program through dispatch | DESIGN.md §Worked example | the same 12 rows phase 0 recorded, now via dispatch, three backends | Open |
+| **1** — `Disp-Applicable` / `Disp-Specific` / `Disp-Select` / `Disp-Fallback` as a pure function over a method table, no lowering | DESIGN.md §Semantics | a unit test over synthetic signatures asserting the selected definition per argument tuple, ambiguous tuples included | **Done 2026-09-14** as `.loft` matrices rather than a Rust unit test — `a-variant-is-more-specific-than-its-enum`, `a-name-may-have-several-definitions-keyed-by-parameter-types`, `a-supplied-argument-picks-the-defaulted-definition` (IMPL.md steps 6–9) |
+| **2** — `Disp-Ambiguous` as a compile-time refusal | DESIGN.md §Ambiguity check | the ambiguity program fails to compile, and the message names **both** definitions | **Done 2026-09-14** — `an-ambiguous-pair-is-refused-naming-both`, `an-omitted-argument-two-definitions-take-is-ambiguous-in-both-spellings` |
+| **3** — `Disp-Closed` lowering for statically-concrete sites | DESIGN.md §Static resolution | `loft introspect` byte-identical to the hand-monomorphised equivalent; and the 1-definition matrix row byte-identical to today | **Half done 2026-09-14** — the 1-definition row is proven at every step (`introspect_diff.sh` IDENTICAL over the corpus); a statically-concrete site already resolves to a direct call at parse time, which IMPL.md step 11 is to measure rather than build |
+| **4** — the acceptance program through dispatch | DESIGN.md §Worked example | the same 12 rows phase 0 recorded, now via dispatch, three backends | **Static rows done 2026-09-14** — `162-step4-pairwise-interaction-through-dispatch.loft`, arguments held at their variant types, both backends; the every-pair scenario over a `vector<Entity>` is phase 6's cell |
 | **5** — DCE / slim-artifact property | DESIGN.md §The two profiles | an unreferenced method is absent from the stripped artifact; artifact size unchanged vs. the `match` form | Open |
 | **6** — `Disp-Dynamic` | DESIGN.md §Runtime resolution | a heterogeneous `vector<Entity>` reproduces phase 0's rows; plus a control that a concrete site still emits a direct call and no table | Open |
 | **7** — `Disp-World` (open profile) | DESIGN.md §Disp-World | add a method mid-run; the new selection is taken AND a marker in the stale specialisation's body never appears | Open |

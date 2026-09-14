@@ -2554,7 +2554,13 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 795 | 453 | 5 | **337** |
+| 798 | 456 | 5 | **337** |
+
+(2026-09-14, @PLN162 step 8: `src/parser/dispatch.rs` is new — `dispatch_rank`,
+`ranked_overloads` and `report_selection` read a `Type` variant, every one through `.base()`
+— and `Data::overload_set_takes_enum` likewise; 795 → 798 total, 453 → 456 aware, the opaque
+column and the ratchet unmoved.  The first cut matched a `(a, p)` tuple of already-peeled
+locals, which the audit cannot see through, and the ratchet refused it.)
 
 (2026-09-14, @PLN162 step 6: `Data::exact_overloads` and `Data::admit_overload_set` are new
 functions that read a dispatcher attribute's `Type::Routine`, and `Parser::call` gained the
