@@ -1123,6 +1123,29 @@ its trip count, a constant push loop one fill — the same recogniser, ≈ −3.
 the C85 line again — closed by C120; a range proof over `(c >> 16) & 255` (a masked
 value is bounded) is the sound form of that one.
 
+*The queue after the ruling and the machine-code read (2026-09-15; DESIGN.md § V-aj
+"The tap in machine code": 109 instructions, 35 branches, 22 cycles per tap against the
+reference's 17 / 1.7 / 4.4).*  In this order:
+
+1. **Invariant index arithmetic hoisted at loft level** (`R-InvariantArith`) — the
+   invariant part of `(yy × iw + xmin) × 4 + ch` once per channel, `base + 4x` per tap.
+   Sound by construction (same values, fewer identical fault notes); ≈ 15 of the 109
+   instructions and the flag re-tests from the stack; applies to every indexed loop.
+2. **The guarded plain nest** (`R-BoundedNest`) — a bound over the nest's inputs taken
+   once per nest, the plain vectorised loop under it, the checked loop as fallback.  The
+   unit that reaches the reference's 4.4 cycles per tap and takes the three resample rows
+   under the bar; the largest to build.  Read § V-ae's fill for the guard-and-fallback
+   shape, § V-al for the emitter placement.
+3. **`parse`** (10.65×) — the `Scan` family is declined by the value form (`read_number`
+   "a site consumes its record", `find_option` / `read_uint` "a result position is not a
+   value leaf": read which site, since a `Scan` is three scalars and every consumer reads
+   `.ok`/`.at`/`.value`), and the runtime's per-record default fill clones the schema's
+   field list (`set_default_value_nullable` 4.7 % + `Vec<Field>::clone` 1.4 % of the
+   row — a runtime fix, both backends).
+4. **The counter step's `jo`** — provable away for a counted range; one instruction per
+   iteration, everywhere.
+5. The aarch64 re-measure, on its own box.
+
 **2026-09-14, later — HAND-OFF FOR THE QUIET BOX: `smooth`, the last judged row over the
 bar.**  Written on `tuxedo` (x86-64, three checkouts sharing it) for an agent on the quiet
 Ubuntu laptop; everything below that is a TIMING is to be re-measured there first.

@@ -4584,6 +4584,31 @@ asserted) with `make native-ratio` (`--gate` fails ratios over
 with `python3 bench/compare.py` in `loft-libs-graphics/drawing` (branch
 `drawing-lock`).
 
+### 2026-09-15 state: the ten filed rows under the bar, and the tap in machine code
+
+Quiet x86-64, 500 calls per row, `--repeat 3`, all 14 hashes agreeing (the scoreboard's
+one home is @PLN157's README § Status; this is the summary a reader of this chapter needs):
+the ten rows loft#1426 filed all sit under the 4× bar — `hash` 0.88×, `fill_circle` 1.14×,
+`fill_star` 1.19×, `lock` 1.90×, `hair` 1.93×, `composite` 2.01×, `lock_curved` 2.19×,
+`wide_line` 2.30×, `fronds` 3.26×, `smooth` 3.67× (a 316 ns reference that swings
+between 304 and 400) — and the issue carries its `Fixes` trailer.  The four rows the
+consumer's bench grew since stay with the plan: `parse` 10.65× (store churn per parsed
+option) and the graphics package's Lanczos resample under `resize` 5.36×, `render_marks`
+7.57×, `render_lock` 5.20×.
+
+What the resample still pays was read off the optimised assembly and counted with
+`perf stat` (DESIGN.md § V-aj *The tap in machine code*): per tap `acc += pre[idx]? *
+hk[j]?`, loft retires **109 instructions, 35 branches, 22 cycles** against the
+reference's **17 / 1.7 / 4.4**.  A sentinel-aware operation is four instructions and a
+predicted branch — cheap per op — but six of them stand in a tap, the fault note is a
+side effect that keeps LLVM re-testing the hoisted index's overflow and sentinel flags
+from the stack on every iteration, and a loop whose every step branches does not
+vectorise while the reference's tap is a four-wide multiply-accumulate.  Skipping the
+tests where the operands are merely typed non-null was put to the owner and declined
+(DESIGN_DECISIONS.md C120: values after a fault must not differ); the sound units that
+remain are invariant index arithmetic hoisted at loft level and a plain loop under a
+bound established once per nest, both in the plan's queue.
+
 ## Open work
 
 The 9 design entries above (P1, P2, P3, N1, N2, N3, N4, N5, W1)

@@ -4049,6 +4049,48 @@ range's counters, a masked value) such that the result cannot overflow emits the
 operator, because then no fault can occur and no value can differ; a library opts in by
 declaring the bounded element types it already knows.
 
+**The tap in machine code (2026-09-15).**  The owner's premise — an integer operation
+should not cost many cycles — was checked on the optimised assembly of the shipped
+emission (`rustc --emit asm -C opt-level=3 -C codegen-units=1 -C debuginfo=1` on the
+resample probe) and with `perf stat` over five resizes, 19.9 M taps each:
+
+| per tap `acc += pre[idx]? * hk[j]?` | loft native | Rust reference |
+|---|---:|---:|
+| instructions | 109 | 17 |
+| branches | 35 | 1.7 |
+| cycles | 22 | 4.4 |
+
+The premise holds per OPERATION: a sentinel-aware add is `cmp, cmp, add, jo`, four
+instructions and a predicted branch.  What multiplies it is the shape around the op, in
+three parts read off the hot path.  (1) Six operations stand in each tap plus two `?`
+discharges and two bounds tests — about fifty-five checking instructions.  (2) LLVM DOES
+hoist the invariant part of the index, `(yy × iw + xmin) × 4 + ch`, out of the inner
+loop, but every operation carries the fault note as a side effect that must fire on the
+right iteration, so the hoisted results' overflow and sentinel flags are spilled to the
+stack and RE-TESTED on every tap — eleven instructions and four stack reloads before the
+first useful one (`cmpb $0, 64(%rsp); jne`, `cmpq %r11, 288(%rsp); je`, …).  (3) A loop
+whose every step branches cannot be vectorised; the reference's 4.4 cycles per tap is a
+four-wide multiply-accumulate.  The two loop constructs asked about: `for a in 55..66`
+already carries no test (§ V-aj, `@FR-R-Counter`; the asm shows a bare `inc`), and one
+instruction more is provable there — the `jo` after it, since a counter bounded by its
+range cannot overflow.  `for b in v` is not: C85 lets an overflowed value, the sentinel,
+be STORED into a `vector<integer>`, so an element is not a value we know exists, and its
+test stays under C120; the library's `v[i]?` states the fact instead and the multiply
+already runs in the checked-only form because of it.
+
+**The two sound units this leaves, both situations we know.**  *Invariant arithmetic
+hoisted at loft level* (`R-InvariantArith`): the invariant part of an index chain
+computed once per enclosing iteration and `base + 4x` inside — the same values on every
+path, the flag re-tests and their stack traffic gone (≈ 15 of the 109 instructions), the
+fault in the invariant part noted once per channel instead of once per tap; it applies
+to every indexed loop in the bench.  *The guarded plain nest* (`R-BoundedNest`): one pass
+per nest over the plane and the kernel bounds their magnitudes, and when
+`max × max × taps` fits in 63 bits no overflow can occur inside the nest, so the plain
+loop — which LLVM vectorises — computes exactly what the checked one would; the checked
+loop is the fallback, as the fill's per-element loop is the fill's.  That is the unit that
+reaches the reference's shape, and it is admissible under C120 because the fact is
+established by a check before the arithmetic runs, not assumed.
+
 ## V-ak — a growth-free loop reads and writes through the element base (2026-09-14)
 
 **Invariant (`@FR-R-Base`, formal/rewrites.md).**  A loop that GROWS no store — no push,
