@@ -2102,6 +2102,16 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     /// EMPTY deps: still exempt from the free, but read as owning by the assignment
     /// lowering, which keeps the copy it has always made there.
     fn vector_element_cursor_deps(&self, v: &Value) -> Option<crate::data::Deps> {
+        // A `&(…)` binding is the other borrowing source: its `__tuple<…>` record is the
+        // CALLER's (formal/tuples.md `(T-Ref)`), so the cursor over it borrows that binding.
+        // Read as owning, the cursor a tuple pattern takes over the binding freed the caller's
+        // record at scope exit — a use-after-free `LOFT_STRICT_STORES` names and a plain run
+        // does not (loft#1530).
+        if let Value::Var(x) = v.unspan()
+            && matches!(self.vars.tp(*x).base(), Type::RefVar(_))
+        {
+            return Some(crate::data::Deps::frame1(*x));
+        }
         let Value::Call(d_nr, args) = v.unspan() else {
             return None;
         };

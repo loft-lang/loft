@@ -119,6 +119,9 @@ the same two cures. The gap between the rule and the model is
               element's own offset — the same `(ref, offset)` pair an ordinary struct FIELD
               uses (binding.md B-Ref).  For a parameter the tuple is the CALLER's; for a local
               it is the source variable's, so the two positions are one mechanism and not two.
+              A tuple PATTERN over the binding is a projection of every element at once, so a
+              `match` reads each element through the reference exactly as `p.i` does, and a
+              heap member read that way borrows the tuple rather than owning a copy.
   (T-Ref-Rep) the tuple a `&(…)` names is STACK-backed when every τᵢ is a scalar, and a
               `__tuple<τ₁, …, τₙ>` RECORD otherwise — the same record a heap-tuple RETURN and
               the loop variable over a `vector<(…)>` already are.  A tuple LOCAL that is the

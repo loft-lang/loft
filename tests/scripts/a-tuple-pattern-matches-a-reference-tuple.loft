@@ -1,0 +1,93 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A `&(τ₁, …, τₙ)` binding "denotes the bound tuple itself" (formal/tuples.md `(T-Ref)`), and a
+// tuple pattern is a projection of every element at once, so a `match` over it reads the
+// tuple through the reference as `t.0` does.  Both representations `(T-Ref-Rep)` gives the
+// binding take the pattern: an all-scalar tuple is STACK-backed, one with a heap member is a
+// `__tuple<…>` RECORD.  The record-backed one was refused at parse, *"Expect token }"*
+// (loft#1530); the stack-backed one was the same refusal until a `&` subject began to be read
+// through its reference, and then it reached code generation as an internal error — the
+// subject was copied into the match's stack tuple as a reference, which no store lowers.
+// @falsified-at: b16a71718 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-tuple-pattern-matches-a-reference-tuple.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — on the control the program never runs: the record-backed cells are refused
+//   at the first `(` of the tuple pattern (*"Expect token }"*), and the stack-backed cell stops
+//   code generation (*"Unknown referenced variable type: tuple(...)"*); here every cell passes.
+//   Not assert and not leak: a program the control cannot compile.
+//   ARMED: no instrument — a plain run on either backend reads it.  The two ownership halves of
+//   the fix are read only by `LOFT_POISON=1 LOFT_STRICT_STORES=1`, which named a use-after-free
+//   on `__tuple<integer,text>` and then on `__tuple<integer,Entity>` before each was closed.
+//   WITNESS: `scalar_pair((0, 7))`: an internal compiler error there, `zero 7` here.
+//   HOLDS: a by-value tuple subject matches on both trees; `t.0` reads and element writes
+//   through the reference answer the same on both; the leak channel is `none` on both.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+enum Entity { Fireball { n: integer }, IceWall { n: integer } }
+
+fn scalar_pair(t: &(integer, integer)) -> text {
+  r = match t { (0, b) => "zero {b}", (a, b) => "{a} {b}" };
+  t.0 = 9;
+  r
+}
+
+fn text_pair(t: &(integer, text)) -> text {
+  r = match t { (0, s) => "zero {s}", (n, s) => "{n} {s}" };
+  t.0 = 5;
+  r
+}
+
+fn entity_pair(t: &(integer, Entity)) -> text {
+  r = match t { (k, IceWall { n }) => "wall {k} {n}", (k, _) => "other {k}" };
+  t.0 = t.0 + 1;
+  r
+}
+
+fn after_write(t: &(integer, text)) -> text {
+  t.0 = 42;
+  match t { (42, s) => "saw the write {s}", _ => "missed the write" }
+}
+
+fn test_a_stack_backed_reference_tuple() {
+  p = (0, 7);
+  r = scalar_pair(p);
+  assert(r == "zero 7", "the literal arm: got {r}");
+  assert(p.0 == 9 && p.1 == 7, "and the element write reached the caller: {p.0} {p.1}");
+  q = (3, 4);
+  r2 = scalar_pair(q);
+  assert(r2 == "3 4", "the binding arm: got {r2}");
+}
+
+fn test_a_record_backed_reference_tuple() {
+  p = (0, "a");
+  r = text_pair(p);
+  assert(r == "zero a", "a literal element pattern over a text member: got {r}");
+  assert(p.0 == 5 && p.1 == "a", "the element write reached the caller: {p.0} {p.1}");
+  q = (2, "b");
+  r2 = text_pair(q);
+  assert(r2 == "2 b", "the binding arm: got {r2}");
+}
+
+fn test_a_struct_enum_member_takes_its_variant_pattern() {
+  wall: Entity = IceWall { n: 6 };
+  w = (1, wall);
+  r = entity_pair(w);
+  assert(r == "wall 1 6", "a variant pattern on a record-backed member: got {r}");
+  fire: Entity = Fireball { n: 2 };
+  f = (1, fire);
+  r2 = entity_pair(f);
+  assert(r2 == "other 1", "the catch-all: got {r2}");
+}
+
+fn test_the_match_sees_a_write_made_through_the_reference() {
+  p = (0, "z");
+  r = after_write(p);
+  assert(r == "saw the write z", "the subject is read at the match, not at entry: got {r}");
+}
+
+fn main() {
+  test_a_stack_backed_reference_tuple();
+  test_a_record_backed_reference_tuple();
+  test_a_struct_enum_member_takes_its_variant_pattern();
+  test_the_match_sees_a_write_made_through_the_reference();
+}

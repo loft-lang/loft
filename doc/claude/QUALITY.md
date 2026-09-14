@@ -2562,7 +2562,12 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 812 | 470 | 5 | **337** |
+| 814 | 472 | 5 | **337** |
+
+(2026-09-15, loft#1530: `Parser::ref_tuple_subject` is new and asks the subject's `Type::RefVar`
+and `Type::Tuple` off a `.base()`, and `vector_element_cursor_deps` gained the same peeled ask, so
+both land in the wrapper-aware column: 812 → 814 total, 470 → 472 aware, the opaque column
+and the ratchet unmoved.)
 
 (2026-09-15, loft#1529: `Parser::enum_slot_view` and `read_through_enum_slot` are new and read
 the nullable struct-enum's `Type::Enum` off a `.base()`, so both land in the wrapper-aware

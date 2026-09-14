@@ -5110,7 +5110,17 @@ impl Parser {
         let match_pos = self.lexer.pos().clone();
         // 1. Parse the subject expression.
         let mut subject = Value::Null;
-        let subject_type = self.expression(&mut subject);
+        let mut subject_type = self.expression(&mut subject);
+        // `(T-Ref)`: a `&(…)` binding denotes the bound tuple itself, so a tuple pattern over it
+        // reads every element through the reference, as `t.0` does.  The subject becomes the
+        // tuple of those element reads, which the tuple match stores and projects like any
+        // other.  Left as the reference, a record-backed tuple reached the plain-struct
+        // handler and was refused at the first `(` (loft#1530), and a stack-backed one was
+        // copied into the match's stack tuple as a reference, which no store lowers.
+        if let Some((reads, elems)) = self.ref_tuple_subject(&subject, &subject_type) {
+            subject = reads;
+            subject_type = Type::Tuple(elems);
+        }
         // @PLN25: a `τ?` subject matches as its base (shared sentinel storage) — peel the marker
         // so `match` on an `integer?` routes to the scalar handler instead of falling to the `_`
         // arm ("match requires an enum, struct, or scalar type"). Gate-OFF inert (never Optional).
@@ -6345,6 +6355,57 @@ impl Parser {
     /// an append allocated a FRESH backing and repointed the local: the write
     /// vanished, silently, on both backends (loft#664's shape).  A chain rooted in
     /// a CALL has no backing variable and still yields `None`.
+    /// The element reads a tuple pattern takes over a `&(…)` binding, with the element types,
+    /// when `subject` is such a binding — `None` for every other subject.  `(T-Ref-Rep)` gives
+    /// the binding two representations and the reads follow each: a STACK-backed tuple (all
+    /// scalar members) is projected through the reference with `TupleGet`, which the
+    /// generators already read that way; a `__tuple<…>` RECORD is unboxed the way a record
+    /// tuple return is, its element types being the record's own fields.
+    fn ref_tuple_subject(&mut self, subject: &Value, tp: &Type) -> Option<(Value, Vec<Type>)> {
+        let Value::Var(v) = subject.unspan() else {
+            return None;
+        };
+        let v = *v;
+        let pointee = match tp.base() {
+            Type::RefVar(inner) => inner.base().clone(),
+            _ => return None,
+        };
+        match pointee {
+            Type::Tuple(elems) => {
+                let reads = (0..elems.len())
+                    .map(|i| Value::TupleGet(v, i as u16))
+                    .collect();
+                Some((Value::Tuple(reads), elems))
+            }
+            Type::Reference(d, _) if self.data.def(d).name().starts_with("__tuple<") => {
+                let elems: Vec<Type> = self
+                    .data
+                    .def(d)
+                    .attributes
+                    .iter()
+                    .map(|a| a.typedef.clone())
+                    .collect();
+                let reads = self.unbox_tuple_from_dbref(Value::Var(v), &elems);
+                // A heap member read out of the record is a VIEW into the caller's store, so
+                // its type says it borrows the binding.  The record's own field types carry
+                // no deps, and read as owned the match's tuple released a struct-enum member
+                // at scope exit — the caller's record, freed under it.
+                let member_types = elems
+                    .into_iter()
+                    .map(|e| {
+                        if crate::data::is_scalar(e.base()) {
+                            e
+                        } else {
+                            e.depending(v)
+                        }
+                    })
+                    .collect();
+                Some((reads, member_types))
+            }
+            _ => None,
+        }
+    }
+
     fn match_borrow_source(&self, subject_val: &Value) -> Option<u16> {
         match subject_val.unspan() {
             Value::Var(v) => Some(*v),
