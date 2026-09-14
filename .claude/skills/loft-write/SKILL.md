@@ -666,6 +666,14 @@ match (3, 7) {
     (0, _)   => "zero",
     (n, m)   => "{n},{m}",
 }
+
+// An enum element names a VARIANT — by tag, or with its payload bound.  A record payload
+// bound this way is a view of the matched value; a scalar payload is a copy.
+match (a, b) {
+    (Fireball, IceWall { status }) => { status.hp -= 3; },
+    (Arrow { id }, Crate)          => { world.removed += [id]; },
+    _ => {},
+}
 ```
 
 Match is an expression — all arms must produce the same type (or void).

@@ -1,0 +1,69 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index e1f5bc9ab..adb18d010 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -10374,63 +10374,9 @@ impl Parser {
+                     }
+                     let elem_type = elem_type.clone();
+                     let elem_get = Value::TupleGet(tmp, i as u16);
+-                    if self.peek_is_variant_subpattern(&elem_type) {
+-                        // @FR-P-Point — a unit or struct variant is a point pattern over ONE
+-                        // value, and a tuple element is one value, so an enum element takes
+-                        // the forms a slice element takes: `(Fire, Wall { hp })` tag-tests
+-                        // each position and binds the payload it names, through the one
+-                        // lowering the top-level arm and the slice head share.
+-                        let mut sub_conds: Vec<Value> = Vec::new();
+-                        let mut aliases: Vec<(String, Option<u16>)> = Vec::new();
+-                        if let Some(c) = self.parse_field_sub_pattern(
+-                            elem_get,
+-                            &elem_type,
+-                            &mut bindings,
+-                            &mut sub_conds,
+-                            &mut aliases,
+-                        ) {
+-                            elem_conds.push(c);
+-                        }
+-                        elem_conds.append(&mut sub_conds);
+-                    } else if let Some(id) = self.lexer.has_identifier() {
++                    if let Some(id) = self.lexer.has_identifier() {
+                         if id == "_" {
+                             // element wildcard — no condition, no binding
+-                        } else if id.starts_with(char::is_uppercase) {
+-                            // @FR-M-Unit — a capitalised name is a VARIANT of the element's
+-                            // enum, or it is nothing: the language never reads one as a
+-                            // variable (`Foo = 5` is unknown), so it cannot be a binding here
+-                            // either, and binding it would make the arm match every tuple.
+-                            // Refused by name, as a top-level arm refuses it.
+-                            bad_pattern = true;
+-                            if !self.first_pass {
+-                                if let Some((e_nr, _)) = self.pattern_variant_enum(&elem_type) {
+-                                    diagnostic!(
+-                                        self.lexer,
+-                                        Level::Error,
+-                                        "'{}' is not a variant of {}",
+-                                        id,
+-                                        self.data.def(e_nr).name()
+-                                    );
+-                                } else {
+-                                    diagnostic!(
+-                                        self.lexer,
+-                                        Level::Error,
+-                                        "'{}' is not a variant — this tuple element is {}, \
+-                                         which has no variants; a binding is lower_case",
+-                                        id,
+-                                        elem_type.source_name(&self.data)
+-                                    );
+-                                }
+-                            }
+-                            // A payload written after a name that is no variant is skipped
+-                            // whole, so the arm reaches its `=>` with one diagnostic, not a
+-                            // cascade.  Step INSIDE the group first: `recover_to` skips a
+-                            // nested group as a unit, so asked from the `{` it would walk
+-                            // past the matching `}` and on through the elements after it.
+-                            if self.lexer.has_token("{") {
+-                                self.lexer.recover_to(&["}"]);
+-                                self.lexer.has_token("}");
+-                            }
+                         } else {
+                             // binding variable — always matches, captures element value
+                             let bind_nr = self.vars.add_variable(&id, &elem_type, &mut self.lexer);

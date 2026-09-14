@@ -373,6 +373,7 @@ elem-pattern    ::= '_'                                  // element wildcard
                   | elem-pattern '|' elem-pattern        // or-pattern
                   | '(' elem-pattern { ',' elem-pattern } ')'  // nested tuple
                   | 'null'                               // null match
+                  | Variant [ '{' field { ',' field } '}' ]  // enum element: tag test, payload bound
 
 guard           ::= 'if' expression
 ```
@@ -515,6 +516,24 @@ When the element type is itself a `Type::Tuple`, the pattern may be a nested
 `(...)`. Recursive call to the element-pattern parser for each sub-element.
 
 Generates a conjunction of sub-element conditions, ANDed into the outer arm condition.
+
+### Enum variant `Variant` / `Variant { fields }`
+
+When the element type is an enum (plain or struct-enum), a capitalised name is a VARIANT
+pattern, never a binding: `(Fire, Wall)` tag-tests both positions, and `(Fire { id }, Wall
+{ status })` also binds each payload field by name, in scope for the guard and the arm.  The
+same view-or-copy rule as a top-level arm applies — a record or other heap payload is a view
+of the matched value, a scalar payload is a copy (LOFT.md § Match expressions).  Plain-enum
+variants take an or-pattern (`(Fire | Ice, _)`); struct-enum variants do not, so spell those
+as separate arms.  The element and the top-level arm share one lowering
+(`parse_field_sub_pattern`), which is what `(P-Point)` in `formal/matching.md` asks for: a
+unit or struct variant is a point pattern over ONE value, and a tuple element is one value.
+
+A capitalised name that is not a variant of the element's enum is refused by name (*'Bogus' is
+not a variant of Kind*), as it is at a top-level arm; over an element with no variants at all
+the message names the element's type.  Before this held, such a name fell through to the
+binding branch and the arm matched every tuple in silence — see `formal/matching.md`
+D-match-5.
 
 ---
 
