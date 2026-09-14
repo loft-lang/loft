@@ -304,10 +304,26 @@ signature() { # <binary> <tree> <guard-path> <extra-args…> ; "exit|asserts|lea
   # record has since taken, which `LOFT_POISON=1` turns into a garbage read and plain mode
   # hides behind the allocator's reuse order — is scored on the channel that sees it, and
   # the guard's `@falsified-at` line says which one was armed.
+  # Honour the guard's `// @ARGS:` line (`--lib <dir>`, relative to the tree) when the guard
+  # runs as a PROGRAM.  The `--tests` runner reads the annotation itself; the program entry
+  # does not, so a library-shaped guard with a `main` scored INERT on both trees — each side
+  # refusing the `use` for want of the fixture, the same answer for the wrong reason.  A
+  # worktree at an OLDER ref still lacks a fixture added since, so such a guard's meaningful
+  # control is the `--patch` form, scored on this tree with the fix reverted.
+  local extra=()
+  case " $* " in
+    *" --tests "*) ;;
+    *)
+      local ann
+      ann=$(grep -m1 '^// @ARGS:' "$file" | sed 's|^// @ARGS:||')
+      # shellcheck disable=SC2206
+      [ -n "$ann" ] && extra=($ann)
+      ;;
+  esac
   out=$(cd "$tree" && bound -k 5 "$((lim + 20))" env LOFT_NATIVE_LEAK_CHECK=1 LOFT_TIMEOUT="$lim" \
         ${LOFT_POISON:+LOFT_POISON="$LOFT_POISON"} \
         ${LOFT_STRICT_STORES:+LOFT_STRICT_STORES="$LOFT_STRICT_STORES"} \
-        "$bin" "$@" "$file" 2>&1); rc=$?
+        "$bin" "$@" ${extra[@]+"${extra[@]}"} "$file" 2>&1); rc=$?
   local asserts leak panic refusals
   asserts=$(echo "$out" | grep -c "assertion failed")
   leak=$(echo "$out" | grep -oE "stores not freed at program exit: .*" | head -1 | sed 's/.*exit: //')

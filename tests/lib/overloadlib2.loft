@@ -1,0 +1,5 @@
+// A second library exporting a set of the SAME name as `overloadlib`'s — the two-package cell.
+pub struct Gem { n: integer }
+pub struct Ore { n: integer }
+pub fn hit(g: Gem) -> text { "gem {g.n}" }
+pub fn hit(o: Ore) -> text { "ore {o.n}" }

@@ -7490,7 +7490,31 @@ impl Data {
                     own(self, &Self::mangle_method(&sig, fn_name)) != u32::MAX
                 }
             });
-        if o_nr != u32::MAX && (self.def(o_nr).def_type != DefType::Dynamic || shadows_a_method) {
+        // `Disp-Key` (@PLN162): the name's bare dispatcher — an overload set, from ANY source
+        // visible bare, a `use`d library's included — already carrying a definition with this
+        // FULL parameter spelling is the same collision `shadows_a_method` names for a method,
+        // and an imported single free `n_<name>` names for itself: two definitions of one
+        // signature, and a bare call reaching the imported one while this one sat unreachable
+        // in silence (measured: `hit(f: Fire)` beside `use shapes` exporting `hit(Fire)` /
+        // `hit(Ice)` answered the library's body).  A definition of ANOTHER spelling joins the
+        // dispatch instead, kept live by its argument types — as a free function beside a
+        // stdlib `both` set always was.
+        let carried_spelling = o_nr != u32::MAX
+            && self.def(o_nr).def_type == DefType::Dynamic
+            && self
+                .full_spelling(arguments.iter().map(|a| &a.typedef))
+                .is_some_and(|full| {
+                    self.def(o_nr)
+                        .attributes
+                        .iter()
+                        .any(|a| match a.typedef.base() {
+                            Type::Routine(r) => self.def_full_spelling(*r).as_ref() == Some(&full),
+                            _ => false,
+                        })
+                });
+        if o_nr != u32::MAX
+            && (self.def(o_nr).def_type != DefType::Dynamic || shadows_a_method || carried_spelling)
+        {
             diagnostic!(
                 lexer,
                 Level::Error,

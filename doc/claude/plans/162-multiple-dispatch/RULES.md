@@ -65,10 +65,19 @@ its full spelling and `n_<name>` is retired, so the name offers no parse hint (`
 and every site that reads `n_<name>` as THE definition finds none, exactly as for a `both`
 name.  Three consequences worth stating:
 
-- **Scope is one SOURCE.**  A MAIN definition under a stdlib name stays the C95 refusal, a
-  library's names stay module-scoped (C97); overloading is something a file does to its own
-  names.  Library-exported overload sets are UNTESTED (the import alias table copies
-  `n_<name>`, which an overload set no longer has) — measured before a library ships one.
+- **Scope is one SOURCE, and a library's set reaches its consumers whole.**  A MAIN definition
+  under a stdlib name stays the C95 refusal, a library's names stay module-scoped (C97).  A
+  library's overload set is reached by every import spelling — wildcard bare, selective,
+  qualified, aliased, the method spelling, the library's own calls — through its bare
+  dispatcher (measured 2026-09-14: `tests/scripts/a-library-exports-an-overload-set.loft` and
+  its selective/aliased twin, both backends; the "untested" flag an earlier draft carried here
+  was wrong in the safe direction).  A consumer's definition of ANOTHER spelling of the name
+  joins the dispatch, kept live by its argument types, as a free function beside a stdlib
+  `both` set always was; one whose spelling the set ALREADY CARRIES is a redefinition,
+  refused naming the library's position — the collision an imported single `n_<name>` and
+  `shadows_a_method` already refuse, which the first cut missed (a bare call answered the
+  library's body while the consumer's own definition sat unreachable in silence).  Two
+  packages exporting a set of one name stay loft#788's refusal: call it qualified.
 - **The spelling is the key's, so it is as coarse as the key.**  Two `vector<τ>` spell alike
   (the element type is not in a key today), so `f(vector<integer>)` beside
   `f(vector<text>)` is a redefinition, as it was.

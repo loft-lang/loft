@@ -303,9 +303,20 @@ the method `x.hit(…)`* for a call no definition took — free overloads have t
 prefix now.  What step 0's table needs beyond this is steps 9 and
 13 (the enum lattice, and a value held at `Entity`).
 
-**Untested, and said so in RULES.md:** a LIBRARY exporting an overload set — the import alias
-table copies `n_<name>`, which an overload set no longer has.  Measure before a library ships
-one; it is the next cell of this step's matrix.
+**The library cell, measured the same day:** a library's overload set reaches its consumers
+by every import spelling (wildcard bare, selective, qualified, aliased, the method spelling,
+the library's own calls) — the "untested" flag was wrong in the safe direction, because the
+set is reached through its bare dispatcher and not through the `n_<name>` alias an import
+copies.  What the cell DID find: a consumer's `hit(f: Fire)` beside `use overloadlib`
+exporting `hit(Fire)` / `hit(Ice)` registered in silence and a bare `hit(Fire {…})` answered
+the LIBRARY's body — the pre-step analogue (a single imported `hit`) is refused as a
+redefinition, and so is a method of the same receiver (`shadows_a_method`), but neither check
+saw a dispatcher's overloads.  Closed in `add_fn`: a definition whose full spelling the name's
+bare dispatcher already carries, from any source visible bare, is a redefinition naming the
+library's position; another spelling still joins.  Guards: `a-library-exports-an-overload-
+set`, `…-reaches-a-selective-and-an-aliased-import`, and `a-consumer-definition-of-a-carried-
+signature-is-a-redefinition` (which also pins loft#788's two-package refusal), over the
+fixtures `tests/lib/overloadlib.loft` / `overloadlib2.loft`.
 
 `dispatch_key` uses every parameter's type and stops testing `arguments[0].name`.  Write and
 read in ONE commit.  A name with one definition keeps `n_<name>` — 145 sites in `src/` look
