@@ -4006,7 +4006,12 @@ impl Parser {
             return u32::MAX;
         }
         let nm = self.data.def(*d_nr).name();
-        if nm.is_empty() || self.data.def_nr(&format!("t_{}{}_lit", nm.len(), nm)) == u32::MAX {
+        if nm.is_empty()
+            || self
+                .data
+                .def_nr(&crate::data::Data::mangle_method(nm, "lit"))
+                == u32::MAX
+        {
             return u32::MAX;
         }
         *d_nr
@@ -7126,7 +7131,7 @@ impl Parser {
             // 1:1 so the LEN prefix `original_name` / `find_method_receivers` parse back is
             // still correct.
             let safe = base.replace(['<', '>', ',', ' ', '(', ')'], "_");
-            format!("t_{}{}_{name}", safe.len(), safe)
+            crate::data::Data::mangle_method(&safe, name)
         };
         // Return existing instantiation if already created.
         let existing = self.data.def_nr(&mangled);

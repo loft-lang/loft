@@ -7168,7 +7168,7 @@ impl Data {
         // A DECLARATION keyed here is a concrete function; only the stubs a BOUND mints are
         // keyed per signature (loft#1275).
         let sig = Self::sig_type_name(&self.key_type_name(type_nr), &arguments[0].typedef);
-        Some(format!("t_{}{}_{fn_name}", sig.len(), sig))
+        Some(Self::mangle_method(&sig, fn_name))
     }
 
     /// The marker that separates a bound HOLDER's method namespace from a concrete type's
@@ -7181,6 +7181,19 @@ impl Data {
     /// already calls eight REQUIRED parameters too many, so a bound method beyond it is not a
     /// shape the language encourages.
     pub(crate) const MAX_BOUND_ARITY: usize = 9;
+
+    /// The ONE spelling of a method's definition key: `t_<LEN><spelling>_<method>`, `LEN` the
+    /// length of `spelling` (`CODE.md` § naming).  `spelling` is whatever keys the receiver — a
+    /// type's name, `Name?` for a nullable receiver ([`Self::sig_type_name`]), `Name#<arity>`
+    /// for a bound holder's stub ([`Self::bound_stub_name`]) — and every site that mints or
+    /// seeks such a key spells it here, so a key minted under one spelling is sought under the
+    /// same one.  @PLN162 `Disp-Key` widens what the spelling carries; this is where it changes.
+    /// Two PREFIX builders stay apart on purpose, because they enumerate a type's keys rather
+    /// than name one: the `t_4Self_` scan in `parser/mod.rs` and the REPL's completion prefix.
+    #[must_use]
+    pub fn mangle_method(spelling: &str, method: &str) -> String {
+        format!("t_{}{}_{method}", spelling.len(), spelling)
+    }
 
     /// The internal name of a BOUND-METHOD STUB for `holder` — a generic's type variable, or an
     /// interface's associated type.
@@ -7216,7 +7229,7 @@ impl Data {
     #[must_use]
     pub fn bound_stub_name(holder: &str, method: &str, arity: usize) -> String {
         let h = format!("{holder}{}{arity}", Self::HOLDER_MARK);
-        format!("t_{}{}_{method}", h.len(), h)
+        Self::mangle_method(&h, method)
     }
 
     /// Is `name` taken by a definition in ANY source?
@@ -7278,7 +7291,7 @@ impl Data {
             return Self::bound_stub_name(&d.name, method, arity);
         }
         let n = self.key_type_name(type_nr);
-        format!("t_{}{}_{method}", n.len(), n)
+        Self::mangle_method(&n, method)
     }
 
     /// The name that KEYS a method on `type_nr`: a concrete type's own name, or a bound
@@ -7342,7 +7355,7 @@ impl Data {
                 let tn = self.type_def_nr(&a.typedef);
                 tn != u32::MAX && {
                     let sig = Self::sig_type_name(&self.key_type_name(tn), &a.typedef);
-                    own(self, &format!("t_{}{}_{fn_name}", sig.len(), sig)) != u32::MAX
+                    own(self, &Self::mangle_method(&sig, fn_name)) != u32::MAX
                 }
             });
         if o_nr != u32::MAX && (self.def(o_nr).def_type != DefType::Dynamic || shadows_a_method) {
@@ -7373,7 +7386,7 @@ impl Data {
             let tn = self.type_def_nr(&arg.typedef);
             if tn != u32::MAX {
                 let sig = Self::sig_type_name(&self.key_type_name(tn), &arg.typedef);
-                let m_nr = self.def_nr(&format!("t_{}{}_{fn_name}", sig.len(), sig));
+                let m_nr = self.def_nr(&Self::mangle_method(&sig, fn_name));
                 if m_nr != u32::MAX {
                     // The package short-name for the qualified-call fix line. `use_names`
                     // may hold an alias beside the real name for one source, so take the
@@ -7602,12 +7615,12 @@ impl Data {
                     d
                 }
             };
-            let d_nr = lookup(&format!("t_{}{}_{fn_name}", sig.len(), sig));
+            let d_nr = lookup(&Self::mangle_method(&sig, fn_name));
             // @PLN25 — a `τ?` receiver falls back to the base (non-null) overload when no
             // `τ?` overload exists, so a nullable value still reaches the plain method
             // (preserves the pre-nullability-key dispatch; inert when sig == base).
             if d_nr == u32::MAX && sig != base {
-                lookup(&format!("t_{}{}_{fn_name}", base.len(), base))
+                lookup(&Self::mangle_method(&base, fn_name))
             } else {
                 d_nr
             }
@@ -7733,7 +7746,7 @@ impl Data {
         };
         let own_source = self.definitions[type_nr as usize].source;
         for spelling in spellings {
-            let key = format!("t_{}{}_{fn_name}", spelling.len(), spelling);
+            let key = Self::mangle_method(spelling, fn_name);
             let d_nr = self.source_nr(source, &key);
             if d_nr == u32::MAX {
                 continue;
@@ -7788,12 +7801,12 @@ impl Data {
         }
         let base = self.key_type_name(type_nr);
         let sig = Self::sig_type_name(&base, tp);
-        let d_nr = self.source_nr(source, &format!("t_{}{}_{fn_name}", sig.len(), sig));
+        let d_nr = self.source_nr(source, &Self::mangle_method(&sig, fn_name));
         if d_nr != u32::MAX {
             return d_nr;
         }
         if sig != base {
-            let d_nr = self.source_nr(source, &format!("t_{}{}_{fn_name}", base.len(), base));
+            let d_nr = self.source_nr(source, &Self::mangle_method(&base, fn_name));
             if d_nr != u32::MAX {
                 return d_nr;
             }
@@ -8526,7 +8539,7 @@ impl Data {
             return u32::MAX;
         }
         let def = self.def(type_def);
-        let key = format!("t_{}{}_OpDrop", def.name.len(), def.name);
+        let key = Self::mangle_method(&def.name, "OpDrop");
         let nr = self.source_nr(def.source, &key);
         if nr != u32::MAX {
             return nr;
@@ -8560,7 +8573,7 @@ impl Data {
             return u32::MAX;
         }
         let def = self.def(type_def);
-        let key = format!("t_{}{}_OpDropAll", def.name.len(), def.name);
+        let key = Self::mangle_method(&def.name, "OpDropAll");
         let nr = self.source_nr(def.source, &key);
         if nr != u32::MAX {
             return nr;
@@ -8589,7 +8602,7 @@ impl Data {
             return u32::MAX;
         }
         let def = self.def(type_def);
-        let key = format!("t_{}{}_OpDropAllExcept", def.name.len(), def.name);
+        let key = Self::mangle_method(&def.name, "OpDropAllExcept");
         let nr = self.source_nr(def.source, &key);
         if nr != u32::MAX {
             return nr;
@@ -8610,7 +8623,7 @@ impl Data {
             return false;
         }
         let def = self.def(type_def);
-        let key = format!("t_{}{}_OpDropAll", def.name.len(), def.name);
+        let key = Self::mangle_method(&def.name, "OpDropAll");
         self.source_nr(def.source, &key) != u32::MAX || self.def_nr(&key) != u32::MAX
     }
 

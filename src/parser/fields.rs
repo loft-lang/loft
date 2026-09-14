@@ -387,7 +387,7 @@ impl Parser {
                 let parent_d = self.data.def(*child_d).parent();
                 if parent_d != u32::MAX && matches!(self.data.def_type(parent_d), DefType::Enum) {
                     let parent_name = self.data.def(parent_d).name().to_string();
-                    let stub_name = format!("t_{}{}_{}", parent_name.len(), parent_name, field);
+                    let stub_name = crate::data::Data::mangle_method(&parent_name, &field);
                     let md_nr = self.data.def_nr(&stub_name);
                     // Only fire when `t_<Parent>_<field>` is the
                     // user's direct declaration on the enum, NOT the

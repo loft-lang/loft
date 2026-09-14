@@ -114,7 +114,7 @@ impl Parser {
             }
         };
         // Method internal name: t_<len><TypeName>_<method>
-        let internal = format!("t_{}{type_name}_{method_name}", type_name.len());
+        let internal = crate::data::Data::mangle_method(&type_name, &method_name);
         let d_nr = {
             let nr = self.data.def_nr(&internal);
             if nr == u32::MAX {

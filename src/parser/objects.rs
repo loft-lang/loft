@@ -2564,7 +2564,9 @@ impl Parser {
             let custom_fmt = if let Type::Reference(fd, _) = &tp {
                 self.data.def_type(*fd) == DefType::Struct && {
                     let nm = self.data.def(*fd).name().to_string();
-                    self.data.def_nr(&format!("t_{}{}_to_text", nm.len(), nm)) != u32::MAX
+                    self.data
+                        .def_nr(&crate::data::Data::mangle_method(&nm, "to_text"))
+                        != u32::MAX
                 }
             } else {
                 false
@@ -2749,7 +2751,9 @@ impl Parser {
             return;
         }
         let nm = self.data.def(target).name();
-        let d_nr = self.data.def_nr(&format!("t_{}{}_lit", nm.len(), nm));
+        let d_nr = self
+            .data
+            .def_nr(&crate::data::Data::mangle_method(nm, "lit"));
         if d_nr == u32::MAX || self.data.attributes(d_nr) != 2 {
             return;
         }
@@ -2825,7 +2829,10 @@ impl Parser {
             );
         }
         let nm = self.data.def(target).name().to_string();
-        let d_nr = self.data.def_nr(&format!("t_{}{nm}_hole_{kind}", nm.len()));
+        let d_nr = self.data.def_nr(&crate::data::Data::mangle_method(
+            &nm,
+            &format!("hole_{kind}"),
+        ));
         if d_nr == u32::MAX || self.data.attributes(d_nr) != 2 {
             if !self.first_pass {
                 diagnostic!(

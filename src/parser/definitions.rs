@@ -5430,14 +5430,14 @@ impl Parser {
     /// the latter, and a synthesized function must not be validated as a user declaration.
     pub(crate) fn drop_cascade_name(data: &crate::data::Data, type_def: u32) -> String {
         let n = data.def(type_def).name();
-        format!("t_{}{}_OpDropAll", n.len(), n)
+        crate::data::Data::mangle_method(n, "OpDropAll")
     }
 
     /// The mangled name of a type's skip-capable cascade — `t_<LEN><Type>_OpDropAllExcept`.
     /// See [`crate::data::Data::drop_cascade_except_nr`] for what it is for.
     pub(crate) fn drop_cascade_except_name(data: &crate::data::Data, type_def: u32) -> String {
         let n = data.def(type_def).name();
-        format!("t_{}{}_OpDropAllExcept", n.len(), n)
+        crate::data::Data::mangle_method(n, "OpDropAllExcept")
     }
 
     /// @PLN139 stage B — give every type that OWNS a droppable through a field a function

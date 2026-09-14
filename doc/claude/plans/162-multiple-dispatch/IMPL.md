@@ -30,6 +30,10 @@ fn hit(self: Fire, t: Crate) { … }
 | Write | `Data::get_fn` — `src/data.rs:7567` | **1** — `parser/definitions.rs:1622` |
 | Read | `Data::find_fn` — `src/data.rs:7624` | 11 — `parser/fields.rs` ×2, `parser/mod.rs` ×6, `parser/definitions.rs` ×1, … |
 
+⚠ **Corrected by step 1 (2026-09-14):** the write is `Data::add_fn` on pass 1, keyed by
+`Data::fn_key`; `get_fn` is the pass-2 re-lookup.  And the key's SPELLING had no single home
+until step 1 gave it one (`Data::mangle_method`) — see § Step 1.
+
 `Data::bound_stub_name` (`src/data.rs:7197`) already folds a marker and an arity into a key —
 `t_<LEN><holder>#g<arity>_<method>` — so the widening has a shape to follow, not invent.
 
@@ -107,13 +111,37 @@ wrong body.
 available and the reason the risky part comes last.  A step here that changes output is a bug
 in the step, not a feature.
 
-### Step 1 — `dispatch_key` as a function  ·  XS
+### Step 1 — one spelling for the method key  ·  XS  ·  DONE 2026-09-14
 
-Extract the key construction from `get_fn` into `Data::dispatch_key(name, &[Argument]) ->
-String`.  One caller.
+Planned as *"extract the key construction from `get_fn` into `Data::dispatch_key`"*; the tree
+had more than fact 2 above says.  The definition-side key already had a home,
+**`Data::fn_key(name, &[Argument])`**, which `add_fn` uses on pass 1 — that is the WRITE;
+`get_fn` is the pass-2 RE-LOOKUP of a definition already registered, and it re-spelled the
+same key inline.  Beside those, `Data::method_key(type_nr, method, arity)` keyed from a type
+and `Data::bound_stub_name` from a holder, and the raw `t_<LEN><Type>_<method>` spelling was
+written out at **22** further sites (`find_fn`, `find_op_method`, the `OpDrop*` cascade
+lookups, the `to_text` / `lit` / `hole_*` hooks, the native-method registry, an enum-variant
+stub) — three homes and no primitive under them, so a key minted under one spelling and
+sought under another would be silently unresolvable (the hazard `bound_stub_name`'s own doc
+names).
 
-- **Red on its own:** `cargo test` — any key drift breaks method resolution everywhere.
-- **Compared against:** `introspect` byte-identical, before/after.
+**Done:** one associated **`Data::mangle_method(spelling, method)`** is the only place the
+spelling exists; `fn_key`, `method_key`, `bound_stub_name` and every inline site call it.
+Two PREFIX builders stay apart on purpose (they enumerate a type's keys rather than name one):
+the `t_4Self_` scan in `parser/mod.rs` and the REPL's completion prefix.  Steps 6–7 change
+`fn_key` (what the spelling carries) and `mangle_method` (how it is spelled) — two functions,
+not twenty-five sites.
+
+- **Compared against:** `bytecode-comparisons/step1-corpus.loft` (one function per key path:
+  free, `self`, `both`, a `τ?` overload beside `τ`, the `τ?`→`τ` fallback, a user method on a
+  stdlib type, a user operator, the `to_text` hook, bound stubs) — `introspect` byte-identical
+  before/after and clean on both backends with the leak checks armed; and
+  `scripts/introspect_diff.sh` over the whole corpus: **IDENTICAL 1504/1504**.
+- **Not done here, deliberately:** `get_fn` still computes `(base, sig)` beside `fn_key`
+  rather than calling it — it also needs `base` for the `τ?`→`τ` fallback, and the ORDER in
+  which each site tries the spellings differs on purpose (`find_fn` tries both directions per
+  `@FR-F-Recv`; `get_fn` and `find_op_method` only `sig` then `base`).  Unifying the order is a
+  behaviour question, not step 1's.
 
 ### Step 2 — `candidates()` beside `find_fn`  ·  S
 
