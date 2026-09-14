@@ -909,8 +909,22 @@ store rather than the mapped file, because there a read faults and writes.  The 
 queue it leaves, cheapest first: assert the facts a header already proved
 (`std::hint::assert_unchecked`, which the tree uses nowhere today), index `allocations`
 unchecked on the same proof, derive a real slice per store at the header, then LTO.  The
-first is a SOUNDNESS lever and its falsifier is `LOFT_HOIST_VERIFY=1`.  Unstarted; the
-next step is the rustc-first probe on one kernel.
+first is a SOUNDNESS lever and its falsifier is `LOFT_HOIST_VERIFY=1`.
+
+**Item 1's ceiling is now MEASURED and it is the biggest number left on the board**
+(PERFORMANCE.md § 3d, the table): removing the three redundant tests a hoisted element
+read still pays reads `composite` **−20.4 %**, `render_marks` **−13.3 %**, `render_lock`
+**−13.1 %**, `lock` **−10.3 %**, `lock_curved` **−7.8 %**, every other row inside the
+lane's swing, 14/14 hashes on all four passes.  The ATTRIBUTION is what shapes the unit:
+the one test that is trivially sound to drop (the store-table index) buys ~5 % on one row
+and nothing else, so there is no cheap version — the win is in the position-overflow test
+and the in-store bounds test, one of which is also the corruption net.  The design that
+follows is the fill's shape: validate the vector's extent against the store ONCE at header
+derivation, answer `len: 0` on failure so a corrupt length degrades to the existing cold
+path rather than to undefined behaviour, after which `0 <= from < len` implies all three
+per-element tests.  The plumbing is the element size into the derivation, which the
+emitter already knows from the element-address op it collected the candidate from.  Ready
+to build; items 2 to 4 are still un-probed.
 
 **2026-09-13 (late) — § V-af shipped: the smooth profile, run down.**  `perf` on this box
 (`sm_only.loft --n 2000000`, the recipe of § V-ad) read a third of the row as runtime

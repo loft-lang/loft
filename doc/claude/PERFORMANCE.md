@@ -905,10 +905,46 @@ worth a cycle while the first four are unstarted — as of 2026-09-14 the tree u
 this project ranks worst ([GOALS.md](GOALS.md)). Derive each assertion from the same fact
 `LOFT_HOIST_VERIFY=1` re-checks, so the falsifier exists before the assertion does.
 
-**The next probe is rustc-first**, the recipe @PLN157 § V-ac and § V-q used: hand-edit the
-emitted Rust of one kernel to carry the assertions, rebuild with the flags loft uses, and
-measure. If that does not move the row, region marking will not move it either, because
-the guard sits upstream of the alias question.
+**The ceiling of item 1, measured 2026-09-14** (aarch64 Linux, host `lima-default`;
+`compare.py --repeat 3`, caches cleared per side, BASE / PROBE / PROBE / BASE, all 14
+hashes agreeing on every run). A hoisted element read still pays THREE tests inside its
+fast path, and all three are redundant against facts the derivation already established:
+the store-table index, `checked_vec_pos`'s overflow test, and `offset_in_bounds` against
+the store's own size. With all three removed by hand:
+
+| row | base | all three removed | store-table index alone |
+|---|---:|---:|---:|
+| `composite` | 138 460 | **110 170 (−20.4 %)** | 130 780 (−5.5 %) |
+| `render_marks` | 7 111 530 | **6 162 980 (−13.3 %)** | 6 984 180 (−1.8 %) |
+| `render_lock` | 15 112 610 | **13 139 580 (−13.1 %)** | 14 933 420 (−1.2 %) |
+| `lock` | 2 428 060 | **2 178 120 (−10.3 %)** | 2 428 580 (0 %) |
+| `lock_curved` | 2 219 040 | **2 046 830 (−7.8 %)** | 2 239 320 (+0.9 %) |
+| `hash` `hair` `smooth` `fronds` the fills `wide_line` | | within the lane's swing | within the lane's swing |
+
+**The attribution is the finding, and it rules out the cheap version.** The check that is
+trivially sound to drop — the store-table index, provable because the store number was
+valid at derivation and `Stores::allocations` never shrinks — buys ~5 % on one row and
+nothing anywhere else. The win is in the other two, which sit on the load's address
+computation and are what stops the vectoriser. One of those two is also the corruption net
+that turns a bad length into a loud raise instead of a wild read, so it cannot simply be
+deleted.
+
+**So the sound design is forced, and it is the shape the fill already has: check once at
+the derivation, not once per element.** Validate at header derivation that the vector's
+extent fits the store — `8 + len × size` within the store's bytes — and on failure answer
+`len: 0`, which makes every fast-path test miss and routes the access down the existing
+cold path with all of its checks and its raise. After that, `0 <= from < len` implies all
+three per-element tests, so the fast path keeps only the range test the language's
+out-of-range semantics need anyway. A corrupt length then degrades to the checked path
+rather than to undefined behaviour, which is the property that makes this shippable at all.
+The cost is plumbing the element size into the derivation, which the emitter already knows:
+it is the literal operand of the element-address op the candidate was collected from.
+
+Item 1 is therefore READY TO BUILD, against a measured ceiling, and items 2 to 4 are
+still un-probed. Item 3 is the one to measure the same way before designing it: hand-edit
+one kernel's runtime path to take a real slice per store, rebuild with the flags loft
+uses, and compare. If that does not move a row, region marking will not move it either,
+because the guard sits upstream of the alias question.
 
 **4. Float near-parity — the target model**
 
