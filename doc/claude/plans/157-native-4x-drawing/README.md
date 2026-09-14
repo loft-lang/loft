@@ -964,6 +964,61 @@ its assumptions are written as a rule and checkable by both.
 
 ## Where to resume
 
+**2026-09-14, end of day — THE FOUR UNJUDGED ROWS, JUDGED.**  The bench's `parse`,
+`render_lock`, `render_marks` and `resize` rows had no Rust reference, so they were
+measured and never judged.  They have one now — `bench-reference-scene.rs` beside this
+README, a port of the drawing package's `parse_scene`, `render` (its four draw paths and
+the scan module) and the graphics package's Pillow-exact Lanczos resample, written to
+append to the package's `bench/bench.rs` and offered to the consumer's agent (their tree
+is read-only from here).  Every hash agreed with the loft native lane on the first
+compile, so the four are like-for-like.  The table on this box, all fourteen rows,
+`--repeat 3`, 14/14 hashes agree:
+
+| routine | Rust ns/op | loft native ns/op | native / Rust |
+|---|---:|---:|---:|
+| hash | 106 660 | 289 940 | 2.72 |
+| hair | 14 440 | 28 800 | 1.99 |
+| smooth | 380 | 1 360 | 3.58 |
+| fronds | 51 640 | 175 400 | 3.40 |
+| lock | 1 545 720 | 3 832 120 | 2.48 |
+| lock_curved | 1 317 820 | 3 529 380 | 2.68 |
+| composite | 101 240 | 239 020 | 2.36 |
+| fill_circle | 55 460 | 64 180 | 1.16 |
+| fill_star | 20 500 | 26 400 | 1.29 |
+| wide_line | 5 960 | 13 900 | 2.33 |
+| **parse** | 7 220 | 72 340 | **10.02** |
+| **render_lock** | 2 901 740 | 20 723 900 | **7.14** |
+| **render_marks** | 891 260 | 9 497 760 | **10.66** |
+| **resize** | 18 052 800 | 137 132 280 | **7.60** |
+
+So the scoreboard is *ten of ten under the bar* for the rows the plan judged, and *four
+of four over it* for the rows it had not — the plan's bar is not met on the whole bench
+until these four are run down.  Each is a composition of routines already under the bar
+(`render_marks` is `fill_poly` + `wide_line` + `smooth` + `fronds` + the resample;
+`render_lock` is `lock` + the resample; `resize` IS the resample; `parse` is the scan
+module over text), so what they add is the glue: text scanning by byte, the per-row
+`thin_line` of the sky, the ribbon polygons, and the resample's four-channel
+fixed-point loops over `vector<integer>` planes.  Profiles below.
+
+*Profiles* (`scripts/profile.sh --engine --calls -- --native-release <row>_only.loft`, a
+one-row cut of `bench/bench.loft`, this box):
+
+| row | what carries it |
+|---|---|
+| `resize` (7.60×) | `t_6Canvas_resample` **81.7 %** — ONE routine: the two fixed-point passes, `rl_acc += rl_pre[(yy*iw+xmin+x)*4+ch]? * hk[rl_base+x]?` over `vector<integer>` planes with a `?`-discharged element read per tap and a guarded `rl_mid[…] =` write per channel; the reference is the same loop over `Vec<i64>` at 18.1 ms against 137 ms |
+| `render_marks` (10.66×) | the same resample **69.7 %** (192×192 down to 64×64); `vector_add` 6.0 % under `n_canvas` → `filled` — the supersampled canvas built by appending its pixels one at a time; the marks themselves under 10 % |
+| `render_lock` (7.14×) | the resample **57.2 %**; `n_lock_layer` 14.3 % (8.6 % of it `raster_segment__inv`, the § V-p twin); `vector_add` 5.4 % (`filled` again) |
+| `parse` (10.02×) | no single routine: `matches_at` 6.9 % + `find_option` 4.2 % are the byte scan (`find_option` rescans the whole line per key, and a `Lock` or `Fronds` line reads a dozen keys), and ≈ 30 % is the store lifecycle behind the per-op records and vectors — `copy_claims` 4.7, `set_default_value_nullable` 4.7, `op_database_inner` 3.7, `database_named` 3.6, `set_free_header` 3.2, `free_named` 2.7, `fl_set_red` 2.2, `clear` 2.0, `claim` + `claim_block` 3.7, `malloc` + `memset` 3.3, `Vec<Field>::clone` 1.4 — every `Op` literal with its `pts` / `widths` / `paint.spec` vectors, and the `Mark` / `PointList` / `Scan` temporaries, mints and frees a store |
+
+*Order.*  The resample first: one routine carries three rows, and it is a scalar element
+loop of exactly the shape § V-h, § V-q and § V-ae were built for — read its emission
+before anything (does the four-deep nest hoist the `rl_pre` / `hk` / `rl_mid` headers,
+and is the `?` discharge on an INTEGER element the blocker § V-ad closed for records
+only?).  Then `filled` — a `w*h` `vector<integer>` grown by `+=` per pixel, which § V-ae's
+slice fill cannot reach because there is no vector yet to fill (a pre-sized fill is the
+op the library wants).  Then `parse`'s store churn, which is the § V-af / § V-ah class one
+level up: per-op temporaries that could be value locals or dead buffers.
+
 **2026-09-14, later — HAND-OFF FOR THE QUIET BOX: `smooth`, the last judged row over the
 bar.**  Written on `tuxedo` (x86-64, three checkouts sharing it) for an agent on the quiet
 Ubuntu laptop; everything below that is a TIMING is to be re-measured there first.
@@ -1032,7 +1087,9 @@ required, not tail; the row's own per-call overhead (≈ 4 %) is outside the ker
 *Outcome, the same day.*  #1 and the dead half of #4 shipped (DESIGN.md § V-ah Built):
 the two-kernel probe's shipped form 2 025–2 102 → **1 110–1 144 ns/op** (−45 %), the
 consumer `smooth` 9.5–10.2× → **3.67×**, and the table reads *ok — 10 routine(s) judged
-against the reference, all within 4.0×* on this lane.  #2's direct-write half, #3 and #5
+against the reference, all within 4.0×* on this lane — for the ten rows that HAD a
+reference; the four that did not were given one the same evening and all four are over
+the bar (the section above this one).  #2's direct-write half, #3 and #5
 are now optional margin on x86-64; the aarch64 lane (8.44× before this) is to be
 re-measured on its own box before the plan is called.
 
