@@ -5721,19 +5721,6 @@ pub(crate) fn builtin_type_alias(name: &str) -> Option<&'static str> {
     })
 }
 
-/// Which arguments a call's nullability is read off when it picks between `m(τ)` and
-/// `m(τ?)`.  A transitional switch (@PLN162 step 5): the two call spellings answer this
-/// differently today — `formal/calls.md` `(F-Recv)` says they must not — and one rule is
-/// to replace it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum NullRoute {
-    /// The bare spelling `m(x, a?)`: any nullable argument selects the `τ?` overload, so
-    /// null propagates regardless of position (@PLN25 F1b(b)).
-    AnyArgument,
-    /// The method spelling `x.m(a?)`: the receiver alone decides.
-    ReceiverOnly,
-}
-
 impl Data {
     /// @PLN11 arc D — serialize this `Data` to a file-backed IR store at
     /// `path` (zero-copy-loadable via [`Data::open`]).  Thin wrapper over
@@ -7808,20 +7795,22 @@ impl Data {
     }
 
     /// The definition a call resolves to, given EVERY argument's type with the receiver
-    /// first — `Disp-Select`'s entry point (@PLN162).  Today the receiver is `types[0]`, and
-    /// a `both`/`self`-dispatched function takes uniform-nullability parameters, so under
-    /// `AnyArgument` the call is routed to the `τ?` overload when any type is nullable.  An
-    /// empty list, or a `null` literal first, has no receiver and asks for the free
-    /// `n_<name>`.  [`Self::candidates`] over that receiver must then yield exactly one.
+    /// first — `Disp-Select`'s entry point (@PLN162), and one rule for both call spellings
+    /// (`@FR-F-Recv`).  Today the receiver is `types[0]`, and a `both`/`self`-dispatched
+    /// function takes uniform-nullability parameters, so the call is routed to the `τ?`
+    /// overload when ANY argument is nullable — `max(5, a?)` reaches the overload `max(a?, 5)`
+    /// does and `p.mix(n?)` the one `mix(p, n?)` does, and null propagates regardless of
+    /// position and of spelling (@PLN25 F1b(b); D-call-21 closed the method spelling, which
+    /// read the receiver alone).  An empty list, or a `null` literal first, has no receiver
+    /// and asks for the free `n_<name>`.  [`Self::candidates`] over that receiver must then
+    /// yield exactly one.
     #[must_use]
-    pub fn select(&self, source: u16, fn_name: &str, types: &[Type], route: NullRoute) -> u32 {
+    pub fn select(&self, source: u16, fn_name: &str, types: &[Type]) -> u32 {
         let unknown = Type::Unknown(0);
         let nullable_holder;
         let dispatch_tp: &Type = if types.is_empty() || types[0] == Type::Null {
             &unknown
-        } else if route == NullRoute::AnyArgument
-            && types.iter().any(|t| matches!(t, Type::Optional(_)))
-        {
+        } else if types.iter().any(|t| matches!(t, Type::Optional(_))) {
             nullable_holder = Type::optional(types[0].base().clone());
             &nullable_holder
         } else {
@@ -7830,21 +7819,16 @@ impl Data {
         self.find_fn(source, fn_name, dispatch_tp)
     }
 
-    /// The definition a BARE call `name(arg, …)` reaches: [`Self::select`] under
-    /// `AnyArgument`.
+    /// The definition a BARE call `name(arg, …)` reaches: [`Self::select`] over the argument
+    /// types as parsed.
     #[must_use]
     pub fn select_fn(&self, source: u16, fn_name: &str, types: &[Type]) -> u32 {
-        self.select(source, fn_name, types, NullRoute::AnyArgument)
+        self.select(source, fn_name, types)
     }
 
     /// The definition a METHOD call `x.m(arg, …)` reaches: [`Self::select`] with `dispatch`
-    /// — the receiver's type carrying its nullability (@FR-F-Recv) — standing in for
-    /// `types[0]`, which is the peeled receiver the call is emitted with, and under
-    /// `ReceiverOnly`.
-    ///
-    /// ⚠ That is not the bare path's rule, so `x.m(a?)` and `m(x, a?)` can reach different
-    /// overloads today (measured — `plans/162-multiple-dispatch/bytecode-comparisons/
-    /// step4-corpus.loft`, the two-spellings cell).  One rule is to cover both.
+    /// — the receiver's type carrying its nullability (`@FR-F-Recv`) — standing in for
+    /// `types[0]`, which is the peeled receiver the call is emitted with.
     #[must_use]
     pub fn select_method(
         &self,
@@ -7856,7 +7840,7 @@ impl Data {
         let mut with_receiver: Vec<Type> = Vec::with_capacity(types.len().max(1));
         with_receiver.push(dispatch.clone());
         with_receiver.extend_from_slice(types.get(1..).unwrap_or(&[]));
-        self.select(source, fn_name, &with_receiver, NullRoute::ReceiverOnly)
+        self.select(source, fn_name, &with_receiver)
     }
 
     /// The ONE definition `fn_name` resolves to for a receiver of type `tp`, or `u32::MAX`

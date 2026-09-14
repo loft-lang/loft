@@ -237,7 +237,7 @@ on both backends with the leak checks armed; `scripts/introspect_diff.sh` **IDEN
    and an admission to make — so not here; noted as a follow-on beside `Disp-Hint`, whose
    cure text names the typed form the method path already takes.
 
-### Step 5 — selection reads the FULL argument list  ·  S
+### Step 5 — selection reads the FULL argument list  ·  S  ·  DONE 2026-09-14
 
 Selection now takes every argument type, and with single-definition names still answers what
 it answered before. The last behaviour-preserving step, and the one that proves the two
@@ -246,6 +246,27 @@ phases actually carry the types.
 - **Red on its own:** an assertion that the selected definition equals `find_fn`'s answer, run
   over the whole corpus, must not fire.
 - **Compared against:** `introspect` byte-identical.
+
+**Done in two commits, because step 4's first finding made half of it a behaviour change:**
+
+- **5a (byte-identical):** `Data::select(source, name, &[Type])` is the ONE entry point —
+  the receiver's dispatch type first, every argument after it — and `select_fn` /
+  `select_method` are its two callers.  The asymmetry step 4 measured was carried for one
+  commit as an explicit `NullRoute` parameter, so the fold could be proven byte-identical
+  (`introspect_diff.sh` IDENTICAL 1504/1504) before the rule touched it.  The "selected ==
+  `find_fn`" assertion the plan asked for is that corpus-wide byte-identity: the emission IS
+  the selected definition.
+- **5b (the rule):** `formal/calls.md` `(F-Recv)` gains the ARGUMENT clause @PLN25 F1b(b)
+  had only in a code comment — a `τ?` argument in any position reaches `m(τ?, …)` when it is
+  declared, whichever spelling — and `D-call-21` records that the method spelling read the
+  receiver alone.  The parameter is gone; `select` routes on any nullable argument for both
+  spellings.  Guard `tests/scripts/a-nullable-argument-routes-both-call-spellings-alike.loft`:
+  the 3 × 3 × 2 matrix with every answer naming the body that ran, plus the two one-overload
+  controls that do not move; falsified against 5a's commit, both backends.
+
+**Phase A is closed.**  Both call spellings reach ONE selection over the FULL argument list,
+the key has one spelling and one write, and the candidate set exists with one member.  Step 6
+is the first behaviour change of the feature itself.
 
 ---
 

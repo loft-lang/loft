@@ -1,0 +1,104 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `(F-Recv)`: with `m(τ, …)` and `m(τ?, …)` both declared, a call reaches the `τ?` overload
+// when ANY of its arguments is nullable — the receiver or a later one — and the two call
+// spellings `x.m(a)` and `m(x, a)` resolve identically.  The bare spelling did this from
+// @PLN25 F1b(b) on (so `max(5, a?)` propagates null like `max(a?, 5)`); the method spelling
+// read the receiver alone, so `p.mix(n?)` ran the DENSE body with `n` turned null in a
+// non-null parameter, warning, where `mix(p, n?)` beside it ran the nullable body — one call,
+// two answers by spelling (@PLN162 step 5, formal/calls.md D-call-21).
+//
+// The matrix: receiver {dense, present τ?, null} × argument {dense, present τ?, null} ×
+// spelling {method, bare}, each cell's overload NAMED in the answer so a wrong body cannot
+// pass on a coincident value; plus the two one-overload controls, whose answers do not move.
+// @falsified-at: d990a4925 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-nullable-argument-routes-both-call-spellings-alike.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: assert — the first method-spelling cell with a nullable argument fails on the
+//   control and the file exits 1; here every cell passes.  Not leak, not panic: a wrong BODY ran.
+//   ARMED: no instrument — a plain run on either backend reads it.
+//   WITNESS: on the control `p.mix(n)` with `n: integer? = 2` answers `dense(1,2)` where the
+//   file says `opt(1,2)` — the dense body ran with the argument turned null-capable in a
+//   non-null parameter, and warned; the bare `mix(p, n)` beside it already answered `opt(1,2)`.
+//   HOLDS: every bare-spelling cell answers the same on both trees, the two one-overload
+//   controls answer the same on both trees (with the same `(N-Store)` warning on the dense
+//   one), and the leak channel is `none` on both and does not move.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct P { x: integer }
+
+fn mix(both: P, n: integer) -> text { "dense({both.x},{n})" }
+fn mix(both: P?, n: integer?) -> text { "opt({both.x ?? -1},{n ?? -1})" }
+
+// one-overload controls: only the dense body, only the nullable body
+fn dense_only(both: P, n: integer) -> text { "dense-only({both.x},{n})" }
+fn opt_only(both: P?, n: integer?) -> text { "opt-only({both.x ?? -1},{n ?? -1})" }
+
+fn test_dense_receiver_dense_argument() {
+  p = P { x: 1 };
+  n = 2;
+  assert(p.mix(n) == "dense(1,2)", "method, all dense: got {p.mix(n)}");
+  assert(mix(p, n) == "dense(1,2)", "bare, all dense: got {mix(p, n)}");
+}
+
+fn test_dense_receiver_present_nullable_argument() {
+  p = P { x: 1 };
+  n: integer? = 2;
+  assert(p.mix(n) == "opt(1,2)", "method, τ? argument present: got {p.mix(n)}");
+  assert(mix(p, n) == "opt(1,2)", "bare, τ? argument present: got {mix(p, n)}");
+}
+
+fn test_dense_receiver_null_argument() {
+  p = P { x: 1 };
+  n: integer? = null;
+  assert(p.mix(n) == "opt(1,-1)", "method, null argument: got {p.mix(n)}");
+  assert(mix(p, n) == "opt(1,-1)", "bare, null argument: got {mix(p, n)}");
+}
+
+fn test_present_nullable_receiver() {
+  p: P? = P { x: 3 };
+  d = 4;
+  n: integer? = 5;
+  z: integer? = null;
+  assert(p.mix(d) == "opt(3,4)", "method, τ? receiver, dense argument: got {p.mix(d)}");
+  assert(mix(p, d) == "opt(3,4)", "bare, τ? receiver, dense argument: got {mix(p, d)}");
+  assert(p.mix(n) == "opt(3,5)", "method, τ? receiver, τ? argument: got {p.mix(n)}");
+  assert(mix(p, n) == "opt(3,5)", "bare, τ? receiver, τ? argument: got {mix(p, n)}");
+  assert(p.mix(z) == "opt(3,-1)", "method, τ? receiver, null argument: got {p.mix(z)}");
+  assert(mix(p, z) == "opt(3,-1)", "bare, τ? receiver, null argument: got {mix(p, z)}");
+}
+
+fn test_null_receiver() {
+  p: P? = null;
+  d = 4;
+  n: integer? = 5;
+  z: integer? = null;
+  assert(p.mix(d) == "opt(-1,4)", "method, null receiver, dense argument: got {p.mix(d)}");
+  assert(mix(p, d) == "opt(-1,4)", "bare, null receiver, dense argument: got {mix(p, d)}");
+  assert(p.mix(n) == "opt(-1,5)", "method, null receiver, τ? argument: got {p.mix(n)}");
+  assert(mix(p, n) == "opt(-1,5)", "bare, null receiver, τ? argument: got {mix(p, n)}");
+  assert(p.mix(z) == "opt(-1,-1)", "method, null receiver, null argument: got {p.mix(z)}");
+  assert(mix(p, z) == "opt(-1,-1)", "bare, null receiver, null argument: got {mix(p, z)}");
+}
+
+// Controls — one overload declared: a τ? argument still reaches the dense body (with the
+// `(N-Store)` warning, the value turned null there), and a dense one reaches the τ? body free.
+// @EXPECT_WARNING: a nullable `integer?` is stored into parameter 2 of `dense_only`
+fn test_one_overload_controls() {
+  p = P { x: 6 };
+  n: integer? = 7;
+  d = 8;
+  assert(p.dense_only(n) == "dense-only(6,7)", "method, dense-only with τ? argument: got {p.dense_only(n)}");
+  assert(dense_only(p, n) == "dense-only(6,7)", "bare, dense-only with τ? argument: got {dense_only(p, n)}");
+  assert(p.opt_only(d) == "opt-only(6,8)", "method, opt-only with dense argument: got {p.opt_only(d)}");
+  assert(opt_only(p, d) == "opt-only(6,8)", "bare, opt-only with dense argument: got {opt_only(p, d)}");
+}
+
+fn main() {
+  test_dense_receiver_dense_argument();
+  test_dense_receiver_present_nullable_argument();
+  test_dense_receiver_null_argument();
+  test_present_nullable_receiver();
+  test_null_receiver();
+  test_one_overload_controls();
+}

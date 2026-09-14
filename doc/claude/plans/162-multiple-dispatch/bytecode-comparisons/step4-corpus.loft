@@ -4,7 +4,7 @@
 // `τ?` against a name with both overloads (@FR-F-Recv, both directions), a method whose
 // argument needs the hint (a width-carrying literal, a lambda, a named argument), an empty
 // argument list, a chained call, a method reached through a bound, and the two spellings
-// `x.m(a?)` / `m(x, a?)` side by side — whatever they answer today is recorded, not judged.
+// `x.m(a?)` / `m(x, a?)` side by side (one answer since step 5; they differed before).
 // `main` runs them all, so the file is also an end-to-end check on both backends.
 
 struct Bag { items: vector<u8>, count: integer }
@@ -76,9 +76,9 @@ fn test_two_spellings_with_a_nullable_argument() {
   n: integer? = 9;
   m = p.mix(n);
   f = mix(p, n);
-  // Recorded, not judged: the method path routes on the RECEIVER, the bare path on ANY
-  // nullable argument.  Step 5 is where one rule must cover both.
-  assert(m == "dense-arg 9 1", "method spelling with a τ? argument: got {m}");
+  // One rule for both spellings since step 5 (formal/calls.md D-call-21): any nullable
+  // argument selects the τ? overload.  Until then the method spelling ran the dense body here.
+  assert(m == "opt-arg 9 1", "method spelling with a τ? argument: got {m}");
   assert(f == "opt-arg 9 1", "bare spelling with a τ? argument: got {f}");
 }
 

@@ -6,11 +6,38 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** — `D-call-20` opened 2026-09-09 and CLOSED 2026-09-12 (loft#1485, a lambda's heap return that reaches a CAPTURE is handed out as a view, below); `D-call-19` opened 2026-09-09 and CLOSED 2026-09-12 (loft#1484, a generic monomorph's `-> T` record return aliases the argument where its concrete twin copies, and D-call-13's guard reads green over it, below); `D-call-18` opened AND CLOSED 2026-09-09 (loft#1482, the DENSE half of `D-call-17`: a `-> S` return whose tail is a named binding viewing a PARAMETER aliases the caller too, and `D-call-17` closed on the belief that it does not, below); `D-call-17` opened and closed 2026-09-08 (loft#1468, a `-> τ?` return of a match-arm view of a PARAMETER aliased the caller, where its dense twin copies, below); `D-call-16` opened and closed 2026-09-08 (loft#1451, a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape, below); `D-call-15` opened and closed 2026-09-08 (loft#1432, a method's two receiver nullabilities resolved by declaration order and by call spelling, below); `D-call-14` opened and closed 2026-09-05 (a vector parameter reassigned from a variable refilled the caller's store, below); `D-call-13` opened and closed 2026-09-05 (a generic's instance returned the argument it was handed, below); `D-call-12` opened and closed 2026-09-04 (loft#1357, the residue of
+OPEN: **0** — `D-call-21` opened AND CLOSED 2026-09-14 (the method spelling read the receiver alone when picking between `m(τ, …)` and `m(τ?, …)`, below); `D-call-20` opened 2026-09-09 and CLOSED 2026-09-12 (loft#1485, a lambda's heap return that reaches a CAPTURE is handed out as a view, below); `D-call-19` opened 2026-09-09 and CLOSED 2026-09-12 (loft#1484, a generic monomorph's `-> T` record return aliases the argument where its concrete twin copies, and D-call-13's guard reads green over it, below); `D-call-18` opened AND CLOSED 2026-09-09 (loft#1482, the DENSE half of `D-call-17`: a `-> S` return whose tail is a named binding viewing a PARAMETER aliases the caller too, and `D-call-17` closed on the belief that it does not, below); `D-call-17` opened and closed 2026-09-08 (loft#1468, a `-> τ?` return of a match-arm view of a PARAMETER aliased the caller, where its dense twin copies, below); `D-call-16` opened and closed 2026-09-08 (loft#1451, a generic's `-> T?` at a tuple was not boxed, because the promotion matched one spelling of its own shape, below); `D-call-15` opened and closed 2026-09-08 (loft#1432, a method's two receiver nullabilities resolved by declaration order and by call spelling, below); `D-call-14` opened and closed 2026-09-05 (a vector parameter reassigned from a variable refilled the caller's store, below); `D-call-13` opened and closed 2026-09-05 (a generic's instance returned the argument it was handed, below); `D-call-12` opened and closed 2026-09-04 (loft#1357, the residue of
 `D-call-9` under the release valgrind sweep), the same day as `D-call-10` and `D-call-11`
 (loft#1345, loft#1347), `D-call-9` (loft#1338) and `D-call-8` (loft#1337); before them
 `D-call-7` closed 2026-09-02 and `D-call-6` was opened and closed the same day by the
 reference review of chapter 31.
+
+### D-call-21 — OPENED AND CLOSED 2026-09-14: the method spelling picked between `m(τ, …)` and `m(τ?, …)` by the receiver alone
+
+`(F-Recv)` closes with *the two call spellings resolve identically*, and for the RECEIVER's
+nullability they did (loft#1432).  For a later ARGUMENT's they did not: the bare spelling
+`mix(p, n?)` routed to the `τ?` overload when ANY argument was nullable — @PLN25 F1b(b),
+written for `max(5, a?)` so that null propagates regardless of position — while the method
+spelling `p.mix(n?)` asked `find_fn` with the receiver's type only, ran the DENSE body with
+`n` turned null in a non-null parameter, and warned `(N-Store)` about it.  One call, two
+answers by spelling, on both backends; the bare side silent, the method side with a warning
+whose cure (discharge the argument) is not what the author meant, because the nullable body
+was declared for exactly this.  Found by @PLN162 step 4's corpus, which put the two spellings
+side by side and recorded both answers; the rule's argument clause was not in the register —
+F1b(b) lived only in a code comment — so it is written now, and the doctrine that the code
+changes to match the rule picked the direction: the bare side was the rule's, the method side
+the deviation.
+
+Closed at `Data::select`, the ONE selection entry point both spellings now go through (steps
+3–5a folded them): the receiver's dispatch type first, every argument after it, routed to the
+`τ?` overload when any is nullable.  Re-measured on both backends over the full matrix —
+receiver {dense, present `τ?`, null} × argument {dense, present `τ?`, null} × spelling {method,
+bare}, each answer NAMING the body that ran — and the two one-overload controls do not move: a
+`τ?` argument still reaches a lone dense body with the warning, a dense one reaches a lone
+nullable body for free.  Guard
+`tests/scripts/a-nullable-argument-routes-both-call-spellings-alike.loft`, falsified at
+`d990a4925` (the method cells ran the dense body there).  `Contract: strained` — the rule
+gained a clause the code already half-implemented.
 
 ### D-call-20 — OPENED 2026-09-09, CLOSED 2026-09-12 (loft#1485): a lambda's heap return that reaches a CAPTURE is handed out as a view
 
