@@ -775,6 +775,16 @@ loop; `LOFT_HOIST_VERIFY=1` re-derives every base at every use and panics when a
 grew under one, and `LOFT_TRACE_BASE=1` prints each loop's growth-free verdict.
 `LOFT_NO_NN_FAST=1` (P3c) also restores the nullable-aware counter step and the guarded
 literal division that § V-aj (`@FR-R-Counter`, `@FR-R-LitDiv`) replaced.
+**`LOFT_NO_LOOP_BUFFER_REUSE=1`** (@PLN157 § V-al, `@FR-R-LoopBuffer`, default-ON,
+generation time) makes a vector local declared `[]` INSIDE a loop re-mint its per-site
+buffer every iteration again — with it off, the buffer's store and its vector survive the
+iteration, the mint after the first is a length reset that keeps the capacity, and the
+literal's zero of the vector field is not emitted (the resample's two per-pixel vectors:
+−10 % on the row) — and is the first bisect step for a stale or wrong element read out of
+a vector declared inside a loop on native.  Only for elements that own no heap (a `text`
+vector keeps the re-mint: a length reset would strand what its elements own), a buffer no
+other call reaches, and a declaration outside the loop.  `LOFT_TRACE_LOOP_BUFFER=1` names
+each buffer kept and each declined.
 **`LOFT_NO_VALUE_RECORD=1`** (@PLN157 § V-aa, default-ON since 2026-09-14) makes a
 function whose result is a plain no-heap record of ≤6 scalar fields return it through
 the buffer again — with it off, such a function whose every call site reads fields off

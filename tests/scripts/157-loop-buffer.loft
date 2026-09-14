@@ -1,0 +1,126 @@
+// @PLN157 § V-al (`@FR-R-LoopBuffer`) — LOOP BUFFERS: a vector local declared `[]` inside a
+// loop is backed by a per-site buffer store (`__vdb_N`) that the IR mints at every
+// iteration and frees once at scope exit.  The record form's mint on a var that still
+// holds a store CLEARS that store and claims the record again; the loop-buffer form keeps
+// the store and the vector and resets the vector's length, its capacity retained — a
+// Rust `Vec` cleared inside a loop keeps its capacity the same way.  Every cell here
+// hand-computes its value; the interpreter is the oracle and keeps the re-mint.  A stale
+// element from a longer previous iteration must be ABSENT (l1, l5), the elements own no
+// heap (l2 declines a `text` vector), and the shape composes with nesting (l3), a callee
+// appending through a `&vector` (l4), no-heap record elements (l6) and a whole-vector
+// append out of the loop (l7).  `LOFT_NO_LOOP_BUFFER_REUSE=1`, `LOFT_POISON=1`,
+// `LOFT_POISON_CLAIM=1` and `LOFT_STRICT_STORES=1` must answer identically.
+//
+// @falsified-at: hand-measured (2026-09-15) — `vector::vector_buffer_reset` sabotaged into
+// a no-op (the length never reset, so every iteration's vector keeps the previous
+// iteration's elements): native `assertion failed: l1 315 20 51` — the VALUE channel sees
+// it at once (the sums and lengths accumulate and the stale probe reads real elements);
+// the interpreter and `LOFT_NO_LOOP_BUFFER_REUSE=1` answer `l1 210 10 -4` on the same
+// build.  Restored, every cell is exact on both backends under LOFT_POISON,
+// LOFT_POISON_CLAIM, LOFT_STRICT_STORES and LOFT_NATIVE_LEAK_CHECK.
+struct Pt { ptx: float, pty: float }
+
+// l1 — a scalar vector, one element longer each iteration; a read one past THIS
+// iteration's length is absent.
+fn l1() {
+  total = 0; lens = 0; stale = 0;
+  for i in 0..4 {
+    v: vector<integer> = [];
+    for j in 0..=i { v += [10 * i + j]; }
+    for j in 0..len(v) { total += v[j]?; }
+    lens += len(v);
+    stale += v[i + 1] ?? -1;
+  }
+  assert(total == 210 && lens == 10 && stale == -4, "l1 {total} {lens} {stale}");
+  println("l1 {total} {lens} {stale}");
+}
+
+// l2 — TEXT elements own heap: the buffer keeps the re-mint (declined), values exact.
+fn l2() {
+  out = "";
+  for i in 0..3 {
+    v: vector<text> = [];
+    for j in 0..=i { v += ["{i}{j}"]; }
+    out += v[i] ?? "-";
+    out += v[i + 1] ?? "-";
+  }
+  assert(out == "00-11-22-", "l2 {out}");
+  println("l2 {out}");
+}
+
+// l3 — NESTED: an inner loop's vector inside an outer loop's vector.
+fn l3() {
+  acc = 0;
+  for i in 0..3 {
+    outer: vector<integer> = [];
+    for j in 0..3 {
+      inner: vector<integer> = [];
+      for k in 0..=j { inner += [k + 1]; }
+      s = 0;
+      for k in 0..len(inner) { s += inner[k]?; }
+      outer += [s * (i + 1)];
+    }
+    for j in 0..len(outer) { acc += outer[j]?; }
+  }
+  assert(acc == 60, "l3 {acc}");
+  println("l3 {acc}");
+}
+
+// l4 — a callee appends through a `&vector` parameter; the loop appends after it.
+fn add3(v: &vector<integer>, base: integer) { v += [base, base + 1, base + 2]; }
+fn l4() {
+  acc = 0;
+  for i in 0..3 {
+    v: vector<integer> = [];
+    add3(v, 10 * i);
+    v += [7];
+    for k in 0..len(v) { acc += v[k]?; }
+    acc += len(v) * 100;
+  }
+  assert(acc == 1320, "l4 {acc}");
+  println("l4 {acc}");
+}
+
+// l5 — lengths DECREASE, down to an iteration that pushes nothing: the element the
+// previous iteration wrote at `n` is absent, and `v[0]` of the empty vector is absent.
+fn l5() {
+  s = "";
+  for i in 0..4 {
+    v: vector<integer> = [];
+    n = 3 - i;
+    for j in 0..n { v += [100 + j]; }
+    s += "{len(v)}:{v[0] ?? -7}:{v[n] ?? -8};";
+  }
+  assert(s == "3:100:-8;2:100:-8;1:100:-8;0:-7:-8;", "l5 {s}");
+  println("l5 {s}");
+}
+
+// l6 — elements that are no-heap RECORDS: admitted like scalars.
+fn l6() {
+  sx = 0.0;
+  for i in 0..3 {
+    ps: vector<Pt> = [];
+    for j in 0..=i { ps += [Pt { ptx: (i * 10 + j) as float, pty: 0.5 }]; }
+    for j in 0..len(ps) { sx += ps[j]?.ptx + ps[j]?.pty; }
+  }
+  assert(sx == 87.0, "l6 {sx}");
+  println("l6 {sx}");
+}
+
+// l7 — the loop's vector is appended WHOLE into an outer vector each iteration.
+fn l7() {
+  out: vector<integer> = [];
+  for i in 0..3 {
+    v: vector<integer> = [];
+    for j in 0..=i { v += [i * 100 + j]; }
+    out += v;
+  }
+  s = 0;
+  for k in 0..len(out) { s += out[k]?; }
+  assert(len(out) == 6 && s == 804, "l7 {len(out)} {s}");
+  println("l7 {len(out)} {s}");
+}
+
+fn main() {
+  l1(); l2(); l3(); l4(); l5(); l6(); l7();
+}

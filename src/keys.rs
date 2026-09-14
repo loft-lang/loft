@@ -1182,6 +1182,17 @@ pub fn vector_base_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VECTOR_BASE"))
 }
 
+/// @PLN157 § V-al (`@FR-R-LoopBuffer`): a per-site vector buffer minted INSIDE a loop keeps
+/// its store and its vector across iterations — every mint after the first is a length
+/// reset that keeps the capacity — **DEFAULT ON**.  Opt OUT with
+/// `LOFT_NO_LOOP_BUFFER_REUSE` (read at GENERATION time): the clear-and-claim per
+/// iteration again, the first bisect step for a stale or wrong element read out of a
+/// vector declared inside a loop on native.
+pub fn loop_buffer_reuse_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_BUFFER_REUSE"))
+}
+
 /// @PLN157 § V-d: a vector-literal element that is a buffer-returning call is built IN the
 /// element's record, and a promoted return buffer honours an offered record — **DEFAULT
 /// ON**.  Opt OUT with `LOFT_NO_APPEND_IN_PLACE`: the before-half of the A/B on one binary

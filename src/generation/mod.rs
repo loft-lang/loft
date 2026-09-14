@@ -776,6 +776,13 @@ pub struct Output<'a> {
     /// build and deep copy, as before @PLN157 § V-z; the bisect step for a wrong
     /// vector field of an appended record on native.
     pub element_first_disabled: bool,
+    /// @PLN157 § V-al — the current function's LOOP BUFFERS (`hoist::loop_buffers`): a
+    /// per-site vector buffer minted inside a loop whose mint after the first is a length
+    /// reset, and whose literal field zero is not emitted.
+    pub loop_buffers: HashSet<u16>,
+    /// `LOFT_NO_LOOP_BUFFER_REUSE` (generation time): every such buffer re-mints per
+    /// iteration again.
+    pub loop_buffer_disabled: bool,
     /// @PLN157 § V-u (`@FR-R-RetAdopt`) — the function being emitted whose result local
     /// ADOPTS the hidden return buffer ([`hoist::ret_adopt`]); `None` for every other.
     pub ret_adopt: Option<hoist::RetAdopt>,
@@ -1755,6 +1762,8 @@ impl<'a> Output<'a> {
             dead_buffers: HashSet::new(),
             elem_first: hoist::ElemFirstMap::default(),
             element_first_disabled: std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"),
+            loop_buffers: HashSet::new(),
+            loop_buffer_disabled: !crate::keys::loop_buffer_reuse_enabled(),
             ret_adopt: None,
             retbuf_adopt_disabled: std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0"),
             in_adopt_delivery: 0,
@@ -2052,6 +2061,21 @@ impl Output<'_> {
         } else {
             hoist::ret_adopt(self.data, def_nr)
         };
+        // @PLN157 § V-al (`@FR-R-LoopBuffer`) — the loop buffers, after every rewrite
+        // that owns a buffer's mint has claimed its own: an invariant literal (§ V-x), an
+        // element-first pair (§ V-z), a move host (§ V-j) and the adopted result's witness
+        // (§ V-u) are left to those.
+        self.loop_buffers.clear();
+        if !self.loop_buffer_disabled {
+            let mut lb = hoist::loop_buffers(self.data, self.stores, def_nr);
+            lb.retain(|v| {
+                !self.invariant_lits.flat.contains_key(v)
+                    && !self.elem_first.by_vdb.contains_key(v)
+                    && !self.move_pairs.values().any(|p| p.host_vdb == *v)
+                    && self.ret_adopt.is_none_or(|a| a.vdb != *v)
+            });
+            self.loop_buffers = lb;
+        }
         self.declared.clear();
         self.local_record_link.clear();
         self.retbuf_witness.clear();

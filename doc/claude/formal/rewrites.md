@@ -168,6 +168,24 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  template's fault note is dropped with it, since it fires only when
                  the result is the sentinel while neither operand is.
 
+  (R-LoopBuffer) a per-site vector buffer (`__vdb_N`, the store a vector local
+                 declared `[]` is backed by) whose mint stands INSIDE a loop keeps
+                 its store and its vector across iterations: the first pass mints,
+                 every later pass resets the vector's length to 0 and keeps its
+                 record and capacity, and the literal's zero of the vector field is
+                 not emitted.  Observably the same vector as a fresh one — a read is
+                 bounded by the length, a push writes from 0 — with the capacity
+                 retained, as a Rust `Vec` cleared in a loop retains its own.  Admitted
+                 only where the record is exactly one vector of elements that OWN NO
+                 HEAP (a length reset releases nothing; the clear is what releases
+                 what an element owns, `@FR-H-ClearRelease`), where every mention of
+                 the buffer is its own init family or a free (a callee reaching the
+                 buffer could keep a handle into the record the reuse keeps), and
+                 where the buffer's null declaration stands outside the loop (a
+                 re-declaration would orphan the kept store).  A buffer another
+                 rewrite owns — an invariant literal, an element-first pair, a move
+                 host, the adopted result's witness — is left to that rewrite.
+
   (R-Header)     in a loop body that writes no store, a vector reached by a PURE
                  PATH P — a variable, or const-offset fields over one — has one
                  header (store, record, length) for the whole loop: the emitter

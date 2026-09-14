@@ -354,6 +354,22 @@ pub fn vector_finish(db: &DbRef, stores: &mut [Store]) {
     store.set_u32_raw(vec_rec, 4, length + 1);
 }
 
+/// @PLN157 § V-al (`@FR-R-LoopBuffer`) — reset a vector BUFFER record (the one-field shape
+/// `OpDatabase` mints to back a vector local) to EMPTY without clearing its store: the
+/// vector keeps its record and its capacity, and its length becomes 0.  Only for elements
+/// that own no heap — the emitter's gate reads that off the layout — because a length reset
+/// releases nothing (`@FR-H-ClearRelease` is the clear's business, not this one's).
+pub fn vector_buffer_reset(db: &DbRef, stores: &mut [Store]) {
+    if db.is_null() || db.rec == 0 {
+        return;
+    }
+    let store = keys::mut_store(db, stores);
+    let vec_rec = store.collection_rec(db.rec, db.pos);
+    if vec_rec != 0 {
+        store.set_u32_raw(vec_rec, 4, 0);
+    }
+}
+
 pub fn sorted_new(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
     // Keep an extra record between the current and the new one.
     // This is needed to allow to create a new open space to move the new record to.

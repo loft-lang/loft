@@ -2646,6 +2646,21 @@ impl Output<'_> {
                     continue;
                 }
             }
+            // @PLN157 § V-al (`@FR-R-LoopBuffer`) — a loop buffer's literal zero of its
+            // vector field is not emitted: the first mint zero-fills the record, and every
+            // later pass keeps the vector the zero would drop.
+            if !self.loop_buffers.is_empty()
+                && let Value::Call(d, args) = v.unspan()
+                && (*d as usize) < self.data.definitions.len()
+                && self.data.def(*d).name() == "OpSetInt4"
+                && let [a0, a1, a2] = &args[..]
+                && let Value::Var(vdb) = a0.unspan()
+                && self.loop_buffers.contains(vdb)
+                && matches!(a1.unspan(), Value::Int(0))
+                && matches!(a2.unspan(), Value::Int(0))
+            {
+                continue;
+            }
             let lit_guard = match v.unspan() {
                 Value::Set(var, _)
                     if self.invariant_lits.wrapped.contains(var)

@@ -4282,6 +4282,150 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
 /// the ABI anyway, and the win is in the small ones (`Pt`, `Smp`).
 pub const VALUE_RECORD_MAX_FIELDS: usize = 6;
 
+/// Is `tp` the record `OpDatabase` mints to back a vector local — exactly one field, a
+/// vector whose elements own no heap?  The fallback is `false`, which costs a loop buffer's
+/// reuse and never a value: an element that owns heap must be released by a clear
+/// (`@FR-H-ClearRelease`), and a record with any other field is not this shape.
+fn one_no_heap_vector(stores: &Stores, tp: i32) -> bool {
+    let Ok(kt) = u16::try_from(tp) else {
+        return false;
+    };
+    if (kt as usize) >= stores.types.len() {
+        return false;
+    }
+    let one = matches!(&stores.types[kt as usize].parts,
+        crate::database::Parts::Struct(f) if f.len() == 1);
+    if !one {
+        return false;
+    }
+    let vec_tp = stores.field_type(kt, 0);
+    if vec_tp == u16::MAX
+        || (vec_tp as usize) >= stores.types.len()
+        || !matches!(
+            stores.types[vec_tp as usize].parts,
+            crate::database::Parts::Vector(_)
+        )
+    {
+        return false;
+    }
+    let elem = stores.content(vec_tp);
+    elem != u16::MAX && !stores.owns_heap(elem)
+}
+
+/// Every node of `v` with whether it stands under a loop, outermost first.
+fn walk_loops(v: &Value, in_loop: bool, f: &mut impl FnMut(&Value, bool)) {
+    let n = v.unspan();
+    f(n, in_loop);
+    let inner = in_loop || matches!(n, Value::Loop(_));
+    n.for_each_child(&mut |c| walk_loops(c, inner, f));
+}
+
+/// @PLN157 § V-al (`@FR-R-LoopBuffer`) — the LOOP BUFFERS of `def_nr`: a per-site vector
+/// buffer (`__vdb_N`, the store a vector local declared `[]` is backed by) whose mint
+/// stands INSIDE a loop, whose record is one vector field of elements that own no heap,
+/// and whose every mention is its own init family — the mint, the `OpGetField` bind, the
+/// literal's `OpSetInt4` zero of the vector field — or a free.  Such a buffer's store
+/// already survives the iteration (the IR frees it at scope exit, and `OpDatabase` on a
+/// var that still holds a store clears that store and claims the record again), so what
+/// the re-mint per iteration buys is the clear and nothing else: the emitter keeps the
+/// store AND the vector, and resets the vector's length instead — its capacity retained
+/// across iterations, as a Rust `Vec` cleared in a loop retains its own.
+///
+/// Declined: a buffer any other call reaches (a callee could keep a handle into the
+/// vector's record), a buffer whose declaration (`Set(v, Null)`) sits inside a loop (the
+/// null-bind would orphan the kept store), an element type that owns heap (a length reset
+/// would strand what the elements own), and a record that is not exactly one vector
+/// field.  The fallback is "not a loop buffer", which costs the reuse and never a value.
+/// A generator binds none (its locals persist as coroutine fields), and a body with a
+/// `par` block binds none (an arm runs in a worker's frame, not this one).
+#[must_use]
+pub fn loop_buffers(data: &Data, stores: &Stores, def_nr: u32) -> HashSet<u16> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    let mut out = HashSet::new();
+    if matches!(body, Value::Null)
+        || body.any_node(&mut |n| matches!(n, Value::Yield(_) | Value::Parallel(_)))
+    {
+        return out;
+    }
+    let trace = std::env::var("LOFT_TRACE_LOOP_BUFFER").is_ok();
+    let mut cand: HashSet<u16> = HashSet::new();
+    let mut null_in_loop: HashSet<u16> = HashSet::new();
+    walk_loops(body, false, &mut |n, in_loop| match n {
+        Value::Call(d, args) if in_loop && (*d as usize) < data.definitions.len() => {
+            if matches!(data.def(*d).name(), "OpDatabase" | "OpDatabaseNP")
+                && let [a0, a1] = &args[..]
+                && let Value::Var(v) = a0.unspan()
+                && let Value::Int(tp) = a1.unspan()
+                && vars.name(*v).starts_with("__vdb")
+                && one_no_heap_vector(stores, *tp)
+            {
+                cand.insert(*v);
+            }
+        }
+        Value::Set(v, rhs) if in_loop && matches!(rhs.unspan(), Value::Null) => {
+            null_in_loop.insert(*v);
+        }
+        _ => {}
+    });
+    for v in cand {
+        if null_in_loop.contains(&v) {
+            if trace {
+                eprintln!(
+                    "[loop-buffer] {}: {} is declared inside the loop",
+                    def.name(),
+                    vars.name(v)
+                );
+            }
+            continue;
+        }
+        let mut mentions = 0u32;
+        let mut accounted = 0u32;
+        body.any_node(&mut |n| {
+            match n {
+                Value::Var(w) if *w == v => mentions += 1,
+                Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                    let first =
+                        matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v);
+                    let int_at = |i: usize, k: i32| {
+                        matches!(args.get(i).map(Value::unspan), Some(Value::Int(n)) if *n == k)
+                    };
+                    if first {
+                        match data.def(*d).name() {
+                            "OpDatabase" | "OpDatabaseNP" => accounted += 1,
+                            "OpGetField" if int_at(1, 0) => accounted += 1,
+                            "OpSetInt4" if int_at(1, 0) && int_at(2, 0) => accounted += 1,
+                            "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefTag" => accounted += 1,
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+            false
+        });
+        if mentions == accounted {
+            if trace {
+                eprintln!(
+                    "[loop-buffer] {}: {} keeps its vector across iterations",
+                    def.name(),
+                    vars.name(v)
+                );
+            }
+            out.insert(v);
+        } else if trace {
+            eprintln!(
+                "[loop-buffer] {}: {} is reached by {} mention(s) outside its init family",
+                def.name(),
+                vars.name(v),
+                mentions - accounted
+            );
+        }
+    }
+    out
+}
+
 /// The hidden RETURN-BUFFER attribute of a record-returning function — the parameter
 /// `ref_return` appends, a `Reference` or struct-enum marked hidden — by position, or
 /// `None` for a function that has none.  ONE predicate for the four sites that drop it:

@@ -4081,6 +4081,62 @@ Consumer table at 500 calls per row: `resize` 7.60 → **5.79×**, `render_marks
 `composite` 2.36 → 2.01× — since every growth-free pixel loop in the bench binds bases now.
 `parse`, which has no such loop, is unmoved.
 
+## V-al — a vector declared inside a loop keeps its store (2026-09-15)
+
+**The evidence.**  The resample's non-tap floor — 32 ms of a 111 ms row, 1.8× the whole
+Rust reference by itself — was split rustc-first on the shipped emission (README § Where
+to resume, *the non-tap floor, split*): the two per-pixel vectors of the vertical pass,
+`rl_ch: vector<integer> = []` and `rl_rgb`, were 8 % of the row on their own.  Each is
+backed by a per-site buffer store (`__vdb_9`, `__vdb_10`) that the IR declares at
+function entry, mints at every iteration and frees once at exit.  `OpDatabase` on a var
+that still holds a store CLEARS that store and claims the record again — a store reset,
+a claim, a zero-fill and a type word per pixel, twice — and the `[]` literal then zeroes
+the vector field, so the first push of the iteration claims a vector record afresh.
+131 072 clear-and-claims per resize, buying nothing the previous iteration's vector did
+not already have: the store, the record, the capacity.
+
+**The rule (`@FR-R-LoopBuffer`).**  A per-site vector buffer minted INSIDE a loop keeps
+its store and its vector across iterations: the first pass mints, every later pass is
+`vector::vector_buffer_reset` — the vector's length set to 0, its record and capacity
+kept — and the literal's zero of the vector field is not emitted (the fresh mint
+zero-fills the record; the reuse path keeps the vector the zero would drop).  What a
+Rust `Vec` cleared in a loop does.  The gate (`hoist::loop_buffers`) admits a `__vdb`
+whose mint stands under a `Loop`, whose record is exactly one vector field of elements
+that own no heap (`Stores::owns_heap`, the same fact `@FR-H-ClearRelease` reads), whose
+every mention is its own init family — the mint, the `OpGetField` bind, the `OpSetInt4`
+zero — or a free, and whose `Set(v, Null)` stands outside the loop.  A `text` vector
+declines: a length reset would strand what its elements own, and the clear is what
+releases it.  A buffer another rewrite owns — an invariant literal (§ V-x), an
+element-first pair (§ V-z), a move host (§ V-j), the adopted result's witness (§ V-u) —
+is left to it, filtered at the emitter where those maps live.  A body with a `par` block
+or a `yield` admits none.  Switch `LOFT_NO_LOOP_BUFFER_REUSE` (generation time); trace
+`LOFT_TRACE_LOOP_BUFFER`.
+
+**What the hand patch taught.**  The first draft of the patch kept the store and reset
+the length but left the literal's field zero in place: the vector record was orphaned
+inside the store and every iteration claimed a new one — the hash exact, the store
+growing per pixel until the function's exit freed it.  Reading the emission before
+running it is what caught it; the unit drops the zero as part of the rewrite, and the
+gate accounts that statement as init family so a buffer with any other write to field 0
+declines.
+
+**Cells** `bytecode-comparisons/V-al-loop-buffer-cells.loft` (l1–l7, hand-computed, both
+backends exact under `LOFT_POISON`, `LOFT_POISON_CLAIM`, `LOFT_STRICT_STORES`,
+`LOFT_NATIVE_LEAK_CHECK` and the switch): lengths that grow, lengths that shrink to an
+empty iteration (the element the previous iteration wrote at `n` is ABSENT, `v[0]` of the
+empty vector is absent), nesting, a callee appending through a `&vector`, no-heap record
+elements, a whole-vector append out of the loop, and the `text` decline.  The guard
+`tests/scripts/157-loop-buffer.loft` carries the sabotage receipt: with the reset a no-op
+the value channel reads `l1 315 20 51` for `210 10 -4`.  `tests/loop_buffer.rs` pins the
+emission.
+
+**Measured** (the resample probe, quiet x86-64, best of 3 at 20 iterations, hash
+`77de7581`): 109.0 → **97.6 ms/op** (−10.5 %); `resample_coeffs`'s per-column `rc_row`
+takes the form too.  Consumer table (500 calls per row, `--repeat 3`, 14/14 hashes
+agree): `resize` 5.66 → **5.36×** (105.4 → 96.0 ms/op), `render_marks` 8.40 → **7.82×**
+(7.46 → 6.91 ms/op), `render_lock` 5.67 → **5.31×** (16.26 → 15.22 ms/op); every other
+row within its lane's noise (`hash` 0.99×, `smooth` 3.52× against a 320 ns reference).
+
 ## V-ai — the reset buffer keeps the capacity it reached (2026-09-14)
 
 **SHIPPED, default-on, BOTH backends (a runtime fact; switch `LOFT_NO_RESET_CAPACITY`,

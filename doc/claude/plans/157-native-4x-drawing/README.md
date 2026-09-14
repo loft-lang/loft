@@ -65,6 +65,17 @@ the free tree are never made — x86-64 Linux (host `tuxedo`), ABAB on one binar
 (**4.28× → 3.42×, under the bar** on this lane), every other row flat, 14/14 hashes.  Nine
 hand-derived cells on both backends under strict stores, poison and the switch; the guard
 reads the re-established capacity off `LOFT_TRACE_CLEAR`.  Switch `LOFT_NO_RESET_CAPACITY`.
+**§ V-al SHIPPED 2026-09-15** (DESIGN.md § V-al): a vector local declared `[]` INSIDE a
+loop keeps its per-site buffer's store and vector across iterations — the mint after
+the first is a length reset that keeps the capacity, the literal's field zero is not
+emitted — for elements that own no heap.  The resample's two per-pixel vectors and
+`resample_coeffs`'s per-column row: the probe 109.0 → **97.6 ms/op** (−10.5 %, hash
+exact, best of 3 at 20 iterations, quiet x86-64).  Seven hand-derived cells on both
+backends under poison, poison-claim, strict stores and the leak check; the guard's
+receipt is the value channel.  Consumer lane (500 calls per row, 14/14 hashes):
+`resize` 5.66 → **5.36×**, `render_marks` 8.40 → **7.82×**, `render_lock` 5.67 →
+**5.31×**, the rest within noise.  Switch `LOFT_NO_LOOP_BUFFER_REUSE`, trace
+`LOFT_TRACE_LOOP_BUFFER`.
 Scoreboard vs the issue baseline, consumer lane on the SHIPPED tier (lean, fully
 optimised — the release default since 2026-09-08, DESIGN.md § The shipped tier):
 `hash` 10.9× → **2.2–2.5×** consumer / 1.2× gate row (under the bar; the spread
@@ -1085,6 +1096,19 @@ admission round grows optimistically and prunes, so the join and its lifts admit
 other.  Both shapes now mint nothing at all.  `tests/value_record.rs` pins the emissions;
 `tests/scripts/157-value-tail.loft` carries both receipts.  The gate's other red,
 `src/generation/fnref.rs` uncatalogued, is an `@I68` tag.
+
+*The non-tap floor, split (2026-09-15, rustc-first on the shipped emission, best of 3 at
+20 iterations: shipped 108.3 ms/op).*  The `rl_mid` prefill as one reserve and a length:
+**105.9** (−2 %); a reserve under the premultiply's 2.4 M-element plane: **106.8**
+(−1.4 %); the two per-pixel vectors of the vertical pass kept across iterations with a
+length reset instead of the clear-and-claim: **99.4** (−8 %); all three: **94.9**
+(−12 %); all three with the premultiply loop removed entirely: **88.7** — the premultiply
+is ≈ 6 ms of its own (three literal divides, a `?` discharge and four pushes per input
+pixel).  The per-pixel vectors were the unit worth building first and are § V-al: the
+row's remaining floor is the prefill and the reserve (a counted push loop is a reserve by
+its trip count, a constant push loop one fill — the same recogniser, ≈ −3.5 % here and
+`filled`'s whole cost in the render rows), then the premultiply's own arithmetic, which is
+the C85 line again.
 
 **2026-09-14, later — HAND-OFF FOR THE QUIET BOX: `smooth`, the last judged row over the
 bar.**  Written on `tuxedo` (x86-64, three checkouts sharing it) for an agent on the quiet
