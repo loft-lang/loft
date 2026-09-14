@@ -97,6 +97,38 @@ apart — an A/B of the two tips on one box, cdylib cache cleared, is the check.
 NATIVE lane swung 235k–464k between runs (the 09-12 note put that row's spread on the
 reference lane); min-of-min is what the row reads.
 
+**`fronds` on x86-64 run down (2026-09-14, host `tuxedo`, the § V-ag tip).**  Not a
+regression: the row is −45 % since the 09-12 x86 table, and § V-ag is active here
+(`fr_only.loft --n 20000`, switch A/B on one binary: 256 351 → 174 239 ns/op, −32 %, hash
+`ebcfd875`).  It is over the bar on this lane because the reference is ~10 % faster than
+on aarch64 and native ~13 % slower, and the profile (`scripts/profile.sh --engine`, 20 000
+calls) says where native's time is: store machinery ≈ 60 % of the run, the program's own
+arithmetic ≈ 25 % (`n_fronds` 15.7, `__sin_fma` + `__sincos_fma` 6.1, `n_pt` 1.6, `n_hash01`
+1.3).  **The free tree is still 20 % of the row after § V-ag — now on the CLAIM side**:
+`claim → fl_take_ge → claim_block → fl_delete_node / fl_insert / fl_balance`, reached from
+`pre_alloc_vector` for every `fd_pts` / `fd_wid` (1 296 claims per call), while the release
+side is under 1 % (`fl_delete_node` 2.2 is the take, not a free).  Three one-axis probes
+(depth 1, so no sub-call; the same 648 fronds) put the cause on the RESULT vector's growth
+ladder.  `bump_tail` fires only while the free tree is ONE block; each growth step of
+`fd_out` (`Store::resize` claims, copies and deletes, because the per-frond claims sit
+right behind it: 11 → 24 → 50 → 102 → 206 → 414 → 830, six moves) frees the old block into
+the store; once the freed blocks are large enough to fit a per-frond claim, `fl_find_ge`'s
+best fit prefers them to the tail, and every claim in the rest of the call is a tree take,
+a remainder insert and a rebalance.  Measured: free-tree share **3.0 % at 11 fronds (no
+growth), 1.3 % at 22 (one step), 21.1 % at 648**; per-frond cost 217 / 212 / 202 / 201 /
+241 / 251 ns at 11 / 22 / 50 / 100 / 300 / 648.  Recursion is not it (depth 1 keeps the
+21 %).  **The reset re-establishes the vector at capacity 11** (`clear_vector_release` →
+`pre_alloc_vector(db, 0, …)`, `count.max(11)`) although the buffer is REUSED across calls
+(§ V-u) and the length it reached is read in the walk arm beside it — so every call after
+the first re-runs the whole ladder inside a store that already has the extent.  Candidate
+unit, unbuilt: re-establish the root vector at the capacity the previous fill reached (the
+store's extent is the receipt), so the ladder runs once per buffer and `bump_tail` serves
+every claim after it; ceiling from the probes ≈ −20 % of the row on this box (~176k →
+~141k, ≈ 3.4×, under the bar here), and it is 3e's shape exactly — a fact the allocator
+cannot have (this store is a reused return buffer) spent by loft.  The tail-bump rule is
+the second question: a claim no hole fits still walks the tree to reach the tail, and a
+tail fast path that survives holes would price the sub-call buffers' holes too.
+
 **Re-measured 2026-09-12 on x86-64 Linux, the same § V-z tip (d3c31d82, doc-only over
 d80307b0)** — rebuilt release lib + binary, fresh scratch clone of `drawing-lock`,
 `compare.py --skip-interp --repeat 5` run twice, every row within 1 % of itself and all
@@ -956,6 +988,7 @@ rules the rewrites already stood on were missing and are now written: `@FR-H-Roo
 | `n_pt`, 14.9 % of `smooth` | unprobed | § V-p's twin applied to a record DESTINATION; measure a ceiling first |
 | § 3d item 1 — assert what the header proved | ceiling measured, unbuilt | validate the vector's extent once at derivation, answer `len: 0` on failure so corruption degrades to the checked path |
 | § 3d items 2–4 | unprobed | item 3 (a real slice per store) wants the same rustc-first probe |
+| `fronds` on x86-64 — the reset buffer re-runs its growth ladder every call | measured, unbuilt (Status § `fronds` on x86-64 run down: free tree 21 % of the row, 3 % without the ladder) | re-establish the reset root vector at the capacity the previous fill reached, not 11; then a tail fast path that survives holes |
 | store ROLES as rules | unnamed | nothing says what a discharge buffer, a comprehension accumulator, a worker's read-only borrow or the const store guarantees |
 
 *Instruments, and where they live.*  The consumer table is a SCRATCH clone of
