@@ -363,19 +363,24 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 3.**
+**OPEN: 2.**
 
-* **D-bind-43** *(opened 2026-09-14)* — `(B-Ref-Write)` for a VECTOR written through a local `&` link from a
-  named vector: `a: vector<integer> = [1]; n: vector<integer> = [7, 8]; c = &n; c = a` must make `n` a copy
-  of `a`, and leaves `n` at `[7, 8]` on both backends while `c` reads a copy of `a` — the write is lost and
-  the link now names a store of its own.  Silent; the same on 2cff47dfc.  A literal build through the link
-  (`pe = [2, 2]`) refills the source in place and is right.  **Where (measured).**  The link is typed a plain
-  vector sharing `n`'s store (`c: vector<integer>[…] = n`), and `c = a` lowers to a fresh store filled from
-  `a` — `OpDatabase`, `c = OpGetField(…)`, `OpAppendVector(c, a, 0)` — so `c` is rebound instead of `n`'s
-  store being cleared and refilled.  The clear-and-refill exists in `Parser::assign_refvar_vector`, which
-  accepts only a `&vector` PARAMETER or annotated local (`RefVar(Vector)`); a link from `c = &n` is typed
-  a plain vector registered in `amp_vector_locals`, so the handler declines it.  A different site from
-  D-bind-42's record copy.  Found while sizing D-bind-42 over the heap kinds.
+* **D-bind-43** *(opened 2026-09-14, CLOSED 2026-09-15)* — `(B-Ref-Write)` for a VECTOR written through a
+  local `&` link from a named vector: `a: vector<integer> = [1]; n: vector<integer> = [7, 8]; c = &n; c = a`
+  must make `n` a copy of `a`, and left `n` at `[7, 8]` on both backends while `c` read a copy of `a` — the
+  write was lost and the link named a store of its own.  The same from another vector link and in a loop.
+  Silent; the same on 2cff47dfc.  A literal build or an append through the link was right.  **Where
+  (measured).**  The link is typed a plain vector sharing `n`'s store and registered in
+  `amp_vector_locals`; `c = a` lowered to a fresh store filled from `a` (`OpDatabase`, `c = OpGetField(…)`,
+  `OpAppendVector(c, a, 0)`).  The clear-and-refill it needs lives in `Parser::assign_refvar_vector`, which
+  took only a `&vector` PARAMETER or annotated local (`RefVar(Vector)`).  **Closed** by letting that
+  handler also take a plain vector local registered in `amp_vector_locals`, for `=` only, and never for the
+  statement that makes the link: that statement registers the local a moment earlier, and claiming it
+  left the local without a slot (a compile error on every vector link, caught by the first build).
+  Measured on both backends, plain, under LOFT_POISON and with the native leak check; a literal, an append
+  and a write-through onto the vector the link names are unchanged, and no existing corpus program's
+  emission moved.  Guard `tests/scripts/a-vector-written-through-a-local-link-refills-what-it-names.loft`.
+  Found while sizing D-bind-42 over the heap kinds.
 * **D-bind-42** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Ref-Write)` and `(B-Copy)` for a RECORD
   written through a LOCAL `&` link from a named record: `a = S{v: 1}; n = S{v: 7}; c = &n; c = a; c.v = 9`
   must leave `a` at 1 and `n` at 9, and left both at 9 on both backends; `…; c = a; a.v = 5` then read 5

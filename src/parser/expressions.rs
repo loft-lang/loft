@@ -4899,7 +4899,7 @@ use a separate collection or add after the loop"
         if self.assign_refvar_text(code, f_type, &s_type, op, var_nr) {
             return Type::Void;
         }
-        if self.assign_refvar_vector(code, f_type, &s_type, op, var_nr) {
+        if self.assign_refvar_vector(code, f_type, &s_type, op, var_nr, amp_collection_bind) {
             return Type::Void;
         }
         // Rewrites `code` into an owned copy and returns false, so the general path
@@ -8281,12 +8281,29 @@ use a separate collection or add after the loop"
         s_type: &Type,
         op: &str,
         var_nr: u16,
+        link_bind: bool,
     ) -> bool {
-        let Type::RefVar(inner) = f_type else {
-            return false;
-        };
-        let Type::Vector(elm_tp, _) = inner.as_ref() else {
-            return false;
+        // A `&vector` PARAMETER, or an annotated `&vector` local, is `RefVar(Vector)`.  A local linked
+        // by `c = &n` is a PLAIN vector sharing `n`'s store, registered in `amp_vector_locals`; its
+        // `c = a` must refill that store the same way, or the link is rebound to a copy and the write
+        // never reaches `n` (`formal/binding.md` D-bind-43).  Its `+=` already appends to the shared
+        // store, so only `=` is taken for it.
+        // `link_bind` is the statement that MAKES the link (`c = &n`): it registers `c` a moment
+        // earlier in the same statement, and it is the share lowering's, not a write-through.
+        let linked_local = op == "="
+            && !link_bind
+            && !self.first_pass
+            && var_nr != u16::MAX
+            && self
+                .amp_vector_locals
+                .contains(&(self.context, self.vars.name(var_nr).to_string()));
+        let elm_tp = match f_type {
+            Type::RefVar(inner) => match inner.as_ref() {
+                Type::Vector(elm_tp, _) => elm_tp.clone(),
+                _ => return false,
+            },
+            Type::Vector(elm_tp, _) if linked_local => elm_tp.clone(),
+            _ => return false,
         };
         if op != "+=" && op != "=" {
             return false;
@@ -8305,7 +8322,7 @@ use a separate collection or add after the loop"
             return true;
         }
         // @P314 — narrow-aware element type (see `append_elem_tp`).
-        let elm = (**elm_tp).clone();
+        let elm = (*elm_tp).clone();
         let rec_tp = self.append_elem_tp(&elm);
         if op == "+=" {
             *code = self.cl(
