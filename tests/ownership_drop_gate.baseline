@@ -19,7 +19,6 @@ c_field_veclit DOUBLE
 c_param_enum DOUBLE,EARLY
 c_param_field DOUBLE,EARLY
 c_param_push DOUBLE,EARLY
-c_param_reassign DOUBLE,EARLY,LOST
 c_param_ret DOUBLE,EARLY
 c_param_veclit DOUBLE,EARLY
 c_pfield_enum DOUBLE,EARLY
@@ -33,6 +32,8 @@ c_tuple_push DOUBLE
 c_tuple_ret DOUBLE,EARLY
 c_tuple_tuplem DOUBLE
 c_tuple_veclit DOUBLE
+p_h6 LOST
+p_h7 LOST
 p_j1 LOST
 p_j2 LOST
 p_j3 DOUBLE

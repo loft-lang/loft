@@ -3054,7 +3054,12 @@ fn run_scan_phase(
         displaced_owned,
         views_to_materialise,
         fnref_target: collect_fnref_targets(orig_code, orig_vars),
-        drop_transferred: collect_drop_transferred(orig_code, orig_vars, data),
+        // Empty, and filled in SCAN ORDER (`Scopes::convert` arms each statement's hand-offs
+        // after that statement is scanned).  A hand-off belongs to the assignment it follows
+        // (`@FR-O-Latest`): seeded for the whole body, `b = mk(1); b = mk(2); y = b` read
+        // `b`'s later hand-off at the earlier reassignment and never released `mk(1)`.  A loop
+        // body is the exception — see the `Value::Loop` arm of `scan_inner`.
+        drop_transferred: HashSet::new(),
         tuple_call_mint: HashMap::new(),
         view_backing: HashMap::new(),
         construction_backing: HashMap::new(),
@@ -3138,8 +3143,10 @@ fn run_scan_phase(
     // before the body is walked, so its `false` initialiser can be placed at the top.
     // Only where the release would move to the DESTINATION, which is what leaves the source
     // without one.  `copy_moves_drop_from` answers a copy off a PARAMETER the other way round
-    // — it stops the destination, because the caller owns — and there is nothing per-path
-    // about that: the caller's release is not on either of these arms.
+    // — it stops the DESTINATION, because the caller owns — and that pair gets no flag.  The
+    // caller's release is on neither arm, but the destination's OWN earlier record is: after
+    // `x = mk(); if c { x = p; }` the stopped `x` leaves `mk()` unreleased on the path where the
+    // copy did not run (heap.md `D-heap-7`, the branch not taken).
     scopes.per_path_pairs = per_path_handoffs(orig_code)
         .into_iter()
         .filter(|&(dst, src)| copy_moves_drop_from(&function, data, dst, src, false) == Some(src))
@@ -7448,6 +7455,16 @@ impl Scopes<'_> {
                 let views_before = self.view_backing.clone();
                 let backing_before = self.construction_backing.clone();
                 let mints_before = self.tuple_call_mint.clone();
+                // A loop body's hand-offs are armed BEFORE its statements are scanned, not in
+                // scan order: on the next iteration an earlier statement displaces what a LATER
+                // one handed off — `for … { x = mk(); x = p; }` reaches `x = mk()` holding the
+                // parameter's copy — so the in-order fact would release a record the caller
+                // owns.  Armed early, that displacement is suppressed on every iteration, which
+                // loses the first iteration's release rather than doubling the later ones'.
+                for op in &lp.operators {
+                    let early = collect_drop_transferred(op, function, data);
+                    self.drop_transferred.extend(early);
+                }
                 let ls = self.convert(lp, function, data, false);
                 self.owned_refs
                     .retain(|k, depth| owned_before.get(k) == Some(depth));
@@ -9593,8 +9610,13 @@ impl Scopes<'_> {
             // existing store, not to a `Set`: a REBUILD, and the record it overwrites is
             // released through its hook exactly as a reassigned one is.  The first
             // construction of a local (outside a loop) displaces nothing.
-            // Re-arm the hand-offs this statement makes, in scan order, so a variable
-            // whose earlier hand-off a reassignment retired is handed off again here.
+            let rebuilt = self.in_place_rebuild(v, function, data);
+            let sv = self.scan(v, function, data);
+            // Arm the hand-offs this statement makes, AFTER it is scanned: its own displaced
+            // release and its retirement read the facts of the assignments before it, and what
+            // it hands off applies to the value it has just assigned (`@FR-O-Latest`).  Armed
+            // before the scan, `x = mk(); x = p` suppressed the release of the displaced `mk()`
+            // with the parameter copy's fact, then retired that fact and dropped the copy.
             {
                 let Self {
                     drop_transferred,
@@ -9605,8 +9627,6 @@ impl Scopes<'_> {
                     drop_handoff_node(n, function, data, drop_transferred, arm_lift_temps);
                 });
             }
-            let rebuilt = self.in_place_rebuild(v, function, data);
-            let sv = self.scan(v, function, data);
             if let Some((pre, _)) = &rebuilt {
                 ls.extend(pre.iter().cloned());
             }

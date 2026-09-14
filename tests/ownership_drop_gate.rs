@@ -189,6 +189,43 @@ fn p_o5() { t = (mk(16), 1); p_o5_m(t); println("R{t.0.id}"); }"#,
             "p_j4",
             r#"fn p_j4() { a: H? = null; v: vector<H> = []; v += [if a != null { a } else { mk(37) }]; println("R{v[0].id}"); }"#,
         ),
+        // A reassigned local whose value is handed off by a LATER statement, or off a
+        // parameter: a hand-off belongs to the assignment it follows, so it must not suppress
+        // the release of a record an earlier assignment gave the local.
+        cell(
+            "p_h1",
+            r#"fn p_h1() { b = mk(40); b = mk(41); y = b; println("R{y.id}"); }"#,
+        ),
+        cell(
+            "p_h2",
+            r#"fn p_h2_b(p: H) { x = mk(42); x = p; println("R{x.id}"); }
+fn p_h2() { a = mk(43); p_h2_b(a); println("R{a.id}"); }"#,
+        ),
+        cell(
+            "p_h3",
+            r#"fn p_h3_b(p: H) { x = mk(44); x = p; x = mk(45); println("R{x.id}"); }
+fn p_h3() { a = mk(46); p_h3_b(a); println("R{a.id}"); }"#,
+        ),
+        cell(
+            "p_h4",
+            r#"fn p_h4_b(p: H) { x = p; x = mk(47); println("R{x.id}"); }
+fn p_h4() { a = mk(48); p_h4_b(a); println("R{a.id}"); }"#,
+        ),
+        cell(
+            "p_h5",
+            r#"fn p_h5_b(p: H, c: boolean) { x = mk(49); if c { x = p; } println("R{x.id}"); }
+fn p_h5() { a = mk(50); p_h5_b(a, true); println("R{a.id}"); }"#,
+        ),
+        cell(
+            "p_h6",
+            r#"fn p_h6_b(p: H, c: boolean) { x = mk(51); if c { x = p; } println("R{x.id}"); }
+fn p_h6() { a = mk(52); p_h6_b(a, false); println("R{a.id}"); }"#,
+        ),
+        cell(
+            "p_h7",
+            r#"fn p_h7_b(p: H) { x = mk(53); for i in 0..2 { x = mk(54 + i); x = p; } println("R{x.id}"); }
+fn p_h7() { a = mk(56); p_h7_b(a); println("R{a.id}"); }"#,
+        ),
         // (H-Drop-Not): the language releases nothing for the X-marked id.
         cell(
             "p_n1",

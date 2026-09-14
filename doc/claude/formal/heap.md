@@ -894,8 +894,27 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
    nothing, the caller owns — so the callee's copy must not release.  D-heap-1's first shape is
    the tuple-member spelling of this family, and the cure it names (a caller-side fact) is the
    same one.
-3. **A local displaced by a parameter** — `x = mk(K); x = p` (`c_param_reassign`): the displaced
-   record is never released, beside family 2's double.
+3. **A hand-off that suppressed a release it does not belong to** — filed from
+   `x = mk(K); x = p` (`c_param_reassign`: the displaced record never released, and the parameter's
+   copy released inside the callee), and wider than filed: `b = mk(1); b = mk(2); y = b` lost
+   `mk(1)` with no parameter anywhere.  The set of variables that stop dropping
+   (`drop_transferred`) was seeded from the WHOLE body before the scan, so a hand-off made by a
+   LATER statement was already in force at an EARLIER reassignment; and each statement re-armed
+   its own hand-off BEFORE its scan, so `x = p` hid `mk(K)` behind the parameter copy's fact and
+   then retired that fact and dropped the copy.  `@FR-O-Latest` is the rule broken — a hand-off
+   belongs to the assignment it follows.
+   - ✓ **CLOSED 2026-09-14 for sequential code and a taken branch.**  The set starts empty and each
+     statement arms its hand-offs after it is scanned.  Gate cells `p_h1`–`p_h5` and
+     `c_param_reassign`, both backends.
+   - **OPEN — a loop.**  `for … { x = mk(); x = p; }` still releases none of the displaced records
+     (`p_h7`).  A loop body keeps the early seed on purpose: on the next iteration an earlier
+     statement displaces what a later one handed off, so the in-order fact would release the
+     caller's record — the loss is kept rather than converted into a double release.  The answer
+     is per ITERATION, which a static fact cannot give.
+   - **OPEN — the branch not taken.**  `x = mk(); if c { x = p; }` with `c` false still loses
+     `mk()` (`p_h6`): the hand-off armed inside the arm suppresses `x`'s own release on the path
+     that never copied.  loft#1515's per-path flag answers exactly this for a SOURCE-side hand-off;
+     a destination-side one (a copy off a parameter) is not given the flag.
 4. **A projection copied into a container** — `s.h`, `vs[0]` or `tt.0` into a field, an enum
    payload, a vector or a tuple member (`c_field_*`, `c_elem_*`, `c_tuple_*`): twice.  The same
    projection bound to a LOCAL is a `(B-View)` view and releases once; placed in a container it
