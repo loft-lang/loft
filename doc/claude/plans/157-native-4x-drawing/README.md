@@ -83,6 +83,21 @@ which resolves to nothing for a later reader on another machine).  The two do no
 bar is *within 4× of the Rust reference on the same machine*, and which routines clear
 it differs by target.  Label every future row with its machine.
 
+**Re-measured 2026-09-14 on x86-64 Linux (host `laptop`, the quiet perf box), tip 011687d9 —
+the ten rows loft#1426 FILED are all under the bar, and the issue takes its `Fixes`
+trailer with this commit.**  Release binary rebuilt at the tip, fresh scratch clone of
+`drawing-lock` (250b2cd), `compare.py --skip-interp --repeat 3 --n-ref 500 --n-native 500`,
+all 14 hashes agreeing: `hash` **0.90×** (110 672 ns/op native / 122 986 reference),
+`fill_circle` **1.15×** (62 126), `fill_star` **1.15×** (22 386), `hair` **1.91×** (26 850),
+`lock` **1.93×** (2 976 728), `composite` **2.00×** (202 214), `lock_curved` **2.23×**
+(2 945 454), `wide_line` **2.25×** (13 208), `smooth` **3.26×** (1 140 / 350), `fronds`
+**3.27×** (161 390 / 49 388) — against the filed 10.9 / 17 / 17 / 4.3 / 30 / 26 / 34 / 17 /
+262 / 49×.  The issue is the surfaced report of these ten on this lane and closes on merge;
+what stays the plan's is the four rows the bench grew since (`parse` 10.45×, `render_lock`
+5.67×, `render_marks` 8.40×, `resize` 5.66× — three of them the graphics package's
+resample, § *The four unjudged rows*) and the aarch64 re-measure (`smooth` read 8.44× there
+before § V-ah, which took this lane from 9.5× to 3.3×).
+
 **Re-measured 2026-09-14 on x86-64 Linux (host `tuxedo`), tip 36552c16** (the § V-ag tip
 plus two commits that change no default: § V-ah stage 1 is opt-in, the last is docs) —
 release lib + binary rebuilt, fresh scratch clone of `drawing-lock` (250b2cd),
