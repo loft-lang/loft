@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `τ? ⤳ σ?` is `τ ⤳ σ` inside the wrapper: a present value widens (@FR-N-Intro), a null
+// lands in a slot that holds null, and nothing is stored into a non-null type.  Converting
+// both sides at once is what keeps @FR-N-Store's check from asking about a store the program
+// does not make.  It used to peel the target first and then report the source's unwrap
+// against the DENSE base — a false warning for a `Fireball?` handed to an `Entity?`
+// parameter, local or field (loft#1528), and for a nullable narrow integer widening into a
+// wider nullable narrow slot, `i8?` into `i16?`, a false ERROR that refused the program.
+// A null placed in a nullable struct-enum FIELD is a separate defect and is not a cell here.
+// The warning half is pinned by `tests/parse_errors.rs`, which fails on an unexpected
+// diagnostic; this file pins the refusal half and the values on both backends.
+// @falsified-at: 80ba212ea — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-nullable-variant-widens-into-its-enums-nullable-slot.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — on the control `wider(small)` hands an `i8?` to an `i16?` parameter and is
+//   refused, *"a nullable `integer(-128, 127)?` cannot be stored into parameter 1 of `wider`
+//   of the non-null type `integer(-32768, 32767)`"*; here it runs.  The false WARNING half
+//   moves no exit code, so `tests/issues.rs` pins it (`code!` fails on any diagnostic).
+//   ARMED: no instrument — a plain run on either backend reads it.
+//   WITNESS: `wider(small)`: refused there, `v 3` here.
+//   HOLDS: every `Fireball?` cell answers the same values on both trees (the control warns
+//   and still computes them); the leak channel is `none` on both.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+enum Entity { Fireball { n: integer }, IceWall { n: integer } }
+
+struct Holder { e: Entity? }
+
+fn tag(e: Entity?) -> text { if e { "any {e.n}" } else { "absent" } }
+
+fn wider(v: i16?) -> text { if v { "v {v}" } else { "v-null" } }
+
+fn test_a_nullable_variant_into_its_enums_nullable_slot() {
+  present: Fireball? = Fireball { n: 4 };
+  absent: Fireball? = null;
+  assert(tag(present) == "any 4", "a present variant widens into the parameter: got {tag(present)}");
+  assert(tag(absent) == "absent", "a null stays null: got {tag(absent)}");
+  local: Entity? = present;
+  assert(tag(local) == "any 4", "and into a local: got {tag(local)}");
+  h = Holder { e: present };
+  assert(tag(h.e) == "any 4", "and into a field: got {tag(h.e)}");
+}
+
+fn test_a_nullable_narrow_integer_into_a_wider_nullable_narrow_slot() {
+  small: i8? = 3;
+  none: i8? = null;
+  assert(wider(small) == "v 3", "an i8? widens into an i16? parameter: got {wider(small)}");
+  assert(wider(none) == "v-null", "and its null stays null: got {wider(none)}");
+}
+
+fn main() {
+  test_a_nullable_variant_into_its_enums_nullable_slot();
+  test_a_nullable_narrow_integer_into_a_wider_nullable_narrow_slot();
+}

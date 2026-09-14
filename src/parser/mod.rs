@@ -4922,6 +4922,15 @@ impl Parser {
                 *code = self.emit_nullable_slot_read(syn, code.clone(), &src);
                 return true;
             }
+            // Both sides nullable: `τ? ⤳ σ?` is `τ ⤳ σ` inside the wrapper.  A null the source
+            // holds lands in a slot that holds null, so @FR-N-Intro's widening is the whole
+            // conversion and there is no store for @FR-N-Store to ask about.  Peeling only the
+            // target sent the source's unwrap to a DENSE `σ`, which reported a store the
+            // program never makes (a `Fireball?` "stored into the non-null type `Entity`" on an
+            // `Entity?` parameter, loft#1528).
+            if let Type::Optional(src_inner) = is_type {
+                return self.convert(code, src_inner, inner);
+            }
             return self.convert(code, is_type, inner);
         }
         if let Type::Optional(inner) = is_type {

@@ -1,0 +1,103 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 6ecb0ddd4..e18c3245c 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -5114,11 +5114,7 @@ impl Parser {
+         // @PLN25: a `τ?` subject matches as its base (shared sentinel storage) — peel the marker
+         // so `match` on an `integer?` routes to the scalar handler instead of falling to the `_`
+         // arm ("match requires an enum, struct, or scalar type"). Gate-OFF inert (never Optional).
+-        // A `&` subject is read through its reference, as every other operation on a `&`
+-        // binding is (LOFT.md § References): the SHAPE question is asked of the pointee
+-        // (`Type::peel_link`), and the subject value reads through the link like a field
+-        // access does (loft#1526).
+-        let subject_type = subject_type.peel_link().clone();
++        let subject_type = subject_type.base().clone();
+         // A subject whose type is not linked yet on the FIRST pass — `match p { … }` where
+         // `p` came from an enum declared LOWER in the file.  The dispatch below cannot
+         // recognise it, so the arms contribute nothing and `result_type` would stay `Void`;
+@@ -6355,22 +6351,6 @@ impl Parser {
+             Value::Call(d_nr, args) if self.data.def(*d_nr).name().starts_with("OpGet") => {
+                 args.first().and_then(|a| self.match_borrow_source(a))
+             }
+-            // A tuple MEMBER is the second spelling of a projection: `TupleGet(tmp, i)` carries
+-            // its base as a var number, not a `Var` node, so matching the getter family alone
+-            // left a binding taken through a tuple subject (`match (a, b) { (_, W { body }) =>
+-            // … }`) dep-free — its write reached `b`'s record while nothing said it borrowed
+-            // `b`, and a `&` parameter written only that way was refused as never modified
+-            // (loft#1526).  The member's own borrow is the source; a member the tuple OWNS
+-            // (a copied heap value) borrows the tuple temporary.
+-            Value::TupleGet(tmp, i) => {
+-                if let Type::Tuple(elems) = self.vars.tp(*tmp)
+-                    && let Some(member) = elems.get(*i as usize)
+-                    && let Some(&src) = member.depend().first()
+-                {
+-                    return Some(src);
+-                }
+-                Some(*tmp)
+-            }
+             _ => None,
+         }
+     }
+@@ -6699,9 +6679,7 @@ impl Parser {
+     /// a variant question of an absence bit.  `None` keeps the element's own refusal there,
+     /// which names the type the author wrote rather than the synthetic.
+     fn pattern_variant_enum(&self, tp: &Type) -> Option<(u32, bool)> {
+-        // Through a `&` too: a tuple element taken from a `&T` binding is that `T`'s value,
+-        // and a variant pattern asks its enum exactly as a direct subject does (loft#1526).
+-        let Type::Enum(e_nr, is_struct, _) = tp.peel_link() else {
++        let Type::Enum(e_nr, is_struct, _) = tp.base() else {
+             return None;
+         };
+         if self.nullable_payload_struct(*e_nr).is_some() {
+@@ -10808,8 +10786,7 @@ impl Parser {
+         // about punctuation for a program whose only fault was that its subject could be
+         // absent.  Reachable from a plain `s: Sh? = Box{…}` with no projection in sight, so it
+         // predates the chain widening that made the corpus meet it.
+-        // A `&` subject is asked through its reference, as `match` asks it (loft#1526).
+-        let subject_type = subject_type.peel_link();
++        let subject_type = subject_type.base();
+         let (e_nr, is_struct) = match subject_type {
+             Type::Enum(nr, true, _) => (*nr, true),
+             Type::Enum(nr, false, _) => (*nr, false),
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 64807e283..80f3fd6a6 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -4922,15 +4922,6 @@ impl Parser {
+                 *code = self.emit_nullable_slot_read(syn, code.clone(), &src);
+                 return true;
+             }
+-            // Both sides nullable: `τ? ⤳ σ?` is `τ ⤳ σ` inside the wrapper.  A null the source
+-            // holds lands in a slot that holds null, so @FR-N-Intro's widening is the whole
+-            // conversion and there is no store for @FR-N-Store to ask about.  Peeling only the
+-            // target sent the source's unwrap to a DENSE `σ`, which reported a store the
+-            // program never makes (a `Fireball?` "stored into the non-null type `Entity`" on an
+-            // `Entity?` parameter, loft#1528).
+-            if let Type::Optional(src_inner) = is_type {
+-                return self.convert(code, src_inner, inner);
+-            }
+             return self.convert(code, is_type, inner);
+         }
+         if let Type::Optional(inner) = is_type {
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index c5c33992d..4adcea260 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -793,17 +793,6 @@ impl Parser {
+                 // "Tuple arity mismatch: left has 0 names".  Only a tuple being CONSTRUCTED
+                 // as a value is a construction.
+                 if !self.lexer.peek_token("=") {
+-                    // A `&` member is the VALUE read through its reference, as every other
+-                    // use of a `&` binding is (LOFT.md § References): the member's type is the
+-                    // pointee, and the load of the `&` variable reads through the link by that
+-                    // type.  Kept as the link, the member had a type no tuple slot can hold and
+-                    // `(n, 2)` over `n: &integer` stopped code generation (loft#1526).  A
+-                    // destructure TARGET is excluded above: there a `&` names the place.
+-                    for t in &mut types {
+-                        if let Type::RefVar(pointee) = t {
+-                            *t = (**pointee).clone();
+-                        }
+-                    }
+                     for (i, v) in values.iter_mut().enumerate() {
+                         if let Some(owned) = self.tuple_member_owned_copy(v, &types[i]) {
+                             types[i] = owned;

@@ -5114,7 +5114,11 @@ impl Parser {
         // @PLN25: a `τ?` subject matches as its base (shared sentinel storage) — peel the marker
         // so `match` on an `integer?` routes to the scalar handler instead of falling to the `_`
         // arm ("match requires an enum, struct, or scalar type"). Gate-OFF inert (never Optional).
-        let subject_type = subject_type.base().clone();
+        // A `&` subject is read through its reference, as every other operation on a `&`
+        // binding is (LOFT.md § References): the SHAPE question is asked of the pointee
+        // (`Type::peel_link`), and the subject value reads through the link like a field
+        // access does (loft#1526).
+        let subject_type = subject_type.peel_link().clone();
         // A subject whose type is not linked yet on the FIRST pass — `match p { … }` where
         // `p` came from an enum declared LOWER in the file.  The dispatch below cannot
         // recognise it, so the arms contribute nothing and `result_type` would stay `Void`;
@@ -6351,6 +6355,22 @@ impl Parser {
             Value::Call(d_nr, args) if self.data.def(*d_nr).name().starts_with("OpGet") => {
                 args.first().and_then(|a| self.match_borrow_source(a))
             }
+            // A tuple MEMBER is the second spelling of a projection: `TupleGet(tmp, i)` carries
+            // its base as a var number, not a `Var` node, so matching the getter family alone
+            // left a binding taken through a tuple subject (`match (a, b) { (_, W { body }) =>
+            // … }`) dep-free — its write reached `b`'s record while nothing said it borrowed
+            // `b`, and a `&` parameter written only that way was refused as never modified
+            // (loft#1526).  The member's own borrow is the source; a member the tuple OWNS
+            // (a copied heap value) borrows the tuple temporary.
+            Value::TupleGet(tmp, i) => {
+                if let Type::Tuple(elems) = self.vars.tp(*tmp).base()
+                    && let Some(member) = elems.get(*i as usize)
+                    && let Some(&src) = member.depend().first()
+                {
+                    return Some(src);
+                }
+                Some(*tmp)
+            }
             _ => None,
         }
     }
@@ -6679,7 +6699,9 @@ impl Parser {
     /// a variant question of an absence bit.  `None` keeps the element's own refusal there,
     /// which names the type the author wrote rather than the synthetic.
     fn pattern_variant_enum(&self, tp: &Type) -> Option<(u32, bool)> {
-        let Type::Enum(e_nr, is_struct, _) = tp.base() else {
+        // Through a `&` too: a tuple element taken from a `&T` binding is that `T`'s value,
+        // and a variant pattern asks its enum exactly as a direct subject does (loft#1526).
+        let Type::Enum(e_nr, is_struct, _) = tp.peel_link() else {
             return None;
         };
         if self.nullable_payload_struct(*e_nr).is_some() {
@@ -10786,7 +10808,8 @@ impl Parser {
         // about punctuation for a program whose only fault was that its subject could be
         // absent.  Reachable from a plain `s: Sh? = Box{…}` with no projection in sight, so it
         // predates the chain widening that made the corpus meet it.
-        let subject_type = subject_type.base();
+        // A `&` subject is asked through its reference, as `match` asks it (loft#1526).
+        let subject_type = subject_type.peel_link();
         let (e_nr, is_struct) = match subject_type {
             Type::Enum(nr, true, _) => (*nr, true),
             Type::Enum(nr, false, _) => (*nr, false),

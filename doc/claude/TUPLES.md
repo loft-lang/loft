@@ -334,8 +334,9 @@ An annotated destructuring LHS — `(a, b): (integer, text) = t` — is not a fo
 it is refused for every name, including one nothing else declares. The annotation goes
 on the tuple being destructured, as in the block above.
 
-`parse_match` dispatches on the subject type. `Type::Tuple` falls into the catch-all
-and emits "match requires an enum, struct, or scalar type" — not yet handled.
+`parse_match` dispatches on the subject type; a `Type::Tuple` subject goes to
+`parse_tuple_match`.  A `&(…)` binding over a heap element is a `__tuple<…>` RECORD
+(`formal/tuples.md` `(T-Ref-Rep)`) and does not take a tuple pattern yet — loft#1530.
 
 **Dependency on T1.8:** Tuple-returning functions (`-> (A, B)`) are deferred as T1.8.
 Tuple match on a function call result (`match foo() { ... }`) requires T1.8a first.

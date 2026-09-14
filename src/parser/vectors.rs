@@ -793,6 +793,17 @@ impl Parser {
                 // "Tuple arity mismatch: left has 0 names".  Only a tuple being CONSTRUCTED
                 // as a value is a construction.
                 if !self.lexer.peek_token("=") {
+                    // A `&` member is the VALUE read through its reference, as every other
+                    // use of a `&` binding is (LOFT.md § References): the member's type is the
+                    // pointee, and the load of the `&` variable reads through the link by that
+                    // type.  Kept as the link, the member had a type no tuple slot can hold and
+                    // `(n, 2)` over `n: &integer` stopped code generation (loft#1526).  A
+                    // destructure TARGET is excluded above: there a `&` names the place.
+                    for t in &mut types {
+                        if let Type::RefVar(pointee) = t.base() {
+                            *t = (**pointee).clone();
+                        }
+                    }
                     for (i, v) in values.iter_mut().enumerate() {
                         if let Some(owned) = self.tuple_member_owned_copy(v, &types[i]) {
                             types[i] = owned;

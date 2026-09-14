@@ -2562,7 +2562,14 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 809 | 467 | 5 | **337** |
+| 810 | 468 | 5 | **337** |
+
+(2026-09-14, loft#1526: `Parser::parse_single`'s tuple literal now reads a `&` member through its
+reference, and `match_borrow_source` resolves a tuple member — both read a `Type` variant off a
+`.base()`, so `parse_single` joins the wrapper-aware column: 809 → 810 total, 467 → 468 aware,
+the opaque column and the ratchet unmoved.  The first cut matched `Type::RefVar` and
+`Type::Tuple` bare and the ratchet refused it, though neither type ever carries the wrapper
+outside.)
 
 (2026-09-14, THE JOINED TREE: 809 · 467 · 5 · 337, re-measured rather than carried — each
 side's row counted its own change against a base the other had moved; the ratchet's
