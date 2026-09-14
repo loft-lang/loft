@@ -254,7 +254,7 @@ must agree.
 
 ---
 
-## Step 0 — before any of it  ·  XS
+## Step 0 — before any of it  ·  XS  ·  DONE 2026-09-14
 
 Write DESIGN.md's acceptance program as a **hand-written `match`**, assert its 12 rows, run on
 all three backends.  Nothing in `src/` changes.
@@ -263,12 +263,56 @@ all three backends.  Nothing in `src/` changes.
   backends do not already agree on the `match` form, the rule is wrong before a line is
   written.  It is also the reference every later step compares to.
 
+**Done:** `tests/scripts/162-step0-pairwise-interaction-as-a-central-match.loft` — the 12 rows
+of DESIGN.md § Expected results, each from a fresh world and asserting values, lengths and WHICH
+ids the world removed; a 13th row the table does not carry (the pair REVERSED reaches the
+fallback — the control that a `match` matching every pair cannot pass); and an every-pair
+scenario over a `vector<Entity>`, the design's physics loop.  Green on `--interpret`,
+`--native` and `--native-wasm` through the corpus runners.  **"Nothing in `src/` changes" did
+not hold** — finding 1 below was a wrong answer in the way, and inside a plan's own
+verification step that is fixed on the spot.
+
+**Findings — what the transcription met, and what each means for the later steps:**
+
+1. **The design's central `match` did not parse, and the nearest loft spelling answered WRONG
+   in silence.**  `match (a, b) { (Fireball(f), IceWall(w)) => … }` is not loft; the loft
+   spelling `(Fireball, IceWall) => …` compiled, bound two locals named `Fireball` and
+   `IceWall`, and matched every pair — no diagnostic, both backends.  A tuple element could
+   not name a variant at all.  **Fixed in this step** (`formal/matching.md` D-match-5; guards
+   `a-tuple-pattern-names-a-variant`, `a-tuple-pattern-refuses-a-name-that-is-no-variant`):
+   an enum-typed element now takes `V` and `V { fields }` through the slice head's own
+   lowering.  Consequence for step 8 / step 14: the canonical `match` of `Disp-Match-Equiv`
+   EXISTS now, and its element form is one lowering shared with the top-level arm — the
+   oracle pairing has a real second program to run.
+2. **A scalar payload bound by a pattern is a COPY** (LOFT.md § Match expressions — a
+   documented rule, not a deviation), so the design's `w.hp -= 3` through a binding does not
+   land.  The program keeps each entity's mutable state in a nested `Status` record, which a
+   binding views.  Consequence for `Disp-Match-Equiv`: the equivalence is stated over the
+   canonical `match`, whose arm sees a VIEW of a record payload and a COPY of a scalar one; a
+   dispatch definition's by-value parameter `w: IceWall` aliases the record (measured: writes
+   through it land, P10), so the observable writes agree — but a scalar-field write is where
+   they could NOT agree if a definition's parameter ever bound a scalar by value, and the
+   oracle must carry that cell.
+3. **A `&Entity` parameter cannot be a `match` or `is` subject** — refused at parse time on
+   both backends (loft#1526; workaround: take it by value, a heap record aliases).  Not needed
+   by the program; recorded because a dispatch definition that REBINDS its parameter would
+   want `&`.
+4. **Two spellings stay refused, as at a top-level arm:** an or-pattern between struct-enum
+   variants in a tuple element, and the qualified `Kind.KFire` (whose message, *"'Kind' is
+   not a variant of Kind"*, is wrong in both places and worth sharpening).  Refusals, not
+   wrong answers.  The program spells the three projectile × player arms out one by one —
+   which is precisely the repetition the design's `match` form exists to show.
+5. **A variant IS a parameter type in every position** — `fn hit(f: Fireball, w: IceWall)`
+   compiles as a free function and takes variant literals; an `Entity`-typed argument is
+   refused (*expected Fireball, got Entity*), which is the static-type dispatch that fact 6
+   and step 13 already record.  Closes the second item of § What I did not verify.
+
 ---
 
 ## What I did not verify
 
 - **The hint circularity's two ways out** (fact 3) — neither (a) nor (b) has been prototyped;
   step 3 owes a probe before it is written.
-- **Whether a variant can be spelled as a parameter type in every position** — `fn tag(self:
-  Fire)` works; `fn f(x: Fire, y: Rock)` as a free function is untested.
+- ~~**Whether a variant can be spelled as a parameter type in every position**~~ — verified
+  by step 0 (finding 5): `fn hit(f: Fireball, w: IceWall)` compiles as a free function.
 - **`Disp-World` against the actual promote path** — its current shape is unread.

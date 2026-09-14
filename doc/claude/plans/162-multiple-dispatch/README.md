@@ -7,7 +7,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**PROPOSAL — design written, nothing accepted, nothing in the tree.**  The design is
+**PROPOSAL — design written; phase 0 DONE 2026-09-14 (the acceptance program is in the tree as
+a hand-written `match`); no dispatch code yet.**  The design is
 [DESIGN.md](DESIGN.md), carried verbatim as the owner wrote it.  Six open questions in it are
 the owner's to answer and at least one (question 6) changes the rules, so no phase below was to
 start until questions 1, 2 and 6 had answers.  **All three are answered** — 1 and 2 on
@@ -51,7 +52,7 @@ compile time to a direct call wherever the argument types are statically concret
 
 - **Effort:** H — six rules, a new selection pass, a lowering, three backends, two profiles.
 - **Design:** ~ (partial) — the rules are written; three open questions gate the first phase.
-- **Last touched:** 2026-09-11
+- **Last touched:** 2026-09-14
 
 ## Composition matrix — Stage A
 
@@ -302,7 +303,7 @@ half-done state to compare against — see [§ Phase cutting](#phase-cutting-why
 
 | Item | Source | Verify | Status |
 |---|---|---|---|
-| **0** — verify the design's claims about the tree; record the canonical-`match` answers | [DESIGN.md](DESIGN.md) §Where it lands, §Worked example | the 12-row expected-results table, measured through a hand-written `match`, identical on all three backends — **before** dispatch exists | Started — the INCONSISTENCY #6 claim checked and struck (see Status); §Where it lands' select-then-monomorphise claim still unchecked |
+| **0** — verify the design's claims about the tree; record the canonical-`match` answers | [DESIGN.md](DESIGN.md) §Where it lands, §Worked example | the 12-row expected-results table, measured through a hand-written `match`, identical on all three backends — **before** dispatch exists | **Done 2026-09-14** — `tests/scripts/162-step0-pairwise-interaction-as-a-central-match.loft`: the 12 rows, a reversed-pair control and an every-pair scenario over a `vector<Entity>`, green on all three backends.  Three deviations met on the way, one of them a silent wrong answer fixed in the same step — [IMPL.md § Step 0](IMPL.md) |
 | **1** — `Disp-Applicable` / `Disp-Specific` / `Disp-Select` / `Disp-Fallback` as a pure function over a method table, no lowering | DESIGN.md §Semantics | a unit test over synthetic signatures asserting the selected definition per argument tuple, ambiguous tuples included | Open |
 | **2** — `Disp-Ambiguous` as a compile-time refusal | DESIGN.md §Ambiguity check | the ambiguity program fails to compile, and the message names **both** definitions | Open |
 | **3** — `Disp-Closed` lowering for statically-concrete sites | DESIGN.md §Static resolution | `loft introspect` byte-identical to the hand-monomorphised equivalent; and the 1-definition matrix row byte-identical to today | Open |
