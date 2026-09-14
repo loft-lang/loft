@@ -479,13 +479,25 @@ normalised, both sites name their overload, and no enum-level dispatcher is synt
 enumerates functions by name shape, so an overload cannot be live-flipped today.  Recorded
 here, measured there.
 
-### Step 12 — the DCE property  ·  S
+### Step 12 — the DCE property  ·  S  ·  DONE 2026-09-14 (a test, not a change)
 
 An unreferenced definition is absent from the stripped artifact.
 
 - **Why its own step:** the only property whose failure is invisible in behaviour.  An
   implementation that quietly retains every method passes every value test and silently costs
   the slim artifact its whole point.
+
+**Measured, and it holds by construction:** every static site is a direct call (step 11), so an
+overload nothing calls is unreachable, and the SHIPPED lane — `--native-release`, which emits
+only reachable functions — leaves it out.  On a `hit` set of four (two called, the total
+fallback and a `(Slime, Crate)` overload uncalled) the release emission holds exactly the two
+called ones; the semantics lane (`--native`, which keeps every tier by design — NATIVE.md
+§ Optimisation tiers) emits all four, which is the control that lets the assertion fail.
+The dispatched source is smaller than its `match`-form twin, not larger (28 359 against
+31 733 bytes of emitted Rust for the same three cases): the `match` carries every arm in one
+body.  `tests/introspect_dispatch.rs` pins both lanes.  The plan's "artifact size unchanged"
+cell is subsumed: the emitted-function list is the property's direct witness, where a byte
+count would also move with anything else in the file.
 
 ### Step 13 — `Disp-Dynamic`  ·  M
 

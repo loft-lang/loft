@@ -53,7 +53,7 @@ compile time to a direct call wherever the argument types are statically concret
 
 - **Effort:** H — six rules, a new selection pass, a lowering, three backends, two profiles.
 - **Design:** ~ (partial) — the rules are written; three open questions gate the first phase.
-- **Last touched:** 2026-09-14 (IMPL.md steps 1–8, 10 and 11 done, 9's static half; phase 4's static rows green; D-disp-1 open)
+- **Last touched:** 2026-09-14 (IMPL.md steps 1–8 and 10–12 done, 9's static half; phase 4's static rows green; D-disp-1 open)
 
 ## Composition matrix — Stage A
 
@@ -315,7 +315,7 @@ half-done state to compare against — see [§ Phase cutting](#phase-cutting-why
 | **2** — `Disp-Ambiguous` as a compile-time refusal | DESIGN.md §Ambiguity check | the ambiguity program fails to compile, and the message names **both** definitions | **Done 2026-09-14** — `an-ambiguous-pair-is-refused-naming-both`, `an-omitted-argument-two-definitions-take-is-ambiguous-in-both-spellings` |
 | **3** — `Disp-Closed` lowering for statically-concrete sites | DESIGN.md §Static resolution | `loft introspect` byte-identical to the hand-monomorphised equivalent; and the 1-definition matrix row byte-identical to today | **Done 2026-09-14** — the 1-definition row is proven at every step (`introspect_diff.sh` IDENTICAL over the corpus), and `tests/introspect_dispatch.rs` pins the dispatched `main` byte-identical to its hand-monomorphised twin (IMPL.md step 11: a test, not a change) |
 | **4** — the acceptance program through dispatch | DESIGN.md §Worked example | the same 12 rows phase 0 recorded, now via dispatch, three backends | **Static rows done 2026-09-14** — `162-step4-pairwise-interaction-through-dispatch.loft`, arguments held at their variant types, both backends; the every-pair scenario over a `vector<Entity>` is phase 6's cell |
-| **5** — DCE / slim-artifact property | DESIGN.md §The two profiles | an unreferenced method is absent from the stripped artifact; artifact size unchanged vs. the `match` form | Open |
+| **5** — DCE / slim-artifact property | DESIGN.md §The two profiles | an unreferenced method is absent from the stripped artifact; artifact size unchanged vs. the `match` form | **Done 2026-09-14** — the release lane emits only the called overloads (`tests/introspect_dispatch.rs`, with the semantics lane as the control that emits all); the dispatched source is smaller than the `match` form, not larger |
 | **6** — `Disp-Dynamic` | DESIGN.md §Runtime resolution | a heterogeneous `vector<Entity>` reproduces phase 0's rows; plus a control that a concrete site still emits a direct call and no table | Open |
 | **7** — `Disp-World` (open profile) | DESIGN.md §Disp-World | add a method mid-run; the new selection is taken AND a marker in the stale specialisation's body never appears | Open |
 | **8** — `Disp-Match-Equiv` in the differential oracle | DESIGN.md §Disp-Match-Equiv | a dispatch set and its canonical `match` compared as two programs, per the oracle's existing shape | Open |
