@@ -2554,7 +2554,13 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| RE-MEASURE | RE-MEASURE | RE-MEASURE | **RE-MEASURE** |
+| 792 | 450 | 5 | **337** |
+
+(2026-09-14, THE JOINED TREE: 792 · 450 · 5 · 337, re-measured rather than carried.  Neither
+branch's row was right — this side read `792 · 449 · 6 · 337` and @PLN157's `791 · 449 · 5 · 337`
+— because each counted its own change against a base the other had already moved.  The two notes
+below are both still true about their own commit; the ROW is the join's.  The ratchet's test
+count FELL with § V-ad's extraction and is re-pinned in this commit.)
 
 (2026-09-13: loft#1525's inclusive-range guard adds one discriminating site and it peels
 (`in_type.base()`), so it lands in the wrapper-aware column — 791 → 792 total, 448 → 449 aware,
