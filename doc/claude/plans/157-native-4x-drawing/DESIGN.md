@@ -3914,12 +3914,14 @@ identical every run):
 
 The run-down projected ≈ −20 %; **`fronds` is under the bar on this lane**, which leaves
 `smooth` the only judged row over it on either machine measured.  A second `compare.py`
-run, taken right after a five-minute local gate, read `fronds` 142 640 (3.45×) and every
-OTHER native row 2–5 % above the first run — rows the unit cannot touch included — so
-the switch was A/B'd on the full bench too (native lane, `--n 50`, three pairs, best of
-three per row): `lock` 2 919 080 / 2 920 180, `lock_curved` 2 564 280 / 2 552 060,
-`composite` 153 920 / 153 740, the fills and `wide_line` within 0.4 %, `fronds`
-182 460 → 138 760.  The unit moves one row; the 2–5 % was the box after the gate.
+run read `fronds` 142 640 (3.45×) and every OTHER native row 2–5 % above the first run —
+rows the unit cannot touch included — so the switch was A/B'd on the full bench too
+(native lane, `--n 50`, three pairs, best of three per row): `lock` 2 919 080 / 2 920 180,
+`lock_curved` 2 564 280 / 2 552 060, `composite` 153 920 / 153 740, the fills and
+`wide_line` within 0.4 %, `fronds` 182 460 → 138 760.  The unit moves one row.  The 2–5 %
+was load: a sibling checkout was building at the time (five-minute load average 12.6 on
+a box whose quiet reading is under 1), and one of the six A/B runs doubled every row at
+once for the same reason — read the best-of, and re-measure a ratio on a quiet box.
 
 **What it does not cover, by construction.**  A placed sub-call buffer (§ V-j) is not a
 store root: it keeps the walk, and its record-level free still leaves a hole.  A claim no

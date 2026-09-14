@@ -1011,9 +1011,9 @@ in a minute (§ V-ad records the recipe, including that `perf` needs
 loft's own front end, dominates).  The one probe worth keeping is committed:
 `smooth-field-return.bench.loft`, the § V-ah ceiling.
 
-*Branch state.*  `157-native-4x`, never PR'd — the owner opens PRs.  The last full gate ran
-on 078fb230 and was green apart from one advisory job that failed downloading its tool over
-the network.
+*Branch state.*  `157-native-4x`, never PR'd — the owner opens PRs.  The last full local
+gate (`make ci`, x86-64 host `tuxedo`) ran on 0fe0878f — the § V-ai tip — and was green:
+4 915 tests, all gates passed.
 
 
 **2026-09-14 — `smooth` run down, the last judged row over the bar: DESIGN.md § V-ah
