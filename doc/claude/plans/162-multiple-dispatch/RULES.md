@@ -179,10 +179,15 @@ types there is nothing to check coverage against, which is why `MethodError` is 
 error there by necessity.  It is the sharpest statement of what the transposition buys, and it
 should be read as the load-bearing one rather than as a convenience.
 
-⚠ And it sharpens open question 6: **pattern-clause dispatch on VALUES would make coverage
-undecidable again** (does some clause match every integer?), so `Disp-Exhaustive` would have
-to be dropped or degraded to a runtime check.  That is a stronger argument for type dispatch
-than the lowering cost the design gives.
+⚠ It also settles what open question 6 would have cost: **pattern-clause dispatch on VALUES
+would make coverage undecidable again** (does some clause match every integer?), so
+`Disp-Exhaustive` would have had to be dropped or degraded to a runtime check.  That is a
+stronger argument for type dispatch than the lowering cost the design gives.  **Q6 is
+answered — type dispatch, and no other matching on a definition (owner, 2026-09-14;
+[README.md § Decisions taken](README.md#decisions-taken-owner), item 5).**  The owner's own
+reason is narrower than either argument: no more complexity on `fn` definitions, with
+`match` kept as the home of every value-shaped decision.  A parameter DEFAULT is the one
+optionality a definition already has and keeps.
 
 ## Consequences worth stating
 

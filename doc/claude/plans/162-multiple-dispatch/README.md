@@ -9,8 +9,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 **PROPOSAL — design written, nothing accepted, nothing in the tree.**  The design is
 [DESIGN.md](DESIGN.md), carried verbatim as the owner wrote it.  Six open questions in it are
-the owner's to answer and at least one (question 6) changes the rules, so **no phase below
-starts until questions 1, 2 and 6 have answers**.
+the owner's to answer and at least one (question 6) changes the rules, so no phase below was to
+start until questions 1, 2 and 6 had answers.  **All three are answered** — 1 and 2 on
+2026-09-11, 6 on 2026-09-14 (§ Decisions taken, item 5) — so **phase 0 is unblocked**.
 
 ⚠ **The design says so itself and it governs this plan: every claim in it about the CURRENT
 implementation was written from reading the repository, not from running it.**  Phase 0 exists
@@ -254,10 +255,11 @@ to know a partial order exists — they need *"more specific wins, and you will 
 tie."*  Eventual home: [USER_DOCS.md](../../USER_DOCS.md)'s three tiers, with the reference
 tier carrying the rules and the teaching tier carrying the four steps above.
 
-## Decisions taken (owner, 2026-09-11)
+## Decisions taken (owner)
 
-All four follow one principle — *refusal is the only reversible direction* — stated in
-[RULES.md](RULES.md#the-principle-the-rules-keep-landing-on).
+The first four (2026-09-11) follow one principle — *refusal is the only reversible direction*
+— stated in [RULES.md](RULES.md#the-principle-the-rules-keep-landing-on).  The fifth
+(2026-09-14) is a scope decision about the notation itself.
 
 1. **No untyped parameters.**  The fallback is the most general TYPE.  (§ Decision below.)
 2. **Cross-kind specificity is incomparable, not ranked** — and **no tie is broken by
@@ -272,6 +274,20 @@ All four follow one principle — *refusal is the only reversible direction* —
    chain per parameter, closed, and single-owner — so the orphan/cross-library problem that
    motivates coherence rules elsewhere largely does not arise.  The generics ranking is
    **deferred, not declined**.
+5. **Type dispatch, and no other matching on a `fn` definition** (2026-09-14, answers Q6).
+   A definition is selected by the TYPES of its parameters and by nothing else — no value
+   clauses, no guards, no inline destructure.  The owner's reason is complexity, not
+   lowering cost: *"I do not want to introduce more complexity on fn definitions."*  The one
+   thing that already reads like matching stays exactly as it is: **a parameter with a
+   default** (`fn f(a: A, b: integer = 0)`) makes that argument optional, and a call that
+   omits it takes the default.  Nothing new is added beside it.  Everything value-shaped —
+   a literal, a range, an arbitrary `if`-guard — is `match`'s job: *"the match statement is
+   there for people who need its specific strength."*  So `Disp-Applicable` and
+   `Disp-Specific` stay type-only, `Disp-Closed`'s direct-call lowering holds for every
+   definition, `Disp-Match-Equiv` stays one-way, and `Disp-Exhaustive` stays decidable
+   ([RULES.md](RULES.md) says why that last one is the property that matters).  One thing
+   this decision hands to step 7 of [IMPL.md](IMPL.md): how a defaulted parameter and the
+   arity component of `Disp-Key` meet.
 
 The gain from (4) is the one worth restating: closedness is not a cost accepted reluctantly,
 it is what lets the compiler enumerate every reachable variant pair and report **which reach
@@ -319,7 +335,7 @@ every value test and silently costs the slim artifact its whole point.
 
 ## Phase ordering
 
-1. **0** — pre-flight.  Gated on open questions 1, 2 and 6 being answered.
+1. **0** — pre-flight.  Was gated on open questions 1, 2 and 6; all three are answered.
 2. **1 → 2 → 3 → 4** — the closed-world core, in order; 4 is the first phase with a
    user-visible feature.
 3. **5** — the artifact property, once 3 lands and there is something to strip.
@@ -329,8 +345,8 @@ every value test and silently costs the slim artifact its whole point.
 
 ## Open design questions
 
-The six in [DESIGN.md §Open questions](DESIGN.md#open-questions--the-owner-decides), unchanged
-and unanswered.  Three of them gate phase 0:
+The six in [DESIGN.md §Open questions](DESIGN.md#open-questions--the-owner-decides), carried
+verbatim there; the answers live here.  The three that gated phase 0 are all answered:
 
 - ~~**Q1**~~ **ANSWERED 2026-09-11 — no, and it opens a bigger question.**  An interface
   cannot be a parameter type (`fn describe(x: Shape)` → *"Expecting a type"*); it is a generic
@@ -352,10 +368,13 @@ and unanswered.  Three of them gate phase 0:
   `try_generic_instantiation(first_id, &types)` already takes the argument types and REPLACES
   the chosen `def_nr`, so a resolution getting revised once types are known is an existing
   shape, not a new one.
-- **Q6** (type dispatch or pattern-clause dispatch?) — if pattern-clause, `Disp-Applicable`
-  and `Disp-Specific` grow value and guard cases, `Disp-Closed`'s direct-call lowering stops
-  holding for value-discriminating definitions, and `Disp-Match-Equiv` becomes bidirectional.
-  Every phase below 1 changes shape.
+- ~~**Q6**~~ **ANSWERED 2026-09-14 — type dispatch, nothing more** (§ Decisions taken,
+  item 5).  Had the answer been pattern-clause, `Disp-Applicable` and `Disp-Specific` would
+  have grown value and guard cases, `Disp-Closed`'s direct-call lowering would have stopped
+  holding for value-discriminating definitions, and `Disp-Match-Equiv` would have become
+  bidirectional — every phase below 1 would have changed shape.  None of that happens: the
+  rules stand as [RULES.md](RULES.md) has them, and a parameter DEFAULT is the only
+  optionality a definition carries.
 
 Q3, Q4 and Q5 can be answered later — they gate phases 7, 1 and the catalogue entry
 respectively, not the start.

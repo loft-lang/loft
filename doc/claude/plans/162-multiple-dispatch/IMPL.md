@@ -178,7 +178,17 @@ programs safe by construction.
 
 `f(a)` and `f(a, b)` become distinct rather than colliding, following `bound_stub_name`.
 
-- **Compared against:** the stdlib's existing same-name/different-arity pairs, unmoved.
+⚠ **A defaulted parameter is the one optionality a definition carries** (owner, 2026-09-14 —
+[README.md § Decisions taken](README.md#decisions-taken-owner), item 5), and it meets the
+arity component here.  `fn f(a: A, b: integer = 0)` answers a two-argument call AND a
+one-argument call, so beside a separate `fn f(a: A)` the one-argument call has two applicable
+definitions.  Under the principle in [RULES.md](RULES.md#the-principle-the-rules-keep-landing-on)
+that is a `Disp-Ambiguous` refusal naming both, not a preference for the exact arity — and it
+must be measured, not assumed: how the parser answers `f(a)` for that pair TODAY (before any
+step) is the control this step compares against.
+
+- **Compared against:** the stdlib's existing same-name/different-arity pairs, unmoved; and
+  the defaulted pair above, before/after.
 
 ### Step 8 — `Disp-Ambiguous`  ·  S
 
