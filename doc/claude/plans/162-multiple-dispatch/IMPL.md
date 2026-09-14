@@ -196,7 +196,7 @@ list; a width-carrying literal; a lambda; a defaulted argument) byte-identical b
 clean on both backends with the leak checks armed; `scripts/introspect_diff.sh`
 **IDENTICAL 1504/1504**.
 
-### Step 4 — the METHOD path selects after its arguments  ·  M
+### Step 4 — the METHOD path selects after its arguments  ·  M  ·  DONE 2026-09-14
 
 `fields.rs:617` collects candidates; `parse_method` selects once the argument types exist.
 This is the one genuine reordering in the plan.
@@ -204,6 +204,38 @@ This is the one genuine reordering in the plan.
 - **Red on its own:** `x.f()` on a `τ?` receiver must still reach `m(τ)` (`@FR-F-Recv`), and
   the `t_`-prefix guard at `:618` must still decline a free function.
 - **Compared against:** `introspect` byte-identical.
+
+**Done:** `parse_method_selecting(val, hint_nr, on, &MethodSelect)` parses the arguments
+under `hint_nr` — `Disp-Hint`: the ONE `t_` candidate the name has at this receiver
+(`Data::candidates` at the name), else the attribute slot's routine, which is exactly what
+`find_fn`'s single answer was — and only then asks `select_method_def`: `Fixed` where the
+caller already knows the definition (a bound's stub, an enum variant's method; the old
+`parse_method` is that wrapper), `ByName` for `x.m(…)` on a concrete receiver, which is
+`Data::select_method(source, name, dispatch, &types)` with the slot's routine as the
+fallback when it names no `t_` method.  Proven: `bytecode-comparisons/step4-corpus.loft`
+(both receiver directions of `@FR-F-Recv`, the hinted arguments — a width-carrying literal, a
+typed lambda, named and defaulted arguments — an empty list, a chained call, a method through
+a bound, and the two spellings with a nullable argument) byte-identical before/after and clean
+on both backends with the leak checks armed; `scripts/introspect_diff.sh` **IDENTICAL
+1504/1504**.
+
+**Two findings, recorded not fixed (this step is behaviour-preserving):**
+
+1. **The two spellings route differently on a nullable ARGUMENT.**  With `mix(both: P, n:
+   integer)` and `mix(both: P?, n: integer?)` both declared and `n: integer?`, `p.mix(n)`
+   reaches the dense overload (and warns `(N-Store)` on the argument) while `mix(p, n)`
+   reaches the `τ?` one: the method path selects on the RECEIVER's type alone, the bare path
+   on ANY nullable argument (@PLN25 F1b(b)).  `Data::select_method`'s doc says so; the corpus
+   cell records both answers as they are.  `@FR-F-Recv` gives `x.m()` and `m(x)` one
+   resolution for the RECEIVER's nullability and says nothing about an argument's.  **Step 5
+   is where one rule must cover both** — and it is a behaviour change on one of the two
+   spellings, so it lands with a matrix, not under byte-identity.
+2. **A `|v|` lambda cannot infer on the method path.**  `b.each(|v| { v * 10 })` is refused
+   (*cannot infer type for lambda parameter*) where `each(b, |v| { v * 10 })` infers: the
+   method hint seeds collection and interpolation targets only (`seeds_collection_hint`),
+   the bare hint seeds lambdas too (`seeds_lambda_hint`).  A refusal, not a wrong answer,
+   and an admission to make — so not here; noted as a follow-on beside `Disp-Hint`, whose
+   cure text names the typed form the method path already takes.
 
 ### Step 5 — selection reads the FULL argument list  ·  S
 

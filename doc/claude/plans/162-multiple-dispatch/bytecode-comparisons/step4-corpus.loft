@@ -1,0 +1,91 @@
+// @PLN162 step 4 — one function per shape of the METHOD call path `x.m(…)`, the path that
+// resolved its definition BEFORE parsing the arguments and now selects after them, with the
+// one candidate at the name as the parse hint (`Disp-Hint`): a receiver held dense and held
+// `τ?` against a name with both overloads (@FR-F-Recv, both directions), a method whose
+// argument needs the hint (a width-carrying literal, a lambda, a named argument), an empty
+// argument list, a chained call, a method reached through a bound, and the two spellings
+// `x.m(a?)` / `m(x, a?)` side by side — whatever they answer today is recorded, not judged.
+// `main` runs them all, so the file is also an end-to-end check on both backends.
+
+struct Bag { items: vector<u8>, count: integer }
+struct P { x: integer }
+
+interface Sized { fn size_of(self: Self) -> integer }
+
+fn label(self: P) -> text { "dense {self.x}" }
+fn label(self: P?) -> text { if self { "opt {self.x}" } else { "none" } }
+
+fn only_dense(self: P) -> integer { self.x * 2 }
+fn only_opt(self: P?) -> integer { if self { self.x + 100 } else { -100 } }
+
+fn push_all(self: Bag, xs: vector<u8>) -> integer { self.items += xs; len(self.items) }
+fn each(self: Bag, f: fn(integer) -> integer) -> integer { s = 0; for v in self.items { s += f(v as integer); } s }
+fn set(self: Bag, count: integer = 1, extra: integer = 0) -> integer { self.count = count + extra; self.count }
+fn size(self: Bag) -> integer { len(self.items) }
+fn bump(self: P) -> P { P { x: self.x + 1 } }
+
+fn size_of(self: P) -> integer { 3 + self.x * 0 }
+fn total<T: Sized>(v: vector<T>) -> integer { s = 0; for e in v { s += e.size_of(); } s }
+
+// the two spellings, with both overloads declared over the receiver and a nullable ARGUMENT
+fn mix(both: P, n: integer) -> text { "dense-arg {n} {both.x}" }
+fn mix(both: P?, n: integer?) -> text { "opt-arg {n ?? -1} {both.x ?? -1}" }
+
+fn test_receiver_both_directions() {
+  d = P { x: 1 };
+  o: P? = P { x: 2 };
+  z: P? = null;
+  assert(d.label() == "dense 1", "dense receiver, both declared: got {d.label()}");
+  assert(o.label() == "opt 2", "τ? receiver, both declared: got {o.label()}");
+  assert(z.label() == "none", "null receiver, both declared: got {z.label()}");
+  assert(o.only_dense() == 4, "τ? receiver falls back to the dense method: got {o.only_dense()}");
+  assert(d.only_opt() == 101, "dense receiver reaches the τ? method for free: got {d.only_opt()}");
+}
+
+fn test_hinted_arguments() {
+  b = Bag { items: [], count: 0 };
+  n = b.push_all([7, 8]);
+  assert(n == 2, "a width-carrying literal takes the parameter's element width: got {n}");
+  // A `|v|` lambda cannot infer here: the method path's hint seeds collection and
+  // interpolation targets only, not fn types, where the bare path seeds lambdas too — a
+  // spelling gap recorded in IMPL.md § Step 4, so the typed form is what this cell exercises.
+  e = b.each(fn(v: integer) -> integer { v * 10 });
+  assert(e == 150, "a typed lambda argument over [7, 8]: got {e}");
+  c1 = b.set(count: 4);
+  assert(c1 == 4, "a named argument: got {c1}");
+  c2 = b.set(2, extra: 5);
+  assert(c2 == 7, "positional then named: got {c2}");
+  c3 = b.set();
+  assert(c3 == 1, "every argument defaulted: got {c3}");
+}
+
+fn test_empty_and_chained() {
+  b = Bag { items: [1, 2, 3], count: 0 };
+  assert(b.size() == 3, "no arguments: got {b.size()}");
+  p = P { x: 5 };
+  assert(p.bump().bump().x == 7, "a chained call: got {p.bump().bump().x}");
+}
+
+fn test_through_a_bound() {
+  ps: vector<P> = [P { x: 1 }, P { x: 2 }];
+  assert(total(ps) == 6, "a method reached through a bound: got {total(ps)}");
+}
+
+fn test_two_spellings_with_a_nullable_argument() {
+  p = P { x: 1 };
+  n: integer? = 9;
+  m = p.mix(n);
+  f = mix(p, n);
+  // Recorded, not judged: the method path routes on the RECEIVER, the bare path on ANY
+  // nullable argument.  Step 5 is where one rule must cover both.
+  assert(m == "dense-arg 9 1", "method spelling with a τ? argument: got {m}");
+  assert(f == "opt-arg 9 1", "bare spelling with a τ? argument: got {f}");
+}
+
+fn main() {
+  test_receiver_both_directions();
+  test_hinted_arguments();
+  test_empty_and_chained();
+  test_through_a_bound();
+  test_two_spellings_with_a_nullable_argument();
+}

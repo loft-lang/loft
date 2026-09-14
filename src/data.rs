@@ -7816,6 +7816,26 @@ impl Data {
         self.find_fn(source, fn_name, dispatch_tp)
     }
 
+    /// The definition a METHOD call `x.m(arg, …)` reaches — `Disp-Select`'s entry point for
+    /// the method spelling (@PLN162).  Today it is the receiver's own answer, [`Self::find_fn`]
+    /// over `dispatch` (the receiver's type carrying its nullability, @FR-F-Recv), and the
+    /// argument types are carried but not consulted.
+    ///
+    /// ⚠ That is not the bare path's rule: [`Self::select_fn`] routes on ANY nullable
+    /// argument, so `x.m(a?)` and `m(x, a?)` can reach different overloads today (measured —
+    /// `plans/162-multiple-dispatch/bytecode-comparisons/step4-corpus.loft`, the two-spellings
+    /// cell).  Step 5 is where one rule covers both.
+    #[must_use]
+    pub fn select_method(
+        &self,
+        source: u16,
+        fn_name: &str,
+        dispatch: &Type,
+        _types: &[Type],
+    ) -> u32 {
+        self.find_fn(source, fn_name, dispatch)
+    }
+
     /// The ONE definition `fn_name` resolves to for a receiver of type `tp`, or `u32::MAX`
     /// when [`Self::candidates`] yields none — or more than one, which nothing here can
     /// choose between (a bound holder carrying the name at two arities).

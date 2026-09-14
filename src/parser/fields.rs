@@ -614,14 +614,24 @@ impl Parser {
             } else {
                 t.clone()
             };
-            let found = self.data.find_fn(u16::MAX, &field, &dispatch);
-            let r_nr = if found != u32::MAX && self.data.def(found).name.starts_with("t_") {
-                found
-            } else {
-                r_nr
+            // `Disp-Hint` (@PLN162): the arguments parse under the ONE `t_` candidate the name
+            // has at this receiver, else under the slot's routine; the definition the call
+            // reaches is selected once the argument types exist (`parse_method_selecting`).
+            let hint_nr = match self.data.candidates(u16::MAX, &field, &dispatch).as_slice() {
+                [one] if self.data.def(*one).name.starts_with("t_") => *one,
+                _ => r_nr,
             };
             if self.lexer.has_token("(") {
-                t = self.parse_method(code, r_nr, t.clone());
+                t = self.parse_method_selecting(
+                    code,
+                    hint_nr,
+                    t.clone(),
+                    &super::control::MethodSelect::ByName {
+                        name: field.clone(),
+                        dispatch,
+                        fallback: r_nr,
+                    },
+                );
             } else {
                 diagnostic!(
                     self.lexer,

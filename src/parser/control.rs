@@ -571,6 +571,20 @@ fn match_arm_types_unify(a: &Type, b: &Type) -> bool {
     strip(a).is_same(&strip(b))
 }
 
+/// How the definition a method call reaches is chosen — see
+/// [`Parser::parse_method_selecting`].
+pub(crate) enum MethodSelect {
+    /// The caller already knows the definition.
+    Fixed(u32),
+    /// `x.m(…)` on a concrete receiver: selected after the arguments, by name over the
+    /// receiver's `dispatch` type; `fallback` is the attribute slot's routine.
+    ByName {
+        name: String,
+        dispatch: Type,
+        fallback: u32,
+    },
+}
+
 impl Parser {
     /// Consume the `=>` separator that follows a match-arm pattern.
     ///
@@ -18112,7 +18126,48 @@ impl Parser {
     }
 
     // <call> ::= [ <expression> { ',' <expression> } ] ')'
+    /// Parse a method call's `(arg, …)` and emit it, the definition FIXED by the caller (a
+    /// bound's stub, an enum variant's method).  See [`Self::parse_method_selecting`].
     pub(crate) fn parse_method(&mut self, val: &mut Value, md_nr: u32, on: Type) -> Type {
+        self.parse_method_selecting(val, md_nr, on, &MethodSelect::Fixed(md_nr))
+    }
+
+    /// Which definition a method call reaches, decided once the argument types exist:
+    /// `Fixed` where the caller already knows it; `ByName` for `x.m(…)` on a concrete
+    /// receiver — [`crate::data::Data::select_method`] over `dispatch` (the receiver's type
+    /// with its nullability) and the argument types, or `fallback`, the attribute slot's
+    /// routine, when that names no `t_` method (a free `n_<name>` and the operator map are
+    /// not candidates on a receiver that carries the method).
+    fn select_method_def(&self, select: &MethodSelect, types: &[Type]) -> u32 {
+        match select {
+            MethodSelect::Fixed(d_nr) => *d_nr,
+            MethodSelect::ByName {
+                name,
+                dispatch,
+                fallback,
+            } => {
+                let found = self.data.select_method(u16::MAX, name, dispatch, types);
+                if found != u32::MAX && self.data.def(found).name.starts_with("t_") {
+                    found
+                } else {
+                    *fallback
+                }
+            }
+        }
+    }
+
+    /// Parse a method call's `(arg, …)` and emit it.  `hint_nr` steers how the arguments
+    /// PARSE — `Disp-Hint` (@PLN162): the one candidate the name has at this receiver, or the
+    /// attribute slot's routine — an expected collection or interpolation type, a named
+    /// argument's parameter.  `select` names the definition the call REACHES, asked once the
+    /// argument types exist ([`Self::select_method_def`]).
+    pub(crate) fn parse_method_selecting(
+        &mut self,
+        val: &mut Value,
+        hint_nr: u32,
+        on: Type,
+        select: &MethodSelect,
+    ) -> Type {
         let mut list = vec![val.clone()];
         let mut types = vec![on];
         // arg_pos aligns with `list` by index; slot 0 is the receiver (its
@@ -18132,6 +18187,7 @@ impl Parser {
         let mut named_args: Vec<(String, Value, Type)> = Vec::new();
         let mut in_named = false;
         if self.lexer.has_token(")") {
+            let md_nr = self.select_method_def(select, &types);
             return self.call_nr(val, md_nr, &list, &types, true, &arg_pos, None);
         }
         loop {
@@ -18143,10 +18199,10 @@ impl Parser {
                 // vector-literal or format-string argument builds at its own
                 // parameter's type, not at the one this slot would have held.
                 self.expected = Type::Unknown(0);
-                if md_nr != u32::MAX {
-                    let a = self.data.attr(md_nr, &arg_name);
+                if hint_nr != u32::MAX {
+                    let a = self.data.attr(hint_nr, &arg_name);
                     if a != usize::MAX {
-                        let expected = self.data.attr_type(md_nr, a);
+                        let expected = self.data.attr_type(hint_nr, a);
                         if Self::seeds_collection_hint(&expected)
                             || self.interpolation_target(&expected) != u32::MAX
                         {
@@ -18178,8 +18234,8 @@ impl Parser {
             // Same rule as the free-function path: the channel is this argument's,
             // so a nested call does not inherit the enclosing one's expectation.
             self.expected = Type::Unknown(0);
-            if md_nr != u32::MAX && list.len() < self.data.attributes(md_nr) {
-                let expected = self.data.attr_type(md_nr, list.len());
+            if hint_nr != u32::MAX && list.len() < self.data.attributes(hint_nr) {
+                let expected = self.data.attr_type(hint_nr, list.len());
                 // @PLN124 — a format-string argument to a METHOD builds the
                 // parameter's type too (`db.run("… {id} …")`), which is the shape a
                 // library API actually presents.
@@ -18200,6 +18256,7 @@ impl Parser {
             }
         }
         self.lexer.token(")");
+        let md_nr = self.select_method_def(select, &types);
         if md_nr == u32::MAX {
             // No callee to resolve names against — `call_with_named` would index a
             // definition that is not there.  Hand it on unchanged; the missing method
