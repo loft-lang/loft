@@ -1,0 +1,164 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `Disp-Key` (@PLN162 step 6): a name may carry several definitions distinguished by the
+// TYPES of their parameters — every position, not the name `self` — and a call reaches the
+// one whose parameters spell its argument types exactly.  Until this held, a second
+// definition of a free name was refused as a redefinition (*Cannot redefine 'hit'*), and a
+// second `self` method with the same receiver was refused whatever its other parameters.
+// `self`/`both` keep exactly their old meaning: the definition is ALSO callable as `x.m(…)`;
+// they no longer decide whether it dispatches.  A name with one definition keys as it always
+// did (the corpus is byte-identical, `introspect_diff.sh` IDENTICAL 1505/1505).
+//
+// Axes: free vs `self` vs `both` · which position differs (0, 1, arity) · type kind (struct,
+// enum, scalar, `τ?`) · declaration order · a defaulted trailing parameter · both call
+// spellings where `self`/`both` allow them · `Disp-Hint`'s cure (a typed local) for an argument
+// that needs a hint.  Every answer names the body that ran.
+// @falsified-at: 73f6cdc67 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-name-may-have-several-definitions-keyed-by-parameter-types.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — the control REFUSES the program at its second definition of `hit`
+//   (*Cannot redefine 'hit'*) and exits 1 before a cell runs; here every cell passes and it
+//   exits 0.  Not assert, not leak: a program that could not be written.
+//   ARMED: no instrument — a plain run on either backend reads it.
+//   WITNESS: on the control the first diagnostic is *Cannot redefine 'hit' (already defined
+//   at …:28)*, the second free definition of the first pair.
+//   HOLDS: the leak channel is `none` on both trees and does not move; a name with ONE
+//   definition is untouched, which the corpus-wide `introspect_diff.sh` states (DIFFERENT 2
+//   of 1508, the two being this file and its refusal twin).
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct Fire { n: integer }
+struct Ice { n: integer }
+struct Wall { n: integer }
+struct Crate { n: integer }
+struct P { x: integer }
+enum Kind { Hot, Cold }
+
+// free, differing in position 0
+fn hit(f: Fire) -> text { "fire {f.n}" }
+fn hit(i: Ice) -> text { "ice {i.n}" }
+
+// free, differing in position 1 only
+fn touch(f: Fire, w: Wall) -> text { "fire-wall {f.n}{w.n}" }
+fn touch(f: Fire, c: Crate) -> text { "fire-crate {f.n}{c.n}" }
+
+// free, three definitions across two arities
+fn cast(f: Fire) -> text { "cast1 {f.n}" }
+fn cast(f: Fire, k: integer) -> text { "cast2 {f.n} {k}" }
+fn cast(i: Ice) -> text { "cast-ice {i.n}" }
+
+// `self` methods differing in the second parameter — both call spellings
+fn melt(self: Fire, w: Wall) -> text { "melt-wall {self.n}{w.n}" }
+fn melt(self: Fire, c: Crate) -> text { "melt-crate {self.n}{c.n}" }
+
+// `both` at two arities — both call spellings
+fn burn(both: Fire) -> text { "burn1 {both.n}" }
+fn burn(both: Fire, k: integer) -> text { "burn2 {both.n} {k}" }
+
+// free, dense and `τ?` — the nullability IS a type
+fn tag(p: P) -> text { "dense {p.x}" }
+fn tag(p: P?) -> text { if p { "opt {p.x}" } else { "opt-null" } }
+
+// a defaulted trailing parameter beside a definition of another type
+fn rank(f: Fire, k: integer = 7) -> text { "rank-fire {f.n} {k}" }
+fn rank(i: Ice) -> text { "rank-ice {i.n}" }
+
+// declared in the other order
+fn cool(i: Ice) -> text { "cool-ice {i.n}" }
+fn cool(f: Fire) -> text { "cool-fire {f.n}" }
+
+// type kinds: an enum, a struct, three scalars
+fn show(k: Kind) -> text { match k { Hot => "kind-hot", Cold => "kind-cold" } }
+fn show(p: P) -> text { "struct {p.x}" }
+fn show(n: integer) -> text { "int {n}" }
+fn show(t: text) -> text { "text {t}" }
+fn show(b: boolean) -> text { "bool {b}" }
+
+// `Disp-Hint`: a multi-definition name offers no parse hint, so a width-carrying literal
+// takes the cure — a typed local
+fn take(f: Fire, xs: vector<u8>) -> integer { f.n + len(xs) }
+fn take(i: Ice, xs: vector<u8>) -> integer { i.n * 100 + len(xs) }
+
+fn test_free_position_0() {
+  assert(hit(Fire { n: 1 }) == "fire 1", "hit(Fire): got {hit(Fire { n: 1 })}");
+  assert(hit(Ice { n: 2 }) == "ice 2", "hit(Ice): got {hit(Ice { n: 2 })}");
+}
+
+fn test_free_position_1() {
+  f = Fire { n: 1 };
+  assert(touch(f, Wall { n: 2 }) == "fire-wall 12", "touch(Fire, Wall): got {touch(f, Wall { n: 2 })}");
+  assert(touch(f, Crate { n: 3 }) == "fire-crate 13", "touch(Fire, Crate): got {touch(f, Crate { n: 3 })}");
+}
+
+fn test_free_three_across_arities() {
+  f = Fire { n: 4 };
+  assert(cast(f) == "cast1 4", "cast(Fire): got {cast(f)}");
+  assert(cast(f, 9) == "cast2 4 9", "cast(Fire, integer): got {cast(f, 9)}");
+  assert(cast(Ice { n: 5 }) == "cast-ice 5", "cast(Ice): got {cast(Ice { n: 5 })}");
+}
+
+fn test_self_methods_second_parameter() {
+  f = Fire { n: 1 };
+  w = Wall { n: 2 };
+  c = Crate { n: 3 };
+  assert(f.melt(w) == "melt-wall 12", "method spelling, Wall: got {f.melt(w)}");
+  assert(f.melt(c) == "melt-crate 13", "method spelling, Crate: got {f.melt(c)}");
+  assert(melt(f, w) == "melt-wall 12", "bare spelling, Wall: got {melt(f, w)}");
+  assert(melt(f, c) == "melt-crate 13", "bare spelling, Crate: got {melt(f, c)}");
+}
+
+fn test_both_two_arities() {
+  f = Fire { n: 6 };
+  assert(f.burn() == "burn1 6", "method, arity 1: got {f.burn()}");
+  assert(burn(f) == "burn1 6", "bare, arity 1: got {burn(f)}");
+  assert(f.burn(8) == "burn2 6 8", "method, arity 2: got {f.burn(8)}");
+  assert(burn(f, 8) == "burn2 6 8", "bare, arity 2: got {burn(f, 8)}");
+}
+
+fn test_free_nullability_is_a_type() {
+  d = P { x: 1 };
+  o: P? = P { x: 2 };
+  z: P? = null;
+  assert(tag(d) == "dense 1", "dense argument: got {tag(d)}");
+  assert(tag(o) == "opt 2", "present τ? argument: got {tag(o)}");
+  assert(tag(z) == "opt-null", "null argument: got {tag(z)}");
+}
+
+fn test_defaulted_trailing_parameter() {
+  f = Fire { n: 3 };
+  assert(rank(f) == "rank-fire 3 7", "omitted default: got {rank(f)}");
+  assert(rank(f, 1) == "rank-fire 3 1", "supplied: got {rank(f, 1)}");
+  assert(rank(Ice { n: 4 }) == "rank-ice 4", "the other type: got {rank(Ice { n: 4 })}");
+}
+
+fn test_declaration_order() {
+  assert(cool(Fire { n: 1 }) == "cool-fire 1", "declared second: got {cool(Fire { n: 1 })}");
+  assert(cool(Ice { n: 2 }) == "cool-ice 2", "declared first: got {cool(Ice { n: 2 })}");
+}
+
+fn test_type_kinds() {
+  assert(show(Kind.Hot) == "kind-hot", "enum: got {show(Kind.Hot)}");
+  assert(show(P { x: 5 }) == "struct 5", "struct: got {show(P { x: 5 })}");
+  assert(show(42) == "int 42", "integer: got {show(42)}");
+  assert(show("hi") == "text hi", "text: got {show(\"hi\")}");
+  assert(show(true) == "bool true", "boolean: got {show(true)}");
+}
+
+fn test_hint_cure_is_a_typed_local() {
+  xs: vector<u8> = [1, 2, 3];
+  assert(take(Fire { n: 1 }, xs) == 4, "take(Fire, vector<u8>): got {take(Fire { n: 1 }, xs)}");
+  assert(take(Ice { n: 2 }, xs) == 203, "take(Ice, vector<u8>): got {take(Ice { n: 2 }, xs)}");
+}
+
+fn main() {
+  test_free_position_0();
+  test_free_position_1();
+  test_free_three_across_arities();
+  test_self_methods_second_parameter();
+  test_both_two_arities();
+  test_free_nullability_is_a_type();
+  test_defaulted_trailing_parameter();
+  test_declaration_order();
+  test_type_kinds();
+  test_hint_cure_is_a_typed_local();
+}

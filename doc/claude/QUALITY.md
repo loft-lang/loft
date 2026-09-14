@@ -2554,7 +2554,15 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 793 | 451 | 5 | **337** |
+| 795 | 453 | 5 | **337** |
+
+(2026-09-14, @PLN162 step 6: `Data::exact_overloads` and `Data::admit_overload_set` are new
+functions that read a dispatcher attribute's `Type::Routine`, and `Parser::call` gained the
+same read for its overload listing — all three through `.base()`, so the two new functions
+land in the wrapper-aware column: 793 → 795 total, 451 → 453 aware; the opaque column
+reads 337 and the ratchet's `opaque_tests` is back at its baseline.  The first cut matched
+the attribute's type bare at all three sites and the ratchet refused it twice — the guard doing
+its job on sites written minutes earlier, exactly as loft#1525's note below records.)
 
 (2026-09-14, @PLN162 step 3: `Data::select_fn` is a new function holding the `Type::Optional`
 routing `Parser::call` did inline, and it names the variant exactly as the moved code did, so

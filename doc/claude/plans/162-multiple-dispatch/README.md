@@ -7,8 +7,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**PROPOSAL — design written; phase 0 DONE 2026-09-14 (the acceptance program is in the tree as
-a hand-written `match`); no dispatch code yet.**  The design is
+**IN PROGRESS — phase 0 DONE and IMPL.md steps 1–6 DONE (2026-09-14): a name may carry several
+definitions keyed by parameter types, selected exactly; the enum lattice and dynamic selection
+are still to come.**  The design is
 [DESIGN.md](DESIGN.md), carried verbatim as the owner wrote it.  Six open questions in it are
 the owner's to answer and at least one (question 6) changes the rules, so no phase below was to
 start until questions 1, 2 and 6 had answers.  **All three are answered** — 1 and 2 on
@@ -52,7 +53,7 @@ compile time to a direct call wherever the argument types are statically concret
 
 - **Effort:** H — six rules, a new selection pass, a lowering, three backends, two profiles.
 - **Design:** ~ (partial) — the rules are written; three open questions gate the first phase.
-- **Last touched:** 2026-09-14 (IMPL.md phase A — steps 1–5 — done)
+- **Last touched:** 2026-09-14 (IMPL.md steps 1–6 done — the first dispatch code is in the tree)
 
 ## Composition matrix — Stage A
 

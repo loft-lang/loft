@@ -272,7 +272,40 @@ is the first behaviour change of the feature itself.
 
 ## Phase B — the feature (steps 6–10)
 
-### Step 6 — `Disp-Key`: key on the TYPES  ·  S  ← first behaviour change
+### Step 6 — `Disp-Key`: key on the TYPES  ·  S  ← first behaviour change  ·  DONE 2026-09-14
+
+**Done — and M, not S, because the tree had a mechanism to reuse rather than a key to widen.**
+A `both` name was already an overload set: a bare `Dynamic` dispatcher whose attributes are the
+overloads, reached by the first parameter's key (`abs(integer)` / `abs(float)`).  Step 6 lets
+any name enter it (`add_fn`: a second definition with a different FULL parameter spelling is
+admitted, keyed by that spelling with `#` as the separator the emitter already sanitises; a
+free incumbent is re-keyed and `n_<name>` retired), makes the pass-2 re-lookup (`get_fn`) ask
+the full-spelling key first, and puts an EXACT rung in front of `candidates`' ladder that only
+the two real call paths reach (`find_fn`'s thirteen protocol callers pass no list and stay on
+the ladder).  `select` hands the routed list to it.  The unknown-function site names the
+overload set: *no definition of `hit` takes (Rock) — declared: hit(Fire), hit(Ice)*, and the
+two-exact case *`amb(Fire)` is ambiguous — it is taken by amb(Fire) and amb(Fire, integer)*.
+RULES.md § Disp-Key carries the implementation form and its three consequences (one-source
+scope; the key's coarseness over `vector<τ>`; exact selection until step 9).
+
+Guards: `tests/scripts/a-name-may-have-several-definitions-keyed-by-parameter-types.loft`
+(free / `self` / `both`; position 0, position 1, arity; struct, enum, scalar, `τ?`;
+declaration order; a defaulted trailing parameter; both call spellings; the `Disp-Hint` cure)
+and `…-refuses-what-is-not-an-overload.loft` (the same types twice; a free definition is not
+a method; no definition takes the call; ambiguous by a defaulted parameter; a literal that
+needed the hint).  Every existing program is byte-identical: `introspect_diff.sh` against the
+pre-step binary reports DIFFERENT 2 of 1508, and the two are the new guards themselves.  Two
+regressions the gate caught on the way, both mine: the first join branch re-keyed every
+second `both` overload in the stdlib (1421 files moved — `atan2`, `log`, `pow`, `max`…), so
+joining is for FREE definitions only and never the stdlib; and an arity-one free overload
+keyed `t_4Fire_hit` wore a METHOD key, so the method-receiver reader reported *did you mean
+the method `x.hit(…)`* for a call no definition took — free overloads have their own `f_`
+prefix now.  What step 0's table needs beyond this is steps 9 and
+13 (the enum lattice, and a value held at `Entity`).
+
+**Untested, and said so in RULES.md:** a LIBRARY exporting an overload set — the import alias
+table copies `n_<name>`, which an overload set no longer has.  Measure before a library ships
+one; it is the next cell of this step's matrix.
 
 `dispatch_key` uses every parameter's type and stops testing `arguments[0].name`.  Write and
 read in ONE commit.  A name with one definition keeps `n_<name>` — 145 sites in `src/` look

@@ -6319,7 +6319,78 @@ impl Parser {
                 // P07.5: when no method receiver is found EITHER, fall back to
                 // a similar-name suggestion across all user functions.
                 let (method_types, from_stdlib) = self.find_method_receivers(name);
-                if method_types.is_empty() {
+                let bare = self.data.def_nr(name);
+                let overloads: Vec<String> =
+                    if bare != u32::MAX && self.data.def_type(bare) == DefType::Dynamic {
+                        self.data
+                            .def(bare)
+                            .attributes
+                            .iter()
+                            .filter_map(|a| match a.typedef.base() {
+                                Type::Routine(r) => Some(*r),
+                                _ => None,
+                            })
+                            .map(|r| {
+                                let params: Vec<String> = self
+                                    .data
+                                    .def(r)
+                                    .attributes
+                                    .iter()
+                                    .filter(|p| !p.hidden)
+                                    .map(|p| p.typedef.source_name(&self.data))
+                                    .collect();
+                                format!("{name}({})", params.join(", "))
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                if method_types.is_empty() && !overloads.is_empty() {
+                    // `Disp-Key` (@PLN162): the name has an overload set.  Either none of its
+                    // definitions takes these argument types (`Disp-Exhaustive`), or more than
+                    // one does and nothing here ranks them (`Disp-Ambiguous` — today a
+                    // defaulted trailing parameter beside a shorter definition).  Name what
+                    // was passed and what is declared, so the cure is one read away.
+                    let given: Vec<String> =
+                        types.iter().map(|t| t.source_name(&self.data)).collect();
+                    let taken = self
+                        .data
+                        .exact_overloads(source, name, types)
+                        .unwrap_or_default();
+                    if taken.len() > 1 {
+                        let by: Vec<String> = taken
+                            .iter()
+                            .map(|&r| {
+                                let params: Vec<String> = self
+                                    .data
+                                    .def(r)
+                                    .attributes
+                                    .iter()
+                                    .filter(|p| !p.hidden)
+                                    .map(|p| p.typedef.source_name(&self.data))
+                                    .collect();
+                                format!("{name}({})", params.join(", "))
+                            })
+                            .collect();
+                        diagnostic_at!(
+                            self.lexer,
+                            name_pos,
+                            Level::Error,
+                            "`{name}({})` is ambiguous — it is taken by {} and nothing ranks them; give the call the arguments that pick one, or drop one definition",
+                            given.join(", "),
+                            by.join(" and ")
+                        );
+                    } else {
+                        diagnostic_at!(
+                            self.lexer,
+                            name_pos,
+                            Level::Error,
+                            "no definition of `{name}` takes ({}) — declared: {}",
+                            given.join(", "),
+                            overloads.join(", ")
+                        );
+                    }
+                } else if method_types.is_empty() {
                     // @PLN13 phase 6 (diagnostics slice): the name may simply be
                     // unimported rather than wrong.  An EXACT hit in a published
                     // package outranks the fuzzy same-name guess below — `rand`

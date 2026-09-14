@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The refusals around `Disp-Key` (@PLN162 step 6), each pinned by its message — the pass-2
+// ones; the same types twice is a pass-1 refusal that stops the rest, and has its own file.
+// A free definition is not a method, so the method spelling does not reach it; a call no definition takes is refused naming what was
+// passed and what is declared (`Disp-Exhaustive`); two definitions that both take the call —
+// a defaulted trailing parameter beside a shorter one — are refused as ambiguous, naming
+// both (`Disp-Ambiguous`); and a multi-definition name offers no parse hint, so a
+// width-carrying literal argument is refused where a typed local is the cure (`Disp-Hint`).
+// @falsified-at: 73f6cdc67 — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-name-with-several-definitions-refuses-what-is-not-an-overload.patch — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — none of the four `@EXPECT_ERROR` lines is met on the control,
+//   which refuses the program earlier and differently (*Cannot redefine 'hit'* at the second
+//   definition), so the suite's verdict is FAIL there and the file's exit goes 1 -> 0 with it.
+//   Not leak and not assert: this whole file is a parse-time verdict.
+//   ARMED: no instrument — the refusals are parse-time on either backend.
+//   WITNESS: on the control the diagnostic is *Cannot redefine 'hit'*; here it is the four
+//   named ones and nothing else — the runner fails an unexpected error.
+//   HOLDS: no diagnostic beyond the four named ones on this tree, and the leak channel is
+//   `none` on both and does not move.
+// @EXPECT_ERROR: Unknown field Fire.hit
+// @EXPECT_ERROR: no definition of `hit` takes (Rock) — declared: hit(Fire), hit(Ice)
+// @EXPECT_ERROR: `amb(Fire)` is ambiguous — it is taken by amb(Fire) and amb(Fire, integer)
+// @EXPECT_ERROR: got vector<integer> on argument 2 of call to take
+
+struct Fire { n: integer }
+struct Ice { n: integer }
+struct Rock { n: integer }
+
+fn hit(f: Fire) -> text { "fire {f.n}" }
+fn hit(i: Ice) -> text { "ice {i.n}" }
+
+fn amb(f: Fire) -> text { "one {f.n}" }
+fn amb(f: Fire, k: integer = 0) -> text { "two {f.n} {k}" }
+
+fn take(f: Fire, xs: vector<u8>) -> integer { f.n + len(xs) }
+fn take(i: Ice, xs: vector<u8>) -> integer { i.n + len(xs) }
+
+fn main() {
+  f = Fire { n: 1 };
+  f.hit();
+  hit(Rock { n: 2 });
+  amb(f);
+  take(f, [1, 2]);
+}

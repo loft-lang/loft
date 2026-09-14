@@ -53,6 +53,31 @@ definition is *also* callable as `x.f(…)`; they no longer decide whether it di
 The second sentence is what makes *no existing program changes* true by construction: a
 program that compiles today has one definition per name, because two would not compile.
 
+**Implementation form (IMPL.md step 6, 2026-09-14):** a name with several definitions is a
+bare `Dynamic` DISPATCHER whose attributes are its overloads — the shape a `both` name has
+always had — and each overload is keyed by its FULL parameter spelling, every declared
+parameter's key name joined with `#`: a method overload as `t_10Fire#Crate_melt`, a FREE
+overload as `f_10Fire#Crate_touch` — its own prefix, because `t_` means "a method" to every
+reader of a key and a free overload has no receiver and no `x.f(…)` spelling.  A `both`/
+`self` definition alone under its receiver keeps `t_<sig0>_<name>` and a free definition
+alone keeps `n_<name>`.  When a free name gains a second definition, the incumbent is re-keyed to
+its full spelling and `n_<name>` is retired, so the name offers no parse hint (`Disp-Hint`)
+and every site that reads `n_<name>` as THE definition finds none, exactly as for a `both`
+name.  Three consequences worth stating:
+
+- **Scope is one SOURCE.**  A MAIN definition under a stdlib name stays the C95 refusal, a
+  library's names stay module-scoped (C97); overloading is something a file does to its own
+  names.  Library-exported overload sets are UNTESTED (the import alias table copies
+  `n_<name>`, which an overload set no longer has) — measured before a library ships one.
+- **The spelling is the key's, so it is as coarse as the key.**  Two `vector<τ>` spell alike
+  (the element type is not in a key today), so `f(vector<integer>)` beside
+  `f(vector<text>)` is a redefinition, as it was.
+- **Selection today is EXACT:** a call reaches the overloads whose parameters spell its
+  argument types position for position, a trailing parameter admitted when it has a default;
+  one is the answer, none falls to the old ladder (`Disp-Exhaustive`'s message when that
+  finds nothing), more than one is `Disp-Ambiguous` (today only the defaulted-trailing shape
+  can produce it — step 7's question).  Steps 9–10 widen "exactly" to the enum lattice.
+
 **Disp-Specific** *(amended — the abstract position is the ENUM, not an interface).*  The
 design says *"a concrete struct is more specific than any interface it implements"*.  Measured
 2026-09-11: **an interface cannot be a parameter type** — `fn describe(x: Shape)` is refused
