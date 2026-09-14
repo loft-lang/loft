@@ -829,6 +829,87 @@ exactly like an optimisation barrier. Replacing those three generated call sites
 `keys::store` measured ~6 % — inside the run-to-run spread on this box, against the 2.5x the
 hoist is worth. The barrier is the guards, not the `OnceLock`.
 
+**3d. What LLVM could be told instead, and which memory can carry the claim**
+
+3c is why the emitter hoists. What it leaves open is whether `rustc` could be told enough
+to hoist for us. Three separate things stop the optimiser in generated code, and only the
+third is a question about memory regions:
+
+| barrier | what stops the optimiser | does marking regions help? |
+|---|---|---|
+| a guarded load cannot be speculated | every store read sits behind a record test and a bounds test, and LLVM will not lift a conditional load out of a loop | no |
+| every call clobbers memory | each emitted function takes `cell: &UnsafeCell<Stores>` and re-derives its own `&mut Stores` from it, so `rustc` marks nothing `noalias` and no store value survives a call in a register | only by changing that ABI |
+| two accesses might alias | LLVM cannot prove two raw pointers into different stores are disjoint | yes |
+
+3c measured the first row as the barrier that bites, and measured an aliasing-shaped
+hypothesis coming back inside the run-to-run spread. So region marking is worth doing for
+the second and third rows; it is not a route to the loop hoists, which are the emitter's.
+
+**The unit of disjointness is the STORE, not the reference.** Each store owns its own
+allocation reached through `Store::ptr`, so two different `store_nr` values never overlap.
+Two references INSIDE one store overlap deliberately: an `&` link, an element view and a
+record living in a vector all name the same bytes on purpose. A claim can therefore be
+made per store and never per `DbRef`.
+
+| region | what it is | the claim it can carry |
+|---|---|---|
+| an ordinary store on one thread | exclusively owned | exclusive (`noalias`) |
+| a worker's borrow of a parent store under `par` | `read_only` for the whole parallel region (`Store::clone_locked`, `Store::borrow_locked_for_light_worker`) | immutable, the strongest claim available |
+| a worker's own stores | thread-exclusive | exclusive |
+| a memory-mapped store | file bytes, with pages flushed and dropped under residency control | none |
+| a lazy or remote store | a READ faults and materialises, so a read writes ([LAZY_STORES.md](LAZY_STORES.md), [REMOTE_STORES.md](REMOTE_STORES.md)) | none |
+
+Two rows there are the opposite of what the shape of the problem suggests. **A parallel
+region is the EASY case:** what `par` shares across threads is exactly what it locks
+read-only for the duration, so shared memory here is immutable memory. And the region that
+refuses every claim is not the mapped file but the lazy store, because there a read is a
+write. Mapping and remote stores are both in the default feature set, and the deciding
+flags live on the `Store`, so the choice is a runtime one and cannot be settled at
+generation time.
+
+**What `rustc` will pass through to LLVM:**
+
+| lever | what it states | reachable from emitted Rust |
+|---|---|---|
+| `noalias` on `&mut T` | this is the only access path | yes, but the shared cell the ABI passes suppresses it ([NATIVE.md § Architecture](NATIVE.md)) |
+| `noalias` + `readonly` on `&T` | nobody writes this | yes, for a locked store |
+| `llvm.assume` | an index is in range, a length is under a capacity, an address is aligned | yes, through `std::hint::assert_unchecked` |
+| unchecked slice indexing | drop a bounds test already proved | yes |
+| scoped per-access `noalias` | these two accesses are disjoint | only as a side effect of inlining a `noalias` argument |
+| type-based alias analysis | disjoint by type | no: `rustc` does not emit it |
+| loop parallel-access metadata | this loop carries no memory dependence | no |
+| `restrict` on a raw pointer | no alias through this pointer | Rust has no such thing |
+
+The last three need a `rustc` fork or an LLVM pass plugin to reach at all. They are not
+worth a cycle while the first four are unstarted — as of 2026-09-14 the tree uses neither
+`assert_unchecked` nor unchecked indexing anywhere on the store path.
+
+**Ranked, cheapest first:**
+
+1. **Assert what the header already proved.** After a header derivation the record number,
+   the length and the end offset are known good. Asserting them turns each guarded element
+   load into an unconditional one, which is the precondition for both hoisting and
+   vectorisation. It is the one lever aimed at the barrier 3c measured.
+2. **Index `Stores::allocations` unchecked**, on the same proof.
+3. **Derive a real slice per store** where the header is derived: `&mut [u8]` for an
+   exclusively owned store, `&[u8]` for a locked one, the raw pointer kept for a mapped or
+   lazy one. This is the region marking, in the only form Rust can express it. Because the
+   deciding flags are runtime flags, the choice rides the derivation and the old path stays
+   as the fallback — the shape `Stores::fill_hoisted` already has (@PLN157 § V-ae).
+4. **Link-time optimisation.** The shipped line is `-C opt-level=3 -C codegen-units=1` with
+   no LTO (`src/native_lib.rs`), so nothing above crosses the rlib boundary except through
+   an explicit `#[inline]` (3b).
+
+⚠ The first item is a SOUNDNESS lever, not an optimisation hint: a wrong
+`assert_unchecked` is undefined behaviour rather than a wrong answer, which is the failure
+this project ranks worst ([GOALS.md](GOALS.md)). Derive each assertion from the same fact
+`LOFT_HOIST_VERIFY=1` re-checks, so the falsifier exists before the assertion does.
+
+**The next probe is rustc-first**, the recipe @PLN157 § V-ac and § V-q used: hand-edit the
+emitted Rust of one kernel to carry the assertions, rebuild with the flags loft uses, and
+measure. If that does not move the row, region marking will not move it either, because
+the guard sits upstream of the alias question.
+
 **4. Float near-parity — the target model**
 
 Newton sqrt (06, 1.05×) and Mandelbrot (05, 1.17×) show what the native pipeline

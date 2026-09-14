@@ -163,9 +163,17 @@ The generated code uses these loft library types (already public):
 - `loft::vector` — vector operations
 
 Each generated file contains:
-1. An `init(db: &mut Stores)` function that registers all type schemas
-2. Rust functions for each loft function, receiving `stores: &mut Stores` as first arg
+1. An `init(cell: &UnsafeCell<Stores>)` function that registers all type schemas
+2. Rust functions for each loft function, receiving `cell: &UnsafeCell<Stores>` as first arg
 3. A `#[test]` wrapper that calls `init()` then the test function
+
+Every one of those functions opens with `let stores: &mut Stores = unsafe { &mut *cell.get() };`.
+The shared cell is what lets a callee reach the store table while its caller still holds a
+reference into it, which ordinary `&mut` aliasing rules forbid and which the runtime needs:
+a call can free, claim and move records.  The cost is that `rustc` marks nothing `noalias`,
+so no store value survives a call in a register — see
+[PERFORMANCE.md § Native vs Rust 3d](PERFORMANCE.md) for what LLVM could be told instead
+and which stores can carry which claim.
 
 #### The type-id correspondence (and how it is checked)
 

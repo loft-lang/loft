@@ -897,6 +897,21 @@ its assumptions are written as a rule and checkable by both.
 
 ## Where to resume
 
+**2026-09-14 — the LLVM question, evaluated and written up: PERFORMANCE.md § Native vs
+Rust 3d.**  Whether `rustc` can be told enough about loft's memory to hoist for us, and
+which regions can carry which claim.  The short answer is that region marking is worth
+doing but is not the route to the loop hoists — 3c already measured the guard, not
+aliasing, as the barrier that bites — and that the unit of disjointness is the STORE, not
+the `DbRef`, because two references inside one store overlap on purpose.  Two findings
+worth carrying: a `par` region is the EASY case (what it shares across threads is what it
+locks read-only for the duration), and the region that refuses every claim is the LAZY
+store rather than the mapped file, because there a read faults and writes.  The ranked
+queue it leaves, cheapest first: assert the facts a header already proved
+(`std::hint::assert_unchecked`, which the tree uses nowhere today), index `allocations`
+unchecked on the same proof, derive a real slice per store at the header, then LTO.  The
+first is a SOUNDNESS lever and its falsifier is `LOFT_HOIST_VERIFY=1`.  Unstarted; the
+next step is the rustc-first probe on one kernel.
+
 **2026-09-13 (late) — § V-af shipped: the smooth profile, run down.**  `perf` on this box
 (`sm_only.loft --n 2000000`, the recipe of § V-ad) read a third of the row as runtime
 store lifecycle: `database_named`/`claim_block`/`op_database_inner`/`set_default_value_
