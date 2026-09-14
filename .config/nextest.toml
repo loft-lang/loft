@@ -143,6 +143,39 @@ test-group = 'html-wasm-serial'
 filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use_native) + binary(multiplayer_v2) + binary(multiplayer_v3) + binary(wasm_debug_relay)'
 test-group = 'heavy-serial'
 
+# The profile the nightly sanitizer legs run under (`miri.yml`'s ASan sweep and leak gate).
+#
+# It is `ci` with ONE difference: `loft_suite`, which runs every `tests/scripts` program
+# serially inside one test process, gets a longer ceiling.  Under `-Zsanitizer=address` that
+# one test is the whole leg's clock, and it grows with the corpus rather than with any hang:
+# measured on GitHub's ubuntu runner, 577.5 s of a 600 s ceiling at 1356 scripts (green,
+# 5cd4785c9) and killed at 600 s at 1371 (loft#1527), while the uninstrumented `ci` run of
+# the same test takes a fraction of that.  So the ceiling is raised HERE, for the build that
+# is slow by construction, and not in `ci`, where 600 s still catches a hung script.  Every
+# other test keeps `ci`'s 600 s.
+[profile.sanitizer]
+retries          = 1
+failure-output   = "immediate-final"
+success-output   = "never"
+status-level     = "pass"
+final-status-level = "slow"
+slow-timeout     = { period = "600s", terminate-after = 1 }
+
+[profile.sanitizer.junit]
+path = "junit.xml"
+
+[[profile.sanitizer.overrides]]
+filter = 'binary(wrap) & test(loft_suite)'
+slow-timeout = { period = "1800s", terminate-after = 1 }
+
+[[profile.sanitizer.overrides]]
+filter = 'binary(html_wasm)'
+test-group = 'html-wasm-serial'
+
+[[profile.sanitizer.overrides]]
+filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use_native) + binary(multiplayer_v2) + binary(multiplayer_v3) + binary(wasm_debug_relay)'
+test-group = 'heavy-serial'
+
 # @PLN-speed — the profile `scripts/test_speed.py` runs under.
 #
 # It exists for ONE reason: a machine-readable per-test duration.  The human log
