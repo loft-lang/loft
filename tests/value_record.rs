@@ -147,6 +147,35 @@ fn each_tail_cell_returns_by_value_exactly_where_predicted() {
         !hc.contains("n_protect_store_frees"),
         "a selecting callee's tuple needs no borrow bracket"
     );
+    // The join buffers of a branch that binds a TUPLE are dead: minted by nothing, freed by
+    // nothing (t4); a branch that keeps a record arm still mints its buffer (t5).
+    let body_of = |name: &str| {
+        rust.split(&format!("\nfn {name}("))
+            .nth(1)
+            .and_then(|s| s.split("\nfn ").next())
+            .unwrap_or_else(|| panic!("{name} emitted"))
+            .to_string()
+    };
+    let t4 = body_of("n_t4");
+    assert!(
+        !t4.contains("OpDatabase(cell,var___ref"),
+        "t4's join buffers are dead and must not be minted"
+    );
+    assert!(
+        !t4.contains("OpFreeRef(cell,var___ref"),
+        "t4's join buffers are dead and must not be freed"
+    );
+    // (A mixed-arm branch delivers its buffer lazily at the call, so its receipt is the
+    // buffer ARGUMENT the declined callee still takes and the free at scope exit.)
+    let t5 = body_of("n_t5");
+    assert!(
+        t5.contains("n_half5(cell, 2_f64, 6_f64, var___ref_1)"),
+        "t5's declined callee still takes its buffer"
+    );
+    assert!(
+        t5.contains("OpFreeRef(cell,var___ref_1"),
+        "t5's live buffer is still freed"
+    );
     let _ = std::fs::remove_file(&out);
 }
 

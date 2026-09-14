@@ -648,7 +648,10 @@ and loses only the innermost frame NAME from the chain.  Switch
                  carries: the record form declined that free exactly when the buffer
                  was the result), and a copy FROM one MATERIALISES the tuple into the
                  destination with one typed write per field, which is how a builder
-                 delivered into a push slot lands without a call or a buffer.  An OWNED
+                 delivered into a push slot lands without a call or a buffer; and a
+                 buffer local whose every mention is one of those drops — a dropped
+                 argument, a free, a test against a value local — is DEAD, and its
+                 mint and its frees emit as nothing.  An OWNED
                  record at a tail declines: the value form would have to mint per call
                  what the buffer form reuses.  Every function a fn-ref dispatch can
                  reach declines, read from the emitter's own arm scan

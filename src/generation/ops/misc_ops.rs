@@ -53,6 +53,13 @@ impl OpEmitter for OpDatabaseEmitter {
             {
                 return write!(ctx.w, "()");
             }
+            // @PLN157 § V-ah (`@FR-R-ValueRecord`) — a DEAD BUFFER: every use of this local
+            // is one the value form drops, so the store it would mint serves nothing.
+            if let Value::Var(w) = var_val.unspan()
+                && ctx.output.dead_buffers.contains(w)
+            {
+                return write!(ctx.w, "()");
+            }
             // @PLN157 § V-j (`@FR-R-MoveAppend`) — this var can be the `__vdb` a pair
             // PLACED a buffer record into, and OpDatabase's reuse arm clears the whole
             // store: the placement vanishes with the clear (no leak — the clear reclaims

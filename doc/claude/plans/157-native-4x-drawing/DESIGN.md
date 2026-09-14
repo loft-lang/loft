@@ -2552,11 +2552,27 @@ measurement before any design.
    `hair` 2.02, `fronds` 3.33, `lock` 2.44, `lock_curved` 2.69, `composite` 2.34, the
    fills 1.22/1.25, `wide_line` 2.41).
 
-   A now reads within 40 % of the hand-written B, not 70 %; what separates them is
-   read off the emission: the four § V-af join-buffer stores `__ref_1..4` minted and
-   freed per activation for branches that now bind tuples (dead — the next unit), and
-   the per-point materialise writing through `store_mut` + `valid` where the push
-   header already addresses the slot (the direct-write unit, −3 % measured rustc-first).
+   *The dead join buffers, the same day.*  What separated A from the hand-written B
+   after the tails was read off the emission: the four § V-af join-buffer stores
+   `__ref_1..4`, minted by `OpDatabase` at every activation and freed at exit, for
+   branches that now bind tuples — every mention of each was a dropped buffer argument,
+   a free, or a store-identity operand against a value local.  `hoist::dead_buffers`
+   names them (a minted local with no other mention; a buffer read as a witness against
+   a RECORD local, or handed to a callee that keeps its buffer, stays live) and the
+   `OpDatabase`/`OpFreeRef`/`OpFreeRefIfDistinct` emitters emit nothing for them.
+   Measured: A 1 504–1 563 → **1 110–1 144** (−27 % again — four `malloc`/`free` pairs
+   per call, which the profile had priced at ~6 % as `op_database_inner` +
+   `database_named` + `enum_parent_size` + `clear` and which cost four times that in
+   the allocator beneath them), B unchanged at 1 070–1 080.  A now reads within 6 % of
+   B.  *Consumer table* (same lane, `--repeat 3`, 14/14 hashes agree): `smooth` **3.67×**
+   (1 320 ns against Rust's 360) from 4.58× — **ten of ten judged rows under the 4× bar
+   on x86-64** (`hash` 2.81, `hair` 1.96, `fronds` 3.42, `lock` 2.45, `lock_curved`
+   2.69, `composite` 2.34, the fills 1.20/1.24, `wide_line` 2.36), the plan's bar met on
+   this lane; the aarch64 lane is to be re-measured on its own box.  What remains
+   between the kernel and Rust is the per-point materialise writing
+   through `store_mut` + `valid` where the push header already addresses the slot (the
+   direct-write unit, −3 % rustc-first), the frame prelude `floor_mod` costs `ctrl`
+   (−3 %), and the segment loop's four unhoisted element reads.
 
 ## V-k — the append path's bookkeeping (2026-09-09)
 

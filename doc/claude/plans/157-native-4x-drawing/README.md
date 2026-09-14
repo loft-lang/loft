@@ -1020,7 +1020,7 @@ that as a user call; `n_pt` is a leaf and carries none.
 | 1 | **§ V-ah stages 2 + 3** — `half_chord` forwards a tuple, `ctrl` selects its fields at the return | `hoist::value_records` + `scopes` (stage 3 changes who frees) | **−41 %** on both lanes | **shipped 2026-09-14** — DESIGN.md § V-ah Built: A 2 025–2 102 → 1 504–1 563 on the two-kernel probe (−27 %); consumer `smooth` 9.5–10.2× → **4.58×** on this lane (1 740 ns against Rust's 380, 14/14 hashes agree), the last row over the bar by 0.58× |
 | 2 | **the push-slot write** — the `n_pt` call inlined into the literal (−7 %) and the element's fields written INTO the push header's slot without `store_mut` + `valid` per field (−3 %, the write twin of `vec_set_hoisted_or_raise_runtime`) | emission: `hoist.rs` / `Output`, both the call form and the literal form | −10 % | the call half shipped inside § V-ah (the materialise arm); the direct-write half unbuilt, ceiling measured |
 | 3 | the tuple helpers' frame prelude — `ctrl_t` is not a leaf under `@FR-R-Leaf` because a loft-bodied `t_` callee counts as a user call | `is_elidable_leaf`: a `t_` callee that is itself a leaf cannot re-enter its caller | −3 % | unprobed beyond the ceiling |
-| 4 | per-call store lifecycle — four join-buffer mints + frees per activation (`op_database_inner`, `database_named`, `clear`, `enum_parent_size` ≈ 6 %) | `@FR-R-Reuse` extended to the join buffers: allocate once per SITE; moot for the two tangent joins once #1 makes them tuples | ≤ 6 % | unprobed |
+| 4 | per-call store lifecycle — four join-buffer mints + frees per activation (`op_database_inner`, `database_named`, `clear`, `enum_parent_size` ≈ 6 %) | `hoist::dead_buffers`: a minted local whose every mention the value form drops emits no mint and no free | **shipped 2026-09-14**: −27 % on the probe (1 504–1 563 → 1 110–1 144), four `malloc`/`free` pairs the profile priced at 6 %; consumer `smooth` 4.58× → **3.67×**, **ten of ten judged rows under the bar on x86-64** | the remaining per-call buffers (a `?` default's, a mixed-arm branch's) are live and stay |
 | 5 | the segment loop's four unhoisted element reads (`get_vector` 4.75 %) | the hoist gate declines a header when a borrow-returning callee takes the vector; admit one for a `const` parameter the callee only reads — and after #1 the callee no longer returns a borrow | ≤ 5 % | unprobed |
 | 6 | the protect bracket's origin — a `Cow<'static, str>` per bracket | runtime, one function | ≤ 3 % | moot once #1 removes the brackets |
 
@@ -1028,6 +1028,13 @@ that as a user call; `n_pt` is a leaf and carries none.
 and #4–#6 shrink or vanish behind it.  Then #2, emission-only.  **#1 + #2 together reach
 −50 % on the kernel against the ≈ −58 % the row needs for 4× on x86**, so #3–#5 are
 required, not tail; the row's own per-call overhead (≈ 4 %) is outside the kernel.
+
+*Outcome, the same day.*  #1 and the dead half of #4 shipped (DESIGN.md § V-ah Built):
+the two-kernel probe's shipped form 2 025–2 102 → **1 110–1 144 ns/op** (−45 %), the
+consumer `smooth` 9.5–10.2× → **3.67×**, and the table reads *ok — 10 routine(s) judged
+against the reference, all within 4.0×* on this lane.  #2's direct-write half, #3 and #5
+are now optional margin on x86-64; the aarch64 lane (8.44× before this) is to be
+re-measured on its own box before the plan is called.
 
 *Instruments, in order of use.*  (1) `cargo build --release --lib --bin loft` — the native
 lane links the rlib, `cargo build --bin loft` does not rebuild it.  (2) A SCRATCH clone of

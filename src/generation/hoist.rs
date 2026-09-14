@@ -4658,6 +4658,82 @@ fn site_walk(node: &Value, pos: Pos, ctx: &ShapeCtx, declined: &mut HashSet<u32>
     }
 }
 
+/// The DEAD BUFFERS of `def_nr` (@PLN157 § V-ah, `@FR-R-ValueRecord`): a local minted by
+/// `OpDatabase` whose every mention the value form drops — the buffer argument of an
+/// admitted callee (dropped from the call), the subject of a free, or an operand of a
+/// store-identity test whose other operand is a value local (answered `true` without a
+/// read).  Such a local was a § V-af join buffer for a branch that now binds a tuple: the
+/// store it minted per activation served nothing, so the mint and the frees are emitted
+/// as nothing.  A buffer with any other mention — a witness read against a RECORD local,
+/// an argument to a callee that keeps its buffer — is minted as before.
+#[must_use]
+pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16> {
+    let mut out = HashSet::new();
+    if vr.fns.is_empty() {
+        return out;
+    }
+    let admitted: HashSet<u32> = vr.fns.keys().copied().collect();
+    let locals = value_locals_in(data, def_nr, &admitted);
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let mut minted: HashSet<u16> = HashSet::new();
+    let mut mentions: HashMap<u16, u32> = HashMap::new();
+    let mut dropped: HashMap<u16, u32> = HashMap::new();
+    def.code().any_node(&mut |n| {
+        match n {
+            Value::Var(w) => *mentions.entry(*w).or_insert(0) += 1,
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                let arg_var = |i: usize| match args.get(i).map(Value::unspan) {
+                    Some(Value::Var(w)) => Some(*w),
+                    _ => None,
+                };
+                let callee = data.def(*d);
+                match callee.name() {
+                    "OpDatabase" | "OpDatabaseNP" => {
+                        if let Some(w) = arg_var(0) {
+                            minted.insert(w);
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    "OpFreeRef" | "OpFreeRefIfDistinct" => {
+                        if let Some(w) = arg_var(0) {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    "OpDistinctStore" => {
+                        for (i, other) in [(0, 1), (1, 0)] {
+                            if let Some(w) = arg_var(i)
+                                && arg_var(other).is_some_and(|o| locals.contains_key(&o))
+                            {
+                                *dropped.entry(w).or_insert(0) += 1;
+                            }
+                        }
+                    }
+                    _ if admitted.contains(d) => {
+                        if let Some(idx) = ret_buffer_attr(callee)
+                            && let Some(w) = arg_var(idx)
+                        {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        false
+    });
+    for w in minted {
+        if !vars.is_argument(w)
+            && !locals.contains_key(&w)
+            && mentions.get(&w).copied().unwrap_or(0) == dropped.get(&w).copied().unwrap_or(0)
+        {
+            out.insert(w);
+        }
+    }
+    out
+}
+
 /// The value leaves of `def_nr` for the emitter ([`ValueLeaves`]): empty for a function
 /// that is not admitted, since only an admitted body converts a view or an `Object`.
 #[must_use]

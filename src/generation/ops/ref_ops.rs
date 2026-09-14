@@ -36,7 +36,8 @@ impl OpEmitter for OpFreeRefEmitter {
         // return-buffer parameter of an admitted function, which the signature dropped.
         if let Some(Value::Var(v)) = args.first().map(Value::unspan)
             && (ctx.output.value_record_locals.contains_key(v)
-                || ctx.output.value_phantom == Some(*v))
+                || ctx.output.value_phantom == Some(*v)
+                || ctx.output.dead_buffers.contains(v))
         {
             return write!(ctx.w, "()");
         }
@@ -282,7 +283,8 @@ impl OpEmitter for OpFreeRefIfDistinctEmitter {
         // admitted function is not there to release either.
         if let Some(Value::Var(v)) = args.first().map(Value::unspan)
             && (ctx.output.value_record_locals.contains_key(v)
-                || ctx.output.value_phantom == Some(*v))
+                || ctx.output.value_phantom == Some(*v)
+                || ctx.output.dead_buffers.contains(v))
         {
             return write!(ctx.w, "()");
         }

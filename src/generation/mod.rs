@@ -760,6 +760,10 @@ pub struct Output<'a> {
     /// is admitted: the signature dropped it, so a free of it emits as nothing and a
     /// store-identity test against it is always distinct.
     pub value_phantom: Option<u16>,
+    /// @PLN157 § V-ah — the current function's DEAD BUFFERS (`hoist::dead_buffers`): a
+    /// join buffer every use of which the value form drops, so its mint and its frees
+    /// emit as nothing.
+    pub dead_buffers: HashSet<u16>,
     /// @PLN157 § V-z (`@FR-R-ElemFirst`) — the element-first pairings of the current
     /// function ([`hoist::element_first`]): each paired temp is BUILT inside the
     /// appended element instead of its own store.
@@ -1743,6 +1747,7 @@ impl<'a> Output<'a> {
             value_record_locals: HashMap::new(),
             value_leaves: hoist::ValueLeaves::default(),
             value_phantom: None,
+            dead_buffers: HashSet::new(),
             elem_first: hoist::ElemFirstMap::default(),
             element_first_disabled: std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"),
             ret_adopt: None,
@@ -2001,7 +2006,9 @@ impl Output<'_> {
         self.value_record_locals.clear();
         self.value_leaves = hoist::ValueLeaves::default();
         self.value_phantom = None;
+        self.dead_buffers.clear();
         if !self.value_records.fns.is_empty() {
+            self.dead_buffers = hoist::dead_buffers(self.data, def_nr, &self.value_records);
             let admitted: HashSet<u32> = self.value_records.fns.keys().copied().collect();
             self.value_record_locals = hoist::value_locals_in(self.data, def_nr, &admitted);
             self.value_leaves = hoist::value_leaves(self.data, def_nr, &self.value_records);
