@@ -1040,97 +1040,10 @@ impl Output<'_> {
             write!(w, "{:?}", crate::data::Value::CallRef(v_nr, args.to_vec()))?;
             return Ok(());
         };
-        // P227: a text-returning fn-ref call site appends the `&text` work buffers the
-        // widest candidate of this signature could want, which is one OR MORE
-        // (`Data::fnref_text_buffers`, loft#1116).  So the candidate filter reads the
-        // user-visible count off the fn-ref TYPE rather than subtracting a fixed one from
-        // `args.len()` — a count that was right only while every call appended exactly
-        // one, and that silently matched NO candidate once a call appended two (the arm
-        // collapsed to `_ => unreachable!()` and rustc answered E0282 rather than naming
-        // anything about loft).
-        //
-        // Through `base()`, because the `?` does not change how a text return is DELIVERED:
-        // `Parser::text_return` peels `Optional` before it converts the body, so a `-> text?`
-        // call site appends exactly the same hidden buffers.  Reading the raw type here asked
-        // for a user-visible arity that counted them, so a `-> text?` lambda matched NO
-        // candidate and the dispatch collapsed to `_ => unreachable!()` — which is the very
-        // failure the paragraph above records, one wrapper out.  One question, one spelling:
-        // `is_text_return` below is the same read and both must move together.
-        let user_arg_match =
-            if matches!(ret_type.base(), Type::Text(_)) && args.len() > param_types.len() {
-                param_types.len()
-            } else {
-                args.len()
-            };
-        // Collect all definitions with a matching signature.
-        // Only include native-callable functions (n_ / t_ prefix) in the reachable set;
-        // bytecode ops (Op* prefix) are never callable via fn-refs in native mode.
-        let n_defs = self.data.definitions();
-        // (d_nr, fn_name, has_closure): has_closure=true when the last attribute is __closure.
-        let mut candidates: Vec<(u32, String, bool)> = Vec::new();
-        for d in 0..n_defs {
-            if !self.reachable.is_empty() && !self.reachable.contains(&d) {
-                continue;
-            }
-            let def = self.data.def(d);
-            if !matches!(def.def_type(), crate::data::DefType::Function) {
-                continue;
-            }
-            // Exclude bytecode ops (Op* prefix) — they are not callable in native mode.
-            if def.name().starts_with("Op") {
-                continue;
-            }
-            // closure-capturing lambdas have a hidden __closure param as the last
-            // attribute. The closure is injected explicitly at the call site (in arg_exprs),
-            // so total arg count must equal the full attribute count.
-            let has_closure = def
-                .attributes()
-                .last()
-                .is_some_and(|a| a.name == "__closure");
-            // P227: hidden-attribute detection is TYPE-based, not name-based.
-            // Text-return work-buffers ride as `Type::RefVar(Type::Text(_))`
-            // attributes that the parser names after the user-visible variable
-            // they shadow (e.g. `a` for `a = "first: {n}"; a`) — a name-prefix
-            // check (`starts_with("__")`) would miss these and reject otherwise
-            // matching candidates.  Closure records remain detected by the
-            // exact `__closure` name (its typedef is plain `DbRef`).
-            let visible_attrs: Vec<&crate::data::Attribute> = def
-                .attributes
-                .iter()
-                .filter(|a| {
-                    // PLAN51 V-c: `ref_return` (src/parser/control.rs:3203)
-                    // appends a hidden Reference/Vector/struct-enum buffer
-                    // arg to heap-returning user fns.  This filter must
-                    // exclude that synthetic attr to keep arity matching
-                    // against the call site's user-visible arg count —
-                    // without it, every ref_return-promoted lambda fails
-                    // the visible_attrs.len() == user_arg_match check below
-                    // and the fn-ref match arm emits only `_ => unreachable!`
-                    // (probes 30, 59, 62 panicked with `invalid fn-ref`).
-                    !a.hidden
-                        && !matches!(a.typedef, Type::RefVar(ref inner) if matches!(**inner, Type::Text(_)))
-                        && a.name != "__closure"
-                })
-                .collect();
-            if visible_attrs.len() != user_arg_match {
-                continue;
-            }
-            let params_match = visible_attrs
-                .iter()
-                .zip(param_types.iter())
-                .all(|(a, expected)| {
-                    rust_type(&a.typedef, &Context::Argument)
-                        == rust_type(expected, &Context::Argument)
-                });
-            if !params_match {
-                continue;
-            }
-            if rust_type(def.returned(), &Context::Result) != rust_type(&ret_type, &Context::Result)
-            {
-                continue;
-            }
-            candidates.push((d, def.name().to_string(), has_closure));
-        }
+        // The arm set has ONE home — `fnref::dispatch_arms` — shared with the value-record
+        // gate, which declines every arm because an arm whose ABI changes breaks the join.
+        let candidates = super::fnref::dispatch_arms(self.data, &self.reachable, &fn_type, args.len())
+            .unwrap_or_default();
         // Phase 09 phase 00 step 0.7 — fn-ref dispatch routes each
         // candidate arm through `output_call_user_fn` (which dispatches
         // via `emit_op`), so a custom emitter registered for any
@@ -1297,7 +1210,7 @@ impl Output<'_> {
             write!(w, "let __vc_out = ")?;
         }
         write!(w, "match var_{var_name}.0 {{")?;
-        for (d_nr, _fn_name, has_closure) in &candidates {
+        for super::fnref::Arm { d_nr, has_closure, .. } in &candidates {
             write!(w, " {d_nr}_u32 => ")?;
             // P227: text-return arms wrap each call result with
             // `.to_string()` so heterogeneous candidate Rust signatures

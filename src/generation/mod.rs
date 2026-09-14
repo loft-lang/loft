@@ -12,6 +12,7 @@ mod calls;
 mod coroutine;
 mod dispatch;
 mod emit;
+pub mod fnref;
 pub mod hoist;
 pub mod non_sentinel;
 pub(crate) mod ops;
