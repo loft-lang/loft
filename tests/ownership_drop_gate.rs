@@ -308,6 +308,25 @@ fn p_s4() { p_s4_b(false); }"#,
             r#"fn p_s5_b(c: boolean) { a = mk(106); b = mk(107); x = mk(108); if c { x = a; } else { x = b; } a = mk(109); println("R{x.id} A{a.id}"); }
 fn p_s5() { p_s5_b(false); }"#,
         ),
+        // A reassignment from `??` with a LOCAL default: the subject present, so the default's
+        // own record is still its local's to release.
+        cell(
+            "p_s6",
+            r#"fn p_s6() { a: H? = mk(110); b = mk(111); x = mk(112); x = a ?? b; println("R{x.id}"); }"#,
+        ),
+        // The same with the subject absent: the local keeps a copy of the default, which
+        // releases once.
+        cell(
+            "p_s7",
+            r#"fn p_s7() { a: H? = null; b = mk(113); x = mk(114); x = a ?? b; println("R{x.id}"); }"#,
+        ),
+        // A reassignment from a scalar `match` whose arms have no block of their own, repeated in
+        // a loop: each iteration releases the record the previous one assigned.
+        cell(
+            "p_s8",
+            r#"fn p_s8_b(k: integer) { x = mk(115); for i in 0..2 { x = match k { 0 => mk(116 + i), _ => mk(118 + i) }; println("R{x.id}"); } }
+fn p_s8() { p_s8_b(0); }"#,
+        ),
         // (H-Drop-Not): the language releases nothing for the X-marked id.
         cell(
             "p_n1",
