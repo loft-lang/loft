@@ -5698,12 +5698,21 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // relocation + early free — the combination that lowers the body-0-locked
         // watermark.  Runs before compute_intervals so the moved first_def is
         // reflected.  `LASTUSE_RECLAIM_OFF` disables it for A/B measurement.
+        // The stores reclaim must not move, for every pass below that reads the reclaim plan.
+        let drop_bearing = drop_bearing_stores(data, d_nr);
         if !reclaim_off {
             let db_nr = data.def_nr("OpDatabase");
             let gf_nr = data.def_nr("OpGetField");
             if !inject_unfreed {
                 let d = &mut data.definitions[d_nr as usize];
-                lastuse_reclaim(&mut d.code, &d.variables, db_nr, gf_nr, free_ref_nr);
+                lastuse_reclaim(
+                    &mut d.code,
+                    &d.variables,
+                    db_nr,
+                    gf_nr,
+                    free_ref_nr,
+                    &drop_bearing,
+                );
             }
             // Plan-57 Phase 4 — Goal-E enforcement (THE watermark guard, supersedes
             // the scope-exit `store_lifetime_guard`).  Every store the model says is
@@ -5713,8 +5722,14 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
             // LOFT_STORE_GUARD (`reclaim_guard`); zero-cost otherwise.
             if reclaim_guard {
                 let d = &data.definitions[d_nr as usize];
-                let unfreed =
-                    reclaim_unfreed_eligible(&d.code, &d.variables, db_nr, gf_nr, free_ref_nr);
+                let unfreed = reclaim_unfreed_eligible(
+                    &d.code,
+                    &d.variables,
+                    db_nr,
+                    gf_nr,
+                    free_ref_nr,
+                    &drop_bearing,
+                );
                 assert_eq!(
                     unfreed, 0,
                     "plan-57 Phase 4: {} left {unfreed} reclaim-eligible store(s) live-but-dead past a later alloc",
@@ -5735,8 +5750,14 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
             // verifies exactly the frees reclaim is responsible for and cannot
             // false-positive on legitimate store-sharing.
             let d = &data.definitions[d_nr as usize];
-            let (owning, _intent) =
-                reclaim_free_intent(&d.code, &d.variables, db_nr, gf_nr, free_ref_nr);
+            let (owning, _intent) = reclaim_free_intent(
+                &d.code,
+                &d.variables,
+                db_nr,
+                gf_nr,
+                free_ref_nr,
+                &drop_bearing,
+            );
             let tagset: HashSet<u16> = owning.into_iter().collect();
             let mut ids: HashMap<u16, u16> = HashMap::new();
             tag_stores(
@@ -19538,12 +19559,15 @@ fn reclaim_safe(code: &Value, vars: &Function, st: u16) -> bool {
 ///   gates (the ones whose null-init may relocate);
 /// - `intent` — `(store, trigger)` pairs: `store`'s data dies before the eligible
 ///   sibling `trigger` allocates, so `store` must be freed before `trigger`'s build.
+///
+/// A store in `drop_bearing` is never eligible ([`drop_bearing_stores`]).
 fn reclaim_free_intent(
     code: &Value,
     vars: &Function,
     db_nr: u32,
     gf_nr: u32,
     fr_nr: u32,
+    drop_bearing: &HashSet<u16>,
 ) -> (Vec<u16>, Vec<(u16, u16)>) {
     let body_scope = match code.unspan() {
         Value::Block(bl) => bl.scope,
@@ -19575,6 +19599,7 @@ fn reclaim_free_intent(
         .copied()
         .filter(|&st| {
             vars.scope(st) == body_scope
+                && !drop_bearing.contains(&st)
                 && contains_alloc_unconditional(code, st, db_nr)
                 && reclaim_safe(code, vars, st)
         })
@@ -19592,6 +19617,27 @@ fn reclaim_free_intent(
         }
     }
     (owning, intent)
+}
+
+/// The locals of function `d_nr` whose record type has a drop cascade: the stores last-use
+/// reclaim must leave alone (`@FR-H-Drop`).
+///
+/// Reclaim moves a store's DEATH — it relocates the null-init down to the build and frees the
+/// store early — but a drop belongs to that death and reclaim moves only the free.  The hook
+/// stays at scope exit, where the slot names a store a later build has reused, so it releases
+/// that store's resources instead; and a rebuild's release snapshot, which reads the slot just
+/// above the build, now runs before the relocated declaration.  Kept out of the plan, such a
+/// store keeps its body-0 null-init and releases through its hook and its free together.
+fn drop_bearing_stores(data: &Data, d_nr: u32) -> HashSet<u16> {
+    let vars = &data.def(d_nr).variables;
+    (0..vars.count())
+        .filter(|&v| {
+            vars.tp(v)
+                .base()
+                .heap_def_nr()
+                .is_some_and(|d| data.drop_cascade_nr(d) != u32::MAX)
+        })
+        .collect()
 }
 
 /// True if `op` is a top-level `OpFreeRef(Var(st))`.
@@ -19614,8 +19660,9 @@ fn reclaim_unfreed_eligible(
     db_nr: u32,
     gf_nr: u32,
     fr_nr: u32,
+    drop_bearing: &HashSet<u16>,
 ) -> usize {
-    let (_owning, intent) = reclaim_free_intent(code, vars, db_nr, gf_nr, fr_nr);
+    let (_owning, intent) = reclaim_free_intent(code, vars, db_nr, gf_nr, fr_nr, drop_bearing);
     let Value::Block(bl) = code.unspan() else {
         return 0;
     };
@@ -19656,10 +19703,17 @@ fn reclaim_unfreed_eligible(
 /// in the slot intervals.  Flat-body straight-line / sequential shapes only — the
 /// I-b / III-straight-line cases block-confinement (I-a) cannot reach.  Returns the
 /// count of relocations + frees applied.
-fn lastuse_reclaim(code: &mut Value, vars: &Function, db_nr: u32, gf_nr: u32, fr_nr: u32) -> usize {
+fn lastuse_reclaim(
+    code: &mut Value,
+    vars: &Function,
+    db_nr: u32,
+    gf_nr: u32,
+    fr_nr: u32,
+    drop_bearing: &HashSet<u16>,
+) -> usize {
     // Eligibility + free-intent come from the shared plan, so the Phase-4 guard
     // (`reclaim_unfreed_eligible`) verifies exactly what this pass acts on.
-    let (owning, intent) = reclaim_free_intent(code, vars, db_nr, gf_nr, fr_nr);
+    let (owning, intent) = reclaim_free_intent(code, vars, db_nr, gf_nr, fr_nr, drop_bearing);
     if owning.is_empty() {
         return 0;
     }

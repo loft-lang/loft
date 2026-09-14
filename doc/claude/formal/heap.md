@@ -923,9 +923,36 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
    clause — and it reaches every projection spelling, not only the loop variable and the `match`
    payload.  Either answer makes today's silence a deviation.
 5. **An element appended to another vector** — `v += [vs[0]]` and `[vs[0]]` (`c_elem_push`,
-   `c_elem_veclit`): the interpreter PANICS reading the element's id as a record number
-   (`Store access out of bounds: rec=39001`), and native releases twice.  The same program with
-   no `OpDrop` runs clean on both backends, so the hook is the axis.
+   `c_elem_veclit`): the interpreter PANICKED reading the element's id as a record number
+   (`Store access out of bounds: rec=39001`), and native releases twice.  The double release is
+   family 4 (a projection copied into a container) and is what remains.
+   - ✓ **The interpreter's crash — CLOSED 2026-09-14, and it was the loud face of a silent
+     defect.**  With a small element id the same program exited 0 and ran the hook about ninety
+     times over garbage records (`p_e1`, `p_e2`).  Two deciders disagreed about where a droppable
+     vector's declaration is.  The scan saw `parse_code`'s body-0 `__vdb = null`, treated the
+     first build as a rebuild and placed a null-safe release snapshot above it; Plan-57's
+     last-use reclaim then moved that null-init down to the build, below the snapshot, so the
+     snapshot read a slot whose declaration had not run, and the interpreter handed it whatever
+     an earlier variable left there.  (`LASTUSE_RECLAIM_OFF=1` removed it; confinement's
+     `LOFT_NO_CONF_RECOVER=1` did not.)
+   - ✓ **Found by the same cure, and closed with it: reclaim released the wrong store.**  Vectors
+     of droppable elements built one after another, each dead before the next (`p_r1`): reclaim
+     frees a dead store early and removes its scope-exit FREE, but not its scope-exit DROP.  At
+     scope exit the slot names a store a later build reused, so the interpreter released the last
+     vector's elements three times and native lost the earlier vectors' releases.  Measured
+     identical before any change today — the interpreter's one correct release of the first
+     vector had come only from the stray snapshot above.
+   - **The cure is one exclusion in the reclaim plan**, which `lastuse_reclaim` and its Phase-4
+     guard both read: a store whose record type has a drop cascade is not eligible
+     (`scopes::drop_bearing_stores`).  Reclaim moves a store's DEATH and a drop belongs to that
+     death, so such a store keeps its body-0 null-init and releases through its hook and its free
+     together.  Its only cost is that these stores are not reclaimed early; the corpus-wide
+     emission diff differs in the seven files that declare a hook and nowhere else.
+   - **Measured and not landed:** placing a relocated null-init before the first op that READS
+     its store.  It removed the crash, but `reads_var` counts a free on an early-return path as
+     a read, so it pulled null-inits back to body 0 in drop-free code
+     (`177-reclaim-early-return.loft`, `872-vector-return-into-struct-literal-field.loft`) and
+     undid their reclaim — and it left the released-wrong-store defect in place.
 6. **A call result's field in a branch arm** — `if k > 0 { mk_s(I).h } else { … }`
    (`c_callproj_arm`): twice.  `D-heap-3` covers the spelling outside an arm.
 

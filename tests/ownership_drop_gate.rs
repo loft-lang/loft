@@ -226,6 +226,29 @@ fn p_h6() { a = mk(52); p_h6_b(a, false); println("R{a.id}"); }"#,
             r#"fn p_h7_b(p: H) { x = mk(53); for i in 0..2 { x = mk(54 + i); x = p; } println("R{x.id}"); }
 fn p_h7() { a = mk(56); p_h7_b(a); println("R{a.id}"); }"#,
         ),
+        // An element copied into a second vector while the element's id is SMALL: the id is
+        // the value an uninitialised store slot would hold, so a release snapshot read ahead
+        // of its declaration lands in bounds and runs the hook over garbage records instead of
+        // crashing (the CROSS family's `c_elem_push` spells the crashing, large-id face).
+        cell(
+            "p_e1",
+            r#"fn p_e1() { vs: vector<H> = [mk(1)]; v: vector<H> = []; v += [vs[0]]; println("R{v[0].id}"); }"#,
+        ),
+        cell(
+            "p_e2",
+            r#"fn p_e2() { vs: vector<H> = [mk(3)]; v: vector<H> = []; v += [vs[0]]; println("R{v[0].id}"); }"#,
+        ),
+        // Droppable-element vectors built one after another, each dead before the next one is
+        // built: the shape last-use reclaim frees early.  Each element is released once, by its
+        // own vector's release.
+        cell(
+            "p_r1",
+            r#"fn p_r1() {
+  a: vector<H> = [mk(60)]; println("R{a[0].id}");
+  b: vector<H> = [mk(61)]; println("R{b[0].id}");
+  c: vector<H> = [mk(62), mk(63)]; println("R{c[1].id}");
+}"#,
+        ),
         // (H-Drop-Not): the language releases nothing for the X-marked id.
         cell(
             "p_n1",

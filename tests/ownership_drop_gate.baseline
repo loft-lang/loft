@@ -9,9 +9,9 @@ c_coalesce_reassign DOUBLE
 c_coalesce_veclit DOUBLE
 c_elem_enum DOUBLE
 c_elem_field DOUBLE
-c_elem_push CRASHED
+c_elem_push DOUBLE
 c_elem_ret DOUBLE,EARLY
-c_elem_veclit CRASHED
+c_elem_veclit DOUBLE
 c_field_enum DOUBLE
 c_field_field DOUBLE
 c_field_push DOUBLE
@@ -32,6 +32,8 @@ c_tuple_push DOUBLE
 c_tuple_ret DOUBLE,EARLY
 c_tuple_tuplem DOUBLE
 c_tuple_veclit DOUBLE
+p_e1 DOUBLE
+p_e2 DOUBLE
 p_h6 LOST
 p_h7 LOST
 p_j1 LOST
