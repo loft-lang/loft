@@ -138,40 +138,18 @@ fn collect_calls(node: IrNode, data: &Data, calls: &mut HashSet<u32>) {
         let d = node.call_to();
         let args = node.call_args();
         calls.insert(d);
-        // n_parallel_for / n_parallel_queue pass a worker function as
-        // args[4]: an integer literal that the codegen emitter
-        // (src/generation/ops/parallel.rs) resolves into a closure body
-        // calling the worker by name.  Detect it here so the worker
-        // is included in the reachable set — without this, the
-        // closure refers to a fn that never gets emitted and rustc
-        // fails with "cannot find function" (E0425).
-        if matches!(
-            data.def(d).name(),
-            "n_parallel_for"
-                | "n_parallel_for_light"
-                | "n_parallel_queue"
-                | "n_parallel_queue_text"
-                | "n_parallel_queue_ref"
-                | "n_parallel_queue_narrow"
-                | "n_parallel_queue_fn"
-                | "n_parallel_discard"
-        ) && args.len() >= 5
-            && args.get(4).kind() == ValueType::Int
-            && args.get(4).int_value() >= 0
+        // The parallel family passes its worker function as an integer literal that the
+        // codegen emitter (src/generation/ops/parallel.rs) resolves into a closure body
+        // calling the worker by name.  Detect it here so the worker is included in the
+        // reachable set — without this, the closure refers to a fn that never gets
+        // emitted and rustc fails with "cannot find function" (E0425).  WHICH argument is
+        // the one table `fnref::parallel_worker_arg`, shared with the value-record gate.
+        if let Some((i, min)) = fnref::parallel_worker_arg(data.def(d).name())
+            && args.len() >= min
+            && args.get(i).kind() == ValueType::Int
+            && args.get(i).int_value() >= 0
         {
-            calls.insert(args.get(4).int_value() as u32);
-        }
-        // ARC.md A5b — par_fold uses a different arg layout than
-        // the for/queue family: the worker fn d_nr is at args[2]
-        // (after input + init).  Same reason for the insert: the
-        // ParallelFoldEmitter generates `worker_name(cell, acc, row)`
-        // and the worker must be in the reachable set.
-        if data.def(d).name() == "n_parallel_fold"
-            && args.len() >= 4
-            && args.get(2).kind() == ValueType::Int
-            && args.get(2).int_value() >= 0
-        {
-            calls.insert(args.get(2).int_value() as u32);
+            calls.insert(args.get(i).int_value() as u32);
         }
     }
     node.for_each_child(&mut |c| collect_calls(c, data, calls));
@@ -774,6 +752,14 @@ pub struct Output<'a> {
     /// holds a Rust tuple, not a `DbRef`, so its `let` type, its field reads and its
     /// release all take the value form.  Local → the callee's def nr.
     pub value_record_locals: HashMap<u16, u32>,
+    /// @PLN157 § V-ah — the value LEAVES of the current (admitted) function, by node
+    /// address (`hoist::value_leaves`): a view `Var` emits as the tuple of its getters, an
+    /// `Object` block as the tuple of its writes, and nothing else converts.
+    pub value_leaves: hoist::ValueLeaves,
+    /// @PLN157 § V-ah — the current function's return-buffer PARAMETER when the function
+    /// is admitted: the signature dropped it, so a free of it emits as nothing and a
+    /// store-identity test against it is always distinct.
+    pub value_phantom: Option<u16>,
     /// @PLN157 § V-z (`@FR-R-ElemFirst`) — the element-first pairings of the current
     /// function ([`hoist::element_first`]): each paired temp is BUILT inside the
     /// appended element instead of its own store.
@@ -1755,6 +1741,8 @@ impl<'a> Output<'a> {
                 .is_ok_and(|v| v != "0"),
             value_records: hoist::ValueRecords::default(),
             value_record_locals: HashMap::new(),
+            value_leaves: hoist::ValueLeaves::default(),
+            value_phantom: None,
             elem_first: hoist::ElemFirstMap::default(),
             element_first_disabled: std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"),
             ret_adopt: None,
@@ -2011,20 +1999,18 @@ impl Output<'_> {
         };
         // @PLN157 § V-aa — the locals this function binds from an admitted call.
         self.value_record_locals.clear();
+        self.value_leaves = hoist::ValueLeaves::default();
+        self.value_phantom = None;
         if !self.value_records.fns.is_empty() {
-            let body = self.data.def(def_nr).code();
-            let admitted = &self.value_records.fns;
-            let mut found: Vec<(u16, u32)> = Vec::new();
-            body.any_node(&mut |n| {
-                if let Value::Set(v, inner) = n
-                    && let Value::Call(d, _) = inner.unspan()
-                    && admitted.contains_key(d)
-                {
-                    found.push((*v, *d));
-                }
-                false
-            });
-            self.value_record_locals.extend(found);
+            let admitted: HashSet<u32> = self.value_records.fns.keys().copied().collect();
+            self.value_record_locals = hoist::value_locals_in(self.data, def_nr, &admitted);
+            self.value_leaves = hoist::value_leaves(self.data, def_nr, &self.value_records);
+            if admitted.contains(&def_nr) {
+                let def = self.data.def(def_nr);
+                self.value_phantom = hoist::ret_buffer_attr(def)
+                    .map(|a| def.variables().var(&def.attributes()[a].name))
+                    .filter(|v| *v != u16::MAX);
+            }
         }
         self.elem_first = if self.element_first_disabled {
             hoist::ElemFirstMap::default()
@@ -2749,11 +2735,17 @@ impl Output<'_> {
         }
         use std::fmt::Write as _;
         let mut pushes = String::new();
-        for a in def.attributes() {
+        let dropped = self
+            .value_records
+            .fns
+            .contains_key(&self.def_nr)
+            .then(|| hoist::ret_buffer_attr(def))
+            .flatten();
+        for (i, a) in def.attributes().iter().enumerate() {
             // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted fn has no return buffer
             // parameter, so the live-reload arm must not push one either: the
             // interpreter allocates its own for the parked call.
-            if self.value_records.fns.contains_key(&self.def_nr) && a.name == "__retbuf" {
+            if dropped == Some(i) {
                 continue;
             }
             match &a.typedef {
@@ -6122,8 +6114,9 @@ extern crate loft;"
         // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted function returns its
         // record's fields in registers, so it needs no return BUFFER to write them into.
         let value_rec = self.value_records.tuple.get(&def_nr).cloned();
-        for a in def.attributes() {
-            if value_rec.is_some() && a.name == "__retbuf" {
+        let dropped = value_rec.as_ref().and_then(|_| hoist::ret_buffer_attr(def));
+        for (i, a) in def.attributes().iter().enumerate() {
+            if dropped == Some(i) {
                 continue;
             }
             let tp = rust_type(&a.typedef, &Context::Argument);
@@ -6220,11 +6213,23 @@ extern crate loft;"
                     && rust_type(vars.tp(v), &Context::Variable) == "DbRef"
                 {
                     use std::fmt::Write as _;
-                    let _ = write!(
-                        vdb_prologue,
-                        "\n  let mut var_{}: DbRef = DbRef::NULL;",
-                        sanitize(vars.name(v))
-                    );
+                    // @PLN157 § V-ah — a returned VALUE local is its tuple, bound at the
+                    // tuple's zero: it never names a store.
+                    if let Some(d) = self.value_record_locals.get(&v)
+                        && let Some(t) = self.value_records.tuple.get(d)
+                    {
+                        let _ = write!(
+                            vdb_prologue,
+                            "\n  let mut var_{}: {t} = Default::default();",
+                            sanitize(vars.name(v))
+                        );
+                    } else {
+                        let _ = write!(
+                            vdb_prologue,
+                            "\n  let mut var_{}: DbRef = DbRef::NULL;",
+                            sanitize(vars.name(v))
+                        );
+                    }
                     self.declared.insert(v);
                     self.predeclared.insert(v);
                 }
@@ -6275,10 +6280,16 @@ extern crate loft;"
             // already frees the orphan; native's reassign-free excluded the
             // retbuf-attr entirely).  Leading `_` suppresses the unused warning
             // for retbuf locals that are never reassigned.
-            for a in def.attributes() {
+            let dropped = self
+                .value_records
+                .fns
+                .contains_key(&def_nr)
+                .then(|| hoist::ret_buffer_attr(def))
+                .flatten();
+            for (i, a) in def.attributes().iter().enumerate() {
                 // @PLN157 § V-aa — an admitted fn has no return buffer, so it has no
                 // buffer witness either (the parameter itself is gone).
-                if self.value_records.fns.contains_key(&def_nr) && a.name == "__retbuf" {
+                if dropped == Some(i) {
                     continue;
                 }
                 if a.hidden && matches!(&a.typedef, Type::Reference(_, _) | Type::Enum(_, true, _))

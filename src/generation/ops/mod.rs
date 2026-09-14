@@ -290,6 +290,7 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     );
     r.insert("OpPutRef", Box::new(ref_ops::OpPutRefEmitter));
     r.insert("OpCopyRecord", Box::new(ref_ops::OpCopyRecordEmitter));
+    r.insert("OpDistinctStore", Box::new(ref_ops::OpDistinctStoreEmitter));
     r.insert("OpSizeofRef", Box::new(ref_ops::OpSizeofRefEmitter));
 
     // Match elimination — the text/format/buffer family relocated VERBATIM from

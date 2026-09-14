@@ -43,8 +43,9 @@ fn c2() {
   println("c2 {s} {f} {n}");
 }
 
-// c3 — a site STORES the record into a collection: the function declines (every site
-// must consume by field reads), and both the stored and the read values stay exact.
+// c3 — a site APPENDS the record to a collection.  Admitted since § V-ah: the append
+// COPIES FROM the local, and a copy from a value local is the tuple materialised into the
+// element (one typed write per field); the local itself never needs a store.
 fn c3() {
   keep: vector<Smp> = [];
   t = 0.0;

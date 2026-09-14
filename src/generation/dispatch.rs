@@ -249,7 +249,10 @@ impl Output<'_> {
             // the caller's buffer is never the store released.  The displaced free is guarded by
             // `_old != place` and released through `free_displaced`, which declines a
             // free-protected store.
+            // @PLN157 § V-ah — a value local holds a tuple in registers, not a store: a
+            // reassignment displaces nothing.
             let owned_ref_reassign = self.declared.contains(&var)
+                && !self.value_record_locals.contains_key(&var)
                 && variables.owns_displaced_store(var, to, self.data)
                 && matches!(
                     to.unspan(),
@@ -746,6 +749,10 @@ impl Output<'_> {
         ) && matches!(to_unspanned, Value::Call(_, _) | Value::CallRef(_, _))
             && self.data.def(fn_nr).is_loft_defined()
             && !self.data.def(fn_nr).return_adopts_fresh_store()
+            // @PLN157 § V-aa/§ V-ah (`@FR-R-ValueRecord`) — an admitted callee answers a
+            // tuple: nothing to adopt, copy, protect or displace, so its binding is the
+            // plain assignment below, and the buffer argument is dropped there.
+            && !self.value_records.fns.contains_key(&fn_nr)
         {
             let tp_nr = self.data.def(d_nr).known_type();
             let first_bind = !self.declared.contains(&var);
@@ -1430,7 +1437,12 @@ impl Output<'_> {
             let tp_str = self.local_rust_type(var, &var_tp);
             write!(w, "let mut var_{name}: {tp_str} = ")?;
         }
-        if matches!(to, Value::Null) && rust_type(variables.tp(var), &Context::Variable) == "DbRef"
+        // @PLN157 § V-ah — a value local's DECLARATION (`x = null` in the IR) binds the
+        // tuple's zero, not a null `DbRef`: the local never names a store.
+        if matches!(to, Value::Null) && self.value_record_locals.contains_key(&var) {
+            write!(w, "Default::default()")?;
+        } else if matches!(to, Value::Null)
+            && rust_type(variables.tp(var), &Context::Variable) == "DbRef"
         {
             let lv = format!("var_{name}");
             self.emit_null_dbref(w, var, &name, &lv, first_assign)?;

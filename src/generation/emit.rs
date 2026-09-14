@@ -306,6 +306,17 @@ impl Output<'_> {
             // keeps a native bridge as it is a &Value-only predicate).
             ValueType::Var => {
                 let var = node.var_nr();
+                // @PLN157 § V-ah (`@FR-R-ValueRecord`) — a VIEW of the record at a value
+                // position of an admitted body is the tuple of its field reads.
+                if !self.value_leaves.views.is_empty()
+                    && let Some(v) = node.native()
+                    && self
+                        .value_leaves
+                        .views
+                        .contains(&(std::ptr::from_ref(v) as usize))
+                {
+                    return self.output_view_tuple(w, var);
+                }
                 let variables = self.data.def(self.def_nr).variables();
                 let var_name = sanitize(variables.name(var));
                 // loft#1354 — this read HANDS the local to an `if` that binds it, and a
@@ -1042,8 +1053,9 @@ impl Output<'_> {
         };
         // The arm set has ONE home — `fnref::dispatch_arms` — shared with the value-record
         // gate, which declines every arm because an arm whose ABI changes breaks the join.
-        let candidates = super::fnref::dispatch_arms(self.data, &self.reachable, &fn_type, args.len())
-            .unwrap_or_default();
+        let candidates =
+            super::fnref::dispatch_arms(self.data, &self.reachable, &fn_type, args.len())
+                .unwrap_or_default();
         // Phase 09 phase 00 step 0.7 — fn-ref dispatch routes each
         // candidate arm through `output_call_user_fn` (which dispatches
         // via `emit_op`), so a custom emitter registered for any
@@ -1210,7 +1222,10 @@ impl Output<'_> {
             write!(w, "let __vc_out = ")?;
         }
         write!(w, "match var_{var_name}.0 {{")?;
-        for super::fnref::Arm { d_nr, has_closure, .. } in &candidates {
+        for super::fnref::Arm {
+            d_nr, has_closure, ..
+        } in &candidates
+        {
             write!(w, " {d_nr}_u32 => ")?;
             // P227: text-return arms wrap each call result with
             // `.to_string()` so heterogeneous candidate Rust signatures
@@ -1481,6 +1496,39 @@ impl Output<'_> {
     }
 
     /// Emit a typed null sentinel for the given type.
+    /// @PLN157 § V-ah — a borrowed VIEW of the current function's record, read at a value
+    /// position, as the tuple of its field getters in field order: the same getters a
+    /// caller's field read lowers to, so a null view answers each field's null exactly as
+    /// the record form's later read would.  A boolean getter answers the storage byte, so
+    /// it is coerced to the `bool` the tuple carries.
+    fn output_view_tuple(&mut self, w: &mut dyn Write, var: u16) -> std::io::Result<()> {
+        let fields = self
+            .value_records
+            .fields
+            .get(&self.def_nr)
+            .cloned()
+            .unwrap_or_default();
+        write!(w, "(")?;
+        for (i, (off, rt)) in fields.iter().enumerate() {
+            if i > 0 {
+                write!(w, ", ")?;
+            }
+            let getter = self.data.def_nr(super::hoist::value_getter(rt));
+            let call = Value::Call(getter, vec![Value::Var(var), Value::Int(*off as i32)]);
+            if *rt == "bool" {
+                write!(w, "((")?;
+                self.output_code_inner(w, &call)?;
+                write!(w, ") as u8) == 1")?;
+            } else {
+                self.output_code_inner(w, &call)?;
+            }
+        }
+        if fields.len() == 1 {
+            write!(w, ",")?;
+        }
+        write!(w, ")")
+    }
+
     pub(super) fn write_typed_null(w: &mut dyn Write, tp: &Type) -> std::io::Result<()> {
         Self::write_typed_null_in(w, tp, false)
     }
@@ -2254,16 +2302,37 @@ impl Output<'_> {
         // value per field at a constant offset, so the whole block — the buffer's
         // allocate-or-reuse, the writes, the yield — is exactly the tuple of those
         // values, in field order.  The buffer it wrote into no longer exists.
+        // Only an `Object` at a value LEAF converts (`hoist::value_leaves`): one bound to a
+        // record local or dropped as a statement is still a record build.
         if bl.name == "Object"
+            && self
+                .value_leaves
+                .objects
+                .contains(&(std::ptr::from_ref(bl) as usize))
             && let Some(&tp) = self.value_records.fns.get(&self.def_nr)
             && let Some(parts) = self.value_record_parts(bl, tp)
         {
+            let kinds: Vec<&'static str> = self
+                .value_records
+                .fields
+                .get(&self.def_nr)
+                .map(|f| f.iter().map(|(_, rt)| *rt).collect())
+                .unwrap_or_default();
             write!(w, "(")?;
             for (i, val) in parts.iter().enumerate() {
                 if i > 0 {
                     write!(w, ", ")?;
                 }
-                self.output_code_inner(w, val)?;
+                // A boolean field's operand may be the STORAGE byte (a `u8` parameter or
+                // field read) where the tuple carries `bool`; the coercion is the one
+                // every test predicate uses.
+                if kinds.get(i) == Some(&"bool") {
+                    write!(w, "((")?;
+                    self.output_code_inner(w, val)?;
+                    write!(w, ") as u8) == 1")?;
+                } else {
+                    self.output_code_inner(w, val)?;
+                }
             }
             // The 1-tuple's trailing comma, matching the signature built in
             // `hoist::value_records` — without it a single-field record returns a bare

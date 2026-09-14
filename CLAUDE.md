@@ -765,15 +765,18 @@ append relocates the element's bytes (heap handles included — they never chang
 zeroes the source, and the buffer's free is record-level — and is the bisect step for a
 wrong element, a leak or a double free out of a loop that appends a dying temporary's
 elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
-**`LOFT_VALUE_RECORD=1`** (@PLN157 § V-aa, **OPT-IN** — off unless set, since 2026-09-12)
-makes a function whose result is a plain no-heap record of ≤6 scalar fields, whose every
-call site reads fields off it and whose body builds it with `Object` blocks, return those
-fields in REGISTERS with the call site reading tuple elements (measured: 1.65× on the
-call, `smooth` −25 % standalone, `lock_curved` −3 %).  Not default-on because its
-call-site gate does not yet hold over the script corpus — three call shapes (a result
-used as a `DbRef`, a buffer argument kept for a signature that dropped it, a `match`
-joining a tuple arm with a record arm) generate a crate that does not compile — so
-the default is the return buffer, and the tests arm the switch explicitly.
+**`LOFT_NO_VALUE_RECORD=1`** (@PLN157 § V-aa, default-ON since 2026-09-14) makes a
+function whose result is a plain no-heap record of ≤6 scalar fields return it through
+the buffer again — with it off, such a function whose every call site reads fields off
+it and whose body builds it with `Object` blocks returns those fields in REGISTERS with
+the call site reading tuple elements (measured: 1.65× on the call, `smooth` −25 %
+standalone, `lock_curved` −3 %) — and is the bisect step for a wrong field out of a
+record-returning call on native.  It was opt-in for two days because its call-site gate
+did not hold over the script corpus (376 compile errors, 218 of them the fn-ref
+DISPATCH: every arm of the `match` a `CallRef` emits shares one return type); the gate
+now declines every arm by reading the arm set from `fnref::dispatch_arms`, the
+emitter's own home for that question, and the two other classes (a `__lift_` temp, a
+mixed-arm branch) are declined by shape.
 `LOFT_TRACE_VALUEREC=1` names each admission and decline.
 **`LOFT_POISON_CLAIM=1`** (`Store::poison_fill`) fills a freshly CLAIMED payload with
 `0xDEADBEEF` instead of zeros — the claim-side twin of `LOFT_POISON`'s poison-on-free, and

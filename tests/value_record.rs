@@ -7,9 +7,9 @@
 //! (`bytecode-comparisons/V-aa-value-record-cells.loft`) says the VALUES hold; this pins
 //! the EMISSION — which functions are admitted, and that every declining shape (a stored
 //! record, a heap field, too many fields, a passed-on or returned-onward result, a
-//! forwarding body) keeps its buffer — and the switch: the unit is OPT-IN (`LOFT_VALUE_RECORD=1`
-//! arms it; unset or `0` is the return buffer, the default until the call-site gate holds over
-//! the script corpus).
+//! forwarding body) keeps its buffer — and the switch: `LOFT_NO_VALUE_RECORD=1` restores the
+//! return buffer for every admitted function (default-on since @PLN157 § V-ah stage 1 gave the
+//! call-site gate the emitter's own fn-ref arm scan).
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -20,15 +20,40 @@ const CELLS: &str =
 const EXPECTED: &[(&str, bool)] = &[
     ("n_mk_smp", true),         // c1: every site reads fields
     ("n_mk_mixed", true),       // c2: mixed scalar field types
-    ("n_mk_smp_kept", false),   // c3: a site STORES the record
-    ("n_mk_owner", false),      // c4: a `text` field owns heap
-    ("n_mk_big", false),        // c5: past the field-count bound
+    ("n_mk_smp_kept", true), // c3: a site appends it — a copy FROM the tuple, materialised (§ V-ah)
+    ("n_mk_owner", false),   // c4: a `text` field owns heap
+    ("n_mk_big", false),     // c5: past the field-count bound
     ("n_mk_smp_passed", false), // c6: the result is passed on
-    ("n_mk_cond", false),       // c7: the arms' Objects sit under an `if` the value
-    // path does not rebuild — the body gate declines it (conservative; values exact)
-    ("n_mk_inner", false),     // c8: its result builds another record
-    ("n_mk_ret", false),       // c9: its caller RETURNS the record onward
-    ("n_pass_through", false), // c9: a FORWARDING body has no Object to convert
+    ("n_mk_cond", false),    // c7: the arms build INTO one shared buffer local and the tail
+    // RETURNS that local — an owned tail, which the value form would have to mint (declines)
+    ("n_mk_inner", true), // c8: read field-wise inside an admitted caller's own build
+    ("n_mk_ret", true),   // c9: its caller forwards it — a forwarding tail (§ V-ah)
+    ("n_pass_through", true), // c9: the forwarding body is admitted with its callee
+];
+
+/// The § V-ah tails (`bytecode-comparisons/V-ah-value-tail-cells.loft`): a forwarding
+/// tail, a selecting tail, the branch-bound local and the builder delivered into a
+/// destination, each beside the shape that must still decline.
+const TAIL_CELLS: &str =
+    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ah-value-tail-cells.loft";
+const TAIL_EXPECTED: &[(&str, bool)] = &[
+    ("n_pt", true),         // t1: delivered into a push slot — the tuple is materialised
+    ("n_half", true),       // t2: a forwarding tail
+    ("n_mk_kept", true),    // t3: its record is appended — a copy FROM a value local materialises
+    ("n_fwd_kept", true),   // t3: forwards an admitted callee
+    ("n_pt5", false),       // t5: forwarded by a body a mixed-arm branch declines
+    ("n_half5", false),     // t5: a mixed-arm branch needs the record
+    ("n_sel", true),        // t6: a selecting tail (a view of a `const` parameter)
+    ("n_ctrl", true),       // t7: a selecting tail with an early return
+    ("n_half_chord", true), // t8: selecting calls without their brackets, then a forward
+    ("n_own", false),       // t9: an OWNED tail — the value form would mint per call
+    ("n_pt10", false),      // t10: a discharge arm joined with a variable
+    ("n_maybe", false),     // t10: a nullable result has no tuple
+    ("n_ping", true),       // t11: a branch of two admitted calls, mutually recursive
+    ("n_pong", true),       // t11: the forwarding half of the pair
+    ("n_pt12", false),      // t12: delivered into a field / element through a `__lift_` temp
+    ("n_pt13", false),      // t13: its result is passed as an argument (`disc(given)`)
+    ("n_disc", false),      // t13: a JOIN tail — a view on one arm, a mint on the other
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
@@ -37,10 +62,10 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
         .arg(out)
         .arg(src)
         .env("LOFT_TIMEOUT", "120")
-        // § V-aa is OPT-IN (see `hoist::value_record_disabled`): its gates do not hold
-        // across the script corpus, so the default build keeps the return buffer.  These
-        // tests are what the unit is developed against, so they ask for it explicitly.
-        .env("LOFT_VALUE_RECORD", "1");
+        // The default build: § V-aa is default-on since its call-site gate reads the fn-ref
+        // arm scan from the emitter's own home (@PLN157 § V-ah stage 1).  A test that wants
+        // the return buffer back passes the switch through `env`.
+        .env_remove("LOFT_NO_VALUE_RECORD");
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -91,16 +116,50 @@ fn each_cell_returns_by_value_exactly_where_predicted() {
 }
 
 #[test]
-fn the_default_build_keeps_every_return_buffer() {
+fn each_tail_cell_returns_by_value_exactly_where_predicted() {
+    let out = std::env::temp_dir().join("loft_value_tail_on.rs");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(TAIL_CELLS);
+    let rust = emit(&src, &out, &[]);
+    for (name, want) in TAIL_EXPECTED {
+        assert_eq!(
+            returns_tuple(&rust, name),
+            *want,
+            "{name}: returns its record by value"
+        );
+    }
+    // The forwarding tail's own buffer parameter is gone from its signature, whatever the
+    // parser named it (`__ref_1` here, not `__retbuf`), and no site passes one.
+    assert!(
+        rust.contains("fn n_half(cell: &std::cell::UnsafeCell<Stores>, mut var_a: f64, mut var_b: f64) -> (f64, f64)"),
+        "the forwarding tail keeps only its declared parameters"
+    );
+    assert!(
+        !rust.contains("n_half(cell, 7_f64, 9_f64, var_"),
+        "a call to the forwarding tail passes no buffer"
+    );
+    // The selecting call site carries no protect bracket: the borrow it guarded is gone.
+    let hc = rust
+        .split("fn n_half_chord(")
+        .nth(1)
+        .and_then(|s| s.split("\nfn ").next())
+        .expect("n_half_chord emitted");
+    assert!(
+        !hc.contains("n_protect_store_frees"),
+        "a selecting callee's tuple needs no borrow bracket"
+    );
+    let _ = std::fs::remove_file(&out);
+}
+
+#[test]
+fn the_switch_restores_every_return_buffer() {
     let out = std::env::temp_dir().join("loft_value_record_off.rs");
-    // The unit is OPT-IN, so asking for nothing is the off state: `emit` sets
-    // LOFT_VALUE_RECORD=1 and this overrides it back to 0.  Pinning the DEFAULT here (not
-    // just "a switch turns it off") is the point — it is what a user's build does.
-    let rust = emit(&cells(), &out, &[("LOFT_VALUE_RECORD", "0")]);
+    // `LOFT_NO_VALUE_RECORD=1` is the bisect step for a wrong field out of a
+    // record-returning call on native: every admitted function keeps its buffer again.
+    let rust = emit(&cells(), &out, &[("LOFT_NO_VALUE_RECORD", "1")]);
     for (name, _) in EXPECTED {
         assert!(
             !returns_tuple(&rust, name),
-            "{name}: the default build keeps its return buffer (§ V-aa is opt-in)"
+            "{name}: LOFT_NO_VALUE_RECORD=1 must restore its return buffer"
         );
     }
     let _ = std::fs::remove_file(&out);

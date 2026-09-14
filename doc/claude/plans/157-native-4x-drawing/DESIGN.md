@@ -2380,8 +2380,10 @@ row asks, and it is a different unit.
 
 ## V-ah — the record that never needed to exist: `smooth` run down (2026-09-14)
 
-**DESIGNED, ceiling measured, NOT BUILT.**  `smooth` is the last judged row over the bar
-(8.44×), and this is its run-down under the [§ 3e](../../PERFORMANCE.md) direction.
+**BUILT 2026-09-14 (stages 1–3), on the quiet x86-64 box.**  `smooth` was the last judged
+row over the bar (8.44×), and this is its run-down under the [§ 3e](../../PERFORMANCE.md)
+direction.  The design below stands as written; what shipped, and what the build taught,
+is the closing paragraph **Built** at the end of this section.
 
 **The profile on the current tip** (`sm_only.loft --n 2000000`; the § V-af reading predates
 § V-ag and the two runtime fixes).  Of the program's own time: `n_smooth_pts` 18.4 %,
@@ -2415,6 +2417,11 @@ record-returning and once returning the two floats as a tuple; identical output,
 | A — `ctrl` and `half_chord` return `Pt` (shipped) | 1 227–1 279 | — |
 | C — only `half_chord` returns its fields | 938–955 | **−24 %** |
 | B — both return their fields | 740–757 | **−40 %** |
+
+On x86-64 (the quiet Ubuntu laptop, 2026-09-14, three runs, load under 1.0) the same probe
+reads A 2 035–2 078, B 1 210–1 214 — **−41 %**, so the two lanes agree on this unit; the
+README's hand-off carries the seven-row table that also prices the `n_pt` inline (−7 %),
+the direct slot write (−3 %) and the tuple helpers' frame prelude (−3 %) on that box.
 
 **So the unit stages, and the split says the cheap stage is worth most of it.**
 
@@ -2465,6 +2472,91 @@ into the appended element by § V-d, so what it costs is the call and two field 
 through a `DbRef` the caller already has an address for.  That is the § V-p twin idea
 applied to a record DESTINATION rather than a source, and it wants its own ceiling
 measurement before any design.
+
+**Built (2026-09-14).**  Three commits on the branch, each with its own gate:
+
+1. *Stage 1 — one home for the fn-ref arm scan.*  `Output::output_call_ref`'s scan moved
+   verbatim into `generation::fnref::dispatch_arms`; `scripts/introspect_diff.sh` read
+   IDENTICAL 1502/1502 against the pre-move binary.  The value-record gate then declines
+   every arm of every `CallRef` by asking that function, and the four remaining corpus
+   scripts were exactly what the by-record heuristic could not see: a lambda reaching a
+   dispatch through a typed variable with no `FnRef` node beside it.  § V-aa is
+   default-ON; `LOFT_NO_VALUE_RECORD=1` restores the buffer; `tests/native` green over
+   the 1 292-script corpus with it on.
+2. *Stages 2 + 3 together, because they share one predicate.*  Admission is a FIXPOINT
+   over `hoist::value_shape` (what a value LEAF is: an `Object` of the body's own
+   record, an admitted call, a value local, a borrowed VIEW of the record) and the
+   positional `hoist::site_walk` (where a tuple may stand: `Tail`, `Bound`, `Discard`;
+   an `Operand` declines).  The emitter reads the same two through `value_locals_in`
+   and `value_view_leaves`, so what is admitted is what is emitted.  Four op arms carry
+   the record form's guards into the value form: a free of a value local is nothing, a
+   store-identity test against one is `true` (the free it guards becomes unconditional —
+   the ownership change stage 3 named, and it is a one-line arm because the buffer the
+   guard protected is never minted in the value form), a copy FROM one MATERIALISES the
+   tuple into the destination (one typed setter per field), and an admitted function's
+   return-buffer parameter is a PHANTOM the frees and the witness prologue skip.
+   `ret_buffer_attr` is the one predicate for "which attribute is the buffer" — the
+   parser names it `__retbuf` when it minted it and after the promoted local
+   (`__ref_3`) when the buffer IS that local, and the call site was passing the
+   argument to a signature that had dropped it.
+3. *What the build corrected in the design.*  (a) The push site was the FIRST blocker,
+   not `n_pt`'s call: `sp_out += [pt(…)]` binds the builder's result to a temp the
+   append copies from under an `OpDistinctStore` guard, and that guard declined `pt`
+   for the whole program — so the "§ V-p twin at a record destination" the design
+   deferred is the materialise arm, and it landed inside this unit (−7 % of the
+   hand-off's ceiling table, the call gone).  (b) An OWNED tail (`own`'s promoted
+   buffer) stays declined on purpose: the value form would mint per call what the
+   buffer form reuses.  (c) A record appended from a value local is admitted, not
+   declined — the append copies FROM the local, which the materialise serves — so the
+   V-aa cells' c3 and c8 predictions flipped, with their values unchanged.  (d) A
+   `__lift_` temp (a builder delivered into a FIELD or an indexed ELEMENT) still
+   declines: its set lowering reads `.store_nr` off the value outside the IR.
+
+   *What the script corpus then corrected, eight scripts at a time.*  (e) A `Var` leaf
+   is a VIEW by the ownership oracle (`@FR-O-Oracle`), not by its dep list: `q1021`'s
+   `__ret_1` is typed `ref(P)["a"]` and holds the parameter's store on one arm and a
+   minted default on the other — `Own::Join` — and reading it as a tuple would have left
+   that mint nobody's; the dep list is the proxy the formal chapter already calls unsound
+   alone.  (f) Only an `Object` at a value LEAF converts (`hoist::ValueLeaves`, by node
+   address): the first build converted EVERY `Object` in an admitted body, and one bound
+   to a record local or dropped as a statement then handed rustc a tuple where a `DbRef`
+   was wanted (five scripts).  (g) A `par` worker is the THIRD spelling of a dispatch,
+   beside a `FnRef` node and a `CallRef`'s typed variable: the queue op carries the
+   worker's number as an integer ARGUMENT and the parallel emitter spells its own buffered
+   call — `fnref::parallel_worker_arg` is the one table, read by native reachability
+   (which must emit the worker) and by the gate (which must decline it).  (h) A generator
+   binds no value local: its locals persist as `DbRef` fields of the coroutine struct.
+   (i) A boolean field's operand may be the storage byte (`u8`) where the tuple carries
+   `bool` — coerced the way every test predicate is, at the `Object` tuple and the view
+   tuple alike.  Every one of the eight was a shape the twelve cells did not reach, which
+   is the corpus doing the job the cells cannot.
+
+   *Cells* `bytecode-comparisons/V-ah-value-tail-cells.loft` (t1–t12, hand-computed,
+   both backends exact, clean under `LOFT_NATIVE_LEAK_CHECK`, `LOFT_POISON`,
+   `LOFT_STRICT_STORES` and `LOFT_NO_VALUE_RECORD`); `tests/value_record.rs` pins which
+   of them the emission admits; `scripts/emission_audit.py` clean on the probe.
+
+   *Measured on the probes* (`--native-release`, three runs, hashes exact; the
+   two-kernel A form is the shipped `smooth` shape):
+
+   | probe form | before | after |
+   |---|---:|---:|
+   | A — record `ctrl`/`half_chord`, `pt` at the push | 2 025–2 102 | **1 504–1 563** (−27 %) |
+   | A + literal push | 1 886–1 952 | 1 483–1 498 |
+   | B — hand-written tuples | 1 210–1 300 | 1 072–1 084 (the push materialise, −11 %) |
+   | B + literal push | 1 078–1 091 | 1 079–1 082 |
+
+   *Consumer table* (`compare.py --skip-interp --repeat 3`, this lane, 14/14 hashes
+   agree): `smooth` **4.58×** (1 740 ns against Rust's 380) from 9.5–10.2× — the last
+   judged row over the bar, now by 0.58×; every other judged row under it (`hash` 3.07,
+   `hair` 2.02, `fronds` 3.33, `lock` 2.44, `lock_curved` 2.69, `composite` 2.34, the
+   fills 1.22/1.25, `wide_line` 2.41).
+
+   A now reads within 40 % of the hand-written B, not 70 %; what separates them is
+   read off the emission: the four § V-af join-buffer stores `__ref_1..4` minted and
+   freed per activation for branches that now bind tuples (dead — the next unit), and
+   the per-point materialise writing through `store_mut` + `valid` where the push
+   header already addresses the slot (the direct-write unit, −3 % measured rustc-first).
 
 ## V-k — the append path's bookkeeping (2026-09-09)
 

@@ -46,8 +46,7 @@ pub fn dispatch_arms(
     let Type::Function(param_types, ret_type, _) = fn_type else {
         return None;
     };
-    let user_arg_match = if matches!(ret_type.base(), Type::Text(_)) && n_args > param_types.len()
-    {
+    let user_arg_match = if matches!(ret_type.base(), Type::Text(_)) && n_args > param_types.len() {
         param_types.len()
     } else {
         n_args
@@ -102,8 +101,7 @@ pub fn dispatch_arms(
             .iter()
             .zip(param_types.iter())
             .all(|(a, expected)| {
-                rust_type(&a.typedef, &Context::Argument)
-                    == rust_type(expected, &Context::Argument)
+                rust_type(&a.typedef, &Context::Argument) == rust_type(expected, &Context::Argument)
             });
         if !params_match {
             continue;
@@ -118,4 +116,28 @@ pub fn dispatch_arms(
         });
     }
     Some(candidates)
+}
+
+/// Where a PARALLEL op carries its worker: `(index, minimum argument count)` of the
+/// argument holding the worker's definition number as an integer literal, for the ops
+/// that spell a dispatch that way — the third spelling of "this function is reached by a
+/// dispatch", beside a `FnRef` node and a `CallRef`'s typed variable, and one no walk over
+/// calls can see.  ONE table, read by native reachability (`collect_calls`, which must
+/// emit the worker) and by the value-record gate (which must decline it: the parallel
+/// emitter spells its own buffered call to the worker).
+#[must_use]
+pub fn parallel_worker_arg(op_name: &str) -> Option<(usize, usize)> {
+    match op_name {
+        "n_parallel_for"
+        | "n_parallel_for_light"
+        | "n_parallel_queue"
+        | "n_parallel_queue_text"
+        | "n_parallel_queue_ref"
+        | "n_parallel_queue_narrow"
+        | "n_parallel_queue_fn"
+        | "n_parallel_discard" => Some((4, 5)),
+        // ARC.md A5b — `par_fold` lays its arguments out as input + init + worker.
+        "n_parallel_fold" => Some((2, 4)),
+        _ => None,
+    }
 }

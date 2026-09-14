@@ -623,25 +623,41 @@ and loses only the innermost frame NAME from the chain.  Switch
                  temp-store build and is the oracle.
 
   (R-ValueRecord) a function whose result is a PLAIN NO-HEAP RECORD of at most six
-                 scalar fields returns those fields BY VALUE — a Rust tuple, in
-                 registers — instead of writing them into a return buffer the
-                 caller then reads back.  Three gates, and the second and third
-                 are what make the first safe per FUNCTION: every CALL SITE in the
-                 program consumes the result by reading fields off a local it binds
-                 (a site that stores it, passes it on, returns it onward or binds
-                 it into a collection declines the whole function, so no site has
-                 to materialise a record out of a tuple and none can be made
-                 slower); and the BODY builds the record through `Object` blocks at
-                 every result position (a tail that FORWARDS another call's record
-                 has nothing to convert, and its signature would promise a tuple
-                 over a `DbRef`).  The callee's `Object` block becomes the tuple of
-                 its writes in field order; the call site binds the tuple, drops the
-                 buffer argument, reads `v.<index>` where it read a store, and
-                 releases nothing.  Two boundaries keep the record contract: the
-                 LIVE-RELOAD arm answers a `DbRef` and so reads the fields back out
-                 of it, and a library's CDYLIB BRIDGE materialises the tuple into
-                 the destination record it already owns — so the C ABI is unchanged
-                 while loft-to-loft calls inside the library take the value path.
+                 scalar fields (an `integer` only at its 8-byte width) returns those
+                 fields BY VALUE — a Rust tuple, in registers — instead of writing them
+                 into a return buffer the caller then reads back.  Admission is a
+                 FIXPOINT over two gates, because a tail may forward another admitted
+                 function's result and a site may bind a branch of admitted calls:
+                 the BODY gate asks that every result position be a VALUE LEAF — an
+                 `Object` build of the function's own record (the tuple of its writes),
+                 a call to an admitted function (its tuple, forwarded), a value local,
+                 or a borrowed VIEW of the record (the tuple of its field reads; a view
+                 is never freed, so reading it is all the value form owes) — and that
+                 the return buffer be mentioned only where the value form drops the
+                 mention (a converted `Object`, a dropped buffer argument, a free); the
+                 SITE gate asks that every admitted call stand where a tuple is
+                 consumed as one: a result position of an admitted body, the right of
+                 a VALUE LOCAL (a local whose every assignment is a value shape and
+                 whose every use is a field read, a free, a store-identity test, a copy
+                 FROM it, or a `return`), or a dropped statement; an argument, a field
+                 value, a return from a non-admitted function or a local that also
+                 takes a record declines the callee.  The record form's three guards
+                 then read as the tuple says: a free of a value local is nothing, a
+                 store-identity test against one is always distinct (so the free it
+                 guards is unconditional — the ownership change a selecting tail
+                 carries: the record form declined that free exactly when the buffer
+                 was the result), and a copy FROM one MATERIALISES the tuple into the
+                 destination with one typed write per field, which is how a builder
+                 delivered into a push slot lands without a call or a buffer.  An OWNED
+                 record at a tail declines: the value form would have to mint per call
+                 what the buffer form reuses.  Every function a fn-ref dispatch can
+                 reach declines, read from the emitter's own arm scan
+                 (`fnref::dispatch_arms`) so the two cannot drift.  Two boundaries keep
+                 the record contract: the LIVE-RELOAD arm answers a `DbRef` and so
+                 reads the fields back out of it, and a library's CDYLIB BRIDGE
+                 materialises the tuple into the destination record it already owns —
+                 so the C ABI is unchanged while loft-to-loft calls inside the library
+                 take the value path.
 
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a

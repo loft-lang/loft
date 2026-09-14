@@ -976,24 +976,29 @@ point against Rust's 4**, per-call cost ~4 % of the row.  Reaching 4× on x86 ne
 and no single unit measured so far reaches that: this is a stack, ranked below by what is
 measured.
 
-*Why this box could not finish the measurement.*  A sibling checkout's `rustc` ran through
-every timing attempt after the gate (load 12–60); the four-kernel probe read
-3047 / 1685 / 1847 / 1010 ns/op on one run and 2597 / 4711 / 2021 / 2914 on the next.  The
-PROFILE shares are usable — `perf` counts only the process's own cycles — the ns/op are not.
-**First job on the quiet box: run the two probes below and replace the numbers here.**
-Quiet means `ps -eo pcpu,comm --sort=-pcpu | head` shows nothing but you; `uptime` lags.
+*Measured on the quiet box (2026-09-14, x86-64 Ubuntu laptop, load under 1.0, binary
+rebuilt at 4633de05).*  Both committed probes, three runs each, every hash `520594874`; the
+two ceilings the hand-off left unmeasured were taken rustc-first on the emitted Rust of
+`smooth-literal-push.bench.loft` (the exact rustc line loft runs, captured with `strace`;
+ABAB against the unedited emission; `emission_audit.py` clean on the edit):
 
-*The profile on x86-64 at 0fe0878f* (`scripts/profile.sh --engine --calls -- --native-release
-<abs>/sm_only.loft --n 2000000`; `sm_only.loft` is the scratch clone's `bench/bench.loft`
-with every `print_row` but `bench_smooth` deleted): `n_smooth_pts` 24.0 %, **`n_pt` 19.1 %**,
-`set_free_protected` 7.7 %, `n_half_chord` 5.5 %, `get_vector` 4.75 %, `OpFreeRef` 3.4 %,
-`n_ctrl` 3.4 %, protect/unprotect 3.4 %, `op_database_inner` 2.3 %, `enum_parent_size` 1.4 %,
-`clear` 1.2 %, `database_named` 1.2 %.  Callers: `n_pt`'s 19 % is the per-POINT call from
-the k-loop, and inside it `offset_in_bounds` (a claim-header `read<i32>` per write) 3.5 %,
-`strict_stores` + its atomic load 5.0 %, `index_mut` 2.45 % — the two
-`store_mut(&db).set_float` writes re-validate a slot the push header already addresses.
-`set_free_protected`'s 7.7 % is all under `n_half_chord → n_protect_store_frees`, 3.1 % of
-it the `Cow<'static, str>` origin conversion/drop per bracket.
+| form | ns/op | vs shipped |
+|---|---:|---:|
+| A — shipped record return | 2 025–2 102 | — |
+| A + literal push (the `n_pt` call gone) | 1 886–1 952 | −7 % |
+| A + literal + direct slot write | 1 886–1 896 | −9.5 % |
+| B — tuple return (§ V-ah stages 2 + 3) | 1 210–1 300 | **−41 %** |
+| B + literal push | 1 078–1 091 | −48 % |
+| B + literal + direct slot write | 1 042–1 049 | −50 % |
+| … + no frame prelude in `ctrl_t` / `half_chord_t` | 1 006–1 034 | −51.5 % |
+
+The § V-ah two-kernel probe agrees: A 2 035–2 078, B 1 210–1 214 (aarch64 read −40 %, so the
+two lanes agree on this unit).  **The loaded-box ranking was inverted**: the `n_pt` unit is
+≈ −10 % in total, not −45 %, and § V-ah is the lead.  The profile's 19 % `n_pt` share is the
+cost of the SYMBOL — it includes the two guarded slot writes, which the literal form pays
+identically inline — so removing the call saves the call and the delivery guard (7 %), and
+removing the validation (`strict_stores`, the `.free` test, `valid`'s header read) another
+3 %.  A profile share is what a symbol costs, not what its removal saves.
 
 *What the emission says* (`--native-release --native-emit <out.rs>` of `sm_only.loft`; read
 `n_smooth_pts`, `n_ctrl`, `n_half_chord`, `n_pt`).  The k-loop is already lean on READS —
@@ -1004,22 +1009,25 @@ append is `push_record_hoisted` (§ V-t) — but the element is filled by CALLIN
 UNHOISTED `get_vector` reads: the loop calls `n_half_chord`, which takes no twin (`pts` is a
 plain vector parameter to a BORROW-returning callee).  Per call: four `OpDatabase` mints
 for the join buffers `__ref_1..4` (§ V-af) and four `OpFreeRef` at exit, plus the reset.
+`n_ctrl` and `n_half_chord` carry the frame prelude (`cr_call_push_lean`, `CallGuard`,
+`FnRefBufGuard`) because `floor_mod` is a loft-bodied `t_` method and `@FR-R-Leaf` counts
+that as a user call; `n_pt` is a leaf and carries none.
 
-*Ranked, with ceilings* (the four-kernel probe is `smooth-literal-push.bench.loft`,
-committed beside `smooth-field-return.bench.loft`; its numbers here are ONE run under load):
+*Ranked by what is measured here, with ceilings*:
 
-| # | unit | mechanism | ceiling | state / next step |
+| # | unit | mechanism | ceiling (quiet x86-64) | state / next step |
 |---|---|---|---|---|
-| 1 | **the push-slot write** — the element's fields written INTO the push header's slot without `store_mut` + `valid` per field (the write twin of `get_elem_hoisted`), and the `n_pt` CALL inlined into that write (§ V-p's twin applied to a record DESTINATION) | emission: `hoist.rs` / `Output`, both the call form and the literal form | A → A+literal read −45 % (3047 → 1685) under load; the profile's `n_pt` share says −15…−20 % for inlining the call alone, the direct write on top | unbuilt.  Measure the direct write rustc-first: hand-edit `n_smooth_b_lit`'s k-loop in the emitted Rust to write through `__ph_1`'s store (`stores.allocations[h.store_nr as usize].write(rec, pos, v)`), link as loft does (`main.rs` ~11099 / 11173: `-C opt-level=3 -C codegen-units=1 --extern loft=target/release/libloft.rlib --extern loft_ffi=<deps>`), ABAB against the unedited emission |
-| 2 | **§ V-ah stages 2 + 3** — `half_chord` forwards a tuple, `ctrl` selects its fields at the return | `hoist::value_records` + `scopes` (stage 3 changes who frees) | **−40 %** (the plan's B form on aarch64, 1 227–1 279 → 740–757); here B read 1847 against A 3047 under load | blocked on stage 1: `Output::output_call_ref`'s arm scan needs ONE home the gate reads (corpus at four scripts, DESIGN.md § V-ah) |
-| 3 | the protect bracket's origin — `n_protect_store_frees` builds and `set_free_protected` stores a `Cow<'static, str>` per bracket | runtime, one function | ≤ 3 % on its own; moot once #2 removes the calls | XS: a `&'static str` origin, the formatted form only under `lock_trace_enabled()` |
-| 4 | per-call store lifecycle — four join-buffer mints + frees per activation (`op_database_inner`, `database_named`, `clear`, `enum_parent_size` ≈ 6 %) | `@FR-R-Reuse` extended to the join buffers: allocate once per SITE | ≤ 6 % at 61 points a call; the size sweep puts per-call cost at ~4 % of the row | unprobed |
-| 5 | the segment loop's four unhoisted element reads (`get_vector` 4.75 %) | the hoist gate declines a header when a borrow-returning callee takes the vector; admit one for a `const` parameter the callee only reads | ≤ 5 % | unprobed |
+| 1 | **§ V-ah stages 2 + 3** — `half_chord` forwards a tuple, `ctrl` selects its fields at the return | `hoist::value_records` + `scopes` (stage 3 changes who frees) | **−41 %** on both lanes | **shipped 2026-09-14** — DESIGN.md § V-ah Built: A 2 025–2 102 → 1 504–1 563 on the two-kernel probe (−27 %); consumer `smooth` 9.5–10.2× → **4.58×** on this lane (1 740 ns against Rust's 380, 14/14 hashes agree), the last row over the bar by 0.58× |
+| 2 | **the push-slot write** — the `n_pt` call inlined into the literal (−7 %) and the element's fields written INTO the push header's slot without `store_mut` + `valid` per field (−3 %, the write twin of `vec_set_hoisted_or_raise_runtime`) | emission: `hoist.rs` / `Output`, both the call form and the literal form | −10 % | the call half shipped inside § V-ah (the materialise arm); the direct-write half unbuilt, ceiling measured |
+| 3 | the tuple helpers' frame prelude — `ctrl_t` is not a leaf under `@FR-R-Leaf` because a loft-bodied `t_` callee counts as a user call | `is_elidable_leaf`: a `t_` callee that is itself a leaf cannot re-enter its caller | −3 % | unprobed beyond the ceiling |
+| 4 | per-call store lifecycle — four join-buffer mints + frees per activation (`op_database_inner`, `database_named`, `clear`, `enum_parent_size` ≈ 6 %) | `@FR-R-Reuse` extended to the join buffers: allocate once per SITE; moot for the two tangent joins once #1 makes them tuples | ≤ 6 % | unprobed |
+| 5 | the segment loop's four unhoisted element reads (`get_vector` 4.75 %) | the hoist gate declines a header when a borrow-returning callee takes the vector; admit one for a `const` parameter the callee only reads — and after #1 the callee no longer returns a borrow | ≤ 5 % | unprobed |
+| 6 | the protect bracket's origin — a `Cow<'static, str>` per bracket | runtime, one function | ≤ 3 % | moot once #1 removes the brackets |
 
-*Order.*  #1 first: emission-only, no ownership change, and both its halves have a
-rustc-first ceiling measurable in an hour.  Then #2's stage-1 refactor (the corpus is four
-scripts from green).  **#1 + #2 together are the only path that reaches 4× on x86**
-(≈ −58 % needed); either alone does not, and #3–#5 are the tail.
+*Order.*  #1 first — it is the only unit over 10 %, its ceiling is the same on both lanes,
+and #4–#6 shrink or vanish behind it.  Then #2, emission-only.  **#1 + #2 together reach
+−50 % on the kernel against the ≈ −58 % the row needs for 4× on x86**, so #3–#5 are
+required, not tail; the row's own per-call overhead (≈ 4 %) is outside the kernel.
 
 *Instruments, in order of use.*  (1) `cargo build --release --lib --bin loft` — the native
 lane links the rlib, `cargo build --bin loft` does not rebuild it.  (2) A SCRATCH clone of
@@ -1031,8 +1039,9 @@ generation-time switch.  (3) `python3 bench/compare.py --loft <tree>/target/rele
 ~/.cache/tmp/loft-profile/perf.data --stdio --no-children -g caller,0.5,callee
 --symbol-filter=<sym>` for who calls a hot runtime symbol.  (5) The two committed probes
 (`loft --native-release <probe>`; every hash must agree across kernels).  (6)
-`LOFT_VALUE_RECORD=1 LOFT_TRACE_VALUEREC=1` on the emit: today it says `n_ctrl` /
-`n_half_chord`: *tail is not an Object build*.  (7) `scripts/emission_audit.py <emitted.rs>`
+`LOFT_TRACE_VALUEREC=1` on the emit names every admission and decline (the value path
+is default-on; before § V-ah it said `n_ctrl` / `n_half_chord`: *tail is not an Object
+build*, and now both read `-> (f64, f64)`).  (7) `scripts/emission_audit.py <emitted.rs>`
 before trusting a hand-edited emission.  **Label every number with the machine** — the two
 lanes already disagree on which rows fail, and a ratio from a loaded box is not a number.
 
@@ -1066,10 +1075,10 @@ rules the rewrites already stood on were missing and are now written: `@FR-H-Roo
 
 | item | state | next step |
 |---|---|---|
-| `smooth` stage 1 — § V-aa default-on | two of three classes closed, corpus 376 errors → 4 scripts | give `Output::output_call_ref`'s arm scan ONE home the gate also reads; do not spell it twice |
-| `smooth` stage 2 — a forwarding tail | blocked on stage 1 | admit a tail that calls another admitted fn; needs the branch-bound local handled too (gate, `value_record_locals`, and the `if` emitting as a tuple) |
-| `smooth` stage 3 — a selecting tail | blocked on stage 2 | carries an ownership change: a guarded free declines exactly when the buffer IS the result, so a result that stops escaping leaves it nobody's |
-| `n_pt`, 19.1 % of `smooth` on x86-64 | profiled + emission read (the hand-off above, #1) | the push-slot write: fields written through the push header, the `n_pt` call inlined; rustc-first ceiling on `smooth-literal-push.bench.loft` |
+| `smooth` stage 1 — § V-aa default-on | **shipped 2026-09-14** (`fnref::dispatch_arms` is the one home; corpus green with the switch on) | — |
+| `smooth` stage 2 — a forwarding tail | **shipped 2026-09-14** with stage 3 (`hoist::value_shape` + the positional `site_walk`; the branch-bound local is a value local) | — |
+| `smooth` stage 3 — a selecting tail | **shipped 2026-09-14**: a VIEW leaf reads as a getter tuple; the ownership change is the `OpFreeRefIfDistinct` arm (always distinct against a tuple) | an OWNED tail stays declined (DESIGN.md § V-ah Built (b)) |
+| `n_pt`, 19.1 % of `smooth` on x86-64 | the CALL half shipped inside § V-ah (a copy FROM a value local materialises the tuple into the push slot) | the direct-write half (−3 % rustc-first): write through the push header without `store_mut` + `valid` |
 | § 3d item 1 — assert what the header proved | ceiling measured, unbuilt | validate the vector's extent once at derivation, answer `len: 0` on failure so corruption degrades to the checked path |
 | § 3d items 2–4 | unprobed | item 3 (a real slice per store) wants the same rustc-first probe |
 | a tail fast path that survives holes | unprobed (§ V-ai shipped the reset-capacity half: `fronds` under the bar on x86-64 too) | a claim no hole fits still walks the tree to reach the tail; the sub-call buffers' holes (§ V-j) are what it would price — measure a ceiling on `fr_only` first |
@@ -1555,7 +1564,7 @@ unless said otherwise.
 | **V-x** — an invariant loop-body vector LITERAL builds once per activation: the local pre-declared at fn top is its own once-flag, the declaration (one wrapped `Set`, or the flat `OpDatabase · Set · pushes` run bracketed by `hoist::flat_lit_member`, the shared predicate) guarded on it being unbound; gates: no-heap scalar elements, invariant parts (literals / pure ops / never-reassigned scalar params / scalar-getter reads of value-const record params), the `(Const-Value)`-mandated alias gate (every pd-reaching var fresh-store or const-getter-only), reads-only uses (indexed use declines — OpGetVector is context-blind) | [DESIGN.md § V-x](DESIGN.md) | the sabotage turns c5 red (`16` → `30`: iteration 0's write carried); `tests/literal_hoist.rs` no longer sees the guards; a cell answers wrong under `LOFT_POISON=1` on either backend | **Shipped 2026-09-11** — eleven cells exact both backends under poison; `fronds` −5.8 % (279–285k ns/op); switch `LOFT_NO_LITERAL_HOIST` |
 | **V-y** — the complete-write prefill ELISION: a literal group the emitter proves writes every schema field position (declared defaults, sentinels, the variant tag — the parser's lowering is complete by construction) calls the no-prefill twin (`OpDatabaseNP`/`OpNewRecordNP`); a vector store's group is width-equal (the collection-field prefill is the one u32 its own `OpSetInt4` writes) and `place_record_in`'s prefill becomes one explicit len-zero (the callee entry-clear ABI covers it); the Z∩P redundancy ships as ONE argument | [DESIGN.md § V-y](DESIGN.md) | the admit-all sabotage crashes the V-j corpus at c17 under `LOFT_NO_ZERO_CLAIM=1` (the production default masks it — the first falsifier could not fail and was replaced); `tests/complete_write.rs` no longer sees the twins; a cell answers wrong under poison or the stale-arena lever | **Shipped 2026-09-12** — eight cells exact both backends under poison + the lever; `fronds` −4.8 % (264.9–272.7k ns/op, 9 twin sites); switch `LOFT_NO_COMPLETE_WRITE` |
 | **V-z** — the ELEMENT-FIRST build: a local vector consumed exactly once as a record-literal field of an append is built inside the appended element — minted at the first temp's declaration (the length bump stays at the finish, so it is invisible until the append), each temp bound to the element's own field slot, the paired copies and temp stores gone; § V-u's adoption composes (a callee delivers its record straight into the element) | [DESIGN.md § V-z](DESIGN.md) | the compound sabotage (paired-offset check dropped + prefill-less prelude) crashes the corpus under `LOFT_NO_ZERO_CLAIM=1`; `tests/element_first.rs` no longer sees the early mints; a cell answers wrong under poison or the lever | **Shipped 2026-09-12** — eight cells exact both backends under poison + the lever; fronds standalone 265k → **186.4–199.7k ns/op**, the hand ceiling (−27–29 %) met exactly; switch `LOFT_NO_ELEMENT_FIRST` |
-| **V-aa** — ⚠ **OPT-IN since 2026-09-12** (`LOFT_VALUE_RECORD=1`; the call-site gate does not hold over the script corpus — three shapes generate a crate that does not compile — so the return buffer is the default until it does; the 2026-09-13 emission of the drawing bench confirms `brush_sample` still returns through its buffer by default) — the VALUE-RECORD return: a plain no-heap record of ≤6 scalar fields comes back in REGISTERS (a Rust tuple) instead of through a return buffer — the path tuples already took; three gates (shape, every call site reads fields, the body builds via `Object`), and two boundaries that keep the record contract (the live-reload arm reads the fields back; a cdylib bridge materialises into the destination it owns, so the C ABI is unchanged and in-library calls take the value path) | [DESIGN.md § V-aa](DESIGN.md) | the use gate removed = 8 rustc errors, the body gate removed = 14; `tests/value_record.rs` no longer sees the tuple returns; a cell answers wrong under poison or the switch | **Shipped 2026-09-12** — nine cells exact both backends under four levers; the call 1.65×, `smooth` −25 %, `lock_curved` −3 %; switch `LOFT_NO_VALUE_RECORD` |
+| **V-aa** — **default-ON since 2026-09-14** (`LOFT_NO_VALUE_RECORD=1` restores the buffer; it was opt-in from 2026-09-12 while the call-site gate did not hold over the script corpus — 376 rustc errors, 218 of them the fn-ref dispatch — until § V-ah stage 1 gave the gate the emitter's own arm scan) — the VALUE-RECORD return: a plain no-heap record of ≤6 scalar fields comes back in REGISTERS (a Rust tuple) instead of through a return buffer — the path tuples already took; three gates (shape, every call site reads fields, the body builds via `Object`), and two boundaries that keep the record contract (the live-reload arm reads the fields back; a cdylib bridge materialises into the destination it owns, so the C ABI is unchanged and in-library calls take the value path) | [DESIGN.md § V-aa](DESIGN.md) | the use gate removed = 8 rustc errors, the body gate removed = 14; `tests/value_record.rs` no longer sees the tuple returns; a cell answers wrong under poison or the switch | **Shipped 2026-09-12** — nine cells exact both backends under four levers; the call 1.65×, `smooth` −25 %, `lock_curved` −3 %; switch `LOFT_NO_VALUE_RECORD` |
 | **V-ab** — the counted loop's SECOND COUNTER: a `for` whose start is not a literal seeds `next` AT the start, tests it, yields it into `i#index`, then steps it — no null-encoded "not started yet" state on either backend (P3b covered the literal start; `lo - 1` is unrepresentable at the type minimum); reverse exclusive seeds the one counter at `till`; switch `LOFT_NO_NEXT_COUNTER` | [DESIGN.md § V-ab](DESIGN.md) | `tests/next_counter.rs` (emission per cell + the switch), `tests/scripts/157-next-counter.loft` (20 value cells, sabotage-falsified), the P3b matrix byte-identical | **Shipped 2026-09-13** — bare loop 0.79 → 0.54 ns/iter, fill 1.41 → 1.16 ns/write, interpreter −11 %; consumer `fill_circle` −3.3 %, `fill_star` −2.2 %, `wide_line` −2.3 % |
 | **V-ac** — a VECTOR parameter's header crosses the call: a § V-p header input is keyed on the argument's pure PATH (`br.img`, `h.cv` + the callee's offsets — `hoist::input_header_at`, the one definition the loop's candidate and the twin call ask; `hoist::substitute_path` re-spells the callee's read over the argument), a return-buffer writer is admitted with its buffer's type as its write set, and the return-buffer DELIVERY site asks the twin question too; same switch `LOFT_NO_CALLEE_INPUTS`, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-ac](DESIGN.md) | a k-cell moves; `tests/callee_inputs.rs`'s § V-ac predictions no longer see a twin or a twin call; the two-paths cell answers b's elements for a (the falsified rotation); a consumer hash disagrees | **Shipped 2026-09-13** — 21 cells exact on both backends under six levers; hand ceiling −5.7 % met and passed: `lock_curved` −6.3 %, `lock` −8.7 %, `render_lock` −2.9 % (aarch64 Linux, ABAB, 14/14 hashes) |
 | **V-ad** — a null-discharge DEFAULT BUFFER's allocation (`e = tbl[i]?` on a vector of all-scalar records mints the absent element into a hidden `__ref_p2_N`) is admitted at the header gate and read as the record's type whole by the scalar tier (`hoist::null_buffer_alloc`, `@FR-R-InPlace`'s hidden-buffer allowance); before it the never-taken arm declined every header in `polygon_generic`'s crossing loop; switch `LOFT_NO_NULL_BUFFER_HOIST`, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-ad](DESIGN.md) | a d-cell moves; `tests/null_buffer_hoist.rs` no longer sees the headers, or sees one for a heap-owning record; a consumer hash disagrees | **Shipped 2026-09-13** — 12 cells exact on both backends under the verifier, the switch and poison; `wide_line` −29 % (5.35× → 4.02×), the fills −15/−19 % (aarch64 Linux, 14/14 hashes) |

@@ -3933,18 +3933,20 @@ pub struct ValueRecords {
     pub fields: HashMap<u32, Vec<(i64, &'static str)>>,
 }
 
-/// WARNING - OPT-IN as of 2026-09-12 (`LOFT_VALUE_RECORD=1`), not default-on.  The
-/// admission gates do not hold across the script corpus: sites survive that use the
-/// result AS A DbRef (rustc: no field store_nr on type (f64,)), that pass a buffer
-/// argument to a signature which dropped it, and that join a tuple arm with a record arm
-/// in one `match` - each one a generated crate that does not compile.  Gate (2) claims
-/// EVERY call site consumes the result by reading fields off a local it binds; the corpus
-/// says otherwise.  Until that gate is proven against the corpus rather than against nine
-/// hand-written cells, the unit is worth -2.9 % on one bench row against a compiler that
-/// cannot build real programs.  Turn it on to work on it; the tests pass it explicitly.
+/// Default-ON since 2026-09-14 (@PLN157 § V-ah stage 1); `LOFT_NO_VALUE_RECORD=1` restores
+/// the return buffer for every record return — the bisect step for a wrong field out of a
+/// record-returning call on native.
 ///
-/// The old switch restored the return buffer for every record return — the
-/// bisect step for a wrong field out of a record-returning call on native.
+/// It was opt-in from 2026-09-12 because the call-site gate did not hold over the script
+/// corpus: 376 compile errors in three classes.  Two were shapes the gate could not see —
+/// a result bound into a compiler `__lift_` temp whose set lowering reads `.store_nr` off
+/// it, and a value branch joining an admitted call with a record expression — and the
+/// third, 218 of the errors, was the fn-ref DISPATCH: the `match` a `CallRef` emits takes
+/// its arms from a signature scan, so every arm shares one return type, and a gate that
+/// asked "which functions can a fn-ref reach?" a second way (by returned record, beside a
+/// `FnRef` node) missed a lambda that reached a dispatch through a typed variable alone.
+/// The gate now reads the arm set from `fnref::dispatch_arms`, the emitter's own home for
+/// that question, and declines every arm.
 ///
 /// The library integration the opt-in phase existed for is closed: a cdylib bridge now
 /// MATERIALISES the tuple into the destination record it already owns
@@ -3952,7 +3954,7 @@ pub struct ValueRecords {
 /// while loft-to-loft calls inside the library take the value path.
 fn value_record_disabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| !std::env::var("LOFT_VALUE_RECORD").is_ok_and(|v| v != "0"))
+    *F.get_or_init(|| std::env::var("LOFT_NO_VALUE_RECORD").is_ok_and(|v| v != "0"))
 }
 
 /// The scalar field kinds a register tuple can carry: no heap, no collection, no nested
@@ -4037,6 +4039,14 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                 break;
             };
             let ftp = data.attr_type(*rd, a_nr);
+            // `integer` at its 8-byte width only: the tuple carries an `i64`, and the
+            // getter/setter the value path pairs it with (`OpGetInt`/`OpSetInt`, the live
+            // arm's `get_int`) read and write eight bytes.  A narrow field (a ranged or
+            // `size(1)` alias) declines the function rather than reading its neighbour.
+            if matches!(ftp.base(), Type::Integer(_)) && stores.size(f.content) != 8 {
+                ok = false;
+                break;
+            }
             if let Some(rt) = value_field_type(&ftp) {
                 parts.push(rt);
                 order.push((i64::from(f.position), rt));
@@ -4049,16 +4059,8 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
         if !ok {
             continue;
         }
-        // The BODY must build the record itself, through `Object` blocks: the value form
-        // is those blocks' writes turned into a tuple, so a tail that FORWARDS another
-        // call's record (or yields a variable) has nothing to convert and the signature
-        // would promise a tuple over a `DbRef` body.
-        if !builds_record_by_object(def.code()) {
-            if trace {
-                eprintln!("[valuerec] {}: tail is not an Object build", def.name());
-            }
-            continue;
-        }
+        // The BODY gate — every result position a value leaf — runs in the fixpoint
+        // below, because what counts as a leaf depends on what else is admitted.
         // A ONE-FIELD record needs the trailing comma: `(bool)` is Rust for a
         // PARENTHESISED bool, not a 1-tuple, so the signature promised a scalar while
         // every call site read `.0` off it and the generated crate would not compile
@@ -4077,61 +4079,20 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
     if cand.is_empty() {
         return out;
     }
-    // Every CALL SITE must bind the result to a local that is read only by field reads.
-    for caller in 0..data.definitions.len() as u32 {
-        let cdef = data.def(caller);
-        if matches!(cdef.code(), Value::Null) {
-            continue;
-        }
-        let vars = cdef.variables();
-        cdef.code().any_node(&mut |n| {
-            match n {
-                // `r = f(…)` — the admitted shape, if `r`'s other uses are field reads.
-                Value::Set(v, inner) => {
-                    if let Value::Call(d, _) = inner.unspan()
-                        && cand.contains_key(d)
-                        && (!local_read_fieldwise(cdef.code(), *v, data, vars)
-                            // A compiler LIFT temp is bound by a set lowering that emits its
-                            // own displacement guard, reading `.store_nr` off the value — a
-                            // use no IR walk can see, because it is not an IR node.  The
-                            // result must stay a `DbRef` there.
-                            || vars.name(*v).starts_with("__lift_"))
-                    {
-                        cand.remove(d);
-                    }
-                }
-                // A call in ANY other position — an argument, a return, a field value —
-                // needs a record the tuple cannot supply.
-                Value::Call(d, args) => {
-                    for a in args {
-                        if let Value::Call(inner_d, _) = a.unspan()
-                            && cand.contains_key(inner_d)
-                        {
-                            cand.remove(inner_d);
-                        }
-                    }
-                    let _ = d;
-                }
-                Value::Return(x) => {
-                    if let Value::Call(d, _) = x.unspan() {
-                        cand.remove(d);
-                    }
-                }
-                _ => {}
-            }
-            false
-        });
-    }
     // A function reachable through a FN-REF cannot change its ABI.  The dispatch a `CallRef`
-    // emits is a `match` whose arms are every definition a signature scan admits, so all of
-    // them share one argument list and one return type; converting one arm to a tuple breaks
-    // the join and drops the buffer argument the others still take.  The scan is keyed on the
-    // signature, not on an explicit reference, so the test is by RETURNED RECORD: a candidate
-    // whose result a fn-ref signature also returns is declined.  Over-broad on purpose — it
-    // can decline a function no dispatch would ever reach, which costs the rewrite and never
-    // correctness (`@FR-R-ValueRecord`).
-    let mut referenced: HashSet<u32> = HashSet::new();
-    let mut ref_returns: HashSet<u32> = HashSet::new();
+    // emits is a `match` whose arms are every definition `fnref::dispatch_arms` admits for
+    // the fn variable's type — all of them sharing one argument list and one return type —
+    // so converting one arm to a tuple breaks the join and drops the buffer argument the
+    // others still take.  The question is asked ONCE, of the same function the emitter
+    // builds the match from: every arm of every `CallRef` in the program is declined, and
+    // so is every `FnRef` target, whose dispatch can sit where no `CallRef` in loft code
+    // shows it (a `#rust` template calling through the fn-ref value).  Over-broad on
+    // purpose — a declined function costs the rewrite and never correctness
+    // (`@FR-R-ValueRecord`).  Asked a second way it drifted: the by-record test that stood
+    // here missed a lambda reaching a dispatch through a typed variable with no `FnRef`
+    // node beside it.
+    let mut arms: HashSet<u32> = HashSet::new();
+    let every: HashSet<u32> = HashSet::new();
     for d_nr in 0..data.definitions.len() as u32 {
         let def = data.def(d_nr);
         if matches!(def.code(), Value::Null) {
@@ -4144,21 +4105,29 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                     if let Ok(t) = u32::try_from(*target)
                         && (t as usize) < data.definitions.len()
                     {
-                        referenced.insert(t);
-                        if let Some(rec) = data.def(t).returned().heap_def_nr() {
-                            ref_returns.insert(rec);
-                        }
+                        arms.insert(t);
                     }
                 }
-                // The dispatch a `CallRef` emits picks its arms by scanning definitions
-                // against the fn variable's own `Type::Function`, so the RETURN type of that
-                // variable names every record a dispatch could join.
-                Value::CallRef(v, _) => {
+                Value::CallRef(v, args) => {
                     if *v < vars.count()
-                        && let Type::Function(_, r, _) = vars.tp(*v)
-                        && let Some(rec) = r.heap_def_nr()
+                        && let Some(found) =
+                            super::fnref::dispatch_arms(data, &every, vars.tp(*v), args.len())
                     {
-                        ref_returns.insert(rec);
+                        arms.extend(found.into_iter().map(|a| a.d_nr));
+                    }
+                }
+                // The third spelling: a `par` worker, named by its number as an integer
+                // argument of the queue op, which the parallel emitter calls through its
+                // own buffered spelling.
+                Value::Call(d, args) => {
+                    if (*d as usize) < data.definitions.len()
+                        && let Some((i, min)) =
+                            super::fnref::parallel_worker_arg(data.def(*d).name())
+                        && args.len() >= min
+                        && let Value::Int(n) = args[i].unspan()
+                        && *n >= 0
+                    {
+                        arms.insert(*n as u32);
                     }
                 }
                 _ => {}
@@ -4166,24 +4135,69 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
             false
         });
     }
-    if !referenced.is_empty() {
+    cand.retain(|d_nr, _| {
+        let keep = !arms.contains(d_nr);
+        if !keep && trace {
+            crate::loft_eprintln!(
+                "[valuerec] {}: an arm of a fn-ref dispatch",
+                data.def(*d_nr).name()
+            );
+        }
+        keep
+    });
+    // Admission is a FIXPOINT.  A body's tail may FORWARD another candidate's result and a
+    // site may bind a BRANCH of candidate calls, so declining one function can decline
+    // another; every round only removes, so it ends.  The body gate and the site gate read
+    // the same three helpers the emitter reads (`value_shape`, `value_locals_in`,
+    // `value_view_leaves`), so what is admitted here is exactly what is emitted there.
+    loop {
+        let before = cand.len();
+        let admitted: HashSet<u32> = cand.keys().copied().collect();
         cand.retain(|d_nr, _| {
-            // The referenced function itself, and every other candidate returning the same
-            // record — the scan can put those in the same dispatch beside it.
-            let keep = !referenced.contains(d_nr)
-                && data
-                    .def(*d_nr)
-                    .returned()
-                    .heap_def_nr()
-                    .is_none_or(|rec| !ref_returns.contains(&rec));
-            if !keep && trace {
+            let ok = value_body(data, *d_nr, &admitted);
+            if !ok && trace {
                 crate::loft_eprintln!(
-                    "[valuerec] {}: reachable through a fn-ref dispatch",
+                    "[valuerec] {}: a result position is not a value leaf",
                     data.def(*d_nr).name()
                 );
             }
-            keep
+            ok
         });
+        let admitted: HashSet<u32> = cand.keys().copied().collect();
+        let mut declined: HashSet<u32> = HashSet::new();
+        for caller in 0..data.definitions.len() as u32 {
+            let cdef = data.def(caller);
+            if matches!(cdef.code(), Value::Null) {
+                continue;
+            }
+            let locals = value_locals_in(data, caller, &admitted);
+            let own = admitted.contains(&caller).then_some(caller);
+            let c = ShapeCtx {
+                data,
+                def_nr: caller,
+                admitted: &admitted,
+                locals: &locals,
+                own,
+            };
+            let top = if own.is_some() {
+                Pos::Tail
+            } else {
+                Pos::Operand
+            };
+            site_walk(cdef.code(), top, &c, &mut declined);
+        }
+        if trace {
+            for d in &declined {
+                crate::loft_eprintln!(
+                    "[valuerec] {}: a site consumes its record",
+                    data.def(*d).name()
+                );
+            }
+        }
+        cand.retain(|d, _| !declined.contains(d));
+        if cand.len() == before {
+            break;
+        }
     }
     out.fns = cand;
     out.tuple.retain(|d, _| out.fns.contains_key(d));
@@ -4191,68 +4205,354 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
     out
 }
 
-/// Does every RESULT position of `body` build the record with an `Object` block?  The
-/// value path converts those blocks and nothing else, so a forwarded call result, a bare
-/// variable or any other tail declines the function.
-fn builds_record_by_object(body: &Value) -> bool {
-    fn leaf_ok(v: &Value) -> bool {
+/// The widest record the value path carries.  A register tuple past this is spilled by
+/// the ABI anyway, and the win is in the small ones (`Pt`, `Smp`).
+pub const VALUE_RECORD_MAX_FIELDS: usize = 6;
+
+/// The hidden RETURN-BUFFER attribute of a record-returning function — the parameter
+/// `ref_return` appends, a `Reference` or struct-enum marked hidden — by position, or
+/// `None` for a function that has none.  ONE predicate for the four sites that drop it:
+/// its NAME is `__retbuf` when the parser minted the buffer and the promoted LOCAL's own
+/// name (`__ref_3`, `p`) when the buffer IS that local, so a name test sees half of them
+/// (measured: `half_chord`'s buffer is `__ref_3`, and the call site kept passing it to a
+/// signature that had dropped it).
+#[must_use]
+pub fn ret_buffer_attr(def: &crate::data::Definition) -> Option<usize> {
+    def.attributes().iter().rposition(|a| {
+        a.hidden && matches!(a.typedef, Type::Reference(_, _) | Type::Enum(_, true, _))
+    })
+}
+
+/// The getter op that reads a value-record field of Rust type `rt` out of a record — what
+/// a VIEW leaf's tuple is built from.  Mirrors the parser's `get_val`: the four scalar
+/// kinds the value path admits, `integer` at its 8-byte width only (`value_field_type`).
+#[must_use]
+pub fn value_getter(rt: &str) -> &'static str {
+    match rt {
+        "f64" => "OpGetFloat",
+        "f32" => "OpGetSingle",
+        "bool" => "OpGetBoolean",
+        _ => "OpGetInt",
+    }
+}
+
+/// The setter twin of [`value_getter`] — what a tuple is MATERIALISED into a destination
+/// record with (`OpCopyRecord` from a value local).
+#[must_use]
+pub fn value_setter(rt: &str) -> &'static str {
+    match rt {
+        "f64" => "OpSetFloat",
+        "f32" => "OpSetSingle",
+        "bool" => "OpSetBoolean",
+        _ => "OpSetInt",
+    }
+}
+
+/// What a walk over one function knows while it classifies value shapes.
+struct ShapeCtx<'a> {
+    data: &'a Data,
+    def_nr: u32,
+    /// The functions admitted so far.
+    admitted: &'a HashSet<u32>,
+    /// This function's value locals so far ([`value_locals_in`]).
+    locals: &'a HashMap<u16, u32>,
+    /// `Some(def_nr)` when THIS function is admitted: then an `Object` build of its own
+    /// record and a borrowed VIEW of one are value leaves as well.
+    own: Option<u32>,
+}
+
+/// The record type an admitted body's own leaves must carry.
+fn own_record(c: &ShapeCtx) -> Option<u16> {
+    plain_record_type(c.data, c.data.def(c.own?).returned())
+}
+
+/// Is `v` a VALUE SHAPE — every result position a value LEAF — and if so, which admitted
+/// function's tuple does it carry?  The leaves: a call to an admitted function (forwards
+/// its tuple), a value local (already a tuple), and — inside an admitted body only — an
+/// `Object` build of the body's own record (the tuple of its writes) or a borrowed VIEW of
+/// that record (a tuple of its field reads; a view is never freed, so reading it is all the
+/// value form owes).  `Block`, `If`, `Insert` and `Return` carry the question to their
+/// result positions.
+///
+/// The fallback is `None` because every shape not named here delivers a RECORD — a bare
+/// call to a buffer-returning function, an OWNED local (whose store the record form hands
+/// up and the value form would have to mint per call, which is slower than the buffer it
+/// replaces: `own`'s promoted parameter), a null, a copy — and a caller that reads a tuple
+/// off a record cannot compile.
+fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u32> {
+    match node.unspan() {
+        Value::Call(callee, _) if ctx.admitted.contains(callee) => Some(*callee),
+        Value::Block(bl) if bl.name == "Object" => {
+            let own = ctx.own?;
+            let rec = own_record(ctx)?;
+            (plain_record_type(ctx.data, &bl.result) == Some(rec)).then_some(own)
+        }
+        Value::Block(bl) => {
+            if matches!(bl.result, Type::Void) {
+                return None;
+            }
+            value_shape(bl.operators.last()?, ctx)
+        }
+        Value::If(_, then_v, else_v) => {
+            let callee = value_shape(then_v, ctx)?;
+            value_shape(else_v, ctx).map(|_| callee)
+        }
+        Value::Insert(ops) => value_shape(ops.last()?, ctx),
+        Value::Return(x) => value_shape(x, ctx),
+        Value::Var(var) => {
+            if let Some(callee) = ctx.locals.get(var) {
+                return Some(*callee);
+            }
+            let own = ctx.own?;
+            let rec = own_record(ctx)?;
+            let tp = ctx.data.def(ctx.def_nr).variables().tp(*var);
+            // A VIEW by the ownership oracle (`@FR-O-Oracle`), not by the dep list: then_v
+            // `__ret_N` typed `ref(P)["then_v"]` holds the parameter's store on one arm and then_v
+            // minted default on the other (`Own::Join`), and reading it as then_v tuple would
+            // leave that mint nobody's.  Only then_v value the frame never owns is read as one.
+            (plain_record_type(ctx.data, tp) == Some(rec)
+                && matches!(
+                    crate::use_analysis::ownership_of(ctx.data, ctx.def_nr, node),
+                    crate::use_analysis::Own::Borrowed { .. }
+                ))
+            .then_some(own)
+        }
+        _ => None,
+    }
+}
+
+/// The leaf NODES of a function's value positions, by address — what the emitter
+/// converts: a `Var` that is a view (the tuple of its getters) and an `Object` block (the
+/// tuple of its writes).  Any other `Object` in the body — one bound to a local that is
+/// not a value local, one whose result is dropped — stays a record build.
+#[derive(Default)]
+pub struct ValueLeaves {
+    /// `Var` leaves that are views (never value locals), by the node's address and its
+    /// unspanned address, which is the identity `output_code_inner` keys on.
+    pub views: HashSet<usize>,
+    /// `Object` leaves, by the `Block`'s address (the `Box`'s content, which is what the
+    /// block emitter is handed).
+    pub objects: HashSet<usize>,
+}
+
+fn collect_leaves(body: &Value, locals: &HashMap<u16, u32>, own: bool) -> ValueLeaves {
+    let mut out = ValueLeaves::default();
+    fn leaves(v: &Value, locals: &HashMap<u16, u32>, out: &mut ValueLeaves) {
         match v.unspan() {
-            Value::Block(bl) if bl.name == "Object" => true,
-            Value::Block(bl) => bl.operators.last().is_some_and(leaf_ok),
-            Value::If(_, a, b) => leaf_ok(a) && leaf_ok(b),
-            Value::Insert(ops) => ops.last().is_some_and(leaf_ok),
-            Value::Return(x) => leaf_ok(x),
-            _ => false,
+            Value::Var(w) if !locals.contains_key(w) => {
+                out.views.insert(std::ptr::from_ref(v) as usize);
+                out.views.insert(std::ptr::from_ref(v.unspan()) as usize);
+            }
+            Value::Block(bl) if bl.name == "Object" => {
+                out.objects.insert(std::ptr::from_ref(&**bl) as usize);
+            }
+            Value::Block(bl) => {
+                if let Some(l) = bl.operators.last() {
+                    leaves(l, locals, out);
+                }
+            }
+            Value::If(_, a, b) => {
+                leaves(a, locals, out);
+                leaves(b, locals, out);
+            }
+            Value::Insert(ops) => {
+                if let Some(l) = ops.last() {
+                    leaves(l, locals, out);
+                }
+            }
+            Value::Return(x) => leaves(x, locals, out),
+            _ => {}
         }
     }
-    // Every `Return` in the body, plus the body's own tail.
+    body.any_node(&mut |n| {
+        match n {
+            Value::Return(x) if own => leaves(x, locals, &mut out),
+            Value::Set(w, rhs) if locals.contains_key(w) => leaves(rhs, locals, &mut out),
+            _ => {}
+        }
+        false
+    });
+    if own {
+        leaves(body, locals, &mut out);
+    }
+    out
+}
+
+/// Does every RESULT position of `d_nr`'s body carry a value leaf ([`value_shape`]), and
+/// is its return buffer mentioned only where the value form can drop the mention?  The
+/// buffer becomes a PHANTOM — the parameter is gone from the signature — so a body may
+/// name it only inside a converted `Object` block, as the buffer argument of a call that
+/// drops it, or as the subject of a free.
+fn value_body(data: &Data, d_nr: u32, admitted: &HashSet<u32>) -> bool {
+    let def = data.def(d_nr);
+    let locals = value_locals_in(data, d_nr, admitted);
+    let c = ShapeCtx {
+        data,
+        def_nr: d_nr,
+        admitted,
+        locals: &locals,
+        own: Some(d_nr),
+    };
+    let body = def.code();
+    if value_shape(body, &c).is_none() {
+        return false;
+    }
     let mut ok = true;
     body.any_node(&mut |n| {
         if let Value::Return(x) = n
-            && !leaf_ok(x)
+            && value_shape(x, &c).is_none()
         {
             ok = false;
             return true;
         }
         false
     });
-    ok && leaf_ok(body)
+    if !ok {
+        return false;
+    }
+    let Some(a) = ret_buffer_attr(def) else {
+        return true;
+    };
+    let rb = def.variables().var(&def.attributes()[a].name);
+    let leaves = collect_leaves(body, &locals, true);
+    rb == u16::MAX || retbuf_uses_ok(body, rb, &c, &leaves.objects)
 }
 
-/// The widest record the value path carries.  A register tuple past this is spilled by
-/// the ABI anyway, and the win is in the small ones (`Pt`, `Smp`).
-pub const VALUE_RECORD_MAX_FIELDS: usize = 6;
+/// Every mention of the return buffer `rb` in `v` is one the value form drops: inside a
+/// converted `Object` block, as the buffer argument of an admitted callee, or as the
+/// subject of a free.  Anything else — a write through it, a read of it, a rebind — needs
+/// the parameter the value form no longer has.
+fn retbuf_uses_ok(v: &Value, rb: u16, c: &ShapeCtx, objects: &HashSet<usize>) -> bool {
+    match v.unspan() {
+        Value::Var(w) => *w != rb,
+        Value::Set(w, _) if *w == rb => false,
+        Value::Block(bl) if objects.contains(&(std::ptr::from_ref(&**bl) as usize)) => true,
+        Value::Call(d, args) => {
+            let callee = c.data.def(*d);
+            let is_free = matches!(callee.name(), "OpFreeRef" | "OpFreeRefIfDistinct");
+            let dropped = if c.admitted.contains(d) {
+                ret_buffer_attr(callee)
+            } else {
+                None
+            };
+            args.iter().enumerate().all(|(i, a)| {
+                if matches!(a.unspan(), Value::Var(w) if *w == rb) {
+                    (is_free && i == 0) || dropped == Some(i)
+                } else {
+                    retbuf_uses_ok(a, rb, c, objects)
+                }
+            })
+        }
+        other => {
+            let mut ok = true;
+            other.for_each_child(&mut |ch| {
+                if ok && !retbuf_uses_ok(ch, rb, c, objects) {
+                    ok = false;
+                }
+            });
+            ok
+        }
+    }
+}
 
-/// Is every use of local `v` in `body` a FIELD READ (or the binding itself)?  The value
-/// path replaces the record with a tuple, so a use that needs the record — an argument, a
-/// return, an append, a copy — answers `false`.
-fn local_read_fieldwise(
-    body: &Value,
-    v: u16,
-    data: &Data,
-    _vars: &crate::variables::Function,
-) -> bool {
+/// Which locals of `def_nr` hold a value-returned record — every non-null assignment a
+/// value shape, every use one the tuple serves ([`local_uses_ok`]), never a parameter and
+/// never a compiler `__lift_` temp — mapped to the function whose tuple they carry.  ONE
+/// home: the gate decides admission over it and the emitter types the locals from it.
+///
+/// A `__lift_` temp is excluded because its set lowering emits its own displacement
+/// guard, reading `.store_nr` off the value — a use no IR walk can see, because it is
+/// not an IR node.  A fixpoint, because a leaf may name another value local.
+#[must_use]
+pub fn value_locals_in(data: &Data, def_nr: u32, admitted: &HashSet<u32>) -> HashMap<u16, u32> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    let own = admitted.contains(&def_nr).then_some(def_nr);
+    let mut locals: HashMap<u16, u32> = HashMap::new();
+    // A GENERATOR's locals persist as fields of its coroutine struct, typed `DbRef` by the
+    // factory; a tuple has no such field, so a generator binds no value local.
+    if body.any_node(&mut |n| matches!(n, Value::Yield(_))) {
+        return locals;
+    }
+    loop {
+        let c = ShapeCtx {
+            data,
+            def_nr,
+            admitted,
+            locals: &locals,
+            own,
+        };
+        // Per local: the tuple its assignments carry, or `None` once ANY assignment is not a
+        // value shape (the declaration's `null` aside).
+        let mut shapes: HashMap<u16, Option<u32>> = HashMap::new();
+        body.any_node(&mut |n| {
+            if let Value::Set(v, rhs) = n
+                && !matches!(rhs.unspan(), Value::Null)
+            {
+                let s = value_shape(rhs, &c);
+                shapes
+                    .entry(*v)
+                    .and_modify(|e| {
+                        if s.is_none() {
+                            *e = None;
+                        }
+                    })
+                    .or_insert(s);
+            }
+            false
+        });
+        let mut next = locals.clone();
+        for (v, s) in shapes {
+            if let Some(d) = s
+                && !locals.contains_key(&v)
+                && !vars.is_argument(v)
+                && !vars.name(v).starts_with("__lift_")
+                && local_uses_ok(body, v, data, own.is_some())
+            {
+                next.insert(v, d);
+            }
+        }
+        if next.len() == locals.len() {
+            return locals;
+        }
+        locals = next;
+    }
+}
+
+/// Is every use of local `v` in `body` one a TUPLE can serve?  A scalar field read at a
+/// constant offset (the tuple index), a free of it (nothing to release), a store-identity
+/// test or a free guarded by one against it (the tuple is in no store, so always
+/// distinct), a copy FROM it (the tuple is materialised into the destination), and — in
+/// an admitted body — a `return` of it.  Any other use — an argument, an append, a copy
+/// INTO it, a whole-value read — needs the record, so the local keeps its buffer.
+fn local_uses_ok(body: &Value, v: u16, data: &Data, own: bool) -> bool {
     let mut mentions = 0u32;
     let mut accounted = 0u32;
     body.any_node(&mut |n| {
         match n {
             Value::Var(w) if *w == v => mentions += 1,
+            Value::Return(x) if own && matches!(x.unspan(), Value::Var(w) if *w == v) => {
+                accounted += 1;
+            }
             Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
                 let name = data.def(*d).name();
-                let first_is_v =
-                    matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v);
+                let arg_is_v = |i: usize| {
+                    matches!(args.get(i).map(Value::unspan), Some(Value::Var(w)) if *w == v)
+                };
                 // A SCALAR FIELD READ at a constant offset — what the value path turns
                 // into a tuple index.  (`OpGetField` is the COLLECTION-field spelling; a
                 // record's scalar field reads through its typed getter.)
-                if first_is_v
+                if arg_is_v(0)
                     && VALUE_RECORD_GETTERS.contains(&name)
                     && matches!(args.get(1).map(Value::unspan), Some(Value::Int(_)))
                 {
                     accounted += 1;
                 }
-                // The local's own release: with no record there is nothing to free, so
-                // the value path DELETES this use rather than being declined by it.
-                if first_is_v && matches!(name, "OpFreeRef" | "OpFreeRefIfDistinct") {
+                if arg_is_v(0) && matches!(name, "OpFreeRef" | "OpFreeRefIfDistinct" | "OpCopyRecord" | "OpDistinctStore") {
+                    accounted += 1;
+                }
+                if arg_is_v(1) && matches!(name, "OpFreeRefIfDistinct" | "OpDistinctStore") {
                     accounted += 1;
                 }
             }
@@ -4263,8 +4563,113 @@ fn local_read_fieldwise(
     mentions == accounted
 }
 
-/// The typed scalar getters a record's field read uses — the reads the value path
-/// rewrites into tuple indices.
+/// Where a node stands, for the site gate: an admitted call is consumed as a TUPLE at a
+/// result position of an admitted body (`Tail`), on the right of a value local (`Bound`),
+/// or as a statement whose result is dropped (`Discard`); anywhere else (`Operand`) the
+/// consumer wants a record.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pos {
+    Tail,
+    Bound,
+    Discard,
+    Operand,
+}
+
+/// The SITE gate: every admitted call in `v` that stands at an `Operand` position — an
+/// argument, a field value, a return of a non-admitted function, the right of a local
+/// that is not a value local — is declined into `declined`.  Result positions carry the
+/// caller's position down; everything else is an operand.
+fn site_walk(node: &Value, pos: Pos, ctx: &ShapeCtx, declined: &mut HashSet<u32>) {
+    match node.unspan() {
+        Value::Call(callee, args) => {
+            if pos == Pos::Operand && ctx.admitted.contains(callee) {
+                declined.insert(*callee);
+            }
+            for arg in args {
+                site_walk(arg, Pos::Operand, ctx, declined);
+            }
+        }
+        Value::CallRef(_, args) | Value::Tuple(args) => {
+            for arg in args {
+                site_walk(arg, Pos::Operand, ctx, declined);
+            }
+        }
+        Value::Set(var, rhs) => {
+            let pos_here = if ctx.locals.contains_key(var) {
+                Pos::Bound
+            } else {
+                Pos::Operand
+            };
+            site_walk(rhs, pos_here, ctx, declined);
+        }
+        Value::Block(bl) => {
+            let count = bl.operators.len();
+            for (idx, op) in bl.operators.iter().enumerate() {
+                let pos_here = if idx + 1 == count && !matches!(bl.result, Type::Void) {
+                    pos
+                } else {
+                    Pos::Discard
+                };
+                site_walk(op, pos_here, ctx, declined);
+            }
+        }
+        Value::Insert(ops) => {
+            let count = ops.len();
+            for (idx, op) in ops.iter().enumerate() {
+                let pos_here = if idx + 1 == count { pos } else { Pos::Discard };
+                site_walk(op, pos_here, ctx, declined);
+            }
+        }
+        Value::If(test, then_v, else_v) => {
+            site_walk(test, Pos::Operand, ctx, declined);
+            site_walk(then_v, pos, ctx, declined);
+            site_walk(else_v, pos, ctx, declined);
+        }
+        Value::Return(inner) => {
+            let pos_here = if ctx.own.is_some() {
+                Pos::Tail
+            } else {
+                Pos::Operand
+            };
+            site_walk(inner, pos_here, ctx, declined);
+        }
+        Value::Loop(bl) => {
+            for op in &bl.operators {
+                site_walk(op, Pos::Discard, ctx, declined);
+            }
+        }
+        // A `par` arm'step result crosses the parallel machinery, which spells its own
+        // buffered call (`n_make_pair(cell, elm, _pd1)`): then_v record, never then_v tuple.
+        Value::Parallel(arms) => {
+            for arm in arms {
+                site_walk(arm, Pos::Operand, ctx, declined);
+            }
+        }
+        Value::Drop(inner) => site_walk(inner, Pos::Discard, ctx, declined),
+        Value::Iter(_, then_v, else_v, step) => {
+            site_walk(then_v, Pos::Operand, ctx, declined);
+            site_walk(else_v, Pos::Operand, ctx, declined);
+            site_walk(step, Pos::Operand, ctx, declined);
+        }
+        Value::TuplePut(_, _, inner) | Value::Yield(inner) => {
+            site_walk(inner, Pos::Operand, ctx, declined)
+        }
+        _ => {}
+    }
+}
+
+/// The value leaves of `def_nr` for the emitter ([`ValueLeaves`]): empty for a function
+/// that is not admitted, since only an admitted body converts a view or an `Object`.
+#[must_use]
+pub fn value_leaves(data: &Data, def_nr: u32, vr: &ValueRecords) -> ValueLeaves {
+    if !vr.fns.contains_key(&def_nr) {
+        return ValueLeaves::default();
+    }
+    let admitted: HashSet<u32> = vr.fns.keys().copied().collect();
+    let locals = value_locals_in(data, def_nr, &admitted);
+    collect_leaves(data.def(def_nr).code(), &locals, true)
+}
+
 pub const VALUE_RECORD_GETTERS: [&str; 6] = [
     "OpGetFloat",
     "OpGetInt",
