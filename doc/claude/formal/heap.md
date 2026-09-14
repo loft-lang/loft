@@ -480,7 +480,7 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 OPEN: **2** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE (the
 list has been re-cut as each was measured; the count is what is open TODAY); and `D-heap-7`,
-below: the drop gate's first sweep, six more families that release wrongly with no diagnostic,
+below: the drop gate's first sweep, eight more families that release wrongly with no diagnostic,
 pinned cell by cell in `tests/ownership_drop_gate.baseline`.  `D-heap-LIFO`
 CLOSED 2026-09-12 by rewriting the rules to how the mechanism functions.  The count read **1** while `D-heap-LIFO` was
 already written and marked OPEN in the rules section — an `OPEN: n` is a claim to re-measure,
@@ -828,7 +828,7 @@ variable where the answer belongs to an ASSIGNMENT — and want the design call 
 before a cure is chosen for any of them.
 
 
-### D-heap-7 — OPEN (2026-09-14): the drop gate's first sweep — six more families release wrongly, and silently
+### D-heap-7 — OPEN (2026-09-14): the drop gate's first sweep — eight more families release wrongly, and silently
 
 `(H-Drop)` releases a resource once, at its owner's death, and moves the release with a copy.
 `tests/ownership_drop_gate.rs` generates 223 cells and scores the release itself (TESTING.md
@@ -976,6 +976,41 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
      disarm reads the same ownership fact the drop hand-off reads.  Gate cells `p_g1`–`p_g5`,
      `c_literal_arm`, `c_callproj_arm`; the corpus-wide emission diff is identical in all 1495
      files, so no existing program used the shape.
+7. **A reassignment from a branch join** — `x = mk(9); x = if c { a } else { b }` with `a` and `b`
+   owned locals: on `c` true neither the displaced `mk(9)` nor the untaken `b` is released; on `c`
+   false `a` is lost (`p_s1`, `p_s2`).  Both backends, plain and under `LOFT_POISON=1`.  The same
+   join written by the author as a statement, `x = mk(9); if c { x = a } else { x = b }`, is clean
+   (`p_s3`).
+   - **Same form, different timing.**  A reassignment from a value branch is lowered to exactly
+     that statement form (`scopes::sink_set_into_arms`, `@FR-O-Complete` / `@FR-B-Copy`), so the
+     failing spelling is meant to become the correct one.  The rewrite happens inside the scan,
+     and two facts the author's form has are then missing:
+     - **the per-path flags** — loft#1515's `__hoff_a` / `__hoff_b` are minted from the pre-scan
+       IR, where only `Set(x, <branch>)` exists, so a static hand-off stops both sources and the
+       untaken one is never released;
+     - **the first arm's displaced release** — the parser types the binding with the join's deps
+       (`[a, b]`), and the scan clears them at the first arm's own copy, AFTER that arm has asked
+       whether the binding owns the record it displaces (`proxy_says_owned`).  The first arm
+       answers no and takes no snapshot; the second sees the cleared deps and takes one.
+       `LOFT_LOG=type_timeline:x` shows the two writes.
+   - A `??` spelling (`x = mk(9); x = a ?? mk(2)`, `c_coalesce_reassign`) has the same missing
+     flag: it releases `a` twice on the present path, crashes the interpreter under poison, and
+     does not compile natively (`E0425: cannot find value var___disp_2` — the arm is a scope-less
+     `Insert`, so the snapshot temp is declared inside a Rust block the loft scope does not have).
+   - Not this family: `x = mk(9); x = if c { a } else { mk(2) }` keeps the value form (the call
+     arm's tail is a compiler work-ref), so the binding is typed as a view of `a` for its whole
+     life and its earlier owned record is freed with no hook on both paths (`p_j1`/`p_j2`).
+8. **A per-path hand-off hides a later hand-off of the same source** — loft#1515 guards a
+   source's release on a flag that records whether its per-path copy ran, and the flag REPLACES
+   the static suppression rather than joining it.  So a later unconditional hand-off is ignored:
+   `if c { x = a } else { x = b }; y = a` on `c` false releases `a`'s resource twice, by `a` and
+   by `y` (`p_s4`), both backends.  The other reader of the same set errs the other way: a later
+   `a = mk(3)` on `c` false never releases the record it displaces (`p_s5`), because
+   `displaced_drop` reads only the static set, where the arm's copy put `a`.  One set carries two
+   facts — "stopped on every path" and "stopped on the path where the copy ran" — and neither
+   reader can take them apart.  Family 7's cure mints the same flags for the lowered form, so it
+   waits on this one: measured, the lowered form of `p_s4` is clean today only because its
+   sources are stopped statically.
 
 And one NATIVE-only refusal: `x = mk(K); x = a ?? mk(J)` (`c_coalesce_reassign`) generates Rust
 that does not compile (`E0425: cannot find value var___disp_2`), where the interpreter runs it
@@ -994,7 +1029,10 @@ with its answer in the rules: family 1's absent path and family 3's two residual
 the branch not taken), which wait on the carrier question — a resolver given a VARIABLE where the
 answer belongs to an ASSIGNMENT — and the native refusal of `x = mk(); x = a ?? d`.  Family 2 has
 its answer too, but reaching it needs a fact about the caller.  Family 4 waits on D-heap-1's
-design call.
+design call.  Family 8 is next: its two readers need the static and the per-path fact kept apart.
+Family 7 follows it — the lowered form needs the flags family 8 makes safe, and its binding needs
+the join deps gone before its first arm asks who owns the displaced record; the native refusal is
+family 7's `??` spelling.
 
 ### D-heap-3 — OPENED AND CLOSED (2026-09-10): a struct field projected off a CALL result releases twice
 

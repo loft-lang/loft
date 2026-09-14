@@ -276,6 +276,38 @@ fn p_g3() { p_g3_b(1); }"#,
             r#"fn p_g5_b(k: integer) { x: H = mk(90); x = if k > 0 { mk_s(91).h } else { mk(92) }; println("R{x.id}"); }
 fn p_g5() { p_g5_b(1); }"#,
         ),
+        // A reassignment from a join whose arms are two owned locals: the displaced record and
+        // the untaken local are each still released once, on either path.
+        cell(
+            "p_s1",
+            r#"fn p_s1_b(c: boolean) { a = mk(94); b = mk(95); x = mk(96); x = if c { a } else { b }; println("R{x.id}"); }
+fn p_s1() { p_s1_b(true); }"#,
+        ),
+        cell(
+            "p_s2",
+            r#"fn p_s2_b(c: boolean) { a = mk(97); b = mk(98); x = mk(99); x = if c { a } else { b }; println("R{x.id}"); }
+fn p_s2() { p_s2_b(false); }"#,
+        ),
+        // The same join written as a statement by the author.
+        cell(
+            "p_s3",
+            r#"fn p_s3_b(c: boolean) { a = mk(100); b = mk(101); x = mk(102); if c { x = a; } else { x = b; } println("R{x.id}"); }
+fn p_s3() { p_s3_b(true); }"#,
+        ),
+        // A per-path copy of `a` that did not run, then an unconditional one: `a`'s resource is
+        // `y`'s alone.
+        cell(
+            "p_s4",
+            r#"fn p_s4_b(c: boolean) { a = mk(103); b = mk(104); x = mk(105); if c { x = a; } else { x = b; } y = a; println("R{x.id} Y{y.id}"); }
+fn p_s4() { p_s4_b(false); }"#,
+        ),
+        // A per-path copy of `a` that did not run, then `a` is rebound: the record it displaces is
+        // released there.
+        cell(
+            "p_s5",
+            r#"fn p_s5_b(c: boolean) { a = mk(106); b = mk(107); x = mk(108); if c { x = a; } else { x = b; } a = mk(109); println("R{x.id} A{a.id}"); }
+fn p_s5() { p_s5_b(false); }"#,
+        ),
         // (H-Drop-Not): the language releases nothing for the X-marked id.
         cell(
             "p_n1",
