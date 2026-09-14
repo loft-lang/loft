@@ -2294,6 +2294,89 @@ bracket — a precision question for `protectable_ref_args`.  `n_pt`'s per-call 
 writes through the buffer (the record form is what the append wants).  And the harness
 effect above, which is the consumer's to change (`--n` per row).
 
+
+## V-ag — clearing a store-root vector resets its store (2026-09-14)
+
+**SHIPPED, default-on, BOTH backends (a runtime fact; switch `LOFT_NO_STORE_RESET_CLEAR`,
+`@FR-R-Switch`; the rule is `@FR-H-ClearRelease` unchanged — this is its release arm done
+in one step instead of N).**  The first unit built under
+[PERFORMANCE.md § Native vs Rust 3e](../../PERFORMANCE.md): loft knows what the store is
+FOR, and spends that knowledge itself.
+
+**The profile, re-measured on the current tip** (`fr_only.loft --n 20000`, the recipe of
+§ V-ad; the README's older reading predated § V-i, § V-j, § V-v, § V-y, § V-z and § V-u).
+The free tree alone is **27.9 %** of the run — `fl_set_red` 9.1, `fl_balance` 5.1,
+`fl_set_right` 3.4, `fl_delete_node` 3.3, `fl_set_left` 3.2, `fl_find_ge` 2.0,
+`fl_insert_node` 1.9 — against `n_fronds` itself at 7.9 %.  Add `remove_claims_mode` 4.4,
+`owned_walk` 4.2, `vector_append` 4.3, `delete` 1.8 and the record pair 1.7 and the store
+machinery is over half the row.  `perf report --symbol-filter` puts nearly all of it on one
+path: `n_fronds` → `clear_vector_release` → `remove_claims_mode` → the tree.
+
+**What that path is.**  `fronds` returns a vector of heap-owning records, and § V-u lets the
+result local adopt the hidden return buffer, whose backing is reused across calls.  Each
+call therefore clears a recycled buffer, and `@FR-H-ClearRelease` releases what the previous
+call's elements owned — element by element, each release returning blocks to a red-black
+tree that rebalances on every insert and delete.  The tree exists to make freed space
+reusable *within* a store.
+
+**The fact loft has and the allocator does not.**  The rule's own shape test already says
+it: the reference is the store's ROOT record and the store's type is a one-field
+`main_vector<T>` wrapper.  A vector that is the root of its own store owns the store's whole
+extent — its elements, and whatever they own, were all claimed inside it.  So at the clear
+every block in that store is dead at once, and the right operation is not N deletes but ONE
+reset.  `Store::init` is that reset and it is O(1): free root back to a single block over
+the whole store, claims back to the primary.  The two records the walk would have left are
+re-established after it, the wrapper by a claim and the vector by `pre_alloc_vector`, so the
+capacity ladder and the length word keep their one home.  Both claims bump on a fresh store.
+The reset also restores `claim`'s `bump_tail` fast path, which only fires while the free tree
+is a single tail block and which a fragmented store never reaches again.
+
+⚠ **A cleared vector must stay PRESENT.**  A heap value is falsy only when absent, so
+dropping the record instead of re-creating it would change what `if v` answers.  This was
+found by reading the release's tail, not by a test: the corpus, the cell values and every
+lever agreed either way, because the compiler folds `if <vector local>` to true and warns
+`constant-condition` doing it — so no program can currently ask.  The record is
+re-established regardless, because an equivalence resting on that fold is one a later change
+to the fold would silently break.
+
+**A cheaper hypothesis, tested first and wrong.**  `LOFT_NO_CLEAR_RELEASE=1` skips the walk
+entirely, so it looked like the free ceiling.  It measures **nothing**: 243.0k/245.2k and
+257.6k/249.9k across two passes.  Skipping the release does not avoid tree work, it trades
+deletes for claims — nothing is reused, the store grows, and the tree is exercised just as
+hard from the other side.  The cost is the churn, not the clear, which is why the cure has
+to RESET rather than skip.
+
+**Cells** (`bytecode-comparisons/V-ag-store-reset-cells.loft`, thirteen, hand-computed and
+matching the interpreter): r1 the recycled-buffer shape · r2 a single call · r3 no-heap
+elements · r4 the result escaping into an outer collection · r5 nested heap · r6 text
+elements · r7 an empty result · r8 alternating lengths · r9 two buffers live at once · r10
+two results read after both calls · r11 a no-heap record element · r12 fifty calls · r13 the
+present-versus-absent question and why it cannot be asked.  Every cell answers the same on
+`--interpret`, `--native`, `LOFT_STRICT_STORES=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`
+and the switch.  `tests/scripts/157-store-reset.loft` carries the values.
+
+**Falsified.**  The reset made to skip re-claiming the ROOT record — so the vector's record
+lands at 1 and overwrites the wrapper — panics in `src/vector.rs` under
+`LOFT_STRICT_STORES=1`.  The second sabotage, skipping the vector record's re-creation,
+stays GREEN on every cell and every lever, which is the recorded finding above rather than a
+gap in the corpus: the fold makes the difference unaskable from loft.
+
+**Measured** (aarch64 Linux, host `lima-default`, shipped tier, hash `ebcfd875` every run):
+
+| instrument | walk | reset | move |
+|---|---:|---:|---:|
+| `fr_only.loft --n 20000`, switch A/B on one binary, ABAB | 244 328 / 242 953 ns/op | **156 610 / 156 252** | **−35.8 %** |
+| `compare.py --repeat 3`, `fronds` | ~207 000 (4.67×) | **159 860 (3.42×)** | −23 % |
+| every other row | | flat, 14/14 hashes | |
+
+**`fronds` is under the bar**, which leaves `smooth` as the only judged row over it.
+
+**What it does not cover, by construction.**  A field vector, a user-struct root and a
+placed buffer are not store roots and keep the walk, exactly as `@FR-H-ClearRelease` already
+says.  A no-heap element never reached the release arm at all.  And the unit does not make
+the free tree cheaper for the stores that still need one — that is the next question this
+row asks, and it is a different unit.
+
 ## V-k — the append path's bookkeeping (2026-09-09)
 
 **Found by** profiling the `lock` row on the § V-j runtime with callers: the per-append

@@ -275,7 +275,13 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  OWNS HEAP.  A no-heap element pays exactly the old reset; a field
                  vector, a user-struct root and a placed buffer (never record 1)
                  keep it too.  Values are unaffected either way — this is a leak
-                 rule, not a semantics rule.
+                 rule, not a semantics rule.  The release is ONE STORE RESET, not a
+                 walk: the shape above says the vector owns the store's whole
+                 extent, so the store is re-initialised and its two records
+                 re-established — the wrapper, and the vector's own record at
+                 length zero — instead of deleting each element's owned blocks
+                 into the free tree.  The cleared vector must stay PRESENT, since
+                 an absent heap value is falsy where an empty one is true.
 
   (H-FreeFooter) inside one store, a FREE block of n words carries −n at BOTH ends: its
                  header word and the HIGH half of its LAST word (the tree node's color

@@ -1127,6 +1127,17 @@ pub fn join_buffer_witness_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_JOIN_BUFFER_WITNESS"))
 }
 
+/// @PLN157 § V-ag: clearing a store-ROOT vector RESETS its store in one step instead of
+/// walking every element and returning each owned block to the free tree — **DEFAULT ON**,
+/// both backends (a runtime fact).  Opt OUT with `LOFT_NO_STORE_RESET_CLEAR`: the
+/// before-half of the A/B on one binary, and the first bisect step for a wrong value, a
+/// leak or a use-after-free at a recycled vector-returning call.  `LOFT_STRICT_STORES=1`
+/// and `LOFT_POISON=1` are the falsifiers.
+pub fn store_reset_clear_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_STORE_RESET_CLEAR"))
+}
+
 pub fn fill_hoist_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_FILL_HOIST"))

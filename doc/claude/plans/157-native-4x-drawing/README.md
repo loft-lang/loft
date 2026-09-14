@@ -897,6 +897,23 @@ its assumptions are written as a rule and checkable by both.
 
 ## Where to resume
 
+**2026-09-14 — § V-ag SHIPPED, the first unit built under the 3e direction, and `fronds` is
+UNDER THE BAR** (DESIGN.md § V-ag).  Re-profiling the row on the current tip put **27.9 %**
+of it in the free tree alone, nearly all of it on one path: a recycled return buffer being
+cleared, releasing the previous call's elements one at a time into a red-black tree.  The
+fact loft had and the allocator did not is the one `@FR-H-ClearRelease` already tests — the
+vector is its store's ROOT, so it owns the store's whole extent and every block in it is
+dead at the clear.  So the release is now ONE store reset with the two records
+re-established, not N deletes.  `fronds` **244k → 156k ns/op (−35.8 %)** on a switch A/B,
+**4.67× → 3.42×** in the consumer table, 14/14 hashes; `smooth` is the only judged row still
+over the bar.  Switch `LOFT_NO_STORE_RESET_CLEAR`.  Two findings recorded: skipping the
+release entirely (`LOFT_NO_CLEAR_RELEASE=1`) measures NOTHING, because it trades deletes for
+claims rather than avoiding tree work — the cost is the churn, so the cure had to reset
+rather than skip; and a cleared vector must stay PRESENT, found by reading rather than by a
+test, since the compiler folds `if <vector local>` to true and no program can currently ask.
+**The next question this row asks is a different unit:** the free tree is still there for
+the stores that genuinely need one.
+
 **2026-09-14 — the direction, and it is not LLVM: PERFORMANCE.md § Native vs Rust 3e.**
 The LLVM levers are bounded and one of them is now measured (3d below); the remaining
 factor comes from loft knowing what a store is FOR and spending that itself.  Read against
@@ -1322,6 +1339,7 @@ unless said otherwise.
 | **V-ad** — a null-discharge DEFAULT BUFFER's allocation (`e = tbl[i]?` on a vector of all-scalar records mints the absent element into a hidden `__ref_p2_N`) is admitted at the header gate and read as the record's type whole by the scalar tier (`hoist::null_buffer_alloc`, `@FR-R-InPlace`'s hidden-buffer allowance); before it the never-taken arm declined every header in `polygon_generic`'s crossing loop; switch `LOFT_NO_NULL_BUFFER_HOIST`, `LOFT_HOIST_VERIFY=1` the falsifier | [DESIGN.md § V-ad](DESIGN.md) | a d-cell moves; `tests/null_buffer_hoist.rs` no longer sees the headers, or sees one for a heap-owning record; a consumer hash disagrees | **Shipped 2026-09-13** — 12 cells exact on both backends under the verifier, the switch and poison; `wide_line` −29 % (5.35× → 4.02×), the fills −15/−19 % (aarch64 Linux, 14/14 hashes) |
 | **V-ae** — the FILL idiom: a counted loop whose body is ONE in-place scalar set at `invariant + i` of an invariant value over a held header emits one guarded `Stores::fill_hoisted` (a range test, then `Store::fill` — one bounds check per end, a vectorisable store loop) with the per-element loop as the fallback for every range the fill declines and the counters left as the loop leaves them (`hoist::fill_loop`, `Output::fill_fast_path`, `@FR-R-Fill`); switch `LOFT_NO_FILL_HOIST`, `LOFT_TRACE_FILL` names a decline | [DESIGN.md § V-ae](DESIGN.md) | an f-cell moves; `tests/fill_hoist.rs` no longer sees a fill, its guard or its tail; the count sabotage turns the in-range cell red; a consumer hash disagrees | **Shipped 2026-09-13** — 16 cells exact on both backends under the verifier, the switch and poison; `wide_line` −23 % (4.02× → 2.91×), `fill_circle` −48 %, `fill_star` −43 % (aarch64 Linux, 14/14 hashes) |
 | **V-af** — a value BRANCH of buffer-delivering calls (`v = if c { mk(i) } else { mk2(i) }`) witnesses every arm's hidden buffer (`scopes` pairing per tail call, `@FR-O-Complete`): the buffers are allocated once by `reuse_record_buffers` and the local's scope-exit free is the existing multi-buffer `OpDistinctStore` ladder; an IR fact, both backends; switch `LOFT_NO_JOIN_BUFFER_WITNESS`, `LOFT_STRICT_STORES=1` / `LOFT_POISON=1` the falsifiers.  Beside it: the uncached `LOFT_TRACE_CLEAR` read and the per-allocation prefix compare removed from the runtime hot path | [DESIGN.md § V-af](DESIGN.md) | a j-cell answers wrong or reports a use-after-free under strict stores; `tests/join_witness.rs` no longer sees the preamble allocations or the ladder; a consumer hash disagrees | **Shipped 2026-09-13** — 12 cells exact on both backends under strict stores, poison and the switch, store allocations 85 → 45; `smooth` −26 % standalone, 10.5× → 9.0× in the consumer table, allocations per call 33 → 17 |
+| **V-ag** — clearing a store-ROOT vector RESETS its store: the shape `@FR-H-ClearRelease` already tests says the vector owns the store's whole extent, so the release is one `Store::init` plus the two records re-established (the wrapper by a claim, the vector by `pre_alloc_vector`) instead of a delete per element into the free tree; both claims bump, and `claim`'s `bump_tail` fast path is restored.  The first unit under PERFORMANCE.md § 3e.  Switch `LOFT_NO_STORE_RESET_CLEAR`; `LOFT_STRICT_STORES=1` / `LOFT_POISON=1` the falsifiers | [DESIGN.md § V-ag](DESIGN.md) | an r-cell answers wrong or reports a use-after-free under strict stores; skipping the root re-claim (the falsified sabotage) panics in `vector.rs`; a consumer hash disagrees | **Shipped 2026-09-14** — 13 cells exact on both backends under five levers; `fronds` −35.8 % on a switch A/B, **4.67× → 3.42× (under the bar)**, every other row flat |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)

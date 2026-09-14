@@ -2283,6 +2283,31 @@ impl Stores {
             } else {
                 u16::MAX
             };
+            if elem != u16::MAX && self.owns_heap(elem) && crate::keys::store_reset_clear_enabled()
+            {
+                // @PLN157 § V-ag — the vector is this store's ROOT, so everything in the
+                // store was claimed inside it and the whole extent is dead here.  Reset the
+                // store and re-establish the two records the element walk would have left:
+                // the root wrapper, and the vector's own record at length zero.  A cleared
+                // vector must stay PRESENT — an absent heap value is falsy where an empty
+                // one is true — so dropping the record instead would change what `if v`
+                // answers.  Both claims bump on a fresh store, so this is O(1) against the
+                // walk's delete per element.
+                let elem_size = u32::from(self.size(elem));
+                let words = 1 + u32::from(self.size(kt)).div_ceil(8);
+                {
+                    let store = &mut self.allocations[db.store_nr as usize];
+                    store.init();
+                    let root = store.claim(words);
+                    debug_assert_eq!(root, 1, "a fresh store's first claim is its root record");
+                    store.zero_fill(root);
+                    store.set_u32_raw(root, 4, u32::from(kt));
+                }
+                // The vector's own record comes back through its one constructor, so the
+                // capacity ladder and the length word are not re-spelled here.
+                crate::vector::pre_alloc_vector(db, 0, elem_size, &mut self.allocations);
+                return;
+            }
             if elem != u16::MAX && self.owns_heap(elem) {
                 let len = crate::vector::length_vector(db, &self.allocations);
                 let size = u32::from(self.size(elem));
