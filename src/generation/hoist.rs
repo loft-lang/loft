@@ -4892,9 +4892,8 @@ fn value_body(data: &Data, d_nr: u32, admitted: &HashSet<u32>) -> Option<&'stati
     if !ok {
         return Some("a return is not a value leaf");
     }
-    let Some(rb) = own_retbuf(data, Some(d_nr)) else {
-        return None;
-    };
+    // No return buffer: nothing left to account for, admitted.
+    let rb = own_retbuf(data, Some(d_nr))?;
     // A phantom that is itself a value local ([`own_retbuf`]) has every mention
     // accounted by [`local_uses_ok`] already.
     if locals.contains_key(&rb) {

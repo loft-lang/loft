@@ -4322,3 +4322,93 @@ store root: it keeps the walk, and its record-level free still leaves a hole.  A
 hole fits still walks the tree to reach the tail — a tail fast path that survives holes is
 the next question, and it would price those sub-call holes too.  A buffer filled once and
 never cleared never reaches the arm.
+
+## V-an — a `return f(…)` forwards the callee's tuple: the phantom buffer is a value local (2026-09-15)
+
+**SHIPPED, default-on with § V-aa (`@FR-R-ValueRecord`; `LOFT_NO_VALUE_RECORD=1` restores
+the buffer; `LOFT_TRACE_VALUEREC=1` now names the refusing test).**  The `parse` row's
+run-down (README § Where to resume, queue item 3).  The value form declined every reader
+of the drawing package's scan module — twelve functions, `find_option`, `read_number`,
+`read_uint` among them — and the trace said *"a result position is not a value leaf"* of
+some and *"a site consumes its record"* of the rest, which is the fixpoint's round order
+speaking, not the cause: a body declined in round one turns its callee's tail into an
+operand, and the callee's decline is then reported as the site's.  Five standalone cells
+pinned it to ONE shape: `if j == i { return scan_fail() }` — an explicit `return` of a
+record-returning call — declines, while the same call at the tail is admitted.
+
+**The three spellings of one lowering.**  The parser hands such a return the function's
+OWN return buffer (`chain_site_set_shape`: the callee builds into it and the caller returns
+it, no copy) — a `one_buffer_chain` block, `rb = f(…, rb); …; return rb`, and the scope
+pass leaves the `return` inside the block or outside it, with a bare `rb;` as the block's
+dropped value.  A local the parser PROMOTES into that buffer (`RetPromotion::Rename`:
+`n = f(…); if !n.ok { … }; n`) is the same variable under the local's name, assigned at
+the top level and returned whole.  And an explicit `return S{…}` after a live local of
+ANOTHER record type is bound lowers as an `Object` block that carries the frees the
+return owes and the `return` itself, its own buffer the returned value.  Every one of the
+three assigns or returns the PHANTOM — the parameter § V-aa drops from the signature —
+and the leaf test could read a phantom only where it was never assigned.
+
+**The rule.**  The phantom is a VALUE LOCAL when every assignment to it is a value shape.
+`hoist::own_retbuf` names it; `value_locals_in` admits it beside the ordinary locals (the
+one parameter that may be one); `local_uses_ok` accounts its two extra mentions — the
+buffer ARGUMENT an admitted call site drops, and a read whose value the block DISCARDS
+(`dropped_reads`, positional: a read under a node the walk does not know counts as used,
+the conservative side).  `retbuf_uses_ok` is then not asked of a phantom that is a value
+local, and the one mention it had never accepted — the phantom as the WITNESS of a
+store-identity test — is accepted as the emitter already answers it (the test is `true`,
+the guarded free unconditional).  The emitter needs nothing new at the sites: the getters,
+frees, identity tests and the tuple call already read `value_record_locals`; what the
+dropped parameter no longer provides is the DECLARATION, bound at the tuple's zero in the
+prologue.  The third spelling is the leaf itself: `object_own_return` recognises an
+`Object` whose last statement returns the buffer its result names; the leaf walk records
+it before its own `return` is reached (a block is met before its statements), and the
+emitter converts it as the tuple first, the block's other statements — the releases — in
+their order, then `return __obj`, so a statement that frees a real store still runs.
+
+**Measured.**  The drawing bench's `parse` row (this box, `--n 2000`, hash 33f6d2b8
+throughout): 77 220–85 620 → **51 197–59 892 ns/op**, then 50 039–53 826 with the
+`link_siblings` clone gone (below).  Every reader of the scan module admitted (the trace:
+eleven `-> (bool, i64, f64)` / `(bool, i64, i64)`); the ≈194 `Scan` mints per parse
+(`LOFT_TRACE_DB=1`, 388 over two parses) are none.  The interpreter 3.52 → 3.31 ms/op,
+the clone's share.
+
+**Cells** `bytecode-comparisons/V-an-chain-cells.loft` n1–n9, hand-computed, exact on both
+backends, clean under `LOFT_NATIVE_LEAK_CHECK`, `LOFT_STRICT_STORES` and `LOFT_POISON`,
+and restored by `LOFT_NO_VALUE_RECORD=1`: two early chains before an Object tail (n1), a
+chain inside a `while` (n2), two chains to different callees (n3), a recursive chain
+(n4), a chain whose call takes a record LITERAL argument — the sibling buffer's release
+stays after the call (n5), a chain in a body that keeps its buffer (n6, declines), a chain
+to a callee another site passes on (n7, both decline), the promoted local (n8), the
+own-return Object (n9).  `tests/value_record.rs` pins the admissions and the three
+emissions (the phantom declared as its tuple, no mint and no copy, `let __obj = (…); …;
+return __obj`).  `scripts/emission_audit.py` is clean on the bench's emission.
+
+**What the build corrected.**  The first cut recognised the chain BLOCK (a `chain_forward`
+leaf with its own emitter arm binding `let __chain`).  It admitted the standalone cells
+and nothing in the cells file, because the file's `pick` carries the chain's `return`
+OUTSIDE the block — the second spelling — and c4's promoted local is the third.  Three
+special cases were one rule short: the phantom is a variable like any other once the
+signature drops it, and reading it as a value local made the block-level machinery
+unnecessary.  Two instruments found the two remaining steps in minutes each, where the
+trace had named a round-order artefact: the body gate now RETURNS the refusing test
+(`Option<&'static str>`), so the trace line says which of its four questions declined.
+
+**The runtime half (both backends).**  `link_siblings` cloned the parent's whole `Parts`
+— the field list — on every `record_finish` with a field, i.e. every element append of a
+record type; it reads the sibling list by index now.  The profile before had it at
+1.3–2.1 % of the row (`Vec<Field>::clone`, all from `record_finish` under `read_points`).
+
+**What `parse` is bound by now** (perf, 1 052 program samples, 40 000 calls,
+`scripts/profile.sh --keep` + `perf script`), for the queue:
+
+| class | share | where |
+|---|---:|---|
+| `OpCopyRecord` deep copies (inclusive) | **18.5 %** | `bs_sk = parse_scene(…)` in the bench harness (5 %: the first bind of a record result COPIES — `_dst` is null, `_src` is the callee's fresh store, and the adopt-or-copy delivery adopts only a store it already holds — and the loop never recovers because the copy leaves `__ref_1` and `bs_sk` on different stores); `acc_pts`'s `sc.elems[idx] = Elem{…}` (5 %: an indexed element OVERWRITE from a literal, built in a temp store and copied in — the § V-z element-first family covers the append, not the overwrite); `parse_poly` / `parse_fronds` `paint: pp_paint` (6 %: a struct FIELD assigned from a local at its last use — a copy where a move would do) |
+| the byte scan | ≈ 15 % | `matches_at` 8.9 %, `find_option` 5.7 % inclusive — `find_option` rescans the whole line per key and a `Fronds` line reads a dozen keys; the library's, not the language's |
+| element mint prefill | ≈ 5 % | `OpNewRecord` → `set_default_value_nullable` for the `Op` literal (partial: `w`, `color`, `kind` written, the rest defaulted, so § V-y's complete-write twin cannot apply); a per-type PREFILL IMAGE (the sentinels and tags a `Prefill` writes are a fixed byte pattern per type) would make it one block copy |
+| `claim` / free lifecycle | ≈ 12 % | the copies above and the `Mark` / `PointList` / `Paint` temporaries per op |
+
+The next unit for the row is the first row of that table — a record result's FIRST bind
+adopting the callee's store instead of copying it, and an element overwrite or a
+last-use field assignment MOVING the source — the memory-model class the README's queue
+names; the prefill image is the second.

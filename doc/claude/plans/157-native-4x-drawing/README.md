@@ -86,6 +86,16 @@ guard's receipt is the value channel.  Consumer lane with § V-al and § V-am to
 (500 calls per row, 14/14 hashes): `resize` 105.4 → **93.5 ms/op** (5.36×),
 `render_marks` 7.46 → **6.70 ms/op** (7.57×), `render_lock` 16.26 → **14.84 ms/op**
 (5.20×).  Switch `LOFT_NO_PUSH_FILL`, trace `LOFT_TRACE_PUSH_FILL`.
+**§ V-an SHIPPED 2026-09-15** (DESIGN.md § V-an): the value form's PHANTOM return buffer
+is a value local when every assignment to it is a value shape — which admits the parser's
+`return f(…)` chain (`rb = f(…, rb); …; return rb`), a local promoted into the buffer, and
+an `Object` that returns what it builds with its own frees inside.  Every reader of the
+drawing package's scan module was declined by that one shape; admitted, the `parse` row's
+≈194 `Scan` mints per parse are none: **77–86 → 50–54 µs/op** (10.5× → ≈ 7.2×, hash
+33f6d2b8).  Nine hand-derived cells on both backends under leak check, strict stores,
+poison and the switch; `tests/value_record.rs` pins the admissions.  With it the runtime
+half of the queue's item 3: `link_siblings` no longer clones the parent's field list per
+element append (both backends).  `LOFT_TRACE_VALUEREC` now names the refusing test.
 **The release-pass ceiling measured 2026-09-15** (`LOFT_RELEASE_PASS_PROBE=1`, a
 measurement instrument — PERFORMANCE.md § *The release-pass ceiling* has the table): the
 three resample rows are bound by the checks (`resize` 5.36× → 2.17×, `render_marks`
@@ -1143,12 +1153,19 @@ reference's 17 / 1.7 / 4.4).*  In this order:
    unit that reaches the reference's 4.4 cycles per tap and takes the three resample rows
    under the bar; the largest to build.  Read § V-ae's fill for the guard-and-fallback
    shape, § V-al for the emitter placement.
-3. **`parse`** (10.65×) — the `Scan` family is declined by the value form (`read_number`
-   "a site consumes its record", `find_option` / `read_uint` "a result position is not a
-   value leaf": read which site, since a `Scan` is three scalars and every consumer reads
-   `.ok`/`.at`/`.value`), and the runtime's per-record default fill clones the schema's
-   field list (`set_default_value_nullable` 4.7 % + `Vec<Field>::clone` 1.4 % of the
-   row — a runtime fix, both backends).
+3. **`parse`** (10.65×) — **§ V-an shipped 2026-09-15: ≈ 7.2×.**  The `Scan` family was
+   declined by ONE shape, an explicit `return f(…)` (the phantom buffer assigned), and the
+   trace's two reasons were the fixpoint's round order; the field-list clone was
+   `link_siblings`, per element append, and is gone.  What the row is bound by now
+   (DESIGN.md § V-an, the table): `OpCopyRecord` deep copies **18.5 %** — the FIRST bind
+   of a record result copies (`bs_sk = parse_scene(…)`: the adopt-or-copy delivery adopts
+   only a store the local already holds, so a fresh local copies and a loop never
+   recovers), an indexed element OVERWRITE from a literal (`sc.elems[idx] = Elem{…}`) and
+   a struct field assigned from a local at its last use (`paint: pp_paint`) — the
+   memory-model units that remain: adopt at the first bind, move at the last use; the
+   byte scan ≈ 15 % (`find_option` rescans the line per key — the library's); the `Op`
+   element mint's prefill ≈ 5 % (a partial literal, so § V-y cannot elide it — a per-type
+   PREFILL IMAGE would make it one block copy).
 4. **The counter step's `jo`** — provable away for a counted range; one instruction per
    iteration, everywhere.
 5. The aarch64 re-measure, on its own box.
