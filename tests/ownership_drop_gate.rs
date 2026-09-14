@@ -171,6 +171,24 @@ fn p_o5() { t = (mk(16), 1); p_o5_m(t); println("R{t.0.id}"); }"#,
             "p_l2",
             r#"fn p_l2() { a: H? = null; for i in 0..2 { x = a ?? mk(27 + i); println("R{x.id}"); } }"#,
         ),
+        // The same joins spelled as a value `if`, beside their `??` spellings in the COALESCE
+        // family: `a ?? d` is that `if`, so the two must answer alike.
+        cell(
+            "p_j1",
+            r#"fn p_j1() { a: H? = mk(30); x = mk(31); x = if a != null { a } else { mk(32) }; println("R{x.id}"); }"#,
+        ),
+        cell(
+            "p_j2",
+            r#"fn p_j2() { a: H? = null; x = mk(33); x = if a != null { a } else { mk(34) }; println("R{x.id}"); }"#,
+        ),
+        cell(
+            "p_j3",
+            r#"fn p_j3() { a: H? = mk(35); v: vector<H> = []; v += [if a != null { a } else { mk(36) }]; println("R{v[0].id}"); }"#,
+        ),
+        cell(
+            "p_j4",
+            r#"fn p_j4() { a: H? = null; v: vector<H> = []; v += [if a != null { a } else { mk(37) }]; println("R{v[0].id}"); }"#,
+        ),
         // (H-Drop-Not): the language releases nothing for the X-marked id.
         cell(
             "p_n1",

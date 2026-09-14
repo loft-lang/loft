@@ -863,6 +863,31 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
      (`own_joined_call_arms`) before the lift runs.  The missing piece is that TYPE fact, not a
      second owner decision: giving the default an owner under the owned type would release it
      twice wherever the lift declines.
+
+     **Where the fact is lost, and why restoring it alone is not landable (measured
+     2026-09-14).**  The `@FR-B-Copy` arm of a variable read in `parser/objects.rs` decides
+     `x = a …` is a whole-value bind while reading the NAME `a`, makes `x` independent of `a`
+     and returns `a`'s type without its dep.  Its lookahead excludes `.`, `[` and `#` — none of
+     them a whole-value bind — but not `??`, and `x = a ?? d` is the join, not the bind.
+     Adding `|| self.lexer.peek_token("??")` to that lookahead makes the `??` lower exactly as
+     the `if` spelling does (`x ["__lift_1", "a"]`, the default arm a `#join-arm-owner`), and
+     closes the LOST on both backends — `coal_absent`, the loop's `p_l2` and both
+     `q_default_*_call_local`.  It was measured and taken back out, because by `(H-Drop)`'s ⚠
+     a change that converts one failure into another is not an improvement, and this one
+     converts two, on both backends: `v += [a ?? mk()]` with `a` absent goes from right (by
+     accident) to releasing twice, and `x = mk(); x = a ?? d` goes from a loud native compile
+     refusal to a silent LOST.  (The postfix `a?` does not share the hole: its default is
+     built into a work-ref this frame already releases, both backends.)
+   - **Why it waits: the same join's other consumers are broken for BOTH spellings.**  The
+     `if` spelling — the "working" form above — releases twice when its join is copied into a
+     container (`v += [if a != null { a } else { mk(2) }]`, the gate's `p_j3`/`p_j4`) and loses
+     the record a local's reassignment displaces (`x = mk(); x = if … { a } else { … }`,
+     `p_j1`/`p_j2`).  A join bound to a local first does not help: `t = a ?? mk(2); v += [t]`
+     releases twice in both spellings, while `t = mk(3); v += [t]` releases once.  The
+     join-bound local is a CARRIER — its type borrows the per-path temps, so the element
+     hand-off stops `t`, which never released anything, and the per-path source keeps its
+     release.  That is D-heap-1's open question (the resolver is given a VARIABLE where the
+     answer belongs to an ASSIGNMENT); the type fact above can land once that is answered.
 2. **A parameter copied out of its callee** — `p` or `p.h` into a field, an enum payload, a
    vector or the return (`c_param_*`, `c_pfield_*`): twice, and the callee's release runs BEFORE
    the caller's own later read.  The rule gives the answer — a copy off a PARAMETER moves

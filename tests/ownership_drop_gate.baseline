@@ -33,6 +33,10 @@ c_tuple_push DOUBLE
 c_tuple_ret DOUBLE,EARLY
 c_tuple_tuplem DOUBLE
 c_tuple_veclit DOUBLE
+p_j1 LOST
+p_j2 LOST
+p_j3 DOUBLE
+p_j4 DOUBLE
 p_l2 LOST
 p_o1 DOUBLE
 p_o2 DOUBLE,EARLY
