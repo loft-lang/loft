@@ -374,6 +374,15 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
   side.  Found while closing D-bind-33: that cure, first built wider, wrote this join out as
   statements too, and native then copied as well — the rule's answer lost on the one side that had
   it.  Narrowed to local arms, the split is back to what it was, and it is recorded here.
+  **Where it happens (measured).**  The author's statement form carries an owner witness
+  (`(O-Witness)`: `__own_x`, released by store identity at the projection's assignment), so the
+  projection arm is a view on both backends.  The value join gets none: `owner_witness_locals` runs
+  before the scan and does not read the join's projection arm as a view assignment, so `x` stays an
+  owning slot, and the interpreter lowers an owning slot's reassignment from an `Own::Join` value to
+  `OpBindOrCopy`, which copies the borrowed arm.  The boundary agrees — a binding whose previous
+  assignment was itself a view views on the interpreter too.  It is the third fact a pass before the
+  scan reads off the join where the author's spelling has it (family 7's per-path flags and
+  D-bind-33's call-arm owner were the other two, `heap.md` D-heap-7).
 * **D-bind-33** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Copy)` did not hold for a
   REASSIGNMENT from a join whose other arm is an owning CALL.  `a = mk(1); x = mk(9); x = if c { a }
   else { mk(2) }; x.id = 77` changed `a` on the path that took it, and a later write to `a` showed
