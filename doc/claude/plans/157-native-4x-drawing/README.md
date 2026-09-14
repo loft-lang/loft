@@ -67,11 +67,35 @@ is the reference lane's swing); `hair` 4.3× → **2.0×** (under the bar); `loc
 § V-q (2026-09-09, both under the bar).
 
 **Which MACHINE a row was measured on is part of the row.**  The tables below through
-2026-09-12 are the **Apple** lane (host `firewall02`, arm64 Darwin); the one directly
-under this paragraph is **x86-64 Linux** (host unrecorded — it read "this dev box",
+2026-09-12 are the **Apple** lane (host `firewall02`, arm64 Darwin); the two directly
+under this paragraph are **x86-64 Linux** (the 2026-09-14 one on host `tuxedo`; the
+2026-09-12 one's host unrecorded — it read "this dev box",
 which resolves to nothing for a later reader on another machine).  The two do not compare row-for-row and neither is wrong: the
 bar is *within 4× of the Rust reference on the same machine*, and which routines clear
 it differs by target.  Label every future row with its machine.
+
+**Re-measured 2026-09-14 on x86-64 Linux (host `tuxedo`), tip 36552c16** (the § V-ag tip
+plus two commits that change no default: § V-ah stage 1 is opt-in, the last is docs) —
+release lib + binary rebuilt, fresh scratch clone of `drawing-lock` (250b2cd),
+`compare.py --skip-interp --repeat 5` run THREE times, each lane's fastest row kept, all
+14 hashes agreeing every run: **eight of the ten judged rows under the bar** —
+`fill_circle` **1.29×** (43 220 ns/op native), `fill_star` **1.51×** (19 580), `hair`
+**1.73×** (21 060), `hash` **2.05×** (235 740), `wide_line` **2.36×** (10 200), `composite`
+**2.49×** (151 440), `lock` **3.13×** (2 859 640), `lock_curved` **3.35×** (2 505 880) —
+and two over: **`fronds` 4.28×** (175 920 / 41 080) and **`smooth` 9.50×** (1 900 / 200).
+Against the 09-12 table below: `wide_line` and both fills crossed under (§ V-ad + § V-ae
+landing on this lane); `fronds` 318 300 → 175 920 ns/op (−45 %, § V-ag) yet still OVER
+here where the aarch64 lane reads 3.42× — the reference is faster on this box (41k vs
+~46k) and native slower (176k vs 156k); the run-down is below.  Two rows are lane noise:
+the `fronds` ratio spanned 2.97–4.75× over the three runs because the REFERENCE swung
+41k–59k while native held 176k–195k, and `smooth`'s reference reads 200–300 ns at `--n 50`,
+under its floor (§ `smooth` run down: the converged x86 figure is ≈9.6×).  ⚠ `lock`,
+`lock_curved` and `composite` read 0.15–0.4× ABOVE their 09-12 ratios: native absolutes
+held within 1 % across today's runs, but the 09-12 table recorded no absolutes for them
+and its tip is not in this repo, so lane drift and a small regression are not yet told
+apart — an A/B of the two tips on one box, cdylib cache cleared, is the check.  `hash`'s
+NATIVE lane swung 235k–464k between runs (the 09-12 note put that row's spread on the
+reference lane); min-of-min is what the row reads.
 
 **Re-measured 2026-09-12 on x86-64 Linux, the same § V-z tip (d3c31d82, doc-only over
 d80307b0)** — rebuilt release lib + binary, fresh scratch clone of `drawing-lock`,
@@ -904,7 +928,10 @@ Linux, host `lima-default`), against six when the session began: `fill_circle` 1
 `fill_star` 1.76×, `hair` 2.01×, `hash` 2.55×, `wide_line` 2.93×, `composite` 3.14×,
 `fronds` 3.42×, `lock` 3.44×, `lock_curved` 3.67×.  **`smooth` at 8.44× is the only row
 still over it.**  Ratios drift with the reference lane between runs, so compare absolute
-ns/op within a session.
+ns/op within a session.  **On x86-64 (host `tuxedo`, 2026-09-14, same tip) it is EIGHT of
+ten**: `fronds` reads **4.28×** there (175 920 / 41 080 ns/op — the reference ~10 % faster
+than aarch64's, native ~13 % slower) and `smooth` 9.50×; Status § *Re-measured 2026-09-14*
+has the table and the three rows whose rise over 09-12 is not yet told from lane drift.
 
 *Shipped, in order, all on `157-native-4x`:* § V-ac (a vector parameter's header crosses
 the call), § V-ad (a null-discharge buffer stops blocking the hoist), § V-ae (a filling loop
