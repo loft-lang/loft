@@ -4038,6 +4038,17 @@ fault.  Measured on the final emission of this unit and § V-ak: the closure as 
 operators −50 % (→ 55 ms).  That is the price of the C85 line on this row, and moving the
 line is the owner's call, not a rewrite's.
 
+**Ruled 2026-09-15 (DESIGN_DECISIONS.md C120): declined, both forms.**  *"We keep today's
+implementation; I do not want random behaviour.  We only optimise situations we know can
+be optimised."*  Three programs measured under each closure show what the ruling keeps
+out: `b = MAX + 1; c = b + 5` reads `-9223372036854775803` for null under the checked
+family, and under plain operators `d = c * 2` reads `10`, an overflowing accumulator `0`
+and a masked hash a C-style value with no fault noted.  The admissible successor is a
+RANGE proof — arithmetic whose operands carry bounds (`integer(lo, hi)`, a counted
+range's counters, a masked value) such that the result cannot overflow emits the plain
+operator, because then no fault can occur and no value can differ; a library opts in by
+declaring the bounded element types it already knows.
+
 ## V-ak — a growth-free loop reads and writes through the element base (2026-09-14)
 
 **Invariant (`@FR-R-Base`, formal/rewrites.md).**  A loop that GROWS no store — no push,

@@ -3743,3 +3743,36 @@ be the sentinel, and that proof is portable by construction.
 
 **Revisit when.** Never for the machine-dependent form.  The range-proof form is @PLN157's
 queue item 3 and needs no revisit here.
+
+## C120 — Integer arithmetic on native stays sentinel-aware after a fault; the non-null proof does not close over `+`, `-`, `*`
+
+**Asked (2026-09-14/15, @PLN157 § V-aj):** may the native emitter count the RESULT of an
+integer `+`, `-` or `*` over proven non-null operands as proven itself, so a chain of
+arithmetic compiles to plain (or overflow-checked-only) machine operations?  Measured on
+the graphics package's Lanczos resample, the last unit standing between three bench rows
+and the plan's 4× bar: −17 % with the checked family, −50 % with plain operators.
+
+**What it changes.** Nothing before a fault.  C85 makes an integer overflow a reported
+fault whose result is null, and the sentinel test on every operand carries that null
+through everything after it — on both backends alike.  Under the closure a native
+program that has overflowed goes on computing with numbers where the interpreter goes
+on with null (measured, three programs: `b = MAX + 1; c = b + 5` reads
+`-9223372036854775803` for null; under plain operators `d = c * 2` reads `10`, an
+accumulator reads `0`, and a masked hash reads a C-style value, with no fault noted at
+all).  The divergence is confined to values downstream of an overflow, and it is exactly
+the kind of value the program cannot know it is holding.
+
+**Decision (owner, 2026-09-15): declined.**  *"We keep today's implementation; I do not want
+random behaviour.  We only optimise situations we know can be optimised."*  A rewrite
+must leave every observable value as the interpreter answers it, faults included; a
+speed-up bought with a value the program cannot predict is not an optimisation.  Both
+forms — checked-only and plain — are closed by this, not only the silent one.
+
+**What would reopen it: nothing about the closure itself.**  The sound successor is a
+PROOF, not a policy: arithmetic whose operands carry declared ranges (`integer(lo, hi)`,
+the counters a counted range bounds, a masked value) such that the result CANNOT
+overflow may emit the plain operator, because no fault can occur and no value can
+differ.  That is a range analysis over the non-null proof's own machinery, and a library
+opts in by declaring the bounded element types it already knows (`vector<integer(0, 255)>`
+for a channel plane).  It is the plan's line for the resample rows, and it is admissible
+under this decision because it optimises a situation we know.

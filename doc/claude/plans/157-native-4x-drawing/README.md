@@ -1057,10 +1057,12 @@ header; what each tap paid was the nullable-aware arithmetic and the per-read st
 resolution.  Shipped: a counted range's counters seeded non-sentinel (`@FR-R-Counter`), a
 division by a literal as one test and a divide (`@FR-R-LitDiv`), and the element BASE
 beside every header of a growth-free loop (`@FR-R-Base`) — the resample probe 139 →
-**111–113 ms/op**, 7.6× → 6.2×.  What is left on the row is the C85 line: the integer
-closure over `+`/`-`/`*` is worth a further −17 % as the checked non-null family and
-−50 % as plain operators, measured on the final emission, and is not a rewrite's to take
-(it would diverge from the interpreter after a reported overflow).  The non-tap floor —
+**111–113 ms/op**, 7.6× → 6.2×.  The C85 line — the integer closure over `+`/`-`/`*`,
+worth a further −17 % as the checked non-null family and −50 % as plain operators on the
+final emission — was put to the owner and **declined on 2026-09-15 (DESIGN_DECISIONS.md
+C120): no random behaviour, only situations we know can be optimised.**  What remains
+admissible for the taps is a RANGE proof (bounded operands that cannot overflow emit the
+plain operator), which needs the library to declare its planes' bounds.  The non-tap floor —
 32 ms of premultiply, prefill, growth ladder and two per-pixel vectors, 1.8× the whole
 reference by itself — is the other half, unprobed beyond the profile.  Then `filled` — a `w*h` `vector<integer>` grown by `+=` per pixel, which § V-ae's
 slice fill cannot reach because there is no vector yet to fill (a pre-sized fill is the
@@ -1118,7 +1120,8 @@ pixel).  The per-pixel vectors were the unit worth building first and are § V-a
 row's remaining floor is the prefill and the reserve (a counted push loop is a reserve by
 its trip count, a constant push loop one fill — the same recogniser, ≈ −3.5 % here and
 `filled`'s whole cost in the render rows), then the premultiply's own arithmetic, which is
-the C85 line again.
+the C85 line again — closed by C120; a range proof over `(c >> 16) & 255` (a masked
+value is bounded) is the sound form of that one.
 
 **2026-09-14, later — HAND-OFF FOR THE QUIET BOX: `smooth`, the last judged row over the
 bar.**  Written on `tuxedo` (x86-64, three checkouts sharing it) for an agent on the quiet
