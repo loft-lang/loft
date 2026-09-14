@@ -2377,6 +2377,75 @@ says.  A no-heap element never reached the release arm at all.  And the unit doe
 the free tree cheaper for the stores that still need one — that is the next question this
 row asks, and it is a different unit.
 
+
+## V-ah — the record that never needed to exist: `smooth` run down (2026-09-14)
+
+**DESIGNED, ceiling measured, NOT BUILT.**  `smooth` is the last judged row over the bar
+(8.44×), and this is its run-down under the [§ 3e](../../PERFORMANCE.md) direction.
+
+**The profile on the current tip** (`sm_only.loft --n 2000000`; the § V-af reading predates
+§ V-ag and the two runtime fixes).  Of the program's own time: `n_smooth_pts` 18.4 %,
+**`n_pt` 14.9 %**, `n_ctrl` 6.2 %, `get_vector` 6.0 %, `n_half_chord` 5.0 %, **the
+borrowed-view call bracket 9.6 %** (`n_protect_store_frees` 3.4, `set_free_protected` 3.1,
+`clear_free_protected` 1.9, `n_unprotect_store_frees` 1.1), and the allocate/free lifecycle
+8.6 %.  `perf --symbol-filter` puts the bracket, the `OpFreeRef` and half the `get_vector`
+under `n_half_chord`, so `ctrl` and `half_chord` together carry about **26 %** of the row.
+
+**What those 26 % buy: nothing the program asked for.**  `ctrl(pts, i, closed) -> Pt`
+returns a BORROWED VIEW of an element of a `const` parameter, or the `?` discharge default
+it minted.  Because that is a borrow-or-own return, every call pays the @P290 protect
+bracket, the adopt-or-copy delivery and a guarded buffer free.  And the only thing either
+caller ever does with the result is read `.ptx` and `.pty`.  The record never needs to
+exist; loft knows that and the runtime is made to carry it anyway.
+
+**§ V-aa is the mechanism and its BODY gate is what refuses.**  `LOFT_TRACE_VALUEREC=1`
+says it in one line each: *`n_ctrl`: tail is not an Object build*, *`n_half_chord`: tail is
+not an Object build*.  The USE gate — every call site consumes the result by field reads —
+already passes for both.  What blocks them is `hoist::builds_record_by_object`, which
+admits a body that BUILDS its record and refuses one that FORWARDS or SELECTS a record.
+With the switch on today the row is flat (1282/1272 against 1269/1281), because only `n_pt`
+is admitted and § V-d already builds that one into the appended element.
+
+**The ceiling, measured in loft** (`sm_ceiling.loft`: the same kernel written twice, once
+record-returning and once returning the two floats as a tuple; identical output, hash
+`520594874`, 61 points, 300 000 reps, order-independent):
+
+| form | ns/op | against the record form |
+|---|---:|---:|
+| A — `ctrl` and `half_chord` return `Pt` (shipped) | 1 227–1 279 | — |
+| C — only `half_chord` returns its fields | 938–955 | **−24 %** |
+| B — both return their fields | 740–757 | **−40 %** |
+
+**So the unit stages, and the split says the cheap stage is worth most of it.**
+
+1. **§ V-aa default-on.**  Everything below needs it, and it is opt-in today because its
+   CALL-SITE gate fails three shapes in the script corpus (a result used as a `DbRef`, a
+   buffer argument kept for a signature that dropped it, a `match` joining a tuple arm with
+   a record arm) — those generate a crate that does not compile.  Make the gate DECLINE
+   them, prove it over the corpus, flip the default.  Already ranked first in the
+   `lock_curved` evaluation for its own −4 %.
+2. **A forwarding tail** — a body whose tail is a CALL to another admitted value-record
+   function — is admitted and forwards the tuple.  This is `half_chord`, it needs no
+   ownership change, and it is **−24 %** of the kernel.
+3. **A selecting tail** — a body whose tail is a record VALUE (an element read, a `?`
+   discharge) — is admitted by reading the fields off it at the return.  This is `ctrl`,
+   and it is the remaining **−16 %**.
+
+⚠ **Stage 3 carries an ownership change and stage 2 does not.**  Today a callee's guarded
+frees decline exactly when the buffer IS the returned value, because the caller then owns
+it: `if (__ref_p2_1).store_nr != (__ret_1).store_nr { OpFreeRef(__ref_p2_1) }`.  If the
+result stops escaping, that guard makes the buffer nobody's and it leaks.  So stage 3 has
+to turn those guards unconditional for an admitted function, which is a `scopes` change to
+who frees, not an emit change — and `LOFT_STRICT_STORES=1` plus the leak suites are the
+channels that judge it.  Stage 2's tail is a call whose own admission already moved that
+question inside the callee, which is why it is separable and why it goes first.
+
+**What this does not reach.**  `n_pt` at 14.9 % is a separate question: it is already built
+into the appended element by § V-d, so what it costs is the call and two field writes
+through a `DbRef` the caller already has an address for.  That is the § V-p twin idea
+applied to a record DESTINATION rather than a source, and it wants its own ceiling
+measurement before any design.
+
 ## V-k — the append path's bookkeeping (2026-09-09)
 
 **Found by** profiling the `lock` row on the § V-j runtime with callers: the per-append

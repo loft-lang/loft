@@ -897,6 +897,26 @@ its assumptions are written as a rule and checkable by both.
 
 ## Where to resume
 
+**2026-09-14 — `smooth` run down, the last judged row over the bar: DESIGN.md § V-ah
+(designed, ceiling measured, NOT built).**  Of the row's own time, `ctrl` and `half_chord`
+carry ~26 %, and almost none of it is arithmetic: `ctrl` returns a BORROWED VIEW of an
+element of a `const` parameter, so every call pays the protect bracket (9.6 %), the
+adopt-or-copy delivery and a guarded buffer free — while both callers only ever read
+`.ptx` and `.pty` off the result.  The record never needs to exist.  § V-aa is the
+mechanism and its BODY gate is exactly what refuses them (`LOFT_TRACE_VALUEREC=1`: *tail is
+not an Object build*, for both); its USE gate already passes.  **Ceiling measured in loft**
+(`sm_ceiling.loft`, the kernel written twice, identical output and hash, order-independent):
+returning the two floats instead of the record is **−40 %** (1 245 → 748 ns/op), of which
+**−24 % comes from `half_chord` alone**.  That splits the unit into three stages, with the
+blocker first: (1) flip § V-aa default-on by making its call-site gate DECLINE the three
+corpus shapes that do not compile; (2) admit a FORWARDING tail — a call to another admitted
+value-record fn — which is `half_chord`, needs no ownership change, and is −24 %; (3) admit
+a SELECTING tail by reading the fields at the return, which is `ctrl` and the remaining
+−16 %, and which DOES change who frees (a callee's guarded free declines precisely when the
+buffer is the returned value; stop the result escaping and that buffer becomes nobody's).
+Separately, `n_pt` is 14.9 % of the row and is a different question: § V-p's twin applied to
+a record DESTINATION, and it wants its own ceiling first.
+
 **2026-09-14 — § V-ag SHIPPED, the first unit built under the 3e direction, and `fronds` is
 UNDER THE BAR** (DESIGN.md § V-ag).  Re-profiling the row on the current tip put **27.9 %**
 of it in the free tree alone, nearly all of it on one path: a recycled return buffer being
