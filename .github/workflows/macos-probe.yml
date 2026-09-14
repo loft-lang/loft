@@ -108,11 +108,7 @@ jobs:
 
       - name: corpus (cached) — what failed
         if: always()
-        run: |
-          grep -aE 'native result:|run failures:' /tmp/cached.log | tail -2 || echo "(no verdict line)"
-          grep -aE 'run failures:' /tmp/cached.log | tail -1 | sed 's/.*run failures: //' \
-            | tr ',' '\n' | sed 's/^ *//' | sort > /tmp/cached.failures || true
-          echo "count: $(wc -l < /tmp/cached.failures | tr -d ' ')"
+        run: scripts/probe_leg_report.sh /tmp/cached.log cached
 
       # ── Leg 2: the SAME build with the cache removed ────────────────────────
       - name: Drop the native cache
@@ -127,27 +123,36 @@ jobs:
 
       - name: corpus (clean) — what failed
         if: always()
-        run: |
-          grep -aE 'native result:|run failures:' /tmp/clean.log | tail -2 || echo "(no verdict line)"
-          grep -aE 'run failures:' /tmp/clean.log | tail -1 | sed 's/.*run failures: //' \
-            | tr ',' '\n' | sed 's/^ *//' | sort > /tmp/clean.failures || true
-          echo "count: $(wc -l < /tmp/clean.failures | tr -d ' ')"
+        run: scripts/probe_leg_report.sh /tmp/clean.log clean
 
       # ── The verdict, as one table nobody has to click through for ───────────
       - name: Verdict
         if: always()
         run: |
-          c=$(wc -l < /tmp/cached.failures 2>/dev/null | tr -d ' '); c=${c:-0}
-          n=$(wc -l < /tmp/clean.failures  2>/dev/null | tr -d ' '); n=${n:-0}
+          c=$(cat /tmp/cached.count 2>/dev/null || echo '?'); co=$(cat /tmp/cached.outcome 2>/dev/null || echo 'UNKNOWN')
+          n=$(cat /tmp/clean.count  2>/dev/null || echo '?'); no=$(cat /tmp/clean.outcome  2>/dev/null || echo 'UNKNOWN')
           {
             echo "## macOS native-corpus probe"
             echo
-            echo "| leg | run failures |"
-            echo "|---|---:|"
-            echo "| cached (ci.yml's restore keys) | $c |"
-            echo "| clean (cache removed) | $n |"
+            echo "| leg | outcome | run failures |"
+            echo "|---|---|---:|"
+            echo "| cached (ci.yml's restore keys) | $co | $c |"
+            echo "| clean (cache removed) | $no | $n |"
             echo
-            if [ "$c" -gt 0 ] && [ "$n" -eq 0 ]; then
+            if [ "$co" != PASSED ] && [ "$co" != FAILED ]; then
+              echo "**The cached leg did not produce a verdict** ($co) — it did not run, so nothing"
+              echo "below is a measurement.  Read the leg log before reading this table."
+            elif [ "$no" != PASSED ] && [ "$no" != FAILED ]; then
+              echo "**The clean leg did not produce a verdict** ($no) — see above."
+            elif [ "$co" = PASSED ] && [ "$no" = PASSED ]; then
+              echo "**Both legs PASS on the first try.** The corpus is green on arm64 with and"
+              echo "without the cache, and neither needed a retry."
+            elif [ "$co" = FLAKY ] || [ "$no" = FLAKY ]; then
+              echo "**A leg is FLAKY** (cached=$co, clean=$no) — a try failed and a retry passed,"
+              echo "so the counts above are the FAILING try's.  This is the state the macOS corpus"
+              echo "sat in: not red, not clean, just occasionally exhausting its retries.  Treat it"
+              echo "as red; the only difference from red is how many tries it got."
+            elif [ "$c" -gt 0 ] && [ "$n" -eq 0 ]; then
               echo "**The cache is the defect.** The corpus passes against the library in this"
               echo "checkout and fails against restored binaries, so the key admits artefacts"
               echo "built from other source — the bare \`-corpus-\` restore prefix. Fix the key."
