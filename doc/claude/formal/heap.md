@@ -1013,10 +1013,14 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
      `p_s1`, `p_s2`, `p_s6` and `c_coalesce_reassign`.  The block change's emission diff differs in
      28 files by the added block alone (the interpreter's bytecode identical in all 28); the flags'
      differs in one, the new guard.
-   - **Not this family, and still open.**  `x = mk(9); x = if c { a } else { mk(2) }` keeps the value
-     form (the call arm's tail is a compiler work-ref), so the binding is typed as a view of `a` for
-     its whole life and its earlier owned record is freed with no hook on both paths
-     (`p_j1`/`p_j2`).  And an arm that copies a PARAMETER (`x = if c { a } else { p }`) stops the
+   - ✓ **Beside it, CLOSED 2026-09-14: a join with an owning CALL arm.**  `x = mk(9); x = if c { a }
+     else { mk(2) }` kept the value form — the parser's owner for the call arm is a compiler temp,
+     which the write-out declined — so the binding was typed as a view of `a` for its whole life: its
+     earlier owned record, and any record assigned after the join, were freed with no hook
+     (`p_j1`/`p_j2`), and the binding ALIASED `a` on the path that took it, a `(B-Copy)` violation
+     recorded as `binding.md` D-bind-33.  Such an arm is now written out as its call beside local
+     arms, and the gate retires `p_j1` and `p_j2`.
+   - **Still open.**  An arm that copies a PARAMETER (`x = if c { a } else { p }`) stops the
      DESTINATION with no flag, so on the path that took `a` its copy is never released — family 3's
      branch-not-taken residual, reached through the written-out form.
 8. ✓ **A per-path hand-off hid a later hand-off of the same source — CLOSED 2026-09-14.**
@@ -1059,9 +1063,8 @@ each with its answer in the rules: family 1's absent path and family 3's two res
 and the branch not taken — reached also through a written-out join whose other arm copies a
 parameter), which wait on the carrier question — a resolver given a VARIABLE where the answer
 belongs to an ASSIGNMENT.  Family 2 has its answer too, but reaching it needs a fact about the
-caller.  Family 4 waits on D-heap-1's design call.  And one shape recorded beside family 7 and
-not in it: a reassignment from a join with a CALL arm (`p_j1`/`p_j2`), whose binding is typed as
-a view for its whole life, so its earlier owned record is freed without its hook.
+caller.  Family 4 waits on D-heap-1's design call.  The shape recorded beside family 7, a
+reassignment from a join with a CALL arm (`p_j1`/`p_j2`), is closed with `binding.md` D-bind-33.
 
 ### D-heap-3 — OPENED AND CLOSED (2026-09-10): a struct field projected off a CALL result releases twice
 

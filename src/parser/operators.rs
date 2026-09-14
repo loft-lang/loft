@@ -577,9 +577,13 @@ impl Parser {
         Some(v_block(
             vec![v_set(buf, val.clone()), Value::Var(buf)],
             tp.clone(),
-            "join-arm-owner",
+            Self::JOIN_ARM_OWNER,
         ))
     }
+
+    /// The name of the block [`Self::materialise_owned_call`] builds, `{ buf = call; buf }`.
+    /// `scopes::sink_set_into_arms` recognises the block by it, so the two must not drift.
+    pub(crate) const JOIN_ARM_OWNER: &'static str = "join-arm-owner";
 
     /// Materialise every owning CALL arm of a join whose merged type is a VIEW
     /// (loft#1019).

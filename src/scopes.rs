@@ -2218,6 +2218,8 @@ fn branch_tail_vars(node: &Value) -> Vec<u16> {
                 walk(t, out);
                 walk(f, out);
             }
+            // Written out as its call, which hands off no local.
+            Value::Block(bl) if bl.name == crate::parser::Parser::JOIN_ARM_OWNER => {}
             Value::Block(bl) => {
                 if let Some(last) = bl.operators.last() {
                     walk(last, out);
@@ -2234,6 +2236,19 @@ fn branch_tail_vars(node: &Value) -> Vec<u16> {
     let mut out = Vec::new();
     walk(node, &mut out);
     out
+}
+
+/// The call a `join-arm-owner` block binds — `{ buf = call; buf }`, exactly as
+/// `Parser::materialise_owned_call` builds it — or `None` for any other contents, which are then
+/// not written out.
+fn owner_block_call(bl: &Block) -> Option<&Value> {
+    let [set, tail] = bl.operators.as_slice() else {
+        return None;
+    };
+    match (set.unspan(), tail.unspan()) {
+        (Value::Set(buf, call), Value::Var(t)) if buf == t => Some(call),
+        _ => None,
+    }
 }
 
 /// Which side of a whole-value copy stops dropping — `None` where the copy moves nothing.
@@ -8068,9 +8083,9 @@ impl Scopes<'_> {
         // elsewhere cannot borrow them (`@FR-O-Latest`), which is exactly why the
         // reassignment is written out per arm instead.  Arms that hand back a compiler temp
         // (a `??` hoist, a literal's work-ref) keep the value form: the join they express is a
-        // runtime fact (`Own::Join`), not a copy.  RECORDS only: a sunk vector `Set` keeps
-        // the join deps the parser typed the binding with and still aliases (the vector twin
-        // is filed, not fixed here).
+        // runtime fact (`Own::Join`), not a copy — except a call arm the parser gave an owner for
+        // the value form, which is written out as the call itself, because that owner served the
+        // join.  RECORDS only: a vector keeps the value form, which already copies the chosen arm.
         if self.var_scope.contains_key(&v)
             && Self::is_value_branch(value)
             && !matches!(function.tp(v), Type::RefVar(_))
@@ -13061,6 +13076,11 @@ impl Scopes<'_> {
                 }
                 Value::Null | Value::Call(_, _) | Value::CallRef(_, _) => true,
                 Value::If(_, t, f) => sinkable(t, v, ov, function) && sinkable(f, v, ov, function),
+                // A call arm the parser gave an owner so the VALUE form's join had one; written
+                // out, the arm binds that call itself.
+                Value::Block(bl) if bl.name == crate::parser::Parser::JOIN_ARM_OWNER => {
+                    owner_block_call(bl).is_some()
+                }
                 Value::Block(bl) if !matches!(bl.result, Type::Void | Type::Null) => bl
                     .operators
                     .last()
@@ -13083,7 +13103,46 @@ impl Scopes<'_> {
                 var_size: 0,
             }));
         }
+        // An owner block is written out only beside LOCAL arms and `null`.  Beside a projection,
+        // or a call answering a view (which the parser leaves unowned), that arm is a `(B-View)`
+        // view, and written out it would lose the dep that keeps it one.  Asked only of a value
+        // `sinkable` accepted, so every block on a tail path is already a value block.
+        fn owners_beside_locals_only(node: &Value) -> bool {
+            fn walk(n: &Value, owner: &mut bool, other: &mut bool) {
+                match n.unspan() {
+                    Value::Var(_) | Value::Null => {}
+                    Value::If(_, t, f) => {
+                        walk(t, owner, other);
+                        walk(f, owner, other);
+                    }
+                    Value::Block(bl) if bl.name == crate::parser::Parser::JOIN_ARM_OWNER => {
+                        *owner = true;
+                    }
+                    Value::Block(bl) => {
+                        if let Some(last) = bl.operators.last() {
+                            walk(last, owner, other);
+                        }
+                    }
+                    Value::Insert(ops) => {
+                        if let Some(last) = ops.last() {
+                            walk(last, owner, other);
+                        }
+                    }
+                    _ => *other = true,
+                }
+            }
+            let (mut owner, mut other) = (false, false);
+            walk(node, &mut owner, &mut other);
+            !owner || !other
+        }
         fn sink(node: &mut Value, ov: u16) {
+            if let Value::Block(bl) = node
+                && bl.name == crate::parser::Parser::JOIN_ARM_OWNER
+                && let Some(call) = owner_block_call(bl).cloned()
+            {
+                *node = Value::Set(ov, Box::new(call));
+                return;
+            }
             match node {
                 Value::Span(b) => sink(&mut b.1, ov),
                 Value::If(_, t, f) => {
@@ -13109,7 +13168,7 @@ impl Scopes<'_> {
                 }
             }
         }
-        if !sinkable(value, v, ov, function) {
+        if !sinkable(value, v, ov, function) || !owners_beside_locals_only(value) {
             return None;
         }
         let mut out = value.clone();

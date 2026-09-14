@@ -363,8 +363,33 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 1.**
 
+* **D-bind-34** *(opened 2026-09-14, OPEN)* — `(B-View)` and `(O-NoDiverge)`: a REASSIGNMENT from a
+  value join whose taken arm is a struct PROJECTION copies on `--interpret` and views on `--native`.
+  `h = Hold{inner: mk(1), …}; x = mk(4); x = if k > 0 { h.inner } else { mk(0) }; x.a = 9` leaves
+  `h.inner.a` at 1 on the interpreter and at 9 natively, while the unbranched `x = h.inner` and the
+  author's statement form `if k > 0 { x = h.inner } else { x = mk(0) }` view on both backends.  The
+  container is not disturbed, so `(B-View)` gives the view and the interpreter is the deviating
+  side.  Found while closing D-bind-33: that cure, first built wider, wrote this join out as
+  statements too, and native then copied as well — the rule's answer lost on the one side that had
+  it.  Narrowed to local arms, the split is back to what it was, and it is recorded here.
+* **D-bind-33** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Copy)` did not hold for a
+  REASSIGNMENT from a join whose other arm is an owning CALL.  `a = mk(1); x = mk(9); x = if c { a }
+  else { mk(2) }; x.id = 77` changed `a` on the path that took it, and a later write to `a` showed
+  through `x`, on both backends; the first bind from the same join copied.  The releases went wrong
+  with it (`heap.md` D-heap-7, `p_j1`/`p_j2`): the displaced `mk(9)` was never released, and neither
+  was a record assigned to `x` after the join, because the binding stayed typed as a view of `a`.
+  **Between two mechanisms.**  A first bind lifts each arm into a temp of its own (D-bind-16,
+  loft#1321); a reassignment cannot borrow those temps (`(O-Latest)`), so it is written out per arm
+  instead (`scopes::sink_set_into_arms`).  The parser had already given the call arm an owner for the
+  value form's view-typed join (`materialise_owned_call`'s `join-arm-owner` block), whose tail is a
+  compiler temp, and the write-out declined every compiler-temp tail — so this reassignment kept the
+  value form, which binds the chosen arm's STORE.  The write-out now accepts that block and writes the
+  arm out as its call, wherever every other arm is a local or `null`.  Beside a projection arm it
+  still declines: written out, a projection arm lost the dep that keeps it a `(B-View)` view, which
+  was measured and is D-bind-34.  Guard
+  `tests/scripts/a-reassignment-from-a-join-with-a-call-arm-copies-its-local-arm.loft`.
 * **D-bind-32** *(opened 2026-09-09, CLOSED 2026-09-09; numbered 30 on its own branch, where
   `D-bind-30` was already spent by the `(B-Ref-Reshape)` entry closed a day earlier — the join is
   what showed the collision)* — `(B-Ref-Repoint)` on `--interpret`,

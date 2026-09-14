@@ -194,14 +194,15 @@ def _fenced_lines(text):
 # `defined_deviations` above reads a THIRD — so the register has three decoders and
 # nothing compared them.  Measured 2026-09-12: they disagreed in five chapters at once.
 REG_OPEN = re.compile(r"OPEN:\s*\**\s*(\d+)")
-# An entry inside that section, in all three spellings the docs use.  The BULLET form is
-# the one `defined_deviations` cannot see (it reads headings and blockquotes only), and it
-# is how `operational`, `layout`, `matching`, `tuples` and `calls` write every entry they
-# own — so those chapters' open entries were invisible to the tool that counts them.
+# An entry inside that section, in every spelling the docs use.  The BULLET form is the one
+# `defined_deviations` cannot see (it reads headings and blockquotes only), and it is how
+# `operational`, `layout`, `matching`, `tuples` and `calls` write every entry they own — so
+# those chapters' open entries were invisible to the tool that counts them.  A bullet is written
+# with `-` or with `*` (`binding.md` uses `*`), and both are read.
 REG_ENTRY_STRICT = re.compile(
     rf"^(?:#{{2,5}}\s+`?|>\s*\*\*`?)(?P<tag>{DEV_TAG})(?![A-Za-z0-9_'-])", re.M)
 REG_ENTRY_BULLET = re.compile(
-    rf"^-\s+\*\*`?(?P<tag>{DEV_TAG})(?![A-Za-z0-9_'-])", re.M)
+    rf"^[-*]\s+\*\*`?(?P<tag>{DEV_TAG})(?![A-Za-z0-9_'-])", re.M)
 REG_ISSUE = re.compile(r"loft#(\d+)")
 
 
