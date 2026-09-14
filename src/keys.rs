@@ -1138,6 +1138,21 @@ pub fn store_reset_clear_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_STORE_RESET_CLEAR"))
 }
 
+/// @PLN157 § V-ai: the store reset of § V-ag re-establishes the root vector at the
+/// CAPACITY the previous fill reached, not at the fresh-vector minimum — **DEFAULT ON**,
+/// both backends (a runtime fact).  The buffer is reused across calls (`@FR-R-Reuse`) and
+/// the store already holds the extent (`@FR-H-RootExtent`), so the growth ladder runs
+/// once per buffer instead of once per call; each rung of that ladder frees a block into
+/// the store, and one freed block is enough to take every later claim off `bump_tail`
+/// and into the free tree.  Opt OUT with `LOFT_NO_RESET_CAPACITY`: the before-half of
+/// the A/B on one binary, and the first bisect step for a wrong element or length out
+/// of a reused vector-returning call.  `LOFT_TRACE_CLEAR=1` prints the capacity each
+/// reset re-establishes.
+pub fn reset_capacity_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_RESET_CAPACITY"))
+}
+
 pub fn fill_hoist_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_FILL_HOIST"))

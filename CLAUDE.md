@@ -788,6 +788,14 @@ step and re-establishes its two records, because the shape `@FR-H-ClearRelease` 
 tests says the vector owns the store's whole extent (`fronds` −36 %, the free tree was
 28 % of that row) — and is the first bisect step for a wrong value, a leak or a
 use-after-free at a recycled vector-returning call.
+**`LOFT_NO_RESET_CAPACITY=1`** (@PLN157 § V-ai, runtime, BOTH backends) makes that reset
+re-establish the vector at the fresh minimum again — with it off, the vector comes back at
+the CAPACITY the previous fill reached (the buffer is reused across calls and the store
+already holds the extent), so the growth ladder runs once per buffer instead of once per
+call, and the freed rungs that took every later claim off `bump_tail` and into the free
+tree are never made (`fronds` −22.5 %, 4.28× → 3.42× on x86-64) — and is the bisect step
+for a wrong element or length out of a reused vector-returning call.  `LOFT_TRACE_CLEAR=1`
+prints the capacity each reset re-establishes.
 **`LOFT_NO_CLEAR_RELEASE=1`** (`@FR-H-ClearRelease`, runtime, BOTH backends) makes a
 vector's entry clear a pure length reset again — with it off, clearing a REUSED
 store-root vector whose elements own heap releases what they own first, closing an

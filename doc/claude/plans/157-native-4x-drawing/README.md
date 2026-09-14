@@ -56,6 +56,15 @@ an uncached `LOFT_TRACE_CLEAR` read in `clear_vector_release` and the per-alloca
 type-variable prefix compare in `enum_parent_size`.  **§ V-aa is NOT the unit for
 `smooth`**: switched on, the row reads +1–3 % — `pt` already builds into the appended
 element, so the tuple only adds a materialisation.  Switch `LOFT_NO_JOIN_BUFFER_WITNESS`.
+**§ V-ai SHIPPED 2026-09-14** (DESIGN.md § V-ai): the § V-ag reset re-establishes the root
+vector at the CAPACITY the previous fill reached instead of the fresh minimum — the buffer
+is reused across calls and the store already holds the extent, so the growth ladder runs
+once per buffer, and the freed rungs that took every later claim off `bump_tail` and into
+the free tree are never made — x86-64 Linux (host `tuxedo`), ABAB on one binary:
+`fr_only` 172.4k → **133.5k ns/op (−22.5 %)**; consumer `fronds` 175 920 → **143 180**
+(**4.28× → 3.42×, under the bar** on this lane), every other row flat, 14/14 hashes.  Nine
+hand-derived cells on both backends under strict stores, poison and the switch; the guard
+reads the re-established capacity off `LOFT_TRACE_CLEAR`.  Switch `LOFT_NO_RESET_CAPACITY`.
 Scoreboard vs the issue baseline, consumer lane on the SHIPPED tier (lean, fully
 optimised — the release default since 2026-09-08, DESIGN.md § The shipped tier):
 `hash` 10.9× → **2.2–2.5×** consumer / 1.2× gate row (under the bar; the spread
@@ -128,6 +137,8 @@ every claim after it; ceiling from the probes ≈ −20 % of the row on this box
 cannot have (this store is a reused return buffer) spent by loft.  The tail-bump rule is
 the second question: a claim no hole fits still walks the tree to reach the tail, and a
 tail fast path that survives holes would price the sub-call buffers' holes too.
+**BUILT the same day as § V-ai: `fronds` 175 920 → 143 180 ns/op on the consumer table,
+4.28× → 3.42× — under the bar here.**
 
 **Re-measured 2026-09-12 on x86-64 Linux, the same § V-z tip (d3c31d82, doc-only over
 d80307b0)** — rebuilt release lib + binary, fresh scratch clone of `drawing-lock`,
@@ -960,10 +971,11 @@ Linux, host `lima-default`), against six when the session began: `fill_circle` 1
 `fill_star` 1.76×, `hair` 2.01×, `hash` 2.55×, `wide_line` 2.93×, `composite` 3.14×,
 `fronds` 3.42×, `lock` 3.44×, `lock_curved` 3.67×.  **`smooth` at 8.44× is the only row
 still over it.**  Ratios drift with the reference lane between runs, so compare absolute
-ns/op within a session.  **On x86-64 (host `tuxedo`, 2026-09-14, same tip) it is EIGHT of
-ten**: `fronds` reads **4.28×** there (175 920 / 41 080 ns/op — the reference ~10 % faster
-than aarch64's, native ~13 % slower) and `smooth` 9.50×; Status § *Re-measured 2026-09-14*
-has the table and the three rows whose rise over 09-12 is not yet told from lane drift.
+ns/op within a session.  **On x86-64 (host `tuxedo`, 2026-09-14) it is NINE of ten as
+well, after § V-ai**: `fronds` read 4.28× there at this tip (175 920 / 41 080 ns/op — the
+reference ~10 % faster than aarch64's, native ~13 % slower) and reads **3.42×** with
+§ V-ai (143 180); `smooth` 9.50×.  Status § *Re-measured 2026-09-14* has the table and the
+three rows whose rise over 09-12 is not yet told from lane drift.
 
 *Shipped, in order, all on `157-native-4x`:* § V-ac (a vector parameter's header crosses
 the call), § V-ad (a null-discharge buffer stops blocking the hoist), § V-ae (a filling loop
@@ -988,7 +1000,7 @@ rules the rewrites already stood on were missing and are now written: `@FR-H-Roo
 | `n_pt`, 14.9 % of `smooth` | unprobed | § V-p's twin applied to a record DESTINATION; measure a ceiling first |
 | § 3d item 1 — assert what the header proved | ceiling measured, unbuilt | validate the vector's extent once at derivation, answer `len: 0` on failure so corruption degrades to the checked path |
 | § 3d items 2–4 | unprobed | item 3 (a real slice per store) wants the same rustc-first probe |
-| `fronds` on x86-64 — the reset buffer re-runs its growth ladder every call | measured, unbuilt (Status § `fronds` on x86-64 run down: free tree 21 % of the row, 3 % without the ladder) | re-establish the reset root vector at the capacity the previous fill reached, not 11; then a tail fast path that survives holes |
+| a tail fast path that survives holes | unprobed (§ V-ai shipped the reset-capacity half: `fronds` under the bar on x86-64 too) | a claim no hole fits still walks the tree to reach the tail; the sub-call buffers' holes (§ V-j) are what it would price — measure a ceiling on `fr_only` first |
 | store ROLES as rules | unnamed | nothing says what a discharge buffer, a comprehension accumulator, a worker's read-only borrow or the const store guarantees |
 
 *Instruments, and where they live.*  The consumer table is a SCRATCH clone of
@@ -1478,6 +1490,7 @@ unless said otherwise.
 | **V-ae** — the FILL idiom: a counted loop whose body is ONE in-place scalar set at `invariant + i` of an invariant value over a held header emits one guarded `Stores::fill_hoisted` (a range test, then `Store::fill` — one bounds check per end, a vectorisable store loop) with the per-element loop as the fallback for every range the fill declines and the counters left as the loop leaves them (`hoist::fill_loop`, `Output::fill_fast_path`, `@FR-R-Fill`); switch `LOFT_NO_FILL_HOIST`, `LOFT_TRACE_FILL` names a decline | [DESIGN.md § V-ae](DESIGN.md) | an f-cell moves; `tests/fill_hoist.rs` no longer sees a fill, its guard or its tail; the count sabotage turns the in-range cell red; a consumer hash disagrees | **Shipped 2026-09-13** — 16 cells exact on both backends under the verifier, the switch and poison; `wide_line` −23 % (4.02× → 2.91×), `fill_circle` −48 %, `fill_star` −43 % (aarch64 Linux, 14/14 hashes) |
 | **V-af** — a value BRANCH of buffer-delivering calls (`v = if c { mk(i) } else { mk2(i) }`) witnesses every arm's hidden buffer (`scopes` pairing per tail call, `@FR-O-Complete`): the buffers are allocated once by `reuse_record_buffers` and the local's scope-exit free is the existing multi-buffer `OpDistinctStore` ladder; an IR fact, both backends; switch `LOFT_NO_JOIN_BUFFER_WITNESS`, `LOFT_STRICT_STORES=1` / `LOFT_POISON=1` the falsifiers.  Beside it: the uncached `LOFT_TRACE_CLEAR` read and the per-allocation prefix compare removed from the runtime hot path | [DESIGN.md § V-af](DESIGN.md) | a j-cell answers wrong or reports a use-after-free under strict stores; `tests/join_witness.rs` no longer sees the preamble allocations or the ladder; a consumer hash disagrees | **Shipped 2026-09-13** — 12 cells exact on both backends under strict stores, poison and the switch, store allocations 85 → 45; `smooth` −26 % standalone, 10.5× → 9.0× in the consumer table, allocations per call 33 → 17 |
 | **V-ag** — clearing a store-ROOT vector RESETS its store: the shape `@FR-H-ClearRelease` already tests says the vector owns the store's whole extent, so the release is one `Store::init` plus the two records re-established (the wrapper by a claim, the vector by `pre_alloc_vector`) instead of a delete per element into the free tree; both claims bump, and `claim`'s `bump_tail` fast path is restored.  The first unit under PERFORMANCE.md § 3e.  Switch `LOFT_NO_STORE_RESET_CLEAR`; `LOFT_STRICT_STORES=1` / `LOFT_POISON=1` the falsifiers | [DESIGN.md § V-ag](DESIGN.md) | an r-cell answers wrong or reports a use-after-free under strict stores; skipping the root re-claim (the falsified sabotage) panics in `vector.rs`; a consumer hash disagrees | **Shipped 2026-09-14** — 13 cells exact on both backends under five levers; `fronds` −35.8 % on a switch A/B, **4.67× → 3.42× (under the bar)**, every other row flat |
+| **V-ai** — the reset buffer keeps the capacity it reached: § V-ag's reset re-establishes the root vector at the capacity the previous fill reached (`vector::reached_capacity`, read off the record before `Store::init`; `vector::vector_capacity` the one home of the inverse formula), so the growth ladder runs once per buffer and the freed rungs that took every later claim into the free tree are never made.  Switch `LOFT_NO_RESET_CAPACITY`; `LOFT_TRACE_CLEAR=1` prints each reset's capacity | [DESIGN.md § V-ai](DESIGN.md) | a cell answers wrong under strict stores or poison; `tests/reset_capacity.rs` sees the minimum with the unit on, or a rung with it off; a consumer hash disagrees | **Shipped 2026-09-14** — nine hand-derived cells exact on both backends; `fr_only` −22.5 % on a switch A/B, consumer `fronds` **4.28× → 3.42× (under the bar on x86-64)**, every other row flat |
 | **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
 
 ## Joined-tree verification (2026-09-07)

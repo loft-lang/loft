@@ -2296,6 +2296,18 @@ impl Stores {
                 // walk's delete per element.
                 let elem_size = u32::from(self.size(elem));
                 let words = 1 + u32::from(self.size(kt)).div_ceil(8);
+                // @PLN157 § V-ai — the capacity the previous fill reached, read off the
+                // record the reset is about to drop.  The buffer is reused across calls
+                // (`@FR-R-Reuse`) and the store already holds this extent
+                // (`@FR-H-RootExtent`), so starting the re-established vector there
+                // runs the growth ladder once per buffer rather than once per call.
+                // Each rung of that ladder frees a block into the store, and one freed
+                // block takes every later claim off `bump_tail` and into the free tree.
+                let reached = if crate::keys::reset_capacity_enabled() {
+                    crate::vector::reached_capacity(db, elem_size, &self.allocations)
+                } else {
+                    0
+                };
                 {
                     let store = &mut self.allocations[db.store_nr as usize];
                     store.init();
@@ -2306,7 +2318,14 @@ impl Stores {
                 }
                 // The vector's own record comes back through its one constructor, so the
                 // capacity ladder and the length word are not re-spelled here.
-                crate::vector::pre_alloc_vector(db, 0, elem_size, &mut self.allocations);
+                crate::vector::pre_alloc_vector(db, reached, elem_size, &mut self.allocations);
+                if trace_enabled() {
+                    eprintln!(
+                        "[clear] reset store={} cap={}",
+                        db.store_nr,
+                        crate::vector::reached_capacity(db, elem_size, &self.allocations)
+                    );
+                }
                 return;
             }
             if elem != u16::MAX && self.owns_heap(elem) {

@@ -3844,3 +3844,85 @@ per the design protocol — a divergence is an alarm to route, not to override):
 
 If a phase lands and its column does not move as predicted, attribute before
 proceeding: `make profile PROFILE_FLAGS=--engine` on the standalone.
+
+
+## V-ai — the reset buffer keeps the capacity it reached (2026-09-14)
+
+**SHIPPED, default-on, BOTH backends (a runtime fact; switch `LOFT_NO_RESET_CAPACITY`,
+`@FR-R-Switch`; stands on `@FR-H-RootExtent` and `@FR-R-Reuse`, neither changed).**  The
+second unit under [PERFORMANCE.md § Native vs Rust 3e](../../PERFORMANCE.md), and the one
+§ V-ag's closing line asked for — the free tree made cheaper for a store that still needed
+one — answered by the store not needing it.
+
+**The profile that named it** (x86-64 Linux, host `tuxedo`; README § *`fronds` on x86-64
+run down* has the full working).  After § V-ag the free tree was still **20 %** of `fronds`,
+on the CLAIM side: `claim → fl_take_ge → claim_block → fl_delete_node / fl_insert /
+fl_balance`, reached from `pre_alloc_vector` for every per-frond vector, with the release
+side under 1 %.  `bump_tail` fires only while the free tree is ONE block, and each growth
+step of the result vector (`Store::resize` claims, copies and deletes, because the
+per-frond claims sit right behind it: 11 → 24 → 50 → 102 → 206 → 414 → 830) freed the old
+block into the store; once the freed blocks fit a per-frond claim, `fl_find_ge`'s best fit
+preferred them to the tail, and every later claim in the call was a tree take, a remainder
+insert and a rebalance.  Three depth-1 probes measured it and ruled recursion out: free-tree
+share **3.0 % at 11 fronds (no growth), 1.3 % at 22 (one step), 21.1 % at 648**; per-frond
+cost 201 ns at 100 and 251 at 648.
+
+**The fact loft has.**  § V-ag's reset re-established the vector through
+`pre_alloc_vector(db, 0, …)`, i.e. at the fresh minimum of 11, although (a) the buffer is
+REUSED across calls (`@FR-R-Reuse`), so the next fill is the same shape as the last; (b) the
+store already holds the extent the previous fill reached (`@FR-H-RootExtent`: the vector's
+extent IS the store's, and `Store::init` keeps the arena); and (c) the record being dropped
+carries the capacity in its claim header, one read away.  So every call after the first
+re-ran the whole ladder inside a store that already had the space, and paid the tree for the
+rest of the call.  The ladder is a per-BUFFER fact, not a per-call one.
+
+**The change — one site, one formula.**  `Stores::clear_vector_release`'s reset arm reads
+`vector::reached_capacity` off the record BEFORE `Store::init` and hands it to
+`pre_alloc_vector`, whose `count.max(11)` and `checked_vec_cap` stay the one home of the
+capacity ladder.  The inverse formula (claimed words → elements) is `vector::vector_capacity`,
+which `vector_append`'s growth step now reads too instead of spelling it inline.  The trace
+`LOFT_TRACE_CLEAR=1` gained one line, `[clear] reset store=N cap=C`, printed after the
+re-establishment — the observable the guard reads.  Retention: the capacity kept is memory
+the store already held (`init` does not shrink the arena), and it is monotone per buffer —
+a shrinking fill keeps the larger capacity, as the store's extent does.  Zeroing: `finish_claim`
+zeroes the larger block on every reset; that cost is inside the A/B below.
+
+**Cells** — `tests/scripts/157-reset-capacity.loft`, nine, every expected value derived by
+hand from `make`'s arithmetic (total(n) = 150·n·(n−1) + 45·n) rather than read off a run,
+both backends, under `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and the switch: a fill that
+grows (5, 40, 60) · one that shrinks and empties (60, 5, 0, 5) · fifty of thirty · an empty
+first fill · two buffers live at once · text-owning elements · an escaping result ·
+a recursion appending sub-results (21 fronds) · one fill of 200 then twenty of one.
+All nine exact on both backends under every lever.
+
+**Guard + falsification** — `tests/reset_capacity.rs` runs the cells under
+`LOFT_TRACE_CLEAR=1` twice.  ON must show the ladder's rungs above the minimum (24, 50,
+102) among the re-established capacities; OFF (`LOFT_NO_RESET_CAPACITY=1`, the pre-unit
+behaviour) must show 11 at every reset, and both halves print the same values.  Measured:
+242 resets; ON reads 11 ×121, 24 ×3, 50 ×112, 102 ×6; OFF reads 11 ×242.  The 200-fill
+never reaches a reset — a buffer filled once is never cleared — which is a cell, not a gap.
+
+**Measured** (x86-64 Linux, host `tuxedo`; ABAB on one binary, `--n 20000`, hashes
+identical every run):
+
+| instrument | fresh minimum | reached capacity | move |
+|---|---:|---:|---:|
+| `fr_only.loft` (the row, depth 2) | 172 385 / 173 256 ns/op | **133 497 / 134 295** | **−22.5 %** |
+| `fr_d1.loft` (depth 1, 648 fronds) | 159 722 / 163 409 | **122 899** | −23 % |
+| `compare.py --repeat 5`, `fronds` | 175 920 (4.28×) | **143 180 (3.42×)** | −19 % |
+| every other row | | flat, 14/14 hashes | |
+
+The run-down projected ≈ −20 %; **`fronds` is under the bar on this lane**, which leaves
+`smooth` the only judged row over it on either machine measured.  A second `compare.py`
+run, taken right after a five-minute local gate, read `fronds` 142 640 (3.45×) and every
+OTHER native row 2–5 % above the first run — rows the unit cannot touch included — so
+the switch was A/B'd on the full bench too (native lane, `--n 50`, three pairs, best of
+three per row): `lock` 2 919 080 / 2 920 180, `lock_curved` 2 564 280 / 2 552 060,
+`composite` 153 920 / 153 740, the fills and `wide_line` within 0.4 %, `fronds`
+182 460 → 138 760.  The unit moves one row; the 2–5 % was the box after the gate.
+
+**What it does not cover, by construction.**  A placed sub-call buffer (§ V-j) is not a
+store root: it keeps the walk, and its record-level free still leaves a hole.  A claim no
+hole fits still walks the tree to reach the tail — a tail fast path that survives holes is
+the next question, and it would price those sub-call holes too.  A buffer filled once and
+never cleared never reaches the arm.

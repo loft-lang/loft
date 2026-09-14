@@ -331,6 +331,11 @@ bump path, which a fragmented store never reaches again. The rule is what licens
 ASSERTED by construction rather than proved — `OpDatabase` mints the wrapper and every later
 claim in that store is made for the collection — so the gate that reads it also reads the
 shape (`clear_vector_release`), and a shape that is not a store root keeps the walk.
+The same extent is what lets the reset re-establish the vector at the capacity the previous
+fill reached rather than at the fresh minimum (`vector::reached_capacity`, read off the
+record before the reset): the space is the store's already, the buffer is reused across
+calls (R-Reuse), and a ladder re-run per call would free a rung into the store each step
+and take every later claim off the bump path (@PLN157 § V-ai).
 
 **In words.** `free` releases a store slot and everything in it. It is disciplined: (1) **LIFO** —
 you free stores in reverse allocation order, because a store's lifetime is nested inside the

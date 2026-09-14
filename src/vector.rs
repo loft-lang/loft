@@ -29,6 +29,36 @@ fn vec_pos_overflow(index: u32, size: u32) -> ! {
     panic!("Vector position overflow: index={index} size={size}")
 }
 
+/// A vector record's capacity in ELEMENTS, read off its claim header: the claimed
+/// words less the one header word (claim size + length), in bytes, over the element
+/// size — the inverse of `checked_vec_cap`.  The one home for the formula: the growth
+/// step in `vector_append` and the store reset's re-establishment
+/// (`Stores::clear_vector_release`, @PLN157 § V-ai) both read it.
+#[inline]
+pub fn vector_capacity(claimed_words: u32, elem_size: u32) -> u32 {
+    claimed_words.saturating_mul(8).saturating_sub(8) / elem_size
+}
+
+/// The capacity a vector has reached, in elements — 0 when the handle is absent, the
+/// vector was never allocated, or its record is not claimed.  Read BEFORE a store reset
+/// drops the record, so the re-established vector can start where the previous fill
+/// ended (@PLN157 § V-ai).
+pub fn reached_capacity(db: &DbRef, elem_size: u32, stores: &[Store]) -> u32 {
+    if db.is_null() || db.rec == 0 || db.pos == 0 {
+        return 0;
+    }
+    let store = keys::store(db, stores);
+    let vec_rec = store.collection_rec(db.rec, db.pos);
+    if vec_rec == 0 {
+        return 0;
+    }
+    let words = store.read::<i32>(vec_rec, 0);
+    if words <= 0 {
+        return 0;
+    }
+    vector_capacity(words as u32, elem_size)
+}
+
 /// Checked vector capacity — `(count * size + 15) / 8` using u64.
 #[inline]
 fn checked_vec_cap(count: u32, size: u32) -> u32 {
@@ -293,8 +323,7 @@ pub fn vector_append(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
             db.rec,
             db.pos
         );
-        let cur_words = cur_words_signed as u32;
-        let cur_cap = cur_words.saturating_mul(8).saturating_sub(8) / size;
+        let cur_cap = vector_capacity(cur_words_signed as u32, size);
         // An element that fits needs no `resize`: that call re-read the header, bumped
         // the store generation and answered the same record on every append that was
         // not a growth step (@PLN157 § V-k — 2 % of the `lock` row).  The growth step
