@@ -4041,6 +4041,11 @@ every base at every use; `LOFT_TRACE_BASE=1` prints each loop's verdict.
 (−14 %; −20 % against the day's start at 139); 8 of the tap loops' 10 element reads and
 its one in-place write go through bases (the two that do not sit in the element-iteration
 `next` block, a separate emit site).  With § V-aj: 6.2× against the reference, from 7.6×.
+Consumer table at 500 calls per row: `resize` 7.60 → **5.79×**, `render_marks` 10.66 →
+**8.39×**, `render_lock` 7.14 → **5.69×**; and the older rows moved too — `hash` 2.72 →
+1.22× (the § V-aj counters), `lock` 2.48 → 1.90×, `lock_curved` 2.68 → 2.29×,
+`composite` 2.36 → 2.01× — since every growth-free pixel loop in the bench binds bases now.
+`parse`, which has no such loop, is unmoved.
 
 ## V-ai — the reset buffer keeps the capacity it reached (2026-09-14)
 
