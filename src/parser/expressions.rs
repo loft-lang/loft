@@ -3273,7 +3273,39 @@ use a separate collection or add after the loop"
                 .ref_linked_tuple_locals
                 .contains(&(self.context, self.vars.name(*lhs).to_string()))
         {
-            let types = types.clone();
+            // The record is the LOCAL's, so its members are the local's own types wherever the
+            // literal's members convert into them: a variant satisfies its enum (@FR-C-Var),
+            // and `w: (integer, Entity) = (1, IceWall { … })` is the `__tuple<integer,Entity>`
+            // a `&(integer, Entity)` names.  Minted from the literal it was
+            // `__tuple<integer,IceWall>`, and the call was refused, as was a later
+            // `w.1 = Fireball { … }` (loft#1531).  `f_type` is pass 1's answer: the declared
+            // tuple on a first bind, the record itself on a rebind.  A member the local does
+            // not accept keeps the literal's types, so the bind's own check still refuses it.
+            let local: Option<Vec<Type>> = match f_type.base() {
+                Type::Tuple(want) => Some(want.clone()),
+                Type::Reference(d, _) if self.data.def(*d).name().starts_with("__tuple<") => Some(
+                    self.data
+                        .def(*d)
+                        .attributes
+                        .iter()
+                        .map(|a| a.typedef.clone())
+                        .collect(),
+                ),
+                _ => None,
+            };
+            let got = types.clone();
+            let types = match local {
+                Some(want)
+                    if want.len() == got.len()
+                        && want
+                            .iter()
+                            .zip(got.iter())
+                            .all(|(w, g)| self.can_convert(g, w)) =>
+                {
+                    want
+                }
+                _ => got,
+            };
             let synth = self.data.tuple_def(&mut self.lexer, &types);
             if synth != u32::MAX {
                 let synth_ref = Type::Reference(synth, Deps::none());

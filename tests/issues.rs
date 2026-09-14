@@ -18657,3 +18657,19 @@ fn probe() -> text {
     .expr("probe()")
     .result(Value::str("any 4|absent|any 4|any 4|v 3"));
 }
+
+/// loft#1531 — a `&`-source tuple local's record takes the LOCAL's member types only where the
+/// literal's members convert into them.  A member the declaration does not accept stays the
+/// bind's refusal: the record is never laid out for a type its value does not have.
+#[test]
+fn a_reference_source_tuple_whose_member_the_declaration_refuses_is_still_refused() {
+    code!(
+        "enum Entity { Fireball { n: integer }, IceWall { n: integer } }
+fn bump(t: &(integer, Entity)) { t.0 = t.0 + 1; }
+fn test() { w: (integer, Entity) = (1, \"x\"); bump(w); print(\"{w.0}\"); }"
+    )
+    .error(
+        "Variable 'w' cannot change type from (integer, Entity) to (integer, text); use a new \
+variable name or cast with 'as' at a_reference_source_tuple_whose_member_the_declaration_refuses_is_still_refused:3:45",
+    );
+}

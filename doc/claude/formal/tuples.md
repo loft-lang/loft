@@ -126,7 +126,10 @@ the same two cures. The gap between the rule and the model is
               `__tuple<τ₁, …, τₙ>` RECORD otherwise — the same record a heap-tuple RETURN and
               the loop variable over a `vector<(…)>` already are.  A tuple LOCAL that is the
               source of such a link is built as that record; every other tuple local keeps its
-              stack form, so a program with no `&(…)` is unchanged by this rule.
+              stack form, so a program with no `&(…)` is unchanged by this rule.  The record's
+              members are the LOCAL's types, never the literal's: `w: (integer, Entity) =
+              (1, IceWall { … })` is a `__tuple<integer,Entity>`, because a variant widens
+              into its enum (types.md `(C-Var)`) and the link names the declared tuple.
   (T-Ref-El)  every τᵢ is a scalar (`integer` of any width, `float`, `single`, `character`,
               `boolean`, a value enum) or a type a struct FIELD can hold — `text`, a struct, a
               vector, a keyed collection, a struct-enum.  What the record cannot spell or lay
