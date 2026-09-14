@@ -368,10 +368,28 @@ impl Output<'_> {
         {
             if to != &Value::Null {
                 let name = sanitize(variables.name(var));
-                // `@FR-B-Ref-Repoint` on a `&` PARAMETER to a scalar: `c = &v[i]`, `c = &o.f` and
-                // `c = &m` move the parameter's own link instead of writing through it.  The
-                // parameter is a `&mut T`, so it takes a borrow of the new place, unbounded like
-                // the raw pointer a local link holds.  Every other value is the write-back below.
+                // `@FR-B-Ref-Repoint` on a `&` PARAMETER.  The parameter is a `&mut T`, so a
+                // re-point takes a borrow of the new place, unbounded like the raw pointer a local
+                // link holds.  Every other value is the write-back below.
+                // `c = &b` with `b` itself a link: take the pointer `b` holds, for every kind —
+                // a text link is a `*mut String` and a record link a `*mut DbRef`, the same `T` the
+                // parameter borrows.
+                if let Value::Call(d_nr, cargs) = to.unspan()
+                    && self.data.def(*d_nr).name() == "OpVarRef"
+                    && let [src_arg] = cargs.as_slice()
+                    && let Value::Var(src) = src_arg.unspan()
+                {
+                    let base = rust_type(inner.base(), &Context::Variable);
+                    let src_name = sanitize(variables.name(*src));
+                    let ptr = if variables.is_argument(*src) {
+                        format!("(&mut *var_{src_name}) as *mut {base}")
+                    } else {
+                        format!("var_{src_name}")
+                    };
+                    write!(w, "var_{name} = unsafe {{ &mut *({ptr}) }}")?;
+                    return Ok(());
+                }
+                // `c = &v[i]`, `c = &o.f` and `c = &m` on a SCALAR parameter.
                 if crate::data::is_scalar(inner)
                     && let Value::Call(d_nr, cargs) = to.unspan()
                 {
@@ -572,8 +590,31 @@ impl Output<'_> {
                         "let mut var_{name}: *mut {base} = std::ptr::addr_of_mut!(var_{src_name})"
                     )?;
                 }
+            } else if let Value::Call(d_nr, cargs) = to.unspan()
+                && self.data.def(*d_nr).name() == "OpVarRef"
+                && let [src_arg] = cargs.as_slice()
+                && let Value::Var(src) = src_arg.unspan()
+            {
+                // `c = &b`, `b` itself a link: `c` takes the pointer `b` holds.  A local link
+                // already is a `*mut T`; a `&` parameter is a `&mut T`, re-borrowed raw.
+                let src_name = sanitize(variables.name(*src));
+                let ptr = if variables.is_argument(*src) {
+                    format!("(&mut *var_{src_name}) as *mut {base}")
+                } else {
+                    format!("var_{src_name}")
+                };
+                if self.declared.contains(&var) {
+                    write!(w, "var_{name} = {ptr}")?;
+                } else {
+                    self.declared.insert(var);
+                    write!(w, "let mut var_{name}: *mut {base} = {ptr}")?;
+                }
             } else if let Value::Var(src) = to.unspan()
                 && matches!(variables.tp(*src), Type::RefVar(_))
+                // A FIRST bind from a link copies its pointer (#257).  A reassignment `c = b`
+                // writes `b`'s value through `c` and takes the arm below; the re-point is the
+                // `OpVarRef` spelling above.
+                && !self.declared.contains(&var)
             {
                 // @PLN87 L7 — ref-to-ref (`c = &b`, `b` a scalar reference): `c` copies
                 // `b`'s pointer, referencing the same source `b` does (the scalar analogue
@@ -630,12 +671,22 @@ impl Output<'_> {
             && let Type::RefVar(inner) = variables.tp(var)
             && matches!(inner.base(), Type::Reference(..))
             && let Value::Call(d_nr, cargs) = to.unspan()
-            && self.data.def(*d_nr).name() == "OpCreateStack"
+            && matches!(self.data.def(*d_nr).name(), "OpCreateStack" | "OpVarRef")
             && let [src_arg] = cargs.as_slice()
             && let Value::Var(src) = src_arg.unspan()
         {
             let name = sanitize(variables.name(var));
             let src_name = sanitize(variables.name(*src));
+            // `OpVarRef(b)`: `b` is itself a record link, so take the pointer it holds.
+            let target = if self.data.def(*d_nr).name() == "OpVarRef" {
+                if variables.is_argument(*src) {
+                    format!("(&mut *var_{src_name}) as *mut DbRef")
+                } else {
+                    format!("var_{src_name}")
+                }
+            } else {
+                format!("std::ptr::addr_of_mut!(var_{src_name})")
+            };
             // loft#1371 — a `*mut DbRef` into the source's slot, not the source's DbRef by
             // VALUE.  By value the link could carry a read and an interior write but never
             // a WHOLE-VALUE one: `pd = S { n: 2 }` re-pointed the alias and left `d` alone,
@@ -644,13 +695,10 @@ impl Output<'_> {
             // reason: the source local stays readable while the link is alive.
             self.local_record_link.insert(var);
             if self.declared.contains(&var) {
-                write!(w, "var_{name} = std::ptr::addr_of_mut!(var_{src_name})")?;
+                write!(w, "var_{name} = {target}")?;
             } else {
                 self.declared.insert(var);
-                write!(
-                    w,
-                    "let mut var_{name}: *mut DbRef = std::ptr::addr_of_mut!(var_{src_name})"
-                )?;
+                write!(w, "let mut var_{name}: *mut DbRef = {target}")?;
             }
             return Ok(());
         }

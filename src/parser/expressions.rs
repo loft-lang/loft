@@ -3522,7 +3522,20 @@ use a separate collection or add after the loop"
             } else {
                 None
             };
-            if let Some(src) = stack_src {
+            // `c = &b` where `b` is itself a link: `c` takes the link `b` holds — a re-point on a
+            // reassignment (`@FR-B-Ref-Repoint`), a link copy on a first bind.  Spelled
+            // `OpVarRef(b)` so it cannot be read as `c = b`, which writes `b`'s value through `c`
+            // (`@FR-B-Ref-Write`); as one IR the two meant one thing to each backend
+            // (`formal/binding.md` D-bind-41).
+            let link_src = match *code.unspan() {
+                Value::Var(src) if matches!(self.vars.tp(src).base(), Type::RefVar(_)) => Some(src),
+                _ => None,
+            };
+            if let Some(src) = link_src {
+                amp_unlowered = false;
+                *code = self.cl("OpVarRef", &[Value::Var(src)]);
+                s_type = self.vars.tp(src).clone();
+            } else if let Some(src) = stack_src {
                 amp_unlowered = false;
                 let mut inner = self.vars.tp(src).clone();
                 // tuples.md T-Ref — a linked tuple local with a heap element is the

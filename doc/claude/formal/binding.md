@@ -363,22 +363,53 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 3.**
+**OPEN: 4.**
 
-* **D-bind-41** *(opened 2026-09-14)* — `(B-Ref-Repoint)` against `(B-Ref-Write)` when the SOURCE is itself a
-  link.  `c = &b` must re-point `c` to what `b` links, and `c = b` must write `b`'s value through `c`;
-  both lower to the same IR, `c = b`, so each backend gives one answer to both spellings.
-  - Locals, `a = 1; n = 7; b = &a; c = &n;` then `c = &b; c = 9` — `--interpret` writes through (`A1
-    N9`), `--native` re-points (`A9 N7`, right).  Then `c = b` instead — `--interpret` writes through
-    (`N1`, right), `--native` re-points (`N7`).
-  - A `&` parameter, `c = &d` with `d` another `&` parameter or a callee-local link — both backends
-    write through (the caller's variable behind `c` takes the value); `c = d` is right on both.
-  A first bind (`c = &b` with no earlier link, and the annotated `c: &integer = b`) is right on both
-  backends.  Silent on every face; the same on 2cff47dfc.  **Where (measured).**  The IR of `c = &b` and
-  `c = b` is identical, `c(1): &integer = b(1)`, so no backend can tell them apart; the interpreter's
-  link write-through and native's local ref-to-ref arm each read that one spelling one way.  The cure
-  is in the parser, which has to give the repoint to a link its own spelling.  Found while measuring
-  D-bind-37's repoint of one `&` parameter to another.
+* **D-bind-43** *(opened 2026-09-14)* — `(B-Ref-Write)` for a VECTOR written through a local `&` link from a
+  named vector: `a: vector<integer> = [1]; n: vector<integer> = [7, 8]; c = &n; c = a` must make `n` a copy
+  of `a`, and leaves `n` at `[7, 8]` on both backends while `c` reads a copy of `a` — the write is lost and
+  the link now names a store of its own.  Silent; the same on 2cff47dfc.  A literal build through the link
+  (`pe = [2, 2]`) refills the source in place and is right.  **Where (measured).**  The link is typed a plain
+  vector sharing `n`'s store (`c: vector<integer>[…] = n`), and `c = a` lowers to a fresh store filled from
+  `a` — `OpDatabase`, `c = OpGetField(…)`, `OpAppendVector(c, a, 0)` — so `c` is rebound instead of `n`'s
+  store being cleared and refilled.  The lowering site is not yet read.  A different site from D-bind-42's
+  record copy.  Found while sizing D-bind-42 over the heap kinds.
+* **D-bind-42** *(opened 2026-09-14)* — `(B-Ref-Write)` and `(B-Copy)` for a RECORD written through a
+  LOCAL `&` link from a named record: `a = S{v: 1}; n = S{v: 7}; c = &n; c = a; c.v = 9` must leave `a`
+  at 1 and `n` at 9, and leaves both at 9 on both backends; `…; c = a; a.v = 5` then reads 5 through `n`.
+  The write-through makes `n` and `a` one record instead of giving `n` a copy of `a`.  It holds in a
+  loop, for a struct-enum link (`c = a; a = Sh::Dot{x: 5}` then reads 5 through `n`), and in the
+  shape the `157-link-repoint.loft` struct cell uses — that cell only reads after the write-through,
+  so it passes whether `n` got a copy or an alias.  The same through a `&S` PARAMETER copies and is
+  right; a `text` link writes a copy and is right; `c = &n; c = n` is one record and right.  Silent;
+  the same on 2cff47dfc.  **Where (measured).**  The parameter write-back `p = a` reaches the IR as a
+  `materialized_amp_field` block (`OpDatabase`, `OpCopyRecord(a, …)`), while the local link's `c = a`
+  stays `c = a` and the interpreter installs `a`'s record reference (`VarRef(a)`, `SetStackRef`).  The
+  copy is built by `Parser::assign_refvar_reference`, which materialises a bare variable only for a
+  PARAMETER, because the same function serves a `&` local bind that must link rather than copy.  At
+  that point a `&` whose source is itself a link arrives as `OpVarRef` (D-bind-41), so a bare variable
+  for a local link is always the write-through.  Found while measuring D-bind-41's struct cells.
+* **D-bind-41** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Ref-Repoint)` against `(B-Ref-Write)` when
+  the SOURCE is itself a link.  `c = &b` must re-point `c` to what `b` links, and `c = b` must write `b`'s
+  value through `c`; both lowered to the same IR, `c = b`, so each backend gave one answer to both
+  spellings, silently.  With `a = 1; n = 7; b = &a; c = &n;`, `c = &b; c = 9` wrote `n` on `--interpret`
+  (`A1 N9`) and `a` on `--native`, and `c = b` copied on `--interpret` and re-pointed on `--native`
+  (`N7`).  The same split held in a loop, in one arm, for a local link re-pointed to a `&` parameter,
+  and for `text` links; a `&` parameter re-pointed to another link wrote through on both backends,
+  and a `&text` or `&S` parameter re-pointed to a callee-local link wrote through the same way.  A
+  first bind was right on both.  **Where (measured).**  The parser's `&` lowering had no arm for a
+  source whose type is a link, so the `&` was dropped; the interpreter's link write-through and
+  native's local link-to-link arm each read the resulting `c = b` one way.  **Closed** by spelling
+  the re-point: the parser lowers `c = &b` to `c = OpVarRef(b)`, the raw link cell `b` holds — the op
+  the interpreter's first-bind link copy already emits.  The interpreter routes it to the link's
+  slot like the install op, for every kind of link; native takes `b`'s pointer in the local, record
+  and parameter arms, and its local link-to-link arm now serves only a FIRST bind, so a reassignment
+  `c = b` writes through.  Measured on both backends, plain, under LOFT_POISON and with the native
+  leak check, across every shape above.  The one corpus program with a first bind from a link
+  (`434-pln87-scalar-reference.loft`) changes its IR spelling and native's record-link representation
+  and passes on both backends.  Guard
+  `tests/scripts/a-link-re-pointed-to-another-link-takes-what-that-link-names.loft`.  Found while
+  measuring D-bind-37's repoint of one `&` parameter to another.
 * **D-bind-40** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Ref-Alias)`, `(B-Ref-Write)` and
   `(F-ParamRef)` for a value ENUM: a `&` to an enum local, element or field was silently a copy, and
   a write through a `&` enum parameter crashed the interpreter.

@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `c = &b` where `b` is itself a link re-points `c` to what `b` links (`binding.md
+// (B-Ref-Repoint)`), and `c = b` without the `&` writes `b`'s value through `c` (`(B-Ref-Write)`).
+// Both spellings name the same two variables, so the program only means one or the other if the
+// `&` survives into what the backends see: here each is pinned beside the other, for locals, for
+// `&` parameters, in a loop and in one arm, and for integer, text and record links.  A first bind
+// from a link takes the link as well.
+//
+// @falsified-at: f8b53dc65 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-link-re-pointed-to-another-link-takes-what-that-link-names.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
+// CHANNEL: the assertions — each source after the write through the link, and the variable the
+// link started on.
+
+struct S { v: integer }
+
+// A local link re-pointed to another local link, then written: the write reaches `a`, not `n`.
+fn local_repoint() -> text { a = 1; n = 7; b = &a; c = &n; c = &b; c = 9; "{a},{n},{b}" }
+// Without `&` the same statement writes `a`'s value into `n`, and neither link moves.
+fn local_write_through() -> text { a = 1; n = 7; b = &a; c = &n; c = b; "{a},{n},{b}" }
+// A first bind from a link, plain and annotated.
+fn first_bind() -> text { a = 1; b = &a; c = &b; c = 9; "{a},{c}" }
+fn first_bind_annotated() -> text { a = 1; b = &a; c: &integer = b; c = 9; "{a},{c}" }
+// A `&` parameter re-pointed to another `&` parameter, and without the `&`.
+fn param_to_param(c: &integer, d: &integer) { d = d + 1; c = &d; c = 9; }
+fn param_write_through(c: &integer, d: &integer) { d = d + 1; c = d; }
+// A `&` parameter re-pointed to a link to a callee local.
+fn param_to_local_link(c: &integer) -> text { m = 4; b = &m; c = &b; c = 9; "{m}" }
+// A local link re-pointed to a `&` parameter.
+fn local_to_param(d: &integer) -> text { d = d + 1; n = 7; c = &n; c = &d; c = 9; "{n}" }
+// In a loop, and in one arm or the other.
+fn in_a_loop() -> text { a = 1; n = 7; b = &a; c = &n; for i in 0..2 { if i == 1 { c = &b; } } c = 9; "{a},{n}" }
+fn in_an_arm(k: integer) -> text { a = 1; n = 7; p = 3; b = &a; c = &n; if k > 0 { c = &b; } else { c = &p; } c = 9; "{a},{n},{p}" }
+// Text links: a re-point, and a write-through that leaves `n` a copy of `a`'s text.
+fn text_repoint() -> text { a = "x"; n = "y"; b = &a; c = &n; c = &b; c = "z"; "{a},{n},{b}" }
+fn text_write_through() -> text { a = "x"; n = "y"; b = &a; c = &n; c = b; a = "q"; "{a},{n}" }
+// A `&text` and a `&S` parameter re-pointed to a link to a callee local.
+fn text_param_to_local_link(c: &text) -> text { m = "q"; b = &m; c = &b; c = "z"; m }
+fn record_param_to_local_link(c: &S) -> integer { m = S{v: 4}; b = &m; c = &b; c.v = 9; m.v }
+// Record links: a re-point, then a field written through it.
+fn record_repoint() -> text { a = S{v: 1}; n = S{v: 7}; b = &a; c = &n; c = &b; c.v = 9; "{a.v},{n.v},{b.v}" }
+
+fn main() {
+  assert(local_repoint() == "9,7,9", "a local link re-points to another link: {local_repoint()}");
+  assert(local_write_through() == "1,1,1", "without `&` the value writes through: {local_write_through()}");
+  assert(first_bind() == "9,9", "a first bind from a link takes the link: {first_bind()}");
+  assert(first_bind_annotated() == "9,9", "the annotated first bind: {first_bind_annotated()}");
+  n = 7; m = 5;
+  param_to_param(n, m);
+  assert(n == 7 && m == 9, "a `&` parameter re-points to another `&` parameter: {n},{m}");
+  n = 7; m = 5;
+  param_write_through(n, m);
+  assert(n == 6 && m == 6, "without `&` a parameter writes the other's value through: {n},{m}");
+  n = 7;
+  assert(param_to_local_link(n) == "9" && n == 7, "a `&` parameter re-points to a callee-local link: {n}");
+  m = 5;
+  assert(local_to_param(m) == "7" && m == 9, "a local link re-points to a `&` parameter: {m}");
+  assert(in_a_loop() == "9,7", "a repoint to a link in a loop: {in_a_loop()}");
+  assert(in_an_arm(1) == "9,7,3", "a repoint to a link in the first arm: {in_an_arm(1)}");
+  assert(in_an_arm(0) == "1,7,9", "a repoint to a plain local in the second arm: {in_an_arm(0)}");
+  assert(text_repoint() == "z,y,z", "a text link re-points to a text link: {text_repoint()}");
+  assert(text_write_through() == "q,x", "a text write-through copies: {text_write_through()}");
+  t = "y";
+  assert(text_param_to_local_link(t) == "z" && t == "y", "a `&text` parameter re-points to a callee-local link: {t}");
+  r = S{v: 7};
+  assert(record_param_to_local_link(r) == 9 && r.v == 7, "a `&S` parameter re-points to a callee-local link: {r.v}");
+  assert(record_repoint() == "9,7,9", "a record link re-points to a record link: {record_repoint()}");
+  println("link to link ok");
+}

@@ -4956,7 +4956,8 @@ impl State {
             };
             let repoints = if let Value::Call(d, _) = value.unspan() {
                 let def = stack.data.def(*d);
-                def.name() == "OpCreateStack"
+                // `OpVarRef(b)` is a re-point to the link `b` holds, for every kind of link.
+                matches!(def.name(), "OpCreateStack" | "OpVarRef")
                     || (scalar_link && matches!(def.returned.base(), Type::Reference(_, _)))
             } else {
                 false
