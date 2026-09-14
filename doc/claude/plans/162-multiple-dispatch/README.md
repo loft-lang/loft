@@ -52,7 +52,7 @@ compile time to a direct call wherever the argument types are statically concret
 
 - **Effort:** H — six rules, a new selection pass, a lowering, three backends, two profiles.
 - **Design:** ~ (partial) — the rules are written; three open questions gate the first phase.
-- **Last touched:** 2026-09-14 (IMPL.md step 1 done)
+- **Last touched:** 2026-09-14 (IMPL.md steps 1–2 done)
 
 ## Composition matrix — Stage A
 

@@ -143,16 +143,30 @@ not twenty-five sites.
   `@FR-F-Recv`; `get_fn` and `find_op_method` only `sig` then `base`).  Unifying the order is a
   behaviour question, not step 1's.
 
-### Step 2 — `candidates()` beside `find_fn`  ·  S
+### Step 2 — `candidates()` beside `find_fn`  ·  S  ·  DONE 2026-09-14
 
-Add `Data::candidates(source, fn_name, tp) -> SmallVec<[u32; 4]>` returning the definitions a
-name could resolve to.  Re-express `find_fn` as *"`candidates` returned exactly one"*, keeping
-its existing fallback ladder (`τ?` → `τ`, `n_<name>`, the operator map) inside it.
+Add `Data::candidates(source, fn_name, tp) -> Vec<u32>` (no `smallvec` in the tree; a
+parse-time lookup does not earn a dependency) returning the definitions a name could resolve
+to.  Re-express `find_fn` as *"`candidates` returned exactly one"*, keeping its existing
+fallback ladder (`τ?` → `τ`, `n_<name>`, the operator map) inside it.
 
-- **Red on its own:** `find_fn` must answer identically at all 11 call sites.
+- **Red on its own:** `find_fn` must answer identically at all **13** call sites (the earlier
+  count of 11 was low).
 - **Compared against:** `introspect` byte-identical.
 - **Why separate:** the set is the new concept; introducing it while it always has one element
   means the concept and the behaviour change never share a diff.
+
+**Done, and the shape the ladder forced:** the walk stops at the first RUNG that yields
+anything, and a rung's yield is a set.  Only one rung can yield more than one today — a bound
+holder carrying the name at two arities — and that is the one ambiguity `find_fn` already
+refused (loft#1275: no arity to offer at this entry point), so *"exactly one"* is the faithful
+reading and "first of all rungs collected" would not have been (it would have picked one of
+the two stubs).  The method rung yields the FIRST spelling that resolves, `@FR-F-Recv`'s own-
+nullability-first order — which is a specificity order in disguise (the exact nullability is
+the more specific definition), so `Disp-Select` inherits it rather than replacing it.
+Proven: `bytecode-comparisons/step2-corpus.loft` (step 1's cells plus a user `next` protocol,
+the name two callers resolve) byte-identical before/after and clean on both backends with the
+leak checks armed; `scripts/introspect_diff.sh` **IDENTICAL 1504/1504**.
 
 ### Step 3 — the BARE path passes the whole type list  ·  S
 

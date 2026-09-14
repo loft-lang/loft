@@ -7653,10 +7653,37 @@ impl Data {
         declared == u32::MAX || declared == type_nr
     }
 
+    /// The definitions `fn_name` could resolve to for a receiver of type `tp`, as a SET, in
+    /// the order [`Self::find_fn`]'s ladder tries them.  The walk stops at the first rung that
+    /// yields anything, and a rung's yield is a set:
+    ///
+    /// - a receiver with no def (an unknown type, a `Function`) yields the free `n_<name>`;
+    /// - a bound HOLDER yields every stub carrying the name, one per arity — and TWO of them
+    ///   is the one ambiguity the language already refuses here, because this entry point has
+    ///   no arity to offer (a method call's arguments are not parsed when its receiver is
+    ///   resolved; the operator paths, which read the arity off the syntax, ask
+    ///   [`Self::bound_stub_name`] directly); none falls to the free `n_<name>`;
+    /// - a concrete receiver yields the method under its OWN nullability spelling first and
+    ///   the other second (@FR-F-Recv), each sought in the caller's scope and then in the
+    ///   type's own source when the scope's answer is foreign (loft#850) — one definition,
+    ///   the first spelling that resolves;
+    /// - then the free `n_<name>`; then the built-in operator whose first parameter is `tp`.
+    ///
+    /// @PLN162 `Disp-Select` chooses from this set by applicability and specificity.  Today
+    /// selection is "exactly one", so [`Self::find_fn`] answers that and every caller is
+    /// unchanged; the set is the concept the later steps widen.
     #[must_use]
-    pub fn find_fn(&self, source: u16, fn_name: &str, tp: &Type) -> u32 {
+    pub fn candidates(&self, source: u16, fn_name: &str, tp: &Type) -> Vec<u32> {
+        let free = || -> Vec<u32> {
+            let d_nr = self.source_nr(source, &format!("n_{fn_name}"));
+            if d_nr == u32::MAX {
+                Vec::new()
+            } else {
+                vec![d_nr]
+            }
+        };
         if matches!(tp, Type::Unknown(_)) {
-            return self.source_nr(source, &format!("n_{fn_name}"));
+            return free();
         }
         // loft#824 — dispatch on the REFERENT of a `&τ` parameter, not on the reference.
         // `type_def_nr` answers `reference` for `RefVar(τ)`, which is right for LAYOUT (the
@@ -7675,32 +7702,22 @@ impl Data {
         let type_nr = self.type_def_nr(tp);
         if type_nr == u32::MAX {
             // No method dispatch for types like Function; fall back to n_ global.
-            return self.source_nr(source, &format!("n_{fn_name}"));
+            return free();
         }
         // A bound HOLDER's stubs are keyed per SIGNATURE (loft#1275), and this entry point has
-        // no arity to offer: a method call's arguments are not parsed when its receiver is
-        // resolved.  So probe the arities the language admits and answer only when ONE bound
-        // signature carries the name — which is every shipped program, `Walkable::children`
-        // included.  Where a bound set declares one name at two arities the answer is
-        // genuinely ambiguous here, and the sites that DO know their arity — the operator
-        // paths, which read it off the syntax — ask [`Self::bound_stub_name`] directly.
+        // no arity to offer, so every arity the language admits is probed — `Walkable::children`
+        // included.  Where a bound set declares one name at two arities the yield has two
+        // members, and nothing here can choose.
         if self.definitions[type_nr as usize].bound_holder {
             let holder = &self.definitions[type_nr as usize].name;
-            let mut found = u32::MAX;
-            for arity in 1..=Self::MAX_BOUND_ARITY {
-                let d_nr = self.source_nr(source, &Self::bound_stub_name(holder, fn_name, arity));
-                if d_nr == u32::MAX {
-                    continue;
-                }
-                if found != u32::MAX {
-                    return u32::MAX; // two signatures, and nothing here can choose
-                }
-                found = d_nr;
+            let stubs: Vec<u32> = (1..=Self::MAX_BOUND_ARITY)
+                .map(|arity| self.source_nr(source, &Self::bound_stub_name(holder, fn_name, arity)))
+                .filter(|&d_nr| d_nr != u32::MAX)
+                .collect();
+            if !stubs.is_empty() {
+                return stubs;
             }
-            if found != u32::MAX {
-                return found;
-            }
-            return self.source_nr(source, &format!("n_{fn_name}"));
+            return free();
         }
         let base = self.key_type_name(type_nr);
         let sig = Self::sig_type_name(&base, tp);
@@ -7752,16 +7769,16 @@ impl Data {
                 continue;
             }
             if self.method_receives(d_nr, type_nr) {
-                return d_nr;
+                return vec![d_nr];
             }
             let own = self.source_nr(own_source, &key);
             if self.method_receives(own, type_nr) {
-                return own;
+                return vec![own];
             }
         }
-        let d_nr = self.source_nr(source, &format!("n_{fn_name}"));
-        if d_nr != u32::MAX {
-            return d_nr;
+        let found = free();
+        if !found.is_empty() {
+            return found;
         }
         // I9-prim: fall back to the `possible` operator map for built-in types.
         // Built-in operators use `add_op` (e.g. `OpLtInt`) rather than the method-style
@@ -7770,16 +7787,24 @@ impl Data {
         if let Some(ops) = self.possible.get(fn_name) {
             for &op_nr in ops {
                 if !self.def(op_nr).attributes.is_empty() && self.attr_type(op_nr, 0).is_equal(tp) {
-                    return op_nr;
+                    return vec![op_nr];
                 }
             }
         }
-        u32::MAX
+        Vec::new()
     }
 
-    /// @PLN101 — is this struct def declared `value struct`? A value (copy) type stored
-    /// inline (record field / vector element already inline out-of-the-box), never aliased,
-    /// non-null. Consulted by the value-semantics chokepoints.
+    /// The ONE definition `fn_name` resolves to for a receiver of type `tp`, or `u32::MAX`
+    /// when [`Self::candidates`] yields none — or more than one, which nothing here can
+    /// choose between (a bound holder carrying the name at two arities).
+    #[must_use]
+    pub fn find_fn(&self, source: u16, fn_name: &str, tp: &Type) -> u32 {
+        match self.candidates(source, fn_name, tp).as_slice() {
+            [one] => *one,
+            _ => u32::MAX,
+        }
+    }
+
     #[must_use]
     pub fn is_value_struct(&self, d_nr: u32) -> bool {
         self.value_structs.contains(&d_nr)
