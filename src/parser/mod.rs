@@ -16562,6 +16562,19 @@ impl Parser {
         }
     }
 
+    /// Is this `&` operand an integer STORE place narrower than 8 bytes — an element or a field
+    /// of `u8`, `i8`, `u16`, `i32` or any range that stores in fewer bytes?
+    ///
+    /// A link reads and writes a whole integer, so a link to such a place cannot honour its width:
+    /// `(B-Ref-Reshape)` refuses it rather than let it copy or read the neighbouring bytes
+    /// (`formal/binding.md` D-bind-39).  A plain variable is not a store place — a narrow local, a
+    /// parameter and a tuple local all live in an 8-byte frame slot and link correctly — so it
+    /// answers no for a `Var`.
+    fn is_narrow_store_place(tp: &Type, code: &Value) -> bool {
+        matches!(tp.base(), Type::Integer(spec) if spec.byte_width(false) < 8)
+            && !matches!(code.unspan(), Value::Var(_))
+    }
+
     /// Plan-06 PRIORITY.md spine step 5 — par-result use-site analyser.
     ///
     /// After the function body is fully parsed, find each

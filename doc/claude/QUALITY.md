@@ -194,7 +194,7 @@ split is a merge that would have coupled two rules that must stay free to differ
 |---|---|---|
 | **no rule names the KEYED FAMILY** as a category — `Col-Hash`/`-Sorted`/`-Index`/`-Spatial`/`-Trie` define one kind each, yet 16 sites tested the category | checklist #3 | ⚠ `is_keyed` cites all five as a stand-in. Minting a family rule is a spec decision |
 | **no rule says a narrow value in a VARIABLE slot is a raw `i64`** — `L-Narrow` states the stored width, `L-Null` the field encoding; the `io.rs` pair depends on neither | checklist #6 | ⚠ the code comments the distinction at length; the rules cannot express it |
-| `formal/binding.md` **OPEN: 3** — D-bind-37 (a `&integer` parameter re-pointed to an element or a local does not compile on `--native`), D-bind-38 (a link to a text place, a `u16`/`i32` element or a `u16` field is refused on both backends) and D-bind-39 (a link to a narrow INTEGER place — a `u8`/`i8` element or a `u8` field — reads or writes the wrong width, **silently**; its enum face had its own cause and closed as D-bind-40) | probing D-bind-36's repoint over every element kind (2026-09-14) | ⚠ open, measured; D-bind-39 is silent-wrong and goes first (see the entries) |
+| `formal/binding.md` **OPEN: 3** — D-bind-37 (a `&integer` parameter re-pointed to an element or a local does not compile on `--native`), D-bind-38 (a link to a text place is refused on both backends) and D-bind-39 (a link to an integer element or field stored in fewer than 8 bytes is refused on both backends — it read or wrote the wrong width silently until the refusal; its closure is a link that carries its target's width) | probing D-bind-36's repoint over every element kind (2026-09-14) | ⚠ open, measured; all three are loud now — D-bind-39's silent faces became a refusal (see the entries) |
 
 #### B3 — DONE: the two producerless variants are removed (2026-08-24)
 
@@ -2631,7 +2631,10 @@ obvious way it matched the attribute type bare, which put it in the OPAQUE colum
 of `scan_set` whole) asks through `.base()` — +1 function, on the see-through side, with the
 opaque column and the ratchet's `337 · 1317` unchanged.  The same change first added an opaque
 function and test, a block-result check its tail walker repeated from `sinkable` where it was
-redundant; it was removed rather than the ratchet raised.)
+redundant; it was removed rather than the ratchet raised.  Later the same day:
+`Parser::is_narrow_store_place` (`formal/binding.md` D-bind-39, the refused set of narrow integer
+store places) asks through `.base()` — +1 function, on the see-through side, opaque column and
+ratchet unchanged.)
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2112** shape tests, **1317** of them opaque

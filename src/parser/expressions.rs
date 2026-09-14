@@ -3456,7 +3456,12 @@ use a separate collection or add after the loop"
                 let name = self.vars.name(src).to_string();
                 self.ref_linked_tuple_locals.insert((self.context, name));
             }
-            let heap_ref = if stack_src.is_none() && is_scalar(&s_type) {
+            // A narrow integer store place is refused at the `&` itself on the second pass; the
+            // first pass must not link it either, or the two passes type the local differently.
+            let heap_ref = if stack_src.is_none()
+                && is_scalar(&s_type)
+                && !Self::is_narrow_store_place(&s_type, code)
+            {
                 match code.unspan() {
                     // The bare element op IS the place.  An enum element arrives in this
                     // spelling on the first pass, before its enum getter wraps it; without

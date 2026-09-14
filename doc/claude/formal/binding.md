@@ -389,45 +389,40 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
   variant resolver read through `peel_link`.  Guard
   `tests/scripts/an-enum-link-reads-and-writes-through-its-own-op.loft`.  Found while measuring
   D-bind-39's enum element face.
-* **D-bind-39** *(opened 2026-09-14)* — `(B-Ref-Read)`, `(B-Ref-Write)` and `(B-Ref-Reshape)` for a
-  link to a NARROW INTEGER place: the link does not honour the place's stored width, and nothing
-  says so.
-  - `u: vector<u8> = [1, 250, 7]; c = &u[1]` reads 2042 on `--interpret`, and `c = 200` then leaves
-    `1,200,0`, so the write reached the next element.  `vector<i8>` is wrong the same way.  On
-    `--native` both panic in the store (`addr_mut`: not aligned for `i64`).
-  - A write through a link to a `u8` FIELD is lost on both backends: `o = B{a: 250, b: 9, n: 7}; c =
-    &o.a; c = 200` leaves `250,9,7`.  The read is right.
-  A `u8` LOCAL links correctly, directly and through a `&u8` parameter, and so do 4- and 8-byte
-  places and `boolean`, `character` and `single` fields.  (`u16` and `i32` elements and a `u16`
-  field are refused instead, D-bind-38; the enum element face this entry first carried had its own
-  cause and closed as D-bind-40.)  Silent: every face but the native element panic answers a wrong
-  value.  The interpreter's repoint of a narrow INTEGER link is not routed to the link's slot
-  (D-bind-36): routed, it would read the same wrong width where it now stops in the store.
-  **Where (measured).**  For the `u8` field the `&` is dropped at the bind: `c = &o.a` lowers to `c:
-  integer(0, 255) = OpGetByte(o, 8, 0)`, a plain copy — the lowering's field arm takes a getter of
-  two operands and the narrow getter carries a third, the range minimum.  For the `u8`/`i8` element
-  the link is real (`c: &integer(0, 255) = OpGetVector(u, 1, 1)`), but reading and writing through a
-  link picks the op by the kind alone — `OpGetInt` / `OpSetInt` for every integer in
-  `state/codegen.rs` — so an 8-byte op runs over a 1-byte element; native takes a `*mut i64` into
-  the same slot.  **Why this is not a one-line cure.**  A link to a `u8` local (an 8-byte frame slot)
-  and a link to a `u8` element (a 1-byte store slot) have the same type, `&integer(0, 255)`, and a
-  link can be re-pointed from one to the other, so the width belongs to the TARGET at run time and
-  the type cannot choose the op.  Honouring it needs a representation for the link; until then
-  `(B-Ref-Reshape)` prefers a refusal to a silent copy.  Found while checking D-bind-36's cells
-  against a middle element.
-* **D-bind-38** *(opened 2026-09-14)* — `(B-Ref-Lvalue)`: a link to a TEXT place, to an element
-  of a `u16` or `i32` vector, or to a `u16` field, is refused.  `a: vector<text> = ["aa"]; t = &a[0]`, `o = O{s: "aa"}; t =
-  &o.s`, `u: vector<u16> = […]; c = &u[1]`, the same over `vector<i32>` and a `u16` field all stop with "`&` requires
-  an addressable operand — a variable, struct field, or vector element", on both backends and
-  already on the first bind, while the same spellings over an integer, `u8`, float, enum or struct
-  place link.  The rule names a field and an element as lvalues without an exception for either.
-  **Where (measured).**  Each of these places reads through an op of its own — `OpGetText(OpGetVector(a,
-  4, 0), 0)`, `OpGetText(o, 8)`, `OpGetShortRaw(OpGetVector(u, 2, 1), 0, 0)`, `OpGetInt4(OpGetVector(d,
-  4, 1), 0)` — and `Parser::is_amp_place` lists the other getters (`OpGetByte` among them) but none of
-  these.  Lifting the refusal is not the whole cure: a local `&text` link is a
-  `*mut String` on `--native`, and a store's text slot is not a `String`, so the link needs a
-  representation for a text that lives in a store.  Found while probing D-bind-36's repoint over
-  every element kind.
+* **D-bind-39** *(opened 2026-09-14; silent until the refusal the same day, now loud)* —
+  `(B-Ref-Lvalue)` for an integer STORE place stored in fewer than 8 bytes — an element or a field
+  of `u8`, `i8`, `u16`, `i32`, or a narrow range: `c = &u[1]`, `c = &o.a`.  The rule says such a place
+  links, and it is refused on both backends with one error per `&` ("`&` cannot link to an integer
+  element or field that is stored in fewer than 8 bytes…"), naming the two ways out: copy into a
+  local and write it back, or declare the element or field `integer`.  A narrow LOCAL, a `&` parameter
+  and a tuple local are 8-byte frame slots and still link.
+  **Before the refusal (measured, silent).**  A `u8`/`i8` element link read 2042 for 250 on
+  `--interpret`, and a write through it reached the next element (`1,200,0`); `--native` panicked in
+  the store (`addr_mut`: not aligned for `i64`).  A `u8` field link was a plain copy, so its write was
+  lost on both backends.  `u16` and `i32` places were already refused, under a message that called
+  them temporaries.
+  **Why a refusal and not a link.**  Reading and writing through a link picks the op by the kind alone
+  (`OpGetInt` / `OpSetInt` for every integer in `state/codegen.rs`, a `*mut i64` natively), and the
+  type cannot choose better: a link to a `u8` local (an 8-byte frame slot) and a link to a `u8`
+  element (a 1-byte store slot) have the same type, `&integer(0, 255)`, and a link can be re-pointed
+  from one to the other, so the width belongs to the target at run time.  `(B-Ref-Reshape)` prefers
+  refusing a link it cannot honour to a silent copy.  **Closes when** a link carries its target's
+  width — a representation decision — and the refusal is lifted.  One home decides the refused set,
+  `Parser::is_narrow_store_place`, asked at the `&` and by the lowering on both passes.  Guards
+  `tests/scripts/a-link-to-a-narrow-integer-store-place-is-refused.loft` (one error per `&`) and
+  `tests/scripts/a-link-to-a-narrow-integer-local-reads-and-writes-it.loft` (what must still link).
+  Found while checking D-bind-36's cells against a middle element.
+* **D-bind-38** *(opened 2026-09-14)* — `(B-Ref-Lvalue)`: a link to a TEXT place is refused.  `a:
+  vector<text> = ["aa"]; t = &a[0]` and `o = O{s: "aa"}; t = &o.s` stop with "`&` requires an
+  addressable operand — a variable, struct field, or vector element", on both backends and already
+  on the first bind, while the same spellings over an integer, float, enum or struct place link.  The
+  rule names a field and an element as lvalues without an exception for text.  **Where (measured).**
+  A text place reads through its own op — `OpGetText(OpGetVector(a, 4, 0), 0)`, `OpGetText(o, 8)` —
+  and `Parser::is_amp_place` does not list it.  Lifting the refusal is not the whole cure: a local
+  `&text` link is a `*mut String` on `--native`, and a store's text slot is not a `String`, so the
+  link needs a representation for a text that lives in a store.  (The `u16` and `i32` places this
+  entry first carried are narrow integer places and share D-bind-39's refusal, which now names them
+  correctly.)  Found while probing D-bind-36's repoint over every element kind.
 * **D-bind-37** *(opened 2026-09-14)* — `(O-NoDiverge)` for `(B-Ref-Repoint)` on a `&τ` PARAMETER:
   `fn f(c: &integer, v: vector<integer>) { c = &v[1]; … }` re-points the parameter's link on
   `--interpret` (the callee reads 2, the caller's variable keeps 7), and `--native` does not compile
