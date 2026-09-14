@@ -249,6 +249,33 @@ fn p_h7() { a = mk(56); p_h7_b(a); println("R{a.id}"); }"#,
   c: vector<H> = [mk(62), mk(63)]; println("R{c[1].id}");
 }"#,
         ),
+        // A construction delivered through a join ARM into a local: the arm's work-ref hands
+        // the record to the binding on the path that ran and holds nothing on the others.  A
+        // struct literal arm is the plain spelling; `match`, a loop and a rebind are the others.
+        cell(
+            "p_g1",
+            r#"fn p_g1_b(k: integer) { x: H = if k > 0 { mk_s(64).h } else { mk_s(65).h }; println("R{x.id}"); }
+fn p_g1() { p_g1_b(1); p_g1_b(0); }"#,
+        ),
+        cell(
+            "p_g2",
+            r#"fn p_g2_b(k: integer) { x: H = if k > 0 { H { id: lit(66) } } else { mk(67) }; println("R{x.id}"); }
+fn p_g2() { p_g2_b(1); }"#,
+        ),
+        cell(
+            "p_g3",
+            r#"fn p_g3_b(k: integer) { x: H = match k { 1 => mk_s(68).h, _ => mk(69) }; println("R{x.id}"); }
+fn p_g3() { p_g3_b(1); }"#,
+        ),
+        cell(
+            "p_g4",
+            r#"fn p_g4() { for i in 0..4 { x: H = if i % 2 == 0 { mk_s(70 + i).h } else { mk(80 + i) }; println("R{x.id}"); } }"#,
+        ),
+        cell(
+            "p_g5",
+            r#"fn p_g5_b(k: integer) { x: H = mk(90); x = if k > 0 { mk_s(91).h } else { mk(92) }; println("R{x.id}"); }
+fn p_g5() { p_g5_b(1); }"#,
+        ),
         // (H-Drop-Not): the language releases nothing for the X-marked id.
         cell(
             "p_n1",
@@ -300,10 +327,12 @@ const SOURCES: &[(&str, &str, &str, &str, &str, &str, &str)] = &[
     ),
     ("callproj", "", "", "mk_s(@I).h", "", "", ""),
     ("coalesce", "", "a: H? = mk(@I);", "a ?? mk(@J)", "", "", ""),
+    ("literal", "", "", "H { id: lit(@I) }", "", "", ""),
 ];
 
 /// `(name, statement)` over `@E`, the source expression; `ret` returns it from a helper
-/// instead, and `arm`/`reassign` mint their other value as `@K`.
+/// instead, and `arm`/`arm0`/`reassign` mint their other value as `@K`.  `arm` takes the arm
+/// holding the source and `arm0` the other one, so both paths of the join are measured.
 const DESTS: &[(&str, &str)] = &[
     ("local", r#"x = @E; println("R{x.id}");"#),
     ("annot", r#"x: H = @E; println("R{x.id}");"#),
@@ -321,6 +350,10 @@ const DESTS: &[(&str, &str)] = &[
     ("tuplem", r#"t = (@E, 1); println("R{t.0.id}");"#),
     (
         "arm",
+        r#"x: H = if k > 0 { @E } else { mk(@K) }; println("R{x.id}");"#,
+    ),
+    (
+        "arm0",
         r#"x: H = if k > 0 { @E } else { mk(@K) }; println("R{x.id}");"#,
     ),
     ("reassign", r#"x = mk(@K); x = @E; println("R{x.id}");"#),
@@ -360,9 +393,14 @@ fn cross_cells() -> Vec<Cell> {
         for &(dname, dest) in DESTS {
             idx += 1;
             let name = format!("c_{sname}_{dname}");
-            let arm = dname == "arm";
+            let arm = dname.starts_with("arm");
             let all_params = join_nonempty(&[params, if arm { "k: integer" } else { "" }]);
-            let call_args = join_nonempty(&[cargs, if arm { "1" } else { "" }]);
+            let k_arg = match dname {
+                "arm" => "1",
+                "arm0" => "0",
+                _ => "",
+            };
+            let call_args = join_nonempty(&[cargs, k_arg]);
             let mut text = String::new();
             if dname == "ret" {
                 let _ = writeln!(
