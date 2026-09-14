@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A whole record written through a `&` LOCAL link replaces the linked record's contents with a
+// COPY of the value (`binding.md (B-Ref-Write)`, `(B-Copy)`): after `c = &n; c = a`, `n` and `a` are
+// two records, so a later write to either is invisible to the other.  A `&` PARAMETER write-back
+// has always copied; a local link now does the same, from a record local, from another link, in
+// a loop, and for a struct-enum.  A `&` re-point (`c = &a`) still links rather than copies, and a
+// write through `c` onto the record it already names is that record.
+//
+// @falsified-at: e820d0b04 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-record-written-through-a-local-link-is-copied-into-it.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
+// CHANNEL: the assertions — a field of the source and of the linked record, each written AFTER the
+// write-through, so an alias and a copy answer differently.
+
+struct S { v: integer }
+struct Cv { width: integer }
+enum Sh { Dot { x: integer }, Box { w: integer } }
+
+// From a record local; then a field written through the link.
+fn from_a_local() -> text { a = S{v: 1}; n = S{v: 7}; c = &n; c = a; c.v = 9; "{a.v},{n.v}" }
+// From a record local; then the SOURCE written.
+fn source_written_after() -> text { a = S{v: 1}; n = S{v: 7}; c = &n; c = a; a.v = 5; "{a.v},{n.v},{c.v}" }
+// From another link.
+fn from_a_link() -> text { a = S{v: 1}; n = S{v: 7}; b = &a; c = &n; c = b; c.v = 9; "{a.v},{n.v},{b.v}" }
+// In a loop, a field written after each write-through.
+fn in_a_loop() -> text { a = S{v: 1}; n = S{v: 7}; c = &n; for i in 0..2 { c = a; c.v = 10 + i; } "{a.v},{n.v}" }
+// A struct-enum link, then the source rebuilt.
+fn struct_enum() -> text { a = Sh::Dot { x: 1 }; n = Sh::Dot { x: 7 }; c = &n; c = a; a = Sh::Dot { x: 5 }; "{a.x},{n.x}" }
+// The shape of `157-link-repoint.loft`'s struct cell, with the source written afterwards.
+fn named_width() -> text { a = Cv { width: 2 }; b = Cv { width: 3 }; cur = &a; cur = b; b.width = 8; "{a.width},{b.width},{cur.width}" }
+// Controls.  A write-through onto the record the link already names is that record.
+fn onto_itself() -> text { n = S{v: 7}; c = &n; c = n; c.v = 9; "{n.v},{c.v}" }
+// A `&` re-point links rather than copies.
+fn re_point() -> text { a = S{v: 1}; n = S{v: 7}; c = &n; c = &a; c.v = 9; "{a.v},{n.v}" }
+// The `&` PARAMETER write-back, which already copied.
+fn write_back(p: &S, a: S) { p = a; p.v = 9; }
+// A text write-through, which already copied.
+fn text_write_through() -> text { a = "x"; n = "y"; b = &a; c = &n; c = b; a = "q"; "{a},{n}" }
+
+fn main() {
+  assert(from_a_local() == "1,9", "a record written through a link from a local is copied: {from_a_local()}");
+  assert(source_written_after() == "5,1,1", "the source written after the write-through leaves the copy: {source_written_after()}");
+  assert(from_a_link() == "1,9,1", "a record written through a link from another link is copied: {from_a_link()}");
+  assert(in_a_loop() == "1,11", "a write-through in a loop copies each time: {in_a_loop()}");
+  assert(struct_enum() == "5,1", "a struct-enum written through a link is copied: {struct_enum()}");
+  assert(named_width() == "3,8,3", "157's shape with the source written afterwards: {named_width()}");
+  assert(onto_itself() == "9,9", "a write-through onto the linked record itself: {onto_itself()}");
+  assert(re_point() == "9,7", "a `&` re-point links rather than copies: {re_point()}");
+  n = S{v: 7}; a = S{v: 1};
+  write_back(n, a);
+  assert(n.v == 9 && a.v == 1, "the `&` parameter write-back copies: {n.v},{a.v}");
+  assert(text_write_through() == "q,x", "a text write-through copies: {text_write_through()}");
+  println("record write-through ok");
+}

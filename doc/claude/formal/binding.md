@@ -363,7 +363,7 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 4.**
+**OPEN: 3.**
 
 * **D-bind-43** *(opened 2026-09-14)* — `(B-Ref-Write)` for a VECTOR written through a local `&` link from a
   named vector: `a: vector<integer> = [1]; n: vector<integer> = [7, 8]; c = &n; c = a` must make `n` a copy
@@ -372,23 +372,28 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
   (`pe = [2, 2]`) refills the source in place and is right.  **Where (measured).**  The link is typed a plain
   vector sharing `n`'s store (`c: vector<integer>[…] = n`), and `c = a` lowers to a fresh store filled from
   `a` — `OpDatabase`, `c = OpGetField(…)`, `OpAppendVector(c, a, 0)` — so `c` is rebound instead of `n`'s
-  store being cleared and refilled.  The lowering site is not yet read.  A different site from D-bind-42's
-  record copy.  Found while sizing D-bind-42 over the heap kinds.
-* **D-bind-42** *(opened 2026-09-14)* — `(B-Ref-Write)` and `(B-Copy)` for a RECORD written through a
-  LOCAL `&` link from a named record: `a = S{v: 1}; n = S{v: 7}; c = &n; c = a; c.v = 9` must leave `a`
-  at 1 and `n` at 9, and leaves both at 9 on both backends; `…; c = a; a.v = 5` then reads 5 through `n`.
-  The write-through makes `n` and `a` one record instead of giving `n` a copy of `a`.  It holds in a
-  loop, for a struct-enum link (`c = a; a = Sh::Dot{x: 5}` then reads 5 through `n`), and in the
-  shape the `157-link-repoint.loft` struct cell uses — that cell only reads after the write-through,
-  so it passes whether `n` got a copy or an alias.  The same through a `&S` PARAMETER copies and is
-  right; a `text` link writes a copy and is right; `c = &n; c = n` is one record and right.  Silent;
-  the same on 2cff47dfc.  **Where (measured).**  The parameter write-back `p = a` reaches the IR as a
-  `materialized_amp_field` block (`OpDatabase`, `OpCopyRecord(a, …)`), while the local link's `c = a`
-  stays `c = a` and the interpreter installs `a`'s record reference (`VarRef(a)`, `SetStackRef`).  The
-  copy is built by `Parser::assign_refvar_reference`, which materialises a bare variable only for a
-  PARAMETER, because the same function serves a `&` local bind that must link rather than copy.  At
-  that point a `&` whose source is itself a link arrives as `OpVarRef` (D-bind-41), so a bare variable
-  for a local link is always the write-through.  Found while measuring D-bind-41's struct cells.
+  store being cleared and refilled.  The clear-and-refill exists in `Parser::assign_refvar_vector`, which
+  accepts only a `&vector` PARAMETER or annotated local (`RefVar(Vector)`); a link from `c = &n` is typed
+  a plain vector registered in `amp_vector_locals`, so the handler declines it.  A different site from
+  D-bind-42's record copy.  Found while sizing D-bind-42 over the heap kinds.
+* **D-bind-42** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Ref-Write)` and `(B-Copy)` for a RECORD
+  written through a LOCAL `&` link from a named record: `a = S{v: 1}; n = S{v: 7}; c = &n; c = a; c.v = 9`
+  must leave `a` at 1 and `n` at 9, and left both at 9 on both backends; `…; c = a; a.v = 5` then read 5
+  through `n`.  The write-through made `n` and `a` one record.  The same held from another link, in a
+  loop, for a struct-enum link, and in the shape `157-link-repoint.loft`'s struct cell uses — that cell
+  only reads after the write-through, so it passed on the alias.  The `&S` PARAMETER write-back copied
+  and was right.  Silent; the same on 2cff47dfc.  **Where (measured).**  `Parser::assign_refvar_reference`
+  materialises the copy (`OpDatabase`, `OpCopyRecord`) for a bare variable only when the target is a
+  PARAMETER, because the same function once also saw a `&` local bind that must link.  A local link's
+  `c = a` stayed `c = a`, and the interpreter installed `a`'s record reference (`SetStackRef`).
+  **Closed** by dropping the parameter restriction: a `&` bind that must link reaches that function
+  already lowered (`OpCreateStack`, or `OpVarRef` since D-bind-41), so a bare variable there is always the
+  write-through.  Measured on both backends, plain, under LOFT_POISON and with the native leak check,
+  across every shape above; a `&` re-point, a text write-through and the parameter write-back are
+  unchanged, and `c = n` onto the record `c` already names copies that record onto itself, which gives the
+  same values.  The copy is real now, so `advice[avoidable-copy]` reports it where the source is still
+  used.  Guard `tests/scripts/a-record-written-through-a-local-link-is-copied-into-it.loft`.  Found while
+  measuring D-bind-41's struct cells.
 * **D-bind-41** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Ref-Repoint)` against `(B-Ref-Write)` when
   the SOURCE is itself a link.  `c = &b` must re-point `c` to what `b` links, and `c = b` must write `b`'s
   value through `c`; both lowered to the same IR, `c = b`, so each backend gave one answer to both
