@@ -2331,6 +2331,14 @@ impl Output<'_> {
                 .get(&self.def_nr)
                 .map(|f| f.iter().map(|(_, rt)| *rt).collect())
                 .unwrap_or_default();
+            // An `Object` that RETURNS what it builds (`hoist::object_own_return`): the
+            // tuple is evaluated first, the block's other statements — the frees the
+            // return owes — run in their order, and the tuple is returned.
+            let own_ret = super::hoist::object_own_return(bl);
+            if own_ret.is_some() {
+                self.indent(w)?;
+                write!(w, "let __obj = ")?;
+            }
             write!(w, "(")?;
             for (i, val) in parts.iter().enumerate() {
                 if i > 0 {
@@ -2354,6 +2362,36 @@ impl Output<'_> {
                 write!(w, ",")?;
             }
             write!(w, ")")?;
+            if let Some(p) = own_ret {
+                writeln!(w, ";")?;
+                // A statement that allocates or writes the buffer — the allocate-or-reuse
+                // guard (an `if` around the `OpDatabase`), the `OpSet*` writes — IS the
+                // tuple; the yield and the return are the `return __obj` below.  Every
+                // other statement is a release the return owes, and runs.
+                let builds = |op: &Value| {
+                    op.any_node(&mut |n| {
+                        matches!(n, Value::Call(d, args)
+                            if (*d as usize) < self.data.definitions.len()
+                                && (self.data.def(*d).name().starts_with("OpSet")
+                                    || self.data.def(*d).name().starts_with("OpDatabase"))
+                                && matches!(args.first().map(Value::unspan),
+                                    Some(Value::Var(v)) if *v == p))
+                    })
+                };
+                for op in &bl.operators {
+                    match op.unspan() {
+                        Value::Return(_) | Value::Var(_) | Value::Line(_) => {}
+                        o if builds(o) => {}
+                        _ => {
+                            self.indent(w)?;
+                            self.output_code_inner(w, op)?;
+                            writeln!(w, ";")?;
+                        }
+                    }
+                }
+                self.indent(w)?;
+                writeln!(w, "return __obj")?;
+            }
             // The block's OPENING brace is already out; close it exactly as the ordinary
             // path does, or the arm eats a delimiter (measured: `unclosed delimiter` on
             // the conditional-construction cell, where the Object sits inside an `if` arm).

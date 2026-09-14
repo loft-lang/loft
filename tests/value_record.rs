@@ -60,6 +60,35 @@ const TAIL_EXPECTED: &[(&str, bool)] = &[
     ("n_sel15c", true),     // t15: the same over `const` parameters
 ];
 
+/// The § V-an chains (`bytecode-comparisons/V-an-chain-cells.loft`): the parser's
+/// `return f(…)` lowering hands the callee the function's OWN return buffer and returns
+/// it, and a local the parser promotes INTO that buffer is the same variable under the
+/// local's name — both are the phantom parameter bound from a value shape, which the value
+/// form takes as a value local (`hoist::own_retbuf`).
+const CHAIN_CELLS: &str =
+    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-an-chain-cells.loft";
+const CHAIN_EXPECTED: &[(&str, bool)] = &[
+    ("n_scan_fail", true),   // every site is a chain or a tail of an admitted body
+    ("n_read_uint", true),   // n1: two early `return scan_fail()` chains before an Object tail
+    ("n_hit", true),         // n2: chained from inside a `while` body
+    ("n_find_eq", true),     // n2: the chain in the loop, the tail forwards `scan_fail`
+    ("n_lo", true),          // n3: the first of two chains
+    ("n_hi", true),          // n3: the second
+    ("n_pick", true),        // n3: two chains to different callees, then an Object tail
+    ("n_count_down", true),  // n4: a recursive chain
+    ("n_bump", true),        // n5: chained with a record LITERAL argument
+    ("n_via_obj", true),     // n5: the chain whose sibling buffer holds that literal
+    ("n_mk6", false),        // n6: chained from a body that keeps its buffer
+    ("n_keep6", false),      // n6: an owned tail after a field write — not a value shape
+    ("n_mk7", false),        // n7: passed on as a record by `sum7`
+    ("n_fwd7", false),       // n7: its chain forwards a declined callee
+    ("n_read_num8", true),   // n8: bound into the caller's PROMOTED local
+    ("n_at_width", true),    // n8: the promoted local is the phantom, read as the tuple
+    ("n_scan3_fail", true),  // n9: forwarded by `read_rgb_at`
+    ("n_read_rgb_at", true), // n9: bound to value locals of ANOTHER type in `read_colour_pair`
+    ("n_read_colour_pair", true), // n9: its early returns are Objects carrying their own frees + return
+];
+
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
@@ -208,6 +237,59 @@ fn each_tail_cell_returns_by_value_exactly_where_predicted() {
             "{name}'s lift is bound to the view's field tuple"
         );
     }
+    let _ = std::fs::remove_file(&out);
+}
+
+#[test]
+fn each_chain_cell_returns_by_value_exactly_where_predicted() {
+    let out = std::env::temp_dir().join("loft_value_chain_on.rs");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CHAIN_CELLS);
+    let rust = emit(&src, &out, &[]);
+    for (name, want) in CHAIN_EXPECTED {
+        assert_eq!(
+            returns_tuple(&rust, name),
+            *want,
+            "{name}: returns its record by value"
+        );
+    }
+    let body_of = |name: &str| {
+        rust.split(&format!("\nfn {name}("))
+            .nth(1)
+            .and_then(|s| s.split("\nfn ").next())
+            .unwrap_or_else(|| panic!("{name} emitted"))
+            .to_string()
+    };
+    // The chain's assignment lands in the phantom, declared at its tuple's zero and bound
+    // from the callee's tuple call — no buffer argument, no mint, no copy.
+    for name in ["n_read_uint", "n_pick", "n_count_down"] {
+        let body = body_of(name);
+        assert!(
+            body.contains("let mut var___ref_1: (bool, i64, f64) = Default::default();"),
+            "{name} declares its phantom as the tuple"
+        );
+        assert!(
+            !body.contains("OpDatabase(cell,") && !body.contains("OpCopyRecord(cell,"),
+            "{name} mints and copies nothing"
+        );
+    }
+    // The promoted local IS the phantom: read field-wise off the tuple, returned whole.
+    let body = body_of("n_at_width");
+    assert!(
+        body.contains("let mut var_n: (bool, i64, f64) = Default::default();")
+            && body.contains("var_n = n_read_num8(cell, ")
+            && body.contains("var_n.0"),
+        "n_at_width's promoted local is its tuple"
+    );
+    // An `Object` that returns what it builds: the tuple first, then the return.
+    let body = body_of("n_read_colour_pair");
+    assert!(
+        body.contains("let __obj = (") && body.contains("return __obj"),
+        "n_read_colour_pair's early returns are tuples returned from their own block"
+    );
+    assert!(
+        !body.contains("OpDatabase(cell,") && !body.contains("OpCopyRecord(cell,"),
+        "n_read_colour_pair mints and copies nothing"
+    );
     let _ = std::fs::remove_file(&out);
 }
 

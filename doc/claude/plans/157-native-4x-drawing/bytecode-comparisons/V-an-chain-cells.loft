@@ -1,0 +1,199 @@
+// @PLN157 § V-an (`@FR-R-ValueRecord`) — the `return f(…)` CHAIN: the parser lowers an
+// explicit return of a record-returning call into a `one_buffer_chain` block over the
+// function's own return buffer (`rb = f(…, rb); …; return rb`), and the value form reads
+// that block as `return f(…)` — the callee's tuple forwarded.  Every cell asserts its
+// hand-computed value, so the interpreter (which keeps the record) and native (which takes
+// the value path wherever the gate admits it) must both answer it.  tests/value_record.rs
+// pins which functions the EMISSION admits.
+//
+// One builder per cell family on purpose: a single non-reading site declines a function for
+// the whole program, so a family that must DECLINE (n6, n7) owns its builder.
+
+struct Scan { ok: boolean, at: integer, value: float }
+fn scan_fail() -> Scan { Scan { ok: false, at: 0, value: 0.0 } }
+fn is_digit(b: integer) -> boolean { b >= 48 && b <= 57 }
+fn at(s: text, i: integer) -> integer { if i < 0 || i >= size(s) { -1 } else { s.byte_at(i) } }
+
+// n1 — two early `return scan_fail()` chains before an Object tail (the scan module's
+// `read_uint`).  Admits `read_uint` and `scan_fail`.
+fn read_uint(s: text, i: integer) -> Scan {
+  j = i;
+  while is_digit(at(s, j)) { j += 1; }
+  if j == i { return scan_fail() }
+  v = s[i..j] as integer?;
+  if v == null { return scan_fail() }
+  Scan { ok: true, at: j, value: (v ?? 0) as float }
+}
+fn n1() {
+  a = read_uint("42x", 0);
+  b = read_uint("x42", 0);
+  c = read_uint("7", 0);
+  assert(a.ok && a.at == 2 && a.value == 42.0, "n1 a {a.ok} {a.at} {a.value}");
+  assert(!b.ok && b.at == 0 && b.value == 0.0, "n1 b {b.ok} {b.at} {b.value}");
+  assert(c.ok && c.at == 1 && c.value == 7.0, "n1 c {c.ok} {c.at} {c.value}");
+  println("n1 {a.ok} {a.at} {a.value} {b.ok} {b.at} {c.at} {c.value}");
+}
+
+// n2 — a chain INSIDE a `while` body (`find_word_from`'s shape), and the loop's tail
+// forwards a second admitted call.  Admits `hit` and `find_eq`.
+fn hit(i: integer, w: integer) -> Scan { Scan { ok: true, at: i + w, value: i as float } }
+fn find_eq(s: text) -> Scan {
+  i = 0;
+  n = size(s);
+  while i < n {
+    if at(s, i) == 61 { return hit(i, 1) }
+    i += 1;
+  }
+  scan_fail()
+}
+fn n2() {
+  a = find_eq("key=val");
+  b = find_eq("nothing");
+  assert(a.ok && a.at == 4 && a.value == 3.0, "n2 a {a.ok} {a.at} {a.value}");
+  assert(!b.ok && b.at == 0 && b.value == 0.0, "n2 b {b.ok} {b.at} {b.value}");
+  println("n2 {a.ok} {a.at} {a.value} {b.ok} {b.at}");
+}
+
+// n3 — two chains to DIFFERENT admitted callees in one body, then an Object tail.
+// Admits `lo`, `hi` and `pick`.
+fn lo(i: integer) -> Scan { Scan { ok: true, at: i, value: -1.0 } }
+fn hi(i: integer) -> Scan { Scan { ok: true, at: i, value: 1.0 } }
+fn pick(i: integer) -> Scan {
+  if i < 0 { return lo(i) }
+  if i > 9 { return hi(i) }
+  Scan { ok: true, at: i * 2, value: 0.0 }
+}
+fn n3() {
+  a = pick(-3);
+  b = pick(12);
+  c = pick(4);
+  assert(a.ok && a.at == -3 && a.value == -1.0, "n3 a {a.at} {a.value}");
+  assert(b.ok && b.at == 12 && b.value == 1.0, "n3 b {b.at} {b.value}");
+  assert(c.ok && c.at == 8 && c.value == 0.0, "n3 c {c.at} {c.value}");
+  println("n3 {a.at} {a.value} {b.at} {b.value} {c.at} {c.value}");
+}
+
+// n4 — a RECURSIVE chain: the body forwards its own tuple.  Admits `count_down`.
+fn count_down(i: integer, acc: integer) -> Scan {
+  if i > 0 { return count_down(i - 1, acc + i) }
+  Scan { ok: true, at: acc, value: i as float }
+}
+fn n4() {
+  r = count_down(4, 0);
+  // 4 + 3 + 2 + 1
+  assert(r.ok && r.at == 10 && r.value == 0.0, "n4 {r.at} {r.value}");
+  println("n4 {r.ok} {r.at} {r.value}");
+}
+
+// n5 — the chained call takes a record LITERAL as an argument, built in the frame's sibling
+// buffer: the buffer's release stays AFTER the call (the chain's statement order is kept).
+// Admits `bump` (its sites read fields; the parameter is a record it reads) and `via_obj`.
+fn bump(s: Scan, d: integer) -> Scan { Scan { ok: s.ok, at: s.at + d, value: s.value * 2.0 } }
+fn via_obj(i: integer) -> Scan {
+  if i > 0 { return bump(Scan { ok: true, at: i, value: 1.5 }, 3) }
+  scan_fail()
+}
+fn n5() {
+  a = via_obj(2);
+  b = via_obj(0);
+  assert(a.ok && a.at == 5 && a.value == 3.0, "n5 a {a.ok} {a.at} {a.value}");
+  assert(!b.ok && b.at == 0 && b.value == 0.0, "n5 b {b.ok} {b.at} {b.value}");
+  println("n5 {a.ok} {a.at} {a.value} {b.ok}");
+}
+
+// n6 — a chain in a body that KEEPS its buffer: its tail returns an owned local after a
+// field write, so the body is not a value shape and its chain consumes `mk6`'s RECORD.
+// Both DECLINE; the values are the record form's.
+fn mk6(i: integer) -> Scan { Scan { ok: true, at: i, value: 6.0 } }
+fn keep6(i: integer) -> Scan {
+  if i < 0 { return mk6(-i) }
+  t = mk6(i);
+  t.at = t.at + 100;
+  t
+}
+fn n6() {
+  a = keep6(-4);
+  b = keep6(4);
+  assert(a.ok && a.at == 4 && a.value == 6.0, "n6 a {a.at} {a.value}");
+  assert(b.ok && b.at == 104 && b.value == 6.0, "n6 b {b.at} {b.value}");
+  println("n6 {a.at} {a.value} {b.at} {b.value}");
+}
+
+// n7 — a chain to a callee ANOTHER site passes on as a record: `mk7` declines, and the
+// chain in `fwd7` then forwards a record, so `fwd7` declines with it.
+fn mk7(i: integer) -> Scan { Scan { ok: true, at: i, value: 7.0 } }
+fn sum7(s: Scan) -> integer { s.at + (s.value as integer) }
+fn fwd7(i: integer) -> Scan {
+  if i > 0 { return mk7(i) }
+  Scan { ok: false, at: 0, value: 0.0 }
+}
+fn n7() {
+  p = sum7(mk7(3));
+  a = fwd7(5);
+  b = fwd7(0);
+  assert(p == 10, "n7 p {p}");
+  assert(a.ok && a.at == 5 && a.value == 7.0, "n7 a {a.at} {a.value}");
+  assert(!b.ok && b.at == 0 && b.value == 0.0, "n7 b {b.ok} {b.at}");
+  println("n7 {p} {a.at} {a.value} {b.ok}");
+}
+
+// n8 — a chain forwarded through a whole-value LOCAL of the caller (`read_at_width`'s
+// shape): the caller binds the callee's tuple, tests a field and returns the local whole.
+// Admits `read_num8` and `at_width`.
+fn read_num8(s: text, i: integer) -> Scan {
+  j = i;
+  while is_digit(at(s, j)) { j += 1; }
+  if j == i { return scan_fail() }
+  Scan { ok: true, at: j, value: ((s[i..j] as integer?) ?? 0) as float }
+}
+fn at_width(s: text, i: integer) -> Scan {
+  if at(s, i) != 64 { return Scan { ok: false, at: i, value: 0.0 } }
+  n = read_num8(s, i + 1);
+  if !n.ok { return Scan { ok: false, at: i, value: 0.0 } }
+  n
+}
+fn n8() {
+  a = at_width("@12", 0);
+  b = at_width("x", 0);
+  c = at_width("@x", 0);
+  assert(a.ok && a.at == 3 && a.value == 12.0, "n8 a {a.ok} {a.at} {a.value}");
+  assert(!b.ok && b.at == 0 && b.value == 0.0, "n8 b {b.ok} {b.at}");
+  assert(!c.ok && c.at == 0 && c.value == 0.0, "n8 c {c.ok} {c.at}");
+  println("n8 {a.ok} {a.at} {a.value} {b.ok} {c.ok}");
+}
+
+// n9 — an early `return S{…}` AFTER a value local of ANOTHER record type is bound: the scope
+// pass puts the frees that return owes INSIDE the literal's block, with the return after
+// them — the block returns the record it builds.  Admits `read_colour_pair` beside
+// `read_rgb_at` and `scan3_fail`.
+struct Scan3 { ok: boolean = false, at: integer = 0, color: integer = 0 }
+fn scan3_fail() -> Scan3 { Scan3 { ok: false, at: 0, color: 0 } }
+fn rgba(r: integer, g: integer, b: integer, a: integer) -> integer { (r << 24) | (g << 16) | (b << 8) | a }
+fn read_rgb_at(s: text, i: integer) -> Scan3 {
+  if at(s, i) != 40 { return scan3_fail() }
+  Scan3 { ok: true, at: i + 1, color: rgba(at(s, i + 1), 2, 3, 255) }
+}
+struct ColourPair { ok: boolean = false, c1: integer = 0, c2: integer = 0 }
+fn read_colour_pair(s: text, i: integer) -> ColourPair {
+  cp_a = read_rgb_at(s, i);
+  if !cp_a.ok { return ColourPair { ok: false, c1: 0, c2: 0 } }
+  cp_j = cp_a.at;
+  if at(s, cp_j) != 62 { return ColourPair { ok: false, c1: 0, c2: 0 } }
+  cp_b = read_rgb_at(s, cp_j + 1);
+  if !cp_b.ok { return ColourPair { ok: false, c1: 0, c2: 0 } }
+  ColourPair { ok: true, c1: cp_a.color, c2: cp_b.color }
+}
+fn n9() {
+  p = read_colour_pair("(>(", 0);
+  q = read_colour_pair("x", 0);
+  r = read_colour_pair("(x", 0);
+  // (62 << 24) | (2 << 16) | (3 << 8) | 255; then at(s, 3) is -1 past the end
+  assert(p.ok && p.c1 == 1040319487 && p.c2 == -16645121, "n9 p {p.ok} {p.c1} {p.c2}");
+  assert(!q.ok && q.c1 == 0 && q.c2 == 0, "n9 q {q.ok} {q.c1}");
+  assert(!r.ok && r.c1 == 0 && r.c2 == 0, "n9 r {r.ok} {r.c1}");
+  println("n9 {p.ok} {p.c1} {p.c2} {q.ok} {r.ok}");
+}
+
+fn main() {
+  n1(); n2(); n3(); n4(); n5(); n6(); n7(); n8(); n9();
+}

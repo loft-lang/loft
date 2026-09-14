@@ -4400,14 +4400,13 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
         let before = cand.len();
         let admitted: HashSet<u32> = cand.keys().copied().collect();
         cand.retain(|d_nr, _| {
-            let ok = value_body(data, *d_nr, &admitted);
-            if !ok && trace {
-                crate::loft_eprintln!(
-                    "[valuerec] {}: a result position is not a value leaf",
-                    data.def(*d_nr).name()
-                );
+            let why = value_body(data, *d_nr, &admitted);
+            if let Some(why) = why
+                && trace
+            {
+                crate::loft_eprintln!("[valuerec] {}: {why}", data.def(*d_nr).name());
             }
-            ok
+            why.is_none()
         });
         let admitted: HashSet<u32> = cand.keys().copied().collect();
         let mut declined: HashSet<u32> = HashSet::new();
@@ -4655,6 +4654,42 @@ struct ShapeCtx<'a> {
     own: Option<u32>,
 }
 
+/// The return-buffer variable of `own`, when it is admitted and has one — the PHANTOM
+/// parameter the value form drops from the signature.  It may still be ASSIGNED in the
+/// body: the parser's `return f(…)` lowering hands the callee this buffer and returns it
+/// (`rb = f(…, rb); …; return rb`, the `one_buffer_chain` block), and a local the parser
+/// PROMOTED into the buffer (`n = f(…); if !n.ok { … }; n`) is this variable under the
+/// local's own name.  Both are the phantom bound from a value shape, so both are it as a
+/// VALUE LOCAL ([`value_locals_in`]): the tuple the callee answered, read where the record
+/// was.
+fn own_retbuf(data: &Data, own: Option<u32>) -> Option<u16> {
+    let def = data.def(own?);
+    let a = ret_buffer_attr(def)?;
+    let v = def.variables().var(&def.attributes()[a].name);
+    (v != u16::MAX).then_some(v)
+}
+
+/// An `Object` block that RETURNS the record it builds — `{ OpDatabase(p); OpSet*(p, …);
+/// frees…; return p }`, `p` the buffer the block's result names.  The scope pass lowers an
+/// explicit `return S{…}` this way when the frees the return owes (a live local of another
+/// record type) go inside the block.  Answers `p`.  In the value form the block is `return
+/// (tuple)`, with those frees between the tuple's evaluation and the return, so a statement
+/// that releases a real store still runs, in its order.  ONE home: the gate reads the shape
+/// here, the leaf walk records it, the emitter converts by it.
+#[must_use]
+pub fn object_own_return(bl: &Block) -> Option<u16> {
+    if bl.name != "Object" {
+        return None;
+    }
+    let [p] = bl.result.depend()[..] else {
+        return None;
+    };
+    match bl.operators.last()?.unspan() {
+        Value::Return(x) if matches!(x.unspan(), Value::Var(w) if *w == p) => Some(p),
+        _ => None,
+    }
+}
+
 /// The record type an admitted body's own leaves must carry.
 fn own_record(c: &ShapeCtx) -> Option<u16> {
     plain_record_type(c.data, c.data.def(c.own?).returned())
@@ -4777,9 +4812,21 @@ fn collect_leaves(body: &Value, locals: &HashMap<u16, u32>, own: bool) -> ValueL
             _ => {}
         }
     }
+    // The walk meets a block before its statements, so an `Object` that returns the
+    // record it builds ([`object_own_return`]) is recorded before its own `return` is
+    // reached — that return reads the block's buffer, which is no leaf.
+    let mut own_returns: HashSet<usize> = HashSet::new();
     body.any_node(&mut |n| {
         match n {
-            Value::Return(x) if own => leaves(x, locals, &mut out),
+            Value::Block(bl) if own && object_own_return(bl).is_some() => {
+                out.objects.insert(std::ptr::from_ref(&**bl) as usize);
+                if let Some(last) = bl.operators.last() {
+                    own_returns.insert(std::ptr::from_ref(last.unspan()) as usize);
+                }
+            }
+            Value::Return(x) if own && !own_returns.contains(&(std::ptr::from_ref(n) as usize)) => {
+                leaves(x, locals, &mut out);
+            }
             Value::Set(w, rhs) if locals.contains_key(w) => leaves(rhs, locals, &mut out),
             _ => {}
         }
@@ -4795,8 +4842,9 @@ fn collect_leaves(body: &Value, locals: &HashMap<u16, u32>, own: bool) -> ValueL
 /// is its return buffer mentioned only where the value form can drop the mention?  The
 /// buffer becomes a PHANTOM — the parameter is gone from the signature — so a body may
 /// name it only inside a converted `Object` block, as the buffer argument of a call that
-/// drops it, or as the subject of a free.
-fn value_body(data: &Data, d_nr: u32, admitted: &HashSet<u32>) -> bool {
+/// drops it, or as the subject of a free.  `None` admits; `Some` names the refusing test
+/// for the `LOFT_TRACE_VALUEREC` line.
+fn value_body(data: &Data, d_nr: u32, admitted: &HashSet<u32>) -> Option<&'static str> {
     let def = data.def(d_nr);
     let locals = value_locals_in(data, d_nr, admitted);
     let c = ShapeCtx {
@@ -4808,11 +4856,32 @@ fn value_body(data: &Data, d_nr: u32, admitted: &HashSet<u32>) -> bool {
     };
     let body = def.code();
     if value_shape(body, &c).is_none() {
-        return false;
+        return Some("the tail is not a value leaf");
     }
+    // An `Object` that returns the record it builds is the leaf; its own `return`, the
+    // block's last statement, is not asked again below.
     let mut ok = true;
+    let mut own_returns: HashSet<usize> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n
+            && object_own_return(bl).is_some()
+        {
+            if value_shape(n, &c).is_none() {
+                ok = false;
+                return true;
+            }
+            if let Some(last) = bl.operators.last() {
+                own_returns.insert(std::ptr::from_ref(last.unspan()) as usize);
+            }
+        }
+        false
+    });
+    if !ok {
+        return Some("an object's return is not a value leaf");
+    }
     body.any_node(&mut |n| {
         if let Value::Return(x) = n
+            && !own_returns.contains(&(std::ptr::from_ref(n) as usize))
             && value_shape(x, &c).is_none()
         {
             ok = false;
@@ -4821,14 +4890,18 @@ fn value_body(data: &Data, d_nr: u32, admitted: &HashSet<u32>) -> bool {
         false
     });
     if !ok {
-        return false;
+        return Some("a return is not a value leaf");
     }
-    let Some(a) = ret_buffer_attr(def) else {
-        return true;
+    let Some(rb) = own_retbuf(data, Some(d_nr)) else {
+        return None;
     };
-    let rb = def.variables().var(&def.attributes()[a].name);
+    // A phantom that is itself a value local ([`own_retbuf`]) has every mention
+    // accounted by [`local_uses_ok`] already.
+    if locals.contains_key(&rb) {
+        return None;
+    }
     let leaves = collect_leaves(body, &locals, true);
-    rb == u16::MAX || retbuf_uses_ok(body, rb, &c, &leaves.objects)
+    (!retbuf_uses_ok(body, rb, &c, &leaves.objects)).then_some("the return buffer is used")
 }
 
 /// Every mention of the return buffer `rb` in `v` is one the value form drops: inside a
@@ -4843,6 +4916,10 @@ fn retbuf_uses_ok(v: &Value, rb: u16, c: &ShapeCtx, objects: &HashSet<usize>) ->
         Value::Call(d, args) => {
             let callee = c.data.def(*d);
             let is_free = matches!(callee.name(), "OpFreeRef" | "OpFreeRefIfDistinct");
+            // As the WITNESS of a store-identity test the phantom is in no store, so the
+            // emitter answers the test `true` and makes the guarded free unconditional
+            // (`OpFreeRefIfDistinctEmitter`, `OpDistinctStoreEmitter`).
+            let witnessed = matches!(callee.name(), "OpFreeRefIfDistinct" | "OpDistinctStore");
             let dropped = if c.admitted.contains(d) {
                 ret_buffer_attr(callee)
             } else {
@@ -4850,7 +4927,7 @@ fn retbuf_uses_ok(v: &Value, rb: u16, c: &ShapeCtx, objects: &HashSet<usize>) ->
             };
             args.iter().enumerate().all(|(i, a)| {
                 if matches!(a.unspan(), Value::Var(w) if *w == rb) {
-                    (is_free && i == 0) || dropped == Some(i)
+                    (is_free && i == 0) || (witnessed && i == 1) || dropped == Some(i)
                 } else {
                     retbuf_uses_ok(a, rb, c, objects)
                 }
@@ -4869,10 +4946,11 @@ fn retbuf_uses_ok(v: &Value, rb: u16, c: &ShapeCtx, objects: &HashSet<usize>) ->
 }
 
 /// Which locals of `def_nr` hold a value-returned record — every non-null assignment a
-/// value shape, every use one the tuple serves ([`local_uses_ok`]), never a parameter and
-/// never a compiler `__lift_` temp bound from a CALL — mapped to the function whose tuple
-/// they carry.  ONE home: the gate decides admission over it and the emitter types the
-/// locals from it.
+/// value shape, every use one the tuple serves ([`local_uses_ok`]), never a parameter
+/// (except the PHANTOM return buffer of an admitted body, [`own_retbuf`]) and never a
+/// compiler `__lift_` temp bound from a CALL — mapped to the function whose tuple they
+/// carry.  ONE home: the gate decides admission over it and the emitter types the locals
+/// from it.
 ///
 /// A `__lift_` temp bound from a call is excluded because that set lowering emits its own
 /// displacement guard, reading `.store_nr` off the value — a use no IR walk can see,
@@ -4904,8 +4982,12 @@ pub fn value_locals_in(data: &Data, def_nr: u32, admitted: &HashSet<u32>) -> Has
         }
         false
     });
+    let rb = own_retbuf(data, own);
+    // Fixed for the body: the reads whose value is dropped.
+    let dropped = dropped_reads(body);
     let eligible = |v: u16| {
-        !vars.is_argument(v) && (!vars.name(v).starts_with("__lift_") || !call_bound.contains(&v))
+        (!vars.is_argument(v) || Some(v) == rb)
+            && (!vars.name(v).starts_with("__lift_") || !call_bound.contains(&v))
     };
     // Per local, GIVEN a locals set: the tuple its assignments carry, or `None` once ANY
     // assignment is not a value shape (the declaration's `null` aside).
@@ -4969,12 +5051,13 @@ pub fn value_locals_in(data: &Data, def_nr: u32, admitted: &HashSet<u32>) -> Has
         loop {
             let with = joined(&locals, &cands);
             let shapes = shapes_given(&with);
-            let reads = collect_leaves(body, &with, own.is_some()).reads;
+            let mut served = collect_leaves(body, &with, own.is_some()).reads;
+            served.extend(dropped.iter().copied());
             let kept: HashMap<u16, u32> = cands
                 .keys()
                 .filter_map(|v| {
                     let d = shapes.get(v).copied().flatten()?;
-                    local_uses_ok(body, *v, data, &reads).then_some((*v, d))
+                    local_uses_ok(body, *v, data, &served, admitted).then_some((*v, d))
                 })
                 .collect();
             let stable = kept.len() == cands.len();
@@ -4990,22 +5073,78 @@ pub fn value_locals_in(data: &Data, def_nr: u32, admitted: &HashSet<u32>) -> Has
     }
 }
 
+/// The `Var` reads in `body` whose value is DROPPED — the tail of a statement block, of a
+/// loop body, of a `Drop` — by both addresses.  Such a read of a tuple is served by doing
+/// nothing, which is what the emitter's plain read of the local does.  The parser's
+/// `return f(…)` chain ends in one when the scope pass leaves its `return` outside the
+/// block.  Positional, so a read under a node this walk does not know counts as USED —
+/// the conservative side, which only ever costs the optimisation.
+fn dropped_reads(body: &Value) -> HashSet<usize> {
+    fn walk(v: &Value, used: bool, out: &mut HashSet<usize>) {
+        match v.unspan() {
+            Value::Var(_) => {
+                if !used {
+                    out.insert(std::ptr::from_ref(v) as usize);
+                    out.insert(std::ptr::from_ref(v.unspan()) as usize);
+                }
+            }
+            Value::Block(bl) => {
+                let n = bl.operators.len();
+                let tail_used = used && !matches!(bl.result.base(), Type::Void);
+                for (i, op) in bl.operators.iter().enumerate() {
+                    walk(op, tail_used && i + 1 == n, out);
+                }
+            }
+            Value::Loop(bl) => {
+                for op in &bl.operators {
+                    walk(op, false, out);
+                }
+            }
+            Value::If(c, a, b) => {
+                walk(c, true, out);
+                walk(a, used, out);
+                walk(b, used, out);
+            }
+            Value::Insert(ops) => {
+                let n = ops.len();
+                for (i, op) in ops.iter().enumerate() {
+                    walk(op, used && i + 1 == n, out);
+                }
+            }
+            Value::Drop(x) => walk(x, false, out),
+            other => other.for_each_child(&mut |ch| walk(ch, true, out)),
+        }
+    }
+    let mut out = HashSet::new();
+    walk(body, true, &mut out);
+    out
+}
+
 /// Is every use of local `v` in `body` one a TUPLE can serve?  A scalar field read at a
 /// constant offset (the tuple index), a free of it (nothing to release), a store-identity
 /// test or a free guarded by one against it (the tuple is in no store, so always
-/// distinct), a copy FROM it (the tuple is materialised into the destination), and a
-/// whole-value read at a VALUE POSITION (`reads`: a return tail of an admitted body, the
-/// right of a value local, the tail of a branch arm either stands at — consumed as the
-/// tuple).  Any other use — an argument, an append, a copy INTO it, a whole-value read
-/// anywhere else — needs the record, so the local keeps its buffer.
-fn local_uses_ok(body: &Value, v: u16, data: &Data, reads: &HashSet<usize>) -> bool {
+/// distinct), a copy FROM it (the tuple is materialised into the destination), the buffer
+/// ARGUMENT of an admitted callee (the argument the call site drops — how the phantom
+/// reaches the callee of a `return f(…)` chain), and a whole-value read the tuple SERVES
+/// (`served`: one at a VALUE POSITION — a return tail of an admitted body, the right of a
+/// value local, the tail of a branch arm either stands at — consumed as the tuple; or one
+/// whose value is dropped, [`dropped_reads`]).  Any other use — an argument, an append, a
+/// copy INTO it, a whole-value read anywhere else — needs the record, so the local keeps
+/// its buffer.
+fn local_uses_ok(
+    body: &Value,
+    v: u16,
+    data: &Data,
+    served: &HashSet<usize>,
+    admitted: &HashSet<u32>,
+) -> bool {
     let mut mentions = 0u32;
     let mut accounted = 0u32;
     body.any_node(&mut |n| {
         match n {
             Value::Var(w) if *w == v => {
                 mentions += 1;
-                if reads.contains(&(std::ptr::from_ref(n) as usize)) {
+                if served.contains(&(std::ptr::from_ref(n) as usize)) {
                     accounted += 1;
                 }
             }
@@ -5014,6 +5153,12 @@ fn local_uses_ok(body: &Value, v: u16, data: &Data, reads: &HashSet<usize>) -> b
                 let arg_is_v = |i: usize| {
                     matches!(args.get(i).map(Value::unspan), Some(Value::Var(w)) if *w == v)
                 };
+                if admitted.contains(d)
+                    && let Some(a) = ret_buffer_attr(data.def(*d))
+                    && arg_is_v(a)
+                {
+                    accounted += 1;
+                }
                 // A SCALAR FIELD READ at a constant offset — what the value path turns
                 // into a tuple index.  (`OpGetField` is the COLLECTION-field spelling; a
                 // record's scalar field reads through its typed getter.)

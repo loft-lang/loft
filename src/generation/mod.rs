@@ -6461,6 +6461,23 @@ extern crate loft;"
                 // @PLN157 § V-aa — an admitted fn has no return buffer, so it has no
                 // buffer witness either (the parameter itself is gone).
                 if dropped == Some(i) {
+                    // @PLN157 § V-an — but a phantom the body ASSIGNS from a value shape
+                    // (`hoist::own_retbuf`: a `return f(…)` chain, a promoted local) is a
+                    // value local with no parameter to declare it: bound at its tuple's
+                    // zero, as every returned value local is.
+                    let av = vars.var(&a.name);
+                    if av != u16::MAX
+                        && let Some(d) = self.value_record_locals.get(&av)
+                        && let Some(t) = self.value_records.tuple.get(d)
+                    {
+                        use std::fmt::Write as _;
+                        let _ = write!(
+                            vdb_prologue,
+                            "\n  let mut var_{}: {t} = Default::default();",
+                            sanitize(vars.name(av))
+                        );
+                        self.declared.insert(av);
+                    }
                     continue;
                 }
                 if a.hidden && matches!(&a.typedef, Type::Reference(_, _) | Type::Enum(_, true, _))
