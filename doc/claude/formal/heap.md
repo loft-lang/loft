@@ -894,6 +894,18 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
    nothing, the caller owns — so the callee's copy must not release.  D-heap-1's first shape is
    the tuple-member spelling of this family, and the cure it names (a caller-side fact) is the
    same one.
+   - **OPEN — a parameter copy displaced by a VIEW (found 2026-09-15; no gate cell yet).**
+     `x = p; x = s.h` releases the caller's resource inside the callee, and the caller releases
+     it again: twice, on both backends, `LOFT_POISON` clean.  The same after `x = mk(); x = p`
+     and after `if c { x = p; }` on the path that copied.  Not the mechanism of the rows above,
+     read off the IR.  A local that owns on one assignment and views on another carries the
+     loft#1336 owner witness.  The parameter copy points the witness at its record
+     (`OpRefAlias`), and the view rebind releases the witnessed store WITH the type's hook.  The
+     witness is right about the store, which is the local's to free, and wrong about the
+     release: the copy's resource is the caller's.
+   - **OPEN — a parameter copy handed on.**  `if c { x = p; } if d { y = x; }` with both taken
+     releases the caller's resource through `y`, then in the caller: twice, both backends.  The
+     copy `y = x` takes `x`'s release (loft#1515), and `x`'s record was never `x`'s to hand on.
 3. **A hand-off that suppressed a release it does not belong to** — filed from
    `x = mk(K); x = p` (`c_param_reassign`: the displaced record never released, and the parameter's
    copy released inside the callee), and wider than filed: `b = mk(1); b = mk(2); y = b` lost
@@ -911,12 +923,27 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
      statement displaces what a later one handed off, so the in-order fact would release the
      caller's record — the loss is kept rather than converted into a double release.  The answer
      is per ITERATION, which a static fact cannot give.
-   - **OPEN — the branch not taken.**  `x = mk(); if c { x = p; }` with `c` false still loses
-     `mk()` (`p_h6`): the hand-off armed inside the arm suppresses `x`'s own release on the path
-     that never copied.  loft#1515's per-path flag answers exactly this for a SOURCE-side hand-off;
-     a destination-side one (a copy off a parameter) is not given the flag.  A written-out join
-     reaches the same residual: `x = if c { a } else { p }` on `c` true never releases `x`'s copy
-     of `a`, because the parameter arm's copy stops `x` on every path.
+   - ✓ **The branch not taken — CLOSED 2026-09-15.**  `x = mk(); if c { x = p; }` with `c` false
+     lost `mk()` (`p_h6`): the copy off the parameter stopped `x` on EVERY path, so on the path
+     that never copied nothing released `x`'s own record.  Wider than filed, measured on both
+     backends and under `LOFT_POISON`:
+     - the else arm: `if c { x = mk(2) } else { x = p }` lost `mk(2)` on the then path;
+     - every path copying a parameter: `if c { x = p } else { x = q }` lost the record the else
+       arm displaced;
+     - a nested branch, a `match` arm, and a record that holds the resource;
+     - a later unconditional rebind, which lost the displaced record on the path not taken;
+     - the written-out join `x = if c { a } else { p }` on `c` true, which lost `x`'s copy of `a`;
+     - a loop whose body copies the parameter in one arm, which lost every displaced record.
+
+     Two facts had to become per path.  loft#1515's flag was given only to a copy that stops its
+     SOURCE; a copy that stops its DESTINATION now gets the same flag, keyed on the side it stops
+     (`scopes::per_path_stops`).  That alone left the rebind and the loop: the ownership memo the
+     displaced release reads (`owned_refs`) records the parameter copy as a VIEW, so the join of
+     an arm that copied with one that did not read "not owned", and inside a loop the
+     own-assignment test read false.  Measured with a probe on the memo before the second change.
+     A copy the flag guards now reads owned in both places, and the flag decides the release
+     (`copy_flagged_on_target`).  Guard:
+     `tests/scripts/a-copy-off-a-parameter-in-a-branch-arm-keeps-the-release-of-the-path-not-taken.loft`.
 4. **A projection copied into a container** — `s.h`, `vs[0]` or `tt.0` into a field, an enum
    payload, a vector or a tuple member (`c_field_*`, `c_elem_*`, `c_tuple_*`): twice.  The same
    projection bound to a LOCAL is a `(B-View)` view and releases once; placed in a container it

@@ -2237,11 +2237,13 @@ fn per_path_handoffs(code: &Value) -> HashSet<(u16, u16)> {
     out
 }
 
-/// Does a whole-value copy `dst = src` written in a branch arm take `src`'s release on the path
-/// that runs it?  Those are the copies loft#1515 gives a per-path flag.  A copy off a PARAMETER
-/// stops the destination instead ([`copy_moves_drop_from`]) and gets no flag.
-fn per_path_moves_source(function: &Function, data: &Data, dst: u16, src: u16) -> bool {
-    copy_moves_drop_from(function, data, dst, src, false) == Some(src)
+/// Which side does a whole-value copy `dst = src` written in a branch arm stop, on the path that
+/// runs it?  The answer is [`copy_moves_drop_from`]'s: the SOURCE for a copy that takes its
+/// release, the DESTINATION for a copy off a PARAMETER, whose caller owns what it holds.  Either
+/// way the stopped variable still owes its own release on the paths that did not run the copy, so
+/// every such copy gets loft#1515's per-path flag, keyed on the side named here.
+fn per_path_stops(function: &Function, data: &Data, dst: u16, src: u16) -> Option<u16> {
+    copy_moves_drop_from(function, data, dst, src, false)
 }
 
 /// The locals a value branch hands back as its arm tails — the sources the statement form
@@ -2453,11 +2455,12 @@ fn drop_handoff_node(
                 // this arm also meets the branch-arm lift's own `__lift_N = a` once that
                 // exists, and there the answer runs the other way.
                 //
-                // A copy written in a branch ARM (`pairs`, loft#1515) stops its source only on
-                // the path that ran it, and that fact is the source's flag.  It never enters
-                // this set, which means "stopped on every path": a later unconditional
-                // hand-off of the same source still has to stop it, and a later rebind still
-                // has to release what it displaces on the path where the copy did not run.
+                // A copy written in a branch ARM (`pairs`, loft#1515) stops its source — or its
+                // destination, off a parameter — only on the path that ran it, and that fact is
+                // the stopped side's flag.  It never enters this set, which means "stopped on
+                // every path": a later unconditional hand-off of the same variable still has to
+                // stop it, and a later rebind still has to release what it displaces on the
+                // path where the copy did not run.
                 if let Value::Var(src) = rhs.unspan()
                     && !pairs.contains(&(*v, *src))
                     && let Some(moved) =
@@ -3404,25 +3407,27 @@ fn run_scan_phase(
     // of code that verifies if a free is needed", rather than to @PLN160's.  Note also that
     // `__own_` has `LOFT_NO_OWNER_WITNESS=1` and this one has no `LOFT_NO_*` switch at all, so
     // the one of the three whose necessity cannot be shown is the one with no bisect step.
-    // loft#1515 — the per-path hand-offs an author wrote, and one boolean per SOURCE to
-    // record whether the copy that would have taken its release actually ran.  Minted here
-    // rather than during the scan for the reason `local_owns` is: the flag has to exist
-    // before the body is walked, so its `false` initialiser can be placed at the top.
-    // Only where the release would move to the DESTINATION, which is what leaves the source
-    // without one.  `copy_moves_drop_from` answers a copy off a PARAMETER the other way round
-    // — it stops the DESTINATION, because the caller owns — and that pair gets no flag.  The
-    // caller's release is on neither arm, but the destination's OWN earlier record is: after
-    // `x = mk(); if c { x = p; }` the stopped `x` leaves `mk()` unreleased on the path where the
-    // copy did not run (heap.md `D-heap-7`, the branch not taken).
+    // loft#1515 — the per-path hand-offs an author wrote, and one boolean per STOPPED variable
+    // to record whether the copy that stops it actually ran.  Minted here rather than during
+    // the scan for the reason `local_owns` is: the flag has to exist before the body is walked,
+    // so its `false` initialiser can be placed at the top.  The stopped side is the SOURCE for
+    // a copy that takes its release and the DESTINATION for a copy off a PARAMETER, because the
+    // caller owns what it holds (`per_path_stops`).  Stopped on every path instead, the second
+    // lost a release: after `x = mk(); if c { x = p; }` the stopped `x` left `mk()` unreleased
+    // on the path where the copy did not run (heap.md `D-heap-7`, the branch not taken).
     scopes.per_path_pairs = per_path_handoffs(orig_code)
         .into_iter()
-        .filter(|&(dst, src)| per_path_moves_source(&function, data, dst, src))
+        .filter(|&(dst, src)| per_path_stops(&function, data, dst, src).is_some())
         .collect();
-    let mut handed_sources: Vec<u16> = scopes.per_path_pairs.iter().map(|&(_, src)| src).collect();
-    handed_sources.sort_unstable();
-    handed_sources.dedup();
-    for src in handed_sources {
-        scopes.mint_handoff_flag(&mut function, src);
+    let mut stopped: Vec<u16> = scopes
+        .per_path_pairs
+        .iter()
+        .filter_map(|&(dst, src)| per_path_stops(&function, data, dst, src))
+        .collect();
+    stopped.sort_unstable();
+    stopped.dedup();
+    for var in stopped {
+        scopes.mint_handoff_flag(&mut function, var);
     }
     let displace_locals = nullable_locals_that_displace(orig_code, &function, data);
     for &v in &displace_locals {
@@ -7595,19 +7600,40 @@ fn check_arg_ref_allocs(ir: &Value, function: &Function, fn_name: &str) {
 }
 
 impl Scopes<'_> {
-    /// The per-path flag of `src` (loft#1515): `false` at function entry, set where a copy that
-    /// takes `src`'s release runs, read at `src`'s scope-end release and at a rebind of it.  One
-    /// per source however many copies share it, so a second request returns the first.
-    fn mint_handoff_flag(&mut self, function: &mut Function, src: u16) -> u16 {
-        if let Some(&flag) = self.handed_off.get(&src) {
+    /// The per-path flag of `var` (loft#1515): `false` at function entry, set where a copy that
+    /// stops `var` runs, read at `var`'s scope-end release and at a rebind of it.  One per
+    /// variable however many copies share it — a source handed out by one arm and a destination
+    /// filled off a parameter by another ask the same question of the same record — so a second
+    /// request returns the first.
+    fn mint_handoff_flag(&mut self, function: &mut Function, var: u16) -> u16 {
+        if let Some(&flag) = self.handed_off.get(&var) {
             return flag;
         }
-        let name = format!("__hoff_{}", function.name(src));
+        let name = format!("__hoff_{}", function.name(var));
         let flag = function.add_temp_var(&name, &Type::Boolean);
         self.var_scope.insert(flag, 0);
         self.var_order.push(flag);
-        self.handed_off.insert(src, flag);
+        self.handed_off.insert(var, flag);
         flag
+    }
+
+    /// Is `v = value` a copy off a PARAMETER written in a branch arm — a copy that stops `v`
+    /// itself, with a per-path flag (loft#1515) to record that it ran?  Such a `v` holds a record
+    /// of its own (`@FR-B-Copy`) whose release is the caller's on the path that copied and the
+    /// release of `v`'s earlier record on the path that did not.  An ownership verdict read off
+    /// the parameter calls the copy a view, which cannot say both, so the displaced release and
+    /// the ownership memo read this copy as owned and leave the release to the flag.
+    fn copy_flagged_on_target(
+        &self,
+        function: &Function,
+        data: &Data,
+        v: u16,
+        value: &Value,
+    ) -> bool {
+        matches!(value.unspan(), Value::Var(src)
+            if self.per_path_pairs.contains(&(v, *src))
+                && per_path_stops(function, data, v, *src) == Some(v)
+                && self.handed_off.contains_key(&v))
     }
 
     /// The type's scope-end hook for `v`, unless a MOVE-copy already released `v`'s
@@ -7623,10 +7649,11 @@ impl Scopes<'_> {
         path_skip: Option<(u16, u16)>,
     ) -> Option<Value> {
         // Two facts stop a release, and both are read.  `drop_transferred` holds the
-        // hand-offs made on EVERY path, so a source in it releases nothing.  A source with a
-        // per-path hand-off (loft#1515, a copy in a branch arm) keeps its release and guards it
-        // on the flag that records whether that copy ran — the copy never enters the static
-        // set, so a later unconditional hand-off of the same source still reaches it here.
+        // hand-offs made on EVERY path, so a variable in it releases nothing.  A variable a copy
+        // in a branch arm stops (loft#1515: its source, or its destination when the copy is off
+        // a parameter) keeps its release and guards it on the flag that records whether that
+        // copy ran — the copy never enters the static set, so a later unconditional hand-off of
+        // the same variable still reaches it here.
         //
         // The guard does not choose WHICH members the release covers — the skip below still
         // decides that, because a member handed out on this path is handed out whether or not
@@ -8263,14 +8290,21 @@ impl Scopes<'_> {
             // sources, because the first arm reads that type to decide whether it owns the record
             // it displaces.
             for src in branch_tail_vars(value) {
-                if !per_path_moves_source(function, data, v, src) {
+                let Some(stopped) = per_path_stops(function, data, v, src) else {
                     continue;
-                }
+                };
                 self.per_path_pairs.insert((ov, src));
                 self.per_path_pairs.insert((v, src));
-                self.mint_handoff_flag(function, src);
-                if var_copy_owns(function, v, src) {
-                    function.make_independent(v, src);
+                if stopped == src {
+                    self.mint_handoff_flag(function, src);
+                    if var_copy_owns(function, v, src) {
+                        function.make_independent(v, src);
+                    }
+                } else {
+                    // A parameter arm stops the binding itself, so the flag is the binding's —
+                    // under both of its ids, the one the pre-scan saw and the one this scan uses.
+                    let flag = self.mint_handoff_flag(function, ov);
+                    self.handed_off.insert(v, flag);
                 }
             }
             return self.scan(&sunk, function, data);
@@ -8282,7 +8316,8 @@ impl Scopes<'_> {
         // new value lands — read here, while `owned_refs` still describes the previous
         // assignment.
         let displaced = if was_in_scope && *value != Value::Null {
-            let rhs_owned = matches!(self.ref_rhs_ownership(value, data), RefRhs::Owned);
+            let rhs_owned = matches!(self.ref_rhs_ownership(value, data), RefRhs::Owned)
+                || self.copy_flagged_on_target(function, data, v, value);
             self.displaced_drop(v, rhs_owned, function, data)
         } else {
             None
@@ -8516,13 +8551,17 @@ impl Scopes<'_> {
             function.tp(v).base(),
             Type::Reference(_, _) | Type::Enum(_, true, _)
         ) {
-            match self.ref_rhs_ownership(value, data) {
-                RefRhs::Owned => {
-                    self.owned_refs.insert(v, self.loops.len());
-                }
-                RefRhs::View => {
-                    self.owned_refs.remove(&v);
-                }
+            // A copy off a parameter whose per-path flag decides its release is recorded as
+            // owned: `v` holds a copy of its own, and whether that record's release is `v`'s is
+            // the flag's to answer, per path.  Recorded as a view, the arm that copied and the
+            // arm that did not disagreed at the join, so a later rebind released neither
+            // (heap.md `D-heap-7`).
+            if self.copy_flagged_on_target(function, data, v, value)
+                || matches!(self.ref_rhs_ownership(value, data), RefRhs::Owned)
+            {
+                self.owned_refs.insert(v, self.loops.len());
+            } else {
+                self.owned_refs.remove(&v);
             }
         }
         // loft#1510 / D-heap-4 — remember which work-ref backs the record a CONSTRUCTION
@@ -9510,21 +9549,25 @@ impl Scopes<'_> {
                 None => v_set(flag, Value::Boolean(sole)),
             });
         }
-        // loft#1515 — this copy is one of the per-path hand-offs, so record that it RAN.  The
-        // source's scope-end release reads the flag: on this path the destination owns what it
-        // took, on the other the source still owes its own.
+        // loft#1515 — this copy is one of the per-path hand-offs, so record that it RAN, on the
+        // side it stops.  That side's scope-end release reads the flag: on this path the other
+        // side owns the resource, on the path that did not copy the stopped side owes its own.
+        let stops_target = self.copy_flagged_on_target(function, data, v, value);
         if let Value::Var(src) = value.unspan()
             && self.per_path_pairs.contains(&(v, *src))
-            && let Some(&flag) = self.handed_off.get(src)
+            && let Some(stopped) = per_path_stops(function, data, v, *src)
+            && let Some(&flag) = self.handed_off.get(&stopped)
         {
             witness_update = Some(match witness_update {
                 Some(prev) => Value::Insert(vec![prev, v_set(flag, Value::Boolean(true))]),
                 None => v_set(flag, Value::Boolean(true)),
             });
         }
-        // `@FR-O-Latest` — assigning the SOURCE itself retires the hand-off: what it holds
-        // from here on is its own to release, whichever arm ran before.
-        if let Some(&flag) = self.handed_off.get(&v) {
+        // `@FR-O-Latest` — assigning a flagged variable retires its hand-off: what it holds
+        // from here on is its own to release, whichever arm ran before.  Except the copy that
+        // has just set the variable's OWN flag, a copy off a parameter: what it holds from here
+        // on is the caller's.
+        if !stops_target && let Some(&flag) = self.handed_off.get(&v) {
             witness_update = Some(match witness_update {
                 Some(prev) => Value::Insert(vec![prev, v_set(flag, Value::Boolean(false))]),
                 None => v_set(flag, Value::Boolean(false)),
