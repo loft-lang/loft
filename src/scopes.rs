@@ -2224,11 +2224,16 @@ fn handoff_target(
 ///
 /// Only a plain `Var` source can be marked: any other expression names no slot that could
 /// carry a scope-exit drop.
-fn collect_drop_transferred(code: &Value, function: &Function, data: &Data) -> HashSet<u16> {
+fn collect_drop_transferred(
+    code: &Value,
+    function: &Function,
+    data: &Data,
+    pairs: &HashSet<(u16, u16)>,
+) -> HashSet<u16> {
     let mut out: HashSet<u16> = HashSet::new();
     // No arm lift has been built yet at construction time, so nothing here is per path.
     let per_path = HashSet::new();
-    code.walk(&mut |n| drop_handoff_node(n, function, data, &mut out, &per_path));
+    code.walk(&mut |n| drop_handoff_node(n, function, data, &mut out, &per_path, pairs));
     out
 }
 
@@ -2242,6 +2247,7 @@ fn drop_handoff_node(
     data: &Data,
     out: &mut HashSet<u16>,
     per_path: &HashSet<u16>,
+    pairs: &HashSet<(u16, u16)>,
 ) {
     let copy_d = data.def_nr("OpCopyRecord");
     if copy_d == u32::MAX {
@@ -2319,7 +2325,14 @@ fn drop_handoff_node(
                 // the drop to the copy.  [`handoff_target`] decides WHICH side stops, because
                 // this arm also meets the branch-arm lift's own `__lift_N = a` once that
                 // exists, and there the answer runs the other way.
+                //
+                // A copy written in a branch ARM (`pairs`, loft#1515) stops its source only on
+                // the path that ran it, and that fact is the source's flag.  It never enters
+                // this set, which means "stopped on every path": a later unconditional
+                // hand-off of the same source still has to stop it, and a later rebind still
+                // has to release what it displaces on the path where the copy did not run.
                 if let Value::Var(src) = rhs.unspan()
+                    && !pairs.contains(&(*v, *src))
                     && let Some(moved) =
                         handoff_target(function, data, *v, *src, false, per_path.contains(v))
                 {
@@ -7363,20 +7376,19 @@ impl Scopes<'_> {
         data: &Data,
         path_skip: Option<(u16, u16)>,
     ) -> Option<Value> {
-        // loft#1515 — a source whose hand-off is PER PATH keeps its release and guards it on
-        // whether the copy ran, rather than being stopped statically for every path.  The
-        // static answer is the defect: one arm's copy suppressed the source on the arm that
-        // did not copy, and the resource was never released at all.
+        // Two facts stop a release, and both are read.  `drop_transferred` holds the
+        // hand-offs made on EVERY path, so a source in it releases nothing.  A source with a
+        // per-path hand-off (loft#1515, a copy in a branch arm) keeps its release and guards it
+        // on the flag that records whether that copy ran — the copy never enters the static
+        // set, so a later unconditional hand-off of the same source still reaches it here.
         //
-        // Two things the guard deliberately does NOT do.  It does not choose WHICH members
-        // the release covers — the skip below still decides that, because a member handed
-        // out on this path is handed out whether or not the whole record's release runs.  And
-        // it bypasses `drop_transferred` rather than reading it: the hand-off recorded `v`
-        // there, and replacing that static suppression with the runtime one is the fix.
-        let handed = self.handed_off.get(&v).copied();
-        if handed.is_none() && self.drop_transferred.contains(&v) {
+        // The guard does not choose WHICH members the release covers — the skip below still
+        // decides that, because a member handed out on this path is handed out whether or not
+        // the whole record's release runs.
+        if self.drop_transferred.contains(&v) {
             return None;
         }
+        let handed = self.handed_off.get(&v).copied();
         let guard = |d: Option<Value>| match handed {
             Some(flag) => d.map(|d| v_if(Value::Var(flag), Value::Null, d)),
             None => d,
@@ -7519,7 +7531,7 @@ impl Scopes<'_> {
                 // owns.  Armed early, that displacement is suppressed on every iteration, which
                 // loses the first iteration's release rather than doubling the later ones'.
                 for op in &lp.operators {
-                    let early = collect_drop_transferred(op, function, data);
+                    let early = collect_drop_transferred(op, function, data, &self.per_path_pairs);
                     self.drop_transferred.extend(early);
                 }
                 let ls = self.convert(lp, function, data, false);
@@ -9396,7 +9408,8 @@ impl Scopes<'_> {
     ///
     /// The owner predicate is the transition free's: `v` is in scope, its record is OWNED
     /// (the dep-empty proxy, `@FR-O-Override`'s never-free, the oracle's latest-assignment
-    /// fact), its drop was not handed off (`drop_transferred`), it is no witnessed
+    /// fact), its drop was not handed off on every path (`drop_transferred`; a hand-off made on
+    /// some paths only is read off its flag when the snapshot is taken), it is no witnessed
     /// mixed-ownership local, no argument and no capture.  A view's record is somebody
     /// else's resource and is never released here — which is why, inside a LOOP, the
     /// latest-assignment fact from outside the loop is trusted only when THIS assignment
@@ -9449,7 +9462,16 @@ impl Scopes<'_> {
                 vec![Value::Var(v), Value::Var(disp), Value::Int(i32::from(kt))],
             ),
         ]);
-        let pre = vec![v_set(disp, Value::Null), v_if(live, snapshot, Value::Null)];
+        // A source whose per-path copy ran has handed this record's resource to that copy
+        // (loft#1515): no snapshot on that path, so the release after the statement finds
+        // nothing.  The flag is read HERE, before the statement, because the same statement
+        // resets it to `false` before that release runs.
+        let take = v_if(live, snapshot, Value::Null);
+        let take = match self.handed_off.get(&v) {
+            Some(&flag) => v_if(Value::Var(flag), Value::Null, take),
+            None => take,
+        };
+        let pre = vec![v_set(disp, Value::Null), take];
         let mut post = Vec::new();
         if let Some(hook) = drop_hook(function, disp, data) {
             post.push(hook);
@@ -9701,10 +9723,18 @@ impl Scopes<'_> {
                 let Self {
                     drop_transferred,
                     arm_lift_temps,
+                    per_path_pairs,
                     ..
                 } = self;
                 v.walk(&mut |n| {
-                    drop_handoff_node(n, function, data, drop_transferred, arm_lift_temps);
+                    drop_handoff_node(
+                        n,
+                        function,
+                        data,
+                        drop_transferred,
+                        arm_lift_temps,
+                        per_path_pairs,
+                    );
                 });
             }
             if let Some((pre, _)) = &rebuilt {

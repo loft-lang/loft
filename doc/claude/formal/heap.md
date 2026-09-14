@@ -1000,17 +1000,28 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
    - Not this family: `x = mk(9); x = if c { a } else { mk(2) }` keeps the value form (the call
      arm's tail is a compiler work-ref), so the binding is typed as a view of `a` for its whole
      life and its earlier owned record is freed with no hook on both paths (`p_j1`/`p_j2`).
-8. **A per-path hand-off hides a later hand-off of the same source** — loft#1515 guards a
-   source's release on a flag that records whether its per-path copy ran, and the flag REPLACES
-   the static suppression rather than joining it.  So a later unconditional hand-off is ignored:
-   `if c { x = a } else { x = b }; y = a` on `c` false releases `a`'s resource twice, by `a` and
-   by `y` (`p_s4`), both backends.  The other reader of the same set errs the other way: a later
-   `a = mk(3)` on `c` false never releases the record it displaces (`p_s5`), because
-   `displaced_drop` reads only the static set, where the arm's copy put `a`.  One set carries two
-   facts — "stopped on every path" and "stopped on the path where the copy ran" — and neither
-   reader can take them apart.  Family 7's cure mints the same flags for the lowered form, so it
-   waits on this one: measured, the lowered form of `p_s4` is clean today only because its
-   sources are stopped statically.
+8. ✓ **A per-path hand-off hid a later hand-off of the same source — CLOSED 2026-09-14.**
+   loft#1515 guards a source's release on a flag that records whether its per-path copy ran, and
+   the flag REPLACED the static suppression rather than joining it.  So a later unconditional
+   hand-off was ignored: `if c { x = a } else { x = b }; y = a` on `c` false released `a`'s
+   resource twice, by `a` and by `y` (`p_s4`), both backends.  The other reader of the same set
+   erred the other way: a later `a = mk(3)` on `c` false never released the record it displaces
+   (`p_s5`), because `displaced_drop` read only the static set, where the arm's copy had put `a`.
+   One set carried two facts — "stopped on every path" and "stopped on the path where the copy
+   ran" — and neither reader could take them apart.
+   - **The cure keeps the two facts apart.**  A copy in a branch arm never enters
+     `drop_transferred`; it is the flag's fact.  Both readers read both: the scope-end release
+     returns nothing for a source stopped on every path and otherwise guards on the flag, and a
+     displaced release takes its snapshot only where the flag says the copy did not run.  The
+     snapshot is guarded rather than the release, because the statement that rebinds the source
+     resets its flag before that release runs.
+   - Gate cells `p_s4` and `p_s5`, both backends, plain and under poison.  The corpus-wide
+     emission diff differs in one file of 1495, loft#1515's own guard: its rebind on the path
+     where the copy did not run now releases the record it displaces — the guard asserts only the
+     other path.
+   - Family 7's cure mints the same flags for the lowered form, which is why this one went first:
+     before it, the lowered form of `p_s4` was clean only because both its sources were stopped
+     statically.
 
 And one NATIVE-only refusal: `x = mk(K); x = a ?? mk(J)` (`c_coalesce_reassign`) generates Rust
 that does not compile (`E0425: cannot find value var___disp_2`), where the interpreter runs it
@@ -1023,16 +1034,15 @@ release does to the store table reaches later frames.  That is why the gate runs
 a process of its own, and why a cell's verdict inside a batch is not a measurement of that cell.
 
 **Closes when** every line of `tests/ownership_drop_gate.baseline` and its native twin is gone,
-each retired in the commit of the fix that moved it.  Closed so far: family 5 and family 6 whole,
+each retired in the commit of the fix that moved it.  Closed so far: families 5, 6 and 8 whole,
 family 3 for sequential code and a taken branch, and family 1's present path.  Still open, each
 with its answer in the rules: family 1's absent path and family 3's two residuals (the loop and
 the branch not taken), which wait on the carrier question — a resolver given a VARIABLE where the
 answer belongs to an ASSIGNMENT — and the native refusal of `x = mk(); x = a ?? d`.  Family 2 has
 its answer too, but reaching it needs a fact about the caller.  Family 4 waits on D-heap-1's
-design call.  Family 8 is next: its two readers need the static and the per-path fact kept apart.
-Family 7 follows it — the lowered form needs the flags family 8 makes safe, and its binding needs
-the join deps gone before its first arm asks who owns the displaced record; the native refusal is
-family 7's `??` spelling.
+design call.  Family 7 is next: its lowered form needs the per-path flags, which family 8's cure
+made safe to mint, and its binding needs the join deps gone before its first arm asks who owns
+the displaced record; the native refusal is family 7's `??` spelling.
 
 ### D-heap-3 — OPENED AND CLOSED (2026-09-10): a struct field projected off a CALL result releases twice
 
