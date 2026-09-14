@@ -1146,6 +1146,11 @@ reference's 17 / 1.7 / 4.4).*  In this order:
    iteration, everywhere.
 5. The aarch64 re-measure, on its own box.
 
+Not in this plan, recorded so it is not re-proposed as a rewrite: the owner's eventual
+OPT-IN "proven program" tier (DESIGN_DECISIONS.md C120, NATIVE.md § Optimisation tiers)
+— plain arithmetic for a game that has already run fault-free under the checks, licensed
+by that evidence.  Every unit here stays inside the checked semantics.
+
 **2026-09-14, later — HAND-OFF FOR THE QUIET BOX: `smooth`, the last judged row over the
 bar.**  Written on `tuxedo` (x86-64, three checkouts sharing it) for an agent on the quiet
 Ubuntu laptop; everything below that is a TIMING is to be re-measured there first.

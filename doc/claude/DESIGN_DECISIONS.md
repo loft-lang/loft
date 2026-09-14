@@ -3744,6 +3744,14 @@ be the sentinel, and that proof is portable by construction.
 **Revisit when.** Never for the machine-dependent form.  The range-proof form is @PLN157's
 queue item 3 and needs no revisit here.
 
+**Amended 2026-09-15 (owner), without reopening the scope or the type.**  What this entry
+closes stays closed: no declaration, scope or type licenses the processor's arithmetic,
+and the checked semantics stay the default for everyone.  What the owner keeps open is
+an eventual OPT-IN code-generation TIER for a whole program that has already proven to
+run fine with the checks on — licensed by the evidence of its own fault-free runs under
+the checked tier — recorded under C120 and NATIVE.md § Optimisation tiers, and not
+built.
+
 ## C120 — Integer arithmetic on native stays sentinel-aware after a fault; the non-null proof does not close over `+`, `-`, `*`
 
 **Asked (2026-09-14/15, @PLN157 § V-aj):** may the native emitter count the RESULT of an
@@ -3776,3 +3784,15 @@ differ.  That is a range analysis over the non-null proof's own machinery, and a
 opts in by declaring the bounded element types it already knows (`vector<integer(0, 255)>`
 for a channel plane).  It is the plan's line for the resample rows, and it is admissible
 under this decision because it optimises a situation we know.
+
+**The owner's fuller position (2026-09-15), recorded so the next proposal starts here.**
+The checks are the DEFAULT because of who reads the numbers: *"I am not happy with giving
+starting programmers random looking numbers they cannot debug without intimate knowledge
+of processors."*  What is not closed is an eventual OPT-IN code-generation tier — "a mode
+for optimal games" — that drops the checks, admissible only for a program that has
+already PROVEN to run fine with the checks on: the evidence is the program's own runs
+under the checked tier with no fault noted (the fault ledger `note_integer_overflow` and
+`LOFT_DEV_SOFT_HALT` already count and name them), never a declaration and never a
+default.  It is not in @PLN157's scope and nothing is built for it; NATIVE.md §
+Optimisation tiers names it as the tier that does not exist yet, and C67 keeps every
+machine-dependent SCOPE or TYPE closed.

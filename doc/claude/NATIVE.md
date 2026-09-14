@@ -72,6 +72,17 @@ neither `lock` nor `hash` (its hot accessors are `#[inline]` already), so the co
 to strip the tier from a `--native` build; `--html` keeps its named frames (the browser
 panic hook's frame block is a pinned contract).
 
+**The tier that does not exist yet (owner, 2026-09-15).**  Every tier above keeps the
+null-sentinel and overflow checks that make an integer fault a reported null rather than
+a wrapped number (DESIGN_DECISIONS.md C67, C120): the checks are the semantics, and they
+stay the default because a starting programmer must never be handed a random-looking
+number they cannot debug.  What may come, and is deliberately not built: an OPT-IN
+"proven program" tier for a game that has already run fine with the checks on — licensed
+by the evidence of its own fault-free runs under the checked tier, never by a
+declaration — that emits the plain arithmetic the processor does.  Until it exists, the
+only way a check is retired is a PROOF that the value cannot be the sentinel
+(`@FR-R-Counter`, the range proofs @PLN157 queues), which is portable by construction.
+
 ## Current State
 
 **Updated 2026-03-23 — Full native test parity achieved.**
