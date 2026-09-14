@@ -4609,6 +4609,45 @@ tests where the operands are merely typed non-null was put to the owner and decl
 remain are invariant index arithmetic hoisted at loft level and a plain loop under a
 bound established once per nest, both in the plan's queue.
 
+### The release-pass ceiling (2026-09-15)
+
+`LOFT_RELEASE_PASS_PROBE=1` compiles a program as the owner's eventual release build pass
+for games would (C120; NATIVE.md § Optimisation tiers): every integer `+`, `-`, `*` and
+non-literal division as the processor's wrapping operator, every float comparison plain,
+the null test and the `*Nullable` twins untouched.  It is a MEASUREMENT instrument and
+never a build anyone ships — the values after a fault are not the language's — so a row
+is comparable only while its hash still agrees, which every row below does.  Its time
+is the ceiling the checked build is measured against, and the distance between the two
+columns is the question *is this row bound by the checks, or by something else?*, which
+is what picks the next optimisation.  Same box, same lane, 500 calls per row, the two
+runs minutes apart:
+
+| row | checked build | release-pass ceiling | bound by |
+|---|---:|---:|---|
+| resize | 5.36× (93.5 ms) | **2.17× (38.0 ms)** | the checks: 60 % of the row |
+| render_marks | 7.57× | **3.69×** | the checks (the resample inside it) |
+| render_lock | 5.20× | **2.98×** | the checks (the resample inside it) |
+| hair | 1.93× | 1.48× | partly the checks (−23 %) |
+| composite | 2.01× | 1.67× | partly (−17 %) |
+| wide_line | 2.30× | 2.13× | something else |
+| lock / lock_curved | 1.90× / 2.19× | 1.77× / 2.06× | something else |
+| smooth | 3.67× | 3.14× | something else (the per-point record path) |
+| fronds | 3.26× | 3.17× | something else (the per-record path) |
+| fill_circle / fill_star | 1.14× / 1.19× | 1.11× / 1.17× | at the floor |
+| parse | 10.65× | 9.90× | something else (the store lifecycle) |
+| hash | 0.88× | 1.13× | lane noise (the native lane swings 106–130 µs) |
+
+Two readings.  The resample is the one routine whose cost IS the checks: the standalone
+probe reads 95.3 → **38.3 ms/op** under the pass (the tap's 22 cycles become the
+vectorised loop's), and even that ceiling is 2.2× the reference — what remains there is
+the memory model's element path (a bounds test and a base load per read, the `?`
+discharge), not arithmetic.  The sound units for it (invariant hoist, the guarded
+nest, a range proof from declared bounds) can recover most of the 60 %, in a library's
+ordinary build.  Everywhere else the ceiling sits within 3–15 % of the checked build:
+`parse`, `fronds`, `smooth`, the locks and the fills are bound by the store lifecycle
+and the per-record path, and no arithmetic rule — sound or not — moves them.  That is
+where the memory-model units (@PLN157 § V-e, § V-f, the queue's `parse` item) belong.
+
 ## Open work
 
 The 9 design entries above (P1, P2, P3, N1, N2, N3, N4, N5, W1)

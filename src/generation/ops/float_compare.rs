@@ -27,6 +27,15 @@ impl OpEmitter for FloatCompareEmitter {
         let Some(op) = non_sentinel::plain_float_compare(ctx.def_fn.name()) else {
             return super::default::DefaultEmitter.emit(ctx, args);
         };
+        // The release-pass PROBE (`LOFT_RELEASE_PASS_PROBE=1`, a measurement instrument):
+        // the plain comparison, as the eventual release build pass would emit it.
+        if args.len() == 2 && ctx.output.release_pass_probe {
+            write!(ctx.w, "((")?;
+            ctx.emit(&args[0])?;
+            write!(ctx.w, ") {op} (")?;
+            ctx.emit(&args[1])?;
+            return write!(ctx.w, "))");
+        }
         if args.len() != 2 || ctx.output.nn_fast_disabled || !ctx.output.non_sentinel_args(args) {
             return super::default::DefaultEmitter.emit(ctx, args);
         }

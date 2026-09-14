@@ -845,6 +845,14 @@ pub struct Output<'a> {
     /// template, as before @PLN157 P3.  The bisect switch for a native-only
     /// wrong boolean around floats, same contract as `LOFT_NO_VECTOR_HOIST`.
     pub nn_fast_disabled: bool,
+    /// `LOFT_RELEASE_PASS_PROBE=1` (generation time) — a MEASUREMENT instrument, never a
+    /// build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal
+    /// division emits the processor's wrapping operator and every float comparison the
+    /// plain one, as the eventual release build pass for games would (DESIGN_DECISIONS.md
+    /// C120, NATIVE.md § Optimisation tiers).  The values after a fault are NOT the
+    /// language's; a row whose hash still agrees never faulted, and its time is the
+    /// ceiling the checked build is measured against.
+    pub release_pass_probe: bool,
     /// Per-definition cache of [`non_sentinel::non_sentinel_float_vars`],
     /// keyed by `def_nr` — computed on the first simplifiable compare a
     /// function emits, shared by the rest.
@@ -1782,6 +1790,7 @@ impl<'a> Output<'a> {
             elem_fuse_disabled: std::env::var("LOFT_NO_ELEM_FUSE").is_ok_and(|v| v != "0"),
             nn_verify: std::env::var("LOFT_NN_VERIFY").is_ok_and(|v| v != "0"),
             nn_fast_disabled: std::env::var("LOFT_NO_NN_FAST").is_ok_and(|v| v != "0"),
+            release_pass_probe: std::env::var("LOFT_RELEASE_PASS_PROBE").is_ok_and(|v| v != "0"),
             nn_cache: HashMap::new(),
             leaf_cache: HashMap::new(),
             checkpoints: CkptMode::from_env(),
@@ -2138,6 +2147,7 @@ impl Output<'_> {
         let idx = format!("var_{}", sanitize(variables.name(f.index_var)));
         let lo = match f.next_var {
             Some(nx) => format!("var_{}", sanitize(variables.name(nx))),
+            None if self.release_pass_probe => format!("(({idx}).wrapping_add(1_i64))"),
             None => format!("ops::op_add_int(({idx}), (1_i64))"),
         };
         let vec = self.expr_string(f.vector)?;
@@ -2227,6 +2237,7 @@ impl Output<'_> {
         let idx = format!("var_{}", sanitize(variables.name(p.index_var)));
         let lo = match p.next_var {
             Some(nx) => format!("var_{}", sanitize(variables.name(nx))),
+            None if self.release_pass_probe => format!("(({idx}).wrapping_add(1_i64))"),
             None => format!("ops::op_add_int(({idx}), (1_i64))"),
         };
         let vec = self.expr_string(p.vector)?;

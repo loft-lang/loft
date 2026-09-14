@@ -98,8 +98,66 @@ fn fast_form(op_name: &str, args: &[Value]) -> Option<Fast> {
 
 pub struct IntArithEmitter;
 
+/// The release-pass PROBE's form of an op (`LOFT_RELEASE_PASS_PROBE=1`): the processor's
+/// wrapping arithmetic, a zero divisor still answering the sentinel (a Rust division by
+/// zero would abort, and the probe measures speed, not that).  The `*Nullable` twins and
+/// the null test itself (`OpConvBoolFromInt`) keep their templates — they ARE the
+/// language's null semantics, not its fault protection.  `None` keeps the ordinary path.
+fn probe_form(op_name: &str, args: &[Value]) -> Option<&'static str> {
+    match (op_name, args.len()) {
+        ("OpAddInt", 2) => Some("wrapping_add"),
+        ("OpMinInt", 2) => Some("wrapping_sub"),
+        ("OpMulInt", 2) => Some("wrapping_mul"),
+        ("OpDivInt", 2) => Some("wrapping_div"),
+        ("OpRemInt", 2) => Some("wrapping_rem"),
+        ("OpMinSingleInt", 1) => Some("wrapping_neg"),
+        ("OpLandInt", 2) => Some("&"),
+        ("OpLorInt", 2) => Some("|"),
+        ("OpEorInt", 2) => Some("^"),
+        ("OpSRightInt", 2) if matches!(args[1].unspan(), Value::Int(k) if (0..64).contains(k)) => {
+            Some(">>")
+        }
+        _ => None,
+    }
+}
+
 impl OpEmitter for IntArithEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        if ctx.output.release_pass_probe
+            && let Some(form) = probe_form(ctx.def_fn.name(), args)
+        {
+            match form {
+                "&" | "|" | "^" | ">>" => {
+                    write!(ctx.w, "((")?;
+                    ctx.emit(&args[0])?;
+                    write!(ctx.w, ") {form} (")?;
+                    ctx.emit(&args[1])?;
+                    return write!(ctx.w, "))");
+                }
+                "wrapping_neg" => {
+                    write!(ctx.w, "((")?;
+                    ctx.emit(&args[0])?;
+                    return write!(ctx.w, ").wrapping_neg())");
+                }
+                "wrapping_div" | "wrapping_rem" => {
+                    write!(ctx.w, "{{ let _a = (")?;
+                    ctx.emit(&args[0])?;
+                    write!(ctx.w, "); let _b = (")?;
+                    ctx.emit(&args[1])?;
+                    return write!(
+                        ctx.w,
+                        "); if _b == 0 {{ i64::MIN }} else {{ _a.{form}(_b) }} }}"
+                    );
+                }
+                _ => {
+                    write!(ctx.w, "((")?;
+                    ctx.emit(&args[0])?;
+                    write!(ctx.w, ").{form}(")?;
+                    ctx.emit(&args[1])?;
+                    return write!(ctx.w, "))");
+                }
+            }
+        }
         if !ctx.output.nn_fast_disabled
             && let Some(sym) = literal_divisor_form(ctx.def_fn.name(), args)
         {

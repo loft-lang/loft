@@ -795,6 +795,16 @@ that can `break`, `return` or loop again, a push under a branch, another write t
 path, or a range end that is not a simple invariant declines the loop.
 `LOFT_TRACE_PUSH_FILL=1` names each decline; `LOFT_HOIST_VERIFY=1` re-derives the push
 header at the fill.
+**`LOFT_RELEASE_PASS_PROBE=1`** (generation time) is a MEASUREMENT INSTRUMENT, never a
+build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal
+division emits the processor's wrapping operator and every float comparison the plain
+one — what the eventual release build pass for games would emit (DESIGN_DECISIONS.md
+C120, NATIVE.md § Optimisation tiers).  The values after a fault are NOT the language's
+(`b = MAX + 1; d = (b + 5) * 2` reads `10` for null), so a row is comparable only while
+its hash still agrees; its time is the CEILING the checked build is measured against,
+which is what says whether a row is bound by the checks or by something else — the
+guide for what to optimise next.  The null test itself and the `*Nullable` twins keep
+their templates: they are the language's null semantics, not its fault protection.
 **`LOFT_NO_VALUE_RECORD=1`** (@PLN157 § V-aa, default-ON since 2026-09-14) makes a
 function whose result is a plain no-heap record of ≤6 scalar fields return it through
 the buffer again — with it off, such a function whose every call site reads fields off

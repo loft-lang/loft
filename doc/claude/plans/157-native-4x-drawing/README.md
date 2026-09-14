@@ -86,6 +86,13 @@ guard's receipt is the value channel.  Consumer lane with § V-al and § V-am to
 (500 calls per row, 14/14 hashes): `resize` 105.4 → **93.5 ms/op** (5.36×),
 `render_marks` 7.46 → **6.70 ms/op** (7.57×), `render_lock` 16.26 → **14.84 ms/op**
 (5.20×).  Switch `LOFT_NO_PUSH_FILL`, trace `LOFT_TRACE_PUSH_FILL`.
+**The release-pass ceiling measured 2026-09-15** (`LOFT_RELEASE_PASS_PROBE=1`, a
+measurement instrument — PERFORMANCE.md § *The release-pass ceiling* has the table): the
+three resample rows are bound by the checks (`resize` 5.36× → 2.17×, `render_marks`
+7.57× → 3.69×, `render_lock` 5.20× → 2.98×, hashes agreeing); every other row's ceiling
+sits within 3–15 % of its checked build, so `parse`, `fronds`, `smooth` and the locks are
+bound by the store lifecycle and the per-record path, not by arithmetic.  The queue in
+§ Where to resume follows that split.
 Scoreboard vs the issue baseline, consumer lane on the SHIPPED tier (lean, fully
 optimised — the release default since 2026-09-08, DESIGN.md § The shipped tier):
 `hash` 10.9× → **2.2–2.5×** consumer / 1.2× gate row (under the bar; the spread
@@ -1147,9 +1154,23 @@ reference's 17 / 1.7 / 4.4).*  In this order:
 5. The aarch64 re-measure, on its own box.
 
 Not in this plan, recorded so it is not re-proposed as a rewrite: the owner's eventual
-OPT-IN "proven program" tier (DESIGN_DECISIONS.md C120, NATIVE.md § Optimisation tiers)
-— plain arithmetic for a game that has already run fault-free under the checks, licensed
-by that evidence.  Every unit here stays inside the checked semantics.
+release build pass for games (DESIGN_DECISIONS.md C120, NATIVE.md § Optimisation tiers)
+— plain arithmetic for a game that has already run fault-free under the checks, compiled
+from every source it uses after extended in-house testing.  Every unit here stays inside
+the checked semantics.  What IS in scope, and shippable, is the owner's second half:
+*"if we can clearly determine that a library cannot introduce this behaviour given
+restrictions on its inputs we can also ship this; a library that allows an API with full
+integer ranges we just cannot prove."*  That is the RANGE PROOF (`R-Range`, queued
+under the invariant hoist and the guarded nest): a library whose public API bounds its
+inputs — `integer(0, 255)` planes, a kernel declared within its fixed-point width, a
+count with a declared ceiling — lets the compiler prove every product and sum inside it
+cannot overflow, and the plain operator ships in the library's ordinary build with the
+checks intact everywhere the proof does not reach.  A library taking full-range
+integers keeps its checks; nothing can prove them away, and nothing should.  The
+measurement that says how much any of this is worth per row is the release-pass PROBE
+(`LOFT_RELEASE_PASS_PROBE=1`, CLAUDE.md): the fourteen rows compiled as the release pass
+would compile them, the ceiling each row's checked build is measured against —
+PERFORMANCE.md § *The release-pass ceiling*.
 
 **2026-09-14, later — HAND-OFF FOR THE QUIET BOX: `smooth`, the last judged row over the
 bar.**  Written on `tuxedo` (x86-64, three checkouts sharing it) for an agent on the quiet
