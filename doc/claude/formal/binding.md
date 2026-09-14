@@ -365,6 +365,20 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 **OPEN: 3.**
 
+* **D-bind-41** *(opened 2026-09-14)* — `(B-Ref-Repoint)` against `(B-Ref-Write)` when the SOURCE is itself a
+  link.  `c = &b` must re-point `c` to what `b` links, and `c = b` must write `b`'s value through `c`;
+  both lower to the same IR, `c = b`, so each backend gives one answer to both spellings.
+  - Locals, `a = 1; n = 7; b = &a; c = &n;` then `c = &b; c = 9` — `--interpret` writes through (`A1
+    N9`), `--native` re-points (`A9 N7`, right).  Then `c = b` instead — `--interpret` writes through
+    (`N1`, right), `--native` re-points (`N7`).
+  - A `&` parameter, `c = &d` with `d` another `&` parameter or a callee-local link — both backends
+    write through (the caller's variable behind `c` takes the value); `c = d` is right on both.
+  A first bind (`c = &b` with no earlier link, and the annotated `c: &integer = b`) is right on both
+  backends.  Silent on every face; the same on 2cff47dfc.  **Where (measured).**  The IR of `c = &b` and
+  `c = b` is identical, `c(1): &integer = b(1)`, so no backend can tell them apart; the interpreter's
+  link write-through and native's local ref-to-ref arm each read that one spelling one way.  The cure
+  is in the parser, which has to give the repoint to a link its own spelling.  Found while measuring
+  D-bind-37's repoint of one `&` parameter to another.
 * **D-bind-40** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Ref-Alias)`, `(B-Ref-Write)` and
   `(F-ParamRef)` for a value ENUM: a `&` to an enum local, element or field was silently a copy, and
   a write through a `&` enum parameter crashed the interpreter.
@@ -423,14 +437,20 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
   link needs a representation for a text that lives in a store.  (The `u16` and `i32` places this
   entry first carried are narrow integer places and share D-bind-39's refusal, which now names them
   correctly.)  Found while probing D-bind-36's repoint over every element kind.
-* **D-bind-37** *(opened 2026-09-14)* — `(O-NoDiverge)` for `(B-Ref-Repoint)` on a `&τ` PARAMETER:
-  `fn f(c: &integer, v: vector<integer>) { c = &v[1]; … }` re-points the parameter's link on
-  `--interpret` (the callee reads 2, the caller's variable keeps 7), and `--native` does not compile
-  it (rustc E0308, mismatched types).  A loud divergence, not a wrong value.  **Where (measured).**
-  The native generator re-points a LOCAL scalar link to a place by taking a `*mut T` into the store
-  slot, and that arm excludes arguments; the parameter falls through to the write-back and emits
-  `*var_c = <the element's DbRef>` into its `&mut i64`.  Found beside D-bind-36: before that closure
-  the interpreter wrote neither, and read 7 in the callee.
+* **D-bind-37** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(O-NoDiverge)` for `(B-Ref-Repoint)` on a
+  `&τ` PARAMETER: `fn f(c: &integer, v: vector<integer>) { c = &v[1]; … }` re-pointed the parameter's link
+  on `--interpret` (after D-bind-36) and did not compile on `--native` — rustc E0308 for an element or
+  a field, and an empty right-hand side (`*var_c = ;`, or `u8::from()` for a boolean) for a callee
+  local.  A loud divergence, never a wrong value.  **Where (measured).**  The native generator treats
+  every assignment to a `&` parameter as the write-back, so a place wrote its reference into the
+  caller's variable.  **Closed** by a repoint arm at the top of that branch: for a scalar parameter,
+  a place op on the right binds a borrow of the store slot, and `OpCreateStack(m)` a borrow of the
+  local; the slot pointer is built by the same helper a local link uses.  Measured on both backends,
+  plain, under LOFT_POISON and with the native leak check: an element, an element then a write, a
+  field, a loop, a callee local, read-repoint-read-write, and float, enum, boolean and character
+  parameters; the write-through control is unchanged.  A `&` parameter re-pointed to ANOTHER link is
+  D-bind-41, which this arm does not reach.  Guard
+  `tests/scripts/a-reference-parameter-re-points-to-an-element-a-field-or-a-local.loft`.
 * **D-bind-36** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Ref-Repoint)` on `--interpret` for
   a link to a SCALAR whose new source is an element or a field: `c = &w[0]; c = &v[0]` and `f =
   &o.x; f = &o.y` panicked (a store access out of bounds; in the allocator for a float element),

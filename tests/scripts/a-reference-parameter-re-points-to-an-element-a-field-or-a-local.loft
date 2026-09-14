@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Inside a function, `c = &v[i]`, `c = &o.f` and `c = &m` on a `&` PARAMETER re-point the
+// parameter's link (`binding.md (B-Ref-Repoint)`): the caller's variable keeps its value, and a
+// read or write through `c` afterwards reaches the new place.  Without the `&` the value writes
+// through to the caller instead (`calls.md (F-ParamRef)`), which the control pins.  Both backends
+// answer alike: for a scalar parameter the native backend takes a borrow of the new place, where it
+// used to write the place's reference into the caller's variable and fail to compile.
+//
+// @falsified-at: cee2b1702 — native exit 1 -> 0; interpret INERT (expected: the interpreter already re-pointed a parameter, native did not compile it)
+// @falsified-by: tests/falsified/a-reference-parameter-re-points-to-an-element-a-field-or-a-local.patch — native exit 1 -> 0; interpret INERT (expected: the interpreter already re-pointed a parameter, native did not compile it)
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
+// CHANNEL: the assertions — the caller's variable after the call, and what the callee read through
+// the link.
+
+struct O { x: integer, y: integer }
+enum Col { Red, Green, Blue }
+
+fn to_element(c: &integer, v: vector<integer>) -> text { c = &v[1]; "{c}" }
+fn to_element_then_write(c: &integer, v: vector<integer>) -> text { c = &v[1]; c = 9; "{c},{v[1]}" }
+fn to_field(c: &integer, o: O) -> text { c = &o.y; "{c}" }
+fn in_a_loop(c: &integer, v: vector<integer>) -> text { for i in 0..2 { c = &v[i]; } "{c}" }
+fn to_a_local(c: &integer) -> text { m = 4; c = &m; c = 5; "{c},{m}" }
+fn read_repoint_read_write(c: &integer, v: vector<integer>) -> text { s = "{c}"; c = &v[1]; t = "{c}"; c = 9; "{s},{t},{v[1]}" }
+fn float_element(c: &float, fs: vector<float>) -> text { c = &fs[1]; "{c}" }
+fn enum_element(c: &Col, es: vector<Col>) -> text { c = &es[1]; s = "{c}"; c = Col.Blue; "{s},{es[1]}" }
+fn boolean_local(c: &boolean) -> text { m = true; c = &m; c = false; "{c},{m}" }
+fn character_element(c: &character, cs: vector<character>) -> text { c = &cs[1]; s = "{c}"; c = 'z'; "{s},{cs[1]},{cs[2]}" }
+// The control: without `&` the value writes through to the caller.
+fn write_through(c: &integer, v: vector<integer>) -> text { c = v[1]; "{c}" }
+
+fn main() {
+  n = 7; v: vector<integer> = [1, 2, 3];
+  assert(to_element(n, v) == "2" && n == 7, "a re-pointed parameter reads the element and leaves the caller alone: {n}");
+  assert(to_element_then_write(n, v) == "9,9" && n == 7 && v[1] == 9, "a write after the repoint reaches the element: {n},{v[1]}");
+  v[1] = 2;
+  o = O{x: 1, y: 2};
+  assert(to_field(n, o) == "2" && n == 7, "a parameter re-points to a field: {n}");
+  assert(in_a_loop(n, v) == "2" && n == 7, "the last repoint in a loop wins: {n}");
+  assert(to_a_local(n) == "5,5" && n == 7, "a parameter re-points to a callee local: {n}");
+  assert(read_repoint_read_write(n, v) == "7,2,9" && n == 7, "read, re-point, read, write: {n}");
+  v[1] = 2;
+  x = 7.5; fs: vector<float> = [1.5, 2.5];
+  assert(float_element(x, fs) == "2.5" && x == 7.5, "a float parameter re-points: {x}");
+  e = Col.Red; es: vector<Col> = [Col.Red, Col.Green, Col.Red];
+  assert(enum_element(e, es) == "Green,Blue" && e == Col.Red, "an enum parameter re-points: {e},{es[1]}");
+  b = true;
+  assert(boolean_local(b) == "false,false" && b, "a boolean parameter re-points to a local: {b}");
+  ch = 'a'; cs: vector<character> = ['p', 'q', 'r'];
+  assert(character_element(ch, cs) == "q,z,r" && ch == 'a', "a character parameter re-points to a middle element: {ch},{cs[1]}");
+  assert(write_through(n, v) == "2" && n == 2, "without `&` the value writes through to the caller: {n}");
+  println("parameter repoint ok");
+}
