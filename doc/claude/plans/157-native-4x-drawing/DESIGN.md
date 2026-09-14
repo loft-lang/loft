@@ -4370,7 +4370,10 @@ throughout): 77 220–85 620 → **51 197–59 892 ns/op**, then 50 039–53 826
 `link_siblings` clone gone (below).  Every reader of the scan module admitted (the trace:
 eleven `-> (bool, i64, f64)` / `(bool, i64, i64)`); the ≈194 `Scan` mints per parse
 (`LOFT_TRACE_DB=1`, 388 over two parses) are none.  The interpreter 3.52 → 3.31 ms/op,
-the clone's share.
+the clone's share.  Consumer lane, all fourteen rows (`compare.py --skip-interp --repeat
+3 --n-ref 500 --n-native 500`, 14/14 hashes agree): `parse` **47 528 ns/op** (≈ 6.6×
+against the reference's 7 220), the three resample rows flat (`render_lock` 14.90 ms,
+`render_marks` 6.69 ms, `resize` 93.3 ms), the ten judged rows all within the bar.
 
 **Cells** `bytecode-comparisons/V-an-chain-cells.loft` n1–n9, hand-computed, exact on both
 backends, clean under `LOFT_NATIVE_LEAK_CHECK`, `LOFT_STRICT_STORES` and `LOFT_POISON`,

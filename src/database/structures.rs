@@ -321,47 +321,42 @@ impl Stores {
             };
             fields[field as usize].other_indexes.len()
         };
-        {
-            {
-                for i in 0..sibling_count {
-                    let (fld_nr, sibling_content) = {
-                        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
-                            &self.types[parent_tp as usize].parts
-                        else {
-                            unreachable!()
-                        };
-                        let fld_nr = fields[field as usize].other_indexes[i];
-                        // A leading `u16::MAX` marks this field as a VIEW of records
-                        // another field also holds — read by the JSON walk to skip
-                        // default-initialising it. It is a marker, not a field
-                        // number, so it is SKIPPED rather than treated as the end of
-                        // the list: that is what lets a view maintain its siblings
-                        // too, and an insert then means the same thing whichever of
-                        // the collections it is spelled through (@FR-Col-Group).
-                        if fld_nr == u16::MAX {
-                            continue;
-                        }
-                        (fld_nr, fields[fld_nr as usize].content)
-                    };
-                    let fld_nr = &fld_nr;
-                    // @PLN25 Scope B — a keyed index over a shared NULLABLE array indexes only
-                    // the non-null records: when the sibling keyed element is `__nullable<S>`
-                    // and this record is the `Null` variant (discriminant 1 at byte offset 0),
-                    // skip the keyed insert.  The null stays in the vector (the primary insert
-                    // at the top of this fn) but is unreachable by key and cannot collide with a
-                    // real empty/zero-key element.  Inert for dense (non-nullable) keyed elements.
-                    // Index ONLY a `Some` record (discriminant 2).  A null element is either
-                    // the zeroed/absent slot (discriminant 0) or the explicit `Null` variant
-                    // (discriminant 1); both are skipped.
-                    if self.absent_nullable_record(self.content(sibling_content), rec) {
-                        continue;
-                    }
-                    let o = self.field_ref(data, parent_tp, *fld_nr);
-                    // Secondary index for a sibling field — index-only, never
-                    // delete the displaced record (the primary collection owns it).
-                    self.insert_record(&o, rec, sibling_content, true);
+        for i in 0..sibling_count {
+            let (fld_nr, sibling_content) = {
+                let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+                    &self.types[parent_tp as usize].parts
+                else {
+                    unreachable!()
+                };
+                let fld_nr = fields[field as usize].other_indexes[i];
+                // A leading `u16::MAX` marks this field as a VIEW of records
+                // another field also holds — read by the JSON walk to skip
+                // default-initialising it. It is a marker, not a field
+                // number, so it is SKIPPED rather than treated as the end of
+                // the list: that is what lets a view maintain its siblings
+                // too, and an insert then means the same thing whichever of
+                // the collections it is spelled through (@FR-Col-Group).
+                if fld_nr == u16::MAX {
+                    continue;
                 }
+                (fld_nr, fields[fld_nr as usize].content)
+            };
+            // @PLN25 Scope B — a keyed index over a shared NULLABLE array indexes only
+            // the non-null records: when the sibling keyed element is `__nullable<S>`
+            // and this record is the `Null` variant (discriminant 1 at byte offset 0),
+            // skip the keyed insert.  The null stays in the vector (the primary insert
+            // at the top of this fn) but is unreachable by key and cannot collide with a
+            // real empty/zero-key element.  Inert for dense (non-nullable) keyed elements.
+            // Index ONLY a `Some` record (discriminant 2).  A null element is either
+            // the zeroed/absent slot (discriminant 0) or the explicit `Null` variant
+            // (discriminant 1); both are skipped.
+            if self.absent_nullable_record(self.content(sibling_content), rec) {
+                continue;
             }
+            let o = self.field_ref(data, parent_tp, fld_nr);
+            // Secondary index for a sibling field — index-only, never
+            // delete the displaced record (the primary collection owns it).
+            self.insert_record(&o, rec, sibling_content, true);
         }
     }
 

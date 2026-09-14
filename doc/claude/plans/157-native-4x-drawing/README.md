@@ -96,6 +96,12 @@ drawing package's scan module was declined by that one shape; admitted, the `par
 poison and the switch; `tests/value_record.rs` pins the admissions.  With it the runtime
 half of the queue's item 3: `link_siblings` no longer clones the parent's field list per
 element append (both backends).  `LOFT_TRACE_VALUEREC` now names the refusing test.
+Consumer lane after both (`compare.py --skip-interp --repeat 3 --n-ref 500 --n-native
+500`, 14/14 hashes agree, this box): `parse` **47 528 ns/op** (≈ 6.6× against the
+reference's 7 220), `render_lock` 14.90 ms, `render_marks` 6.69 ms, `resize` 93.3 ms —
+the three resample rows flat — and the ten judged rows all within the bar (`hash` 1.12×,
+`fill_circle` 1.18×, `fill_star` 1.19×, `hair` 1.92×, `lock` 1.92×, `composite` 2.00×,
+`lock_curved` 2.18×, `wide_line` 2.31×, `smooth` 3.13×, `fronds` 3.32×).
 **The release-pass ceiling measured 2026-09-15** (`LOFT_RELEASE_PASS_PROBE=1`, a
 measurement instrument — PERFORMANCE.md § *The release-pass ceiling* has the table): the
 three resample rows are bound by the checks (`resize` 5.36× → 2.17×, `render_marks`
