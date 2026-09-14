@@ -953,8 +953,29 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
      a read, so it pulled null-inits back to body 0 in drop-free code
      (`177-reclaim-early-return.loft`, `872-vector-return-into-struct-literal-field.loft`) and
      undid their reclaim — and it left the released-wrong-store defect in place.
-6. **A call result's field in a branch arm** — `if k > 0 { mk_s(I).h } else { … }`
-   (`c_callproj_arm`): twice.  `D-heap-3` covers the spelling outside an arm.
+6. ✓ **A construction delivered through a branch arm — CLOSED 2026-09-14.**  Filed as a call
+   result's field in an arm (`c_callproj_arm`), and wider than filed: ANY construction handed to
+   a local through a join arm released twice — a plain struct literal (`x: H = if c { H {…} }
+   else { mk() }`, `c_literal_arm`), both arms constructions, a `match`, a loop.  A rebind from
+   such a join (`x: H = mk(); x = if … { mk_s().h } …`) was a use-after-free: under
+   `LOFT_POISON=1` the second hook read the poison pattern, both backends.  A call arm was always
+   clean — its result is adopted through its own buffer — and so was every untaken arm (`c_*_arm0`).
+   - **One predicate, two deciders.**  `construction_work_ref` answers the work-ref a
+     construction block delivers, and `None` for a join.  Both halves of the single-construction
+     hand-off read it: `drop_handoff_node` stops the work-ref's drop, and `scan_set` disarms the
+     work-ref with the sentinel (`D-heap-5`, loft#1513).  For a join both were skipped together,
+     so the arm's work-ref kept its name and its drop beside the binding's.
+   - **The cure** (`construction_work_refs`): a join lists every arm's construction, and both
+     deciders read the list.  Static per path — on the path that ran the binding adopts that
+     arm's store; on the others that arm's construction never ran, so its work-ref holds nothing
+     and the disarm is a no-op.  `is_null_sentinel_detach` keys only on the work-ref's name and
+     the bare sentinel, so each arm's disarm is read as a disarm, not a displacement.
+   - ⚠ **The join disarm is decided AFTER the arm lift.**  Decided before it, `x = a ?? H {…}` lost
+     its default's release: the join parses as owned, the literal arm was disarmed, and the lift
+     then made `x` a borrow of `a`'s temp, so nothing released the literal.  After the lift the
+     disarm reads the same ownership fact the drop hand-off reads.  Gate cells `p_g1`–`p_g5`,
+     `c_literal_arm`, `c_callproj_arm`; the corpus-wide emission diff is identical in all 1495
+     files, so no existing program used the shape.
 
 And one NATIVE-only refusal: `x = mk(K); x = a ?? mk(J)` (`c_coalesce_reassign`) generates Rust
 that does not compile (`E0425: cannot find value var___disp_2`), where the interpreter runs it
@@ -967,9 +988,13 @@ release does to the store table reaches later frames.  That is why the gate runs
 a process of its own, and why a cell's verdict inside a batch is not a measurement of that cell.
 
 **Closes when** every line of `tests/ownership_drop_gate.baseline` and its native twin is gone,
-each retired in the commit of the fix that moved it.  Families 1, 3, 5 and 6 and the native
-refusal have their answer in the rules as written.  Family 2 has its answer too, but reaching it
-needs a fact about the caller.  Family 4 waits on D-heap-1's design call.
+each retired in the commit of the fix that moved it.  Closed so far: family 5 and family 6 whole,
+family 3 for sequential code and a taken branch, and family 1's present path.  Still open, each
+with its answer in the rules: family 1's absent path and family 3's two residuals (the loop and
+the branch not taken), which wait on the carrier question — a resolver given a VARIABLE where the
+answer belongs to an ASSIGNMENT — and the native refusal of `x = mk(); x = a ?? d`.  Family 2 has
+its answer too, but reaching it needs a fact about the caller.  Family 4 waits on D-heap-1's
+design call.
 
 ### D-heap-3 — OPENED AND CLOSED (2026-09-10): a struct field projected off a CALL result releases twice
 

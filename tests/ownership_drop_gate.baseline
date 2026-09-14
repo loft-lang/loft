@@ -1,7 +1,6 @@
 # ownership_drop_gate — the interpreter cells that are NOT clean, measured on the tree that
 # committed this file.  Each line is an open (H-Drop) defect: `cell KIND,KIND`.
 # Regenerate only after reading the diff: LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate
-c_callproj_arm DOUBLE
 c_coalesce_enum DOUBLE
 c_coalesce_field DOUBLE
 c_coalesce_push DOUBLE
@@ -16,7 +15,6 @@ c_field_enum DOUBLE
 c_field_field DOUBLE
 c_field_push DOUBLE
 c_field_veclit DOUBLE
-c_literal_arm DOUBLE
 c_param_enum DOUBLE,EARLY
 c_param_field DOUBLE,EARLY
 c_param_push DOUBLE,EARLY
@@ -35,11 +33,6 @@ c_tuple_tuplem DOUBLE
 c_tuple_veclit DOUBLE
 p_e1 DOUBLE
 p_e2 DOUBLE
-p_g1 DOUBLE
-p_g2 DOUBLE
-p_g3 DOUBLE
-p_g4 DOUBLE
-p_g5 DOUBLE
 p_h6 LOST
 p_h7 LOST
 p_j1 LOST

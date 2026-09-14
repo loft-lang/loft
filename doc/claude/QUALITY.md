@@ -480,12 +480,16 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
+| 474 | 450 | **24** |
+
 | 485 | 461 | **24** |
 
 (2026-09-12: § V-x's `flat_lit_member`/`lit_part_invariant`/`lit_init_invariant` and
 § V-y's `complete_writes`/`group_covers_type` all peel `Span` — every arrival lands on
 the aware side; the opaque count is unchanged.  Re-measured at the § V-aa tip: +3 sites,
-all three on the peel side, **24** opaque still.)
+all three on the peel side, **24** opaque still.  2026-09-14: `scopes::construction_work_refs`
+(`formal/heap.md` D-heap-7 family 6) peels `Span` — +1 site, on the peel side, **24** opaque
+still.)
 
 
 

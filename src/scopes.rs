@@ -2306,11 +2306,14 @@ fn drop_handoff_node(
                 // @FR-O-Proxy asks free — the answer places the scope-end DROP (suppress the
                 // work-ref's, because the binding's own release covers the record), and the
                 // @FR-O-Override veto rides inside `proxy_says_owned` as one question.
-                if let Some(w) = construction_work_ref(rhs, function)
-                    && w != *v
-                    && function.proxy_says_owned(*v)
-                {
-                    out.insert(w);
+                // Every arm's construction when the value is a branch join: the binding adopts
+                // the one that ran, and the others hold nothing (`construction_work_refs`).
+                if function.proxy_says_owned(*v) {
+                    for w in construction_work_refs(rhs, function) {
+                        if w != *v {
+                            out.insert(w);
+                        }
+                    }
                 }
                 // A plain WHOLE-VALUE copy between two locals — `t = s`, `h2 = h` — moves
                 // the drop to the copy.  [`handoff_target`] decides WHICH side stops, because
@@ -2350,6 +2353,39 @@ fn construction_work_ref(rhs: &Value, function: &Function) -> Option<u16> {
             (n.starts_with("__ref_") || n.starts_with("__rref_")).then_some(v)
         }
         _ => None,
+    }
+}
+
+/// The work-refs whose records a value's CONSTRUCTIONS hand to its target: every arm's when
+/// `rhs` is a branch join, and [`construction_work_ref`]'s single answer otherwise.
+///
+/// A join delivers the value of the ONE arm that ran.  On that path the binding adopts that
+/// arm's store; on every other path that arm's construction never ran, so its work-ref holds
+/// nothing — null, or the sentinel an earlier pass's disarm left.  So every work-ref listed may
+/// be handed off, and disarmed after the join, whichever arm ran (`@FR-O-Complete`).  An arm
+/// whose tail is not a construction — a call adopted through its own buffer, a lifted local —
+/// contributes nothing: its release is decided where that spelling is.
+fn construction_work_refs(rhs: &Value, function: &Function) -> Vec<u16> {
+    match rhs.unspan() {
+        Value::If(_, t, e) => {
+            let mut out = construction_work_refs(t, function);
+            for w in construction_work_refs(e, function) {
+                if !out.contains(&w) {
+                    out.push(w);
+                }
+            }
+            out
+        }
+        // A value block whose TAIL is a join — an arm wrapper, or a `match` lowered behind its
+        // subject binding — is the same join one wrapper down.
+        Value::Block(bl)
+            if matches!(bl.operators.last().map(Value::unspan), Some(Value::If(..))) =>
+        {
+            bl.operators
+                .last()
+                .map_or_else(Vec::new, |tail| construction_work_refs(tail, function))
+        }
+        _ => construction_work_ref(rhs, function).into_iter().collect(),
     }
 }
 
@@ -8222,14 +8258,14 @@ impl Scopes<'_> {
         // in-place reuse (`OpFreeRefIfDistinct` reads "distinct" against a sentinel and
         // frees, so a comprehension minted per PASS instead of rebuilding one store —
         // `value_struct_alloc`'s O(1) promise measured it at N cycles).
-        let mut handoff_disarm: Option<Value> = None;
+        let mut handoff_disarm: Vec<Value> = Vec::new();
         match construction_work_ref(value, function) {
             Some(w) if w != v && !function.proxy_says_owned(v) => {
                 self.construction_backing.insert(v, w);
             }
             Some(w) if w != v => {
                 if drop_hook(function, v, data).is_some() {
-                    handoff_disarm = Some(v_set(
+                    handoff_disarm.push(v_set(
                         w,
                         Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
                     ));
@@ -8934,6 +8970,29 @@ impl Scopes<'_> {
         } else {
             value
         };
+        // A branch JOIN hands over each arm's construction the way a single construction does
+        // above: the binding adopts the one that ran, and the other arms' work-refs hold
+        // nothing, so every one is disarmed (`construction_work_refs`).  Decided HERE, after the
+        // arm lift, because the lift can turn the binding into a borrow of its per-arm temps —
+        // `x = a ?? H {…}` lifts `a` — and then the binding releases nothing, so a work-ref
+        // disarmed before the lift was released by nobody.  After it, this reads the same
+        // ownership fact the drop hand-off reads once the statement is scanned.
+        if construction_work_ref(value, function).is_none()
+            // @FR-O-Proxy asks free — the answer places the binding's hook and free as the
+            // store's one claimant (the disarm above does the same for a single construction),
+            // and the @FR-O-Override veto rides inside `proxy_says_owned` as one question.
+            && function.proxy_says_owned(v)
+            && drop_hook(function, v, data).is_some()
+        {
+            for w in construction_work_refs(value, function) {
+                if w != v {
+                    handoff_disarm.push(v_set(
+                        w,
+                        Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
+                    ));
+                }
+            }
+        }
         let scanned = self.scan(value, function, data);
         // Flatten: if the scanned value is Insert([preamble..., final_call]),
         // hoist the preamble out so the IR becomes
@@ -9260,7 +9319,7 @@ impl Scopes<'_> {
             && witness_update.is_none()
             && witness_ops.is_empty()
             && displaced.is_none()
-            && handoff_disarm.is_none()
+            && handoff_disarm.is_empty()
         {
             Value::Set(v, Box::new(set_value))
         } else {
