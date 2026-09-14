@@ -478,8 +478,10 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **1** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE (the
-list has been re-cut as each was measured; the count is what is open TODAY).  `D-heap-LIFO`
+OPEN: **2** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE (the
+list has been re-cut as each was measured; the count is what is open TODAY); and `D-heap-7`,
+below: the drop gate's first sweep, six more families that release wrongly with no diagnostic,
+pinned cell by cell in `tests/ownership_drop_gate.baseline`.  `D-heap-LIFO`
 CLOSED 2026-09-12 by rewriting the rules to how the mechanism functions.  The count read **1** while `D-heap-LIFO` was
 already written and marked OPEN in the rules section — an `OPEN: n` is a claim to re-measure,
 and a deviation placed beside its rule rather than under this heading is the way it goes
@@ -825,6 +827,67 @@ the loop variable and the REASSIGNED variable are one question — the resolver 
 variable where the answer belongs to an ASSIGNMENT — and want the design call above answered
 before a cure is chosen for any of them.
 
+
+### D-heap-7 — OPEN (2026-09-14): the drop gate's first sweep — six more families release wrongly, and silently
+
+`(H-Drop)` releases a resource once, at its owner's death, and moves the release with a copy.
+`tests/ownership_drop_gate.rs` generates 223 cells and scores the release itself (TESTING.md
+§ The drop gate).  On `origin/main` `ec4a95226` its baselines pin **94** cells that do not
+hold, the same on both backends except where noted below, and **none carries a diagnostic** —
+`warning[double-move]` fires on none of them.  The cell names below are the baselines' names,
+so a family is re-measured by one run of the gate.
+
+D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside that entry:
+
+1. **A `??` result as a copy source** — `x = a ?? d` (`q_*`, `c_coalesce_*`).  Not one
+   mechanism: a tuple-member or branch-arm destination is clean in all 18 rows of the coalesce
+   family, a struct-field destination releases twice in all 18 — including the absent path,
+   where the default is a fresh call — and a local destination releases twice on the present
+   path and LOSES a fresh-call default on the absent one.  Read off the IR of
+   `a: H? = mk(1); x = a ?? mk(2)`: the coalesce lowers to
+   `if a { __lift_1 = a; __lift_1 } else n_mk(2, __ref_2)`, `x` is typed `deps=[__lift_1]`, and
+   scope end drops both `__lift_1` and `a`.  So on the present path the arm lift's copy never
+   moves the release off `a` — the per-path hand-off `ownership.md (O-Complete)` describes, and
+   one where suppressing `a` outright is admissible, because on the absent path `a` is null and
+   the drop is liveness-guarded.  On the absent path `x` holds `__ref_2`'s record while its deps
+   name only `__lift_1`, so nothing releases it: a value `if` whose deps are not the union of
+   its arms.
+2. **A parameter copied out of its callee** — `p` or `p.h` into a field, an enum payload, a
+   vector or the return (`c_param_*`, `c_pfield_*`): twice, and the callee's release runs BEFORE
+   the caller's own later read.  The rule gives the answer — a copy off a PARAMETER moves
+   nothing, the caller owns — so the callee's copy must not release.  D-heap-1's first shape is
+   the tuple-member spelling of this family, and the cure it names (a caller-side fact) is the
+   same one.
+3. **A local displaced by a parameter** — `x = mk(K); x = p` (`c_param_reassign`): the displaced
+   record is never released, beside family 2's double.
+4. **A projection copied into a container** — `s.h`, `vs[0]` or `tt.0` into a field, an enum
+   payload, a vector or a tuple member (`c_field_*`, `c_elem_*`, `c_tuple_*`): twice.  The same
+   projection bound to a LOCAL is a `(B-View)` view and releases once; placed in a container it
+   is a copy, and the source's own container still cascades the member.  This is the question
+   D-heap-1 leaves as a design call — a per-element mark, or `(H-Drop)`'s `warning[double-move]`
+   clause — and it reaches every projection spelling, not only the loop variable and the `match`
+   payload.  Either answer makes today's silence a deviation.
+5. **An element appended to another vector** — `v += [vs[0]]` and `[vs[0]]` (`c_elem_push`,
+   `c_elem_veclit`): the interpreter PANICS reading the element's id as a record number
+   (`Store access out of bounds: rec=39001`), and native releases twice.  The same program with
+   no `OpDrop` runs clean on both backends, so the hook is the axis.
+6. **A call result's field in a branch arm** — `if k > 0 { mk_s(I).h } else { … }`
+   (`c_callproj_arm`): twice.  `D-heap-3` covers the spelling outside an arm.
+
+And one NATIVE-only refusal: `x = mk(K); x = a ?? mk(J)` (`c_coalesce_reassign`) generates Rust
+that does not compile (`E0425: cannot find value var___disp_2`), where the interpreter runs it
+and releases twice.
+
+⚠ **A double release is not only a handle closed twice.**  In one process, a cell that is clean
+on its own lost its release when it ran after a doubling one — `t = (a ?? mk(4), 1)` after
+family 1's local cell printed its mint and its read and never released.  Whatever the second
+release does to the store table reaches later frames.  That is why the gate runs every cell in
+a process of its own, and why a cell's verdict inside a batch is not a measurement of that cell.
+
+**Closes when** every line of `tests/ownership_drop_gate.baseline` and its native twin is gone,
+each retired in the commit of the fix that moved it.  Families 1, 3, 5 and 6 and the native
+refusal have their answer in the rules as written.  Family 2 has its answer too, but reaching it
+needs a fact about the caller.  Family 4 waits on D-heap-1's design call.
 
 ### D-heap-3 — OPENED AND CLOSED (2026-09-10): a struct field projected off a CALL result releases twice
 

@@ -43,10 +43,9 @@
 //! that a fix retires its line in the same commit.  A line in it is an open defect, not an
 //! accepted behaviour — the register for each one is `doc/claude/formal/heap.md`.
 //!
-//!   run:    cargo test --release --test ownership_drop_gate
+//!   run:    cargo test --release --test ownership_drop_gate      (both backends)
 //!   bless:  LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate
-//!   native: cargo test --release --test ownership_drop_gate -- --ignored
-//!           (bless with the same variable; it writes `ownership_drop_gate.native.baseline`)
+//!           (writes `ownership_drop_gate.baseline` and `ownership_drop_gate.native.baseline`)
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
@@ -717,9 +716,10 @@ fn every_cell_releases_each_resource_once_on_the_interpreter() {
     check_baseline(&verdicts, BASELINE, "interpreter");
 }
 
+/// The same cells on `--native`, against a baseline of their own: the backends disagree on three
+/// cells today, and each disagreement is a finding rather than noise, so it is printed on every
+/// run.  One `rustc` per cell measured 36 s for the whole family on a warm target.
 #[test]
-#[ignore = "native leg: one rustc per cell, minutes — run with `-- --ignored`; un-ignore when a \
-            batched native run is isolation-safe (a double release corrupts later cells today)"]
 fn every_cell_releases_each_resource_once_on_native() {
     let cells = all_cells();
     let native = run_all(&cells, "--native", "300", workers(6));
