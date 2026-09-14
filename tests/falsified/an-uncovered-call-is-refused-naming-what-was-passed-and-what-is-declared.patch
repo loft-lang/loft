@@ -1,0 +1,69 @@
+diff --git b/src/data.rs a/src/data.rs
+index 3097f8fc0..75b1bcf0f 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -7170,15 +7170,12 @@ impl Data {
+         Some(parts.join("#"))
+     }
+ 
+-    /// Does the author's overload set of `name` own its dispatch over the enum `e_nr`, so that
+-    /// @F20 synthesises no enum-level dispatcher for it (@PLN162)?  It does when the set
+-    /// carries a definition RECEIVING the enum (`hit(e: Entity, …)`, dense or `Entity?`) —
+-    /// `Disp-Fallback`'s most general type, the author's to write — or a FREE definition
+-    /// (keyed `f_…`), which is no method and gets no `x.f(…)` spelling; a dispatcher
+-    /// synthesised beside either would be the same signature twice, or a method spelling for
+-    /// a name that has none.  A `self`/`both` set with neither keeps @F20's runtime dispatch.
+-    #[must_use]
+-    pub fn overload_set_owns_dispatch(&self, name: &str, e_nr: u32) -> bool {
++    /// Does `name`'s overload set carry a definition whose RECEIVER is the enum `e_nr` itself
++    /// (`hit(e: Entity, …)`, dense or `Entity?`)?  Then the enum-level definition of the name
++    /// is the author's — `Disp-Fallback`'s most general type — and @F20 synthesises none over
++    /// it (@PLN162).
++    #[must_use]
++    pub fn overload_set_takes_enum(&self, name: &str, e_nr: u32) -> bool {
+         let main = self.def_nr(name);
+         if main == u32::MAX || self.def(main).def_type != DefType::Dynamic {
+             return false;
+@@ -7187,17 +7184,12 @@ impl Data {
+             .attributes
+             .iter()
+             .any(|a| match a.typedef.base() {
+-                Type::Routine(r) => {
+-                    self.def(*r).name.starts_with("f_")
+-                        || self
+-                            .def(*r)
+-                            .attributes
+-                            .iter()
+-                            .find(|p| !p.hidden)
+-                            .is_some_and(
+-                                |p| matches!(p.typedef.base(), Type::Enum(e, _, _) if *e == e_nr),
+-                            )
+-                }
++                Type::Routine(r) => self
++                    .def(*r)
++                    .attributes
++                    .iter()
++                    .find(|p| !p.hidden)
++                    .is_some_and(|p| matches!(p.typedef.base(), Type::Enum(e, _, _) if *e == e_nr)),
+                 _ => false,
+             })
+     }
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index 068681a4e..1a729bdf5 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -412,10 +412,10 @@ impl Parser {
+                 // compiler. A method lives in its type's own attribute table, which is
+                 // shared and source-independent, so it answers the same from anywhere.
+                 && self.data.attr(*e_nr, &d.original_name()) == usize::MAX
+-                // @PLN162 — an overload set that receives the enum, or holds a FREE
+-                // definition, owns its dispatch: the enum-level definition is the author's
+-                // (`Disp-Fallback`), and a free overload is no method to hang a dispatcher on.
+-                && !self.data.overload_set_owns_dispatch(&d.original_name(), *e_nr)
++                // @PLN162 — an overload set that already carries a definition RECEIVING the
++                // enum has its enum-level definition written by the author (`Disp-Fallback`);
++                // synthesising one beside it would be the same signature twice.
++                && !self.data.overload_set_takes_enum(&d.original_name(), *e_nr)
+             {
+                 // Keyed by the enum AND the method NAME: a dispatcher dispatches ONE method,
+                 // and `create_enum_dispatch_fn` names it after `nrs[0]`.  Keyed by the enum

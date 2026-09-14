@@ -427,7 +427,7 @@ passing, and already produces two distinct keys.
   So step 9 is the static half — a value whose static type IS the variant — and step 13 is
   the rest.  Cut them apart or step 9 cannot go red on its own.
 
-### Step 10 — `Disp-Exhaustive`  ·  S
+### Step 10 — `Disp-Exhaustive`  ·  S  ·  DONE 2026-09-14
 
 A call with no definition applicable to its STATIC argument types is refused
 ([RULES.md](RULES.md)).
@@ -437,6 +437,23 @@ A call with no definition applicable to its STATIC argument types is refused
 - **Why here:** it needs `Disp-Specific` (step 9) to know what "applicable to the static
   types" means for an interface, and it must precede `Disp-Dynamic`, because it is what
   guarantees the runtime step always has an answer.
+
+**Done — one line of code moved, found by the guard:** the refusal landed with step 6's
+message and step 8's applicability, but a FREE overload set over variants with no enum-level
+member still had @F20 synthesise `hit(self: Entity, …)` on the enum — a method spelling for
+functions that have none, and the uncovered call read as *did you mean the method
+`x.hit(…)`*.  The synthesiser now yields to a set that carries a free member as well as to one
+receiving the enum (`Data::overload_set_owns_dispatch`).  Otherwise this step is the rule's
+guards and its record.  `an-uncovered-call-is-refused-naming-what-
+was-passed-and-what-is-declared` pins the three uncovered shapes (a variant pair no definition
+names; two values held at the enum with no enum-level definition — the soundness clause; a
+scalar set asked for a type it lacks), and `a-total-case-covers-every-pair` adds the total
+case and reaches it with the same calls.  RULES.md carries the implementation form (the
+method spelling is refused by the receiver's method's own argument check; the pairs advice is
+not built) and opens **D-disp-1**: @F20's synthesised dispatcher IS a runtime no-method path —
+a missing variant is a warning and an empty value at runtime, both backends — which step 13
+closes, and which is a compatibility decision because programs compile with that warning
+today.
 
 ---
 

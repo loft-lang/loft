@@ -7170,12 +7170,15 @@ impl Data {
         Some(parts.join("#"))
     }
 
-    /// Does `name`'s overload set carry a definition whose RECEIVER is the enum `e_nr` itself
-    /// (`hit(e: Entity, …)`, dense or `Entity?`)?  Then the enum-level definition of the name
-    /// is the author's — `Disp-Fallback`'s most general type — and @F20 synthesises none over
-    /// it (@PLN162).
+    /// Does the author's overload set of `name` own its dispatch over the enum `e_nr`, so that
+    /// @F20 synthesises no enum-level dispatcher for it (@PLN162)?  It does when the set
+    /// carries a definition RECEIVING the enum (`hit(e: Entity, …)`, dense or `Entity?`) —
+    /// `Disp-Fallback`'s most general type, the author's to write — or a FREE definition
+    /// (keyed `f_…`), which is no method and gets no `x.f(…)` spelling; a dispatcher
+    /// synthesised beside either would be the same signature twice, or a method spelling for
+    /// a name that has none.  A `self`/`both` set with neither keeps @F20's runtime dispatch.
     #[must_use]
-    pub fn overload_set_takes_enum(&self, name: &str, e_nr: u32) -> bool {
+    pub fn overload_set_owns_dispatch(&self, name: &str, e_nr: u32) -> bool {
         let main = self.def_nr(name);
         if main == u32::MAX || self.def(main).def_type != DefType::Dynamic {
             return false;
@@ -7184,12 +7187,17 @@ impl Data {
             .attributes
             .iter()
             .any(|a| match a.typedef.base() {
-                Type::Routine(r) => self
-                    .def(*r)
-                    .attributes
-                    .iter()
-                    .find(|p| !p.hidden)
-                    .is_some_and(|p| matches!(p.typedef.base(), Type::Enum(e, _, _) if *e == e_nr)),
+                Type::Routine(r) => {
+                    self.def(*r).name.starts_with("f_")
+                        || self
+                            .def(*r)
+                            .attributes
+                            .iter()
+                            .find(|p| !p.hidden)
+                            .is_some_and(
+                                |p| matches!(p.typedef.base(), Type::Enum(e, _, _) if *e == e_nr),
+                            )
+                }
                 _ => false,
             })
     }

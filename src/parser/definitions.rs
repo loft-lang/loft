@@ -412,10 +412,10 @@ impl Parser {
                 // compiler. A method lives in its type's own attribute table, which is
                 // shared and source-independent, so it answers the same from anywhere.
                 && self.data.attr(*e_nr, &d.original_name()) == usize::MAX
-                // @PLN162 — an overload set that already carries a definition RECEIVING the
-                // enum has its enum-level definition written by the author (`Disp-Fallback`);
-                // synthesising one beside it would be the same signature twice.
-                && !self.data.overload_set_takes_enum(&d.original_name(), *e_nr)
+                // @PLN162 — an overload set that receives the enum, or holds a FREE
+                // definition, owns its dispatch: the enum-level definition is the author's
+                // (`Disp-Fallback`), and a free overload is no method to hang a dispatcher on.
+                && !self.data.overload_set_owns_dispatch(&d.original_name(), *e_nr)
             {
                 // Keyed by the enum AND the method NAME: a dispatcher dispatches ONE method,
                 // and `create_enum_dispatch_fn` names it after `nrs[0]`.  Keyed by the enum

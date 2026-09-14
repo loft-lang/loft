@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// D-disp-1 (@PLN162 RULES.md § Deviations), PINNED AS MEASURED, not as wanted: `Disp-Exhaustive`
+// says no runtime "no method" path exists, and @F20's synthesised enum dispatcher has one.
+// With `tag(self: Fireball)` and `tag(self: IceWall)` declared and `Crate` left out, `c.tag()`
+// on a `Crate` held at `Entity` is a compile-time WARNING and at runtime an EMPTY value — not
+// null, not a refusal — on both backends.  Step 13's rule closes it, and this file is what
+// flips then: a closure that leaves it green has changed nothing.
+// @falsified-at: none — pins a deviation's measured behaviour; its closure is what falsifies it
+// @EXPECT_WARNING: no implementation of 'tag' for variant 'Crate'
+
+enum Entity {
+  Fireball { n: integer },
+  IceWall { n: integer },
+  Crate { n: integer },
+}
+
+fn tag(self: Fireball) -> text { "fire {self.n}" }
+fn tag(self: IceWall) -> text { "wall {self.n}" }
+
+fn main() {
+  c: Entity = Crate { n: 3 };
+  r = c.tag();
+  assert(r == "", "D-disp-1 as measured: the missing variant answers an empty text, got [{r}]");
+  assert(r != null, "D-disp-1 as measured: and not null");
+  f: Entity = Fireball { n: 1 };
+  assert(f.tag() == "fire 1", "a present variant dispatches: got {f.tag()}");
+}

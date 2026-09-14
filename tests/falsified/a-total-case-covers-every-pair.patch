@@ -1,0 +1,659 @@
+diff --git b/src/data.rs a/src/data.rs
+index 3097f8fc0..a07fa2c18 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -7149,7 +7149,7 @@ impl Data {
+     /// a definition's parameter contributes to its key, and what a call's argument is matched
+     /// against.  `None` for a type with no def to name (a `Function`).
+     #[must_use]
+-    pub(crate) fn type_spelling(&self, tp: &Type) -> Option<String> {
++    fn type_spelling(&self, tp: &Type) -> Option<String> {
+         let tn = self.type_def_nr(tp);
+         (tn != u32::MAX).then(|| Self::sig_type_name(&self.key_type_name(tn), tp))
+     }
+@@ -7170,38 +7170,6 @@ impl Data {
+         Some(parts.join("#"))
+     }
+ 
+-    /// Does the author's overload set of `name` own its dispatch over the enum `e_nr`, so that
+-    /// @F20 synthesises no enum-level dispatcher for it (@PLN162)?  It does when the set
+-    /// carries a definition RECEIVING the enum (`hit(e: Entity, …)`, dense or `Entity?`) —
+-    /// `Disp-Fallback`'s most general type, the author's to write — or a FREE definition
+-    /// (keyed `f_…`), which is no method and gets no `x.f(…)` spelling; a dispatcher
+-    /// synthesised beside either would be the same signature twice, or a method spelling for
+-    /// a name that has none.  A `self`/`both` set with neither keeps @F20's runtime dispatch.
+-    #[must_use]
+-    pub fn overload_set_owns_dispatch(&self, name: &str, e_nr: u32) -> bool {
+-        let main = self.def_nr(name);
+-        if main == u32::MAX || self.def(main).def_type != DefType::Dynamic {
+-            return false;
+-        }
+-        self.def(main)
+-            .attributes
+-            .iter()
+-            .any(|a| match a.typedef.base() {
+-                Type::Routine(r) => {
+-                    self.def(*r).name.starts_with("f_")
+-                        || self
+-                            .def(*r)
+-                            .attributes
+-                            .iter()
+-                            .find(|p| !p.hidden)
+-                            .is_some_and(
+-                                |p| matches!(p.typedef.base(), Type::Enum(e, _, _) if *e == e_nr),
+-                            )
+-                }
+-                _ => false,
+-            })
+-    }
+-
+     /// The full spelling of a registered definition's declared parameters.
+     #[must_use]
+     fn def_full_spelling(&self, d_nr: u32) -> Option<String> {
+@@ -7270,6 +7238,66 @@ impl Data {
+         format!("{fn_name}({})", params.join(", "))
+     }
+ 
++    /// [`Self::exact_overloads`] for the METHOD spelling: `dispatch` (the receiver's type with
++    /// its nullability) stands in for `types[0]`, as in [`Self::select_method`].
++    #[must_use]
++    pub fn exact_method_overloads(
++        &self,
++        source: u16,
++        fn_name: &str,
++        dispatch: &Type,
++        types: &[Type],
++    ) -> Option<Vec<u32>> {
++        let mut with_receiver: Vec<Type> = Vec::with_capacity(types.len().max(1));
++        with_receiver.push(dispatch.clone());
++        with_receiver.extend_from_slice(types.get(1..).unwrap_or(&[]));
++        self.exact_overloads(source, fn_name, &with_receiver)
++    }
++
++    /// The overloads of `fn_name` whose declared parameters spell EXACTLY the argument
++    /// types `args` (receiver first) — every position equal, a trailing parameter admitted
++    /// when it has a default.  `None` when the name has no overload set or an argument has
++    /// no spelling; an empty set when it has one and nothing matches.
++    #[must_use]
++    pub fn exact_overloads(&self, source: u16, fn_name: &str, args: &[Type]) -> Option<Vec<u32>> {
++        let main = self.source_nr(source, fn_name);
++        if main == u32::MAX || self.def(main).def_type != DefType::Dynamic {
++            return None;
++        }
++        let want: Vec<String> = args
++            .iter()
++            .map(|t| self.type_spelling(t))
++            .collect::<Option<Vec<String>>>()?;
++        let mut hits = Vec::new();
++        for a in &self.def(main).attributes {
++            // Read through `τ?` (@FR-N-Shape), though a dispatcher's attribute is never wrapped.
++            let Type::Routine(r) = a.typedef.base() else {
++                continue;
++            };
++            let r = *r;
++            let declared: Vec<&Attribute> = self
++                .def(r)
++                .attributes
++                .iter()
++                .filter(|p| !p.hidden)
++                .collect();
++            if want.len() > declared.len() {
++                continue;
++            }
++            let positional = declared[..want.len()]
++                .iter()
++                .zip(&want)
++                .all(|(p, w)| self.type_spelling(&p.typedef).as_deref() == Some(w.as_str()));
++            let rest_defaulted = declared[want.len()..]
++                .iter()
++                .all(|p| p.value != Value::Null);
++            if positional && rest_defaulted {
++                hits.push(r);
++            }
++        }
++        Some(hits)
++    }
++
+     #[must_use]
+     pub fn fn_key(&self, fn_name: &str, arguments: &[Argument]) -> Option<String> {
+         let is_self = !arguments.is_empty() && arguments[0].name == "self";
+@@ -7912,7 +7940,19 @@ impl Data {
+     /// selection is "exactly one", so [`Self::find_fn`] answers that and every caller is
+     /// unchanged; the set is the concept the later steps widen.
+     #[must_use]
+-    pub fn candidates(&self, source: u16, fn_name: &str, tp: &Type) -> Vec<u32> {
++    pub fn candidates(&self, source: u16, fn_name: &str, tp: &Type, args: &[Type]) -> Vec<u32> {
++        // `Disp-Key` (@PLN162): a name with SEVERAL definitions is a bare `Dynamic` dispatcher
++        // whose attributes are its overloads.  With the call's full argument list in hand —
++        // only the two real call paths have one — the overloads whose parameters spell the
++        // argument types EXACTLY are the candidates and the ladder is not consulted; without
++        // one (no dispatcher, an argument with no spelling, no exact overload) the ladder
++        // answers as it always has.  Steps 9–10 widen "exactly" to the enum lattice.
++        if !args.is_empty()
++            && let Some(hits) = self.exact_overloads(source, fn_name, args)
++            && !hits.is_empty()
++        {
++            return hits;
++        }
+         let free = || -> Vec<u32> {
+             let d_nr = self.source_nr(source, &format!("n_{fn_name}"));
+             if d_nr == u32::MAX {
+@@ -8033,44 +8073,36 @@ impl Data {
+         Vec::new()
+     }
+ 
+-    /// The argument types as DISPATCHED: `(F-Recv)`'s argument clause — a `both`/`self`
+-    /// overload pair takes uniform nullability, so when ANY argument is nullable every
+-    /// position is asked for as `τ?`, and null propagates regardless of position and of
+-    /// spelling (@PLN25 F1b(b); D-call-21 closed the method spelling).  An empty list, or a
+-    /// `null` literal first, has no receiver: the first position becomes `Unknown`, which
+-    /// asks for the free `n_<name>`.
+-    #[must_use]
+-    pub fn routed_types(&self, types: &[Type]) -> Vec<Type> {
+-        if types.is_empty() || types[0] == Type::Null {
+-            let mut out = vec![Type::Unknown(0)];
+-            out.extend_from_slice(types.get(1..).unwrap_or(&[]));
+-            return out;
+-        }
+-        if types.iter().any(|t| matches!(t, Type::Optional(_))) {
+-            types
+-                .iter()
+-                .map(|t| {
+-                    if matches!(t, Type::Optional(_)) {
+-                        t.clone()
+-                    } else {
+-                        Type::optional(t.base().clone())
+-                    }
+-                })
+-                .collect()
+-        } else {
+-            types.to_vec()
+-        }
+-    }
+-
+-    /// The definition a call resolves to by today's LADDER, given EVERY argument's type with
+-    /// the receiver first — the entry point for a name with no overload set, and the fallback
+-    /// when selection over one decided nothing (`parser::dispatch`).  The receiver is
+-    /// `types[0]` as routed ([`Self::routed_types`]), and [`Self::candidates`] over it must
++    /// The definition a call resolves to, given EVERY argument's type with the receiver
++    /// first — `Disp-Select`'s entry point (@PLN162), and one rule for both call spellings
++    /// (`@FR-F-Recv`).  Today the receiver is `types[0]`, and a `both`/`self`-dispatched
++    /// function takes uniform-nullability parameters, so the call is routed to the `τ?`
++    /// overload when ANY argument is nullable — `max(5, a?)` reaches the overload `max(a?, 5)`
++    /// does and `p.mix(n?)` the one `mix(p, n?)` does, and null propagates regardless of
++    /// position and of spelling (@PLN25 F1b(b); D-call-21 closed the method spelling, which
++    /// read the receiver alone).  An empty list, or a `null` literal first, has no receiver
++    /// and asks for the free `n_<name>`.  [`Self::candidates`] over that receiver must then
+     /// yield exactly one.
+     #[must_use]
+     pub fn select(&self, source: u16, fn_name: &str, types: &[Type]) -> u32 {
+-        let routed = self.routed_types(types);
+-        match self.candidates(source, fn_name, &routed[0]).as_slice() {
++        let unknown = Type::Unknown(0);
++        let nullable_holder;
++        let dispatch_tp: &Type = if types.is_empty() || types[0] == Type::Null {
++            &unknown
++        } else if types.iter().any(|t| matches!(t, Type::Optional(_))) {
++            nullable_holder = Type::optional(types[0].base().clone());
++            &nullable_holder
++        } else {
++            &types[0]
++        };
++        // The routed list: the receiver as dispatched, every other argument as parsed.
++        let mut routed: Vec<Type> = Vec::with_capacity(types.len());
++        routed.push(dispatch_tp.clone());
++        routed.extend_from_slice(types.get(1..).unwrap_or(&[]));
++        match self
++            .candidates(source, fn_name, dispatch_tp, &routed)
++            .as_slice()
++        {
+             [one] => *one,
+             _ => u32::MAX,
+         }
+@@ -8105,7 +8137,7 @@ impl Data {
+     /// choose between (a bound holder carrying the name at two arities).
+     #[must_use]
+     pub fn find_fn(&self, source: u16, fn_name: &str, tp: &Type) -> u32 {
+-        match self.candidates(source, fn_name, tp).as_slice() {
++        match self.candidates(source, fn_name, tp, &[]).as_slice() {
+             [one] => *one,
+             _ => u32::MAX,
+         }
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 31d97a984..227678e00 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -18146,31 +18146,36 @@ impl Parser {
+                 dispatch,
+                 fallback,
+             } => {
+-                // Selection over the name's overload set first (`parser::dispatch`,
+-                // @PLN162), with the receiver's `dispatch` type standing in for `types[0]`.
+-                // `Disp-Ambiguous` is reported here: the bare spelling refuses it, and the
+-                // method spelling used to take the slot's routine in silence.  The call still
+-                // binds to the slot so nothing cascades; the diagnostic refuses the program.
+-                // None applicable is NOT reported here: the slot's routine then refuses the
+-                // argument itself, naming the parameter, as it always did.
+-                let mut with_receiver: Vec<Type> = Vec::with_capacity(types.len().max(1));
+-                with_receiver.push(dispatch.clone());
+-                with_receiver.extend_from_slice(types.get(1..).unwrap_or(&[]));
+-                let routed = self.data.routed_types(&with_receiver);
+-                match self.select_overload(u16::MAX, name, &routed) {
+-                    crate::parser::dispatch::Selection::One(d) => return d,
+-                    sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
+-                        if !self.first_pass {
+-                            self.report_selection(name, &routed, &sel, None);
+-                        }
+-                        return *fallback;
+-                    }
+-                    _ => {}
+-                }
+                 let found = self.data.select_method(u16::MAX, name, dispatch, types);
+                 if found != u32::MAX && self.data.def(found).name.starts_with("t_") {
+                     return found;
+                 }
++                // `Disp-Ambiguous` (@PLN162): more than one overload takes the call — a
++                // defaulted trailing parameter beside a shorter definition — and nothing
++                // ranks them.  The bare spelling refuses this; the method spelling used to
++                // take the slot's routine in silence, one call with two answers by spelling.
++                // The refusal stands alone: the call still binds to the slot's routine so
++                // nothing cascades, and the diagnostic is what refuses the program.
++                if !self.first_pass
++                    && let Some(taken) =
++                        self.data
++                            .exact_method_overloads(u16::MAX, name, dispatch, types)
++                    && taken.len() > 1
++                {
++                    let given: Vec<String> =
++                        types.iter().map(|t| t.source_name(&self.data)).collect();
++                    let by: Vec<String> = taken
++                        .iter()
++                        .map(|&r| self.data.overload_signature(name, r))
++                        .collect();
++                    diagnostic!(
++                        self.lexer,
++                        Level::Error,
++                        "`{name}({})` is ambiguous — it is taken by {} and nothing ranks them; give the call the arguments that pick one, or drop one definition",
++                        given.join(", "),
++                        by.join(" and ")
++                    );
++                }
+                 *fallback
+             }
+         }
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index 068681a4e..9f32394d5 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -412,10 +412,6 @@ impl Parser {
+                 // compiler. A method lives in its type's own attribute table, which is
+                 // shared and source-independent, so it answers the same from anywhere.
+                 && self.data.attr(*e_nr, &d.original_name()) == usize::MAX
+-                // @PLN162 — an overload set that receives the enum, or holds a FREE
+-                // definition, owns its dispatch: the enum-level definition is the author's
+-                // (`Disp-Fallback`), and a free overload is no method to hang a dispatcher on.
+-                && !self.data.overload_set_owns_dispatch(&d.original_name(), *e_nr)
+             {
+                 // Keyed by the enum AND the method NAME: a dispatcher dispatches ONE method,
+                 // and `create_enum_dispatch_fn` names it after `nrs[0]`.  Keyed by the enum
+diff --git b/src/parser/dispatch.rs a/src/parser/dispatch.rs
+deleted file mode 100644
+index cbc999b69..000000000
+--- b/src/parser/dispatch.rs
++++ /dev/null
+@@ -1,223 +0,0 @@
+-// Copyright (c) 2026 Jurjen Stellingwerff
+-// SPDX-License-Identifier: LGPL-3.0-or-later
+-
+-//! Selection over a name's OVERLOAD SET (@PLN162): which of several definitions a call
+-//! reaches, decided from the argument types alone.
+-//!
+-//! `Disp-Applicable` — a definition takes the call when every argument may satisfy its
+-//! parameter, which is the parser's own [`Parser::can_convert`] and not a second spelling of
+-//! it.  `Disp-Specific` — per position, an exact spelling beats a widening (a variant to its
+-//! enum, `τ` into `τ?`), which beats a lossy discharge (`τ?` into `τ`, `(N-Store)`), which
+-//! beats any other conversion; one definition is more specific than another when it is no
+-//! worse at every position and better at one.  `Disp-Select` — the unique most-specific
+-//! applicable definition.  `Disp-Ambiguous` — two minimal ones that nothing ranks are refused
+-//! naming both; `Disp-Exhaustive` — none applicable is refused naming what was passed and what
+-//! is declared.  The nullability routing of `(F-Recv)`'s argument clause runs FIRST
+-//! ([`crate::data::Data::routed_types`]), so a nullable argument anywhere reaches the `τ?`
+-//! overload where one is declared.
+-//!
+-//! A name with no overload set — one definition, or a bound holder's stubs — is not decided
+-//! here at all: the caller falls through to [`crate::data::Data::select`], today's ladder,
+-//! which is why every program that compiled before overload sets existed is untouched.
+-
+-use crate::data::{DefType, Type};
+-use crate::diagnostics::diagnostic_format;
+-use crate::parser::Parser;
+-
+-/// How far a call's argument is from a parameter's declared type, per position.
+-/// Smaller is more specific.
+-type Rank = u8;
+-const EXACT: Rank = 0;
+-const WIDENED: Rank = 1;
+-const LOSSY: Rank = 2;
+-const CONVERTED: Rank = 3;
+-
+-/// What selection over an overload set answered.
+-pub(crate) enum Selection {
+-    /// The unique most-specific applicable definition.
+-    One(u32),
+-    /// Two or more minimal definitions that nothing ranks.
+-    Ambiguous(Vec<u32>),
+-    /// An overload set exists and no definition takes the call.
+-    NoneApplicable,
+-    /// The name has no overload set (or an argument no spelling): not decided here.
+-    NotDecidable,
+-}
+-
+-impl Parser {
+-    /// The rank of passing an argument of type `arg` to a parameter of type `param`, or
+-    /// `None` when the argument cannot satisfy the parameter.
+-    fn dispatch_rank(&mut self, arg: &Type, param: &Type) -> Option<Rank> {
+-        let (arg_opt, param_opt) = (
+-            matches!(arg, Type::Optional(_)),
+-            matches!(param, Type::Optional(_)),
+-        );
+-        let (a, p) = (arg.base(), param.base());
+-        let same = self.data.type_spelling(a).is_some()
+-            && self.data.type_spelling(a) == self.data.type_spelling(p);
+-        // The base relation first, then the nullability step on top of it.
+-        let base: Rank = if same {
+-            EXACT
+-        } else if let (Type::Reference(v_nr, _), Type::Enum(e_nr, _, _)) =
+-            (arg.base(), param.base())
+-            && self.data.def_type(*v_nr) == DefType::EnumValue
+-            && self.data.def(*v_nr).parent() == *e_nr
+-        {
+-            // @FR-C-Var — a variant satisfies its enum: the one widening the enum lattice has.
+-            WIDENED
+-        } else if self.can_convert(a, p) {
+-            CONVERTED
+-        } else {
+-            return None;
+-        };
+-        let step: Rank = match (arg_opt, param_opt) {
+-            (false, true) => WIDENED, // (N-Intro): a present value into a nullable slot, free
+-            (true, false) => LOSSY,   // (N-Store): a nullable value into a dense slot, warned
+-            _ => EXACT,
+-        };
+-        Some(base.saturating_add(step))
+-    }
+-
+-    /// Every overload of `name` that takes the routed argument types, with its rank vector,
+-    /// or `None` when the name has no overload set or an argument has no spelling.
+-    fn ranked_overloads(
+-        &mut self,
+-        source: u16,
+-        name: &str,
+-        routed: &[Type],
+-    ) -> Option<Vec<(u32, Vec<Rank>)>> {
+-        let main = self.data.source_nr(source, name);
+-        if main == u32::MAX || self.data.def_type(main) != DefType::Dynamic {
+-            return None;
+-        }
+-        if routed.iter().any(|t| self.data.type_spelling(t).is_none()) {
+-            return None;
+-        }
+-        let routines: Vec<u32> = self
+-            .data
+-            .def(main)
+-            .attributes
+-            .iter()
+-            .filter_map(|a| match a.typedef.base() {
+-                Type::Routine(r) => Some(*r),
+-                _ => None,
+-            })
+-            .collect();
+-        let mut ranked = Vec::new();
+-        'routine: for r in routines {
+-            let declared: Vec<Type> = self
+-                .data
+-                .def(r)
+-                .attributes
+-                .iter()
+-                .filter(|p| !p.hidden)
+-                .map(|p| p.typedef.clone())
+-                .collect();
+-            if routed.len() > declared.len() {
+-                continue;
+-            }
+-            // A trailing parameter is admitted when it has a default (the one optionality a
+-            // definition carries — owner, 2026-09-14).
+-            let trailing_defaulted = self
+-                .data
+-                .def(r)
+-                .attributes
+-                .iter()
+-                .filter(|p| !p.hidden)
+-                .skip(routed.len())
+-                .all(|p| p.value != crate::data::Value::Null);
+-            if !trailing_defaulted {
+-                continue;
+-            }
+-            let mut ranks = Vec::with_capacity(routed.len());
+-            for (arg, param) in routed.iter().zip(&declared) {
+-                match self.dispatch_rank(arg, param) {
+-                    Some(k) => ranks.push(k),
+-                    None => continue 'routine,
+-                }
+-            }
+-            ranked.push((r, ranks));
+-        }
+-        Some(ranked)
+-    }
+-
+-    /// `Disp-Select` over an overload set for the routed argument types.
+-    pub(crate) fn select_overload(
+-        &mut self,
+-        source: u16,
+-        name: &str,
+-        routed: &[Type],
+-    ) -> Selection {
+-        let Some(ranked) = self.ranked_overloads(source, name, routed) else {
+-            return Selection::NotDecidable;
+-        };
+-        if ranked.is_empty() {
+-            return Selection::NoneApplicable;
+-        }
+-        // The minimal elements of the pointwise order: a definition no other applicable one is
+-        // strictly better than.
+-        let dominated = |a: &[Rank], b: &[Rank]| -> bool {
+-            // b is strictly better than a
+-            a.iter().zip(b).all(|(x, y)| y <= x) && a.iter().zip(b).any(|(x, y)| y < x)
+-        };
+-        let minimal: Vec<u32> = ranked
+-            .iter()
+-            .filter(|(_, ra)| !ranked.iter().any(|(_, rb)| dominated(ra, rb)))
+-            .map(|(r, _)| *r)
+-            .collect();
+-        match minimal.as_slice() {
+-            [one] => Selection::One(*one),
+-            _ => Selection::Ambiguous(minimal),
+-        }
+-    }
+-
+-    /// The two refusals selection can end in, worded once for both call spellings.
+-    pub(crate) fn report_selection(
+-        &mut self,
+-        name: &str,
+-        given: &[Type],
+-        sel: &Selection,
+-        at: Option<&crate::lexer::Position>,
+-    ) {
+-        let shown: Vec<String> = given.iter().map(|t| t.source_name(&self.data)).collect();
+-        let text = match sel {
+-            Selection::Ambiguous(taken) => {
+-                let by: Vec<String> = taken
+-                    .iter()
+-                    .map(|&r| self.data.overload_signature(name, r))
+-                    .collect();
+-                format!(
+-                    "`{name}({})` is ambiguous — it is taken by {} and nothing ranks them; give the call the arguments that pick one, or drop one definition",
+-                    shown.join(", "),
+-                    by.join(" and ")
+-                )
+-            }
+-            Selection::NoneApplicable => {
+-                let bare = self.data.def_nr(name);
+-                let declared: Vec<String> = self
+-                    .data
+-                    .def(bare)
+-                    .attributes
+-                    .iter()
+-                    .filter_map(|a| match a.typedef.base() {
+-                        Type::Routine(r) => Some(*r),
+-                        _ => None,
+-                    })
+-                    .map(|r| self.data.overload_signature(name, r))
+-                    .collect();
+-                format!(
+-                    "no definition of `{name}` takes ({}) — declared: {}",
+-                    shown.join(", "),
+-                    declared.join(", ")
+-                )
+-            }
+-            _ => return,
+-        };
+-        match at {
+-            Some(pos) => {
+-                crate::diagnostic_at!(self.lexer, pos, crate::diagnostics::Level::Error, "{text}")
+-            }
+-            None => crate::diagnostic!(self.lexer, crate::diagnostics::Level::Error, "{text}"),
+-        }
+-    }
+-}
+diff --git b/src/parser/fields.rs a/src/parser/fields.rs
+index a95dcff53..eee45e7a8 100644
+--- b/src/parser/fields.rs
++++ a/src/parser/fields.rs
+@@ -617,7 +617,11 @@ impl Parser {
+             // `Disp-Hint` (@PLN162): the arguments parse under the ONE `t_` candidate the name
+             // has at this receiver, else under the slot's routine; the definition the call
+             // reaches is selected once the argument types exist (`parse_method_selecting`).
+-            let hint_nr = match self.data.candidates(u16::MAX, &field, &dispatch).as_slice() {
++            let hint_nr = match self
++                .data
++                .candidates(u16::MAX, &field, &dispatch, &[])
++                .as_slice()
++            {
+                 [one] if self.data.def(*one).name.starts_with("t_") => *one,
+                 _ => r_nr,
+             };
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 447fe6cc8..aac42b6ba 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -1280,7 +1280,6 @@ pub(super) mod builtins;
+ pub(super) mod collections;
+ pub(super) mod control;
+ pub(super) mod definitions;
+-pub(super) mod dispatch;
+ pub(super) mod expressions;
+ pub(super) mod fields;
+ pub(super) mod fit;
+@@ -5923,29 +5922,9 @@ impl Parser {
+         let mut d_nr = if self.default && is_op(name) {
+             self.data.def_nr(name)
+         } else {
+-            // Selection over the name's overload set first (`parser::dispatch`, @PLN162), on
+-            // the routed argument types; a name with no set falls to today's ladder.  A
+-            // refusal here is the whole answer: the arguments are parsed, nothing else is owed.
+-            // Selection over the name's overload set first (`parser::dispatch`, @PLN162), on
+-            // the routed argument types.  A tie is the whole answer: the arguments are parsed
+-            // and nothing else is owed.  None applicable, and a name with no set, fall to
+-            // today's ladder — the free `n_<name>` that coexists beside a `both` set (the
+-            // stdlib's `exists(text)` beside `exists(File)`), then the operator map — and
+-            // the unknown-function site below names the set when that finds nothing either.
+-            let routed = self.data.routed_types(types);
+-            let d = match self.select_overload(source, name, &routed) {
+-                crate::parser::dispatch::Selection::One(d) => d,
+-                sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
+-                    if !self.first_pass {
+-                        self.report_selection(name, &routed, &sel, Some(name_pos));
+-                    }
+-                    return Type::Unknown(0);
+-                }
+-                crate::parser::dispatch::Selection::NoneApplicable
+-                | crate::parser::dispatch::Selection::NotDecidable => {
+-                    self.data.select_fn(source, name, types)
+-                }
+-            };
++            // The whole argument list goes to selection; today it reads the receiver off the
++            // first argument and the nullability off all of them (`Data::select_fn`).
++            let d = self.data.select_fn(source, name, types);
+             // loft#788 — a bare CALL is ambiguous the same way a bare type is,
+             // and worse: both import orders compile and RUN, answering
+             // differently. The key is the mangled one, since that is what a
+@@ -6340,17 +6319,58 @@ impl Parser {
+                 // P07.5: when no method receiver is found EITHER, fall back to
+                 // a similar-name suggestion across all user functions.
+                 let (method_types, from_stdlib) = self.find_method_receivers(name);
+-                // `Disp-Exhaustive` (@PLN162): the name has an overload set, none of its
+-                // definitions takes these argument types, and the ladder found nothing else
+-                // either.  Name what was passed and what is declared.
+-                let routed = self.data.routed_types(types);
+-                let none_applicable = matches!(
+-                    self.select_overload(source, name, &routed),
+-                    crate::parser::dispatch::Selection::NoneApplicable
+-                );
+-                if none_applicable && method_types.is_empty() {
+-                    let sel = crate::parser::dispatch::Selection::NoneApplicable;
+-                    self.report_selection(name, &routed, &sel, Some(name_pos));
++                let bare = self.data.def_nr(name);
++                let overloads: Vec<String> =
++                    if bare != u32::MAX && self.data.def_type(bare) == DefType::Dynamic {
++                        self.data
++                            .def(bare)
++                            .attributes
++                            .iter()
++                            .filter_map(|a| match a.typedef.base() {
++                                Type::Routine(r) => Some(*r),
++                                _ => None,
++                            })
++                            .map(|r| self.data.overload_signature(name, r))
++                            .collect()
++                    } else {
++                        Vec::new()
++                    };
++                let given: Vec<String> = types.iter().map(|t| t.source_name(&self.data)).collect();
++                // `Disp-Ambiguous` (@PLN162) is asked FIRST, whatever kind the overloads are:
++                // more than one takes the call — a defaulted trailing parameter beside a
++                // shorter definition — and nothing ranks them.  Asked after the method-receiver
++                // hint, a `both` pair reported *did you mean the method `x.pg(…)`* for a call
++                // two of its methods took.  The method spelling refuses the same way
++                // (`select_method_def`), with the same rendering.
++                let taken = self
++                    .data
++                    .exact_overloads(source, name, types)
++                    .unwrap_or_default();
++                if taken.len() > 1 {
++                    let by: Vec<String> = taken
++                        .iter()
++                        .map(|&r| self.data.overload_signature(name, r))
++                        .collect();
++                    diagnostic_at!(
++                        self.lexer,
++                        name_pos,
++                        Level::Error,
++                        "`{name}({})` is ambiguous — it is taken by {} and nothing ranks them; give the call the arguments that pick one, or drop one definition",
++                        given.join(", "),
++                        by.join(" and ")
++                    );
++                } else if method_types.is_empty() && !overloads.is_empty() {
++                    // `Disp-Exhaustive` (@PLN162): the name has an overload set and none of
++                    // its definitions takes these argument types.  Name what was passed and
++                    // what is declared, so the cure is one read away.
++                    diagnostic_at!(
++                        self.lexer,
++                        name_pos,
++                        Level::Error,
++                        "no definition of `{name}` takes ({}) — declared: {}",
++                        given.join(", "),
++                        overloads.join(", ")
++                    );
+                 } else if method_types.is_empty() {
+                     // @PLN13 phase 6 (diagnostics slice): the name may simply be
+                     // unimported rather than wrong.  An EXACT hit in a published

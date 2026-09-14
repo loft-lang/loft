@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `Disp-Exhaustive` (@PLN162 step 10): a call is covered when some definition of its name
+// takes its STATIC argument types; an uncovered call is refused at compile time, naming what
+// was passed and what is declared, so the cure — add the definition, or fix the argument — is
+// one read away.  Three uncovered shapes: a variant pair no definition names; two values held
+// at the ENUM where no enum-level definition exists (the soundness clause: every runtime
+// variant is a subtype of the static type, so covering the static type covers every run — and
+// nothing covers `(Entity, Entity)` here); and a scalar set asked for a type it lacks.  The
+// twin file adds the total case and the same calls compile.
+// @falsified-at: 0af9e3cfd — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/an-uncovered-call-is-refused-naming-what-was-passed-and-what-is-declared.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — on the control the two `hit` lines are unmet: @F20 had hung a
+//   synthesised dispatcher on the free set, so the first call read *Unknown function hit — did
+//   you mean the method `x.hit(…)`* and the second *expected IceWall, got Entity on argument 2*;
+//   here both name what was passed and what is declared.  Not leak and not assert.
+//   ARMED: no instrument — the refusals are parse-time on either backend.
+//   WITNESS: the control's first message offers a method spelling for free functions that have
+//   none; this tree's names the declared definitions.
+//   HOLDS: the `show(boolean)` line is met on both trees and does not move; the program is
+//   refused on both; the leak channel is `none` on both.
+// @EXPECT_ERROR: no definition of `hit` takes (Crate, IceWall) — declared: hit(Fireball, IceWall), hit(IceBolt, IceWall)
+// @EXPECT_ERROR: no definition of `hit` takes (Entity, Entity) — declared: hit(Fireball, IceWall), hit(IceBolt, IceWall)
+// @EXPECT_ERROR: no definition of `show` takes (boolean) — declared: show(integer), show(text)
+
+enum Entity {
+  Fireball { n: integer },
+  IceBolt { n: integer },
+  IceWall { n: integer },
+  Crate { n: integer },
+}
+
+fn hit(f: Fireball, w: IceWall) -> text { "fire-wall {f.n}{w.n}" }
+fn hit(b: IceBolt, w: IceWall) -> text { "bolt-wall {b.n}{w.n}" }
+
+fn show(n: integer) -> text { "int {n}" }
+fn show(t: text) -> text { "text {t}" }
+
+fn main() {
+  hit(Crate { n: 1 }, IceWall { n: 2 });
+  a: Entity = Fireball { n: 3 };
+  b: Entity = IceWall { n: 4 };
+  hit(a, b);
+  show(true);
+}

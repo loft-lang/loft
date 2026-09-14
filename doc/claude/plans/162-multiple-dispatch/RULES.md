@@ -101,7 +101,9 @@ name.  Three consequences worth stating:
   value held STATICALLY at the enum reaches is the enum-level definition; its runtime
   variant is step 13's question.  And @F20's synthesised enum dispatcher yields to an
   author's enum-level definition of the name — `Disp-Fallback`'s most general type is the
-  author's to write.
+  author's to write — and to a FREE overload set over variants, which is no method and gets
+  no `x.f(…)` spelling (step 10 found the synthesiser hanging a dispatcher on one and the
+  uncovered call reading as *did you mean the method*).
 
 **Disp-Specific** *(amended — the abstract position is the ENUM, not an interface).*  The
 design says *"a concrete struct is more specific than any interface it implements"*.  Measured
@@ -256,6 +258,30 @@ the cheaper half: under `Disp-Key` a multi-definition name has no `n_<name>` key
 sites (`parser/control.rs`, the two `hint_d_nr` lookups) consult nothing else, so the refusal
 falls out with no code and the message is the whole work.  A single-definition name — every
 program that compiles today — keeps its hint unchanged.
+
+**Disp-Exhaustive, implementation form (IMPL.md step 10, 2026-09-14).**  A bare call on an
+overload set that no definition takes, and that today's ladder cannot resolve either (the free
+`n_<name>` beside a `both` set, the operator map), is refused *no definition of `f` takes (τ₁,
+τ₂) — declared: f(…), f(…)*.  The method spelling on a set whose receiver already carries the
+method is refused by that method's own argument check, which names the parameter; the two
+messages differ in wording and agree in verdict.  The enumerated-pairs ADVICE the rule text
+above proposes (`dispatch-pairs-uncovered`) is not built.
+
+## Deviations
+
+OPEN: **1**.
+
+- **D-disp-1 — OPEN 2026-09-14.**  `Disp-Exhaustive` says no runtime *"no method"* path
+  exists, and @F20's synthesised enum dispatcher has one: with `tag(self: Fireball)` and
+  `tag(self: IceWall)` declared and `Crate` left out, `c.tag()` on a `Crate` held at `Entity`
+  is a compile-time WARNING (*no implementation of 'tag' for variant 'Crate'*) and at runtime
+  an EMPTY value — not null, not a refusal — on both backends, pinned AS MEASURED by
+  `tests/scripts/d-disp-1-a-missing-variant-is-a-warning-and-an-empty-value.loft`, which the
+  closure flips.  Pre-existing; it is the shape step 13's rule
+  must close: a call whose argument is held at the enum is covered by an enum-level
+  definition or by an implementation for EVERY variant, and otherwise refused — which turns
+  a warning today's programs compile with into a refusal, so it is a
+  [COMPATIBILITY.md](../../COMPATIBILITY.md) decision at contract 0 and the owner's.
 
 ## Consequences worth stating
 
