@@ -260,6 +260,28 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  (`N stores not freed at program exit`) — a warning ordinarily and an ERROR
                  under `LOFT_STRICT_STORES`, which asks for exactly-once and so has to fail
                  both halves: a store used after its free, and a store never freed at all.
+  (H-RootExtent) a store whose ROOT record is the one-field collection wrapper
+                 `OpDatabase` mints holds NOTHING ELSE: every record in it was
+                 claimed for that collection — its elements, and whatever they own.
+                 The collection's extent IS the store's extent, so a point at which
+                 the collection is wholly dead is a point at which the store is, and
+                 releasing it there is one store reset rather than a free per
+                 element.  What would break the rule is a record placed into the
+                 store from outside; the one mechanism that places (R-MoveAppend)
+                 places an ELEMENT of that very collection, so it holds.  A field
+                 vector, a user-struct root and a placed buffer are not store roots
+                 and carry no such claim.
+  (H-RootExtent) a store whose ROOT record is the one-field collection wrapper
+                 `OpDatabase` mints holds NOTHING ELSE: every record in it was
+                 claimed for that collection — its elements, and whatever they own.
+                 The collection's extent IS the store's extent, so a point at which
+                 the collection is wholly dead is a point at which the store is, and
+                 releasing it there is one store reset rather than a free per
+                 element.  What would break the rule is a record placed into the
+                 store from outside; the one mechanism that places (R-MoveAppend)
+                 places an ELEMENT of that very collection, so it holds.  A field
+                 vector, a user-struct root and a placed buffer are not store roots
+                 and carry no such claim.
   (H-ClearRelease) CLEARING a vector that OUTLIVES the clear releases what its
                  elements own.  `clear_vector` is a length reset — sound wherever
                  the vector's store dies straight after (every use it was written
@@ -298,6 +320,17 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  image is unchanged, and an image written before footers existed is
                  re-footed by the open walk.
 ```
+
+**`H-RootExtent` is what makes `H-ClearRelease`'s release affordable.** The release has to
+reach everything the cleared elements own, and it can do that two ways: walk the elements and
+return each owned block to the free tree, or — knowing the collection owns the store's whole
+extent — reset the store and re-establish the two records the walk would have left. The
+second is O(1) where the first is a delete per element, and it also restores the allocator's
+bump path, which a fragmented store never reaches again. The rule is what licenses it: without
+"the store holds nothing else", a reset would drop a record someone still reaches. It is
+ASSERTED by construction rather than proved — `OpDatabase` mints the wrapper and every later
+claim in that store is made for the collection — so the gate that reads it also reads the
+shape (`clear_vector_release`), and a shape that is not a store root keeps the walk.
 
 **In words.** `free` releases a store slot and everything in it. It is disciplined: (1) **LIFO** —
 you free stores in reverse allocation order, because a store's lifetime is nested inside the

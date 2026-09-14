@@ -521,6 +521,29 @@ second statement keep the loop.  Switch `LOFT_NO_FILL_HOIST`; falsifier
 `tests/scripts/157-fill-hoist.loft`; `LOFT_TRACE_FILL=1` names the check that declined a
 loop.  Sites: `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoisted`.
 
+### A witnessed buffer is allocated once, not minted per call
+
+```
+  (R-Reuse)      a hidden return buffer whose result local is WITNESSED (O-Buffer) is
+                 allocated ONCE, right after its null-init, so a callee that builds
+                 into it reuses one record per call SITE instead of minting a store
+                 per CALL.  The witness is the whole condition: an allocated buffer
+                 outlives the call, so a site that frees the result plainly would
+                 release it and the next turn would write a record back in the pool.
+                 Also required — the buffer is used ONCE and its result local is
+                 assigned ONCE, since a second use has one guarded site and one this
+                 did not read, and a reassignment frees the store it displaces.
+                 Every other buffer keeps its per-call mint.
+```
+
+**In words.** @PLN157 § V and § V-af.  `scopes::reuse_record_buffers` inserts the
+`OpDatabase` and `scopes`'s pairing supplies the witness; the positive control
+`LOFT_NO_RETBUF_WITNESS_GATE=1` allocates every buffer, guarded or not, and
+`LOFT_STRICT_STORES=1` then reports the use-after-free at exactly the sites the gate
+declines — which is how the condition is falsified rather than asserted.  Switches
+`LOFT_NO_RETBUF_REUSE`, `LOFT_NO_JOIN_BUFFER_WITNESS`.  Sites:
+`scopes::reuse_record_buffers`, `scopes::tail_calls`.
+
 ### A leaf carries no frame
 
 ```

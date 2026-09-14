@@ -2863,6 +2863,8 @@ fn tuple_call_mints(
 /// arm and `gen_set_first_vector_null`'s vector twin already emit, so both backends lower it
 /// from the IR and neither generator needs to know why.
 ///
+/// Enforces `@FR-R-Reuse`; the witness it reads is `@FR-O-Buffer`.
+///
 /// **The gate is `witness_buffer`, and it is the whole soundness argument.**  An allocated
 /// buffer outlives the call, so a call site that frees the RESULT with a plain `OpFreeRef`
 /// releases the buffer's store — and the next turn of the loop writes a record that is back
@@ -2879,7 +2881,7 @@ fn tuple_call_mints(
 /// the buffer's: the next call then writes a store that is back in the pool (measured, a
 /// use-after-free on every turn after the first).  Guarding that free against the buffer is
 /// the widening that lifts this condition; until then the buffer stays null there.
-/// The calls at the VALUE positions of a branch (@PLN157 § V-af): an `if`'s two arms, a
+/// The calls at the VALUE positions of a branch (@PLN157 § V-af, `@FR-O-Buffer`): an `if`'s two arms, a
 /// value block's last statement, recursively; a `Call` is its own tail.  Anything else — a
 /// variable, a literal, a null — contributes no call.
 fn tail_calls(v: &Value) -> Vec<&Value> {
@@ -8338,7 +8340,8 @@ impl Scopes<'_> {
         // `CallRef`.  While this read `Value::Call` alone the two disagreed for a fn-ref
         // bind: codegen deep-copied into a store `v` owns and the deps stayed, so
         // `get_free_vars` emitted no `OpFreeRef` and every copy leaked.
-        // @PLN157 § V-af (`@FR-O-Complete`) — the right-hand side is a value BRANCH whose arms
+        // @PLN157 § V-af (`@FR-O-Buffer`, per path under `@FR-O-Complete`) — the right-hand
+        // side is a value BRANCH whose arms
         // end in buffer-delivering calls: `v = if c { mk(i) } else { mk2(i) }`.  Each arm's
         // call delivers through a hidden buffer of its own and `v` adopts whichever ran, so
         // every arm's buffer is `v`'s witness — the same pairing a direct call takes below,

@@ -2286,8 +2286,9 @@ impl Stores {
             if elem != u16::MAX && self.owns_heap(elem) && crate::keys::store_reset_clear_enabled()
             {
                 // @PLN157 § V-ag — the vector is this store's ROOT, so everything in the
-                // store was claimed inside it and the whole extent is dead here.  Reset the
-                // store and re-establish the two records the element walk would have left:
+                // store was claimed inside it (`@FR-H-RootExtent`) and the whole extent is
+                // dead here.  Reset the store and re-establish the two records the
+                // element walk would have left:
                 // the root wrapper, and the vector's own record at length zero.  A cleared
                 // vector must stay PRESENT — an absent heap value is falsy where an empty
                 // one is true — so dropping the record instead would change what `if v`

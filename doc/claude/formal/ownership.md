@@ -76,6 +76,18 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 owner frees once.
   (O-Derived)   FREE PLACEMENT IS DERIVED, NOT DECIDED.  Free a local iff it owns its store
                 and does not transfer it out — once, at scope exit.  No per-site heuristic.
+  (O-Buffer)    A HIDDEN RETURN BUFFER IS THE CALLER'S STORE, WITNESSED BY THE LOCAL
+                THAT ADOPTS IT.  The `__ref_N` a caller passes for a callee's record
+                result belongs to the caller, and the callee either fills it and hands
+                it back or mints its own and hands that back — which, no static bit can
+                say (O-Opaque).  So the result local's free is guarded by STORE IDENTITY
+                against the buffer (`OpFreeRefIfDistinct(v, __ref_N)`), declining exactly
+                when the callee handed the buffer back, and the buffer's own free at
+                frame exit is what releases it then.  Every arm of a value branch is such
+                an adoption, so a local bound from a branch is witnessed by EVERY arm's
+                buffer and its free declines against each (O-Complete, per path).  A
+                result reached any other way — a lift temp with a plain free, a local
+                assigned twice — has no such witness.
   (O-Complete)  PER BINDING, PER PATH, COMPLETE.  Every binding, including every `match`/`if`
                 arm — a set-and-reconcile, not a single-variable structural walk.
 ```

@@ -991,6 +991,21 @@ record at all, does.
 - **Element layout.** A vector of no-heap records could be a flat run of bytes with no
   per-element record bookkeeping.
 
+**The formal rules lag the same way, and in the same place.**  Audited 2026-09-14: the
+REWRITE family is in good order — 23 rules, every unit of the drawing arc cites one, and the
+chapter registers agree with their entries.  What was missing is the layer underneath, the
+STORE facts those rewrites stand on.  Three were load-bearing in shipped code and stated
+nowhere: that a store whose root is a collection wrapper holds nothing else
+(`@FR-H-RootExtent`, which is what lets a clear be one reset), that a hidden return buffer
+is the caller's store witnessed by the local that adopts it (`@FR-O-Buffer`), and that such
+a buffer may be allocated once only where that witness exists (`@FR-R-Reuse`).  All three
+are now written.  The pattern is worth keeping in view: **a rewrite gets a rule because
+someone builds it, while the invariant it stands on gets one only if someone asks** — so
+when a unit's soundness argument is a paragraph in a plan rather than a rule, that is the
+signal.  The roles themselves are still unnamed: no rule says what a discharge buffer, a
+comprehension accumulator, a worker's read-only borrow or the const store guarantees, and if
+the units below key on roles then those rules come first.
+
 So read 3d as a bounded, worthwhile errand and not as the direction: its ceiling is
 measured and finite. Note too that step 1's own design converged on the same principle —
 its content is not an LLVM hint but a loft-level decision, *check the vector's extent once
