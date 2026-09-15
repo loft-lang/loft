@@ -1,0 +1,286 @@
+// @PLN164 B2 — R-PLACE / R-MOVELAST: a call result whose ONE owning destination on every
+// path that keeps it is a field of a record living in store S gets its return buffer
+// CLAIMED IN S (`@FR-R-Place`), and the field taking it at its last use is a RELOCATION
+// within S instead of a deep copy (`@FR-R-MoveLast`).  These cells put the parse library's
+// shape (`pp_paint = read_paint(s)` … `paint: pp_paint` inside an `Op` appended to the
+// scene) and every decline the two rules list — a read after the store on one path (E9),
+// a source that is not owned (E10: a `const` parameter, a discharged element's field), a
+// `??` discharge on the result, an argument that reaches the destination's store, a callee
+// that answers a parameter on one exit, a rebind after the store, two destinations, two
+// stores — through hand-computed values on both backends, plus a no-heap record and a
+// text-owning record so the relocation's heap handles are exercised.  The moved-from local
+// is dead at every exit; `LOFT_POISON=1` is what would show a free that still ran.
+// `LOFT_NO_PLACE_RESULT=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1`
+// and `LOFT_NATIVE_LEAK_CHECK=1` must answer identically.
+
+struct Paint { pk: integer, c1: integer, c2: integer, spec: vector<float> }
+struct Op { kind: integer, pts: vector<float>, paint: Paint, w: integer }
+struct Sketch { ops: vector<Op>, tag: text }
+struct Label { name: text, n: integer }
+struct Card { label: Label, id: integer }
+struct Deck { cards: vector<Card> }
+struct Rgb { r: integer, g: integer, b: integer }
+struct Pixel { c: Rgb, x: integer }
+struct Row { px: vector<Pixel> }
+
+// `read_paint`'s shape: several literal returns, one per exit.
+fn read_paint(s: text) -> Paint {
+  if s == "radial" { return Paint { pk: 3, c1: 10, c2: 20, spec: [1.5, 2.5] } }
+  if s == "grad" { return Paint { pk: 2, c1: 30, c2: 40, spec: [0.25] } }
+  if s == "rgb" { return Paint { pk: 1, c1: 50, c2: 0, spec: [] } }
+  Paint { pk: 0, c1: 0, c2: 0, spec: [] }
+}
+fn sum_spec(p: Paint) -> float { s = 0.0; for x in p.spec { s += x; } s }
+
+// b1 — the parse_poly shape: bound from a call, READ before the store, then given to a
+// literal field appended into a parameter's vector on two paths; dead on the third.
+fn add_poly(sc: Sketch, s: text, n: integer) -> integer {
+  pp = read_paint(s);
+  if n < 2 { return -1 }
+  if pp.pk != 0 {
+    sc.ops += [Op { kind: 1, pts: [n as float], paint: pp, w: 3 }];
+    return 1
+  }
+  sc.ops += [Op { kind: 2, pts: [n as float, 2.0 * (n as float)], paint: pp, w: n }];
+  2
+}
+fn b1() {
+  sc = Sketch { ops: [], tag: "b1" };
+  r = add_poly(sc, "radial", 5) + add_poly(sc, "none", 7) + add_poly(sc, "grad", 1) + add_poly(sc, "rgb", 9);
+  assert(r == 3 && len(sc.ops) == 3, "b1 {r} {len(sc.ops)}");
+  o0 = sc.ops[0]?; o1 = sc.ops[1]?; o2 = sc.ops[2]?;
+  assert(o0.kind == 1 && o0.paint.pk == 3 && o0.paint.c2 == 20 && len(o0.paint.spec) == 2 && sum_spec(o0.paint) == 4.0, "b1 o0 {o0.paint.pk} {sum_spec(o0.paint)}");
+  assert(o1.kind == 2 && o1.paint.pk == 0 && len(o1.paint.spec) == 0 && o1.w == 7 && len(o1.pts) == 2, "b1 o1 {o1.paint.pk} {o1.w}");
+  assert(o2.kind == 1 && o2.paint.pk == 1 && o2.paint.c1 == 50 && len(o2.paint.spec) == 0, "b1 o2 {o2.paint.c1}");
+  println("b1 {r} {len(sc.ops)} {o0.paint.c1} {sum_spec(o0.paint)} {o1.w}");
+}
+
+// b2 — E9: the result READ AFTER the store on one path; the source must be intact there.
+fn add_read_after(sc: Sketch, s: text, c: boolean) -> integer {
+  pp = read_paint(s);
+  if c {
+    sc.ops += [Op { kind: 1, pts: [], paint: pp, w: 1 }];
+    return 1
+  }
+  sc.ops += [Op { kind: 2, pts: [], paint: pp, w: 2 }];
+  pp.c1 + pp.c2
+}
+fn b2() {
+  sc = Sketch { ops: [], tag: "b2" };
+  a = add_read_after(sc, "radial", true);
+  b = add_read_after(sc, "grad", false);
+  assert(a == 1 && b == 70 && len(sc.ops) == 2, "b2 {a} {b} {len(sc.ops)}");
+  o1 = sc.ops[1]?;
+  assert(o1.paint.pk == 2 && sum_spec(o1.paint) == 0.25, "b2 o1 {o1.paint.pk}");
+  println("b2 {a} {b} {o1.paint.c2}");
+}
+
+// b3 — E10: a source that is NOT owned — a `const` parameter, then a discharged element's
+// field; both must be intact after the store.
+fn keep_const(sc: Sketch, p: const Paint, w: integer) {
+  sc.ops += [Op { kind: 4, pts: [], paint: p, w: w }];
+}
+fn b3() {
+  sc = Sketch { ops: [], tag: "b3" };
+  base = read_paint("radial");
+  keep_const(sc, base, 1);
+  keep_const(sc, base, 2);
+  assert(base.pk == 3 && sum_spec(base) == 4.0, "b3 base {base.pk} {sum_spec(base)}");
+  e = sc.ops[0]?;
+  sc.ops += [Op { kind: 5, pts: [], paint: e.paint, w: 3 }];
+  assert(e.paint.c1 == 10 && len(e.paint.spec) == 2, "b3 e {e.paint.c1} {len(e.paint.spec)}");
+  s = 0.0;
+  for o in sc.ops { s += sum_spec(o.paint); }
+  assert(len(sc.ops) == 3 && s == 12.0, "b3 {len(sc.ops)} {s}");
+  println("b3 {base.pk} {s}");
+}
+
+// b4 — sixty activations in a loop: the steady state, and the leak gate.
+fn b4() {
+  sc = Sketch { ops: [], tag: "b4" };
+  for i in 0..60 { add_poly(sc, if i % 2 == 0 { "radial" } else { "grad" }, i + 2); }
+  s = 0.0; n = 0;
+  for o in sc.ops { s += sum_spec(o.paint); n += o.paint.c1; }
+  assert(len(sc.ops) == 60 && s == 127.5 && n == 1200, "b4 {len(sc.ops)} {s} {n}");
+  println("b4 {len(sc.ops)} {s} {n}");
+}
+
+// b5 — a `??` discharge on the result declines the placement; the joined value is right.
+fn maybe_paint(s: text) -> Paint? {
+  if s == "" { return null }
+  read_paint(s)
+}
+fn add_opt(sc: Sketch, s: text) -> integer {
+  pp = maybe_paint(s) ?? Paint { pk: 9, c1: 1, c2: 2, spec: [9.0] };
+  sc.ops += [Op { kind: 6, pts: [], paint: pp, w: 0 }];
+  pp.pk
+}
+fn b5() {
+  sc = Sketch { ops: [], tag: "b5" };
+  a = add_opt(sc, "rgb");
+  b = add_opt(sc, "");
+  o1 = sc.ops[1]?;
+  assert(a == 1 && b == 9 && o1.paint.pk == 9 && sum_spec(o1.paint) == 9.0, "b5 {a} {b} {o1.paint.pk}");
+  println("b5 {a} {b} {sum_spec(o1.paint)}");
+}
+
+// b6 — an argument of the call reaches the destination's store (`sc`): declined, the
+// value derived from the scene's last op is right.
+fn derive(sc: Sketch, s: text) -> Paint {
+  base = if len(sc.ops) > 0 { sc.ops[len(sc.ops) - 1]?.paint.c1 } else { 0 };
+  p = read_paint(s);
+  Paint { pk: p.pk, c1: base + p.c1, c2: p.c2, spec: p.spec }
+}
+fn add_derived(sc: Sketch, s: text) {
+  pp = derive(sc, s);
+  sc.ops += [Op { kind: 7, pts: [], paint: pp, w: 0 }];
+}
+fn b6() {
+  sc = Sketch { ops: [], tag: "b6" };
+  add_derived(sc, "radial");
+  add_derived(sc, "grad");
+  add_derived(sc, "rgb");
+  o2 = sc.ops[2]?;
+  assert(len(sc.ops) == 3 && o2.paint.c1 == 90 && o2.paint.pk == 1, "b6 {o2.paint.c1} {o2.paint.pk}");
+  println("b6 {len(sc.ops)} {o2.paint.c1}");
+}
+
+// b7 — a callee that answers a PARAMETER on one exit (`O-Opaque`): declined; the
+// parameter is intact and both ops carry the right paint.
+fn pick(a: Paint, s: text) -> Paint {
+  if s == "keep" { return a }
+  read_paint(s)
+}
+fn b7() {
+  sc = Sketch { ops: [], tag: "b7" };
+  base = read_paint("grad");
+  pp = pick(base, "keep");
+  sc.ops += [Op { kind: 8, pts: [], paint: pp, w: 0 }];
+  qq = pick(base, "rgb");
+  sc.ops += [Op { kind: 8, pts: [], paint: qq, w: 1 }];
+  assert(base.pk == 2 && sum_spec(base) == 0.25, "b7 base {base.pk}");
+  o0 = sc.ops[0]?; o1 = sc.ops[1]?;
+  assert(o0.paint.pk == 2 && o1.paint.pk == 1 && o1.paint.c1 == 50, "b7 {o0.paint.pk} {o1.paint.pk}");
+  println("b7 {base.pk} {o0.paint.c2} {o1.paint.c1}");
+}
+
+// b8 — the destination a field of an existing LOCAL record, twice: the second store
+// releases the first value's heap and lands in place.
+fn b8() {
+  o = Op { kind: 1, pts: [1.0], paint: Paint { pk: 0, c1: 0, c2: 0, spec: [] }, w: 0 };
+  pp = read_paint("radial");
+  o.paint = pp;
+  assert(o.paint.pk == 3 && sum_spec(o.paint) == 4.0 && o.kind == 1 && len(o.pts) == 1, "b8 {o.paint.pk} {sum_spec(o.paint)}");
+  qq = read_paint("grad");
+  o.paint = qq;
+  assert(o.paint.pk == 2 && sum_spec(o.paint) == 0.25, "b8 second {o.paint.pk} {sum_spec(o.paint)}");
+  println("b8 {o.paint.pk} {sum_spec(o.paint)} {o.kind}");
+}
+
+// b9 — the destination an ELEMENT's field of a parameter's vector.
+fn b9() {
+  sc = Sketch { ops: [], tag: "b9" };
+  for i in 0..3 { sc.ops += [Op { kind: i, pts: [], paint: Paint { pk: 0, c1: 0, c2: 0, spec: [] }, w: i }]; }
+  pp = read_paint("rgb");
+  sc.ops[1].paint = pp;
+  o1 = sc.ops[1]?; o0 = sc.ops[0]?;
+  assert(o1.paint.pk == 1 && o1.paint.c1 == 50 && o1.kind == 1 && o0.paint.pk == 0, "b9 {o1.paint.pk} {o1.paint.c1} {o0.paint.pk}");
+  println("b9 {o1.paint.c1} {o1.w} {o0.paint.pk}");
+}
+
+// b10 — the local REBOUND after the store, twice; each op keeps the value it was given.
+fn b10() {
+  sc = Sketch { ops: [], tag: "b10" };
+  pp = read_paint("radial");
+  sc.ops += [Op { kind: 1, pts: [], paint: pp, w: 1 }];
+  pp = read_paint("grad");
+  sc.ops += [Op { kind: 2, pts: [], paint: pp, w: 2 }];
+  pp = read_paint("rgb");
+  o0 = sc.ops[0]?; o1 = sc.ops[1]?;
+  assert(o0.paint.pk == 3 && o1.paint.pk == 2 && pp.pk == 1 && sum_spec(o0.paint) == 4.0, "b10 {o0.paint.pk} {o1.paint.pk} {pp.pk}");
+  println("b10 {o0.paint.pk} {o1.paint.pk} {pp.pk}");
+}
+
+// b11 — TWO owning destinations on one path: declined, both ops hold the value.
+fn b11() {
+  sa = Sketch { ops: [], tag: "a" }; sb = Sketch { ops: [], tag: "b" };
+  pp = read_paint("radial");
+  sa.ops += [Op { kind: 1, pts: [], paint: pp, w: 1 }];
+  sb.ops += [Op { kind: 1, pts: [], paint: pp, w: 2 }];
+  a = sa.ops[0]?; b = sb.ops[0]?;
+  assert(a.paint.pk == 3 && b.paint.pk == 3 && sum_spec(a.paint) == 4.0 && sum_spec(b.paint) == 4.0, "b11 {a.paint.pk} {b.paint.pk}");
+  println("b11 {a.paint.c1} {b.paint.c2} {sum_spec(b.paint)}");
+}
+
+// b12 — the destination in a DIFFERENT store on each path: declined (no single S).
+fn add_either(sa: Sketch, sb: Sketch, s: text, c: boolean) {
+  pp = read_paint(s);
+  if c { sa.ops += [Op { kind: 1, pts: [], paint: pp, w: 1 }]; }
+  else { sb.ops += [Op { kind: 2, pts: [], paint: pp, w: 2 }]; }
+}
+fn b12() {
+  sa = Sketch { ops: [], tag: "a" }; sb = Sketch { ops: [], tag: "b" };
+  add_either(sa, sb, "radial", true); add_either(sa, sb, "grad", false); add_either(sa, sb, "rgb", false);
+  b1e = sb.ops[1]?; a0 = sa.ops[0]?;
+  assert(len(sa.ops) == 1 && len(sb.ops) == 2 && a0.paint.pk == 3 && b1e.paint.c1 == 50, "b12 {len(sa.ops)} {len(sb.ops)}");
+  println("b12 {len(sa.ops)} {len(sb.ops)} {a0.paint.c1} {b1e.paint.pk}");
+}
+
+// b13 — a NO-HEAP record: the relocation is bytes only.
+fn mk_rgb(i: integer) -> Rgb {
+  if i % 3 == 0 { return Rgb { r: i, g: 0, b: 0 } }
+  if i % 3 == 1 { return Rgb { r: 0, g: i, b: 0 } }
+  Rgb { r: 0, g: 0, b: i }
+}
+fn add_px(row: Row, i: integer) {
+  c = mk_rgb(i);
+  row.px += [Pixel { c: c, x: i }];
+}
+fn b13() {
+  row = Row { px: [] };
+  for i in 0..30 { add_px(row, i); }
+  r = 0; g = 0; b = 0;
+  for p in row.px { r += p.c.r; g += p.c.g; b += p.c.b; }
+  assert(len(row.px) == 30 && r == 135 && g == 145 && b == 155, "b13 {r} {g} {b}");
+  println("b13 {len(row.px)} {r} {g} {b}");
+}
+
+// b14 — a TEXT-owning record: the handle keeps its claim across the relocation.
+fn mk_label(i: integer) -> Label {
+  if i % 2 == 0 { return Label { name: "even-{i}", n: i } }
+  Label { name: "odd-{i}", n: -i }
+}
+fn add_card(d: Deck, i: integer) {
+  l = mk_label(i);
+  d.cards += [Card { label: l, id: i * 10 }];
+}
+fn b14() {
+  d = Deck { cards: [] };
+  for i in 0..40 { add_card(d, i); }
+  n = 0; ev = 0; total = 0;
+  for c in d.cards {
+    n += c.label.n;
+    if c.label.name == "even-{c.id / 10}" { ev += 1; }
+    total += len(c.label.name);
+  }
+  assert(len(d.cards) == 40 && n == -20 && ev == 20 && total == 250, "b14 {n} {ev} {total}");
+  println("b14 {len(d.cards)} {n} {ev} {total}");
+}
+
+// b15 — the destination a field of a LOCAL record literal that is itself appended after:
+// the append copies the local, and the local stays writable.
+fn b15() {
+  sc = Sketch { ops: [], tag: "b15" };
+  pp = read_paint("radial");
+  o = Op { kind: 3, pts: [], paint: pp, w: 5 };
+  sc.ops += [o];
+  o.w = 6;
+  e = sc.ops[0]?;
+  assert(e.paint.pk == 3 && e.w == 5 && o.w == 6 && sum_spec(o.paint) == 4.0 && sum_spec(e.paint) == 4.0, "b15 {e.w} {o.w}");
+  println("b15 {e.paint.c1} {e.w} {o.w}");
+}
+
+fn main() {
+  b1(); b2(); b3(); b4(); b5(); b6(); b7(); b8(); b9(); b10(); b11(); b12(); b13(); b14(); b15();
+  println("ok");
+}

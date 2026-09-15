@@ -2602,6 +2602,12 @@ names through `Type::depend`, the keystone; the opaque column fell by one and th
 already counted, so one function lands in the wrapper-aware column: 814 → 815 total, 472 → 473
 aware, the opaque column and the ratchet unmoved.)
 
+(2026-09-15, @PLN164 B2 unit 1: `Parser::literal_exits_into_buffer` is new and reads the
+buffer's record definition through `.base().heap_def_nr()` — the peeling column: 817 · 475 ·
+6 · 336; the opaque column and the ratchet's pin (336 / 1317) do not move.  Its companion
+`for_each_return_mut` tells one `Value` variant apart through `unspan`, so the unspan row
+stays at 491 · 467 · 24.)
+
 (2026-09-15, loft#1530: `Parser::ref_tuple_subject` is new and asks the subject's `Type::RefVar`
 and `Type::Tuple` off a `.base()`, and `vector_element_cursor_deps` gained the same peeled ask, so
 both land in the wrapper-aware column: 812 → 814 total, 470 → 472 aware, the opaque column

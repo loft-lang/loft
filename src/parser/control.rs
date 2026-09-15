@@ -2565,6 +2565,9 @@ impl Parser {
                 // `formal/closures.md` D-clo-17).
                 let delivery = self.classify_reference_delivery(&t.base().depend(), l, context);
                 self.dispatch_reference_delivery(delivery, td, l);
+                if context == "return from block" {
+                    self.literal_exits_into_buffer(l);
+                }
             } else if crate::parser::vectors::is_keyed(t) {
                 // Enforces @FR-O-Move's second clause for the keyed kinds — *if the return
                 // borrows a parameter, the return type records it*.
@@ -3178,6 +3181,85 @@ impl Parser {
         Self::guard_literal_alloc(&mut l[last], work_ref, guard, db_nr);
         Self::substitute_work_ref(&mut l[last], work_ref, buf_var);
         self.vars.set_skip_free(work_ref);
+    }
+
+    /// @PLN164 B2 (`@FR-R-Place`, the callee clause) — once the tail's delivery is
+    /// decided: when the return buffer is still the unpromoted `__retbuf` and EVERY
+    /// mid-body exit is a fresh literal of its type, each `return S { … }` builds into
+    /// that buffer exactly as the tail literal does ([`Self::build_into_return_buffer`]),
+    /// so the callee answers ONE store whichever exit it takes — the precondition
+    /// `(R-Place)` states for handing a callee a record placed where its result will
+    /// live.  Decided HERE and not at the `return`, because the tail's promotion is not
+    /// known while a mid-body return is parsed: a promoted local (`o = P { … }; …; o`) IS
+    /// the buffer, and a literal exit written into it beside that local handed the caller
+    /// a stale ref to free (`164-adopt-first-bind` c3).  A function with any non-literal
+    /// mid-body exit keeps every per-exit store; the decline is always available.
+    fn literal_exits_into_buffer(&mut self, l: &mut [Value]) {
+        if !crate::keys::value_return_enabled() || !crate::keys::literal_exit_buffer_enabled() {
+            return;
+        }
+        let Some(buf_var) = self.unpromoted_return_buffer_var() else {
+            return;
+        };
+        if !self.record_is_fully_written_by_a_literal(buf_var) {
+            return;
+        }
+        let Some(td) = self.vars.tp(buf_var).base().heap_def_nr() else {
+            return;
+        };
+        let mut work_refs: Vec<u16> = Vec::new();
+        let mut all_literal = true;
+        for op in l.iter() {
+            op.walk(&mut |n| {
+                if let Value::Return(inner) = n {
+                    match Self::tail_fresh_object_workref(inner) {
+                        Some(w) if w == buf_var => {}
+                        Some(w)
+                            if self.vars.is_compiler_generated(w)
+                                && self.vars.tp(w).base().heap_def_nr() == Some(td) =>
+                        {
+                            work_refs.push(w);
+                        }
+                        _ => all_literal = false,
+                    }
+                }
+            });
+        }
+        if !all_literal || work_refs.is_empty() {
+            if crate::keys::trace_ret_promotion() && !work_refs.is_empty() {
+                eprintln!(
+                    "[retpromo] literal-exits fn={} DECLINED: an exit is not a fresh literal",
+                    self.data.def(self.context).name()
+                );
+            }
+            return;
+        }
+        for op in l.iter_mut() {
+            Self::for_each_return_mut(op, &mut |ret| {
+                if let Some(w) = Self::tail_fresh_object_workref(ret)
+                    && work_refs.contains(&w)
+                {
+                    self.build_into_return_buffer(std::slice::from_mut(ret), w, buf_var);
+                }
+            });
+        }
+        if crate::keys::trace_ret_promotion() {
+            eprintln!(
+                "[retpromo] literal-exits fn={} {} mid-body exit(s) built into `__retbuf`",
+                self.data.def(self.context).name(),
+                work_refs.len()
+            );
+        }
+    }
+
+    /// Every `Return` node under `v`, outermost first; a return's own body is not
+    /// descended (a literal exit has no return inside it).
+    fn for_each_return_mut<F: FnMut(&mut Value)>(v: &mut Value, f: &mut F) {
+        if matches!(v.unspan(), Value::Return(_)) {
+            f(v);
+            return;
+        }
+        v.for_each_child_mut(&mut |c| Self::for_each_return_mut(c, f));
     }
 
     /// @PLN157 § V — in the tail's `"Object"` block, drop the work-ref's null init and put

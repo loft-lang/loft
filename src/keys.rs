@@ -1017,6 +1017,15 @@ pub fn value_return_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VALUE_RETURN"))
 }
 
+/// `LOFT_NO_LITERAL_EXIT_BUFFER=1` keeps a mid-body `return S { … }` building its record in
+/// a store of its own (@PLN164 B2, `@FR-R-Place`'s callee clause: a callee that on some exit
+/// answers a store other than the buffer it was handed cannot be placed) — the bisect step
+/// for a wrong record out of a callee with more than one literal exit.
+pub fn literal_exit_buffer_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LITERAL_EXIT_BUFFER"))
+}
+
 /// The two flag bits `OpCopyRecord` carries in its `tp` operand beside the type id, so
 /// a type id is at most `0x3FFF` (16 383 types — `debug_assert`ed where the parser sets a
 /// bit).  Every decoder masks with [`COPY_TP_MASK`]; a decoder that masks only one bit

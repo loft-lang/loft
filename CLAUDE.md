@@ -869,6 +869,12 @@ re-runs the walk after every image write and panics naming the type where the by
 disagree; `LOFT_TRACE_PREFILL=1` names each capture and each use — and a cell can pass
 without ever reaching the image, because on `--native` a literal's mint is a complete
 write that never prefills and a callee's buffer is minted once per caller activation.
+**`LOFT_NO_LITERAL_EXIT_BUFFER=1`** (@PLN164 B2, `@FR-R-Place`'s callee clause, parse
+time, BOTH backends) makes a mid-body `return S { … }` build its record in a store of its
+own again — with it off, every literal exit of a record function writes the `__retbuf`
+the caller handed, through the same null-guarded mint the TAIL literal has used since
+@PLN157 § V, so a callee with several literal exits answers ONE store — and is the first
+bisect step for a wrong record out of a callee with more than one literal exit.
 **`LOFT_NO_ELEMENT_FIRST=1`** (@PLN157 § V-z) makes a record-literal's vector field
 keep its temp-store build and deep copy again — with it off, a local vector consumed
 exactly once by one append is built INSIDE the appended element (minted at the temp's
