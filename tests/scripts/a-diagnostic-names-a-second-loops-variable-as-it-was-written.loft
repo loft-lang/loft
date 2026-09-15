@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A second loop over one name binds `f#1`, a third `f#2` — the native backend declares a local
+// per name — and a diagnostic about that variable said so: "copy of R — `f#1` is still used after
+// this point".  The author wrote `f`; `f` is what they can find and type back.  The name a person
+// reads now comes from one place, `Variables::written_name`, which the avoidable-copy advice, the
+// editor's extract-function edit and the `x#break` diagnostic all read.
+//
+// @falsified-at: 94ad85606 — interpret and native both print "copy of R — `f#1` is still used …"
+//   and "copy of Q — `f#2` is still used …", so neither `@EXPECT_WARNING` below matches.
+//   CHANNEL: expectations — measured by hand, because `make falsify` scores exit, asserts, leak,
+//   panic and refusals and reads INERT here: every value is the same on both trees.
+//   ARMED: nothing.
+//   WITNESS: the same two lines on the installed 2026.9.0 build, so the leak predates the branch.
+//   HOLDS: the first loop over `f` still moves (no advice) on both trees; all four asserts pass
+//   on both backends.
+//
+// @EXPECT_WARNING: copy of R — `f` is still used after this point, so it could not be moved
+// @EXPECT_WARNING: copy of Q — `f` is still used after this point, so it could not be moved
+
+struct R { id: integer, ws: vector<integer> }
+struct Q { id: integer, ks: vector<integer> }
+
+fn mk_r(n: integer) -> vector<R> {
+  out: vector<R> = [];
+  for i in 0..n { out += [R { id: i + 1, ws: [i] }]; }
+  out
+}
+
+fn mk_q(n: integer) -> vector<Q> {
+  out: vector<Q> = [];
+  for i in 0..n { out += [Q { id: (i + 1) * 10, ks: [i, i] }]; }
+  out
+}
+
+fn main() {
+  // The first loop over `f` binds the name itself and moves: no advice.
+  a: vector<R> = [];
+  for f in mk_r(2) { a += [f]; }
+  // The second binds `f#1`; `f` is read after the append, so the append copies.
+  b: vector<R> = [];
+  s = 0;
+  for f in mk_r(3) { b += [f]; s += f.id; }
+  // The third binds `f#2`.
+  c: vector<Q> = [];
+  t = 0;
+  for f in mk_q(2) { c += [f]; t += f.id; }
+  assert(len(a) == 2, "a: {len(a)}");
+  assert(len(b) == 3 && s == 6, "b: {len(b)} {s}");
+  assert(len(c) == 2 && t == 30, "c: {len(c)} {t}");
+  assert(len(c[1].ks) == 2 && c[1].ks[0] == 1, "c[1].ks: {len(c[1].ks)}");
+}

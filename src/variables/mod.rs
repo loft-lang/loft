@@ -1170,10 +1170,7 @@ impl Function {
         while c != u16::MAX {
             let v = self.loops[c as usize].variable;
             if v != u16::MAX {
-                let n = self.name(v);
-                // The parser mangles a shadowed loop variable to `i#1`; the author wrote
-                // the part before the `#`, and that is what they can type back.
-                let n = n.split('#').next().unwrap_or(n);
+                let n = self.written_name(v);
                 if !n.is_empty() && !out.iter().any(|s: &String| s == n) {
                     out.push(n.to_string());
                 }
@@ -1281,6 +1278,26 @@ impl Function {
             return "??";
         }
         &self.variables[var_nr as usize].name
+    }
+
+    /// The name as the author wrote it — for text a person reads (a diagnostic, an editor
+    /// edit).  A second loop over one name binds `f#1` ([`Self::loop_binding`]) because the
+    /// native backend declares a local per name; the author wrote `f`, and `f` is what they
+    /// can type back.  Only that numeric suffix is removed: `f#index` and `f#count` are
+    /// names the author writes themselves.
+    #[must_use]
+    pub fn written_name(&self, var_nr: u16) -> &str {
+        let name = self.name(var_nr);
+        match name.rsplit_once('#') {
+            Some((written, nr))
+                if !written.is_empty()
+                    && !nr.is_empty()
+                    && nr.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                written
+            }
+            _ => name,
+        }
     }
 
     pub fn set_scope(&mut self, var_nr: u16, scope: u16) {

@@ -2114,11 +2114,19 @@ pub fn extract_function(
     let ty = |v: u16| data.type_name_str(vars.tp(v));
     let params: Vec<String> = inputs
         .iter()
-        .map(|&v| format!("{}: {}", vars.name(v), ty(v)))
+        .map(|&v| format!("{}: {}", vars.written_name(v), ty(v)))
         .collect();
-    let out_names: Vec<String> = outputs.iter().map(|&v| vars.name(v).to_string()).collect();
+    // The selected lines are copied verbatim, so they spell each variable as the author wrote
+    // it (`f`, never the second loop's `f#1`); the signature and the call must match them.
+    let out_names: Vec<String> = outputs
+        .iter()
+        .map(|&v| vars.written_name(v).to_string())
+        .collect();
     let out_types: Vec<String> = outputs.iter().map(|&v| ty(v)).collect();
-    let args: Vec<String> = inputs.iter().map(|&v| vars.name(v).to_string()).collect();
+    let args: Vec<String> = inputs
+        .iter()
+        .map(|&v| vars.written_name(v).to_string())
+        .collect();
 
     // The selected source lines (verbatim) + the call-site indentation.
     let lines: Vec<&str> = text.lines().collect();

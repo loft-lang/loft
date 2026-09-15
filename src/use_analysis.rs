@@ -7116,7 +7116,7 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
             let src_name = if r.source == u16::MAX {
                 String::new()
             } else {
-                format!(" `{}`", def.variables.name(r.source))
+                format!(" `{}`", def.variables.written_name(r.source))
             };
             let msg = if src_name.is_empty() {
                 // No named source, so no fix attaches below — this branch KEEPS its
