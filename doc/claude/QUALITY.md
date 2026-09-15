@@ -480,7 +480,12 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 489 | 465 | **24** |
+| 491 | 467 | **24** |
+
+(2026-09-15, @PLN157 § V-ao: 491 · 467 · 24 — two sites added and both peel:
+`hoist::arith_chain`, which reads a chain's leaves and ops through their `Span`, and
+`non_sentinel::arg_var`, which reads a by-reference argument through its `Span` to see
+the `OpCreateStack` spelling the proof had missed, loft#1534.)
 
 (2026-09-15, THE JOINED TREE — this branch through loft#1532, ../loft2's drop-release arc through
 its loop-body parameter copy, and @PLN157 through § V-an: 489 · 465 · 24, re-measured rather than

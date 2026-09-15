@@ -1,0 +1,204 @@
+// @PLN157 § V-ao (`@FR-R-Invariant`) — an integer chain a loop cannot change is evaluated
+// at its first use and answered from a memo after: a chain of `+ - * neg & | ^` over
+// literals and variables the loop neither rebinds nor lets escape holds one value for the
+// loop's whole extent, so the first-use evaluation IS every later evaluation — the same
+// value on every path, the overflow note fired at the same point.  Every cell asserts its
+// hand-computed value, so both backends must answer it; tests/invariant_arith.rs pins the
+// EMISSION — which loop declares a memo, which spelling reads it, which leaf declines one.
+
+// m1 — the resample's tap shape: `(yy * iw + xmin + x) * 2 + ch` in the x loop, whose
+// invariant part `yy * iw + xmin` is one memo per x-loop entry; the write index in the ch
+// loop is another.
+fn m1() {
+  iw = 3;
+  ih = 2;
+  pre: vector<integer> = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  hk: vector<integer> = [10, 100, 1000];
+  xmin = 0;
+  n = 3;
+  out: vector<integer> = [0, 0, 0, 0];
+  for yy in 0..ih {
+    for ch in 0..2 {
+      acc = 0;
+      for x in 0..n { acc += pre[(yy * iw + xmin + x) * 2 + ch]? * hk[x]?; }
+      out[yy * 2 + ch] = acc;
+    }
+  }
+  // yy 0 ch 0: 1*10 + 3*100 + 5*1000; ch 1: 2*10 + 4*100 + 6*1000;
+  // yy 1 ch 0: 7*10 + 9*100 + 11*1000; ch 1: 8*10 + 10*100 + 12*1000
+  assert(out[0]? == 5310 && out[1]? == 6420 && out[2]? == 11970 && out[3]? == 13080, "m1 {out}");
+  println("m1 {out}");
+}
+
+// m2 — a leaf the body REBINDS: `k * 10` is no chain, and the value follows k.
+fn m2() {
+  k = 3;
+  s = 0;
+  for i in 0..4 { s += k * 10 + i; k = k + 1; }
+  // 30+0, 40+1, 50+2, 60+3
+  assert(s == 186, "m2 {s}");
+  println("m2 {s}");
+}
+
+fn bump(n: &integer) { n = n + 7; }
+
+// m3 — a leaf handed to a by-reference parameter inside the body ESCAPES: no memo, and
+// the value follows the callee's writes.
+fn m3() {
+  k = 1;
+  s = 0;
+  for i in 0..3 { s += k * 100 + i; bump(k); }
+  // 100+0, 800+1, 1500+2
+  assert(s == 2403, "m3 {s}");
+  println("m3 {s}");
+}
+
+// m4 — the chain OVERFLOWS: `big * 4` is null on every evaluation, so the memo holds the
+// null and every tap discharges it the same way.  Under LOFT_DEV_SOFT_HALT the note fires
+// where the first evaluation stands (tests/invariant_arith.rs counts the lines).
+fn m4() {
+  big = 4611686018427387904;
+  s = 0;
+  for i in 0..3 { s += (big * 4 + i) ?? 7; }
+  assert(s == 21, "m4 {s}");
+  println("m4 {s}");
+}
+
+// m5 — a ZERO-trip loop over an overflowing chain: nothing is evaluated, nothing noted.
+fn m5() {
+  big = 4611686018427387904;
+  s = 0;
+  n = 0;
+  for i in 0..n { s += (big * 4 + i) ?? 7; }
+  assert(s == 0, "m5 {s}");
+  println("m5 {s}");
+}
+
+// m6 — the chain stands AFTER a `continue` the first iteration takes: its first evaluation
+// is the second iteration's, and that is where the memo evaluates it.
+fn m6() {
+  big = 4611686018427387904;
+  s = 0;
+  for i in 0..2 { if i == 0 { continue; } s += (big * 4 + i) ?? 7; }
+  assert(s == 7, "m6 {s}");
+  println("m6 {s}");
+}
+
+// m7 — a nest: `a * b + i * 10` is invariant in the j loop (i is the OUTER counter, which
+// the j loop never rebinds) — one memo, declared at the j loop, re-evaluated per entry.
+fn m7() {
+  a = 6;
+  b = 7;
+  s = 0;
+  for i in 0..3 { for j in 0..2 { s += a * b + i * 10 + j; } }
+  // 6 * 42 + 10 * (0+0+1+1+2+2) + (0+1) * 3
+  assert(s == 315, "m7 {s}");
+  println("m7 {s}");
+}
+
+// m8 — one chain spelled TWICE in a body is one memo with two uses.
+fn m8() {
+  a = 5;
+  b = 9;
+  s = 0;
+  for i in 0..4 { s += a * b + i; s += a * b - i; }
+  // (45 + i) + (45 - i) = 90, four times
+  assert(s == 360, "m8 {s}");
+  println("m8 {s}");
+}
+
+// m9 — a `while` loop memoises the same way: no range shape is asked for.
+fn m9() {
+  a = 12;
+  b = 5;
+  i = 0;
+  s = 0;
+  while i < 4 { s += a * b - i; i += 1; }
+  // 60, 59, 58, 57
+  assert(s == 234, "m9 {s}");
+  println("m9 {s}");
+}
+
+// m10 — the chain in the loop's OWN test: `n * 4` is the range's end, read per iteration.
+fn m10() {
+  n = 3;
+  s = 0;
+  for x in 0..(n * 4) { s += x; }
+  // 0 + … + 11
+  assert(s == 66, "m10 {s}");
+  println("m10 {s}");
+}
+
+// m11 — a vector iteration: `a * b` is the memo, x the iterator variable.
+fn m11() {
+  v: vector<integer> = [1, 2, 3];
+  a = 4;
+  b = 25;
+  s = 0;
+  for x in v { s += x * (a * b); }
+  assert(s == 600, "m11 {s}");
+  println("m11 {s}");
+}
+
+// m12 — negation and the bitwise ops are chain ops: `((-a) & 255) | (b ^ 7)` is one memo.
+fn m12() {
+  a = 6;
+  b = 3;
+  s = 0;
+  for i in 0..3 { s += (((-a) & 255) | (b ^ 7)) + i; }
+  // (-6 & 255) = 250; 3 ^ 7 = 4; 250 | 4 = 254; three times, plus 0 + 1 + 2
+  assert(s == 765, "m12 {s}");
+  println("m12 {s}");
+}
+
+struct P { x: integer, y: integer }
+
+// m13 — a FIELD read is not a leaf (a callee could write the record; the scalar tier is
+// the one that answers that question): `p.x * p.y` takes no memo.
+fn m13() {
+  p = P { x: 3, y: 4 };
+  s = 0;
+  for i in 0..3 { s += p.x * p.y + i; }
+  assert(s == 39, "m13 {s}");
+  println("m13 {s}");
+}
+
+// m14 — parameters are leaves.
+fn m14(a: integer, b: integer) -> integer {
+  s = 0;
+  for i in 0..3 { s += (a + b) * 2 + i; }
+  s
+}
+
+fn twice(n: integer) -> integer { n * 2 }
+
+// m15 — a leaf handed to a FN-REF call as a bare argument escapes (the callee is unknown
+// to the walk): no memo, value right.
+fn m15() {
+  f = twice;
+  k = 4;
+  s = 0;
+  for i in 0..3 { s += k * 3 + i; s += f(k); }
+  // (12 + i) + 8, three times
+  assert(s == 63, "m15 {s}");
+  println("m15 {s}");
+}
+
+// m16 — a leaf rebound inside a NESTED loop is rebound for the outer one too.
+fn m16() {
+  k = 2;
+  s = 0;
+  for i in 0..3 { s += k * 10 + i; for j in 0..2 { k = k + 1; } }
+  // 20+0 (k 2), 40+1 (k 4), 60+2 (k 6)
+  assert(s == 123, "m16 {s}");
+  println("m16 {s}");
+}
+
+fn main() {
+  m1(); m2(); m3(); m4(); m5(); m6(); m7(); m8(); m9(); m10(); m11(); m12(); m13();
+  r = m14(10, 5);
+  // (15 * 2) * 3 + 0 + 1 + 2
+  assert(r == 93, "m14 {r}");
+  println("m14 {r}");
+  m15(); m16();
+}

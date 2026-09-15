@@ -672,6 +672,17 @@ pub struct Output<'a> {
     /// `(variable, field offset)` → the Rust local holding the value the prelude read
     /// once.  Pushed and popped beside [`Self::vec_headers`], one frame per `Value::Loop`.
     pub scalar_hoists: Vec<HashMap<hoist::ScalarKey, String>>,
+    /// @PLN157 § V-ao (`@FR-R-Invariant`) — the invariant integer chains of the enclosing
+    /// loops, innermost last: node address (a spelling's `Span` wrapper and its inner node
+    /// both) → the memo's `__ia_N` local and the chain its first use evaluates.  A chain an
+    /// enclosing frame holds is served from that frame.  Pushed and popped beside the
+    /// other hoist frames.
+    pub invariant_hoists: Vec<HashMap<usize, std::rc::Rc<(String, Value)>>>,
+    /// `LOFT_NO_INVARIANT_HOIST=1` — every invariant integer chain is evaluated at every
+    /// use again, as before @PLN157 § V-ao; the bisect step for a wrong index or a wrong
+    /// arithmetic value inside a loop on native.  `LOFT_HOIST_VERIFY=1` is the falsifier
+    /// (every use re-evaluates the chain and compares it with the memo).
+    pub invariant_hoist_disabled: bool,
     /// Per-definition memo behind [`hoist::may_write_store`], shared across every loop in
     /// the program so the call-graph walk runs once per callee.
     pub hoist_cache: HashMap<u32, bool>,
@@ -1746,6 +1757,9 @@ impl<'a> Output<'a> {
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
             scalar_hoist_disabled: std::env::var("LOFT_NO_SCALAR_HOIST").is_ok_and(|v| v != "0"),
+            invariant_hoists: Vec::new(),
+            invariant_hoist_disabled: std::env::var("LOFT_NO_INVARIANT_HOIST")
+                .is_ok_and(|v| v != "0"),
             fill_hoist_disabled: !crate::keys::fill_hoist_enabled(),
             view_hoist_disabled: std::env::var("LOFT_NO_VIEW_HOIST").is_ok_and(|v| v != "0"),
             wrapper_inline_disabled: std::env::var("LOFT_NO_WRAPPER_INLINE")
@@ -2422,6 +2436,44 @@ impl Output<'_> {
             lines.push(format!("let {name} = {operand};"));
             scalar_frame.insert(key, name);
         }
+        // @PLN157 § V-ao (`@FR-R-Invariant`) — each invariant integer chain the loop itself
+        // spells (a nested loop's are its own) takes a memo local pair here: the value, and
+        // whether its first use has evaluated it.  The first use evaluates the chain where it
+        // stands — the same value, the overflow note fired at the same point — and every
+        // later use answers the memo; the pair is declared at THIS loop so its flag is clear
+        // on every entry, the form LLVM peels the test out of.
+        let mut invariant_frame: HashMap<usize, std::rc::Rc<(String, Value)>> = HashMap::new();
+        if !self.invariant_hoist_disabled {
+            let trace = std::env::var("LOFT_TRACE_INVARIANT").is_ok();
+            for ch in hoist::invariant_chains(lp, self.data) {
+                if ch
+                    .nodes
+                    .iter()
+                    .any(|a| self.invariant_hoists.iter().any(|f| f.contains_key(a)))
+                {
+                    continue;
+                }
+                self.hoist_counter += 1;
+                let name = format!("__ia_{}", self.hoist_counter);
+                if trace {
+                    eprintln!(
+                        "invariant: {} loop {} memo {name}: {} ops, {} spelling(s)",
+                        self.data.def(self.def_nr).name(),
+                        lp.scope,
+                        ch.ops,
+                        ch.spellings
+                    );
+                }
+                lines.push(format!(
+                    "let mut {name}: i64 = i64::MIN; let mut {name}_set = false; //@PLN157 § V-ao invariant chain, {} ops",
+                    ch.ops
+                ));
+                let memo = std::rc::Rc::new((name, ch.chain));
+                for a in ch.nodes {
+                    invariant_frame.insert(a, memo.clone());
+                }
+            }
+        }
         let opened = !lines.is_empty();
         if opened {
             writeln!(w, "{{ //loft#885 loop-invariant vector headers")?;
@@ -2434,6 +2486,7 @@ impl Output<'_> {
         self.vec_headers.push(frame);
         self.vec_bases.push(base_frame);
         self.scalar_hoists.push(scalar_frame);
+        self.invariant_hoists.push(invariant_frame);
         self.push_headers.push(push_frame);
         self.mint_push_headers.push(mint_frame);
         Ok(opened)
@@ -2444,6 +2497,7 @@ impl Output<'_> {
         self.vec_headers.pop();
         self.vec_bases.pop();
         self.scalar_hoists.pop();
+        self.invariant_hoists.pop();
         self.push_headers.pop();
         self.mint_push_headers.pop();
         if opened {
@@ -2630,6 +2684,42 @@ impl Output<'_> {
             .iter()
             .rev()
             .find_map(|f| f.get(key).map(String::as_str))
+    }
+
+    /// @PLN157 § V-ao (`@FR-R-Invariant`) — the memo an enclosing loop holds for the chain
+    /// spelled at `node`, when one does.
+    #[must_use]
+    pub fn active_invariant(&self, node: &Value) -> Option<std::rc::Rc<(String, Value)>> {
+        let key = std::ptr::from_ref(node) as usize;
+        self.invariant_hoists
+            .iter()
+            .rev()
+            .find_map(|f| f.get(&key).cloned())
+    }
+
+    /// Emit a memoised chain's use: the first use evaluates the chain where it stands and
+    /// records it, every later use answers the memo.  Under `LOFT_HOIST_VERIFY=1` every use
+    /// evaluates the chain and asserts the memo agrees — the falsifier for a leaf the
+    /// admission wrongly called invariant.  The chain is emitted from the memo's own clone,
+    /// whose nodes no frame holds, so this cannot re-enter the substitution.
+    pub(super) fn emit_invariant_use(
+        &mut self,
+        w: &mut dyn Write,
+        memo: &(String, Value),
+    ) -> std::io::Result<()> {
+        let (name, chain) = memo;
+        if self.hoist_verify {
+            write!(w, "{{ let __c = (")?;
+            self.output_code_inner(w, chain)?;
+            write!(
+                w,
+                "); if !{name}_set {{ {name} = __c; {name}_set = true; }} assert!(__c == {name}, \"@FR-R-Invariant: memo {name} disagrees with a fresh evaluation\"); {name} }}"
+            )
+        } else {
+            write!(w, "{{ if !{name}_set {{ {name} = (")?;
+            self.output_code_inner(w, chain)?;
+            write!(w, "); {name}_set = true; }} {name} }}")
+        }
     }
 
     /// Whether this getter call reads a record scalar an enclosing loop hoisted

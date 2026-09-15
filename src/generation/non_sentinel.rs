@@ -227,31 +227,54 @@ fn scan_sets(v: &Value, data: &Data, vars: &HashMap<u16, bool>, acc: &mut HashMa
     v.for_each_child(&mut |c| scan_sets(c, data, vars, acc));
 }
 
-/// Every var something other than a `Set` could write: a bare `Var` handed
-/// to a `RefVar`-typed parameter (the callee writes through it — a by-VALUE
-/// scalar argument can never be written back), any bare `Var` given to a
-/// fn-ref call (the callee is unknown), a `TuplePut` destination, an `Iter`
-/// variable.  Composite shapes are walked through the exhaustive child
-/// iterator, so no site can be missed by a variant this match forgot.
-fn collect_escapes(data: &Data, v: &Value, escaped: &mut std::collections::HashSet<u16>) {
+/// The variable an argument names, through the spelling a by-reference argument takes:
+/// the parser lowers `f(k)` for a `&T` parameter to `f(OpCreateStack(k))`, so the bare
+/// `Var` is one spelling of two.  The proof read only the bare one (loft#1534) and so
+/// trusted a local the callee overwrote with the sentinel — `poison(k)` with
+/// `n = n * 4` left `k` null and the proven `k + 1` answered a number on native.
+fn arg_var(data: &Data, a: &Value) -> Option<u16> {
+    match a.unspan() {
+        Value::Var(nr) => Some(*nr),
+        Value::Call(d, args) if args.len() == 1 && data.def(*d).name() == "OpCreateStack" => {
+            match args[0].unspan() {
+                Value::Var(nr) => Some(*nr),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Every var something other than a `Set` could write: a `Var` handed to a
+/// `RefVar`-typed parameter, bare or through its `OpCreateStack` spelling (the
+/// callee writes through it — a by-VALUE scalar argument can never be written
+/// back), any `Var` given to a fn-ref call (the callee is unknown), a
+/// `TuplePut` destination, an `Iter` variable.  Composite shapes are walked
+/// through the exhaustive child iterator, so no site can be missed by a
+/// variant this match forgot.
+pub(super) fn collect_escapes(
+    data: &Data,
+    v: &Value,
+    escaped: &mut std::collections::HashSet<u16>,
+) {
     match v.unspan() {
         Value::Call(d_nr, args) => {
             let def = data.def(*d_nr);
             for (i, a) in args.iter().enumerate() {
-                if let Value::Var(nr) = a.unspan() {
+                if let Some(nr) = arg_var(data, a) {
                     let by_ref = def.attributes().get(i).is_some_and(|at| {
                         matches!(at.typedef.base(), crate::data::Type::RefVar(_))
                     });
                     if by_ref {
-                        escaped.insert(*nr);
+                        escaped.insert(nr);
                     }
                 }
             }
         }
         Value::CallRef(_, args) => {
             for a in args {
-                if let Value::Var(nr) = a.unspan() {
-                    escaped.insert(*nr);
+                if let Some(nr) = arg_var(data, a) {
+                    escaped.insert(nr);
                 }
             }
         }
