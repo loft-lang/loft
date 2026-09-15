@@ -425,10 +425,10 @@ where
 /// selected at parse / scope-analysis time and hardcoded into the
 /// opcode stream.
 ///
-/// **Currently dead code** — phase 3b lands the dispatcher that
-/// consumes this; until then no production caller exists.  The type
-/// is here so that downstream phases (3d codegen-embedding, 3e
-/// `Stitch::Reduce` runtime) have a stable shape.
+/// **Dead code** — no production caller: the dispatcher phase 3b landed
+/// selects on `QueueStitch` (`src/native.rs`) instead, and `par_fold` is backed by
+/// [`run_parallel_fold`] directly, not by `Stitch::Reduce`.  Kept only as
+/// the named shape the Plan-06 phases were written against.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stitch {
