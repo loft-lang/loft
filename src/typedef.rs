@@ -1312,7 +1312,7 @@ pub(crate) fn fill_database(data: &mut Data, database: &mut Stores, d_nr: u32) {
                     database.trie(c_tp, &key)
                 }
                 Type::Enum(t, _, _) if data.def(t).name == "enumerate" => database.byte(0, false),
-                Type::Function(_, _, _) => {
+                Type::Function(..) => {
                     // P213: when a capturing-lambda assignment has been
                     // seen at this attribute (its d_nr recorded on
                     // `assigned_lambda_d_nr` during first-pass parsing

@@ -294,7 +294,7 @@ impl Output<'_> {
             {
                 format!("&*({val_expr})")
             } else if let Value::CallRef(v_nr, _) = val.unspan()
-                && let Type::Function(_, ret, _) = self.data.def(self.def_nr).variables().tp(*v_nr)
+                && let Type::Function(_, ret, ..) = self.data.def(self.def_nr).variables().tp(*v_nr)
                 && matches!(ret.base(), Type::Text(_))
             {
                 format!("&*({val_expr})")

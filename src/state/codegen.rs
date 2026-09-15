@@ -800,7 +800,7 @@ impl State {
                     stack.add_op("OpVarRef", self);
                     self.code_add(var_pos);
                     match elem_tp.base() {
-                        Type::Integer(_) | Type::Function(_, _, _) => {
+                        Type::Integer(_) | Type::Function(..) => {
                             stack.add_op("OpGetInt", self);
                         }
                         Type::Float => stack.add_op("OpGetFloat", self),
@@ -860,7 +860,7 @@ impl State {
                     // truncate the closure half.  OpVarFnRef pushes
                     // the full 20 B (with the same +4 stack tracker
                     // bump generate_var uses for plain Function vars).
-                    Type::Function(_, _, _) => {
+                    Type::Function(..) => {
                         stack.add_op("OpVarFnRef", self);
                         // @PLAN53 S4: 20B fn-ref push − 16B `text` account.
                         stack.position += stack.fnref_signature_gap();
@@ -922,7 +922,7 @@ impl State {
                     self.code_add(var_pos);
                     self.generate_node(value, stack, false);
                     match elem_tp.base() {
-                        Type::Integer(_) | Type::Function(_, _, _) => {
+                        Type::Integer(_) | Type::Function(..) => {
                             stack.add_op("OpSetInt", self);
                         }
                         Type::Float => stack.add_op("OpSetFloat", self),
@@ -957,7 +957,7 @@ impl State {
                 // `fn_call_ref: fn_var=16 < 20` and `--native` emitted `var_t.0 = 711_i64`
                 // against a `(u32, DbRef)` slot, failing with a raw rustc E0308.  A
                 // CAPTURING lambda already pushes the pair and is unchanged.
-                if matches!(elem_tp.base(), Type::Function(_, _, _)) {
+                if matches!(elem_tp.base(), Type::Function(..)) {
                     self.gen_fn_ref_value_node(value, stack);
                 } else {
                     self.generate_node(value, stack, false);
@@ -990,7 +990,7 @@ impl State {
                     // signature pops 16 B (`text`) but the runtime
                     // actually pops 20 B; mirror gen_set_first_at_tos's
                     // `fnref_signature_gap` correction.
-                    Type::Function(_, _, _) => {
+                    Type::Function(..) => {
                         stack.add_op("OpPutFnRef", self);
                         stack.position -= stack.fnref_signature_gap(); // @PLAN53 S4 fn-ref
                     }
@@ -1352,7 +1352,7 @@ impl State {
     ) {
         for (e, item) in elems.iter().zip(items.iter()) {
             match e.base() {
-                Type::Function(_, _, _) => self.gen_fn_ref_value(item, stack),
+                Type::Function(..) => self.gen_fn_ref_value(item, stack),
                 Type::Tuple(inner) if inner.iter().any(crate::data::tuple_carries_fn_ref) => {
                     if let Value::Tuple(inner_items) = item.unspan()
                         && inner_items.len() == inner.len()
@@ -1384,10 +1384,7 @@ impl State {
     /// path in `gen_fn_ref_value`.  `before` is `stack.position` captured before
     /// the return value was generated.
     fn pad_fn_ref_return(&mut self, stack: &mut Stack, before: u16) {
-        let return_is_fn = matches!(
-            stack.data.def(stack.def_nr).returned(),
-            Type::Function(_, _, _)
-        );
+        let return_is_fn = matches!(stack.data.def(stack.def_nr).returned(), Type::Function(..));
         if return_is_fn && stack.position.saturating_sub(before) < 16 {
             self.emit_push_sentinel(stack);
         }
@@ -1669,7 +1666,7 @@ impl State {
                 // P249 — fn-ref slot is 20 B; OpVarFnRef pushes the
                 // full layout (8 B d_nr + 12 B closure DbRef) with a
                 // +4 stack tracker bump for the signature mismatch.
-                Type::Function(_, _, _) => {
+                Type::Function(..) => {
                     stack.add_op("OpVarFnRef", self);
                     stack.position += stack.fnref_signature_gap(); // @PLAN53 S4 fn-ref
                 }
@@ -1722,7 +1719,7 @@ impl State {
                 // OpPutFnRef's signature pops 16 B (`text`) but the
                 // runtime pops 20; mirror gen_set_first_at_tos's
                 // `fnref_signature_gap` correction.
-                Type::Function(_, _, _) => {
+                Type::Function(..) => {
                     stack.add_op("OpPutFnRef", self);
                     stack.position -= stack.fnref_signature_gap(); // @PLAN53 S4 fn-ref
                 }
@@ -1756,7 +1753,7 @@ impl State {
                 continue;
             }
             match elem.base() {
-                Type::Integer(_) | Type::Function(_, _, _) => {
+                Type::Integer(_) | Type::Function(..) => {
                     stack.add_op("OpConstInt", self);
                     self.code_add(0i64);
                 }
@@ -1798,7 +1795,7 @@ impl State {
             }
             let pos = stack.position - elem_abs;
             match elem.base() {
-                Type::Integer(_) | Type::Function(_, _, _) => stack.add_op("OpPutInt", self),
+                Type::Integer(_) | Type::Function(..) => stack.add_op("OpPutInt", self),
                 Type::Boolean => stack.add_op("OpPutBool", self),
                 Type::Single => stack.add_op("OpPutSingle", self),
                 Type::Float => stack.add_op("OpPutFloat", self),
@@ -2980,7 +2977,7 @@ impl State {
                 // pops 20 B; mirror gen_set_first_at_tos's
                 // `fnref_signature_gap` correction (op signature
                 // declares 16 B / `text` but the runtime pops 20).
-                Type::Function(_, _, _) => {
+                Type::Function(..) => {
                     stack.add_op("OpPutFnRef", self);
                     stack.position -= stack.fnref_signature_gap(); // @PLAN53 S4 fn-ref
                 }
@@ -3238,7 +3235,7 @@ impl State {
             self.gen_set_first_keyed_null(stack, v);
         } else if matches!(stack.function.tp(v), Type::Tuple(_)) && *value == Value::Null {
             self.gen_set_first_tuple_null(stack, v);
-        } else if matches!(stack.function.tp(v), Type::Function(_, _, _)) {
+        } else if matches!(stack.function.tp(v), Type::Function(..)) {
             // Plan-04 Phase B.3 atomic bundle: push the 20-byte fn-ref
             // value (8B d_nr + 12B closure DbRef) then OpPutFnRef at v's
             // slot.  `OpPutFnRef`'s stdlib signature pops a 16-byte
@@ -3930,7 +3927,7 @@ impl State {
         // for that sentinel, so non-capturing lambdas are safe.
         if stack.data.def(op).name() == "OpFreeRef"
             && let Some(Value::Var(v)) = parameters.first()
-            && matches!(stack.function.tp(*v), Type::Function(_, _, _))
+            && matches!(stack.function.tp(*v), Type::Function(..))
         {
             let var_pos = stack.var_pos(*v);
             stack.add_op("OpVarRef", self);
@@ -4006,7 +4003,7 @@ impl State {
                     && let Value::TupleGet(tvar, tidx) = parameters[a_nr].unspan()
                     && let Type::Tuple(elems) = stack.function.tp(*tvar).clone()
                     && (*tidx as usize) < elems.len()
-                    && matches!(elems[*tidx as usize].base(), Type::Function(_, _, _))
+                    && matches!(elems[*tidx as usize].base(), Type::Function(..))
                 {
                     // #493 — a fn-ref TUPLE ELEMENT stored into a 4-byte d_nr
                     // struct field (OpSetInt4): project only the 8-byte d_nr, not
@@ -4045,8 +4042,7 @@ impl State {
                     // pushes only the d_nr (8), so pad the closure half.  Both halves
                     // are target-independent, unlike the `text` slot the fn-ref OPS
                     // are declared with (see `Stack::fnref_signature_gap`).
-                    if matches!(a.typedef, Type::Function(_, _, _))
-                        && stack.position - stack_before < 16
+                    if matches!(a.typedef, Type::Function(..)) && stack.position - stack_before < 16
                     {
                         self.emit_push_sentinel(stack);
                     }
@@ -4449,7 +4445,7 @@ impl State {
         v_nr: u16,
         args: IrNodeList,
     ) -> Type {
-        let Type::Function(param_types, ret_type, _) = stack.function.tp(v_nr).clone() else {
+        let Type::Function(param_types, ret_type, ..) = stack.function.tp(v_nr).clone() else {
             panic!("generate_call_ref: variable is not Type::Function");
         };
         let ret_type = *ret_type;
@@ -4469,7 +4465,7 @@ impl State {
         // first-Set path use, so the three spellings of "put a fn-ref in a 20-byte slot"
         // cannot drift (loft#1069's family).
         for (i, arg) in args.iter().enumerate() {
-            if i < param_types.len() && matches!(param_types[i].base(), Type::Function(_, _, _)) {
+            if i < param_types.len() && matches!(param_types[i].base(), Type::Function(..)) {
                 self.gen_fn_ref_value_node(arg, stack);
             } else {
                 self.generate_node(arg, stack, false);
@@ -4525,7 +4521,7 @@ impl State {
         // storage) — peel the marker so each op-emission arm sees the base type.
         match stack.function.tp(variable).base() {
             Type::Integer(_) => stack.add_op("OpVarInt", self),
-            Type::Function(_, _, _) => {
+            Type::Function(..) => {
                 stack.add_op("OpVarFnRef", self);
                 // Post-2c fn-ref slot is 20 bytes, but OpVarFnRef's stdlib
                 // signature returns `text` (16 B Str).  Add the 4-byte
@@ -4623,7 +4619,7 @@ impl State {
             let tp = tp.base();
             // A fn-ref reads like `text` in the one respect this cares about: its op takes no
             // FIELD operand, because the blob sits at the link's own position.
-            let txt = matches!(tp, Type::Text(_) | Type::Function(_, _, _));
+            let txt = matches!(tp, Type::Text(_) | Type::Function(..));
             match tp {
                 Type::Integer(_) => stack.add_op("OpGetInt", self),
                 Type::Character => stack.add_op("OpGetCharacter", self),
@@ -4647,7 +4643,7 @@ impl State {
                 // EXIST, which is why this site could only be found once loft#1454 installed
                 // it — the fix moved the failure one step later rather than causing it
                 // (loft#1455).
-                Type::Function(_, _, _) => {
+                Type::Function(..) => {
                     stack.add_op("OpGetStackFnRef", self);
                     stack.position += stack.fnref_signature_gap();
                 }
@@ -4779,7 +4775,7 @@ impl State {
                 stack.add_op("OpFreeStack", self);
                 self.code_add(size as u8);
                 self.code_add(stack.position - to);
-            } else if matches!(&result, Type::Function(_, _, _)) && stack.position < after {
+            } else if matches!(&result, Type::Function(..)) && stack.position < after {
                 // a fn-ref block result is 16 bytes ([d_nr 4B][closure DbRef 12B]).
                 // If the block only pushed 4 bytes (d_nr via OpConstInt), pad to 16 with
                 // a null-ref sentinel so both branches of an if-else reach the join point
@@ -5083,7 +5079,7 @@ impl State {
             // excluded is the link INSTALL itself (`OpCreateStack(src)`), which gives the
             // variable its link and is not a fn-ref reaching a slot through one (loft#1454) —
             // it is the re-point above, and never reaches here.
-            if matches!(*tp, Type::Function(_, _, _)) {
+            if matches!(*tp, Type::Function(..)) {
                 self.gen_fn_ref_value_node(IrNode::Native(value), stack);
                 // AFTER the push: `var_pos` is relative to the current stack top, so the
                 // pair has to be on it already.  The runtime subtracts the popped span
@@ -5231,7 +5227,7 @@ impl State {
         // ran it, which is the backend split rather than a shared refusal.  A CAPTURING
         // lambda already pushes the pair (its closure block's type IS the function), so it
         // is unchanged — that case worked, and it is the shape being matched.
-        if matches!(stack.function.tp(var).base(), Type::Function(_, _, _))
+        if matches!(stack.function.tp(var).base(), Type::Function(..))
             && !matches!(value.unspan(), Value::Null)
         {
             self.gen_fn_ref_value(value, stack);
@@ -5256,7 +5252,7 @@ impl State {
         #[cfg(debug_assertions)]
         {
             let var_tp = stack.function.tp(var).clone();
-            if !matches!(var_tp, Type::Tuple(_) | Type::Function(_, _, _)) {
+            if !matches!(var_tp, Type::Tuple(_) | Type::Function(..)) {
                 let pushed = stack.position.saturating_sub(stack_before);
                 let slot = size(&var_tp, &Context::Variable);
                 // #493: the `pushed == slot` model holds ONLY for the RAW
@@ -5310,7 +5306,7 @@ impl State {
         // nullable local reassignment (`x: integer? = 5; x = 9`) panicked "Unknown var type".
         match stack.function.tp(var).base() {
             Type::Integer(_) => stack.add_op("OpPutInt", self),
-            Type::Function(_, _, _) => {
+            Type::Function(..) => {
                 stack.add_op("OpPutFnRef", self);
                 // Post-2c fn-ref slot is 20 bytes, but OpPutFnRef's stdlib
                 // signature pops `text` (16 B Str).  Subtract the 4-byte

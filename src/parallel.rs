@@ -1746,7 +1746,7 @@ pub(crate) fn read_tuple_at_wide(
                     buf.as_mut_ptr().add(arg_offset),
                     arg_sz,
                 );
-            } else if matches!(t, crate::data::Type::Function(_, _, _)) {
+            } else if matches!(t, crate::data::Type::Function(..)) {
                 // ARC.md A6.c — fn-ref vector elements are 4-byte
                 // d_nr in storage (`element_size(Type::Function) = 4`)
                 // but the worker's argument slot is 20 bytes

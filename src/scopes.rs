@@ -2997,7 +2997,7 @@ pub(crate) fn collect_fnref_targets(code: &Value, function: &Function) -> HashMa
     let mut out: HashMap<u16, u32> = HashMap::new();
     code.walk(&mut |v| {
         let Value::Set(var, rhs) = v else { return };
-        if !matches!(function.tp(*var).base(), Type::Function(_, _, _)) {
+        if !matches!(function.tp(*var).base(), Type::Function(..)) {
             return;
         }
         // Which definition this right-hand side names is read by
@@ -3038,7 +3038,7 @@ pub(crate) fn collect_fnref_captures(
     let mut out: HashMap<u16, Vec<(i32, u16)>> = HashMap::new();
     code.walk(&mut |v| {
         let Value::Set(var, rhs) = v else { return };
-        if !matches!(function.tp(*var).base(), Type::Function(_, _, _)) {
+        if !matches!(function.tp(*var).base(), Type::Function(..)) {
             return;
         }
         // The closure variable this assignment builds — named by the `FnRef` it yields, so a
@@ -6485,7 +6485,7 @@ fn arm_value_delivers_record(leaf: &Value, r: u16, function: &Function) -> bool 
         // record unfreed on every omitting path.
         Value::Var(v) if (*v as usize) < function.count() as usize => {
             match function.tp(*v).base() {
-                Type::Function(_, _, deps) => deps.as_slice().contains(&r),
+                Type::Function(_, _, deps, ..) => deps.as_slice().contains(&r),
                 _ => true,
             }
         }
@@ -6976,7 +6976,7 @@ fn closure_records_of_source(data: &Data, function: &Function, v: u16, out: &mut
         // here: every entry of a def-space list names the CALLEE's attributes or the
         // CALLEE's frame, never a record of this function, so nothing it carries can pass
         // the caller's membership test (`85-closure-factory-discarded-free`).
-        Type::Function(_, _, deps) => {
+        Type::Function(_, _, deps, ..) => {
             for w in deps.as_slice() {
                 if !out.contains(w) {
                     out.push(*w);
@@ -11822,7 +11822,7 @@ impl Scopes<'_> {
                     // caller read `internal error: invalid fn-ref`.  The interpreter answered
                     // correctly by accident, off eval-stack top, which is the same accident
                     // loft#957 names one carve-out earlier in this list.
-                    || matches!(tp.base(), Type::Function(_, _, _)))
+                    || matches!(tp.base(), Type::Function(..)))
                     && !matches!(tp.base(), Type::Iterator(_, _))
                 {
                     // loft#957 — the same eval-stack reliance P236 names above, for
@@ -12478,7 +12478,7 @@ impl Scopes<'_> {
             // free the closure DbRef embedded at offset+4 in a fn-ref slot.
             // The 16-byte fn-ref stack slot is reclaimed by FreeStack, but the closure
             // store record at offset+4 must be explicitly freed via OpFreeRef.
-            if let Type::Function(_, _, _) = function.tp(v) {
+            if let Type::Function(..) = function.tp(v) {
                 // fn-ref variables OWN their closure store. The dep list
                 // tracks captured variables, not store borrowing. Always
                 // emit OpFreeRef unless the fn-ref is the return value.
@@ -12512,7 +12512,7 @@ impl Scopes<'_> {
                 // side never does.
                 let mut carried: Vec<u16> = Vec::new();
                 closure_records_of_source(data, function, v, &mut carried);
-                let link_carries = matches!(function.tp(v), Type::Function(_, _, _))
+                let link_carries = matches!(function.tp(v), Type::Function(..))
                     && carried.iter().any(|w| link_delivered.contains(w));
                 let in_ret = tp.depend().contains(&v)
                     || ret_carries
@@ -13305,7 +13305,7 @@ impl Scopes<'_> {
         if !callee.is_loft_defined() {
             return None;
         }
-        if matches!(callee.returned().base(), Type::Function(_, _, _)) {
+        if matches!(callee.returned().base(), Type::Function(..)) {
             return None;
         }
         if !callee.returns_borrowed_view() {
@@ -13371,7 +13371,7 @@ impl Scopes<'_> {
         // heap returns alone — the shape test below names them — so the ownership question
         // is asked only of a callee that has one.  Without the gate, `fn make_adder(b) ->
         // fn(integer) -> integer` tripped that assert before any of its own work ran.
-        if matches!(callee.returned().base(), Type::Function(_, _, _)) {
+        if matches!(callee.returned().base(), Type::Function(..)) {
             return None;
         }
         if !callee.returns_borrowed_view() {
@@ -14969,7 +14969,7 @@ impl Scopes<'_> {
                         // name the closure the call reads.
                         Value::CallRef(fn_var, _) => !matches!(
                             function.tp(*fn_var),
-                            Type::Function(_, _, d) if d.is_empty()
+                            Type::Function(_, _, d, ..) if d.is_empty()
                         ),
                         _ => false,
                     },
@@ -15168,10 +15168,10 @@ impl Scopes<'_> {
                 // A non-capturing return carries the null closure sentinel → the free
                 // is a safe no-op; a borrowed fn-ref copy is marked `skip_free`
                 // elsewhere, so only a freshly produced closure is lifted here.
-                if let Type::Function(params, ret, _) = returned {
+                if let Type::Function(params, ret, _, consts) = returned {
                     return Some(Self::reopt(
                         opt,
-                        Type::Function(params.clone(), ret.clone(), Deps::none()),
+                        Type::Function(params.clone(), ret.clone(), Deps::none(), *consts),
                     ));
                 }
             }
@@ -16698,7 +16698,7 @@ impl Scopes<'_> {
                     // bytes of uninitialised stack as the closure half.  The `if` spelling of
                     // the identical choice is correct precisely because it IS hoisted, which
                     // gives both arms a `fn`-typed destination to be padded against.
-                    let is_fnref_result = matches!(block.result.base(), Type::Function(_, _, _));
+                    let is_fnref_result = matches!(block.result.base(), Type::Function(..));
                     let mut hoist_tmp: Option<u16> = None;
                     if is_return
                         && (!free.is_empty() || !trailing_frees.is_empty())

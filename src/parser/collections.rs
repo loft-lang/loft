@@ -599,7 +599,7 @@ impl Parser {
                         // `get_val(Tuple, …)` falls through the field-
                         // type dispatch and errors with "Field access
                         // not supported on type tuple([…])".
-                    } else if matches!(*vtp.clone(), Type::Function(_, _, _)) {
+                    } else if matches!(*vtp.clone(), Type::Function(..)) {
                         // @P343: vector-of-fn-ref element read.  Mirror the
                         // working index-apply path (parser/fields.rs:730-752)
                         // — vector elements store only the 4-byte d_nr, so
@@ -1606,7 +1606,7 @@ impl Parser {
         //   * a vector element → `fn_ref_slot_dnr`, the same four-byte projection the
         //     vector literal writes, behind the same #247 capture refusal.
         if op == "="
-            && matches!(f_type.base(), Type::Function(_, _, _))
+            && matches!(f_type.base(), Type::Function(..))
             && let Some((host, pos, split)) = self.fn_ref_place(to)
         {
             // The host may be named directly (`Reference`) or through a `&` parameter
@@ -3708,8 +3708,7 @@ use #count instead"
                     v_block(vec![Value::Break(0)], Type::Void, "break"),
                     Value::Null,
                 ));
-            } else if matches!(in_type, Type::Vector(_, _))
-                && matches!(&var_tp, Type::Function(_, _, _))
+            } else if matches!(in_type, Type::Vector(_, _)) && matches!(&var_tp, Type::Function(..))
             {
                 // @P343: a `vector<fn(...)>` loop terminates by testing the
                 // d_nr half of the loop's fn-ref (see the
@@ -4530,7 +4529,7 @@ use #count instead"
             // write the 20-byte fn-ref into per-worker output
             // slots; main thread copies bytes back via the
             // execute_at_raw_to path in run_parallel_direct.
-            let is_fn_ref = matches!(ret_type, Type::Function(_, _, _));
+            let is_fn_ref = matches!(ret_type, Type::Function(..));
             if !self.first_pass && fn_d_nr != u32::MAX && (sz == 0 || (sz > 8 && !is_fn_ref)) {
                 diagnostic!(
                     self.lexer,
@@ -4579,7 +4578,7 @@ use #count instead"
                 && let Some(n) = spec.vector_narrow_width(false)
             {
                 i32::from(n)
-            } else if matches!(elem_tp, Type::Function(_, _, _)) {
+            } else if matches!(elem_tp, Type::Function(..)) {
                 // Plan-06 phase 4d.A.2 — fn-ref vector storage is
                 // 4-byte i32 d_nr (matches `data::element_stack_size(Type::Function)`).
                 // The known_type / db_size lookup below would return
@@ -4718,7 +4717,7 @@ use #count instead"
             Type::Text(_)
                 | Type::Reference(_, _)
                 | Type::Enum(_, true, _)
-                | Type::Function(_, _, _)
+                | Type::Function(..)
                 | Type::Vector(_, _)
                 | Type::Unknown(_)
         );
@@ -4777,7 +4776,7 @@ use #count instead"
         // body substitution diverges below to emit
         // `Set(b_var, Call(buf_get_fn, [idx]))` per iteration
         // instead of inline-expanding b_var via replace_var_in_ir.
-        let early_route_fn_queue = matches!(ret_type, Type::Function(_, _, _))
+        let early_route_fn_queue = matches!(ret_type, Type::Function(..))
             && fn_d_nr != u32::MAX
             && queue_fn_d_nr != u32::MAX
             && buf_get_fn_d_nr != u32::MAX
@@ -5012,7 +5011,7 @@ use #count instead"
             Type::Text(_)
                 | Type::Reference(_, _)
                 | Type::Enum(_, true, _)
-                | Type::Function(_, _, _)
+                | Type::Function(..)
                 | Type::Vector(_, _)
                 | Type::Unknown(_)
         );
@@ -5149,7 +5148,7 @@ use #count instead"
             && queue_ref_d_nr != u32::MAX
             && buf_get_ref_d_nr != u32::MAX
             && buf_drop_ref_d_nr != u32::MAX;
-        let route_fn_queue = matches!(ret_type, Type::Function(_, _, _))
+        let route_fn_queue = matches!(ret_type, Type::Function(..))
             && fn_d_nr != u32::MAX
             && queue_fn_d_nr != u32::MAX
             && buf_get_fn_d_nr != u32::MAX
@@ -5627,7 +5626,7 @@ use #count instead"
             // `fn(T) -> U` answering `vector<U>`.  Both passes must agree on it or the
             // BINDING reports "Variable 'v' cannot change type from vector<T> to
             // vector<U>" — which is how a perfectly good `map(xs, label)` was refused.
-            if let Some(Type::Function(_, ret, _)) = types.get(1)
+            if let Some(Type::Function(_, ret, ..)) = types.get(1)
                 && !ret.is_unknown()
                 && !matches!(**ret, Type::Void)
             {
@@ -5672,7 +5671,7 @@ use #count instead"
                 // cannot change type"*).  loft#1453's other half is the same complaint about
                 // `for`, so answering it here with a fresh recovery error would be the defect it
                 // fixes.  The lambda types cleanly now, so its return is available.
-                if let Type::Function(_, ret, _) = &types[1]
+                if let Type::Function(_, ret, ..) = &types[1]
                     && !matches!(**ret, Type::Void)
                 {
                     return Type::Vector(ret.clone(), crate::data::Deps::none());
@@ -5686,7 +5685,7 @@ use #count instead"
             );
             return placeholder;
         };
-        let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, _) = &types[1] {
+        let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, ..) = &types[1] {
             (params.clone(), *ret.clone())
         } else {
             diagnostic!(
@@ -5730,6 +5729,24 @@ use #count instead"
                  the long form `fn(x: <type>) -> <ret> {{ … }}` which declares its types"
             );
             return placeholder;
+        }
+        // loft#1540 — the elements of a const collection reach the callback's parameter only when
+        // it is `const` (a short lambda over a const subject is hinted so; see `lambda_hint`'s
+        // callers).
+        if !self.first_pass
+            && let Some(consts) = types.get(1).and_then(Type::function_consts)
+            && let Some(elem_param) = fn_param_types.first()
+        {
+            let elem_param = elem_param.clone();
+            self.report_const_argument(
+                &list[0],
+                &elem_param,
+                consts.is(0),
+                crate::parser::ConstHandOff::Callback {
+                    builtin: "map",
+                    nr: 0,
+                },
+            );
         }
         // accept both static fn-refs (Value::Int) and fn-ref variables/lambdas.
         let fn_d_nr = if let Value::Int(d) = &list[1] {
@@ -5851,7 +5868,7 @@ use #count instead"
             }
             return Err(placeholder);
         };
-        let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, _) = &types[1] {
+        let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, ..) = &types[1] {
             (params.clone(), *ret.clone())
         } else {
             diagnostic!(
@@ -5876,6 +5893,24 @@ use #count instead"
                 "filter: predicate must return boolean"
             );
             return Err(placeholder);
+        }
+        // loft#1540 — the elements of a const collection reach the callback's parameter only when
+        // it is `const` (a short lambda over a const subject is hinted so; see `lambda_hint`'s
+        // callers).
+        if !self.first_pass
+            && let Some(consts) = types.get(1).and_then(Type::function_consts)
+            && let Some(elem_param) = fn_param_types.first()
+        {
+            let elem_param = elem_param.clone();
+            self.report_const_argument(
+                &list[0],
+                &elem_param,
+                consts.is(0),
+                crate::parser::ConstHandOff::Callback {
+                    builtin: "filter",
+                    nr: 0,
+                },
+            );
         }
         // accept both static fn-refs and fn-ref variables/lambdas.
         let fn_d_nr = if let Value::Int(d) = &list[1] {
@@ -6642,7 +6677,7 @@ use #count instead"
             }
             return None;
         };
-        if let Type::Function(params, ret, _) = &types[1] {
+        if let Type::Function(params, ret, ..) = &types[1] {
             if params.len() != 1 && !self.first_pass {
                 diagnostic!(
                     self.lexer,
@@ -6664,6 +6699,23 @@ use #count instead"
                 "{name}: second argument must be a function reference (use fn <name>)"
             );
             return None;
+        }
+        // loft#1540 — see the twin in `parse_map`.
+        if !self.first_pass
+            && let Some(fn_tp) = types.get(1)
+            && let Type::Function(params, _, _, consts) = fn_tp.base()
+            && let Some(elem_param) = params.first()
+        {
+            let (consts, elem_param) = (*consts, elem_param.clone());
+            self.report_const_argument(
+                &list[0],
+                &elem_param,
+                consts.is(0),
+                crate::parser::ConstHandOff::Callback {
+                    builtin: name,
+                    nr: 0,
+                },
+            );
         }
         // Accept both a static fn-ref (`Value::Int`) and a fn-ref VALUE (a capturing lambda
         // or a fn-ref variable); the caller picks `Call` or `CallRef` off this.

@@ -62,7 +62,7 @@ fn tuple_first_arg_types(def: &crate::data::Definition) -> Option<Vec<crate::dat
     let first = def.attributes.first()?;
     match &first.typedef {
         crate::data::Type::Tuple(elems) => Some(elems.clone()),
-        crate::data::Type::Function(_, _, _) => Some(vec![first.typedef.clone()]),
+        crate::data::Type::Function(..) => Some(vec![first.typedef.clone()]),
         _ => None,
     }
 }
@@ -80,7 +80,7 @@ fn input_kind_for_first_arg(def: &crate::data::Definition) -> InputKind {
         Type::Boolean | Type::Enum(_, false, _) => InputKind::Primitive { size: 1 },
         Type::Single | Type::Character => InputKind::Primitive { size: 4 },
         Type::Integer(_) | Type::Float => InputKind::Primitive { size: 8 },
-        Type::Function(_, _, _) | Type::Tuple(_) => {
+        Type::Function(..) | Type::Tuple(_) => {
             let sz = crate::variables::size(&first.typedef, &crate::data::Context::Argument);
             if (sz as usize) <= INPUT_PRIMITIVE_MAX_BYTES && sz > 0 {
                 InputKind::Primitive { size: sz as u8 }

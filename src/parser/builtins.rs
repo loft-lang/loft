@@ -665,7 +665,7 @@ impl Parser {
             );
             return Type::Unknown(0);
         }
-        let (worker_arg_types, worker_ret_type) = if let Type::Function(args, ret, _) = &types[0] {
+        let (worker_arg_types, worker_ret_type) = if let Type::Function(args, ret, ..) = &types[0] {
             (args.clone(), (**ret).clone())
         } else {
             diagnostic!(
@@ -836,7 +836,7 @@ impl Parser {
             return Type::Unknown(0);
         }
         // V1: fold must be fn(integer, integer) -> integer.
-        let (fn_args, fn_ret) = if let Type::Function(args, ret, _) = &types[2] {
+        let (fn_args, fn_ret) = if let Type::Function(args, ret, ..) = &types[2] {
             (args.clone(), (**ret).clone())
         } else {
             diagnostic!(

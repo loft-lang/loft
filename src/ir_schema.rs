@@ -218,7 +218,7 @@ fn write_type(out: &mut String, ty: &Type) {
             write_u16_list(out, dep);
             out.push('}');
         }
-        Type::Function(args, result, dep) => {
+        Type::Function(args, result, dep, consts) => {
             out.push_str("{\"k\":\"Function\",\"args\":[");
             for (i, a) in args.iter().enumerate() {
                 if i > 0 {
@@ -230,6 +230,7 @@ fn write_type(out: &mut String, ty: &Type) {
             write_type(out, result);
             out.push_str(",\"dep\":");
             write_u16_list(out, dep);
+            let _ = write!(out, ",\"consts\":{}", consts.bits());
             out.push('}');
         }
         Type::Rewritten(inner) => {
@@ -438,6 +439,7 @@ fn type_from_parsed(p: &Parsed) -> Result<Type, TypeDecodeError> {
             type_list(field(p, "args")?)?,
             Box::new(type_from_parsed(field(p, "result")?)?),
             deps(field(p, "dep")?)?,
+            crate::data::ConstParams::from_bits(as_u32(field(p, "consts")?)?),
         ),
         "Rewritten" => Type::Rewritten(Box::new(type_from_parsed(field(p, "t")?)?)),
         "Tuple" => Type::Tuple(type_list(field(p, "elems")?)?),
@@ -1627,6 +1629,7 @@ mod tests {
                 vec![Type::Integer(IntegerSpec::wide()), Type::Text(Deps::none())],
                 Box::new(Type::Boolean),
                 Deps::unknown(vec![0]),
+                crate::data::ConstParams::from_bits(0b10),
             ),
             Type::Rewritten(Box::new(Type::Text(Deps::none()))),
             Type::Tuple(vec![
@@ -1741,8 +1744,9 @@ mod tests {
                 vec![Type::Boolean, Type::Float],
                 Box::new(Type::Null),
                 Deps::none(),
+                crate::data::ConstParams::NONE,
             )),
-            r#"{"k":"Function","args":[{"k":"Boolean"},{"k":"Float"}],"result":{"k":"Null"},"dep":[]}"#
+            r#"{"k":"Function","args":[{"k":"Boolean"},{"k":"Float"}],"result":{"k":"Null"},"dep":[],"consts":0}"#
         );
     }
 
@@ -2023,7 +2027,12 @@ mod tests {
             Value::FnRef(
                 -1,
                 u16::MAX,
-                Box::new(Type::Function(vec![], Box::new(Type::Null), Deps::none())),
+                Box::new(Type::Function(
+                    vec![],
+                    Box::new(Type::Null),
+                    Deps::none(),
+                    crate::data::ConstParams::NONE,
+                )),
             ),
         ];
         for v in &samples {

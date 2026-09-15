@@ -459,7 +459,7 @@ impl Output<'_> {
                 // and a wrap around the whole `if` would leave both arms a bare `i64`.  A
                 // CAPTURING lambda already emits the pair and is not a bare `Int`, so it is
                 // untouched — which is why this hid behind the shape people write first.
-                let needs_fn_pair = matches!(inner_slot, Type::Function(_, _, _));
+                let needs_fn_pair = matches!(inner_slot, Type::Function(..));
                 if amp_owned_writeback {
                     write!(w, "{{ let _old_disp = *var_{name}; *var_{name} = ")?;
                 } else {
@@ -532,7 +532,7 @@ impl Output<'_> {
                     // `Optional` symptom the paragraph above records verbatim: no arm
                     // matched, the bind emitted no right-hand side (`let mut var_pd: … =
                     // as …;`) and rustc reported that instead of the missing case.
-                    | Type::Function(_, _, _)
+                    | Type::Function(..)
                     // A value enum is one storage byte, `u8` in the frame and in a store,
                     // so its link is a `*mut u8` like any other scalar's.  Left out, the bind
                     // emitted no right-hand side.
@@ -638,7 +638,7 @@ impl Output<'_> {
                 // while a bare fn name or a non-capturing lambda carries only the d_nr.
                 // Asked through `fn_ref_context` like the parameter write-back, so an
                 // if-VALUED source builds the pair inside each arm (loft#1454).
-                let fn_link = matches!(inner.base(), Type::Function(_, _, _));
+                let fn_link = matches!(inner.base(), Type::Function(..));
                 write!(w, "unsafe {{ *var_{name} = ")?;
                 if bool_link {
                     write!(w, "u8::from(")?;
@@ -1608,7 +1608,7 @@ impl Output<'_> {
                 }
             } else {
                 // wrap plain Int or If-with-Int values assigned to Function vars.
-                let is_fn_ref_var = matches!(variables.tp(var), Type::Function(_, _, _));
+                let is_fn_ref_var = matches!(variables.tp(var), Type::Function(..));
                 let wrap_fn_ref = is_fn_ref_var && matches!(to, Value::Int(_));
                 if wrap_fn_ref {
                     write!(w, "(")?;

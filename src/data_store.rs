@@ -206,8 +206,9 @@ pub(crate) const TYHASH_N: u32 = 8;
 pub(crate) const TYHASH_NAMES: u32 = 4;
 pub(crate) const TYHASH_DEP: u32 = 16;
 pub(crate) const TYFUNC_ARGS: u32 = 4;
-pub(crate) const TYFUNC_RESULT: u32 = 8;
-pub(crate) const TYFUNC_DEP: u32 = 12;
+pub(crate) const TYFUNC_RESULT: u32 = 16;
+pub(crate) const TYFUNC_DEP: u32 = 20;
+pub(crate) const TYFUNC_CONSTS: u32 = 8; // loft#1540 — the `ConstParams` bits
 pub(crate) const TYREWRITTEN_INNER: u32 = 4;
 pub(crate) const TYTUPLE_ELEMS: u32 = 4;
 pub(crate) const TYOPTIONAL_INNER: u32 = 4; // @PLN25 `Optional(τ)` child (like RefVar)
@@ -1369,6 +1370,7 @@ mod tests {
         assert_eq!(pos(ids.ty_function, "args"), TYFUNC_ARGS);
         assert_eq!(pos(ids.ty_function, "result"), TYFUNC_RESULT);
         assert_eq!(pos(ids.ty_function, "dep"), TYFUNC_DEP);
+        assert_eq!(pos(ids.ty_function, "consts"), TYFUNC_CONSTS);
         assert_eq!(pos(ids.ty_rewritten, "inner"), TYREWRITTEN_INNER);
         assert_eq!(pos(ids.ty_tuple, "elems"), TYTUPLE_ELEMS);
         assert_eq!(pos(ids.ty_optional, "inner"), TYOPTIONAL_INNER);

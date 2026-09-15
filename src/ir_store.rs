@@ -185,11 +185,12 @@ fn write_type(stores: &mut Stores, slot: &Record, ty: &Type) {
             name_list(stores, slot, ds::TYHASH_NAMES, names);
             dep_list(stores, slot, ds::TYHASH_DEP, dep);
         }
-        Type::Function(args, result, dep) => {
+        Type::Function(args, result, dep, consts) => {
             slot.set_discriminant(stores, ds::TY_FUNCTION);
             type_list(stores, slot, ds::TYFUNC_ARGS, args);
             type_child(stores, slot, ds::TYFUNC_RESULT, result);
             dep_list(stores, slot, ds::TYFUNC_DEP, dep);
+            slot.set_field_int(stores, ds::TYFUNC_CONSTS, i64::from(consts.bits()));
         }
         Type::Rewritten(inner) => {
             slot.set_discriminant(stores, ds::TY_REWRITTEN);
@@ -1384,6 +1385,7 @@ mod tests {
                 Deps::unknown(vec![3]),
             )),
             Deps::unknown(vec![7]),
+            crate::data::ConstParams::from_bits(0b1),
         );
 
         let root = root_type_vector(&mut stores);

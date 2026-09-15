@@ -1045,7 +1045,7 @@ enum TypeT {
   TyIndex { n: integer, keys: vector<SortKey>, dep: vector<integer> },
   TySpacial { n: integer, names: vector<NameRef>, dep: vector<integer> },
   TyHash { n: integer, names: vector<NameRef>, dep: vector<integer> },
-  TyFunction { args: vector<TypeT>, result: vector<TypeT>, dep: vector<integer> },
+  TyFunction { args: vector<TypeT>, result: vector<TypeT>, dep: vector<integer>, consts: integer },
   TyRewritten { inner: vector<TypeT> }, TyTuple { elems: vector<TypeT> }
 }
 

@@ -188,7 +188,7 @@ fn collect_tuple_fn_refs(elems: &[Type], inner: &Value, calls: &mut HashSet<u32>
     }
     for (e, item) in elems.iter().zip(items.iter()) {
         match e.base() {
-            Type::Function(_, _, _) => collect_int_fn_refs(IrNode::Native(item), calls),
+            Type::Function(..) => collect_int_fn_refs(IrNode::Native(item), calls),
             Type::Tuple(nested) if nested.iter().any(crate::data::tuple_carries_fn_ref) => {
                 collect_tuple_fn_refs(nested, item, calls);
             }
@@ -253,7 +253,7 @@ fn collect_fn_ref_literals(
             // once.  Hand-rolled here and at four more sites across loft#1443/#1454/#1455
             // before the accessor reached this tree.
             let slot_tp = variables.tp(*var).peel_link();
-            if matches!(slot_tp, Type::Function(_, _, _) | Type::Routine(_)) {
+            if matches!(slot_tp, Type::Function(..) | Type::Routine(_)) {
                 collect_int_fn_refs(IrNode::Native(inner), calls);
             }
             // loft#1069 — a fn-ref stored into a TUPLE MEMBER. `t: (fn(…), integer) =
@@ -286,7 +286,7 @@ fn collect_fn_ref_literals(
             if let Type::Tuple(elems) = variables.tp(*var)
                 && elems
                     .get(*idx as usize)
-                    .is_some_and(|e| matches!(e.base(), Type::Function(_, _, _)))
+                    .is_some_and(|e| matches!(e.base(), Type::Function(..)))
             {
                 collect_int_fn_refs(IrNode::Native(inner), calls);
             }
@@ -328,7 +328,7 @@ fn collect_fn_ref_literals(
                 if idx < callee.attributes.len()
                     && matches!(
                         callee.attributes[idx].typedef,
-                        Type::Function(_, _, _) | Type::Routine(_)
+                        Type::Function(..) | Type::Routine(_)
                     )
                 {
                     collect_int_fn_refs(IrNode::Native(a), calls);
@@ -346,12 +346,12 @@ fn collect_fn_ref_literals(
         // place a lambda callee declares them.  Over-approximation is correctness-safe here
         // exactly as it is for @P299 and loft#1069 — it can only emit an unused candidate.
         Value::CallRef(v_nr, args) => {
-            if let Type::Function(param_types, _, _) = variables.tp(*v_nr) {
+            if let Type::Function(param_types, ..) = variables.tp(*v_nr) {
                 for (idx, a) in args.iter().enumerate() {
                     if idx < param_types.len()
                         && matches!(
                             param_types[idx].base(),
-                            Type::Function(_, _, _) | Type::Routine(_)
+                            Type::Function(..) | Type::Routine(_)
                         )
                     {
                         collect_int_fn_refs(IrNode::Native(a), calls);
@@ -405,7 +405,7 @@ pub fn reachable_functions(data: &Data, entry_defs: &[u32]) -> HashSet<u32> {
         // #263: a fn-ref returned as a bare d_nr is only a fn-ref literal when
         // this def's return type IS a fn-ref — otherwise an ordinary integer
         // return would be misread as a reachable fn d_nr.
-        let returns_fn = matches!(def.returned(), Type::Function(_, _, _) | Type::Routine(_));
+        let returns_fn = matches!(def.returned(), Type::Function(..) | Type::Routine(_));
         collect_fn_ref_literals(def.code(), data, def.variables(), &mut calls, returns_fn);
         for c in calls {
             if !reachable.contains(&c) {
@@ -1422,7 +1422,7 @@ pub fn rust_type(tp: &Type, context: &Context) -> String {
         | Type::Iterator(_, _) => "DbRef",
         Type::Routine(_) => "u32",
         // C39/A5.6: fn-ref carries d_nr + closure DbRef as a tuple.
-        Type::Function(_, _, _) => "(u32, DbRef)",
+        Type::Function(..) => "(u32, DbRef)",
         Type::Unknown(_) => "??",
         Type::Keys => "&[Key]",
         Type::Void => "()",
@@ -1643,7 +1643,7 @@ pub(super) fn default_native_value_in(tp: &Type, context: &Context) -> String {
         // `Str` sentinel, exactly like `text`) — without this it fell to the `0` catch-all.
         Type::Optional(inner) => default_native_value_in(inner, context),
         Type::Routine(_) => "0_u32".into(),
-        Type::Function(_, _, _) => "(0_u32, DbRef::NULL)".into(),
+        Type::Function(..) => "(0_u32, DbRef::NULL)".into(),
         Type::Reference(_, _)
         | Type::Vector(_, _)
         | Type::Sorted(_, _, _)
@@ -5380,7 +5380,7 @@ extern crate loft;"
                     // recurse into the closure-record struct first so
                     // its `t{N}` binding precedes the field emission,
                     // mirroring `fill_database`'s inline recursion.
-                    Type::Function(_, _, _) => (a.assigned_lambda_d_nr != u32::MAX)
+                    Type::Function(..) => (a.assigned_lambda_d_nr != u32::MAX)
                         .then(|| self.data.def(a.assigned_lambda_d_nr).closure_record())
                         .filter(|cr| *cr != u32::MAX)
                         .map(|cr| self.data.def(cr).known_type())
@@ -5853,7 +5853,7 @@ extern crate loft;"
             // `known_type` is `u16::MAX` → emits `db.vector(u16::MAX)`
             // which panics in `Stores::field`'s parent-tracking when the
             // wrapper struct is registered.
-            if matches!(c, Type::Function(_, _, _)) {
+            if matches!(c, Type::Function(..)) {
                 let narrow = self.stores.name("int<0,false>");
                 if narrow != u16::MAX {
                     // @P353: an empty `vector<fn(…)>` literal registers its
@@ -6117,7 +6117,7 @@ extern crate loft;"
             )?;
             return Ok(());
         }
-        if matches!(typedef, Type::Function(_, _, _)) {
+        if matches!(typedef, Type::Function(..)) {
             // Storage holds the 4-byte i32 d_nr.  When a capturing
             // closure was assigned to this attribute, the parser split
             // it into TWO database fields (`<attr>` +
@@ -6519,7 +6519,7 @@ extern crate loft;"
                 if vars.is_argument(v) || self.declared.contains(&v) {
                     continue;
                 }
-                if !matches!(vars.tp(v).base(), Type::Function(_, _, _)) {
+                if !matches!(vars.tp(v).base(), Type::Function(..)) {
                     continue;
                 }
                 use std::fmt::Write as _;

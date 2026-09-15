@@ -2054,7 +2054,7 @@ impl Parser {
             if elems.iter().any(crate::data::has_lifetime_concern)
                 || (self.par_worker_defs.contains(&self.context)
                     && u32::from(crate::variables::size(&result, &crate::data::Context::Argument)) > 8
-                    && !elems.iter().any(|e| matches!(e, crate::data::Type::Function(_, _, _)))));
+                    && !elems.iter().any(|e| matches!(e, crate::data::Type::Function(..)))));
         // @PLN85 generic-tuple-return-fix.md — a generic template whose return SHAPE
         // is already concrete (`-> (text, text)`, no `T` in any element) is not the
         // "T resolves later" case the skip guards; let it ride the same promotion the
@@ -2894,13 +2894,26 @@ impl Parser {
     pub(crate) fn parse_fn_type(&mut self, d_nr: u32) -> Type {
         let mut r_type = Type::Void;
         let mut args = Vec::new();
+        let mut consts = Vec::new();
         self.lexer.token("(");
         loop {
             if self.lexer.peek_token(")") {
                 break;
             }
+            // loft#1540 — `fn(const T)`: a parameter the function behind the reference may not
+            // write, so a value-const value can be handed through it (C124, D-bind-45).
+            let is_const = self.lexer.has_keyword("const");
+            if is_const && args.len() >= crate::data::ConstParams::LIMIT {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "A function type can declare `const` on its first {} parameters only",
+                    crate::data::ConstParams::LIMIT
+                );
+            }
             if let Some(tp) = self.parse_type_full(d_nr, false) {
                 args.push(tp);
+                consts.push(is_const);
             }
             if !self.lexer.has_token(",") {
                 break;
@@ -2912,7 +2925,12 @@ impl Parser {
         {
             r_type = tp2;
         }
-        Type::Function(args, Box::new(r_type), crate::data::Deps::none())
+        Type::Function(
+            args,
+            Box::new(r_type),
+            crate::data::Deps::none(),
+            crate::data::ConstParams::from_flags(consts),
+        )
     }
 
     // <type> ::= <identifier> [::<identifier>] [ '<' ( <sub_type> | <type> ) '>' ] [ <depend> ] [ '?' ]

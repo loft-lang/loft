@@ -57,7 +57,7 @@ enum ClosureShape {
 fn closure_shape(ret: &Type) -> ClosureShape {
     if matches!(ret, Type::Text(_)) {
         ClosureShape::Text
-    } else if matches!(ret, Type::Function(_, _, _)) {
+    } else if matches!(ret, Type::Function(..)) {
         ClosureShape::Fn
     } else if is_ref_return(ret) {
         ClosureShape::HeapRef
@@ -252,7 +252,7 @@ fn tuple_arg_prep(ctx: &EmitCtx<'_, '_>, fn_d_nr: u32, elem_size: i32) -> (Strin
     // stored (offset 0) — so read it, widen to `u32`, and pair with a NULL
     // closure.  Mirrors the working for-loop unpack
     // (`tests/generated/issues_p4d_a2_vector_fn_ref_for_loop.rs`).
-    if matches!(elem_attr.typedef, Type::Function(_, _, _)) {
+    if matches!(elem_attr.typedef, Type::Function(..)) {
         let prep = "let _ts = unsafe { &*cell.get() }.store(&elm); \
                     let _p = (_ts.get_i32_raw(elm.rec, elm.pos) as u32, DbRef::NULL); "
             .to_string();

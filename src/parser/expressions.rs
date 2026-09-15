@@ -1329,7 +1329,7 @@ impl Parser {
                 // closures already arrive as a Block ending in
                 // `FnRef(d_nr, closure_var, _)`, so no rewrite needed.
                 if let Type::Iterator(elem_tp, _) = &r_type
-                    && matches!(**elem_tp, Type::Function(_, _, _))
+                    && matches!(**elem_tp, Type::Function(..))
                 {
                     let unspanned = v.unspan().clone();
                     if let Value::Int(d_nr) = unspanned {
@@ -2228,7 +2228,7 @@ use a separate collection or add after the loop"
         // LITERAL refuses `Holder { f: null }` outright.  Without naming the exception the
         // assignment wrote d_nr `0` and the next call through the field SIGSEGV'd
         // (loft#1072: the literal and the assignment must accept the same values).
-        if matches!(s_type, Type::Null) && !matches!(f_type.base(), Type::Function(_, _, _)) {
+        if matches!(s_type, Type::Null) && !matches!(f_type.base(), Type::Function(..)) {
             return false;
         }
         // A narrowing integer store has its OWN diagnostic further down; running
@@ -3487,7 +3487,7 @@ use a separate collection or add after the loop"
                             Type::Reference(..)
                                 | Type::Tuple(_)
                                 | Type::Text(_)
-                                | Type::Function(_, _, _)
+                                | Type::Function(..)
                         ) =>
                 {
                     Some(src)
@@ -3688,7 +3688,7 @@ use a separate collection or add after the loop"
         // path marks its `__fn_ref_tmp` the same way).
         if op == "="
             && var_nr != u16::MAX
-            && matches!(&s_type, Type::Function(_, _, _))
+            && matches!(&s_type, Type::Function(..))
             && matches!(code, Value::Block(b) if b.name == "fn_ref_field_read")
         {
             self.vars.set_skip_free(var_nr);
@@ -8506,12 +8506,28 @@ use a separate collection or add after the loop"
                 // (`s.v[i]=`, `s.v.x=`, deeper): its value is read-only at every depth.
                 // A rebind/append of the field ITSELF (`s.v=` / `s.v+=`) is the outermost
                 // node — not flagged here — and is decided by the leaf-field block below.
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Cannot modify value-const field '{}'; its value is read-only",
-                    frozen
-                );
+                // loft#1540 — a closure reaches a capture through its record (`__closure_N.x`),
+                // and a capture of a read-only value is a value-const field of that record; the
+                // author wrote the captured NAME, so that is what the message names.
+                if let Some((_, captured)) = frozen
+                    .strip_prefix("__closure_")
+                    .and_then(|rest| rest.split_once('.'))
+                {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot modify '{captured}' from a closure: the value it captures is \
+                         read-only where '{captured}' is bound — change a local copy instead, or \
+                         drop the `const` that makes it read-only"
+                    );
+                } else {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot modify value-const field '{}'; its value is read-only",
+                        frozen
+                    );
+                }
             }
         }
         if let Value::Call(_, vars) = to.unspan()

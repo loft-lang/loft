@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1540 — the refusals `fn(const T)` completes.  `(Const-Value)` makes a value read-only
+// through its name, and three routes still wrote one on both backends with no diagnostic:
+//
+// - a LAMBDA's `const` parameter: `fn(x: const Account) { x.balance = 7 }` wrote, because a
+//   lambda's parameters never took the flag a named function's take;
+// - a CLOSURE capturing a `const` value, or a view of one: a record or collection capture shares
+//   the value (LOFT.md § Closures), and the body reached it through the closure record, where
+//   nothing said it was read-only — LOFT.md already promised *"mutating a `const` parameter
+//   through a closure is rejected"*, and only the scalar capture kept that promise;
+// - a short `|p|` callback over a `const` collection: `map(ps, |p| { p.x = 5; 1 })` wrote every
+//   element.  The callback's parameter is hinted from the collection, so it is now `const` when the
+//   collection is.
+//
+// And the conversion `fn(const T)` introduces: a function whose parameter is plain may not stand
+// where a slot promises that parameter is `const` — as an argument, a struct field or a return.
+//
+// Every cell is a refusal; the controls that stay legal are
+// `a-const-value-through-a-const-function-type-is-legal.loft`, which has a `main` and asserts.  The
+// hand-offs that are reported as C124's warning are
+// `a-const-value-reaches-a-function-reference-only-through-const.loft`.
+//
+// No `main`: a file of refusals lets the harness isolate its functions.
+//
+// @falsified-at: 01893a542 — interpret exit 1 -> 0, interpret expectations FAIL/11 -> 0/11 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/11 -> 0/11 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations, on both backends — the control does not parse `fn(const T)`, so it
+//   stops at the first cell that spells it and none of the eleven refusals occurs.
+//   ARMED: nothing.
+//   WITNESS: the cells that do not spell `fn(const T)` (1, 3–8), run on the frozen control with a
+//   `main` that prints what each left behind, compile with no diagnostic and write on both
+//   backends: a lambda's `const` parameter 7, the two callbacks 5 and 3, a closure's capture 5, a
+//   relayed capture 1, a captured view 9, a capture inside a callback 2.  Here the same file is
+//   refused.
+//   HOLDS: the direct write refusals (`Cannot modify const parameter`) keep their wording.
+// @EXPECT_ERROR: Cannot modify const parameter 'x1'
+// @EXPECT_ERROR: Cannot modify const parameter 'x2'
+// @EXPECT_ERROR: Cannot modify const parameter 'p3'
+// @EXPECT_ERROR: Cannot modify const parameter 'p4'
+// @EXPECT_ERROR: Cannot modify 'a5' from a closure: the value it captures is read-only
+// @EXPECT_ERROR: Cannot modify 'a6' from a closure: the value it captures is read-only
+// @EXPECT_ERROR: Cannot modify 'f7' from a closure: the value it captures is read-only
+// @EXPECT_ERROR: Cannot modify 'a8' from a closure: the value it captures is read-only
+// @EXPECT_ERROR: expected fn(const Acc1541), got fn(Acc1541) on argument 2 of call to take9
+// @EXPECT_ERROR: Cannot assign fn(Acc1541) to field Hold1541.f of type fn(const Acc1541)
+// @EXPECT_ERROR: expected fn(const Acc1541), got fn(Acc1541) on return from block
+
+struct Acc1541 { balance: integer }
+struct Pt1541 { x: integer }
+struct Hold1541 { f: fn(const Acc1541) }
+
+fn bump1541(a: Acc1541) { a.balance = 999; }
+
+// a lambda's `const` parameter, bound and called
+fn cell1(a: const Acc1541) { op = fn(x1: const Acc1541) { x1.balance = 7; }; op(a); }
+
+// a lambda's `const` parameter, passed where `fn(const T)` is expected
+fn take2(a: const Acc1541, op: fn(const Acc1541)) { op(a); }
+fn cell2(a: const Acc1541) { take2(a, fn(x2: const Acc1541) { x2.balance = 3; }); }
+
+// a short callback over a const collection, in both call spellings
+fn cell3(ps: const vector<Pt1541>) -> integer { len(map(ps, |p3| { p3.x = 5; 1 })) }
+fn cell4(ps: const vector<Pt1541>) -> integer { len(ps.map(|p4| { p4.x = 3; 1 })) }
+
+// a closure capturing a const parameter
+fn cell5(a5: const Acc1541) { op = fn() { a5.balance = 5; }; op(); }
+
+// a capture relayed through an enclosing lambda
+fn cell6(a6: const Acc1541) { outer = fn() { inner = fn() { a6.balance = 1; }; inner(); }; outer(); }
+
+// a capture of a view of a const collection
+fn cell7(ps: const vector<Pt1541>) { for f7 in ps { op = fn() { f7.x = 9; }; op(); } }
+
+// a capture inside a short callback
+fn cell8(a8: const Acc1541, ps: vector<Pt1541>) -> integer { len(map(ps, |p| { a8.balance = 2; p.x })) }
+
+// a plain-parameter function as an argument where `fn(const T)` is expected
+fn take9(a: const Acc1541, op: fn(const Acc1541)) { op(a); }
+fn cell9(a: const Acc1541) { take9(a, bump1541); }
+
+// ... as a struct field
+fn cell10() -> Hold1541 { Hold1541 { f: bump1541 } }
+
+// ... as a return
+fn cell11() -> fn(const Acc1541) { bump1541 }

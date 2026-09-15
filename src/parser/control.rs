@@ -671,6 +671,22 @@ impl Parser {
     }
 
     pub(crate) fn parse_block(&mut self, context: &str, val: &mut Value, result: &Type) -> Type {
+        // loft#1540 — an arm handed its SIBLING's function type converts with that type's
+        // `const` parameters set aside: the join is the parameters BOTH arms declare `const`
+        // (`parse_if`, `join_arm_into`), so an arm whose parameter is plain is not refused for
+        // the order the arms were written in.  A declared destination still asks the direction
+        // (`convert`) where the joined value meets it.
+        let sibling_fn;
+        let result = if matches!(context, "else" | "if" | "match_arm")
+            && result
+                .function_consts()
+                .is_some_and(|c| c != crate::data::ConstParams::NONE)
+        {
+            sibling_fn = result.with_function_consts(crate::data::ConstParams::NONE);
+            &sibling_fn
+        } else {
+            result
+        };
         // Cognitive complexity, charged here because `parse_block`'s `context` already names
         // the construct — one hook instead of one per parser entry point.  `match_arm` is
         // deliberately free: `parse_match` charges once for the whole construct, so a wide
@@ -2356,6 +2372,15 @@ impl Parser {
                 } else {
                     result.with_deps_of(t)
                 };
+                // loft#1540 — and its own `const` parameters: the sibling's were set aside for
+                // the conversion (see the top of this function), and the join is what BOTH arms
+                // declare, so an arm reporting the sibling's would decide the join for it.
+                let honest = match t.function_consts() {
+                    Some(own) if honest.function_consts().is_some() => {
+                        honest.with_function_consts(own)
+                    }
+                    _ => honest,
+                };
                 if crate::keys::pln25_dn1_enabled()
                     && matches!(t, Type::Optional(_))
                     && !matches!(honest, Type::Optional(_))
@@ -3016,7 +3041,7 @@ impl Parser {
                 Value::CallRef(v, _) => {
                     return *v < vars.count()
                         && vars.is_argument(*v)
-                        && matches!(vars.tp(*v).base(), Type::Function(_, _, _));
+                        && matches!(vars.tp(*v).base(), Type::Function(..));
                 }
                 _ => return false,
             }
@@ -4935,6 +4960,14 @@ impl Parser {
                 // carries the context those spellings need.
                 let variant_enum = self.variant_parent_enum(&true_type);
                 false_type = self.parse_block("else", &mut false_code, &true_type);
+                // loft#1540 — two functions join to the parameters BOTH declare `const`: the
+                // value is whichever arm ran, so the expression promises no more than either.
+                if let (Some(tc), Some(fc)) =
+                    (true_type.function_consts(), false_type.function_consts())
+                    && tc.common(fc) != tc
+                {
+                    true_type = true_type.with_function_consts(tc.common(fc));
+                }
                 // @FR-C-Var — two DIFFERENT variants of one enum join to the ENUM, and
                 // that is this expression's type.  `parse_block` accepted the sibling arm
                 // and kept its own type (see its `arm_joins_to_enum` carve-out); deciding
@@ -6250,6 +6283,19 @@ impl Parser {
             self.arm_convert_reported = false;
             return tp;
         }
+        // loft#1540 — the sibling's `const` parameters are set aside for the conversion, and
+        // the arm answers with its own: the join is what BOTH declare (`join_arm_into`), as a
+        // block arm's is (`parse_block`).
+        let sibling_fn;
+        let expected = if expected
+            .function_consts()
+            .is_some_and(|c| c != crate::data::ConstParams::NONE)
+        {
+            sibling_fn = expected.with_function_consts(crate::data::ConstParams::NONE);
+            &sibling_fn
+        } else {
+            expected
+        };
         let at = self.lexer.pos().clone();
         let t = self.expression(arm_code);
         self.arm_convert_reported = false;
@@ -6292,6 +6338,10 @@ impl Parser {
         // loft#1103 — the SHAPE is the expected type's, the NULLABILITY the arm's own:
         // `(N-Join)` makes the construct optional iff some arm is.
         let honest = expected.with_deps_of(&t);
+        let honest = match t.function_consts() {
+            Some(own) if honest.function_consts().is_some() => honest.with_function_consts(own),
+            _ => honest,
+        };
         if crate::keys::pln25_dn1_enabled()
             && matches!(t, Type::Optional(_))
             && !matches!(honest, Type::Optional(_))
@@ -13124,6 +13174,13 @@ impl Parser {
 
     fn join_arm_into(&self, so_far: &Type, arm: &Value, tp: &Type) -> Type {
         let joined = so_far.joined_deps(&self.arm_join_type(arm, tp));
+        // loft#1540 — two functions join to the parameters BOTH declare `const` (see `parse_if`).
+        let joined = match (joined.function_consts(), tp.function_consts()) {
+            (Some(jc), Some(ac)) if jc.common(ac) != jc => {
+                joined.with_function_consts(jc.common(ac))
+            }
+            _ => joined,
+        };
         // @FR-C-Var — when an arm joins to an ENUM the join is that enum, not the variant
         // the earlier arms happened to name.  `parse_if` decides this for its two arms;
         // every `match` arm site reaches it here, which is the one place both the settled
@@ -16967,7 +17024,7 @@ impl Parser {
                 // call fell through to `Unknown function` (loft#1455).
                 let slot_tp = Self::fn_slot_type(self.vars.tp(v_nr)).clone();
                 let through_link = matches!(self.vars.tp(v_nr), Type::RefVar(_));
-                if let Type::Function(param_types, ret_type, _) = slot_tp.clone()
+                if let Type::Function(param_types, ret_type, ..) = slot_tp.clone()
                     && param_types.is_empty()
                 {
                     // @PLN85 L1 — callee-attr-space deps must not leak into the
@@ -17077,7 +17134,7 @@ impl Parser {
                 && arg_idx < self.data.attributes(d_nr)
             {
                 let expected = self.data.attr_type(d_nr, arg_idx);
-                if matches!(expected, Type::Function(_, _, _)) {
+                if matches!(expected, Type::Function(..)) {
                     self.expected = expected;
                 }
             }
@@ -17161,6 +17218,12 @@ impl Parser {
                 && let Type::Vector(elm, _) = types[0].base()
             {
                 let elem = *elm.clone();
+                // loft#1540 — an element of a const collection is read-only; see the twin in
+                // `parse_vector_method`.
+                let elem_const = self.const_view_place(&list[0], true).is_some();
+                let elem_at = |i: usize| {
+                    crate::data::ConstParams::from_flags((0..=i).map(|k| k == i && elem_const))
+                };
                 let hint = match (name, arg_idx) {
                     // loft#945 — `map` is `fn(T) -> U`: the PARAMETER is the element type,
                     // the return is free.  See the twin hint in `parse_vector_method`.
@@ -17168,11 +17231,13 @@ impl Parser {
                         vec![elem.clone()],
                         Box::new(Type::Unknown(0)),
                         Deps::none(),
+                        elem_at(0),
                     )),
                     ("filter" | "any" | "all" | "count_if", 1) => Some(Type::Function(
                         vec![elem],
                         Box::new(Type::Boolean),
                         Deps::none(),
+                        elem_at(0),
                     )),
                     ("reduce", 2) => {
                         let init_tp = types.get(1).cloned().unwrap_or(elem.clone());
@@ -17180,6 +17245,7 @@ impl Parser {
                             vec![init_tp.clone(), elem],
                             Box::new(init_tp),
                             Deps::none(),
+                            elem_at(1),
                         ))
                     }
                     _ => None,
@@ -17635,13 +17701,13 @@ impl Parser {
             // `try_fn_ref_call` makes before the variable exists in this scope.
             self.capture_context
                 .iter()
-                .find(|(n, t)| n == name && matches!(t, Type::Function(_, _, _)))
+                .find(|(n, t)| n == name && matches!(t, Type::Function(..)))
                 .map(|(_, t)| t.clone())?
         } else {
             self.vars.tp(v_nr).clone()
         };
         match tp.base() {
-            Type::Function(params, _, _) => params.get(arg_idx).cloned(),
+            Type::Function(params, ..) => params.get(arg_idx).cloned(),
             _ => None,
         }
     }
@@ -17670,7 +17736,7 @@ impl Parser {
         let outer_fnref_type = self
             .capture_context
             .iter()
-            .find(|(n, t)| n == name && matches!(t, Type::Function(_, _, _)))
+            .find(|(n, t)| n == name && matches!(t, Type::Function(..)))
             .cloned()
             .map(|(_, t)| t);
         if !self.vars.name_exists(name) {
@@ -17692,7 +17758,7 @@ impl Parser {
         // Through the LINK as well as bare — see the zero-argument twin (loft#1455).
         let slot_tp = Self::fn_slot_type(self.vars.tp(v_nr)).clone();
         let through_link = matches!(self.vars.tp(v_nr), Type::RefVar(_));
-        let Type::Function(param_types, ret_type, _) = slot_tp.clone() else {
+        let Type::Function(param_types, ret_type, _, param_consts) = slot_tp.clone() else {
             return None;
         };
         // @PLN85 L1 — callee-attr-space deps must not leak into the caller
@@ -17764,6 +17830,17 @@ impl Parser {
                 );
                 return Some(*ret_type);
             }
+            for (i, expected) in param_types.iter().enumerate() {
+                self.report_const_argument(
+                    &list[i],
+                    expected,
+                    param_consts.is(i),
+                    crate::parser::ConstHandOff::FnRef {
+                        callee: Some(name),
+                        nr: i,
+                    },
+                );
+            }
             let mut converted = list.to_vec();
             for (i, expected) in param_types.iter().enumerate() {
                 self.convert(&mut converted[i], &types[i], expected);
@@ -17815,7 +17892,7 @@ impl Parser {
             let was_captured = self
                 .capture_context
                 .iter()
-                .any(|(n, t)| n == name && matches!(t, Type::Function(_, _, _)));
+                .any(|(n, t)| n == name && matches!(t, Type::Function(..)));
             if was_captured
                 && self.closure_param != u16::MAX
                 && let closure_rec_d = self.data.def(self.context).closure_record()
@@ -17978,7 +18055,7 @@ impl Parser {
             );
             return Type::Unknown(0);
         };
-        let (fn_param_types, _fn_ret_type) = if let Type::Function(params, ret, _) = &types[2] {
+        let (fn_param_types, _fn_ret_type) = if let Type::Function(params, ret, ..) = &types[2] {
             (params.clone(), *ret.clone())
         } else {
             diagnostic!(
@@ -17995,6 +18072,24 @@ impl Parser {
                 "reduce: function must take exactly two arguments (accumulator, element)"
             );
             return Type::Unknown(0);
+        }
+        // loft#1540 — the elements of a const collection reach the callback's parameter only when
+        // it is `const` (a short lambda over a const subject is hinted so; see `lambda_hint`'s
+        // callers).
+        if !self.first_pass
+            && let Some(consts) = types.get(2).and_then(Type::function_consts)
+            && let Some(elem_param) = fn_param_types.get(1)
+        {
+            let elem_param = elem_param.clone();
+            self.report_const_argument(
+                &list[0],
+                &elem_param,
+                consts.is(1),
+                crate::parser::ConstHandOff::Callback {
+                    builtin: "reduce",
+                    nr: 1,
+                },
+            );
         }
         // loft#956 — the FOLD FUNCTION's first parameter is what the accumulator type is.
         //

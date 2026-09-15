@@ -381,9 +381,9 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 3.**
+**OPEN: 2.**
 
-* **D-bind-45** *(opened 2026-09-15, OPEN — narrowed to one residual)* — `(Const-Value)` for a
+* **D-bind-45** *(opened 2026-09-15, CLOSED 2026-09-15)* — `(Const-Value)` for a
   value-const value handed to a PLAIN heap parameter.  A plain struct or vector parameter names the
   caller's record (`calls.md` F-ParamHeap), so `fn bump(a: Account) { a.balance = 999 }` called as
   `bump(acct)` with `acct: const Account` wrote the caller's balance on both backends with no
@@ -400,12 +400,15 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
   overload dispatcher carry the `const` of what they copy; an `Op*` primitive is exempt, since only
   the standard library's own bodies can call one and `const` there means an immediate operand.
   Guards `tests/scripts/a-const-value-reaches-only-a-const-parameter.loft` and
-  `…-passed-to-a-const-parameter-is-legal.loft`.  **Still open:** a value-const value handed on
-  through a FUNCTION REFERENCE — `op(acct)` with `op: fn(Account)` still writes the caller's value,
-  because a fn-ref call converts its arguments on a path neither gate reaches, and a function type
-  cannot say `const` at all (`fn(const Account)` does not parse), so refusing it would leave no cure
-  but a copy.  Closing it needs `const` in a function type's parameters first (C124 § Revisit when).
-  loft#1540.
+  `…-passed-to-a-const-parameter-is-legal.loft`.  **Closed with the function-reference half:** a function type spells `const` (`fn(const T)`,
+  carried as `ConstParams` beside the parameter types rather than as a wrapper on them), so a call
+  through a reference, a builtin's callback (`map` / `filter` / `any` / `all` / `count_if` /
+  `reduce`) and a lambda's own `const` parameter are judged by the same signature rule; a
+  plain-parameter function is refused where `fn(const T)` is expected, a join of functions keeps the
+  `const` every arm declares, and a closure's capture of a value-const value is a value-const field
+  of its record.  Guards `tests/scripts/a-const-value-reaches-a-function-reference-only-through-const.loft`,
+  `…-is-not-written-through-a-const-lambda-or-a-closure.loft` and
+  `…-through-a-const-function-type-is-legal.loft`.  loft#1540.
 * **D-bind-44** *(opened 2026-09-15, CLOSED 2026-09-15)* — `(Const-Value)` through a VIEW: a value-const
   value was written, in silence and on both backends, through a loop variable over its elements
   (`for f in ps { f.x = 5 }`), an element or field bound to a local (`p = ps[0]`, `q = w.p`,

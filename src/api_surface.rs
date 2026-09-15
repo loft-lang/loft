@@ -330,7 +330,7 @@ fn collect_type_defs(t: &Type, out: &mut Vec<u32>) {
             collect_type_defs(a, out);
             collect_type_defs(b, out);
         }
-        Type::Function(ps, r, _) => {
+        Type::Function(ps, r, ..) => {
             for p in ps {
                 collect_type_defs(p, out);
             }

@@ -830,6 +830,13 @@ impl Parser {
         loop {
             if let Type::Vector(elm, _) = t {
                 let elem = *elm.clone();
+                // loft#1540 — an element of a const collection is read-only, so the callback's
+                // element parameter is hinted `const`: a short lambda's body may not write it,
+                // and a named function whose parameter is plain is reported at the hand-off.
+                let elem_const = self.const_view_place(&list[0], true).is_some();
+                let elem_at = |i: usize| {
+                    crate::data::ConstParams::from_flags((0..=i).map(|k| k == i && elem_const))
+                };
                 let hint = match (method, m_arg_idx) {
                     // loft#945 — `map` is `fn(T) -> U`, so only the PARAMETER is the
                     // element type; the return is free.  Pinning it to `elem` type-checked
@@ -842,11 +849,13 @@ impl Parser {
                         vec![elem],
                         Box::new(Type::Unknown(0)),
                         crate::data::Deps::none(),
+                        elem_at(0),
                     )),
                     ("filter", 1) => Some(Type::Function(
                         vec![elem],
                         Box::new(Type::Boolean),
                         crate::data::Deps::none(),
+                        elem_at(0),
                     )),
                     // @P288 — `v.reduce(init, |acc, x| {…})`: the lambda is ARG 2 (init is
                     // arg 1), so the hint goes on m_arg_idx == 2.
@@ -874,6 +883,7 @@ impl Parser {
                             vec![acc.clone(), elem],
                             Box::new(acc),
                             crate::data::Deps::none(),
+                            elem_at(1),
                         ))
                     }
                     _ => None,
@@ -2058,7 +2068,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 );
             } else if let Type::Tuple(elems) = etp {
                 *code = self.unbox_tuple_from_dbref(code.clone(), elems);
-            } else if matches!(etp, Type::Function(_, _, _)) {
+            } else if matches!(etp, Type::Function(..)) {
                 // P214: vector elements of `fn(...) -> ...` type are
                 // stored as 4-byte d_nr only (non-capturing — capturing
                 // closures in vectors are deferred).  The variable's
@@ -2336,7 +2346,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     /// are considered, so an offset shared with a differently-typed field cannot match.
     pub(crate) fn fn_ref_attr_at(&mut self, d_nr: u32, pos: i32) -> Option<usize> {
         let names: Vec<(usize, String)> = (0..self.data.def(d_nr).attributes().len())
-            .filter(|&f| matches!(self.data.attr_type(d_nr, f).base(), Type::Function(_, _, _)))
+            .filter(|&f| matches!(self.data.attr_type(d_nr, f).base(), Type::Function(..)))
             .map(|f| (f, self.data.attr_name(d_nr, f)))
             .collect();
         names.into_iter().find_map(|(f, nm)| {

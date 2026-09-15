@@ -44,7 +44,7 @@ pub fn dispatch_arms(
     fn_type: &Type,
     n_args: usize,
 ) -> Option<Vec<Arm>> {
-    let Type::Function(param_types, ret_type, _) = fn_type else {
+    let Type::Function(param_types, ret_type, ..) = fn_type else {
         return None;
     };
     let user_arg_match = if matches!(ret_type.base(), Type::Text(_)) && n_args > param_types.len() {

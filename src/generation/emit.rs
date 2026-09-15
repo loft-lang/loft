@@ -374,7 +374,7 @@ impl Output<'_> {
                             // reads as the PAIR behind it.  Left out, the pointer itself was
                             // handed to a `fn(…)` parameter — rustc E0308, `expected
                             // (u32, DbRef), found *mut (u32, DbRef)`.
-                            | Type::Function(_, _, _)
+                            | Type::Function(..)
                             // A value enum link is a `*mut u8` and reads as the byte behind it.
                             | Type::Enum(_, false, _)
                     )
@@ -431,8 +431,8 @@ impl Output<'_> {
                     // closure block's type IS the function), so it is left alone — that
                     // case worked, and it is the shape being matched.
                     let needs_fn_pair =
-                        matches!(slots.get(i).map(Type::base), Some(Type::Function(_, _, _)))
-                            && !matches!(self.infer_type(e), Some(Type::Function(_, _, _)));
+                        matches!(slots.get(i).map(Type::base), Some(Type::Function(..)))
+                            && !matches!(self.infer_type(e), Some(Type::Function(..)));
                     if needs_fn_pair {
                         write!(w, "((")?;
                     }
@@ -568,7 +568,7 @@ impl Output<'_> {
                 // bare `Int` and neither is touched.
                 let elem_is_fn = elem_tp
                     .as_ref()
-                    .is_some_and(|e| matches!(e.base(), Type::Function(_, _, _)));
+                    .is_some_and(|e| matches!(e.base(), Type::Function(..)));
                 // The write through a `&`-bound tuple local derefs a raw pointer, so the
                 // whole assignment — not just the base — has to sit inside the block.
                 if deref {
@@ -742,7 +742,7 @@ impl Output<'_> {
                     // whose branches are bare d_nrs must emit the
                     // `(u32, DbRef)` tuple per branch.
                     let prev_fn_ref_ctx = self.fn_ref_context;
-                    if matches!(returned, Type::Function(_, _, _)) {
+                    if matches!(returned, Type::Function(..)) {
                         self.fn_ref_context = true;
                     }
                     self.output_if_inner(w, test, true_v, false_v, true)?;
@@ -952,7 +952,7 @@ impl Output<'_> {
                     // null-sentinel closure half — the native mirror of
                     // the interpreter's gen_return sentinel padding.
                     let prev_fn_ref_ctx = self.fn_ref_context;
-                    if matches!(returned, Type::Function(_, _, _)) {
+                    if matches!(returned, Type::Function(..)) {
                         self.fn_ref_context = true;
                     }
                     // @PLN85 — a `Block`/`Insert` return value (e.g. a `match` tail
@@ -1065,7 +1065,7 @@ impl Output<'_> {
         let variables = self.data.def(self.def_nr).variables();
         let var_name = sanitize(variables.name(v_nr));
         let fn_type = variables.tp(v_nr).clone();
-        let (param_types, ret_type) = if let Type::Function(p, r, _) = &fn_type {
+        let (param_types, ret_type) = if let Type::Function(p, r, ..) = &fn_type {
             (p.clone(), *r.clone())
         } else {
             // Not a function type — fall back to debug print.
@@ -1146,7 +1146,7 @@ impl Output<'_> {
             // flag rather than wrapping the emitted text is what keeps an if-VALUED source
             // right: the pair is then built inside EACH branch.
             let is_fn_arg =
-                i < param_types.len() && matches!(param_types[i].base(), Type::Function(_, _, _));
+                i < param_types.len() && matches!(param_types[i].base(), Type::Function(..));
             let prev_fn_ref_ctx = self.fn_ref_context;
             if is_fn_arg {
                 self.fn_ref_context = true;
@@ -1480,7 +1480,7 @@ impl Output<'_> {
             // return the u8 storage form).
             ValueType::CallRef => {
                 let var = node.callref_var();
-                if let Type::Function(_, r, _) = self.data.def(self.def_nr).variables.tp(var) {
+                if let Type::Function(_, r, ..) = self.data.def(self.def_nr).variables.tp(var) {
                     (**r != Type::Void).then(|| (**r).clone())
                 } else {
                     None

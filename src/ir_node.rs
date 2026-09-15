@@ -883,7 +883,7 @@ fn native_type_kind(t: &Type) -> TypeKind {
         Type::Trie(_, _, _) => K::Trie,
         Type::Radix(_, _, _) => K::Radix,
         Type::Hash(_, _, _) => K::Hash,
-        Type::Function(_, _, _) => K::Function,
+        Type::Function(..) => K::Function,
         Type::Rewritten(_) => K::Rewritten,
         Type::Tuple(_) => K::Tuple,
     }

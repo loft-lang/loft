@@ -1116,8 +1116,11 @@ impl Parser {
         self.data.def_used(d_nr);
         let n_args = self.data.attributes(d_nr);
         let arg_types: Vec<Type> = (0..n_args).map(|a| self.data.attr_type(d_nr, a)).collect();
+        let consts = crate::data::ConstParams::from_flags(
+            (0..n_args).map(|a| self.data.def(d_nr).attributes()[a].value_const),
+        );
         let ret_type = self.published_ret_type(d_nr, self.data.def(d_nr).returned().clone());
-        Type::Function(arg_types, Box::new(ret_type), Deps::none())
+        Type::Function(arg_types, Box::new(ret_type), Deps::none(), consts)
     }
 
     // <lambda> ::= 'fn' '(' [<params>] ')' ['->' <type>] '{' <body> '}'
@@ -1239,6 +1242,28 @@ impl Parser {
                 owner.insert(name.clone(), *d);
             }
         }
+        // loft#1540 — which of these captures carry a read-only value.  A name bound in the
+        // enclosing scope answers with its own flag (a `const` parameter or local, or a view of
+        // one, is marked value-const at its bind); a name that scope only relays answers with
+        // what the enclosing lambda received.
+        let consts: std::collections::HashSet<String> = ctx
+            .iter()
+            // Only a capture that SHARES the value: a scalar or `text` capture is copied or
+            // promoted to a cell, and a write to a `const` one is already refused where the
+            // closure's mutation is found (`Cannot modify const parameter 'p' from a closure`).
+            .filter(|(_, tp)| Self::names_callers_value(tp))
+            .filter(|(name, _)| {
+                let v = outer_vars.var(name);
+                if v == u16::MAX {
+                    self.capture_const.contains(name)
+                } else {
+                    outer_vars.is_value_const(v)
+                }
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        let saved = std::mem::replace(&mut self.capture_const, consts);
+        self.capture_const_saved.push(saved);
         (
             std::mem::replace(&mut self.capture_context, ctx),
             std::mem::replace(&mut self.capture_owner, owner),
@@ -1369,6 +1394,7 @@ or build a local and use that."
             // standing, this lambda's `capture_context` is what the NEXT thing parsed sees as
             // its enclosing scope.
             self.capture_context = outer_capture;
+            self.capture_const = self.capture_const_saved.pop().unwrap_or_default();
             self.capture_owner = outer_owner;
             self.captured_names = outer_captured;
             return Type::Unknown(0);
@@ -1397,9 +1423,17 @@ or build a local and use that."
                 if v_nr != u16::MAX {
                     self.vars.become_argument(v_nr);
                     self.var_usages(v_nr, false);
+                    // loft#1540 — `fn(p: const T) { … }` is value-const in its body exactly as
+                    // a named function's parameter is (`parse_function`); set on both passes.
+                    if a.constant {
+                        self.vars.set_value_const(v_nr);
+                    }
                 }
             } else {
                 self.change_var_type(a_nr as u16, &a.typedef);
+                if a.constant {
+                    self.vars.set_value_const(a_nr as u16);
+                }
             }
         }
         // @PLN115 tail — record each `fn(e: T)` lambda parameter's DECLARATION (pass 2,
@@ -1500,6 +1534,7 @@ or build a local and use that."
         self.vars = outer_vars;
         self.in_loop = outer_loop;
         self.capture_context = outer_capture;
+        self.capture_const = self.capture_const_saved.pop().unwrap_or_default();
         self.capture_owner = outer_owner;
         // The enclosing table is back, so a captured name can finally be asked what it is
         // bound to out here (loft#1281).
@@ -1535,7 +1570,8 @@ or build a local and use that."
         } else {
             Deps::frame1(self.last_closure_work_var)
         };
-        Type::Function(arg_types, Box::new(ret_type), dep)
+        let consts = crate::data::ConstParams::from_flags(arguments.iter().map(|a| a.constant));
+        Type::Function(arg_types, Box::new(ret_type), dep, consts)
     }
 
     // <short-lambda> ::= '||' ['->' type] block              (expect_close=false)
@@ -1553,11 +1589,12 @@ or build a local and use that."
 
         // Capture hint types before entering the new context.
         let hint_params_ret = self.lambda_hint();
-        let hint_params: Vec<Type> = if let Type::Function(pts, _, _) = &hint_params_ret {
-            pts.clone()
-        } else {
-            Vec::new()
-        };
+        let (hint_params, hint_consts): (Vec<Type>, crate::data::ConstParams) =
+            if let Type::Function(pts, _, _, consts) = &hint_params_ret {
+                (pts.clone(), *consts)
+            } else {
+                (Vec::new(), crate::data::ConstParams::NONE)
+            };
 
         // Parse parameter list from `|p1 [: T], p2 [: T], …|`.
         // When expect_close=false (`||` was consumed), there are no params and no closing `|`.
@@ -1601,11 +1638,12 @@ or build a local and use that."
         let arguments: Vec<Argument> = param_names
             .iter()
             .zip(param_types.iter())
-            .map(|(n, t)| Argument {
+            .enumerate()
+            .map(|(i, (n, t))| Argument {
                 name: n.clone(),
                 typedef: t.clone(),
                 default: Value::Null,
-                constant: false,
+                constant: hint_consts.is(i),
                 ref_pos: (0, 0),
                 const_pos: (0, 0),
             })
@@ -1646,6 +1684,7 @@ or build a local and use that."
             self.vars = outer_vars;
             self.in_loop = outer_loop;
             self.capture_context = outer_capture;
+            self.capture_const = self.capture_const_saved.pop().unwrap_or_default();
             self.capture_owner = outer_owner;
             self.captured_names = outer_captured;
             return Type::Unknown(0);
@@ -1663,7 +1702,7 @@ or build a local and use that."
                  use fn(…) -> <ret> {{ ... }} instead"
             );
             self.parse_type_full(d_nr, true).unwrap_or(Type::Void)
-        } else if let Type::Function(_, ret, _) = &hint_params_ret {
+        } else if let Type::Function(_, ret, ..) = &hint_params_ret {
             *ret.clone()
         } else {
             Type::Void
@@ -1701,9 +1740,17 @@ or build a local and use that."
                 if v_nr != u16::MAX {
                     self.vars.become_argument(v_nr);
                     self.var_usages(v_nr, false);
+                    // loft#1540 — a parameter the hint says is `const` (an element of a const
+                    // collection handed to `map`'s callback) is read-only in the body.
+                    if a.constant {
+                        self.vars.set_value_const(v_nr);
+                    }
                 }
             } else {
                 self.change_var_type(a_nr as u16, &a.typedef);
+                if a.constant {
+                    self.vars.set_value_const(a_nr as u16);
+                }
                 // Force-update the data definition with the inferred type.
                 // `set_attr_type` panics on non-unknown, so write directly.
                 // (First pass stored Unknown(0); typedef.rs may have resolved that to a
@@ -1815,6 +1862,7 @@ or build a local and use that."
         self.vars = outer_vars;
         self.in_loop = outer_loop;
         self.capture_context = outer_capture;
+        self.capture_const = self.capture_const_saved.pop().unwrap_or_default();
         self.capture_owner = outer_owner;
         // The enclosing table is back, so a captured name can finally be asked what it is
         // bound to out here (loft#1281).
@@ -1844,7 +1892,8 @@ or build a local and use that."
         } else {
             Deps::frame1(self.last_closure_work_var)
         };
-        Type::Function(arg_types, Box::new(ret_type), dep)
+        let consts = crate::data::ConstParams::from_flags(arguments.iter().map(|a| a.constant));
+        Type::Function(arg_types, Box::new(ret_type), dep, consts)
     }
 
     // emit the lambda value — plain Int(d_nr) for non-capturing
@@ -1891,7 +1940,15 @@ or build a local and use that."
             // fn-ref depends on closure work var `w` so that
             // get_free_vars does not emit OpFreeRef for the closure record
             // before the fn-ref escapes the defining scope.
-            let fn_type = Type::Function(visible_params, Box::new(ret_tp.clone()), Deps::frame1(w));
+            let visible_consts = crate::data::ConstParams::from_flags(
+                (0..n_visible).map(|aid| self.data.def(d_nr).attributes()[aid].value_const),
+            );
+            let fn_type = Type::Function(
+                visible_params,
+                Box::new(ret_tp.clone()),
+                Deps::frame1(w),
+                visible_consts,
+            );
             let mut alloc_steps: Vec<Value> = Vec::new();
             // loft#1483 — the stores this rebuild DISPLACES, spliced in front below.
             let mut displaced: Vec<Value> = Vec::new();
@@ -1985,14 +2042,15 @@ or build a local and use that."
             //    try_fn_ref_call at the call site creates the right number of
             //    work buffers.  Without this, cross-scope fn-ref calls to
             //    text-returning lambdas crash because the work buffer is missing.
-            if let Type::Function(params, _, _) = self.data.def(self.context).returned() {
+            if let Type::Function(params, _, _, consts) = self.data.def(self.context).returned() {
                 let params = params.clone();
+                let consts = *consts;
                 // H2 step 5: `w` is a FRAME var stored in the DEF-space home
                 // (`Definition.returned`) — write it as a tagged
                 // callee-frame note so readers decode the space instead of
                 // guessing by attr-range position (`Deps::entries`).
                 self.data.definitions[self.context as usize].returned =
-                    Type::Function(params, Box::new(ret_tp), Deps::callee_frame1(w));
+                    Type::Function(params, Box::new(ret_tp), Deps::callee_frame1(w), consts);
             }
             // record the work var so parse_assign can populate closure_vars
             // (used by write-back and native codegen's closure_var_of lookup).
@@ -2753,6 +2811,16 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 let attr_tp = self.closure_attr_type(tp);
                 self.data
                     .add_attribute(&mut self.lexer, record_d_nr, name, attr_tp);
+                // loft#1540 — a capture of a read-only value is a read-only FIELD of the
+                // record: the body reaches it through `__closure.<name>`, and a write through
+                // a value-const field is refused at the write (`frozen_through`).
+                if self.capture_const.contains(name) {
+                    let a = self.data.attr(record_d_nr, name);
+                    if a != usize::MAX {
+                        self.data.definitions[record_d_nr as usize].attributes[a].value_const =
+                            true;
+                    }
+                }
             }
             // Store the closure record def_nr on the lambda's definition.
             self.data.definitions[lambda_d_nr as usize].closure_record = record_d_nr;
@@ -4657,6 +4725,16 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // spellings, whose slot holds absence by construction.
         let elem_index = res.len();
         let elem_slot = format!("element {elem_index} of this vector literal");
+        // loft#1540 — an INFERRED literal of functions holds whichever element is read back, so
+        // its element type promises only the `const` every element declares.  Asked before the
+        // conversion below, which would otherwise keep the FIRST element's `const` and hand a
+        // plain-parameter function a read-only value through the loop that walks it.
+        if !declared
+            && let (Some(have), Some(elem)) = (in_t.function_consts(), t.function_consts())
+            && have.common(elem) != have
+        {
+            *in_t = in_t.with_function_consts(have.common(elem));
+        }
         if let (Type::Reference(t_nr, _), Type::Reference(in_nr, _)) = (&t, &in_t.clone())
             && let (Type::Enum(t_e, true, _), Type::Enum(in_e, true, _)) = (
                 self.data.def(*t_nr).returned(),
@@ -4748,7 +4826,21 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 // example writes, and per-element `as single` was the only thing offered.
                 // Named first because it costs no conversion; the cast stays for the case
                 // where the elements are not literals.
-                if matches!(t, Type::Float) && matches!(in_t.base(), Type::Single) {
+                if let (Type::Function(.., have), Type::Function(.., want)) =
+                    (t.base(), in_t.base())
+                    && !have.stands_for(*want)
+                {
+                    // loft#1540 — not a precision question, and no cast cures it.
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "cannot store {} elements in a vector<{}>: a function whose parameter is \
+                         plain cannot stand where `fn(const …)` is expected — declare that \
+                         parameter `const` in the function, or drop `const` from the element type",
+                        t.source_name(&self.data),
+                        in_t.source_name(&self.data)
+                    );
+                } else if matches!(t, Type::Float) && matches!(in_t.base(), Type::Single) {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
@@ -4794,7 +4886,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // refuse the statically-detectable capturing shapes — a direct lambda, a
         // local holding one, a closure factory's return — at the literal.
         if !self.first_pass
-            && matches!(in_t, Type::Function(_, _, _))
+            && matches!(in_t, Type::Function(..))
             && (elem_capturing_lambda || self.fn_ref_source_captures(&p))
         {
             self.refuse_capturing_closure_in_collection();
@@ -4845,7 +4937,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             Value::Var(v) => self.closure_vars.contains_key(v),
             Value::Call(d_nr, _) => matches!(
                 self.data.def(*d_nr).returned(),
-                Type::Function(_, _, deps) if !deps.is_empty()
+                Type::Function(_, _, deps, ..) if !deps.is_empty()
             ),
             _ => false,
         }
@@ -4873,12 +4965,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     pub(crate) fn fn_ref_slot_dnr(&mut self, src: &Value, in_t: &Type) -> (Value, Vec<Value>) {
         match src.unspan() {
             Value::Int(_) => (src.clone(), Vec::new()),
-            Value::Var(v) if matches!(self.vars.tp(*v), Type::Function(_, _, _)) => {
+            Value::Var(v) if matches!(self.vars.tp(*v), Type::Function(..)) => {
                 (Value::FnRefDnr(*v), Vec::new())
             }
             Value::Call(_, _) => {
-                let fn_type = if let Type::Function(params, ret, _) = in_t {
-                    Type::Function(params.clone(), ret.clone(), Deps::none())
+                let fn_type = if let Type::Function(params, ret, _, consts) = in_t {
+                    Type::Function(params.clone(), ret.clone(), Deps::none(), *consts)
                 } else {
                     in_t.clone()
                 };
@@ -5403,7 +5495,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 // the slice-materialise site.  The fallback (an element outside the
                 // narrow gate) keeps the wide `set_field` path below.
                 ls.push(op);
-            } else if matches!(in_t, Type::Function(_, _, _)) {
+            } else if matches!(in_t, Type::Function(..)) {
                 // Plan-06 phase 4d.A.2 — a fn-ref vector element stores the 4-byte i32
                 // d_nr, so the write is `OpSetInt4` (4 bytes) and not `OpSetInt` (8),
                 // which would overflow into the next element's slot.  What to WRITE is
@@ -6086,7 +6178,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // so vector storage uses the flat narrow-int path.  The
             // semantic difference (d_nr vs. integer) is recovered at
             // read-back time via fn-ref unbox.
-            Type::Function(_, _, _) => self.database.int(0, false),
+            Type::Function(..) => self.database.int(0, false),
             Type::Reference(r, _) | Type::Enum(r, _, _) => self.data.def(*r).known_type(),
             Type::Hash(tp, key, _) => {
                 let mut name = "hash<".to_string() + self.data.def(*tp).name() + "[";

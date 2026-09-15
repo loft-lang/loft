@@ -988,7 +988,7 @@ impl Output<'_> {
         // `tuple_kinds` on the same `T`), so the two ends never diverge.
         let tkinds = tuple_kinds(yield_tp);
         let is_tuple_into = tkinds.is_some();
-        let is_fnref_into = matches!(yield_tp, Type::Function(_, _, _));
+        let is_fnref_into = matches!(yield_tp, Type::Function(..));
         let uses_next_into = is_tuple_into || is_fnref_into;
         // P225: when the generator contains any `ForLoopBody` segment,
         // the factory eager-collects EVERY yield (Simple, YieldFrom, and
@@ -1634,7 +1634,7 @@ impl Output<'_> {
         let channel_can_suspend = tuple_kinds(&yield_tp).is_none()
             && !matches!(
                 yield_tp,
-                Type::Function(_, _, _)
+                Type::Function(..)
                     | Type::Reference(_, _)
                     | Type::Vector(_, _)
                     | Type::Enum(_, true, _)
@@ -1793,7 +1793,7 @@ impl Output<'_> {
         {
             Some(refusal_text(yield_tp, self.data, NO_CHANNEL))
         } else if eager_kinds.is_none()
-            && (tuple_kinds(yield_tp).is_some() || matches!(yield_tp, Type::Function(_, _, _)))
+            && (tuple_kinds(yield_tp).is_some() || matches!(yield_tp, Type::Function(..)))
         {
             Some(refusal_text(yield_tp, self.data, NO_EAGER_BUFFER))
         } else {

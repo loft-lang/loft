@@ -1535,7 +1535,7 @@ impl Parser {
             // `if c { [1,2] } else { [3,4] }[0]` is unaffected, because its type is a
             // vector, not `Void`.
             || (self.lexer.peek_token("[") && !matches!(t, Type::Void))
-            || (self.lexer.peek_token("(") && matches!(t, Type::Function(_, _, _)))
+            || (self.lexer.peek_token("(") && matches!(t, Type::Function(..)))
             || self.lexer.peek_token("?")
         {
             // @PLN116 — postfix default-fallback `x?`.  Handled first (a default-
@@ -1898,7 +1898,7 @@ impl Parser {
                 self.lexer.token("]");
             } else if self.lexer.has_token("(") {
                 // chained call on a Type::Function expression — expr(args).
-                if let Type::Function(param_types, ret_type, fn_deps) = t.clone() {
+                if let Type::Function(param_types, ret_type, fn_deps, fn_consts) = t.clone() {
                     // @PLN85 t1 — does the SOURCE fn-ref OWN a freshly-minted
                     // closure?  A closure-factory return (`make_greeter(..)`) carries
                     // a `CalleeFrame` dep (the lambda's `___clos_N` work var); a
@@ -1927,6 +1927,7 @@ impl Parser {
                         } else {
                             crate::data::Deps::none()
                         },
+                        fn_consts,
                     );
                     // Allocate temp variable on BOTH passes (consistent unique counter).
                     let fn_work = self.create_unique("__fn_ref_tmp", &fn_type);
@@ -1972,6 +1973,19 @@ impl Parser {
                     }
                     self.lexer.token(")");
                     if !self.first_pass {
+                        for (i, expected) in param_types.iter().enumerate() {
+                            if let Some(arg) = list.get(i) {
+                                self.report_const_argument(
+                                    arg,
+                                    expected,
+                                    fn_consts.is(i),
+                                    crate::parser::ConstHandOff::FnRef {
+                                        callee: None,
+                                        nr: i,
+                                    },
+                                );
+                            }
+                        }
                         let mut converted = list;
                         for (i, expected) in param_types.iter().enumerate() {
                             if i < converted.len() {

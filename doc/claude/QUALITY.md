@@ -2600,7 +2600,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 826 | 486 | 6 | **334** |
+| 830 | 490 | 6 | **334** |
 
 (2026-09-15, THE JOINED TREE — this branch through loft#1540 and ../loft2's @PLN165 phase 0
 (bdb84abe8): 826 · 486 · 6 · 334, re-measured rather than carried; the ratchet reads its 334 / 1316
@@ -2671,6 +2671,16 @@ buffer's record definition through `.base().heap_def_nr()` — the peeling colum
 stays at 491 · 467 · 24.  Those are the @PLN157 branch's numbers; re-measured on the joined
 tree `tuxedo-work-2026-09-15` the rows read 826 · 486 · 6 · 334 and 504 · 481 · 23 with the
 ratchet at 334 / 1316, the same as before this unit was picked.)
+
+(2026-09-15, loft#1540's function-reference half: `Type::function_consts` and
+`Type::with_function_consts` are new — the one way a join reads and sets a function type's `const`
+parameters, the first through `.base()` and the second with an `Optional` arm — and
+`Parser::report_const_argument` takes over `process_call_args`'s two argument gates, asking the
+parameter's shape through `.base()` as they did.  The join sites (`parse_if`, `join_arm_into`, the
+sibling-arm conversions, `parse_item`, `change_var_type`, the callback builtins) ask through the
+helpers, and `Parser::names_callers_value` is the one shape question a parameter and a closure's
+capture share, so the peeling column grows by four: 826 · 486 → 830 · 490, the opaque column and
+the ratchet (334 / 1316) unmoved.  Asked bare first, they grew the ratchet to 336 / 1328.)
 
 (2026-09-15, loft#1530: `Parser::ref_tuple_subject` is new and asks the subject's `Type::RefVar`
 and `Type::Tuple` off a `.base()`, and `vector_element_cursor_deps` gained the same peeled ask, so

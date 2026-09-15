@@ -4046,7 +4046,7 @@ pub fn callref_captures(data: &Data, d_nr: u32, call: &Value) -> bool {
         return false;
     };
     let vars = data.def(d_nr).variables();
-    let Type::Function(_, _, deps) = vars.tp(*v_nr).base() else {
+    let Type::Function(_, _, deps, ..) = vars.tp(*v_nr).base() else {
         return false;
     };
     deps.iter().any(|&v| {

@@ -242,6 +242,7 @@ pub fn read_type(stores: &Stores, slot: Record) -> Type {
                 slot.field_recvec(ds::TYFUNC_RESULT, ds::TYPET_STRIDE),
             )),
             read_deps(stores, slot, ds::TYFUNC_DEP),
+            crate::data::ConstParams::from_bits(slot.field_int(stores, ds::TYFUNC_CONSTS) as u32),
         ),
         TypeKind::Rewritten => Type::Rewritten(Box::new(read_type_child(
             stores,
@@ -1179,6 +1180,7 @@ mod tests {
                 vec![Type::Integer(IntegerSpec::wide()), Type::Text(Deps::none())],
                 Box::new(Type::Boolean),
                 Deps::unknown(vec![0]),
+                crate::data::ConstParams::from_bits(0b10),
             ),
             Type::Rewritten(Box::new(Type::Text(Deps::none()))),
             Type::Tuple(vec![
@@ -1210,6 +1212,7 @@ mod tests {
                 Deps::unknown(vec![3]),
             )),
             Deps::unknown(vec![7]),
+            crate::data::ConstParams::from_bits(1),
         ));
     }
 

@@ -529,9 +529,18 @@ fn function_name(param: type, other: type = default_value) -> return_type {
     error once the shipped libraries declare their read-only parameters. A read-only helper says so: `fn total(v: const vector<T>)`. The
     standard library's readers (`len`, `sum`, `join`, the `JsonValue` accessors, …) declare their
     parameters `const`; its writers (`clear`, `seek`, the `store_load*` targets) do not. `text`
-    and scalar parameters take their own copy and are not affected. A function REFERENCE is the
-    one gap: a function type cannot say `const` yet (`fn(const T)` does not parse), so a `const`
-    value passed through one is not checked.
+    and scalar parameters take their own copy and are not affected.
+  - A **function reference** is judged by its TYPE the same way: `fn(const T)` declares a
+    parameter the functions it holds may not write, and a `const` value passed through a
+    reference whose type does not say so is the same warning. A function whose parameter is plain
+    cannot stand where `fn(const T)` is expected (an argument, a field, a return); the other
+    direction is free. A local, an `if` or a `match` that may hold functions with different
+    `const` parameters promises only the `const` they all declare.
+  - The elements of a `const` collection handed to `map`, `filter`, `any`, `all`, `count_if` or
+    `reduce` reach the callback on the same terms: a short `|p|` callback over one gets a `const`
+    parameter, and a named function whose parameter is plain is the warning.
+  - A lambda's `const` parameter is read-only in its body, and a closure that captures a `const`
+    value — or a view of one — cannot write it.
   - Re-pointing the local slot — `p = other` — **is** allowed for a compound type (it
     rebinds the function's own copy of the borrow, not the caller's value). The same is
     true of a value-const **local**: `x: const vector<T> = …`.
@@ -1158,6 +1167,11 @@ fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }
 result = apply(fn double_it, 5)
 ```
 
+A parameter of a function type may be `const` — `fn(const Score) -> integer` — which says the
+functions the reference holds only read it, so a `const` value may be passed through it.  A
+function whose parameter is plain is refused where `fn(const T)` is expected; one whose parameter
+is `const` fits a plain `fn(T)` slot as well.
+
 **Lambda expressions** produce an inline anonymous function at the expression level.
 Two syntactic forms are available:
 
@@ -1262,7 +1276,8 @@ add5(10)               // 15
 - Struct references: the DbRef is copied — both point to the same store
   record while both are alive, and mutations from either side are visible to
   the other (#318/C75 bound such closures to the frame that owns the
-  captures).
+  captures).  A capture of a `const` value, or of a view of one, is read-only
+  inside the closure as well (loft#1540).
 - Collections (`hash` / `vector` / `sorted` / `index`): captured by shared
   DbRef — the closure **borrows** the outer collection (like a struct
   reference).  Inside the closure the full surface works and every mutation

@@ -4001,7 +4001,7 @@ version declares it.
 
 ## C124 — a `const` value reaches only a `const` parameter; semantics is judged by the line, optimisation by the proof
 
-**Catalogue:** @PLN40 const-model rule 4 · `formal/binding.md` (Const-Value), D-bind-45 · loft#1540 · reads C121 and C122
+**Catalogue:** @PLN40 const-model rule 4 · `formal/binding.md` (Const-Value), D-bind-45 (closed) · loft#1540 · reads C121 and C122
 
 ### Question
 
@@ -4065,6 +4065,32 @@ parameters to mark `const`:
 | Moros-Economy-Development | `cmp_f` · `a` / `b`, `direct_chain` · `g` | `loft_planet/tests/14-workflow.loft` |
 
 The `&` spelling (D-bind-44) is refused as an error already: it had no call sites to migrate.
+
+### Function references and callbacks
+
+**2026-09-15, closing D-bind-45.**  A function reference is a call whose signature is its TYPE, so
+the ruling reaches it once the type can say `const`: `fn(const T)` parses, a function value carries
+which of its parameters are `const` (a named function's from its declaration, a lambda's from its
+own), and the IR store keeps it.  From there the rule is read exactly as for a declared function:
+
+- A value-const value passed to a reference's parameter that its type does not declare `const` is
+  the same `const-to-plain-parameter` warning; to a `&` parameter, the same error.
+- A function whose parameter is plain may not stand where a slot promises `fn(const T)` — an
+  argument, a struct field, a return — or a caller trusting the promise would hand a read-only value
+  to a function that may write it.  The other direction is free.
+- A slot that may hold either of two functions promises only the `const` both declare: a fn-ref
+  local reassigned, a value `if`, a `match`.  Joining by the first arm instead refused a program
+  for the order its arms were written in.
+- The elements of a `const` collection handed to `map`, `filter`, `any`, `all`, `count_if` or
+  `reduce` reach the callback's element parameter on the same terms.  A short `|p|` callback is
+  hinted by its collection, so over a `const` one its parameter is `const` and a write in its body
+  is refused as any write through a `const` binding is.
+- A lambda's `const` parameter is read-only in its body, as a named function's is; and a closure
+  capturing a value-const value (a view of one included) holds it as a read-only field of its
+  record, which LOFT.md § Closures already promised for a scalar.
+
+No rollout table: before `fn(const T)` parsed nothing could be declared that way, and the
+population is measured in the commit that closed it.
 
 ### Revisit when
 

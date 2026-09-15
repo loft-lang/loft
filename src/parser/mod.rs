@@ -68,6 +68,23 @@ fn registry_fn_hint(_name: &str, _resolved: &[String]) -> Option<String> {
     None
 }
 
+/// Where a value is handed to a parameter, for [`Parser::report_const_argument`] (loft#1540,
+/// C124): which signature is asked, and how the diagnostic names it.
+#[derive(Clone, Copy)]
+pub(crate) enum ConstHandOff<'a> {
+    /// Parameter `nr` (0-based) of the declared function `callee`, named `param` when it has a name.
+    Declared {
+        callee: &'a str,
+        nr: usize,
+        param: Option<&'a str>,
+    },
+    /// Parameter `nr` of the function a reference holds: `callee` is the reference's name, or
+    /// `None` for a call on a function-typed expression (`make()(x)`).
+    FnRef { callee: Option<&'a str>, nr: usize },
+    /// The elements of a collection handed to `builtin`'s callback as its parameter `nr`.
+    Callback { builtin: &'a str, nr: usize },
+}
+
 /// @PLN102 case B (soften-nullflow-discharge.md) — the sign / lower-bound lattice used to
 /// prove a domain-fault op's argument is in its safe domain (`sqrt` needs `≥ 0`, `ln` needs
 /// `> 0`). `Pos ⊑ NonNeg ⊑ Unknown` (stronger → weaker); `Unknown` is the conservative default.
@@ -919,6 +936,13 @@ pub struct Parser {
     /// minted in the frame that holds the variable, not in the closure that passes it along
     /// (loft#1236).
     pub(crate) capture_owner: std::collections::HashMap<String, u32>,
+    /// loft#1540 — the names in `capture_context` whose value is read-only: an enclosing binding
+    /// marked value-const, or a capture the enclosing lambda itself received read-only.  A
+    /// capture shares a record or collection with the binding it names (LOFT.md § Closures), so
+    /// the closure may write it no more than that binding may.
+    pub(crate) capture_const: std::collections::HashSet<String>,
+    /// The `capture_const` of each enclosing lambda, restored where `capture_context` is.
+    pub(crate) capture_const_saved: Vec<std::collections::HashSet<String>>,
     /// Captures a lambda REBINDS whole-value (`p = [..]`), keyed by the lambda's def.
     ///
     /// Recorded where the assignment is parsed, because by the time the lambda closes its
@@ -1511,6 +1535,8 @@ impl Parser {
             fields_of: u32::MAX,
             capture_context: Vec::new(),
             capture_owner: std::collections::HashMap::new(),
+            capture_const: std::collections::HashSet::new(),
+            capture_const_saved: Vec::new(),
             rebound_captures: std::collections::HashMap::new(),
             captured_names: Vec::new(),
             branch_sunk_vectors: std::collections::HashSet::new(),
@@ -2665,7 +2691,7 @@ impl Parser {
                 &Type::Tuple(elems.clone()),
                 &crate::data::Context::Argument,
             )) <= 8
-                || elems.iter().any(|e| matches!(e, Type::Function(_, _, _)))
+                || elems.iter().any(|e| matches!(e, Type::Function(..)))
             {
                 continue;
             }
@@ -3914,11 +3940,176 @@ impl Parser {
     /// absent; it says nothing about the signature a value in it would have, and a
     /// hint that dropped out on `?` would make the rule depend on it (loft#1067).
     pub(crate) fn lambda_hint(&self) -> Type {
-        if matches!(self.expected.base(), Type::Function(_, _, _)) {
+        if matches!(self.expected.base(), Type::Function(..)) {
             self.expected.base().clone()
         } else {
             Type::Unknown(0)
         }
+    }
+
+    /// Does a binding of this type NAME the value it was given — a record, a struct-enum or a
+    /// collection — rather than hold its own copy, as a scalar and `text` do?  The question
+    /// C124 asks of a parameter (`calls.md` F-ParamHeap) and loft#1540 of a closure's capture
+    /// (LOFT.md § Closures: a record or collection capture shares the value).  A `&` link is
+    /// peeled first; whether the binding IS a link is the caller's separate question.
+    pub(crate) fn names_callers_value(tp: &Type) -> bool {
+        matches!(
+            tp.peel_link().base(),
+            Type::Reference(_, _)
+                | Type::Enum(_, true, _)
+                | Type::Vector(_, _)
+                | Type::Sorted(_, _, _)
+                | Type::Index(_, _, _)
+                | Type::Radix(_, _, _)
+                | Type::Trie(_, _, _)
+                | Type::Hash(_, _, _)
+        )
+    }
+
+    /// loft#1540 / C124 — may this value be handed to this parameter?  The one question every
+    /// hand-off asks: a value-const value (a `const` parameter or local, a view of one, a read
+    /// through a value-const field) reaches a `&` parameter never, and a record or collection
+    /// parameter only when that parameter is `const`.  `text` and scalar parameters take their
+    /// own copy and are not asked.
+    ///
+    /// Decided by the SIGNATURE the hand-off names — a declared function's, a function type's
+    /// (`fn(const T)`), a builtin callback's — never by the body behind it: what a call means is
+    /// judged from the call and the declaration it names (C121), while a proof that a body does
+    /// not write stays an optimisation's to use (C122).  A `&` parameter is refused as an error
+    /// (plan 40's rule 4); a plain one is the gating warning `const-to-plain-parameter`, C124's
+    /// rollout (owner, 2026-09-15), whose cure is in the message.
+    ///
+    /// `@FR-N-Shape` — "is this parameter a `&` link" is a shape question, and a `&τ?` parameter
+    /// links exactly as its dense twin does, so it is asked through `base()`.
+    pub(crate) fn report_const_argument(
+        &mut self,
+        actual: &Value,
+        param_tp: &Type,
+        param_const: bool,
+        at: ConstHandOff<'_>,
+    ) {
+        if param_const {
+            return;
+        }
+        let is_link = matches!(param_tp.base(), Type::RefVar(_));
+        let is_heap = !is_link && Self::names_callers_value(param_tp);
+        if !is_link && !is_heap {
+            return;
+        }
+        let Some(place) = self.const_view_place(actual, true) else {
+            return;
+        };
+        // A view names itself and what it views: the author passed `f`, not `ps`.
+        let what = match (&at, actual.unspan()) {
+            (ConstHandOff::Callback { .. }, _) => format!("the elements of {place}"),
+            (_, Value::Var(v)) if self.const_views.contains_key(&(self.context, *v)) => {
+                format!("'{}', a view of {place},", self.vars.written_name(*v))
+            }
+            _ => place,
+        };
+        let (fix_title, fix_condition) = match at {
+            ConstHandOff::Declared { callee, nr, param } => {
+                if is_link {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot pass {what} to the `&` parameter {} of `{callee}`, which may \
+                         modify it; its value is read-only — pass a local copy, or make the \
+                         parameter `const` if `{callee}` only reads it",
+                        nr + 1
+                    );
+                    return;
+                }
+                let param = param.map_or_else(String::new, |a| format!(" `{a}`"));
+                diagnostic!(
+                    self.lexer,
+                    Level::Warning,
+                    code = "const-to-plain-parameter",
+                    "Cannot pass {what} to parameter {}{param} of `{callee}`, which is not \
+                     `const`: its value is read-only, and a plain parameter names the caller's \
+                     value — declare the parameter `const` if `{callee}` only reads it, or \
+                     pass a local copy",
+                    nr + 1
+                );
+                (
+                    format!("declare parameter{param} of `{callee}` `const`"),
+                    format!("`{callee}` only reads that parameter"),
+                )
+            }
+            ConstHandOff::FnRef { callee, nr } => {
+                let label = callee.map_or_else(
+                    || "the called function value".to_string(),
+                    |c| format!("the function reference `{c}`"),
+                );
+                if is_link {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot pass {what} to the `&` parameter {} of {label}, which may modify \
+                         it; its value is read-only — pass a local copy, or declare the \
+                         parameter `const` in the function type (`fn(const …)`) if every \
+                         function it holds only reads it",
+                        nr + 1
+                    );
+                    return;
+                }
+                diagnostic!(
+                    self.lexer,
+                    Level::Warning,
+                    code = "const-to-plain-parameter",
+                    "Cannot pass {what} to parameter {} of {label}, whose function type does not \
+                     declare it `const`: its value is read-only, and a plain parameter names the \
+                     caller's value — declare it `const` in the function type (`fn(const …)`) if \
+                     every function it holds only reads it, or pass a local copy",
+                    nr + 1
+                );
+                (
+                    format!("declare parameter {} of {label}'s type `const`", nr + 1),
+                    format!("every function {label} holds only reads that parameter"),
+                )
+            }
+            ConstHandOff::Callback { builtin, nr } => {
+                if is_link {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot pass {what} to `{builtin}`'s callback, whose parameter {} is `&` \
+                         and may modify them; their value is read-only — pass a copy of the \
+                         collection",
+                        nr + 1
+                    );
+                    return;
+                }
+                diagnostic!(
+                    self.lexer,
+                    Level::Warning,
+                    code = "const-to-plain-parameter",
+                    "Cannot pass {what} to `{builtin}`'s callback, whose parameter {} is not \
+                     `const`: their value is read-only, and a plain parameter names the caller's \
+                     value — declare that parameter `const` if the callback only reads it, or \
+                     pass a copy of the collection",
+                    nr + 1
+                );
+                (
+                    format!(
+                        "declare parameter {} of the callback passed to `{builtin}` `const`",
+                        nr + 1
+                    ),
+                    "the callback only reads that parameter".to_string(),
+                )
+            }
+        };
+        // Conditional, and without an edit: whether the callee only reads is the author's to
+        // affirm (C124 decides by the signature, not by reading the body for them), and the
+        // parameter is usually declared in another place than this hand-off.
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: fix_title,
+            condition: Some(fix_condition),
+            edit: None,
+            concept: "const parameters",
+            concept_ref: "@F18",
+        });
     }
 
     /// May this expected type seed a short lambda's parameter types?
@@ -3928,7 +4119,7 @@ impl Parser {
     /// element, a block tail and a parameter default (loft#1067). LOFT.md states the
     /// rule as *the expected type wherever there is one* — this is "wherever".
     pub(crate) fn seeds_lambda_hint(tp: &Type) -> bool {
-        matches!(tp.base(), Type::Function(_, _, _))
+        matches!(tp.base(), Type::Function(..))
     }
 
     /// The tuple type a `⇐` push should carry for `tp` — the one home for the tuple
@@ -4831,6 +5022,20 @@ impl Parser {
 
     #[track_caller]
     fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
+        // loft#1540 — a function value meets a function-typed slot only in the direction `const`
+        // allows: a function whose parameter is plain may not stand where the slot promises that
+        // parameter is `const` (`ConstParams::stands_for`), or a caller trusting the promise hands a
+        // read-only value to a function that may write it.  Asked before every accept below,
+        // because `is_equal` compares function types by shape and would take it.
+        // Pass 2 only, as every refusal here: on pass 1 a function declared further down has not
+        // yet said which of its parameters are `const`.
+        if !self.first_pass
+            && let (Type::Function(.., have), Type::Function(.., want)) =
+                (is_type.base(), should.base())
+            && !have.stands_for(*want)
+        {
+            return false;
+        }
         // @PLAN48 P2: implicitly narrowing a loft `integer` to a smaller explicit
         // width (e.g. `integer` → `i32`) loses data and must be an explicit `as`.
         // A constant that provably fits is exempt.  Emit here, then fall through to
@@ -5773,7 +5978,13 @@ impl Parser {
                 return true;
             }
             // Function types with compatible params and return type.
-            if let (Type::Function(tp, tr, _), Type::Function(sp, sr, _)) = (test_type, should)
+            // loft#1540 — and the direction of `const`: a function whose parameter is plain may
+            // not stand where the expected signature promises that parameter is `const`
+            // (`ConstParams::stands_for`), or a caller trusting the promise hands a read-only
+            // value to a function that may write it.
+            if let (Type::Function(tp, tr, _, tc), Type::Function(sp, sr, _, sc)) =
+                (test_type, should)
+                && tc.stands_for(*sc)
                 && tp.len() == sp.len()
                 && tp.iter().zip(sp.iter()).all(|(a, b)| a.is_equal(b))
                 && tr.is_equal(sr)
@@ -7038,7 +7249,7 @@ impl Parser {
             &returned,
             &crate::data::Context::Argument,
         )) > 8;
-        let has_fn = elems.iter().any(|e| matches!(e, Type::Function(_, _, _)));
+        let has_fn = elems.iter().any(|e| matches!(e, Type::Function(..)));
         if elems.iter().any(crate::data::has_lifetime_concern) || (wide && !has_fn) {
             let elems_clone = elems.clone();
             let synth = self.data.tuple_def(&mut self.lexer, &elems_clone);
@@ -9118,7 +9329,7 @@ impl Parser {
                         | Type::Radix(_, _, _)
                         | Type::Trie(_, _, _)
                         | Type::Iterator(_, _)
-                        | Type::Function(_, _, _)
+                        | Type::Function(..)
                         | Type::Routine(_)
                         | Type::RefVar(_)
                         | Type::Tuple(_) => None,
@@ -9325,7 +9536,7 @@ impl Parser {
     /// every later `__work_N` (loft#662's class, the reason
     /// `collections::callback_call_ref` already mints this way).
     fn push_deferred_fnref_buffers(&mut self, v_nr: u16, args: &mut Vec<Value>) {
-        let Type::Function(params, ret, _) = self.vars.tp(v_nr).clone() else {
+        let Type::Function(params, ret, ..) = self.vars.tp(v_nr).clone() else {
             return;
         };
         if args.len() != params.len() {
@@ -9533,7 +9744,7 @@ impl Parser {
                 | Type::Boolean
                 | Type::Character
                 | Type::Text(_)
-                | Type::Function(_, _, _)
+                | Type::Function(..)
                 | Type::Enum(_, false, _) // plain enum (struct-enums use OpCopyRecord)
         )
     }
@@ -9607,7 +9818,7 @@ impl Parser {
                 let d = data.def_nr("OpSetText");
                 Value::Call(d, vec![elm, pos, src_value])
             }
-            Type::Function(_, _, _) => {
+            Type::Function(..) => {
                 // Plan-06 phase 4d.A.2 — fn-ref vector elements store the
                 // 4-byte i32 d_nr.  Same shape as `vectors.rs:1597`.
                 let d = data.def_nr("OpSetInt4");
@@ -10144,7 +10355,7 @@ impl Parser {
             | Type::Trie(_, _, _)
             | Type::Hash(_, _, _)
             | Type::Iterator(_, _)
-            | Type::Function(_, _, _)
+            | Type::Function(..)
             | Type::Routine(_)
             | Type::RefVar(_) => return code,
             // A tuple element is read field by field by its consumer (`TupleGet`), so
@@ -10366,7 +10577,7 @@ impl Parser {
         // from `assigned_lambda_d_nr` directly — the flag is only
         // set when the assigning body parses, so a body parsed
         // earlier would wrongly see the legacy layout (#313).
-        if let Type::Function(_, _, _) = &tp
+        if let Type::Function(..) = &tp
             && f_nr != usize::MAX
         {
             // Remember WHICH attribute this read came from, for an assignment through it
@@ -10608,7 +10819,7 @@ impl Parser {
                     self.cl("OpGetDbRef", &[code, p])
                 }
             }
-            Type::Function(_, _, _) => {
+            Type::Function(..) => {
                 // P213: storage is two database fields per loft attribute
                 //   `<attr>`              — 4B i32 holding the lambda's d_nr
                 //   `<attr>__closure_rec` — 4B vector header at pos+4
@@ -11056,7 +11267,7 @@ impl Parser {
         // "Tuple struct field cannot contain element of type integer?".
         let single = match elem_tp.base() {
             Type::Integer(_) => self.cl("OpSetInt", &[ref_code.clone(), pos_v, value]),
-            Type::Function(_, _, _) => {
+            Type::Function(..) => {
                 // P196: storage holds the 4-byte i32 d_nr only.  Reduce
                 // `Value::FnRef` to its bare `Value::Int(d_nr)` so the
                 // OpSetInt4 template body sees an i64 the interpreter
@@ -11082,7 +11293,7 @@ impl Parser {
                 let d_nr_only = match value {
                     Value::FnRef(d_nr, _, _) => Value::Int(d_nr),
                     Value::Var(v)
-                        if matches!(self.vars.tp(v), Type::Function(_, _, _))
+                        if matches!(self.vars.tp(v), Type::Function(..))
                             && !self.closure_vars.contains_key(&v) =>
                     {
                         Value::FnRefDnr(v)
@@ -11646,7 +11857,7 @@ impl Parser {
         // DbRef, no copy) and is exempt.
         if emit_check
             && !self.first_pass
-            && !matches!(tp, Type::Function(_, _, _))
+            && !matches!(tp, Type::Function(..))
             && self.type_carries_closure(&tp)
         {
             diagnostic!(
@@ -11813,7 +12024,7 @@ impl Parser {
                 // in `objects.rs`.
                 self.cl("OpSetInt4", &[ref_code, pos_val, val_code])
             }
-            Type::Function(_, _, _) => {
+            Type::Function(..) => {
                 // P213: storage is now TWO database fields per loft
                 // attribute — `<attr>` (4B int holding the lambda's
                 // d_nr; database name matches the loft attribute name
@@ -12948,112 +13159,29 @@ impl Parser {
             if amp_rebind_arg != u16::MAX {
                 self.ensure_rebind_witness(amp_rebind_arg);
             }
-            // loft#1540 — plan 40's rule 4: a value-const value may be handed to a `const`
-            // parameter and not to a `&` one, whose whole purpose is to write the caller's
-            // value.  Asked of whole variables (`set(ps)`), projections (`set(ps[0])`) and views
-            // (`for f in ps { set(f) }`) alike, through the one place that describes them.
-            // `@FR-N-Shape` — "is this parameter a `&` link" is a shape question, and a `&τ?`
-            // parameter links exactly as its dense twin does, so it is asked through `base()`.
-            // An OP is exempt from both gates below: it is a primitive only the standard
-            // library's own bodies call, where `const` on a parameter means an immediate operand
-            // in the bytecode (`Data::add_op`), not a read-only borrow; the stdlib's `pub fn`
-            // wrapper around it carries the signature a program is judged by.
+            // loft#1540, C124 — a value-const value reaches a `&` parameter never and a plain
+            // record or collection parameter only when it is `const`; the question and its
+            // wording live in `report_const_argument`, shared with a function reference's call
+            // and a builtin's callback.
+            // An OP is exempt: it is a primitive only the standard library's own bodies call,
+            // where `const` on a parameter means an immediate operand in the bytecode
+            // (`Data::add_op`), not a read-only borrow; the stdlib's `pub fn` wrapper around it
+            // carries the signature a program is judged by.
             let callee_is_op = self.data.def(d_nr).is_operator();
-            if report
-                && !self.first_pass
-                && !callee_is_op
-                && matches!(tp.base(), Type::RefVar(_))
-                && !self
-                    .data
-                    .def(d_nr)
-                    .attributes()
-                    .get(nr)
-                    .is_some_and(|a| a.value_const)
-                && let Some(place) = self.const_view_place(&actual_code, true)
-            {
-                // A view names itself and what it views: the author passed `f`, not `ps`.
-                let what = match actual_code.unspan() {
-                    Value::Var(v) if self.const_views.contains_key(&(self.context, *v)) => {
-                        format!("'{}', a view of {place},", self.vars.written_name(*v))
-                    }
-                    _ => place,
-                };
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Cannot pass {what} to the `&` parameter {} of `{callee_name}`, which may \
-                     modify it; its value is read-only — pass a local copy, or make the \
-                     parameter `const` if `{callee_name}` only reads it",
-                    nr + 1
+            if report && !self.first_pass && !callee_is_op {
+                let attr = self.data.def(d_nr).attributes().get(nr);
+                let param_const = attr.is_some_and(|a| a.value_const);
+                let param = attr.map(|a| a.name.clone());
+                self.report_const_argument(
+                    &actual_code,
+                    &tp,
+                    param_const,
+                    ConstHandOff::Declared {
+                        callee: &callee_name,
+                        nr,
+                        param: param.as_deref(),
+                    },
                 );
-            }
-            // C124 — a value-const value reaches only a `const` parameter.  The `&` gate above
-            // refuses a `&` parameter outright; this one refuses a plain RECORD or COLLECTION
-            // parameter that is not declared `const`, because a plain heap parameter names the
-            // caller's value (`calls.md` F-ParamHeap) and its callee may write it.  Decided by
-            // the SIGNATURE, never the callee's body: what a call means is judged from the call
-            // and the declaration it names (C121), while a proof that the callee does not write
-            // stays an optimisation's to use (C122).  `text` and scalar parameters take their
-            // own copy and are not asked.
-            if report
-                && !self.first_pass
-                && !callee_is_op
-                && !matches!(tp.base(), Type::RefVar(_))
-                && matches!(
-                    tp.peel_link().base(),
-                    Type::Reference(_, _)
-                        | Type::Enum(_, true, _)
-                        | Type::Vector(_, _)
-                        | Type::Sorted(_, _, _)
-                        | Type::Index(_, _, _)
-                        | Type::Radix(_, _, _)
-                        | Type::Trie(_, _, _)
-                        | Type::Hash(_, _, _)
-                )
-                && !self
-                    .data
-                    .def(d_nr)
-                    .attributes()
-                    .get(nr)
-                    .is_some_and(|a| a.value_const)
-                && let Some(place) = self.const_view_place(&actual_code, true)
-            {
-                let what = match actual_code.unspan() {
-                    Value::Var(v) if self.const_views.contains_key(&(self.context, *v)) => {
-                        format!("'{}', a view of {place},", self.vars.written_name(*v))
-                    }
-                    _ => place,
-                };
-                let param = self
-                    .data
-                    .def(d_nr)
-                    .attributes()
-                    .get(nr)
-                    .map_or_else(String::new, |a| format!(" `{}`", a.name));
-                // C124's rollout (owner, 2026-09-15): a gating WARNING first, so the libraries whose
-                // read-only helpers do not yet say `const` can add it before this becomes the
-                // error the ruling describes; the cure is in the message.
-                diagnostic!(
-                    self.lexer,
-                    Level::Warning,
-                    code = "const-to-plain-parameter",
-                    "Cannot pass {what} to parameter {}{param} of `{callee_name}`, which is not \
-                     `const`: its value is read-only, and a plain parameter names the caller's \
-                     value — declare the parameter `const` if `{callee_name}` only reads it, or \
-                     pass a local copy",
-                    nr + 1
-                );
-                // Conditional, and without an edit: whether the callee only reads is the author's
-                // to affirm (C124 decides by the signature, not by reading the body for them), and
-                // the parameter is usually declared in another file than this call.
-                self.lexer.fix_last(crate::diagnostics::Fix {
-                    kind: crate::diagnostics::FixKind::Conditional,
-                    title: format!("declare parameter{param} of `{callee_name}` `const`"),
-                    condition: Some(format!("`{callee_name}` only reads that parameter")),
-                    edit: None,
-                    concept: "const parameters",
-                    concept_ref: "@F18",
-                });
             }
             // @FR-N-Store — the parameter is a slot when this binding is REPORTED and the callee
             // is not null-transparent; an overload TRIAL (`!report`) and a null-transparent
@@ -13097,7 +13225,7 @@ impl Parser {
                     // cannot be named HERE — it is reported at the bare-name site in
                     // `objects.rs` instead, where the name is still in hand, and both
                     // receivers now give the same message.
-                    let method_arg = if matches!(tp, Type::Function(_, _, _))
+                    let method_arg = if matches!(tp, Type::Function(..))
                         && matches!(actual_type, Type::Null | Type::Unknown(_))
                         && let Value::Var(v) = actual_code.unspan()
                     {
@@ -13313,7 +13441,7 @@ impl Parser {
     /// position: a caller local's fn-type was INFERRED at the bind, so a capturing lambda
     /// leaves the closure record in them and a non-capturing one leaves them empty.
     fn capturing_fnref_var(vars: &crate::variables::Function, v_nr: u16) -> Option<u16> {
-        matches!(vars.tp(v_nr).base(), Type::Function(_, _, d) if !d.is_empty()).then_some(v_nr)
+        matches!(vars.tp(v_nr).base(), Type::Function(_, _, d, ..) if !d.is_empty()).then_some(v_nr)
     }
 
     /// The return type a fn-ref VALUE publishes to whoever holds it — the deps a CALLER can
@@ -17371,7 +17499,7 @@ impl Parser {
             // store", then SIGSEGV).  It reached a value position through the fallback of a
             // non-total `match` over an enum whose arms yield lambdas, where nothing else
             // names the width.
-            Type::Function(_, _, _) => Value::FnRef(0, u16::MAX, Box::new(tp.base().clone())),
+            Type::Function(..) => Value::FnRef(0, u16::MAX, Box::new(tp.base().clone())),
             _ => Value::Null,
         }
     }
@@ -17468,7 +17596,7 @@ fn tests_base_dir(cur_dir: &str) -> &str {
 /// (a complete `FnRef`) or is not a literal at all (a `Var`, a `Call`, a nested branch
 /// its own join already widened). Widening any of those would overwrite a live value.
 pub(crate) fn widen_bare_fn_ref(v: &mut Value, tp: &Type) -> bool {
-    if !matches!(tp.base(), Type::Function(_, _, _)) {
+    if !matches!(tp.base(), Type::Function(..)) {
         return false;
     }
     let fn_tp = tp.base().clone();
@@ -17654,7 +17782,7 @@ fn emit_fn_ref_field_write(
                 false
             };
             let source_is_noncapturing =
-                matches!(p.vars.tp(v), Type::Function(_, _, _)) && !p.closure_vars.contains_key(&v);
+                matches!(p.vars.tp(v), Type::Function(..)) && !p.closure_vars.contains_key(&v);
             if target_is_4b && source_is_noncapturing {
                 return p.cl("OpSetInt4", &[ref_code, pos_val, Value::FnRefDnr(v)]);
             }

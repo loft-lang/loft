@@ -88,8 +88,10 @@ re-annotated to match.  No new keyword.
     kept by every copy of a signature: generic instances, interface and bound-method stubs,
     default-value functions, overload dispatchers.  The stdlib's read-only heap parameters are
     `const`; `Op*` primitives are exempt (only stdlib bodies call them, and `const` there means an
-    immediate operand).  **Open:** a function type cannot spell `const`, so a value-const value
-    handed through a function reference is unchecked (formal/binding.md D-bind-45).
+    immediate operand).  The function-reference half followed the same day (D-bind-45 closed): a
+    function type spells `const` (`fn(const T)`, a `ConstParams` mask beside the parameter types —
+    still no `Type::Const`), and a reference's call, a builtin's callback, a lambda's `const`
+    parameter and a closure's capture are judged by it.
 
 ## First principle — two orthogonal facts, and loft already has one of them
 
