@@ -1,0 +1,54 @@
+// @PLN157 § V-af cells — a value BRANCH of buffer-delivering calls witnesses every arm's
+// buffer (@FR-O-Complete).  `v = if c { mk(i) } else { mk2(i) }` inside a loop: each arm's call
+// delivers through its own hidden `__ref_N`, `v` adopts whichever ran, and without the
+// pairing `v`'s per-iteration free releases the buffer's store — so the buffers stay null,
+// every call mints a store, and every iteration frees one (16 % of the consumer's `smooth`).
+// With the pairing, both buffers are allocated once and `v`'s free declines against each.
+// Values are what the copy-free semantics give either way; the interpreter is the oracle,
+// `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` are the falsifiers (a use-after-free or a
+// double free is loud under them), and `LOFT_STORES=log` counts the stores.
+struct Pt { x: float, y: float }
+struct Wrap { p: Pt, n: integer }
+
+fn mk(i: integer) -> Pt { Pt { x: i as float, y: 2.0 * (i as float) } }
+fn mk2(i: integer) -> Pt { Pt { x: -(i as float), y: 0.5 } }
+fn mk3(i: integer) -> Pt { Pt { x: 100.0, y: i as float } }
+fn tenth(v: float) -> integer { (v * 10.0) as integer }
+
+// j1 — the smooth shape: an if-join of two calls in a loop.  i even → mk, odd → mk2.
+// x: 0 - 1 + 2 - 3 + 4 - 5 = -3; y: 0 + 0.5 + 4 + 0.5 + 8 + 0.5 = 13.5 → -30 135.
+fn j1() { sx = 0.0; sy = 0.0; for i in 0..6 { v = if i % 2 == 0 { mk(i) } else { mk2(i) }; sx += v.x; sy += v.y; } println("j1 {tenth(sx)} {tenth(sy)}"); }
+// j2 — an if-join of a call and a LITERAL.  even → mk(i), odd → Pt{9, 9}.  x: 0 + 9 + 2 + 9 + 4 + 9 = 33; y: 0+9+4+9+8+9 = 39.
+fn j2() { sx = 0.0; sy = 0.0; for i in 0..6 { v = if i % 2 == 0 { mk(i) } else { Pt { x: 9.0, y: 9.0 } }; sx += v.x; sy += v.y; } println("j2 {tenth(sx)} {tenth(sy)}"); }
+// j3 — a THREE-arm branch (else-if) of three calls.  i%3: 0 → mk, 1 → mk2, 2 → mk3.
+// x: 0 - 1 + 100 + 3 - 4 + 100 = 198; y: 0 + 0.5 + 2 + 6 + 0.5 + 5 = 14 → 1980 140.
+fn j3() { sx = 0.0; sy = 0.0; for i in 0..6 { v = if i % 3 == 0 { mk(i) } else if i % 3 == 1 { mk2(i) } else { mk3(i) }; sx += v.x; sy += v.y; } println("j3 {tenth(sx)} {tenth(sy)}"); }
+// j4 — NESTED ifs: the inner join's arms are the outer's.  i<3: (even → mk, odd → mk2); else mk3.
+// x: 0 - 1 + 2 + 100·3 = 301; y: 0 + 0.5 + 4 + 3 + 4 + 5 = 16.5 → 3010 165.
+fn j4() { sx = 0.0; sy = 0.0; for i in 0..6 { v = if i < 3 { if i % 2 == 0 { mk(i) } else { mk2(i) } } else { mk3(i) }; sx += v.x; sy += v.y; } println("j4 {tenth(sx)} {tenth(sy)}"); }
+// j5 — one arm is an EXISTING variable (a view of a record bound before the loop): the other
+// arm's buffer is witnessed, the view arm frees nothing.  base = Pt{7, 7}; even → mk, odd → base.
+// x: 0 + 7 + 2 + 7 + 4 + 7 = 27; y: 0 + 7 + 4 + 7 + 8 + 7 = 33; base intact.
+fn j5() { base = Pt { x: 7.0, y: 7.0 }; sx = 0.0; sy = 0.0; for i in 0..6 { v = if i % 2 == 0 { mk(i) } else { base }; sx += v.x; sy += v.y; } println("j5 {tenth(sx)} {tenth(sy)} {tenth(base.x)}"); }
+// j6 — the joined local is REASSIGNED later in the body: multi-assigned, the buffers stay
+// unreused, the values hold.  y read from the join (13.5, as j1), then v = mk3(i) and x from it (600).
+fn j6() { sx = 0.0; sy = 0.0; for i in 0..6 { v = if i % 2 == 0 { mk(i) } else { mk2(i) }; sy += v.y; v = mk3(i); sx += v.x; } println("j6 {tenth(sx)} {tenth(sy)}"); }
+// j7 — the join OUTSIDE any loop, read after: mk2(4) → x -4, y 0.5.
+fn j7() { c = true; v = if c { mk2(4) } else { mk(4) }; println("j7 {tenth(v.x)} {tenth(v.y)}"); }
+// j8 — the joined value ESCAPES into a vector: a copy per element, the buffer reused.
+// pushes mk(0), mk2(1), mk(2), mk2(3): x sum = 0 - 1 + 2 - 3 = -2; len 4; element 1 keeps -1 after the loop.
+fn j8() { out: vector<Pt> = []; for i in 0..4 { v = if i % 2 == 0 { mk(i) } else { mk2(i) }; out += [v]; } sx = 0.0; for p in out { sx += p.x; } println("j8 {tenth(sx)} {len(out)} {tenth(out[1]?.x)}"); }
+// j9 — the joined value is stored into a FIELD of a record built before the loop: the last one wins.
+// w.p = mk2(5) → x -5, y 0.5.
+fn j9() { w = Wrap { p: Pt { x: 0.0, y: 0.0 }, n: 0 }; for i in 0..6 { v = if i % 2 == 0 { mk(i) } else { mk2(i) }; w.p = v; w.n += 1; } println("j9 {tenth(w.p.x)} {tenth(w.p.y)} {w.n}"); }
+// j10 — TWO joined locals in one iteration (smooth's sp_ta and sp_tb): four buffers.
+// a: even mk / odd mk2 (as j1: x -3, y 13.5); b: even mk3 / odd mk (x: 100+1+100+3+100+5 = 309; y: 0+2+2+6+4+10 = 24).
+fn j10() { ax = 0.0; ay = 0.0; bx = 0.0; by = 0.0; for i in 0..6 { a = if i % 2 == 0 { mk(i) } else { mk2(i) }; b = if i % 2 == 0 { mk3(i) } else { mk(i) }; ax += a.x; ay += a.y; bx += b.x; by += b.y; } println("j10 {tenth(ax)} {tenth(ay)} {tenth(bx)} {tenth(by)}"); }
+// j11 — a nested loop: the join in the inner loop, the outer running it twice.  2 × j1 → -60 270.
+fn j11() { sx = 0.0; sy = 0.0; for _r in 0..2 { for i in 0..6 { v = if i % 2 == 0 { mk(i) } else { mk2(i) }; sx += v.x; sy += v.y; } } println("j11 {tenth(sx)} {tenth(sy)}"); }
+// j12 — the join's calls are through ANOTHER call level: half_chord's shape, a forwarder that
+// builds its result with a call.  fwd(i) = mk(i + 1).  even → fwd, odd → mk2: x: 1 - 1 + 3 - 3 + 5 - 5 = 0; y: 2 + 0.5 + 6 + 0.5 + 10 + 0.5 = 19.5.
+fn fwd(i: integer) -> Pt { mk(i + 1) }
+fn j12() { sx = 0.0; sy = 0.0; for i in 0..6 { v = if i % 2 == 0 { fwd(i) } else { mk2(i) }; sx += v.x; sy += v.y; } println("j12 {tenth(sx)} {tenth(sy)}"); }
+
+fn main() { j1(); j2(); j3(); j4(); j5(); j6(); j7(); j8(); j9(); j10(); j11(); j12(); }

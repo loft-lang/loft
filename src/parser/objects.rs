@@ -122,7 +122,7 @@ impl Parser {
     /// bare `Shape` slot beside it was accepted. Whether the slot may be ABSENT says
     /// nothing about which variants it can hold.
     pub(crate) fn enum_context(&self, tp: &Type) -> bool {
-        match tp.base() {
+        match tp.peel_link() {
             Type::Enum(_, _, _) => true,
             Type::Reference(d_nr, _) => self.data.def_type(*d_nr) == DefType::Enum,
             _ => false,
@@ -888,18 +888,19 @@ impl Parser {
         // `Type::Reference(enum)` (typed decl / reassignment / field init / call
         // arg / return).  emit_variant_value picks the right discriminant (and
         // the mixed-enum allocation form) for that enum.
-        // Read through `base()`: whether the target may be ABSENT says nothing about
-        // which variants it can hold, so `v: vector<Color?> = [Green]` has to resolve
+        // Read through `peel_link()`: whether the target may be ABSENT, or is a `&` link to
+        // its source, says nothing about which variants it can hold, so `v: vector<Color?> =
+        // [Green]` and `c = &e; c = Green` have to resolve
         // `Green` exactly as the dense spelling beside it does.  Asked bare, a nullable
         // element type fell past both arms and the bare variant was reported as having no
         // type at all — the same peel `enum_context` already does to decide there IS an
         // enum context here (loft#1065 one site over, loft#1416).
-        } else if let Type::Enum(enr, _, _) = parent_tp.base()
+        } else if let Type::Enum(enr, _, _) = parent_tp.peel_link()
             && self.data.def(*enr).attr_names.contains_key(name)
         {
             let enr = *enr;
             t = self.emit_variant_value(enr, name, code);
-        } else if let Type::Reference(enr, _) = parent_tp.base()
+        } else if let Type::Reference(enr, _) = parent_tp.peel_link()
             && self.data.def_type(*enr) == DefType::Enum
             && self.data.def(*enr).attr_names.contains_key(name)
         {
@@ -2564,7 +2565,9 @@ impl Parser {
             let custom_fmt = if let Type::Reference(fd, _) = &tp {
                 self.data.def_type(*fd) == DefType::Struct && {
                     let nm = self.data.def(*fd).name().to_string();
-                    self.data.def_nr(&format!("t_{}{}_to_text", nm.len(), nm)) != u32::MAX
+                    self.data
+                        .def_nr(&crate::data::Data::mangle_method(&nm, "to_text"))
+                        != u32::MAX
                 }
             } else {
                 false
@@ -2749,7 +2752,9 @@ impl Parser {
             return;
         }
         let nm = self.data.def(target).name();
-        let d_nr = self.data.def_nr(&format!("t_{}{}_lit", nm.len(), nm));
+        let d_nr = self
+            .data
+            .def_nr(&crate::data::Data::mangle_method(nm, "lit"));
         if d_nr == u32::MAX || self.data.attributes(d_nr) != 2 {
             return;
         }
@@ -2825,7 +2830,10 @@ impl Parser {
             );
         }
         let nm = self.data.def(target).name().to_string();
-        let d_nr = self.data.def_nr(&format!("t_{}{nm}_hole_{kind}", nm.len()));
+        let d_nr = self.data.def_nr(&crate::data::Data::mangle_method(
+            &nm,
+            &format!("hole_{kind}"),
+        ));
         if d_nr == u32::MAX || self.data.attributes(d_nr) != 2 {
             if !self.first_pass {
                 diagnostic!(
@@ -3208,59 +3216,98 @@ impl Parser {
         // the `token(")")` below — leave that gated on `reverse`.
         let want_reverse = reverse || self.reverse_iterator;
         self.reverse_iterator = false;
-        // Set when the forward branch below picks the plain counter form; the
-        // init slot then carries `lo - 1` instead of the typed null.
-        let mut plain_counter_init: Option<Value> = None;
-        let test = if want_reverse {
-            if incl {
-                ls.push(v_set(
-                    ivar,
-                    v_if(
-                        self.single_op("!", Value::Var(ivar), in_type.clone()),
-                        till,
-                        self.conv_op(
-                            "-",
-                            Value::Var(ivar),
-                            Value::Int(1),
-                            in_type.clone(),
-                            I32.clone(),
-                        ),
-                    ),
-                ));
+        // The counter's init: the typed null for the null-encoded form, the plain value
+        // for a form whose first step needs no "not started yet" state.
+        let mut counter_init: Option<Value> = None;
+        // `@FR-I-Range` lowers to ONE compare and ONE step per iteration.  A start that is
+        // not a literal cannot seed the counter at `a - 1` — that is unrepresentable when
+        // `a` is the type's minimum, where `a - 1` IS the null sentinel — so such a loop
+        // runs a second counter, `next`, that starts AT `a`: the bound is tested against
+        // `next`, `next` is yielded into the visible counter, then stepped.  Every value
+        // the compare and the step see is the one the null-encoded form computed, so a
+        // null bound, a start at the type minimum and an inclusive end at the type maximum
+        // behave as before, and the visible counter (`i#index`, readable in the body) is
+        // never a step ahead of `i`.  The null-encoded form — `if !i#index { a } else
+        // { i#index + 1 }` — paid a null test and a select on every iteration, half the
+        // cost of a tight loop (@PLN157 § V-ab).
+        //
+        // `LOFT_NO_NEXT_COUNTER=1` emits the null-encoded form on both backends
+        // (`@FR-R-Switch`): the before-half of an A/B, and the first bisect step for a
+        // wrong value out of a counted loop whose start is not a literal.
+        let next_counter = std::env::var_os("LOFT_NO_NEXT_COUNTER").is_none();
+        let mut next_init: Option<Value> = None;
+        if want_reverse {
+            if incl && next_counter {
+                // rev(a..=b): `next` starts at b, is yielded, then steps down.
+                let nxt = self.create_unique("next", &in_type);
+                next_init = Some(v_set(nxt, till));
+                let test =
+                    self.conv_op("<", Value::Var(nxt), expr.clone(), in_type.clone(), till_tp);
+                ls.push(v_if(test, Value::Break(0), Value::Null));
+                ls.push(v_set(ivar, Value::Var(nxt)));
+                let step = self.conv_op(
+                    "-",
+                    Value::Var(nxt),
+                    Value::Int(1),
+                    in_type.clone(),
+                    I32.clone(),
+                );
+                ls.push(v_set(nxt, step));
             } else {
-                ls.push(v_if(
-                    self.single_op("!", Value::Var(ivar), in_type.clone()),
-                    v_set(ivar, till),
-                    Value::Null,
-                ));
-                ls.push(v_set(
-                    ivar,
-                    self.conv_op(
+                if incl {
+                    ls.push(v_set(
+                        ivar,
+                        v_if(
+                            self.single_op("!", Value::Var(ivar), in_type.clone()),
+                            till,
+                            self.conv_op(
+                                "-",
+                                Value::Var(ivar),
+                                Value::Int(1),
+                                in_type.clone(),
+                                I32.clone(),
+                            ),
+                        ),
+                    ));
+                } else {
+                    // rev(a..b): the counter starts AT b and steps before the test, so
+                    // the first value is b - 1 and no "not started yet" state is needed.
+                    if next_counter {
+                        counter_init = Some(till);
+                    } else {
+                        ls.push(v_if(
+                            self.single_op("!", Value::Var(ivar), in_type.clone()),
+                            v_set(ivar, till),
+                            Value::Null,
+                        ));
+                    }
+                    let step = self.conv_op(
                         "-",
                         Value::Var(ivar),
                         Value::Int(1),
                         in_type.clone(),
                         I32.clone(),
-                    ),
-                ));
+                    );
+                    ls.push(v_set(ivar, step));
+                }
+                let test = self.conv_op(
+                    "<",
+                    Value::Var(ivar),
+                    expr.clone(),
+                    in_type.clone(),
+                    till_tp,
+                );
+                ls.push(v_if(test, Value::Break(0), Value::Null));
             }
-            self.conv_op(
-                "<",
-                Value::Var(ivar),
-                expr.clone(),
-                in_type.clone(),
-                till_tp,
-            )
         } else {
             // @PLN157 P3b — a forward loop over a literal non-negative `lo` needs no
-            // null-encoded "not started yet" state: the counter starts at `lo - 1`
-            // (folded here) and every iteration is one increment and one compare,
-            // instead of a null test choosing between init and increment.  The break
-            // test needs no proof — a null bound is i64::MIN, which sorts below every
-            // `lo` under the plain order exactly as under the sentinel-aware one, so
-            // both forms run such a loop zero times.  The null-init form stays for
-            // reverse loops, a computed `lo`, and any counter whose spec cannot hold
-            // `lo - 1` in range — a narrow unsigned counter's -1 IS its null sentinel.
+            // second counter either: the one counter starts at `lo - 1` (folded here) and
+            // every iteration is one increment and one compare.  The break test needs no
+            // proof — a null bound is i64::MIN, which sorts below every `lo` under the
+            // plain order exactly as under the sentinel-aware one, so both forms run such
+            // a loop zero times.  Declined for a counter whose spec cannot hold `lo - 1`
+            // in range — a narrow unsigned counter's -1 IS its null sentinel — which takes
+            // the `next` form instead.
             let plain_init = match (expr.unspan(), &in_type) {
                 (Value::Int(lo), Type::Integer(spec))
                     if *lo >= 0 && i64::from(spec.min) < i64::from(*lo) =>
@@ -3269,6 +3316,7 @@ impl Parser {
                 }
                 _ => None,
             };
+            let cmp = if incl { "<" } else { "<=" };
             let step = self.conv_op(
                 "+",
                 Value::Var(ivar),
@@ -3276,9 +3324,59 @@ impl Parser {
                 in_type.clone(),
                 I32.clone(),
             );
+            // loft#1525 — an INCLUSIVE range stops on the value it just yielded, BEFORE the
+            // step, so it never has to represent `till + 1`.  The overshoot test below cannot
+            // do that job when `till` is the type's maximum: the step overflows to the null
+            // sentinel (`i64::MIN` for `integer`), and `till < null` is false under the plain
+            // order — so the loop either restarts (the null-init form reads the sentinel as
+            // "not started yet") or runs on with `i = null` forever.
+            //
+            // Both spellings of the counter take this test unchanged.  In the plain-counter
+            // form `i` starts at `lo - 1`, so `i == till` on entry is exactly the empty range
+            // `lo..=lo-1`, where breaking is the right answer; in the null-init form `i` starts
+            // at the sentinel, which equals `till` only when `till` is itself null — a range
+            // that already ran zero times.  So no "have we started" test is needed, and the
+            // cost is one compare in `..=` loops only.
+            //
+            // Skipped entirely when the end is a CONSTANT strictly below the type's maximum
+            // (`0..=9`), where the step cannot overflow — that keeps @PLN157 § V-ab's counted
+            // loop at one increment and one compare for the common form.
+            // `@FR-N-Shape` — the scrutinee is PEELED (`base()`), so a nullable loop type is
+            // asked the same question as its dense twin rather than falling through the match
+            // and taking the test it does not need.
+            let end_can_reach_max = !matches!(
+                (till.unspan(), in_type.base()),
+                (Value::Int(t), Type::Integer(spec)) if i64::from(*t) < i64::from(spec.max)
+            );
+            if incl && end_can_reach_max {
+                let reached = self.conv_op(
+                    "==",
+                    Value::Var(ivar),
+                    till.clone(),
+                    in_type.clone(),
+                    till_tp.clone(),
+                );
+                ls.push(v_if(reached, Value::Break(0), Value::Null));
+            }
             if let Some(init) = plain_init {
-                plain_counter_init = Some(Value::Int(init));
+                counter_init = Some(Value::Int(init));
                 ls.push(v_set(ivar, step));
+                let test = self.conv_op(cmp, till, Value::Var(ivar), till_tp, in_type.clone());
+                ls.push(v_if(test, Value::Break(0), Value::Null));
+            } else if next_counter {
+                let nxt = self.create_unique("next", &in_type);
+                next_init = Some(v_set(nxt, expr.clone()));
+                let test = self.conv_op(cmp, till, Value::Var(nxt), till_tp, in_type.clone());
+                ls.push(v_if(test, Value::Break(0), Value::Null));
+                ls.push(v_set(ivar, Value::Var(nxt)));
+                let next_step = self.conv_op(
+                    "+",
+                    Value::Var(nxt),
+                    Value::Int(1),
+                    in_type.clone(),
+                    I32.clone(),
+                );
+                ls.push(v_set(nxt, next_step));
             } else {
                 ls.push(v_set(
                     ivar,
@@ -3288,25 +3386,20 @@ impl Parser {
                         step,
                     ),
                 ));
+                let test = self.conv_op(cmp, till, Value::Var(ivar), till_tp, in_type.clone());
+                ls.push(v_if(test, Value::Break(0), Value::Null));
             }
-            self.conv_op(
-                if incl { "<" } else { "<=" },
-                till,
-                Value::Var(ivar),
-                till_tp,
-                in_type.clone(),
-            )
-        };
-        ls.push(v_if(test, Value::Break(0), Value::Null));
+        }
         ls.push(Value::Var(ivar));
         // The loop init runs once before iteration.  For a slice it carries the
         // bound-clamp prelude (len/lo/hi temps) ahead of the iterator-var reset;
         // `iterator()` keeps this init slot (it drops only `extra_init`), so the
         // clamp is emitted on both the for-loop and the materialisation paths.
-        let init_ivar = v_set(
-            ivar,
-            plain_counter_init.unwrap_or_else(|| self.null(&in_type)),
-        );
+        let init_ivar = v_set(ivar, counter_init.unwrap_or_else(|| self.null(&in_type)));
+        // The second counter is seeded in the init, ahead of the visible counter's reset.
+        if let Some(seed) = next_init {
+            iter_prelude.push(seed);
+        }
         let iter_init = if iter_prelude.is_empty() {
             init_ivar
         } else {

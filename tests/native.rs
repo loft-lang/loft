@@ -751,21 +751,36 @@ fn run_native_jobs(
         .map(|(job, _)| job)
         .collect();
     let compile_ok = ready.len();
-    let run_errors: Vec<String> = std::thread::scope(|s| {
-        ready
-            .iter()
-            .map(|job| s.spawn(|| run_native_job(job)))
-            .collect::<Vec<_>>()
-            .into_iter()
-            .zip(ready.iter())
-            .filter_map(|(h, job)| {
-                h.join()
-                    .unwrap_or_else(|_| Err(Error::from(std::io::ErrorKind::Other)))
-                    .err()
-                    .map(|_| job.stem.clone())
-            })
-            .collect()
-    });
+    // IN CHUNKS, exactly as phase 2 compiles.  This spawned one thread per ready job — ~1300
+    // at once, each running a subprocess — which a 24-core Linux box absorbs and a macOS
+    // runner does not: the gate reported `0 compile failed, 19 run failed` with every one of
+    // the 19 among the LAST scripts alphabetically, i.e. the last threads spawned, and the
+    // same commit passed one day and failed the next as runner load varied.  Phase 2 never
+    // failed that way because it was already bounded, which is what made the asymmetry
+    // readable: two pools in one function, one of them unbounded.
+    //
+    // `concurrency` is the same worker count, so the run phase inherits the memory clamp the
+    // compile phase derives; a run peaks far below a rustc invocation, so this is a ceiling
+    // rather than a throttle.
+    let mut run_errors: Vec<String> = Vec::new();
+    for chunk in ready.chunks(concurrency) {
+        let chunk_errors: Vec<String> = std::thread::scope(|s| {
+            chunk
+                .iter()
+                .map(|job| s.spawn(|| run_native_job(job)))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .zip(chunk.iter())
+                .filter_map(|(h, job)| {
+                    h.join()
+                        .unwrap_or_else(|_| Err(Error::from(std::io::ErrorKind::Other)))
+                        .err()
+                        .map(|_| job.stem.clone())
+                })
+                .collect()
+        });
+        run_errors.extend(chunk_errors);
+    }
     let run_ok = compile_ok - run_errors.len();
     println!(
         "\nnative result: {run_ok} passed, {} compile failed, {} run failed; {} total",
@@ -2147,8 +2162,14 @@ fn one_sql_interface_drives_four_different_c_libraries() -> std::io::Result<()> 
         // The per-backend READ expression is still load-bearing for a different
         // reason: sqlite renders a `REAL` as `%!.15g`, so reading the column
         // naively loses the low bits of values that ARE stored correctly.
+        //
+        // The one-ULP miss is the LIBRARY's, so it is a fact per sqlite version:
+        // 3.46.1 (measured 2026-09-13) parses that text exactly and answers 7/7,
+        // the older library 6/7.  Both are the honest answer for their sqlite;
+        // any other count is loft's defect.
         assert!(
-            s.contains("sqlite float wrote=7 exact=6/7 inlined=false plain=true"),
+            s.contains("sqlite float wrote=7 exact=6/7 inlined=false plain=true")
+                || s.contains("sqlite float wrote=7 exact=7/7 inlined=false plain=true"),
             "sqlite: a bound float must round-trip exactly (see @PLN133 P3):\n{s}"
         );
         assert_eq!(

@@ -577,9 +577,13 @@ impl Parser {
         Some(v_block(
             vec![v_set(buf, val.clone()), Value::Var(buf)],
             tp.clone(),
-            "join-arm-owner",
+            Self::JOIN_ARM_OWNER,
         ))
     }
+
+    /// The name of the block [`Self::materialise_owned_call`] builds, `{ buf = call; buf }`.
+    /// `scopes::sink_set_into_arms` recognises the block by it, so the two must not drift.
+    pub(crate) const JOIN_ARM_OWNER: &'static str = "join-arm-owner";
 
     /// Materialise every owning CALL arm of a join whose merged type is a VIEW
     /// (loft#1019).
@@ -1221,6 +1225,16 @@ impl Parser {
                              whole right-hand side of an assignment (`a = &b`). Pass a `&` \
                              parameter WITHOUT `&` (`f(x)`, the reference comes from the \
                              parameter type); do not use `&` in an argument or sub-expression"
+                        );
+                        self.amp_pending = false;
+                    } else if Self::is_narrow_store_place(&t, code) {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "`&` cannot link to an integer element or field that is stored in fewer \
+                             than 8 bytes, because a link reads and writes a whole integer. Copy it \
+                             into a local and write it back (`x = v[i]; ...; v[i] = x`), or declare \
+                             the element or field as `integer`"
                         );
                         self.amp_pending = false;
                     } else if !Self::is_amp_place(code, &self.data) {
@@ -2690,8 +2704,19 @@ impl Parser {
             // points at — a missing one has no record.  A COLLECTION is the case above:
             // there the DbRef addresses the slot HOLDING the collection, so `rec` names
             // the holder and says nothing about what the slot contains.
-            let conv_nr = self.data.def_nr("OpConvBoolFromRef");
-            Value::Call(conv_nr, vec![src.clone()])
+            // loft#1529 — a nullable struct-enum SLOT (a field or an element read) is a
+            // sub-reference whose `rec` is the holder's, so `rec != 0` called every absent slot
+            // present.  Its tag says, through the one null test that already reads it.
+            let as_optional = Type::Optional(Box::new(tp.clone()));
+            if matches!(tp.base(), Type::Enum(_, true, _))
+                && self.enum_slot_view(src, &as_optional)
+                && let Some(not_null) = self.null_test(src.clone(), &as_optional, true)
+            {
+                not_null
+            } else {
+                let conv_nr = self.data.def_nr("OpConvBoolFromRef");
+                Value::Call(conv_nr, vec![src.clone()])
+            }
         } else if matches!(tp, Type::Boolean) {
             // @PLN17: the null-check is "is NOT null" (v_if true → keep lhs).
             // For a boolean that is `src != null` (raw `!= 255`), NOT the

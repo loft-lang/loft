@@ -128,6 +128,82 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
 ### A vector reached by a pure path has one header for a loop that cannot move it
 
 ```
+  (R-Base)       in a loop that GROWS no store — no push, no mint push, no
+                 null-discharge buffer minted in its body; in-place sets, store-free
+                 ops, store-free or in-place-only callees and frees may run — a
+                 hoisted header (R-Header) is accompanied by the address of its
+                 vector's element 0, derived once beside it, and every fused element
+                 read and write of the path in the loop is one bounds test against
+                 the header's length and one load or store through that address.
+                 The base is the header's address, never a second derivation of the
+                 path (R-State counts it with its header), and an inner growth-free
+                 loop may derive one from a header an enclosing, growing loop holds,
+                 for the inner loop's extent alone: the enclosing loop's growth
+                 happens outside it.  A base is valid exactly while no store's buffer
+                 is reallocated, which is what "grows no store" secures; the verify
+                 form re-derives it at every use.
+
+  (R-Counter)    a counted range's counters — its `#index`, the `next` counter of a
+                 computed start, and the loop variable — are never the sentinel: an
+                 exclusive range steps its counter to at most its end, so the step
+                 cannot overflow, and an inclusive range is admitted when its end is
+                 a literal below the type's maximum.  The counters are seeded into
+                 the non-sentinel proof from the one parser that reads a range's
+                 shape, so the step emits as the non-null checked add and every
+                 index built from the counter alone loses its operand pre-tests.  The
+                 INTEGER CLOSURE — the result of `+`/`-`/`*` over non-sentinel
+                 operands counted non-sentinel — is deliberately NOT taken: C85 makes
+                 an overflow's sentinel propagate onward as null on both backends,
+                 and a native closure would answer a number there, a divergence after
+                 a reported fault.  Its price is measured (§ V-aj), and it is the
+                 owner's line to move.
+
+  (R-LitDiv)     a division or remainder by a LITERAL that is neither 0 nor -1 emits
+                 as one sentinel test and the plain operator — `if x == MIN { MIN }
+                 else { x / k }` — which is the guarded template's exact value: the
+                 null a `/` mints comes from a zero divisor, from `MIN / -1`, or from
+                 a null operand, and the literal rules out the first two at
+                 generation time.  It needs no proof of the dividend, which is what
+                 lets it fire on an arithmetic result the proof never trusts; the
+                 template's fault note is dropped with it, since it fires only when
+                 the result is the sentinel while neither operand is.
+
+  (R-LoopBuffer) a per-site vector buffer (`__vdb_N`, the store a vector local
+                 declared `[]` is backed by) whose mint stands INSIDE a loop keeps
+                 its store and its vector across iterations: the first pass mints,
+                 every later pass resets the vector's length to 0 and keeps its
+                 record and capacity, and the literal's zero of the vector field is
+                 not emitted.  Observably the same vector as a fresh one — a read is
+                 bounded by the length, a push writes from 0 — with the capacity
+                 retained, as a Rust `Vec` cleared in a loop retains its own.  Admitted
+                 only where the record is exactly one vector of elements that OWN NO
+                 HEAP (a length reset releases nothing; the clear is what releases
+                 what an element owns, `@FR-H-ClearRelease`), where every mention of
+                 the buffer is its own init family or a free (a callee reaching the
+                 buffer could keep a handle into the record the reuse keeps), and
+                 where the buffer's null declaration stands outside the loop (a
+                 re-declaration would orphan the kept store).  A buffer another
+                 rewrite owns — an invariant literal, an element-first pair, a move
+                 host, the adopted result's witness — is left to that rewrite.
+
+  (R-PushFill)   a counted loop (`for … in lo..hi`, `lo..=hi`) whose body pushes k
+                 scalars to ONE pure path at its top level every iteration — nothing
+                 in the body can leave the loop early or loop again, no push to the
+                 path stands under a branch, no other write reaches the path, the
+                 range's end is a simple invariant — RESERVES k times its trip count
+                 once before it runs, over the push header the loop holds, and
+                 re-derives that header (the reserve may move the record).  Observably
+                 nothing: a reservation is capacity, and the pushes write as before.
+                 When the body is that one push of a SIMPLE INVARIANT and nothing
+                 else, the loop is ONE fill of the vector's tail — the room reserved,
+                 the elements written with one bounds check at each end, the length
+                 bumped once — guarded so that a range the fill declines (empty,
+                 negative, an absent owner, an element width not the value's) runs the
+                 per-element loop instead, and the counters are left as that loop
+                 would leave them (`R-Fill`'s own tail).  The trip count is the range's
+                 end less its start — the `next` counter's current value or `#index +
+                 1` — plus one for an inclusive range, taken at loop entry.
+
   (R-Header)     in a loop body that writes no store, a vector reached by a PURE
                  PATH P — a variable, or const-offset fields over one — has one
                  header (store, record, length) for the whole loop: the emitter
@@ -163,6 +239,17 @@ in-place write moves nothing, so no header, aliased or not, can go stale; that i
 why the header needs no write set while a scalar (R-Scalar) does.  Switch
 `LOFT_NO_WRITE_HOIST`.  Sites: `hoist::IN_PLACE_SET_OPS`,
 `hoist::blocks_header_hoist`.
+**The hidden-buffer allowance** (@PLN157 § V-ad): the allow-list also admits
+`OpDatabase`/`OpDatabaseNP` into a null-discharge buffer — the hidden `__ref_p2_N` that
+`e = tbl[i]?` mints an ABSENT record element into — when the record is all-scalar.
+The allocation takes a store of its own from a null slot or clears the buffer's OWN
+store, and that store hosts no vector, text or reference, so no header can name
+anything in it; the field sets that follow are (R-InPlace) sets and walk on their own,
+and the scalar tier reads the allocation as the record's type whole (R-Scalar).  Only
+the pass-2 discharge buffers qualify: a `__ref_N` work-ref may be a return buffer, and
+a return buffer may be a record the caller offered (R-Callee's second half carries
+that case).  Switch `LOFT_NO_NULL_BUFFER_HOIST`; falsifier `LOFT_HOIST_VERIFY=1`.
+Site: `hoist::null_buffer_alloc`.
 
 ### A callee is admitted by what its body writes, one call deep
 
@@ -245,18 +332,20 @@ cannot see.  Switch `LOFT_NO_WRAPPER_INLINE`; pin `tests/wrapper_op.rs`.  Sites:
 ### A callee's invariant inputs cross the call
 
 ```
-  (R-Inputs)     a callee admitted by (R-Callee), of a plain-struct parameter p it
-                 never rebinds, has INVARIANT INPUTS: the scalar fields p.f its own
-                 write set does not reach, and the vector paths p.g it views (R-View)
-                 or indexes (R-Header).  A caller loop that holds, for the leaf
-                 argument variable c it passes for p, the value of (c, f) under
-                 (R-Scalar) and the header of (c, g) under (R-Header) — EVERY input
-                 of the callee — calls the callee's TWIN: the same body emitted with
-                 those values as extra parameters, read in place of the record — the
-                 caller's holders handed in (R-State: a path held by a push header
-                 hands in that header, current at the call).  A call missing any
-                 input keeps the plain form; the twin exists beside the original,
-                 never instead of it.
+  (R-Inputs)     a callee admitted by (R-Callee), of a parameter p it never
+                 rebinds, has INVARIANT INPUTS: for a plain-struct p, the scalar
+                 fields p.f its own write set does not reach and the vector paths
+                 p.g it views (R-View) or indexes (R-Header); for a vector p, its
+                 own header when it indexes p (g empty).  A caller loop that holds,
+                 for the argument a it passes for p — a leaf variable c for a scalar
+                 input, a pure path (R-Header) for a header input — the value of
+                 (c, f) under (R-Scalar) and the header of a.g under (R-Header) —
+                 EVERY input of the callee — calls the callee's TWIN: the same body
+                 emitted with those values as extra parameters, read in place of
+                 the record — the caller's holders handed in (R-State: a path held
+                 by a push header hands in that header, current at the call).  A
+                 call missing any input keeps the plain form; the twin exists
+                 beside the original, never instead of it.
 ```
 
 **In words.** @PLN157 § V-p.  The pixel methods read `self.width` / `self.height`
@@ -272,7 +361,18 @@ small twin — so the rewrite passes values and never clones IR; shipped, the co
 `LOFT_NO_CALLEE_INPUTS`; falsifier `LOFT_HOIST_VERIFY=1`, which inside the twin
 re-reads every input against the record.  Sites: `hoist::callee_inputs`,
 `hoist::hoistable` (the mapping through the argument), the twin's emission in
-`Output::output_function`, the twin call in `Output::user_fn_call_body`.
+`Output::output_function`, the twin call in `Output::user_fn_call_body` and in the
+return-buffer delivery site of `dispatch.rs`.
+**The path-argument half** (@PLN157 § V-ac): a header input is keyed on the
+ARGUMENT's pure path, so `brush_sample(br.img, …)` over `img: const vector<integer>`
+takes the header of `(br, img)` the loop already holds, and `rd(h.cv, i)` over
+`c.data` takes `(h, cv, data)`; the callee's path is re-spelled over the argument by
+`hoist::substitute_path` (a walk of its own — `map_nodes` descends into the
+replacement, whose variable numbers are the caller's), the key by
+`hoist::input_header_at`, the ONE definition both the loop's candidate and the twin
+call ask.  A scalar input still needs a leaf variable — its key carries a variable,
+not a path.  A return-buffer writer (R-Callee's second half) is admitted like any
+other: its write set is its buffer's type whole, which no parameter's field shares.
 
 ### A push keeps its own header current
 
@@ -471,6 +571,55 @@ across calls — and collapsing the delivery BLOCK whole drops its scope-exit fr
 § V-j hook.  Shipped: standalone `fronds` −9.5 % (381–396k → 350–357k ns/op) and
 `smooth` −14.4 % (2 205 → 1 887), hashes exact, cells leak-free under poison.
 
+### A filling loop is one slice fill
+
+```
+  (R-Fill)       a counted loop `for i in lo..hi { v[base + i] = c }` — the body ONE
+                 in-place scalar set (R-InPlace) at field 0 of a plain scalar vector
+                 reached by a pure path a header is held for (R-Header), the index
+                 the loop variable or an invariant plus it, the value and the bound
+                 invariant — runs as ONE range test and one slice fill when every
+                 index lands in [0, len) with no overflow on the way and the range is
+                 non-empty; otherwise the per-element loop runs, unchanged.  The
+                 counters are left where the loop leaves them.
+```
+
+**In words.** @PLN157 § V-ae.  The elements the fill writes are exactly the elements the
+loop would write, in the only case the fill takes: a contiguous run inside the vector.
+Every other case — a negative index (which counts from the end), a range past either
+end, an empty range, an overflow in `base + i` — is the loop's own, so the fill declines
+at run time and the loop runs; the emitter never has to know which case it is.
+`Stores::fill_hoisted` is the guard and the fill, `Store::fill` the primitive (one bounds
+check at each end, an unaligned store per element the optimiser vectorises).  A body
+that reads the vector, a value that depends on the loop variable, a strided index or a
+second statement keep the loop.  Switch `LOFT_NO_FILL_HOIST`; falsifier
+`LOFT_HOIST_VERIFY=1` (the fill re-derives the header) and the count sabotage recorded in
+`tests/scripts/157-fill-hoist.loft`; `LOFT_TRACE_FILL=1` names the check that declined a
+loop.  Sites: `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoisted`.
+
+### A witnessed buffer is allocated once, not minted per call
+
+```
+  (R-Reuse)      a hidden return buffer whose result local is WITNESSED (O-Buffer) is
+                 allocated ONCE, right after its null-init, so a callee that builds
+                 into it reuses one record per call SITE instead of minting a store
+                 per CALL.  The witness is the whole condition: an allocated buffer
+                 outlives the call, so a site that frees the result plainly would
+                 release it and the next turn would write a record back in the pool.
+                 Also required — the buffer is used ONCE and its result local is
+                 assigned ONCE, since a second use has one guarded site and one this
+                 did not read, and a reassignment frees the store it displaces.
+                 Every other buffer keeps its per-call mint.
+```
+
+**In words.** @PLN157 § V and § V-af.  `scopes::reuse_record_buffers` inserts the
+`OpDatabase` and `scopes`'s pairing supplies the witness; the positive control
+`LOFT_NO_RETBUF_WITNESS_GATE=1` allocates every buffer, guarded or not, and
+`LOFT_STRICT_STORES=1` then reports the use-after-free at exactly the sites the gate
+declines — which is how the condition is falsified rather than asserted.  Switches
+`LOFT_NO_RETBUF_REUSE`, `LOFT_NO_JOIN_BUFFER_WITNESS`.  Sites:
+`scopes::reuse_record_buffers`, `scopes::tail_calls`.
+
 ### A leaf carries no frame
 
 ```
@@ -550,25 +699,58 @@ and loses only the innermost frame NAME from the chain.  Switch
                  temp-store build and is the oracle.
 
   (R-ValueRecord) a function whose result is a PLAIN NO-HEAP RECORD of at most six
-                 scalar fields returns those fields BY VALUE — a Rust tuple, in
-                 registers — instead of writing them into a return buffer the
-                 caller then reads back.  Three gates, and the second and third
-                 are what make the first safe per FUNCTION: every CALL SITE in the
-                 program consumes the result by reading fields off a local it binds
-                 (a site that stores it, passes it on, returns it onward or binds
-                 it into a collection declines the whole function, so no site has
-                 to materialise a record out of a tuple and none can be made
-                 slower); and the BODY builds the record through `Object` blocks at
-                 every result position (a tail that FORWARDS another call's record
-                 has nothing to convert, and its signature would promise a tuple
-                 over a `DbRef`).  The callee's `Object` block becomes the tuple of
-                 its writes in field order; the call site binds the tuple, drops the
-                 buffer argument, reads `v.<index>` where it read a store, and
-                 releases nothing.  Two boundaries keep the record contract: the
-                 LIVE-RELOAD arm answers a `DbRef` and so reads the fields back out
-                 of it, and a library's CDYLIB BRIDGE materialises the tuple into
-                 the destination record it already owns — so the C ABI is unchanged
-                 while loft-to-loft calls inside the library take the value path.
+                 scalar fields (an `integer` only at its 8-byte width) returns those
+                 fields BY VALUE — a Rust tuple, in registers — instead of writing them
+                 into a return buffer the caller then reads back.  Admission is a
+                 FIXPOINT over two gates, because a tail may forward another admitted
+                 function's result and a site may bind a branch of admitted calls:
+                 the BODY gate asks that every result position be a VALUE LEAF — an
+                 `Object` build of the function's own record (the tuple of its writes),
+                 a call to an admitted function (its tuple, forwarded), a value local,
+                 or a borrowed VIEW of the record (the tuple of its field reads; a view
+                 is never freed, so reading it is all the value form owes) — and that
+                 the return buffer be mentioned only where the value form drops the
+                 mention (a converted `Object`, a dropped buffer argument, a free); the
+                 SITE gate asks that every admitted call stand where a tuple is
+                 consumed as one: a result position of an admitted body, the right of
+                 a VALUE LOCAL (a local whose every assignment is a value shape and
+                 whose every use is a field read, a free, a store-identity test, a copy
+                 FROM it, or a `return`), or a dropped statement; an argument, a field
+                 value, a return from a non-admitted function or a local that also
+                 takes a record declines the callee.  The record form's three guards
+                 then read as the tuple says: a free of a value local is nothing, a
+                 store-identity test against one is always distinct (so the free it
+                 guards is unconditional — the ownership change a selecting tail
+                 carries: the record form declined that free exactly when the buffer
+                 was the result), and a copy FROM one MATERIALISES the tuple into the
+                 destination with one typed write per field, which is how a builder
+                 delivered into a push slot lands without a call or a buffer; and a
+                 buffer local whose every mention is one of those drops — a dropped
+                 argument, a free, a test against a value local — is DEAD, and its
+                 mint and its frees emit as nothing.  An OWNED
+                 record at a tail declines: the value form would have to mint per call
+                 what the buffer form reuses.  Every function a fn-ref dispatch can
+                 reach declines, read from the emitter's own arm scan
+                 (`fnref::dispatch_arms`) so the two cannot drift.  Two boundaries keep
+                 the record contract: the LIVE-RELOAD arm answers a `DbRef` and so
+                 reads the fields back out of it, and a library's CDYLIB BRIDGE
+                 materialises the tuple into the destination record it already owns —
+                 so the C ABI is unchanged while loft-to-loft calls inside the library
+                 take the value path.  A compiler `__lift_` temp is never a VIEW leaf:
+                 it owns the store its whole-record bind mints (the record form hands
+                 that store up as the result), so read as a view it leaks one record
+                 per call; bound from a bare view it is a VALUE LOCAL — the tuple of the
+                 view's reads — and a whole-value read of a value local at a value
+                 position (the tail of a branch arm, the right of a value local, a
+                 return) is a use the tuple serves.  A body's value locals are admitted
+                 TOGETHER — the join local of a selecting branch and the lifts its arms
+                 bind justify each other — by an optimistic growth from the body's
+                 views, admitted calls and `Object` builds, pruned to a consistent set.
+                 And a whole-record bind INTO a value local takes the plain assignment:
+                 the mint and the deep copy `@FR-B-Copy` spells for a record local are
+                 the store the value form exists to drop (a generic instance's
+                 selecting tail lowers as a statement join whose arms each bind the
+                 join local from a parameter's view).
 
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a

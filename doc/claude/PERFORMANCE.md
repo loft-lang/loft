@@ -829,6 +829,192 @@ exactly like an optimisation barrier. Replacing those three generated call sites
 `keys::store` measured ~6 % — inside the run-to-run spread on this box, against the 2.5x the
 hoist is worth. The barrier is the guards, not the `OnceLock`.
 
+**3d. What LLVM could be told instead, and which memory can carry the claim**
+
+3c is why the emitter hoists. What it leaves open is whether `rustc` could be told enough
+to hoist for us. Three separate things stop the optimiser in generated code, and only the
+third is a question about memory regions:
+
+| barrier | what stops the optimiser | does marking regions help? |
+|---|---|---|
+| a guarded load cannot be speculated | every store read sits behind a record test and a bounds test, and LLVM will not lift a conditional load out of a loop | no |
+| every call clobbers memory | each emitted function takes `cell: &UnsafeCell<Stores>` and re-derives its own `&mut Stores` from it, so `rustc` marks nothing `noalias` and no store value survives a call in a register | only by changing that ABI |
+| two accesses might alias | LLVM cannot prove two raw pointers into different stores are disjoint | yes |
+
+3c measured the first row as the barrier that bites, and measured an aliasing-shaped
+hypothesis coming back inside the run-to-run spread. So region marking is worth doing for
+the second and third rows; it is not a route to the loop hoists, which are the emitter's.
+
+**The unit of disjointness is the STORE, not the reference.** Each store owns its own
+allocation reached through `Store::ptr`, so two different `store_nr` values never overlap.
+Two references INSIDE one store overlap deliberately: an `&` link, an element view and a
+record living in a vector all name the same bytes on purpose. A claim can therefore be
+made per store and never per `DbRef`.
+
+| region | what it is | the claim it can carry |
+|---|---|---|
+| an ordinary store on one thread | exclusively owned | exclusive (`noalias`) |
+| a worker's borrow of a parent store under `par` | `read_only` for the whole parallel region (`Store::clone_locked`, `Store::borrow_locked_for_light_worker`) | immutable, the strongest claim available |
+| a worker's own stores | thread-exclusive | exclusive |
+| a memory-mapped store | file bytes, with pages flushed and dropped under residency control | none |
+| a lazy or remote store | a READ faults and materialises, so a read writes ([LAZY_STORES.md](LAZY_STORES.md), [REMOTE_STORES.md](REMOTE_STORES.md)) | none |
+
+Two rows there are the opposite of what the shape of the problem suggests. **A parallel
+region is the EASY case:** what `par` shares across threads is exactly what it locks
+read-only for the duration, so shared memory here is immutable memory. And the region that
+refuses every claim is not the mapped file but the lazy store, because there a read is a
+write. Mapping and remote stores are both in the default feature set, and the deciding
+flags live on the `Store`, so the choice is a runtime one and cannot be settled at
+generation time.
+
+**What `rustc` will pass through to LLVM:**
+
+| lever | what it states | reachable from emitted Rust |
+|---|---|---|
+| `noalias` on `&mut T` | this is the only access path | yes, but the shared cell the ABI passes suppresses it ([NATIVE.md § Architecture](NATIVE.md)) |
+| `noalias` + `readonly` on `&T` | nobody writes this | yes, for a locked store |
+| `llvm.assume` | an index is in range, a length is under a capacity, an address is aligned | yes, through `std::hint::assert_unchecked` |
+| unchecked slice indexing | drop a bounds test already proved | yes |
+| scoped per-access `noalias` | these two accesses are disjoint | only as a side effect of inlining a `noalias` argument |
+| type-based alias analysis | disjoint by type | no: `rustc` does not emit it |
+| loop parallel-access metadata | this loop carries no memory dependence | no |
+| `restrict` on a raw pointer | no alias through this pointer | Rust has no such thing |
+
+The last three need a `rustc` fork or an LLVM pass plugin to reach at all. They are not
+worth a cycle while the first four are unstarted — as of 2026-09-14 the tree uses neither
+`assert_unchecked` nor unchecked indexing anywhere on the store path.
+
+**Ranked, cheapest first:**
+
+1. **Assert what the header already proved.** After a header derivation the record number,
+   the length and the end offset are known good. Asserting them turns each guarded element
+   load into an unconditional one, which is the precondition for both hoisting and
+   vectorisation. It is the one lever aimed at the barrier 3c measured.
+2. **Index `Stores::allocations` unchecked**, on the same proof.
+3. **Derive a real slice per store** where the header is derived: `&mut [u8]` for an
+   exclusively owned store, `&[u8]` for a locked one, the raw pointer kept for a mapped or
+   lazy one. This is the region marking, in the only form Rust can express it. Because the
+   deciding flags are runtime flags, the choice rides the derivation and the old path stays
+   as the fallback — the shape `Stores::fill_hoisted` already has (@PLN157 § V-ae).
+4. **Link-time optimisation.** The shipped line is `-C opt-level=3 -C codegen-units=1` with
+   no LTO (`src/native_lib.rs`), so nothing above crosses the rlib boundary except through
+   an explicit `#[inline]` (3b).
+
+⚠ The first item is a SOUNDNESS lever, not an optimisation hint: a wrong
+`assert_unchecked` is undefined behaviour rather than a wrong answer, which is the failure
+this project ranks worst ([GOALS.md](GOALS.md)). Derive each assertion from the same fact
+`LOFT_HOIST_VERIFY=1` re-checks, so the falsifier exists before the assertion does.
+
+**The ceiling of item 1, measured 2026-09-14** (aarch64 Linux, host `lima-default`;
+`compare.py --repeat 3`, caches cleared per side, BASE / PROBE / PROBE / BASE, all 14
+hashes agreeing on every run). A hoisted element read still pays THREE tests inside its
+fast path, and all three are redundant against facts the derivation already established:
+the store-table index, `checked_vec_pos`'s overflow test, and `offset_in_bounds` against
+the store's own size. With all three removed by hand:
+
+| row | base | all three removed | store-table index alone |
+|---|---:|---:|---:|
+| `composite` | 138 460 | **110 170 (−20.4 %)** | 130 780 (−5.5 %) |
+| `render_marks` | 7 111 530 | **6 162 980 (−13.3 %)** | 6 984 180 (−1.8 %) |
+| `render_lock` | 15 112 610 | **13 139 580 (−13.1 %)** | 14 933 420 (−1.2 %) |
+| `lock` | 2 428 060 | **2 178 120 (−10.3 %)** | 2 428 580 (0 %) |
+| `lock_curved` | 2 219 040 | **2 046 830 (−7.8 %)** | 2 239 320 (+0.9 %) |
+| `hash` `hair` `smooth` `fronds` the fills `wide_line` | | within the lane's swing | within the lane's swing |
+
+**The attribution is the finding, and it rules out the cheap version.** The check that is
+trivially sound to drop — the store-table index, provable because the store number was
+valid at derivation and `Stores::allocations` never shrinks — buys ~5 % on one row and
+nothing anywhere else. The win is in the other two, which sit on the load's address
+computation and are what stops the vectoriser. One of those two is also the corruption net
+that turns a bad length into a loud raise instead of a wild read, so it cannot simply be
+deleted.
+
+**So the sound design is forced, and it is the shape the fill already has: check once at
+the derivation, not once per element.** Validate at header derivation that the vector's
+extent fits the store — `8 + len × size` within the store's bytes — and on failure answer
+`len: 0`, which makes every fast-path test miss and routes the access down the existing
+cold path with all of its checks and its raise. After that, `0 <= from < len` implies all
+three per-element tests, so the fast path keeps only the range test the language's
+out-of-range semantics need anyway. A corrupt length then degrades to the checked path
+rather than to undefined behaviour, which is the property that makes this shippable at all.
+The cost is plumbing the element size into the derivation, which the emitter already knows:
+it is the literal operand of the element-address op the candidate was collected from.
+
+Item 1 is therefore READY TO BUILD, against a measured ceiling, and items 2 to 4 are
+still un-probed. Item 3 is the one to measure the same way before designing it: hand-edit
+one kernel's runtime path to take a real slice per store, rebuild with the flags loft
+uses, and compare. If that does not move a row, region marking will not move it either,
+because the guard sits upstream of the alias question.
+
+**3e. The runtime is general where the program is specific — and this, not LLVM, is where
+the remaining speed is**
+
+3d bounds what `rustc` can be told: four reachable levers, one of them now measured. Read
+the arc's own results against that bound and the conclusion is structural. **Every unit that
+moved a row by more than a few percent won by using something loft knows and LLVM cannot
+know** — not by phrasing the same code so the optimiser could see further:
+
+| unit | the fact loft had | LLVM could not have it because |
+|---|---|---|
+| loft#885, P4a–P4d | this loop cannot write any store | it would have to prove it across opaque calls |
+| § V-l, § V-p, § V-ac | this callee writes only in place, so the caller's facts survive the call | the callee is behind a call it must treat as a clobber |
+| § V-ad | this allocation targets a hidden discharge buffer, which no header names | the buffer is an ordinary allocation to it |
+| § V-ae | this loop is one contiguous fill | the address arithmetic is guarded and opaque |
+| § V-t, § V-u, § V-z, § V-af | this store is a return buffer, an appended element, a branch arm's delivery | these are ROLES, and the type system does not carry them |
+
+The pattern is the point. A store is not memory in general: it has a **role**, a **content
+type**, a **lifetime** and an **access pattern**, and every one of those is known to the
+compiler that emitted the code. The runtime then discards all four and treats every store
+the same way — a red-black free tree, a claims bitset, per-type default prefill, a generic
+element walk — because it is written for the general case. That gap is a root cause of its
+own, and it is not one an optimiser can close from the outside.
+
+**The standing proof is `fronds`**, the row still furthest over the bar after the drawing
+arc. Profiled on this box its cost is not its own arithmetic: `claim` 9.1 %, the free-list
+tree 14.8 %, the append pair 6.9 %, the record pair 3.2 %, `memset` 3.6 %, against
+`n_fronds` itself at 8.4 %. About 39 % of the row is allocator and free-tree machinery
+serving a program whose temporaries are born and die inside one activation. No LLVM
+annotation reaches that. A region freed whole, or an element layout with no per-element
+record at all, does.
+
+**What loft knows and does not yet spend:**
+
+- **Role.** A return buffer, a discharge default, a comprehension accumulator, a worker's
+  read-only borrow and the const store have different lifetimes and different access
+  patterns, and the emitter knows which is which. They share one implementation.
+- **Content type.** `Store::known_type` is already recorded. A store of fixed-width,
+  heap-free elements needs no free tree, no per-element walk and no default prefill.
+  § V-f and § V-i spent part of this; the rest is untouched.
+- **Lifetime.** A function activation's temporaries could come from a region released in
+  one step rather than tracked individually. This is what the `fronds` profile is asking
+  for.
+- **Element layout.** A vector of no-heap records could be a flat run of bytes with no
+  per-element record bookkeeping.
+
+**The formal rules lag the same way, and in the same place.**  Audited 2026-09-14: the
+REWRITE family is in good order — 23 rules, every unit of the drawing arc cites one, and the
+chapter registers agree with their entries.  What was missing is the layer underneath, the
+STORE facts those rewrites stand on.  Three were load-bearing in shipped code and stated
+nowhere: that a store whose root is a collection wrapper holds nothing else
+(`@FR-H-RootExtent`, which is what lets a clear be one reset), that a hidden return buffer
+is the caller's store witnessed by the local that adopts it (`@FR-O-Buffer`), and that such
+a buffer may be allocated once only where that witness exists (`@FR-R-Reuse`).  All three
+are now written.  The pattern is worth keeping in view: **a rewrite gets a rule because
+someone builds it, while the invariant it stands on gets one only if someone asks** — so
+when a unit's soundness argument is a paragraph in a plan rather than a rule, that is the
+signal.  The roles themselves are still unnamed: no rule says what a discharge buffer, a
+comprehension accumulator, a worker's read-only borrow or the const store guarantees, and if
+the units below key on roles then those rules come first.
+
+So read 3d as a bounded, worthwhile errand and not as the direction: its ceiling is
+measured and finite. Note too that step 1's own design converged on the same principle —
+its content is not an LLVM hint but a loft-level decision, *check the vector's extent once
+where the header is derived, because that is where loft knows it*. The route to the
+remaining factor is [P8](#design-p8--store-effect-classifier) for what an op does to a
+store, [N1](#design-n1--direct-emit-local-collections-in-native-codegen) for a collection
+that never needed to be a store, and the role and lifetime work above, which has no design
+doc yet.
+
 **4. Float near-parity — the target model**
 
 Newton sqrt (06, 1.05×) and Mandelbrot (05, 1.17×) show what the native pipeline
@@ -4397,6 +4583,70 @@ asserted) with `make native-ratio` (`--gate` fails ratios over
 `bench/ratio_oracle.tsv`'s bars); the full 14-routine table from the consumer
 with `python3 bench/compare.py` in `loft-libs-graphics/drawing` (branch
 `drawing-lock`).
+
+### 2026-09-15 state: the ten filed rows under the bar, and the tap in machine code
+
+Quiet x86-64, 500 calls per row, `--repeat 3`, all 14 hashes agreeing (the scoreboard's
+one home is @PLN157's README § Status; this is the summary a reader of this chapter needs):
+the ten rows loft#1426 filed all sit under the 4× bar — `hash` 0.88×, `fill_circle` 1.14×,
+`fill_star` 1.19×, `lock` 1.90×, `hair` 1.93×, `composite` 2.01×, `lock_curved` 2.19×,
+`wide_line` 2.30×, `fronds` 3.26×, `smooth` 3.67× (a 316 ns reference that swings
+between 304 and 400) — and the issue carries its `Fixes` trailer.  The four rows the
+consumer's bench grew since stay with the plan: `parse` 10.65× (store churn per parsed
+option) and the graphics package's Lanczos resample under `resize` 5.36×, `render_marks`
+7.57×, `render_lock` 5.20×.
+
+What the resample still pays was read off the optimised assembly and counted with
+`perf stat` (DESIGN.md § V-aj *The tap in machine code*): per tap `acc += pre[idx]? *
+hk[j]?`, loft retires **109 instructions, 35 branches, 22 cycles** against the
+reference's **17 / 1.7 / 4.4**.  A sentinel-aware operation is four instructions and a
+predicted branch — cheap per op — but six of them stand in a tap, the fault note is a
+side effect that keeps LLVM re-testing the hoisted index's overflow and sentinel flags
+from the stack on every iteration, and a loop whose every step branches does not
+vectorise while the reference's tap is a four-wide multiply-accumulate.  Skipping the
+tests where the operands are merely typed non-null was put to the owner and declined
+(DESIGN_DECISIONS.md C120: values after a fault must not differ); the sound units that
+remain are invariant index arithmetic hoisted at loft level and a plain loop under a
+bound established once per nest, both in the plan's queue.
+
+### The release-pass ceiling (2026-09-15)
+
+`LOFT_RELEASE_PASS_PROBE=1` compiles a program as the owner's eventual release build pass
+for games would (C120; NATIVE.md § Optimisation tiers): every integer `+`, `-`, `*` and
+non-literal division as the processor's wrapping operator, every float comparison plain,
+the null test and the `*Nullable` twins untouched.  It is a MEASUREMENT instrument and
+never a build anyone ships — the values after a fault are not the language's — so a row
+is comparable only while its hash still agrees, which every row below does.  Its time
+is the ceiling the checked build is measured against, and the distance between the two
+columns is the question *is this row bound by the checks, or by something else?*, which
+is what picks the next optimisation.  Same box, same lane, 500 calls per row, the two
+runs minutes apart:
+
+| row | checked build | release-pass ceiling | bound by |
+|---|---:|---:|---|
+| resize | 5.36× (93.5 ms) | **2.17× (38.0 ms)** | the checks: 60 % of the row |
+| render_marks | 7.57× | **3.69×** | the checks (the resample inside it) |
+| render_lock | 5.20× | **2.98×** | the checks (the resample inside it) |
+| hair | 1.93× | 1.48× | partly the checks (−23 %) |
+| composite | 2.01× | 1.67× | partly (−17 %) |
+| wide_line | 2.30× | 2.13× | something else |
+| lock / lock_curved | 1.90× / 2.19× | 1.77× / 2.06× | something else |
+| smooth | 3.67× | 3.14× | something else (the per-point record path) |
+| fronds | 3.26× | 3.17× | something else (the per-record path) |
+| fill_circle / fill_star | 1.14× / 1.19× | 1.11× / 1.17× | at the floor |
+| parse | 10.65× | 9.90× | something else (the store lifecycle) |
+| hash | 0.88× | 1.13× | lane noise (the native lane swings 106–130 µs) |
+
+Two readings.  The resample is the one routine whose cost IS the checks: the standalone
+probe reads 95.3 → **38.3 ms/op** under the pass (the tap's 22 cycles become the
+vectorised loop's), and even that ceiling is 2.2× the reference — what remains there is
+the memory model's element path (a bounds test and a base load per read, the `?`
+discharge), not arithmetic.  The sound units for it (invariant hoist, the guarded
+nest, a range proof from declared bounds) can recover most of the 60 %, in a library's
+ordinary build.  Everywhere else the ceiling sits within 3–15 % of the checked build:
+`parse`, `fronds`, `smooth`, the locks and the fills are bound by the store lifecycle
+and the per-record path, and no arithmetic rule — sound or not — moves them.  That is
+where the memory-model units (@PLN157 § V-e, § V-f, the queue's `parse` item) belong.
 
 ## Open work
 

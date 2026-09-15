@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `&` link to a narrow integer LOCAL reads and writes it (`binding.md (B-Ref-Read)`,
+// `(B-Ref-Write)`), on both backends: a narrow local lives in an 8-byte frame slot, whatever range
+// its type declares, so a link that reads and writes a whole integer is right there.  The same
+// holds through a `&` parameter and for a tuple local with a narrow member.  These are the cases
+// the refusal of a link to a narrow STORE place must leave alone
+// (`a-link-to-a-narrow-integer-store-place-is-refused.loft`); a full-width element is the other
+// side of that line.
+//
+// @falsified-at: none — these links were already right before the refusal of a narrow store place (measured on b3b36cf2d, both backends); the guard pins what that refusal must leave alone
+//
+// CHANNEL: the assertions — each linked local and the local declared after it.
+
+fn set_200(c: &u8) { c = 200; }
+
+fn u8_local() -> text { x: u8 = 250; y: u8 = 9; c = &x; s = "{c}"; c = 200; "{s},{x},{y}" }
+fn u16_local() -> text { x: u16 = 60000; y: u16 = 9; c = &x; s = "{c}"; c = 7; "{s},{x},{y}" }
+fn i32_local() -> text { x: i32 = -5; y: i32 = 9; c = &x; c = 200; "{x},{y}" }
+fn u8_parameter() -> text { x: u8 = 250; y: u8 = 9; set_200(x); "{x},{y}" }
+fn u8_local_repoint() -> text { x: u8 = 250; y: u8 = 9; c = &x; c = &y; c = 7; "{x},{y}" }
+fn tuple_with_a_u8_member() -> text { t: (u8, integer) = (250, 5); c = &t; c.0 = 200; c.1 = 9; "{t.0},{t.1}" }
+// A full-width element is not a narrow store place: it links.
+fn integer_element() -> text { v: vector<integer> = [1, 2, 3]; c = &v[1]; c = 9; "{v[0]},{v[1]},{v[2]}" }
+
+fn main() {
+  assert(u8_local() == "250,200,9", "a u8 local reads and writes through its link: {u8_local()}");
+  assert(u16_local() == "60000,7,9", "a u16 local reads and writes through its link: {u16_local()}");
+  assert(i32_local() == "200,9", "an i32 local writes through its link: {i32_local()}");
+  assert(u8_parameter() == "200,9", "a u8 local written through a `&u8` parameter: {u8_parameter()}");
+  assert(u8_local_repoint() == "250,7", "a re-pointed u8 link writes its second local: {u8_local_repoint()}");
+  assert(tuple_with_a_u8_member() == "200,9", "a tuple local with a u8 member: {tuple_with_a_u8_member()}");
+  assert(integer_element() == "1,9,3", "a full-width element links: {integer_element()}");
+  println("narrow local link ok");
+}

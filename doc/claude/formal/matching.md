@@ -258,7 +258,7 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 ## Deviations
 
 OPEN: **0** — a *rules* doc: it shrinks operational.md's D-op-1 and carries no open
-deviation of its own.  `D-match-4` closed 2026-09-12.
+deviation of its own.  `D-match-5` closed 2026-09-14; `D-match-4` closed 2026-09-12.
 
 - **D-match-1 — OPENED AND CLOSED 2026-09-04 (loft#1343).** `(M-Bool)` did not exist, and the
   edge it names was answered wrong: a boolean match spelling both arms was lowered with the
@@ -320,6 +320,31 @@ deviation of its own.  `D-match-4` closed 2026-09-12.
   `tests/scripts/1419-a-fixed-pattern-after-a-rest-is-a-tail-element.loft`, which also holds the
   named-rest spelling, a two-fixed tail and a head control; falsified at `d9850164`.
 
+- **D-match-5 — OPENED AND CLOSED 2026-09-14.**  `(P-Point)` makes a unit variant and a struct
+  variant point patterns over ONE value, and a TUPLE element is one value — but the tuple
+  element loop offered only `_`, a bare binding, a literal and a nested tuple, so a capitalised
+  name in an enum-typed element fell through to the BINDING branch: `(KFire, KWall) => …` bound
+  two locals named `KFire` and `KWall` and matched EVERY pair, on a plain enum and on a
+  struct-enum alike, on both backends, with no diagnostic.  Nothing else in the language reads a
+  capitalised name as a variable (`Foo = 5` is refused as unknown), which is what made the
+  silence a wrong ANSWER rather than a spelling the author could have meant.  Found by @PLN162
+  step 0, whose acceptance program is a central `match` on a pair of variants; the design's own
+  `match (a, b) { (Fireball(f), IceWall(w)) => … }` did not parse, and the nearest loft
+  spelling answered wrong.  Closed by routing an enum-typed element through the slice head's
+  own path (`peek_is_variant_subpattern` → `parse_field_sub_pattern`), so `(Fire, Wall {
+  hp })` tag-tests each position and binds its payload — a heap payload as a VIEW, as at a
+  top-level arm; a capitalised name that is no variant is refused by name, the `(M-Unit)`
+  refusal one level down, and one over an element with no variants says so.  Re-measured on
+  both backends: five pairs of a plain enum, an or-pattern inside an element, a struct-enum
+  pair by tag and by payload, a variant beside a literal and beside a guarded scalar, a
+  nested-record write landing through the tuple and through the elements of a
+  `vector<Entity>`, and the lower-case binding control.  Guards
+  `tests/scripts/a-tuple-pattern-names-a-variant.loft` and
+  `tests/scripts/a-tuple-pattern-refuses-a-name-that-is-no-variant.loft`, falsified at
+  `00272ff49`.  Two spellings stay refused, exactly as at a top-level arm: an or-pattern
+  between STRUCT-enum variants, and the qualified `Kind.KFire`, which reports *"'Kind' is not
+  a variant of Kind"* in both places — a message to sharpen, not a rule.
+
 - **PEG patterns are SHIPPED (@PLN35)** — the shipped implementation (phases 1–7 + PC1–PC5,
   [plans/35-match-peg](../plans/35-match-peg/)) conforms to the stated rules on both backends,
   with no standing exception since `D-match-4` closed 2026-09-12. Each rule is pinned by the
@@ -363,6 +388,10 @@ deviation of its own.  `D-match-4` closed 2026-09-12.
   untouched.  A tail element is any point pattern `(P-Point)` admits — a bare name, `_`, a
   literal, or a variant sub-pattern: `[Kw { word }, .., End { e }]` and `[1, .., 9]` both
   match (D-match-4, closed 2026-09-12).
+- **A tuple element is a point pattern (`P-Point`)** — `match (a, b) { (Fire, Wall { status })
+  => … }` tag-tests both positions and binds `status` as a view of `b`'s payload; a swapped
+  pair falls to `_`, and `(Bogus, _)` over an enum element is a compile error naming the enum
+  (D-match-5, closed 2026-09-14).
 
 D-op-1's falsifier applies: any program where the interpreter and `--native` disagree on which
 arm a `match` selects, on a bound payload value, or on whether a match is exhaustive is the

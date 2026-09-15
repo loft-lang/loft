@@ -3743,3 +3743,66 @@ be the sentinel, and that proof is portable by construction.
 
 **Revisit when.** Never for the machine-dependent form.  The range-proof form is @PLN157's
 queue item 3 and needs no revisit here.
+
+**Amended 2026-09-15 (owner), without reopening the scope or the type.**  What this entry
+closes stays closed: no declaration, scope or type licenses the processor's arithmetic,
+and the checked semantics stay the default for everyone.  What the owner keeps open is
+an eventual OPT-IN code-generation TIER for a whole program that has already proven to
+run fine with the checks on — licensed by the evidence of its own fault-free runs under
+the checked tier — recorded under C120 and NATIVE.md § Optimisation tiers, and not
+built.
+
+## C120 — Integer arithmetic on native stays sentinel-aware after a fault; the non-null proof does not close over `+`, `-`, `*`
+
+**Asked (2026-09-14/15, @PLN157 § V-aj):** may the native emitter count the RESULT of an
+integer `+`, `-` or `*` over proven non-null operands as proven itself, so a chain of
+arithmetic compiles to plain (or overflow-checked-only) machine operations?  Measured on
+the graphics package's Lanczos resample, the last unit standing between three bench rows
+and the plan's 4× bar: −17 % with the checked family, −50 % with plain operators.
+
+**What it changes.** Nothing before a fault.  C85 makes an integer overflow a reported
+fault whose result is null, and the sentinel test on every operand carries that null
+through everything after it — on both backends alike.  Under the closure a native
+program that has overflowed goes on computing with numbers where the interpreter goes
+on with null (measured, three programs: `b = MAX + 1; c = b + 5` reads
+`-9223372036854775803` for null; under plain operators `d = c * 2` reads `10`, an
+accumulator reads `0`, and a masked hash reads a C-style value, with no fault noted at
+all).  The divergence is confined to values downstream of an overflow, and it is exactly
+the kind of value the program cannot know it is holding.
+
+**Decision (owner, 2026-09-15): declined.**  *"We keep today's implementation; I do not want
+random behaviour.  We only optimise situations we know can be optimised."*  A rewrite
+must leave every observable value as the interpreter answers it, faults included; a
+speed-up bought with a value the program cannot predict is not an optimisation.  Both
+forms — checked-only and plain — are closed by this, not only the silent one.
+
+**What would reopen it: nothing about the closure itself.**  The sound successor is a
+PROOF, not a policy: arithmetic whose operands carry declared ranges (`integer(lo, hi)`,
+the counters a counted range bounds, a masked value) such that the result CANNOT
+overflow may emit the plain operator, because no fault can occur and no value can
+differ.  That is a range analysis over the non-null proof's own machinery, and a library
+opts in by declaring the bounded element types it already knows (`vector<integer(0, 255)>`
+for a channel plane).  It is the plan's line for the resample rows, and it is admissible
+under this decision because it optimises a situation we know.
+
+**The owner's fuller position (2026-09-15), recorded so the next proposal starts here.**
+The checks are the DEFAULT because of who reads the numbers: *"I am not happy with giving
+starting programmers random looking numbers they cannot debug without intimate knowledge
+of processors."*  What is not closed is an eventual OPT-IN code-generation tier — "a mode
+for optimal games" — that drops the checks, admissible only for a program that has
+already PROVEN to run fine with the checks on: the evidence is the program's own runs
+under the checked tier with no fault noted (the fault ledger `note_integer_overflow` and
+`LOFT_DEV_SOFT_HALT` already count and name them), never a declaration and never a
+default.  It is not in @PLN157's scope and nothing is built for it; NATIVE.md §
+Optimisation tiers names it as the tier that does not exist yet, and C67 keeps every
+machine-dependent SCOPE or TYPE closed.  And it is heavier than a switch, which is the
+second half of the same day's ruling: *"I will never want to publish a binary without the
+added protection layer"* — a LIBRARY published to the registry always carries the
+checks.  The tier is therefore a RELEASE BUILD PASS FOR GAMES: after extended in-house
+testing under the checked build, the game is compiled once more from every source it
+uses — its own and its libraries', recompiled at that level inside the game's build,
+never taken as the registry's binaries — into the less safe artefact that ships to Steam
+or the browser.  The evidence that licenses it is the in-house testing's fault-free
+ledger; the registry's own artefacts never lose the layer.  That is also why the proofs
+come first: a check retired by a proof is retired inside the library's ordinary build
+and reaches every consumer, checks intact.

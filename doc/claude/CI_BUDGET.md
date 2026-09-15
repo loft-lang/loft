@@ -23,6 +23,39 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > its own gate is the one case where `CI_BUDGET_SECS=... make ci` is the right answer for a
 > single run. That is a fact about the box, not about the diff.
 >
+> **A macOS box is not the Linux gate's twin, and four facts bit on 2026-09-13.**  Its
+> `/bin/sh` is bash 3.2: a single quote inside `"${x:+…}"` is read as an opening quote (the
+> recipe died with *unexpected EOF while looking for matching `'`*), and `BASHPID` does not
+> exist.  It ships no `flock` (`brew install flock`; the recipe runs UNSERIALISED without it,
+> saying so).  It has no `/proc`, so `scripts/gate_lock.sh` can tell HELD from FREE but never
+> name the holder — it answers `HELD_UNKNOWN` there and its self-test SKIPS, stated, because
+> its cells are /proc verdicts.  And this box runs an endpoint-security agent (Kandji's ES
+> system extension) at a steady 25–37 % of one core, which taxes every exec and file event —
+> the spawn-heavy phases (rustc per test program, the scratch sweep) more than a hot loop —
+> so a timing taken here beside a build is not a timing.
+>
+> **And the gate's minutes here are CONTENTION, not work — measured the same day.**  The
+> 20-minute budget cancelled a `make ci` at 1 935 of 4 864 tests; its JUnit record named six
+> tests at 128–287 s each.  Run alone on the quiet box they took 21–78 s (215 s for all six
+> against ~1 150 s in the gate, an inflation of 4–13× per test — the JUnit trap this document
+> already describes, confirmed on a second machine).  One `loft --interpret` process costs
+> ~60 ms here, one bare `fork+exec` 9–10 ms (a Mac without an ES agent: ~1 ms; a Linux
+> guest on this box: 0.25 ms).  Then the thread count itself: the same 243-test slice
+> ran in **390 s at 14 threads and 325 s at 7** — halving the threads was 17 % FASTER,
+> because each nextest thread spawns its own `rustc`/`loft` processes, the last four threads
+> land on the four efficiency cores, and every spawn pays the agent.  `CI_NPROC` therefore
+> defaults to half the logical cores on macOS (`CI_JOBS=<n>` overrides; 10 is untested).
+> The rest of the answer for this box is a Linux guest: the existing Lima instance (vz,
+> Ubuntu 25.10, ext4, the repo cloned INSIDE the guest disk — never built from the
+> read-only virtiofs `~` mount) measures a 40× cheaper exec and has the toolchain; it was
+> resized to 8 CPUs / 32 GiB for a gate run.
+>
+> **A RAM volume buys nothing here — measured, so nobody tries it again.**  One emitted
+> program through `rustc -O` (the native corpus's unit of work, 3 000 lines) with `-o` and
+> `TMPDIR` on APFS: 409–410 ms; on a 1 GiB `hdiutil` RAM volume: 406–409 ms (3 rounds × 5
+> compiles each).  The compile is CPU, link and code-signing, not disk — and it is 2× the
+> 0.20 s the same unit costs on Linux, which is the spawn tax on rustc's own children.
+>
 > ⚠ A mid-run kill can tear the debug rlib (`undefined symbol: anon.*.llvm.*` out of
 > `libloft.rlib`); recover with `cargo clean -p loft`. The cancel message says so.
 

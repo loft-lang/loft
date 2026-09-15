@@ -119,11 +119,17 @@ the same two cures. The gap between the rule and the model is
               element's own offset — the same `(ref, offset)` pair an ordinary struct FIELD
               uses (binding.md B-Ref).  For a parameter the tuple is the CALLER's; for a local
               it is the source variable's, so the two positions are one mechanism and not two.
+              A tuple PATTERN over the binding is a projection of every element at once, so a
+              `match` reads each element through the reference exactly as `p.i` does, and a
+              heap member read that way borrows the tuple rather than owning a copy.
   (T-Ref-Rep) the tuple a `&(…)` names is STACK-backed when every τᵢ is a scalar, and a
               `__tuple<τ₁, …, τₙ>` RECORD otherwise — the same record a heap-tuple RETURN and
               the loop variable over a `vector<(…)>` already are.  A tuple LOCAL that is the
               source of such a link is built as that record; every other tuple local keeps its
-              stack form, so a program with no `&(…)` is unchanged by this rule.
+              stack form, so a program with no `&(…)` is unchanged by this rule.  The record's
+              members are the LOCAL's types, never the literal's: `w: (integer, Entity) =
+              (1, IceWall { … })` is a `__tuple<integer,Entity>`, because a variant widens
+              into its enum (types.md `(C-Var)`) and the link names the declared tuple.
   (T-Ref-El)  every τᵢ is a scalar (`integer` of any width, `float`, `single`, `character`,
               `boolean`, a value enum) or a type a struct FIELD can hold — `text`, a struct, a
               vector, a keyed collection, a struct-enum.  What the record cannot spell or lay
@@ -260,6 +266,25 @@ it, not a standing fact.
   `(integer?, integer)` independently.  **The one-arm change must not be landed alone**: it
   half-migrates the representation and takes `?` on a tuple down with it.  The written `(τ, τ)?` stays
   refused — that half is `1419-a-nullable-tuple-type-is-refused-by-name.loft` and does not move.
+
+D-tup-14 OPENED AND CLOSED 2026-09-15 (loft#1532): `(T-Cons)` copies a heap member in and
+`layout.md (L-Tuple)` makes a member a field, and a member WRITE honoured neither.  `w.i = e`
+put `e`'s handle into the slot, so a named source — a local, a field, a vector element, another
+tuple's member, a vector local — stayed a second name for the member, and the record the write
+replaced was released by nobody; for a droppable member the construction's own scope-end release
+then ran on a freed store.  A literal member built from a field PROJECTION aliased the same way,
+because `Parser::tuple_member_owned_copy` copied a local or a tuple member and nothing else.
+Closed in two halves.  The write copies through the literal's own helper, which now takes a
+record projection as a place — for a record that owns no DROPPABLE.  A droppable projected out of
+a live container keeps its alias as a member, literal or written: copied, it would be released
+twice, the double release its struct-field, payload, push and vector-literal siblings already
+carry in `tests/ownership_drop_gate.baseline` (`c_field_field`, `c_elem_push`, …), and the
+hand-off that moves the container's release to the copy is the cure those share.  The scope pass hands a member a later write names to the tuple
+ALONE at its literal (`Scopes::written_tuple_members`), so each write releases the record it
+displaces — without its hook, `heap.md (H-Drop-Not)`, as the struct-field write does — and
+disarms the claimant of the value it writes.  Guards: `a-value-written-into-a-tuple-member-is-copied-in.loft`
+(the copy, and a droppable member's trace) and `a-tuple-member-write-releases-the-record-it-replaces.loft`
+(the release).
 
 D-tup-13 OPENED AND CLOSED 2026-09-10 (loft#1509): `(T-Proj)` says `t.i` reads that element and
 `heap.md (H-Drop)` runs the hook once per resource, and a RETURNED member satisfied neither —

@@ -1,0 +1,59 @@
+// @PLN157 § V-ab — the counted-for lowering for a start that is NOT a literal: a second
+// counter seeded AT the start, tested, yielded, then stepped (`@FR-I-Range`).  Every cell's
+// expected value is hand-computed and printed; the OUTPUT is byte-identical to the
+// null-encoded form's (`LOFT_NO_NEXT_COUNTER=1`) on both backends.  Axes: inclusive ×
+// direction × start (parameter / zero-holding local / expression / type minimum) × till
+// (literal / expression / null-discharged) × emptiness × break/continue × nesting × `_`
+// binder × slice × `i#index` × the variable after the loop.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-13) — the second counter seeded at `a + 1`
+// instead of `a` turns 11 of the 20 cells red at once on BOTH backends (c1 14 -> 12, c2 20 -> 18,
+// c4 3 -> -1: the first trip vanishes); restored byte-identically, every cell matches the
+// null-encoded form's output (`LOFT_NO_NEXT_COUNTER=1`) and the pre-unit binary's.
+
+fn c1(a: integer, b: integer) -> integer { s = 0; for i in a..b { s += i; } s }
+fn c2(a: integer, b: integer) -> integer { s = 0; for i in a..=b { s += i; } s }
+fn c3(n: integer) -> integer { s = 0; for _ in n..n { s += 1; } s }
+fn c4(n: integer) -> integer { s = -1; for i in n..(n + 1) { s = i; } s }
+fn c5(a: integer, b: integer) -> integer { s = 0; for _ in a..b { s += 1; } s }
+fn c6(n: integer) -> integer { z = 0; s = 0; for i in z..n { s += i; } s }
+fn c7(n: integer) -> integer { s = 0; for i in (n - n)..n { s += i; } s }
+fn c8(a: integer, b: integer) -> integer { s = 0; c = 0; for i in a..b { if i == 2 { break } s += i; c += 1; } s * 10 + c }
+fn c9(a: integer, b: integer) -> integer { s = 0; for i in a..b { if (i % 2 ?? 0) == 0 { continue } s += i; } s }
+fn c10(a: integer, b: integer, c: integer) -> integer { s = 0; for i in a..b { for j in a..c { s += i * 10 + j; } } s }
+fn c11(a: integer, b: integer, c: integer) -> integer { s = 0; for _ in a..b { for _ in a..c { s += 1; } } s }
+fn c12(a: integer, b: integer) -> integer { d = 0; same = 1; for i in a..b { d = d * 10 + i#index; if i#index != i { same = 0; } } d * 10 + same }
+fn c13(v: const vector<integer>, a: integer, b: integer) -> integer { s = 0; for x in v[a..b] { s += x; } s }
+fn c14(v: const vector<integer>, a: integer, b: integer) -> integer { s = 0; for x in rev(v[a..b]) { s = s * 100 + x; } s }
+fn c15(a: integer, b: integer) -> integer { s = 0; for i in rev(a..b) { s = s * 10 + i; } s }
+fn c16(a: integer, b: integer) -> integer { s = 0; for i in rev(a..=b) { s = s * 10 + i; } s }
+fn c17(a: integer, b: integer) -> integer { n = 0; last = 0; for i in a..b { n += 1; last = i; } n * 100 + (last + 9223372036854775800) }
+fn c18(a: integer, t: integer) -> integer { s = 0; for _ in a..t { s += 1; } s }
+fn c19(a: integer, b: integer) -> integer { for i in a..b { } i }
+fn c20(a: integer, b: integer) -> integer { n = 0; s = 0; for i in a..b { for j in i..b { n += 1; s += j; } } n * 100 + s }
+
+fn main() {
+  println("c1 {c1(2, 6)}");                     // 2+3+4+5 = 14
+  println("c2 {c2(2, 6)}");                     // 2+3+4+5+6 = 20
+  println("c3 {c3(3)}");                        // n..n: zero trips -> 0
+  println("c4 {c4(3)}");                        // one trip, i = 3
+  println("c5 {c5(7, 3)}");                     // start above the end: 0
+  println("c6 {c6(4)}");                        // a local holding zero: 0+1+2+3 = 6
+  println("c7 {c7(4)}");                        // an expression that is zero: 6
+  println("c8 {c8(0, 10)}");                    // break at 2: sum 1, count 2 -> 12
+  println("c9 {c9(0, 6)}");                     // continue on even: 1+3+5 = 9
+  println("c10 {c10(0, 2, 3)}");                // 0+1+2+10+11+12 = 36
+  println("c11 {c11(0, 3, 4)}");                // `_` nested: 3 × 4 = 12
+  println("c12 {c12(2, 5)}");                   // i#index digits 234, equal to i on every trip -> 2341
+  v: vector<integer> = [10, 20, 30, 40, 50];
+  println("c13 {c13(v, 1, 4)}");                // slice 1..4: 20+30+40 = 90
+  println("c14 {c14(v, 1, 4)}");                // reversed slice: 40, 30, 20 -> 403020
+  println("c15 {c15(0, 3)}");                   // rev(0..3): 2, 1, 0 -> 210
+  println("c16 {c16(1, 4)}");                   // rev(1..=4): 4, 3, 2, 1 -> 4321
+  println("c17 {c17(-9223372036854775807, -9223372036854775805)}"); // start at the type minimum: 2 trips, last = min + 1 -> 200 + (-6) = 194
+  w: vector<integer> = [1];
+  nt = w[2];                                    // out of bounds: a null integer
+  println("c18 {c18(0, nt ?? 0)} {c18(0, nt ?? 3)}"); // a null-discharged end: 0 and 3
+  println("c19 {c19(2, 5)}");                   // the variable after the loop holds the last value: 4
+  println("c20 {c20(0, 3)}");                   // inner start reads the outer var: 6 pairs, j sum 8 -> 608
+}

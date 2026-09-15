@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `Disp-Key` (@PLN162 step 6) admits a second definition of a name only when its parameter
+// TYPES differ; the same types under other parameter names are the redefinition they always
+// were, refused on pass 1 with the message that names the winner.
+// @falsified-at: none — a control: the refusal it pins predates Disp-Key and still holds
+// @EXPECT_ERROR: Cannot redefine 'dup'
+
+struct Fire { n: integer }
+
+fn dup(f: Fire) -> text { "a {f.n}" }
+fn dup(g: Fire) -> text { "b {g.n}" }
+
+fn main() { println(dup(Fire { n: 1 })); }

@@ -1553,8 +1553,13 @@ impl Store {
     /// re-footed by [`Store::fl_rebuild`] on open.
     fn set_free_header(&mut self, pos: u32, words: i32) {
         debug_assert!(words > 0, "free block of {words} words at {pos}");
-        self.write(pos, 0, -words);
-        self.write::<i32>(pos + words as u32 - 1, 4, -words);
+        // Both writes are BLOCK metadata, not record fields: a free block has no size header
+        // to be inside of, and the footer deliberately addresses the block's LAST word
+        // (`@FR-H-FreeFooter`, so a delete coalesces backward in O(1)).  Routing them through
+        // the record-field write made `Store::init` trip the record-size assert on the first
+        // store any test builds — every unit test, under `-C debug-assertions=on`.
+        self.write_block_meta(pos, 0, -words);
+        self.write_block_meta::<i32>(pos + words as u32 - 1, 4, -words);
     }
 
     /// The backward half of `delete`'s coalescing: the free PREDECESSOR of the block at
@@ -2697,8 +2702,9 @@ impl Store {
             }
             if header < 0 {
                 // Re-foot every free block: an image written before footers existed
-                // carries none, and the walk is already here (@FR-H-FreeFooter).
-                self.write::<i32>(pos + block_size as u32 - 1, 4, header);
+                // carries none, and the walk is already here (@FR-H-FreeFooter).  BLOCK
+                // metadata, not a record field — see `begin_write_block_meta`.
+                self.write_block_meta::<i32>(pos + block_size as u32 - 1, 4, header);
                 if -header >= MIN_FREE_TREE {
                     self.fl_insert(pos);
                 }
@@ -3171,6 +3177,27 @@ impl Store {
     /// arriving at that hook, and a second write path that skipped it would put the count
     /// back where it started.
     fn begin_write<T: 'static>(&mut self, rec: u32, fld: u32) -> isize {
+        self.begin_write_inner::<T>(rec, fld, true)
+    }
+
+    /// The same, for a write that is FREE-BLOCK BOOKKEEPING rather than a record field.
+    ///
+    /// `@FR-H-FreeFooter`'s footer sits at field 4 of a free block's LAST word, which is not a
+    /// record and has no size header to be inside of: the record-size check below reads that
+    /// word's first four bytes as a header and, during `Store::init`, finds the zeroes of a
+    /// buffer nothing has written yet — `Fld 4 is outside of record 63 size 0`, on the first
+    /// store any test builds.  Everything else a write owes is still owed and still happens
+    /// here: the lock refusal, the bounds check and @PLN154's shadow hook.
+    fn begin_write_block_meta<T: 'static>(&mut self, rec: u32, fld: u32) -> isize {
+        self.begin_write_inner::<T>(rec, fld, false)
+    }
+
+    /// `in_record` is false for free-block metadata — see [`Store::begin_write_block_meta`].
+    ///
+    /// Its only reader is the record-size check, which is `debug_assertions`-only, so a release
+    /// build sees the parameter unused.
+    #[cfg_attr(not(debug_assertions), allow(unused_variables))]
+    fn begin_write_inner<T: 'static>(&mut self, rec: u32, fld: u32, in_record: bool) -> isize {
         // Only hard `read_only` blocks writes.  Call-bracket
         // `free_protected` lets writes through (only frees are blocked).
         //
@@ -3188,7 +3215,7 @@ impl Store {
         );
         let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
         #[cfg(debug_assertions)]
-        if rec > 1 && fld > 0 {
+        if in_record && rec > 1 && fld > 0 {
             let rec_header = unsafe {
                 std::ptr::read_unaligned(
                     self.ptr
@@ -3227,6 +3254,19 @@ impl Store {
         at
     }
 
+    /// The address of ELEMENT 0 of the vector record `rec` — the record's word plus the
+    /// 8-byte length header — for a loop that proved this store cannot grow while it holds
+    /// the pointer (@PLN157 § V-ak, `@FR-R-Base`).  Pointer arithmetic only: `rec` is a
+    /// claimed record, so `rec * 8 + 8` is inside the allocation or one past its end, and
+    /// every read through the result is bounded by the header's length before it happens.
+    #[inline]
+    #[must_use]
+    pub fn elem_base(&self, rec: u32) -> *const u8 {
+        // SAFETY: `rec` is a word index below `size`, so the offset stays within (or one
+        // past) the allocation `ptr` was made for.
+        unsafe { self.ptr.add(rec as usize * 8 + 8) }
+    }
+
     /// Write a field INTO the store.  The mirror of [`Store::read`], and the ordinary way to
     /// store a value.
     ///
@@ -3239,6 +3279,34 @@ impl Store {
     pub fn write<T: 'static + Copy>(&mut self, rec: u32, fld: u32, val: T) {
         let at = self.begin_write::<T>(rec, fld);
         unsafe { self.ptr.offset(at).cast::<T>().write_unaligned(val) }
+    }
+
+    /// [`Store::write`] for free-block bookkeeping — see [`Store::begin_write_block_meta`].
+    #[inline]
+    fn write_block_meta<T: 'static + Copy>(&mut self, rec: u32, fld: u32, val: T) {
+        let at = self.begin_write_block_meta::<T>(rec, fld);
+        unsafe { self.ptr.offset(at).cast::<T>().write_unaligned(val) }
+    }
+
+    /// Write `count` copies of `val` at `fld`, `fld + width`, … — one bounds check at each
+    /// end instead of one per element, and an unaligned store per element that the optimiser
+    /// turns into a vector loop (@PLN157 § V-ae, the fill idiom).  `width` is the element
+    /// stride and must be `size_of::<T>()`: a contiguous run of scalars, nothing else.
+    pub fn fill<T: 'static + Copy>(&mut self, rec: u32, fld: u32, count: u32, val: T) {
+        if count == 0 {
+            return;
+        }
+        let width = std::mem::size_of::<T>() as u32;
+        let first = self.begin_write::<T>(rec, fld);
+        let _last = self.begin_write::<T>(rec, fld + (count - 1) * width);
+        let base = unsafe { self.ptr.offset(first) };
+        for k in 0..count as usize {
+            unsafe {
+                base.add(k * width as usize)
+                    .cast::<T>()
+                    .write_unaligned(val)
+            }
+        }
     }
 
     /// Borrow a field MUTABLY in place, for the values [`Store::write`] cannot store by value.
@@ -5034,8 +5102,10 @@ mod tests {
         // right before B — AND the matching fake "header" at that block's would-be
         // start (also A's data).  Both header checks pass; only the free-tree
         // confirmation knows no such block exists.
-        store.write::<i32>(a + 4, 4, -3);
-        store.write::<i32>(a + 2, 0, -3);
+        // Forged BLOCK metadata, so written as such — `write` is the record-field spelling and
+        // its record-size check would (rightly) refuse a field-4 write into a word that is data.
+        store.write_block_meta::<i32>(a + 4, 4, -3);
+        store.write_block_meta::<i32>(a + 2, 0, -3);
         store.delete(b);
         // A stayed claimed and whole: its header still says 5 claimed words, and the
         // free block is exactly B (its own words, no absorption into A's middle).

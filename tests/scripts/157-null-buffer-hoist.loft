@@ -1,0 +1,68 @@
+// @PLN157 § V-ad (loft#1426) — a null-discharge DEFAULT BUFFER does not block the hoist on
+// the native backend (@FR-R-InPlace, the hidden-buffer allowance): `e = tbl[i]?` on a vector
+// of ALL-SCALAR records discharges an absent element into a hidden per-site buffer, and the
+// allocation into that buffer takes a store of its own or clears the buffer's own store,
+// which hosts nothing a header can name — so a loop containing it keeps its headers.  Before
+// this unit the never-taken arm's allocation declined every header in the loop (the drawing
+// bench's `polygon_generic` crossing loop: `wide_line` −31 %).  The interpreter (no rewrite)
+// is the oracle.  The cells pin the boundary from both sides:
+//   - the crossing-loop shape, the default arm taken, an in-place write and a push beside
+//     the discharge, nested loops, two discharge sites, a scalar read of the discharged
+//     vector, the buffer read after the loop, and a scalar `?` control answer the same
+//     values with the headers hoisted;
+//   - a record that OWNS HEAP keeps blocking: its default vector lives in the buffer's
+//     store, and a `&` alias of the discharged variable made before the loop would read a
+//     stale header through it (the falsifier cell).
+// The full cell corpus with its emission predictions is
+// doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ad-null-buffer-cells.loft
+// (tests/null_buffer_hoist.rs pins which loops derive a header); this file carries the VALUE
+// cells that must hold whatever the emitter decides.  `LOFT_NO_NULL_BUFFER_HOIST=1` and
+// `LOFT_HOIST_VERIFY=1` must answer identically.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-13) — the all-scalar condition dropped in
+// `hoist::null_buffer_alloc` (a heap-owning record's buffer admitted) turns exactly the
+// no-default alias cell red on --native (`alias_no_default()` 7 → 15: the header for `g.tags`
+// taken at loop entry names h[0]'s tags and serves every iteration) and LOFT_HOIST_VERIFY=1
+// panics at that read (`hoisted vector header is stale`, src/vector.rs); every other cell stays
+// green.  Its sibling with a DECLARED default vector stays green under the same sabotage,
+// because the discharge arm then builds that default with a growth op that blocks the loop on
+// its own — which is why the falsifier needs the record without a default.  Restored
+// byte-identically; interpret / native / LOFT_HOIST_VERIFY / LOFT_NO_NULL_BUFFER_HOIST /
+// LOFT_POISON all green.
+
+struct Ed { a: integer, b: integer, w: single }
+struct Hv { a: integer, tags: vector<integer> }
+struct Hd { a: integer, tags: vector<integer> = [4, 5, 6] }
+
+fn table() -> vector<Ed> { [Ed { a: 1, b: 10, w: 0.5f }, Ed { a: 2, b: 20, w: 1.5f }, Ed { a: 3, b: 30, w: 2.5f }] }
+
+fn crossing_shape() -> integer { t = table(); v = [7, 8, 9]; s = 0; for i in 0..3 { e = t[i]?; s += e.a * (v[i] ?? 0); } s }
+fn default_arm_taken() -> integer { t = table(); v = [7, 8, 9]; s = 0; last = -1; for i in 0..4 { e = t[i]?; s += e.a * (v[i] ?? 0); last = e.b; } assert(last == 0, "the absent element is the zero record"); s }
+fn heap_owning_record() -> integer { h: vector<Hv> = [Hv { a: 1, tags: [1] }, Hv { a: 2, tags: [2, 3] }]; v = [7, 8]; s = 0; n = 0; for i in 0..3 { e = h[i]?; s += e.a * (v[i] ?? 0); n += len(e.tags); } assert(n == 3, "the absent element's tags are empty"); s }
+fn write_beside() -> integer { t = table(); v = [0, 0, 0]; for i in 0..3 { e = t[i]?; v[i] = e.a * 10; } s = 0; for x in v { s += x; } s }
+fn push_beside() -> integer { t = table(); v = [7, 8, 9]; out: vector<integer> = []; s = 0; for i in 0..3 { e = t[i]?; out += [e.b]; s += e.a * (v[i] ?? 0); } assert(len(out) == 3 && out[2]? == 30, "the pushes land"); s }
+fn nested_loops() -> integer { t = table(); v = [7, 8, 9]; s = 0; for _j in 0..2 { for i in 0..3 { e = t[i]?; s += e.a * (v[i] ?? 0); } } s }
+fn two_sites() -> integer { t = table(); v = [7, 8, 9]; s = 0; for i in 0..3 { e = t[i]?; f = t[2 - i]?; s += (e.a + f.b) * (v[i] ?? 0); } s }
+fn scalar_of_same_vector() -> integer { t = table(); s = 0; w = 0.0f; for i in 0..3 { e = t[i]?; s += e.a; w += t[i]?.w; } s * 100 + ((w * 10.0f) as integer) }
+fn buffer_after_loop() -> integer { t = table(); s = 0; e = t[0]?; for i in 0..4 { e = t[i]?; s += e.a; } assert(e.a == 0, "the last view is the absent default"); s }
+fn scalar_control() -> integer { t = table(); v = [7, 8, 9]; s = 0; for i in 0..3 { e = t[i]?; x = v[i]?; s += e.b + (x ?? 0); } s }
+fn view_across_rediscarge() -> integer { h: vector<Hd> = [Hd { a: 1, tags: [1] }]; e = h[5]?; s = 0; for i in 0..3 { f = h[5]?; s += (e.tags[i] ?? 0) + f.a; } s }
+fn alias_no_default() -> integer { h: vector<Hv> = [Hv { a: 1, tags: [5] }, Hv { a: 2, tags: [2, 3] }]; e = h[0]?; g = &e; s = 0; for i in 0..3 { e = h[i]?; s += g.tags[0] ?? 0; } s }
+fn alias_follows_rebinding() -> integer { h: vector<Hd> = [Hd { a: 1, tags: [1] }, Hd { a: 2, tags: [2, 3] }]; e = h[0]?; g = &e; s = 0; for i in 0..3 { e = h[i]?; s += g.tags[0] ?? 0; } s }
+
+fn main() {
+  assert(crossing_shape() == 50, "the crossing-loop shape: 1·7 + 2·8 + 3·9");
+  assert(default_arm_taken() == 50, "the default arm taken adds the zero record");
+  assert(heap_owning_record() == 23, "a heap-owning record keeps the plain reads: 1·7 + 2·8");
+  assert(write_beside() == 60, "an in-place write beside the discharge: 10 + 20 + 30");
+  assert(push_beside() == 50, "a push beside the discharge: 1·7 + 2·8 + 3·9");
+  assert(nested_loops() == 100, "nested loops: 2 × 50");
+  assert(two_sites() == 510, "two discharge sites: 31·7 + 22·8 + 13·9");
+  assert(scalar_of_same_vector() == 645, "a scalar read of the discharged vector: a 6, w 4.5");
+  assert(buffer_after_loop() == 6, "the buffer read after the loop: 1 + 2 + 3 + 0");
+  assert(scalar_control() == 84, "a scalar `?` read beside the discharge: 60 + 24");
+  assert(view_across_rediscarge() == 15, "a heap-owning view across a re-discharge: 4 + 5 + 6");
+  assert(alias_follows_rebinding() == 7, "a `&` alias follows the rebinding: 1 + 2 + 4");
+  assert(alias_no_default() == 7, "the alias over a heap-owning record with no default: 5 + 2 + 0, never 15");
+  println("null-buffer-hoist ok");
+}

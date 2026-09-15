@@ -4310,3 +4310,14 @@ fn a_tuple_element_reads_through_a_variable_vector_index() {
     .expr("check()")
     .result(Value::Int(339412));
 }
+
+/// A capitalised name in a tuple pattern element is a variant or nothing (`@FR-M-Unit` one
+/// level down): refused by name, and a payload written after it is skipped whole, so the
+/// refusal is the arm's ONLY diagnostic — no `expected ','` cascade behind it, and the arms
+/// after it still parse.  The `code!` harness asserts the exact set emitted, which is what
+/// pins the ABSENCE of the cascade (an `@EXPECT_ERROR` pin can only say a line fired).
+#[test]
+fn tuple_element_name_that_is_no_variant_is_one_diagnostic() {
+    code!("enum Entity { Fireball { id: integer }, IceWall { id: integer } }\nfn f(a: Entity, b: Entity) -> text { match (a, b) { (Bogus { id }, IceWall) => \"m\", (Fireball, IceWall) => \"fw\", _ => \"none\" } }\nfn test() { x: Entity = Fireball { id: 1 }; w: Entity = IceWall { id: 2 }; print(f(x, w)); }")
+        .error("'Bogus' is not a variant of Entity at tuple_element_name_that_is_no_variant_is_one_diagnostic:2:61");
+}

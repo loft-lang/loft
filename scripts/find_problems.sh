@@ -413,7 +413,7 @@ rebuild_native_cdylibs() {
 
   # Wait for any parallel rebuilds (none unless LOFT_PARALLEL_REBUILD=1, in which case
   # `wait` exits after the slowest).  Serial builds have already finished.
-  for pid in "${jobs[@]}"; do wait "$pid"; done
+  for pid in ${jobs[@]+"${jobs[@]}"}; do wait "$pid"; done
 
   # Collect timings — one file per scheduled job.  Concatenate in
   # scheduled order so the summary table reads top-to-bottom by

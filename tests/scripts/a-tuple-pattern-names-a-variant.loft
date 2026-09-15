@@ -1,0 +1,227 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A tuple pattern's element names a VARIANT of the element's enum: `(Fire, Wall)` tag-tests
+// both positions, `(Fire { id }, Wall { hp })` binds each payload, and a heap payload bound
+// that way is a VIEW of the matched record.  `(P-Point)` makes a unit variant and a struct
+// variant point patterns over one value, and a tuple element is one value — so an enum
+// element takes the forms a slice element takes.  Before this held, a capitalised name in a
+// tuple element fell through to the BINDING branch: `(KFire, KWall) => …` bound two locals
+// named `KFire` and `KWall` and matched EVERY pair, on a plain enum and on a struct-enum
+// alike, with no diagnostic on either backend (found by @PLN162 step 0, whose acceptance
+// program is a central `match` on a pair of variants).
+// @falsified-at: 00272ff49 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-tuple-pattern-names-a-variant.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — an assertion fails on the control and the file exits 1; here every
+//   assertion passes and it exits 0.  Not leak, not panic: the defect is a wrong ANSWER.
+//   ARMED: no instrument — a plain run on either backend reads it.
+//   WITNESS: cell 1's `kind_pair(KWall, KFire)` answers `fire-wall` on the control where the
+//   file says `none`, because `(KFire, KWall)` binds two locals there and matches every pair;
+//   the `plain swapped pair reaches _` assertion is the first to fail.
+//   HOLDS: the lower-case binding control (cell 8) passes on both trees, and the leak channel
+//   is `none` on both and does not move.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+enum Kind { KFire, KWall, KCrate }
+
+struct Body { hp: integer, frozen: boolean }
+
+enum Entity {
+  Fireball { id: integer },
+  IceBolt  { id: integer },
+  IceWall  { id: integer, body: Body },
+  Slime    { id: integer, body: Body },
+}
+
+// Cell 1 — a plain-enum pair: every arm is a tag test on BOTH positions, and a swapped pair
+// falls to `_`.
+fn kind_pair(a: Kind, b: Kind) -> text {
+  match (a, b) {
+    (KFire, KWall) => "fire-wall",
+    (KFire, KCrate) => "fire-crate",
+    (KWall, KWall) => "wall-wall",
+    _ => "none",
+  }
+}
+
+fn test_plain_enum_pair() {
+  fw = kind_pair(Kind.KFire, Kind.KWall);
+  assert(fw == "fire-wall", "plain (KFire, KWall): got {fw}");
+  fc = kind_pair(Kind.KFire, Kind.KCrate);
+  assert(fc == "fire-crate", "plain (KFire, KCrate): got {fc}");
+  ww = kind_pair(Kind.KWall, Kind.KWall);
+  assert(ww == "wall-wall", "plain (KWall, KWall): got {ww}");
+  wf = kind_pair(Kind.KWall, Kind.KFire);
+  assert(wf == "none", "plain swapped pair reaches `_`: got {wf}");
+  cc = kind_pair(Kind.KCrate, Kind.KCrate);
+  assert(cc == "none", "plain unlisted pair reaches `_`: got {cc}");
+}
+
+// Cell 2 — an or-pattern inside one element, and a wildcard beside it.
+fn kind_or(a: Kind, b: Kind) -> text {
+  match (a, b) {
+    (KFire | KWall, KCrate) => "either-crate",
+    (KCrate, _) => "crate-any",
+    _ => "none",
+  }
+}
+
+fn test_or_pattern_in_an_element() {
+  a = kind_or(Kind.KFire, Kind.KCrate);
+  assert(a == "either-crate", "or-pattern first alternative: got {a}");
+  b = kind_or(Kind.KWall, Kind.KCrate);
+  assert(b == "either-crate", "or-pattern second alternative: got {b}");
+  c = kind_or(Kind.KCrate, Kind.KFire);
+  assert(c == "crate-any", "wildcard second element: got {c}");
+  d = kind_or(Kind.KFire, Kind.KWall);
+  assert(d == "none", "or-pattern misses on the second element: got {d}");
+}
+
+// Cell 3 — a struct-enum pair by tag alone (bare names, no payload).
+fn entity_pair(a: Entity, b: Entity) -> text {
+  match (a, b) {
+    (Fireball, IceWall) => "fire-wall",
+    (IceBolt, IceWall) => "ice-wall",
+    (Fireball, IceBolt) => "cancel",
+    _ => "none",
+  }
+}
+
+fn test_struct_enum_pair_by_tag() {
+  f: Entity = Fireball { id: 1 };
+  b: Entity = IceBolt { id: 2 };
+  w: Entity = IceWall { id: 3, body: Body { hp: 10, frozen: false } };
+  fw = entity_pair(f, w);
+  assert(fw == "fire-wall", "struct-enum (Fireball, IceWall): got {fw}");
+  bw = entity_pair(b, w);
+  assert(bw == "ice-wall", "struct-enum (IceBolt, IceWall): got {bw}");
+  fb = entity_pair(f, b);
+  assert(fb == "cancel", "struct-enum (Fireball, IceBolt): got {fb}");
+  wf = entity_pair(w, f);
+  assert(wf == "none", "struct-enum swapped pair reaches `_`: got {wf}");
+  bf = entity_pair(b, f);
+  assert(bf == "none", "struct-enum unlisted pair reaches `_`: got {bf}");
+}
+
+// Cell 4 — payload capture in both elements: the bound scalars are the matched records'.
+fn ids_of(a: Entity, b: Entity) -> integer {
+  match (a, b) {
+    (Fireball { id }, IceWall { body }) => id * 100 + body.hp,
+    (IceBolt { id }, Slime { body }) => id * 100 + body.hp + 1000,
+    _ => -1,
+  }
+}
+
+fn test_payload_capture_in_both_elements() {
+  f: Entity = Fireball { id: 7 };
+  w: Entity = IceWall { id: 3, body: Body { hp: 42, frozen: false } };
+  b: Entity = IceBolt { id: 5 };
+  s: Entity = Slime { id: 9, body: Body { hp: 11, frozen: false } };
+  fw = ids_of(f, w);
+  assert(fw == 742, "(Fireball {{ id }}, IceWall {{ body }}) reads 7 and 42: got {fw}");
+  bs = ids_of(b, s);
+  assert(bs == 1511, "(IceBolt {{ id }}, Slime {{ body }}) reads 5 and 11: got {bs}");
+  sw = ids_of(s, w);
+  assert(sw == -1, "an unlisted pair reaches `_`: got {sw}");
+}
+
+// Cell 5 — a heap payload bound through a tuple element is a VIEW: the write lands in the
+// record the tuple was built from, not in a copy.
+fn hit(a: Entity, b: Entity) {
+  match (a, b) {
+    (Fireball, IceWall { body }) => { body.hp -= 3; },
+    (Fireball, Slime { body }) => { body.hp -= 6; },
+    (IceBolt, Slime { body }) => { body.frozen = true; },
+    _ => {},
+  }
+}
+
+fn hp_of(e: Entity) -> integer {
+  match e {
+    IceWall { body } => body.hp,
+    Slime { body } => body.hp,
+    _ => -1,
+  }
+}
+
+fn frozen_of(e: Entity) -> boolean {
+  match e {
+    Slime { body } => body.frozen,
+    _ => false,
+  }
+}
+
+fn test_heap_payload_binding_is_a_view() {
+  f: Entity = Fireball { id: 1 };
+  b: Entity = IceBolt { id: 2 };
+  w: Entity = IceWall { id: 3, body: Body { hp: 10, frozen: false } };
+  s: Entity = Slime { id: 4, body: Body { hp: 10, frozen: false } };
+  hit(f, w);
+  assert(hp_of(w) == 7, "wall hp after (Fireball, IceWall): got {hp_of(w)}");
+  hit(f, s);
+  assert(hp_of(s) == 4, "slime hp after (Fireball, Slime): got {hp_of(s)}");
+  hit(b, s);
+  assert(frozen_of(s), "slime frozen after (IceBolt, Slime): got {frozen_of(s)}");
+  assert(hp_of(s) == 4, "the freeze arm leaves hp alone: got {hp_of(s)}");
+  hit(w, f);
+  assert(hp_of(w) == 7, "a swapped pair changes nothing: got {hp_of(w)}");
+}
+
+// Cell 6 — the same through the elements of a `vector<Entity>`, which is where a game keeps
+// them: the loop variable is a view of the element, and so is the tuple built from it.
+fn test_through_vector_elements() {
+  es: vector<Entity> = [
+    Fireball { id: 1 },
+    IceWall { id: 2, body: Body { hp: 10, frozen: false } },
+    Slime { id: 3, body: Body { hp: 10, frozen: false } },
+  ];
+  for e in es { hit(es[0], e); }
+  assert(hp_of(es[1]) == 7, "wall element after the loop: got {hp_of(es[1])}");
+  assert(hp_of(es[2]) == 4, "slime element after the loop: got {hp_of(es[2])}");
+}
+
+// Cell 7 — a mixed tuple: a variant beside a literal, and beside a bound scalar with a guard.
+fn kind_and_count(k: Kind, n: integer) -> text {
+  match (k, n) {
+    (KFire, 0) => "fire-zero",
+    (KFire, n) if n > 5 => "fire-many",
+    (KWall, _) => "wall-any",
+    _ => "none",
+  }
+}
+
+fn test_variant_beside_a_scalar() {
+  a = kind_and_count(Kind.KFire, 0);
+  assert(a == "fire-zero", "(KFire, 0): got {a}");
+  b = kind_and_count(Kind.KFire, 9);
+  assert(b == "fire-many", "(KFire, n) if n > 5: got {b}");
+  c = kind_and_count(Kind.KFire, 3);
+  assert(c == "none", "(KFire, 3) fails the guard and the literal: got {c}");
+  d = kind_and_count(Kind.KWall, 3);
+  assert(d == "wall-any", "(KWall, _): got {d}");
+  e = kind_and_count(Kind.KCrate, 0);
+  assert(e == "none", "(KCrate, 0) reaches `_`: got {e}");
+}
+
+// Cell 8 — the control: a lower-case name is still a binding, and binds the element value.
+fn bound_pair(a: Kind, b: Kind) -> text {
+  match (a, b) {
+    (x, y) => "{x}/{y}",
+  }
+}
+
+fn test_lowercase_names_still_bind() {
+  r = bound_pair(Kind.KWall, Kind.KFire);
+  assert(r == "KWall/KFire", "lower-case bindings: got {r}");
+}
+
+fn main() {
+  test_plain_enum_pair();
+  test_or_pattern_in_an_element();
+  test_struct_enum_pair_by_tag();
+  test_payload_capture_in_both_elements();
+  test_heap_payload_binding_is_a_view();
+  test_through_vector_elements();
+  test_variant_beside_a_scalar();
+  test_lowercase_names_still_bind();
+}

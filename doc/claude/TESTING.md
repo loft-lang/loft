@@ -1677,6 +1677,58 @@ identical on every machine at any load, which is why
 `data_structures::hash_growth_frees_the_table_it_replaces` can pin "2000 entries
 claim 9 records" as an exact expectation while no timing could.
 
+## The drop gate (`tests/ownership_drop_gate.rs`)
+
+**What it checks.** `formal/heap.md (H-Drop)`: a droppable resource is released exactly once,
+at the death of the record that owns it; and `(H-Drop-Not)`: the places that rule names release
+nothing.  The free-side instruments — `LOFT_POISON`, the leak check, `LOFT_OWN_ORACLE=check` —
+cannot see a drop: each is clean on a program that runs a hook twice or never.  So this gate
+scores the release itself.
+
+**How a cell reports.**  Each cell is a small generated program.  Its resource type prints
+`M<id>` when a resource is minted, `D<id>` when the hook runs and `R<id>` when the program
+reads it; `X<id>` marks a resource `(H-Drop-Not)` leaves to the author.  A copy keeps the id,
+so one id names one resource across all of its copies.  `score` turns the trace into findings:
+
+| kind | meaning |
+|---|---|
+| `DOUBLE` | released more than once |
+| `LOST` | never released |
+| `EARLY` | released, then read again |
+| `LATE` | released after its cell returned |
+| `UNMINTED` | released an id that was never minted — the hook read freed memory |
+| `RELEASED_NOT` | released a resource marked `X` |
+| `REFUSED` / `CRASHED` | did not compile, or stopped inside the cell — never scored as clean |
+| `EMPTY` / `REMINT` | a fault in the harness: the cell minted nothing, or two resources share an id |
+
+The generator never states an expectation — the trace does — so a new cell needs no expected
+value.  A new axis is a row in `SOURCES`, `DESTS` or a `COAL_*` table; a hand-written shape goes
+in `pilot_cells`.
+
+**Every cell runs in its own process.**  A doubled release corrupts what later code in the same
+process sees: a cell that is clean on its own loses its release when it runs after a doubling
+one.  So a batch result is not a measurement of any one cell.  On Linux an interpreter cell runs
+under a 2 GiB address-space limit, because `LOFT_MEMORY_LIMIT` (below) is armed only under
+`loft test`, and a corrupt length can allocate without bound.
+
+**The baselines.**  `tests/ownership_drop_gate.baseline` (interpreter) and
+`tests/ownership_drop_gate.native.baseline` list every cell that is not clean, as
+`cell KIND,KIND`.  A line is an open defect registered in `formal/heap.md` (`D-heap-1`,
+`D-heap-7`) — not accepted behaviour.  The test fails on a NEW line (a cell that now releases
+wrongly, or differently) and on a GONE line (a fix: retire the line in the same commit).  A
+missing baseline fails; it is never written on first sight.  Each run also prints every cell
+where the two backends disagree.
+
+```bash
+cargo test --release --test ownership_drop_gate                            # both legs, ~40 s warm
+LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate     # only after reading the diff
+```
+
+**It can fail.**  `the_scorer_names_each_kind_of_wrong_release` feeds a hand-written trace for
+each kind, and `every_cell_is_distinct_and_mints` rejects a cell that could only ever be clean.
+Against the compiler: `LOFT_NO_FIELD_HANDOFF=1` switches one hand-off off, and the interpreter
+leg reports 11 NEW cells.
+
 ## Store-memory ceiling (`LOFT_MEMORY_LIMIT`)
 
 The sibling of the execution timeout, for the failure it cannot catch. A corrupted

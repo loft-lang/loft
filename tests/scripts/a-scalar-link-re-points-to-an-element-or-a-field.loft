@@ -1,0 +1,145 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `c = &v[i]` and `f = &o.y` on a variable that is already a `&` link RE-POINT the link
+// (`binding.md (B-Ref-Repoint)`), whatever the link names: another element, the same vector at
+// another index, a plain variable, another field.  The old source is neither written nor released,
+// and a write through the link afterwards reaches the new source only.  Without the `&` the same
+// statement writes THROUGH the link (`(B-Ref-Write)`), which the controls pin beside each repoint.
+//
+// For a link to a scalar the two spellings differ only in the right-hand side's type: the place
+// itself is a reference, a value read out of it is the scalar.  (`binding.md` D-bind-36.)  A
+// struct element bound with `&` is typed as a view of its vector, not as a link; the struct cell
+// checks that rebinding it leaves the first element alone.
+//
+// @falsified-at: acb02a845 — interpret exit 101 -> 0, interpret panicked -> clean; native INERT (expected: native re-pointed these links on both trees)
+// @falsified-by: tests/falsified/a-scalar-link-re-points-to-an-element-or-a-field.patch — interpret exit 101 -> 0, interpret panicked -> clean; native INERT (expected: native re-pointed these links on both trees)
+// HOLDS: leak and free-refusal are clean on both trees and both backends; native answers the same on both trees.
+//
+// CHANNEL: the assertions — the value read through the link and through each source.
+
+struct O { x: integer, y: integer }
+struct P { x: integer }
+
+// An element of one vector, re-pointed to an element of another: read before and after.
+fn element_to_other_vector() -> text {
+  v: vector<integer> = [1, 2, 3]; w: vector<integer> = [4];
+  c = &w[0]; s = "{c}"; c = &v[0];
+  "{s},{c},{w[0]}"
+}
+// The same, then written through: the second source takes the write.
+fn element_repoint_then_write() -> text {
+  v: vector<integer> = [1, 2, 3]; w: vector<integer> = [4];
+  c = &w[0]; c = &v[0]; c = 9;
+  "{v[0]},{w[0]}"
+}
+// The same vector at another index, then written through.
+fn element_to_same_vector() -> text {
+  v: vector<integer> = [1, 2, 3];
+  c = &v[0]; c = &v[2]; s = "{c}"; c = 9;
+  "{s},{v[0]},{v[2]}"
+}
+// A plain variable re-pointed to an element: the variable is untouched.
+fn variable_to_element() -> text {
+  v: vector<integer> = [1, 2, 3]; n = 7;
+  c = &n; c = &v[1]; c = 8;
+  "{n},{v[1]}"
+}
+// An element re-pointed to a plain variable (the install op, the control).
+fn element_to_variable() -> text {
+  v: vector<integer> = [1, 2, 3]; n = 7;
+  c = &v[0]; c = &n; c = 8;
+  "{v[0]},{n}"
+}
+// A field re-pointed to another field of the same record, then written through.
+fn field_to_field() -> text {
+  o = O{x: 1, y: 2};
+  f = &o.x; f = &o.y; s = "{f}"; f = 8;
+  "{s},{o.x},{o.y}"
+}
+// Re-pointed on every pass of a loop; the last pass wins.
+fn element_repoint_in_a_loop() -> text {
+  v: vector<integer> = [1, 2, 3];
+  c = &v[0]; for i in 0..3 { c = &v[i]; } c = 9;
+  "{v[0]},{v[2]}"
+}
+// A float element: the same rule at another scalar width.
+fn float_element() -> text {
+  fs: vector<float> = [1.5, 2.5];
+  f = &fs[0]; s = "{f}"; f = &fs[1];
+  "{s},{f},{fs[0]}"
+}
+fn boolean_element() -> text {
+  bs: vector<boolean> = [true, false, false];
+  c = &bs[0]; s = "{c}"; c = &bs[1]; t = "{c}"; c = true;
+  "{s},{t},{bs[0]},{bs[1]},{bs[2]}"
+}
+// A 4-byte element, re-pointed to a MIDDLE element and written: the element after it is untouched.
+fn character_element() -> text {
+  cs: vector<character> = ['a', 'b', 'c'];
+  c = &cs[0]; s = "{c}"; c = &cs[1]; t = "{c}"; c = 'z';
+  "{s},{t},{cs[0]},{cs[1]},{cs[2]}"
+}
+fn single_element() -> text {
+  v: vector<single> = [1.5f, 2.5f, 3.5f];
+  c = &v[0]; s = "{c}"; c = &v[1]; c = 9.5f;
+  "{s},{v[0]},{v[1]},{v[2]}"
+}
+fn nullable_element() -> text {
+  ns: vector<integer?> = [1, null, 3, 4];
+  c = &ns[0]; s = "{c}"; c = &ns[2]; t = "{c}"; c = 9;
+  "{s},{t},{ns[0]},{ns[2]},{ns[3]}"
+}
+// Re-pointed in one arm or the other, then written through: only the taken arm's source changes.
+fn element_repoint_in_an_arm(k: integer) -> text {
+  v: vector<integer> = [1, 2, 3]; w: vector<integer> = [4];
+  c = &w[0]; if k > 0 { c = &v[0]; } else { c = &v[2]; } c = 9;
+  "{v[0]},{v[2]},{w[0]}"
+}
+// A link into an element of a vector PARAMETER.
+fn read_parameter_element(v: vector<integer>) -> text {
+  w: vector<integer> = [4];
+  c = &w[0]; c = &v[1];
+  "{c},{w[0]}"
+}
+// A struct element bound with `&` (a view of its vector, not a `&` link), bound again to another
+// vector's element: the first element keeps its value.
+fn struct_element() -> text {
+  ps: vector<P> = [P{x: 10}]; qs: vector<P> = [P{x: 20}];
+  s = &ps[0]; t = "{s.x}"; s = &qs[0];
+  "{t},{s.x},{ps[0].x}"
+}
+// Write-through controls: the right-hand side is a VALUE read out of a place.
+fn write_through_from_an_element() -> text {
+  v: vector<integer> = [1, 2, 3]; w: vector<integer> = [4];
+  c = &w[0]; c = v[1];
+  "{c},{w[0]},{v[1]}"
+}
+fn write_through_from_a_field() -> text {
+  v: vector<integer> = [1, 2]; o = O{x: 5, y: 6};
+  c = &v[0]; c = o.x;
+  "{c},{v[0]},{o.x}"
+}
+
+fn main() {
+  assert(element_to_other_vector() == "4,1,4", "an element link re-points to another vector: {element_to_other_vector()}");
+  assert(element_repoint_then_write() == "9,4", "a write after the repoint reaches the new source only: {element_repoint_then_write()}");
+  assert(element_to_same_vector() == "3,1,9", "an element link re-points within its vector: {element_to_same_vector()}");
+  assert(variable_to_element() == "7,8", "a variable link re-points to an element: {variable_to_element()}");
+  assert(element_to_variable() == "1,8", "an element link re-points to a variable: {element_to_variable()}");
+  assert(field_to_field() == "2,1,8", "a field link re-points to another field: {field_to_field()}");
+  assert(element_repoint_in_a_loop() == "1,9", "the last repoint in a loop wins: {element_repoint_in_a_loop()}");
+  assert(float_element() == "1.5,2.5,1.5", "a float element link re-points: {float_element()}");
+  assert(boolean_element() == "true,false,true,true,false", "a boolean element link re-points: {boolean_element()}");
+  assert(character_element() == "a,b,a,z,c", "a character element link re-points: {character_element()}");
+  assert(single_element() == "1.5,1.5,9.5,3.5", "a single element link re-points: {single_element()}");
+  assert(nullable_element() == "1,3,1,9,4", "a nullable element link re-points: {nullable_element()}");
+  assert(element_repoint_in_an_arm(1) == "9,3,4", "the first arm's repoint takes the write: {element_repoint_in_an_arm(1)}");
+  assert(element_repoint_in_an_arm(0) == "1,9,4", "the second arm's repoint takes the write: {element_repoint_in_an_arm(0)}");
+  pv: vector<integer> = [1, 2];
+  assert(read_parameter_element(pv) == "2,4", "a link re-points into a parameter's element: {read_parameter_element(pv)}");
+  assert(struct_element() == "10,20,10", "a struct element view rebinds without writing the first: {struct_element()}");
+  assert(write_through_from_an_element() == "2,2,2", "without `&` an element value writes through: {write_through_from_an_element()}");
+  assert(write_through_from_a_field() == "5,5,5", "without `&` a field value writes through: {write_through_from_a_field()}");
+  println("scalar link repoint ok");
+}

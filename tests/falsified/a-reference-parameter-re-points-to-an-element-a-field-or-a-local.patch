@@ -1,0 +1,82 @@
+diff --git b/src/generation/dispatch.rs a/src/generation/dispatch.rs
+index 42e654cb5..b3c73a451 100644
+--- b/src/generation/dispatch.rs
++++ a/src/generation/dispatch.rs
+@@ -298,25 +298,6 @@ impl Output<'_> {
+         self.output_set_inner(w, var, to)
+     }
+ 
+-    /// Writes a raw pointer to the store slot a place op names — the element of an
+-    /// `OpGetVector`/`OpVectorRef`, the field of an `OpGetField` — as the statements of a block:
+-    /// `let __ed = <place>; stores…addr_mut::<T>(…) as *mut T`.  A local link and a `&` parameter
+-    /// both link to a place this way; the caller supplies the enclosing `unsafe` block and what it
+-    /// makes of the pointer.
+-    fn output_place_pointer(
+-        &mut self,
+-        w: &mut dyn Write,
+-        place: &Value,
+-        base: &str,
+-    ) -> std::io::Result<()> {
+-        write!(w, "let __ed = ")?;
+-        self.output_code_inner(w, place)?;
+-        write!(
+-            w,
+-            "; stores.store_mut(&__ed).addr_mut::<{base}>(__ed.rec, __ed.pos) as *mut {base}"
+-        )
+-    }
+-
+     fn output_set_inner(&mut self, w: &mut dyn Write, var: u16, to: &Value) -> std::io::Result<()> {
+         let variables = self.data.def(self.def_nr).variables();
+         // P224: writes to coroutine-persistent locals target the struct
+@@ -365,34 +346,6 @@ impl Output<'_> {
+         {
+             if to != &Value::Null {
+                 let name = sanitize(variables.name(var));
+-                // `@FR-B-Ref-Repoint` on a `&` PARAMETER to a scalar: `c = &v[i]`, `c = &o.f` and
+-                // `c = &m` move the parameter's own link instead of writing through it.  The
+-                // parameter is a `&mut T`, so it takes a borrow of the new place, unbounded like
+-                // the raw pointer a local link holds.  Every other value is the write-back below.
+-                if crate::data::is_scalar(inner)
+-                    && let Value::Call(d_nr, cargs) = to.unspan()
+-                {
+-                    let op = self.data.def(*d_nr).name().to_string();
+-                    let base = rust_type(inner.base(), &Context::Variable);
+-                    if matches!(op.as_str(), "OpGetField" | "OpGetVector" | "OpVectorRef") {
+-                        write!(w, "var_{name} = unsafe {{ &mut *{{ ")?;
+-                        self.output_place_pointer(w, to, &base)?;
+-                        write!(w, " }} }}")?;
+-                        return Ok(());
+-                    }
+-                    if op == "OpCreateStack"
+-                        && let [src_arg] = cargs.as_slice()
+-                        && let Value::Var(src) = src_arg.unspan()
+-                        && !matches!(variables.tp(*src).base(), Type::RefVar(_))
+-                    {
+-                        let src_name = sanitize(variables.name(*src));
+-                        write!(
+-                            w,
+-                            "var_{name} = unsafe {{ &mut *std::ptr::addr_of_mut!(var_{src_name}) }}"
+-                        )?;
+-                        return Ok(());
+-                    }
+-                }
+                 // @PLN87 P2.2 / @PLN85 t4 — a `&`-param whole-record write-back that
+                 // installs a fresh OWNED store (`o = Obj{..}` literal OR `o = mk()`
+                 // owned-returning call) must FREE the DISPLACED caller store
+@@ -551,9 +504,13 @@ impl Output<'_> {
+                     self.declared.insert(var);
+                     write!(w, "let mut var_{name}: *mut {base} = ")?;
+                 }
+-                write!(w, "unsafe {{ ")?;
+-                self.output_place_pointer(w, to, &base)?;
+-                write!(w, " }}")?;
++                write!(w, "unsafe {{ let __ed = ")?;
++                self.output_code_inner(w, to)?;
++                write!(
++                    w,
++                    "; stores.store_mut(&__ed).addr_mut::<{base}>(__ed.rec, __ed.pos) \
++                     as *mut {base} }}"
++                )?;
+             } else if let Value::Call(d_nr, cargs) = to.unspan()
+                 && self.data.def(*d_nr).name() == "OpCreateStack"
+                 && let [src_arg] = cargs.as_slice()

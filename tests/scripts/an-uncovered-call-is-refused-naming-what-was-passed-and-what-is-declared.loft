@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `Disp-Exhaustive` (@PLN162 step 10): a call is covered when some definition of its name
+// takes its STATIC argument types; an uncovered call is refused at compile time, naming what
+// was passed and what is declared, so the cure — add the definition, or fix the argument — is
+// one read away.  Three uncovered shapes: a variant pair no definition names; two values held
+// at the ENUM where no enum-level definition exists — since step 13 the closed enum is
+// enumerated and the refusal names the first pair no definition takes, the site being covered
+// only when every pair is; and a scalar set asked for a type it lacks.  The twin file adds the
+// total case and the same calls compile.
+// @falsified-at: 51395d496 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/an-uncovered-call-is-refused-naming-what-was-passed-and-what-is-declared.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — on the control the enum-held line is unmet: the call is refused
+//   there at the static types (*no definition of `hit` takes (Entity, Entity)*) where here the
+//   closed enum is enumerated and the refusal names the first pair no definition takes.
+//   (Re-measured at step 13; the earlier receipt, at 0af9e3cfd, pinned the pre-enumeration
+//   wording.)  Not leak and not assert.
+//   ARMED: no instrument.
+//   WITNESS: the control's message names `(Entity, Entity)`; this tree's names `(Fireball,
+//   Fireball)`.
+//   HOLDS: the other two lines are met on both trees; the program is refused on both.
+// @EXPECT_ERROR: no definition of `hit` takes (Crate, IceWall) — declared: hit(Fireball, IceWall), hit(IceBolt, IceWall)
+// @EXPECT_ERROR: `hit(Entity, Entity)` has no definition for the pair (Fireball, Fireball) — declared: hit(Fireball, IceWall), hit(IceBolt, IceWall)
+// @EXPECT_ERROR: no definition of `show` takes (boolean) — declared: show(integer), show(text)
+
+enum Entity {
+  Fireball { n: integer },
+  IceBolt { n: integer },
+  IceWall { n: integer },
+  Crate { n: integer },
+}
+
+fn hit(f: Fireball, w: IceWall) -> text { "fire-wall {f.n}{w.n}" }
+fn hit(b: IceBolt, w: IceWall) -> text { "bolt-wall {b.n}{w.n}" }
+
+fn show(n: integer) -> text { "int {n}" }
+fn show(t: text) -> text { "text {t}" }
+
+fn main() {
+  hit(Crate { n: 1 }, IceWall { n: 2 });
+  a: Entity = Fireball { n: 3 };
+  b: Entity = IceWall { n: 4 };
+  hit(a, b);
+  show(true);
+}

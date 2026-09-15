@@ -470,6 +470,8 @@ pub struct Function {
     inline_ref_vars: BTreeSet<u16>,
     /// Locals assigned a BORROW on one path and an owned value on another (loft#1333).
     borrow_arm_vars: BTreeSet<u16>,
+    /// Locals that hold the CALLER's record on every path — see [`Self::mark_caller_record`].
+    caller_record_vars: BTreeSet<u16>,
     /// Locals whose store may still be named by the work-ref that CONSTRUCTED it
     /// (loft#1522) — see [`Self::mark_buffer_witnessed`].
     buffer_witnessed_vars: BTreeSet<u16>,
@@ -598,6 +600,7 @@ impl Function {
             arm_consumed: BTreeSet::new(),
             inline_ref_vars: BTreeSet::new(),
             borrow_arm_vars: BTreeSet::new(),
+            caller_record_vars: BTreeSet::new(),
             buffer_witnessed_vars: BTreeSet::new(),
             names: HashMap::new(),
             loop_scopes: HashSet::new(),
@@ -872,6 +875,7 @@ impl Function {
             work_refs: BTreeSet::new(),
             inline_ref_vars: other.inline_ref_vars.clone(),
             borrow_arm_vars: other.borrow_arm_vars.clone(),
+            caller_record_vars: other.caller_record_vars.clone(),
             buffer_witnessed_vars: other.buffer_witnessed_vars.clone(),
             names: other.names.clone(),
             loop_scopes: other.loop_scopes.clone(),
@@ -3807,6 +3811,21 @@ impl Function {
     #[must_use]
     pub fn has_borrow_arm(&self, v: u16) -> bool {
         self.borrow_arm_vars.contains(&v)
+    }
+
+    /// Record that `v` holds the CALLER's record on every path: each assignment that binds a
+    /// store is a whole-value copy off a parameter or off another such local, and nothing writes
+    /// through `v`.  `(H-Drop)` gives a copy off a parameter no release to move, and a copy of
+    /// that copy is still the caller's record, so `scopes::copy_moves_drop_from` answers `v` as it
+    /// answers a parameter.
+    pub fn mark_caller_record(&mut self, v: u16) {
+        self.caller_record_vars.insert(v);
+    }
+
+    /// Does `v` hold the caller's record on every path — see [`Self::mark_caller_record`]?
+    #[must_use]
+    pub fn holds_caller_record(&self, v: u16) -> bool {
+        self.caller_record_vars.contains(&v)
     }
 
     /// Does `v`, a NULLABLE heap local, borrow exactly ONE argument of this function — the

@@ -1109,6 +1109,102 @@ pub fn inplace_callee_hoist_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_INPLACE_CALLEE_HOIST"))
 }
 
+/// @PLN157 § V-ae: `for i in lo..hi { v[base + i] = c }` over a held header, `base` and `c`
+/// invariant, is ONE range test and a slice fill, the per-element loop kept as the
+/// fallback — **DEFAULT ON**.  Opt OUT with `LOFT_NO_FILL_HOIST` (read at GENERATION
+/// time): the before-half of the A/B on one binary, and the first bisect step for a wrong
+/// element or a missed write out of a filling loop.  `LOFT_HOIST_VERIFY=1` is the falsifier.
+/// @PLN157 § V-af: a value BRANCH of buffer-delivering calls (`v = if c { mk(i) } else {
+/// mk2(i) }`) witnesses every arm's hidden buffer, so the buffers are allocated once and the
+/// local's per-iteration free declines against each — **DEFAULT ON**, both backends (an IR
+/// fact).  Opt OUT with `LOFT_NO_JOIN_BUFFER_WITNESS` (read at PARSE time): the
+/// before-half of the A/B on one binary — a store minted and freed per iteration — and the
+/// first bisect step for a leak, a double free or a stale record out of a loop that binds
+/// a record from a branch of calls.  `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` are the
+/// falsifiers.
+pub fn join_buffer_witness_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_JOIN_BUFFER_WITNESS"))
+}
+
+/// @PLN157 § V-ag: clearing a store-ROOT vector RESETS its store in one step instead of
+/// walking every element and returning each owned block to the free tree — **DEFAULT ON**,
+/// both backends (a runtime fact).  Opt OUT with `LOFT_NO_STORE_RESET_CLEAR`: the
+/// before-half of the A/B on one binary, and the first bisect step for a wrong value, a
+/// leak or a use-after-free at a recycled vector-returning call.  `LOFT_STRICT_STORES=1`
+/// and `LOFT_POISON=1` are the falsifiers.
+pub fn store_reset_clear_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_STORE_RESET_CLEAR"))
+}
+
+/// @PLN157 § V-ai: the store reset of § V-ag re-establishes the root vector at the
+/// CAPACITY the previous fill reached, not at the fresh-vector minimum — **DEFAULT ON**,
+/// both backends (a runtime fact).  The buffer is reused across calls (`@FR-R-Reuse`) and
+/// the store already holds the extent (`@FR-H-RootExtent`), so the growth ladder runs
+/// once per buffer instead of once per call; each rung of that ladder frees a block into
+/// the store, and one freed block is enough to take every later claim off `bump_tail`
+/// and into the free tree.  Opt OUT with `LOFT_NO_RESET_CAPACITY`: the before-half of
+/// the A/B on one binary, and the first bisect step for a wrong element or length out
+/// of a reused vector-returning call.  `LOFT_TRACE_CLEAR=1` prints the capacity each
+/// reset re-establishes.
+pub fn reset_capacity_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_RESET_CAPACITY"))
+}
+
+pub fn fill_hoist_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FILL_HOIST"))
+}
+
+/// @PLN157 § V-ad: a null-discharge DEFAULT BUFFER's allocation (`e = tbl[i]?` on a
+/// vector of all-scalar records mints the absent element into a hidden `__ref_p2_N`)
+/// does not decline a header hoist — **DEFAULT ON**.  Opt OUT with
+/// `LOFT_NO_NULL_BUFFER_HOIST` (read at GENERATION time): the before-half of the A/B on
+/// one binary, and the first bisect step for a wrong element read in a loop that
+/// discharges a record element with `?`.  `LOFT_HOIST_VERIFY=1` is the falsifier.
+pub fn null_buffer_hoist_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_NULL_BUFFER_HOIST"))
+}
+
+/// @PLN157 § V-ak (`@FR-R-Base`): a loop that GROWS no store binds, beside each hoisted
+/// vector header, the address of the vector's element 0, and every fused element read
+/// and write in the loop is a bounds test and one load or store through it — no store
+/// lookup, no record offset, no claim-header test per element — **DEFAULT ON**.  Opt OUT
+/// with `LOFT_NO_VECTOR_BASE` (read at GENERATION time): the header-only form again, the
+/// first bisect step for a wrong element read or write in a growth-free loop.
+/// `LOFT_HOIST_VERIFY=1` is the falsifier: every read re-derives the base and panics when a
+/// store moved under it.
+pub fn vector_base_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_VECTOR_BASE"))
+}
+
+/// @PLN157 § V-al (`@FR-R-LoopBuffer`): a per-site vector buffer minted INSIDE a loop keeps
+/// its store and its vector across iterations — every mint after the first is a length
+/// reset that keeps the capacity — **DEFAULT ON**.  Opt OUT with
+/// `LOFT_NO_LOOP_BUFFER_REUSE` (read at GENERATION time): the clear-and-claim per
+/// iteration again, the first bisect step for a stale or wrong element read out of a
+/// vector declared inside a loop on native.
+pub fn loop_buffer_reuse_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_BUFFER_REUSE"))
+}
+
+/// @PLN157 § V-am (`@FR-R-PushFill`): a counted loop whose body pushes k scalars to one
+/// vector RESERVES k times its trip count before it runs, and a counted loop whose body is
+/// one push of an invariant scalar is ONE fill of the vector's tail — **DEFAULT ON**.  Opt
+/// OUT with `LOFT_NO_PUSH_FILL` (read at GENERATION time): the per-push growth ladder and
+/// the per-element loop again, the first bisect step for a wrong element or length out of
+/// a counted push loop on native.  `LOFT_HOIST_VERIFY=1` re-derives the push header at
+/// the fill.
+pub fn push_fill_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PUSH_FILL"))
+}
+
 /// @PLN157 § V-d: a vector-literal element that is a buffer-returning call is built IN the
 /// element's record, and a promoted return buffer honours an offered record — **DEFAULT
 /// ON**.  Opt OUT with `LOFT_NO_APPEND_IN_PLACE`: the before-half of the A/B on one binary

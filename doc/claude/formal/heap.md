@@ -260,6 +260,28 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  (`N stores not freed at program exit`) — a warning ordinarily and an ERROR
                  under `LOFT_STRICT_STORES`, which asks for exactly-once and so has to fail
                  both halves: a store used after its free, and a store never freed at all.
+  (H-RootExtent) a store whose ROOT record is the one-field collection wrapper
+                 `OpDatabase` mints holds NOTHING ELSE: every record in it was
+                 claimed for that collection — its elements, and whatever they own.
+                 The collection's extent IS the store's extent, so a point at which
+                 the collection is wholly dead is a point at which the store is, and
+                 releasing it there is one store reset rather than a free per
+                 element.  What would break the rule is a record placed into the
+                 store from outside; the one mechanism that places (R-MoveAppend)
+                 places an ELEMENT of that very collection, so it holds.  A field
+                 vector, a user-struct root and a placed buffer are not store roots
+                 and carry no such claim.
+  (H-RootExtent) a store whose ROOT record is the one-field collection wrapper
+                 `OpDatabase` mints holds NOTHING ELSE: every record in it was
+                 claimed for that collection — its elements, and whatever they own.
+                 The collection's extent IS the store's extent, so a point at which
+                 the collection is wholly dead is a point at which the store is, and
+                 releasing it there is one store reset rather than a free per
+                 element.  What would break the rule is a record placed into the
+                 store from outside; the one mechanism that places (R-MoveAppend)
+                 places an ELEMENT of that very collection, so it holds.  A field
+                 vector, a user-struct root and a placed buffer are not store roots
+                 and carry no such claim.
   (H-ClearRelease) CLEARING a vector that OUTLIVES the clear releases what its
                  elements own.  `clear_vector` is a length reset — sound wherever
                  the vector's store dies straight after (every use it was written
@@ -275,7 +297,13 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  OWNS HEAP.  A no-heap element pays exactly the old reset; a field
                  vector, a user-struct root and a placed buffer (never record 1)
                  keep it too.  Values are unaffected either way — this is a leak
-                 rule, not a semantics rule.
+                 rule, not a semantics rule.  The release is ONE STORE RESET, not a
+                 walk: the shape above says the vector owns the store's whole
+                 extent, so the store is re-initialised and its two records
+                 re-established — the wrapper, and the vector's own record at
+                 length zero — instead of deleting each element's owned blocks
+                 into the free tree.  The cleared vector must stay PRESENT, since
+                 an absent heap value is falsy where an empty one is true.
 
   (H-FreeFooter) inside one store, a FREE block of n words carries −n at BOTH ends: its
                  header word and the HIGH half of its LAST word (the tree node's color
@@ -292,6 +320,22 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  image is unchanged, and an image written before footers existed is
                  re-footed by the open walk.
 ```
+
+**`H-RootExtent` is what makes `H-ClearRelease`'s release affordable.** The release has to
+reach everything the cleared elements own, and it can do that two ways: walk the elements and
+return each owned block to the free tree, or — knowing the collection owns the store's whole
+extent — reset the store and re-establish the two records the walk would have left. The
+second is O(1) where the first is a delete per element, and it also restores the allocator's
+bump path, which a fragmented store never reaches again. The rule is what licenses it: without
+"the store holds nothing else", a reset would drop a record someone still reaches. It is
+ASSERTED by construction rather than proved — `OpDatabase` mints the wrapper and every later
+claim in that store is made for the collection — so the gate that reads it also reads the
+shape (`clear_vector_release`), and a shape that is not a store root keeps the walk.
+The same extent is what lets the reset re-establish the vector at the capacity the previous
+fill reached rather than at the fresh minimum (`vector::reached_capacity`, read off the
+record before the reset): the space is the store's already, the buffer is reused across
+calls (R-Reuse), and a ladder re-run per call would free a rung into the store each step
+and take every later claim off the bump path (@PLN157 § V-ai).
 
 **In words.** `free` releases a store slot and everything in it. It is disciplined: (1) **LIFO** —
 you free stores in reverse allocation order, because a store's lifetime is nested inside the
@@ -434,8 +478,10 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **1** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE (the
-list has been re-cut as each was measured; the count is what is open TODAY).  `D-heap-LIFO`
+OPEN: **2** — `D-heap-1`, below: five shapes release a tuple member's resource TWICE (the
+list has been re-cut as each was measured; the count is what is open TODAY); and `D-heap-7`,
+below: the drop gate's first sweep, eight more families that release wrongly with no diagnostic,
+pinned cell by cell in `tests/ownership_drop_gate.baseline`.  `D-heap-LIFO`
 CLOSED 2026-09-12 by rewriting the rules to how the mechanism functions.  The count read **1** while `D-heap-LIFO` was
 already written and marked OPEN in the rules section — an `OPEN: n` is a claim to re-measure,
 and a deviation placed beside its rule rather than under this heading is the way it goes
@@ -781,6 +827,335 @@ the loop variable and the REASSIGNED variable are one question — the resolver 
 variable where the answer belongs to an ASSIGNMENT — and want the design call above answered
 before a cure is chosen for any of them.
 
+
+### D-heap-7 — OPEN (2026-09-14): the drop gate's first sweep — eight more families release wrongly, and silently
+
+`(H-Drop)` releases a resource once, at its owner's death, and moves the release with a copy.
+`tests/ownership_drop_gate.rs` generates 223 cells and scores the release itself (TESTING.md
+§ The drop gate).  On `origin/main` `ec4a95226` its baselines pin **94** cells that do not
+hold, the same on both backends except where noted below, and **none carries a diagnostic** —
+`warning[double-move]` fires on none of them.  The cell names below are the baselines' names,
+so a family is re-measured by one run of the gate.
+
+D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside that entry:
+
+1. **A `??` result as a copy source** — `x = a ?? d` (`q_*`, `c_coalesce_*`).  Not one
+   mechanism: a tuple-member or branch-arm destination is clean in all 18 rows of the coalesce
+   family, a struct-field destination releases twice in all 18 — including the absent path,
+   where the default is a fresh call — and a local destination releases twice on the present
+   path and LOSES a fresh-call default on the absent one.  The same join spelled as an `if`
+   (`if a != null { a } else { mk(2) }` — `a ?? d` lowers to exactly that) releases once on
+   both paths and both backends, so the `if` spelling's IR is the working form, and the two
+   mechanisms are the differences from it:
+   - ✓ **The present path — CLOSED 2026-09-14.**  The `??` arm lifts `__lift_1 = a` and records
+     the per-path hand-off, and the statement scan then RETIRED that hand-off as if it were an
+     unconditional reassignment: the retirement reads scope depth as "certain to run", and a
+     `??` arm is a bare `Insert` that opens no scope, so the Set arrived at the temp's own
+     depth.  (Measured with a probe at the retirement: it fired on both `??` paths and never on
+     the `if` spelling, whose arms are blocks.)  The retirement now skips `arm_lift_temps`,
+     the per-path fact the hand-off was recorded under.  A `match` with bare arms and a boolean
+     `if` never reached the misfire.
+   - **The absent path — OPEN.**  `x` holds the default's record while its deps name only
+     `__lift_1`, so nothing releases it.  The `??` builder types its result from the subject's
+     DECLARED type, which carries no dep on the subject, so it decides the join OWNS and gives a
+     call default no owner — and the scopes lift then makes `x` a borrow of the lift temp.  The
+     `if` spelling's join type carries `a`, so its call arm is given an owner
+     (`own_joined_call_arms`) before the lift runs.  The missing piece is that TYPE fact, not a
+     second owner decision: giving the default an owner under the owned type would release it
+     twice wherever the lift declines.
+
+     **Where the fact is lost, and why restoring it alone is not landable (measured
+     2026-09-14).**  The `@FR-B-Copy` arm of a variable read in `parser/objects.rs` decides
+     `x = a …` is a whole-value bind while reading the NAME `a`, makes `x` independent of `a`
+     and returns `a`'s type without its dep.  Its lookahead excludes `.`, `[` and `#` — none of
+     them a whole-value bind — but not `??`, and `x = a ?? d` is the join, not the bind.
+     Adding `|| self.lexer.peek_token("??")` to that lookahead makes the `??` lower exactly as
+     the `if` spelling does (`x ["__lift_1", "a"]`, the default arm a `#join-arm-owner`), and
+     closes the LOST on both backends — `coal_absent`, the loop's `p_l2` and both
+     `q_default_*_call_local`.  It was measured and taken back out, because by `(H-Drop)`'s ⚠
+     a change that converts one failure into another is not an improvement, and this one
+     converts two, on both backends: `v += [a ?? mk()]` with `a` absent goes from right (by
+     accident) to releasing twice, and `x = mk(); x = a ?? d` goes from a loud native compile
+     refusal to a silent LOST.  (The postfix `a?` does not share the hole: its default is
+     built into a work-ref this frame already releases, both backends.)
+   - **Why it waits: the same join's other consumers are broken for BOTH spellings.**  The
+     `if` spelling — the "working" form above — releases twice when its join is copied into a
+     container (`v += [if a != null { a } else { mk(2) }]`, the gate's `p_j3`/`p_j4`) and loses
+     the record a local's reassignment displaces (`x = mk(); x = if … { a } else { … }`,
+     `p_j1`/`p_j2`).  A join bound to a local first does not help: `t = a ?? mk(2); v += [t]`
+     releases twice in both spellings, while `t = mk(3); v += [t]` releases once.  The
+     join-bound local is a CARRIER — its type borrows the per-path temps, so the element
+     hand-off stops `t`, which never released anything, and the per-path source keeps its
+     release.  That is D-heap-1's open question (the resolver is given a VARIABLE where the
+     answer belongs to an ASSIGNMENT); the type fact above can land once that is answered.
+2. **A parameter copied out of its callee** — `p` or `p.h` into a field, an enum payload, a
+   vector or the return (`c_param_*`, `c_pfield_*`): twice, and the callee's release runs BEFORE
+   the caller's own later read.  The rule gives the answer — a copy off a PARAMETER moves
+   nothing, the caller owns — so the callee's copy must not release.  D-heap-1's first shape is
+   the tuple-member spelling of this family, and the cure it names (a caller-side fact) is the
+   same one.
+   - ✓ **A parameter copy the owner witness names — CLOSED 2026-09-15.**  `x = p; x = s.h`
+     released the caller's resource inside the callee, and the caller released it again: twice,
+     on both backends, `LOFT_POISON` clean.  Not the mechanism of the rows above, read off the IR.
+     A local that owns on one assignment and views on another carries the loft#1336 owner
+     witness, and a whole-value copy is a store of the local's own (`@FR-B-Copy`), so the
+     parameter copy pointed the witness at its record (`OpRefAlias`).  The witness then released
+     that store WITH the type's hook.  The witness was right about the store, which is the
+     local's to free, and wrong about the release, which is the caller's.  Measured at all four
+     places a witness hooks:
+     - a later field or element view;
+     - an in-place rebuild by a literal;
+     - scope exit;
+     - per iteration inside a loop.
+
+     Each held with the copy unconditional, after a record of the local's own, or in a branch
+     arm, and for a record that holds the resource.  A null or a fresh call displacing the copy
+     was right.
+
+     The cure carries the fact the p_h6 close introduced: a witnessed local assigned a copy off
+     a parameter gets the `__hoff_` flag, the copy sets it, and every other assignment retires it.
+     The in-place rebuild, which is no `Set`, retires it too.  The witness frees the store either
+     way and skips the hook while the flag is set, one home for all four sites
+     (`Scopes::witness_hook`).  A release that runs where the local stops owning is emitted
+     before the statement's flag writes, so its hook reads the flag of the record it releases.
+     Guard: `tests/scripts/a-parameter-copy-the-owner-witness-names-is-released-by-the-caller-only.loft`.
+   - ✓ **A parameter copy handed on — CLOSED 2026-09-15 for a carrier that holds the caller's
+     record on every path.**  `x = p; y = x` released the caller's resource at `y`'s scope exit
+     and again in the caller, which then read a record already released: twice, both backends,
+     `LOFT_POISON` clean.  The same happened through a witnessed `y` later given a view.  The one
+     decider every copy asks (`copy_moves_drop_from`) read `x` as an ordinary local, so it moved
+     the release to `y`.
+
+     A local is now marked before the scan (`Function::holds_caller_record`) when:
+     - every assignment that binds a store is a copy off a parameter or off another marked local;
+     - no write place is rooted at it;
+     - it is never passed bare to a call.
+
+     The decider answers a marked local as it answers a parameter.  Measured beside it, and
+     unchanged:
+     - a local written through after the copy (`x = p; x.h = mk(); y = x`) keeps its own release,
+       because its record then holds a resource the frame made;
+     - `x = p; return x` releases twice exactly as `return p` does — the caller-side shape above;
+     - a destination rebound to a fresh record, a carrier that kept its own record, and all-local
+       copies are clean.
+
+     Guard:
+     `tests/scripts/a-parameter-copy-handed-on-to-another-local-is-released-by-the-caller-only.loft`.
+   - ✓ **Handed on from a branch arm — CLOSED 2026-09-15.**  `x = mk(); if c { x = p; } y = x` with
+     `c` true released the caller's resource through `y`, then in the caller: twice, both backends,
+     `LOFT_POISON` clean.  The carrier holds the caller's record on one path only, so the static
+     mark above cannot apply.  The per-path flag that records the answer (loft#1515) belonged to the
+     source alone, so the copy took a release on every path.  The same was measured with the
+     hand-on inside another arm, into a witnessed local given a view, and through a chain
+     (`z = y`).  It also happened with NO parameter: `x = mk(); if c { z = x; } y = x` released the
+     record through `z` and again through `y`.
+
+     A copy of a flagged local now inherits the flag at the copy.  The inherited value is read
+     before the statement writes the source's own flag, so the destination releases on exactly the
+     paths the source would have.  A fixpoint before the scan mints the flag for every such
+     destination.  Unchanged: a carrier that kept its own record, a carrier copied from a local in
+     the arm, and the arm not taken.  Guard:
+     `tests/scripts/a-copy-of-a-local-that-may-not-own-its-record-takes-the-per-path-answer.loft`.
+3. **A hand-off that suppressed a release it does not belong to** — filed from
+   `x = mk(K); x = p` (`c_param_reassign`: the displaced record never released, and the parameter's
+   copy released inside the callee), and wider than filed: `b = mk(1); b = mk(2); y = b` lost
+   `mk(1)` with no parameter anywhere.  The set of variables that stop dropping
+   (`drop_transferred`) was seeded from the WHOLE body before the scan, so a hand-off made by a
+   LATER statement was already in force at an EARLIER reassignment; and each statement re-armed
+   its own hand-off BEFORE its scan, so `x = p` hid `mk(K)` behind the parameter copy's fact and
+   then retired that fact and dropped the copy.  `@FR-O-Latest` is the rule broken — a hand-off
+   belongs to the assignment it follows.
+   - ✓ **CLOSED 2026-09-14 for sequential code and a taken branch.**  The set starts empty and each
+     statement arms its hand-offs after it is scanned.  Gate cells `p_h1`–`p_h5` and
+     `c_param_reassign`, both backends.
+   - ✓ **A loop — CLOSED 2026-09-15.**  `for … { x = mk(); x = p; }` released none of the displaced
+     records (`p_h7`).  A loop body arms its hand-offs before its statements, because on the next
+     iteration an earlier statement displaces what a later one handed off, and a static fact
+     cannot say whether that record is the caller's.  So a copy off a parameter anywhere in the
+     body stopped `x` for the whole function.  Measured wider than the gate's cell:
+     `x = mk(); for … { x = p; x = mk(); }` also lost the last fresh record at scope exit, and a
+     body holding only the copy lost the record it first displaced.
+
+     The answer is per ITERATION, and the destination-keyed runtime flag above gives exactly that.
+     A copy that stops its destination, written in a loop body, is now a per-path hand-off like an
+     arm copy.  The early seed skips it, the copy sets the flag, every other assignment retires it,
+     and each displaced release and the scope-exit drop read it when they run.  A copy that moves
+     its source's release keeps the early seed.  The fresh-records-only loop is unchanged.  Guard:
+     `tests/scripts/a-parameter-copy-in-a-loop-body-keeps-the-release-of-every-record-it-displaces.loft`.
+   - ✓ **The branch not taken — CLOSED 2026-09-15.**  `x = mk(); if c { x = p; }` with `c` false
+     lost `mk()` (`p_h6`): the copy off the parameter stopped `x` on EVERY path, so on the path
+     that never copied nothing released `x`'s own record.  Wider than filed, measured on both
+     backends and under `LOFT_POISON`:
+     - the else arm: `if c { x = mk(2) } else { x = p }` lost `mk(2)` on the then path;
+     - every path copying a parameter: `if c { x = p } else { x = q }` lost the record the else
+       arm displaced;
+     - a nested branch, a `match` arm, and a record that holds the resource;
+     - a later unconditional rebind, which lost the displaced record on the path not taken;
+     - the written-out join `x = if c { a } else { p }` on `c` true, which lost `x`'s copy of `a`;
+     - a loop whose body copies the parameter in one arm, which lost every displaced record.
+
+     Two facts had to become per path.  loft#1515's flag was given only to a copy that stops its
+     SOURCE; a copy that stops its DESTINATION now gets the same flag, keyed on the side it stops
+     (`scopes::per_path_stops`).  That alone left the rebind and the loop: the ownership memo the
+     displaced release reads (`owned_refs`) records the parameter copy as a VIEW, so the join of
+     an arm that copied with one that did not read "not owned", and inside a loop the
+     own-assignment test read false.  Measured with a probe on the memo before the second change.
+     A copy the flag guards now reads owned in both places, and the flag decides the release
+     (`copy_flagged_on_target`).  Guard:
+     `tests/scripts/a-copy-off-a-parameter-in-a-branch-arm-keeps-the-release-of-the-path-not-taken.loft`.
+4. **A projection copied into a container** — `s.h`, `vs[0]` or `tt.0` into a field, an enum
+   payload, a vector or a tuple member (`c_field_*`, `c_elem_*`, `c_tuple_*`): twice.  The same
+   projection bound to a LOCAL is a `(B-View)` view and releases once; placed in a container it
+   is a copy, and the source's own container still cascades the member.  This is the question
+   D-heap-1 leaves as a design call — a per-element mark, or `(H-Drop)`'s `warning[double-move]`
+   clause — and it reaches every projection spelling, not only the loop variable and the `match`
+   payload.  Either answer makes today's silence a deviation.
+5. **An element appended to another vector** — `v += [vs[0]]` and `[vs[0]]` (`c_elem_push`,
+   `c_elem_veclit`): the interpreter PANICKED reading the element's id as a record number
+   (`Store access out of bounds: rec=39001`), and native releases twice.  The double release is
+   family 4 (a projection copied into a container) and is what remains.
+   - ✓ **The interpreter's crash — CLOSED 2026-09-14, and it was the loud face of a silent
+     defect.**  With a small element id the same program exited 0 and ran the hook about ninety
+     times over garbage records (`p_e1`, `p_e2`).  Two deciders disagreed about where a droppable
+     vector's declaration is.  The scan saw `parse_code`'s body-0 `__vdb = null`, treated the
+     first build as a rebuild and placed a null-safe release snapshot above it; Plan-57's
+     last-use reclaim then moved that null-init down to the build, below the snapshot, so the
+     snapshot read a slot whose declaration had not run, and the interpreter handed it whatever
+     an earlier variable left there.  (`LASTUSE_RECLAIM_OFF=1` removed it; confinement's
+     `LOFT_NO_CONF_RECOVER=1` did not.)
+   - ✓ **Found by the same cure, and closed with it: reclaim released the wrong store.**  Vectors
+     of droppable elements built one after another, each dead before the next (`p_r1`): reclaim
+     frees a dead store early and removes its scope-exit FREE, but not its scope-exit DROP.  At
+     scope exit the slot names a store a later build reused, so the interpreter released the last
+     vector's elements three times and native lost the earlier vectors' releases.  Measured
+     identical before any change today — the interpreter's one correct release of the first
+     vector had come only from the stray snapshot above.
+   - **The cure is one exclusion in the reclaim plan**, which `lastuse_reclaim` and its Phase-4
+     guard both read: a store whose record type has a drop cascade is not eligible
+     (`scopes::drop_bearing_stores`).  Reclaim moves a store's DEATH and a drop belongs to that
+     death, so such a store keeps its body-0 null-init and releases through its hook and its free
+     together.  Its only cost is that these stores are not reclaimed early; the corpus-wide
+     emission diff differs in the seven files that declare a hook and nowhere else.
+   - **Measured and not landed:** placing a relocated null-init before the first op that READS
+     its store.  It removed the crash, but `reads_var` counts a free on an early-return path as
+     a read, so it pulled null-inits back to body 0 in drop-free code
+     (`177-reclaim-early-return.loft`, `872-vector-return-into-struct-literal-field.loft`) and
+     undid their reclaim — and it left the released-wrong-store defect in place.
+6. ✓ **A construction delivered through a branch arm — CLOSED 2026-09-14.**  Filed as a call
+   result's field in an arm (`c_callproj_arm`), and wider than filed: ANY construction handed to
+   a local through a join arm released twice — a plain struct literal (`x: H = if c { H {…} }
+   else { mk() }`, `c_literal_arm`), both arms constructions, a `match`, a loop.  A rebind from
+   such a join (`x: H = mk(); x = if … { mk_s().h } …`) was a use-after-free: under
+   `LOFT_POISON=1` the second hook read the poison pattern, both backends.  A call arm was always
+   clean — its result is adopted through its own buffer — and so was every untaken arm (`c_*_arm0`).
+   - **One predicate, two deciders.**  `construction_work_ref` answers the work-ref a
+     construction block delivers, and `None` for a join.  Both halves of the single-construction
+     hand-off read it: `drop_handoff_node` stops the work-ref's drop, and `scan_set` disarms the
+     work-ref with the sentinel (`D-heap-5`, loft#1513).  For a join both were skipped together,
+     so the arm's work-ref kept its name and its drop beside the binding's.
+   - **The cure** (`construction_work_refs`): a join lists every arm's construction, and both
+     deciders read the list.  Static per path — on the path that ran the binding adopts that
+     arm's store; on the others that arm's construction never ran, so its work-ref holds nothing
+     and the disarm is a no-op.  `is_null_sentinel_detach` keys only on the work-ref's name and
+     the bare sentinel, so each arm's disarm is read as a disarm, not a displacement.
+   - ⚠ **The join disarm is decided AFTER the arm lift.**  Decided before it, `x = a ?? H {…}` lost
+     its default's release: the join parses as owned, the literal arm was disarmed, and the lift
+     then made `x` a borrow of `a`'s temp, so nothing released the literal.  After the lift the
+     disarm reads the same ownership fact the drop hand-off reads.  Gate cells `p_g1`–`p_g5`,
+     `c_literal_arm`, `c_callproj_arm`; the corpus-wide emission diff is identical in all 1495
+     files, so no existing program used the shape.
+7. ✓ **A reassignment from a branch join — CLOSED 2026-09-14.**  `x = mk(9); x = if c { a } else
+   { b }` with `a` and `b` owned locals lost the displaced `mk(9)` and the untaken `b` on `c` true,
+   and `a` on `c` false (`p_s1`, `p_s2`), both backends, plain and under `LOFT_POISON=1`; the same
+   join written by the author as a statement, `if c { x = a } else { x = b }`, was clean (`p_s3`).
+   A reassignment from a value branch is lowered to exactly that statement form
+   (`scopes::sink_set_into_arms`, `@FR-O-Complete` / `@FR-B-Copy`), but inside the scan, and the
+   written-out arms lacked three things the author's arms have:
+   - **the per-path flags** — loft#1515's `__hoff_a` / `__hoff_b` were minted from the pre-scan
+     IR, where only `Set(x, <branch>)` exists, so a static hand-off stopped both sources and the
+     untaken one was never released.  The site that writes the arms out now registers its own
+     pairs and mints their flags before the first arm is scanned: it is the one site that knows
+     those copies exist.  Family 8's cure is what made that safe — before it, a flag replaced every
+     static stop of its source.
+   - **the first arm's displaced release** — the parser typed the binding with the join's deps
+     (`[a, b]`), and the scan cleared them at the first arm's own copy, AFTER that arm asked whether
+     the binding owns the record it displaces (`proxy_says_owned`), so only the second arm took a
+     snapshot (`LOFT_LOG=type_timeline:x` shows the two writes).  The same site now strips the arm
+     tails' deps first, through the predicate the bind itself uses (`var_copy_owns`).
+   - **a block per arm** — the `??` and scalar-`match` lowerings write their arms without one, so a
+     written-out arm's snapshot temp was registered at the ENCLOSING scope and released at that
+     scope's exit on every path, reading an uninitialised slot where the arm never ran: an
+     interpreter crash under poison, a native compile refusal (`E0425: cannot find value
+     var___disp_2`, `c_coalesce_reassign`), and on the plain interpreter whatever the slot held — a
+     second release of `a` on the `??` present path.  This entry first attributed that release to
+     the missing flag; that was inferred, not measured, and wrong.  Such an arm is now given a block
+     (`tests/scripts/a-reassignment-from-a-bare-arm-releases-its-snapshot-in-that-arm.loft`).
+     Landed alone, that change CONVERTED one failure rather than fixing it: `x = a ?? b` with a
+     local default and `a` present went from releasing `a` twice to losing `b` (`p_s6`) — `b`'s old
+     release had been the uninitialised slot — and the flags above closed it.
+   - Measured: every local-arm spelling — an `if`, an `if` chain, a scalar `match`, an `if` nested
+     in a `match` arm, a nullable binding, inside a loop, with the arm locals read afterwards —
+     releases each resource once, on both backends, plain and under poison.  The gate retires
+     `p_s1`, `p_s2`, `p_s6` and `c_coalesce_reassign`.  The block change's emission diff differs in
+     28 files by the added block alone (the interpreter's bytecode identical in all 28); the flags'
+     differs in one, the new guard.
+   - ✓ **Beside it, CLOSED 2026-09-14: a join with an owning CALL arm.**  `x = mk(9); x = if c { a }
+     else { mk(2) }` kept the value form — the parser's owner for the call arm is a compiler temp,
+     which the write-out declined — so the binding was typed as a view of `a` for its whole life: its
+     earlier owned record, and any record assigned after the join, were freed with no hook
+     (`p_j1`/`p_j2`), and the binding ALIASED `a` on the path that took it, a `(B-Copy)` violation
+     recorded as `binding.md` D-bind-33.  Such an arm is now written out as its call beside local
+     arms, and the gate retires `p_j1` and `p_j2`.
+   - **The mechanism since (2026-09-14):** the first scan records each reassignment it writes out;
+     that reassignment is rewritten in the original code and the function is scanned again, so every
+     analysis before the scan reads the per-arm form (`binding.md` D-bind-34).  The fixes at the
+     write-out site above stay: a reassignment nested inside another's arm is reached only through
+     the first scan's own copy, is not recorded, and is still written out there.
+   - **Still open.**  An arm that copies a PARAMETER (`x = if c { a } else { p }`) stops the
+     DESTINATION with no flag, so on the path that took `a` its copy is never released — family 3's
+     branch-not-taken residual, reached through the written-out form.
+8. ✓ **A per-path hand-off hid a later hand-off of the same source — CLOSED 2026-09-14.**
+   loft#1515 guards a source's release on a flag that records whether its per-path copy ran, and
+   the flag REPLACED the static suppression rather than joining it.  So a later unconditional
+   hand-off was ignored: `if c { x = a } else { x = b }; y = a` on `c` false released `a`'s
+   resource twice, by `a` and by `y` (`p_s4`), both backends.  The other reader of the same set
+   erred the other way: a later `a = mk(3)` on `c` false never released the record it displaces
+   (`p_s5`), because `displaced_drop` read only the static set, where the arm's copy had put `a`.
+   One set carried two facts — "stopped on every path" and "stopped on the path where the copy
+   ran" — and neither reader could take them apart.
+   - **The cure keeps the two facts apart.**  A copy in a branch arm never enters
+     `drop_transferred`; it is the flag's fact.  Both readers read both: the scope-end release
+     returns nothing for a source stopped on every path and otherwise guards on the flag, and a
+     displaced release takes its snapshot only where the flag says the copy did not run.  The
+     snapshot is guarded rather than the release, because the statement that rebinds the source
+     resets its flag before that release runs.
+   - Gate cells `p_s4` and `p_s5`, both backends, plain and under poison.  The corpus-wide
+     emission diff differs in one file of 1495, loft#1515's own guard: its rebind on the path
+     where the copy did not run now releases the record it displaces — the guard asserts only the
+     other path.
+   - Family 7's cure mints the same flags for the lowered form, which is why this one went first:
+     before it, the lowered form of `p_s4` was clean only because both its sources were stopped
+     statically.
+
+✓ The NATIVE-only refusal of `x = mk(K); x = a ?? mk(J)` (`c_coalesce_reassign`) — CLOSED
+2026-09-14 with family 7's `??` spelling, above: the same misplaced snapshot temp, and the cell
+now releases once on both backends.
+
+⚠ **A double release is not only a handle closed twice.**  In one process, a cell that is clean
+on its own lost its release when it ran after a doubling one — `t = (a ?? mk(4), 1)` after
+family 1's local cell printed its mint and its read and never released.  Whatever the second
+release does to the store table reaches later frames.  That is why the gate runs every cell in
+a process of its own, and why a cell's verdict inside a batch is not a measurement of that cell.
+
+**Closes when** every line of `tests/ownership_drop_gate.baseline` and its native twin is gone,
+each retired in the commit of the fix that moved it.  Closed so far: families 5, 6, 7 and 8
+whole, family 3 for sequential code and a taken branch, and family 1's present path.  Still open,
+each with its answer in the rules: family 1's absent path and family 3's two residuals (the loop,
+and the branch not taken — reached also through a written-out join whose other arm copies a
+parameter), which wait on the carrier question — a resolver given a VARIABLE where the answer
+belongs to an ASSIGNMENT.  Family 2 has its answer too, but reaching it needs a fact about the
+caller.  Family 4 waits on D-heap-1's design call.  The shape recorded beside family 7, a
+reassignment from a join with a CALL arm (`p_j1`/`p_j2`), is closed with `binding.md` D-bind-33.
 
 ### D-heap-3 — OPENED AND CLOSED (2026-09-10): a struct field projected off a CALL result releases twice
 

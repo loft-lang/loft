@@ -325,7 +325,7 @@ jobs:
           RUSTFLAGS: '-Zsanitizer=address'
           ASAN_OPTIONS: 'detect_leaks=0'
         run: >
-          cargo +nightly nextest run --profile ci --release
+          cargo +nightly nextest run --profile sanitizer --release
           --target ${{ matrix.target }}
           --lib --test issues --test wrap --test strings --test frame_vars
           -E 'not (test(library_suite) | test(fill_rs_up_to_date) |
@@ -453,8 +453,10 @@ jobs:
         # real binary process::exits, so this is never a production leak).  The
         # deliberately-faulting fixtures run under the gate; the only exclusions are the
         # toolchain-sensitive meta-tests and the two "spawns a build" tests below.
+        # `--profile sanitizer` is `ci` with a longer ceiling for `loft_suite` alone, which
+        # outgrew 600 s under ASan as the corpus grew (.config/nextest.toml, loft#1527).
         run: >
-          cargo +nightly nextest run --profile ci --release --no-fail-fast
+          cargo +nightly nextest run --profile sanitizer --release --no-fail-fast
           --target ${{ matrix.target }}
           --lib --test issues --test wrap --test strings --test frame_vars
           -E 'not (test(fill_rs_up_to_date) | test(n9_generated_fill_matches_src) |

@@ -739,10 +739,13 @@ reads `d[i]` through one header derived once — and is the bisect step for a wr
 read through a view outside a loop.  **`LOFT_NO_WRAPPER_INLINE=1`** (@PLN157 § V-o) emits a
 call to a stdlib one-op wrapper (`len(v)`, `sqrt(x)`) as the CALL again instead of as its
 op — the bisect step for a wrong length or libm value on native.  **`LOFT_NO_CALLEE_INPUTS=1`**
-(@PLN157 § V-p) emits no callee TWIN — with it on, a callee that reads a record parameter's
-scalar fields or views its vector fields gets a `<fn>__inv` twin taking those as extra
-parameters, and a loop that hoisted them for the argument calls the twin — and is the bisect
-step for a wrong value read through a record parameter inside a callee a hoisting loop calls.
+(@PLN157 § V-p, § V-ac) emits no callee TWIN — with it on, a callee that reads a record
+parameter's scalar fields, views or indexes its vector fields, or indexes a plain VECTOR
+parameter gets a `<fn>__inv` twin taking those as extra parameters, and a loop that hoisted
+them for the argument — a variable, or for a header any pure path such as `br.img` — calls
+the twin; a callee answering a scalar record through its return buffer qualifies too — and
+is the bisect step for a wrong value read through a record or vector parameter inside a
+callee a hoisting loop calls.
 **`LOFT_NO_PUSH_HOIST=1`** (@PLN157 § V-q) makes a loop that PUSHES to a vector (`v += [x]`,
 a comprehension) hoist nothing — with it on, the pushed path keeps a PUSH header carrying the
 record's capacity, a push that fits is one store and a length bump, and every read of the path
@@ -762,12 +765,62 @@ append relocates the element's bytes (heap handles included — they never chang
 zeroes the source, and the buffer's free is record-level — and is the bisect step for a
 wrong element, a leak or a double free out of a loop that appends a dying temporary's
 elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
-**`LOFT_NO_VALUE_RECORD=1`** (@PLN157 § V-aa) makes a record-returning function write
-its result into a return buffer again — with it off, a function whose result is a plain
-no-heap record of ≤6 scalar fields, whose every call site reads fields off it and whose
-body builds it with `Object` blocks, returns those fields in REGISTERS and the call site
-reads tuple elements (measured: 1.65× on the call, `smooth` −25 %, `lock_curved` −3 %) —
-and is the bisect step for a wrong field out of a record-returning call on native.
+**`LOFT_NO_VECTOR_BASE=1`** (@PLN157 § V-ak, `@FR-R-Base`, default-ON) makes a
+growth-free loop's fused element reads and writes resolve the store per element again —
+with it off, a loop that grows no store (no push, no mint push, no null-discharge buffer)
+binds the address of each hoisted vector's element 0 beside its header and every read
+or write is one bounds test and one load or store through it (the resample probe −14 %)
+— and is the first bisect step for a wrong element read or write inside a growth-free
+loop; `LOFT_HOIST_VERIFY=1` re-derives every base at every use and panics when a store
+grew under one, and `LOFT_TRACE_BASE=1` prints each loop's growth-free verdict.
+`LOFT_NO_NN_FAST=1` (P3c) also restores the nullable-aware counter step and the guarded
+literal division that § V-aj (`@FR-R-Counter`, `@FR-R-LitDiv`) replaced.
+**`LOFT_NO_LOOP_BUFFER_REUSE=1`** (@PLN157 § V-al, `@FR-R-LoopBuffer`, default-ON,
+generation time) makes a vector local declared `[]` INSIDE a loop re-mint its per-site
+buffer every iteration again — with it off, the buffer's store and its vector survive the
+iteration, the mint after the first is a length reset that keeps the capacity, and the
+literal's zero of the vector field is not emitted (the resample's two per-pixel vectors:
+−10 % on the row) — and is the first bisect step for a stale or wrong element read out of
+a vector declared inside a loop on native.  Only for elements that own no heap (a `text`
+vector keeps the re-mint: a length reset would strand what its elements own), a buffer no
+other call reaches, and a declaration outside the loop.  `LOFT_TRACE_LOOP_BUFFER=1` names
+each buffer kept and each declined.
+**`LOFT_NO_PUSH_FILL=1`** (@PLN157 § V-am, `@FR-R-PushFill`, default-ON, generation time)
+makes a counted push loop grow per push again — with it off, `for i in a..b { v += [x, y] }`
+reserves two elements times its trip count once before it runs, and `for _ in a..b
+{ v += [c] }` with `c` invariant is ONE fill of the vector's tail with the per-element
+loop as its fallback (the resample's plane prefill: −2 % on the row) — and is the first
+bisect step for a wrong element or length out of a counted push loop on native.  A body
+that can `break`, `return` or loop again, a push under a branch, another write to the
+path, or a range end that is not a simple invariant declines the loop.
+`LOFT_TRACE_PUSH_FILL=1` names each decline; `LOFT_HOIST_VERIFY=1` re-derives the push
+header at the fill.
+**`LOFT_RELEASE_PASS_PROBE=1`** (generation time) is a MEASUREMENT INSTRUMENT, never a
+build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal
+division emits the processor's wrapping operator and every float comparison the plain
+one — what the eventual release build pass for games would emit (DESIGN_DECISIONS.md
+C120, NATIVE.md § Optimisation tiers).  The values after a fault are NOT the language's
+(`b = MAX + 1; d = (b + 5) * 2` reads `10` for null), so a row is comparable only while
+its hash still agrees; its time is the CEILING the checked build is measured against,
+which is what says whether a row is bound by the checks or by something else — the
+guide for what to optimise next.  The null test itself and the `*Nullable` twins keep
+their templates: they are the language's null semantics, not its fault protection.
+**`LOFT_NO_VALUE_RECORD=1`** (@PLN157 § V-aa, default-ON since 2026-09-14) makes a
+function whose result is a plain no-heap record of ≤6 scalar fields return it through
+the buffer again — with it off, such a function whose every call site reads fields off
+it and whose body builds it with `Object` blocks returns those fields in REGISTERS with
+the call site reading tuple elements (measured: 1.65× on the call, `smooth` −25 %
+standalone, `lock_curved` −3 %) — and is the bisect step for a wrong field out of a
+record-returning call on native.  It was opt-in for two days because its call-site gate
+did not hold over the script corpus (376 compile errors, 218 of them the fn-ref
+DISPATCH: every arm of the `match` a `CallRef` emits shares one return type); the gate
+now declines every arm by reading the arm set from `fnref::dispatch_arms`, the
+emitter's own home for that question, and the two other classes (a `__lift_` temp bound
+from a CALL, a mixed-arm branch) are declined by shape.  A `__lift_` temp bound from a
+VIEW — a selecting tail's arm over a by-value parameter — is a value local bound to the
+view's field tuple and never a view leaf (read as one it leaked the store its copy
+mints, one record per call; found 2026-09-15 with the generic instance's statement join,
+whose arms bind the join local the same way and did not compile).
 `LOFT_TRACE_VALUEREC=1` names each admission and decline.
 **`LOFT_POISON_CLAIM=1`** (`Store::poison_fill`) fills a freshly CLAIMED payload with
 `0xDEADBEEF` instead of zeros — the claim-side twin of `LOFT_POISON`'s poison-on-free, and
@@ -776,6 +829,20 @@ unwritten space becomes a loud out-of-range value the store's guards refuse, whe
 `LOFT_NO_ZERO_CLAIM=1` only leaves stale bytes that often look enough like zeros to pass.
 Census 2026-09-12: 1 232 of 1 261 `tests/scripts` clean on the interpreter, 29 dependent
 (the buffer/delivery family), every @PLN157 cell corpus clean on both backends.
+**`LOFT_NO_STORE_RESET_CLEAR=1`** (@PLN157 § V-ag, runtime, BOTH backends) makes that
+release a WALK again — with it off, clearing a store-ROOT vector resets the store in one
+step and re-establishes its two records, because the shape `@FR-H-ClearRelease` already
+tests says the vector owns the store's whole extent (`fronds` −36 %, the free tree was
+28 % of that row) — and is the first bisect step for a wrong value, a leak or a
+use-after-free at a recycled vector-returning call.
+**`LOFT_NO_RESET_CAPACITY=1`** (@PLN157 § V-ai, runtime, BOTH backends) makes that reset
+re-establish the vector at the fresh minimum again — with it off, the vector comes back at
+the CAPACITY the previous fill reached (the buffer is reused across calls and the store
+already holds the extent), so the growth ladder runs once per buffer instead of once per
+call, and the freed rungs that took every later claim off `bump_tail` and into the free
+tree are never made (`fronds` −22.5 %, 4.28× → 3.42× on x86-64) — and is the bisect step
+for a wrong element or length out of a reused vector-returning call.  `LOFT_TRACE_CLEAR=1`
+prints the capacity each reset re-establishes.
 **`LOFT_NO_CLEAR_RELEASE=1`** (`@FR-H-ClearRelease`, runtime, BOTH backends) makes a
 vector's entry clear a pure length reset again — with it off, clearing a REUSED
 store-root vector whose elements own heap releases what they own first, closing an
@@ -809,6 +876,33 @@ them (one holder per path per frame, no mover on a held path, a twin handed only
 holders) — run it on any emission that looks wrong before running the program.
 PERFORMANCE.md § Design: P2, NATIVE.md.
 
+**A null-discharge buffer does not block the hoist (@PLN157 § V-ad, `--native`, generation
+time):** `e = tbl[i]?` on a vector of all-scalar records mints an absent element into a
+hidden per-site buffer, and that allocation used to decline every header in the loop
+around it — the drawing bench's polygon crossing loop hoisted nothing (`wide_line` −31 %
+when it did).  **`LOFT_NO_NULL_BUFFER_HOIST=1`** restores the blocking form and is the
+first bisect step for a wrong element read in a loop that discharges a record element
+with `?`; `LOFT_HOIST_VERIFY=1` is the falsifier.
+
+**A value branch of calls witnesses every arm's buffer (@PLN157 § V-af, BOTH backends,
+parse time):** `v = if c { mk(i) } else { mk2(i) }` in a loop binds `v` to whichever arm's
+hidden return buffer ran, so every arm's buffer is `v`'s witness — the buffers are
+allocated once per activation and `v`'s per-iteration free declines against each, where
+before the branch paired nothing and every iteration minted and freed a store (the
+consumer's `smooth` −26 %).  **`LOFT_NO_JOIN_BUFFER_WITNESS=1`** restores the unpaired
+form and is the first bisect step for a leak, a double free or a stale record out of a
+loop that binds a record from a branch of calls; `LOFT_STRICT_STORES=1` and
+`LOFT_POISON=1` are the falsifiers.
+
+**A filling loop is one slice fill (@PLN157 § V-ae, `--native`, generation time):**
+`for i in lo..hi { v[base + i] = c }` with `base` and `c` invariant, over a vector a
+header is held for, emits ONE range test and a slice fill, the per-element loop kept as
+the fallback for every range the fill declines (a negative or partial index, an empty
+range, an overflow) — `wide_line` −23 %, the two fills −48 %.  **`LOFT_NO_FILL_HOIST=1`**
+emits the per-element form again and is the first bisect step for a wrong element or a
+missed write out of a filling loop; `LOFT_TRACE_FILL=1` names the check that declined a
+loop the idiom should have taken.
+
 **Store confinement across sibling blocks (default-ON since 2026-08-21, both backends):** a
 local reassigned across sibling `if`/`else if`/`match` arms used to keep EVERY arm's store
 alive to scope exit, so the watermark grew with the number of reassignment SITES rather than
@@ -838,3 +932,15 @@ never-free (`formal/ownership.md` @FR-O-Witness). **`LOFT_NO_OWNER_WITNESS=1`** 
 pre-witness form: the first bisect step for a leak or a wrong answer in a local that is both
 copy-bound and view-bound (a walker `cur: Node? = a; cur = cur.next`), and what the
 `LOFT_NO_JOIN_OWN` positive controls set beside their own switch.
+
+**The counted loop's second counter (@PLN157 § V-ab, default-ON, both backends):** a
+`for i in a..b` whose start is not a literal runs a hidden `next` counter seeded AT `a`
+(tested, yielded into `i#index`, then stepped) instead of a null-encoded counter that asked
+`if !i#index { a } else { i#index + 1 }` on every iteration — a null test and a select LLVM
+cannot fold, half the cost of a tight loop; a literal start already took P3b's single
+counter seeded at `a - 1`, which a computed start cannot use because `a - 1` is the null
+sentinel when `a` is the type's minimum.  **`LOFT_NO_NEXT_COUNTER=1`** emits the
+null-encoded form again on both backends: the first bisect step for a wrong value out of a
+counted loop whose start is a variable or an expression.  Every value the compare and the
+step see is unchanged, so the edges are too — including loft#1525, an inclusive range to
+the type MAXIMUM that never terminates on either form.

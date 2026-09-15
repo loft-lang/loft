@@ -1,0 +1,106 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `heap.md (H-Drop)` releases a resource once, by its owner.  A copy moves the release with it —
+// unless the record it copies was never the source's to release: a copy off a PARAMETER (the
+// caller owns it), or a record a branch arm already handed to another copy.  When the source holds
+// such a record on ONE path only, the answer at the copy is per path, and the per-path flag that
+// records it (loft#1515, `__hoff_`) belonged to the source alone.  So the copy took a release on
+// every path:
+//
+// - `x = mk(); if c { x = p; }` then `y = x` released the caller's resource through `y` on the path
+//   that copied the parameter, and the caller released it again;
+// - `x = mk(); if c { z = x; }` then `y = x` released the record through `z` and again through `y`.
+//
+// Twice, on both backends, `LOFT_POISON` clean — only the author's release doubled.  A copy of a
+// flagged local now inherits the flag at the copy, read before the statement writes the source's
+// own, so the destination releases on exactly the paths the source would have.
+//
+// @falsified-at: 8674f3f4e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-copy-of-a-local-that-may-not-own-its-record-takes-the-per-path-answer.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
+// CHANNEL: the assertions on each hook's own trace, IDENTICALLY on both backends.  NOT the leak
+//   channel and NOT `LOFT_POISON`: every store is freed once either way; only the author's release
+//   doubles.
+// ARMED: no instrument.  The guard writes each hook call to its own trace file and asserts the
+//   string, so an ordinary run on either backend reports it.
+// WITNESS: on the control the first cell, `both_arms(true, true)`, drains
+//   `131,R130,R130,130,R130,130` where the fix drains `131,R130,R130,R130,130` — the callee releases
+//   the caller's 130 through `y`, and the caller releases it again.  The run stops there; the other
+//   cells were measured on the same build in the probe matrix the guard was cut from: the hand-on
+//   after the branch, the witnessed local, the chain and the parameter-free arm copy each released
+//   twice, and the controls were byte-identical on both trees.
+//
+// The trace file is this guard's own.
+
+fn trace_path() -> text { return "loft_arm_carrier_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct AcH { id: integer }
+fn OpDrop(self: AcH) { note("{self.id}"); }
+fn ac(id: integer) -> AcH { return AcH { id: id }; }
+struct AcS { h: AcH }
+
+// The carrier copies the parameter in one arm; the hand-on is in another arm.  Both taken.
+fn both_arms_b(p: AcH, c: boolean, d: boolean) { x = ac(131); if c { x = p; } if d { y = x; note("R{y.id}"); } note("R{x.id}"); }
+fn both_arms(c: boolean, d: boolean) { a = ac(130); both_arms_b(a, c, d); note("R{a.id}"); }
+// The hand-on after the branch, unconditional.
+fn after_b(p: AcH, c: boolean) { x = ac(141); if c { x = p; } y = x; note("R{y.id}"); }
+fn after_branch(c: boolean) { a = ac(140); after_b(a, c); note("R{a.id}"); }
+// Handed on into a witnessed local that is then given a view.
+fn witnessed_b(p: AcH, c: boolean) { s = AcS { h: ac(152) }; x = ac(151); if c { x = p; } y = x; note("W{y.id}"); y = s.h; note("R{y.id}"); }
+fn witnessed(c: boolean) { a = ac(150); witnessed_b(a, c); }
+// A chain: handed on twice.
+fn chain_b(p: AcH, c: boolean) { x = ac(161); if c { x = p; } y = x; z = y; note("R{z.id}"); }
+fn chain(c: boolean) { a = ac(160); chain_b(a, c); note("R{a.id}"); }
+// No parameter: a branch arm hands the record to `z`, then `y = x` copies it again.
+fn arm_then_copy(c: boolean) { x = ac(181); if c { z = x; note("R{z.id}"); } y = x; note("R{y.id}"); }
+
+// CONTROL — a carrier copied from a LOCAL in the arm, then handed on.
+fn local_carrier(c: boolean) { e = ac(171); x = ac(172); if c { x = e; } y = x; note("R{y.id}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  both_arms(true, true); got = drain();
+  assert(got == "131,R130,R130,R130,130", "a parameter copy from an arm, handed on in another arm: {got}");
+  both_arms(false, true); got = drain();
+  assert(got == "R131,R131,131,R130,130", "the carrier kept its own record, handed on: {got}");
+  after_branch(true); got = drain();
+  assert(got == "141,R140,R140,140", "handed on after the branch, the arm copied the parameter: {got}");
+  after_branch(false); got = drain();
+  assert(got == "R141,141,R140,140", "handed on after the branch, the carrier kept its own record: {got}");
+  witnessed(true); got = drain();
+  assert(got == "151,W150,R152,152,150", "handed on into a witnessed local given a view: {got}");
+  chain(true); got = drain();
+  assert(got == "161,R160,R160,160", "handed on twice: {got}");
+  arm_then_copy(true); got = drain();
+  assert(got == "R181,R181,181", "a record an arm handed to another copy, copied again: {got}");
+  arm_then_copy(false); got = drain();
+  assert(got == "R181,181", "the arm did not run, copied once: {got}");
+
+  local_carrier(true); got = drain();
+  assert(got == "172,R171,171", "CONTROL a carrier copied from a local in the arm: {got}");
+
+  if !delete(trace_path()) { println("trace cleanup failed"); }
+  println("arm carrier drop ok");
+}

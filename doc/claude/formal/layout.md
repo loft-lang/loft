@@ -242,6 +242,18 @@ The rule wants splitting rather than weakening, and the split is decidable from 
                METHOD CALL is not a slot either: `v[i].n` and `v[i].m()` on a tagged element
                read the receiver through its tag first, so an absent element's field is the
                typed null and its method receives `nullref`, as a `S?` local's would.
+               The same clause holds for a nullable STRUCT-ENUM slot, whose absence is
+               `(L-Null)`'s discriminant 0 in its own bytes rather than a tag beside a
+               payload: a field or `vector<E?>` element read, or a variable viewing one, is a
+               sub-reference into the holder and never itself null, so a value leaving that
+               slot for a non-slot position — a local, a parameter, a return, a `??`/`?`
+               subject, a field-read base, a condition — is read through its discriminant AT
+               THAT POINT and answers `nullref` when absent (`Parser::read_through_enum_slot`,
+               whose slot question is `Parser::null_test`'s own).  The null TEST and `match`
+               read the slot and need nothing.  The writer half is the same rule: a source
+               that may be null, written into such a slot, zeroes the discriminant when it is
+               null, where the record copy it took copied nothing and left the old variant
+               (loft#1529).
                And the pointer half has ONE value spelling: a read that names no record — an
                index past the end or before the front, a keyed miss, a zero child pointer —
                answers `nullref` AT THE READ (`DbRef::or_null`, the exit of

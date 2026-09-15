@@ -149,10 +149,17 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
     // `--lib` packages, bundles), except the stdlib and synthetic sources.
     // Pair each file with its def-source id for source-aware fn lookup.
     let stdlib_prefix = crate::portable_path::plain_canonical_str(stdlib_dir);
+    // The entry file's id in the SHADOW, read off its own definitions: a snippet parses under
+    // it and an overload set is looked up by it, and the shadow's `parse_str` does not use the
+    // id the running program's `parse` did.
+    let entry_source = (0..shadow.definitions())
+        .map(|d| shadow.def(d))
+        .find(|def| def.position.file == path)
+        .map_or(crate::data::STD_SOURCE, |def| def.source);
     let mut files: Vec<WatchedFile> = vec![WatchedFile {
         path: path.to_string(),
         last_content: content,
-        source: 0,
+        source: entry_source,
     }];
     for d in 0..shadow.definitions() {
         let def = shadow.def(d);
@@ -217,24 +224,46 @@ pub fn poll(state: &mut State) -> bool {
             let new_fns = fn_blocks(&content);
             host.files[i].last_content = content;
             let source = host.files[i].source;
-            for (name, new_src) in &new_fns {
-                let Some(old_src) = old_fns.get(name) else {
-                    continue; // brand-new fn: nothing calls it yet — next full run picks it up
-                };
-                if old_src == new_src {
+            // A head that is gone is a removal or a re-signature; neither half-applies
+            // (`Disp-World`: the world only ever GROWS, and a signature is a call site's frame).
+            // The names it touches are refused whole; every other head is judged on its own.
+            let mut refused: Vec<&str> = Vec::new();
+            for (head, (name, _)) in &old_fns {
+                if new_fns.contains_key(head) {
                     continue;
                 }
-                grew |= reload_fn(host, state, name, new_src, source);
+                if new_fns.values().any(|(n, _)| n == name) {
+                    eprintln!("live-reload: '{name}' changed its signature; restart to apply");
+                } else {
+                    eprintln!(
+                        "live-reload: '{head}' was removed; the running program keeps it — restart to apply"
+                    );
+                }
+                refused.push(name);
+            }
+            for (head, (name, new_src)) in &new_fns {
+                if refused.iter().any(|r| r == name) {
+                    continue;
+                }
+                match old_fns.get(head) {
+                    Some((_, old_src)) if old_src == new_src => {}
+                    Some(_) => grew |= reload_fn(host, state, name, head, new_src, source),
+                    None => grew |= add_fn_block(host, state, name, head, new_src, source),
+                }
             }
         }
         grew
     })
 }
 
-/// Extract `(name, full text)` of every column-0 `fn`/`pub fn` block.
-/// Repo style: the body's closing `}` sits at column 0 (the same shape the
-/// extraction-hygiene scanner relies on).
-fn fn_blocks(src: &str) -> std::collections::HashMap<String, String> {
+/// Extract every column-0 `fn`/`pub fn` block, keyed by its declaration HEAD — the first
+/// line with `pub ` stripped, whitespace collapsed and the opening `{` dropped — to
+/// `(name, full text)`.  The head, not the name, is the key: an overload set spells one name
+/// several times (`Disp-Key`, @PLN162), and keyed by name the map held only the last block,
+/// so an edit to the first overload was skipped in silence and an added overload read as an
+/// edit of the last (measured, IMPL.md step 14).  Repo style: the body's closing `}` sits at
+/// column 0 (the same shape the extraction-hygiene scanner relies on).
+fn fn_blocks(src: &str) -> std::collections::HashMap<String, (String, String)> {
     let mut out = std::collections::HashMap::new();
     let lines: Vec<&str> = src.lines().collect();
     let mut i = 0;
@@ -245,12 +274,18 @@ fn fn_blocks(src: &str) -> std::collections::HashMap<String, String> {
                 .chars()
                 .take_while(|c| c.is_alphanumeric() || *c == '_')
                 .collect();
+            let head = decl
+                .trim_end()
+                .trim_end_matches('{')
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
             let start = i;
             while i < lines.len() && lines[i] != "}" {
                 i += 1;
             }
             if i < lines.len() && !name.is_empty() {
-                out.insert(name, lines[start..=i].join("\n"));
+                out.insert(head, (name, lines[start..=i].join("\n")));
             }
         }
         i += 1;
@@ -265,6 +300,7 @@ fn reload_fn(
     host: &mut ReloadHost,
     state: &mut State,
     name: &str,
+    head: &str,
     new_src: &str,
     source: u16,
 ) -> bool {
@@ -288,11 +324,15 @@ fn reload_fn(
     if orig == u32::MAX {
         orig = data.def_nr(&want);
     }
-    if orig == u32::MAX {
+    // An overload set (`Disp-Key`, @PLN162) has no `n_<name>`: its members are keyed by
+    // their parameter types, and the one this block belongs to is found by signature once
+    // the block has been parsed (below).
+    let set = overload_set(data, source, name);
+    if orig == u32::MAX && set == u32::MAX {
         eprintln!("live-reload: '{name}' is not a known fn; skipped");
         return false;
     }
-    if matches!(data.def(orig).returned(), crate::data::Type::Iterator(_, _)) {
+    if orig != u32::MAX && is_generator(data, orig) {
         eprintln!("live-reload: '{name}' is a generator; not swappable (restart to apply)");
         return false;
     }
@@ -307,7 +347,13 @@ fn reload_fn(
     // Parse under the ORIGINAL fn's source id with the session's import
     // scoping intact (#350) — the snippet then resolves the same library
     // names (qualified and imported) its file did.
-    let orig_source = host.session.parser.data.def(orig).source;
+    // A set member is found by signature only after the parse; the set's source is the
+    // member's (`Disp-Key` joins within one source).
+    let orig_source = if orig == u32::MAX {
+        host.session.parser.data.def(set).source
+    } else {
+        host.session.parser.data.def(orig).source
+    };
     let parser = &mut host.session.parser;
     let pre_defs = parser.data.definitions();
     let pre_diag = parser.diagnostics.entries().len();
@@ -330,23 +376,204 @@ fn reload_fn(
         eprintln!("live-reload: '{name}' parsed but produced no def; skipped");
         return false;
     }
+    if orig == u32::MAX {
+        // The member of the set with this block's signature.
+        orig = set_members(&parser.data, set)
+            .into_iter()
+            .find(|&m| same_signature(&parser.data, m, temp))
+            .unwrap_or(u32::MAX);
+        if orig == u32::MAX {
+            parser.data.rollback_to(pre_defs);
+            eprintln!(
+                "live-reload: no definition of '{name}' in the running program has the signature '{head}'; restart to apply"
+            );
+            return false;
+        }
+        if is_generator(&parser.data, orig) {
+            parser.data.rollback_to(pre_defs);
+            eprintln!("live-reload: '{name}' is a generator; not swappable (restart to apply)");
+            return false;
+        }
+    }
     // Signature guard: same arity + arg types + return type.
-    let same_sig = {
-        let d = &parser.data;
-        let (a, b) = (d.def(orig), d.def(temp));
-        a.attributes.len() == b.attributes.len()
-            && a.attributes
-                .iter()
-                .zip(b.attributes.iter())
-                .all(|(x, y)| format!("{:?}", x.typedef) == format!("{:?}", y.typedef))
-            && format!("{:?}", a.returned()) == format!("{:?}", b.returned())
-    };
-    if !same_sig {
+    if !same_signature(&parser.data, orig, temp) {
         parser.data.rollback_to(pre_defs);
         eprintln!("live-reload: '{name}' changed its signature; restart to apply");
         return false;
     }
 
+    let sites = commit(parser, state, pre_defs, &[(orig, temp)]);
+    eprintln!(
+        "live-reload: '{name}' v{v} live ({sites} call site(s) patched, fn-refs via dispatch)"
+    );
+    true
+}
+
+/// The `Dynamic` dispatcher of `name`'s overload set in `source` (`Disp-Key`, @PLN162), or
+/// `u32::MAX` when the name has no set there.  A set's dispatcher carries the bare name; its
+/// members are keyed by their parameter types.
+fn overload_set(data: &crate::data::Data, source: u16, name: &str) -> u32 {
+    let mut d = data.source_nr(source, name);
+    if d == u32::MAX {
+        d = data.def_nr(name);
+    }
+    if d != u32::MAX && data.def_type(d) == crate::data::DefType::Dynamic {
+        d
+    } else {
+        u32::MAX
+    }
+}
+
+/// The members of an overload set, in declaration order.
+fn set_members(data: &crate::data::Data, set: u32) -> Vec<u32> {
+    data.def(set)
+        .attributes
+        .iter()
+        .filter_map(|a| match a.typedef.base() {
+            crate::data::Type::Routine(r) => Some(*r),
+            _ => None,
+        })
+        .collect()
+}
+
+fn is_generator(data: &crate::data::Data, d: u32) -> bool {
+    matches!(data.def(d).returned(), crate::data::Type::Iterator(_, _))
+}
+
+/// Same arity + argument types + return type — the frame a call site embeds.
+fn same_signature(data: &crate::data::Data, a: u32, b: u32) -> bool {
+    let (a, b) = (data.def(a), data.def(b));
+    a.attributes.len() == b.attributes.len()
+        && a.attributes
+            .iter()
+            .zip(b.attributes.iter())
+            .all(|(x, y)| format!("{:?}", x.typedef) == format!("{:?}", y.typedef))
+        && format!("{:?}", a.returned()) == format!("{:?}", b.returned())
+}
+
+/// `Disp-World` (@PLN162 step 14): a `fn` block whose head the file did not have before.
+///
+/// Tier 0 used to skip it — *"nothing calls it yet"* — which is true of a new NAME and false
+/// of a new OVERLOAD: every site of the set is its caller, and the selection those sites
+/// compiled was made in a world that did not have it.  So an overload joins the running
+/// program's world: the block is parsed under its own name in the shadow session (it joins
+/// the set by `Disp-Key`), every specialisation of the name — the per-spelling `__sel_` stubs
+/// and `__dyn_` dispatchers the open profile lowers every call of the set to — is rebuilt in
+/// the new world, and each is swapped in behind its old def through the same patch a body
+/// edit takes, so the running loop's next call selects in the new world and no body selected
+/// in an earlier one runs again.  The whole step is one transaction: a rebuild the new set
+/// cannot decide (a served tuple now ambiguous, Q3 — the ADD is refused, as the design
+/// proposes) rolls everything back and the world is unchanged.  A new name is still skipped,
+/// and a second definition of a name that was ONE function is refused: its sites were direct
+/// calls with nothing to rebuild.
+fn add_fn_block(
+    host: &mut ReloadHost,
+    state: &mut State,
+    name: &str,
+    head: &str,
+    src: &str,
+    source: u16,
+) -> bool {
+    let data = &host.session.parser.data;
+    let set = overload_set(data, source, name);
+    if set == u32::MAX {
+        if data.source_nr(source, &format!("n_{name}")) != u32::MAX {
+            eprintln!(
+                "live-reload: '{head}' would make '{name}' an overload set, which the running program did not start with; restart to apply"
+            );
+        }
+        // A brand-new name: nothing calls it yet — the next full run picks it up.
+        return false;
+    }
+    // The block joins under the SET's source (`Disp-Key` joins within one source only), which
+    // is the file's own id whatever the watcher recorded for it.
+    let set_source = data.def(set).source;
+    host.version += 1;
+    let world = host.version;
+    let parser = &mut host.session.parser;
+    let pre_defs = parser.data.definitions();
+    let pre_diag = parser.diagnostics.entries().len();
+    parser.parse_snippet(src, "<live-reload>", set_source);
+    let produced = &parser.diagnostics.entries()[pre_diag..];
+    if produced
+        .iter()
+        .any(|e| e.level >= crate::diagnostics::Level::Error)
+    {
+        for e in produced {
+            eprintln!("live-reload: {name}: {}", e.message);
+        }
+        parser.data.rollback_to(pre_defs);
+        eprintln!("live-reload: '{head}' is refused; the running world is unchanged");
+        return false;
+    }
+    if !set_members(&parser.data, set)
+        .iter()
+        .any(|&m| m >= pre_defs)
+    {
+        parser.data.rollback_to(pre_defs);
+        eprintln!("live-reload: '{head}' parsed but did not join the set of '{name}'; skipped");
+        return false;
+    }
+    // Every specialisation of the name from the worlds before this one — the defs the running
+    // program's sites call, whose numbers stay the dispatch home; a rebuild from an earlier
+    // world (`__w<k>`) is reached only through one of these and is not rebuilt again.
+    let prefix_dyn = format!("n_{name}__dyn_");
+    let prefix_sel = format!("n_{name}__sel_");
+    let specs: Vec<u32> = (0..pre_defs)
+        .filter(|&d| {
+            let def = parser.data.def(d);
+            def.synthetic() == Some("dynamic_dispatcher")
+                && !def.name.contains("__w")
+                && (def.name.starts_with(&prefix_dyn) || def.name.starts_with(&prefix_sel))
+        })
+        .collect();
+    let lex_pre = parser.lexer.diagnostics().entries().len();
+    let mut swaps: Vec<(u32, u32)> = Vec::with_capacity(specs.len());
+    for &old in &specs {
+        match parser.rebuild_specialisation(old, world) {
+            Some(new) => swaps.push((old, new)),
+            None => break,
+        }
+    }
+    // The rebuilt specialisations are definitions pass 2 never saw: an owned text return
+    // among them takes its `___tret` retbuf here, exactly as the originals took theirs at
+    // the program's parse — the running program's sites push that buffer.
+    if swaps.len() == specs.len() {
+        parser.after_pass2();
+    }
+    let refusals: Vec<String> = parser.lexer.diagnostics().entries()[lex_pre..]
+        .iter()
+        .filter(|e| e.level >= crate::diagnostics::Level::Error)
+        .map(|e| e.message.clone())
+        .collect();
+    parser.reported_dynamic_refusal = false;
+    if swaps.len() != specs.len() || !refusals.is_empty() {
+        for m in &refusals {
+            eprintln!("live-reload: {name}: {m}");
+        }
+        parser.data.rollback_to(pre_defs);
+        eprintln!(
+            "live-reload: adding '{head}' is refused — it leaves a call of '{name}' the set cannot decide; the running world is unchanged"
+        );
+        return false;
+    }
+    let sites = commit(parser, state, pre_defs, &swaps);
+    eprintln!(
+        "live-reload: '{head}' added — world {world}: {} specialisation(s) of '{name}' rebuilt, {sites} call site(s) patched",
+        swaps.len()
+    );
+    true
+}
+
+/// Generate every def the shadow session added since `pre_defs` into the running state and
+/// swap each `(old, new)` pair in: `fn_positions[old]` and every recorded call site of `old`
+/// now reach `new`'s body.  Returns the number of sites patched.
+fn commit(
+    parser: &mut crate::parser::Parser,
+    state: &mut State,
+    pre_defs: u32,
+    swaps: &[(u32, u32)],
+) -> usize {
     // The shadow session only PARSES — it never generates bytecode, so its
     // defs carry no code positions.  A call emitted from the new body embeds
     // the callee's `code_position` (codegen's OpCall `to` operand), so sync
@@ -357,7 +584,7 @@ fn reload_fn(
         parser.data.definitions[d as usize].code_position = state.fn_positions[d as usize];
     }
 
-    // Generate the new body (and any lambdas it contains) at the END of the
+    // Generate the new bodies (and any lambdas they contain) at the END of the
     // running bytecode stream.  `code_pos` is the LIVE PC — save + restore.
     let saved_pc = state.code_pos;
     state.code_pos = state.bytecode.len() as u32;
@@ -385,7 +612,6 @@ fn reload_fn(
     // (`state::emit_op`), so the derivation was wrong for `OpCoroutineCreate` in both
     // copies.  Recording the operand address at emission removes the arithmetic from
     // both, which is why this reads `site` and not `site + 11`.
-    let new_pos = parser.data.def(temp).code_position;
     if state.fn_positions.len() < parser.data.definitions() as usize {
         let mut ext: Vec<u32> = Vec::new();
         for d in state.fn_positions.len() as u32..parser.data.definitions() {
@@ -393,16 +619,54 @@ fn reload_fn(
         }
         state.fn_positions.extend(ext);
     }
-    state.fn_positions[orig as usize] = new_pos;
-    let sites = state.calls.get(&orig).cloned().unwrap_or_default();
-    for site in &sites {
-        state.code_put::<i64>(*site, i64::from(new_pos));
+    if std::env::var_os("LOFT_RELOAD_DEBUG").is_some() {
+        for &(orig, new) in swaps {
+            eprintln!(
+                "live-reload: swap {orig} {} -> {new} {}",
+                parser.data.def(orig).name,
+                parser.data.def(new).name
+            );
+        }
+        for d in 0..parser.data.definitions() {
+            let def = parser.data.def(d);
+            if def.name.contains("_hit") || def.name == "hit" {
+                eprintln!(
+                    "live-reload: def {d} {} ({:?}) params {:?}",
+                    def.name,
+                    def.def_type,
+                    def.attributes
+                        .iter()
+                        .map(|a| format!("{}{}", a.name, if a.hidden { "(h)" } else { "" }))
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+        for d in pre_defs..parser.data.definitions() {
+            let def = parser.data.def(d);
+            eprintln!(
+                "live-reload: def {d} {} ({:?}) code {}..{} params {:?}",
+                def.name,
+                def.def_type,
+                def.code_position,
+                def.code_position + def.code_length,
+                def.attributes
+                    .iter()
+                    .map(|a| format!("{}{}", a.name, if a.hidden { "(h)" } else { "" }))
+                    .collect::<Vec<_>>()
+            );
+        }
     }
-    eprintln!(
-        "live-reload: '{name}' v{v} live ({} call site(s) patched, fn-refs via dispatch)",
-        sites.len()
-    );
-    true
+    let mut patched = 0;
+    for &(orig, new) in swaps {
+        let new_pos = parser.data.def(new).code_position;
+        state.fn_positions[orig as usize] = new_pos;
+        let sites = state.calls.get(&orig).cloned().unwrap_or_default();
+        for site in &sites {
+            state.code_put::<i64>(*site, i64::from(new_pos));
+        }
+        patched += sites.len();
+    }
+    patched
 }
 
 /// First-occurrence textual rewrite; `None` when the needle is absent.

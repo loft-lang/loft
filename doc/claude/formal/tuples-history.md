@@ -10,13 +10,26 @@ OPEN: **1** — D-tup-10, whose entry lives in the chapter next door because it 
 worked; this register carries the closed ones.  This line read `OPEN: 0` from 2026-09-05 until
 2026-09-10 while D-tup-10 and D-tup-11 were live in [tuples.md](tuples.md) — a register's
 headline is a claim about the chapter beside it, and it decayed the moment an entry was opened
-somewhere else.  D-tup-12 opened and closed 2026-09-10 (below).  D-tup-9 opened and closed 2026-09-05 (loft#1365 — below: the record and scalar bindings by @PLN153 phase 1, the collection half by the @FR-F-Ret join).  (D-tup-8 opened and closed 2026-09-04, loft#1361 — below; D-tup-7 opened and closed 2026-09-04, loft#1350 — below; D-tup-4's KEYED half CLOSED 2026-08-31, loft#1230); D-tup-5 and D-tup-6 opened and closed
+somewhere else.  D-tup-14 opened and closed 2026-09-14 (below).  D-tup-12 opened and closed 2026-09-10 (below).  D-tup-9 opened and closed 2026-09-05 (loft#1365 — below: the record and scalar bindings by @PLN153 phase 1, the collection half by the @FR-F-Ret join).  (D-tup-8 opened and closed 2026-09-04, loft#1361 — below; D-tup-7 opened and closed 2026-09-04, loft#1350 — below; D-tup-4's KEYED half CLOSED 2026-08-31, loft#1230); D-tup-5 and D-tup-6 opened and closed
 2026-08-28; D-tup-3 opened and closed 2026-08-26; D-tup-2 closed the day the
 rule it needed was written down.  Bounded by the oracle note below — **and D-tup-3 is what that
 note was warning about**: it was found by giving an element a HEAP type, which this doc's
 all-`(integer, integer)` oracle cannot express, so the zero above never covered it.  D-tup-5 and
 D-tup-6 are two more from the same blind spot, one axis further: a NULLABLE element, which the
 all-`(integer, integer)` oracle cannot express either.
+
+### D-tup-14 — OPENED AND CLOSED (2026-09-14): a tuple with an enum member linked as a record
+
+`(T-Ref-El)` counts a value enum among the scalar elements, so `(T-Ref-Rep)` makes a `&` to a
+`(Col, integer)` local the stack tuple itself.  The parser's `&` lowering asked its own scalar list,
+which left the value enum out, so the tuple read as one with a heap element and took the
+record-backed link: `t = (Col.Red, 5); c = &t; c.1 = 9` panicked in the allocator on `--interpret`
+and did not compile on `--native` (rustc E0308).  The `&(Col, integer)` PARAMETER and a
+`(Col, text)` local, which the rule makes record-backed, were already right, and so was a
+`(boolean, integer)` local.  Closed by asking `data::is_scalar`, the shared predicate that counts
+the value enum, together with `binding.md` D-bind-40.  Guard
+`tests/scripts/an-enum-link-reads-and-writes-through-its-own-op.loft` (`tuple_link`, with a
+boolean-member control).
 
 ### D-tup-12 — OPENED AND CLOSED (2026-09-10): `_0` was a second spelling of `.0`, on one home only
 

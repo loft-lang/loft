@@ -306,6 +306,10 @@ x = t.0                 // element access — works
 t.1 = "world"           // element assignment — works
 ```
 
+An element assignment of a heap value (a record, a struct-enum, a vector) COPIES it in, as the
+tuple literal does, and releases the record it replaces: after `w.1 = s; s.n = 1`, `w.1.n` still
+reads what `s.n` was (loft#1532, `formal/tuples.md` D-tup-14).
+
 A destructuring LHS is a **binding position**, so its names follow the same rule as
 `name = expr`: a name that a definition also uses still mints a local.
 
@@ -334,8 +338,11 @@ An annotated destructuring LHS — `(a, b): (integer, text) = t` — is not a fo
 it is refused for every name, including one nothing else declares. The annotation goes
 on the tuple being destructured, as in the block above.
 
-`parse_match` dispatches on the subject type. `Type::Tuple` falls into the catch-all
-and emits "match requires an enum, struct, or scalar type" — not yet handled.
+`parse_match` dispatches on the subject type; a `Type::Tuple` subject goes to
+`parse_tuple_match`.  A `&(…)` binding takes a tuple pattern too, in both of its
+representations (`formal/tuples.md` `(T-Ref-Rep)`): the subject becomes the tuple of its
+element reads through the reference — `TupleGet` for a stack-backed tuple, the record's own
+fields for a `__tuple<…>` RECORD — and a heap member read that way borrows the binding.
 
 **Dependency on T1.8:** Tuple-returning functions (`-> (A, B)`) are deferred as T1.8.
 Tuple match on a function call result (`match foo() { ... }`) requires T1.8a first.
@@ -373,6 +380,7 @@ elem-pattern    ::= '_'                                  // element wildcard
                   | elem-pattern '|' elem-pattern        // or-pattern
                   | '(' elem-pattern { ',' elem-pattern } ')'  // nested tuple
                   | 'null'                               // null match
+                  | Variant [ '{' field { ',' field } '}' ]  // enum element: tag test, payload bound
 
 guard           ::= 'if' expression
 ```
@@ -515,6 +523,24 @@ When the element type is itself a `Type::Tuple`, the pattern may be a nested
 `(...)`. Recursive call to the element-pattern parser for each sub-element.
 
 Generates a conjunction of sub-element conditions, ANDed into the outer arm condition.
+
+### Enum variant `Variant` / `Variant { fields }`
+
+When the element type is an enum (plain or struct-enum), a capitalised name is a VARIANT
+pattern, never a binding: `(Fire, Wall)` tag-tests both positions, and `(Fire { id }, Wall
+{ status })` also binds each payload field by name, in scope for the guard and the arm.  The
+same view-or-copy rule as a top-level arm applies — a record or other heap payload is a view
+of the matched value, a scalar payload is a copy (LOFT.md § Match expressions).  Plain-enum
+variants take an or-pattern (`(Fire | Ice, _)`); struct-enum variants do not, so spell those
+as separate arms.  The element and the top-level arm share one lowering
+(`parse_field_sub_pattern`), which is what `(P-Point)` in `formal/matching.md` asks for: a
+unit or struct variant is a point pattern over ONE value, and a tuple element is one value.
+
+A capitalised name that is not a variant of the element's enum is refused by name (*'Bogus' is
+not a variant of Kind*), as it is at a top-level arm; over an element with no variants at all
+the message names the element's type.  Before this held, such a name fell through to the
+binding branch and the arm matched every tuple in silence — see `formal/matching.md`
+D-match-5.
 
 ---
 

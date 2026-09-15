@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A LIBRARY's overload set reaches its consumers by every import spelling (`Disp-Key`,
+// @PLN162): the wildcard `use lib` bare, the selective `use lib::(name, …)`, the qualified
+// `lib::name(…)` with no `use`, the alias `use lib as l`, the method spelling on a method
+// set, and the library's own calls to its overloads.  A consumer's definition of ANOTHER
+// spelling of the name joins the dispatch, kept live by its argument types, as a free function
+// beside a stdlib `both` set always was.  Plan RULES.md had this cell down as untested because
+// an import copies `n_<name>`, which an overload set no longer has; measured, the set reaches
+// its consumers through its bare dispatcher and nothing was missing.
+// @ARGS: --lib tests/lib
+// @falsified-at: none — the control cannot be a worktree: a build before Disp-Key REFUSES the
+//   fixture library itself, and no earlier ref holds the fixture.  Measured by hand on the
+//   pre-step build (73f6cdc67, `--interpret --lib tests/lib`): `Cannot redefine 'hit' (already
+//   defined at tests/lib/overloadlib.loft:8:23)` and the same for `melt`, exit 1; this tree
+//   exit 0 with every cell green on both backends.  `scripts/falsify.sh` scores a
+//   program-shaped guard without its `@ARGS` until this commit, and with them the REF form
+//   still fails the control for the fixture's absence — the `--patch` form is the one that can
+//   score this file once it is committed.
+//   CHANNEL: exit — a refusal at the library's second definition on the control.
+//   ARMED: no instrument.
+//   WITNESS: the two `Cannot redefine` lines above, at the library, not at the consumer.
+//   HOLDS: the leak channel is `none` here and every cell's value is asserted, not counted.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+use overloadlib;
+
+struct Rock { n: integer }
+
+// another spelling of the library's name, defined here: joins the dispatch
+fn hit(r: Rock) -> text { "rock {r.n}" }
+
+fn test_wildcard_bare() {
+  f = Fire { n: 1 };
+  assert(hit(f) == "fire 1", "bare hit(Fire): got {hit(f)}");
+  assert(hit(Ice { n: 2 }) == "ice 2", "bare hit(Ice): got {hit(Ice { n: 2 })}");
+}
+
+fn test_method_set_both_spellings() {
+  f = Fire { n: 1 };
+  assert(f.melt(Wall { n: 3 }) == "melt-wall 13", "method, Wall: got {f.melt(Wall { n: 3 })}");
+  assert(f.melt(Crate { n: 4 }) == "melt-crate 14", "method, Crate: got {f.melt(Crate { n: 4 })}");
+  assert(melt(f, Crate { n: 5 }) == "melt-crate 15", "bare, Crate: got {melt(f, Crate { n: 5 })}");
+}
+
+fn test_qualified_and_internal() {
+  assert(overloadlib::hit(Fire { n: 6 }) == "fire 6", "qualified: got {overloadlib::hit(Fire { n: 6 })}");
+  assert(overloadlib::internal() == "fire 1|ice 2|melt-wall 34", "the library's own calls: got {overloadlib::internal()}");
+}
+
+fn test_own_other_spelling_joins() {
+  assert(hit(Rock { n: 9 }) == "rock 9", "the consumer's own spelling: got {hit(Rock { n: 9 })}");
+  assert(hit(Fire { n: 1 }) == "fire 1", "and the library's still reach: got {hit(Fire { n: 1 })}");
+}
+
+fn main() {
+  test_wildcard_bare();
+  test_method_set_both_spellings();
+  test_qualified_and_internal();
+  test_own_other_spelling_joins();
+}

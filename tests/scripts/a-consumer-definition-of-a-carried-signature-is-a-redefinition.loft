@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A consumer's definition whose parameter spelling a `use`d library's overload set ALREADY
+// carries is a redefinition (`Disp-Key`, @PLN162) — the same refusal a single imported free
+// function gives, and the one `shadows_a_method` gives a method.  Until this held, `hit(f:
+// Fire)` beside `use overloadlib` registered in silence and a bare `hit(Fire {…})` answered
+// the LIBRARY's body: two definitions of one signature, one of them unreachable and unwarned.
+// The second cell is loft#788's standing refusal: a name two packages export bare must be
+// called qualified, an overload set included.
+// @ARGS: --lib tests/lib
+// @falsified-at: 988288e7b — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-consumer-definition-of-a-carried-signature-is-a-redefinition.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — on the control the first `@EXPECT_ERROR` is unmet (the consumer's
+//   `hit(f: Fire)` registers in silence), so the suite's verdict is FAIL there and the file's
+//   exit goes 1 -> 0 with it.  Not leak and not assert: a parse-time verdict.
+//   ARMED: no instrument — the refusal is parse-time on either backend.
+//   WITNESS: on the control the program compiles past the consumer's `hit` and a bare
+//   `hit(Fire {…})` answers the LIBRARY's `fire 1`, the consumer's own body unreachable and
+//   unwarned; here the definition is refused naming `tests/lib/overloadlib.loft:9`.
+//   HOLDS: the second expectation, loft#788's two-package refusal, is met on both trees and
+//   does not move; the leak channel is `none` on both.
+// @EXPECT_ERROR: Cannot redefine 'hit' (already defined at
+// @EXPECT_ERROR: `hit` is declared by more than one package here
+
+use overloadlib;
+use overloadlib2;
+
+fn hit(f: Fire) -> text { "MINE {f.n}" }
+
+fn main() {
+  println(hit(Fire { n: 1 }));
+}

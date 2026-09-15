@@ -521,10 +521,22 @@ different bugs — on this one they are the same defect, and the ICE cell is the
 statement of it: the damage lands on whoever reads next, and that reader need have
 nothing to do with functions.
 
+**A fifth door: a cell whose SPELLING is lowered to something else.**  A cell that binds `c =
+&place` and only reads `c` gives the right answer whether `c` became a link, a copy or a view.
+So it can pass without running the mechanism its assert message names.  Measured in one guard
+for `(B-Ref-Repoint)`: `e = &es[1]` on an enum element lowers to `e: Col = OpGetEnum(…)`, a
+copy with the `&` dropped, and `s = &ps[0]` on a struct element to `s: ref(P)`, a view.  Both
+cells were green and claimed "a link re-points".  The dropped `&` was itself a silent defect
+(a write through it is lost, `binding.md` D-bind-39).  It showed only because a cell that
+WROTE through the link to a MIDDLE element failed.  Check the bind's type in the cell's `loft
+introspect` output, and give each cell a write through the link plus a neighbour after the
+element: a copy then fails on the write, and an op of the wrong width fails on the neighbour.
+
 The doors together give one question to ask of any instrument: **for each channel
 it captures, name the assertion that compares it, and name a case where that assertion
 FIRES.**  A channel with no comparison is the third door; a cell whose value is
-never used is the fourth; a comparison with no case that
+never used is the fourth; a cell lowered to a construct other than the one it names is the
+fifth; a comparison with no case that
 can disagree is the "exercised by nothing" trap (thirty corpus programs all exited 0, so
 an exit-code comparator that had run since the oracle was built had never once compared a
 NON-ZERO code); and a comparison scored on the wrong channel is the first two.

@@ -29,6 +29,36 @@ fn vec_pos_overflow(index: u32, size: u32) -> ! {
     panic!("Vector position overflow: index={index} size={size}")
 }
 
+/// A vector record's capacity in ELEMENTS, read off its claim header: the claimed
+/// words less the one header word (claim size + length), in bytes, over the element
+/// size — the inverse of `checked_vec_cap`.  The one home for the formula: the growth
+/// step in `vector_append` and the store reset's re-establishment
+/// (`Stores::clear_vector_release`, @PLN157 § V-ai) both read it.
+#[inline]
+pub fn vector_capacity(claimed_words: u32, elem_size: u32) -> u32 {
+    claimed_words.saturating_mul(8).saturating_sub(8) / elem_size
+}
+
+/// The capacity a vector has reached, in elements — 0 when the handle is absent, the
+/// vector was never allocated, or its record is not claimed.  Read BEFORE a store reset
+/// drops the record, so the re-established vector can start where the previous fill
+/// ended (@PLN157 § V-ai).
+pub fn reached_capacity(db: &DbRef, elem_size: u32, stores: &[Store]) -> u32 {
+    if db.is_null() || db.rec == 0 || db.pos == 0 {
+        return 0;
+    }
+    let store = keys::store(db, stores);
+    let vec_rec = store.collection_rec(db.rec, db.pos);
+    if vec_rec == 0 {
+        return 0;
+    }
+    let words = store.read::<i32>(vec_rec, 0);
+    if words <= 0 {
+        return 0;
+    }
+    vector_capacity(words as u32, elem_size)
+}
+
 /// Checked vector capacity — `(count * size + 15) / 8` using u64.
 #[inline]
 fn checked_vec_cap(count: u32, size: u32) -> u32 {
@@ -194,6 +224,18 @@ pub fn reserve_vector(db: &DbRef, count: i64, elem_size: u32, stores: &mut [Stor
     }
 }
 
+/// @PLN157 § V-am (`@FR-R-PushFill`) — reserve room for `extra` MORE elements beyond the
+/// vector's current length: the reservation a counted push loop makes once before it runs
+/// instead of growing per push.  A non-positive `extra` reserves nothing; an absent owner
+/// slot reserves nothing (the pushes' own growth handles it, as before).
+pub fn reserve_more(db: &DbRef, extra: i64, elem_size: u32, stores: &mut [Store]) {
+    if extra <= 0 {
+        return;
+    }
+    let len = i64::from(vec_header(db, stores).len);
+    reserve_vector(db, len.saturating_add(extra), elem_size, stores);
+}
+
 /// Make room for one more element at the end of the vector `db` points at, and
 /// answer where to write it.  Grows the backing record ~2x when it is full, and
 /// follows the record if the grow had to move it.
@@ -293,8 +335,7 @@ pub fn vector_append(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
             db.rec,
             db.pos
         );
-        let cur_words = cur_words_signed as u32;
-        let cur_cap = cur_words.saturating_mul(8).saturating_sub(8) / size;
+        let cur_cap = vector_capacity(cur_words_signed as u32, size);
         // An element that fits needs no `resize`: that call re-read the header, bumped
         // the store generation and answered the same record on every append that was
         // not a growth step (@PLN157 § V-k — 2 % of the `lock` row).  The growth step
@@ -323,6 +364,22 @@ pub fn vector_finish(db: &DbRef, stores: &mut [Store]) {
     let vec_rec = store.collection_rec(db.rec, db.pos);
     let length = store.get_u32_raw(vec_rec, 4);
     store.set_u32_raw(vec_rec, 4, length + 1);
+}
+
+/// @PLN157 § V-al (`@FR-R-LoopBuffer`) — reset a vector BUFFER record (the one-field shape
+/// `OpDatabase` mints to back a vector local) to EMPTY without clearing its store: the
+/// vector keeps its record and its capacity, and its length becomes 0.  Only for elements
+/// that own no heap — the emitter's gate reads that off the layout — because a length reset
+/// releases nothing (`@FR-H-ClearRelease` is the clear's business, not this one's).
+pub fn vector_buffer_reset(db: &DbRef, stores: &mut [Store]) {
+    if db.is_null() || db.rec == 0 {
+        return;
+    }
+    let store = keys::mut_store(db, stores);
+    let vec_rec = store.collection_rec(db.rec, db.pos);
+    if vec_rec != 0 {
+        store.set_u32_raw(vec_rec, 4, 0);
+    }
 }
 
 pub fn sorted_new(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
@@ -597,6 +654,16 @@ pub fn get_vector(db: &DbRef, size: u32, from: i64, stores: &[Store]) -> DbRef {
     }
 }
 
+/// The indices a fill covers (@PLN157 § V-ae, `@FR-R-Fill`): `base + lo` through `base + hi`,
+/// the end included when the range is `..=` and excluded when it is `..`.
+#[derive(Clone, Copy, Debug)]
+pub struct FillSpan {
+    pub base: i64,
+    pub lo: i64,
+    pub hi: i64,
+    pub inclusive: bool,
+}
+
 /// The part of a vector's identity that a loop cannot change while nothing writes to
 /// it: which store holds it, which record its elements live in, and how many there are.
 ///
@@ -762,6 +829,76 @@ pub fn get_vector_hoisted<const VERIFY: bool>(
     } else {
         get_vector(db, size, from, stores)
     }
+}
+
+/// @PLN157 § V-ak (`@FR-R-Base`) — the address of element 0 of the vector `h` describes,
+/// or null for an absent vector.  Bound once beside a header in a loop the emitter proved
+/// GROWS NO STORE, so the buffer the address points into cannot be reallocated while the
+/// loop runs; [`get_elem_at`] and `Stores::vec_set_at` then reach an element with one
+/// bounds test and one address computation.  `LOFT_HOIST_VERIFY=1` re-derives it at every
+/// use and panics when a store moved under it.
+#[must_use]
+#[inline]
+pub fn vec_base(h: &VecHeader, stores: &[Store]) -> *const u8 {
+    if h.rec == 0 {
+        std::ptr::null()
+    } else {
+        stores[h.store_nr as usize].elem_base(h.rec)
+    }
+}
+
+/// [`get_elem_hoisted`]'s twin through a hoisted BASE (`@FR-R-Base`): the same bounds test
+/// against the header's length, then a single unaligned load at `base + from * size + fld`.
+/// The cold path — an index outside the vector — is the same one.
+///
+/// # Safety
+///
+/// `base` must be [`vec_base`] of `h` taken while `h` described `db`, and no store may
+/// have been reallocated since — the growth-free proof the emitter makes for the loop that
+/// binds it (`@FR-R-Base`).  Under `VERIFY` both are checked.
+///
+/// # Panics
+///
+/// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header or the base no longer matches
+/// a fresh derivation — a store grew or moved under the loop.  Never in the emitted default.
+// The eight arguments are `get_elem_hoisted`'s seven plus the base, and the emitter spells
+// both calls from one site; a struct would name nothing.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+#[inline]
+pub unsafe fn get_elem_at<T: Copy, const VERIFY: bool>(
+    h: &VecHeader,
+    base: *const u8,
+    db: &DbRef,
+    size: u32,
+    from: i64,
+    fld: u32,
+    absent: T,
+    stores: &[Store],
+) -> T {
+    if from >= 0 && from < i64::from(h.len) {
+        if VERIFY {
+            assert_eq!(
+                *h,
+                vec_header(db, stores),
+                "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
+            );
+            assert!(
+                std::ptr::eq(base, vec_base(h, stores)),
+                "hoisted vector base is stale — a store grew or moved under the loop"
+            );
+        }
+        // SAFETY: `base` is element 0 of a live vector record in a store the loop cannot
+        // grow (the emitter's growth-free proof), and `from < len` keeps the address inside
+        // the record's claim; `read_unaligned` because an element offset need not be
+        // aligned for `T` (loft#1481).
+        return unsafe {
+            base.add(from as usize * size as usize + fld as usize)
+                .cast::<T>()
+                .read_unaligned()
+        };
+    }
+    get_elem_hoisted_cold::<T>(db, size, from, fld, absent, stores)
 }
 
 /// One indexed element read against an already-derived [`VecHeader`]: the bounds test and

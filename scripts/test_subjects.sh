@@ -81,16 +81,16 @@ SUBJECT_NAMES='parser scopes codegen runtime store wasm packages lsp sql docs ho
 subject_patterns() {
   case "$1" in
     (parser)    echo '~pars ~keyless_sorted ~expression ~error_messages ~suggestion ~strings ~spans ~tuple ~qq_null ~dn4 ~nullflow ~steer ~lint ~match ~const_ ~diagnostic ~main_signature ~plan25 ~pln25 ~nullable ~variant_field ~template ~fault_position ~pln14' ;;
-    (scopes)    echo '~slot ~leak ~ownership ~use_analysis ~uaf ~frame_vars ~closure ~callarg ~alias ~borrow ~branch_join ~copy_advice ~double_move ~loop_binding ~own_ ~owns_ ~ref_param ~redundant_free ~returned_text ~value_struct ~text_buffer ~text_return ~early_text ~nullable_ret ~generic_discharged ~link_' ;;
-    (codegen)   echo '~codegen ~copy_fresh_dest ~inplace_callee_hoist ~fused_append ~scalar_hoist ~mint_hoist ~record_push ~move_append ~retbuf_adopt ~selfread_literal ~literal_hoist ~complete_write ~element_first ~view_header ~wrapper_op ~callee_inputs ~push_hoist ~emission_audit ~native ~n2_ ~n3_ ~g2_ ~ir_ ~introspect ~slots ~entry_signature ~differential ~hoist ~e1_ ~n0_ ~behavior_golden ~compile_scaling ~windows ~append_in_place ~retbuf ~view_elision' ;;
+    (scopes)    echo '~slot ~leak ~ownership ~use_analysis ~uaf ~frame_vars ~closure ~callarg ~alias ~borrow ~branch_join ~join_witness ~copy_advice ~double_move ~loop_binding ~own_ ~owns_ ~ref_param ~redundant_free ~returned_text ~value_struct ~text_buffer ~text_return ~early_text ~nullable_ret ~generic_discharged ~link_' ;;
+    (codegen)   echo '~codegen ~copy_fresh_dest ~inplace_callee_hoist ~fused_append ~scalar_hoist ~mint_hoist ~record_push ~move_append ~retbuf_adopt ~selfread_literal ~literal_hoist ~complete_write ~element_first ~view_header ~wrapper_op ~callee_inputs ~push_hoist ~next_counter ~emission_audit ~native ~n2_ ~n3_ ~g2_ ~ir_ ~introspect ~slots ~entry_signature ~differential ~hoist ~vector_base ~loop_buffer ~push_fill ~release_pass ~e1_ ~n0_ ~behavior_golden ~compile_scaling ~windows ~append_in_place ~retbuf ~view_elision' ;;
     (runtime)   echo '~wrap ~issues ~thread ~par_ ~parallel ~parity ~coroutine ~runtime ~dispatch ~panic ~exit_codes ~crash ~error_path ~soft_halt ~log ~math ~format_width ~profiling ~sandbox ~script_mode ~self_append ~timeout ~json_corpus ~test ~env_' ;;
-    (store)     echo '~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io ~heap_free ~clear_release ~poison_claim ~value_record' ;;
+    (store)     echo '~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io ~heap_free ~clear_release ~reset_capacity ~poison_claim ~value_record' ;;
     (wasm)      echo '~wasm ~html ~deliver ~browser ~gl_ ~android' ;;
     (packages)  echo '~registry ~package =imports ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_' ;;
     (lsp)       echo '~lsp ~dap ~debugger ~repl' ;;
     (sql)       echo '~lazy_sql ~sql' ;;
     (docs)      echo '~doc ~features ~index_hygiene ~comment ~viewer ~check_line ~expectation ~function_coverage ~typst' ;;
-    (host)      echo '~engine_host ~host_ ~multiplayer ~serve ~rpc ~mock ~audio ~crystal' ;;
+    (host)      echo '~engine_host ~host_ ~multiplayer ~serve ~rpc ~mock ~audio ~crystal ~live_world' ;;
     (*)        return 1 ;;
   esac
 }

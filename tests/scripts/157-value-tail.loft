@@ -1,0 +1,247 @@
+// @PLN157 § V-ah (`@FR-R-ValueRecord`) — the value-record TAILS: a FORWARDING tail (a call
+// to an admitted function), a SELECTING tail (a borrowed view read as its fields at the
+// return), the BRANCH-BOUND local (a value branch of admitted calls) and the builder
+// DELIVERED INTO A DESTINATION (a copy FROM a value local materialises the tuple).  The
+// interpreter keeps the record and is the VALUES oracle; every cell asserts its
+// hand-computed value, so a value the native path answers wrong fails here on native
+// alone.  tests/value_record.rs pins which of these functions the emission admits.
+// `LOFT_NO_VALUE_RECORD=1`, `LOFT_POISON=1` and `LOFT_STRICT_STORES=1` must answer identically.
+//
+// One builder per cell family on purpose: a single non-reading site declines a function
+// for the whole program, so a family that must DECLINE (t5, t10, t12) owns its builder and
+// cannot pull `pt` down with it.
+//
+// @falsified-at: hand-measured (two sabotages, 2026-09-14) — `OpDistinctStore` against a
+// value local answering `false` (the materialise into the push slot never runs):
+// `assertion failed: t1 0` on native; the view leaf judged by its dep list instead of the
+// ownership oracle: `n_disc` admitted, every value still exact, and `1 stores not freed at
+// program exit: kt=85 Pt×1` under LOFT_NATIVE_LEAK_CHECK — the LEAK channel, not the value
+// one, is what sees a join read as a tuple.  Restored, the guard is exact on both backends
+// under LOFT_POISON, LOFT_STRICT_STORES and LOFT_NO_VALUE_RECORD.  t14 (added 2026-09-14,
+// hand-measured at 38d50740, the build it catches): the generic instance's join local was
+// typed as its tuple while each arm still minted and deep-copied into it — `error[E0308]:
+// mismatched types` ×6 (`expected DbRef, found (f64, f64)`), the crate does not compile;
+// the interpreter answers `t14 3.5 4.5 1.5 2.5 7` on the same build.  t15 (the same day,
+// hand-measured at 38d50740 with t14's line alone): every value exact and `Warning: 1
+// stores not freed at program exit: kt=85 Pt×2` under LOFT_NATIVE_LEAK_CHECK — the lift's
+// minted store, one per call, on the by-value and the `const` shape alike; the record form
+// (`LOFT_NO_VALUE_RECORD=1`) and the interpreter leave nothing behind.
+struct Pt { ptx: float, pty: float }
+fn pt(px: float, py: float) -> Pt { Pt { ptx: px, pty: py } }
+
+// t1 — the builder DELIVERED into a push slot, `v += [pt(..)]`, under a hoisted push
+// header: the tuple is written into the slot.  Admits `pt`.
+fn t1() {
+  v: vector<Pt> = [];
+  for i in 0..4 { v += [pt((i as float) * 1.5, 10.0 - (i as float))]; }
+  s = 0.0;
+  for p in v { s = (s + p.ptx * 100.0 + p.pty) ?? 0.0; }
+  // 0+10, 150+9, 300+8, 450+7
+  assert(s == 934.0, "t1 {s}");
+  assert(len(v) == 4, "t1 len {len(v)}");
+  println("t1 {s} {len(v)}");
+}
+
+// t2 — a FORWARDING tail: `half`'s result is `pt`'s.  Admits `half`.
+fn half(a: float, b: float) -> Pt { pt(a * 0.5, b * 0.5) }
+fn t2() {
+  h = half(7.0, 9.0);
+  assert(h.ptx == 3.5 && h.pty == 4.5, "t2 {h.ptx} {h.pty}");
+  println("t2 {h.ptx} {h.pty}");
+}
+
+// t3 — a forwarding tail to a DECLINED callee: `mk_kept`'s record is stored, so
+// `fwd_kept` has no tuple to forward.  Both keep their buffers; the values are the same.
+fn mk_kept(a: float) -> Pt { Pt { ptx: a, pty: a + 1.0 } }
+fn fwd_kept(a: float) -> Pt { mk_kept(a * 2.0) }
+fn t3() {
+  keep: vector<Pt> = [];
+  k = mk_kept(3.0);
+  keep += [k];
+  f = fwd_kept(4.0);
+  k0 = keep[0]?;
+  assert(f.ptx == 8.0 && f.pty == 9.0 && k0.ptx == 3.0, "t3 {f.ptx} {f.pty} {k0.ptx}");
+  println("t3 {f.ptx} {f.pty} {len(keep)}");
+}
+
+// t4 — the BRANCH-BOUND local: a value branch of two admitted calls, read fieldwise.
+fn t4() {
+  s = 0.0;
+  for i in 0..4 {
+    c = (i % 2 ?? 0) == 0;
+    t = if c { half(2.0 * (i as float), 4.0) } else { pt((i as float), 1.0) };
+    s = (s + t.ptx * 10.0 + t.pty) ?? 0.0;
+  }
+  // i=0 half(0,4)=(0,2) → 2; i=1 pt(1,1) → 11; i=2 half(4,4)=(2,2) → 22; i=3 pt(3,1) → 31
+  assert(s == 66.0, "t4 {s}");
+  println("t4 {s}");
+}
+
+// t5 — a MIXED-arm branch: one arm an admitted call, the other a record variable.  The
+// local needs a record, so `half5` declines, and with it the `pt5` it forwards.
+fn pt5(px: float, py: float) -> Pt { Pt { ptx: px, pty: py } }
+fn half5(a: float, b: float) -> Pt { pt5(a * 0.5, b * 0.5) }
+fn t5() {
+  base = Pt { ptx: 100.0, pty: 200.0 };
+  s = 0.0;
+  for i in 0..2 {
+    t = if i == 0 { half5(2.0, 6.0) } else { base };
+    s = (s + t.ptx + t.pty) ?? 0.0;
+  }
+  // (1+3) + (100+200)
+  assert(s == 304.0, "t5 {s}");
+  println("t5 {s}");
+}
+
+// t6 — a SELECTING tail: an element read whose `?` default is a zero record.
+fn sel(pts: const vector<Pt>, i: integer) -> Pt { pts[i]? }
+fn t6() {
+  ps: vector<Pt> = [pt(1.0, 2.0), pt(3.0, 4.0), pt(5.0, 6.0)];
+  a = sel(ps, 1);
+  b = sel(ps, 7);
+  assert(a.ptx == 3.0 && a.pty == 4.0 && b.ptx == 0.0 && b.pty == 0.0, "t6 {a.ptx} {a.pty} {b.ptx} {b.pty}");
+  println("t6 {a.ptx} {a.pty} {b.ptx} {b.pty}");
+}
+
+// t7 — the selecting tail with an EARLY RETURN and a clamp: `ctrl` as `smooth` spells it.
+fn ctrl(pts: const vector<Pt>, i: integer, closed: boolean) -> Pt {
+  cn = len(pts);
+  if closed { return pts[i.floor_mod(cn) ?? 0]? }
+  ci = i;
+  if ci < 0 { ci = 0; }
+  if ci > cn - 1 { ci = cn - 1; }
+  pts[ci]?
+}
+fn t7() {
+  ps: vector<Pt> = [pt(1.0, 2.0), pt(3.0, 4.0), pt(5.0, 6.0)];
+  a = ctrl(ps, -1, true);
+  b = ctrl(ps, -1, false);
+  c = ctrl(ps, 9, false);
+  // floor_mod(-1, 3) = 2 → (5, 6); clamp below → (1, 2); clamp above → (5, 6)
+  assert(a.ptx == 5.0 && a.pty == 6.0 && b.ptx == 1.0 && b.pty == 2.0 && c.ptx == 5.0 && c.pty == 6.0, "t7 {a.ptx} {b.ptx} {c.pty}");
+  println("t7 {a.ptx} {b.ptx} {c.pty}");
+}
+
+// t8 — `half_chord` as `smooth` spells it: two selecting calls whose borrow brackets go,
+// then a forwarding tail.
+fn half_chord(pts: const vector<Pt>, i: integer, closed: boolean) -> Pt {
+  hc_a = ctrl(pts, i - 1, closed);
+  hc_b = ctrl(pts, i + 1, closed);
+  pt((hc_b.ptx - hc_a.ptx) * 0.5, (hc_b.pty - hc_a.pty) * 0.5)
+}
+fn t8() {
+  ps: vector<Pt> = [pt(1.0, 2.0), pt(3.0, 4.0), pt(5.0, 6.0)];
+  h = half_chord(ps, 1, false);
+  // ctrl(0) = (1, 2), ctrl(2) = (5, 6) → ((5-1)/2, (6-2)/2)
+  assert(h.ptx == 2.0 && h.pty == 2.0, "t8 {h.ptx} {h.pty}");
+  w = half_chord(ps, 0, true);
+  // ctrl(-1, closed) = (5, 6), ctrl(1) = (3, 4) → (-1, -1)
+  assert(w.ptx == -1.0 && w.pty == -1.0, "t8 wrap {w.ptx} {w.pty}");
+  println("t8 {h.ptx} {h.pty} {w.ptx}");
+}
+
+// t9 — a selecting tail on an OWNED local: the record is built, changed, then read at the
+// return, and its store is released by the value path (it was handed up by the record one).
+fn own() -> Pt {
+  p = Pt { ptx: 8.0, pty: 9.0 };
+  p.ptx = p.ptx + 1.0;
+  p
+}
+fn t9() {
+  o = own();
+  assert(o.ptx == 9.0 && o.pty == 9.0, "t9 {o.ptx} {o.pty}");
+  println("t9 {o.ptx} {o.pty}");
+}
+
+// t10 — a NULLABLE result declines (the tuple has no null), and the discharge's builder
+// arm is a mixed-arm join, so `pt10` declines with it.  Values unchanged.
+fn pt10(px: float, py: float) -> Pt { Pt { ptx: px, pty: py } }
+fn maybe(i: integer) -> Pt? { if i > 0 { pt10(1.0, 1.0) } else { null } }
+fn t10() {
+  m = maybe(1) ?? pt10(5.0, 5.0);
+  n = maybe(0) ?? pt10(5.0, 5.0);
+  assert(m.ptx == 1.0 && n.ptx == 5.0, "t10 {m.ptx} {n.ptx}");
+  println("t10 {m.ptx} {n.ptx}");
+}
+
+// t11 — MUTUAL forwarding: admission is a fixpoint, and a body whose tail is a branch of
+// two admitted calls is admitted with them.
+fn ping(n: integer) -> Pt { if n == 0 { pt(1.0, 2.0) } else { pong(n - 1) } }
+fn pong(n: integer) -> Pt { ping(n) }
+fn t11() {
+  r = ping(3);
+  assert(r.ptx == 1.0 && r.pty == 2.0, "t11 {r.ptx} {r.pty}");
+  println("t11 {r.ptx} {r.pty}");
+}
+
+// t12 — the builder delivered into a FIELD and into an ELEMENT, the same delivered shape
+// as t1 at two other destinations; `pt12` is admitted only if every one is.
+struct Holder { hp: Pt, hn: integer }
+fn pt12(px: float, py: float) -> Pt { Pt { ptx: px, pty: py } }
+fn t12() {
+  h = Holder { hp: pt12(4.0, 5.0), hn: 1 };
+  h.hp = pt12(6.0, 7.0);
+  ps: vector<Pt> = [pt12(0.0, 0.0), pt12(0.0, 0.0)];
+  ps[1] = pt12(8.0, 9.0);
+  p1 = ps[1]?;
+  assert(h.hp.ptx == 6.0 && h.hp.pty == 7.0 && p1.ptx == 8.0 && p1.pty == 9.0, "t12 {h.hp.ptx} {h.hp.pty} {p1.ptx} {p1.pty}");
+  println("t12 {h.hp.ptx} {h.hp.pty} {p1.ptx} {p1.pty} {h.hn}");
+}
+
+// t13 — a JOIN of a parameter's view and a minted default (`a ?? Pt {..}`): typed as a view,
+// but the discharge arm mints, so the tail is `Own::Join` and the function DECLINES (read as
+// a tuple, the mint would be nobody's — the leak check is the channel that sees it).
+fn pt13(px: float, py: float) -> Pt { Pt { ptx: px, pty: py } }
+fn disc(a: Pt? = null) -> Pt { a ?? Pt { ptx: 7.0, pty: 8.0 } }
+fn t13() {
+  d0 = disc();
+  given = pt13(1.0, 2.0);
+  d1 = disc(given);
+  assert(d0.ptx == 7.0 && d0.pty == 8.0 && d1.ptx == 1.0 && d1.pty == 2.0, "t13 {d0.ptx} {d0.pty} {d1.ptx} {d1.pty}");
+  println("t13 {d0.ptx} {d0.pty} {d1.ptx} {d1.pty}");
+}
+
+// t14 — a GENERIC instance's selecting tail.  The instance's `if` is lowered as a
+// STATEMENT join (`if c { __ret_join = a } else { __ret_join = b }`), so each arm is a
+// Set of the join local FROM A PARAMETER'S VIEW — a value local assigned a view, where
+// the record form mints a store per call and deep-copies the view into it.  The value
+// form reads the view's fields into the tuple and mints nothing.  Admits `t_2Pt_gpick`
+// and `t_4Coin_gmax` (a ONE-field record: the `(i64,)` tuple — the shape the generics
+// doc compiles).  The arguments are literals bound to locals, not `pt(..)` calls: a
+// builder's result passed as an argument would decline the builder (t13).
+fn gpick<T>(a: T, b: T, c: boolean) -> T { if c { a } else { b } }
+struct Coin { cents: integer }
+fn OpLt(self: Coin, other: Coin) -> boolean { self.cents < other.cents }
+fn gmax<T: Ordered>(x: T, y: T) -> T { if x > y { x } else { y } }
+fn t14() {
+  p = Pt { ptx: 1.5, pty: 2.5 };
+  q = Pt { ptx: 3.5, pty: 4.5 };
+  r = gpick(p, q, false);
+  s = gpick(p, q, true);
+  m = gmax(Coin { cents: 3 }, Coin { cents: 7 });
+  assert(r.ptx == 3.5 && r.pty == 4.5 && s.ptx == 1.5 && s.pty == 2.5 && m.cents == 7, "t14 {r.ptx} {r.pty} {s.ptx} {s.pty} {m.cents}");
+  println("t14 {r.ptx} {r.pty} {s.ptx} {s.pty} {m.cents}");
+}
+
+// t15 — the SOURCE-LEVEL selecting tail over parameters, by value (`sel15`) and `const`
+// (`sel15c`).  The parser lifts each arm's parameter read into a `__lift_N` temp — a COPY,
+// so the caller's record never aliases the result — and the join local views the lift; the
+// record form hands the lift's store up as the result.  Read as a VIEW leaf, the lift's
+// store was minted and never freed (one record per call, the leak channel again); the
+// lift is an owner by construction and is a leaf only as a VALUE LOCAL, which the value
+// form binds to the tuple of the parameter's reads — no mint at all.  The join and the
+// lift admit each other, so the admission round grows optimistically and prunes.
+fn sel15(a: Pt, b: Pt, c: boolean) -> Pt { if c { a } else { b } }
+fn sel15c(a: const Pt, b: const Pt, c: boolean) -> Pt { if c { a } else { b } }
+fn t15() {
+  p = Pt { ptx: 1.25, pty: 2.25 };
+  q = Pt { ptx: 3.25, pty: 4.25 };
+  r = sel15(p, q, false);
+  s = sel15c(p, q, true);
+  assert(r.ptx == 3.25 && r.pty == 4.25 && s.ptx == 1.25 && s.pty == 2.25, "t15 {r.ptx} {r.pty} {s.ptx} {s.pty}");
+  println("t15 {r.ptx} {r.pty} {s.ptx} {s.pty}");
+}
+
+fn main() {
+  t1(); t2(); t3(); t4(); t5(); t6(); t7(); t8(); t9(); t10(); t11(); t12(); t13(); t14(); t15();
+}

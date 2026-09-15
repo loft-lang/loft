@@ -72,6 +72,24 @@ neither `lock` nor `hash` (its hot accessors are `#[inline]` already), so the co
 to strip the tier from a `--native` build; `--html` keeps its named frames (the browser
 panic hook's frame block is a pinned contract).
 
+**The tier that does not exist yet (owner, 2026-09-15).**  Every tier above keeps the
+null-sentinel and overflow checks that make an integer fault a reported null rather than
+a wrapped number (DESIGN_DECISIONS.md C67, C120): the checks are the semantics, and they
+stay the default because a starting programmer must never be handed a random-looking
+number they cannot debug.  What may come, and is deliberately not built: an OPT-IN
+"proven program" tier for a game that has already run fine with the checks on — licensed
+by the evidence of its own fault-free runs under the checked tier, never by a
+declaration — that emits the plain arithmetic the processor does.  Its shape (owner,
+the same day): a RELEASE BUILD PASS FOR GAMES.  A library published to the registry
+always carries the checks; a game that has passed extended in-house testing under the
+checked build is compiled once more from every source it uses — its libraries recompiled
+at that level inside the game's build, never taken as published binaries — into the
+less safe artefact that ships to Steam or the browser.  A build, not a switch, and
+licensed by the testing's fault-free ledger.  Until it exists, the only way a check is
+retired is a PROOF that the value cannot be the sentinel (`@FR-R-Counter`, the range
+proofs @PLN157 queues), which is portable by construction and — the point — retires the
+check inside a library's ordinary build, so every consumer gets it with the checks on.
+
 ## Current State
 
 **Updated 2026-03-23 — Full native test parity achieved.**
@@ -163,9 +181,17 @@ The generated code uses these loft library types (already public):
 - `loft::vector` — vector operations
 
 Each generated file contains:
-1. An `init(db: &mut Stores)` function that registers all type schemas
-2. Rust functions for each loft function, receiving `stores: &mut Stores` as first arg
+1. An `init(cell: &UnsafeCell<Stores>)` function that registers all type schemas
+2. Rust functions for each loft function, receiving `cell: &UnsafeCell<Stores>` as first arg
 3. A `#[test]` wrapper that calls `init()` then the test function
+
+Every one of those functions opens with `let stores: &mut Stores = unsafe { &mut *cell.get() };`.
+The shared cell is what lets a callee reach the store table while its caller still holds a
+reference into it, which ordinary `&mut` aliasing rules forbid and which the runtime needs:
+a call can free, claim and move records.  The cost is that `rustc` marks nothing `noalias`,
+so no store value survives a call in a register — see
+[PERFORMANCE.md § Native vs Rust 3d](PERFORMANCE.md) for what LLVM could be told instead
+and which stores can carry which claim.
 
 #### The type-id correspondence (and how it is checked)
 

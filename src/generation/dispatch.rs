@@ -90,8 +90,17 @@ impl Output<'_> {
                 "; if _own_store_{name}.store_nr != u16::MAX \
                  && _own_store_{name}.store_nr != var_{name}.store_nr \
                  {{ OpFreeRef(cell, _own_store_{name}, \"{name}(owned)\"); \
-                 _own_store_{name} = DbRef::NULL; }} }}"
+                 _own_store_{name} = DbRef::NULL; }}"
             )?;
+            // A projection the oracle reports as a borrow is still COPIED when
+            // `materialises_element` selects the copy arm, and that copy is this local's own
+            // store — the owner the first-decl branch below teaches the tracker about.  Name
+            // it here too: where a displacement free emptied the slot before the bind, the
+            // copy lands in a FRESH store, and a tracker left null releases nobody.
+            if self.materialises_element(var, to) {
+                write!(w, " _own_store_{name} = var_{name};")?;
+            }
+            write!(w, " }}")?;
             return Ok(());
         }
         if reassign && owned && to.reads_var(var) {
@@ -249,7 +258,10 @@ impl Output<'_> {
             // the caller's buffer is never the store released.  The displaced free is guarded by
             // `_old != place` and released through `free_displaced`, which declines a
             // free-protected store.
+            // @PLN157 § V-ah — a value local holds a tuple in registers, not a store: a
+            // reassignment displaces nothing.
             let owned_ref_reassign = self.declared.contains(&var)
+                && !self.value_record_locals.contains_key(&var)
                 && variables.owns_displaced_store(var, to, self.data)
                 && matches!(
                     to.unspan(),
@@ -287,6 +299,25 @@ impl Output<'_> {
             }
         }
         self.output_set_inner(w, var, to)
+    }
+
+    /// Writes a raw pointer to the store slot a place op names — the element of an
+    /// `OpGetVector`/`OpVectorRef`, the field of an `OpGetField` — as the statements of a block:
+    /// `let __ed = <place>; stores…addr_mut::<T>(…) as *mut T`.  A local link and a `&` parameter
+    /// both link to a place this way; the caller supplies the enclosing `unsafe` block and what it
+    /// makes of the pointer.
+    fn output_place_pointer(
+        &mut self,
+        w: &mut dyn Write,
+        place: &Value,
+        base: &str,
+    ) -> std::io::Result<()> {
+        write!(w, "let __ed = ")?;
+        self.output_code_inner(w, place)?;
+        write!(
+            w,
+            "; stores.store_mut(&__ed).addr_mut::<{base}>(__ed.rec, __ed.pos) as *mut {base}"
+        )
     }
 
     fn output_set_inner(&mut self, w: &mut dyn Write, var: u16, to: &Value) -> std::io::Result<()> {
@@ -337,6 +368,52 @@ impl Output<'_> {
         {
             if to != &Value::Null {
                 let name = sanitize(variables.name(var));
+                // `@FR-B-Ref-Repoint` on a `&` PARAMETER.  The parameter is a `&mut T`, so a
+                // re-point takes a borrow of the new place, unbounded like the raw pointer a local
+                // link holds.  Every other value is the write-back below.
+                // `c = &b` with `b` itself a link: take the pointer `b` holds, for every kind —
+                // a text link is a `*mut String` and a record link a `*mut DbRef`, the same `T` the
+                // parameter borrows.
+                if let Value::Call(d_nr, cargs) = to.unspan()
+                    && self.data.def(*d_nr).name() == "OpVarRef"
+                    && let [src_arg] = cargs.as_slice()
+                    && let Value::Var(src) = src_arg.unspan()
+                {
+                    let base = rust_type(inner.base(), &Context::Variable);
+                    let src_name = sanitize(variables.name(*src));
+                    let ptr = if variables.is_argument(*src) {
+                        format!("(&mut *var_{src_name}) as *mut {base}")
+                    } else {
+                        format!("var_{src_name}")
+                    };
+                    write!(w, "var_{name} = unsafe {{ &mut *({ptr}) }}")?;
+                    return Ok(());
+                }
+                // `c = &v[i]`, `c = &o.f` and `c = &m` on a SCALAR parameter.
+                if crate::data::is_scalar(inner)
+                    && let Value::Call(d_nr, cargs) = to.unspan()
+                {
+                    let op = self.data.def(*d_nr).name().to_string();
+                    let base = rust_type(inner.base(), &Context::Variable);
+                    if matches!(op.as_str(), "OpGetField" | "OpGetVector" | "OpVectorRef") {
+                        write!(w, "var_{name} = unsafe {{ &mut *{{ ")?;
+                        self.output_place_pointer(w, to, &base)?;
+                        write!(w, " }} }}")?;
+                        return Ok(());
+                    }
+                    if op == "OpCreateStack"
+                        && let [src_arg] = cargs.as_slice()
+                        && let Value::Var(src) = src_arg.unspan()
+                        && !matches!(variables.tp(*src).base(), Type::RefVar(_))
+                    {
+                        let src_name = sanitize(variables.name(*src));
+                        write!(
+                            w,
+                            "var_{name} = unsafe {{ &mut *std::ptr::addr_of_mut!(var_{src_name}) }}"
+                        )?;
+                        return Ok(());
+                    }
+                }
                 // @PLN87 P2.2 / @PLN85 t4 — a `&`-param whole-record write-back that
                 // installs a fresh OWNED store (`o = Obj{..}` literal OR `o = mk()`
                 // owned-returning call) must FREE the DISPLACED caller store
@@ -456,6 +533,10 @@ impl Output<'_> {
                     // matched, the bind emitted no right-hand side (`let mut var_pd: … =
                     // as …;`) and rustc reported that instead of the missing case.
                     | Type::Function(_, _, _)
+                    // A value enum is one storage byte, `u8` in the frame and in a store,
+                    // so its link is a `*mut u8` like any other scalar's.  Left out, the bind
+                    // emitted no right-hand side.
+                    | Type::Enum(_, false, _)
             )
         {
             let name = sanitize(variables.name(var));
@@ -491,13 +572,9 @@ impl Output<'_> {
                     self.declared.insert(var);
                     write!(w, "let mut var_{name}: *mut {base} = ")?;
                 }
-                write!(w, "unsafe {{ let __ed = ")?;
-                self.output_code_inner(w, to)?;
-                write!(
-                    w,
-                    "; stores.store_mut(&__ed).addr_mut::<{base}>(__ed.rec, __ed.pos) \
-                     as *mut {base} }}"
-                )?;
+                write!(w, "unsafe {{ ")?;
+                self.output_place_pointer(w, to, &base)?;
+                write!(w, " }}")?;
             } else if let Value::Call(d_nr, cargs) = to.unspan()
                 && self.data.def(*d_nr).name() == "OpCreateStack"
                 && let [src_arg] = cargs.as_slice()
@@ -513,8 +590,31 @@ impl Output<'_> {
                         "let mut var_{name}: *mut {base} = std::ptr::addr_of_mut!(var_{src_name})"
                     )?;
                 }
+            } else if let Value::Call(d_nr, cargs) = to.unspan()
+                && self.data.def(*d_nr).name() == "OpVarRef"
+                && let [src_arg] = cargs.as_slice()
+                && let Value::Var(src) = src_arg.unspan()
+            {
+                // `c = &b`, `b` itself a link: `c` takes the pointer `b` holds.  A local link
+                // already is a `*mut T`; a `&` parameter is a `&mut T`, re-borrowed raw.
+                let src_name = sanitize(variables.name(*src));
+                let ptr = if variables.is_argument(*src) {
+                    format!("(&mut *var_{src_name}) as *mut {base}")
+                } else {
+                    format!("var_{src_name}")
+                };
+                if self.declared.contains(&var) {
+                    write!(w, "var_{name} = {ptr}")?;
+                } else {
+                    self.declared.insert(var);
+                    write!(w, "let mut var_{name}: *mut {base} = {ptr}")?;
+                }
             } else if let Value::Var(src) = to.unspan()
                 && matches!(variables.tp(*src), Type::RefVar(_))
+                // A FIRST bind from a link copies its pointer (#257).  A reassignment `c = b`
+                // writes `b`'s value through `c` and takes the arm below; the re-point is the
+                // `OpVarRef` spelling above.
+                && !self.declared.contains(&var)
             {
                 // @PLN87 L7 — ref-to-ref (`c = &b`, `b` a scalar reference): `c` copies
                 // `b`'s pointer, referencing the same source `b` does (the scalar analogue
@@ -571,12 +671,22 @@ impl Output<'_> {
             && let Type::RefVar(inner) = variables.tp(var)
             && matches!(inner.base(), Type::Reference(..))
             && let Value::Call(d_nr, cargs) = to.unspan()
-            && self.data.def(*d_nr).name() == "OpCreateStack"
+            && matches!(self.data.def(*d_nr).name(), "OpCreateStack" | "OpVarRef")
             && let [src_arg] = cargs.as_slice()
             && let Value::Var(src) = src_arg.unspan()
         {
             let name = sanitize(variables.name(var));
             let src_name = sanitize(variables.name(*src));
+            // `OpVarRef(b)`: `b` is itself a record link, so take the pointer it holds.
+            let target = if self.data.def(*d_nr).name() == "OpVarRef" {
+                if variables.is_argument(*src) {
+                    format!("(&mut *var_{src_name}) as *mut DbRef")
+                } else {
+                    format!("var_{src_name}")
+                }
+            } else {
+                format!("std::ptr::addr_of_mut!(var_{src_name})")
+            };
             // loft#1371 — a `*mut DbRef` into the source's slot, not the source's DbRef by
             // VALUE.  By value the link could carry a read and an interior write but never
             // a WHOLE-VALUE one: `pd = S { n: 2 }` re-pointed the alias and left `d` alone,
@@ -585,13 +695,10 @@ impl Output<'_> {
             // reason: the source local stays readable while the link is alive.
             self.local_record_link.insert(var);
             if self.declared.contains(&var) {
-                write!(w, "var_{name} = std::ptr::addr_of_mut!(var_{src_name})")?;
+                write!(w, "var_{name} = {target}")?;
             } else {
                 self.declared.insert(var);
-                write!(
-                    w,
-                    "let mut var_{name}: *mut DbRef = std::ptr::addr_of_mut!(var_{src_name})"
-                )?;
+                write!(w, "let mut var_{name}: *mut DbRef = {target}")?;
             }
             return Ok(());
         }
@@ -746,6 +853,10 @@ impl Output<'_> {
         ) && matches!(to_unspanned, Value::Call(_, _) | Value::CallRef(_, _))
             && self.data.def(fn_nr).is_loft_defined()
             && !self.data.def(fn_nr).return_adopts_fresh_store()
+            // @PLN157 § V-aa/§ V-ah (`@FR-R-ValueRecord`) — an admitted callee answers a
+            // tuple: nothing to adopt, copy, protect or displace, so its binding is the
+            // plain assignment below, and the buffer argument is dropped there.
+            && !self.value_records.fns.contains_key(&fn_nr)
         {
             let tp_nr = self.data.def(d_nr).known_type();
             let first_bind = !self.declared.contains(&var);
@@ -857,7 +968,15 @@ impl Output<'_> {
             // whose test file happened to name a helper the way the library did (loft#878).
             write!(w, "{{ let _dst = var_{name}; {protect}let _src = ")?;
             if let Value::Call(_, args) = to_unspanned {
-                write!(w, "{}(cell", self.fn_ident(callee))?;
+                // @PLN157 § V-p — the TWIN form here too (`@FR-R-Inputs`): this site spells
+                // the call itself, so it asks the same question `user_fn_call_body` does.
+                let twin_args = self.twin_call_inputs(fn_nr, args);
+                write!(
+                    w,
+                    "{}{}(cell",
+                    self.fn_ident(callee),
+                    if twin_args.is_some() { "__inv" } else { "" }
+                )?;
                 // Emit each arg through the shared `emit_call_arg` helper so the
                 // ABI-B call applies the same per-parameter coercions (boolean→u8,
                 // narrow-int, text deref, typed-null, fn-ref) as the normal call
@@ -866,6 +985,9 @@ impl Output<'_> {
                 for (idx, arg) in args.iter().enumerate() {
                     write!(w, ", ")?;
                     self.emit_call_arg(w, callee, idx, arg)?;
+                }
+                for extra in twin_args.iter().flatten() {
+                    write!(w, ", {extra}")?;
                 }
                 write!(w, ")")?;
             } else {
@@ -1120,9 +1242,20 @@ impl Output<'_> {
         // a nullable whole-value bind reached neither this arm nor any other and fell
         // through to `let mut var_d = var_s;`, a pointer copy: an ALIAS, where `@FR-B-Copy`
         // says the bound variable is INDEPENDENT (loft#1319).
+        //
+        // @PLN157 § V-ah (`@FR-R-ValueRecord`) — a VALUE LOCAL is a tuple in registers,
+        // never a store: a whole-record bind INTO one takes the plain assignment below, and
+        // its right-hand side — a view the gate admitted, registered as a leaf by
+        // `collect_leaves` — emits as the tuple of the view's field reads.  The mint and
+        // the deep copy this arm spells are the store the value form exists to drop.  A
+        // generic INSTANCE's selecting tail is the shape: its `if` lowers as a statement
+        // join whose arms each bind the join local from a parameter's view, where the
+        // source-level function lifts each arm into an expression the tuple path already
+        // read (`tests/scripts/157-value-tail.loft` t14 — E0308 without this line).
         if let (Some(d_nr), Value::Var(src)) =
             (variables.tp(var).base().heap_def_nr(), to_unspanned)
             && variables.tp(*src).base().heap_def_nr().is_some()
+            && !self.value_record_locals.contains_key(&var)
         {
             let src_name = sanitize(variables.name(*src));
             let tp_nr = self.data.def(d_nr).known_type();
@@ -1419,7 +1552,12 @@ impl Output<'_> {
             let tp_str = self.local_rust_type(var, &var_tp);
             write!(w, "let mut var_{name}: {tp_str} = ")?;
         }
-        if matches!(to, Value::Null) && rust_type(variables.tp(var), &Context::Variable) == "DbRef"
+        // @PLN157 § V-ah — a value local's DECLARATION (`x = null` in the IR) binds the
+        // tuple's zero, not a null `DbRef`: the local never names a store.
+        if matches!(to, Value::Null) && self.value_record_locals.contains_key(&var) {
+            write!(w, "Default::default()")?;
+        } else if matches!(to, Value::Null)
+            && rust_type(variables.tp(var), &Context::Variable) == "DbRef"
         {
             let lv = format!("var_{name}");
             self.emit_null_dbref(w, var, &name, &lv, first_assign)?;

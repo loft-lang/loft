@@ -194,7 +194,7 @@ split is a merge that would have coupled two rules that must stay free to differ
 |---|---|---|
 | **no rule names the KEYED FAMILY** as a category — `Col-Hash`/`-Sorted`/`-Index`/`-Spatial`/`-Trie` define one kind each, yet 16 sites tested the category | checklist #3 | ⚠ `is_keyed` cites all five as a stand-in. Minting a family rule is a spec decision |
 | **no rule says a narrow value in a VARIABLE slot is a raw `i64`** — `L-Narrow` states the stored width, `L-Null` the field encoding; the `io.rs` pair depends on neither | checklist #6 | ⚠ the code comments the distinction at length; the rules cannot express it |
-| `formal/binding.md` **OPEN: 1** — D-bind-11's heap-element half | pre-existing | ⚠ needs a representation choice; the record-backed path is proven to work (see the entry) |
+| `formal/binding.md` **OPEN: 2** — D-bind-38 (a link to a text place is refused on both backends) and D-bind-39 (a link to an integer element or field stored in fewer than 8 bytes is refused on both backends — it read or wrote the wrong width silently until the refusal; its closure is a link that carries its target's width) | probing D-bind-36's repoint over every element kind (2026-09-14) | ⚠ open, measured; both are loud refusals now — every silent face found in this walk is closed (see the entries) |
 
 #### B3 — DONE: the two producerless variants are removed (2026-08-24)
 
@@ -480,12 +480,29 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 473 | 449 | **24** |
+| 489 | 465 | **24** |
+
+(2026-09-15, THE JOINED TREE — this branch through loft#1532, ../loft2's drop-release arc through
+its loop-body parameter copy, and @PLN157 through § V-an: 489 · 465 · 24, re-measured rather than
+carried.  The pick left this branch's 488 · 464 standing against § V-an's 486 · 462; neither was
+the union's.)
+
+(2026-09-15: @PLN157 § V-an's `hoist::dropped_reads` — the positional walk that finds a
+value local's dropped reads — unspans at its one discriminating site; the opaque count is
+unchanged.)
+
+(2026-09-14, THE JOINED TREE — @PLN162 step 14 + @PLN157 through § V-am + the quality
+stream through D-bind-37: 488 · 464 · 24, re-measured rather than carried.  The join had
+left both sides' rows standing (476 · 452 and 485 · 461); neither was the union's.)
 
 (2026-09-12: § V-x's `flat_lit_member`/`lit_part_invariant`/`lit_init_invariant` and
 § V-y's `complete_writes`/`group_covers_type` all peel `Span` — every arrival lands on
 the aware side; the opaque count is unchanged.  Re-measured at the § V-aa tip: +3 sites,
-all three on the peel side, **24** opaque still.)
+all three on the peel side, **24** opaque still.  2026-09-14: `scopes::construction_work_refs`
+(`formal/heap.md` D-heap-7 family 6) peels `Span` — +1 site, on the peel side, **24** opaque
+still.  `scopes::branch_tail_vars` (family 7) peels `Span` — +1 site, on the peel side, **24**
+opaque still.  `sink_set_into_arms`' `owners_beside_locals_only` (`formal/binding.md` D-bind-33)
+peels `Span` — +1 site, on the peel side, **24** opaque still.)
 
 
 
@@ -516,7 +533,7 @@ comparison, and reads that op's argument through its own.  The join re-measures 
 above, which is neither branch's number, as every join so far.  The `@FR-O-Complete` walk (B7u)
 added one peeling site — `scopes::adopted_work_refs` reads a
 right-hand side's `If` arms, `Block` and `Insert` tails through their `Span` to find the
-construction work-refs a binding adopts.  loft#1356 added two peeling sites (the eager factory's tail scan reads a `Return` and a `Set` through their `Span`), loft#1362 two (`scopes::in_place_rebuild` reads the statement-level `OpDatabase` through its `Span`, and `copy_hands_off` walks a nested destination place through each level's), loft#1357 one, and the projection-view marking one (`scopes::nullable_view_locals` reads each `Set`'s source through its `Span` to match a `Value::TupleGet` or a projection `Value::Call`) — the statement scan in `scopes::convert` takes a `Span` off an `if` whose condition consumes a `??` temp, so it can put the evaluated condition back under the same position.  The `@FR-O-Witness` walk (B7v) added two peeling sites — `scopes::sink_set_into_arms` reads an `if`/`match`'s arms, `Block` and `Insert` tails through their `Span` to lower a value-branch reassignment to the statement form.  `scripts/ir_walker_audit.py unspan` re-measures it, and
+construction work-refs a binding adopts.  loft#1356 added two peeling sites (the eager factory's tail scan reads a `Return` and a `Set` through their `Span`), loft#1362 two (`scopes::in_place_rebuild` reads the statement-level `OpDatabase` through its `Span`, and `copy_hands_off` walks a nested destination place through each level's), loft#1357 one, and the projection-view marking one (`scopes::nullable_view_locals` reads each `Set`'s source through its `Span` to match a `Value::TupleGet` or a projection `Value::Call`) — the statement scan in `scopes::convert` takes a `Span` off an `if` whose condition consumes a `??` temp, so it can put the evaluated condition back under the same position.  The `@FR-O-Witness` walk (B7v) added two peeling sites — `scopes::sink_set_into_arms` reads an `if`/`match`'s arms, `Block` and `Insert` tails through their `Span` to lower a value-branch reassignment to the statement form.  @PLN157 § V-ac added one — `hoist::substitute_path` re-spells a callee's pure path over the caller's argument through each level's `Span`, so the position survives the substitution — § V-ae three, the fill recogniser's `fill_loop`, `simple_invariant` and `is_break_block`, each reading a loop's statements through their `Span`, and § V-af one, `scopes::tail_calls`, which finds a branch's tail calls through theirs; § V-ah's lift closure (2026-09-15) two, both in `hoist::value_locals_in`, which reads each `Set`'s right-hand side through its `Span` once to tell a call-bound `__lift_` from a view-bound one and once for the value shape it carries; § V-al one, `hoist::walk_loops`, which asks whether a node is a `Loop` through its `Span` while it carries the under-a-loop flag down to the loop-buffer gate; § V-am one, `hoist::push_loop`, which reads each body statement through its `Span` to tell a counted push from the path's own reservation.  `scripts/ir_walker_audit.py unspan` re-measures it, and
 @PLN157 § V-d adds one peeling site — **420 · 396 · 24** — `vectors::element_call_takes_record_buffer` reads a vector-literal element through its `Span` to ask whether it is a buffer-returning call.
 
 @PLN157 § V-g adds one peeling site — **421 · 397 · 24** — `use_analysis::read_only_record_locals` reads every node through its `Span` before classifying the position a variable occurs in (a getter's receiver, a setter's root, a call argument, a literal element), which is the read-only proof the view elision rests on; a shape it does not name denies, so the peel is what keeps a spanned `Var` from reading as an unknown position.
@@ -1533,7 +1550,11 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 62 | **12** | 50 |
+| 63 | **13** | 50 |
+
+(2026-09-15, loft#1532: `Parser::tuple_member_owned_copy` already copied a `TupleGet` member and
+now also copies a record PROJECTION, asked through `is_projection_op`, so it arrives on the
+both-spellings side: 62 → 63 total, 12 → 13 handling `TupleGet`, the call-only column unmoved.)
 
 (The four 2026-09-12 arrivals are @PLN157 § V-x's `lit_init_invariant` /
 `flat_lit_member`, § V-y's `group_covers_type` and § V-z's `element_first`, which match
@@ -2554,7 +2575,103 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 791 | 448 | 6 | **337** |
+| 816 | 474 | 6 | **336** |
+
+(2026-09-15, THE JOINED TREE — the same union: 816 · 474 · 6 · 336, re-measured rather than
+carried.  This branch's 815 · 473 · 5 · 337 and § V-an's 796 · 454 · 6 · 336 each counted its own
+change against a base the other had moved; the opaque column is § V-an's 336 and the ratchet's
+pin (336 / 1317) holds on the union.)
+
+(2026-09-15, later: @PLN157 § V-an — `hoist::dropped_reads` tests a block's result through
+`.base()` (the peeling column) and `object_own_return` reads the buffer a block's result
+names through `Type::depend`, the keystone; the opaque column fell by one and the
+`@FR-N-Shape` ratchet is re-pinned at 336.)
+
+(2026-09-15, loft#1532: `Scopes::member_write` is new and asks the tuple's `Type::Tuple` off a
+`.base()`, and the literal's transfer in `scan_set` makes the same peeled ask inside a function
+already counted, so one function lands in the wrapper-aware column: 814 → 815 total, 472 → 473
+aware, the opaque column and the ratchet unmoved.)
+
+(2026-09-15, loft#1530: `Parser::ref_tuple_subject` is new and asks the subject's `Type::RefVar`
+and `Type::Tuple` off a `.base()`, and `vector_element_cursor_deps` gained the same peeled ask, so
+both land in the wrapper-aware column: 812 → 814 total, 470 → 472 aware, the opaque column
+and the ratchet unmoved.)
+
+(2026-09-15, loft#1529: `Parser::enum_slot_view` and `read_through_enum_slot` are new and read
+the nullable struct-enum's `Type::Enum` off a `.base()`, so both land in the wrapper-aware
+column: 810 → 812 total, 468 → 470 aware, the opaque column and the ratchet unmoved.  The first
+cut matched the truthiness arm's `tp` and a call result's return type bare, and the ratchet
+refused the second.)
+
+(2026-09-14, loft#1526: `Parser::parse_single`'s tuple literal now reads a `&` member through its
+reference, and `match_borrow_source` resolves a tuple member — both read a `Type` variant off a
+`.base()`, so `parse_single` joins the wrapper-aware column: 809 → 810 total, 467 → 468 aware,
+the opaque column and the ratchet unmoved.  The first cut matched `Type::RefVar` and
+`Type::Tuple` bare and the ratchet refused it, though neither type ever carries the wrapper
+outside.)
+
+(2026-09-14, THE JOINED TREE: 809 · 467 · 5 · 337, re-measured rather than carried — each
+side's row counted its own change against a base the other had moved; the ratchet's
+`opaque_tests` is 1317 on the joined tree and on BOTH sources, so the pin @PLN157 took at
+1317 is the union's too.)
+
+(2026-09-15: @PLN157 § V-ah's three bare tests — `hoist::ret_buffer_attr` on the hidden
+buffer's `typedef`, `value_shape` and `site_walk` on a block's `result` — moved from the
+opaque column to the peeling one; the `@FR-N-Shape` ratchet on the GitHub gate refused
+them at 340 → 337 and the emission over the value-record cell corpora is byte-identical
+either way.)
+
+(2026-09-14, @PLN162 step 14: `Parser::build_specialisation` and `stub_admissible` in
+`dispatch.rs`, and the reload host's `set_members` in `live_reload.rs`, are new and read
+`Type::Routine` / `Type::Enum` off a `.base()` — the wrapper-aware column: 800 → 803 total,
+458 → 461 aware, the opaque column and the ratchet unmoved.)
+
+(2026-09-14, @PLN162 step 13: `Parser::dynamic_positions` and `report_dynamic_leaf` are new
+and read `Type` variants — the nullable question spelled first, the shape then read through
+`.base()` — so they land in the wrapper-aware column: 798 → 800 total, 456 → 458 aware,
+the opaque column and the ratchet unmoved.  The first cut matched a def's `returned()` type
+bare in a guard clause and the ratchet refused it.)
+
+(2026-09-14, @PLN162 step 8: `src/parser/dispatch.rs` is new — `dispatch_rank`,
+`ranked_overloads` and `report_selection` read a `Type` variant, every one through `.base()`
+— and `Data::overload_set_takes_enum` likewise; 795 → 798 total, 453 → 456 aware, the opaque
+column and the ratchet unmoved.  The first cut matched a `(a, p)` tuple of already-peeled
+locals, which the audit cannot see through, and the ratchet refused it.)
+
+(2026-09-14, @PLN162 step 6: `Data::exact_overloads` and `Data::admit_overload_set` are new
+functions that read a dispatcher attribute's `Type::Routine`, and `Parser::call` gained the
+same read for its overload listing — all three through `.base()`, so the two new functions
+land in the wrapper-aware column: 793 → 795 total, 451 → 453 aware; the opaque column
+reads 337 and the ratchet's `opaque_tests` is back at its baseline.  The first cut matched
+the attribute's type bare at all three sites and the ratchet refused it twice — the guard doing
+its job on sites written minutes earlier, exactly as loft#1525's note below records.)
+
+(2026-09-14, @PLN162 step 3: `Data::select_fn` is a new function holding the `Type::Optional`
+routing `Parser::call` did inline, and it names the variant exactly as the moved code did, so
+it lands in the wrapper-aware column — 792 → 793 total, 450 → 451 aware; `find_fn` stopped
+discriminating when step 2 moved its ladder into `candidates`, which discriminates in its
+place, so those two cancel.  The opaque column and the ratchet do not move.  The step is a
+byte-identical refactor, so the moved test was kept literal rather than routed through
+`is_nullable_wrapper`, whose answer over the synthetic `__nullable<S>` is not proven to be the
+same question.)
+
+(2026-09-14, THE JOINED TREE: 792 · 450 · 5 · 337, re-measured rather than carried.  Neither
+branch's row was right — this side read `792 · 449 · 6 · 337` and @PLN157's `791 · 449 · 5 · 337`
+— because each counted its own change against a base the other had already moved.  The two notes
+below are both still true about their own commit; the ROW is the join's.  The ratchet's test
+count FELL with § V-ad's extraction and is re-pinned in this commit.)
+
+(2026-09-13: loft#1525's inclusive-range guard adds one discriminating site and it peels
+(`in_type.base()`), so it lands in the wrapper-aware column — 791 → 792 total, 448 → 449 aware,
+and the opaque column and the ratchet's `337 · 1317` do not move.  `@FR-N-Shape` is what made
+that the shape of the fix: the first draft matched `&in_type` unpeeled and the ratchet refused
+it, which is the guard doing exactly its job on a site written minutes earlier.)
+
+(2026-09-13: @PLN157 § V-ad moved one function from the keystone column to the peeling one —
+`hoist::all_scalar_record` now holds the per-field `Type::Routine` test that
+`retbuf_only_writer` carried inline beside its `heap_def_nr` descent, and reads the field
+type through `.base()`; the first cut read it bare and the `@FR-N-Shape` ratchet on the
+GitHub gate refused the new opaque site, which is the ratchet doing its job.)
 
 (2026-09-12: § V-x asks element shapes through `base()`/`peel_link` and § V-y asks the
 schema through `Parts`, not `Type`, and loft#1519's wrapper-identity guard asks through
@@ -2562,7 +2679,15 @@ schema through `Parts`, not `Type`, and loft#1519's wrapper-identity guard asks 
 column and the ratchet's `337 · 1317` have not moved.  That guard is worth the note: written the
 obvious way it matched the attribute type bare, which put it in the OPAQUE column and made
 `make optional-ratchet` fail — a new test is as able to grow this count as new code is.
-§ V-aa's sites land on the see-through side for the same reason.)
+§ V-aa's sites land on the see-through side for the same reason.  2026-09-14:
+`scopes::var_copy_owns` (`formal/heap.md` D-heap-7 family 7, the bind's dep-strip test moved out
+of `scan_set` whole) asks through `.base()` — +1 function, on the see-through side, with the
+opaque column and the ratchet's `337 · 1317` unchanged.  The same change first added an opaque
+function and test, a block-result check its tail walker repeated from `sinkable` where it was
+redundant; it was removed rather than the ratchet raised.  Later the same day:
+`Parser::is_narrow_store_place` (`formal/binding.md` D-bind-39, the refused set of narrow integer
+store places) asks through `.base()` — +1 function, on the see-through side, opaque column and
+ratchet unchanged.)
 
 ⚠ **The FUNCTION row is not the queue, and @PLN153 batch 11 measured why.**  The unit that
 carries the defect is the TEST: the same run reports **2112** shape tests, **1317** of them opaque

@@ -1,0 +1,105 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A nullable struct-enum held in a SLOT — a struct field or a `vector<E?>` element — spells its
+// absence as discriminant 0 in its own bytes (layout.md `(L-Null)`), and a value that LEAVES
+// the slot for a non-slot position is the pointer, `nullref` when absent (`(L-Null-Which)`):
+// a local, a parameter, a return, a `??` or `?` subject, the base of a field read, a
+// condition.  The null TEST already read the tag, so `h.e == null` and `match h.e` were right,
+// while every value use read a sub-reference into the holder — never null — and answered
+// PRESENT with zeroed fields.  The writer half is the same rule from the other end: a null
+// handle written into the slot zeroes the tag, where the record copy it took left the old
+// value in place (loft#1529).
+// @falsified-at: b16a71718 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-null-struct-enum-slot-leaves-its-slot-as-null.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: assert — on the control the first value cell fails: a local bound from an absent
+//   `h.e` answers `any 0`, a present record of zeroes, where the file says `absent`; here every
+//   cell passes.  Not leak: the control is leak-free too, the defect is the value.
+//   ARMED: no instrument — a plain run on either backend reads it.
+//   WITNESS: `x = h.e; tag(x)` over `Holder { e: null }`: `any 0` there, `absent` here.  The
+//   write cells go the same way on the control (`h.e = absent` leaves `h.e` present).
+//   HOLDS: the present-value cells and the `== null` / `match` controls answer the same on
+//   both trees; the leak channel is `none` on both.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+enum Entity { Fireball { n: integer }, IceWall { n: integer } }
+
+struct Holder { e: Entity? }
+
+struct Outer { h: Holder }
+
+fn tag(e: Entity?) -> text { if e { "any {e.n}" } else { "absent" } }
+
+fn get(h: Holder) -> Entity? { h.e }
+
+fn fresh_empty() -> Holder { Holder { e: null } }
+
+fn none_entity() -> Entity? { null }
+
+fn test_a_null_field_leaves_its_slot_as_null() {
+  h = Holder { e: null };
+  x = h.e;
+  assert(tag(x) == "absent", "a local bound from the field: got {tag(x)}");
+  assert(tag(h.e) == "absent", "the field passed on: got {tag(h.e)}");
+  truthy = if h.e { "present" } else { "absent" };
+  assert(truthy == "absent", "the field as a condition: got {truthy}");
+  assert(tag(get(h)) == "absent", "returned from a function: got {tag(get(h))}");
+  assert(tag(h.e ?? Fireball { n: 9 }) == "any 9", "a `??` default is reached: got {tag(h.e ?? Fireball { n: 9 })}");
+  o = Outer { h: Holder { e: null } };
+  assert(tag(o.h.e) == "absent", "a nested field: got {tag(o.h.e)}");
+  assert(tag(fresh_empty().e) == "absent", "a field read off a call result: got {tag(fresh_empty().e)}");
+  assert(h.e == null, "the null test, unchanged");
+  m = match h.e { Fireball { n } => "fire {n}", IceWall { n } => "wall {n}", _ => "none" };
+  assert(m == "none", "match, unchanged: got {m}");
+}
+
+fn test_a_present_field_is_unchanged() {
+  p = Holder { e: Fireball { n: 4 } };
+  x = p.e;
+  assert(tag(x) == "any 4", "local: got {tag(x)}");
+  assert(tag(p.e) == "any 4", "argument: got {tag(p.e)}");
+  assert(tag(get(p)) == "any 4", "return: got {tag(get(p))}");
+  assert(tag(p.e ?? Fireball { n: 9 }) == "any 4", "`??` keeps the present value: got {tag(p.e ?? Fireball { n: 9 })}");
+}
+
+fn test_a_null_element_leaves_its_slot_as_null() {
+  v: vector<Entity?> = [null, Fireball { n: 5 }];
+  assert(tag(v[0]) == "absent", "an absent element passed on: got {tag(v[0])}");
+  assert(tag(v[1]) == "any 5", "a present element passed on: got {tag(v[1])}");
+  truthy = if v[0] { "present" } else { "absent" };
+  assert(truthy == "absent", "an absent element as a condition: got {truthy}");
+  seen = "";
+  for e in v { seen += "{tag(e)};"; }
+  assert(seen == "absent;any 5;", "the loop variable passed on: got {seen}");
+}
+
+fn test_a_null_handle_written_into_the_slot_is_absent() {
+  absent: Fireball? = null;
+  h = Holder { e: Fireball { n: 4 } };
+  h.e = absent;
+  assert(h.e == null, "an assignment from a null handle clears the slot");
+  assert(tag(h.e) == "absent", "and reads back absent: got {tag(h.e)}");
+  k = Holder { e: absent };
+  assert(tag(k.e) == "absent", "a literal from a null handle: got {tag(k.e)}");
+  src = Holder { e: null };
+  dst = Holder { e: IceWall { n: 7 } };
+  dst.e = src.e;
+  assert(tag(dst.e) == "absent", "slot to slot, absent: got {tag(dst.e)}");
+  full = Holder { e: IceWall { n: 8 } };
+  dst.e = full.e;
+  assert(tag(dst.e) == "any 8", "slot to slot, present: got {tag(dst.e)}");
+  dst.e = none_entity();
+  assert(tag(dst.e) == "absent", "from a call returning null: got {tag(dst.e)}");
+  v: vector<Entity?> = [Fireball { n: 1 }, IceWall { n: 2 }];
+  v[0] = absent;
+  assert(tag(v[0]) == "absent", "an element written from a null handle: got {tag(v[0])}");
+  v[1] = src.e;
+  assert(tag(v[1]) == "absent", "an element written from an absent field: got {tag(v[1])}");
+}
+
+fn main() {
+  test_a_null_field_leaves_its_slot_as_null();
+  test_a_present_field_is_unchanged();
+  test_a_null_element_leaves_its_slot_as_null();
+  test_a_null_handle_written_into_the_slot_is_absent();
+}

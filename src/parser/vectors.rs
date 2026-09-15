@@ -793,6 +793,17 @@ impl Parser {
                 // "Tuple arity mismatch: left has 0 names".  Only a tuple being CONSTRUCTED
                 // as a value is a construction.
                 if !self.lexer.peek_token("=") {
+                    // A `&` member is the VALUE read through its reference, as every other
+                    // use of a `&` binding is (LOFT.md § References): the member's type is the
+                    // pointee, and the load of the `&` variable reads through the link by that
+                    // type.  Kept as the link, the member had a type no tuple slot can hold and
+                    // `(n, 2)` over `n: &integer` stopped code generation (loft#1526).  A
+                    // destructure TARGET is excluded above: there a `&` names the place.
+                    for t in &mut types {
+                        if let Type::RefVar(pointee) = t.base() {
+                            *t = (**pointee).clone();
+                        }
+                    }
                     for (i, v) in values.iter_mut().enumerate() {
                         if let Some(owned) = self.tuple_member_owned_copy(v, &types[i]) {
                             types[i] = owned;
@@ -5664,6 +5675,24 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     return None;
                 }
                 Value::TupleGet(*base, *i)
+            }
+            // loft#1532 — a record PROJECTION (`h.s`, `v[0]`) names a place exactly as a local
+            // does, so `@FR-T-Cons` copies it too.  Stored as the handle, `(1, h.s)` and
+            // `w.1 = h.s` were second names for the field's record.
+            //
+            // Not a record that owns a DROPPABLE: copying one out of a live container leaves the
+            // resource in two records with nothing moving the container's release to the copy —
+            // the double release its struct-field, payload, push and vector-literal siblings
+            // already carry in `tests/ownership_drop_gate.baseline` (`c_field_field`,
+            // `c_elem_push`, …).  Until that hand-off exists such a member keeps its alias, which
+            // releases once.
+            Value::Call(d, _)
+                if crate::use_analysis::is_projection_op(&self.data, *d)
+                    && tp
+                        .heap_def_nr()
+                        .is_some_and(|r| !self.data.owns_droppable(r)) =>
+            {
+                val.unspan().clone()
             }
             _ => return None,
         };

@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `&` link reads and writes a whole integer, so it cannot honour an integer element or field
+// that is stored in fewer bytes.  loft refuses such a link at the `&` rather than let it read the
+// neighbouring bytes or quietly bind a copy (`binding.md (B-Ref-Reshape)`, D-bind-39): one error per
+// refused `&`, for a `u8`, `i8`, `u16` or `i32` element, a nullable narrow element, and a narrow
+// field.  Every expected error below is matched exactly once, so a second error for the same `&`
+// fails the file.
+//
+// A narrow LOCAL links correctly and is not refused — its guard is
+// `a-link-to-a-narrow-integer-local-reads-and-writes-it.loft`.
+//
+// @falsified-at: b3b36cf2d — interpret exit 1 -> 0, interpret expectations FAIL/8 -> 0/8 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/8 -> 0/8 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-link-to-a-narrow-integer-store-place-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/8 -> 0/8 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/8 -> 0/8 (the suite's verdict, not a count of matches)
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
+// CHANNEL: the expected diagnostics, one per refused `&`.
+//
+// @EXPECT_ERROR: cannot link to an integer element or field that is stored in fewer than 8 bytes
+// @EXPECT_ERROR: cannot link to an integer element or field that is stored in fewer than 8 bytes
+// @EXPECT_ERROR: cannot link to an integer element or field that is stored in fewer than 8 bytes
+// @EXPECT_ERROR: cannot link to an integer element or field that is stored in fewer than 8 bytes
+// @EXPECT_ERROR: cannot link to an integer element or field that is stored in fewer than 8 bytes
+// @EXPECT_ERROR: cannot link to an integer element or field that is stored in fewer than 8 bytes
+// @EXPECT_ERROR: cannot link to an integer element or field that is stored in fewer than 8 bytes
+// @EXPECT_ERROR: cannot link to an integer element or field that is stored in fewer than 8 bytes
+
+struct B { a: u8, b: u8, n: integer }
+struct Q { a: i32, n: integer }
+
+fn u8_element() { u: vector<u8> = [1, 250, 7]; c = &u[1]; c = 200; }
+fn i8_element() { e: vector<i8> = [1, -5, 7]; c = &e[1]; c = -100; }
+fn u16_element() { u: vector<u16> = [1, 60000, 7]; c = &u[1]; c = 200; }
+fn nullable_u8_element() { u: vector<u8?> = [1, null, 7]; c = &u[2]; c = 9; }
+fn u8_field() { o = B{a: 250, b: 9, n: 7}; c = &o.a; c = 200; }
+fn i32_field() { o = Q{a: -5, n: 7}; c = &o.a; c = 200; }
+// A repoint between two narrow elements: both `&` are refused.
+fn u8_repoint() { u: vector<u8> = [1, 250, 7]; c = &u[0]; c = &u[1]; c = 200; }
+
+fn main() {
+  u8_element();
+  i8_element();
+  u16_element();
+  nullable_u8_element();
+  u8_field();
+  i32_field();
+  u8_repoint();
+}

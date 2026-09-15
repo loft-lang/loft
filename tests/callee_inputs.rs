@@ -80,6 +80,58 @@ const CALLS: &[(&str, usize)] = &[
     ("n_c18", 0), // a `&` view rebound in the loop
 ];
 
+/// @PLN157 § V-ac — the PATH-argument half: a callee indexing a plain VECTOR parameter, or a
+/// record parameter's vector field, whose caller passes a pure path (`br.img`, `h.cv`); and a
+/// callee answering a scalar record through its return buffer.  Cells and predictions:
+/// `bytecode-comparisons/V-ac-vector-param-cells.loft`.
+const CELLS_AC: &str =
+    "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ac-vector-param-cells.loft";
+
+/// Every twin in the § V-ac corpus takes exactly one header.
+const TWINS_AC: &[&str] = &[
+    "n_sample", // the brush_sample shape: a return-buffer writer over a vector parameter
+    "n_rd",     // a record parameter's `data`
+    "n_fs",     // a float vector parameter
+    "n_s2",     // transitive: forwards `img` to sample, its buffer to sample's
+    "n_first",  // the second reader sharing k15's header
+    "n_s3",     // transitive through a record parameter's path `c.data`
+    "n_flag",   // a boolean vector: the header admitted, the read left unfused
+];
+
+/// No twin, and why.
+const NO_TWIN_AC: &[&str] = &[
+    "n_rb_copy", // rebinds its parameter by copy: a store write
+    "n_grow",    // pushes to its parameter
+    "n_cnt",     // length only
+];
+
+/// `(caller, twin calls in its body)`.
+const CALLS_AC: &[(&str, usize)] = &[
+    ("n_k1", 1),      // the brush shape through `br.img`
+    ("n_k2", 0),      // rb_copy has no twin
+    ("n_k3", 0),      // grow has no twin, and the loop hoists nothing
+    ("n_k4", 2),      // two paths, two headers
+    ("n_k5", 2),      // an empty and an omitted vector: headers of length 0
+    ("n_k6", 0),      // a conditional as the argument
+    ("n_k7a", 1),     // an in-place element write beside the call
+    ("n_k7b", 1),     // the path held by a PUSH header, handed at the call
+    ("n_k8", 0),      // the root is a `&` view rebound in the loop
+    ("n_k9", 1),      // a record parameter's field through the path `h.cv`
+    ("n_k10", 0),     // cnt
+    ("n_k11", 1),     // nested loops: one header, one call site
+    ("n_k12", 1),     // a float vector through `f.data`
+    ("n_k13", 1),     // s2 through the delivery-call emission
+    ("n_s2__inv", 1), // … whose twin calls sample's twin
+    ("n_k14", 1),     // through a `&` alias of the record
+    ("n_k15", 2),     // two callees over one path
+    ("n_k16", 1),     // a nested path `h.br.img`
+    ("n_k17", 0),     // outside any loop
+    ("n_k18", 1),     // s3 with a plain record variable
+    ("n_s3__inv", 1), // … whose twin calls first's twin
+    ("n_k19", 0),     // a call result as the argument
+    ("n_k20", 1),     // the boolean vector through `f.flags`
+];
+
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
@@ -149,6 +201,49 @@ fn each_callee_earns_exactly_the_twin_predicted_and_each_call_takes_it() {
             .unwrap_or_else(|| panic!("{name} was not emitted"));
         assert_eq!(*got, *calls, "{name}: twin calls in its body");
     }
+    let _ = std::fs::remove_file(&out);
+}
+
+#[test]
+fn a_path_argument_hands_its_header_to_the_twin() {
+    let out = std::env::temp_dir().join("loft_callee_inputs_ac_on.rs");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS_AC);
+    let fns = functions(&emit(&src, &out, &[]));
+    for name in TWINS_AC {
+        let twin = format!("{name}__inv");
+        let (sig, _) = fns
+            .get(&twin)
+            .unwrap_or_else(|| panic!("{twin} was not emitted"));
+        assert!(
+            sig.contains(", __ih_0: vector::VecHeader)"),
+            "{twin}: one header input, got:\n{sig}"
+        );
+    }
+    for name in NO_TWIN_AC {
+        assert!(fns.contains_key(*name), "{name} was not emitted");
+        assert!(
+            !fns.contains_key(&format!("{name}__inv")),
+            "{name} must earn no twin"
+        );
+    }
+    for (name, calls) in CALLS_AC {
+        let (_, got) = fns
+            .get(*name)
+            .unwrap_or_else(|| panic!("{name} was not emitted"));
+        assert_eq!(*got, *calls, "{name}: twin calls in its body");
+    }
+    let _ = std::fs::remove_file(&out);
+}
+
+#[test]
+fn the_switch_emits_no_twin_and_no_twin_call_for_a_path_argument() {
+    let out = std::env::temp_dir().join("loft_callee_inputs_ac_off.rs");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS_AC);
+    let rust = emit(&src, &out, &[("LOFT_NO_CALLEE_INPUTS", "1")]);
+    assert!(
+        !rust.contains("__inv("),
+        "LOFT_NO_CALLEE_INPUTS=1 must emit no twin and call none"
+    );
     let _ = std::fs::remove_file(&out);
 }
 

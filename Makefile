@@ -519,7 +519,12 @@ TEST_ENV := TMPDIR=$(TEST_SCRATCH) LOFT_TMPDIR=$(TEST_SCRATCH)
 # answered 3.  `ci-guard`'s own sibling loop skips self the same way.
 # `nproc` is Linux; macOS spells it `sysctl -n hw.ncpu` — a bare $(nproc) made the
 # recipe die with `nproc: command not found` on every Mac (same 2808e183 throttle).
-CI_NPROC = $$( nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4 )
+# On macOS the default is HALF the logical cores, measured (2026-09-13, M3 Max, 10 P + 4 E
+# cores, a 243-test slice of the suite): 14 threads 390 s, 7 threads 325 s — the tests
+# spawn their own rustc/loft processes, the last four threads land on efficiency cores, and
+# every exec pays the endpoint-security agent, so more threads meant more waiting.  10 is
+# untested; `CI_JOBS=<n>` overrides on any OS.  CI_BUDGET.md § A macOS box.
+CI_NPROC = $$( if [ -n "$${CI_JOBS:-}" ]; then echo "$${CI_JOBS}"; elif [ "$$(uname -s)" = Darwin ]; then n=$$(sysctl -n hw.ncpu 2>/dev/null || echo 8); echo $$(( n / 2 )); else nproc 2>/dev/null || echo 4; fi )
 # A test/build thread costs roughly 0.7 GiB at peak (rustc for native fixtures,
 # the codegen units of the release build), so sizing by cores alone over-commits
 # a small-memory box into swap — measured on a 14 GiB laptop: 20 threads drove
@@ -2164,7 +2169,10 @@ ci: ci-guard
 	mkdir -p $(TEST_SCRATCH) && \
 	{ scripts/sweep_scratch.sh $(TEST_SCRATCH) >> result.txt 2>&1 || true; } && \
 	export $(TEST_ENV) && \
-	{ if [ -n "$${LOFT_GATE_PARALLEL:-}" ]; then :; else \
+	{ if [ -n "$${LOFT_GATE_PARALLEL:-}" ]; then :; \
+	  elif ! command -v flock >/dev/null 2>&1; then \
+	    echo "make ci: no flock on this box (macOS ships none; brew install flock) — running UNSERIALISED, as LOFT_GATE_PARALLEL=1 would" | tee -a result.txt; \
+	  else \
 	    exec 9>>/tmp/loft-gate.lock; \
 	    if ! flock -n 9; then \
 	      echo "make ci: QUEUED behind another gate on this box since $$(date -u +%TZ) — $$(scripts/gate_lock.sh why)" | tee -a result.txt; \
@@ -2199,7 +2207,7 @@ ci: ci-guard
 	(cargo nextest --version >/dev/null 2>&1 || cargo install cargo-nextest --locked) >> result.txt 2>&1 && \
 	./target/release/loft cache warm --from tests >> result.txt 2>&1 && \
 	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; export NEXTEST_TEST_THREADS=$$jobs; } && \
-	{ first=$$(scripts/nextest_priority.sh 2>>result.txt); echo "make ci: tests on $$jobs thread(s), $$gates gate(s) live$${first:+; the diff's subjects run first}; stopping after $(CI_MAX_FAIL) failure(s)" >> result.txt; } && \
+	{ first=$$(scripts/nextest_priority.sh 2>>result.txt); echo "make ci: tests on $$jobs thread(s), $$gates gate(s) live$${first:+; the changed subjects run first}; stopping after $(CI_MAX_FAIL) failure(s)" >> result.txt; } && \
 	cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first >> result.txt 2>&1 && \
 	echo 'CI-RESULT: ALL GATES PASSED' >> result.txt || \
 	  { echo 'CI-RESULT: FAILED — see the last failing command above in result.txt' >> result.txt; rm -f .ci-running; exit 1; } ) 9>&-

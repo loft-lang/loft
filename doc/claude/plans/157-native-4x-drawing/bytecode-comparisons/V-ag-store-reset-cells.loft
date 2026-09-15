@@ -1,0 +1,75 @@
+// @PLN157 § V-ag cells — clearing a store-ROOT vector resets its store (@FR-H-ClearReset).
+// A vector that is the root of its own store owns everything in that store: its elements and
+// whatever they own were all claimed inside it.  Clearing such a vector therefore kills the
+// store's whole extent, so the store is RESET in one step instead of walking every element
+// and returning each owned block to the free tree one at a time.  The values are what the
+// element-walk release gives either way; what the unit changes is how the space comes back,
+// so `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` are the channels that see a wrong reset and
+// the interpreter is the oracle for the values.  Expected values are hand-computed per cell.
+struct Frond { fpts: vector<float>, fwid: vector<float> }
+struct Leaf { name: text, n: integer }
+struct Deep { rows: vector<Frond> }
+struct Flat { a: float, b: float }
+
+// The recycled-buffer shape: a fn returning a vector of heap-owning records, called in a loop.
+fn make(n: integer) -> vector<Frond> {
+  mk_out: vector<Frond> = [];
+  for i in 0..n {
+    mk_p: vector<float> = [];
+    mk_w: vector<float> = [];
+    for k in 0..3 { mk_p += [(i * 10 + k) as float]; mk_w += [0.5]; }
+    mk_out += [Frond { fpts: mk_p, fwid: mk_w }];
+  }
+  mk_out
+}
+fn total(fs: const vector<Frond>) -> integer {
+  t = 0.0;
+  for f in fs { for p in f.fpts { t += p; } for w in f.fwid { t += w; } }
+  (t * 10.0) as integer
+}
+
+// r1 — the fronds shape: the buffer is recycled every call.  Each call: points 0+1+2 = 3 for
+// i=0, 10+11+12 = 33 for i=1, plus widths 0.5×6 = 3 → 39.0 → 390.  Four calls of len 2.
+fn r1() { s = 0; n = 0; for _c in 0..4 { v = make(2); s += total(v); n += len(v); } println("r1 {s} {n}"); }
+// r2 — one call only, no recycle: 390, len 2.
+fn r2() { v = make(2); println("r2 {total(v)} {len(v)}"); }
+// r3 — the elements own NO heap: a plain float vector takes the length reset, never the walk.
+fn r3() { s = 0.0; for _c in 0..4 { v: vector<float> = []; for i in 0..5 { v += [i as float]; } for x in v { s += x; } } println("r3 {(s * 10.0) as integer}"); }
+// r4 — the result ESCAPES: each call's vector is kept in an outer collection, so nothing may
+// be reset out from under it.  Four calls of len 2 kept → 8 fronds, each 390 → 1560.
+fn r4() { keep: vector<Frond> = []; for _c in 0..4 { v = make(2); for f in v { keep += [f]; } } s = 0; for f in keep { s += total([f]); } println("r4 {s} {len(keep)}"); }
+// r5 — NESTED heap: a record holding a vector of heap-owning records.
+fn r5() { s = 0; for _c in 0..3 { d = Deep { rows: make(2) }; s += total(d.rows); } println("r5 {s}"); }
+// r6 — TEXT elements own heap too.  Names "a0".."a2" kept, lengths 2 each → 6, count 3.
+fn r6() { s = 0; n = 0; for _c in 0..3 { v: vector<Leaf> = []; for i in 0..3 { v += [Leaf { name: "a{i}", n: i }]; } for l in v { s += size(l.name) + l.n; } n += len(v); } println("r6 {s} {n}"); }
+// r7 — an EMPTY result each call: nothing to release, the reset must leave a usable store.
+fn r7() { n = 0; for _c in 0..4 { v = make(0); n += len(v); } println("r7 {n}"); }
+// r8 — alternating lengths, so the store grows and shrinks across calls.  1+3+1+3 elements.
+fn r8() { n = 0; s = 0; for c in 0..4 { v = make(if c % 2 == 0 { 1 } else { 3 }); n += len(v); s += total(v); } println("r8 {n} {s}"); }
+// r9 — TWO buffers live at once: both cleared per iteration, neither may take the other's.
+fn r9() { s = 0; n = 0; for _c in 0..3 { a = make(1); b = make(2); s += total(a) + total(b); n += len(a) + len(b); } println("r9 {s} {n}"); }
+// r10 — the previous call's vector is still READ after the next call ran: the reset of the
+// second call's buffer must not touch the first's.  Both are separate stores.
+fn r10() { a = make(2); b = make(1); s = total(a) + total(b); println("r10 {s} {len(a)} {len(b)}"); }
+// r11 — a no-heap RECORD element (Flat): owns_heap is false, so the length reset path.
+fn r11() { s = 0.0; for _c in 0..3 { v: vector<Flat> = []; for i in 0..4 { v += [Flat { a: i as float, b: 0.25 }]; } for f in v { s += f.a + f.b; } } println("r11 {(s * 10.0) as integer}"); }
+// r12 — many calls, so a leak or a failure to reuse shows as growth rather than a wrong value.
+fn r12() { s = 0; for _c in 0..50 { v = make(2); s += len(v); } println("r12 {s}"); }
+
+// r13 — the present-versus-absent question, and why it cannot be ASKED from loft.  A heap
+// value is falsy only when absent, so an emptied vector and a dropped one would differ in a
+// condition — but the compiler folds `if <vector local>` to true (it warns
+// `constant-condition` right here), so no program can observe whether a cleared buffer kept
+// its record.  This cell therefore pins the FOLD and cannot fail on the reset: it reads 30
+// either way.  The reset re-establishes the record regardless, because an equivalence that
+// rests on a fold is one a later change to that fold would silently break.
+fn present(n: integer) -> vector<Frond> {
+  pr_out: vector<Frond> = [];
+  pr_seen = if pr_out { 1.0 } else { 0.0 };
+  pr_out += [Frond { fpts: [pr_seen], fwid: [1.0] }];
+  for i in 0..n { pr_out += [Frond { fpts: [(i + 5) as float], fwid: [1.0] }]; }
+  pr_out
+}
+fn r13() { s = 0.0; for _c in 0..3 { v = present(1); s += v[0]?.fpts[0] ?? -1.0; } println("r13 {(s * 10.0) as integer}"); }
+
+fn main() { r1(); r2(); r3(); r4(); r5(); r6(); r7(); r8(); r9(); r10(); r11(); r12(); r13(); }

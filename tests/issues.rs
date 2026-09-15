@@ -18633,3 +18633,43 @@ fn a_guarded_wildcard_still_admits_the_arms_after_it() {
 }"
     );
 }
+
+/// loft#1528 — `τ? ⤳ σ?` is `τ ⤳ σ` inside the wrapper.  A `Fireball?` handed to an `Entity?`
+/// parameter, local or field, and an `i8?` handed to an `i16?` parameter, compile with NO
+/// diagnostic — `code!` fails on any it was not told to expect, which is what makes this the
+/// absence pin a `.loft` `@EXPECT_WARNING` cannot be — and the values arrive.
+#[test]
+fn a_nullable_variant_into_its_enums_nullable_slot_reports_nothing() {
+    code!(
+        "enum Entity { Fireball { n: integer }, IceWall { n: integer } }
+struct Holder { e: Entity? }
+fn tag(e: Entity?) -> text { if e { \"any {e.n}\" } else { \"absent\" } }
+fn wider(v: i16?) -> text { if v { \"v {v}\" } else { \"v-null\" } }
+fn probe() -> text {
+  p: Fireball? = Fireball { n: 4 };
+  z: Fireball? = null;
+  l: Entity? = p;
+  h = Holder { e: p };
+  s: i8? = 3;
+  \"{tag(p)}|{tag(z)}|{tag(l)}|{tag(h.e)}|{wider(s)}\"
+}"
+    )
+    .expr("probe()")
+    .result(Value::str("any 4|absent|any 4|any 4|v 3"));
+}
+
+/// loft#1531 — a `&`-source tuple local's record takes the LOCAL's member types only where the
+/// literal's members convert into them.  A member the declaration does not accept stays the
+/// bind's refusal: the record is never laid out for a type its value does not have.
+#[test]
+fn a_reference_source_tuple_whose_member_the_declaration_refuses_is_still_refused() {
+    code!(
+        "enum Entity { Fireball { n: integer }, IceWall { n: integer } }
+fn bump(t: &(integer, Entity)) { t.0 = t.0 + 1; }
+fn test() { w: (integer, Entity) = (1, \"x\"); bump(w); print(\"{w.0}\"); }"
+    )
+    .error(
+        "Variable 'w' cannot change type from (integer, Entity) to (integer, text); use a new \
+variable name or cast with 'as' at a_reference_source_tuple_whose_member_the_declaration_refuses_is_still_refused:3:45",
+    );
+}

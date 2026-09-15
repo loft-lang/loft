@@ -1,0 +1,126 @@
+// A CEILING PROBE, not a guard: run it by hand with `loft --native-release`.  It is the
+// @PLN157 § V-ah measurement — the same kernel written twice, so the two rows are the
+// before and after of returning the two floats instead of the record.
+// Ceiling probe for @PLN157: what does `smooth_pts` cost if `ctrl` and `half_chord` return
+// their two floats instead of a Pt record?  Same arithmetic, same output, so the hashes must
+// match; the difference is the borrow-view return machinery (the protect bracket, the
+// adopt-or-copy delivery, the discharge buffer's free).
+const SMOOTH_SAMPLES = 10;
+struct Pt { ptx: float, pty: float }
+fn pt(px: float, py: float) -> Pt { Pt { ptx: px, pty: py } }
+
+fn outline() -> vector<Pt> {
+  [pt(100.0, 100.0), pt(80.0, 140.0), pt(88.0, 193.0),
+   pt(100.0, 200.0), pt(112.0, 193.0), pt(120.0, 140.0)]
+}
+
+// ── A: the shipped shape — a record-returning ctrl and half_chord ──────────────
+fn ctrl(pts: const vector<Pt>, i: integer, closed: boolean) -> Pt {
+  cn = len(pts);
+  if closed { return pts[i.floor_mod(cn) ?? 0]? }
+  ci = i;
+  if ci < 0 { ci = 0; }
+  if ci > cn - 1 { ci = cn - 1; }
+  pts[ci]?
+}
+fn half_chord(pts: const vector<Pt>, i: integer, closed: boolean) -> Pt {
+  hc_a = ctrl(pts, i - 1, closed);
+  hc_b = ctrl(pts, i + 1, closed);
+  pt((hc_b.ptx - hc_a.ptx) * 0.5, (hc_b.pty - hc_a.pty) * 0.5)
+}
+fn smooth_a(pts: const vector<Pt>, flags: const vector<boolean>, closed: boolean) -> vector<Pt> {
+  sp_n = len(pts);
+  sp_out: vector<Pt> = [];
+  sp_out += [pts[0]?];
+  sp_segs = if closed { sp_n } else { sp_n - 1 };
+  for i in 0..sp_segs {
+    sp_ia = i % sp_n ?? 0;
+    sp_ib = (i + 1) % sp_n ?? 0;
+    sp_a = pts[sp_ia]?;
+    sp_b = pts[sp_ib]?;
+    sp_chx = sp_b.ptx - sp_a.ptx;
+    sp_chy = sp_b.pty - sp_a.pty;
+    sp_ta = if flags[sp_ia]? { half_chord(pts, sp_ia, closed) } else { pt(sp_chx, sp_chy) };
+    sp_tb = if flags[sp_ib]? { half_chord(pts, sp_ib, closed) } else { pt(sp_chx, sp_chy) };
+    for k in 1..=SMOOTH_SAMPLES {
+      sp_t = ((k as float) / (SMOOTH_SAMPLES as float)) ?? 0.0;
+      sp_t2 = sp_t * sp_t;
+      sp_t3 = sp_t2 * sp_t;
+      sp_h00 = 2.0 * sp_t3 - 3.0 * sp_t2 + 1.0;
+      sp_h10 = sp_t3 - 2.0 * sp_t2 + sp_t;
+      sp_h01 = -2.0 * sp_t3 + 3.0 * sp_t2;
+      sp_h11 = sp_t3 - sp_t2;
+      sp_out += [pt(sp_h00 * sp_a.ptx + sp_h10 * sp_ta.ptx + sp_h01 * sp_b.ptx + sp_h11 * sp_tb.ptx,
+                    sp_h00 * sp_a.pty + sp_h10 * sp_ta.pty + sp_h01 * sp_b.pty + sp_h11 * sp_tb.pty)];
+    }
+  }
+  sp_out
+}
+
+// ── B: the ceiling — the same two functions returning their fields ─────────────
+fn ctrl_t(pts: const vector<Pt>, i: integer, closed: boolean) -> (float, float) {
+  cn = len(pts);
+  ci = i;
+  if closed { ci = i.floor_mod(cn) ?? 0; } else {
+    if ci < 0 { ci = 0; }
+    if ci > cn - 1 { ci = cn - 1; }
+  }
+  ct_e = pts[ci]?;
+  (ct_e.ptx, ct_e.pty)
+}
+fn half_chord_t(pts: const vector<Pt>, i: integer, closed: boolean) -> (float, float) {
+  hc_a = ctrl_t(pts, i - 1, closed);
+  hc_b = ctrl_t(pts, i + 1, closed);
+  ((hc_b.0 - hc_a.0) * 0.5, (hc_b.1 - hc_a.1) * 0.5)
+}
+fn smooth_b(pts: const vector<Pt>, flags: const vector<boolean>, closed: boolean) -> vector<Pt> {
+  sp_n = len(pts);
+  sp_out: vector<Pt> = [];
+  sp_out += [pts[0]?];
+  sp_segs = if closed { sp_n } else { sp_n - 1 };
+  for i in 0..sp_segs {
+    sp_ia = i % sp_n ?? 0;
+    sp_ib = (i + 1) % sp_n ?? 0;
+    sp_a = pts[sp_ia]?;
+    sp_b = pts[sp_ib]?;
+    sp_chx = sp_b.ptx - sp_a.ptx;
+    sp_chy = sp_b.pty - sp_a.pty;
+    sp_ta = if flags[sp_ia]? { half_chord_t(pts, sp_ia, closed) } else { (sp_chx, sp_chy) };
+    sp_tb = if flags[sp_ib]? { half_chord_t(pts, sp_ib, closed) } else { (sp_chx, sp_chy) };
+    for k in 1..=SMOOTH_SAMPLES {
+      sp_t = ((k as float) / (SMOOTH_SAMPLES as float)) ?? 0.0;
+      sp_t2 = sp_t * sp_t;
+      sp_t3 = sp_t2 * sp_t;
+      sp_h00 = 2.0 * sp_t3 - 3.0 * sp_t2 + 1.0;
+      sp_h10 = sp_t3 - 2.0 * sp_t2 + sp_t;
+      sp_h01 = -2.0 * sp_t3 + 3.0 * sp_t2;
+      sp_h11 = sp_t3 - sp_t2;
+      sp_out += [pt(sp_h00 * sp_a.ptx + sp_h10 * sp_ta.0 + sp_h01 * sp_b.ptx + sp_h11 * sp_tb.0,
+                    sp_h00 * sp_a.pty + sp_h10 * sp_ta.1 + sp_h01 * sp_b.pty + sp_h11 * sp_tb.1)];
+    }
+  }
+  sp_out
+}
+
+fn hash_of(v: const vector<Pt>) -> integer {
+  h = 2166136261;
+  for p in v { h = ((h ^ ((p.ptx * 1000.0) as integer)) * 16777619) & 4294967295; h = ((h ^ ((p.pty * 1000.0) as integer)) * 16777619) & 4294967295; }
+  h
+}
+
+fn main() {
+  pts = outline();
+  flags: vector<boolean> = [true, true, true, true, true, true];
+  n = 300000;
+  a1 = smooth_a(pts, flags, true);
+  b1 = smooth_b(pts, flags, true);
+  assert(len(a1) == len(b1), "same length");
+  assert(hash_of(a1) == hash_of(b1), "same output");
+  t0 = ticks();
+  for _r in 0..n { va = smooth_a(pts, flags, true); }
+  ta = ticks() - t0;
+  t1 = ticks();
+  for _r in 0..n { vb = smooth_b(pts, flags, true); }
+  tb = ticks() - t1;
+  println("A record-return {(ta * 1000 / n)} ns/op   B field-return {(tb * 1000 / n)} ns/op   hash {hash_of(a1)} {hash_of(b1)} len {len(a1)}");
+}

@@ -363,8 +363,206 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 2.**
 
+* **D-bind-43** *(opened 2026-09-14, CLOSED 2026-09-15)* — `(B-Ref-Write)` for a VECTOR written through a
+  local `&` link from a named vector: `a: vector<integer> = [1]; n: vector<integer> = [7, 8]; c = &n; c = a`
+  must make `n` a copy of `a`, and left `n` at `[7, 8]` on both backends while `c` read a copy of `a` — the
+  write was lost and the link named a store of its own.  The same from another vector link and in a loop.
+  Silent; the same on 2cff47dfc.  A literal build or an append through the link was right.  **Where
+  (measured).**  The link is typed a plain vector sharing `n`'s store and registered in
+  `amp_vector_locals`; `c = a` lowered to a fresh store filled from `a` (`OpDatabase`, `c = OpGetField(…)`,
+  `OpAppendVector(c, a, 0)`).  The clear-and-refill it needs lives in `Parser::assign_refvar_vector`, which
+  took only a `&vector` PARAMETER or annotated local (`RefVar(Vector)`).  **Closed** by letting that
+  handler also take a plain vector local registered in `amp_vector_locals`, for `=` only, and never for the
+  statement that makes the link: that statement registers the local a moment earlier, and claiming it
+  left the local without a slot (a compile error on every vector link, caught by the first build).
+  Measured on both backends, plain, under LOFT_POISON and with the native leak check; a literal, an append
+  and a write-through onto the vector the link names are unchanged, and no existing corpus program's
+  emission moved.  Guard `tests/scripts/a-vector-written-through-a-local-link-refills-what-it-names.loft`.
+  Found while sizing D-bind-42 over the heap kinds.
+* **D-bind-42** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Ref-Write)` and `(B-Copy)` for a RECORD
+  written through a LOCAL `&` link from a named record: `a = S{v: 1}; n = S{v: 7}; c = &n; c = a; c.v = 9`
+  must leave `a` at 1 and `n` at 9, and left both at 9 on both backends; `…; c = a; a.v = 5` then read 5
+  through `n`.  The write-through made `n` and `a` one record.  The same held from another link, in a
+  loop, for a struct-enum link, and in the shape `157-link-repoint.loft`'s struct cell uses — that cell
+  only reads after the write-through, so it passed on the alias.  The `&S` PARAMETER write-back copied
+  and was right.  Silent; the same on 2cff47dfc.  **Where (measured).**  `Parser::assign_refvar_reference`
+  materialises the copy (`OpDatabase`, `OpCopyRecord`) for a bare variable only when the target is a
+  PARAMETER, because the same function once also saw a `&` local bind that must link.  A local link's
+  `c = a` stayed `c = a`, and the interpreter installed `a`'s record reference (`SetStackRef`).
+  **Closed** by dropping the parameter restriction: a `&` bind that must link reaches that function
+  already lowered (`OpCreateStack`, or `OpVarRef` since D-bind-41), so a bare variable there is always the
+  write-through.  Measured on both backends, plain, under LOFT_POISON and with the native leak check,
+  across every shape above; a `&` re-point, a text write-through and the parameter write-back are
+  unchanged, and `c = n` onto the record `c` already names copies that record onto itself, which gives the
+  same values.  The copy is real now, so `advice[avoidable-copy]` reports it where the source is still
+  used.  Guard `tests/scripts/a-record-written-through-a-local-link-is-copied-into-it.loft`.  Found while
+  measuring D-bind-41's struct cells.
+* **D-bind-41** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Ref-Repoint)` against `(B-Ref-Write)` when
+  the SOURCE is itself a link.  `c = &b` must re-point `c` to what `b` links, and `c = b` must write `b`'s
+  value through `c`; both lowered to the same IR, `c = b`, so each backend gave one answer to both
+  spellings, silently.  With `a = 1; n = 7; b = &a; c = &n;`, `c = &b; c = 9` wrote `n` on `--interpret`
+  (`A1 N9`) and `a` on `--native`, and `c = b` copied on `--interpret` and re-pointed on `--native`
+  (`N7`).  The same split held in a loop, in one arm, for a local link re-pointed to a `&` parameter,
+  and for `text` links; a `&` parameter re-pointed to another link wrote through on both backends,
+  and a `&text` or `&S` parameter re-pointed to a callee-local link wrote through the same way.  A
+  first bind was right on both.  **Where (measured).**  The parser's `&` lowering had no arm for a
+  source whose type is a link, so the `&` was dropped; the interpreter's link write-through and
+  native's local link-to-link arm each read the resulting `c = b` one way.  **Closed** by spelling
+  the re-point: the parser lowers `c = &b` to `c = OpVarRef(b)`, the raw link cell `b` holds — the op
+  the interpreter's first-bind link copy already emits.  The interpreter routes it to the link's
+  slot like the install op, for every kind of link; native takes `b`'s pointer in the local, record
+  and parameter arms, and its local link-to-link arm now serves only a FIRST bind, so a reassignment
+  `c = b` writes through.  Measured on both backends, plain, under LOFT_POISON and with the native
+  leak check, across every shape above.  The one corpus program with a first bind from a link
+  (`434-pln87-scalar-reference.loft`) changes its IR spelling and native's record-link representation
+  and passes on both backends.  Guard
+  `tests/scripts/a-link-re-pointed-to-another-link-takes-what-that-link-names.loft`.  Found while
+  measuring D-bind-37's repoint of one `&` parameter to another.
+* **D-bind-40** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Ref-Alias)`, `(B-Ref-Write)` and
+  `(F-ParamRef)` for a value ENUM: a `&` to an enum local, element or field was silently a copy, and
+  a write through a `&` enum parameter crashed the interpreter.
+  - `e = Col.Green; c = &e; c = Col.Blue` left `e` Green on both backends, and so did a link to an
+    element (`e = &es[1]`), a field (`e = &o.k`) and a nullable local.
+  - `fn f(c: &Col) { c = Col.Blue; }` overflowed the interpreter's call stack; native answered right.
+  **Where (measured).**  Four sites, each on one path the enum takes:
+  - The parser lowers a `&` only for a scalar, and its own scalar list left the value enum out while
+    `data::is_scalar` counts it, so the bind copied.  The same list made a tuple with an enum member
+    take the record-backed link (`tuples.md` D-tup-14).
+  - On the first pass an enum element read is the bare `OpGetVector` place, before its enum getter
+    wraps it, and the lowering knew only the wrapped spelling.  The first pass typed the local as
+    the enum and the second as its link: "cannot change type from Col to &Col".
+  - The interpreter read and wrote an enum link with `OpGetByte` / `OpSetByte`, which take a range
+    minimum the site never wrote.  The next instruction was read as that minimum, the code stream
+    lost its alignment, and control fell back into the caller's code, which called again.
+  - Native's local-link arms had no enum, so the bind emitted no right-hand side; and a bare variant
+    written through the link did not resolve, because the enum context read the type without
+    peeling the link.
+  Closed at each: the lowering asks `data::is_scalar` and accepts the bare element op, the link ops
+  are `OpGetEnum` / `OpSetEnum`, native links an enum as a `*mut u8`, and `enum_context` and the
+  variant resolver read through `peel_link`.  Guard
+  `tests/scripts/an-enum-link-reads-and-writes-through-its-own-op.loft`.  Found while measuring
+  D-bind-39's enum element face.
+* **D-bind-39** *(opened 2026-09-14; silent until the refusal the same day, now loud)* —
+  `(B-Ref-Lvalue)` for an integer STORE place stored in fewer than 8 bytes — an element or a field
+  of `u8`, `i8`, `u16`, `i32`, or a narrow range: `c = &u[1]`, `c = &o.a`.  The rule says such a place
+  links, and it is refused on both backends with one error per `&` ("`&` cannot link to an integer
+  element or field that is stored in fewer than 8 bytes…"), naming the two ways out: copy into a
+  local and write it back, or declare the element or field `integer`.  A narrow LOCAL, a `&` parameter
+  and a tuple local are 8-byte frame slots and still link.
+  **Before the refusal (measured, silent).**  A `u8`/`i8` element link read 2042 for 250 on
+  `--interpret`, and a write through it reached the next element (`1,200,0`); `--native` panicked in
+  the store (`addr_mut`: not aligned for `i64`).  A `u8` field link was a plain copy, so its write was
+  lost on both backends.  `u16` and `i32` places were already refused, under a message that called
+  them temporaries.
+  **Why a refusal and not a link.**  Reading and writing through a link picks the op by the kind alone
+  (`OpGetInt` / `OpSetInt` for every integer in `state/codegen.rs`, a `*mut i64` natively), and the
+  type cannot choose better: a link to a `u8` local (an 8-byte frame slot) and a link to a `u8`
+  element (a 1-byte store slot) have the same type, `&integer(0, 255)`, and a link can be re-pointed
+  from one to the other, so the width belongs to the target at run time.  `(B-Ref-Reshape)` prefers
+  refusing a link it cannot honour to a silent copy.  **Closes when** a link carries its target's
+  width — a representation decision — and the refusal is lifted.  One home decides the refused set,
+  `Parser::is_narrow_store_place`, asked at the `&` and by the lowering on both passes.  Guards
+  `tests/scripts/a-link-to-a-narrow-integer-store-place-is-refused.loft` (one error per `&`) and
+  `tests/scripts/a-link-to-a-narrow-integer-local-reads-and-writes-it.loft` (what must still link).
+  Found while checking D-bind-36's cells against a middle element.
+* **D-bind-38** *(opened 2026-09-14)* — `(B-Ref-Lvalue)`: a link to a TEXT place is refused.  `a:
+  vector<text> = ["aa"]; t = &a[0]` and `o = O{s: "aa"}; t = &o.s` stop with "`&` requires an
+  addressable operand — a variable, struct field, or vector element", on both backends and already
+  on the first bind, while the same spellings over an integer, float, enum or struct place link.  The
+  rule names a field and an element as lvalues without an exception for text.  **Where (measured).**
+  A text place reads through its own op — `OpGetText(OpGetVector(a, 4, 0), 0)`, `OpGetText(o, 8)` —
+  and `Parser::is_amp_place` does not list it.  Lifting the refusal is not the whole cure: a local
+  `&text` link is a `*mut String` on `--native`, and a store's text slot is not a `String`, so the
+  link needs a representation for a text that lives in a store.  (The `u16` and `i32` places this
+  entry first carried are narrow integer places and share D-bind-39's refusal, which now names them
+  correctly.)  Found while probing D-bind-36's repoint over every element kind.
+* **D-bind-37** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(O-NoDiverge)` for `(B-Ref-Repoint)` on a
+  `&τ` PARAMETER: `fn f(c: &integer, v: vector<integer>) { c = &v[1]; … }` re-pointed the parameter's link
+  on `--interpret` (after D-bind-36) and did not compile on `--native` — rustc E0308 for an element or
+  a field, and an empty right-hand side (`*var_c = ;`, or `u8::from()` for a boolean) for a callee
+  local.  A loud divergence, never a wrong value.  **Where (measured).**  The native generator treats
+  every assignment to a `&` parameter as the write-back, so a place wrote its reference into the
+  caller's variable.  **Closed** by a repoint arm at the top of that branch: for a scalar parameter,
+  a place op on the right binds a borrow of the store slot, and `OpCreateStack(m)` a borrow of the
+  local; the slot pointer is built by the same helper a local link uses.  Measured on both backends,
+  plain, under LOFT_POISON and with the native leak check: an element, an element then a write, a
+  field, a loop, a callee local, read-repoint-read-write, and float, enum, boolean and character
+  parameters; the write-through control is unchanged.  A `&` parameter re-pointed to ANOTHER link is
+  D-bind-41, which this arm does not reach.  Guard
+  `tests/scripts/a-reference-parameter-re-points-to-an-element-a-field-or-a-local.loft`.
+* **D-bind-36** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Ref-Repoint)` on `--interpret` for
+  a link to a SCALAR whose new source is an element or a field: `c = &w[0]; c = &v[0]` and `f =
+  &o.x; f = &o.y` panicked (a store access out of bounds; in the allocator for a float element),
+  while native re-pointed.  The parser lowers the place to its own op (`OpGetVector`, `OpGetField`),
+  not to the install op D-bind-32 routed to the link's slot, so `set_var` took the write-through
+  path.  For a link to a scalar the right-hand side's TYPE separates
+  the two spellings: a place op is declared to return a reference, a value read out of the place is
+  the scalar.  `set_var` routes the former to the link's slot as well, except for an integer stored
+  narrower than 8 bytes, whose link reads the wrong width (D-bind-39).  A link to a record or a
+  collection reads an element's VALUE as a reference too, so there the type cannot tell them apart
+  and only the install op is routed.  (A struct element bound with `&` is typed as a view of its
+  vector, `ref(P)`, rather than as a `&P` link; rebinding it already left the first element alone,
+  and a cell pins that.)  Guard `tests/scripts/a-scalar-link-re-points-to-an-element-or-a-field.loft`.
+* **D-bind-35** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Disturb)` did not hold for a view
+  bound inside ONE ARM of an `if` whose other arm assigns the same local: `x = mk(4); if k > 0 { x =
+  h.inner } else { x = mk(0) }; h = Hold{…}` left `x` reading the new container on both backends,
+  where the unbranched bind and the value join materialise.  The materialisation walk (`ViewWalk`)
+  walked the two arms one after the other, so the second arm's assignment ended the view the first
+  arm had bound — the same program with the arms swapped materialised.  The arms are now walked as
+  alternatives: each from the views open before the `if`, keeping what either leaves open or
+  disturbed, and a literal key only where both agree.  Found by D-bind-34's closure, which lowers the
+  value join to exactly that statement form.  The walk's imprecision in the other direction is
+  unchanged and deliberate: a view bound before the `if` and disturbed on one path only is
+  materialised on both, and the author is told.  On `--native` the newly materialised copy then
+  LEAKED: a displacement free emptied the slot first, so the copy landed in a fresh store, and the
+  generator's owner tracker records a copy only on a first declaration — the reassignment branch
+  left it unnamed, and nothing released it.  Falsifying the guard caught it in the leak column; that
+  branch now asks `materialises_element` too, the question the first declaration already asked.
+  Guard
+  `tests/scripts/a-projection-assigned-in-an-arm-views-until-its-container-is-reassigned.loft`.
+* **D-bind-34** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-View)` and `(O-NoDiverge)`: a REASSIGNMENT from a
+  value join whose taken arm is a struct PROJECTION copies on `--interpret` and views on `--native`.
+  `h = Hold{inner: mk(1), …}; x = mk(4); x = if k > 0 { h.inner } else { mk(0) }; x.a = 9` leaves
+  `h.inner.a` at 1 on the interpreter and at 9 natively, while the unbranched `x = h.inner` and the
+  author's statement form `if k > 0 { x = h.inner } else { x = mk(0) }` view on both backends.  The
+  container is not disturbed, so `(B-View)` gives the view and the interpreter is the deviating
+  side.  Found while closing D-bind-33: that cure, first built wider, wrote this join out as
+  statements too, and native then copied as well — the rule's answer lost on the one side that had
+  it.  Narrowed to local arms, the split is back to what it was, and it is recorded here.
+  **Where it happens (measured).**  The author's statement form carries an owner witness
+  (`(O-Witness)`: `__own_x`, released by store identity at the projection's assignment), so the
+  projection arm is a view on both backends.  The value join gets none: `owner_witness_locals` runs
+  before the scan and does not read the join's projection arm as a view assignment, so `x` stays an
+  owning slot, and the interpreter lowers an owning slot's reassignment from an `Own::Join` value to
+  `OpBindOrCopy`, which copies the borrowed arm.  The boundary agrees — a binding whose previous
+  assignment was itself a view views on the interpreter too.  It is the third fact a pass before the
+  scan reads off the join where the author's spelling has it (family 7's per-path flags and
+  D-bind-33's call-arm owner were the other two, `heap.md` D-heap-7).
+  **Closed by carrying the scan's own decision.**  The first scan records, by the address of each
+  `Set`'s value node, the reassignments it writes out per arm; the caller rewrites exactly those in
+  the original code, strips the arm locals' deps the parser gave the binding, and scans again — so
+  every analysis before the scan, the owner witness among them, reads the per-arm form.  A structural
+  "is this a reassignment" was measured first and rejected: it disagreed with the scan at 52 of 899
+  corpus sites.  The lowered family-7 cells now emit exactly what their author-written twins emit,
+  and the value join views on both backends.  Closing it exposed D-bind-35.
+* **D-bind-33** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(B-Copy)` did not hold for a
+  REASSIGNMENT from a join whose other arm is an owning CALL.  `a = mk(1); x = mk(9); x = if c { a }
+  else { mk(2) }; x.id = 77` changed `a` on the path that took it, and a later write to `a` showed
+  through `x`, on both backends; the first bind from the same join copied.  The releases went wrong
+  with it (`heap.md` D-heap-7, `p_j1`/`p_j2`): the displaced `mk(9)` was never released, and neither
+  was a record assigned to `x` after the join, because the binding stayed typed as a view of `a`.
+  **Between two mechanisms.**  A first bind lifts each arm into a temp of its own (D-bind-16,
+  loft#1321); a reassignment cannot borrow those temps (`(O-Latest)`), so it is written out per arm
+  instead (`scopes::sink_set_into_arms`).  The parser had already given the call arm an owner for the
+  value form's view-typed join (`materialise_owned_call`'s `join-arm-owner` block), whose tail is a
+  compiler temp, and the write-out declined every compiler-temp tail — so this reassignment kept the
+  value form, which binds the chosen arm's STORE.  The write-out now accepts that block and writes the
+  arm out as its call, wherever every other arm is a local or `null`.  Beside a projection arm it
+  still declines: written out, a projection arm lost the dep that keeps it a `(B-View)` view, which
+  was measured and is D-bind-34.  Guard
+  `tests/scripts/a-reassignment-from-a-join-with-a-call-arm-copies-its-local-arm.loft`.
 * **D-bind-32** *(opened 2026-09-09, CLOSED 2026-09-09; numbered 30 on its own branch, where
   `D-bind-30` was already spent by the `(B-Ref-Reshape)` entry closed a day earlier — the join is
   what showed the collision)* — `(B-Ref-Repoint)` on `--interpret`,

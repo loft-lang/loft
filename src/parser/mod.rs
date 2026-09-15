@@ -891,6 +891,9 @@ pub struct Parser {
     /// so those need no push.)  Consolidating the former four `*_hint` fields is
     /// [formal/types.md D1](../../doc/claude/formal/types.md) — one judgment, not four side-channels.
     pub(crate) expected: Type,
+    /// Set by `dynamic_dispatcher` when it refused a leaf, so the call site returns rather
+    /// than falling to the ladder and reporting the same site a second way.
+    pub(crate) reported_dynamic_refusal: bool,
     /// Set by `iter_op` when `#fields` is encountered. Holds the struct `def_nr`.
     /// Checked by `parse_for` to take the unrolling path. Reset after use.
     pub(crate) fields_of: u32,
@@ -1280,6 +1283,7 @@ pub(super) mod builtins;
 pub(super) mod collections;
 pub(super) mod control;
 pub(super) mod definitions;
+pub(super) mod dispatch;
 pub(super) mod expressions;
 pub(super) mod fields;
 pub(super) mod fit;
@@ -1483,6 +1487,7 @@ impl Parser {
             fn_ref_read_attr: None,
             lambda_counter: 0,
             expected: Type::Unknown(0),
+            reported_dynamic_refusal: false,
             fields_of: u32::MAX,
             capture_context: Vec::new(),
             capture_owner: std::collections::HashMap::new(),
@@ -2294,22 +2299,7 @@ impl Parser {
         // worker" only fills as pass 1 reaches each par site.  Promote those here, so
         // the boxing lands before `reserve_late_return_buffers` hands the now-heap
         // return its `__retbuf` and before the H5 snapshot counts attributes.
-        self.promote_par_worker_tuple_returns();
-        // loft#944 — every declaration has now been seen, so a forward reference the parser
-        // left as a stub has been adopted.  Point the stored `Type::Unknown(stub)` values at
-        // the real type, then promote the tuple RETURNS that could not be judged while a
-        // member was unresolved — both before `reserve_late_return_buffers` below, so a
-        // newly-heap return gets its `__retbuf` in the same breath.
-        let adopted = self.data.resolve_adopted_stubs(&mut self.lexer);
-        self.refuse_forward_tuple_returns(&adopted);
-        self.refuse_forward_ref_tuple_params(&adopted);
-        // @PLN125 — the same class, one step earlier in the chain: a bound-method stub's
-        // hidden parameters are decided from the INTERFACE method's return type, which on
-        // pass 1 can still be an unresolved forward reference.  Re-derive here, before the
-        // buffers below and before the H5 snapshot.
-        self.refresh_bound_method_stubs();
-        self.promote_late_text_buffers();
-        self.reserve_late_return_buffers();
+        self.between_passes();
         let pass1_attr_counts: Vec<usize> = (0..self.data.definitions.len())
             .map(|d| self.data.attributes(d as u32))
             .collect();
@@ -2335,22 +2325,7 @@ impl Parser {
             // graph) at compile time, before it can hang at runtime.  Post-parse over pass-2 edges.
             self.check_subrule_wellformedness();
             self.assert_pass2_def_attr_stable(&pass1_attr_counts);
-            // @PLN104 P2 — oracle pass: flag frame-local text returns the interpreter would
-            // orphan (#568) into `force_tret` (default-on; opt out with LOFT_NO_TRET_FIX).
-            self.report_tret_promotions();
-            // @PLN104 P3 — the targeted promotion: promote each flagged frame-local text
-            // return (`force_tret`) to a `__tret` retbuf IN PLACE on the pass-2 IR and patch
-            // only its direct callers to push the buffer.  The promotion set is decided BEFORE
-            // this (in `report_tret_promotions`), so every caller — forward- OR backward-ref —
-            // gets the retbuf without an ABI-growth crash; post-H5, so the extra attrs never
-            // trip the pass1==pass2 contract.  This replaced a whole-file re-parse ("third
-            // pass") whose non-idempotent re-lowering corrupted unrelated defs (var__vec /
-            // diagnostics / s5-s7); touching only the promoted defs + their callers removes
-            // that collateral class by construction.  See
-            // doc/claude/plans/104-tret-promotion/targeted-promotion-design.md.
-            if !self.force_tret.is_empty() {
-                self.targeted_tret_promotion();
-            }
+            self.after_pass2();
         }
         self.backfill_native_symbol_crates();
         // Plan-07 phase 4h — emit `not null` field-reminder hints
@@ -2590,6 +2565,68 @@ impl Parser {
             );
         }
     }
+    /// What pass 2 owes the program, in one place — the signature work that can only be
+    /// judged on the lowered IR, and so grows a definition's attribute list AFTER every
+    /// call to it was lowered:
+    ///
+    /// @PLN104 P2 — the oracle pass flags every frame-local text return the interpreter would
+    /// orphan (#568) into `force_tret` (default-on; opt out with `LOFT_NO_TRET_FIX`); P3 — the
+    /// targeted promotion gives each flagged def a `__tret` retbuf IN PLACE on the pass-2 IR
+    /// and patches only its direct callers to push the buffer.  The set is decided BEFORE the
+    /// promotion, so every caller — forward- or backward-ref — gets the retbuf without an
+    /// ABI-growth crash; post-H5, so the extra attrs never trip the pass1==pass2 contract.
+    /// This replaced a whole-file re-parse ("third pass") whose non-idempotent re-lowering
+    /// corrupted unrelated defs; touching only the promoted defs + their callers removes that
+    /// collateral class by construction — `plans/104-tret-promotion/targeted-promotion-design.md`.
+    ///
+    /// Like [`between_passes`](Self::between_passes), every two-pass entry runs it: a
+    /// definition promoted here in the running program and NOT in a shadow session's parse
+    /// of the same file has one more parameter in the running program than the shadow
+    /// believes, and a body generated from the shadow reads its buffer off the wrong slot
+    /// (@PLN162 step 14 — the synthesised dispatcher, an owned text return, was promoted by
+    /// `parse` and not by `parse_str`).  `force_tret` is cleared first: the set is narrowed
+    /// to the promoted defs and never drained, and promoting a def twice would give it two
+    /// buffers.
+    pub(crate) fn after_pass2(&mut self) {
+        self.force_tret.clear();
+        self.report_tret_promotions();
+        if !self.force_tret.is_empty() {
+            self.targeted_tret_promotion();
+        }
+    }
+
+    /// What pass 1 owes pass 2, in one place: every declaration has been seen, so the
+    /// signatures pass 2 will call through are completed here — a par worker's tuple return
+    /// boxed, a forward-referenced stub adopted and the tuple returns it held back judged, a
+    /// bound-method stub's hidden parameters re-derived (@PLN125), a late text tail's buffer
+    /// promoted to a hidden parameter, and a heap return's `__retbuf` reserved.  Every
+    /// two-pass entry runs it — `parse`, `parse_source`, `parse_virtual` AND `parse_snippet` —
+    /// because the ATTRIBUTE LIST of a definition is the frame its callers push, and two
+    /// parses of one program that disagree on it disagree on every call between them.
+    /// Measured (@PLN162 step 14): the live-reload shadow session loaded the program through
+    /// `parse_source`, which ran three of these six, so a text-returning definition had one
+    /// hidden buffer there and two in the running program; a body generated from the shadow
+    /// and called from the running program's sites read its return buffer off the wrong slot
+    /// and faulted at the first `OpAppendText`.
+    fn between_passes(&mut self) {
+        self.promote_par_worker_tuple_returns();
+        // loft#944 — every declaration has now been seen, so a forward reference the parser
+        // left as a stub has been adopted.  Point the stored `Type::Unknown(stub)` values at
+        // the real type, then promote the tuple RETURNS that could not be judged while a
+        // member was unresolved — both before `reserve_late_return_buffers` below, so a
+        // newly-heap return gets its `__retbuf` in the same breath.
+        let adopted = self.data.resolve_adopted_stubs(&mut self.lexer);
+        self.refuse_forward_tuple_returns(&adopted);
+        self.refuse_forward_ref_tuple_params(&adopted);
+        // @PLN125 — the same class, one step earlier in the chain: a bound-method stub's
+        // hidden parameters are decided from the INTERFACE method's return type, which on
+        // pass 1 can still be an unresolved forward reference.  Re-derive here, before the
+        // buffers below and before the H5 snapshot.
+        self.refresh_bound_method_stubs();
+        self.promote_late_text_buffers();
+        self.reserve_late_return_buffers();
+    }
+
     fn promote_par_worker_tuple_returns(&mut self) {
         let mut workers: Vec<u32> = self.par_worker_defs.iter().copied().collect();
         workers.sort_unstable(); // deterministic `__tuple<…>` def order across runs
@@ -2861,8 +2898,19 @@ impl Parser {
             // every pass-1 def number is untouched and the numbering contract H5 protects
             // holds.
             let lazy_tuple = matches!(dt, DefType::Struct) && name.starts_with("__tuple<");
+            // @PLN162 — the fifth legal append: a synthesised DYNAMIC DISPATCHER
+            // (`parser::dispatch::dynamic_dispatcher`).  Pass-2-only by design for the
+            // reason an instantiation is: the overload set it enumerates is complete only
+            // after pass 1, so pass 1 keeps the static selection and never emits it.  The
+            // same append shape too — name-keyed, idempotent, at the end.
+            let lazy_dispatcher = matches!(dt, DefType::Function)
+                && self.data.def(d as u32).synthetic() == Some("dynamic_dispatcher");
             assert!(
-                lazy_wrapper || lazy_instantiation || lazy_bound_stub || lazy_tuple,
+                lazy_wrapper
+                    || lazy_instantiation
+                    || lazy_bound_stub
+                    || lazy_tuple
+                    || lazy_dispatcher,
                 "H5: pass-2-only definition `{name}` (#{d}, {dt:?}) is not a lazy vector \
                  wrapper or generic instantiation — a real cross-pass divergence \
                  (pass1={}, pass2={})",
@@ -3322,18 +3370,7 @@ impl Parser {
         self.lexer.parse_string(content, filename);
         self.parse_file();
         self.resolve_deferred_unknowns();
-        // loft#808 — the same between-passes promotion `parse` does, so a program
-        // handed over as a STRING boxes a par worker's tuple return identically to
-        // one read from a file.
-        self.promote_par_worker_tuple_returns();
-        // loft#944 — every declaration has now been seen, so a forward reference the parser
-        // left as a stub has been adopted.  Point the stored `Type::Unknown(stub)` values at
-        // the real type, then promote the tuple RETURNS that could not be judged while a
-        // member was unresolved — both before `reserve_late_return_buffers` below, so a
-        // newly-heap return gets its `__retbuf` in the same breath.
-        let adopted = self.data.resolve_adopted_stubs(&mut self.lexer);
-        self.refuse_forward_tuple_returns(&adopted);
-        self.refuse_forward_ref_tuple_params(&adopted);
+        self.between_passes();
         let lvl = self.lexer.diagnostics().level();
         if lvl != Level::Error && lvl != Level::Fatal {
             self.first_pass = false;
@@ -3351,6 +3388,8 @@ impl Parser {
             self.parse_file();
             self.resolve_deferred_unknowns();
             // @PLN130 F9 (loft#779) — see `parse`.
+            self.check_subrule_wellformedness();
+            self.after_pass2();
             if !default {
                 self.check_reshape_under_reference();
                 self.synth_drop_cascades();
@@ -3382,18 +3421,7 @@ impl Parser {
         self.lexer.parse_string(content, filename);
         self.parse_file();
         self.resolve_deferred_unknowns();
-        // loft#808 — the same between-passes promotion `parse` does, so a program
-        // handed over as a STRING boxes a par worker's tuple return identically to
-        // one read from a file.
-        self.promote_par_worker_tuple_returns();
-        // loft#944 — every declaration has now been seen, so a forward reference the parser
-        // left as a stub has been adopted.  Point the stored `Type::Unknown(stub)` values at
-        // the real type, then promote the tuple RETURNS that could not be judged while a
-        // member was unresolved — both before `reserve_late_return_buffers` below, so a
-        // newly-heap return gets its `__retbuf` in the same breath.
-        let adopted = self.data.resolve_adopted_stubs(&mut self.lexer);
-        self.refuse_forward_tuple_returns(&adopted);
-        self.refuse_forward_ref_tuple_params(&adopted);
+        self.between_passes();
         let lvl = self.lexer.diagnostics().level();
         if lvl != Level::Error && lvl != Level::Fatal {
             self.first_pass = false;
@@ -3408,6 +3436,8 @@ impl Parser {
             self.parse_file();
             self.resolve_deferred_unknowns();
             // @PLN130 F9 (loft#779) — see `parse`.
+            self.check_subrule_wellformedness();
+            self.after_pass2();
             if !default {
                 self.check_reshape_under_reference();
                 self.synth_drop_cascades();
@@ -3514,6 +3544,11 @@ impl Parser {
         self.deferred_unknown.clear();
         self.resolutions.clear();
         self.data.reset();
+        // The source stays the stdlib's, 0: this is the REPL session's entry, where every
+        // later input and a debugger's eval resolve their names under that scope, and where
+        // a definition colliding with a stdlib one is a collision of ONE key.  A gate that
+        // asks "is this the reader's code?" therefore reads the definition's FILE, not this
+        // id — `Data::is_owned_def`.
         self.lambda_counter = 0;
         self.fn_lambdas.clear();
         self.declared_capabilities.clear();
@@ -3527,16 +3562,7 @@ impl Parser {
         self.pending_param_locks.clear();
         self.parse_file();
         self.resolve_deferred_unknowns();
-        // loft#808 — the same between-passes promotion `parse` does; see there.
-        self.promote_par_worker_tuple_returns();
-        // loft#944 — every declaration has now been seen, so a forward reference the parser
-        // left as a stub has been adopted.  Point the stored `Type::Unknown(stub)` values at
-        // the real type, then promote the tuple RETURNS that could not be judged while a
-        // member was unresolved — both before `reserve_late_return_buffers` below, so a
-        // newly-heap return gets its `__retbuf` in the same breath.
-        let adopted = self.data.resolve_adopted_stubs(&mut self.lexer);
-        self.refuse_forward_tuple_returns(&adopted);
-        self.refuse_forward_ref_tuple_params(&adopted);
+        self.between_passes();
         let lvl = self.lexer.diagnostics().level();
         if lvl == Level::Error || lvl == Level::Fatal {
             self.diagnostics.fill(self.lexer.diagnostics());
@@ -3555,6 +3581,7 @@ impl Parser {
         self.resolve_deferred_unknowns();
         // @PLN35 PC3 — reject a left-recursive sub-rule grammar (see `check_subrule_termination`).
         self.check_subrule_wellformedness();
+        self.after_pass2();
         // @PLN130 F9 (loft#779) — see `parse`.
         self.check_reshape_under_reference();
         self.synth_drop_cascades();
@@ -3596,6 +3623,7 @@ impl Parser {
         self.data.source = source;
         self.parse_file();
         self.resolve_deferred_unknowns();
+        self.between_passes();
         let lvl = self.lexer.diagnostics().level();
         if lvl == Level::Error || lvl == Level::Fatal {
             self.diagnostics.fill(self.lexer.diagnostics());
@@ -3611,6 +3639,7 @@ impl Parser {
         self.data.source = source;
         self.parse_file();
         self.resolve_deferred_unknowns();
+        self.after_pass2();
         // @PLN130 F9 (loft#779) — see `parse`.
         self.check_reshape_under_reference();
         self.synth_drop_cascades();
@@ -4006,7 +4035,12 @@ impl Parser {
             return u32::MAX;
         }
         let nm = self.data.def(*d_nr).name();
-        if nm.is_empty() || self.data.def_nr(&format!("t_{}{}_lit", nm.len(), nm)) == u32::MAX {
+        if nm.is_empty()
+            || self
+                .data
+                .def_nr(&crate::data::Data::mangle_method(nm, "lit"))
+                == u32::MAX
+        {
             return u32::MAX;
         }
         *d_nr
@@ -4820,6 +4854,13 @@ impl Parser {
                 return true;
             }
         }
+        // loft#1529 — an `E?` slot value meeting an `E?` store is the pointer on the far side
+        // (`(L-Null-Which)`).  Asked before the equality accept, which is the path it takes:
+        // the two types are the same and nothing else would convert it.  Only a STORE: a
+        // comparison or a null test asks the slot itself.
+        if !self.store_ctx.is_empty() && matches!(should, Type::Optional(_)) {
+            self.read_through_enum_slot(code, is_type);
+        }
         if is_type.is_equal(should) {
             return true;
         }
@@ -4887,6 +4928,15 @@ impl Parser {
                 let src = is_type.clone();
                 *code = self.emit_nullable_slot_read(syn, code.clone(), &src);
                 return true;
+            }
+            // Both sides nullable: `τ? ⤳ σ?` is `τ ⤳ σ` inside the wrapper.  A null the source
+            // holds lands in a slot that holds null, so @FR-N-Intro's widening is the whole
+            // conversion and there is no store for @FR-N-Store to ask about.  Peeling only the
+            // target sent the source's unwrap to a DENSE `σ`, which reported a store the
+            // program never makes (a `Fireball?` "stored into the non-null type `Entity`" on an
+            // `Entity?` parameter, loft#1528).
+            if let Type::Optional(src_inner) = is_type {
+                return self.convert(code, src_inner, inner);
             }
             return self.convert(code, is_type, inner);
         }
@@ -5917,21 +5967,47 @@ impl Parser {
         let mut d_nr = if self.default && is_op(name) {
             self.data.def_nr(name)
         } else {
-            // @PLN25 F1b(b): a `both`/`self`-dispatched function takes uniform-nullability
-            // params, so dispatch on whether ANY argument is nullable — not just arg0. This
-            // routes `max(5, a?)` to the `τ?` overload the same as `max(a?, 5)`, so null
-            // propagates regardless of position. (arg0-only dispatch missed the arg1 case.)
-            let unknown = Type::Unknown(0);
-            let nullable_holder;
-            let dispatch_tp: &Type = if types.is_empty() || types[0] == Type::Null {
-                &unknown
-            } else if types.iter().any(|t| matches!(t, Type::Optional(_))) {
-                nullable_holder = Type::optional(types[0].base().clone());
-                &nullable_holder
-            } else {
-                &types[0]
+            // Selection over the name's overload set first (`parser::dispatch`, @PLN162), on
+            // the routed argument types; a name with no set falls to today's ladder.  A
+            // refusal here is the whole answer: the arguments are parsed, nothing else is owed.
+            // Selection over the name's overload set first (`parser::dispatch`, @PLN162), on
+            // the routed argument types.  A tie is the whole answer: the arguments are parsed
+            // and nothing else is owed.  None applicable, and a name with no set, fall to
+            // today's ladder — the free `n_<name>` that coexists beside a `both` set (the
+            // stdlib's `exists(text)` beside `exists(File)`), then the operator map — and
+            // the unknown-function site below names the set when that finds nothing either.
+            let routed = self.data.routed_types(types);
+            let d = match self.select_overload(source, name, &routed) {
+                crate::parser::dispatch::Selection::One(d) => {
+                    // `Disp-Dynamic`: a position held at the enum where the set decides by
+                    // variant calls the synthesised dispatcher instead.
+                    self.dynamic_dispatcher(source, name, &routed).unwrap_or(d)
+                }
+                sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
+                    if !self.first_pass {
+                        self.report_selection(name, &routed, &sel, Some(name_pos));
+                    }
+                    return Type::Unknown(0);
+                }
+                crate::parser::dispatch::Selection::NoneApplicable => {
+                    // `Disp-Exhaustive` over the closed enum: no definition takes the static
+                    // types, but the set may cover every variant tuple of the enum-held
+                    // positions — then the dispatcher is total and the call is covered; a
+                    // tuple it does not cover is refused naming that tuple, and the ladder
+                    // answers for a name that is no dynamic site at all.
+                    match self.dynamic_dispatcher(source, name, &routed) {
+                        Some(dd) => dd,
+                        None if !self.first_pass && self.reported_dynamic_refusal => {
+                            self.reported_dynamic_refusal = false;
+                            return Type::Unknown(0);
+                        }
+                        None => self.data.select_fn(source, name, types),
+                    }
+                }
+                crate::parser::dispatch::Selection::NotDecidable => {
+                    self.data.select_fn(source, name, types)
+                }
             };
-            let d = self.data.find_fn(source, name, dispatch_tp);
             // loft#788 — a bare CALL is ambiguous the same way a bare type is,
             // and worse: both import orders compile and RUN, answering
             // differently. The key is the mangled one, since that is what a
@@ -6326,7 +6402,18 @@ impl Parser {
                 // P07.5: when no method receiver is found EITHER, fall back to
                 // a similar-name suggestion across all user functions.
                 let (method_types, from_stdlib) = self.find_method_receivers(name);
-                if method_types.is_empty() {
+                // `Disp-Exhaustive` (@PLN162): the name has an overload set, none of its
+                // definitions takes these argument types, and the ladder found nothing else
+                // either.  Name what was passed and what is declared.
+                let routed = self.data.routed_types(types);
+                let none_applicable = matches!(
+                    self.select_overload(source, name, &routed),
+                    crate::parser::dispatch::Selection::NoneApplicable
+                );
+                if none_applicable && method_types.is_empty() {
+                    let sel = crate::parser::dispatch::Selection::NoneApplicable;
+                    self.report_selection(name, &routed, &sel, Some(name_pos));
+                } else if method_types.is_empty() {
                     // @PLN13 phase 6 (diagnostics slice): the name may simply be
                     // unimported rather than wrong.  An EXACT hit in a published
                     // package outranks the fuzzy same-name guess below — `rand`
@@ -7126,7 +7213,7 @@ impl Parser {
             // 1:1 so the LEN prefix `original_name` / `find_method_receivers` parse back is
             // still correct.
             let safe = base.replace(['<', '>', ',', ' ', '(', ')'], "_");
-            format!("t_{}{}_{name}", safe.len(), safe)
+            crate::data::Data::mangle_method(&safe, name)
         };
         // Return existing instantiation if already created.
         let existing = self.data.def_nr(&mangled);
@@ -11082,7 +11169,8 @@ impl Parser {
     /// emitter declines while the layout has no known type yet — and is rebuilt anyway.
     pub(crate) fn read_through_tag(&mut self, code: &mut Value, tp: &mut Type) -> bool {
         let Some((syn, pointer)) = self.tagged_pointer_type(tp) else {
-            return false;
+            // A struct-enum slot is the same rule with the discriminant in its own bytes.
+            return self.read_through_enum_slot(code, tp);
         };
         *code = self.emit_nullable_slot_read(syn, code.clone(), tp);
         *tp = pointer;
@@ -11152,6 +11240,86 @@ impl Parser {
             result_tp,
             "nullable_slot_read",
         )
+    }
+
+    /// Is `code` a nullable STRUCT-ENUM read that is still its SLOT — a field or a
+    /// `vector<E?>` element, or a variable that views one?  Layout.md `(L-Null)` spells the
+    /// absence of such a slot as discriminant 0 in its own bytes, so the value is a
+    /// sub-reference into the holder and never itself null.  The two shapes are exactly the
+    /// two slot branches of [`Parser::null_test`], which is where the question was first
+    /// answered: an `OpGetField` read (a field, and an element, which is read as a field at
+    /// offset 0) and a variable [`Parser::views_a_nullable_element_slot`] says is one.
+    /// The tagged `__nullable<S>` has its own reader ([`Self::read_through_tag`]).
+    pub(crate) fn enum_slot_view(&self, code: &Value, tp: &Type) -> bool {
+        if !matches!(tp, Type::Optional(_)) {
+            return false;
+        }
+        let Type::Enum(e_nr, true, _) = tp.base() else {
+            return false;
+        };
+        if self.data.def(*e_nr).name.starts_with("__nullable<") {
+            return false;
+        }
+        self.inline_slot_word(code).is_some()
+            || (matches!(code.unspan(), Value::Var(_)) && self.views_a_nullable_element_slot(tp))
+    }
+
+    /// `(L-Null-Which)` for a nullable struct-enum slot: a value LEAVING the slot for a
+    /// position that is not a slot — a local, a parameter, a return, a `??` or `?` subject,
+    /// the base of a field read — is the pointer, `nullref` when the slot is absent.  Left as
+    /// the slot's sub-reference it was present to every handle test and read as a record of
+    /// zeroes (loft#1529).  The type is unchanged (`E?` either way), so this is pass-2 only.
+    /// The slot is read twice, for the tag and as the value, which a projection is free to
+    /// do.  A slot read off a CALL's record (`fresh().e`) is not: the call is named once and
+    /// the slot re-read off the name.  Argument lifting would name it too, but only after
+    /// parsing, which is too late for this decision, so the name takes the lift's place and
+    /// with it the lift's OWNERSHIP of the delivered record — marked as a borrow instead, the
+    /// record was never released (one `Holder` store per call, on both backends).
+    pub(crate) fn read_through_enum_slot(&mut self, code: &mut Value, tp: &Type) -> bool {
+        if self.first_pass || !self.enum_slot_view(code, tp) {
+            return false;
+        }
+        if Self::is_repeatable_place(&self.data, code) {
+            let Some(absent) = self.null_test(code.clone(), tp, false) else {
+                return false;
+            };
+            let null = self.cl("OpNullRefSentinel", &[]);
+            *code = v_if(absent, null, code.clone());
+            return true;
+        }
+        let Value::Call(get_d, args) = code.unspan().clone() else {
+            return false;
+        };
+        let Some(base) = args.first() else {
+            return false;
+        };
+        let Value::Call(call_d, _) = base.unspan() else {
+            return false;
+        };
+        let holder_d = match self.data.def(*call_d).returned().base() {
+            Type::Reference(d, _) => *d,
+            _ => return false,
+        };
+        let named = self
+            .vars
+            .work_refs(&Type::Reference(holder_d, Deps::none()), &mut self.lexer);
+        if named == u16::MAX {
+            return false;
+        }
+        self.vars.mark_inline_ref(named);
+        let mut slot_args = args.clone();
+        slot_args[0] = Value::Var(named);
+        let slot = Value::Call(get_d, slot_args);
+        let Some(absent) = self.null_test(slot.clone(), tp, false) else {
+            return false;
+        };
+        let null = self.cl("OpNullRefSentinel", &[]);
+        *code = v_block(
+            vec![v_set(named, base.clone()), v_if(absent, null, slot)],
+            tp.clone(),
+            "enum_slot_read_named",
+        );
+        true
     }
 
     /// `if <discriminant is set> { <payload> } else { <the reference null sentinel> }` — the
@@ -16486,6 +16654,19 @@ impl Parser {
             }
             _ => false,
         }
+    }
+
+    /// Is this `&` operand an integer STORE place narrower than 8 bytes — an element or a field
+    /// of `u8`, `i8`, `u16`, `i32` or any range that stores in fewer bytes?
+    ///
+    /// A link reads and writes a whole integer, so a link to such a place cannot honour its width:
+    /// `(B-Ref-Reshape)` refuses it rather than let it copy or read the neighbouring bytes
+    /// (`formal/binding.md` D-bind-39).  A plain variable is not a store place — a narrow local, a
+    /// parameter and a tuple local all live in an 8-byte frame slot and link correctly — so it
+    /// answers no for a `Var`.
+    fn is_narrow_store_place(tp: &Type, code: &Value) -> bool {
+        matches!(tp.base(), Type::Integer(spec) if spec.byte_width(false) < 8)
+            && !matches!(code.unspan(), Value::Var(_))
     }
 
     /// Plan-06 PRIORITY.md spine step 5 — par-result use-site analyser.

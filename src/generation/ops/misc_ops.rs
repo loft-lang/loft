@@ -53,6 +53,40 @@ impl OpEmitter for OpDatabaseEmitter {
             {
                 return write!(ctx.w, "()");
             }
+            // @PLN157 § V-ah (`@FR-R-ValueRecord`) — a DEAD BUFFER: every use of this local
+            // is one the value form drops, so the store it would mint serves nothing.
+            if let Value::Var(w) = var_val.unspan()
+                && ctx.output.dead_buffers.contains(w)
+            {
+                return write!(ctx.w, "()");
+            }
+            // @PLN157 § V-al (`@FR-R-LoopBuffer`) — a LOOP BUFFER: a per-site vector buffer
+            // minted inside a loop keeps its store and its vector across iterations.  The
+            // first pass mints; every later pass resets the vector's length and keeps its
+            // capacity (`vector::vector_buffer_reset`), which is all the clear-and-claim of
+            // a re-mint bought: the elements own no heap, and the literal's field zero is
+            // dropped with it (`emit.rs`, the block loop).
+            if let Value::Var(w) = var_val.unspan()
+                && ctx.output.loop_buffers.contains(w)
+            {
+                let name = super::super::sanitize(
+                    ctx.output.data.def(ctx.output.def_nr).variables().name(*w),
+                );
+                let mint = if ctx.output.complete_writes.db_vars.contains(w) {
+                    "OpDatabaseNP"
+                } else {
+                    "OpDatabase"
+                };
+                write!(
+                    ctx.w,
+                    "if var_{name}.store_nr == u16::MAX || var_{name}.rec == 0 {{ var_{name} = {mint}(cell,var_{name}, "
+                )?;
+                ctx.emit_i32_slot(tp_val)?;
+                return write!(
+                    ctx.w,
+                    ") }} else {{ vector::vector_buffer_reset(&var_{name}, &mut stores.allocations) }} /* @PLN157 § V-al loop buffer */"
+                );
+            }
             // @PLN157 § V-j (`@FR-R-MoveAppend`) — this var can be the `__vdb` a pair
             // PLACED a buffer record into, and OpDatabase's reuse arm clears the whole
             // store: the placement vanishes with the clear (no leak — the clear reclaims

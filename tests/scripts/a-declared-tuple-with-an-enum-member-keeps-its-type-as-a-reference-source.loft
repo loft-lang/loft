@@ -1,0 +1,105 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A tuple local that is the source of a `&(…)` link and carries a heap member is built as the
+// `__tuple<…>` RECORD (formal/tuples.md `(T-Ref-Rep)`), and that record is the LOCAL's: its
+// members are the local's declared types, which a variant literal widens into (`@FR-C-Var`).
+// It was minted from the literal's own member types, so `w: (integer, Entity) = (1, IceWall
+// { … })` became a `__tuple<integer,IceWall>`: a `&(integer, Entity)` parameter refused it, a
+// later `w.1 = Fireball { … }` was refused as a write to a field of type `IceWall`, and
+// `r = &w` was refused as a type change (loft#1531).  An undeclared local keeps the literal's
+// type, the way a `&Entity` parameter refuses an `IceWall` local.
+// @falsified-at: 343bdf647 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-declared-tuple-with-an-enum-member-keeps-its-type-as-a-reference-source.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — on the control the program never runs: every `&(integer, Entity)` call is
+//   refused (*"expected &__tuple<integer,Entity>, got __tuple<integer,IceWall>"*), as are the
+//   member write of the other variant and the `r = &w` link; here every cell passes.  Not
+//   assert and not leak: a program the control cannot compile.
+//   ARMED: no instrument — a plain run on either backend reads it.
+//   WITNESS: `test_a_declared_member_takes_the_link`: refused at `bump(w)` there, `2 wall 6` here.
+//   HOLDS: a declared member the literal does NOT convert into is still the bind's refusal
+//   (`tests/issues.rs::a_reference_source_tuple_whose_member_the_declaration_refuses_is_still_refused`),
+//   and an undeclared variant local is still refused by a `&(integer, Entity)`, on both trees;
+//   the leak channel is `none` on both, and the cells are clean under strict stores and poison.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+enum Entity { Fireball { n: integer }, IceWall { n: integer } }
+
+struct Slot { n: integer }
+
+fn bump(t: &(integer, Entity)) { t.0 = t.0 + 1; }
+
+fn to_fire(t: &(integer, Entity)) { t.1 = Fireball { n: t.0 * 10 }; }
+
+fn bump_text(t: &(text, Entity)) { t.0 += "!"; }
+
+fn bump_slot(t: &(integer, Slot)) { t.0 = t.0 + 1; }
+
+fn name(e: Entity) -> text {
+  match e { Fireball { n } => "fire {n}", IceWall { n } => "wall {n}" }
+}
+
+fn test_a_declared_member_takes_the_link() {
+  w: (integer, Entity) = (1, IceWall { n: 6 });
+  bump(w);
+  assert(w.0 == 2 && name(w.1) == "wall 6", "the call reached the local: {w.0} {name(w.1)}");
+}
+
+fn test_the_callee_writes_the_other_variant_through_the_link() {
+  w: (integer, Entity) = (3, IceWall { n: 6 });
+  to_fire(w);
+  assert(w.0 == 3 && name(w.1) == "fire 30", "the member took the variant: {w.0} {name(w.1)}");
+}
+
+fn test_the_local_takes_the_other_variant_before_the_link() {
+  w: (integer, Entity) = (1, IceWall { n: 6 });
+  w.1 = Fireball { n: 3 };
+  bump(w);
+  assert(w.0 == 2 && name(w.1) == "fire 3", "a member write of the other variant: {w.0} {name(w.1)}");
+}
+
+fn test_a_rebind_to_the_other_variant_keeps_the_declaration() {
+  w: (integer, Entity) = (1, IceWall { n: 6 });
+  first = name(w.1);
+  w = (5, Fireball { n: 2 });
+  bump(w);
+  assert(first == "wall 6" && w.0 == 6 && name(w.1) == "fire 2", "the rebind: {first} {w.0} {name(w.1)}");
+}
+
+fn test_a_local_link_writes_either_member() {
+  w: (integer, Entity) = (1, IceWall { n: 6 });
+  r = &w;
+  r.0 += 10;
+  r.1 = Fireball { n: 8 };
+  assert(w.0 == 11 && name(w.1) == "fire 8", "through the local link: {w.0} {name(w.1)}");
+}
+
+fn test_repeated_calls_then_a_variant_match() {
+  w: (integer, Entity) = (1, IceWall { n: 6 });
+  for _ in 0..3 { bump(w); }
+  r = match w.1 { IceWall { n } => "wall {n}", Fireball { n } => "fire {n}" };
+  assert(w.0 == 4 && r == "wall 6", "three calls: {w.0} {r}");
+}
+
+fn test_a_text_member_beside_the_enum_member() {
+  w: (text, Entity) = ("a", IceWall { n: 6 });
+  bump_text(w);
+  assert(w.0 == "a!" && name(w.1) == "wall 6", "a second heap member: {w.0} {name(w.1)}");
+}
+
+fn test_a_member_that_does_not_widen_is_unchanged() {
+  w: (integer, Slot) = (1, Slot { n: 6 });
+  bump_slot(w);
+  assert(w.0 == 2 && w.1.n == 6, "a struct member, nothing to widen: {w.0} {w.1.n}");
+}
+
+fn main() {
+  test_a_declared_member_takes_the_link();
+  test_the_callee_writes_the_other_variant_through_the_link();
+  test_the_local_takes_the_other_variant_before_the_link();
+  test_a_rebind_to_the_other_variant_keeps_the_declaration();
+  test_a_local_link_writes_either_member();
+  test_repeated_calls_then_a_variant_match();
+  test_a_text_member_beside_the_enum_member();
+  test_a_member_that_does_not_widen_is_unchanged();
+}

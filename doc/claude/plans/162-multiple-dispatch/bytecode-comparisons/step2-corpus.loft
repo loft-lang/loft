@@ -1,0 +1,121 @@
+// @PLN162 step 2 — step 1's cells (one per key path) plus the `next` protocol, which two of
+// `find_fn`'s callers resolve by name: every rung of the candidate ladder, exercised.
+// `main` runs them all, so the file is also an end-to-end check on both backends.
+
+struct P { x: integer, y: integer }
+struct Res { id: integer, log: text }
+
+interface Sized { fn size_of(self: Self) -> integer }
+
+// free function — keyed `n_<name>`
+fn twice(n: integer) -> integer { n * 2 }
+
+// `self` method on a struct — `t_1P_norm1`
+fn norm1(self: P) -> integer { self.x + self.y }
+
+// `both` — a method AND a free function
+fn magnitude(both: P) -> integer { both.x * both.x + both.y * both.y }
+
+// a `τ?` overload beside the `τ` one — `t_2P?_label` beside `t_1P_label` (@FR-F-Recv)
+fn label(self: P) -> text { "P({self.x},{self.y})" }
+fn label(self: P?) -> text { if self { "some {self.x}" } else { "none" } }
+
+// only the `τ` overload, reached from a `τ?` receiver through the base fallback
+fn area(self: P) -> integer { self.x * self.y }
+
+// a user method on a STDLIB type — its struct source is not the current source
+fn shout(self: text) -> text { "{self}!" }
+
+// a user operator method — `find_op_method` (`t_1P_OpAdd`)
+fn OpAdd(self: P, o: P) -> P { P { x: self.x + o.x, y: self.y + o.y } }
+
+// `to_text` on a struct — the interpolation hook looks up `t_1P_to_text`
+fn to_text(self: P) -> text { "<{self.x};{self.y}>" }
+
+// a bounded generic — the bound's stubs are keyed per signature (`bound_stub_name`)
+fn size_of(self: P) -> integer { 2 + self.x * 0 }
+fn size_of(self: Res) -> integer { 1 + len(self.log) }
+fn total<T: Sized>(v: vector<T>) -> integer { s = 0; for e in v { s += e.size_of(); } s }
+
+fn test_free() { assert(twice(21) == 42, "twice: got {twice(21)}"); }
+
+fn test_self_method() {
+  p = P { x: 3, y: 4 };
+  assert(p.norm1() == 7, "norm1 method: got {p.norm1()}");
+  assert(norm1(p) == 7, "norm1 as a free call: got {norm1(p)}");
+}
+
+fn test_both() {
+  p = P { x: 3, y: 4 };
+  assert(p.magnitude() == 25, "both as method: got {p.magnitude()}");
+  assert(magnitude(p) == 25, "both as free fn: got {magnitude(p)}");
+}
+
+fn test_nullable_overload() {
+  p = P { x: 1, y: 2 };
+  q: P? = null;
+  r: P? = P { x: 5, y: 6 };
+  assert(p.label() == "P(1,2)", "dense receiver takes the dense overload: got {p.label()}");
+  assert(q.label() == "none", "null receiver takes the τ? overload: got {q.label()}");
+  assert(r.label() == "some 5", "present τ? receiver takes the τ? overload: got {r.label()}");
+}
+
+fn test_base_fallback() {
+  r: P? = P { x: 5, y: 6 };
+  a = r.area();
+  assert(a == 30, "τ? receiver falls back to the τ method: got {a}");
+}
+
+fn test_stdlib_type_extended() {
+  s = "hi";
+  assert(s.shout() == "hi!", "user method on text: got {s.shout()}");
+  assert(shout(s) == "hi!", "and as a free call: got {shout(s)}");
+}
+
+fn test_operator_method() {
+  a = P { x: 1, y: 2 };
+  b = P { x: 10, y: 20 };
+  c = a + b;
+  assert(c.x == 11 && c.y == 22, "user OpAdd: got {c.x},{c.y}");
+}
+
+fn test_to_text_hook() {
+  p = P { x: 7, y: 8 };
+  s = "{p}";
+  assert(s == "<7;8>", "to_text hook: got {s}");
+}
+
+fn test_bound_stubs() {
+  ps: vector<P> = [P { x: 0, y: 0 }, P { x: 1, y: 1 }];
+  rs: vector<Res> = [Res { id: 1, log: "abc" }];
+  assert(total(ps) == 4, "bound over P: got {total(ps)}");
+  assert(total(rs) == 4, "bound over Res: got {total(rs)}");
+}
+
+// a user iterator — the `for` desugaring resolves `next` on the element type by name
+struct Counter { n: integer }
+fn next(self: Counter) -> integer? {
+  if self.n >= 3 { return null; }
+  self.n += 1;
+  self.n
+}
+
+fn test_iterator_protocol() {
+  c = Counter { n: 0 };
+  s = 0;
+  for v in c { s += v; }
+  assert(s == 6, "user next protocol sums 1+2+3: got {s}");
+}
+
+fn main() {
+  test_free();
+  test_self_method();
+  test_both();
+  test_nullable_overload();
+  test_base_fallback();
+  test_stdlib_type_extended();
+  test_operator_method();
+  test_to_text_hook();
+  test_bound_stubs();
+  test_iterator_protocol();
+}

@@ -1,0 +1,68 @@
+// @PLN157 § V-ag (loft#1426) — clearing a store-ROOT vector RESETS its store, on BOTH
+// backends (`@FR-H-ClearRelease`, the release arm's mechanism).  A vector that is the root
+// of its own store owns everything in that store: its elements, and whatever they own, were
+// all claimed inside it.  Clearing it therefore kills the store's whole extent, so the store
+// is reset in one step and its two records re-established, instead of walking every element
+// and returning each owned block to the free tree one at a time.  The rule is unchanged —
+// what the elements own is still released — and so are the values; what changes is how the
+// space comes back, which is why the channels that see a wrong reset are
+// `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` rather than a wrong number.
+// The full cell corpus is
+// doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ag-store-reset-cells.loft.
+// `LOFT_NO_STORE_RESET_CLEAR=1` restores the element walk and must answer identically.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-14) — the reset made to skip re-claiming
+// the ROOT record (so the vector's record lands at 1 and overwrites the wrapper) panics at
+// `src/vector.rs` under LOFT_STRICT_STORES=1 and answers wrong without it.  A second
+// sabotage that skips re-creating the vector's own record stays GREEN, and that is a
+// recorded finding rather than a gap: an emptied vector and a dropped one differ only in a
+// condition, and the compiler folds `if <vector local>` to true, so no program can ask.  The
+// record is re-established anyway, because an equivalence resting on that fold is one a
+// later change to the fold would silently break.
+
+struct Frond { fpts: vector<float>, fwid: vector<float> }
+struct Leaf { name: text, n: integer }
+struct Flat { a: float, b: float }
+
+fn make(n: integer) -> vector<Frond> {
+  mk_out: vector<Frond> = [];
+  for i in 0..n {
+    mk_p: vector<float> = [];
+    mk_w: vector<float> = [];
+    for k in 0..3 { mk_p += [(i * 10 + k) as float]; mk_w += [0.5]; }
+    mk_out += [Frond { fpts: mk_p, fwid: mk_w }];
+  }
+  mk_out
+}
+fn total(fs: const vector<Frond>) -> integer {
+  t = 0.0;
+  for f in fs { for p in f.fpts { t += p; } for w in f.fwid { t += w; } }
+  (t * 10.0) as integer
+}
+
+fn recycled_buffer() -> integer { s = 0; for _c in 0..4 { v = make(2); s += total(v); } s }
+fn single_call() -> integer { v = make(2); total(v) * 10 + len(v) }
+fn no_heap_elements() -> integer { s = 0.0; for _c in 0..4 { v: vector<float> = []; for i in 0..5 { v += [i as float]; } for x in v { s += x; } } (s * 10.0) as integer }
+fn result_escapes() -> integer { keep: vector<Frond> = []; for _c in 0..4 { v = make(2); for f in v { keep += [f]; } } s = 0; for f in keep { s += total([f]); } s * 10 + len(keep) }
+fn text_elements() -> integer { s = 0; n = 0; for _c in 0..3 { v: vector<Leaf> = []; for i in 0..3 { v += [Leaf { name: "a{i}", n: i }]; } for l in v { s += size(l.name) + l.n; } n += len(v); } s * 10 + n }
+fn empty_result() -> integer { n = 0; for _c in 0..4 { v = make(0); n += len(v); } n }
+fn alternating_lengths() -> integer { n = 0; s = 0; for c in 0..4 { v = make(if c % 2 == 0 { 1 } else { 3 }); n += len(v); s += total(v); } s * 10 + n }
+fn two_buffers_live() -> integer { s = 0; n = 0; for _c in 0..3 { a = make(1); b = make(2); s += total(a) + total(b); n += len(a) + len(b); } s * 10 + n }
+fn both_read_after() -> integer { a = make(2); b = make(1); (total(a) + total(b)) * 10 + len(a) * 2 + len(b) }
+fn no_heap_record_elements() -> integer { s = 0.0; for _c in 0..3 { v: vector<Flat> = []; for i in 0..4 { v += [Flat { a: i as float, b: 0.25 }]; } for f in v { s += f.a + f.b; } } (s * 10.0) as integer }
+fn many_calls() -> integer { s = 0; for _c in 0..50 { v = make(2); s += len(v); } s }
+
+fn main() {
+  assert(recycled_buffer() == 1560, "four calls through one recycled buffer: 4 x 39.0");
+  assert(single_call() == 3902, "one call, no recycle: 39.0 and two elements");
+  assert(no_heap_elements() == 400, "a no-heap element takes the plain length reset");
+  assert(result_escapes() == 15608, "an escaping result keeps every element: 8 fronds");
+  assert(text_elements() == 279, "text elements own heap too: names and counts survive");
+  assert(empty_result() == 0, "an empty result leaves a usable store");
+  assert(alternating_lengths() == 21608, "the store grows and shrinks across calls");
+  assert(two_buffers_live() == 13059, "two buffers live at once, neither takes the other's");
+  assert(both_read_after() == 4355, "two results read after both calls ran");
+  assert(no_heap_record_elements() == 210, "a no-heap record element takes the length reset");
+  assert(many_calls() == 100, "fifty calls reuse one store");
+  println("store-reset ok");
+}

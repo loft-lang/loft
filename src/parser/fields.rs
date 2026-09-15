@@ -208,6 +208,10 @@ impl Parser {
             && (self.lexer.peek_token("(") || self.find_poly_enum_field(*enum_d, &field).is_none())
         {
             self.read_through_tag(code, &mut t);
+        } else {
+            // The base of a field read is not a slot either, for a struct-enum slot as for the
+            // tagged one: an absent `h.e` answers the typed null for `h.e.n` (loft#1529).
+            self.read_through_enum_slot(code, &t);
         }
         // ⚠ `dnr` is the receiver's DEF, and the two are not the same thing to a reader:
         // `type_def_nr` answers the def a type is REPRESENTED by, so a fn-ref's is `i32` and a
@@ -387,7 +391,7 @@ impl Parser {
                 let parent_d = self.data.def(*child_d).parent();
                 if parent_d != u32::MAX && matches!(self.data.def_type(parent_d), DefType::Enum) {
                     let parent_name = self.data.def(parent_d).name().to_string();
-                    let stub_name = format!("t_{}{}_{}", parent_name.len(), parent_name, field);
+                    let stub_name = crate::data::Data::mangle_method(&parent_name, &field);
                     let md_nr = self.data.def_nr(&stub_name);
                     // Only fire when `t_<Parent>_<field>` is the
                     // user's direct declaration on the enum, NOT the
@@ -614,14 +618,24 @@ impl Parser {
             } else {
                 t.clone()
             };
-            let found = self.data.find_fn(u16::MAX, &field, &dispatch);
-            let r_nr = if found != u32::MAX && self.data.def(found).name.starts_with("t_") {
-                found
-            } else {
-                r_nr
+            // `Disp-Hint` (@PLN162): the arguments parse under the ONE `t_` candidate the name
+            // has at this receiver, else under the slot's routine; the definition the call
+            // reaches is selected once the argument types exist (`parse_method_selecting`).
+            let hint_nr = match self.data.candidates(u16::MAX, &field, &dispatch).as_slice() {
+                [one] if self.data.def(*one).name.starts_with("t_") => *one,
+                _ => r_nr,
             };
             if self.lexer.has_token("(") {
-                t = self.parse_method(code, r_nr, t.clone());
+                t = self.parse_method_selecting(
+                    code,
+                    hint_nr,
+                    t.clone(),
+                    &super::control::MethodSelect::ByName {
+                        name: field.clone(),
+                        dispatch,
+                        fallback: r_nr,
+                    },
+                );
             } else {
                 diagnostic!(
                     self.lexer,
@@ -2088,6 +2102,16 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     /// EMPTY deps: still exempt from the free, but read as owning by the assignment
     /// lowering, which keeps the copy it has always made there.
     fn vector_element_cursor_deps(&self, v: &Value) -> Option<crate::data::Deps> {
+        // A `&(…)` binding is the other borrowing source: its `__tuple<…>` record is the
+        // CALLER's (formal/tuples.md `(T-Ref)`), so the cursor over it borrows that binding.
+        // Read as owning, the cursor a tuple pattern takes over the binding freed the caller's
+        // record at scope exit — a use-after-free `LOFT_STRICT_STORES` names and a plain run
+        // does not (loft#1530).
+        if let Value::Var(x) = v.unspan()
+            && matches!(self.vars.tp(*x).base(), Type::RefVar(_))
+        {
+            return Some(crate::data::Deps::frame1(*x));
+        }
         let Value::Call(d_nr, args) = v.unspan() else {
             return None;
         };

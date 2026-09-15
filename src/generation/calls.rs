@@ -221,12 +221,7 @@ impl Output<'_> {
             .value_records
             .fns
             .contains_key(&callee_nr)
-            .then(|| {
-                def_fn
-                    .attributes()
-                    .iter()
-                    .position(|a| a.name == "__retbuf")
-            })
+            .then(|| super::hoist::ret_buffer_attr(def_fn))
             .flatten();
         for (idx, v) in vals.iter().enumerate() {
             if drop_buf == Some(idx) {

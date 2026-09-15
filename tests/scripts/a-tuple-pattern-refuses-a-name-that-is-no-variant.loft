@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A capitalised name in a tuple pattern element is never a BINDING (`Foo = 5` is refused as
+// an unknown variable everywhere else), so one that is not a variant of the element's enum is
+// refused by name — the top-level arm's own `(M-Unit)` refusal, one level down.  Before this
+// held, `(Bogus, Nothing) => …` bound two locals and matched every pair in silence.  A
+// capitalised name over an element that has no variants at all says so, naming the type.
+// @falsified-at: 00272ff49 — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-tuple-pattern-refuses-a-name-that-is-no-variant.patch — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — the four `@EXPECT_ERROR` lines are all unmet on the control, so
+//   the suite's verdict is FAIL there and the file's exit goes 1 -> 0 with them.  Not leak
+//   and not assert: this whole file is a parse-time verdict.
+//   ARMED: no instrument — the refusals are parse-time on either backend.
+//   WITNESS: on the control the program COMPILES and `typo(KWall, KFire)` prints `matched`
+//   — `Bogus` and `Nothing` are silently two bindings — where here it does not compile.
+//   HOLDS: no diagnostic beyond the four named ones on either tree (the runner fails an
+//   unexpected error), and the leak channel is `none` on both and does not move.
+// @EXPECT_ERROR: 'Bogus' is not a variant of Kind
+// @EXPECT_ERROR: 'Nothing' is not a variant of Kind
+// @EXPECT_ERROR: 'Big' is not a variant — this tuple element is integer
+// @EXPECT_ERROR: 'Nope' is not a variant of Kind
+
+enum Kind { KFire, KWall }
+
+fn typo(a: Kind, b: Kind) -> text {
+  match (a, b) {
+    (Bogus, Nothing) => "matched",
+    _ => "none",
+  }
+}
+
+fn not_an_enum(n: integer, k: Kind) -> text {
+  match (n, k) {
+    (Big, KFire) => "matched",
+    _ => "none",
+  }
+}
+
+// A payload after the name is skipped whole: the refusal stands alone and the arms after it
+// still parse (the exact-set pin is `parse_errors::tuple_element_name_that_is_no_variant_is_one_diagnostic`).
+fn typo_with_payload(a: Kind, b: Kind) -> text {
+  match (a, b) {
+    (Nope { id }, KWall) => "matched",
+    (KFire, KWall) => "fire-wall",
+    _ => "none",
+  }
+}
+
+fn main() {
+  println(typo(Kind.KWall, Kind.KFire));
+  println(not_an_enum(3, Kind.KFire));
+  println(typo_with_payload(Kind.KFire, Kind.KWall));
+}

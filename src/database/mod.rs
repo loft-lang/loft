@@ -1871,6 +1871,61 @@ impl Stores {
         }
     }
 
+    /// [`Self::vec_set_hoisted_or_raise_runtime`]'s twin through a hoisted BASE (@PLN157
+    /// § V-ak, `@FR-R-Base`): the same bounds test, then one unaligned store at
+    /// `base + index * size + fld`.  The cold path — an index outside the vector — is the
+    /// same one.
+    ///
+    /// # Safety
+    ///
+    /// `base` must be [`crate::vector::vec_base`] of `h` taken while `h` described `db`,
+    /// and no store may have been reallocated since — the growth-free proof the emitter
+    /// makes for the loop that binds it (`@FR-R-Base`).  Under `VERIFY` both are checked.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header or the base no longer
+    /// matches a fresh derivation.  Never in the emitted default.
+    // The eight arguments are `vec_set_hoisted_or_raise_runtime`'s seven plus the base,
+    // and the emitter spells both calls from one site; a struct would name nothing.
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn vec_set_at<T: crate::vector::HoistScalar, const VERIFY: bool>(
+        &mut self,
+        h: &crate::vector::VecHeader,
+        base: *const u8,
+        db: &crate::keys::DbRef,
+        size: u32,
+        index: i64,
+        fld: u32,
+        val: T,
+    ) {
+        if index >= 0 && index < i64::from(h.len) {
+            if VERIFY {
+                assert_eq!(
+                    *h,
+                    crate::vector::vec_header(db, &self.allocations),
+                    "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
+                );
+                assert!(
+                    std::ptr::eq(base, crate::vector::vec_base(h, &self.allocations)),
+                    "hoisted vector base is stale — a store grew or moved under the loop"
+                );
+            }
+            // SAFETY: as `get_elem_at` — a live record in a store the loop cannot grow,
+            // the index bounded by the header's length; the pointer carries the store
+            // buffer's own provenance (it was derived from the raw `ptr` field, not from a
+            // shared reference to the data), so writing through it is the store's write.
+            unsafe {
+                base.cast_mut()
+                    .add(index as usize * size as usize + fld as usize)
+                    .cast::<T>()
+                    .write_unaligned(val);
+            }
+        } else {
+            self.vec_set_hoisted_cold::<T>(db, size, index, fld, val);
+        }
+    }
+
     /// The write twin of [`Self::vec_get_hoisted_or_raise_runtime`] (@PLN157 P4b): one
     /// indexed element WRITE against an already-derived [`crate::vector::VecHeader`] —
     /// in range, one bounds test and one typed store, with no `DbRef` built between
@@ -1915,6 +1970,67 @@ impl Stores {
         } else {
             self.vec_set_hoisted_cold::<T>(db, size, index, fld, val);
         }
+    }
+
+    /// @PLN157 § V-ae (`@FR-R-Fill`) — the whole of `for i in lo..hi { v[base + i] = val }` as
+    /// ONE range test and one slice fill, when every index lands: `[base + lo, base + last]`
+    /// inside `[0, len)`, no overflow on the way, a non-empty range.  Answers `false` without
+    /// writing anything otherwise — a negative index counts from the end, a partial range
+    /// drops what falls outside, an empty range writes nothing — and the caller then runs the
+    /// per-element loop, whose cold path spells every one of those exactly.  `size` is the
+    /// element stride and must be `size_of::<T>()`.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header no longer describes `db` —
+    /// the point of the switch.  Never in the emitted default.
+    pub fn fill_hoisted<T: crate::vector::HoistScalar, const VERIFY: bool>(
+        &mut self,
+        h: &crate::vector::VecHeader,
+        db: &crate::keys::DbRef,
+        size: u32,
+        span: crate::vector::FillSpan,
+        val: T,
+    ) -> bool {
+        let crate::vector::FillSpan {
+            base,
+            lo,
+            hi,
+            inclusive,
+        } = span;
+        let Some(last) = (if inclusive {
+            Some(hi)
+        } else {
+            hi.checked_sub(1)
+        }) else {
+            return false;
+        };
+        if lo > last || size != std::mem::size_of::<T>() as u32 {
+            return false;
+        }
+        let (Some(first), Some(end)) = (base.checked_add(lo), base.checked_add(last)) else {
+            return false;
+        };
+        if first < 0 || end >= i64::from(h.len) {
+            return false;
+        }
+        let Ok(count) = u32::try_from(end - first + 1) else {
+            return false;
+        };
+        if VERIFY {
+            assert_eq!(
+                *h,
+                crate::vector::vec_header(db, &self.allocations),
+                "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
+            );
+        }
+        self.allocations[h.store_nr as usize].fill::<T>(
+            h.rec,
+            crate::vector::checked_vec_pos(first as u32, size),
+            count,
+            val,
+        );
+        true
     }
 
     /// The off-fast-path half of [`Self::vec_set_hoisted_or_raise_runtime`]: an out-of-range or
@@ -1996,6 +2112,58 @@ impl Stores {
     /// declined to inline it across the rlib boundary, and every in-capacity push — a
     /// bounds test, one store and a length bump — paid a real call (23.8 % of the
     /// `lock_curved` row's self time sat in the helper).
+    /// @PLN157 § V-am (`@FR-R-PushFill`) — push `count` copies of `val` in one step: the
+    /// counted loop `for _ in lo..hi { v += [c] }` over a held push header.  Reserves the
+    /// room once, fills the tail with one bounds check at each end (`Store::fill`), bumps
+    /// the length once and re-derives the push header (the reserve may have moved the
+    /// record).  Answers `false` — and does nothing — for a non-positive count, an element
+    /// width that is not `T`'s, or an absent owner slot, so the caller's per-element loop
+    /// runs instead and leaves every counter as it would.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the push header no longer describes
+    /// `db` — the point of the switch.  Never in the emitted default.
+    pub fn push_fill<T: crate::vector::HoistScalar, const VERIFY: bool>(
+        &mut self,
+        p: &mut crate::vector::PushHeader,
+        db: &crate::keys::DbRef,
+        size: u32,
+        count: i64,
+        val: T,
+    ) -> bool {
+        if count <= 0 || size != std::mem::size_of::<T>() as u32 {
+            return false;
+        }
+        let Ok(n) = u32::try_from(count) else {
+            return false;
+        };
+        if VERIFY {
+            assert_eq!(
+                *p,
+                crate::vector::push_header(db, &self.allocations),
+                "hoisted push header is stale — the loop moved the vector it fills"
+            );
+        }
+        if db.is_null() || db.rec == 0 || db.pos == 0 {
+            return false;
+        }
+        let len = p.h.len;
+        let Some(total) = len.checked_add(n) else {
+            return false;
+        };
+        crate::vector::reserve_vector(db, i64::from(total), size, &mut self.allocations);
+        let h = crate::vector::vec_header(db, &self.allocations);
+        if h.rec == 0 {
+            return false;
+        }
+        let store = &mut self.allocations[h.store_nr as usize];
+        store.fill::<T>(h.rec, crate::vector::checked_vec_pos(len, size), n, val);
+        store.write::<u32>(h.rec, 4, total);
+        *p = crate::vector::push_header(db, &self.allocations);
+        true
+    }
+
     #[cold]
     #[inline(never)]
     fn push_hoisted_grow<T: crate::vector::HoistScalar>(
@@ -2149,7 +2317,14 @@ impl Stores {
             crate::vector::clear_vector(db, &mut self.allocations);
             return;
         }
-        if std::env::var("LOFT_TRACE_CLEAR").is_ok() {
+        // Cached like the switch above: this runs on every clear of a reused vector, and
+        // an uncached `getenv` here was 3.8 % of the consumer's `smooth` row (perf,
+        // 2026-09-13).
+        fn trace_enabled() -> bool {
+            static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            *F.get_or_init(|| std::env::var("LOFT_TRACE_CLEAR").is_ok())
+        }
+        if trace_enabled() {
             let kt = if (db.store_nr as usize) < self.allocations.len() {
                 self.allocations[db.store_nr as usize].known_type
             } else {
@@ -2215,6 +2390,51 @@ impl Stores {
             } else {
                 u16::MAX
             };
+            if elem != u16::MAX && self.owns_heap(elem) && crate::keys::store_reset_clear_enabled()
+            {
+                // @PLN157 § V-ag — the vector is this store's ROOT, so everything in the
+                // store was claimed inside it (`@FR-H-RootExtent`) and the whole extent is
+                // dead here.  Reset the store and re-establish the two records the
+                // element walk would have left:
+                // the root wrapper, and the vector's own record at length zero.  A cleared
+                // vector must stay PRESENT — an absent heap value is falsy where an empty
+                // one is true — so dropping the record instead would change what `if v`
+                // answers.  Both claims bump on a fresh store, so this is O(1) against the
+                // walk's delete per element.
+                let elem_size = u32::from(self.size(elem));
+                let words = 1 + u32::from(self.size(kt)).div_ceil(8);
+                // @PLN157 § V-ai — the capacity the previous fill reached, read off the
+                // record the reset is about to drop.  The buffer is reused across calls
+                // (`@FR-R-Reuse`) and the store already holds this extent
+                // (`@FR-H-RootExtent`), so starting the re-established vector there
+                // runs the growth ladder once per buffer rather than once per call.
+                // Each rung of that ladder frees a block into the store, and one freed
+                // block takes every later claim off `bump_tail` and into the free tree.
+                let reached = if crate::keys::reset_capacity_enabled() {
+                    crate::vector::reached_capacity(db, elem_size, &self.allocations)
+                } else {
+                    0
+                };
+                {
+                    let store = &mut self.allocations[db.store_nr as usize];
+                    store.init();
+                    let root = store.claim(words);
+                    debug_assert_eq!(root, 1, "a fresh store's first claim is its root record");
+                    store.zero_fill(root);
+                    store.set_u32_raw(root, 4, u32::from(kt));
+                }
+                // The vector's own record comes back through its one constructor, so the
+                // capacity ladder and the length word are not re-spelled here.
+                crate::vector::pre_alloc_vector(db, reached, elem_size, &mut self.allocations);
+                if trace_enabled() {
+                    eprintln!(
+                        "[clear] reset store={} cap={}",
+                        db.store_nr,
+                        crate::vector::reached_capacity(db, elem_size, &self.allocations)
+                    );
+                }
+                return;
+            }
             if elem != u16::MAX && self.owns_heap(elem) {
                 let len = crate::vector::length_vector(db, &self.allocations);
                 let size = u32::from(self.size(elem));

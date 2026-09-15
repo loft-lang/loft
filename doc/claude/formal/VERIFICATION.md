@@ -85,20 +85,19 @@ plan for the new rules — the oracle already guards each *area*; this drives it
   `LOFT_POISON` suite + the ownership fuzz gate + `LOFT_NATIVE_LEAK_CHECK` (read ownership.md's
   own `OPEN` line rather than a number restated here — it is `OPEN: 1` as of 2026-09-11,
   `D-own-40`, and this row read "0 open" for a cycle after that stopped being true).*
-- ~ **H-Drop — NOT on this worklist until 2026-09-11, and that is the finding.** The rule names
-  THREE deaths at which the hook runs (the owner's scope end in reverse declaration order; a
-  displacing REASSIGNMENT, after the new value is computed and before anything after the
-  statement; a CONTAINER's death through the cascade) plus a responsibility-moves-with-a-copy
-  clause.  Each is separately falsifiable and none had a row.  **No gate represents this rule at
-  all:** the free side has `LOFT_POISON`, the leak check and `ownership_cfg`'s Check D
-  (`LOFT_OWN_ORACLE=check`), and every one of them is clean on a program that loses a hook —
-  Check D measured `clean — 0 RED` over both loft#1517 guards while twelve cells were wrong, and
-  it still does over the fixed ones — closing the defect did not close this gap.
-  `(H-Drop)`'s own ⚠ says why the free-side instruments cannot be reused: a drop's two failures
-  are not ordered the way a free's are, so there is no safe direction to err in.  Until a gate
-  exists, the drop rules are pinned only by per-guard TRACES — each guard writing its hook calls
-  to a file and asserting the sequence.  **Building that gate is the gap this row records.**
-  *Current coverage, all `tests/scripts/`, all trace-asserting, all both-backends:
+- ~ **H-Drop** — the hook runs once per resource, at the death of the record that owns it (the
+  owner's scope end in reverse declaration order; a displacing REASSIGNMENT, after the new value
+  is computed and before anything after the statement; a CONTAINER's death through the cascade),
+  and responsibility moves with a copy.  *Gate: `tests/ownership_drop_gate.rs` — 223 generated
+  cells on both backends, scored on the release itself (TESTING.md § The drop gate).*  The
+  free-side instruments cannot stand in for it: `LOFT_POISON`, the leak check and
+  `ownership_cfg`'s Check D (`LOFT_OWN_ORACLE=check`) ask whether a FREE is sound, and each is
+  clean on a program that loses or doubles a hook — Check D read `clean — 0 RED` over the
+  loft#1517 guards while twelve of their cells were wrong.  A drop has no safe direction to err
+  in (`(H-Drop)`'s own ⚠), which is why its gate scores the release and not a free.  **`~`
+  because the gate pins 94 cells that release wrongly today, none with a diagnostic** —
+  `heap.md` `D-heap-1` and `D-heap-7` carry them, and the row turns ✓ when both baselines are
+  empty.  *Trace guards beside it, all `tests/scripts/`, all both-backends:
   `a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces` (the reassignment
   and scope-end clauses, 20 cells, all green since loft#1517 closed),
   `a-copy-of-a-tuple-with-a-droppable-member-releases-once` and

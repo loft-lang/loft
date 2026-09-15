@@ -372,6 +372,12 @@ pub struct LoopHoist {
     /// through (the slot from the header, the length bump at the finish).  A mint that does
     /// not qualify stays a plain mover (§ V-s: admitted, no holder, templates per element).
     pub mint_pushes: Vec<(PathKey, Value)>,
+    /// @PLN157 § V-ak (`@FR-R-Base`) — the loop GROWS no store: no push, no mint push,
+    /// no null-discharge buffer minted in its body.  Everything else the admission lets
+    /// through — in-place sets, store-free ops, store-free or in-place-only callees, a
+    /// free — leaves every store's buffer where it is, so a hoisted header may carry the
+    /// address of its vector's element 0 for the loop's whole extent.
+    pub growth_free: bool,
 }
 
 /// The vector headers and the record scalars `body` may derive once up front.
@@ -410,6 +416,7 @@ pub fn hoistable(
         scalars: Vec::new(),
         pushes: Vec::new(),
         mint_pushes: Vec::new(),
+        growth_free: false,
     };
     let vars = data.def(def_nr).variables();
     let rebound = rebound_vars(body);
@@ -443,12 +450,13 @@ pub fn hoistable(
                     && let Some(fi) = callee_inputs(*f, data, stores, cache, writes, inputs)
                 {
                     for (pf, offs, path) in &fi.headers {
-                        if let Some(Value::Var(c)) = args.get(*pf as usize).map(Value::unspan)
-                            && !rebound.contains(c)
-                            && !out.vectors.iter().any(|(p, _)| p.0 == *c && p.1 == *offs)
+                        if let Some((key, expr)) = args
+                            .get(*pf as usize)
+                            .and_then(|a| input_header_at(data, a, *pf, offs, path))
+                            && !rebound.contains(&key.0)
+                            && !out.vectors.iter().any(|(p, _)| *p == key)
                         {
-                            out.vectors
-                                .push(((*c, offs.clone()), substitute_root(path, *pf, *c)));
+                            out.vectors.push((key, expr));
                         }
                     }
                     if tiers.scalars {
@@ -563,6 +571,22 @@ pub fn hoistable(
             .filter_map(|(p, expr, q)| q.then_some((p, expr)))
             .collect();
     }
+    // `@FR-R-Base` — decided here, before either early return below: a loop with no
+    // record scalars to hoist is exactly the shape a pixel loop has.
+    let null_buf = mints_null_buffer(body, data, vars);
+    out.growth_free = out.pushes.is_empty() && out.mint_pushes.is_empty() && !null_buf;
+    if std::env::var("LOFT_TRACE_BASE").is_ok() {
+        eprintln!(
+            "base: {} loop {} growth_free={} (pushes {}, mint pushes {}, null buffer {}, headers {})",
+            data.def(def_nr).name(),
+            body.scope,
+            out.growth_free,
+            out.pushes.len(),
+            out.mint_pushes.len(),
+            null_buf,
+            out.vectors.len()
+        );
+    }
     if found.is_empty() {
         return out;
     }
@@ -591,6 +615,19 @@ pub fn hoistable(
         .map(|(key, _, call)| (key, call))
         .collect();
     out
+}
+
+/// Does the body mint a § V-ad null-discharge buffer — the one store allocation the
+/// header admission lets through?  It moves no header's record, but it is a growth, and
+/// `@FR-R-Base` asks for none.
+fn mints_null_buffer(body: &Block, data: &Data, vars: &crate::variables::Function) -> bool {
+    body.operators.iter().any(|op| {
+        op.any_node(&mut |n| {
+            matches!(n, Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && null_buffer_alloc(data.def(*d).name(), args, Some(vars), data).is_some())
+        })
+    })
 }
 
 /// The schema type of a variable that names a PLAIN struct record — a `Reference` to a
@@ -827,6 +864,10 @@ fn body_writes(
                 // § V-d's delivery tail into a fresh mint variable (`@FR-R-Mint`): the copy
                 // writes the fresh element, and its source-free releases the builder's own
                 // this-iteration buffer — neither is a record a hoisted scalar can name.
+            } else if let Some(tp) = null_buffer_alloc(name, args, Some(vars), data) {
+                // § V-ad — the discharge buffer is re-initialised whole; only a scalar hoisted
+                // off ITS type could observe that, and the buffer's view is rebound per use.
+                set.whole.insert(tp);
             } else if RECORD_FREE_OPS.contains(&name) {
                 let freed = match args.first().map(Value::unspan) {
                     Some(Value::Var(r)) => plain_record_type(data, vars.tp(*r)),
@@ -975,10 +1016,7 @@ fn callee_inputs_inner(
         return None;
     };
     // `.base()`: the shape question sees through a `τ?` result (`@FR-N-Shape`).
-    if !def.rust().is_empty()
-        || def.hidden_return_buffer_attr().is_some()
-        || matches!(def.returned().base(), Type::Iterator(_, _))
-    {
+    if !def.rust().is_empty() || matches!(def.returned().base(), Type::Iterator(_, _)) {
         return None;
     }
     let mut active = HashSet::new();
@@ -990,20 +1028,35 @@ fn callee_inputs_inner(
     let vars = def.variables();
     let params = u16::try_from(def.attributes().len()).ok()?;
     let rebound = rebound_vars(body);
-    let mut written = WriteSet::default();
-    let mut fresh_elems: HashSet<u16> = HashSet::new();
-    for op in &body.operators {
-        written.extend(&body_writes(
-            op,
-            data,
-            stores,
-            vars,
-            cache,
-            writes,
-            &mut HashSet::new(),
-            &mut fresh_elems,
-        )?);
-    }
+    // What the body writes, as the caller's gate accounts it (`@FR-R-Callee`): a
+    // return-buffer writer (§ V-ac — `brush_sample` answering a `Smp` through its buffer)
+    // reaches its buffer's record type WHOLE, which no parameter's field shares; any other
+    // admitted body has a typed set of its own, or no twin.
+    let written = if def.hidden_return_buffer_attr().is_some()
+        && retbuf_only_writer(d_nr, data, cache, &mut active)
+    {
+        let attr = def.hidden_return_buffer_attr()?;
+        WriteSet {
+            offsets: HashSet::new(),
+            whole: HashSet::from([plain_record_type(data, &def.attributes()[attr].typedef)?]),
+        }
+    } else {
+        let mut written = WriteSet::default();
+        let mut fresh_elems: HashSet<u16> = HashSet::new();
+        for op in &body.operators {
+            written.extend(&body_writes(
+                op,
+                data,
+                stores,
+                vars,
+                cache,
+                writes,
+                &mut HashSet::new(),
+                &mut fresh_elems,
+            )?);
+        }
+        written
+    };
     // A parameter (never rebound) as a candidate root: its plain record type, or — for a
     // header — whether it names a vector at all.
     let record_param = |p: u16| -> Option<u16> {
@@ -1072,12 +1125,13 @@ fn callee_inputs_inner(
                 }
             }
             for (pf, offs, path) in &fi.headers {
-                if let Some(Value::Var(p)) = args.get(*pf as usize).map(Value::unspan)
-                    && path_root(*p, offs)
-                    && !out.headers.iter().any(|(r, o, _)| *r == *p && o == offs)
+                if let Some(((p, key), expr)) = args
+                    .get(*pf as usize)
+                    .and_then(|a| input_header_at(data, a, *pf, offs, path))
+                    && path_root(p, &key)
+                    && !out.headers.iter().any(|(r, o, _)| *r == p && *o == key)
                 {
-                    out.headers
-                        .push((*p, offs.clone(), substitute_root(path, *pf, *p)));
+                    out.headers.push((p, key, expr));
                 }
             }
         }
@@ -1090,13 +1144,43 @@ fn callee_inputs_inner(
 /// caller's argument variable (@PLN157 § V-p).
 #[must_use]
 pub fn substitute_root(v: &Value, from: u16, to: u16) -> Value {
-    let mut out = v.clone();
-    out.map_nodes(&mut |n| {
-        if matches!(n, Value::Var(x) if *x == from) {
-            *n = Value::Var(to);
-        }
-    });
-    out
+    substitute_path(v, from, &Value::Var(to))
+}
+
+/// `path` — a callee's pure path over `Var(from)` — re-spelled over the caller's argument
+/// `arg`, itself a pure path (@PLN157 § V-ac): the callee's `img` at an argument `br.img`
+/// is the caller's `br.img`, its `c.data` at `h.cv` is `h.cv.data`.  A walk of its own
+/// rather than `map_nodes`, which descends into the replacement: the argument is spelled
+/// over the CALLER's variables, whose numbers can coincide with `from`.
+#[must_use]
+pub fn substitute_path(path: &Value, from: u16, arg: &Value) -> Value {
+    match path {
+        Value::Var(x) if *x == from => arg.clone(),
+        Value::Span(b) => Value::Span(Box::new((b.0.clone(), substitute_path(&b.1, from, arg)))),
+        Value::Call(d, args) => Value::Call(
+            *d,
+            args.iter().map(|a| substitute_path(a, from, arg)).collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// A callee's header input `(pf, offs, path)` at the caller's argument `arg`, when that
+/// argument is a pure path (`@FR-R-Header`): the caller's key — the argument's path
+/// extended by the callee's offsets — and the expression that derives it.  `None` for any
+/// other argument (an element view, a conditional, a call), which keeps the plain call.
+/// Enforces `@FR-R-Inputs` (the path-argument half, @PLN157 § V-ac).
+#[must_use]
+pub fn input_header_at(
+    data: &Data,
+    arg: &Value,
+    pf: u16,
+    offs: &[i64],
+    path: &Value,
+) -> Option<(PathKey, Value)> {
+    let (root, mut key) = vector_path(data, arg)?;
+    key.extend_from_slice(offs);
+    Some(((root, key), substitute_path(path, pf, arg)))
 }
 
 /// @PLN157 § V-n — does statement `at` of `stmts` bind a VIEW of a vector whose header the
@@ -1361,6 +1445,510 @@ pub struct FusedPush<'a> {
     pub size: u32,
 }
 
+/// @PLN157 § V-ae (`@FR-R-Fill`) — a loop that is ONE fill: `for i in lo..hi { v[base + i]
+/// = val }` with `base` and `val` invariant, over a pure path a header may serve.
+pub struct FillLoop<'a> {
+    /// The written path's key and operand (the header's, `@FR-R-Header`).
+    pub path: PathKey,
+    pub vector: &'a Value,
+    /// The Rust type of the element, and its width as the setter spells it.
+    pub rust_type: &'static str,
+    pub size: u32,
+    /// The invariant added to the loop variable, when the index is not the variable alone.
+    pub base: Option<&'a Value>,
+    /// The range's end operand, and whether the range includes it.
+    pub hi: &'a Value,
+    pub inclusive: bool,
+    /// The counter the range runs on: the `#index` variable, and the `next` variable of
+    /// the two-counter form (a computed start, § V-ab) — `None` in the single-counter form
+    /// (a literal start, P3b), whose `#index` is seeded one below the start.
+    pub index_var: u16,
+    pub next_var: Option<u16>,
+    pub val: &'a Value,
+}
+
+/// Is `v` an INVARIANT scalar expression the fill may evaluate once — a variable other
+/// than the loop's own, a literal, plain integer/float arithmetic over those, or a record
+/// scalar read off such a variable?  Anything else (a call, a `??` block, an element read,
+/// a conversion) keeps the per-element loop: the fill evaluates the expression once and
+/// the fallback once more, so it must be pure and free of the loop's counters.
+fn simple_invariant(v: &Value, data: &Data, banned: &[u16]) -> bool {
+    match v.unspan() {
+        Value::Var(x) => !banned.contains(x),
+        Value::Int(_) | Value::Float(_) => true,
+        Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+            let name = data.def(*d).name();
+            if matches!(
+                name,
+                "OpAddInt" | "OpMinInt" | "OpMulInt" | "OpAddFloat" | "OpMinFloat" | "OpMulFloat"
+            ) {
+                args.len() == 2 && args.iter().all(|a| simple_invariant(a, data, banned))
+            } else if SCALAR_GETTERS.contains(&name) && args.len() == 3 {
+                matches!(args[0].unspan(), Value::Var(r) if !banned.contains(r))
+                    && matches!(args[1].unspan(), Value::Int(_))
+                    && matches!(args[2].unspan(), Value::Int(_))
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Is `v` a `break` — bare, or a block whose only statement is one?
+fn is_break_block(v: &Value) -> bool {
+    match v.unspan() {
+        Value::Break(_) => true,
+        Value::Block(b) => {
+            b.operators.len() == 1 && matches!(b.operators[0].unspan(), Value::Break(_))
+        }
+        _ => false,
+    }
+}
+
+/// The `if index == hi { break }` an INCLUSIVE range emits before its step (loft#1525) — the
+/// stop decided on the value just yielded, so `hi + 1` never has to exist.  Recognised by SHAPE
+/// (an equality whose arms are a break and a null), never by position alone, so an ordinary
+/// leading statement is not mistaken for it.
+fn is_inclusive_stop_guard(v: &Value, data: &Data) -> bool {
+    let Value::If(cond, on_true, on_false) = v.unspan() else {
+        return false;
+    };
+    if !is_break_block(on_true) || !matches!(on_false.unspan(), Value::Null) {
+        return false;
+    }
+    // The EQUALITY is what tells this guard from the range's own break test, and the
+    // distinction is load-bearing: the two-counter form is `[test, index, step, yield]`, whose
+    // leading statement is ALSO an if-break over a two-argument call.  Matching on the shape
+    // alone peeled that test and read the remainder as the single-counter form — a different
+    // loop, silently.  The range tests with `OpLtInt`/`OpLeInt`; only the stop guard is `==`.
+    matches!(
+        cond.unspan(),
+        Value::Call(d, args) if args.len() == 2 && data.def(*d).name() == "OpEqInt"
+    )
+}
+
+/// Recognise the fill idiom in a `For loop` body (@PLN157 § V-ae): the iterator block of a
+/// counted range in either lowering — the two-counter form `[if hi <cmp> next { break };
+/// index = next; next = next + 1; index]` (§ V-ab) or the single-counter form `[index =
+/// index + 1; if hi <cmp> index { break }; index]` (P3b) — followed by ONE statement, a
+/// fusable scalar set (`OpSetInt`/`OpSetSingle`/`OpSetFloat`) at field 0 of `v[idx]` with
+/// `v` a pure path, `idx` the loop variable or `invariant + variable`, and the value
+/// invariant.  `<cmp>` is `OpLtInt` for an inclusive range and `OpLeInt` for an exclusive
+/// one.  Reports shape only; the emitter confirms the path has a header.
+/// Enforces `@FR-R-Fill`.
+/// The counters of a counted `for` loop, as the parser lowers `for v in a..b`: the loop
+/// variable, the `#index` it yields, the `next` counter of the two-counter form (a
+/// computed start, § V-ab; `None` in the single-counter form, P3b), whether the range is
+/// inclusive, and its end operand.  ONE home — the fill rewrite reads the shape here and
+/// so does the non-sentinel pass, which seeds these counters as never-null off the bound.
+pub struct RangeCounters<'a> {
+    pub loop_var: u16,
+    pub index: u16,
+    pub next: Option<u16>,
+    pub inclusive: bool,
+    pub hi: &'a Value,
+}
+
+/// Parse a `For loop` block's iterator into its counters, or say which part of the shape
+/// it is not.
+///
+/// # Errors
+///
+/// The reason the block is not a counted range — the trace the fill rewrite prints.
+pub fn range_counters<'a>(lp: &'a Block, data: &Data) -> Result<RangeCounters<'a>, String> {
+    let decline = |why: &str| -> Result<RangeCounters<'a>, String> { Err(why.to_string()) };
+    if lp.operators.len() != 2 {
+        return decline(&format!("loop has {} statements", lp.operators.len()));
+    }
+    let Value::Set(loop_var, iter) = lp.operators[0].unspan() else {
+        return decline("first statement is not the loop variable's Set");
+    };
+    let Value::Block(it) = iter.unspan() else {
+        return decline("iterator is not a block");
+    };
+    if it.name != "Iter range" {
+        return decline(&format!("iterator block is `{}`, not a range", it.name));
+    }
+    // loft#1525 — an INCLUSIVE range decides its stop on the value just YIELDED, so its
+    // iterator carries one extra leading statement: `if index == hi { break }`, emitted before
+    // the step so the loop never has to represent `hi + 1`.  Peel it, because the loop under it
+    // is the same fill: the guard changes when the loop ENDS, not which elements it writes.
+    //
+    // Safe to drop rather than carry, and `fill_hoisted` is why — it declines (returns false,
+    // falling back to this very loop) whenever the span does not fit the vector, including the
+    // `end >= h.len` and `u32::try_from` edges an unbounded end reaches.  So the fill applies
+    // only where the guard would never have fired, and where it would fire the fallback is the
+    // corrected loop.
+    let ops: &[Value] = match &it.operators[..] {
+        [first, rest @ ..] if rest.len() >= 3 && is_inclusive_stop_guard(first, data) => rest,
+        all => all,
+    };
+    // The three statements and the yield, in one of the two orders.
+    let (test, seed_index, step, yielded, next_var) = match ops {
+        [a, b, c, d] => {
+            // § V-ab: [if …; index = next; next = next + 1; index]
+            let Value::Set(xi, from) = b.unspan() else {
+                return decline("two-counter form: second statement is not the index Set");
+            };
+            let Value::Var(nx) = from.unspan() else {
+                return decline("two-counter form: the index is not set from a variable");
+            };
+            let Value::Set(nx2, step) = c.unspan() else {
+                return decline("two-counter form: third statement is not the step Set");
+            };
+            if nx2 != nx {
+                return decline("two-counter form: the step is on another variable");
+            }
+            (a, *xi, step.unspan(), d, Some(*nx))
+        }
+        [a, b, c] => {
+            // P3b: [index = index + 1; if …; index]
+            let Value::Set(xi, step) = a.unspan() else {
+                return decline("single-counter form: first statement is not the step Set");
+            };
+            (b, *xi, step.unspan(), c, None)
+        }
+        _ => return decline(&format!("iterator has {} statements", ops.len())),
+    };
+    let counter = next_var.unwrap_or(seed_index);
+    let loop_var = *loop_var;
+    // The step: counter = counter + 1.
+    let Value::Call(sd, sargs) = step else {
+        return decline("the step is not a call");
+    };
+    if data.def(*sd).name() != "OpAddInt"
+        || sargs.len() != 2
+        || !matches!(sargs[0].unspan(), Value::Var(c) if *c == counter)
+        || !matches!(sargs[1].unspan(), Value::Int(1))
+    {
+        return decline("the step is not `counter + 1`");
+    }
+    // The test: if hi <cmp> counter { break } else null.
+    let Value::If(cond, on_true, on_false) = test.unspan() else {
+        return decline("the test is not an if");
+    };
+    if !is_break_block(on_true) || !matches!(on_false.unspan(), Value::Null) {
+        return decline("the test does not break");
+    }
+    let Value::Call(cd, cargs) = cond.unspan() else {
+        return decline("the test's condition is not a call");
+    };
+    let inclusive = match data.def(*cd).name() {
+        "OpLtInt" => true,
+        "OpLeInt" => false,
+        _ => return decline("the test is not OpLtInt/OpLeInt"),
+    };
+    if cargs.len() != 2 || !matches!(cargs[1].unspan(), Value::Var(c) if *c == counter) {
+        return decline("the test is not against the counter");
+    }
+    // The yield: the index variable.
+    if !matches!(yielded.unspan(), Value::Var(y) if *y == seed_index) {
+        return decline("the iterator does not yield the index");
+    }
+    Ok(RangeCounters {
+        loop_var,
+        index: seed_index,
+        next: next_var,
+        inclusive,
+        hi: &cargs[0],
+    })
+}
+
+pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
+    let trace = std::env::var("LOFT_TRACE_FILL").is_ok();
+    let decline = |why: &str| -> Option<FillLoop<'a>> {
+        if trace {
+            eprintln!("fill: loop {} declined — {why}", lp.scope);
+        }
+        None
+    };
+    let kinds = |ops: &[Value]| -> String {
+        ops.iter()
+            .map(|o| kind_of(o.unspan()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if lp.name != "For loop" {
+        return None;
+    }
+    let rc = match range_counters(lp, data) {
+        Ok(rc) => rc,
+        Err(why) => return decline(&why),
+    };
+    let (loop_var, seed_index, next_var, inclusive, hi) =
+        (rc.loop_var, rc.index, rc.next, rc.inclusive, rc.hi);
+    // The body: one fusable scalar set over the loop variable's index.
+    let Value::Block(body) = lp.operators[1].unspan() else {
+        return decline("the body is not a block");
+    };
+    // A source-line marker is not a statement (a library module's body carries one).
+    let stmts: Vec<&Value> = body
+        .operators
+        .iter()
+        .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+        .collect();
+    if stmts.len() != 1 {
+        return decline(&format!(
+            "the body has {} statements: {}",
+            stmts.len(),
+            kinds(&body.operators)
+        ));
+    }
+    let Value::Call(setter, wargs) = stmts[0].unspan() else {
+        return decline("the body is not a call");
+    };
+    let Some((_, rust_type)) = FUSABLE_SETTERS
+        .iter()
+        .find(|(name, _)| *name == data.def(*setter).name())
+    else {
+        return decline(&format!(
+            "the body is `{}`, not a fusable setter",
+            data.def(*setter).name()
+        ));
+    };
+    let [inner, fld, val] = &wargs[..] else {
+        return decline("the setter does not take three operands");
+    };
+    if !matches!(fld.unspan(), Value::Int(0)) {
+        return decline("the setter's field is not 0");
+    }
+    let Value::Call(addr, aargs) = inner.unspan() else {
+        return decline("the address is not a call");
+    };
+    if !is_element_address(data, *addr) {
+        return decline("the address is not an element address");
+    }
+    let [vector, size, index] = &aargs[..] else {
+        return decline("the address does not take three operands");
+    };
+    let Value::Int(size) = size.unspan() else {
+        return decline("the element size is not a literal");
+    };
+    let width: u32 = match *rust_type {
+        "i64" | "f64" => 8,
+        "f32" => 4,
+        _ => return None,
+    };
+    if u32::try_from(*size).ok() != Some(width) {
+        return decline("the element size is not the scalar's width");
+    }
+    let Some(path) = vector_path(data, vector) else {
+        return decline("the vector is not a pure path");
+    };
+    let mut banned = vec![loop_var, seed_index];
+    if let Some(nx) = next_var {
+        banned.push(nx);
+    }
+    banned.push(path.0);
+    // The index: the loop variable, or `invariant + variable` either way round.
+    let base = match index.unspan() {
+        Value::Var(x) if *x == loop_var => None,
+        Value::Call(d, args) if data.def(*d).name() == "OpAddInt" && args.len() == 2 => {
+            let is_var = |a: &Value| matches!(a.unspan(), Value::Var(x) if *x == loop_var);
+            if is_var(&args[0]) && simple_invariant(&args[1], data, &banned) {
+                Some(&args[1])
+            } else if is_var(&args[1]) && simple_invariant(&args[0], data, &banned) {
+                Some(&args[0])
+            } else {
+                return decline("the index is not `invariant + loop variable`");
+            }
+        }
+        _ => return decline("the index is neither the loop variable nor a sum"),
+    };
+    if !simple_invariant(val, data, &banned) {
+        return decline("the value is not a simple invariant");
+    }
+    if !simple_invariant(hi, data, &banned) {
+        return decline("the range's end is not a simple invariant");
+    }
+    Some(FillLoop {
+        path,
+        vector,
+        rust_type,
+        size: width,
+        base,
+        hi,
+        inclusive,
+        index_var: seed_index,
+        next_var,
+        val,
+    })
+}
+
+/// @PLN157 § V-am (`@FR-R-PushFill`) — a counted loop that PUSHES: `k` scalar pushes to
+/// one pure path at the top level of its body, every iteration, with nothing that can
+/// leave the loop early and no other write reaching the path.  The reserve form holds for
+/// any such loop (`pushes` × the trip count, once, before the loop); the FILL form is the
+/// body that is that one push of a simple invariant and nothing else.
+pub struct PushLoop<'a> {
+    pub path: PathKey,
+    pub vector: &'a Value,
+    pub rust_type: &'static str,
+    pub size: u32,
+    pub hi: &'a Value,
+    pub inclusive: bool,
+    pub index_var: u16,
+    pub next_var: Option<u16>,
+    /// The pushes per iteration.
+    pub pushes: u32,
+    /// The invariant value when the body is ONE push of it — the fill form.
+    pub fill: Option<&'a Value>,
+}
+
+/// Recognise the counted push loop (`@FR-R-PushFill`).  Declines, and says why under
+/// `LOFT_TRACE_PUSH_FILL=1`, whenever the trip count cannot be known before the loop runs
+/// or the pushes per iteration cannot be counted: a `break`, a `return`, a `continue`, an
+/// inner loop, a push under a branch, a push to a second path, an append or any other
+/// write reaching the path, a range end that is not a simple invariant.  The fallback is
+/// `None` — the loop runs as it did, which costs the reserve and never a value.
+#[must_use]
+pub fn push_loop<'a>(lp: &'a Block, data: &Data) -> Option<PushLoop<'a>> {
+    let trace = std::env::var("LOFT_TRACE_PUSH_FILL").is_ok();
+    let decline = |why: &str| -> Option<PushLoop<'a>> {
+        if trace {
+            eprintln!("push-fill: loop {} declined — {why}", lp.scope);
+        }
+        None
+    };
+    if lp.name != "For loop" {
+        return None;
+    }
+    let rc = match range_counters(lp, data) {
+        Ok(rc) => rc,
+        Err(why) => return decline(&why),
+    };
+    let Value::Block(body) = lp.operators[1].unspan() else {
+        return decline("the body is not a block");
+    };
+    let stmts: Vec<&Value> = body
+        .operators
+        .iter()
+        .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+        .collect();
+    let push_kind = |d: &u32| -> Option<(&'static str, u32)> {
+        if (*d as usize) >= data.definitions.len() {
+            return None;
+        }
+        let name = data.def(*d).name();
+        FUSABLE_PUSHES
+            .iter()
+            .find(|(n, _, _)| *n == name)
+            .map(|(_, rt, w)| (*rt, *w))
+    };
+    // The pushes at the top level of the body.
+    let mut path: Option<PathKey> = None;
+    let mut vector: Option<&'a Value> = None;
+    let mut rust_type = "";
+    let mut size = 0u32;
+    let mut vals: Vec<&'a Value> = Vec::new();
+    for s in &stmts {
+        if let Value::Call(d, args) = s.unspan()
+            && let Some((rt, w)) = push_kind(d)
+            && args.len() == 2
+            && let Some(p) = vector_path(data, &args[0])
+        {
+            match &path {
+                Some(pp) if *pp != p => return decline("the pushes reach two paths"),
+                Some(_) => {}
+                None => {
+                    path = Some(p);
+                    vector = Some(&args[0]);
+                    rust_type = rt;
+                    size = w;
+                }
+            }
+            vals.push(&args[1]);
+        }
+    }
+    let (Some(path), Some(vector)) = (path, vector) else {
+        return decline("no push at the top level of the body");
+    };
+    // The statements that are neither a counted push nor the path's own reservation (which
+    // the parser emits BEFORE the push, so it is counted once the path is known).
+    let plain = stmts
+        .iter()
+        .filter(|s| {
+            !matches!(s.unspan(), Value::Call(d, a)
+                if (push_kind(d).is_some()
+                    || ((*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpPreAllocVector"))
+                    && a.first().and_then(|f| vector_path(data, f)).as_ref() == Some(&path))
+        })
+        .count();
+    let mut early = false;
+    lp.operators[1].any_node(&mut |n| {
+        if matches!(
+            n,
+            Value::Break(_)
+                | Value::Return(_)
+                | Value::Continue(_)
+                | Value::Loop(_)
+                | Value::Yield(_)
+                | Value::Parallel(_)
+        ) {
+            early = true;
+            return true;
+        }
+        false
+    });
+    if early {
+        return decline("the body can leave early, or loops");
+    }
+    // Every push to the path is one of the counted ones, and nothing else writes it.
+    let mut all = 0usize;
+    let mut other = false;
+    lp.operators[1].any_node(&mut |n| {
+        if let Value::Call(d, args) = n
+            && (*d as usize) < data.definitions.len()
+            && let Some(first) = args.first()
+            && vector_path(data, first).as_ref() == Some(&path)
+        {
+            let name = data.def(*d).name();
+            if push_kind(d).is_some() {
+                all += 1;
+            } else if !(name == "OpPreAllocVector"
+                || name.starts_with("OpGet")
+                || name.starts_with("OpLength"))
+            {
+                other = true;
+            }
+        }
+        false
+    });
+    if other {
+        return decline("another write reaches the path");
+    }
+    if all != vals.len() {
+        return decline("a push stands under a branch");
+    }
+    let mut banned = vec![rc.loop_var, rc.index, path.0];
+    if let Some(nx) = rc.next {
+        banned.push(nx);
+    }
+    if !simple_invariant(rc.hi, data, &banned) {
+        return decline("the range's end is not a simple invariant");
+    }
+    let fill = if vals.len() == 1 && plain == 0 && simple_invariant(vals[0], data, &banned) {
+        Some(vals[0])
+    } else {
+        None
+    };
+    let pushes = u32::try_from(vals.len()).ok()?;
+    Some(PushLoop {
+        path,
+        vector,
+        rust_type,
+        size,
+        hi: rc.hi,
+        inclusive: rc.inclusive,
+        index_var: rc.index,
+        next_var: rc.next,
+        pushes,
+        fill,
+    })
+}
+
 /// Recognise `OpPreAllocVector(path, count, size)` over a pure path (@PLN157 § V-q): the
 /// reservation the parser emits before a push to a LOCAL vector.  It claims a record only
 /// for an ABSENT vector and never moves an existing one, so it cannot stale a header; with a
@@ -1577,6 +2165,47 @@ fn writes_store(
 /// releases `v` alone, so only its first operand is the question.
 const RECORD_FREE_OPS: [&str; 2] = ["OpFreeRef", "OpFreeRefIfDistinct"];
 
+/// Is `def_nr` a record type with no heap in it — every field a fixed-width scalar (a
+/// constant and a routine field hold no store either)?  The record's store then hosts
+/// nothing a hoisted header could name: the fact `@FR-R-Callee`'s return-buffer half and
+/// § V-ad's discharge buffer both stand on.
+fn all_scalar_record(data: &Data, def_nr: u32) -> bool {
+    data.def(def_nr).attributes().iter().all(|a| {
+        a.constant || matches!(a.typedef.base(), Type::Routine(_)) || is_scalar(&a.typedef)
+    })
+}
+
+/// @PLN157 § V-ad — `OpDatabase`/`OpDatabaseNP` into a hidden null-discharge buffer
+/// (`__ref_p2_N`, the record `e = tbl[i]?` mints an ABSENT element into) whose record is
+/// all-scalar: the allocation takes a store of its own from a null slot, or clears the
+/// buffer's OWN store, and that store hosts no vector, text or reference — so no header
+/// can go stale and no scalar hoist can be reached except through the buffer's own type.
+/// Answers that type.  Only the pass-2 discharge buffers qualify: a `__ref_N` work-ref may
+/// be a return buffer, and a return buffer may be a record the caller offered.
+/// Enforces `@FR-R-InPlace` (the hidden-buffer allowance).
+fn null_buffer_alloc(
+    name: &str,
+    args: &[Value],
+    vars: Option<&crate::variables::Function>,
+    data: &Data,
+) -> Option<u16> {
+    if !crate::keys::null_buffer_hoist_enabled()
+        || !(name == "OpDatabase" || name == "OpDatabaseNP")
+    {
+        return None;
+    }
+    let vars = vars?;
+    let Some(Value::Var(b)) = args.first().map(Value::unspan) else {
+        return None;
+    };
+    if *b >= vars.count() || !vars.name(*b).starts_with("__ref_p2_") {
+        return None;
+    }
+    let tp = plain_record_type(data, vars.tp(*b))?;
+    let def_nr = vars.tp(*b).heap_def_nr()?;
+    all_scalar_record(data, def_nr).then_some(tp)
+}
+
 fn frees_a_record(name: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
     let Some(vars) = vars else { return false };
     RECORD_FREE_OPS.contains(&name)
@@ -1625,6 +2254,9 @@ fn blocks_header_hoist(
             let record_free = known
                 && crate::keys::retbuf_hoist_enabled()
                 && frees_a_record(data.def(*d).name(), args, vars);
+            // @PLN157 § V-ad — the null-discharge buffer's allocation moves nothing a header
+            // describes; its field sets below are in-place and walk on their own.
+            let buffer_alloc = known && null_buffer_alloc(data.def(*d).name(), args, vars, data).is_some();
             // @PLN157 § V-q (`@FR-R-Push`) — a fusable push over a pure path is admitted
             // under its own tier: it grows one vector whose header the loop keeps current
             // through the push itself; `hoistable` decides the aliasing.  The value operand
@@ -1655,7 +2287,13 @@ fn blocks_header_hoist(
             {
                 fresh.remove(e);
             }
-            if in_place_setter || record_free || fusable_push || record_mint || fresh_delivery {
+            if in_place_setter
+                || record_free
+                || buffer_alloc
+                || fusable_push
+                || record_mint
+                || fresh_delivery
+            {
                 false
             } else if call_writes_store(*d, data, cache, active) {
                 // @PLN157 § V-l — a USER callee that writes, but only in place: admitted
@@ -1787,12 +2425,7 @@ fn retbuf_only_writer(
     let Some(record) = def.attributes()[attr].typedef.heap_def_nr() else {
         return false;
     };
-    if !data
-        .def(record)
-        .attributes()
-        .iter()
-        .all(|a| a.constant || matches!(a.typedef, Type::Routine(_)) || is_scalar(&a.typedef))
-    {
+    if !all_scalar_record(data, record) {
         return false;
     }
     let buf = def.variables().var(&def.attributes()[attr].name);
@@ -2354,12 +2987,22 @@ pub struct RetAdopt {
 #[must_use]
 pub fn ret_adopt(data: &Data, def_nr: u32) -> Option<RetAdopt> {
     let def = data.def(def_nr);
-    // A dep naming only HIDDEN attrs is the one-buffer return marker, not a borrow —
-    // `returns_borrowed_view` reads exactly that distinction (a visible attr borrows).
-    if !def.is_loft_defined() || def.returns_borrowed_view() {
+    if !def.is_loft_defined() {
         return None;
     }
+    // The RETURN-TYPE gate comes FIRST, and the order is load-bearing.
+    // `returns_borrowed_view` is a heap-return ownership read: it walks the return's dep list
+    // as ATTRIBUTE indices, and a `Type::Function` return does not carry those — a closure's
+    // deps are callee-frame notes tagged `0x8000`, which are not attr indices at all.
+    // `data.rs` states that invariant as an assert ("closure-internal note reached a heap-return
+    // ownership read") and it fired here on every closure factory under `-C debug-assertions=on`,
+    // because this gate asked the ownership question before knowing the return was a vector.
     if !matches!(def.returned().peel_link(), Type::Vector(_, _)) {
+        return None;
+    }
+    // A dep naming only HIDDEN attrs is the one-buffer return marker, not a borrow —
+    // `returns_borrowed_view` reads exactly that distinction (a visible attr borrows).
+    if def.returns_borrowed_view() {
         return None;
     }
     let attr = def.hidden_return_buffer_attr()?;
@@ -3536,18 +4179,20 @@ pub struct ValueRecords {
     pub fields: HashMap<u32, Vec<(i64, &'static str)>>,
 }
 
-/// WARNING - OPT-IN as of 2026-09-12 (`LOFT_VALUE_RECORD=1`), not default-on.  The
-/// admission gates do not hold across the script corpus: sites survive that use the
-/// result AS A DbRef (rustc: no field store_nr on type (f64,)), that pass a buffer
-/// argument to a signature which dropped it, and that join a tuple arm with a record arm
-/// in one `match` - each one a generated crate that does not compile.  Gate (2) claims
-/// EVERY call site consumes the result by reading fields off a local it binds; the corpus
-/// says otherwise.  Until that gate is proven against the corpus rather than against nine
-/// hand-written cells, the unit is worth -2.9 % on one bench row against a compiler that
-/// cannot build real programs.  Turn it on to work on it; the tests pass it explicitly.
+/// Default-ON since 2026-09-14 (@PLN157 § V-ah stage 1); `LOFT_NO_VALUE_RECORD=1` restores
+/// the return buffer for every record return — the bisect step for a wrong field out of a
+/// record-returning call on native.
 ///
-/// The old switch restored the return buffer for every record return — the
-/// bisect step for a wrong field out of a record-returning call on native.
+/// It was opt-in from 2026-09-12 because the call-site gate did not hold over the script
+/// corpus: 376 compile errors in three classes.  Two were shapes the gate could not see —
+/// a result bound into a compiler `__lift_` temp whose set lowering reads `.store_nr` off
+/// it, and a value branch joining an admitted call with a record expression — and the
+/// third, 218 of the errors, was the fn-ref DISPATCH: the `match` a `CallRef` emits takes
+/// its arms from a signature scan, so every arm shares one return type, and a gate that
+/// asked "which functions can a fn-ref reach?" a second way (by returned record, beside a
+/// `FnRef` node) missed a lambda that reached a dispatch through a typed variable alone.
+/// The gate now reads the arm set from `fnref::dispatch_arms`, the emitter's own home for
+/// that question, and declines every arm.
 ///
 /// The library integration the opt-in phase existed for is closed: a cdylib bridge now
 /// MATERIALISES the tuple into the destination record it already owns
@@ -3555,7 +4200,7 @@ pub struct ValueRecords {
 /// while loft-to-loft calls inside the library take the value path.
 fn value_record_disabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| !std::env::var("LOFT_VALUE_RECORD").is_ok_and(|v| v != "0"))
+    *F.get_or_init(|| std::env::var("LOFT_NO_VALUE_RECORD").is_ok_and(|v| v != "0"))
 }
 
 /// The scalar field kinds a register tuple can carry: no heap, no collection, no nested
@@ -3640,6 +4285,14 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                 break;
             };
             let ftp = data.attr_type(*rd, a_nr);
+            // `integer` at its 8-byte width only: the tuple carries an `i64`, and the
+            // getter/setter the value path pairs it with (`OpGetInt`/`OpSetInt`, the live
+            // arm's `get_int`) read and write eight bytes.  A narrow field (a ranged or
+            // `size(1)` alias) declines the function rather than reading its neighbour.
+            if matches!(ftp.base(), Type::Integer(_)) && stores.size(f.content) != 8 {
+                ok = false;
+                break;
+            }
             if let Some(rt) = value_field_type(&ftp) {
                 parts.push(rt);
                 order.push((i64::from(f.position), rt));
@@ -3652,16 +4305,8 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
         if !ok {
             continue;
         }
-        // The BODY must build the record itself, through `Object` blocks: the value form
-        // is those blocks' writes turned into a tuple, so a tail that FORWARDS another
-        // call's record (or yields a variable) has nothing to convert and the signature
-        // would promise a tuple over a `DbRef` body.
-        if !builds_record_by_object(def.code()) {
-            if trace {
-                eprintln!("[valuerec] {}: tail is not an Object build", def.name());
-            }
-            continue;
-        }
+        // The BODY gate — every result position a value leaf — runs in the fixpoint
+        // below, because what counts as a leaf depends on what else is admitted.
         // A ONE-FIELD record needs the trailing comma: `(bool)` is Rust for a
         // PARENTHESISED bool, not a 1-tuple, so the signature promised a scalar while
         // every call site read `.0` off it and the generated crate would not compile
@@ -3680,39 +4325,55 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
     if cand.is_empty() {
         return out;
     }
-    // Every CALL SITE must bind the result to a local that is read only by field reads.
-    for caller in 0..data.definitions.len() as u32 {
-        let cdef = data.def(caller);
-        if matches!(cdef.code(), Value::Null) {
+    // A function reachable through a FN-REF cannot change its ABI.  The dispatch a `CallRef`
+    // emits is a `match` whose arms are every definition `fnref::dispatch_arms` admits for
+    // the fn variable's type — all of them sharing one argument list and one return type —
+    // so converting one arm to a tuple breaks the join and drops the buffer argument the
+    // others still take.  The question is asked ONCE, of the same function the emitter
+    // builds the match from: every arm of every `CallRef` in the program is declined, and
+    // so is every `FnRef` target, whose dispatch can sit where no `CallRef` in loft code
+    // shows it (a `#rust` template calling through the fn-ref value).  Over-broad on
+    // purpose — a declined function costs the rewrite and never correctness
+    // (`@FR-R-ValueRecord`).  Asked a second way it drifted: the by-record test that stood
+    // here missed a lambda reaching a dispatch through a typed variable with no `FnRef`
+    // node beside it.
+    let mut arms: HashSet<u32> = HashSet::new();
+    let every: HashSet<u32> = HashSet::new();
+    for d_nr in 0..data.definitions.len() as u32 {
+        let def = data.def(d_nr);
+        if matches!(def.code(), Value::Null) {
             continue;
         }
-        let vars = cdef.variables();
-        cdef.code().any_node(&mut |n| {
+        let vars = def.variables();
+        def.code().any_node(&mut |n| {
             match n {
-                // `r = f(…)` — the admitted shape, if `r`'s other uses are field reads.
-                Value::Set(v, inner) => {
-                    if let Value::Call(d, _) = inner.unspan()
-                        && cand.contains_key(d)
-                        && !local_read_fieldwise(cdef.code(), *v, data, vars)
+                Value::FnRef(target, _, _) => {
+                    if let Ok(t) = u32::try_from(*target)
+                        && (t as usize) < data.definitions.len()
                     {
-                        cand.remove(d);
+                        arms.insert(t);
                     }
                 }
-                // A call in ANY other position — an argument, a return, a field value —
-                // needs a record the tuple cannot supply.
+                Value::CallRef(v, args) => {
+                    if *v < vars.count()
+                        && let Some(found) =
+                            super::fnref::dispatch_arms(data, &every, vars.tp(*v), args.len())
+                    {
+                        arms.extend(found.into_iter().map(|a| a.d_nr));
+                    }
+                }
+                // The third spelling: a `par` worker, named by its number as an integer
+                // argument of the queue op, which the parallel emitter calls through its
+                // own buffered spelling.
                 Value::Call(d, args) => {
-                    for a in args {
-                        if let Value::Call(inner_d, _) = a.unspan()
-                            && cand.contains_key(inner_d)
-                        {
-                            cand.remove(inner_d);
-                        }
-                    }
-                    let _ = d;
-                }
-                Value::Return(x) => {
-                    if let Value::Call(d, _) = x.unspan() {
-                        cand.remove(d);
+                    if (*d as usize) < data.definitions.len()
+                        && let Some((i, min)) =
+                            super::fnref::parallel_worker_arg(data.def(*d).name())
+                        && args.len() >= min
+                        && let Value::Int(n) = args[i].unspan()
+                        && *n >= 0
+                    {
+                        arms.insert(*n as u32);
                     }
                 }
                 _ => {}
@@ -3720,74 +4381,796 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
             false
         });
     }
+    cand.retain(|d_nr, _| {
+        let keep = !arms.contains(d_nr);
+        if !keep && trace {
+            crate::loft_eprintln!(
+                "[valuerec] {}: an arm of a fn-ref dispatch",
+                data.def(*d_nr).name()
+            );
+        }
+        keep
+    });
+    // Admission is a FIXPOINT.  A body's tail may FORWARD another candidate's result and a
+    // site may bind a BRANCH of candidate calls, so declining one function can decline
+    // another; every round only removes, so it ends.  The body gate and the site gate read
+    // the same three helpers the emitter reads (`value_shape`, `value_locals_in`,
+    // `value_view_leaves`), so what is admitted here is exactly what is emitted there.
+    loop {
+        let before = cand.len();
+        let admitted: HashSet<u32> = cand.keys().copied().collect();
+        cand.retain(|d_nr, _| {
+            let why = value_body(data, *d_nr, &admitted);
+            if let Some(why) = why
+                && trace
+            {
+                crate::loft_eprintln!("[valuerec] {}: {why}", data.def(*d_nr).name());
+            }
+            why.is_none()
+        });
+        let admitted: HashSet<u32> = cand.keys().copied().collect();
+        let mut declined: HashSet<u32> = HashSet::new();
+        for caller in 0..data.definitions.len() as u32 {
+            let cdef = data.def(caller);
+            if matches!(cdef.code(), Value::Null) {
+                continue;
+            }
+            let locals = value_locals_in(data, caller, &admitted);
+            let own = admitted.contains(&caller).then_some(caller);
+            let c = ShapeCtx {
+                data,
+                def_nr: caller,
+                admitted: &admitted,
+                locals: &locals,
+                own,
+            };
+            let top = if own.is_some() {
+                Pos::Tail
+            } else {
+                Pos::Operand
+            };
+            site_walk(cdef.code(), top, &c, &mut declined);
+        }
+        if trace {
+            for d in &declined {
+                crate::loft_eprintln!(
+                    "[valuerec] {}: a site consumes its record",
+                    data.def(*d).name()
+                );
+            }
+        }
+        cand.retain(|d, _| !declined.contains(d));
+        if cand.len() == before {
+            break;
+        }
+    }
     out.fns = cand;
     out.tuple.retain(|d, _| out.fns.contains_key(d));
     out.fields.retain(|d, _| out.fns.contains_key(d));
     out
 }
 
-/// Does every RESULT position of `body` build the record with an `Object` block?  The
-/// value path converts those blocks and nothing else, so a forwarded call result, a bare
-/// variable or any other tail declines the function.
-fn builds_record_by_object(body: &Value) -> bool {
-    fn leaf_ok(v: &Value) -> bool {
-        match v.unspan() {
-            Value::Block(bl) if bl.name == "Object" => true,
-            Value::Block(bl) => bl.operators.last().is_some_and(leaf_ok),
-            Value::If(_, a, b) => leaf_ok(a) && leaf_ok(b),
-            Value::Insert(ops) => ops.last().is_some_and(leaf_ok),
-            Value::Return(x) => leaf_ok(x),
-            _ => false,
+/// The widest record the value path carries.  A register tuple past this is spilled by
+/// the ABI anyway, and the win is in the small ones (`Pt`, `Smp`).
+pub const VALUE_RECORD_MAX_FIELDS: usize = 6;
+
+/// Is `tp` the record `OpDatabase` mints to back a vector local — exactly one field, a
+/// vector whose elements own no heap?  The fallback is `false`, which costs a loop buffer's
+/// reuse and never a value: an element that owns heap must be released by a clear
+/// (`@FR-H-ClearRelease`), and a record with any other field is not this shape.
+fn one_no_heap_vector(stores: &Stores, tp: i32) -> bool {
+    let Ok(kt) = u16::try_from(tp) else {
+        return false;
+    };
+    if (kt as usize) >= stores.types.len() {
+        return false;
+    }
+    let one = matches!(&stores.types[kt as usize].parts,
+        crate::database::Parts::Struct(f) if f.len() == 1);
+    if !one {
+        return false;
+    }
+    let vec_tp = stores.field_type(kt, 0);
+    if vec_tp == u16::MAX
+        || (vec_tp as usize) >= stores.types.len()
+        || !matches!(
+            stores.types[vec_tp as usize].parts,
+            crate::database::Parts::Vector(_)
+        )
+    {
+        return false;
+    }
+    let elem = stores.content(vec_tp);
+    elem != u16::MAX && !stores.owns_heap(elem)
+}
+
+/// Every node of `v` with whether it stands under a loop, outermost first.
+fn walk_loops(v: &Value, in_loop: bool, f: &mut impl FnMut(&Value, bool)) {
+    let n = v.unspan();
+    f(n, in_loop);
+    let inner = in_loop || matches!(n, Value::Loop(_));
+    n.for_each_child(&mut |c| walk_loops(c, inner, f));
+}
+
+/// @PLN157 § V-al (`@FR-R-LoopBuffer`) — the LOOP BUFFERS of `def_nr`: a per-site vector
+/// buffer (`__vdb_N`, the store a vector local declared `[]` is backed by) whose mint
+/// stands INSIDE a loop, whose record is one vector field of elements that own no heap,
+/// and whose every mention is its own init family — the mint, the `OpGetField` bind, the
+/// literal's `OpSetInt4` zero of the vector field — or a free.  Such a buffer's store
+/// already survives the iteration (the IR frees it at scope exit, and `OpDatabase` on a
+/// var that still holds a store clears that store and claims the record again), so what
+/// the re-mint per iteration buys is the clear and nothing else: the emitter keeps the
+/// store AND the vector, and resets the vector's length instead — its capacity retained
+/// across iterations, as a Rust `Vec` cleared in a loop retains its own.
+///
+/// Declined: a buffer any other call reaches (a callee could keep a handle into the
+/// vector's record), a buffer whose declaration (`Set(v, Null)`) sits inside a loop (the
+/// null-bind would orphan the kept store), an element type that owns heap (a length reset
+/// would strand what the elements own), and a record that is not exactly one vector
+/// field.  The fallback is "not a loop buffer", which costs the reuse and never a value.
+/// A generator binds none (its locals persist as coroutine fields), and a body with a
+/// `par` block binds none (an arm runs in a worker's frame, not this one).
+#[must_use]
+pub fn loop_buffers(data: &Data, stores: &Stores, def_nr: u32) -> HashSet<u16> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    let mut out = HashSet::new();
+    if matches!(body, Value::Null)
+        || body.any_node(&mut |n| matches!(n, Value::Yield(_) | Value::Parallel(_)))
+    {
+        return out;
+    }
+    let trace = std::env::var("LOFT_TRACE_LOOP_BUFFER").is_ok();
+    let mut cand: HashSet<u16> = HashSet::new();
+    let mut null_in_loop: HashSet<u16> = HashSet::new();
+    walk_loops(body, false, &mut |n, in_loop| match n {
+        Value::Call(d, args) if in_loop && (*d as usize) < data.definitions.len() => {
+            if matches!(data.def(*d).name(), "OpDatabase" | "OpDatabaseNP")
+                && let [a0, a1] = &args[..]
+                && let Value::Var(v) = a0.unspan()
+                && let Value::Int(tp) = a1.unspan()
+                && vars.name(*v).starts_with("__vdb")
+                && one_no_heap_vector(stores, *tp)
+            {
+                cand.insert(*v);
+            }
+        }
+        Value::Set(v, rhs) if in_loop && matches!(rhs.unspan(), Value::Null) => {
+            null_in_loop.insert(*v);
+        }
+        _ => {}
+    });
+    for v in cand {
+        if null_in_loop.contains(&v) {
+            if trace {
+                eprintln!(
+                    "[loop-buffer] {}: {} is declared inside the loop",
+                    def.name(),
+                    vars.name(v)
+                );
+            }
+            continue;
+        }
+        let mut mentions = 0u32;
+        let mut accounted = 0u32;
+        body.any_node(&mut |n| {
+            match n {
+                Value::Var(w) if *w == v => mentions += 1,
+                Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                    let first =
+                        matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v);
+                    let int_at = |i: usize, k: i32| {
+                        matches!(args.get(i).map(Value::unspan), Some(Value::Int(n)) if *n == k)
+                    };
+                    if first {
+                        match data.def(*d).name() {
+                            "OpDatabase" | "OpDatabaseNP" => accounted += 1,
+                            "OpGetField" if int_at(1, 0) => accounted += 1,
+                            "OpSetInt4" if int_at(1, 0) && int_at(2, 0) => accounted += 1,
+                            "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefTag" => accounted += 1,
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+            false
+        });
+        if mentions == accounted {
+            if trace {
+                eprintln!(
+                    "[loop-buffer] {}: {} keeps its vector across iterations",
+                    def.name(),
+                    vars.name(v)
+                );
+            }
+            out.insert(v);
+        } else if trace {
+            eprintln!(
+                "[loop-buffer] {}: {} is reached by {} mention(s) outside its init family",
+                def.name(),
+                vars.name(v),
+                mentions - accounted
+            );
         }
     }
-    // Every `Return` in the body, plus the body's own tail.
+    out
+}
+
+/// The hidden RETURN-BUFFER attribute of a record-returning function — the parameter
+/// `ref_return` appends, a `Reference` or struct-enum marked hidden — by position, or
+/// `None` for a function that has none.  ONE predicate for the four sites that drop it:
+/// its NAME is `__retbuf` when the parser minted the buffer and the promoted LOCAL's own
+/// name (`__ref_3`, `p`) when the buffer IS that local, so a name test sees half of them
+/// (measured: `half_chord`'s buffer is `__ref_3`, and the call site kept passing it to a
+/// signature that had dropped it).
+#[must_use]
+pub fn ret_buffer_attr(def: &crate::data::Definition) -> Option<usize> {
+    def.attributes().iter().rposition(|a| {
+        a.hidden
+            && matches!(
+                a.typedef.base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            )
+    })
+}
+
+/// The getter op that reads a value-record field of Rust type `rt` out of a record — what
+/// a VIEW leaf's tuple is built from.  Mirrors the parser's `get_val`: the four scalar
+/// kinds the value path admits, `integer` at its 8-byte width only (`value_field_type`).
+#[must_use]
+pub fn value_getter(rt: &str) -> &'static str {
+    match rt {
+        "f64" => "OpGetFloat",
+        "f32" => "OpGetSingle",
+        "bool" => "OpGetBoolean",
+        _ => "OpGetInt",
+    }
+}
+
+/// The setter twin of [`value_getter`] — what a tuple is MATERIALISED into a destination
+/// record with (`OpCopyRecord` from a value local).
+#[must_use]
+pub fn value_setter(rt: &str) -> &'static str {
+    match rt {
+        "f64" => "OpSetFloat",
+        "f32" => "OpSetSingle",
+        "bool" => "OpSetBoolean",
+        _ => "OpSetInt",
+    }
+}
+
+/// What a walk over one function knows while it classifies value shapes.
+struct ShapeCtx<'a> {
+    data: &'a Data,
+    def_nr: u32,
+    /// The functions admitted so far.
+    admitted: &'a HashSet<u32>,
+    /// This function's value locals so far ([`value_locals_in`]).
+    locals: &'a HashMap<u16, u32>,
+    /// `Some(def_nr)` when THIS function is admitted: then an `Object` build of its own
+    /// record and a borrowed VIEW of one are value leaves as well.
+    own: Option<u32>,
+}
+
+/// The return-buffer variable of `own`, when it is admitted and has one — the PHANTOM
+/// parameter the value form drops from the signature.  It may still be ASSIGNED in the
+/// body: the parser's `return f(…)` lowering hands the callee this buffer and returns it
+/// (`rb = f(…, rb); …; return rb`, the `one_buffer_chain` block), and a local the parser
+/// PROMOTED into the buffer (`n = f(…); if !n.ok { … }; n`) is this variable under the
+/// local's own name.  Both are the phantom bound from a value shape, so both are it as a
+/// VALUE LOCAL ([`value_locals_in`]): the tuple the callee answered, read where the record
+/// was.
+fn own_retbuf(data: &Data, own: Option<u32>) -> Option<u16> {
+    let def = data.def(own?);
+    let a = ret_buffer_attr(def)?;
+    let v = def.variables().var(&def.attributes()[a].name);
+    (v != u16::MAX).then_some(v)
+}
+
+/// An `Object` block that RETURNS the record it builds — `{ OpDatabase(p); OpSet*(p, …);
+/// frees…; return p }`, `p` the buffer the block's result names.  The scope pass lowers an
+/// explicit `return S{…}` this way when the frees the return owes (a live local of another
+/// record type) go inside the block.  Answers `p`.  In the value form the block is `return
+/// (tuple)`, with those frees between the tuple's evaluation and the return, so a statement
+/// that releases a real store still runs, in its order.  ONE home: the gate reads the shape
+/// here, the leaf walk records it, the emitter converts by it.
+#[must_use]
+pub fn object_own_return(bl: &Block) -> Option<u16> {
+    if bl.name != "Object" {
+        return None;
+    }
+    let [p] = bl.result.depend()[..] else {
+        return None;
+    };
+    match bl.operators.last()?.unspan() {
+        Value::Return(x) if matches!(x.unspan(), Value::Var(w) if *w == p) => Some(p),
+        _ => None,
+    }
+}
+
+/// The record type an admitted body's own leaves must carry.
+fn own_record(c: &ShapeCtx) -> Option<u16> {
+    plain_record_type(c.data, c.data.def(c.own?).returned())
+}
+
+/// Is `v` a VALUE SHAPE — every result position a value LEAF — and if so, which admitted
+/// function's tuple does it carry?  The leaves: a call to an admitted function (forwards
+/// its tuple), a value local (already a tuple), and — inside an admitted body only — an
+/// `Object` build of the body's own record (the tuple of its writes) or a borrowed VIEW of
+/// that record (a tuple of its field reads; a view is never freed, so reading it is all the
+/// value form owes).  `Block`, `If`, `Insert` and `Return` carry the question to their
+/// result positions.
+///
+/// The fallback is `None` because every shape not named here delivers a RECORD — a bare
+/// call to a buffer-returning function, an OWNED local (whose store the record form hands
+/// up and the value form would have to mint per call, which is slower than the buffer it
+/// replaces: `own`'s promoted parameter), a null, a copy — and a caller that reads a tuple
+/// off a record cannot compile.
+fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u32> {
+    match node.unspan() {
+        Value::Call(callee, _) if ctx.admitted.contains(callee) => Some(*callee),
+        Value::Block(bl) if bl.name == "Object" => {
+            let own = ctx.own?;
+            let rec = own_record(ctx)?;
+            (plain_record_type(ctx.data, &bl.result) == Some(rec)).then_some(own)
+        }
+        Value::Block(bl) => {
+            if matches!(bl.result.base(), Type::Void) {
+                return None;
+            }
+            value_shape(bl.operators.last()?, ctx)
+        }
+        Value::If(_, then_v, else_v) => {
+            let callee = value_shape(then_v, ctx)?;
+            value_shape(else_v, ctx).map(|_| callee)
+        }
+        Value::Insert(ops) => value_shape(ops.last()?, ctx),
+        Value::Return(x) => value_shape(x, ctx),
+        Value::Var(var) => {
+            if let Some(callee) = ctx.locals.get(var) {
+                return Some(*callee);
+            }
+            let own = ctx.own?;
+            let rec = own_record(ctx)?;
+            let vars = ctx.data.def(ctx.def_nr).variables();
+            // A compiler `__lift_` temp OWNS what it is bound to (`scopes::new_lift_var`):
+            // its whole-record bind from a view MINTS a store and copies into it, and the
+            // record form hands that store UP as the result (the join local it feeds is a
+            // view of it, so nothing in the frame frees it).  The oracle reads the
+            // un-minted bind as Borrowed of its source — the one answer a leaf must not
+            // rest on: read as a view, the store the lowering mints is nobody's, one
+            // leaked record per call (t15).  A lift is a leaf only as a VALUE LOCAL, above.
+            if vars.name(*var).starts_with("__lift_") {
+                return None;
+            }
+            let tp = vars.tp(*var);
+            // A VIEW by the ownership oracle (`@FR-O-Oracle`), not by the dep list: then_v
+            // `__ret_N` typed `ref(P)["then_v"]` holds the parameter's store on one arm and then_v
+            // minted default on the other (`Own::Join`), and reading it as then_v tuple would
+            // leave that mint nobody's.  Only then_v value the frame never owns is read as one.
+            (plain_record_type(ctx.data, tp) == Some(rec)
+                && matches!(
+                    crate::use_analysis::ownership_of(ctx.data, ctx.def_nr, node),
+                    crate::use_analysis::Own::Borrowed { .. }
+                ))
+            .then_some(own)
+        }
+        _ => None,
+    }
+}
+
+/// The leaf NODES of a function's value positions, by address — what the emitter
+/// converts: a `Var` that is a view (the tuple of its getters) and an `Object` block (the
+/// tuple of its writes).  Any other `Object` in the body — one bound to a local that is
+/// not a value local, one whose result is dropped — stays a record build.
+#[derive(Default)]
+pub struct ValueLeaves {
+    /// `Var` leaves that are views (never value locals), by the node's address and its
+    /// unspanned address, which is the identity `output_code_inner` keys on.
+    pub views: HashSet<usize>,
+    /// `Object` leaves, by the `Block`'s address (the `Box`'s content, which is what the
+    /// block emitter is handed).
+    pub objects: HashSet<usize>,
+    /// EVERY `Var` node at a value position, view or value local, by both addresses — the
+    /// whole-value reads a tuple serves, which is what [`local_uses_ok`] accounts a value
+    /// local's read at the tail of a branch arm against.
+    pub reads: HashSet<usize>,
+}
+
+fn collect_leaves(body: &Value, locals: &HashMap<u16, u32>, own: bool) -> ValueLeaves {
+    let mut out = ValueLeaves::default();
+    fn leaves(v: &Value, locals: &HashMap<u16, u32>, out: &mut ValueLeaves) {
+        match v.unspan() {
+            Value::Var(w) => {
+                out.reads.insert(std::ptr::from_ref(v) as usize);
+                out.reads.insert(std::ptr::from_ref(v.unspan()) as usize);
+                if !locals.contains_key(w) {
+                    out.views.insert(std::ptr::from_ref(v) as usize);
+                    out.views.insert(std::ptr::from_ref(v.unspan()) as usize);
+                }
+            }
+            Value::Block(bl) if bl.name == "Object" => {
+                out.objects.insert(std::ptr::from_ref(&**bl) as usize);
+            }
+            Value::Block(bl) => {
+                if let Some(l) = bl.operators.last() {
+                    leaves(l, locals, out);
+                }
+            }
+            Value::If(_, a, b) => {
+                leaves(a, locals, out);
+                leaves(b, locals, out);
+            }
+            Value::Insert(ops) => {
+                if let Some(l) = ops.last() {
+                    leaves(l, locals, out);
+                }
+            }
+            Value::Return(x) => leaves(x, locals, out),
+            _ => {}
+        }
+    }
+    // The walk meets a block before its statements, so an `Object` that returns the
+    // record it builds ([`object_own_return`]) is recorded before its own `return` is
+    // reached — that return reads the block's buffer, which is no leaf.
+    let mut own_returns: HashSet<usize> = HashSet::new();
+    body.any_node(&mut |n| {
+        match n {
+            Value::Block(bl) if own && object_own_return(bl).is_some() => {
+                out.objects.insert(std::ptr::from_ref(&**bl) as usize);
+                if let Some(last) = bl.operators.last() {
+                    own_returns.insert(std::ptr::from_ref(last.unspan()) as usize);
+                }
+            }
+            Value::Return(x) if own && !own_returns.contains(&(std::ptr::from_ref(n) as usize)) => {
+                leaves(x, locals, &mut out);
+            }
+            Value::Set(w, rhs) if locals.contains_key(w) => leaves(rhs, locals, &mut out),
+            _ => {}
+        }
+        false
+    });
+    if own {
+        leaves(body, locals, &mut out);
+    }
+    out
+}
+
+/// Does every RESULT position of `d_nr`'s body carry a value leaf ([`value_shape`]), and
+/// is its return buffer mentioned only where the value form can drop the mention?  The
+/// buffer becomes a PHANTOM — the parameter is gone from the signature — so a body may
+/// name it only inside a converted `Object` block, as the buffer argument of a call that
+/// drops it, or as the subject of a free.  `None` admits; `Some` names the refusing test
+/// for the `LOFT_TRACE_VALUEREC` line.
+fn value_body(data: &Data, d_nr: u32, admitted: &HashSet<u32>) -> Option<&'static str> {
+    let def = data.def(d_nr);
+    let locals = value_locals_in(data, d_nr, admitted);
+    let c = ShapeCtx {
+        data,
+        def_nr: d_nr,
+        admitted,
+        locals: &locals,
+        own: Some(d_nr),
+    };
+    let body = def.code();
+    if value_shape(body, &c).is_none() {
+        return Some("the tail is not a value leaf");
+    }
+    // An `Object` that returns the record it builds is the leaf; its own `return`, the
+    // block's last statement, is not asked again below.
     let mut ok = true;
+    let mut own_returns: HashSet<usize> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n
+            && object_own_return(bl).is_some()
+        {
+            if value_shape(n, &c).is_none() {
+                ok = false;
+                return true;
+            }
+            if let Some(last) = bl.operators.last() {
+                own_returns.insert(std::ptr::from_ref(last.unspan()) as usize);
+            }
+        }
+        false
+    });
+    if !ok {
+        return Some("an object's return is not a value leaf");
+    }
     body.any_node(&mut |n| {
         if let Value::Return(x) = n
-            && !leaf_ok(x)
+            && !own_returns.contains(&(std::ptr::from_ref(n) as usize))
+            && value_shape(x, &c).is_none()
         {
             ok = false;
             return true;
         }
         false
     });
-    ok && leaf_ok(body)
+    if !ok {
+        return Some("a return is not a value leaf");
+    }
+    // No return buffer: nothing left to account for, admitted.
+    let rb = own_retbuf(data, Some(d_nr))?;
+    // A phantom that is itself a value local ([`own_retbuf`]) has every mention
+    // accounted by [`local_uses_ok`] already.
+    if locals.contains_key(&rb) {
+        return None;
+    }
+    let leaves = collect_leaves(body, &locals, true);
+    (!retbuf_uses_ok(body, rb, &c, &leaves.objects)).then_some("the return buffer is used")
 }
 
-/// The widest record the value path carries.  A register tuple past this is spilled by
-/// the ABI anyway, and the win is in the small ones (`Pt`, `Smp`).
-pub const VALUE_RECORD_MAX_FIELDS: usize = 6;
+/// Every mention of the return buffer `rb` in `v` is one the value form drops: inside a
+/// converted `Object` block, as the buffer argument of an admitted callee, or as the
+/// subject of a free.  Anything else — a write through it, a read of it, a rebind — needs
+/// the parameter the value form no longer has.
+fn retbuf_uses_ok(v: &Value, rb: u16, c: &ShapeCtx, objects: &HashSet<usize>) -> bool {
+    match v.unspan() {
+        Value::Var(w) => *w != rb,
+        Value::Set(w, _) if *w == rb => false,
+        Value::Block(bl) if objects.contains(&(std::ptr::from_ref(&**bl) as usize)) => true,
+        Value::Call(d, args) => {
+            let callee = c.data.def(*d);
+            let is_free = matches!(callee.name(), "OpFreeRef" | "OpFreeRefIfDistinct");
+            // As the WITNESS of a store-identity test the phantom is in no store, so the
+            // emitter answers the test `true` and makes the guarded free unconditional
+            // (`OpFreeRefIfDistinctEmitter`, `OpDistinctStoreEmitter`).
+            let witnessed = matches!(callee.name(), "OpFreeRefIfDistinct" | "OpDistinctStore");
+            let dropped = if c.admitted.contains(d) {
+                ret_buffer_attr(callee)
+            } else {
+                None
+            };
+            args.iter().enumerate().all(|(i, a)| {
+                if matches!(a.unspan(), Value::Var(w) if *w == rb) {
+                    (is_free && i == 0) || (witnessed && i == 1) || dropped == Some(i)
+                } else {
+                    retbuf_uses_ok(a, rb, c, objects)
+                }
+            })
+        }
+        other => {
+            let mut ok = true;
+            other.for_each_child(&mut |ch| {
+                if ok && !retbuf_uses_ok(ch, rb, c, objects) {
+                    ok = false;
+                }
+            });
+            ok
+        }
+    }
+}
 
-/// Is every use of local `v` in `body` a FIELD READ (or the binding itself)?  The value
-/// path replaces the record with a tuple, so a use that needs the record — an argument, a
-/// return, an append, a copy — answers `false`.
-fn local_read_fieldwise(
+/// Which locals of `def_nr` hold a value-returned record — every non-null assignment a
+/// value shape, every use one the tuple serves ([`local_uses_ok`]), never a parameter
+/// (except the PHANTOM return buffer of an admitted body, [`own_retbuf`]) and never a
+/// compiler `__lift_` temp bound from a CALL — mapped to the function whose tuple they
+/// carry.  ONE home: the gate decides admission over it and the emitter types the locals
+/// from it.
+///
+/// A `__lift_` temp bound from a call is excluded because that set lowering emits its own
+/// displacement guard, reading `.store_nr` off the value — a use no IR walk can see,
+/// because it is not an IR node.  A lift bound from a bare `Var` — the copy of a
+/// parameter's view a selecting arm returns — has no such lowering: its bind is the
+/// whole-record copy arm, which a value local turns into the tuple of the view's reads,
+/// and a lift read as a VIEW leaf instead leaks the store that copy mints (t15).  A
+/// fixpoint, because a leaf may name another value local.
+#[must_use]
+pub fn value_locals_in(data: &Data, def_nr: u32, admitted: &HashSet<u32>) -> HashMap<u16, u32> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    let own = admitted.contains(&def_nr).then_some(def_nr);
+    let mut locals: HashMap<u16, u32> = HashMap::new();
+    // A GENERATOR's locals persist as fields of its coroutine struct, typed `DbRef` by the
+    // factory; a tuple has no such field, so a generator binds no value local.
+    if body.any_node(&mut |n| matches!(n, Value::Yield(_))) {
+        return locals;
+    }
+    // A `__lift_` temp with an assignment that is not a bare `Var` keeps its buffer (see
+    // above); the set is fixed for the body, so it is read once.
+    let mut call_bound: HashSet<u16> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(v, rhs) = n
+            && !matches!(rhs.unspan(), Value::Null | Value::Var(_))
+        {
+            call_bound.insert(*v);
+        }
+        false
+    });
+    let rb = own_retbuf(data, own);
+    // Fixed for the body: the reads whose value is dropped.
+    let dropped = dropped_reads(body);
+    let eligible = |v: u16| {
+        (!vars.is_argument(v) || Some(v) == rb)
+            && (!vars.name(v).starts_with("__lift_") || !call_bound.contains(&v))
+    };
+    // Per local, GIVEN a locals set: the tuple its assignments carry, or `None` once ANY
+    // assignment is not a value shape (the declaration's `null` aside).
+    let shapes_given = |locals: &HashMap<u16, u32>| -> HashMap<u16, Option<u32>> {
+        let c = ShapeCtx {
+            data,
+            def_nr,
+            admitted,
+            locals,
+            own,
+        };
+        let mut shapes: HashMap<u16, Option<u32>> = HashMap::new();
+        body.any_node(&mut |n| {
+            if let Value::Set(v, rhs) = n
+                && !matches!(rhs.unspan(), Value::Null)
+            {
+                let s = value_shape(rhs, &c);
+                shapes
+                    .entry(*v)
+                    .and_modify(|e| {
+                        if s.is_none() {
+                            *e = None;
+                        }
+                    })
+                    .or_insert(s);
+            }
+            false
+        });
+        shapes
+    };
+    let joined = |locals: &HashMap<u16, u32>, cands: &HashMap<u16, u32>| -> HashMap<u16, u32> {
+        let mut with = locals.clone();
+        with.extend(cands.iter().map(|(v, d)| (*v, *d)));
+        with
+    };
+    loop {
+        // GROW: this round's candidates, admitted optimistically.  A candidate's shape may
+        // rest on ANOTHER candidate — the join local of a selecting branch reads the lift
+        // each arm binds, and the lift's read stands at that join's right — so a step over
+        // `locals` alone reaches neither.  Every candidate still traces to a source outside
+        // the set: the first pass admits from `locals`, views and admitted calls only, and
+        // each later pass only from what the pass before found.
+        let mut cands: HashMap<u16, u32> = HashMap::new();
+        loop {
+            let mut grown = cands.clone();
+            for (v, s) in shapes_given(&joined(&locals, &cands)) {
+                if let Some(d) = s
+                    && !locals.contains_key(&v)
+                    && eligible(v)
+                {
+                    grown.insert(v, d);
+                }
+            }
+            if grown.len() == cands.len() {
+                break;
+            }
+            cands = grown;
+        }
+        // PRUNE to a consistent set: a candidate whose uses the tuple cannot serve, or
+        // whose shape rested on a candidate just pruned, leaves — until nothing else does.
+        loop {
+            let with = joined(&locals, &cands);
+            let shapes = shapes_given(&with);
+            let mut served = collect_leaves(body, &with, own.is_some()).reads;
+            served.extend(dropped.iter().copied());
+            let kept: HashMap<u16, u32> = cands
+                .keys()
+                .filter_map(|v| {
+                    let d = shapes.get(v).copied().flatten()?;
+                    local_uses_ok(body, *v, data, &served, admitted).then_some((*v, d))
+                })
+                .collect();
+            let stable = kept.len() == cands.len();
+            cands = kept;
+            if stable {
+                break;
+            }
+        }
+        if cands.is_empty() {
+            return locals;
+        }
+        locals.extend(cands);
+    }
+}
+
+/// The `Var` reads in `body` whose value is DROPPED — the tail of a statement block, of a
+/// loop body, of a `Drop` — by both addresses.  Such a read of a tuple is served by doing
+/// nothing, which is what the emitter's plain read of the local does.  The parser's
+/// `return f(…)` chain ends in one when the scope pass leaves its `return` outside the
+/// block.  Positional, so a read under a node this walk does not know counts as USED —
+/// the conservative side, which only ever costs the optimisation.
+fn dropped_reads(body: &Value) -> HashSet<usize> {
+    fn walk(v: &Value, used: bool, out: &mut HashSet<usize>) {
+        match v.unspan() {
+            Value::Var(_) => {
+                if !used {
+                    out.insert(std::ptr::from_ref(v) as usize);
+                    out.insert(std::ptr::from_ref(v.unspan()) as usize);
+                }
+            }
+            Value::Block(bl) => {
+                let n = bl.operators.len();
+                let tail_used = used && !matches!(bl.result.base(), Type::Void);
+                for (i, op) in bl.operators.iter().enumerate() {
+                    walk(op, tail_used && i + 1 == n, out);
+                }
+            }
+            Value::Loop(bl) => {
+                for op in &bl.operators {
+                    walk(op, false, out);
+                }
+            }
+            Value::If(c, a, b) => {
+                walk(c, true, out);
+                walk(a, used, out);
+                walk(b, used, out);
+            }
+            Value::Insert(ops) => {
+                let n = ops.len();
+                for (i, op) in ops.iter().enumerate() {
+                    walk(op, used && i + 1 == n, out);
+                }
+            }
+            Value::Drop(x) => walk(x, false, out),
+            other => other.for_each_child(&mut |ch| walk(ch, true, out)),
+        }
+    }
+    let mut out = HashSet::new();
+    walk(body, true, &mut out);
+    out
+}
+
+/// Is every use of local `v` in `body` one a TUPLE can serve?  A scalar field read at a
+/// constant offset (the tuple index), a free of it (nothing to release), a store-identity
+/// test or a free guarded by one against it (the tuple is in no store, so always
+/// distinct), a copy FROM it (the tuple is materialised into the destination), the buffer
+/// ARGUMENT of an admitted callee (the argument the call site drops — how the phantom
+/// reaches the callee of a `return f(…)` chain), and a whole-value read the tuple SERVES
+/// (`served`: one at a VALUE POSITION — a return tail of an admitted body, the right of a
+/// value local, the tail of a branch arm either stands at — consumed as the tuple; or one
+/// whose value is dropped, [`dropped_reads`]).  Any other use — an argument, an append, a
+/// copy INTO it, a whole-value read anywhere else — needs the record, so the local keeps
+/// its buffer.
+fn local_uses_ok(
     body: &Value,
     v: u16,
     data: &Data,
-    _vars: &crate::variables::Function,
+    served: &HashSet<usize>,
+    admitted: &HashSet<u32>,
 ) -> bool {
     let mut mentions = 0u32;
     let mut accounted = 0u32;
     body.any_node(&mut |n| {
         match n {
-            Value::Var(w) if *w == v => mentions += 1,
+            Value::Var(w) if *w == v => {
+                mentions += 1;
+                if served.contains(&(std::ptr::from_ref(n) as usize)) {
+                    accounted += 1;
+                }
+            }
             Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
                 let name = data.def(*d).name();
-                let first_is_v =
-                    matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v);
+                let arg_is_v = |i: usize| {
+                    matches!(args.get(i).map(Value::unspan), Some(Value::Var(w)) if *w == v)
+                };
+                if admitted.contains(d)
+                    && let Some(a) = ret_buffer_attr(data.def(*d))
+                    && arg_is_v(a)
+                {
+                    accounted += 1;
+                }
                 // A SCALAR FIELD READ at a constant offset — what the value path turns
                 // into a tuple index.  (`OpGetField` is the COLLECTION-field spelling; a
                 // record's scalar field reads through its typed getter.)
-                if first_is_v
+                if arg_is_v(0)
                     && VALUE_RECORD_GETTERS.contains(&name)
                     && matches!(args.get(1).map(Value::unspan), Some(Value::Int(_)))
                 {
                     accounted += 1;
                 }
-                // The local's own release: with no record there is nothing to free, so
-                // the value path DELETES this use rather than being declined by it.
-                if first_is_v && matches!(name, "OpFreeRef" | "OpFreeRefIfDistinct") {
+                if arg_is_v(0) && matches!(name, "OpFreeRef" | "OpFreeRefIfDistinct" | "OpCopyRecord" | "OpDistinctStore") {
+                    accounted += 1;
+                }
+                if arg_is_v(1) && matches!(name, "OpFreeRefIfDistinct" | "OpDistinctStore") {
                     accounted += 1;
                 }
             }
@@ -3798,8 +5181,189 @@ fn local_read_fieldwise(
     mentions == accounted
 }
 
-/// The typed scalar getters a record's field read uses — the reads the value path
-/// rewrites into tuple indices.
+/// Where a node stands, for the site gate: an admitted call is consumed as a TUPLE at a
+/// result position of an admitted body (`Tail`), on the right of a value local (`Bound`),
+/// or as a statement whose result is dropped (`Discard`); anywhere else (`Operand`) the
+/// consumer wants a record.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pos {
+    Tail,
+    Bound,
+    Discard,
+    Operand,
+}
+
+/// The SITE gate: every admitted call in `v` that stands at an `Operand` position — an
+/// argument, a field value, a return of a non-admitted function, the right of a local
+/// that is not a value local — is declined into `declined`.  Result positions carry the
+/// caller's position down; everything else is an operand.
+fn site_walk(node: &Value, pos: Pos, ctx: &ShapeCtx, declined: &mut HashSet<u32>) {
+    match node.unspan() {
+        Value::Call(callee, args) => {
+            if pos == Pos::Operand && ctx.admitted.contains(callee) {
+                declined.insert(*callee);
+            }
+            for arg in args {
+                site_walk(arg, Pos::Operand, ctx, declined);
+            }
+        }
+        Value::CallRef(_, args) | Value::Tuple(args) => {
+            for arg in args {
+                site_walk(arg, Pos::Operand, ctx, declined);
+            }
+        }
+        Value::Set(var, rhs) => {
+            let pos_here = if ctx.locals.contains_key(var) {
+                Pos::Bound
+            } else {
+                Pos::Operand
+            };
+            site_walk(rhs, pos_here, ctx, declined);
+        }
+        Value::Block(bl) => {
+            let count = bl.operators.len();
+            for (idx, op) in bl.operators.iter().enumerate() {
+                let pos_here = if idx + 1 == count && !matches!(bl.result.base(), Type::Void) {
+                    pos
+                } else {
+                    Pos::Discard
+                };
+                site_walk(op, pos_here, ctx, declined);
+            }
+        }
+        Value::Insert(ops) => {
+            let count = ops.len();
+            for (idx, op) in ops.iter().enumerate() {
+                let pos_here = if idx + 1 == count { pos } else { Pos::Discard };
+                site_walk(op, pos_here, ctx, declined);
+            }
+        }
+        Value::If(test, then_v, else_v) => {
+            site_walk(test, Pos::Operand, ctx, declined);
+            site_walk(then_v, pos, ctx, declined);
+            site_walk(else_v, pos, ctx, declined);
+        }
+        Value::Return(inner) => {
+            let pos_here = if ctx.own.is_some() {
+                Pos::Tail
+            } else {
+                Pos::Operand
+            };
+            site_walk(inner, pos_here, ctx, declined);
+        }
+        Value::Loop(bl) => {
+            for op in &bl.operators {
+                site_walk(op, Pos::Discard, ctx, declined);
+            }
+        }
+        // A `par` arm'step result crosses the parallel machinery, which spells its own
+        // buffered call (`n_make_pair(cell, elm, _pd1)`): then_v record, never then_v tuple.
+        Value::Parallel(arms) => {
+            for arm in arms {
+                site_walk(arm, Pos::Operand, ctx, declined);
+            }
+        }
+        Value::Drop(inner) => site_walk(inner, Pos::Discard, ctx, declined),
+        Value::Iter(_, then_v, else_v, step) => {
+            site_walk(then_v, Pos::Operand, ctx, declined);
+            site_walk(else_v, Pos::Operand, ctx, declined);
+            site_walk(step, Pos::Operand, ctx, declined);
+        }
+        Value::TuplePut(_, _, inner) | Value::Yield(inner) => {
+            site_walk(inner, Pos::Operand, ctx, declined)
+        }
+        _ => {}
+    }
+}
+
+/// The DEAD BUFFERS of `def_nr` (@PLN157 § V-ah, `@FR-R-ValueRecord`): a local minted by
+/// `OpDatabase` whose every mention the value form drops — the buffer argument of an
+/// admitted callee (dropped from the call), the subject of a free, or an operand of a
+/// store-identity test whose other operand is a value local (answered `true` without a
+/// read).  Such a local was a § V-af join buffer for a branch that now binds a tuple: the
+/// store it minted per activation served nothing, so the mint and the frees are emitted
+/// as nothing.  A buffer with any other mention — a witness read against a RECORD local,
+/// an argument to a callee that keeps its buffer — is minted as before.
+#[must_use]
+pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16> {
+    let mut out = HashSet::new();
+    if vr.fns.is_empty() {
+        return out;
+    }
+    let admitted: HashSet<u32> = vr.fns.keys().copied().collect();
+    let locals = value_locals_in(data, def_nr, &admitted);
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let mut minted: HashSet<u16> = HashSet::new();
+    let mut mentions: HashMap<u16, u32> = HashMap::new();
+    let mut dropped: HashMap<u16, u32> = HashMap::new();
+    def.code().any_node(&mut |n| {
+        match n {
+            Value::Var(w) => *mentions.entry(*w).or_insert(0) += 1,
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                let arg_var = |i: usize| match args.get(i).map(Value::unspan) {
+                    Some(Value::Var(w)) => Some(*w),
+                    _ => None,
+                };
+                let callee = data.def(*d);
+                match callee.name() {
+                    "OpDatabase" | "OpDatabaseNP" => {
+                        if let Some(w) = arg_var(0) {
+                            minted.insert(w);
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    "OpFreeRef" | "OpFreeRefIfDistinct" => {
+                        if let Some(w) = arg_var(0) {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    "OpDistinctStore" => {
+                        for (i, other) in [(0, 1), (1, 0)] {
+                            if let Some(w) = arg_var(i)
+                                && arg_var(other).is_some_and(|o| locals.contains_key(&o))
+                            {
+                                *dropped.entry(w).or_insert(0) += 1;
+                            }
+                        }
+                    }
+                    _ if admitted.contains(d) => {
+                        if let Some(idx) = ret_buffer_attr(callee)
+                            && let Some(w) = arg_var(idx)
+                        {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        false
+    });
+    for w in minted {
+        if !vars.is_argument(w)
+            && !locals.contains_key(&w)
+            && mentions.get(&w).copied().unwrap_or(0) == dropped.get(&w).copied().unwrap_or(0)
+        {
+            out.insert(w);
+        }
+    }
+    out
+}
+
+/// The value leaves of `def_nr` for the emitter ([`ValueLeaves`]): empty for a function
+/// that is not admitted, since only an admitted body converts a view or an `Object`.
+#[must_use]
+pub fn value_leaves(data: &Data, def_nr: u32, vr: &ValueRecords) -> ValueLeaves {
+    if !vr.fns.contains_key(&def_nr) {
+        return ValueLeaves::default();
+    }
+    let admitted: HashSet<u32> = vr.fns.keys().copied().collect();
+    let locals = value_locals_in(data, def_nr, &admitted);
+    collect_leaves(data.def(def_nr).code(), &locals, true)
+}
+
 pub const VALUE_RECORD_GETTERS: [&str; 6] = [
     "OpGetFloat",
     "OpGetInt",

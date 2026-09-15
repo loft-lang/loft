@@ -1,0 +1,142 @@
+// @PLN157 § V-am (`@FR-R-PushFill`) — the COUNTED PUSH LOOP: a `for` over a range whose
+// body pushes k scalars to one vector every iteration reserves k times its trip count
+// once, before it runs (the growth ladder gone); a body that is ONE push of an invariant
+// is one fill of the vector's tail, the per-element loop kept as its fallback for every
+// range the fill declines.  Every cell hand-computes its value; the interpreter keeps
+// the per-push form and is the oracle.  `LOFT_NO_PUSH_FILL=1`, `LOFT_HOIST_VERIFY=1`
+// (the push header re-derived at the fill), `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and
+// `LOFT_STRICT_STORES=1` must answer identically.
+
+//
+// @falsified-at: hand-measured (2026-09-15) — `Stores::push_fill` sabotaged to bump the
+// length one short of the elements it wrote: native `assertion failed: p1 4 28` for
+// `p1 5 35` — the VALUE channel sees it at the first cell; the interpreter and
+// `LOFT_NO_PUSH_FILL=1` answer `p1 5 35` on the same build.  Restored, every cell is
+// exact on both backends under LOFT_HOIST_VERIFY, LOFT_POISON, LOFT_POISON_CLAIM,
+// LOFT_STRICT_STORES and LOFT_NATIVE_LEAK_CHECK.
+// p1 — the constant push loop over a fresh vector: one fill.
+fn p1() {
+  v: vector<integer> = [];
+  for _ in 0..5 { v += [7]; }
+  s = 0;
+  for i in 0..len(v) { s += v[i]?; }
+  assert(len(v) == 5 && s == 35, "p1 {len(v)} {s}");
+  println("p1 {len(v)} {s}");
+}
+
+// p2 — onto a NON-EMPTY vector: the fill lands after the elements already there.
+fn p2() {
+  v: vector<integer> = [1, 2, 3];
+  for _ in 0..4 { v += [9]; }
+  s = 0;
+  for i in 0..len(v) { s += v[i]?; }
+  assert(len(v) == 7 && s == 42 && v[2]? == 3 && v[3]? == 9, "p2 {len(v)} {s} {v[2]?} {v[3]?}");
+  println("p2 {len(v)} {s} {v[2]?} {v[3]?}");
+}
+
+// p3 — an EMPTY range, a NEGATIVE one and `2..2` push nothing.
+fn p3() {
+  v: vector<integer> = [1];
+  n = 0;
+  for _ in 0..n { v += [5]; }
+  m = -3;
+  for _ in 0..m { v += [5]; }
+  for _ in 2..2 { v += [5]; }
+  assert(len(v) == 1 && v[0]? == 1, "p3 {len(v)} {v[0]?}");
+  println("p3 {len(v)} {v[0]?}");
+}
+
+// p4 — THREE pushes per iteration of computed values: the reserve form, values exact.
+fn p4() {
+  v: vector<integer> = [];
+  for i in 0..4 { v += [i, i * 10, i * 100]; }
+  s = 0;
+  for k in 0..len(v) { s += v[k]?; }
+  assert(len(v) == 12 && s == 666 && v[7]? == 20, "p4 {len(v)} {s} {v[7]?}");
+  println("p4 {len(v)} {s} {v[7]?}");
+}
+
+// p5 — a `break` in the body: the loop is declined, values exact.
+fn p5() {
+  v: vector<integer> = [];
+  for i in 0..10 {
+    if i == 4 { break; }
+    v += [i];
+  }
+  s = 0;
+  for k in 0..len(v) { s += v[k]?; }
+  assert(len(v) == 4 && s == 6, "p5 {len(v)} {s}");
+  println("p5 {len(v)} {s}");
+}
+
+// p6 — a FLOAT fill.
+fn p6() {
+  v: vector<float> = [];
+  for _ in 0..3 { v += [2.5]; }
+  s = 0.0;
+  for k in 0..len(v) { s += v[k]?; }
+  assert(len(v) == 3 && s == 7.5, "p6 {len(v)} {s}");
+  println("p6 {len(v)} {s}");
+}
+
+// p7 — the pushed value depends on the loop variable: the reserve form, not a fill.
+fn p7() {
+  v: vector<integer> = [];
+  for i in 0..6 { v += [i * i]; }
+  s = 0;
+  for k in 0..len(v) { s += v[k]?; }
+  assert(len(v) == 6 && s == 55, "p7 {len(v)} {s}");
+  println("p7 {len(v)} {s}");
+}
+
+// p8 — an INCLUSIVE range with a computed start, then an exclusive one from the same start.
+fn p8() {
+  v: vector<integer> = [];
+  a = 2;
+  b = 5;
+  for _ in a..=b { v += [3]; }
+  for i in a..b { v += [i]; }
+  s = 0;
+  for k in 0..len(v) { s += v[k]?; }
+  assert(len(v) == 7 && s == 21 && v[4]? == 2, "p8 {len(v)} {s} {v[4]?}");
+  println("p8 {len(v)} {s} {v[4]?}");
+}
+
+// p9 — the range's end is a CALL: the loop is declined, values exact.
+fn hi9(k: integer) -> integer { k + 2 }
+fn p9() {
+  v: vector<integer> = [];
+  for _ in 0..hi9(3) { v += [1]; }
+  assert(len(v) == 5, "p9 {len(v)}");
+  println("p9 {len(v)}");
+}
+
+// p10 — a counted push loop NESTED in another loop: one reserve per entry.
+fn p10() {
+  v: vector<integer> = [];
+  for i in 0..3 {
+    for j in 0..i { v += [10 * i + j]; }
+  }
+  s = 0;
+  for k in 0..len(v) { s += v[k]?; }
+  assert(len(v) == 3 && s == 51, "p10 {len(v)} {s}");
+  println("p10 {len(v)} {s}");
+}
+
+// p11 — a fill into a LOOP BUFFER (§ V-al composes): the vector kept across iterations,
+// filled to a different length each time.
+fn p11() {
+  t = 0;
+  for i in 1..4 {
+    v: vector<integer> = [];
+    for _ in 0..i { v += [i]; }
+    for k in 0..len(v) { t += v[k]?; }
+    t += v[i] ?? -100;
+  }
+  assert(t == -286, "p11 {t}");
+  println("p11 {t}");
+}
+
+fn main() {
+  p1(); p2(); p3(); p4(); p5(); p6(); p7(); p8(); p9(); p10(); p11();
+}

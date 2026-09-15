@@ -1,0 +1,71 @@
+// @PLN157 § V-af (loft#1426) — a value BRANCH of buffer-delivering calls witnesses every
+// arm's buffer, on BOTH backends (@FR-O-Complete): `v = if c { mk(i) } else { mk2(i) }` inside
+// a loop binds `v` to whichever arm's hidden `__ref_N` ran, so every arm's buffer is `v`'s
+// witness — the buffers are allocated once for the function and `v`'s per-iteration free
+// declines against each (the same ladder a literal branch already took).  Before this unit
+// a branch paired nothing: the buffers stayed null, every call minted a store and every
+// iteration freed one — 16 % of the consumer's `smooth` row, which the unit took −26 %.
+// The values are the copy-free semantics either way; what the unit changes is which store
+// each iteration writes, so `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` are the channels that
+// see a wrong pairing (a use-after-free or a double free is loud under them) and the
+// interpreter is the oracle for the values.  The cells pin the boundary from both sides:
+//   - a two-arm and a three-arm branch, nested branches, a call beside a literal, a call
+//     beside an existing view, two joined locals in one iteration, a forwarding callee and
+//     nested loops answer the same values through the reused buffers;
+//   - a joined local reassigned in the body keeps its buffers unreused, a join outside a
+//     loop pairs the other way round, an escaping value copies as before.
+// The full cell corpus is
+// doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-af-join-witness-cells.loft
+// (tests/join_witness.rs pins the IR: the preamble allocations and the free ladder, and
+// the switch); this file carries the VALUE cells.  `LOFT_NO_JOIN_BUFFER_WITNESS=1` must
+// answer identically.
+//
+// @falsified-at: hand-measured (2026-09-13) — the positive control that allocates EVERY hidden
+// buffer (`LOFT_NO_RETBUF_WITNESS_GATE=1`) under `LOFT_STRICT_STORES=1`, on a one-cell probe of
+// the two-arm shape: with the pairing ON both backends run clean; with
+// `LOFT_NO_JOIN_BUFFER_WITNESS=1` both report `[strict-store] USE AFTER FREE (write) … type=Pt`
+// — a pre-allocated buffer whose result's free is unguarded is exactly the unsoundness the
+// pairing prevents.  (The corpus-wide run is red in both directions under that control,
+// because the escaping and reassigned cells are the shapes the control was built to break.)
+// A sabotage that witnessed only the FIRST arm stayed green everywhere and says why a
+// missing witness is safe: the unwitnessed arm's buffer is simply not pre-allocated, so that
+// arm keeps minting a store per call — the pre-unit behaviour, correct and slow.  Restored
+// byte-identically; interpret / native / strict stores / poison / the switch all green.
+
+struct Pt { x: float, y: float }
+struct Wrap { p: Pt, n: integer }
+
+fn mk(i: integer) -> Pt { Pt { x: i as float, y: 2.0 * (i as float) } }
+fn mk2(i: integer) -> Pt { Pt { x: -(i as float), y: 0.5 } }
+fn mk3(i: integer) -> Pt { Pt { x: 100.0, y: i as float } }
+fn fwd(i: integer) -> Pt { mk(i + 1) }
+fn tenth(v: float) -> integer { (v * 10.0) as integer }
+
+fn two_arms() -> integer { sx = 0.0; sy = 0.0; for i in 0..6 { v = if i % 2 == 0 { mk(i) } else { mk2(i) }; sx += v.x; sy += v.y; } tenth(sx) * 1000 + tenth(sy) }
+fn call_and_literal() -> integer { sx = 0.0; sy = 0.0; for i in 0..6 { v = if i % 2 == 0 { mk(i) } else { Pt { x: 9.0, y: 9.0 } }; sx += v.x; sy += v.y; } tenth(sx) * 1000 + tenth(sy) }
+fn three_arms() -> integer { sx = 0.0; sy = 0.0; for i in 0..6 { v = if i % 3 == 0 { mk(i) } else if i % 3 == 1 { mk2(i) } else { mk3(i) }; sx += v.x; sy += v.y; } tenth(sx) * 1000 + tenth(sy) }
+fn nested_branches() -> integer { sx = 0.0; sy = 0.0; for i in 0..6 { v = if i < 3 { if i % 2 == 0 { mk(i) } else { mk2(i) } } else { mk3(i) }; sx += v.x; sy += v.y; } tenth(sx) * 1000 + tenth(sy) }
+fn call_and_view() -> integer { base = Pt { x: 7.0, y: 7.0 }; sx = 0.0; sy = 0.0; for i in 0..6 { v = if i % 2 == 0 { mk(i) } else { base }; sx += v.x; sy += v.y; } assert(base.x == 7.0 && base.y == 7.0, "the view's record is intact"); tenth(sx) * 1000 + tenth(sy) }
+fn reassigned() -> integer { sx = 0.0; sy = 0.0; for i in 0..6 { v = if i % 2 == 0 { mk(i) } else { mk2(i) }; sy += v.y; v = mk3(i); sx += v.x; } tenth(sx) * 1000 + tenth(sy) }
+fn outside_loop() -> integer { c = true; v = if c { mk2(4) } else { mk(4) }; tenth(v.x) * 1000 + tenth(v.y) }
+fn escaping() -> integer { out: vector<Pt> = []; for i in 0..4 { v = if i % 2 == 0 { mk(i) } else { mk2(i) }; out += [v]; } sx = 0.0; for p in out { sx += p.x; } assert(len(out) == 4 && out[1]?.x == -1.0 && out[3]?.x == -3.0, "each element keeps its own copy"); tenth(sx) }
+fn into_field() -> integer { w = Wrap { p: Pt { x: 0.0, y: 0.0 }, n: 0 }; for i in 0..6 { v = if i % 2 == 0 { mk(i) } else { mk2(i) }; w.p = v; w.n += 1; } tenth(w.p.x) * 1000 + tenth(w.p.y) * 10 + w.n }
+fn two_locals() -> integer { ax = 0.0; ay = 0.0; bx = 0.0; by = 0.0; for i in 0..6 { a = if i % 2 == 0 { mk(i) } else { mk2(i) }; b = if i % 2 == 0 { mk3(i) } else { mk(i) }; ax += a.x; ay += a.y; bx += b.x; by += b.y; } assert(tenth(ax) == -30 && tenth(ay) == 135, "the first local as two_arms"); tenth(bx) * 1000 + tenth(by) }
+fn nested_loops() -> integer { sx = 0.0; sy = 0.0; for _r in 0..2 { for i in 0..6 { v = if i % 2 == 0 { mk(i) } else { mk2(i) }; sx += v.x; sy += v.y; } } tenth(sx) * 1000 + tenth(sy) }
+fn forwarder() -> integer { sx = 0.0; sy = 0.0; for i in 0..6 { v = if i % 2 == 0 { fwd(i) } else { mk2(i) }; sx += v.x; sy += v.y; } tenth(sx) * 1000 + tenth(sy) }
+
+fn main() {
+  assert(two_arms() == -30 * 1000 + 135, "two arms: x -3, y 13.5");
+  assert(call_and_literal() == 330 * 1000 + 390, "a call beside a literal: x 33, y 39");
+  assert(three_arms() == 1980 * 1000 + 140, "three arms: x 198, y 14");
+  assert(nested_branches() == 3010 * 1000 + 165, "nested branches: x 301, y 16.5");
+  assert(call_and_view() == 270 * 1000 + 330, "a call beside a view: x 27, y 33");
+  assert(reassigned() == 6000 * 1000 + 135, "a reassigned local: x 600 from mk3, y 13.5 from the join");
+  assert(outside_loop() == -40 * 1000 + 5, "a join outside a loop: mk2(4)");
+  assert(escaping() == -20, "an escaping value copies: -2");
+  assert(into_field() == -50 * 1000 + 5 * 10 + 6, "into a field: the last wins, mk2(5), six writes");
+  assert(two_locals() == 3090 * 1000 + 240, "two joined locals: the second x 309, y 24");
+  assert(nested_loops() == -60 * 1000 + 270, "nested loops: twice two_arms");
+  assert(forwarder() == 0 * 1000 + 195, "a forwarding callee: x 0, y 19.5");
+  println("join-witness ok");
+}

@@ -1,0 +1,186 @@
+name: macOS probe (native corpus)
+
+# A MEASUREMENT run for the macOS `native_scripts` red, so a fix can be validated on a real
+# arm64 runner without waiting for the nightly that owns it.  Not a gate, never runs on a PR,
+# blocks nothing.
+#
+# ── The question this answers, and why the dev box cannot ────────────────────
+#
+# `Test (macos-latest)` reported `1212 passed, 0 compile failed, 63 run failed` out of 1275
+# native scripts.  The SAME commit (5cd4785c9) passed on 09-11 and 09-12 and failed on 09-13,
+# on the same runner image (macos-26-arm64 20260907.0351.1) and the same toolchain (rustc
+# 1.98.1) — so the code is not what changed and a bisect has nothing to bisect.  What differs
+# between those runs is RESTORED STATE.
+#
+# The suspect is the native-corpus binary cache.  Its restore keys end in a bare
+# `${{ runner.os }}-corpus-` prefix, which matches ANY corpus cache regardless of the
+# `Cargo.lock` hash above it — and nothing in the key names the loft SOURCE that produced the
+# cached binaries.  A cache filled by a different `src/` is therefore restorable, its entries
+# count as hits, nothing recompiles, and the scripts run against binaries that do not match the
+# library they were built from.  "0 compile failed, 63 run failed" is the shape that predicts.
+#
+# So the two legs differ in exactly one thing:
+#
+#   cached  — restore the corpus cache with ci.yml's own keys, then run the corpus.
+#   clean   — the same build with `target/loft-native-cache` REMOVED, so every script
+#             compiles against the library in this checkout.
+#
+# One job, so the cargo build is shared and the cache is the only variable.  If `cached` fails
+# where `clean` passes, the key is the defect and the fix is to name the source in it.  If BOTH
+# fail, the cache is exonerated and this job is the place to iterate on a real arm64 runner.
+#
+# Trigger:
+#   gh workflow run macos-probe.yml --ref <branch>
+#   git push origin <branch>:macos-probe        # push trigger
+
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: 'nextest filter for the corpus leg'
+        default: 'binary(native) and test(native_scripts)'
+  push:
+    branches: [macos-probe]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_NET_RETRY: 10
+  CARGO_INCREMENTAL: 0
+  LOFT_TMPDIR: ${{ github.workspace }}/target/loft-native-cache
+  FILTER: ${{ inputs.filter || 'binary(native) and test(native_scripts)' }}
+
+jobs:
+  corpus:
+    name: probe — native corpus (macos arm64)
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Record the environment the two legs share
+        run: |
+          echo "rustc: $(rustc --version)"
+          echo "uname: $(uname -sm)"
+          sw_vers || true
+
+      # ci.yml's own keys, verbatim — the point is to restore what the gate restores, including
+      # the bare `-corpus-` fallback that makes a foreign cache eligible.
+      - name: Restore the native-corpus binary cache (as ci.yml does)
+        uses: actions/cache/restore@v4
+        with:
+          path: target/loft-native-cache
+          key: ${{ runner.os }}-corpus-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-corpus-${{ hashFiles('**/Cargo.lock') }}-
+            ${{ runner.os }}-corpus-
+
+      - name: What the restore actually brought in
+        run: |
+          d=target/loft-native-cache
+          if [ -d "$d" ]; then
+            echo "entries: $(find "$d" -type f | wc -l | tr -d ' ')"
+            echo "newest:  $(find "$d" -type f -newermt '1970-01-01' -print0 2>/dev/null | xargs -0 ls -lt 2>/dev/null | head -3 || true)"
+          else
+            echo "no cache restored — the `cached` leg below is then the same as `clean`,"
+            echo "which is itself the answer: the failure needs a restored cache to appear."
+          fi
+
+      - name: Install cargo-nextest
+        run: cargo nextest --version >/dev/null 2>&1 || cargo install cargo-nextest --locked
+
+      - name: Build (shared by both legs)
+        run: cargo build --release --all-targets
+
+      # ── Leg 1: WITH the restored cache — the gate's own condition ───────────
+      - name: corpus (cached)
+        id: cached
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cargo nextest run --profile ci --no-fail-fast -E "$FILTER" 2>&1 | tee /tmp/cached.log
+
+      - name: corpus (cached) — what failed
+        if: always()
+        run: scripts/probe_leg_report.sh /tmp/cached.log cached
+
+      # ── Leg 2: the SAME build with the cache removed ────────────────────────
+      - name: Drop the native cache
+        run: rm -rf target/loft-native-cache && mkdir -p target/loft-native-cache
+
+      - name: corpus (clean)
+        id: clean
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cargo nextest run --profile ci --no-fail-fast -E "$FILTER" 2>&1 | tee /tmp/clean.log
+
+      - name: corpus (clean) — what failed
+        if: always()
+        run: scripts/probe_leg_report.sh /tmp/clean.log clean
+
+      # ── The verdict, as one table nobody has to click through for ───────────
+      - name: Verdict
+        if: always()
+        run: |
+          c=$(cat /tmp/cached.count 2>/dev/null || echo '?'); co=$(cat /tmp/cached.outcome 2>/dev/null || echo 'UNKNOWN')
+          n=$(cat /tmp/clean.count  2>/dev/null || echo '?'); no=$(cat /tmp/clean.outcome  2>/dev/null || echo 'UNKNOWN')
+          {
+            echo "## macOS native-corpus probe"
+            echo
+            echo "| leg | outcome | run failures |"
+            echo "|---|---|---:|"
+            echo "| cached (ci.yml's restore keys) | $co | $c |"
+            echo "| clean (cache removed) | $no | $n |"
+            echo
+            if [ "$co" != PASSED ] && [ "$co" != FAILED ]; then
+              echo "**The cached leg did not produce a verdict** ($co) — it did not run, so nothing"
+              echo "below is a measurement.  Read the leg log before reading this table."
+            elif [ "$no" != PASSED ] && [ "$no" != FAILED ]; then
+              echo "**The clean leg did not produce a verdict** ($no) — see above."
+            elif [ "$co" = PASSED ] && [ "$no" = PASSED ]; then
+              echo "**Both legs PASS on the first try.** The corpus is green on arm64 with and"
+              echo "without the cache, and neither needed a retry."
+            elif [ "$co" = FLAKY ] || [ "$no" = FLAKY ]; then
+              echo "**A leg is FLAKY** (cached=$co, clean=$no) — a try failed and a retry passed,"
+              echo "so the counts above are the FAILING try's.  This is the state the macOS corpus"
+              echo "sat in: not red, not clean, just occasionally exhausting its retries.  Treat it"
+              echo "as red; the only difference from red is how many tries it got."
+            elif [ "$c" -gt 0 ] && [ "$n" -eq 0 ]; then
+              echo "**The cache is the defect.** The corpus passes against the library in this"
+              echo "checkout and fails against restored binaries, so the key admits artefacts"
+              echo "built from other source — the bare \`-corpus-\` restore prefix. Fix the key."
+            elif [ "$c" -eq 0 ] && [ "$n" -eq 0 ]; then
+              echo "**Neither leg reproduces.** The red needs something else this job does not"
+              echo "recreate — look at what the gate's OTHER shards leave behind, not the cache."
+            elif [ "$c" -eq "$n" ] && [ "$c" -gt 0 ]; then
+              echo "**The cache is exonerated** and the failure is real on arm64: identical"
+              echo "counts with and without it. Iterate here, not on a Linux box."
+            else
+              echo "**Both legs fail, by different amounts** ($c vs $n) — part cache, part real."
+              echo "The scripts only in the cached leg are the cache's; the rest are arm64's."
+            fi
+            echo
+            echo "### only in the cached leg"
+            comm -23 /tmp/cached.failures /tmp/clean.failures 2>/dev/null | head -70 || true
+            echo
+            echo "### in both legs"
+            comm -12 /tmp/cached.failures /tmp/clean.failures 2>/dev/null | head -70 || true
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload both logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-probe-logs
+          path: |
+            /tmp/cached.log
+            /tmp/clean.log
+          if-no-files-found: warn

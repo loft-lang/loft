@@ -62,6 +62,10 @@ this is a deliberate, both-backends-shared choice). The loop is a pure desugarin
 ```
   (I-Range)    for x in a..b { body }   iterates the integers a, a+1, …, b-1 (empty if a ≥ b);
                                         x is the value, not an index.
+  (I-RangeIncl) for x in a..=b { body } iterates a, a+1, …, b — b INCLUDED (empty if a > b).
+                                        The stop is decided on the value just YIELDED, so the
+                                        sequence is exact when b is the type's MAXIMUM and the
+                                        loop never has to represent b + 1.
   (I-Text)     for c in t { body }      binds c : character to each Unicode CODEPOINT of t, left
                                         to right — one iteration PER CODEPOINT, NOT per grapheme
                                         cluster.  The cursor is a BYTE position advanced by the
@@ -71,7 +75,21 @@ this is a deliberate, both-backends-shared choice). The loop is a pure desugarin
 ```
 
 **In words.** A range `a..b` yields the half-open integer sequence (never includes `b`); an
-empty range (`a ≥ b`) runs the body zero times. Text iterates by **Unicode codepoint** — each
+empty range (`a ≥ b`) runs the body zero times. `a..=b` is the same sequence with `b` included,
+and empty when `a > b`.
+
+> **Why the inclusive form states WHERE it stops, and not only what it yields.** Until
+> 2026-09-13 it had no rule at all, and its implementation ended the loop with the same
+> overshoot compare the half-open form uses — a test on the value about to be yielded. That
+> cannot end a range whose end is the type's maximum: the step past `b` overflows to the null
+> sentinel (`i64::MIN` for `integer`), and `till < null` is false under the plain order. So
+> `for i in (m - 2)..=m` with `m = i64::MAX` did not terminate on either backend — it RESTARTED
+> (the null-init counter reads the sentinel as "not started yet" and re-seeds at the start), and
+> after @PLN157 § V-ab removed that null test it ran on forever with `i = null` instead
+> (loft#1525). Deciding the stop on the value just YIELDED removes the need for `b + 1` to exist,
+> which is why the rule says it. The half-open form is unaffected — its test fires before the
+> step — and so is any inclusive range whose end is below the maximum. Pinned by
+> `tests/scripts/1525-an-inclusive-range-stops-on-the-value-it-yielded.loft`. Text iterates by **Unicode codepoint** — each
 `c` is a `character` (a scalar value), and a combining sequence is **multiple** iterations, NOT
 one: `for c in "e" + U+0301 + "X"` runs **three** times with `c#index = 0, 1, 3` (the combining
 accent is its own codepoint at byte 1, 2 bytes wide), because loft iterates **codepoints, not

@@ -306,6 +306,17 @@ impl Output<'_> {
             // keeps a native bridge as it is a &Value-only predicate).
             ValueType::Var => {
                 let var = node.var_nr();
+                // @PLN157 § V-ah (`@FR-R-ValueRecord`) — a VIEW of the record at a value
+                // position of an admitted body is the tuple of its field reads.
+                if !self.value_leaves.views.is_empty()
+                    && let Some(v) = node.native()
+                    && self
+                        .value_leaves
+                        .views
+                        .contains(&(std::ptr::from_ref(v) as usize))
+                {
+                    return self.output_view_tuple(w, var);
+                }
                 let variables = self.data.def(self.def_nr).variables();
                 let var_name = sanitize(variables.name(var));
                 // loft#1354 — this read HANDS the local to an `if` that binds it, and a
@@ -356,6 +367,8 @@ impl Output<'_> {
                             // handed to a `fn(…)` parameter — rustc E0308, `expected
                             // (u32, DbRef), found *mut (u32, DbRef)`.
                             | Type::Function(_, _, _)
+                            // A value enum link is a `*mut u8` and reads as the byte behind it.
+                            | Type::Enum(_, false, _)
                     )
                 {
                     // @PLN87 L1 — a local scalar `&`-link holds `*mut T` (raw); deref
@@ -618,6 +631,23 @@ impl Output<'_> {
             Value::Block(bl) => self.output_block(w, IrBlock::Native(bl), false, false)?,
             Value::Loop(lp) => {
                 let hoisted = self.begin_vector_hoist(w, lp)?;
+                // @PLN157 § V-ae (`@FR-R-Fill`) — a loop that is one fill over a held header
+                // runs the slice fill first; the per-element loop below is its fallback for
+                // every range the fill declines (a negative or partial index, an overflow,
+                // an empty range), and the counters are left as the loop would leave them.
+                let fill = self.fill_fast_path(w, lp)?;
+                if fill {
+                    self.indent(w)?;
+                    writeln!(w, "if !__fill_{} {{", lp.scope)?;
+                }
+                // @PLN157 § V-am (`@FR-R-PushFill`) — a counted push loop reserves its
+                // pushes times its trip count first; one push of an invariant is one fill
+                // of the tail, the per-element loop its fallback exactly as the fill's.
+                let pushed = self.push_fast_path(w, lp)?;
+                if pushed {
+                    self.indent(w)?;
+                    writeln!(w, "if !__pf_{} {{", lp.scope)?;
+                }
                 self.loop_stack.push(lp.scope);
                 writeln!(w, "'l{}: loop {{ //{}_{}", lp.scope, lp.name, lp.scope)?;
                 for v in &lp.operators {
@@ -630,6 +660,12 @@ impl Output<'_> {
                 self.indent(w)?;
                 write!(w, "}} /*{}_{}*/", lp.name, lp.scope)?;
                 self.loop_stack.pop();
+                if pushed {
+                    self.push_fast_path_tail(w, lp)?;
+                }
+                if fill {
+                    self.fill_fast_path_tail(w, lp)?;
+                }
                 self.end_vector_hoist(w, hoisted)?;
             }
             Value::Set(var, to) => self.output_set(w, *var, to)?,
@@ -1028,97 +1064,11 @@ impl Output<'_> {
             write!(w, "{:?}", crate::data::Value::CallRef(v_nr, args.to_vec()))?;
             return Ok(());
         };
-        // P227: a text-returning fn-ref call site appends the `&text` work buffers the
-        // widest candidate of this signature could want, which is one OR MORE
-        // (`Data::fnref_text_buffers`, loft#1116).  So the candidate filter reads the
-        // user-visible count off the fn-ref TYPE rather than subtracting a fixed one from
-        // `args.len()` — a count that was right only while every call appended exactly
-        // one, and that silently matched NO candidate once a call appended two (the arm
-        // collapsed to `_ => unreachable!()` and rustc answered E0282 rather than naming
-        // anything about loft).
-        //
-        // Through `base()`, because the `?` does not change how a text return is DELIVERED:
-        // `Parser::text_return` peels `Optional` before it converts the body, so a `-> text?`
-        // call site appends exactly the same hidden buffers.  Reading the raw type here asked
-        // for a user-visible arity that counted them, so a `-> text?` lambda matched NO
-        // candidate and the dispatch collapsed to `_ => unreachable!()` — which is the very
-        // failure the paragraph above records, one wrapper out.  One question, one spelling:
-        // `is_text_return` below is the same read and both must move together.
-        let user_arg_match =
-            if matches!(ret_type.base(), Type::Text(_)) && args.len() > param_types.len() {
-                param_types.len()
-            } else {
-                args.len()
-            };
-        // Collect all definitions with a matching signature.
-        // Only include native-callable functions (n_ / t_ prefix) in the reachable set;
-        // bytecode ops (Op* prefix) are never callable via fn-refs in native mode.
-        let n_defs = self.data.definitions();
-        // (d_nr, fn_name, has_closure): has_closure=true when the last attribute is __closure.
-        let mut candidates: Vec<(u32, String, bool)> = Vec::new();
-        for d in 0..n_defs {
-            if !self.reachable.is_empty() && !self.reachable.contains(&d) {
-                continue;
-            }
-            let def = self.data.def(d);
-            if !matches!(def.def_type(), crate::data::DefType::Function) {
-                continue;
-            }
-            // Exclude bytecode ops (Op* prefix) — they are not callable in native mode.
-            if def.name().starts_with("Op") {
-                continue;
-            }
-            // closure-capturing lambdas have a hidden __closure param as the last
-            // attribute. The closure is injected explicitly at the call site (in arg_exprs),
-            // so total arg count must equal the full attribute count.
-            let has_closure = def
-                .attributes()
-                .last()
-                .is_some_and(|a| a.name == "__closure");
-            // P227: hidden-attribute detection is TYPE-based, not name-based.
-            // Text-return work-buffers ride as `Type::RefVar(Type::Text(_))`
-            // attributes that the parser names after the user-visible variable
-            // they shadow (e.g. `a` for `a = "first: {n}"; a`) — a name-prefix
-            // check (`starts_with("__")`) would miss these and reject otherwise
-            // matching candidates.  Closure records remain detected by the
-            // exact `__closure` name (its typedef is plain `DbRef`).
-            let visible_attrs: Vec<&crate::data::Attribute> = def
-                .attributes
-                .iter()
-                .filter(|a| {
-                    // PLAN51 V-c: `ref_return` (src/parser/control.rs:3203)
-                    // appends a hidden Reference/Vector/struct-enum buffer
-                    // arg to heap-returning user fns.  This filter must
-                    // exclude that synthetic attr to keep arity matching
-                    // against the call site's user-visible arg count —
-                    // without it, every ref_return-promoted lambda fails
-                    // the visible_attrs.len() == user_arg_match check below
-                    // and the fn-ref match arm emits only `_ => unreachable!`
-                    // (probes 30, 59, 62 panicked with `invalid fn-ref`).
-                    !a.hidden
-                        && !matches!(a.typedef, Type::RefVar(ref inner) if matches!(**inner, Type::Text(_)))
-                        && a.name != "__closure"
-                })
-                .collect();
-            if visible_attrs.len() != user_arg_match {
-                continue;
-            }
-            let params_match = visible_attrs
-                .iter()
-                .zip(param_types.iter())
-                .all(|(a, expected)| {
-                    rust_type(&a.typedef, &Context::Argument)
-                        == rust_type(expected, &Context::Argument)
-                });
-            if !params_match {
-                continue;
-            }
-            if rust_type(def.returned(), &Context::Result) != rust_type(&ret_type, &Context::Result)
-            {
-                continue;
-            }
-            candidates.push((d, def.name().to_string(), has_closure));
-        }
+        // The arm set has ONE home — `fnref::dispatch_arms` — shared with the value-record
+        // gate, which declines every arm because an arm whose ABI changes breaks the join.
+        let candidates =
+            super::fnref::dispatch_arms(self.data, &self.reachable, &fn_type, args.len())
+                .unwrap_or_default();
         // Phase 09 phase 00 step 0.7 — fn-ref dispatch routes each
         // candidate arm through `output_call_user_fn` (which dispatches
         // via `emit_op`), so a custom emitter registered for any
@@ -1285,7 +1235,10 @@ impl Output<'_> {
             write!(w, "let __vc_out = ")?;
         }
         write!(w, "match var_{var_name}.0 {{")?;
-        for (d_nr, _fn_name, has_closure) in &candidates {
+        for super::fnref::Arm {
+            d_nr, has_closure, ..
+        } in &candidates
+        {
             write!(w, " {d_nr}_u32 => ")?;
             // P227: text-return arms wrap each call result with
             // `.to_string()` so heterogeneous candidate Rust signatures
@@ -1556,6 +1509,39 @@ impl Output<'_> {
     }
 
     /// Emit a typed null sentinel for the given type.
+    /// @PLN157 § V-ah — a borrowed VIEW of the current function's record, read at a value
+    /// position, as the tuple of its field getters in field order: the same getters a
+    /// caller's field read lowers to, so a null view answers each field's null exactly as
+    /// the record form's later read would.  A boolean getter answers the storage byte, so
+    /// it is coerced to the `bool` the tuple carries.
+    fn output_view_tuple(&mut self, w: &mut dyn Write, var: u16) -> std::io::Result<()> {
+        let fields = self
+            .value_records
+            .fields
+            .get(&self.def_nr)
+            .cloned()
+            .unwrap_or_default();
+        write!(w, "(")?;
+        for (i, (off, rt)) in fields.iter().enumerate() {
+            if i > 0 {
+                write!(w, ", ")?;
+            }
+            let getter = self.data.def_nr(super::hoist::value_getter(rt));
+            let call = Value::Call(getter, vec![Value::Var(var), Value::Int(*off as i32)]);
+            if *rt == "bool" {
+                write!(w, "((")?;
+                self.output_code_inner(w, &call)?;
+                write!(w, ") as u8) == 1")?;
+            } else {
+                self.output_code_inner(w, &call)?;
+            }
+        }
+        if fields.len() == 1 {
+            write!(w, ",")?;
+        }
+        write!(w, ")")
+    }
+
     pub(super) fn write_typed_null(w: &mut dyn Write, tp: &Type) -> std::io::Result<()> {
         Self::write_typed_null_in(w, tp, false)
     }
@@ -2329,16 +2315,45 @@ impl Output<'_> {
         // value per field at a constant offset, so the whole block — the buffer's
         // allocate-or-reuse, the writes, the yield — is exactly the tuple of those
         // values, in field order.  The buffer it wrote into no longer exists.
+        // Only an `Object` at a value LEAF converts (`hoist::value_leaves`): one bound to a
+        // record local or dropped as a statement is still a record build.
         if bl.name == "Object"
+            && self
+                .value_leaves
+                .objects
+                .contains(&(std::ptr::from_ref(bl) as usize))
             && let Some(&tp) = self.value_records.fns.get(&self.def_nr)
             && let Some(parts) = self.value_record_parts(bl, tp)
         {
+            let kinds: Vec<&'static str> = self
+                .value_records
+                .fields
+                .get(&self.def_nr)
+                .map(|f| f.iter().map(|(_, rt)| *rt).collect())
+                .unwrap_or_default();
+            // An `Object` that RETURNS what it builds (`hoist::object_own_return`): the
+            // tuple is evaluated first, the block's other statements — the frees the
+            // return owes — run in their order, and the tuple is returned.
+            let own_ret = super::hoist::object_own_return(bl);
+            if own_ret.is_some() {
+                self.indent(w)?;
+                write!(w, "let __obj = ")?;
+            }
             write!(w, "(")?;
             for (i, val) in parts.iter().enumerate() {
                 if i > 0 {
                     write!(w, ", ")?;
                 }
-                self.output_code_inner(w, val)?;
+                // A boolean field's operand may be the STORAGE byte (a `u8` parameter or
+                // field read) where the tuple carries `bool`; the coercion is the one
+                // every test predicate uses.
+                if kinds.get(i) == Some(&"bool") {
+                    write!(w, "((")?;
+                    self.output_code_inner(w, val)?;
+                    write!(w, ") as u8) == 1")?;
+                } else {
+                    self.output_code_inner(w, val)?;
+                }
             }
             // The 1-tuple's trailing comma, matching the signature built in
             // `hoist::value_records` — without it a single-field record returns a bare
@@ -2347,6 +2362,36 @@ impl Output<'_> {
                 write!(w, ",")?;
             }
             write!(w, ")")?;
+            if let Some(p) = own_ret {
+                writeln!(w, ";")?;
+                // A statement that allocates or writes the buffer — the allocate-or-reuse
+                // guard (an `if` around the `OpDatabase`), the `OpSet*` writes — IS the
+                // tuple; the yield and the return are the `return __obj` below.  Every
+                // other statement is a release the return owes, and runs.
+                let builds = |op: &Value| {
+                    op.any_node(&mut |n| {
+                        matches!(n, Value::Call(d, args)
+                            if (*d as usize) < self.data.definitions.len()
+                                && (self.data.def(*d).name().starts_with("OpSet")
+                                    || self.data.def(*d).name().starts_with("OpDatabase"))
+                                && matches!(args.first().map(Value::unspan),
+                                    Some(Value::Var(v)) if *v == p))
+                    })
+                };
+                for op in &bl.operators {
+                    match op.unspan() {
+                        Value::Return(_) | Value::Var(_) | Value::Line(_) => {}
+                        o if builds(o) => {}
+                        _ => {
+                            self.indent(w)?;
+                            self.output_code_inner(w, op)?;
+                            writeln!(w, ";")?;
+                        }
+                    }
+                }
+                self.indent(w)?;
+                writeln!(w, "return __obj")?;
+            }
             // The block's OPENING brace is already out; close it exactly as the ordinary
             // path does, or the arm eats a delimiter (measured: `unclosed delimiter` on
             // the conditional-construction cell, where the Object sits inside an `if` arm).
@@ -2651,6 +2696,21 @@ impl Output<'_> {
                 if handled {
                     continue;
                 }
+            }
+            // @PLN157 § V-al (`@FR-R-LoopBuffer`) — a loop buffer's literal zero of its
+            // vector field is not emitted: the first mint zero-fills the record, and every
+            // later pass keeps the vector the zero would drop.
+            if !self.loop_buffers.is_empty()
+                && let Value::Call(d, args) = v.unspan()
+                && (*d as usize) < self.data.definitions.len()
+                && self.data.def(*d).name() == "OpSetInt4"
+                && let [a0, a1, a2] = &args[..]
+                && let Value::Var(vdb) = a0.unspan()
+                && self.loop_buffers.contains(vdb)
+                && matches!(a1.unspan(), Value::Int(0))
+                && matches!(a2.unspan(), Value::Int(0))
+            {
+                continue;
             }
             let lit_guard = match v.unspan() {
                 Value::Set(var, _)

@@ -412,6 +412,10 @@ impl Parser {
                 // compiler. A method lives in its type's own attribute table, which is
                 // shared and source-independent, so it answers the same from anywhere.
                 && self.data.attr(*e_nr, &d.original_name()) == usize::MAX
+                // @PLN162 — an overload set that receives the enum, or holds a FREE
+                // definition, owns its dispatch: the enum-level definition is the author's
+                // (`Disp-Fallback`), and a free overload is no method to hang a dispatcher on.
+                && !self.data.overload_set_owns_dispatch(&d.original_name(), *e_nr)
             {
                 // Keyed by the enum AND the method NAME: a dispatcher dispatches ONE method,
                 // and `create_enum_dispatch_fn` names it after `nrs[0]`.  Keyed by the enum
@@ -5430,14 +5434,14 @@ impl Parser {
     /// the latter, and a synthesized function must not be validated as a user declaration.
     pub(crate) fn drop_cascade_name(data: &crate::data::Data, type_def: u32) -> String {
         let n = data.def(type_def).name();
-        format!("t_{}{}_OpDropAll", n.len(), n)
+        crate::data::Data::mangle_method(n, "OpDropAll")
     }
 
     /// The mangled name of a type's skip-capable cascade — `t_<LEN><Type>_OpDropAllExcept`.
     /// See [`crate::data::Data::drop_cascade_except_nr`] for what it is for.
     pub(crate) fn drop_cascade_except_name(data: &crate::data::Data, type_def: u32) -> String {
         let n = data.def(type_def).name();
-        format!("t_{}{}_OpDropAllExcept", n.len(), n)
+        crate::data::Data::mangle_method(n, "OpDropAllExcept")
     }
 
     /// @PLN139 stage B — give every type that OWNS a droppable through a field a function

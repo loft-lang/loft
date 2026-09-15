@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The two import spellings the wildcard cell cannot hold in one file (a `use` form is per
+// file): the selective `use lib::(name, …)` of an overload-set name, and the alias
+// `use lib as l` reaching it qualified (`Disp-Key`, @PLN162).
+// @ARGS: --lib tests/lib
+// @falsified-at: none — the control cannot be a worktree: a build before Disp-Key REFUSES the
+//   fixture library itself, and no earlier ref holds the fixture.  Measured by hand on the
+//   pre-step build (73f6cdc67, `--interpret --lib tests/lib`): `Cannot redefine 'hit' (already
+//   defined at tests/lib/overloadlib.loft:8:23)` and the same for `melt`, exit 1; this tree
+//   exit 0 with every cell green on both backends.  `scripts/falsify.sh` scores a
+//   program-shaped guard without its `@ARGS` until this commit, and with them the REF form
+//   still fails the control for the fixture's absence — the `--patch` form is the one that can
+//   score this file once it is committed.
+//   CHANNEL: exit — a refusal at the library's second definition on the control.
+//   ARMED: no instrument.
+//   WITNESS: the two `Cannot redefine` lines above, at the library, not at the consumer.
+//   HOLDS: the leak channel is `none` here and every cell's value is asserted, not counted.
+
+use overloadlib::(hit, Fire, Ice);
+use overloadlib2 as o;
+
+fn main() {
+  assert(hit(Fire { n: 1 }) == "fire 1", "selective import, Fire: got {hit(Fire { n: 1 })}");
+  assert(hit(Ice { n: 2 }) == "ice 2", "selective import, Ice: got {hit(Ice { n: 2 })}");
+  assert(o::hit(o::Gem { n: 3 }) == "gem 3", "aliased, Gem: got {o::hit(o::Gem { n: 3 })}");
+  assert(o::hit(o::Ore { n: 4 }) == "ore 4", "aliased, Ore: got {o::hit(o::Ore { n: 4 })}");
+}

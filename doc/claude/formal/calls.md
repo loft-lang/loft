@@ -234,6 +234,10 @@ concrete one right (D-call-13, QUALITY.md B7t).  The concrete twin is the oracle
              `m(τ?)` is (N-Intro) and is free.  A call on an absent receiver reaches `m(τ?)`
              with `self == null`, which is the whole point of the spelling.  The two call
              SPELLINGS, `x.m(…)` and `m(x, …)`, resolve identically.
+             And the receiver is not special: a `both`/`self` overload pair takes uniform
+             nullability, so a `τ?` ARGUMENT in any later position reaches `m(τ?, …)` when it
+             is declared, whichever spelling the call uses — null propagates regardless of
+             position, which is what the nullable body exists to do.
 ```
 
 **In words.** `m(τ)` and `m(τ?)` are one method with two bodies, and which body runs is decided
@@ -241,7 +245,12 @@ by the receiver you have, not by the order you wrote them in. Declaring only one
 case and it answers every receiver: the dense body takes a nullable receiver with a warning, the
 nullable body takes a dense receiver for nothing.
 
-**The last sentence is the one that carries the weight**, because two spellings of one call are
+**The argument clause is @PLN25 F1b(b) written down** — `max(5, a?)` reaches the overload
+`max(a?, 5)` does — and it was true of the bare spelling only until 2026-09-14: `p.mix(n?)`
+ran the dense body with `n` turned null in a non-null parameter, warning, while `mix(p, n?)`
+beside it ran the nullable one (D-call-21).
+
+**The identical-resolution sentence is the one that carries the weight**, because two spellings of one call are
 two different pieces of code in the compiler and they disagreed in BOTH directions (loft#1432).
 `x.m()` resolved through the type's ATTRIBUTE TABLE, which holds one routine per name — so with
 both overloads declared, an absent receiver ran the DENSE body while `m(x)` beside it ran the
@@ -275,7 +284,8 @@ cannot see.
 
 ## Deviations
 
-**OPEN: 0.**  `D-call-19` and `D-call-20` both closed 2026-09-12, re-measured on both backends
+**OPEN: 0.**  `D-call-21` opened and closed 2026-09-14 (the method spelling read the receiver
+alone when picking between `m(τ, …)` and `m(τ?, …)`; the argument clause above).  `D-call-19` and `D-call-20` both closed 2026-09-12, re-measured on both backends
 in the spelling each entry was written in — `bump(f(q)); f(q).a`, which never binds, so a record
 bind cannot swallow the answer.  All six of D-call-19's cells (whole · element · element-bind,
 generic and concrete) read 7, and all five of D-call-20's rows read as wanted, including the one

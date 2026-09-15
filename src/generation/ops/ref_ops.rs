@@ -32,9 +32,12 @@ pub struct OpFreeRefEmitter;
 impl OpEmitter for OpFreeRefEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         // @PLN157 § V-aa (`@FR-R-ValueRecord`) — a local holding a value-returned record
-        // owns no store record, so there is nothing to release.
+        // owns no store record, so there is nothing to release; nor does the PHANTOM
+        // return-buffer parameter of an admitted function, which the signature dropped.
         if let Some(Value::Var(v)) = args.first().map(Value::unspan)
-            && ctx.output.value_record_locals.contains_key(v)
+            && (ctx.output.value_record_locals.contains_key(v)
+                || ctx.output.value_phantom == Some(*v)
+                || ctx.output.dead_buffers.contains(v))
         {
             return write!(ctx.w, "()");
         }
@@ -276,11 +279,25 @@ pub struct OpFreeRefIfDistinctEmitter;
 impl OpEmitter for OpFreeRefIfDistinctEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         // @PLN157 § V-aa (`@FR-R-ValueRecord`) — nothing to release: the local holds a
-        // tuple in registers, not a record in a store.
+        // tuple in registers, not a record in a store; the phantom buffer parameter of an
+        // admitted function is not there to release either.
         if let Some(Value::Var(v)) = args.first().map(Value::unspan)
-            && ctx.output.value_record_locals.contains_key(v)
+            && (ctx.output.value_record_locals.contains_key(v)
+                || ctx.output.value_phantom == Some(*v)
+                || ctx.output.dead_buffers.contains(v))
         {
             return write!(ctx.w, "()");
+        }
+        // @PLN157 § V-ah — guarded AGAINST a value local (or the phantom buffer): the
+        // tuple is in no store, so the placeholder is always distinct from it and the
+        // free is unconditional.  This is the ownership change a selecting tail carries:
+        // the record form declined this free exactly when the buffer WAS the result,
+        // because the caller then owned it; the value form never hands the buffer up.
+        if let Some(Value::Var(v)) = args.get(1).map(Value::unspan)
+            && (ctx.output.value_record_locals.contains_key(v)
+                || ctx.output.value_phantom == Some(*v))
+        {
+            return super::emit_op(ctx, "OpFreeRef", &args[..1]);
         }
         if let [ph_val, wit_val] = args {
             let ph_name = if let Value::Var(v) = ph_val {
@@ -400,6 +417,37 @@ pub struct OpCopyRecordEmitter;
 impl OpEmitter for OpCopyRecordEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         if let [src, dst, tp_val] = args {
+            // @PLN157 § V-ah (`@FR-R-ValueRecord`) — a copy FROM a value local is the
+            // tuple MATERIALISED into the destination: one typed field write per element,
+            // in field order, through the same setters a literal's writes lower to.  This
+            // is how a builder delivered into a push slot, an element or a field lands
+            // without a call, a buffer or a whole-record copy.
+            if let Value::Var(v) = src.unspan()
+                && let Some(d) = ctx.output.value_record_locals.get(v).copied()
+                && let Some(fields) = ctx.output.value_records.fields.get(&d).cloned()
+            {
+                let name = super::super::sanitize(
+                    ctx.output.data.def(ctx.output.def_nr).variables().name(*v),
+                );
+                write!(ctx.w, "{{ ")?;
+                for (i, (off, rt)) in fields.iter().enumerate() {
+                    let setter = ctx
+                        .output
+                        .data
+                        .def_nr(super::super::hoist::value_setter(rt));
+                    let call = Value::Call(
+                        setter,
+                        vec![
+                            dst.clone(),
+                            Value::Int(*off as i32),
+                            Value::RawExpr(format!("var_{name}.{i}")),
+                        ],
+                    );
+                    ctx.emit(&call)?;
+                    write!(ctx.w, "; ")?;
+                }
+                return write!(ctx.w, "}}");
+            }
             // @PLN157 § V-j (`@FR-R-MoveAppend`) — the paired append's copy: when the
             // source is the armed loop variable and both elements share a store (the
             // placed buffer landed the callee's result beside the destination), the
@@ -508,5 +556,26 @@ impl OpEmitter for OpSizeofRefEmitter {
             write!(ctx.w, ")")?;
         }
         Ok(())
+    }
+}
+
+/// `OpDistinctStore` — the store-identity test, with the @PLN157 § V-ah arm: a value
+/// local (or an admitted function's phantom buffer parameter) is in NO store, so it is
+/// distinct from everything, and the guard it feeds — a displaced free, a delivery copy —
+/// takes its "different store" branch unconditionally.  Everything else emits the
+/// `#rust` template.
+pub struct OpDistinctStoreEmitter;
+
+impl OpEmitter for OpDistinctStoreEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        let is_value = |a: &Value| {
+            matches!(a.unspan(), Value::Var(v)
+                if ctx.output.value_record_locals.contains_key(v)
+                    || ctx.output.value_phantom == Some(*v))
+        };
+        if args.iter().any(is_value) {
+            return write!(ctx.w, "true");
+        }
+        super::default::DefaultEmitter.emit(ctx, args)
     }
 }

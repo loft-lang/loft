@@ -5071,6 +5071,18 @@ impl Definition {
         self.synthetic
     }
 
+    /// Is this a session's synthetic EVAL function — a REPL line (`replmain_<n>`) or a
+    /// debugger evaluation (`__eval_<n>`, `__evalinfer_<n>`)?  Such a function is called
+    /// through the frame-reenter path, which reads an OWNED text result back and pushes no
+    /// hidden buffer, so a text-return promotion that grows its signature leaves the caller
+    /// passing nothing and the callee reading an undefined slot.  Every promotion that
+    /// grows a `&text` parameter asks this, and only this.
+    #[must_use]
+    pub fn is_reentered_eval(&self) -> bool {
+        let n = self.original_name();
+        n.starts_with("replmain_") || n.starts_with("__eval_") || n.starts_with("__evalinfer_")
+    }
+
     #[must_use]
     pub fn is_operator(&self) -> bool {
         matches!(self.def_type, DefType::Function)
@@ -5097,7 +5109,7 @@ impl Definition {
     #[must_use]
     pub fn original_name(&self) -> String {
         if self.def_type == DefType::Function {
-            if self.name.starts_with("t_") {
+            if self.name.starts_with("t_") || self.name.starts_with("f_") {
                 if let Ok(nr) = self.name[2..4].parse::<u8>() {
                     self.name[5 + nr as usize..].to_string()
                 } else if let Ok(nr) = self.name[2..3].parse::<u8>() {
@@ -5983,6 +5995,15 @@ impl Data {
                     .collect()
             };
             self.definitions.truncate(keep as usize);
+            // `Disp-Key` (@PLN162): an overload that joined a set and is now dropped must
+            // leave the set too, or the name's dispatcher carries a routine number nothing
+            // defines — a stale member every later selection would rank.
+            for d in &mut self.definitions {
+                if d.def_type == DefType::Dynamic {
+                    d.attributes
+                        .retain(|a| !matches!(a.typedef.base(), Type::Routine(r) if *r >= keep));
+                }
+            }
             self.rebuild_indices();
             for (name, src, nr) in expected {
                 assert_eq!(
@@ -7145,6 +7166,134 @@ impl Data {
         }
     }
 
+    /// The key spelling of one TYPE: its def's name, `?`-suffixed for a nullable one — what
+    /// a definition's parameter contributes to its key, and what a call's argument is matched
+    /// against.  `None` for a type with no def to name (a `Function`).
+    #[must_use]
+    pub(crate) fn type_spelling(&self, tp: &Type) -> Option<String> {
+        let tn = self.type_def_nr(tp);
+        (tn != u32::MAX).then(|| Self::sig_type_name(&self.key_type_name(tn), tp))
+    }
+
+    /// Every DECLARED parameter's spelling joined with `#` — the FULL spelling a definition
+    /// is keyed by when its name has several (`Disp-Key`, @PLN162).  `#` is the separator
+    /// [`Self::bound_stub_name`] already relies on: no identifier can contain it, and the
+    /// native emitter maps it to `__`.  Hidden parameters (a return buffer) are not part of a
+    /// signature and are skipped.  `None` when a parameter has no spelling, which keeps such
+    /// a definition on today's keys.  Two `vector<τ>` spell alike — the element type is not
+    /// in a key today either.
+    #[must_use]
+    pub(crate) fn full_spelling<'a>(
+        &self,
+        params: impl Iterator<Item = &'a Type>,
+    ) -> Option<String> {
+        let mut parts = Vec::new();
+        for tp in params {
+            parts.push(self.type_spelling(tp)?);
+        }
+        Some(parts.join("#"))
+    }
+
+    /// Does the author's overload set of `name` own its dispatch over the enum `e_nr`, so that
+    /// @F20 synthesises no enum-level dispatcher for it (@PLN162)?  It does when the set
+    /// carries a definition RECEIVING the enum (`hit(e: Entity, …)`, dense or `Entity?`) —
+    /// `Disp-Fallback`'s most general type, the author's to write — or a FREE definition
+    /// (keyed `f_…`), which is no method and gets no `x.f(…)` spelling; a dispatcher
+    /// synthesised beside either would be the same signature twice, or a method spelling for
+    /// a name that has none.  A `self`/`both` set with neither keeps @F20's runtime dispatch.
+    #[must_use]
+    pub fn overload_set_owns_dispatch(&self, name: &str, e_nr: u32) -> bool {
+        let main = self.def_nr(name);
+        if main == u32::MAX || self.def(main).def_type != DefType::Dynamic {
+            return false;
+        }
+        self.def(main)
+            .attributes
+            .iter()
+            .any(|a| match a.typedef.base() {
+                Type::Routine(r) => {
+                    self.def(*r).name.starts_with("f_")
+                        || self
+                            .def(*r)
+                            .attributes
+                            .iter()
+                            .find(|p| !p.hidden)
+                            .is_some_and(
+                                |p| matches!(p.typedef.base(), Type::Enum(e, _, _) if *e == e_nr),
+                            )
+                }
+                _ => false,
+            })
+    }
+
+    /// The full spelling of a registered definition's declared parameters.
+    #[must_use]
+    fn def_full_spelling(&self, d_nr: u32) -> Option<String> {
+        self.full_spelling(
+            self.def(d_nr)
+                .attributes
+                .iter()
+                .filter(|a| !a.hidden)
+                .map(|a| &a.typedef),
+        )
+    }
+
+    /// `Disp-Key` (@PLN162): make `fn_name` an OVERLOAD SET — the bare `Dynamic` dispatcher
+    /// exists, the way a `both` name always registers one, and carries `incumbent` as an
+    /// attribute labelled by its spelling.  A free incumbent is re-keyed from `n_<name>` to
+    /// its full spelling, so the name offers no parse hint (`Disp-Hint`) and the sites that
+    /// read `n_<name>` as THE definition find none, exactly as they do for a `both` name.
+    fn admit_overload_set(&mut self, lexer: &mut Lexer, fn_name: &str, incumbent: u32) {
+        let mut main = self.def_nr(fn_name);
+        if main == u32::MAX {
+            main = self.add_def(fn_name, lexer.pos(), DefType::Dynamic);
+        }
+        let carried = self
+            .def(main)
+            .attributes
+            .iter()
+            .any(|a| matches!(a.typedef.base(), Type::Routine(r) if *r == incumbent));
+        if carried {
+            return;
+        }
+        let label = if self.def(incumbent).name.starts_with("t_") {
+            // A method keeps its `t_<sig0>_<name>` key; its label is that receiver spelling.
+            self.def(incumbent)
+                .attributes
+                .first()
+                .and_then(|a| self.type_spelling(&a.typedef))
+                .unwrap_or_default()
+        } else {
+            let Some(full) = self.def_full_spelling(incumbent) else {
+                return;
+            };
+            let old = self.def(incumbent).name.clone();
+            let src = self.def(incumbent).source;
+            let new = Self::mangle_free_overload(&full, fn_name);
+            self.def_names.remove(&(old, src));
+            self.def_names.insert((new.clone(), src), incumbent);
+            self.definitions[incumbent as usize].name = new;
+            full
+        };
+        let a_nr = self.add_attribute(lexer, main, &label, Type::Routine(incumbent));
+        self.definitions[main as usize].attributes[a_nr].mutable = false;
+        self.definitions[main as usize].attributes[a_nr].constant = true;
+    }
+
+    /// One overload as a reader sees it, `name(τ₁, τ₂)` over its declared parameters — the
+    /// ONE rendering both call spellings' diagnostics use.
+    #[must_use]
+    pub fn overload_signature(&self, fn_name: &str, r: u32) -> String {
+        let params: Vec<String> = self
+            .def(r)
+            .attributes
+            .iter()
+            .filter(|p| !p.hidden)
+            .map(|p| p.typedef.source_name(self))
+            .collect();
+        format!("{fn_name}({})", params.join(", "))
+    }
+
     #[must_use]
     pub fn fn_key(&self, fn_name: &str, arguments: &[Argument]) -> Option<String> {
         let is_self = !arguments.is_empty() && arguments[0].name == "self";
@@ -7168,7 +7317,7 @@ impl Data {
         // A DECLARATION keyed here is a concrete function; only the stubs a BOUND mints are
         // keyed per signature (loft#1275).
         let sig = Self::sig_type_name(&self.key_type_name(type_nr), &arguments[0].typedef);
-        Some(format!("t_{}{}_{fn_name}", sig.len(), sig))
+        Some(Self::mangle_method(&sig, fn_name))
     }
 
     /// The marker that separates a bound HOLDER's method namespace from a concrete type's
@@ -7181,6 +7330,28 @@ impl Data {
     /// already calls eight REQUIRED parameters too many, so a bound method beyond it is not a
     /// shape the language encourages.
     pub(crate) const MAX_BOUND_ARITY: usize = 9;
+
+    /// The ONE spelling of a method's definition key: `t_<LEN><spelling>_<method>`, `LEN` the
+    /// length of `spelling` (`CODE.md` § naming).  `spelling` is whatever keys the receiver — a
+    /// type's name, `Name?` for a nullable receiver ([`Self::sig_type_name`]), `Name#<arity>`
+    /// for a bound holder's stub ([`Self::bound_stub_name`]) — and every site that mints or
+    /// seeks such a key spells it here, so a key minted under one spelling is sought under the
+    /// same one.  @PLN162 `Disp-Key` widens what the spelling carries; this is where it changes.
+    /// Two PREFIX builders stay apart on purpose, because they enumerate a type's keys rather
+    /// than name one: the `t_4Self_` scan in `parser/mod.rs` and the REPL's completion prefix.
+    #[must_use]
+    pub fn mangle_method(spelling: &str, method: &str) -> String {
+        format!("t_{}{}_{method}", spelling.len(), spelling)
+    }
+
+    /// The key of a FREE definition that belongs to an overload set (`Disp-Key`, @PLN162):
+    /// `f_<LEN><full spelling>_<name>`.  Its own prefix, because `t_` MEANS "a method" to every
+    /// reader of a key — the method-receiver hint, the method-path guard, the borrowed-view
+    /// rule — and a free overload is not one: it has no receiver and no `x.f(…)` spelling.
+    #[must_use]
+    pub fn mangle_free_overload(spelling: &str, name: &str) -> String {
+        format!("f_{}{}_{name}", spelling.len(), spelling)
+    }
 
     /// The internal name of a BOUND-METHOD STUB for `holder` — a generic's type variable, or an
     /// interface's associated type.
@@ -7216,7 +7387,7 @@ impl Data {
     #[must_use]
     pub fn bound_stub_name(holder: &str, method: &str, arity: usize) -> String {
         let h = format!("{holder}{}{arity}", Self::HOLDER_MARK);
-        format!("t_{}{}_{method}", h.len(), h)
+        Self::mangle_method(&h, method)
     }
 
     /// Is `name` taken by a definition in ANY source?
@@ -7278,7 +7449,7 @@ impl Data {
             return Self::bound_stub_name(&d.name, method, arity);
         }
         let n = self.key_type_name(type_nr);
-        format!("t_{}{}_{method}", n.len(), n)
+        Self::mangle_method(&n, method)
     }
 
     /// The name that KEYS a method on `type_nr`: a concrete type's own name, or a bound
@@ -7342,10 +7513,34 @@ impl Data {
                 let tn = self.type_def_nr(&a.typedef);
                 tn != u32::MAX && {
                     let sig = Self::sig_type_name(&self.key_type_name(tn), &a.typedef);
-                    own(self, &format!("t_{}{}_{fn_name}", sig.len(), sig)) != u32::MAX
+                    own(self, &Self::mangle_method(&sig, fn_name)) != u32::MAX
                 }
             });
-        if o_nr != u32::MAX && (self.def(o_nr).def_type != DefType::Dynamic || shadows_a_method) {
+        // `Disp-Key` (@PLN162): the name's bare dispatcher — an overload set, from ANY source
+        // visible bare, a `use`d library's included — already carrying a definition with this
+        // FULL parameter spelling is the same collision `shadows_a_method` names for a method,
+        // and an imported single free `n_<name>` names for itself: two definitions of one
+        // signature, and a bare call reaching the imported one while this one sat unreachable
+        // in silence (measured: `hit(f: Fire)` beside `use shapes` exporting `hit(Fire)` /
+        // `hit(Ice)` answered the library's body).  A definition of ANOTHER spelling joins the
+        // dispatch instead, kept live by its argument types — as a free function beside a
+        // stdlib `both` set always was.
+        let carried_spelling = o_nr != u32::MAX
+            && self.def(o_nr).def_type == DefType::Dynamic
+            && self
+                .full_spelling(arguments.iter().map(|a| &a.typedef))
+                .is_some_and(|full| {
+                    self.def(o_nr)
+                        .attributes
+                        .iter()
+                        .any(|a| match a.typedef.base() {
+                            Type::Routine(r) => self.def_full_spelling(*r).as_ref() == Some(&full),
+                            _ => false,
+                        })
+                });
+        if o_nr != u32::MAX
+            && (self.def(o_nr).def_type != DefType::Dynamic || shadows_a_method || carried_spelling)
+        {
             diagnostic!(
                 lexer,
                 Level::Error,
@@ -7373,7 +7568,7 @@ impl Data {
             let tn = self.type_def_nr(&arg.typedef);
             if tn != u32::MAX {
                 let sig = Self::sig_type_name(&self.key_type_name(tn), &arg.typedef);
-                let m_nr = self.def_nr(&format!("t_{}{}_{fn_name}", sig.len(), sig));
+                let m_nr = self.def_nr(&Self::mangle_method(&sig, fn_name));
                 if m_nr != u32::MAX {
                     // The package short-name for the qualified-call fix line. `use_names`
                     // may hold an alias beside the real name for one source, so take the
@@ -7425,6 +7620,58 @@ impl Data {
             }
         }
         let mut d_nr = own(self, &name); // C97: a library's mangled name is scoped to its own source
+        // `Disp-Key` (@PLN162): a second definition of a name whose parameter types differ
+        // from the incumbent's is an OVERLOAD, not a redefinition.  It is keyed by its full
+        // parameter spelling, and the name's bare `Dynamic` dispatcher carries every overload
+        // the way a `both` name always has.  Within ONE source only: a MAIN definition under
+        // a stdlib name stays the refusal below (C95), and a library's names stay module-scoped
+        // (C97).  The same spelling twice is the redefinition it always was.
+        let mut overload_label: Option<String> = None;
+        if d_nr != u32::MAX
+            && self.def(d_nr).def_type == DefType::Function
+            && self.def(d_nr).source == self.source
+            && let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
+            && self.def_full_spelling(d_nr).as_ref() != Some(&full)
+        {
+            let key = if is_self || is_both {
+                Self::mangle_method(&full, fn_name)
+            } else {
+                Self::mangle_free_overload(&full, fn_name)
+            };
+            if own(self, &key) == u32::MAX {
+                self.admit_overload_set(lexer, fn_name, d_nr);
+                name = key;
+                overload_label = Some(full);
+                d_nr = u32::MAX;
+            }
+        } else if d_nr == u32::MAX
+            && !(is_self || is_both)
+            // The stdlib PRELUDE never joins — by its FILE, not its source id: a REPL or
+            // live-reload shadow session parses the user's program under source 0 as well,
+            // and keyed on the id a third overload there registered as a fresh `n_<name>`,
+            // the first overload's pass-2 body then read *Unknown variable* for its own
+            // parameter, and every program with three overloads lost its watcher
+            // (measured, @PLN162 step 14).
+            && !crate::portable_path::is_stdlib_source(&lexer.pos().file)
+            && o_nr != u32::MAX
+            && self.def(o_nr).def_type == DefType::Dynamic
+            && self.def(o_nr).source == self.source
+            && let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
+        {
+            // A FREE definition of a name that is already an overload set of this source — a
+            // third definition, or a free one beside a `both` — joins under its full
+            // spelling: its `n_<name>` key is gone, so it has nowhere else to be.  A `self` /
+            // `both` definition has its own receiver key and joins only when that collides
+            // (above); the stdlib never overloads a free name, and its keys are the native
+            // registry's, so it never joins.  A dispatcher of ANOTHER source, the stdlib's
+            // `abs` say, is not joined either: a free `abs(Q)` beside it registers as `n_abs`,
+            // exactly as before.
+            let key = Self::mangle_free_overload(&full, fn_name);
+            if own(self, &key) == u32::MAX {
+                name = key;
+                overload_label = Some(full);
+            }
+        }
         if d_nr != u32::MAX {
             // Name WHERE the winner lives, exactly as the shadowing branch above does.
             // Without it a stdlib collision read as a bare "Cannot redefine 'sum'", which
@@ -7505,6 +7752,10 @@ impl Data {
                 }
             } else if existing && new_is_optional {
                 // The same nullability twice, already reported above; nothing to add.
+            } else if existing && overload_label.is_some() {
+                // An overload of the slot's method (`Disp-Key`): the slot keeps the incumbent
+                // — membership, and the method-path hint — and the dispatcher below carries
+                // both, which is where a call's argument types choose.
             } else if existing {
                 // The receiver type already carries a member of this name.  Unlike a free
                 // function (which C97 module-scopes to its library), a method lives in the
@@ -7544,24 +7795,29 @@ impl Data {
                 self.definitions[type_nr as usize].attributes[a_nr].constant = true;
             }
         }
-        if is_both {
+        if is_both || overload_label.is_some() {
             let mut main = self.def_nr(fn_name);
             if main == u32::MAX {
                 main = self.add_def(fn_name, lexer.pos(), DefType::Dynamic);
             }
-            let type_nr = self.type_def_nr(&arguments[0].typedef);
-            assert_ne!(
-                type_nr,
-                u32::MAX,
-                "Unknown type {}: {:?} at {}",
-                arguments[0].name,
-                arguments[0].typedef,
-                lexer.pos()
-            );
-            // @PLN25 — key the dispatcher attribute by the nullability-aware sig name so a
-            // `min(τ?)` overload lives beside `min(τ)` on the `Dynamic` def.
-            let base = self.key_type_name(type_nr);
-            let sig = Self::sig_type_name(&base, &arguments[0].typedef);
+            let sig = if let Some(full) = overload_label {
+                // An overload is labelled by its full spelling, the key it lives under.
+                full
+            } else {
+                let type_nr = self.type_def_nr(&arguments[0].typedef);
+                assert_ne!(
+                    type_nr,
+                    u32::MAX,
+                    "Unknown type {}: {:?} at {}",
+                    arguments[0].name,
+                    arguments[0].typedef,
+                    lexer.pos()
+                );
+                // @PLN25 — key the dispatcher attribute by the nullability-aware sig name so a
+                // `min(τ?)` overload lives beside `min(τ)` on the `Dynamic` def.
+                let base = self.key_type_name(type_nr);
+                Self::sig_type_name(&base, &arguments[0].typedef)
+            };
             let a_nr = self.add_attribute(lexer, main, &sig, Type::Routine(d_nr));
             self.definitions[main as usize].attributes[a_nr].mutable = false;
             self.definitions[main as usize].attributes[a_nr].constant = true;
@@ -7602,17 +7858,43 @@ impl Data {
                     d
                 }
             };
-            let d_nr = lookup(&format!("t_{}{}_{fn_name}", sig.len(), sig));
+            // `Disp-Key` (@PLN162): an overload of a method lives under its FULL parameter
+            // spelling; that key is asked first, so a second `m(self: τ, …)` reaches its own
+            // def on pass 2 and not the incumbent's.  With one parameter the two keys are one.
+            if arguments.len() > 1
+                && let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
+            {
+                let d_nr = lookup(&Self::mangle_method(&full, fn_name));
+                if d_nr != u32::MAX {
+                    return d_nr;
+                }
+            }
+            let d_nr = lookup(&Self::mangle_method(&sig, fn_name));
             // @PLN25 — a `τ?` receiver falls back to the base (non-null) overload when no
             // `τ?` overload exists, so a nullable value still reaches the plain method
             // (preserves the pre-nullability-key dispatch; inert when sig == base).
             if d_nr == u32::MAX && sig != base {
-                lookup(&format!("t_{}{}_{fn_name}", base.len(), base))
+                lookup(&Self::mangle_method(&base, fn_name))
             } else {
                 d_nr
             }
         } else {
-            self.def_nr(&format!("n_{fn_name}"))
+            let d_nr = self.def_nr(&format!("n_{fn_name}"));
+            if d_nr != u32::MAX {
+                return d_nr;
+            }
+            // `Disp-Key` (@PLN162): a free definition that joined an overload set was re-keyed
+            // to its full parameter spelling, in its own source.
+            let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef)) else {
+                return u32::MAX;
+            };
+            let key = Self::mangle_free_overload(&full, fn_name);
+            let scoped = self.source_nr(self.source, &key);
+            if scoped == u32::MAX {
+                self.def_nr(&key)
+            } else {
+                scoped
+            }
         }
     }
 
@@ -7640,10 +7922,37 @@ impl Data {
         declared == u32::MAX || declared == type_nr
     }
 
+    /// The definitions `fn_name` could resolve to for a receiver of type `tp`, as a SET, in
+    /// the order [`Self::find_fn`]'s ladder tries them.  The walk stops at the first rung that
+    /// yields anything, and a rung's yield is a set:
+    ///
+    /// - a receiver with no def (an unknown type, a `Function`) yields the free `n_<name>`;
+    /// - a bound HOLDER yields every stub carrying the name, one per arity — and TWO of them
+    ///   is the one ambiguity the language already refuses here, because this entry point has
+    ///   no arity to offer (a method call's arguments are not parsed when its receiver is
+    ///   resolved; the operator paths, which read the arity off the syntax, ask
+    ///   [`Self::bound_stub_name`] directly); none falls to the free `n_<name>`;
+    /// - a concrete receiver yields the method under its OWN nullability spelling first and
+    ///   the other second (@FR-F-Recv), each sought in the caller's scope and then in the
+    ///   type's own source when the scope's answer is foreign (loft#850) — one definition,
+    ///   the first spelling that resolves;
+    /// - then the free `n_<name>`; then the built-in operator whose first parameter is `tp`.
+    ///
+    /// @PLN162 `Disp-Select` chooses from this set by applicability and specificity.  Today
+    /// selection is "exactly one", so [`Self::find_fn`] answers that and every caller is
+    /// unchanged; the set is the concept the later steps widen.
     #[must_use]
-    pub fn find_fn(&self, source: u16, fn_name: &str, tp: &Type) -> u32 {
+    pub fn candidates(&self, source: u16, fn_name: &str, tp: &Type) -> Vec<u32> {
+        let free = || -> Vec<u32> {
+            let d_nr = self.source_nr(source, &format!("n_{fn_name}"));
+            if d_nr == u32::MAX {
+                Vec::new()
+            } else {
+                vec![d_nr]
+            }
+        };
         if matches!(tp, Type::Unknown(_)) {
-            return self.source_nr(source, &format!("n_{fn_name}"));
+            return free();
         }
         // loft#824 — dispatch on the REFERENT of a `&τ` parameter, not on the reference.
         // `type_def_nr` answers `reference` for `RefVar(τ)`, which is right for LAYOUT (the
@@ -7662,32 +7971,22 @@ impl Data {
         let type_nr = self.type_def_nr(tp);
         if type_nr == u32::MAX {
             // No method dispatch for types like Function; fall back to n_ global.
-            return self.source_nr(source, &format!("n_{fn_name}"));
+            return free();
         }
         // A bound HOLDER's stubs are keyed per SIGNATURE (loft#1275), and this entry point has
-        // no arity to offer: a method call's arguments are not parsed when its receiver is
-        // resolved.  So probe the arities the language admits and answer only when ONE bound
-        // signature carries the name — which is every shipped program, `Walkable::children`
-        // included.  Where a bound set declares one name at two arities the answer is
-        // genuinely ambiguous here, and the sites that DO know their arity — the operator
-        // paths, which read it off the syntax — ask [`Self::bound_stub_name`] directly.
+        // no arity to offer, so every arity the language admits is probed — `Walkable::children`
+        // included.  Where a bound set declares one name at two arities the yield has two
+        // members, and nothing here can choose.
         if self.definitions[type_nr as usize].bound_holder {
             let holder = &self.definitions[type_nr as usize].name;
-            let mut found = u32::MAX;
-            for arity in 1..=Self::MAX_BOUND_ARITY {
-                let d_nr = self.source_nr(source, &Self::bound_stub_name(holder, fn_name, arity));
-                if d_nr == u32::MAX {
-                    continue;
-                }
-                if found != u32::MAX {
-                    return u32::MAX; // two signatures, and nothing here can choose
-                }
-                found = d_nr;
+            let stubs: Vec<u32> = (1..=Self::MAX_BOUND_ARITY)
+                .map(|arity| self.source_nr(source, &Self::bound_stub_name(holder, fn_name, arity)))
+                .filter(|&d_nr| d_nr != u32::MAX)
+                .collect();
+            if !stubs.is_empty() {
+                return stubs;
             }
-            if found != u32::MAX {
-                return found;
-            }
-            return self.source_nr(source, &format!("n_{fn_name}"));
+            return free();
         }
         let base = self.key_type_name(type_nr);
         let sig = Self::sig_type_name(&base, tp);
@@ -7733,22 +8032,22 @@ impl Data {
         };
         let own_source = self.definitions[type_nr as usize].source;
         for spelling in spellings {
-            let key = format!("t_{}{}_{fn_name}", spelling.len(), spelling);
+            let key = Self::mangle_method(spelling, fn_name);
             let d_nr = self.source_nr(source, &key);
             if d_nr == u32::MAX {
                 continue;
             }
             if self.method_receives(d_nr, type_nr) {
-                return d_nr;
+                return vec![d_nr];
             }
             let own = self.source_nr(own_source, &key);
             if self.method_receives(own, type_nr) {
-                return own;
+                return vec![own];
             }
         }
-        let d_nr = self.source_nr(source, &format!("n_{fn_name}"));
-        if d_nr != u32::MAX {
-            return d_nr;
+        let found = free();
+        if !found.is_empty() {
+            return found;
         }
         // I9-prim: fall back to the `possible` operator map for built-in types.
         // Built-in operators use `add_op` (e.g. `OpLtInt`) rather than the method-style
@@ -7757,16 +8056,91 @@ impl Data {
         if let Some(ops) = self.possible.get(fn_name) {
             for &op_nr in ops {
                 if !self.def(op_nr).attributes.is_empty() && self.attr_type(op_nr, 0).is_equal(tp) {
-                    return op_nr;
+                    return vec![op_nr];
                 }
             }
         }
-        u32::MAX
+        Vec::new()
     }
 
-    /// @PLN101 — is this struct def declared `value struct`? A value (copy) type stored
-    /// inline (record field / vector element already inline out-of-the-box), never aliased,
-    /// non-null. Consulted by the value-semantics chokepoints.
+    /// The argument types as DISPATCHED: `(F-Recv)`'s argument clause — a `both`/`self`
+    /// overload pair takes uniform nullability, so when ANY argument is nullable every
+    /// position is asked for as `τ?`, and null propagates regardless of position and of
+    /// spelling (@PLN25 F1b(b); D-call-21 closed the method spelling).  An empty list, or a
+    /// `null` literal first, has no receiver: the first position becomes `Unknown`, which
+    /// asks for the free `n_<name>`.
+    #[must_use]
+    pub fn routed_types(&self, types: &[Type]) -> Vec<Type> {
+        if types.is_empty() || types[0] == Type::Null {
+            let mut out = vec![Type::Unknown(0)];
+            out.extend_from_slice(types.get(1..).unwrap_or(&[]));
+            return out;
+        }
+        if types.iter().any(|t| matches!(t, Type::Optional(_))) {
+            types
+                .iter()
+                .map(|t| {
+                    if matches!(t, Type::Optional(_)) {
+                        t.clone()
+                    } else {
+                        Type::optional(t.base().clone())
+                    }
+                })
+                .collect()
+        } else {
+            types.to_vec()
+        }
+    }
+
+    /// The definition a call resolves to by today's LADDER, given EVERY argument's type with
+    /// the receiver first — the entry point for a name with no overload set, and the fallback
+    /// when selection over one decided nothing (`parser::dispatch`).  The receiver is
+    /// `types[0]` as routed ([`Self::routed_types`]), and [`Self::candidates`] over it must
+    /// yield exactly one.
+    #[must_use]
+    pub fn select(&self, source: u16, fn_name: &str, types: &[Type]) -> u32 {
+        let routed = self.routed_types(types);
+        match self.candidates(source, fn_name, &routed[0]).as_slice() {
+            [one] => *one,
+            _ => u32::MAX,
+        }
+    }
+
+    /// The definition a BARE call `name(arg, …)` reaches: [`Self::select`] over the argument
+    /// types as parsed.
+    #[must_use]
+    pub fn select_fn(&self, source: u16, fn_name: &str, types: &[Type]) -> u32 {
+        self.select(source, fn_name, types)
+    }
+
+    /// The definition a METHOD call `x.m(arg, …)` reaches: [`Self::select`] with `dispatch`
+    /// — the receiver's type carrying its nullability (`@FR-F-Recv`) — standing in for
+    /// `types[0]`, which is the peeled receiver the call is emitted with.
+    #[must_use]
+    pub fn select_method(
+        &self,
+        source: u16,
+        fn_name: &str,
+        dispatch: &Type,
+        types: &[Type],
+    ) -> u32 {
+        let mut with_receiver: Vec<Type> = Vec::with_capacity(types.len().max(1));
+        with_receiver.push(dispatch.clone());
+        with_receiver.extend_from_slice(types.get(1..).unwrap_or(&[]));
+        self.select(source, fn_name, &with_receiver)
+    }
+
+    /// The ONE definition `fn_name` resolves to for a receiver of type `tp`, or `u32::MAX`
+    /// when [`Self::candidates`] yields none — or more than one, which nothing here can
+    /// choose between (a bound holder carrying the name at two arities).
+    #[must_use]
+    pub fn find_fn(&self, source: u16, fn_name: &str, tp: &Type) -> u32 {
+        match self.candidates(source, fn_name, tp).as_slice() {
+            [one] => *one,
+            _ => u32::MAX,
+        }
+    }
+
     #[must_use]
     pub fn is_value_struct(&self, d_nr: u32) -> bool {
         self.value_structs.contains(&d_nr)
@@ -7788,12 +8162,12 @@ impl Data {
         }
         let base = self.key_type_name(type_nr);
         let sig = Self::sig_type_name(&base, tp);
-        let d_nr = self.source_nr(source, &format!("t_{}{}_{fn_name}", sig.len(), sig));
+        let d_nr = self.source_nr(source, &Self::mangle_method(&sig, fn_name));
         if d_nr != u32::MAX {
             return d_nr;
         }
         if sig != base {
-            let d_nr = self.source_nr(source, &format!("t_{}{}_{fn_name}", base.len(), base));
+            let d_nr = self.source_nr(source, &Self::mangle_method(&base, fn_name));
             if d_nr != u32::MAX {
                 return d_nr;
             }
@@ -8526,7 +8900,7 @@ impl Data {
             return u32::MAX;
         }
         let def = self.def(type_def);
-        let key = format!("t_{}{}_OpDrop", def.name.len(), def.name);
+        let key = Self::mangle_method(&def.name, "OpDrop");
         let nr = self.source_nr(def.source, &key);
         if nr != u32::MAX {
             return nr;
@@ -8560,7 +8934,7 @@ impl Data {
             return u32::MAX;
         }
         let def = self.def(type_def);
-        let key = format!("t_{}{}_OpDropAll", def.name.len(), def.name);
+        let key = Self::mangle_method(&def.name, "OpDropAll");
         let nr = self.source_nr(def.source, &key);
         if nr != u32::MAX {
             return nr;
@@ -8589,7 +8963,7 @@ impl Data {
             return u32::MAX;
         }
         let def = self.def(type_def);
-        let key = format!("t_{}{}_OpDropAllExcept", def.name.len(), def.name);
+        let key = Self::mangle_method(&def.name, "OpDropAllExcept");
         let nr = self.source_nr(def.source, &key);
         if nr != u32::MAX {
             return nr;
@@ -8610,7 +8984,7 @@ impl Data {
             return false;
         }
         let def = self.def(type_def);
-        let key = format!("t_{}{}_OpDropAll", def.name.len(), def.name);
+        let key = Self::mangle_method(&def.name, "OpDropAll");
         self.source_nr(def.source, &key) != u32::MAX || self.def_nr(&key) != u32::MAX
     }
 

@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A whole vector written through a `&` LOCAL link replaces the linked vector's contents with a
+// copy of the value (`binding.md (B-Ref-Write)`): after `c = &n; c = a`, `n` holds `a`'s elements
+// in its own store and `c` still names `n`, so a later change to `a` is invisible to both, and a
+// later append through `c` lands in `n`.  A `&vector` PARAMETER write-back has always refilled the
+// caller's store; a local link now does the same, from a vector local, from another link and in a
+// loop.  A literal build or an append through the link, and a write-through onto the vector the
+// link already names, were right before and are pinned beside them.
+//
+// @falsified-at: 299d87ded — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-vector-written-through-a-local-link-refills-what-it-names.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
+// CHANNEL: the assertions — the length and elements of the source and of the linked vector, read
+// after a later change to the source or an append through the link.
+
+// From a vector local; then the SOURCE appended.
+fn from_a_local() -> text { a: vector<integer> = [1]; n: vector<integer> = [7, 8]; c = &n; c = a; a += [5]; "{len(a)},{len(n)},{n[0]}" }
+// From another vector link.
+fn from_a_link() -> text { a: vector<integer> = [1]; n: vector<integer> = [7, 8]; b = &a; c = &n; c = b; a += [5]; "{len(a)},{len(n)},{n[0]}" }
+// In a loop.
+fn in_a_loop() -> text { a: vector<integer> = [1]; n: vector<integer> = [7, 8]; c = &n; for _i in 0..2 { c = a; } a += [5]; "{len(a)},{len(n)},{n[0]}" }
+// After the write-through the link still names `n`: an append through it lands there.
+fn append_after() -> text { a: vector<integer> = [1]; n: vector<integer> = [7, 8]; c = &n; c = a; c += [9]; "{len(a)},{len(n)},{n[1]}" }
+// Controls.  A literal through the link refills `n`.
+fn literal_through() -> text { n: vector<integer> = [7, 8]; c = &n; c = [2, 2, 2]; "{len(n)},{n[0]}" }
+// An append through the link lands in `n`.
+fn append_through() -> text { n: vector<integer> = [7, 8]; c = &n; c += [9]; "{len(n)},{n[2]}" }
+// A write-through onto the vector the link already names leaves it as it was.
+fn onto_itself() -> text { n: vector<integer> = [7, 8]; c = &n; c = n; "{len(n)},{n[0]}" }
+// The `&vector` PARAMETER write-back.
+fn write_back(p: &vector<integer>, a: vector<integer>) { p = a; }
+
+fn main() {
+  assert(from_a_local() == "2,1,1", "a vector written through a link from a local refills it: {from_a_local()}");
+  assert(from_a_link() == "2,1,1", "a vector written through a link from another link refills it: {from_a_link()}");
+  assert(in_a_loop() == "2,1,1", "a vector written through a link in a loop refills it: {in_a_loop()}");
+  assert(append_after() == "1,2,9", "the link still names n after the write-through: {append_after()}");
+  assert(literal_through() == "3,2", "a literal through the link refills n: {literal_through()}");
+  assert(append_through() == "3,9", "an append through the link lands in n: {append_through()}");
+  assert(onto_itself() == "2,7", "a write-through onto the linked vector itself: {onto_itself()}");
+  n: vector<integer> = [7, 8]; a: vector<integer> = [1];
+  write_back(n, a);
+  assert(len(n) == 1 && n[0] == 1, "the `&vector` parameter write-back refills the caller's vector: {len(n)}");
+  println("vector write-through ok");
+}

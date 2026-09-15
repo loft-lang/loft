@@ -173,6 +173,14 @@ pub fn non_sentinel_vars(data: &Data, code: &Value) -> HashMap<u16, bool> {
     let mut escaped: std::collections::HashSet<u16> = std::collections::HashSet::new();
     collect_escapes(data, code, &mut escaped);
     let mut vars: HashMap<u16, bool> = HashMap::new();
+    // A counted loop's counters are non-sentinel by the loop's own bound, which is a fact
+    // the assignment `i#index = i#index + 1` cannot show a least fixpoint (it names
+    // itself): an EXCLUSIVE range steps the counter to at most its end, so the step
+    // never overflows; an inclusive one steps one past, which overflows only when the
+    // end is the type's maximum — admitted when the end is a literal below it.  The
+    // shape is read from the one parser the fill rewrite reads it from
+    // (`hoist::range_counters`), so the two cannot disagree about what a range is.
+    seed_range_counters(data, code, &mut vars);
     loop {
         let mut round: HashMap<u16, bool> = HashMap::new();
         scan_sets(code, data, &vars, &mut round);
@@ -187,6 +195,26 @@ pub fn non_sentinel_vars(data: &Data, code: &Value) -> HashMap<u16, bool> {
             return vars;
         }
     }
+}
+
+/// Seed every counted loop's index, next-counter and loop variable as non-sentinel when
+/// the loop's bound proves the step cannot overflow (see `non_sentinel_vars`).
+fn seed_range_counters(data: &Data, v: &Value, vars: &mut HashMap<u16, bool>) {
+    if let Value::Loop(lp) = v.unspan()
+        && let Ok(rc) = super::hoist::range_counters(lp, data)
+    {
+        let bounded = !rc.inclusive
+            || matches!(rc.hi.unspan(), Value::Int(k) if *k < i32::MAX)
+            || matches!(rc.hi.unspan(), Value::Long(k) if *k < i64::MAX);
+        if bounded {
+            vars.insert(rc.index, true);
+            vars.insert(rc.loop_var, true);
+            if let Some(n) = rc.next {
+                vars.insert(n, true);
+            }
+        }
+    }
+    v.for_each_child(&mut |c| seed_range_counters(data, c, vars));
 }
 
 /// One round: fold every `Set(var, expr)`'s verdict under the current map

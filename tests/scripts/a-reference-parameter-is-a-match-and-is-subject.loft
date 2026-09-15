@@ -1,0 +1,130 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A `&T` binding is a live reference, and every operation goes through it (LOFT.md
+// § References) — matching is an operation.  A `match` or `is` whose subject is a `&`
+// parameter reads the pointee: a struct-enum, a plain enum, a scalar and a text, as a direct
+// subject; a tuple element taken from a `&` binding tag-tests its variant as any element
+// does; a payload write through an arm binding lands in the caller's record; and a match
+// after the callee REBINDS its parameter sees the new variant.  All of these were refused at
+// parse time, *"match requires an enum, struct, or scalar type"* (loft#1526).
+// @falsified-at: 80ba212ea — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-reference-parameter-is-a-match-and-is-subject.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit — on the control every cell is refused at parse, *"match requires an enum,
+//   struct, or scalar type"*, *"'is' requires an enum type, got &Entity"* and, for the tuple
+//   subject, *"'IceWall' is not a variant — this tuple element is &Entity"*; here the program
+//   runs and every assertion holds.  Not assert and not leak: a program the control cannot
+//   compile.
+//   ARMED: no instrument — a plain run on either backend reads it.
+//   WITNESS: `hurt`, `hurt_is` and `pair` over one caller record: refused there; here each
+//   reaches its arm and the caller's `hp` reads 4 (10 - 1 - 2 - 3).
+//   HOLDS: the by-value spellings the file's comments name compile and agree on both trees;
+//   the leak channel is `none` on both.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct Body { hp: integer }
+enum Entity { Fireball { id: integer }, IceWall { id: integer, body: Body } }
+enum Colour { Red, Green, Blue }
+
+fn kind_then_rebind(b: &Entity) -> integer {
+  k = match b { IceWall { id } => id, Fireball { id } => id + 100 };
+  b = Fireball { id: 7 };
+  k
+}
+
+fn rebind_then_kind(b: &Entity) -> integer {
+  b = IceWall { id: 5, body: Body { hp: 1 } };
+  match b { IceWall { id } => id, _ => -1 }
+}
+
+fn is_then_rebind(b: &Entity) -> integer {
+  r = 0;
+  if b is IceWall { id } { r = id; }
+  b = Fireball { id: 8 };
+  r
+}
+
+fn colour_code(c: &Colour) -> integer {
+  r = match c { Red => 1, Green => 2, Blue => 3 };
+  c = Colour.Blue;
+  r
+}
+
+fn classify(n: &integer) -> text {
+  r = match n { 0 => "zero", _ => "other" };
+  n = 5;
+  r
+}
+
+fn text_class(t: &text) -> text {
+  r = match t { "a" => "A", _ => "?" };
+  t = "b";
+  r
+}
+
+fn hurt(b: &Entity) -> integer { match b { IceWall { body } => { body.hp -= 1; 1 }, _ => 0 } }
+
+fn hurt_is(b: &Entity) -> integer {
+  r = 0;
+  if b is IceWall { body } { body.hp -= 2; r = 1; }
+  r
+}
+
+fn pair(a: Entity, b: &Entity) -> integer {
+  match (a, b) { (Fireball, IceWall { body }) => { body.hp -= 3; 1 }, _ => 0 }
+}
+
+fn test_a_struct_enum_subject_through_a_reference() {
+  w: Entity = IceWall { id: 2, body: Body { hp: 10 } };
+  k = kind_then_rebind(w);
+  after = match w { Fireball { id } => id, _ => -1 };
+  assert(k == 2, "the arm the caller's variant picks: got {k}");
+  assert(after == 7, "and the rebind reached the caller: got {after}");
+}
+
+fn test_a_match_after_a_rebind_sees_the_new_variant() {
+  x: Entity = Fireball { id: 9 };
+  k = rebind_then_kind(x);
+  caller = match x { IceWall { id } => id, _ => -1 };
+  assert(k == 5, "the rebound variant, inside the callee: got {k}");
+  assert(caller == 5, "and in the caller: got {caller}");
+}
+
+fn test_is_through_a_reference() {
+  y: Entity = IceWall { id: 4, body: Body { hp: 1 } };
+  k = is_then_rebind(y);
+  after = match y { Fireball { id } => id, _ => -1 };
+  assert(k == 4, "`is` binds the payload through the reference: got {k}");
+  assert(after == 8, "and the rebind reached the caller: got {after}");
+}
+
+fn test_a_plain_enum_a_scalar_and_a_text_through_a_reference() {
+  c = Colour.Red;
+  code = colour_code(c);
+  assert(code == 1 && c == Colour.Blue, "plain enum: code {code}, caller rebound to Blue");
+  z = 0;
+  zc = classify(z);
+  assert(zc == "zero" && z == 5, "scalar: {zc}, caller {z}");
+  s = "a";
+  sc = text_class(s);
+  assert(sc == "A" && s == "b", "text: {sc}, caller {s}");
+}
+
+fn test_payload_writes_through_arm_bindings_land_in_the_caller() {
+  f: Entity = Fireball { id: 1 };
+  w: Entity = IceWall { id: 3, body: Body { hp: 10 } };
+  h = hurt(w);
+  hi = hurt_is(w);
+  p = pair(f, w);
+  hp = match w { IceWall { body } => body.hp, _ => -1 };
+  assert(h == 1 && hi == 1 && p == 1, "match, is and a tuple element each reach their arm: {h} {hi} {p}");
+  assert(hp == 4, "every write lands in the caller's record, 10 - 1 - 2 - 3: got {hp}");
+}
+
+fn main() {
+  test_a_struct_enum_subject_through_a_reference();
+  test_a_match_after_a_rebind_sees_the_new_variant();
+  test_is_through_a_reference();
+  test_a_plain_enum_a_scalar_and_a_text_through_a_reference();
+  test_payload_writes_through_arm_bindings_land_in_the_caller();
+}

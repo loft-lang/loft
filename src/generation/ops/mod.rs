@@ -220,6 +220,12 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
         "OpSRightInt",
         "OpConvFloatFromInt",
         "OpConvBoolFromInt",
+        // Division and remainder: plain behind one sentinel test when the divisor is a
+        // literal (`int_arith::literal_divisor_form`); the template otherwise.
+        "OpDivInt",
+        "OpDivIntNullable",
+        "OpRemInt",
+        "OpRemIntNullable",
     ] {
         r.insert(op, Box::new(int_arith::IntArithEmitter));
     }
@@ -290,6 +296,7 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     );
     r.insert("OpPutRef", Box::new(ref_ops::OpPutRefEmitter));
     r.insert("OpCopyRecord", Box::new(ref_ops::OpCopyRecordEmitter));
+    r.insert("OpDistinctStore", Box::new(ref_ops::OpDistinctStoreEmitter));
     r.insert("OpSizeofRef", Box::new(ref_ops::OpSizeofRefEmitter));
 
     // Match elimination — the text/format/buffer family relocated VERBATIM from
@@ -520,9 +527,12 @@ mod tests {
         // a hoisted push header (`@FR-R-PushRec`).  § V-u adds no entry: the
         // adopted buffer's `OpReplaceVector` delivery is aliasing-safe at run
         // time, and its `one_buffer_vec_copy` block is skipped whole in
-        // `output_block` (`@FR-R-RetAdopt`).
+        // `output_block` (`@FR-R-RetAdopt`).  § V-ah added `OpDistinctStoreEmitter`
+        // (a store-identity test against a value local answers `true`) and § V-aj
+        // the four integer division/remainder ops into `IntArithEmitter` for the
+        // literal-divisor form (`@FR-R-LitDiv`): 115 measured on 2026-09-15.
         assert!(
-            count <= 111,
+            count <= 115,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

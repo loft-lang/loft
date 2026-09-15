@@ -1,0 +1,51 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `Disp-Ambiguous` for the one shape a DEFAULT produces (@PLN162 step 7): the call that omits
+// an argument two definitions can take — a defaulted trailing parameter beside a shorter
+// definition, or two defaulted parameters at one arity — is refused naming both, in BOTH
+// call spellings and whichever was declared first.  Until this held, the method spelling
+// `a.pm()` took the attribute slot's routine in silence where the bare `pm(a)` refused, and
+// a `both` pair's bare call was reported as *did you mean the method*.
+// @falsified-at: 523fbbe08 — interpret exit 1 -> 0, interpret expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/an-omitted-argument-two-definitions-take-is-ambiguous-in-both-spellings.patch — interpret exit 1 -> 0, interpret expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — on the control two of the five `@EXPECT_ERROR` lines are unmet
+//   (the method spelling `a.pm()` ran the slot's routine in silence, and the `both` pair's
+//   bare `pb(a)` was reported as *did you mean the method*), so the suite's verdict is FAIL
+//   there and the file's exit goes 1 -> 0 with it.  Not leak and not assert.
+//   ARMED: no instrument — the refusals are parse-time on either backend.
+//   WITNESS: on the control `a.pm()` answers `pm-short 1` with no diagnostic, and `pb(a)`
+//   reports *Unknown function pb — did you mean the method `x.pb(…)` on A*; here both
+//   refuse naming the two definitions.
+//   HOLDS: the three free-pair refusals (`pf`, `pg`, `pk`) are met on both trees and do not
+//   move; the leak channel is `none` on both.
+// @EXPECT_ERROR: `pf(A)` is ambiguous — it is taken by pf(A) and pf(A, integer)
+// @EXPECT_ERROR: `pg(A)` is ambiguous — it is taken by pg(A, integer) and pg(A)
+// @EXPECT_ERROR: `pk(A)` is ambiguous — it is taken by pk(A, integer) and pk(A, text)
+// @EXPECT_ERROR: `pm(A)` is ambiguous — it is taken by pm(A) and pm(A, integer)
+// @EXPECT_ERROR: `pb(A)` is ambiguous — it is taken by pb(A) and pb(A, integer)
+
+struct A { n: integer }
+
+fn pf(a: A) -> text { "pf-short {a.n}" }
+fn pf(a: A, k: integer = 1) -> text { "pf-long {a.n} {k}" }
+
+fn pg(a: A, k: integer = 1) -> text { "pg-long {a.n} {k}" }
+fn pg(a: A) -> text { "pg-short {a.n}" }
+
+fn pk(a: A, k: integer = 1) -> text { "pk-int {a.n} {k}" }
+fn pk(a: A, t: text = "x") -> text { "pk-text {a.n} {t}" }
+
+fn pm(self: A) -> text { "pm-short {self.n}" }
+fn pm(self: A, k: integer = 1) -> text { "pm-long {self.n} {k}" }
+
+fn pb(both: A) -> text { "pb-short {both.n}" }
+fn pb(both: A, k: integer = 1) -> text { "pb-long {both.n} {k}" }
+
+fn main() {
+  a = A { n: 1 };
+  pf(a);
+  pg(a);
+  pk(a);
+  a.pm();
+  pb(a);
+}

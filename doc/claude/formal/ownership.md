@@ -76,6 +76,18 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 owner frees once.
   (O-Derived)   FREE PLACEMENT IS DERIVED, NOT DECIDED.  Free a local iff it owns its store
                 and does not transfer it out — once, at scope exit.  No per-site heuristic.
+  (O-Buffer)    A HIDDEN RETURN BUFFER IS THE CALLER'S STORE, WITNESSED BY THE LOCAL
+                THAT ADOPTS IT.  The `__ref_N` a caller passes for a callee's record
+                result belongs to the caller, and the callee either fills it and hands
+                it back or mints its own and hands that back — which, no static bit can
+                say (O-Opaque).  So the result local's free is guarded by STORE IDENTITY
+                against the buffer (`OpFreeRefIfDistinct(v, __ref_N)`), declining exactly
+                when the callee handed the buffer back, and the buffer's own free at
+                frame exit is what releases it then.  Every arm of a value branch is such
+                an adoption, so a local bound from a branch is witnessed by EVERY arm's
+                buffer and its free declines against each (O-Complete, per path).  A
+                result reached any other way — a lift temp with a plain free, a local
+                assigned twice — has no such witness.
   (O-Complete)  PER BINDING, PER PATH, COMPLETE.  Every binding, including every `match`/`if`
                 arm — a set-and-reconcile, not a single-variable structural walk.
 ```
@@ -97,6 +109,18 @@ locals that get the null and the hoist, and it must peel `Optional`; a literal's
 adopted inside a loop body takes the pairing a call's `__ref_N` already has (`witness_buffer`,
 @P378(a)) so one owner frees once; and the free-source licence of a keyed join reaches every
 `match` arm, not only an `if`'s.  The rule did not change: the code did, at those three homes.
+A fourth home, @PLN157 § V-af (2026-09-13): a local bound from a value BRANCH whose arms end
+in buffer-delivering calls (`v = if c { mk(i) } else { mk2(i) }`) adopts whichever arm's
+`__ref_N` ran, so EVERY arm's buffer is its witness — the same pairing a direct call takes,
+per tail call — and the local's scope-exit free is the multi-buffer `OpDistinctStore` ladder.
+The branch binds the arm's `DbRef` as it is, with none of the copy a direct call's set
+lowering interposes, so whether the callee adopts a fresh store or fills the buffer it is
+handed makes no difference to the pairing.  Before it a branch paired nothing, which was
+correct (the local freed a store minted per call) and forfeited the buffer reuse; the
+falsifier is the positive control `LOFT_NO_RETBUF_WITNESS_GATE=1` under `LOFT_STRICT_STORES=1`
+on the one-cell probe — clean with the pairing, a use-after-free without it, both backends.
+Switch `LOFT_NO_JOIN_BUFFER_WITNESS`; site `scopes.rs` (the branch block above the direct
+call's pairing), `scopes::tail_calls`.
 The VECTOR spelling of a bound value branch has its home where the vector copy has its home —
 the parser's bind selector, not the post-parse lift — and had none until D-own-35: every
 value-branch bind of a vector local aliased the chosen arm, and `x = s.v ?? va` viewed a

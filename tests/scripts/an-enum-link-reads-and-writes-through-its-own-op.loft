@@ -1,0 +1,98 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `&` link to a value enum reads and writes its source (`binding.md (B-Ref-Read)`, `(B-Ref-Write)`),
+// exactly as a link to an integer or a boolean does, on both backends: a `&` parameter
+// (`calls.md (F-ParamRef)`), a link to a local, and a link to a vector element or a struct field.
+// The interpreter reads and writes such a link with the enum ops, which take only the field (a byte
+// op also takes a range minimum); the `&` lowers like any scalar's, so the bind is a link and not a
+// copy; and a bare variant written through the link resolves against the enum it links to.
+//
+// @falsified-at: 2cff47dfc — interpret exit 134 -> 0, interpret panicked -> clean, native exit 1 -> 0
+// @falsified-by: tests/falsified/an-enum-link-reads-and-writes-through-its-own-op.patch — interpret exit 134 -> 0, interpret panicked -> clean, native exit 1 -> 0
+// HOLDS: leak and free-refusal are clean on both trees and both backends.
+//
+// CHANNEL: the assertions — the caller's variable after the call, and the value read back through
+// the link inside the callee.
+
+enum Col { Red, Green, Blue }
+
+fn paint(c: &Col) { c = Col.Blue; }
+fn paint_from_local(c: &Col) { x = Col.Red; c = x; }
+// Written, then read back through the link.
+fn paint_and_read(c: &Col) -> text { c = Col.Blue; "{c}" }
+// Read through the link to decide the write.
+fn cycle(c: &Col) { if c == Col.Red { c = Col.Green; } else { c = Col.Red; } }
+// Written on every pass of a loop.
+fn cycle_three(c: &Col) { for _i in 0..3 { cycle(c); } }
+// The link passed on to a second `&` parameter.
+fn forward(c: &Col) { paint(c); }
+fn flip(b: &boolean) { b = true; }
+// A link to a LOCAL, read and then written; the variable beside it is untouched.
+fn local_link() -> text { e = Col.Green; d = Col.Red; c = &e; s = "{c}"; c = Col.Blue; "{s},{e},{d}" }
+// Re-pointed to a second local, then written.
+fn local_repoint() -> text { a = Col.Red; b = Col.Green; c = &a; c = &b; c = Col.Blue; "{a},{b}" }
+// Read and written through the link on every pass of a loop.
+fn local_loop() -> text { e = Col.Red; c = &e; for _i in 0..3 { if c == Col.Red { c = Col.Green; } else { c = Col.Red; } } "{e}" }
+// A MIDDLE vector element, re-pointed from the first and written: the neighbours are untouched.
+fn element_link() -> text {
+  es: vector<Col> = [Col.Red, Col.Green, Col.Red];
+  e = &es[0]; s = "{e}"; e = &es[1]; e = Col.Blue;
+  "{s},{es[0]},{es[1]},{es[2]}"
+}
+struct K { k: Col, j: Col, n: integer }
+// A struct field beside another field of the same enum; the write is a BARE variant.
+fn field_link() -> text { o = K{k: Col.Green, j: Col.Red, n: 7}; e = &o.j; e = Blue; "{o.k},{o.j},{o.n}" }
+// An element link re-pointed in one arm or the other, then written: only the taken arm's element changes.
+fn arm_repoint(k: integer) -> text {
+  es: vector<Col> = [Col.Red, Col.Green, Col.Red];
+  e = &es[1]; if k > 0 { e = &es[0]; } else { e = &es[2]; } e = Col.Blue;
+  "{es[0]},{es[1]},{es[2]}"
+}
+// An element link re-pointed on every pass of a loop, then written: the last pass wins.
+fn loop_repoint() -> text {
+  es: vector<Col> = [Col.Red, Col.Green, Col.Red];
+  e = &es[0]; for i in 0..3 { e = &es[i]; } e = Col.Blue;
+  "{es[0]},{es[1]},{es[2]}"
+}
+// A tuple with an enum member is a tuple of scalars, so a link to it is the stack tuple itself
+// (`tuples.md (T-Ref-El)`, `(T-Ref-Rep)`); both members written through the link reach it.
+fn tuple_link() -> text { t = (Col.Red, 5); c = &t; c.0 = Col.Blue; c.1 = 9; "{t.0},{t.1}" }
+// The same with a boolean member, which was already right: the control that the enum change moved
+// nothing else.
+fn tuple_link_control() -> text { t = (true, 5); c = &t; c.0 = false; c.1 = 9; "{t.0},{t.1}" }
+// A nullable local.
+fn nullable_local() -> text { e: Col? = Col.Green; c = &e; c = Col.Blue; "{e}" }
+
+fn main() {
+  a = Col.Green; n = Col.Red;
+  paint(a);
+  assert(a == Col.Blue && n == Col.Red, "a literal write reaches the caller only: {a},{n}");
+  b = Col.Green;
+  paint_from_local(b);
+  assert(b == Col.Red, "a write from a local reaches the caller: {b}");
+  c = Col.Green;
+  r = paint_and_read(c);
+  assert(r == "Blue" && c == Col.Blue, "the link reads back what it wrote: {r},{c}");
+  d = Col.Red;
+  cycle_three(d);
+  assert(d == Col.Green, "three reads and writes through the link: Red Green Red Green, got {d}");
+  e = Col.Green;
+  forward(e);
+  assert(e == Col.Blue, "a link passed on writes the first caller's variable: {e}");
+  f = false;
+  flip(f);
+  assert(f, "the boolean control: {f}");
+  assert(local_link() == "Green,Blue,Red", "a link to a local reads and writes it: {local_link()}");
+  assert(local_repoint() == "Red,Blue", "a re-pointed link writes its second source: {local_repoint()}");
+  assert(local_loop() == "Green", "three reads and writes through a local link: {local_loop()}");
+  assert(element_link() == "Red,Red,Blue,Red", "a link to a middle element writes it alone: {element_link()}");
+  assert(field_link() == "Green,Blue,7", "a bare variant through a field link writes that field alone: {field_link()}");
+  assert(arm_repoint(1) == "Blue,Green,Red", "the first arm's repoint takes the write: {arm_repoint(1)}");
+  assert(arm_repoint(0) == "Red,Green,Blue", "the second arm's repoint takes the write: {arm_repoint(0)}");
+  assert(loop_repoint() == "Red,Green,Blue", "the last repoint in a loop takes the write: {loop_repoint()}");
+  assert(tuple_link() == "Blue,9", "a link to a tuple with an enum member writes both members: {tuple_link()}");
+  assert(tuple_link_control() == "false,9", "the boolean-member control: {tuple_link_control()}");
+  assert(nullable_local() == "Blue", "a link to a nullable local writes it: {nullable_local()}");
+  println("enum link ok");
+}

@@ -571,6 +571,20 @@ fn match_arm_types_unify(a: &Type, b: &Type) -> bool {
     strip(a).is_same(&strip(b))
 }
 
+/// How the definition a method call reaches is chosen — see
+/// [`Parser::parse_method_selecting`].
+pub(crate) enum MethodSelect {
+    /// The caller already knows the definition.
+    Fixed(u32),
+    /// `x.m(…)` on a concrete receiver: selected after the arguments, by name over the
+    /// receiver's `dispatch` type; `fallback` is the attribute slot's routine.
+    ByName {
+        name: String,
+        dispatch: Type,
+        fallback: u32,
+    },
+}
+
 impl Parser {
     /// Consume the `=>` separator that follows a match-arm pattern.
     ///
@@ -1331,11 +1345,7 @@ impl Parser {
         // eval fn gains nothing from the leak-opt anyway.
         let do_tret_bind = context == "return from block"
             && matches!(result.base(), Type::Text(_))
-            && !self
-                .data
-                .def(self.context)
-                .original_name()
-                .starts_with("replmain_")
+            && !self.data.def(self.context).is_reentered_eval()
             && l.last().is_some_and(|tail| self.tret_bind_ok(tail, &l))
             // Pass-stability gate.  `do_tret_bind` promotes `__tret` to a hidden
             // `&text` SIGNATURE buffer, so it MUST fire IDENTICALLY on both passes
@@ -1429,11 +1439,7 @@ impl Parser {
         let do_if_acc = !do_tret_bind
             && context == "return from block"
             && matches!(result.base(), Type::Text(_))
-            && !self
-                .data
-                .def(self.context)
-                .original_name()
-                .starts_with("replmain_")
+            && !self.data.def(self.context).is_reentered_eval()
             && l.last().is_some_and(Self::if_tail_yields_text)
             // Pass-stability gate — the same one `do_tret_bind` carries above, for the same
             // reason and by the same means.  This promotion grows a hidden `&text`
@@ -5104,11 +5110,25 @@ impl Parser {
         let match_pos = self.lexer.pos().clone();
         // 1. Parse the subject expression.
         let mut subject = Value::Null;
-        let subject_type = self.expression(&mut subject);
+        let mut subject_type = self.expression(&mut subject);
+        // `(T-Ref)`: a `&(…)` binding denotes the bound tuple itself, so a tuple pattern over it
+        // reads every element through the reference, as `t.0` does.  The subject becomes the
+        // tuple of those element reads, which the tuple match stores and projects like any
+        // other.  Left as the reference, a record-backed tuple reached the plain-struct
+        // handler and was refused at the first `(` (loft#1530), and a stack-backed one was
+        // copied into the match's stack tuple as a reference, which no store lowers.
+        if let Some((reads, elems)) = self.ref_tuple_subject(&subject, &subject_type) {
+            subject = reads;
+            subject_type = Type::Tuple(elems);
+        }
         // @PLN25: a `τ?` subject matches as its base (shared sentinel storage) — peel the marker
         // so `match` on an `integer?` routes to the scalar handler instead of falling to the `_`
         // arm ("match requires an enum, struct, or scalar type"). Gate-OFF inert (never Optional).
-        let subject_type = subject_type.base().clone();
+        // A `&` subject is read through its reference, as every other operation on a `&`
+        // binding is (LOFT.md § References): the SHAPE question is asked of the pointee
+        // (`Type::peel_link`), and the subject value reads through the link like a field
+        // access does (loft#1526).
+        let subject_type = subject_type.peel_link().clone();
         // A subject whose type is not linked yet on the FIRST pass — `match p { … }` where
         // `p` came from an enum declared LOWER in the file.  The dispatch below cannot
         // recognise it, so the arms contribute nothing and `result_type` would stay `Void`;
@@ -6335,6 +6355,57 @@ impl Parser {
     /// an append allocated a FRESH backing and repointed the local: the write
     /// vanished, silently, on both backends (loft#664's shape).  A chain rooted in
     /// a CALL has no backing variable and still yields `None`.
+    /// The element reads a tuple pattern takes over a `&(…)` binding, with the element types,
+    /// when `subject` is such a binding — `None` for every other subject.  `(T-Ref-Rep)` gives
+    /// the binding two representations and the reads follow each: a STACK-backed tuple (all
+    /// scalar members) is projected through the reference with `TupleGet`, which the
+    /// generators already read that way; a `__tuple<…>` RECORD is unboxed the way a record
+    /// tuple return is, its element types being the record's own fields.
+    fn ref_tuple_subject(&mut self, subject: &Value, tp: &Type) -> Option<(Value, Vec<Type>)> {
+        let Value::Var(v) = subject.unspan() else {
+            return None;
+        };
+        let v = *v;
+        let pointee = match tp.base() {
+            Type::RefVar(inner) => inner.base().clone(),
+            _ => return None,
+        };
+        match pointee {
+            Type::Tuple(elems) => {
+                let reads = (0..elems.len())
+                    .map(|i| Value::TupleGet(v, i as u16))
+                    .collect();
+                Some((Value::Tuple(reads), elems))
+            }
+            Type::Reference(d, _) if self.data.def(d).name().starts_with("__tuple<") => {
+                let elems: Vec<Type> = self
+                    .data
+                    .def(d)
+                    .attributes
+                    .iter()
+                    .map(|a| a.typedef.clone())
+                    .collect();
+                let reads = self.unbox_tuple_from_dbref(Value::Var(v), &elems);
+                // A heap member read out of the record is a VIEW into the caller's store, so
+                // its type says it borrows the binding.  The record's own field types carry
+                // no deps, and read as owned the match's tuple released a struct-enum member
+                // at scope exit — the caller's record, freed under it.
+                let member_types = elems
+                    .into_iter()
+                    .map(|e| {
+                        if crate::data::is_scalar(e.base()) {
+                            e
+                        } else {
+                            e.depending(v)
+                        }
+                    })
+                    .collect();
+                Some((reads, member_types))
+            }
+            _ => None,
+        }
+    }
+
     fn match_borrow_source(&self, subject_val: &Value) -> Option<u16> {
         match subject_val.unspan() {
             Value::Var(v) => Some(*v),
@@ -6344,6 +6415,22 @@ impl Parser {
             // its first argument is just an argument.
             Value::Call(d_nr, args) if self.data.def(*d_nr).name().starts_with("OpGet") => {
                 args.first().and_then(|a| self.match_borrow_source(a))
+            }
+            // A tuple MEMBER is the second spelling of a projection: `TupleGet(tmp, i)` carries
+            // its base as a var number, not a `Var` node, so matching the getter family alone
+            // left a binding taken through a tuple subject (`match (a, b) { (_, W { body }) =>
+            // … }`) dep-free — its write reached `b`'s record while nothing said it borrowed
+            // `b`, and a `&` parameter written only that way was refused as never modified
+            // (loft#1526).  The member's own borrow is the source; a member the tuple OWNS
+            // (a copied heap value) borrows the tuple temporary.
+            Value::TupleGet(tmp, i) => {
+                if let Type::Tuple(elems) = self.vars.tp(*tmp).base()
+                    && let Some(member) = elems.get(*i as usize)
+                    && let Some(&src) = member.depend().first()
+                {
+                    return Some(src);
+                }
+                Some(*tmp)
             }
             _ => None,
         }
@@ -6673,7 +6760,9 @@ impl Parser {
     /// a variant question of an absence bit.  `None` keeps the element's own refusal there,
     /// which names the type the author wrote rather than the synthetic.
     fn pattern_variant_enum(&self, tp: &Type) -> Option<(u32, bool)> {
-        let Type::Enum(e_nr, is_struct, _) = tp.base() else {
+        // Through a `&` too: a tuple element taken from a `&T` binding is that `T`'s value,
+        // and a variant pattern asks its enum exactly as a direct subject does (loft#1526).
+        let Type::Enum(e_nr, is_struct, _) = tp.peel_link() else {
             return None;
         };
         if self.nullable_payload_struct(*e_nr).is_some() {
@@ -10374,9 +10463,63 @@ impl Parser {
                     }
                     let elem_type = elem_type.clone();
                     let elem_get = Value::TupleGet(tmp, i as u16);
-                    if let Some(id) = self.lexer.has_identifier() {
+                    if self.peek_is_variant_subpattern(&elem_type) {
+                        // @FR-P-Point — a unit or struct variant is a point pattern over ONE
+                        // value, and a tuple element is one value, so an enum element takes
+                        // the forms a slice element takes: `(Fire, Wall { hp })` tag-tests
+                        // each position and binds the payload it names, through the one
+                        // lowering the top-level arm and the slice head share.
+                        let mut sub_conds: Vec<Value> = Vec::new();
+                        let mut aliases: Vec<(String, Option<u16>)> = Vec::new();
+                        if let Some(c) = self.parse_field_sub_pattern(
+                            elem_get,
+                            &elem_type,
+                            &mut bindings,
+                            &mut sub_conds,
+                            &mut aliases,
+                        ) {
+                            elem_conds.push(c);
+                        }
+                        elem_conds.append(&mut sub_conds);
+                    } else if let Some(id) = self.lexer.has_identifier() {
                         if id == "_" {
                             // element wildcard — no condition, no binding
+                        } else if id.starts_with(char::is_uppercase) {
+                            // @FR-M-Unit — a capitalised name is a VARIANT of the element's
+                            // enum, or it is nothing: the language never reads one as a
+                            // variable (`Foo = 5` is unknown), so it cannot be a binding here
+                            // either, and binding it would make the arm match every tuple.
+                            // Refused by name, as a top-level arm refuses it.
+                            bad_pattern = true;
+                            if !self.first_pass {
+                                if let Some((e_nr, _)) = self.pattern_variant_enum(&elem_type) {
+                                    diagnostic!(
+                                        self.lexer,
+                                        Level::Error,
+                                        "'{}' is not a variant of {}",
+                                        id,
+                                        self.data.def(e_nr).name()
+                                    );
+                                } else {
+                                    diagnostic!(
+                                        self.lexer,
+                                        Level::Error,
+                                        "'{}' is not a variant — this tuple element is {}, \
+                                         which has no variants; a binding is lower_case",
+                                        id,
+                                        elem_type.source_name(&self.data)
+                                    );
+                                }
+                            }
+                            // A payload written after a name that is no variant is skipped
+                            // whole, so the arm reaches its `=>` with one diagnostic, not a
+                            // cascade.  Step INSIDE the group first: `recover_to` skips a
+                            // nested group as a unit, so asked from the `{` it would walk
+                            // past the matching `}` and on through the elements after it.
+                            if self.lexer.has_token("{") {
+                                self.lexer.recover_to(&["}"]);
+                                self.lexer.has_token("}");
+                            }
                         } else {
                             // binding variable — always matches, captures element value
                             let bind_nr = self.vars.add_variable(&id, &elem_type, &mut self.lexer);
@@ -10726,7 +10869,8 @@ impl Parser {
         // about punctuation for a program whose only fault was that its subject could be
         // absent.  Reachable from a plain `s: Sh? = Box{…}` with no projection in sight, so it
         // predates the chain widening that made the corpus meet it.
-        let subject_type = subject_type.base();
+        // A `&` subject is asked through its reference, as `match` asks it (loft#1526).
+        let subject_type = subject_type.peel_link();
         let (e_nr, is_struct) = match subject_type {
             Type::Enum(nr, true, _) => (*nr, true),
             Type::Enum(nr, false, _) => (*nr, false),
@@ -11449,7 +11593,15 @@ impl Parser {
         let mut flagged: Vec<u32> = Vec::new();
         for d in 0..self.data.definitions() {
             let def = self.data.def(d);
-            if def.def_type != DefType::Function || def.source != crate::data::MAIN_SOURCE {
+            // The reader's own definitions: the program's source under `parse`, and under a
+            // session's `parse_str` (the REPL, the live-reload shadow, the test harness) the
+            // stdlib's id on a file that is not the stdlib.  Asked by FILE there, because the
+            // id cannot tell the two apart, and the shadow must promote exactly what the
+            // running program promoted (@PLN162 step 14).  A session's eval is never promoted.
+            let owned = def.source == crate::data::MAIN_SOURCE
+                || (def.source == crate::data::STD_SOURCE
+                    && !crate::portable_path::is_stdlib_source(&def.position.file));
+            if def.def_type != DefType::Function || !owned || def.is_reentered_eval() {
                 continue;
             }
             // The #568 orphan predicate lives in ONE place (`use_analysis`) so this oracle
@@ -18058,7 +18210,72 @@ impl Parser {
     }
 
     // <call> ::= [ <expression> { ',' <expression> } ] ')'
+    /// Parse a method call's `(arg, …)` and emit it, the definition FIXED by the caller (a
+    /// bound's stub, an enum variant's method).  See [`Self::parse_method_selecting`].
     pub(crate) fn parse_method(&mut self, val: &mut Value, md_nr: u32, on: Type) -> Type {
+        self.parse_method_selecting(val, md_nr, on, &MethodSelect::Fixed(md_nr))
+    }
+
+    /// Which definition a method call reaches, decided once the argument types exist:
+    /// `Fixed` where the caller already knows it; `ByName` for `x.m(…)` on a concrete
+    /// receiver — [`crate::data::Data::select_method`] over `dispatch` (the receiver's type
+    /// with its nullability) and the argument types, or `fallback`, the attribute slot's
+    /// routine, when that names no `t_` method (a free `n_<name>` and the operator map are
+    /// not candidates on a receiver that carries the method).
+    fn select_method_def(&mut self, select: &MethodSelect, types: &[Type]) -> u32 {
+        match select {
+            MethodSelect::Fixed(d_nr) => *d_nr,
+            MethodSelect::ByName {
+                name,
+                dispatch,
+                fallback,
+            } => {
+                // Selection over the name's overload set first (`parser::dispatch`,
+                // @PLN162), with the receiver's `dispatch` type standing in for `types[0]`.
+                // `Disp-Ambiguous` is reported here: the bare spelling refuses it, and the
+                // method spelling used to take the slot's routine in silence.  The call still
+                // binds to the slot so nothing cascades; the diagnostic refuses the program.
+                // None applicable is NOT reported here: the slot's routine then refuses the
+                // argument itself, naming the parameter, as it always did.
+                let mut with_receiver: Vec<Type> = Vec::with_capacity(types.len().max(1));
+                with_receiver.push(dispatch.clone());
+                with_receiver.extend_from_slice(types.get(1..).unwrap_or(&[]));
+                let routed = self.data.routed_types(&with_receiver);
+                match self.select_overload(u16::MAX, name, &routed) {
+                    crate::parser::dispatch::Selection::One(d) => {
+                        return self
+                            .dynamic_dispatcher(u16::MAX, name, &routed)
+                            .unwrap_or(d);
+                    }
+                    sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
+                        if !self.first_pass {
+                            self.report_selection(name, &routed, &sel, None);
+                        }
+                        return *fallback;
+                    }
+                    _ => {}
+                }
+                let found = self.data.select_method(u16::MAX, name, dispatch, types);
+                if found != u32::MAX && self.data.def(found).name.starts_with("t_") {
+                    return found;
+                }
+                *fallback
+            }
+        }
+    }
+
+    /// Parse a method call's `(arg, …)` and emit it.  `hint_nr` steers how the arguments
+    /// PARSE — `Disp-Hint` (@PLN162): the one candidate the name has at this receiver, or the
+    /// attribute slot's routine — an expected collection or interpolation type, a named
+    /// argument's parameter.  `select` names the definition the call REACHES, asked once the
+    /// argument types exist ([`Self::select_method_def`]).
+    pub(crate) fn parse_method_selecting(
+        &mut self,
+        val: &mut Value,
+        hint_nr: u32,
+        on: Type,
+        select: &MethodSelect,
+    ) -> Type {
         let mut list = vec![val.clone()];
         let mut types = vec![on];
         // arg_pos aligns with `list` by index; slot 0 is the receiver (its
@@ -18078,6 +18295,7 @@ impl Parser {
         let mut named_args: Vec<(String, Value, Type)> = Vec::new();
         let mut in_named = false;
         if self.lexer.has_token(")") {
+            let md_nr = self.select_method_def(select, &types);
             return self.call_nr(val, md_nr, &list, &types, true, &arg_pos, None);
         }
         loop {
@@ -18089,10 +18307,10 @@ impl Parser {
                 // vector-literal or format-string argument builds at its own
                 // parameter's type, not at the one this slot would have held.
                 self.expected = Type::Unknown(0);
-                if md_nr != u32::MAX {
-                    let a = self.data.attr(md_nr, &arg_name);
+                if hint_nr != u32::MAX {
+                    let a = self.data.attr(hint_nr, &arg_name);
                     if a != usize::MAX {
-                        let expected = self.data.attr_type(md_nr, a);
+                        let expected = self.data.attr_type(hint_nr, a);
                         if Self::seeds_collection_hint(&expected)
                             || self.interpolation_target(&expected) != u32::MAX
                         {
@@ -18124,8 +18342,8 @@ impl Parser {
             // Same rule as the free-function path: the channel is this argument's,
             // so a nested call does not inherit the enclosing one's expectation.
             self.expected = Type::Unknown(0);
-            if md_nr != u32::MAX && list.len() < self.data.attributes(md_nr) {
-                let expected = self.data.attr_type(md_nr, list.len());
+            if hint_nr != u32::MAX && list.len() < self.data.attributes(hint_nr) {
+                let expected = self.data.attr_type(hint_nr, list.len());
                 // @PLN124 — a format-string argument to a METHOD builds the
                 // parameter's type too (`db.run("… {id} …")`), which is the shape a
                 // library API actually presents.
@@ -18146,6 +18364,7 @@ impl Parser {
             }
         }
         self.lexer.token(")");
+        let md_nr = self.select_method_def(select, &types);
         if md_nr == u32::MAX {
             // No callee to resolve names against — `call_with_named` would index a
             // definition that is not there.  Hand it on unchanged; the missing method

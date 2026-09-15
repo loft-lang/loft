@@ -1,0 +1,104 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// An INCLUSIVE range stops on the value it just yielded, before the step — so it never has to
+// represent `till + 1`.
+//
+// `(I-Range)` fixes the half-open form; the inclusive one had no rule, which is how the edge
+// stayed open.  Its exit test was the same overshoot compare the exclusive form uses, and that
+// compare cannot end a range whose end is the type's MAXIMUM: the step overflows to the null
+// sentinel (`i64::MIN` for `integer`) and `till < null` is false under the plain order.  So
+// `for i in (m - 2)..=m` with `m = i64::MAX` either RESTARTED — the null-init counter reads the
+// sentinel as "not started yet" and re-seeds at the start — or ran on forever with `i = null`
+// once @PLN157 § V-ab's plain counter removed that null test (loft#1525).  Both backends.
+//
+// The stop is now decided BEFORE the step, which is where an inclusive range's stop belongs.
+// Both spellings of the counter take it unchanged: the plain counter starts at `lo - 1`, so
+// `i == till` on entry is exactly the empty range `lo..=lo-1`; the null-init counter starts at
+// the sentinel, which equals `till` only when `till` is itself null — a range that already ran
+// zero times.  No "have we started" test is needed, so the cost is one compare, in `..=` loops
+// only, and it is skipped entirely when the end is a CONSTANT strictly below the maximum
+// (`0..=3`), where the step cannot overflow — @PLN157 § V-ab's counted loop keeps its one
+// increment and one compare for the common form.
+//
+// ⚠ The `if c > 5 { break }` guards exist so a FAILING build terminates.  A cell that loses its
+// guard hangs instead of failing, which is a worse test, not a stricter one.
+//
+// The controls are the shapes that were already right: the EXCLUSIVE range to the maximum (its
+// test fires before the step, so it never had this), a constant end below the maximum (the fast
+// counter, which must not gain the compare), empty and single-element ranges in both the
+// constant and computed spellings, a negative zero-crossing range, and `rev(..=)`, which takes
+// the other branch entirely.  The minimum-end mirror is covered too: reverse counts DOWN and
+// forward starts AT the lowest representable value, and both were correct before this change.
+//
+// @falsified-at: ec4a95226 — interpret exit 0 -> 1 and 1 assertion failure (the first cell
+//   counts 6 iterations ending at 9223372036854775806, i.e. the loop restarted); native the
+//   same.  Re-runnable: check out the parent and run this file.
+//   HOLDS: leak, panic and refusals are equal on both trees, both backends.
+
+fn main() {
+  mx = 9223372036854775807;
+
+  // --- the filed cell: inclusive, computed end AT the maximum ---
+  c1 = 0; l1 = 0;
+  for i in (mx - 2)..=mx { c1 += 1; l1 = i; if c1 > 5 { break } }
+  assert(c1 == 3, "computed end at max: 3 iterations, got {c1}");
+  assert(l1 == mx, "and the last value is the maximum, got {l1}");
+
+  // --- one element, at the maximum ---
+  c2 = 0; l2 = 0;
+  for i in mx..=mx { c2 += 1; l2 = i; if c2 > 5 { break } }
+  assert(c2 == 1 && l2 == mx, "mx..=mx runs once at mx, got {c2}/{l2}");
+
+  // --- EXCLUSIVE to the maximum: was always right, must stay right ---
+  c3 = 0; l3 = 0;
+  for i in (mx - 2)..mx { c3 += 1; l3 = i; if c3 > 5 { break } }
+  assert(c3 == 2, "exclusive to max: 2 iterations, got {c3}");
+  assert(l3 == mx - 1, "and stops one below, got {l3}");
+
+  // --- a CONSTANT end below the max keeps the fast counter ---
+  s4 = 0; for i in 0..=3 { s4 += i; }
+  assert(s4 == 6, "0..=3 sums 6, got {s4}");
+  s5 = 0; for i in 0..3 { s5 += i; }
+  assert(s5 == 3, "0..3 sums 3, got {s5}");
+
+  // --- computed end BELOW the max takes the added test and must still be exact ---
+  n6 = 4; c6 = 0; l6 = 0;
+  for i in 1..=n6 { c6 += 1; l6 = i; }
+  assert(c6 == 4 && l6 == 4, "1..=n runs n times ending at n, got {c6}/{l6}");
+
+  // --- empty inclusive ranges, both shapes ---
+  e7 = 0; for i in 5..=4 { e7 += 1; }
+  assert(e7 == 0, "5..=4 is empty, got {e7}");
+  e8 = 0; for i in 6..=4 { e8 += 1; }
+  assert(e8 == 0, "6..=4 is empty, got {e8}");
+  n9 = 4; e9 = 0; for i in 5..=n9 { e9 += 1; }
+  assert(e9 == 0, "5..=n(4) is empty, got {e9}");
+
+  // --- single element away from the max ---
+  g10 = 0; for i in 7..=7 { g10 += 1; }
+  assert(g10 == 1, "7..=7 runs once, got {g10}");
+  n11 = 7; g11 = 0; for i in 7..=n11 { g11 += 1; }
+  assert(g11 == 1, "7..=n(7) runs once, got {g11}");
+
+  // --- negative and zero-crossing, computed ends ---
+  lo12 = -3; hi12 = 2; c12 = 0; s12 = 0;
+  for i in lo12..=hi12 { c12 += 1; s12 += i; }
+  assert(c12 == 6, "-3..=2 runs 6 times, got {c12}");
+  assert(s12 == -3, "and sums -3, got {s12}");
+
+  // --- REVERSE inclusive, which takes the other branch ---
+  c13 = 0; l13 = 0;
+  for i in rev(1..=4) { c13 += 1; l13 = i; }
+  assert(c13 == 4 && l13 == 1, "rev(1..=4) runs 4 ending at 1, got {c13}/{l13}");
+  c14 = 0; f14 = 0;
+  for i in rev((mx - 2)..=mx) { c14 += 1; if c14 == 1 { f14 = i; } if c14 > 5 { break } }
+  assert(c14 == 3, "rev to max runs 3, got {c14}");
+  assert(f14 == mx, "and starts at the maximum, got {f14}");
+
+  // --- the counter is still usable after the loop, and `break` still works ---
+  c15 = 0; for i in 0..=9 { c15 += 1; if i == 4 { break } }
+  assert(c15 == 5, "break inside an inclusive loop stops at once, got {c15}");
+
+  println("1525 an inclusive range stops on the value it yielded OK");
+}

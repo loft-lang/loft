@@ -3273,7 +3273,39 @@ use a separate collection or add after the loop"
                 .ref_linked_tuple_locals
                 .contains(&(self.context, self.vars.name(*lhs).to_string()))
         {
-            let types = types.clone();
+            // The record is the LOCAL's, so its members are the local's own types wherever the
+            // literal's members convert into them: a variant satisfies its enum (@FR-C-Var),
+            // and `w: (integer, Entity) = (1, IceWall { … })` is the `__tuple<integer,Entity>`
+            // a `&(integer, Entity)` names.  Minted from the literal it was
+            // `__tuple<integer,IceWall>`, and the call was refused, as was a later
+            // `w.1 = Fireball { … }` (loft#1531).  `f_type` is pass 1's answer: the declared
+            // tuple on a first bind, the record itself on a rebind.  A member the local does
+            // not accept keeps the literal's types, so the bind's own check still refuses it.
+            let local: Option<Vec<Type>> = match f_type.base() {
+                Type::Tuple(want) => Some(want.clone()),
+                Type::Reference(d, _) if self.data.def(*d).name().starts_with("__tuple<") => Some(
+                    self.data
+                        .def(*d)
+                        .attributes
+                        .iter()
+                        .map(|a| a.typedef.clone())
+                        .collect(),
+                ),
+                _ => None,
+            };
+            let got = types.clone();
+            let types = match local {
+                Some(want)
+                    if want.len() == got.len()
+                        && want
+                            .iter()
+                            .zip(got.iter())
+                            .all(|(w, g)| self.can_convert(g, w)) =>
+                {
+                    want
+                }
+                _ => got,
+            };
             let synth = self.data.tuple_def(&mut self.lexer, &types);
             if synth != u32::MAX {
                 let synth_ref = Type::Reference(synth, Deps::none());
@@ -3393,16 +3425,10 @@ use a separate collection or add after the loop"
             // fell past every arm below and the `&` was silently a copy: `p = 7` left
             // `x: integer?` unchanged on both backends (`@FR-B-Ref-Reshape`: loft declines a
             // link it cannot honour, it never downgrades it to a copy).
-            let is_scalar = |t: &Type| {
-                matches!(
-                    t.base(),
-                    Type::Integer(..)
-                        | Type::Float
-                        | Type::Single
-                        | Type::Boolean
-                        | Type::Character
-                )
-            };
+            // The shared predicate, which counts a value enum: `(T-Ref-El)` names it a scalar
+            // tuple element, and its slot and store place are one byte read and written with
+            // the enum ops, so it links like any other scalar.
+            let is_scalar = crate::data::is_scalar;
             // L1 / #2 — a scalar stack LOCAL source (`b = &a` / `b: &T = a`).
             // L5 — a HEAP whole-value source (`p = &o`, `o: Reference`): a NON-OWNING
             // alias of the source's record.  A heap local COPIES on `p = o` (value type),
@@ -3462,8 +3488,23 @@ use a separate collection or add after the loop"
                 let name = self.vars.name(src).to_string();
                 self.ref_linked_tuple_locals.insert((self.context, name));
             }
-            let heap_ref = if stack_src.is_none() && is_scalar(&s_type) {
+            // A narrow integer store place is refused at the `&` itself on the second pass; the
+            // first pass must not link it either, or the two passes type the local differently.
+            let heap_ref = if stack_src.is_none()
+                && is_scalar(&s_type)
+                && !Self::is_narrow_store_place(&s_type, code)
+            {
                 match code.unspan() {
+                    // The bare element op IS the place.  An enum element arrives in this
+                    // spelling on the first pass, before its enum getter wraps it; without
+                    // this arm the first pass typed the local as the enum and the second as
+                    // its link.  It sits above the `OpGet*` arm, whose prefix test would
+                    // otherwise take `OpGetVector` itself.
+                    Value::Call(g, _)
+                        if matches!(self.data.def(*g).name(), "OpGetVector" | "OpVectorRef") =>
+                    {
+                        Some(code.unspan().clone())
+                    }
                     Value::Call(g, gargs) if self.data.def(*g).name().starts_with("OpGet") => {
                         if gargs.first().is_some_and(|a| {
                             matches!(a.unspan(), Value::Call(d, _)
@@ -3481,7 +3522,20 @@ use a separate collection or add after the loop"
             } else {
                 None
             };
-            if let Some(src) = stack_src {
+            // `c = &b` where `b` is itself a link: `c` takes the link `b` holds — a re-point on a
+            // reassignment (`@FR-B-Ref-Repoint`), a link copy on a first bind.  Spelled
+            // `OpVarRef(b)` so it cannot be read as `c = b`, which writes `b`'s value through `c`
+            // (`@FR-B-Ref-Write`); as one IR the two meant one thing to each backend
+            // (`formal/binding.md` D-bind-41).
+            let link_src = match *code.unspan() {
+                Value::Var(src) if matches!(self.vars.tp(src).base(), Type::RefVar(_)) => Some(src),
+                _ => None,
+            };
+            if let Some(src) = link_src {
+                amp_unlowered = false;
+                *code = self.cl("OpVarRef", &[Value::Var(src)]);
+                s_type = self.vars.tp(src).clone();
+            } else if let Some(src) = stack_src {
                 amp_unlowered = false;
                 let mut inner = self.vars.tp(src).clone();
                 // tuples.md T-Ref — a linked tuple local with a heap element is the
@@ -4845,7 +4899,7 @@ use a separate collection or add after the loop"
         if self.assign_refvar_text(code, f_type, &s_type, op, var_nr) {
             return Type::Void;
         }
-        if self.assign_refvar_vector(code, f_type, &s_type, op, var_nr) {
+        if self.assign_refvar_vector(code, f_type, &s_type, op, var_nr, amp_collection_bind) {
             return Type::Void;
         }
         // Rewrites `code` into an owned copy and returns false, so the general path
@@ -6807,6 +6861,15 @@ use a separate collection or add after the loop"
                 self.vars.remap_name(&name, shadow);
                 lhs.root = shadow;
             }
+            // loft#1532 — a heap value written into a member is COPIED in: the tuple literal
+            // copies a member (`@FR-T-Cons`) and a struct field write copies its value, and
+            // `layout.md (L-Tuple)` makes the member a field.  The write stored the source's
+            // handle instead, so `w.1 = s; s.n = 1` answered `1` through `w.1`, on both
+            // backends.  The literal's own helper decides what is a place to copy and what is a
+            // fresh value or a parameter that keeps its documented alias.
+            if let Some(member) = member_for_null.as_ref() {
+                self.tuple_member_owned_copy(&mut rhs, member);
+            }
             *code = build_nested_tuple_assign(code, &lhs, rhs);
             return Type::Void;
         }
@@ -7965,14 +8028,15 @@ use a separate collection or add after the loop"
         // freed at the callee's scope exit and the caller reads a freed store (loft#1303).
         // `x = x` is excluded: it would copy a store onto itself and free the original.
         //
-        // ⚠ Only for a `&` PARAMETER.  This function serves two constructs, and they want
-        // opposite things from a bare-var right-hand side: @FR-F-ParamRef makes a parameter's
-        // whole-value `x = e` a WRITE-BACK, which installs a store, while `(B-Ref-Alias)`
-        // makes a `&` LOCAL bind (`q = &p`) a live LINK to the source, which must not copy.
-        // The field arm above is unrestricted because it materialises a VIEW rather than a
-        // link, which is right for both (loft#775).
-        let bare_var_rhs = self.vars.is_argument(var_nr)
-            && matches!(code.unspan(), Value::Var(rv) if *rv != var_nr);
+        // For a `&` PARAMETER and a `&` LOCAL link alike.  A `&` bind that must LINK rather
+        // than copy (`(B-Ref-Alias)`) has already been lowered when it reaches this function —
+        // `q = &p` to `OpCreateStack(p)`, and `q = &b` with `b` itself a link to `OpVarRef(b)`
+        // (`formal/binding.md` D-bind-41) — so a bare variable here is always the whole-value
+        // write-through, which `@FR-B-Ref-Write` makes a copy into the linked record.  Left to
+        // parameters only, a local link installed the source's own record and the two became one
+        // (`formal/binding.md` D-bind-42).  The field arm above materialises a VIEW, which is right
+        // for both (loft#775).
+        let bare_var_rhs = matches!(code.unspan(), Value::Var(rv) if *rv != var_nr);
         if op != "=" || !(self.is_field(code) || bare_var_rhs) {
             return false;
         }
@@ -8217,12 +8281,29 @@ use a separate collection or add after the loop"
         s_type: &Type,
         op: &str,
         var_nr: u16,
+        link_bind: bool,
     ) -> bool {
-        let Type::RefVar(inner) = f_type else {
-            return false;
-        };
-        let Type::Vector(elm_tp, _) = inner.as_ref() else {
-            return false;
+        // A `&vector` PARAMETER, or an annotated `&vector` local, is `RefVar(Vector)`.  A local linked
+        // by `c = &n` is a PLAIN vector sharing `n`'s store, registered in `amp_vector_locals`; its
+        // `c = a` must refill that store the same way, or the link is rebound to a copy and the write
+        // never reaches `n` (`formal/binding.md` D-bind-43).  Its `+=` already appends to the shared
+        // store, so only `=` is taken for it.
+        // `link_bind` is the statement that MAKES the link (`c = &n`): it registers `c` a moment
+        // earlier in the same statement, and it is the share lowering's, not a write-through.
+        let linked_local = op == "="
+            && !link_bind
+            && !self.first_pass
+            && var_nr != u16::MAX
+            && self
+                .amp_vector_locals
+                .contains(&(self.context, self.vars.name(var_nr).to_string()));
+        let elm_tp = match f_type {
+            Type::RefVar(inner) => match inner.as_ref() {
+                Type::Vector(elm_tp, _) => elm_tp.clone(),
+                _ => return false,
+            },
+            Type::Vector(elm_tp, _) if linked_local => elm_tp.clone(),
+            _ => return false,
         };
         if op != "+=" && op != "=" {
             return false;
@@ -8241,7 +8322,7 @@ use a separate collection or add after the loop"
             return true;
         }
         // @P314 — narrow-aware element type (see `append_elem_tp`).
-        let elm = (**elm_tp).clone();
+        let elm = (*elm_tp).clone();
         let rec_tp = self.append_elem_tp(&elm);
         if op == "+=" {
             *code = self.cl(

@@ -14,7 +14,8 @@ a 100 % deviation.
 ## Unchanged from DESIGN.md
 
 `Disp-Applicable` · `Disp-Select` · `Disp-Ambiguous` · `Disp-Closed` · `Disp-Dynamic` ·
-`Disp-World` · `Disp-Match-Equiv` — as written there.
+`Disp-World` · `Disp-Match-Equiv` — as written there (the last two have an implementation
+form under § New, which says where each landed in the tree).
 
 ## The principle the rules keep landing on
 
@@ -52,6 +53,70 @@ definition is *also* callable as `x.f(…)`; they no longer decide whether it di
 
 The second sentence is what makes *no existing program changes* true by construction: a
 program that compiles today has one definition per name, because two would not compile.
+
+**Implementation form (IMPL.md step 6, 2026-09-14):** a name with several definitions is a
+bare `Dynamic` DISPATCHER whose attributes are its overloads — the shape a `both` name has
+always had — and each overload is keyed by its FULL parameter spelling, every declared
+parameter's key name joined with `#`: a method overload as `t_10Fire#Crate_melt`, a FREE
+overload as `f_10Fire#Crate_touch` — its own prefix, because `t_` means "a method" to every
+reader of a key and a free overload has no receiver and no `x.f(…)` spelling.  A `both`/
+`self` definition alone under its receiver keeps `t_<sig0>_<name>` and a free definition
+alone keeps `n_<name>`.  When a free name gains a second definition, the incumbent is re-keyed to
+its full spelling and `n_<name>` is retired, so the name offers no parse hint (`Disp-Hint`)
+and every site that reads `n_<name>` as THE definition finds none, exactly as for a `both`
+name.  Three consequences worth stating:
+
+- **Scope is one SOURCE, and a library's set reaches its consumers whole.**  A MAIN definition
+  under a stdlib name stays the C95 refusal, a library's names stay module-scoped (C97).  A
+  library's overload set is reached by every import spelling — wildcard bare, selective,
+  qualified, aliased, the method spelling, the library's own calls — through its bare
+  dispatcher (measured 2026-09-14: `tests/scripts/a-library-exports-an-overload-set.loft` and
+  its selective/aliased twin, both backends; the "untested" flag an earlier draft carried here
+  was wrong in the safe direction).  A consumer's definition of ANOTHER spelling of the name
+  joins the dispatch, kept live by its argument types, as a free function beside a stdlib
+  `both` set always was; one whose spelling the set ALREADY CARRIES is a redefinition,
+  refused naming the library's position — the collision an imported single `n_<name>` and
+  `shadows_a_method` already refuse, which the first cut missed (a bare call answered the
+  library's body while the consumer's own definition sat unreachable in silence).  Two
+  packages exporting a set of one name stay loft#788's refusal: call it qualified.
+- **The spelling is the key's, so it is as coarse as the key.**  Two `vector<τ>` spell alike
+  (the element type is not in a key today), so `f(vector<integer>)` beside
+  `f(vector<text>)` is a redefinition, as it was.
+- **Selection today is EXACT:** a call reaches the overloads whose parameters spell its
+  argument types position for position, a trailing parameter admitted when it has a default;
+  one is the answer, none falls to the old ladder (`Disp-Exhaustive`'s message when that
+  finds nothing), more than one is `Disp-Ambiguous`.  Today only a DEFAULT can produce more
+  than one — a defaulted trailing parameter beside a shorter definition, or two defaulted
+  parameters at one arity, for the call that omits the argument — and it is refused naming
+  both, in both call spellings (IMPL.md step 7; the method spelling took the slot's routine
+  in silence until then).  Ranking the exact-arity definition above the default-filled one is
+  additive and may follow.
+
+- **Selection over the enum lattice (IMPL.md steps 8–9, 2026-09-14), the static half:**
+  `Disp-Applicable` is the parser's own `can_convert`, so a variant satisfies its enum
+  (@FR-C-Var) and a present value a `τ?` slot; `Disp-Specific` ranks each position — exact,
+  widened (variant to enum, `τ` into `τ?`), lossy (`τ?` into `τ`), converted — and a
+  definition is more specific when no worse at every position and better at one;
+  `Disp-Select` is the unique minimal one, a tie is `Disp-Ambiguous`, none is the ladder and
+  then `Disp-Exhaustive`.  The `(F-Recv)` nullability routing runs before ranking.  What a
+  value held STATICALLY at the enum reaches is the enum-level definition; its runtime
+  variant is step 13's answer: `parser::dispatch::dynamic_dispatcher` synthesises, per
+  (name, spelling) and on pass 2, the canonical `match` over every enum-held position, each
+  leaf calling what `Disp-Select` picks for that variant tuple (`Disp-Dynamic`), a tuple no
+  definition takes or two take without ranking refused naming it, and a set covering every
+  tuple admitted without an enum-level definition.  And @F20's synthesised enum dispatcher
+  yields to an author's enum-level definition of the name — `Disp-Fallback`'s most general type is the
+  author's to write — and to a FREE overload set over variants, which is no method and gets
+  no `x.f(…)` spelling (step 10 found the synthesiser hanging a dispatcher on one and the
+  uncovered call reading as *did you mean the method*).
+
+- **`Disp-Closed` holds by construction (IMPL.md step 11, measured 2026-09-14):** selection
+  runs at parse time, so a statically-concrete site is a plain `Call` of the selected
+  definition in IR, bytecode and native — byte-identical to a hand-monomorphised twin once
+  the callee names are normalised (`tests/introspect_dispatch.rs`).  No runtime table exists
+  for such a site — and so an overload nothing calls is unreachable and absent from the
+  shipped artifact (`--native-release` emits only reachable functions; the semantics lane
+  keeps every tier by design), the slim-artifact property step 12 pins in the same file.
 
 **Disp-Specific** *(amended — the abstract position is the ENUM, not an interface).*  The
 design says *"a concrete struct is more specific than any interface it implements"*.  Measured
@@ -179,10 +244,91 @@ types there is nothing to check coverage against, which is why `MethodError` is 
 error there by necessity.  It is the sharpest statement of what the transposition buys, and it
 should be read as the load-bearing one rather than as a convenience.
 
-⚠ And it sharpens open question 6: **pattern-clause dispatch on VALUES would make coverage
-undecidable again** (does some clause match every integer?), so `Disp-Exhaustive` would have
-to be dropped or degraded to a runtime check.  That is a stronger argument for type dispatch
-than the lowering cost the design gives.
+⚠ It also settles what open question 6 would have cost: **pattern-clause dispatch on VALUES
+would make coverage undecidable again** (does some clause match every integer?), so
+`Disp-Exhaustive` would have had to be dropped or degraded to a runtime check.  That is a
+stronger argument for type dispatch than the lowering cost the design gives.  **Q6 is
+answered — type dispatch, and no other matching on a definition (owner, 2026-09-14;
+[README.md § Decisions taken](README.md#decisions-taken-owner), item 5).**  The owner's own
+reason is narrower than either argument: no more complexity on `fn` definitions, with
+`match` kept as the home of every value-shaped decision.  A parameter DEFAULT is the one
+optionality a definition already has and keeps.
+
+**Disp-Hint** *(new — the hint circularity, decided at IMPL.md step 3, 2026-09-14).*
+Parsing an argument is TYPE-DIRECTED by the definition being called: a `|x|` lambda takes its
+parameter types from the parameter, a vector literal takes its element width from it, a named
+argument is matched against its name.  That hint is the ONE definition of the name.  **A name
+with several definitions offers no hint**: its arguments parse from their own spelling alone,
+and an argument that cannot be typed without one is refused at the call, naming the
+definitions considered and the cure — the typed lambda form (`fn(x: integer) { … }`), a
+literal carrying its width, the argument spelled positionally.
+
+Chosen over the alternative — hinting wherever every candidate AGREES on that parameter's
+type — by [the principle](#the-principle-the-rules-keep-landing-on): refusal is the only
+reversible direction.  Agreement-hinting can be added later and only ever admits programs;
+shipping it first fixes a meaning for programs the refusal would have kept open.  It is also
+the cheaper half: under `Disp-Key` a multi-definition name has no `n_<name>` key, and the hint
+sites (`parser/control.rs`, the two `hint_d_nr` lookups) consult nothing else, so the refusal
+falls out with no code and the message is the whole work.  A single-definition name — every
+program that compiles today — keeps its hint unchanged.
+
+**Disp-Exhaustive, implementation form (IMPL.md step 10, 2026-09-14).**  A bare call on an
+overload set that no definition takes, and that today's ladder cannot resolve either (the free
+`n_<name>` beside a `both` set, the operator map), is refused *no definition of `f` takes (τ₁,
+τ₂) — declared: f(…), f(…)*.  The method spelling on a set whose receiver already carries the
+method is refused by that method's own argument check, which names the parameter; the two
+messages differ in wording and agree in verdict.  The enumerated-pairs ADVICE the rule text
+above proposes (`dispatch-pairs-uncovered`) is not built.
+
+**Disp-World, implementation form (IMPL.md step 14, 2026-09-14).**  The open profile is
+`LOFT_LIVE_RELOAD=1`, and there is no promoter under it — the tree's "interpret, then
+promote" is @PLN18's tier 0, a body swap of an existing named fn.  So the rule lands on that
+boundary.  Under the open profile every call into an overload set is lowered to a
+per-(name, spelling) synthesised function — the `__dyn_` dispatcher a dynamic site already
+had (step 13), and a `__sel_` stub at a static site whose body is the one direct call
+`Disp-Select` picked; the closed profile keeps step 11's direct call and is byte-identical.
+That function IS the specialisation the rule speaks of, and the world counter is the reload
+host's version: an overload added mid-run joins the shadow session's set, every
+specialisation of the name is rebuilt in the new world and swapped in behind its old def
+through tier 0's own patch (`fn_positions` + every recorded call operand), so the running
+loop's next call selects in the new world and a body selected in an earlier world never runs
+again — invalidation is eager, so no specialisation needs to carry the world it was built in.
+The whole add is one transaction.  **Q3 answered as the design proposes, from the principle
+above: the ADD is refused** — a rebuild that leaves a served tuple ambiguous, or one no
+definition takes, is reported naming the tuple and the world is unchanged; a removed or
+re-signatured overload is refused too (the world only grows, and a signature is the frame a
+call site embeds); and a second definition of a name that was ONE function is refused,
+because its sites were direct calls with nothing to rebuild.  Not reached: a `self` set
+(D-disp-1's remainder), and the native live-flip binary, whose compiled callers keep the
+world they were built in until flipped — recorded, not closed.
+
+**Disp-Match-Equiv, in the oracle (IMPL.md step 14, 2026-09-14).**  A dispatch set and its
+canonical `match` are two programs of the differential-oracle corpus, `tests/oracle/34-…`,
+and the set's side declares `@ORACLE_TWIN: <the match>`: the sweep holds the pair to one
+stdout on top of holding each to its own three backends, with a positive control that a
+differing line or exit is caught.
+
+## Deviations
+
+OPEN: **1**.
+
+- **D-disp-1 — OPEN 2026-09-14, NARROWED the same day by step 13.**  For every set that
+  owns its dispatch (a free member, or an enum-level definition) the dynamic dispatcher
+  refuses a missing tuple at compile time; what remains is the `self` set over variants, in
+  two facets — the one below, and a `self` set WITH an enum-level member (`kind(self:
+  Fireball)` beside `kind(self: Entity)`), which has no bare dispatcher, so @F20 yields and an
+  enum-held receiver reaches the enum-level definition rather than its runtime variant's.
+  Both pinned as measured in one file.  `Disp-Exhaustive` says no runtime *"no method"* path exists, and @F20's synthesised
+  enum dispatcher has one: with `tag(self: Fireball)` and
+  `tag(self: IceWall)` declared and `Crate` left out, `c.tag()` on a `Crate` held at `Entity`
+  is a compile-time WARNING (*no implementation of 'tag' for variant 'Crate'*) and at runtime
+  an EMPTY value — not null, not a refusal — on both backends, pinned AS MEASURED by
+  `tests/scripts/d-disp-1-a-missing-variant-is-a-warning-and-an-empty-value.loft`, which the
+  closure flips.  Pre-existing; it is the shape step 13's rule
+  must close: a call whose argument is held at the enum is covered by an enum-level
+  definition or by an implementation for EVERY variant, and otherwise refused — which turns
+  a warning today's programs compile with into a refusal, so it is a
+  [COMPATIBILITY.md](../../COMPATIBILITY.md) decision at contract 0 and the owner's.
 
 ## Consequences worth stating
 

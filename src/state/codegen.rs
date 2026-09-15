@@ -4632,7 +4632,9 @@ impl State {
                 // codegen — the natural shape for a two-state out-parameter, next
                 // to an `&integer` that worked (loft#655).
                 Type::Boolean => stack.add_op("OpGetBoolean", self),
-                Type::Enum(_, false, _) => stack.add_op("OpGetByte", self),
+                // `OpGetEnum`, not `OpGetByte`: the byte op also takes a range `min`, and the
+                // one operand written below would leave the next code word read as it.
+                Type::Enum(_, false, _) => stack.add_op("OpGetEnum", self),
                 Type::Text(_) => stack.add_op("OpGetStackText", self),
                 // `@FR-B-Ref-Intro` — the READ twin of the `&fn(…)` write.  A fn-ref is 20
                 // bytes on the stack, so neither `OpGetStackRef` (12) nor `OpGetStackText`
@@ -4934,9 +4936,33 @@ impl State {
             // lost the second record's field, a text was CLEARED through the link and read
             // empty, an integer kept the first source, while a vector re-pointed and native
             // re-pointed every kind.
-            if matches!(value.unspan(), Value::Call(d, _)
-                if stack.data.def(*d).name() == "OpCreateStack")
-            {
+            // A link to a SCALAR re-points just the same when its new source is an element or a
+            // field — `c = &v[0]`, `f = &o.y` — which reaches here as the PLACE op itself, typed as
+            // a reference (`OpGetVector` / `OpGetField`), where a write-through of a value reads
+            // that place (`OpGetInt(OpGetVector(..))`) and is typed as the scalar.  For a record or
+            // collection link an element's VALUE is a reference too, so the type cannot tell them
+            // apart and only the install op is routed here.  An integer stored narrower than 8
+            // bytes is left out: a link does not yet honour a narrow place's width
+            // (binding.md D-bind-39), and routed it would read that wrong width silently.
+            let link_base = tp.base();
+            let scalar_link = match link_base {
+                Type::Integer(spec) => spec.byte_width(false) == 8,
+                Type::Boolean
+                | Type::Float
+                | Type::Single
+                | Type::Character
+                | Type::Enum(_, false, _) => true,
+                _ => false,
+            };
+            let repoints = if let Value::Call(d, _) = value.unspan() {
+                let def = stack.data.def(*d);
+                // `OpVarRef(b)` is a re-point to the link `b` holds, for every kind of link.
+                matches!(def.name(), "OpCreateStack" | "OpVarRef")
+                    || (scalar_link && matches!(def.returned.base(), Type::Reference(_, _)))
+            } else {
+                false
+            };
+            if repoints {
                 self.generate(value, stack, false);
                 let var_pos = stack.var_pos(var);
                 stack.add_op("OpPutRef", self);
@@ -5094,7 +5120,9 @@ impl State {
                 // storage ↔ two-state expression conversion, which `OpSetByte`
                 // would skip.
                 Type::Boolean => stack.add_op("OpSetBoolean", self),
-                Type::Enum(_, false, _) => stack.add_op("OpSetByte", self),
+                // `OpSetEnum` for the same reason as the read: `OpSetByte` takes a `min` operand
+                // this site does not write.
+                Type::Enum(_, false, _) => stack.add_op("OpSetEnum", self),
                 // A KEYED collection joins the store-backed kinds: its slot holds a DbRef
                 // exactly as a vector's does, so the write-back repoints it the same way.
                 // The list was Vector/Reference/Enum and a `&hash<T[k]>` fell into the

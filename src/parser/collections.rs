@@ -1478,6 +1478,37 @@ impl Parser {
             let write = self.emit_nullable_slot_write(syn, to, val.clone());
             return v_block(write, Type::Void, "nullable_elem_convert");
         }
+        // loft#1529 — the writer half of `(L-Null)` for a nullable struct-enum slot.  A source
+        // that may be null reached `OpCopyRecord`, which copies nothing from a null source, so
+        // the slot kept whatever it held: `h.e = absent` left `h.e` present.  Absence is the
+        // zero tag word, which is what a literal `null` already writes; a present source still
+        // copies.  A source that is not free to evaluate twice is named first.
+        if op == "="
+            && !self.first_pass
+            && matches!(f_type, Type::Optional(_))
+            && matches!(src_tp, Type::Optional(_))
+            && let Type::Enum(e_nr, true, _) = f_type.base()
+            && !self.data.def(*e_nr).name.starts_with("__nullable<")
+            && let Some((base, fld)) = self.inline_slot_word(to)
+        {
+            let (prelude, source) = if Self::is_repeatable_place(&self.data, val) {
+                (None, val.clone())
+            } else {
+                let named = self.vars.work_refs(src_tp.base(), &mut self.lexer);
+                self.vars.set_skip_free(named);
+                self.vars.mark_inline_ref(named);
+                (Some(v_set(named, val.clone())), Value::Var(named))
+            };
+            if let Some(absent) = self.null_test(source.clone(), src_tp, false) {
+                let clear = self.cl("OpSetInt4", &[base, fld, Value::Int(0)]);
+                let copy = self.copy_ref(to, &source, f_type.base());
+                let write = v_if(absent, clear, copy);
+                return match prelude {
+                    Some(bind) => v_block(vec![bind, write], Type::Void, "enum_slot_write"),
+                    None => write,
+                };
+            }
+        }
         // @PLN25 index flip — an element WRITE `v[i] = h` is an lvalue slot, not a nullable
         // read: under the flip `v[i]` types `Optional(Reference/Enum)`, but the slot itself
         // holds the base record, so a whole-element assign is still a `copy_ref` (OpCopyRecord).

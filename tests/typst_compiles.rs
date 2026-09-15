@@ -32,7 +32,12 @@ fn compiles(source: &str) {
         println!("skip {source}: not generated in this tree");
         return;
     }
-    let out = std::env::temp_dir().join(format!(
+    // Under the tree, not the system temp dir: a snap-installed `typst` is confined
+    // to the home directory and answers "Permission denied" for a PDF in `/tmp`,
+    // while `make pdf` writing into `doc/` works on the same box.
+    let scratch = Path::new(env!("CARGO_MANIFEST_DIR")).join("target");
+    std::fs::create_dir_all(&scratch).expect("target/ is writable");
+    let out = scratch.join(format!(
         "loft_typst_check_{}_{}.pdf",
         std::process::id(),
         source.replace(['/', '.'], "_")

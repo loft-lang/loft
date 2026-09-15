@@ -7,10 +7,13 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**PROPOSAL — design written, nothing accepted, nothing in the tree.**  The design is
+**IN PROGRESS — phase 0 DONE and IMPL.md steps 1–6 DONE (2026-09-14): a name may carry several
+definitions keyed by parameter types, selected exactly; the enum lattice and dynamic selection
+are still to come.**  The design is
 [DESIGN.md](DESIGN.md), carried verbatim as the owner wrote it.  Six open questions in it are
-the owner's to answer and at least one (question 6) changes the rules, so **no phase below
-starts until questions 1, 2 and 6 have answers**.
+the owner's to answer and at least one (question 6) changes the rules, so no phase below was to
+start until questions 1, 2 and 6 had answers.  **All three are answered** — 1 and 2 on
+2026-09-11, 6 on 2026-09-14 (§ Decisions taken, item 5) — so **phase 0 is unblocked**.
 
 ⚠ **The design says so itself and it governs this plan: every claim in it about the CURRENT
 implementation was written from reading the repository, not from running it.**  Phase 0 exists
@@ -50,7 +53,7 @@ compile time to a direct call wherever the argument types are statically concret
 
 - **Effort:** H — six rules, a new selection pass, a lowering, three backends, two profiles.
 - **Design:** ~ (partial) — the rules are written; three open questions gate the first phase.
-- **Last touched:** 2026-09-11
+- **Last touched:** 2026-09-14 (IMPL.md steps 1–14 done; every phase green; D-disp-1 open for `self` sets)
 
 ## Composition matrix — Stage A
 
@@ -254,10 +257,11 @@ to know a partial order exists — they need *"more specific wins, and you will 
 tie."*  Eventual home: [USER_DOCS.md](../../USER_DOCS.md)'s three tiers, with the reference
 tier carrying the rules and the teaching tier carrying the four steps above.
 
-## Decisions taken (owner, 2026-09-11)
+## Decisions taken (owner)
 
-All four follow one principle — *refusal is the only reversible direction* — stated in
-[RULES.md](RULES.md#the-principle-the-rules-keep-landing-on).
+The first four (2026-09-11) follow one principle — *refusal is the only reversible direction*
+— stated in [RULES.md](RULES.md#the-principle-the-rules-keep-landing-on).  The fifth
+(2026-09-14) is a scope decision about the notation itself.
 
 1. **No untyped parameters.**  The fallback is the most general TYPE.  (§ Decision below.)
 2. **Cross-kind specificity is incomparable, not ranked** — and **no tie is broken by
@@ -272,6 +276,26 @@ All four follow one principle — *refusal is the only reversible direction* —
    chain per parameter, closed, and single-owner — so the orphan/cross-library problem that
    motivates coherence rules elsewhere largely does not arise.  The generics ranking is
    **deferred, not declined**.
+5. **Type dispatch, and no other matching on a `fn` definition** (2026-09-14, answers Q6).
+   A definition is selected by the TYPES of its parameters and by nothing else — no value
+   clauses, no guards, no inline destructure.  The owner's reason is complexity, not
+   lowering cost: *"I do not want to introduce more complexity on fn definitions."*  The one
+   thing that already reads like matching stays exactly as it is: **a parameter with a
+   default** (`fn f(a: A, b: integer = 0)`) makes that argument optional, and a call that
+   omits it takes the default.  Nothing new is added beside it.  Everything value-shaped —
+   a literal, a range, an arbitrary `if`-guard — is `match`'s job: *"the match statement is
+   there for people who need its specific strength."*  So `Disp-Applicable` and
+   `Disp-Specific` stay type-only, `Disp-Closed`'s direct-call lowering holds for every
+   definition, `Disp-Match-Equiv` stays one-way, and `Disp-Exhaustive` stays decidable
+   ([RULES.md](RULES.md) says why that last one is the property that matters).  One thing
+   this decision hands to step 7 of [IMPL.md](IMPL.md): how a defaulted parameter and the
+   arity component of `Disp-Key` meet.
+
+**Decided in implementation, from the principle (not an owner decision — reversible):**
+IMPL.md step 3's hint circularity is closed by **`Disp-Hint`** in [RULES.md](RULES.md): a
+name with several definitions offers no parse hint, and an argument that needs one is refused
+naming the cure.  The permissive alternative (hint where every candidate agrees) is additive
+and can follow.
 
 The gain from (4) is the one worth restating: closedness is not a cost accepted reluctantly,
 it is what lets the compiler enumerate every reachable variant pair and report **which reach
@@ -286,15 +310,15 @@ half-done state to compare against — see [§ Phase cutting](#phase-cutting-why
 
 | Item | Source | Verify | Status |
 |---|---|---|---|
-| **0** — verify the design's claims about the tree; record the canonical-`match` answers | [DESIGN.md](DESIGN.md) §Where it lands, §Worked example | the 12-row expected-results table, measured through a hand-written `match`, identical on all three backends — **before** dispatch exists | Started — the INCONSISTENCY #6 claim checked and struck (see Status); §Where it lands' select-then-monomorphise claim still unchecked |
-| **1** — `Disp-Applicable` / `Disp-Specific` / `Disp-Select` / `Disp-Fallback` as a pure function over a method table, no lowering | DESIGN.md §Semantics | a unit test over synthetic signatures asserting the selected definition per argument tuple, ambiguous tuples included | Open |
-| **2** — `Disp-Ambiguous` as a compile-time refusal | DESIGN.md §Ambiguity check | the ambiguity program fails to compile, and the message names **both** definitions | Open |
-| **3** — `Disp-Closed` lowering for statically-concrete sites | DESIGN.md §Static resolution | `loft introspect` byte-identical to the hand-monomorphised equivalent; and the 1-definition matrix row byte-identical to today | Open |
-| **4** — the acceptance program through dispatch | DESIGN.md §Worked example | the same 12 rows phase 0 recorded, now via dispatch, three backends | Open |
-| **5** — DCE / slim-artifact property | DESIGN.md §The two profiles | an unreferenced method is absent from the stripped artifact; artifact size unchanged vs. the `match` form | Open |
-| **6** — `Disp-Dynamic` | DESIGN.md §Runtime resolution | a heterogeneous `vector<Entity>` reproduces phase 0's rows; plus a control that a concrete site still emits a direct call and no table | Open |
-| **7** — `Disp-World` (open profile) | DESIGN.md §Disp-World | add a method mid-run; the new selection is taken AND a marker in the stale specialisation's body never appears | Open |
-| **8** — `Disp-Match-Equiv` in the differential oracle | DESIGN.md §Disp-Match-Equiv | a dispatch set and its canonical `match` compared as two programs, per the oracle's existing shape | Open |
+| **0** — verify the design's claims about the tree; record the canonical-`match` answers | [DESIGN.md](DESIGN.md) §Where it lands, §Worked example | the 12-row expected-results table, measured through a hand-written `match`, identical on all three backends — **before** dispatch exists | **Done 2026-09-14** — `tests/scripts/162-step0-pairwise-interaction-as-a-central-match.loft`: the 12 rows, a reversed-pair control and an every-pair scenario over a `vector<Entity>`, green on all three backends.  Three deviations met on the way, one of them a silent wrong answer fixed in the same step — [IMPL.md § Step 0](IMPL.md) |
+| **1** — `Disp-Applicable` / `Disp-Specific` / `Disp-Select` / `Disp-Fallback` as a pure function over a method table, no lowering | DESIGN.md §Semantics | a unit test over synthetic signatures asserting the selected definition per argument tuple, ambiguous tuples included | **Done 2026-09-14** as `.loft` matrices rather than a Rust unit test — `a-variant-is-more-specific-than-its-enum`, `a-name-may-have-several-definitions-keyed-by-parameter-types`, `a-supplied-argument-picks-the-defaulted-definition` (IMPL.md steps 6–9) |
+| **2** — `Disp-Ambiguous` as a compile-time refusal | DESIGN.md §Ambiguity check | the ambiguity program fails to compile, and the message names **both** definitions | **Done 2026-09-14** — `an-ambiguous-pair-is-refused-naming-both`, `an-omitted-argument-two-definitions-take-is-ambiguous-in-both-spellings` |
+| **3** — `Disp-Closed` lowering for statically-concrete sites | DESIGN.md §Static resolution | `loft introspect` byte-identical to the hand-monomorphised equivalent; and the 1-definition matrix row byte-identical to today | **Done 2026-09-14** — the 1-definition row is proven at every step (`introspect_diff.sh` IDENTICAL over the corpus), and `tests/introspect_dispatch.rs` pins the dispatched `main` byte-identical to its hand-monomorphised twin (IMPL.md step 11: a test, not a change) |
+| **4** — the acceptance program through dispatch | DESIGN.md §Worked example | the same 12 rows phase 0 recorded, now via dispatch, three backends | **Done 2026-09-14** — `162-step4-…-through-dispatch.loft` (arguments held at their variant types) and `162-step6-…` (the every-pair loop, held at the enum), both backends |
+| **5** — DCE / slim-artifact property | DESIGN.md §The two profiles | an unreferenced method is absent from the stripped artifact; artifact size unchanged vs. the `match` form | **Done 2026-09-14** — the release lane emits only the called overloads (`tests/introspect_dispatch.rs`, with the semantics lane as the control that emits all); the dispatched source is smaller than the `match` form, not larger |
+| **6** — `Disp-Dynamic` | DESIGN.md §Runtime resolution | a heterogeneous `vector<Entity>` reproduces phase 0's rows; plus a control that a concrete site still emits a direct call and no table | **Done 2026-09-14** — `162-step6-every-pair-through-dispatch.loft` ends the world where step 0's `match` did, removals in order; the direct-call control is `tests/introspect_dispatch.rs` |
+| **7** — `Disp-World` (open profile) | DESIGN.md §Disp-World | add a method mid-run; the new selection is taken AND a marker in the stale specialisation's body never appears | **Done 2026-09-14** — on tier-0 live reload, there being no promoter: under `LOFT_LIVE_RELOAD=1` every call into a set is a per-spelling synthesised function, rebuilt and swapped in when an overload is added mid-run; `tests/live_world.rs` drives a running loop through the add, a refused tie, a body edit of the first overload, a refused re-signature and a skipped new name.  Five defects met at the reload boundary and fixed — [IMPL.md § Step 14](IMPL.md) |
+| **8** — `Disp-Match-Equiv` in the differential oracle | DESIGN.md §Disp-Match-Equiv | a dispatch set and its canonical `match` compared as two programs, per the oracle's existing shape | **Done 2026-09-14** — `tests/oracle/34-dispatch-set.loft` declares `@ORACLE_TWIN: 34-dispatch-set-as-match.loft`; the sweep holds the pair to one stdout, with a positive control |
 
 ## Phase cutting — why these, and not the design's four
 
@@ -319,7 +343,7 @@ every value test and silently costs the slim artifact its whole point.
 
 ## Phase ordering
 
-1. **0** — pre-flight.  Gated on open questions 1, 2 and 6 being answered.
+1. **0** — pre-flight.  Was gated on open questions 1, 2 and 6; all three are answered.
 2. **1 → 2 → 3 → 4** — the closed-world core, in order; 4 is the first phase with a
    user-visible feature.
 3. **5** — the artifact property, once 3 lands and there is something to strip.
@@ -329,8 +353,8 @@ every value test and silently costs the slim artifact its whole point.
 
 ## Open design questions
 
-The six in [DESIGN.md §Open questions](DESIGN.md#open-questions--the-owner-decides), unchanged
-and unanswered.  Three of them gate phase 0:
+The six in [DESIGN.md §Open questions](DESIGN.md#open-questions--the-owner-decides), carried
+verbatim there; the answers live here.  The three that gated phase 0 are all answered:
 
 - ~~**Q1**~~ **ANSWERED 2026-09-11 — no, and it opens a bigger question.**  An interface
   cannot be a parameter type (`fn describe(x: Shape)` → *"Expecting a type"*); it is a generic
@@ -352,10 +376,13 @@ and unanswered.  Three of them gate phase 0:
   `try_generic_instantiation(first_id, &types)` already takes the argument types and REPLACES
   the chosen `def_nr`, so a resolution getting revised once types are known is an existing
   shape, not a new one.
-- **Q6** (type dispatch or pattern-clause dispatch?) — if pattern-clause, `Disp-Applicable`
-  and `Disp-Specific` grow value and guard cases, `Disp-Closed`'s direct-call lowering stops
-  holding for value-discriminating definitions, and `Disp-Match-Equiv` becomes bidirectional.
-  Every phase below 1 changes shape.
+- ~~**Q6**~~ **ANSWERED 2026-09-14 — type dispatch, nothing more** (§ Decisions taken,
+  item 5).  Had the answer been pattern-clause, `Disp-Applicable` and `Disp-Specific` would
+  have grown value and guard cases, `Disp-Closed`'s direct-call lowering would have stopped
+  holding for value-discriminating definitions, and `Disp-Match-Equiv` would have become
+  bidirectional — every phase below 1 would have changed shape.  None of that happens: the
+  rules stand as [RULES.md](RULES.md) has them, and a parameter DEFAULT is the only
+  optionality a definition carries.
 
 Q3, Q4 and Q5 can be answered later — they gate phases 7, 1 and the catalogue entry
 respectively, not the start.

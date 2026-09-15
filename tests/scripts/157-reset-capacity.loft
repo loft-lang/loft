@@ -1,0 +1,83 @@
+// @PLN157 § V-ai (loft#1426) — the store reset of § V-ag re-establishes the root vector at
+// the CAPACITY the previous fill reached, on BOTH backends.  The buffer is reused across
+// calls (`@FR-R-Reuse`) and the store already holds the extent (`@FR-H-RootExtent`), so the
+// growth ladder runs once per buffer instead of once per call — each rung of that ladder
+// freed a block into the store, and one freed block was enough to take every later claim
+// off `bump_tail` and into the free tree for the rest of the call.  The values are the
+// language's either way; what these cells pin is that a vector re-established LARGER than
+// the fresh minimum answers the same values and lengths as one that grows from it, across
+// every shape the reached capacity can meet: a fill that grows, one that shrinks, one that
+// is empty, one buffer beside another, elements owning text, a result that escapes, a
+// recursion, and many small fills after one large one.  Every expected value is derived by
+// hand from `make`'s arithmetic (total(n) = 150·n·(n−1) + 45·n), not read off a run.
+// `LOFT_NO_RESET_CAPACITY=1` restores the fresh minimum and must answer identically;
+// `tests/reset_capacity.rs` reads the capacity each reset re-establishes off
+// `LOFT_TRACE_CLEAR` in both halves.
+//
+// @falsified-at: switch, 2026-09-14 — tests/reset_capacity.rs runs this file under
+// LOFT_TRACE_CLEAR=1 twice: the ON half must show resets re-establishing the ladder's
+// rungs above the minimum (24, 50 and 102 — the 60-fill's rung); the OFF half
+// (LOFT_NO_RESET_CAPACITY=1, the pre-unit build's behaviour) must show cap=11 at every
+// reset.  Measured: 242 resets; ON reads 11 ×121, 24 ×3, 50 ×112, 102 ×6; OFF reads 11 at
+// all 242.  Both halves print the same values.  (`big_then_small`'s 200-fill never
+// reaches a reset — a buffer filled once is never cleared — which is a cell, not a gap.)
+
+struct Frond { fpts: vector<float>, fwid: vector<float> }
+struct Leaf { name: text, n: integer }
+
+fn make(n: integer) -> vector<Frond> {
+  mk_out: vector<Frond> = [];
+  for i in 0..n {
+    mk_p: vector<float> = [];
+    mk_w: vector<float> = [];
+    for k in 0..3 { mk_p += [(i * 10 + k) as float]; mk_w += [0.5]; }
+    mk_out += [Frond { fpts: mk_p, fwid: mk_w }];
+  }
+  mk_out
+}
+fn total(fs: const vector<Frond>) -> integer {
+  t = 0.0;
+  for f in fs { for p in f.fpts { t += p; } for w in f.fwid { t += w; } }
+  (t * 10.0) as integer
+}
+fn tree(n: integer, depth: integer) -> vector<Frond> {
+  tr_out = make(n);
+  if depth <= 1 { return tr_out }
+  for _k in 0..n {
+    for f in tree(2, depth - 1) { tr_out += [f]; }
+  }
+  tr_out
+}
+
+fn grow() -> integer { s = 0; for c in 0..3 { v = make(if c == 0 { 5 } else if c == 1 { 40 } else { 60 }); s += total(v) + len(v); } s }
+fn shrink() -> integer { s = 0; for c in 0..4 { v = make(if c == 0 { 60 } else if c == 2 { 0 } else { 5 }); s += total(v) + len(v); } s }
+fn same_many() -> integer { s = 0; for _c in 0..50 { v = make(30); s += total(v) + len(v); } s }
+fn zero_first() -> integer { s = 0; for c in 0..4 { v = make(if c % 2 == 0 { 0 } else { 40 }); s += total(v) + len(v); } s }
+fn two_live() -> integer { s = 0; for _c in 0..3 { a = make(40); b = make(3); s += total(a) + total(b) + len(a) * 2 + len(b); } s }
+fn text_grow() -> integer {
+  s = 0; nt = 0;
+  for c in 0..3 {
+    v: vector<Leaf> = [];
+    tg_n = if c == 1 { 3 } else { 20 };
+    for i in 0..tg_n { v += [Leaf { name: "a{i}", n: i }]; }
+    for l in v { s += size(l.name) + l.n; }
+    nt += len(v);
+  }
+  s * 100 + nt
+}
+fn escapes() -> integer { keep: vector<Frond> = []; for _c in 0..3 { v = make(40); for f in v { keep += [f]; } } s = 0; for f in keep { s += total([f]); } s + len(keep) }
+fn recursion() -> integer { s = 0; for _c in 0..2 { v = tree(3, 3); s += total(v) + len(v); } s }
+fn big_then_small() -> integer { a = make(200); s = total(a) + len(a); for _c in 0..20 { v = make(1); s += total(v) + len(v); } s }
+
+fn main() {
+  assert(grow() == 772830, "a fill that grows across calls: 5, 40, 60");
+  assert(shrink() == 540220, "a fill that shrinks and empties: 60, 5, 0, 5");
+  assert(same_many() == 6594000, "fifty fills of thirty through one buffer");
+  assert(zero_first() == 471680, "an empty first fill, then forty");
+  assert(two_live() == 710754, "two buffers live at once keep their own capacity");
+  assert(text_grow() == 48943, "text-owning elements: twenty, three, twenty");
+  assert(escapes() == 707520, "an escaping result keeps every element: 120 fronds");
+  assert(recursion() == 9132, "a recursion appends its sub-results: 21 fronds twice");
+  assert(big_then_small() == 5980120, "one fill of two hundred, then twenty of one");
+  println("reset-capacity ok");
+}
