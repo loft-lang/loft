@@ -327,8 +327,9 @@ fn p_s5() { p_s5_b(false); }"#,
             r#"fn p_s8_b(k: integer) { x = mk(115); for i in 0..2 { x = match k { 0 => mk(116 + i), _ => mk(118 + i) }; println("R{x.id}"); } }
 fn p_s8() { p_s8_b(0); }"#,
         ),
-        // (H-Rebind-Self): a variable rebound to its own value is not a new structure, so each
-        // resource is released once — and a `??` whose subject is the target itself is the same.
+        // A variable rebound to its own value: `a = a` and `a = a ?? d` each WRITE a copy of the
+        // existing `a`, so both are refused (`formal/heap.md` H-Copy-Refuse; heap.md D-heap-10
+        // records how the second released twice while it compiled).
         cell(
             "p_i1",
             r#"fn p_i1() { a = mk(120); a = a; println("R{a.id}"); }"#,
@@ -337,6 +338,10 @@ fn p_s8() { p_s8_b(0); }"#,
             "p_i2",
             r#"fn p_i2() { a: H? = mk(121); a = a ?? mk(122); println("R{a.id}"); }"#,
         ),
+        // A member read through a call result, further along the chain: the compiler copies the
+        // member only to read `.id` off it, and nothing outlives the expression, so the line
+        // writes no copy (`formal/heap.md` H-Move).  The liveness reading refused it.
+        cell("p_t1", r#"fn p_t1() { println("R{mk_s(130).h.id}"); }"#),
         // (H-Drop-Not): the language releases nothing for the X-marked id.
         cell(
             "p_n1",
@@ -1041,10 +1046,13 @@ fn expected_roots(name: &str) -> Option<Vec<&'static str>> {
 /// resource type has no `OpDrop` reports no site at all.  The census is what @PLN163 P2 turns
 /// into the refusal report, so a copy it cannot see is a copy the refusal would let through.
 ///
-/// It is also the oracle for `(H-Move)`'s implementation (`src/lease.rs`, @PLN163 P2): the census
-/// refuses a copy in exactly the cells [`lease_verdict`] says the rules refuse, refuses nothing in
-/// a cell that must release once, and never reports a copy its liveness pass did not reach.  The
-/// verdicts are derived by hand from each cell's axes, so the two cannot agree by construction.
+/// It is also the oracle for both verdicts in `src/lease.rs` (@PLN163 P2r).  The `lease=` column —
+/// the rule read off the line — refuses a copy in exactly the cells [`lease_verdict`] refuses and
+/// in no other.  The `liveness=` column — whether the copied value is used afterwards, kept for
+/// `(H-Elide)` — refuses in exactly the cells [`liveness_verdict`] refuses, and never reports a copy
+/// its pass did not reach.  Both oracles are derived by hand from each cell's own lines, so neither
+/// column can agree with them by construction.  A tuple literal's `item` site is a placement the
+/// rule judges, not an emitted copy, so the expected roots below leave it out.
 #[test]
 fn the_census_names_the_copy_each_cell_makes() {
     let cells = all_cells();
@@ -1060,33 +1068,47 @@ fn the_census_names_the_copy_each_cell_makes() {
         // `from=a,b` lists one root per arm of a join; `-` names no variable.
         let from: Vec<&str> = sites
             .iter()
+            .filter(|l| census_field(l, "kind") != Some("item"))
             .filter_map(|l| census_field(l, "from"))
             .flat_map(|f| f.split(','))
             .filter(|f| *f != "-")
             .collect();
-        let refusals: Vec<&str> = sites
-            .iter()
-            .filter_map(|l| census_field(l, "lease"))
-            .filter(|l| l.starts_with("refuse:"))
-            .collect();
+        let refused_in = |column: &str| -> Vec<&str> {
+            sites
+                .iter()
+                .filter_map(|l| census_field(l, column))
+                .filter(|l| l.starts_with("refuse:"))
+                .collect()
+        };
+        let (refusals, liveness_refusals) = (refused_in("lease"), refused_in("liveness"));
         if sites
             .iter()
-            .any(|l| census_field(l, "lease") == Some("unreached"))
+            .any(|l| census_field(l, "liveness") == Some("unreached"))
         {
             wrong.push(format!(
                 "{}: a copy the liveness pass never reached in {sites:?}",
                 c.name
             ));
         }
-        // P2a's report still implements the superseded liveness reading of (H-Move), so it is
-        // held to that reading's verdicts until @PLN163 P2 is reworked to the written-move rule.
-        match liveness_verdict(&c.name) {
-            Some(Lease::Refused) if refusals.is_empty() => wrong.push(format!(
-                "{}: refused by the liveness reading, but the census refuses nothing in {sites:?}",
+        match lease_verdict(&c.name) {
+            Lease::Refused if refusals.is_empty() => wrong.push(format!(
+                "{}: refused by the lease rules, but the census refuses nothing in {sites:?}",
                 c.name
             )),
-            Some(Lease::Once) if !refusals.is_empty() => wrong.push(format!(
-                "{}: releases once by the liveness reading, but the census refuses {refusals:?}",
+            Lease::Once if !refusals.is_empty() => wrong.push(format!(
+                "{}: releases once by the lease rules, but the census refuses {refusals:?}",
+                c.name
+            )),
+            _ => {}
+        }
+        match liveness_verdict(&c.name) {
+            Some(Lease::Refused) if liveness_refusals.is_empty() => wrong.push(format!(
+                "{}: refused by the liveness reading, but `liveness=` refuses nothing in {sites:?}",
+                c.name
+            )),
+            Some(Lease::Once) if !liveness_refusals.is_empty() => wrong.push(format!(
+                "{}: releases once by the liveness reading, but `liveness=` refuses \
+                 {liveness_refusals:?}",
                 c.name
             )),
             _ => {}
@@ -1154,6 +1176,7 @@ const PILOT_ONCE: &[&str] = &[
     "p_k4", // a block yields the variable it declares
     "p_k5", "p_k6", "p_r1", "p_g2", "p_s8", // fresh values only
     "p_n1", "p_n2", "p_n3", "p_n4", // fresh values written into places, and a removal
+    "p_t1", // a member read through a call result, which nothing outlives
 ];
 
 /// The pilot cells that write a copy of an existing `H`, each classified by hand.
@@ -1209,7 +1232,7 @@ fn liveness_verdict(name: &str) -> Option<Lease> {
     ];
     const REFUSED_PILOTS: &[&str] = &[
         "p_k7", "p_o1", "p_o3", "p_o4", "p_o5", "p_l1", "p_l2", "p_h2", "p_h3", "p_h4", "p_h5",
-        "p_h6", "p_h7", "p_e1", "p_e2", "p_g1", "p_g3", "p_g4", "p_g5", "p_s4",
+        "p_h6", "p_h7", "p_e1", "p_e2", "p_g1", "p_g3", "p_g4", "p_g5", "p_s4", "p_t1",
     ];
     let parts: Vec<&str> = name.split('_').collect();
     match parts.as_slice() {

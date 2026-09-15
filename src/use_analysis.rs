@@ -4681,10 +4681,28 @@ pub fn drop_copy_census(data: &Data) {
                     .then(|| data.type_name_str(&def.returned)),
                 whole_tuple: None,
                 rhs_of: None,
+                placement: crate::lease::Placement::Structure,
+                blocks: Vec::new(),
                 line: 0,
                 sites: 0,
             };
             cx.scan(&def.code);
+            // `x = x` leaves no IR (the parser erases it), but it places an existing droppable
+            // where it was without a copy — a line the rules judge like any other bind.
+            let func = cx.func;
+            for (var, line) in crate::copy_manifest::self_binds(d_nr) {
+                if !data.type_owns_droppable_anywhere(func.tp(var).base()) {
+                    continue;
+                }
+                cx.line = line;
+                let lease = lease_column(
+                    func,
+                    cx.frame
+                        .written_var_verdict(var, crate::lease::Placement::Structure),
+                );
+                let tp = data.type_name_str(func.tp(var));
+                cx.emit("bind", &tp, &[var], func.name(var), (&lease, "-"), false);
+            }
             sites += cx.sites;
         }
     }
@@ -4699,7 +4717,7 @@ struct Census<'a> {
     data: &'a Data,
     d_nr: u32,
     func: &'a Function,
-    /// The `(H-Move)` verdicts for this function (`src/lease.rs`).
+    /// The copy-lease verdicts for this function (`src/lease.rs`).
     frame: crate::lease::Frame<'a>,
     fname: &'a str,
     copy_d: u32,
@@ -4710,6 +4728,11 @@ struct Census<'a> {
     /// The right-hand side of the assignment being scanned, and the variable it assigns — so a
     /// whole-tuple copy that IS that right-hand side is recorded against its destination.
     rhs_of: Option<(*const Value, u16)>,
+    /// Where a value copied here goes: out of the function, out of a block, into a read through a
+    /// temporary, or — by default — into a new structure.
+    placement: crate::lease::Placement,
+    /// The blocks enclosing the node being scanned, innermost last.
+    blocks: Vec<*const Value>,
     /// The nearest line seen before the node being visited.
     line: u32,
     sites: usize,
@@ -4732,6 +4755,7 @@ impl Census<'_> {
     }
 
     fn scan(&mut self, node: &Value) {
+        use crate::lease::{Lease, Placement, Refusal};
         if let Some(p) = node.span_pos() {
             self.line = p.line;
         } else if let Value::Line(n) = node {
@@ -4739,35 +4763,69 @@ impl Census<'_> {
         }
         let node = node.unspan();
         let mut whole = None;
-        if let Value::Block(bl) = node
-            && bl.name == "synthetic_tuple_return"
-        {
-            // A returned tuple, written member by member into the return buffer through a hold
-            // of the tuple (`__ref_3 = t`): one whole-tuple copy of `t`.
-            if let Some(hold) = bl.operators.iter().find_map(|o| match o.unspan() {
-                Value::Set(h, rhs)
-                    if matches!(rhs.unspan(), Value::Var(_))
-                        && matches!(self.func.tp(*h).base(), Type::Tuple(_)) =>
-                {
-                    Some(*h)
+        let outer_placement = self.placement;
+        if let Value::Block(bl) = node {
+            match bl.name {
+                // A value leaving its block through a materialised copy: out of the function when
+                // the block returns, and otherwise out of the enclosing block as its result.
+                "materialized_view_return" | "materialized_view_return_armed" => {
+                    self.placement = if bl
+                        .operators
+                        .iter()
+                        .any(|o| o.any_node(&mut |n| matches!(n, Value::Return(_))))
+                    {
+                        Placement::Return
+                    } else {
+                        self.blocks
+                            .last()
+                            .map_or(Placement::Structure, |&b| Placement::BlockResult(b))
+                    };
                 }
-                _ => None,
-            }) {
-                let (root, through_member) = self.frame.resolve_view(hold);
-                let lease = if through_member {
-                    lease_column(
-                        self.func,
-                        crate::lease::Lease::Refuse(crate::lease::Refusal::Container(root)),
-                    )
-                } else {
-                    lease_column(self.func, self.frame.var_verdict(node, root))
-                };
-                let tp = self.data.type_name_str(self.func.tp(hold));
-                self.emit("tuple", &tp, &[root], "-", &lease, false);
-                crate::copy_manifest::note_lease_return(self.d_nr);
-                whole = Some(root);
+                // A returned tuple, written member by member into the return buffer through a
+                // hold of the tuple (`__ref_3 = t`): one whole-tuple copy of `t`.
+                "synthetic_tuple_return" => {
+                    self.placement = Placement::Return;
+                    if let Some(hold) = bl.operators.iter().find_map(|o| match o.unspan() {
+                        Value::Set(h, rhs)
+                            if matches!(rhs.unspan(), Value::Var(_))
+                                && matches!(self.func.tp(*h).base(), Type::Tuple(_)) =>
+                        {
+                            Some(*h)
+                        }
+                        _ => None,
+                    }) {
+                        let (root, through_member) = self.frame.resolve_view(hold);
+                        let (lease, liveness) = if through_member {
+                            let refused =
+                                lease_column(self.func, Lease::Refuse(Refusal::Container(root)));
+                            (refused.clone(), refused)
+                        } else {
+                            (
+                                lease_column(
+                                    self.func,
+                                    self.frame.written_var_verdict(root, Placement::Return),
+                                ),
+                                lease_column(
+                                    self.func,
+                                    self.frame.liveness_var_verdict(node, root),
+                                ),
+                            )
+                        };
+                        let tp = self.data.type_name_str(self.func.tp(hold));
+                        self.emit("tuple", &tp, &[root], "-", (&lease, &liveness), false);
+                        crate::copy_manifest::note_lease_return(self.d_nr);
+                        whole = Some(root);
+                    }
+                }
+                _ => {}
             }
         }
+        // A member read through a copy the compiler makes only to read it (`mk().h.id`): nothing
+        // outlives the expression, so the copy is not one the author wrote.
+        let read_through = matches!(node, Value::Call(op, args)
+            if self.data.def(*op).name().starts_with("OpGet")
+                && matches!(args.first().map(Value::unspan),
+                    Some(Value::Block(b)) if b.name == "inline ref copy"));
         match node {
             Value::Call(d, args)
                 if *d == self.copy_d
@@ -4803,13 +4861,26 @@ impl Census<'_> {
                 let tp = copied_record_name(self.data, &args[2]);
                 let mut from = Vec::new();
                 copy_source_roots(&args[0], self.data, self.func, &mut from);
-                let lease = if kind == "snapshot" {
-                    "-".to_string()
+                // Only a value copied straight into a variable leaves with the block or function it
+                // leaves; a copy into a place of a structure being built is a copy into that
+                // structure.
+                let placement = if self.placement == Placement::ReadThrough
+                    || matches!(args[1].unspan(), Value::Var(_))
+                {
+                    self.placement
+                } else {
+                    Placement::Structure
+                };
+                let (lease, liveness) = if kind == "snapshot" {
+                    ("-".to_string(), "-".to_string())
                 } else {
                     self.note_destination(&args[1]);
-                    lease_column(self.func, self.frame.copy_verdict(node, &args[0]))
+                    (
+                        lease_column(self.func, self.frame.written_verdict(&args[0], placement)),
+                        lease_column(self.func, self.frame.liveness_verdict(node, &args[0])),
+                    )
                 };
-                self.emit(kind, &tp, &from, &into, &lease, frees);
+                self.emit(kind, &tp, &from, &into, (&lease, &liveness), frees);
             }
             // A bind whose type depends on its own source is a VIEW of it — a destructure's
             // `__ref_2 = u`, a nested copy's `_tuphold_1 = inner` — and copies nothing.  So is a
@@ -4833,14 +4904,58 @@ impl Census<'_> {
                 };
                 let tp = self.data.type_name_str(self.func.tp(*v));
                 let into = self.func.name(*v).to_string();
-                let lease = lease_column(self.func, self.frame.var_verdict(node, *src));
+                let lease = lease_column(
+                    self.func,
+                    self.frame.written_var_verdict(*src, self.placement),
+                );
+                let liveness = lease_column(self.func, self.frame.liveness_var_verdict(node, *src));
                 crate::copy_manifest::note_lease_site(self.d_nr, *v);
-                self.emit(kind, &tp, &[*src], &into, &lease, false);
+                self.emit(kind, &tp, &[*src], &into, (&lease, &liveness), false);
+            }
+            // A join whose arm is a variable as it is (`a = a ?? mk(122)`) places that variable
+            // without a copy; the rules judge the line all the same.  An arm that is a view — the
+            // destination's type depends on it, or on what the arm views (`x = s.h ?? mk()` binds
+            // the member's view temp) — places nothing.  The join a `return` lowers into a
+            // `__ret_N` temp places its arms out of the function.
+            Value::Set(v, rhs)
+                if matches!(rhs.unspan(), Value::If(..))
+                    && self
+                        .data
+                        .type_owns_droppable_anywhere(self.func.tp(*v).base()) =>
+            {
+                let mut arms = Vec::new();
+                join_var_arms(rhs, &mut arms);
+                let into = self.func.name(*v).to_string();
+                let tp = self.data.type_name_str(self.func.tp(*v));
+                let dest_deps = self.func.tp(*v).depend();
+                let placement = if into.starts_with("__ret_") {
+                    Placement::Return
+                } else {
+                    self.placement
+                };
+                for src in arms {
+                    if dest_deps.contains(&src)
+                        || self
+                            .func
+                            .tp(src)
+                            .depend()
+                            .iter()
+                            .any(|d| dest_deps.contains(d))
+                        || !self
+                            .data
+                            .type_owns_droppable_anywhere(self.func.tp(src).base())
+                    {
+                        continue;
+                    }
+                    let lease =
+                        lease_column(self.func, self.frame.written_var_verdict(src, placement));
+                    self.emit("bind", &tp, &[src], &into, (&lease, "-"), false);
+                }
             }
             // A tuple literal that reads every member of one tuple, in order, copies that tuple
             // whole — `u = t`, or a nested member copied through a hold.  Listed once, and the
             // member copies inside it are not listed again.
-            Value::Tuple(_) => {
+            Value::Tuple(items) => {
                 if let Some(base) = crate::lease::whole_tuple_source(self.func, node) {
                     let (root, through_member) = self.frame.resolve_view(base);
                     if self.whole_tuple != Some(root)
@@ -4848,16 +4963,24 @@ impl Census<'_> {
                             .data
                             .type_owns_droppable_anywhere(self.func.tp(base).base())
                     {
-                        let lease = if through_member {
-                            lease_column(
-                                self.func,
-                                crate::lease::Lease::Refuse(crate::lease::Refusal::Container(root)),
-                            )
+                        let (lease, liveness) = if through_member {
+                            let refused =
+                                lease_column(self.func, Lease::Refuse(Refusal::Container(root)));
+                            (refused.clone(), refused)
                         } else {
-                            lease_column(self.func, self.frame.var_verdict(node, root))
+                            (
+                                lease_column(
+                                    self.func,
+                                    self.frame.written_var_verdict(root, self.placement),
+                                ),
+                                lease_column(
+                                    self.func,
+                                    self.frame.liveness_var_verdict(node, root),
+                                ),
+                            )
                         };
                         let tp = self.data.type_name_str(self.func.tp(base));
-                        self.emit("tuple", &tp, &[root], "-", &lease, false);
+                        self.emit("tuple", &tp, &[root], "-", (&lease, &liveness), false);
                     }
                     if let Some((rhs, v)) = self.rhs_of
                         && std::ptr::eq(rhs, node)
@@ -4865,6 +4988,32 @@ impl Census<'_> {
                         crate::copy_manifest::note_lease_site(self.d_nr, v);
                     }
                     whole = Some(root);
+                } else if let Some((rhs, v)) = self.rhs_of
+                    && std::ptr::eq(rhs, node)
+                {
+                    // An item that places an existing droppable in a tuple literal is written as a
+                    // copy whether the compiler copies it or views it (`(p, 1)`, `(s.h, 1)`): the
+                    // rule judges the line.  A member copy the parser built is judged at its own
+                    // `OpCopyRecord`.
+                    let func = self.func;
+                    if let Type::Tuple(elms) = func.tp(v).base() {
+                        for (item, elm) in items.iter().zip(elms) {
+                            if !self.data.type_owns_droppable_anywhere(elm)
+                                || matches!(item.unspan(),
+                                    Value::Block(b) if b.name == "tuple_member_copy")
+                            {
+                                continue;
+                            }
+                            let lease = lease_column(
+                                func,
+                                self.frame.written_verdict(item, self.placement),
+                            );
+                            let mut from = Vec::new();
+                            copy_source_roots(item, self.data, func, &mut from);
+                            let tp = self.data.type_name_str(elm);
+                            self.emit("item", &tp, &from, func.name(v), (&lease, "-"), false);
+                        }
+                    }
                 }
             }
             // Every `return` of a droppable is judged here: refused when it hands out a value the
@@ -4875,7 +5024,14 @@ impl Census<'_> {
                     crate::copy_manifest::note_lease_return(self.d_nr);
                     if let Some(refusal) = self.frame.return_refusal(value) {
                         let lease = format!("refuse:{}", refusal.describe(self.func));
-                        self.emit("return", &returned, &[refusal.var()], "-", &lease, false);
+                        self.emit(
+                            "return",
+                            &returned,
+                            &[refusal.var()],
+                            "-",
+                            (&lease, &lease),
+                            false,
+                        );
                     }
                 }
             }
@@ -4889,14 +5045,34 @@ impl Census<'_> {
         if let Value::Set(v, rhs) = node {
             self.rhs_of = Some((std::ptr::from_ref(rhs.unspan()), *v));
         }
+        if read_through {
+            self.placement = Placement::ReadThrough;
+        }
+        let is_block = matches!(node, Value::Block(_));
+        if is_block {
+            self.blocks.push(std::ptr::from_ref(node));
+        }
         node.for_each_child(&mut |c| self.scan(c));
+        if is_block {
+            self.blocks.pop();
+        }
         self.whole_tuple = outer;
         self.rhs_of = outer_rhs;
+        self.placement = outer_placement;
     }
 
     /// `from` lists the root of every value the copy may take — one per arm of a join — joined
-    /// with commas, or `-` when no arm names a variable.
-    fn emit(&mut self, kind: &str, tp: &str, from: &[u16], into: &str, lease: &str, frees: bool) {
+    /// with commas, or `-` when no arm names a variable.  `verdicts` is the rule read off the line
+    /// and the liveness answer, as `lease=` and `liveness=`.
+    fn emit(
+        &mut self,
+        kind: &str,
+        tp: &str,
+        from: &[u16],
+        into: &str,
+        verdicts: (&str, &str),
+        frees: bool,
+    ) {
         self.sites += 1;
         let from = if from.is_empty() {
             "-".to_string()
@@ -4907,15 +5083,36 @@ impl Census<'_> {
                 .join(",")
         };
         eprintln!(
-            "drop-copy fn={} line={} kind={kind} type={tp} from={from} into={into} lease={lease}{}",
+            "drop-copy fn={} line={} kind={kind} type={tp} from={from} into={into} lease={} liveness={}{}",
             self.fname,
             self.line,
+            verdicts.0,
+            verdicts.1,
             if frees { " frees-source" } else { "" }
         );
     }
 }
 
 /// The census's `lease=` spelling of an `(H-Move)` verdict.
+/// The arms of the join `value` that are a bare variable, through nested joins and block tails.  An
+/// arm of any other shape — a call, a copy block, a projection — is not collected: the census judges
+/// it at the copy it makes, or it makes a fresh value.
+fn join_var_arms(value: &Value, out: &mut Vec<u16>) {
+    match value.unspan() {
+        Value::Var(v) => out.push(*v),
+        Value::If(_, then, els) => {
+            join_var_arms(then, out);
+            join_var_arms(els, out);
+        }
+        Value::Block(bl) => {
+            if let Some(tail) = bl.operators.last() {
+                join_var_arms(tail, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn lease_column(func: &Function, verdict: crate::lease::Lease) -> String {
     match verdict {
         crate::lease::Lease::Move => "move".to_string(),

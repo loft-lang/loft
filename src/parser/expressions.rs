@@ -3000,6 +3000,10 @@ use a separate collection or add after the loop"
             let link = self.lexer.link();
             self.lexer.cont();
             if self.lexer.peek_token(";") {
+                // Nothing is left for the copy census to find, so tell it here (@PLN163).
+                if !self.first_pass {
+                    crate::copy_manifest::note_self_bind(self.context, *lhs, self.lexer.pos().line);
+                }
                 *code = Value::Insert(Vec::new());
                 return Type::Void;
             }
