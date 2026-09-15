@@ -306,6 +306,20 @@ which native guards with its `_rb_w_` witness and the interpreter does not (the 
 A rebind keeps the in-place copy on both backends.  `LOFT_NO_ADOPT_FIRST_BIND=1` restores the
 copy; `tests/scripts/164-adopt-first-bind.loft` and `tests/adopt_first_bind.rs` are the receipts.
 
+**A call result with ONE owning destination is built where it will live and stored there by
+relocation (@PLN164 B2, `@FR-R-Place`, `@FR-R-MoveLast`).**  `pp = read_paint(s); …;
+sc.ops += [Op { paint: pp, … }]` in a function where `sc` is a parameter: `place_result`
+(one IR pass, after the scan) hands the callee a record CLAIMED IN `sc`'s store
+(`OpPlaceRecord`), the field takes it by relocation (`OpMoveRecord`: bytes move, heap
+handles keep their claims, the source's block is released), and the exit frees the record
+alone on the one path that still holds it (`OpFreeRecordIn`) and nothing after a move — the
+path state is written into the IR, never zeroed or nulled at runtime.  Admitted only where
+the callee writes its `__retbuf` on every exit (`literal_exits_into_buffer`), the local is
+read only as the receiver of native reads before the store, and the destination is an
+appended element of a parameter's collection; a read after the store, a hand-off, a second
+destination, a local host or a rejoin of a stored and a held path keeps the copy.
+`LOFT_NO_PLACE_RESULT=1` is the switch, `LOFT_TRACE_PLACE=1` the trace.
+
 **A branch join carries what EITHER arm borrows (loft#978).**  `it = if fresh { Item {
 … } } else { b.items["one"]? }` delivers a fresh record on one path and a view into `b`
 on the other, and which one ran is a run-time fact — so the local's type has to admit it

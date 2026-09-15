@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 491 | 467 | **24** |
+| 500 | 476 | **24** |
 
 (2026-09-15, @PLN157 § V-ao: 491 · 467 · 24 — two sites added and both peel:
 `hoist::arith_chain`, which reads a chain's leaves and ops through their `Span`, and
@@ -2580,7 +2580,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 817 | 475 | 6 | **336** |
+| 821 | 479 | 6 | **336** |
 
 (2026-09-15, @PLN164 B1: 817 · 475 · 6 · 336 — one function added and it peels:
 `use_analysis::adopts_minted_at_bind` reads a callee's return type through `peel_optional`
@@ -2607,6 +2607,14 @@ buffer's record definition through `.base().heap_def_nr()` — the peeling colum
 6 · 336; the opaque column and the ratchet's pin (336 / 1317) do not move.  Its companion
 `for_each_return_mut` tells one `Value` variant apart through `unspan`, so the unspan row
 stays at 491 · 467 · 24.)
+
+(2026-09-16, @PLN164 B2 units 2–3: `place_result` is new — `placeable_bind`, `admit` and
+`note_element` read the nullability off `peel_optional` and `scalar_like` off `.base()`, so all
+four land in the wrapper-aware column: 821 · 479 · 6 · 336, the opaque column and the ratchet's
+pin unmoved.  Its two first cuts of `admit` and `note_element` matched `Type::Reference` bare
+and moved the opaque column to 338 — the audit is what turned them into peeled asks.  The
+`Value` walkers (`names_var`, `collect_vars`, `apply`) peel `Span` or carry a `Span` arm:
+the unspan row reads 500 · 476 · 24.)
 
 (2026-09-15, loft#1530: `Parser::ref_tuple_subject` is new and asks the subject's `Type::RefVar`
 and `Type::Tuple` off a `.base()`, and `vector_element_cursor_deps` gained the same peeled ask, so

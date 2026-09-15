@@ -1455,6 +1455,25 @@ fn OpRemove(state_var: const u16, data: reference, on: const u8, tp: const u16);
 fn OpClear(data: reference, tp: const u16);
 fn OpAppendCopy(data: reference, count: integer, tp: const u16);
 fn OpCopyRecord(data: reference, to: reference, tp: const u16);
+// @PLN164 B2 (`@FR-R-Place`) — claim a `tp` record inside `host`'s store, prefilled as
+// `OpDatabase` prefills a fresh buffer: the return buffer of a call whose result has ONE
+// owning destination, a field of a record living in that store.  A null host answers a
+// fresh-store buffer instead, which `OpFreeRecordIn` releases whole.
+fn OpPlaceRecord(host: reference, tp: const u16) -> reference;
+#rust"stores.place_record_prefilled(&@host, @tp)"
+#impure(parent_write)
+// @PLN164 B2 (`@FR-R-MoveLast`) — the last-use store of an owned record local into a
+// field, consuming the source: within one store the bytes relocate (the heap handles keep
+// their claims) and the source's block is released; across stores it is `OpCopyRecord`'s
+// deep copy and the source store is released.  The IR sets the local to null right after.
+fn OpMoveRecord(data: reference, dest: reference, tp: const u16);
+#rust"stores.move_record_out(&@data, &@dest, @tp);"
+#impure(parent_write)
+// @PLN164 B2 — release a placed record inside a store that lives on: the heap it still
+// owns, then its block; null-guarded, and a store-root record frees its whole store.
+fn OpFreeRecordIn(rec: reference, tp: const u16);
+#rust"stores.free_record_in(&@rec, @tp);"
+#impure(parent_write)
 // ABI-B caller path for `v = call()` (heap-param callee returning struct-OR-null):
 // pops the call result `src`; `pos` is the destination var's slot (already holding
 // a fresh OpDatabase record).  A null `src` (sentinel) frees that record and binds

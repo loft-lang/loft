@@ -870,11 +870,13 @@ symbol and self time is the candidate).  Sites: `vector::get_elem_hoisted_cold`,
                  free-guard that names it, in this frame or through a callee it is
                  passed to) takes the source by RELOCATION when source and destination
                  share a store — the record's bytes move, its heap handles keep their
-                 claims, the source is zeroed and its scope-exit free finds nothing
-                 (R-MoveAppend's mechanics for one record) — and keeps B-Copy's deep
-                 copy when they do not: a cross-store move copies every claim anyway,
-                 so the rewrite has no gain there, and R-Place is what brings the
-                 source into the destination's store first.
+                 claims, the source's block is released at the move, and the exit of a
+                 path that moved it frees NOTHING, because the state of the local at
+                 every exit is a fact the rewrite establishes and writes into the IR;
+                 no runtime stand-in (a zeroed source, a null rebind) is substituted
+                 for it — and keeps B-Copy's deep copy when they do not: a cross-store
+                 move copies every claim anyway, so the rewrite has no gain there, and
+                 R-Place is what brings the source into the destination's store first.
   (R-InPlaceLiteral) an assignment of a record LITERAL to an existing place — an
                  element `v[i] = R { … }` or a field `o.f = R { … }` — writes the
                  literal's fields into that place instead of building the literal in

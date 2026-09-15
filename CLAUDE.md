@@ -875,6 +875,24 @@ own again — with it off, every literal exit of a record function writes the `_
 the caller handed, through the same null-guarded mint the TAIL literal has used since
 @PLN157 § V, so a callee with several literal exits answers ONE store — and is the first
 bisect step for a wrong record out of a callee with more than one literal exit.
+**`LOFT_NO_PLACE_RESULT=1`** (@PLN164 B2 units 2–3, `@FR-R-Place` + `@FR-R-MoveLast`, decided
+after the scope pass, BOTH backends) keeps a call result minting its own store and deep-copying
+into its destination again — with it off, a plain local bound from a callee whose every exit
+writes the handed buffer, and whose ONE owning destination on every path is a record-literal
+field of an element appended to a PARAMETER's collection (`sc.ops += [Op { paint: pp, … }]`),
+gets that buffer CLAIMED IN the parameter's store (`OpPlaceRecord`), the field takes it by
+RELOCATION (`OpMoveRecord`: the bytes move, the heap handles keep their claims, the source's
+block is released on the spot), and the exit releases the record alone on the one path that
+still holds it (`OpFreeRecordIn`) and nothing after a move — the path state is a compile-time
+fact the pass writes into the IR, never a runtime stand-in (no zeroed source, no `v = null`,
+which the interpreter lowers as a store-level free of what the local held).  It is the first
+bisect step for a wrong field, a leak or a double free out of a record built by a call and
+stored in an appended element; `LOFT_TRACE_PLACE=1` names each admission and each decline
+(a read after the store, a hand-off to a call, a rebind, a second destination or host, a
+destination in a local record, a loop, a rejoin of a stored and a held path all keep the copy).
+Measured 2026-09-16 on the drawing bench's parse row: one store fewer per line and the copy
+gone, and a WASH on every counter (`perf stat`: instructions, cycles and cache misses equal
+within noise) because the record relocated there carries no heap on that scene.
 **`LOFT_NO_ELEMENT_FIRST=1`** (@PLN157 § V-z) makes a record-literal's vector field
 keep its temp-store build and deep copy again — with it off, a local vector consumed
 exactly once by one append is built INSIDE the appended element (minted at the temp's

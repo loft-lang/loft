@@ -8935,6 +8935,10 @@ fn main() {
     }
     // loft#985 — the post-scope-check lint family lives in ONE place, so the program path
     // here and `loft test` run the same set; the error gate (loft#883) travels with it.
+    // ⚠ On THIS path the family reads the IR before `scopes::check` (below); `loft test`
+    // runs the check first.  The dead-store lint's expectations are measured against this
+    // order (`tests/dead_code_lint.rs`), so a lint that must know what the scope pass
+    // decided asks the deciding pass instead — the copy notice asks `place_result`.
     loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
     // @PLN24 arc B — the interpreter calls `#c` bindings for real now; what
     // remains gated is the ONE shape the contract does not cover.
