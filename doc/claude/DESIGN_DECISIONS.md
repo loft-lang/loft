@@ -3806,3 +3806,40 @@ or the browser.  The evidence that licenses it is the in-house testing's fault-f
 ledger; the registry's own artefacts never lose the layer.  That is also why the proofs
 come first: a check retired by a proof is retired inside the library's ordinary build
 and reaches every consumer, checks intact.
+
+## C121 — The contract is semantics; a rewrite is free wherever its conditions are validated, and a library API is the one boundary
+
+**Asked (2026-09-15, @PLN164 C5, `formal/ownership.md` `(O-ViewField)`):** may a record a
+function returns carry a heap field that is a VIEW into a store the caller already owns —
+`Mark.pts` naming the op's own vector in the scene instead of a second copy of the points
+— when every call site only reads it and nothing disturbs the container between the call
+and the read?  The natural `parse_poly` writes its points twice; a programmer who knows the
+store model returns an index instead; the compiler may not change that contract, so the
+question was whether a returned view is a shape the language wants at all.
+
+**Decision (owner, 2026-09-15): admitted, and the question was smaller than asked.**  *"The
+current contract is about semantics, not about optimisations; we can do anything for that
+as long as we can validate the conditions where it is correct.  The biggest problem here is
+a library API where we cannot know how it will be used.  But if a construction doesn't
+escape a library then we can rewrite whatever we want."*
+
+**What it settles.**  The language's contract is what a program computes and what it can
+observe — values, faults, the order of effects — never how a value is represented, where
+it lives, or how many stores or copies it takes to get there.  A rewrite therefore needs no
+permission from the contract: it needs its CONDITIONS, stated as a rule and validated on the
+IR, under which the observable behaviour is unchanged; where a condition cannot be
+validated the rewrite declines and the unrewritten form runs.  The one place validation is
+impossible is a library's exported API, whose callers the compiler cannot see: a
+construction that ESCAPES the unit — is answered to, stored by, or handed to code outside it
+— keeps the representation the API promises, and the boundary materialises whatever an
+internal rewrite made of it (as the cdylib bridge already materialises a value tuple).  A
+construction that does not escape may be rewritten in any way its conditions allow.  This
+is recorded as `(R-Escape)` in `formal/rewrites.md`, every rewrite rule reads it, and
+`(O-ViewField)` takes its scope from it: decided over the call sites the compiler sees
+whole, never over an unseen one.
+
+**What it does not change.**  C120 stands untouched, because it was never about
+representation: a value after a fault IS the contract, and a rewrite that changes it
+changes semantics.  The two rulings are one principle read from both sides — everything
+the program cannot observe is the compiler's, everything it can is the language's.
+

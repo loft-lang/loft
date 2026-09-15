@@ -40,7 +40,27 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  rewrite assumed and panics when it is stale (LOFT_HOIST_VERIFY=1), or
                  an emission pin where there is nothing to re-derive.  The interpreter
                  applies no rewrite and is the oracle of every cell.
+  (R-Escape)     the contract is SEMANTICS — what a program computes and can observe —
+                 never a representation: how many stores or copies a value takes, or
+                 where it lives, is the compiler's to change wherever the rule's
+                 CONDITIONS are validated on the IR, and where they cannot be the
+                 rewrite declines to the unrewritten form.  The one boundary is a
+                 library's exported API, whose callers the compiler cannot see: a
+                 construction that ESCAPES the unit — answered to, stored by, or
+                 handed to code outside it — keeps the representation the API
+                 promises, and the boundary materialises whatever an internal rewrite
+                 made of it; one that does not escape may be rewritten in any way its
+                 conditions allow.  (C121, owner 2026-09-15.)
 ```
+
+**`(R-Escape)` in words.** Every rule below asks for permission from nobody: it states
+the conditions under which a program cannot tell the rewritten form from the written one,
+and the compiler validates those conditions or declines.  What it may never do is change
+a value, a fault or an effect (C120 is the same principle from the other side), or hand a
+representation of its own choosing across a library's API, where the callers that would
+have to validate the conditions are not in the compilation.  `(R-ValueRecord)`'s bridge
+clause is the existing instance — a value tuple inside the library, the promised record
+at the boundary — and `(O-ViewField)` takes its scope from here.
 
 **In words.** The switch is the before-half of an A/B on one binary and the first
 bisect step for a native-only wrong answer; the falsifier is what makes "the values
