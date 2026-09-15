@@ -31,7 +31,11 @@ the author learns from a survival guide.  **And the scoping (owner, same day):**
 not "optimise everything" — each spelling is first asked *is this natural to write?*, the
 mechanism goes to the spellings that pass, and a contrived spelling keeps today's correct
 copy and is deferred with its row kept.  Most cells of the matrix below may be deferred
-at any moment; the natural ones are where the gain sits.  The compiler removes the per-call temporaries a record-returning style mints — a store
+at any moment; the natural ones are where the gain sits.  **And the licence (owner,
+2026-09-15, C121, `(R-Escape)`):** the contract is semantics, not representation — a
+rewrite needs its validated conditions and nothing else; the one boundary is a library API,
+whose callers are unseen, and a construction that does not escape it may be rewritten in
+any way its conditions allow.  The compiler removes the per-call temporaries a record-returning style mints — a store
 per hidden buffer per activation, a deep copy at a first bind, at a last-use field
 assignment and at an element overwrite, a copy for a read-only `?`-discharge — without a
 line of the consumer's code changing, and the drawing library's `parse` row goes from
@@ -380,7 +384,7 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § The rewrite list | E15/E16 cells; `smooth_pts` writes `Op.pts` | After C3 (needs no arena: the destination is a record in the scene's store) |
 | **C3** — read-only `?`-discharge as a view (`B-View`'s discharge clause) | § The rewrite list | E17 cells; `acc_pts` copies nothing | Open |
 | **C4** — per-type prefill image (`R-Prefill`) | § The rewrite list | `set_default_value_nullable` leaves the parse profile; the `Op` literal's cells | Open — with B2 |
-| **C5** — a returned record's heap field as a view leaf (`O-ViewField`, `R-ValueRecord`) | § The rewrite list | the points written once per line: `Mark.pts` names `Op.pts`; an E17 site that appends between the call and the read must read the copy | Open — last; the rule wants the owner's sign-off before its cells |
+| **C5** — a returned record's heap field as a view leaf (`O-ViewField`, `R-ValueRecord`, `R-Escape`) | § The rewrite list | the points written once per line: `Mark.pts` names `Op.pts`; an E17 site that appends between the call and the read must read the copy; an escaping `pub fn` result reads the copy at the bridge | Open — last; rule admitted (C121) |
 
 Every phase: a switch (`LOFT_NO_<unit>=1`), a falsifier, cells in
 `bytecode-comparisons/`, a guard in `tests/scripts/` with its `@falsified-at:` receipt,
@@ -414,12 +418,16 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
    detail with no value, but the leak gate must then read both.
 3. **Where does a moved-from local's `deps` go?**  Tier 2's move needs the scopes pass to
    record "handed off", the same predicate the double-move lint counts.
-4. **`(O-ViewField)` — the owner's sign-off.**  It is the one rule the rewrite list
-   invents rather than refines: a heap field of a returned record delivered as a view of
-   a place that outlives the frame, admitted only when every call site is read-only and
-   undisturbed.  Written 2026-09-15 in `formal/ownership.md` before C5 is cut; the
-   question for the owner is whether a returned view is a shape the language wants at
-   all, or whether the copy is the contract and C5 stays a decline.
+4. **`(O-ViewField)` — DECIDED (owner, 2026-09-15, C121): admitted.**  *"The current
+   contract is about semantics, not about optimisations; we can do anything for that as
+   long as we can validate the conditions where it is correct.  The biggest problem here
+   is a library API where we cannot know how it will be used.  But if a construction
+   doesn't escape a library then we can rewrite whatever we want."*  Recorded as
+   `(R-Escape)` in `formal/rewrites.md`, which every rule in the rewrite list now reads:
+   a rule needs its validated conditions and nothing else; a construction that escapes a
+   library's API keeps the promised representation and the boundary materialises; one
+   that does not may be rewritten freely.  C5's cells therefore include an ESCAPE row —
+   a `pub fn` whose result a consumer could keep — which must read the copy at the bridge.
 5. **`(R-Place)` across stores.**  A result's buffer claimed in the DESTINATION's store
    (the scene's) rather than a store of its own is what makes B2's move a relocation;
    it is also the first place a temporary lives inside another record's store, which is

@@ -104,8 +104,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 the container the view names between the call and that read, in the
                 caller or through what it calls; one site that stores, appends to,
                 rebinds, returns or hands the field to a by-value parameter declines the
-                function whole, and every site keeps the owning copy.  A declined view
-                is a copy, never a stale read.
+                function whole, and every site keeps the owning copy.  "Every call site"
+                means every site the compiler sees whole (R-Escape): a result that
+                escapes the unit — a library's exported function — is materialised at
+                the boundary as the value tuple already is, so an unseen caller never
+                receives a view.  A declined view is a copy, never a stale read.
 ```
 
 **`(O-ViewField)` in words** (@PLN164 C5, written before the phase is cut).  The natural
@@ -119,7 +122,9 @@ last read.  The three parts are the three ways it could be wrong: the source dyi
 the frame (a dangling view), a site that writes or keeps the field (a lost write, a copy
 the caller expected), and a disturbance between the call and the read (a stale view).
 Every part declines to the copy the code emits today, which is the direction
-`(O-Move)` already points.
+`(O-Move)` already points.  Admitted by the owner on 2026-09-15 (C121): the contract is
+semantics, not representation, so a returned view needs only its conditions; the library
+API is the boundary, and a construction that does not escape it may be rewritten freely.
 
 **In words.** One thing owns each piece of heap, and it's the only thing that frees it.
 When you return a heap value you *give it away* (the function stops owning it); if you
