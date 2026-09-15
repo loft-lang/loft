@@ -60,7 +60,11 @@ a value, a fault or an effect (C120 is the same principle from the other side), 
 representation of its own choosing across a library's API, where the callers that would
 have to validate the conditions are not in the compilation.  `(R-ValueRecord)`'s bridge
 clause is the existing instance — a value tuple inside the library, the promised record
-at the boundary — and `(O-ViewField)` takes its scope from here.
+at the boundary — and `(O-ViewField)` takes its scope from here.  A user PROGRAM is a
+closed unit (every use is in the compilation; a fn-ref call is a match over known
+definitions), so every condition is decidable in it and the only boundaries left are
+where a representation is turned back into the promised one: a call into a `use`d
+library, the live-reload arm, and a record's layout in a store (C121's corollary).
 
 **In words.** The switch is the before-half of an A/B on one binary and the first
 bisect step for a native-only wrong answer; the falsifier is what makes "the values

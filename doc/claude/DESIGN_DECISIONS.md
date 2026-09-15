@@ -3910,6 +3910,19 @@ is recorded as `(R-Escape)` in `formal/rewrites.md`, every rewrite rule reads it
 `(O-ViewField)` takes its scope from it: decided over the call sites the compiler sees
 whole, never over an unseen one.
 
+**The corollary for a user program (owner, same day):** *"So for a user program we are
+totally free, because we know how things are used by just reading its code."*  A program is
+a closed unit — every use of every construction is in the compilation, and a fn-ref call is
+a match over the known candidate definitions, so no callee is unseen — and every rule's
+conditions are decidable in it.  What remains a boundary inside a program is not a limit on
+the rewrite but a place where a rewritten representation is turned back into the promised
+one: a call into a library the program `use`s (its API is compiled separately and is
+materialised at the call, both ways), the live-reload and debugger arm (a function flipped
+to the interpreter takes and answers the contract's records, as `(R-ValueRecord)` already
+provides per function), and the layout of a record inside a store, which persistence, the
+FFI and the debugger read — the rewrites move temporaries and drop copies, they never
+re-lay a stored record.
+
 **What it does not change.**  C120 stands untouched, because it was never about
 representation: a value after a fault IS the contract, and a rewrite that changes it
 changes semantics.  The two rulings are one principle read from both sides — everything
