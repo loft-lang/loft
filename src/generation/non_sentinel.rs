@@ -151,8 +151,9 @@ fn non_negative_literal(v: &Value) -> bool {
 
 /// Per-function var facts: a local is non-sentinel iff it has at least one
 /// assignment, EVERY `Set` to it assigns a non-sentinel expression, and it is never
-/// writable behind the map's back — handed to a call through a `RefVar`
-/// parameter, a `TuplePut` destination, or an `Iter` variable.  (The
+/// writable behind the map's back — its address taken (a by-reference argument or a
+/// local link, loft#1534), handed to a call through a `RefVar` parameter, a
+/// `TuplePut` destination, or an `Iter` variable.  (The
 /// parser's write analysis is a deny-list this pass deliberately does not
 /// lean on.)
 ///
@@ -227,16 +228,34 @@ fn scan_sets(v: &Value, data: &Data, vars: &HashMap<u16, bool>, acc: &mut HashMa
     v.for_each_child(&mut |c| scan_sets(c, data, vars, acc));
 }
 
-/// Every var something other than a `Set` could write: a bare `Var` handed
-/// to a `RefVar`-typed parameter (the callee writes through it — a by-VALUE
-/// scalar argument can never be written back), any bare `Var` given to a
-/// fn-ref call (the callee is unknown), a `TuplePut` destination, an `Iter`
-/// variable.  Composite shapes are walked through the exhaustive child
-/// iterator, so no site can be missed by a variant this match forgot.
+/// Every var something other than a `Set` could write: a var whose ADDRESS is
+/// taken (`OpCreateStack` / `OpVarRef` — whoever holds that reference can write
+/// it), a bare `Var` handed to a `RefVar`-typed parameter (the callee writes
+/// through it — a by-VALUE scalar argument can never be written back), any bare
+/// `Var` given to a fn-ref call (the callee is unknown), a `TuplePut`
+/// destination, an `Iter` variable.  Composite shapes are walked through the
+/// exhaustive child iterator, so no site can be missed by a variant this match
+/// forgot.
 fn collect_escapes(data: &Data, v: &Value, escaped: &mut std::collections::HashSet<u16>) {
     match v.unspan() {
         Value::Call(d_nr, args) => {
             let def = data.def(*d_nr);
+            // loft#1534 — taking a local's address IS the escape, wherever the reference
+            // goes.  The parser lowers a by-reference argument to `OpCreateStack(k)`, not a
+            // bare `Var`, and binds a local link `p = &k` the same way (or `OpVarRef(k)`), so
+            // the by-ref arm below never saw either: every `Set` to `k` was a literal, the
+            // proof called `k` non-sentinel, and a callee's overflow or `n / 0` — or a write
+            // through the link — left the sentinel in a local whose `k + 1` then emitted the
+            // unchecked `_nn` form and answered a number where the interpreter answers null.
+            // The address-taking pair is the one `dispatch.rs`'s record-link (`@PLN87 L5`)
+            // arm recognises.
+            if matches!(def.name(), "OpCreateStack" | "OpVarRef") {
+                for a in args {
+                    if let Value::Var(nr) = a.unspan() {
+                        escaped.insert(*nr);
+                    }
+                }
+            }
             for (i, a) in args.iter().enumerate() {
                 if let Value::Var(nr) = a.unspan() {
                     let by_ref = def.attributes().get(i).is_some_and(|at| {

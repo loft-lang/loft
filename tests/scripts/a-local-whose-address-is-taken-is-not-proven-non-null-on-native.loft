@@ -1,0 +1,120 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `--native` skips the null test on arithmetic over a local it has PROVEN can never hold the
+// sentinel (@PLN157 P3c, `generation::non_sentinel`): every `Set` to it assigns a non-null
+// value, and nothing else can write it.  A local whose ADDRESS is taken can be written by
+// whoever holds the reference — a callee through a `&integer` parameter, or a local link
+// `p = &k` — and an overflow or a division by zero there leaves the sentinel (C85).  The proof
+// only counted a bare `Var` handed to a `RefVar` parameter as an escape, while the parser lowers
+// both spellings to `OpCreateStack(k)`, so `k + 1` took the unchecked form and answered
+// `-9223372036854775807` where the interpreter answers null (loft#1534).
+// @falsified-at: 14d50b42f — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-local-whose-address-is-taken-is-not-proven-non-null-on-native.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: exit and asserts, on native only — the interpreter never proved anything, so it
+//   answers null on both trees.  On the control `main` stops at the first defect cell's assert.
+//   ARMED: none needed for the value; `LOFT_NN_VERIFY=1` turns the same fault into a panic on
+//   the control ("OpAddInt: non-sentinel proof failed"), and it is silent here.
+//   WITNESS: every defect cell moved on native, measured cell by cell before this file: the
+//   overflow through the reference, the division by zero, the local link, the loop and the taken
+//   branch each read `-9223372036854775807` on the control and null here; the emitted `k + 1`
+//   went from `op_add_long_nn` to the checked `op_add_int`.
+//   HOLDS: the four controls answer the same on both trees on both backends — a by-value callee,
+//   a local never passed, an untaken branch, a float made NaN — and the by-value control still
+//   emits `op_add_long_nn`, so the proof keeps every local nothing can write.  Clean under strict
+//   stores and poison, no native leak.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+fn poison(n: &integer) { n = n * 4; }
+
+fn divz(n: &integer, z: integer) { n = n / z; }
+
+fn fnan(f: &float, z: float) { f = z / z; }
+
+fn dbl(n: integer) -> integer { n * 2 }
+
+// Every assignment to `k` in a defect cell is a non-null LITERAL: that is what makes the proof
+// call `k` non-sentinel, and a call result there would leave the fast form unemitted and the
+// cell unable to fail.
+
+fn test_a_callee_overflows_the_local_through_its_reference() {
+  k = 1;
+  k = 4611686018427387904;
+  poison(k);
+  r = k + 1;
+  assert(r == null, "the overflow reached the caller's local: {r}");
+}
+
+fn test_a_callee_divides_the_local_by_zero_through_its_reference() {
+  k = 5;
+  divz(k, 0);
+  r = k + 1;
+  assert(r == null, "a division by zero through the reference: {r}");
+}
+
+fn test_a_write_through_a_local_link() {
+  k = 7;
+  k = 4611686018427387904;
+  p = &k;
+  p = p * 4;
+  r = k + 1;
+  assert(r == null, "a write through the link reached the local: {r}");
+}
+
+fn test_the_call_inside_a_loop() {
+  k = 3;
+  k = 2305843009213693952;
+  for _ in 0..2 { poison(k); }
+  r = k + 1;
+  assert(r == null, "the loop's second turn starts from the overflow: {r}");
+}
+
+fn test_the_call_on_a_taken_branch() {
+  k = 9;
+  k = 4611686018427387904;
+  if k > 0 { poison(k); }
+  r = k + 1;
+  assert(r == null, "the branch that ran wrote the local: {r}");
+}
+
+// Controls: the proof must still hold where nothing can write the local, and the answers stay.
+
+fn test_a_by_value_call_leaves_the_local_proven() {
+  k = 5;
+  d = dbl(k);
+  r = k + 1;
+  assert(r == 6 && d == 10, "a by-value argument cannot write back: {r} {d}");
+}
+
+fn test_a_local_never_passed() {
+  k = 5;
+  r = k + 1;
+  assert(r == 6, "nothing writes it: {r}");
+}
+
+fn test_the_call_on_an_untaken_branch() {
+  k = 11;
+  k = 4611686018427387904;
+  if k < 0 { poison(k); }
+  r = k + 1;
+  assert(r == 4611686018427387905, "the branch did not run: {r}");
+}
+
+fn test_a_float_made_nan_through_its_reference() {
+  x = 1.5;
+  fnan(x, 0.0);
+  y = x + 1.0;
+  assert(y == null, "NaN is float's null: {y}");
+}
+
+fn main() {
+  test_a_callee_overflows_the_local_through_its_reference();
+  test_a_callee_divides_the_local_by_zero_through_its_reference();
+  test_a_write_through_a_local_link();
+  test_the_call_inside_a_loop();
+  test_the_call_on_a_taken_branch();
+  test_a_by_value_call_leaves_the_local_proven();
+  test_a_local_never_passed();
+  test_the_call_on_an_untaken_branch();
+  test_a_float_made_nan_through_its_reference();
+}
