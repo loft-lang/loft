@@ -632,11 +632,17 @@ loop.  Sites: `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoiste
                  Also required — the buffer is used ONCE and its result local is
                  assigned ONCE, since a second use has one guarded site and one this
                  did not read, and a reassignment frees the store it displaces.
+                 A buffer whose callee MINTS the store its result adopts (O-Move at
+                 a plain local's first bind, @PLN164 B1) is paired for the guarded
+                 free alone and NOT allocated here: handed non-null to a callee that
+                 rebinds its promoted local from a call, it is freed by that rebind.
                  Every other buffer keeps its per-call mint.
 ```
 
 **In words.** @PLN157 § V and § V-af.  `scopes::reuse_record_buffers` inserts the
-`OpDatabase` and `scopes`'s pairing supplies the witness; the positive control
+`OpDatabase` and `scopes`'s pairing supplies the witness (`Scopes::minted_pairs` names the
+adopt-at-bind pairings it skips — @PLN164 B1's matrix measured the use-after-free that
+pooling one produces on the interpreter, plan 51 cluster 3's shape); the positive control
 `LOFT_NO_RETBUF_WITNESS_GATE=1` allocates every buffer, guarded or not, and
 `LOFT_STRICT_STORES=1` then reports the use-after-free at exactly the sites the gate
 declines — which is how the condition is falsified rather than asserted.  Switches

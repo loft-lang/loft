@@ -3207,6 +3207,10 @@ impl State {
                 self.gen_set_first_ref_join(stack, v, value, join_d_nr, base);
             } else if stack.data.def(fn_nr).return_adopts_fresh_store()
                 || stack.function.is_view_elided(v)
+                // @PLN164 B1 (`@FR-O-Move`) — the callee returns the local it promoted onto
+                // its buffer, and `v` is a plain local: adopt the store it minted; `scopes`
+                // paired the two so the scope-exit free is guarded by identity.
+                || crate::use_analysis::adopts_minted_at_bind(stack.data, &stack.function, v, value)
             {
                 // runtime tolerates double-free as a no-op so leaving
                 // __ref_N to be freed by scopes.rs's is_work_ref gate at

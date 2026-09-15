@@ -857,6 +857,12 @@ impl Output<'_> {
             // tuple: nothing to adopt, copy, protect or displace, so its binding is the
             // plain assignment below, and the buffer argument is dropped there.
             && !self.value_records.fns.contains_key(&fn_nr)
+            // @PLN164 B1 (`@FR-O-Move`) — a plain local's FIRST bind from a callee that
+            // returns its promoted local adopts the minted store: the plain assignment
+            // below, the same emit a fresh-adopting callee's result takes.  A reassignment
+            // keeps this arm's in-place copy, as the interpreter's reassignment path does.
+            && (self.declared.contains(&var)
+                || !crate::use_analysis::adopts_minted_at_bind(self.data, variables, var, to))
         {
             let tp_nr = self.data.def(d_nr).known_type();
             let first_bind = !self.declared.contains(&var);

@@ -1,0 +1,237 @@
+// @PLN164 B1 (`@FR-O-Move`) — ADOPT AT FIRST BIND: a plain local first-bound from a call whose
+// return names only the callee's own hidden return buffer (`fn mk() -> P { o = P { … }; …;
+// o }`, deps `["o"]`) ADOPTS the store the callee minted instead of minting a second one and
+// deep-copying it.  The local is paired with the call's buffer for an identity-guarded free
+// exactly as a literal-returning callee's result already is, and the buffer is NOT enrolled
+// in the entry-time buffer pool: handed such a callee non-null, the buffer is written by the
+// promoted local's literal and then FREED by the interpreter's rebind of that local from a
+// call (c6, plan 51 cluster 3's shape — the free native guards with its `_rb_w_` witness),
+// after which the caller's next turn reads a recycled store.  Every cell hand-computes its
+// value; the shapes beside the adopting one (a literal-returning callee, a `??` join, a value
+// branch, a returned local, a rebind) pin the routes the change must leave alone.
+// `LOFT_NO_ADOPT_FIRST_BIND=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1`
+// and `LOFT_NATIVE_LEAK_CHECK=1` must answer identically.
+//
+// @falsified-at: hand-measured (2026-09-15) — `reuse_record_buffers`'s `minted_pairs` exclusion
+// removed (the paired buffer pre-minted at function entry as a fresh-adopting callee's is):
+// `--interpret` under LOFT_STRICT_STORES `[strict-store] USE AFTER FREE (read) store #3 type=Q
+// … killed by the free of <anon>` in c6's `render_lit_then_call` (the rebind of the promoted
+// buffer local frees the caller's buffer, and `p.tag` reads the recycled slot), `FAILED: 2
+// store-lifetime violation(s)`; `--native` clean on the same build — the STRICT-STORE channel
+// moves on one backend, the value channel on neither.  Restored, every cell is exact on both
+// backends under LOFT_POISON, LOFT_POISON_CLAIM, LOFT_STRICT_STORES and LOFT_NATIVE_LEAK_CHECK,
+// and the store census (`LOFT_TRACE_DB=1`) reads 108 / 106 mints against 139 / 137 with the
+// switch off (interpret / native).
+struct P { pts: vector<float>, n: integer = 0 }
+struct T { name: text = "", k: integer = 0 }
+struct Node { d: integer = 0, kids: vector<Node> }
+enum Shape { Dot { x: integer }, Box { w: integer, h: integer } }
+
+fn mk_loc(i: integer) -> P { o = P { pts: [], n: i }; o.pts += [i as float, 0.25]; o }
+fn mk_lit(i: integer) -> P {
+  if i < 0 { return P { pts: [], n: -1 } }
+  P { pts: [i as float, 0.5], n: i }
+}
+
+// c1 — the two shapes in one loop body: `a` adopts a reused buffer today, `b` copied.
+fn c1() {
+  s = 0;
+  for i in 0..3 {
+    a = mk_lit(i);
+    b = mk_loc(i);
+    assert(b.pts[0]? == i as float && b.pts[1]? == 0.25, "c1 b.pts {i}");
+    s += a.n * 100 + b.n * 10 + len(a.pts) + len(b.pts);
+  }
+  assert(s == 342, "c1 {s}");
+  println("c1 {s}");
+}
+
+// c2 — a text-owning record at function scope; two binds are independent.
+fn mk_t(k: integer) -> T { o = T { name: "n{k}", k: k }; o.name += "!"; o }
+fn c2() {
+  t = mk_t(7);
+  u = mk_t(8);
+  t.k = 70;
+  assert(t.name == "n7!" && t.k == 70, "c2 t {t.name} {t.k}");
+  assert(u.name == "n8!" && u.k == 8, "c2 u {u.name} {u.k}");
+  println("c2 {t.name} {t.k} {u.name} {u.k}");
+}
+
+// c3 — a callee with an early LITERAL return beside the promoted local.
+fn mk_mix(i: integer) -> P {
+  o = P { pts: [1.0], n: i };
+  if i % 2 == 0 { return P { pts: [], n: -i } }
+  o.pts += [2.0];
+  o
+}
+fn c3() {
+  sn = 0; sl = 0;
+  for i in 1..=3 { m = mk_mix(i); sn += m.n; sl += len(m.pts); }
+  assert(sn == 2 && sl == 4, "c3 {sn} {sl}");
+  println("c3 {sn} {sl}");
+}
+
+// c4 — a NULLABLE return: null on one path, the promoted local on the other; the
+// `?? default` discharge is the join route and is pinned beside it.
+fn maybe(i: integer) -> P? {
+  o = P { pts: [], n: i };
+  if i == 1 { return null }
+  o.pts += [9.0];
+  o
+}
+fn c4() {
+  d0 = maybe(0) ?? mk_loc(5);
+  d1 = maybe(1) ?? mk_loc(5);
+  n0 = maybe(0) == null;
+  n1 = maybe(1) == null;
+  assert(d0.n == 0 && len(d0.pts) == 1 && d0.pts[0]? == 9.0, "c4 d0 {d0.n} {len(d0.pts)}");
+  assert(d1.n == 5 && len(d1.pts) == 2, "c4 d1 {d1.n} {len(d1.pts)}");
+  assert(!n0 && n1, "c4 null {n0} {n1}");
+  println("c4 {d0.n} {len(d0.pts)} {d1.n} {len(d1.pts)} {n0} {n1}");
+}
+
+// c5 — a STRUCT-ENUM promoted local.
+fn mk_box(w: integer) -> Shape { o = Box { w: w, h: 2 }; o }
+fn c5() {
+  s = mk_box(3);
+  area = match s { Box { w, h } => w * h, Dot { x } => x };
+  assert(area == 6, "c5 {area}");
+  println("c5 {area}");
+}
+
+// c6 — plan 51 cluster 3 (`143-plan51-cluster3-mixed-lit-call`): the promoted local IS the
+// callee's buffer, so its own bind from a call must keep filling that buffer while the
+// OUTER bind adopts.
+struct Q { tag: integer }
+struct Canvas { data: vector<integer>, w: integer }
+fn alloc_canvas(w: integer, h: integer, fill: integer) -> Canvas {
+  cv = Canvas { data: [], w: w };
+  for _i in 0..h { cv.data += [fill]; }
+  cv
+}
+fn render_lit_then_call(p: Q) -> Canvas {
+  cv = Canvas { data: [], w: 1 };
+  cv = alloc_canvas(4, 5, p.tag);
+  cv
+}
+fn render_direct(q: Q) -> Canvas { cv = alloc_canvas(7, 9, q.tag * 2); cv }
+fn c6() {
+  s = 0;
+  for i in 0..6 {
+    p = Q { tag: i };
+    q = Q { tag: i + 100 };
+    cv_c = render_lit_then_call(p);
+    cv_d = render_direct(q);
+    assert(cv_c.w == 4 && len(cv_c.data) == 5 && cv_c.data[0]? == i, "c6 c {i} {cv_c.w} {len(cv_c.data)}");
+    assert(cv_d.w == 7 && len(cv_d.data) == 9 && cv_d.data[0]? == (i + 100) * 2, "c6 d {i} {cv_d.w}");
+    s += cv_c.data[4]? + cv_d.data[8]?;
+  }
+  assert(s == 15 + 6 * 200 + 30, "c6 {s}");
+  println("c6 {s}");
+}
+
+// c7 — the adopted store is INDEPENDENT of the argument the callee read.
+fn grow(p: P) -> P { o = P { pts: p.pts, n: p.n + 1 }; o.pts += [7.0]; o }
+fn c7() {
+  x = mk_loc(1);
+  y = grow(x);
+  y.pts[0] = 99.0;
+  assert(y.n == 2 && len(y.pts) == 3 && y.pts[2]? == 7.0, "c7 y {y.n} {len(y.pts)}");
+  assert(x.n == 1 && len(x.pts) == 2 && x.pts[0]? == 1.0, "c7 x {x.n} {len(x.pts)} {x.pts[0]?}");
+  println("c7 {y.n} {len(y.pts)} {x.n} {len(x.pts)} {x.pts[0]?}");
+}
+
+// c8 — a LIFTED temporary: the call's result read inside an expression.
+fn c8() {
+  s = 0;
+  for i in 0..3 { s += mk_loc(i).n + len(mk_loc(i).pts); }
+  assert(s == 9, "c8 {s}");
+  println("c8 {s}");
+}
+
+// c9 — two locals from the same callee in one scope hold distinct stores.
+fn c9() {
+  p = mk_loc(1);
+  q = mk_loc(2);
+  p.n = 50;
+  p.pts += [3.0];
+  assert(q.n == 2 && len(q.pts) == 2, "c9 q {q.n} {len(q.pts)}");
+  assert(p.n == 50 && len(p.pts) == 3, "c9 p {p.n} {len(p.pts)}");
+  println("c9 {p.n} {len(p.pts)} {q.n} {len(q.pts)}");
+}
+
+// c10 — a METHOD with the promoted-local shape.
+fn twice(self: P) -> P { o = P { pts: [], n: self.n * 2 }; o.pts += self.pts; o.pts += self.pts; o }
+fn c10() {
+  b = mk_loc(3);
+  t = b.twice();
+  assert(t.n == 6 && len(t.pts) == 4 && t.pts[2]? == 3.0, "c10 {t.n} {len(t.pts)}");
+  assert(b.n == 3 && len(b.pts) == 2, "c10 b {b.n} {len(b.pts)}");
+  println("c10 {t.n} {len(t.pts)} {b.n}");
+}
+
+// c11 — RECURSION: each activation adopts its child's minted store into its own record.
+fn build(d: integer) -> Node {
+  o = Node { d: d, kids: [] };
+  if d > 0 { k = build(d - 1); o.kids += [k]; }
+  o
+}
+fn count(n: const Node) -> integer { c = 1; for k in n.kids { c += count(k); } c }
+fn c11() {
+  t = build(5);
+  c = count(t);
+  assert(c == 6 && t.d == 5 && t.kids[0]?.d == 4, "c11 {c} {t.d}");
+  println("c11 {c} {t.d} {t.kids[0]?.d}");
+}
+
+// c12 — a value BRANCH of the two shapes (the join route, pinned).
+fn c12() {
+  sn = 0; sl = 0;
+  for i in 0..4 {
+    v = if i % 2 == 0 { mk_loc(i) } else { mk_lit(i) };
+    sn += v.n; sl += len(v.pts);
+  }
+  assert(sn == 6 && sl == 8, "c12 {sn} {sl}");
+  println("c12 {sn} {sl}");
+}
+
+// c14 — REBINDS after the adopting first bind, in and out of a loop.
+fn c14() {
+  b = mk_loc(1);
+  s = b.n;
+  b = mk_loc(2);
+  s += b.n;
+  b = mk_lit(3);
+  assert(s == 3 && b.n == 3 && len(b.pts) == 2, "c14 {s} {b.n} {len(b.pts)}");
+  for i in 0..3 { b = mk_loc(i + 10); }
+  assert(b.n == 12 && b.pts[0]? == 12.0, "c14 loop {b.n}");
+  println("c14 {b.n} {len(b.pts)}");
+}
+
+// c15 — the adopted local is RETURNED (§ V-an's phantom: promoted onto the caller's own
+// buffer, so it is not a plain local and keeps today's delivery).
+fn via(i: integer) -> P { n = mk_loc(i); n.n += 100; n }
+fn c15() {
+  r = via(4);
+  assert(r.n == 104 && len(r.pts) == 2 && r.pts[0]? == 4.0, "c15 {r.n} {len(r.pts)}");
+  println("c15 {r.n} {len(r.pts)}");
+}
+
+// c17 — an explicit mid-body `return o` of the promoted local.
+fn mk_ret(i: integer) -> P {
+  o = P { pts: [5.0], n: i };
+  if i > 1 { return o }
+  o.pts += [6.0];
+  o
+}
+fn c17() {
+  a = mk_ret(1);
+  b = mk_ret(2);
+  assert(len(a.pts) == 2 && len(b.pts) == 1 && b.n == 2, "c17 {len(a.pts)} {len(b.pts)}");
+  println("c17 {len(a.pts)} {len(b.pts)} {b.n}");
+}
+
+fn main() {
+  c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c14(); c15(); c17();
+  println("164-adopt-first-bind PASSED");
+}

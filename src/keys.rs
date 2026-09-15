@@ -1140,6 +1140,20 @@ pub fn join_buffer_witness_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_JOIN_BUFFER_WITNESS"))
 }
 
+/// @PLN164 B1 (`@FR-O-Move`): a plain local first-bound from a call whose return names only
+/// the callee's OWN hidden return buffer (`fn mk() -> P { o = P { … }; …; o }`) ADOPTS the
+/// store the callee minted instead of minting a second one and deep-copying it — **DEFAULT
+/// ON**, both backends (an IR fact: the local is paired with the call's buffer exactly as a
+/// literal-returning callee's result already is).  Opt OUT with `LOFT_NO_ADOPT_FIRST_BIND`
+/// (read at PARSE time): the before-half of the A/B on one binary — two stores and a deep
+/// copy per such bind — and the first bisect step for a leak, a double free or a wrong
+/// field out of a local bound from a build-into-a-local callee.  `LOFT_STRICT_STORES=1`,
+/// `LOFT_POISON=1` and `LOFT_NATIVE_LEAK_CHECK=1` are the falsifiers.
+pub fn adopt_first_bind_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_ADOPT_FIRST_BIND"))
+}
+
 /// @PLN157 § V-ag: clearing a store-ROOT vector RESETS its store in one step instead of
 /// walking every element and returning each owned block to the free tree — **DEFAULT ON**,
 /// both backends (a runtime fact).  Opt OUT with `LOFT_NO_STORE_RESET_CLEAR`: the

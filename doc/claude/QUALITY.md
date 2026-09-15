@@ -2591,7 +2591,17 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 820 | 479 | 6 | **335** |
+| 824 | 483 | 6 | **335** |
+
+(2026-09-15, THE JOINED TREE — this branch through @PLN162's close, ../loft2's @PLN163 through
+P2r, and @PLN157 / @PLN164 through B1: 824 · 483 · 6 · 335, re-measured rather than carried; the
+ratchet reads its 335 / 1316 pin.  This branch read 820 · 479 and @PLN164 B1 817 · 475; each
+counted its own additions and not the others'.)
+
+(2026-09-15, @PLN164 B1: 817 · 475 · 6 · 336 — one function added and it peels:
+`use_analysis::adopts_minted_at_bind` reads a callee's return type through `peel_optional`
+and declines the nullable spelling by its marker, since a `-> S?` return has no buffer
+attribute to adopt.  The opaque column stays at the ratchet's 336.)
 
 (2026-09-15, own iterators — `dispatch_call`'s `exhausted` special form now asks whether its
 argument IS an iterator through `.base()`, so a nullable `iterator<T>?` reaches it: one shape test
