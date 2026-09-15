@@ -984,11 +984,12 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
        value, whose release is still to be made right;
      - a member overwritten after the copy, which retires the copy;
      - a miss: the parameter handed on to a call after the copy;
-     - a miss: a member returned as the body's tail without `return`;
      - a miss: a copy or a view of the parameter whose member is returned (`u = p; return u.0`,
        `e = p.h; return e`).
 
-     The three misses are pinned in `tests/double_move.rs`, and the corpus reaches the shape once:
+     A member returned as the body's tail without `return` reports like `return p.h`: after
+     `scopes::check` the tail is a `return`.  The misses are pinned in `tests/double_move.rs`, and
+     the corpus reaches the shape once:
      `1506b`'s `param_member` control now carries the warning.
 3. **A hand-off that suppressed a release it does not belong to** — filed from
    `x = mk(K); x = p` (`c_param_reassign`: the displaced record never released, and the parameter's
@@ -1054,13 +1055,22 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
    while every record released once.  The lint now reads the copied record's type off the copy
    (`keys::COPY_TP_MASK`) and requires a cascade or a hook.
 
-   Two false positives remain.  Both need facts that exist only after `scopes::check`, and the
-   program path runs this lint BEFORE it, while `loft test` runs it after:
-   - `x = p; x.h = mk(); c = Hold { h: x.h }` — a copy off a parameter stops its destination,
-     so the container is the member's only releaser (`g6`, pinned);
-   - `x = p; t = x; u = x` — the two-owner pairing reads `x` without the caller-record mark the
-     scope pass sets, so it warns on the program path and not under `loft test`.  The pairing
-     code is unchanged from `main`.
+   **One stage on every path.**  The post-scope lints read facts only `scopes::check` produces:
+   the caller-record mark, the releases it places, the copies it materialises.  So `loft <file>`
+   runs the scope pass before them exactly as `loft test` does, and one program answers the same
+   under both.  That IR carries the scope pass's own work, which the lints read as follows:
+   - a RELEASE (a free, or a drop hook or cascade) is neither a write nor a read
+     (`use_analysis::releases_first_arg`).  Read as a write, the root's own drop retired this
+     warning's pending copy; read as a read, a free hid a lost write;
+   - the allocation `scopes::value_struct_copy` makes for its copy (its source temp is
+     `__vs_src_<N>`, named after the destination) defines the copy and does not read it;
+   - an inline call argument arrives as the `__lift_N` the scope pass bound to it.
+
+   Measured over every `tests/scripts` program on both paths: the program path's `double-move`
+   and `lost-write` findings are unchanged, and `loft test` now reports the 14 lost writes it
+   never did.  `x = p; t = x; u = x` no longer warns.  One false positive remains:
+   `x = p; x.h = mk(); c = Hold { h: x.h }`, where a copy off a parameter stops its destination and
+   the container is the member's only releaser (`g6`, pinned).
 
    The lint keeps such a copy pending on its ROOT and reports it where the root's release is
    certain:

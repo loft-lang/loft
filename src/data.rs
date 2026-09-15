@@ -8920,6 +8920,22 @@ impl Data {
         self.def_nr(&key)
     }
 
+    /// Is `d_nr` a function a drop site calls: a type's own `OpDrop` hook, its `OpDropAll` cascade,
+    /// or the skip-capable `OpDropAllExcept`?  The reverse of [`Self::drop_hook_nr`],
+    /// [`Self::drop_cascade_nr`] and [`Self::drop_cascade_except_nr`], spelled with the same method
+    /// names they mangle.
+    #[must_use]
+    pub fn is_drop_function(&self, d_nr: u32) -> bool {
+        if d_nr == u32::MAX || d_nr as usize >= self.definitions.len() {
+            return false;
+        }
+        let def = self.def(d_nr);
+        def.def_type == DefType::Function
+            && ["_OpDrop", "_OpDropAll", "_OpDropAllExcept"]
+                .iter()
+                .any(|m| def.name.ends_with(m))
+    }
+
     /// Does this program declare ANY `OpDrop`?
     ///
     /// The cheap gate in front of the whole cascade: with no hook anywhere, no type can own

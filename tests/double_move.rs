@@ -715,16 +715,31 @@ fn z1_parameter_passed_on_after_the_copy_is_outside() {
     );
 }
 
-/// BLIND SPOT, pinned — a parameter's member returned as the body's TAIL, without `return`.
-/// Released twice.
+/// A parameter's member returned as the body's TAIL, without `return`: after `scopes::check`
+/// the tail is a `return` like any other, so it reports as `f5` does.  Released twice.
 #[test]
-fn z6_parameter_member_as_the_tail_is_outside() {
+fn f10_parameter_member_as_the_tail() {
     check_prog(
         "z6",
         "fn g(p: S) -> H { p.h }",
         "s = S { h: mk(89) }; x = g(s); println(\"{x.id}{s.h.id}\");",
-        0,
+        1,
         2,
+    );
+}
+
+/// SILENT — a local copy of a parameter copied on TWICE.  Neither copy releases: a copy off a
+/// parameter moves nothing, and a copy of that copy is still the caller's record.  Released
+/// once, by the caller.  The pairing reads that through the caller-record mark the scope pass
+/// sets, which is why the lint runs after it on every path.
+#[test]
+fn g7_copy_of_a_parameter_copy_handed_on_twice() {
+    check_prog(
+        "g7",
+        "fn g(p: H) { x = p; t = x; u = x; println(\"{t.id}{u.id}\"); }",
+        "a = mk(97); g(a); println(\"{a.id}\");",
+        0,
+        1,
     );
 }
 
@@ -792,16 +807,17 @@ fn p13_member_of_a_view_root() {
     );
 }
 
-/// BLIND SPOT, pinned — the source rebound to a value that READS it: its displaced release is
-/// decided by store identity at run time, so the copy retires.  Released three times here, the
-/// third from `keep` handing the caller back a second record (heap.md family 2's return shape).
+/// The source rebound to a value that READS it, after the member copy.  Released three times,
+/// the third from `keep` handing the caller back a second record (heap.md family 2's return
+/// shape).  The rebind retires the pending copy, and the scope pass's own release of `s` —
+/// which the lint reads after `scopes::check` — is where the double is certain, so it reports.
 #[test]
-fn z4_rebind_that_reads_the_source_is_outside() {
+fn z4_rebind_that_reads_the_source_reports_at_the_release() {
     check_prog(
         "z4",
         "struct Hold { h: H }\nfn keep(q: S) -> S { return q; }",
         "s = S { h: mk(34) }; c = Hold { h: s.h }; s = keep(s); println(\"{c.h.id}{s.h.id}\");",
-        0,
+        1,
         3,
     );
 }
