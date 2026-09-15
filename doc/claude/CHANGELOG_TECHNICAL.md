@@ -9,6 +9,21 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The browser kernel's fn-ref calls read a moved-from `Data` after the first frame (loft#1541, 2026-09-16)
+
+`execute_log_impl` installs two raw pointers to the `Data` it is handed — `State::data_ptr`,
+which a fn-ref call reads to size its callee's hidden buffers, and the parallel context's
+copy.  The browser kernel (`wasm::compile_and_start`) runs the first frame with the
+parser's `Data`, then moves that `Data` into its `GameSession` and the session into the
+thread-local slot, so from the second frame on every fn-ref call read `definitions` through
+a pointer to a moved-from table: `index out of bounds: the len is 0 but the index is 825`
+in `browser_kernel_one_script_differential` and `s6_browser_swap_under_living_page`, the
+number varying with what the stale bytes held (827 on a retry).  `State::rebind_data` now
+re-points both at the session's `Data` before every `resume_frame`; the two browser tests
+are the guard (red before, green after, on this box and in CI's `rest-b` shard).  Found by
+the @PLN164 B2 gate: the placement changed the client program's bytecode enough to change
+what the stale read answered.
+
 ### A call result is built where it will live and stored there by relocation (2026-09-16)
 
 @PLN164 B2 units 2–3, `@FR-R-Place` + `@FR-R-MoveLast`, both backends, default ON

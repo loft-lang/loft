@@ -6645,6 +6645,22 @@ impl State {
         self.stack_pos = saved_sp;
     }
 
+    /// Re-point the two raw `Data` pointers a run installs (`data_ptr`, read by a fn-ref
+    /// call to size its callee's buffers, and the parallel context's copy) at the `Data`
+    /// that owns the program NOW.  `execute_log_impl` installs them for the `Data` it is
+    /// handed; a host that keeps the program running across calls — the browser kernel,
+    /// which yields per frame and stores the `Data` beside the `State` — moves that `Data`
+    /// after the first run, and the pointers then name a moved-from table (loft#1541: a
+    /// fn-ref call in a later frame read `definitions` as empty).  Call it before every
+    /// resumption with the `Data` at its final address.
+    pub fn rebind_data(&mut self, data: &Data) {
+        let data_ptr = std::ptr::from_ref::<Data>(data);
+        self.data_ptr = data_ptr;
+        if let Some(ctx) = self.database.parallel_ctx.as_mut() {
+            ctx.data = data_ptr;
+        }
+    }
+
     pub fn resume(&mut self) -> bool {
         self.database.frame_yield = false;
         let bytecode_len = self.bytecode.len() as u32;
