@@ -7,7 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Active — P0 done; P1 (the rules) next, and it waits on open question 7.  Tracked as
+Active — P0 and P1 done; P2 (the refusal as a report) next.  Tracked as
 [`@PLN163`](https://github.com/loft-lang/plans/issues/163).  Decided with the owner on 2026-09-15
 after the drop-release arc (`heap.md` D-heap-1, D-heap-7) kept meeting shapes where the compiler
 could not tell which copy should release a resource.
@@ -130,7 +130,7 @@ value; a refusal cell scores the error and its named line.
 | Item | Source | Verify | Status |
 |---|---|---|---|
 | **P0** — census: every type with `OpDrop` in the corpus and the published libraries, and every place one is copied today | `LOFT_DROP_COPY_CENSUS` (`use_analysis::drop_copy_census`), the library and consumer trees, the registry cache | `ownership_drop_gate::the_census_names_the_copy_each_cell_makes`: every CROSS and COALESCE cell against a per-axis expectation, and the CROSS `local` cells with the hook removed report `0 sites`.  Falsified: disabling the bind arm fails 54 cells; the join peel and the view-temp dependencies each failed it before they existed | Done |
-| **P1** — the rules above in `formal/heap.md` + `binding.md`, with a deviation for every current behaviour that disagrees | this plan | `rule_tags.py registers`: the OPEN count equals the drop-gate cells the census classifies as disagreeing | Open |
+| **P1** — the rules above in `formal/heap.md` + `binding.md`, with a deviation for every current behaviour that disagrees | this plan | Every gate cell has a lease verdict (`Once` / `Refused` / `Open`), and `every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation` ties each `Once` cell that fails in a baseline to exactly one OPEN entry: `D-heap-1` (`p_o2`), `D-heap-7` (family 1, 19 cells), `D-heap-10` (`p_i2`).  All 111 `Refused` cells are `D-heap-8`'s, and `D-heap-9` is `OpCopy`.  `registers` reads `OPEN: 5`.  Falsified: closing `D-heap-10` in the register, or removing `p_i2` from a baseline, turns it red.  The census check asks a refused cell for a copy from a variable; marking a fresh-only cell refused turns it red.  Only `c_tuple_tuplem` is `Open` (question 9) | Done |
 | **P2** — the refusal as a REPORT (no error): at every copy site of a refusing type whose source is used afterwards | `copy_manifest::Origin` (both backends' emitted copies) + `ParserMaterialise` | the manifest guard: every emitted copy of a refusing type is reported or proven a move; falsified by disabling one site | Open |
 | **P3** — the report becomes a compile error; the published-library gate read row by row | P2 | `tests/scripts` refusal cells (`@EXPECT_ERROR`) on both backends; every library break is a real double release today, or the rule is wrong | Open |
 | **P4** — `OpCopy`: signature check (mirror `check_drop_signature`, `definitions.rs`), synthesized cascade (mirror `synth_drop_cascades`), a call at every copy site on both backends | P1 | drop gate re-baselined on the lease oracle, both backends, `LOFT_POISON`; the matrix's `OpCopy` count per cell | Open |
@@ -166,7 +166,14 @@ value; a refusal cell scores the error and its named line.
    type refuses.
 6. **A non-droppable type that must not be copied** (a `unique struct` modifier, beside `value struct`):
    left out until a use case asks for it.
-7. **Returning a member of a local that is about to die** (`return s.h`).  The census shows a copy
+7. **DECIDED 2026-09-15 (owner): refused** for a type without `OpCopy`, a second lease for a type
+   with one.  The container's drop is a use of the member, so copying a member out of a container
+   whose drop still runs is a copy while the source is used.  The author writes
+   `c = acquire(); …; return c` instead.  Written into P1 as two more consequences.  A PARAMETER
+   is never moved, because the caller holds it, so `return p` and `x = p` are refused too.  That
+   narrows `(H-Rebind-Self)` to `a = a` and `a = a ?? d`, since `same(a)` is refused inside `same`.
+   The builder idiom keeps a loft spelling: write through the aliasing parameter instead of
+   returning it.  **Returning a member of a local that is about to die** (`return s.h`).  The census shows a copy
    into the return buffer (`kind=buffer from=s`), while `s`'s own drop still covers the member.
    `return a` of a whole local copies nothing, so "a `return` is legal" holds for a whole value only.
    For a member there are three readings: a second lease, a refusal, or a move OUT of the container.

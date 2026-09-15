@@ -1724,6 +1724,17 @@ cargo test --release --test ownership_drop_gate                            # bot
 LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate     # only after reading the diff
 ```
 
+**The lease verdicts.**  `formal/heap.md`'s copy-lease rules give every cell a verdict
+(`lease_verdict`): `Once` (every copy is a move, a view or a fresh value) or `Refused` (a copy
+whose value is still used; `D-heap-8` until the refusal exists), or `Open` naming the plan's
+question that decides it.  `every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation`
+reads both baselines and requires each `Once` cell that releases wrongly to be listed under
+exactly one OPEN deviation (`LEASE_DEVIATIONS`), and each listed cell to still fail — so a fix
+retires its cell from the list in the same commit, and a deviation closed in the register while a
+cell still measures it fails.  `the_census_names_the_copy_each_cell_makes` runs
+`LOFT_DROP_COPY_CENSUS` over every cell: a copied structure is reported from its root, a view
+reports nothing, a program with no hook reports `0 sites`, and a `Refused` cell must list a copy.
+
 **It can fail.**  `the_scorer_names_each_kind_of_wrong_release` feeds a hand-written trace for
 each kind, and `every_cell_is_distinct_and_mints` rejects a cell that could only ever be clean.
 Against the compiler: `LOFT_NO_FIELD_HANDOFF=1` switches one hand-off off, and the interpreter

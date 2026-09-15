@@ -3185,6 +3185,11 @@ day), `t = s; return t` three times.  `scopes::copy_moves_drop_from` is the one 
 a parameter leaves the caller as the owner.  Guard:
 `tests/scripts/a-whole-value-copy-of-a-droppable-releases-once.loft`.
 
+**Revised 2026-09-15 by C121.**  Only a MOVE — a copy whose source value is not used after it —
+hands the release on.  A copy whose value is still used makes a second structure, which takes
+its own lease through `OpCopy` or is refused at compile time.  The move-on-construction above
+stands for a source that dies at the copy.
+
 **And to the reassignment (2026-09-05, loft#1362).**  A rebind is the owner's death for the
 record it displaces, and the hook ran at scope end only — a struct literal assigned to a live
 local is rebuilt IN PLACE, so the old record's bytes were gone before anything could read
@@ -3806,3 +3811,58 @@ or the browser.  The evidence that licenses it is the in-house testing's fault-f
 ledger; the registry's own artefacts never lose the layer.  That is also why the proofs
 come first: a check retired by a proof is retired inside the library's ordinary build
 and reaches every consumer, checks intact.
+
+## C121 — a copy of a droppable takes its own lease or is refused; the release no longer moves with a copy
+
+**Catalogue:** @F-drop (`OpDrop`) · @PLN163 · revises C111's whole-value extension
+
+### Question
+
+A type with `OpDrop` releases something outside the program.  When its value is copied — a
+bind, a field, an element, a return — which copy releases it?
+
+### Context
+
+C111 moved the release with a copy into a container, and on 2026-09-04 extended that to every
+whole-value copy: the copy owns, the source stops dropping.  The drop gate then measured 94
+cells releasing wrongly, and cure after cure met a shape where the compiler could not tell which
+copy should release (`formal/heap.md` D-heap-1, D-heap-7).  On the morning of 2026-09-15 the
+shapes inside a structure were closed as `warning[double-move]`.
+
+### Evaluation — from the use cases
+
+| program | the release moving with a copy | what the use case needs |
+|---|---|---|
+| `a = mk(); b = a; b.id = 4` | one drop; `a`'s structure is never dropped | two structures, two drops |
+| `b = a` in a block, `a` read after it | `b` releases while `a` is still in use | the copy needs a lease of its own |
+| an outward connection, a writable file | — | a duplicate shares one stream and one position, so no second lease can exist: the copy is refused |
+| `c = Hold { h: s.h }`, `return s.h` | the release goes with one of two structures | refused: the container's drop still holds the member |
+| `a = a` | — | one structure |
+
+Declined:
+
+- **the release moving with a copy** — it leaves one structure working while its resource is
+  gone, or releases twice;
+- **a mark inside the container** recording which member was moved out — bookkeeping inside
+  structures, and a guess for the programmer about which structure still works;
+- **a static ownership fact** choosing the owner per copy — D-heap-1's resolver is given a
+  variable where the answer belongs to an assignment, and the answer still surprises;
+- **a warning for the shapes inside a structure** — the program still compiles and still
+  releases twice.
+
+### Decision
+
+**2026-09-15, owner.**  `formal/heap.md` (H-Lease), (H-Move), (H-Copy-Lease), (H-Copy-Refuse),
+(H-Rebind-Self), (H-Elide).  A type with `OpDrop` and no `OpCopy` refuses a copy whose value is
+still used; `OpCopy` makes a second lease; a move hands the lease on.  A container member and a
+parameter are never moved, so `return s.h`, `c = Hold { h: s.h }`, `x = p` and `return p` are
+refused for a type without `OpCopy`.  Sharing a store stays an optimisation that may elide a
+copy together with its drop (C86).  loft is at contract 0 and no published package declares
+`OpDrop`, so the refusal lands without a deprecation window (COMPATIBILITY.md § The error
+surface is one-directional).
+
+### Revisit when
+
+A consumer needs a droppable OUT of a container it keeps using — a pool that hands out one
+connection and keeps the rest.  That wants a named operation that empties the member (a
+`take`), which is additive; it is not a reason to move a release with an implicit copy again.

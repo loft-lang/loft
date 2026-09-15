@@ -327,6 +327,16 @@ fn p_s5() { p_s5_b(false); }"#,
             r#"fn p_s8_b(k: integer) { x = mk(115); for i in 0..2 { x = match k { 0 => mk(116 + i), _ => mk(118 + i) }; println("R{x.id}"); } }
 fn p_s8() { p_s8_b(0); }"#,
         ),
+        // (H-Rebind-Self): a variable rebound to its own value is not a new structure, so each
+        // resource is released once — and a `??` whose subject is the target itself is the same.
+        cell(
+            "p_i1",
+            r#"fn p_i1() { a = mk(120); a = a; println("R{a.id}"); }"#,
+        ),
+        cell(
+            "p_i2",
+            r#"fn p_i2() { a: H? = mk(121); a = a ?? mk(122); println("R{a.id}"); }"#,
+        ),
         // (H-Drop-Not): the language releases nothing for the X-marked id.
         cell(
             "p_n1",
@@ -1030,9 +1040,18 @@ fn expected_roots(name: &str) -> Option<Vec<&'static str>> {
 /// that structure's root, a fresh value is reported from no user variable, and a program whose
 /// resource type has no `OpDrop` reports no site at all.  The census is what @PLN163 P2 turns
 /// into the refusal report, so a copy it cannot see is a copy the refusal would let through.
+///
+/// It also checks the lease verdicts against what is copied: a cell the rules refuse duplicates a
+/// value something still holds, so the census must list a copy FROM the variable that holds it,
+/// or the verdict is wrong.  A copy of a fresh value made while building the cell's source
+/// (`from=__lift_2 into=s`) does not count.  Two refused sources are held by no variable of the
+/// cell: a call result's member (`mk_s(…).h`), and a returned PARAMETER or place reached through
+/// one (`return p`, `return p.h`).  The callee copies nothing there; the copy is the caller's bind
+/// of the call result, minted at emission, where `copy_manifest.rs` sees it and this IR walk does
+/// not (@PLN163 P2).
 #[test]
 fn the_census_names_the_copy_each_cell_makes() {
-    let cells: Vec<Cell> = cross_cells().into_iter().chain(coalesce_cells()).collect();
+    let cells = all_cells();
     let reports = for_each_cell(&cells, "census", workers(16), |dir, c| {
         census(dir, c, PRELUDE)
     });
@@ -1049,8 +1068,24 @@ fn the_census_names_the_copy_each_cell_makes() {
             .flat_map(|f| f.split(','))
             .filter(|f| *f != "-")
             .collect();
+        let held_by_no_variable = c.name.starts_with("c_callproj_")
+            || ["p_g1", "p_g3", "p_g4", "p_g5"].contains(&c.name.as_str())
+            || c.name == "c_param_ret"
+            || c.name == "c_pfield_ret"
+            || (c.name.starts_with("q_") && c.name.contains("_param_") && c.name.ends_with("_ret"));
+        if lease_verdict(&c.name) == Lease::Refused
+            && !held_by_no_variable
+            && !from.iter().any(|f| !f.starts_with('_'))
+        {
+            wrong.push(format!(
+                "{}: refused by the lease rules, but no copy from a variable in {sites:?}",
+                c.name
+            ));
+        }
         let Some(roots) = expected_roots(&c.name) else {
-            eprintln!("  undecided {}: {sites:?}", c.name);
+            if !c.name.starts_with("p_") {
+                eprintln!("  undecided {}: {sites:?}", c.name);
+            }
             continue;
         };
         for root in &roots {
@@ -1087,6 +1122,172 @@ fn the_census_names_the_copy_each_cell_makes() {
     assert!(
         wrong.is_empty(),
         "\ncopy census:\n  {}\n",
+        wrong.join("\n  ")
+    );
+}
+
+// ── the lease verdicts (@PLN163 P1) ─────────────────────────────────────────────────────────
+
+/// What `formal/heap.md`'s copy-lease rules require of a cell.  `H` declares `OpDrop` and no
+/// `OpCopy`, so every copy of it is a move or refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lease {
+    /// Compiles and releases each resource once: every copy in the cell is a move (H-Move), a
+    /// view, or a copy of a fresh value.
+    Once,
+    /// A copy whose value is still used — by a later read, by the container whose drop holds the
+    /// member, or by the caller that holds the parameter — so the cell must not compile
+    /// (H-Copy-Refuse).  `D-heap-8` until the refusal exists.
+    Refused,
+    /// The rules do not decide the cell yet; the text names the plan's open question.
+    Open(&'static str),
+}
+
+/// The pilot cells the lease rules refuse, each classified by hand.
+const PILOT_REFUSED: &[&str] = &[
+    "p_k7", // `t = x` off a parameter
+    "p_o1", // `u = e`: a loop variable over the vector's elements
+    "p_o3", // `return x`: a view of a member of the tuple that dies
+    "p_o4", // `return t.0 ?? d`: a member of the tuple that dies, or a parameter
+    "p_o5", // a parameter's member placed in a container
+    "p_l1", "p_l2", // `a ?? mk()` inside a loop, `a` declared outside it
+    "p_h2", "p_h3", "p_h4", "p_h5", "p_h6", "p_h7", // `x = p`
+    "p_e1", "p_e2", // `vs[0]` appended to another vector
+    "p_g1", "p_g3", "p_g4", "p_g5", // `mk_s(…).h`: a member of a call result that dies
+    "p_s4", // `x = a` on one path, then `y = a`
+];
+
+/// The pilot cells whose copies are all moves, views or fresh values, each classified by hand.
+const PILOT_ONCE: &[&str] = &[
+    "p_k1", "p_k2", "p_k3", "p_k4", "p_k5", "p_k6", "p_o2", "p_j1", "p_j2", "p_j3", "p_j4", "p_h1",
+    "p_r1", "p_g2", "p_s1", "p_s2", "p_s3", "p_s5", "p_s6", "p_s7", "p_s8", "p_i1", "p_i2", "p_n1",
+    "p_n2", "p_n3", "p_n4",
+];
+
+/// What the lease rules require of the cell `name`: by hand for a pilot, and from its two axes for
+/// a generated cell.
+///
+/// A local, a `??` over one, a call and a literal are only ever moved or fresh.  A parameter is
+/// never moved (the caller holds it) and neither is a member of a container (the container's drop
+/// holds it), so copying either is refused — while a member bound to a variable or placed in a
+/// tuple member is a view and copies nothing.  A call result's member is materialised when the
+/// call result dies, which copies it.  Whether a parameter or a tuple member placed in a tuple
+/// member copies at all is the plan's question 9.
+fn lease_verdict(name: &str) -> Lease {
+    const VIEWING: &[&str] = &[
+        "local", "annot", "nullable", "arm", "arm0", "reassign", "tuplem",
+    ];
+    const Q9: Lease = Lease::Open("question 9: does a tuple literal copy its member in?");
+    let parts: Vec<&str> = name.split('_').collect();
+    match parts.as_slice() {
+        ["p", ..] if PILOT_REFUSED.contains(&name) => Lease::Refused,
+        ["p", ..] if PILOT_ONCE.contains(&name) => Lease::Once,
+        ["c", source, dest] => match *source {
+            "call" | "literal" | "local" | "coalesce" => Lease::Once,
+            "param" | "tuple" if *dest == "tuplem" => Q9,
+            "param" | "callproj" => Lease::Refused,
+            _ if VIEWING.contains(dest) => Lease::Once,
+            _ => Lease::Refused,
+        },
+        ["q", _, "param", _, "tuplem"] => Q9,
+        ["q", _, "param", _, _] => Lease::Refused,
+        ["q", _, "field", _, dest] if !VIEWING.contains(dest) => Lease::Refused,
+        ["q", ..] => Lease::Once,
+        _ => panic!("{name} has no lease verdict: classify it under formal/heap.md § Drop"),
+    }
+}
+
+/// Each OPEN deviation in `formal/heap.md` that a cell with a `Once` verdict still measures, with
+/// those cells.  A refused cell compiles today and is `D-heap-8`'s, so it is not listed.
+const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[
+    ("D-heap-1", &["p_o2"]),
+    (
+        "D-heap-7",
+        &[
+            "c_coalesce_enum",
+            "c_coalesce_field",
+            "c_coalesce_push",
+            "c_coalesce_veclit",
+            "p_j3",
+            "p_j4",
+            "q_default_local_call_field",
+            "q_default_local_call_local",
+            "q_default_local_literal_field",
+            "q_default_local_literal_push",
+            "q_default_local_var_field",
+            "q_default_local_var_push",
+            "q_present_local_call_field",
+            "q_present_local_call_push",
+            "q_present_local_literal_field",
+            "q_present_local_literal_push",
+            "q_present_local_var_field",
+            "q_present_local_var_push",
+            "q_present_local_var_ret",
+        ],
+    ),
+    ("D-heap-10", &["p_i2"]),
+];
+
+/// Every cell has a lease verdict, and every cell the rules say must release once while a
+/// baseline says it does not is carried by exactly one OPEN deviation in `formal/heap.md`.  A fix
+/// that retires a baseline line fails here until its cell leaves the deviation's list, and so
+/// does a deviation closed in the register while a cell still measures it.
+#[test]
+fn every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation() {
+    let heap = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/doc/claude/formal/heap.md"
+    ))
+    .expect("read formal/heap.md");
+    let mut wrong = Vec::new();
+    for dev in LEASE_DEVIATIONS
+        .iter()
+        .map(|(d, _)| *d)
+        .chain(["D-heap-8", "D-heap-9"])
+    {
+        let header = format!("### {dev} — OPEN");
+        if !heap.lines().any(|l| l.starts_with(&header)) {
+            wrong.push(format!("{dev} is not OPEN in formal/heap.md"));
+        }
+    }
+    let cells = all_cells();
+    for (path, backend) in [(BASELINE, "interpreter"), (NATIVE_BASELINE, "native")] {
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let measured = parse_baseline(&text);
+        let mut refused = 0;
+        for c in &cells {
+            let listed: Vec<&str> = LEASE_DEVIATIONS
+                .iter()
+                .filter(|(_, names)| names.contains(&c.name.as_str()))
+                .map(|(d, _)| *d)
+                .collect();
+            let fails = measured.contains_key(&c.name);
+            match lease_verdict(&c.name) {
+                Lease::Once if fails && listed.len() != 1 => wrong.push(format!(
+                    "{backend} {}: releases wrongly under a Once verdict, listed under {listed:?}",
+                    c.name
+                )),
+                Lease::Once if !fails && !listed.is_empty() => wrong.push(format!(
+                    "{backend} {}: clean, and still listed under {listed:?} — retire it there",
+                    c.name
+                )),
+                Lease::Refused | Lease::Open(_) if !listed.is_empty() => wrong.push(format!(
+                    "{backend} {}: not a Once cell, and listed under {listed:?}",
+                    c.name
+                )),
+                Lease::Refused => refused += 1,
+                Lease::Open(q) if fails => eprintln!("  {backend} {}: undecided — {q}", c.name),
+                _ => {}
+            }
+        }
+        eprintln!(
+            "  {backend}: {refused} of {} cells are refused by the lease rules (D-heap-8)",
+            cells.len()
+        );
+    }
+    assert!(
+        wrong.is_empty(),
+        "\nlease verdicts:\n  {}\n",
         wrong.join("\n  ")
     );
 }
