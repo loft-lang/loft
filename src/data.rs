@@ -7243,7 +7243,7 @@ impl Data {
     /// attribute labelled by its spelling.  A free incumbent is re-keyed from `n_<name>` to
     /// its full spelling, so the name offers no parse hint (`Disp-Hint`) and the sites that
     /// read `n_<name>` as THE definition find none, exactly as they do for a `both` name.
-    fn admit_overload_set(&mut self, lexer: &mut Lexer, fn_name: &str, incumbent: u32) {
+    pub(crate) fn admit_overload_set(&mut self, lexer: &mut Lexer, fn_name: &str, incumbent: u32) {
         let mut main = self.def_nr(fn_name);
         if main == u32::MAX {
             main = self.add_def(fn_name, lexer.pos(), DefType::Dynamic);

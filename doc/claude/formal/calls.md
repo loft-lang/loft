@@ -272,10 +272,10 @@ no-variant-matched tail and answered another variant's bytes on `--interpret` an
 five lines above it (loft#1427). One home answers it: `Data::receiver_def_nr`.
 
 *Anchors:* `Data::receiver_def_nr` (`src/data.rs`), its three readers in
-`src/parser/definitions.rs` (`enum_fn`, `enum_numbers`, `warn_missing_enum_variants`) and
+`src/parser/definitions.rs` (`enum_fn`, `enum_numbers`, `refuse_uncovered_variants`) and
 `one_implementation_per_variant`, which keeps a variant's DENSE overload where both are
 declared — the one a direct call takes; `tests/scripts/1427-a-nullable-receiver-implements-its-variant.loft`,
-`1427b-…`, and the warning half in `tests/parse_errors.rs`
+`1427b-…`, and the refusal half in `tests/parse_errors.rs`
 (`nullable_receiver_implements_its_variant`), which fails on the extra report a `.loft` guard
 cannot see.
 

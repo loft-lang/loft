@@ -41,9 +41,10 @@ fn ar35(self: Sb35) -> integer { self.s * self.s }
 fn per35(self: Ca35) -> integer { self.r * 2 }
 fn per35(self: Sb35) -> integer { self.s * 4 }
 
-// e3 — a THIRD method only one variant implements: its dispatcher has one arm, and the warning
-// names the variant that has none (`tests/parse_errors.rs` counts the reports; a `.loft` guard
-// cannot assert a warning's absence).
+// e3 — a THIRD method only one variant implements.  Called through `Sh35` it is a `match` missing
+// `Sb35` and refused (@PLN162 D-disp-1), so the per-method keying of THAT answer lives in
+// `tests/parse_errors.rs` (`a_second_method_gets_its_own_missing_variant_refusal`), where a
+// refusal can be asserted; here the method is called on the variant it belongs to.
 fn third35(self: Ca35) -> integer { self.r + 7 }
 
 // e4 — a second enum whose two methods differ in RETURN kind, which is what made the shared
@@ -64,7 +65,8 @@ fn main() {
   b: Sh35 = Sb35 { s: 4 };
   assert(a.ar35() == 6 && b.ar35() == 16, "e1 the first method dispatches: {a.ar35()} {b.ar35()}");
   assert(a.per35() == 4 && b.per35() == 16, "e2 and so does the second: {a.per35()} {b.per35()}");
-  assert(a.third35() == 9, "e3 a method only one variant implements still dispatches: {a.third35()}");
+  c = Ca35 { r: 2 };
+  assert(c.third35() == 9, "e3 a method only one variant implements, on that variant: {c.third35()}");
 
   x: Bd35 = Bx35 { v: 3 };
   y: Bd35 = By35 { v: 3 };

@@ -1,0 +1,128 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A definition at the ENUM beside definitions at its variants is the canonical `match`'s `_`
+// arm (@PLN162 `Disp-Match-Equiv`, closing D-disp-1): a value held at the enum takes its
+// runtime variant's own definition where one exists, and the enum-level body otherwise.  The
+// variant methods (`t_8Fireball_kind`) and the enum-level one (`t_6Entity_kind`, or a free
+// `kind(e: Entity)`) live under different keys, so nothing made them one overload set: no
+// dispatcher existed, @F20 yielded to the enum-level definition, and every variant answered
+// the enum-level body — on both backends, with no diagnostic, even with all three variants
+// implemented.  The other half of the closure, a call through the enum on a set missing a
+// variant, is a REFUSAL and lives in `tests/parse_errors.rs`, where one can be asserted.
+// @falsified-at: 0c1567d48 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-method-at-the-enum-is-the-wildcard-for-variants-without-their-own.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: exit and asserts, on both backends — the control compiles and answers the
+//   enum-level body, so `main` stops at the first cell's assert (`entity 1|entity 2|entity 3`).
+//   ARMED: nothing; the wrong answer needs no instrument.
+//   WITNESS: measured cell by cell on the control with each assert turned into a print: every
+//   enum-held cell answered the enum-level body — `entity 1|entity 2|entity 3` and
+//   `entity 4|entity 5` on the two spellings, `-999897` for the complete set (each element
+//   `n - 100`), `late-entity 6|late-entity 7`, `free-entity 8|free-entity 9`, `7|8|9` for
+//   the trailing parameter, `none 4|none 0|none 3` for the branch-built text.
+//   HOLDS: the variant-held control answers the same on both trees; leak, panic and refusals
+//   are clean on both, and the file is clean under strict stores, poison and the native leak
+//   check.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+enum Entity {
+  Fireball { n: integer },
+  IceWall { n: integer },
+  Crate { n: integer },
+}
+
+fn kind(self: Fireball) -> text { "fire {self.n}" }
+fn kind(self: Entity) -> text { "entity {self.n}" }
+
+// Every variant has its own: the enum-level body is never reached through a variant.
+fn full(self: Fireball) -> integer { 10 + self.n }
+fn full(self: IceWall) -> integer { 20 + self.n }
+fn full(self: Crate) -> integer { 30 + self.n }
+fn full(self: Entity) -> integer { self.n - 100 }
+
+// The enum-level member declared FIRST.
+fn late(self: Entity) -> text { "late-entity {self.n}" }
+fn late(self: IceWall) -> text { "late-wall {self.n}" }
+
+// A FREE enum-level fallback beside a variant method.
+fn tagline(self: Crate) -> text { "free-crate {self.n}" }
+fn tagline(e: Entity) -> text { "free-entity {e.n}" }
+
+fn dmg(self: Fireball, x: integer) -> integer { self.n * 100 + x }
+fn dmg(self: Entity, x: integer) -> integer { self.n + x }
+
+// A text body that builds its result in a branch carries a buffer its twin does not.
+fn heat(self: Fireball) -> text { if self.n > 2 { "hot {self.n}" } else { "cold" } }
+fn heat(self: Entity) -> text { "none {self.n}" }
+
+fn test_an_enum_held_receiver_takes_its_variants_method() {
+  f: Entity = Fireball { n: 1 };
+  w: Entity = IceWall { n: 2 };
+  c: Entity = Crate { n: 3 };
+  s = "{f.kind()}|{w.kind()}|{c.kind()}";
+  assert(s == "fire 1|entity 2|entity 3", "the method spelling: {s}");
+}
+
+fn test_the_bare_spelling_agrees() {
+  f: Entity = Fireball { n: 4 };
+  c: Entity = Crate { n: 5 };
+  s = "{kind(f)}|{kind(c)}";
+  assert(s == "fire 4|entity 5", "the bare spelling: {s}");
+}
+
+fn test_every_variant_implemented_never_reaches_the_enum_body() {
+  es: vector<Entity> = [Fireball { n: 1 }, IceWall { n: 2 }, Crate { n: 3 }];
+  t = 0;
+  for e in es {
+    t = t * 100 + e.full();
+  }
+  assert(t == 112233, "every element took its own variant's body: {t}");
+}
+
+fn test_the_enum_level_member_declared_first() {
+  w: Entity = IceWall { n: 6 };
+  f: Entity = Fireball { n: 7 };
+  s = "{w.late()}|{f.late()}";
+  assert(s == "late-wall 6|late-entity 7", "declaration order does not decide: {s}");
+}
+
+fn test_a_free_fallback_beside_a_variant_method() {
+  c: Entity = Crate { n: 8 };
+  w: Entity = IceWall { n: 9 };
+  s = "{tagline(c)}|{tagline(w)}";
+  assert(s == "free-crate 8|free-entity 9", "a free enum-level member: {s}");
+}
+
+fn test_a_trailing_parameter() {
+  f: Entity = Fireball { n: 2 };
+  c: Entity = Crate { n: 3 };
+  s = "{f.dmg(5)}|{c.dmg(5)}|{dmg(f, 7)}";
+  assert(s == "205|8|207", "the argument reaches the arm: {s}");
+}
+
+fn test_a_text_body_built_in_a_branch() {
+  f: Entity = Fireball { n: 4 };
+  g: Entity = Fireball { n: 0 };
+  c: Entity = Crate { n: 3 };
+  s = "{f.heat()}|{g.heat()}|{c.heat()}";
+  assert(s == "hot 4|cold|none 3", "a branch-built text through the dispatcher: {s}");
+}
+
+// Control: a receiver held at a VARIANT was always right, and stays a direct call.
+fn test_a_variant_held_receiver() {
+  f = Fireball { n: 1 };
+  c = Crate { n: 3 };
+  s = "{f.kind()}|{kind(f)}|{c.kind()}";
+  assert(s == "fire 1|fire 1|entity 3", "a static receiver: {s}");
+}
+
+fn main() {
+  test_an_enum_held_receiver_takes_its_variants_method();
+  test_the_bare_spelling_agrees();
+  test_every_variant_implemented_never_reaches_the_enum_body();
+  test_the_enum_level_member_declared_first();
+  test_a_free_fallback_beside_a_variant_method();
+  test_a_trailing_parameter();
+  test_a_text_body_built_in_a_branch();
+  test_a_variant_held_receiver();
+}

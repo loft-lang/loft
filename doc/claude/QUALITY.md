@@ -2575,7 +2575,11 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 816 | 474 | 6 | **336** |
+| 818 | 476 | 6 | **336** |
+
+(2026-09-15, @PLN162 D-disp-1 — `refuse_uncovered_variants` tests the synthesised dispatcher's
+receiver and `join_enum_lattice_sets` a definition's first parameter, both through `.base()`
+(the peeling column, +2); the opaque column and the ratchet's pin (336 / 1317) are unchanged.)
 
 (2026-09-15, THE JOINED TREE — the same union: 816 · 474 · 6 · 336, re-measured rather than
 carried.  This branch's 815 · 473 · 5 · 337 and § V-an's 796 · 454 · 6 · 336 each counted its own

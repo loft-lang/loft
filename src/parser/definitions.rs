@@ -181,31 +181,122 @@ impl Parser {
         }
     }
 
-    pub(crate) fn warn_missing_enum_variants(&mut self, e_nr: u32, nrs: &[usize], name: &str) {
+    /// `Disp-Exhaustive` over @F20's synthesised dispatcher (@PLN162, D-disp-1).  A call that
+    /// reaches the dispatcher holds its receiver at the ENUM, so it is the `match` the
+    /// dispatcher stands for, and a variant with no implementation is that `match` missing an
+    /// arm: refused here, at the call, in `M-Exhaust`'s shape.  It used to be a warning at the
+    /// variant's declaration and, at run time, the return type's empty value.  A set nothing
+    /// calls through the enum — a method only one variant has — dispatches nothing and is
+    /// complete as written.
+    pub(crate) fn refuse_uncovered_variants(&mut self, dispatcher: u32) {
+        let Some(Type::Enum(e_nr, true, _)) = self
+            .data
+            .def(dispatcher)
+            .attributes
+            .first()
+            .map(|a| a.typedef.base().clone())
+        else {
+            return;
+        };
+        let name = self.data.def(dispatcher).original_name().clone();
         // @FR-F-Recv — which variant an implementation is FOR is `receiver_def_nr`'s answer,
-        // so a `self: V?` receiver counts as an implementation of `V`.  Asked bare, this
-        // reported "no implementation of 'area' for variant 'Square'" with one written five
-        // lines above it.
-        let implemented: HashSet<u32> = nrs
-            .iter()
-            .map(|nr| self.data.receiver_def_nr(*nr as u32))
-            .filter(|a_nr| *a_nr != u32::MAX)
-            .collect();
-        let missing: Vec<(String, Position)> = self
+        // so a `self: V?` receiver counts as an implementation of `V`.
+        let implemented: HashSet<u32> = self
             .data
             .definitions
             .iter()
             .enumerate()
-            .filter(|(_, v)| v.def_type == DefType::EnumValue && v.parent == e_nr)
-            .filter(|(v_nr, _)| !implemented.contains(&(*v_nr as u32)))
-            .map(|(_, v)| (v.name.clone(), v.position.clone()))
+            .filter(|(_, d)| {
+                d.def_type == DefType::Function
+                    && d.synthetic.is_none()
+                    && d.original_name().as_str() == name
+            })
+            .map(|(nr, _)| self.data.receiver_def_nr(nr as u32))
+            .filter(|v| *v != u32::MAX)
             .collect();
-        for (variant_name, pos) in &missing {
-            self.lexer.pos_diagnostic(
-                Level::Warning,
-                pos,
-                &format!("no implementation of '{name}' for variant '{variant_name}'"),
-            );
+        let missing: Vec<String> = self
+            .data
+            .definitions
+            .iter()
+            .enumerate()
+            .filter(|(v_nr, v)| {
+                v.def_type == DefType::EnumValue
+                    && v.parent == e_nr
+                    && !implemented.contains(&(*v_nr as u32))
+            })
+            .map(|(_, v)| v.name.clone())
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        let enum_name = self.data.def(e_nr).name.clone();
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "call of `{name}` on `{enum_name}` is not exhaustive — missing: {}; add `fn {name}(self: …)` for each missing variant, or a fallback `fn {name}(self: {enum_name})` that every variant without one reaches",
+            missing.join(", ")
+        );
+    }
+
+    /// `Disp-Specific` / `Disp-Fallback` (@PLN162): the definitions of one name whose first
+    /// parameter is an enum or one of its variants are ONE overload set, however each is
+    /// spelled.  `kind(self: Fireball)` beside `kind(self: Entity)` — or beside a free
+    /// `kind(e: Entity)` — live under different keys, so nothing made them one: no bare
+    /// dispatcher existed, a receiver held at the enum reached the enum-level definition
+    /// whatever its runtime variant, and @F20 yielded to that definition.  The canonical
+    /// `match` (`Disp-Match-Equiv`) takes the variant's arm and leaves the enum-level body as
+    /// its `_`.  Joined once the file's definitions are all known and before @F20 asks whether
+    /// a set owns its dispatch, so selection ranks the variant above the enum and
+    /// `Disp-Dynamic` builds that `match` for an enum-held position.  A group with no
+    /// enum-level member stays @F20's, whose dispatcher already IS the set's `match`.  A name
+    /// another source holds as a set is not joined, exactly as `add_fn` does not join one.
+    fn join_enum_lattice_sets(&mut self) {
+        let source = self.data.source;
+        // (name, enum) → (has an enum-level member, has a variant member, members)
+        let mut groups: std::collections::BTreeMap<(String, u32), (bool, bool, Vec<u32>)> =
+            std::collections::BTreeMap::new();
+        for (d_nr, d) in self.data.definitions.iter().enumerate() {
+            if d.def_type != DefType::Function
+                || d.source != source
+                || d.synthetic.is_some()
+                || crate::portable_path::is_stdlib_source(&d.position.file)
+            {
+                continue;
+            }
+            let Some(first) = d.attributes.iter().find(|a| !a.hidden) else {
+                continue;
+            };
+            let (e_nr, at_enum) = match first.typedef.base() {
+                Type::Enum(e, true, _) => (*e, true),
+                Type::Reference(v, _) if self.data.def(*v).def_type == DefType::EnumValue => {
+                    (self.data.def(*v).parent, false)
+                }
+                _ => continue,
+            };
+            let group = groups
+                .entry((d.original_name().clone(), e_nr))
+                .or_default();
+            if at_enum {
+                group.0 = true;
+            } else {
+                group.1 = true;
+            }
+            group.2.push(d_nr as u32);
+        }
+        for ((name, _), (at_enum, at_variant, members)) in groups {
+            if !(at_enum && at_variant) {
+                continue;
+            }
+            let main = self.data.def_nr(&name);
+            if main != u32::MAX
+                && (self.data.def(main).def_type != DefType::Dynamic
+                    || self.data.def(main).source != source)
+            {
+                continue;
+            }
+            for member in members {
+                self.data.admit_overload_set(&mut self.lexer, &name, member);
+            }
         }
     }
 
@@ -380,13 +471,13 @@ impl Parser {
         self.data.definitions[fn_nr as usize].code =
             v_block(ls, self.data.def(from_nr).returned().clone(), "dynamic_fn");
         self.data.definitions[self.context as usize].variables = self.vars.clone();
-        self.warn_missing_enum_variants(e_nr, nrs, &name);
     }
 
     pub(crate) fn enum_fn(&mut self) {
         if !self.first_pass {
             return;
         }
+        self.join_enum_lattice_sets();
         let mut todo = HashMap::new();
         for (d_nr, d) in self.data.definitions.iter().enumerate() {
             if d.def_type != DefType::Function || d.attributes.is_empty() {

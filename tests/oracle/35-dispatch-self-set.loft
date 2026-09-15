@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN162 D-disp-1 (@PLN89 differential-oracle corpus) — AXIS: `Disp-Match-Equiv` for a
+// `self` set.  `34-dispatch-set` holds a FREE set to its `match`; this is the same pairing
+// for a set spelled with method receivers, where a receiver held at the enum used to reach the
+// enum-level definition whatever its variant.  The `self: Entity` member is the canonical
+// `match`'s `_` arm: a variant with a definition of its own takes it, every other variant
+// takes the enum-level body.  `35-dispatch-self-set-as-match.loft` is that `match`, and
+// `@ORACLE_TWIN` holds the two programs to one stdout.  Cells: a static receiver at a variant;
+// the method and the bare spelling over every variant of a `vector<Entity>`; a trailing
+// parameter; a text body that builds its result in a branch; enum-held locals.
+// @ORACLE_TWIN: 35-dispatch-self-set-as-match.loft
+
+enum Entity {
+  Fireball { n: integer },
+  IceWall { n: integer },
+  Crate { n: integer },
+}
+
+fn kind(self: Fireball) -> text { if self.n > 2 { "hot fire {self.n}" } else { "fire {self.n}" } }
+fn kind(self: IceWall) -> text { "wall {self.n}" }
+fn kind(self: Entity) -> text { "thing {self.n}" }
+
+fn dmg(self: Fireball, x: integer) -> integer { self.n * 100 + x }
+fn dmg(self: Entity, x: integer) -> integer { self.n + x }
+
+fn main() {
+  a = Fireball { n: 1 };
+  s = a.kind();
+  assert(s == "fire 1", "static receiver at a variant: got {s}");
+  print("{s}\n");
+  es: vector<Entity> = [Fireball { n: 3 }, IceWall { n: 4 }, Crate { n: 5 }];
+  out = "";
+  for e in es {
+    out += e.kind() + "/" + kind(e) + "/{e.dmg(7)};";
+  }
+  assert(out == "hot fire 3/hot fire 3/307;wall 4/wall 4/11;thing 5/thing 5/12;", "every variant through the enum: got {out}");
+  print("{out}\n");
+  x: Entity = IceWall { n: 8 };
+  y: Entity = Fireball { n: 2 };
+  t = "{x.kind()}|{y.dmg(1)}|{dmg(x, 2)}";
+  assert(t == "wall 8|201|10", "enum-held locals: got {t}");
+  print("{t}\n");
+}

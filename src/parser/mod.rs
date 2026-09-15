@@ -12399,6 +12399,15 @@ impl Parser {
         // (a method / operator path) keeps the cursor caret and offers no quick-fix.
         name_pos: Option<&Position>,
     ) -> Type {
+        // `Disp-Exhaustive` (@PLN162): a call reaching @F20's synthesised dispatcher is a
+        // `match` on the enum, and a variant with no implementation is refused here — both
+        // call spellings, and every receiver spelling, arrive at this one site.
+        if !self.first_pass
+            && d_nr != u32::MAX
+            && self.data.def(d_nr).synthetic == Some("enum_dispatcher")
+        {
+            self.refuse_uncovered_variants(d_nr);
+        }
         // @PLN102 pre-freeze — `OpEqBool`/`OpNeBool` are BOOLEAN (in)equality; they must
         // not be the implicit truthiness fallback for mismatched types.  Without this,
         // `5 == "banana"` resolves as `OpEqBool(OpConvBoolFromInt(5),

@@ -539,47 +539,74 @@ fn fn_name_as_typedef() {
 }
 
 #[test]
-fn missing_variant_impl() {
-    // area() is only defined for Circle; Rect has no area() — expect a warning at Rect's definition.
+fn a_method_one_variant_has_says_nothing_until_called_through_the_enum() {
+    // @PLN162 D-disp-1 — `area` only for `Circle` is a method of `Circle`: a call on a value
+    // held at the variant is a direct call and complete as written, so nothing is reported.
+    // It used to warn at `Rect`'s declaration whether or not anything dispatched.  This
+    // harness fails on any diagnostic the fixture does not assert, so the old warning coming
+    // back goes red here.
     code!(
-        "enum Shape {\n    Circle { r: float },\n    Rect { w: float, h: float }\n}\nfn area(self: Circle) -> float { self.r * self.r }\nfn test() { 1 + 1; }"
+        "enum Shape {\n    Circle { r: float },\n    Rect { w: float, h: float }\n}\nfn area(self: Circle) -> float { self.r * self.r }\nfn test() { c = Circle { r: 2.0 }; c.area(); }"
+    );
+}
+
+#[test]
+fn a_call_through_the_enum_missing_a_variant_is_refused() {
+    // @PLN162 `Disp-Exhaustive`, D-disp-1 — a call on a value held at the ENUM is the `match`
+    // the synthesised dispatcher stands for, and `Rect` has no arm: refused at the call, in
+    // `M-Exhaust`'s shape, on both spellings.  It compiled with a warning and answered the
+    // return type's empty value at run time.
+    code!(
+        "enum Shape {\n    Circle { r: float },\n    Rect { w: float, h: float }\n}\nfn area(self: Circle) -> float { self.r * self.r }\nfn test() { s: Shape = Circle { r: 1.0 }; s.area(); area(s); }"
     )
-    .warning("no implementation of 'area' for variant 'Rect' at missing_variant_impl:3:11");
+    .error("call of `area` on `Shape` is not exhaustive — missing: Rect; add `fn area(self: …)` for each missing variant, or a fallback `fn area(self: Shape)` that every variant without one reaches at a_call_through_the_enum_missing_a_variant_is_refused:6:52")
+    .error("call of `area` on `Shape` is not exhaustive — missing: Rect; add `fn area(self: …)` for each missing variant, or a fallback `fn area(self: Shape)` that every variant without one reaches at a_call_through_the_enum_missing_a_variant_is_refused:6:61");
 }
 
 #[test]
 fn nullable_receiver_implements_its_variant() {
     // loft#1427 — a `self: Sq?` receiver IS an implementation of `Sq` (`@FR-F-Recv`), so the
-    // warning must name only the variant that has none.  Asked bare, the scan reported `Sq`
-    // too — a warning for an implementation written three lines above it — and this harness
-    // fails on any warning the fixture does not assert, so the extra one goes red here.
+    // refusal must name only the variant that has none.  Asked bare, the scan reported `Sq`
+    // too — for an implementation written three lines above it.
     //
-    // Measured against e9f45817 in the cached falsify worktree: FAILS there with
-    // *"Found 'Warning: no implementation of 'ar' for variant 'Sq'' Expected ''"*.  Worth the
-    // check rather than assuming — a `code!` snippet parses as STDLIB source, so a feature
-    // gated on `source != STD_SOURCE` is inert inside one (TESTING.md § The `Test` struct).
-    // The dispatcher scan is not one of those, which is what this measurement establishes.
+    // Measured against e9f45817 in the cached falsify worktree (as the warning it was then):
+    // FAILS there with *"Found 'Warning: no implementation of 'ar' for variant 'Sq''
+    // Expected ''"*.  Worth the check rather than assuming — a `code!` snippet parses as
+    // STDLIB source, so a feature gated on `source != STD_SOURCE` is inert inside one
+    // (TESTING.md § The `Test` struct).  The dispatcher scan is not one of those.
     code!(
-        "enum Sh {\n    Ci { r: integer },\n    Sq { s: integer },\n    Tr { t: integer }\n}\nfn ar(self: Ci) -> integer { self.r }\nfn ar(self: Sq?) -> integer { if self == null { 0 } else { self.s } }\nfn test() { 1 + 1; }"
+        "enum Sh {\n    Ci { r: integer },\n    Sq { s: integer },\n    Tr { t: integer }\n}\nfn ar(self: Ci) -> integer { self.r }\nfn ar(self: Sq?) -> integer { if self == null { 0 } else { self.s } }\nfn test() { s: Sh = Ci { r: 1 }; s.ar(); }"
     )
-    .warning("no implementation of 'ar' for variant 'Tr' at nullable_receiver_implements_its_variant:4:9");
+    .error("call of `ar` on `Sh` is not exhaustive — missing: Tr; add `fn ar(self: …)` for each missing variant, or a fallback `fn ar(self: Sh)` that every variant without one reaches at nullable_receiver_implements_its_variant:8:41");
 }
 
 #[test]
-fn a_second_method_gets_its_own_missing_variant_warning() {
-    // loft#1435 — the dispatcher scan is keyed by the enum AND the method name, so the
-    // missing-implementation warning is asked per method.  Keyed by the enum alone, `Sq`
-    // implementing `ar` silenced the warning about `per`, which it does not implement — and
-    // this harness fails on any warning the fixture does not assert, so a regression that
-    // brings the extra one back goes red here too.
+fn a_second_method_gets_its_own_missing_variant_refusal() {
+    // loft#1435 — the dispatcher scan is keyed by the enum AND the method name, so coverage
+    // is asked per method.  Keyed by the enum alone, `Sq` implementing `ar` silenced the
+    // report about `per`, which it does not implement.  `s.ar()` through the enum is covered
+    // and says nothing; `s.per()` is refused naming `Sq`.
     //
-    // Measured against e9f45817: FAILS there with *"Found '' Expected 'Warning: no
-    // implementation of 'per' for variant 'Sq''"* — the warning this asserts is simply absent
-    // on that build.
+    // Measured against e9f45817 (as the warning it was then): FAILS there with *"Found ''
+    // Expected 'Warning: no implementation of 'per' for variant 'Sq''"*.
     code!(
-        "enum Sh {\n    Ci { r: integer },\n    Sq { s: integer }\n}\nfn ar(self: Ci) -> integer { self.r }\nfn ar(self: Sq) -> integer { self.s }\nfn per(self: Ci) -> integer { self.r * 2 }\nfn test() { 1 + 1; }"
+        "enum Sh {\n    Ci { r: integer },\n    Sq { s: integer }\n}\nfn ar(self: Ci) -> integer { self.r }\nfn ar(self: Sq) -> integer { self.s }\nfn per(self: Ci) -> integer { self.r * 2 }\nfn test() { s: Sh = Ci { r: 1 }; s.ar(); s.per(); }"
     )
-    .warning("no implementation of 'per' for variant 'Sq' at a_second_method_gets_its_own_missing_variant_warning:3:9");
+    .error("call of `per` on `Sh` is not exhaustive — missing: Sq; add `fn per(self: …)` for each missing variant, or a fallback `fn per(self: Sh)` that every variant without one reaches at a_second_method_gets_its_own_missing_variant_refusal:8:50");
+}
+
+#[test]
+fn a_nullable_variant_method_beside_an_enum_level_one_is_ambiguous() {
+    // @PLN162 `Disp-Specific` — `self: Fi?` widens the variant's NULLABILITY and `self: En`
+    // widens the variant to its ENUM: two abstractions of different kinds, incomparable, so a
+    // `Fi` held at the enum is taken by both and nothing ranks them.  The same pair of FREE
+    // definitions is refused the same way; before the two spellings were one set, the method
+    // spelling answered the enum-level body in silence.
+    code!(
+        "enum En {\n    Fi { n: integer },\n    Cr { n: integer }\n}\nfn kd(self: Fi?) -> integer { 1 }\nfn kd(self: En) -> integer { self.n }\nfn test() { f: En = Fi { n: 1 }; f.kd(); }"
+    )
+    .warning("Parameter self is never read at a_nullable_variant_method_beside_an_enum_level_one_is_ambiguous:5:30")
+    .error("`kd(En)` is ambiguous at (Fi) — that pair is taken by kd(Fi?) and kd(En) and nothing ranks them; give the call the arguments that pick one, or drop one definition at a_nullable_variant_method_beside_an_enum_level_one_is_ambiguous:7:41");
 }
 
 #[test]
@@ -678,10 +705,7 @@ fn direct_call_unimplemented_variant() {
 fn area(self: Circle) -> float { self.r * self.r }
 fn test() { r = Rect { w: 3.0, h: 4.0 }; r.area(); }"
     )
-    .error("Unknown field Rect.area at direct_call_unimplemented_variant:3:49")
-    .warning(
-        "no implementation of 'area' for variant 'Rect' at direct_call_unimplemented_variant:1:41",
-    );
+    .error("Unknown field Rect.area at direct_call_unimplemented_variant:3:49");
 }
 
 // --- parallel_for: extra context-argument count validation ---
