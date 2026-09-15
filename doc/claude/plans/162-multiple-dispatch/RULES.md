@@ -311,15 +311,19 @@ and the set's side declares `@ORACLE_TWIN: <the match>`: the sweep holds the pai
 stdout on top of holding each to its own three backends, with a positive control that a
 differing line or exit is caught.
 
-**One return type per dispatch (DESIGN.md Q4, where it cannot stay open — 2026-09-15).**  A
+**One return type per dispatch (DESIGN.md Q4, answered — 2026-09-15).**  A
 call decided by the runtime variant is one synthesised function with one return type, so the
 definitions it chooses between must agree on it.  `val(f: Fireball) -> integer` beside
 `val(e: Entity) -> text` read the text through the integer's frame on the interpreter (`[2]`
 where the body says `e2`) and did not compile on `--native` — for a free set since step 13, and
 for @F20's own dispatcher before any of this plan.  Such a call is now refused naming the two
 definitions; a static call reaches one definition and is untouched (`width(integer) ->
-integer` beside `width(text) -> text` compiles and runs).  Whether every definition of a NAME
-must agree — the design's proposal — stays the owner's question.
+integer` beside `width(text) -> text` compiles and runs).  **That is the whole rule (owner,
+2026-09-15, answering Q4): the definitions of a NAME may return different types; only a
+dispatch decided at run time needs the definitions it chooses between to agree.**  The design's
+proposal — refuse the name — was declined: it would refuse the stdlib's own overload sets
+(`abs` on an `integer` returns `integer`, on a `single` returns `single`) and working programs
+like `width`, for a benefit, one result type to infer, that only a runtime dispatch needs.
 
 ## Deviations
 
