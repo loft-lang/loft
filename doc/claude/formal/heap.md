@@ -440,6 +440,16 @@ member of a container copied into another container while the first still owns i
 hand-off inside a loop body that runs twice — `warning[double-move]` names what it can see and
 the loop shape stays on the author.
 
+**Standalone right, encapsulated warned.** Which of the two answers a shape gets is decided by
+one question: does the ambiguity exist only because the droppable sits inside a structure?  A
+droppable used as a plain value — a local, a parameter, a return, a branch arm — must release
+exactly once, and a shape that does not is a deviation to fix.  Once it sits inside a structure
+— a record field, an enum payload, a tuple member, a collection element — a release with no
+single clear owner is `warning[double-move]`'s, and the release stays as it is.  Neither a mark
+inside the structure nor a static ownership fact resolves such a shape without leaving a gotcha
+for the programmer, so the language keeps it out of published code instead: a warning gates a
+library's CI.
+
 **Conformance.** `tests/scripts/139-drop-cascade.loft` (the cascade),
 `a-whole-value-copy-of-a-droppable-releases-once.loft` (the copy moves), and
 `1362-a-rebind-releases-the-droppable-it-displaces.loft` (the reassignment), each measured
