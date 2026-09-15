@@ -1,0 +1,101 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic that appends to, concatenates or removes from a `vector<T>` answers what its
+// concrete twin answers at every element kind — a scalar, a narrow integer, a text and a record
+// (`interfaces.md (G-Mono)`, loft#1536).
+//
+// The template lowers each of those while the element is still the type variable, and an
+// append, a removal and a `vector<T>` local's own record each carry a schema ROW as a constant
+// argument.  Substitution rewrites types, never constants, and the monomorph's row retarget
+// mapped only a record or enum binding's own row.  So at `integer` and `text` the append kept
+// `__typevar_T`'s width of zero — a divide by zero on both backends — the removal slid the tail
+// by the wrong width, and `v += [v[0]]` appended garbage.  A record binding was always mapped,
+// so the `Pt` cells are the controls and must stay green on both trees.
+//
+// @falsified-at: b12e15474 — interpret exit 101 -> 0, interpret panicked -> clean, native exit 101 -> 0, native panicked -> clean
+// @falsified-by: tests/falsified/1536-a-generic-appends-and-removes-at-every-element-type.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 101 -> 0, native panicked -> clean
+//   CHANNEL: exit + panic, both backends — the control does not get as far as an assertion.
+//   ARMED: nothing.
+//   WITNESS: on the control this file panics at `src/database/types.rs` while it compiles:
+//     `cat`'s `a + b` over `vector<T>` indexes the schema with `u16::MAX`.  Measured as
+//     separate probes on the same build: `twice` at `integer` panics `attempt to divide by
+//     zero` at `src/vector.rs:39`, `drop_at(["a","b","c"], 1)` answers `["a","b"]`, and
+//     `grow([1,2,3])` answers `[1,2,3,4294967200]`.
+//   HOLDS: the `Pt` cells, which answered right on the control as separate probes.
+
+struct Pt { x: integer, y: integer }
+
+fn twice<T>(v: vector<T>) -> vector<T> { r: vector<T> = []; r += v; r += v; r }
+
+fn cat<T>(a: vector<T>, b: vector<T>) -> vector<T> { r = a + b; r }
+
+fn drop_at<T>(v: vector<T>, i: integer) { v.remove(i); }
+
+fn grow<T>(v: vector<T>) { v += [v[0]]; }
+
+fn test_append_at_a_scalar() {
+  a: vector<integer> = [1, 2];
+  t = twice(a);
+  assert("{t}" == "[1,2,1,2]", "twice at integer: {t}");
+  n: vector<u8> = [1, 250];
+  tn = twice(n);
+  assert("{tn}" == "[1,250,1,250]", "twice at u8: {tn}");
+}
+
+fn test_append_at_a_text() {
+  a: vector<text> = ["p", "q"];
+  t = twice(a);
+  assert("{t}" == "[\"p\",\"q\",\"p\",\"q\"]", "twice at text: {t}");
+}
+
+fn test_append_at_a_record() {
+  a: vector<Pt> = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }];
+  t = twice(a);
+  assert(len(t) == 4 && t[3].y == 4, "twice at Pt: {len(t)}");
+}
+
+fn test_concat() {
+  x: vector<integer> = [1];
+  y: vector<integer> = [2, 3];
+  c = cat(x, y);
+  assert("{c}" == "[1,2,3]", "cat at integer: {c}");
+  s: vector<text> = ["a"];
+  u: vector<text> = ["b", "c"];
+  cs = cat(s, u);
+  assert("{cs}" == "[\"a\",\"b\",\"c\"]", "cat at text: {cs}");
+  p: vector<Pt> = [Pt { x: 1, y: 2 }];
+  q: vector<Pt> = [Pt { x: 3, y: 4 }];
+  cp = cat(p, q);
+  assert(len(cp) == 2 && cp[1].y == 4, "cat at Pt: {len(cp)}");
+}
+
+fn test_remove() {
+  a: vector<integer> = [1, 2, 3];
+  drop_at(a, 1);
+  assert("{a}" == "[1,3]", "remove at integer: {a}");
+  s: vector<text> = ["a", "b", "c"];
+  drop_at(s, 1);
+  assert("{s}" == "[\"a\",\"c\"]", "remove at text: {s}");
+  p: vector<Pt> = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }, Pt { x: 5, y: 6 }];
+  drop_at(p, 0);
+  assert(len(p) == 2 && p[0].y == 4 && p[1].y == 6, "remove at Pt: {len(p)}");
+}
+
+fn test_read_then_append() {
+  a: vector<integer> = [1, 2, 3];
+  grow(a);
+  assert("{a}" == "[1,2,3,1]", "v += [v[0]] at integer: {a}");
+  s: vector<text> = ["x", "y"];
+  grow(s);
+  assert("{s}" == "[\"x\",\"y\",\"x\"]", "v += [v[0]] at text: {s}");
+}
+
+fn main() {
+  test_append_at_a_scalar();
+  test_append_at_a_text();
+  test_append_at_a_record();
+  test_concat();
+  test_remove();
+  test_read_then_append();
+}

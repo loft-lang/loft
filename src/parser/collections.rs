@@ -6291,6 +6291,14 @@ use #count instead"
         }
     }
 
+    /// Is a collection's element type still a TYPE VARIABLE — a template's `T`, whose
+    /// placeholder is an attribute-less struct?  A builtin whose lowering is a function of the
+    /// element type ([`TV_INSERT`](Parser::TV_INSERT), [`TV_REVERSE`](Parser::TV_REVERSE))
+    /// defers itself to the monomorph there.
+    pub(crate) fn is_type_var_element(&self, elm: &Type) -> bool {
+        matches!(elm.base(), Type::Reference(d, _) if self.data.is_type_var_placeholder(*d))
+    }
+
     /// Compute the in-store byte size of a vector element type.
     pub(crate) fn element_store_size(&self, elm: &Type) -> i32 {
         let elm_td = self.data.type_elm(elm);
@@ -6413,6 +6421,14 @@ use #count instead"
             );
             return Type::Void;
         };
+        // @FR-G-Mono — the element's width, its row and its setter are all functions of the
+        // element type, and inside a template that type is still the type variable: lowered
+        // here, the monomorph kept the placeholder's width and a RECORD copy for an `integer`
+        // element (loft#1537).  Stamp the site; the monomorph lowers it through this function.
+        if self.is_type_var_element(&elm_tp) {
+            *val = v_block(list.to_vec(), types[0].clone(), Self::TV_INSERT);
+            return Type::Void;
+        }
         let elm_size = Value::Int(self.element_store_size(&elm_tp));
         let db_tp = self.type_info(&elm_tp);
         let ed_nr = self.data.type_def_nr(&elm_tp);
@@ -6517,6 +6533,11 @@ use #count instead"
             return Type::Void;
         }
         let elm_size = if let Type::Vector(elm, _) = types[0].peel_link() {
+            // The width walked is the element's: a type variable has none yet (@FR-G-Mono).
+            if self.is_type_var_element(elm) {
+                *val = v_block(list.to_vec(), types[0].clone(), Self::TV_REVERSE);
+                return Type::Void;
+            }
             self.element_store_size(elm)
         } else {
             diagnostic!(

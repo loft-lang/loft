@@ -1071,6 +1071,9 @@ pub struct Parser {
     /// loft#1023 — `(monomorph, template, bindings, concrete)` for each monomorph built
     /// from a template whose pass-2 body had not been parsed yet.
     pub(crate) stale_monomorphs: Vec<(u32, u32, Vec<(u32, Type)>, Type)>,
+    /// Generic templates refused at their own declaration (loft#1538): a call to one is
+    /// already an error the declaration names, so the call adds no second message.
+    pub(crate) refused_templates: std::collections::HashSet<u32>,
     /// @PLN99 Arc C — set by `convert` when it dispatches a struct/reference-returning
     /// USER conversion (`x as T` via `fn OpConvTFromS`).  Such a conversion ALLOCATES a
     /// fresh owned store, so its result must NOT inherit the source's deps (the reinterpret-
@@ -1521,6 +1524,7 @@ impl Parser {
             last_place_discharge: false,
             pass2_bodies: std::collections::HashSet::new(),
             stale_monomorphs: Vec::new(),
+            refused_templates: std::collections::HashSet::new(),
             conv_owned_result: None,
             trace_types: false,
             trace_types_lines: Vec::new(),
@@ -3010,12 +3014,23 @@ impl Parser {
     /// `n_<fn>` template exist as a `DefType::Generic`?  Only such defs are
     /// legal pass-2-only appends of the Function kind — a source-declared
     /// method parses in pass 1 and can never appear as a trailing pass-2 def.
+    ///
+    /// A METHOD template (`fn head<T>(self: vector<T>)`) is stored under its receiver's key,
+    /// `t_6vector_head`, rather than as `n_head`, and instantiates on pass 2 the same way
+    /// (loft#1539) — so a template of either spelling makes the name legal.
     fn h5_names_a_generic_template(&self, name: &str) -> bool {
         let Some((_, fn_name)) = Self::h5_split_mangled(name) else {
             return false;
         };
         let g_nr = self.data.def_nr(&format!("n_{fn_name}"));
-        g_nr != u32::MAX && matches!(self.data.def_type(g_nr), DefType::Generic)
+        if g_nr != u32::MAX && matches!(self.data.def_type(g_nr), DefType::Generic) {
+            return true;
+        }
+        (0..self.data.definitions()).any(|d| {
+            matches!(self.data.def_type(d), DefType::Generic)
+                && Self::h5_split_mangled(self.data.def(d).name())
+                    .is_some_and(|(_, method)| method == fn_name)
+        })
     }
 
     /// Split `t_<LEN><Type>_<fn>` into its type name and function name.
@@ -3849,12 +3864,20 @@ impl Parser {
         // while a nested element registered level-COLLAPSED.  Now that
         // `vector<vector<T>>` registers honestly, `vector_of` is the CONTAINER
         // and passing it strode `vector_add` one level too deep.
+        // An element with no row answers `u16::MAX`, the "no such type" sentinel, rather than
+        // indexing the schema with it.  A template's type variable is one: `a + b` over a
+        // `vector<T>` was an internal compiler error here while its concrete twin got the
+        // refusal it earns.  A monomorph asks again with the concrete element.
         i32::from(
             self.data
                 .vector_element_type(content, &mut self.database)
                 .unwrap_or_else(|| {
                     let vec_tp = self.vector_of(content);
-                    self.database.content(vec_tp)
+                    if vec_tp == u16::MAX {
+                        u16::MAX
+                    } else {
+                        self.database.content(vec_tp)
+                    }
                 }),
         )
     }
@@ -6040,8 +6063,16 @@ impl Parser {
             },
             self.first_pass,
         );
-        // skip generic templates — they are not callable directly.
+        // skip generic templates — they are not callable directly.  A METHOD template the
+        // bare lookup found (`fn head<T>(self: vector<T>)` for `head(a)`) is kept aside: the
+        // lookup resolves the method spelling before the free one, and a concrete method
+        // shadows a same-named free function the same way, so the call instantiates that
+        // template rather than a free `head<T>` (loft#1539).
+        let mut method_template = u32::MAX;
         if d_nr != u32::MAX && self.data.def(d_nr).def_type() == DefType::Generic {
+            if self.data.def(d_nr).name().starts_with("t_") {
+                method_template = d_nr;
+            }
             d_nr = u32::MAX;
         }
         // @PLN115 S5 — record a free-function CALL as a Global reference at its
@@ -6089,13 +6120,30 @@ impl Parser {
         // exactly as before).
         if d_nr == u32::MAX {
             if self.first_pass {
-                let predicted = self.predict_generic_return_type(name, types);
+                let predicted = if method_template == u32::MAX {
+                    self.predict_generic_return_type(name, types)
+                } else {
+                    self.predict_template_return(method_template, name, types)
+                };
                 if !predicted.is_unknown() {
                     *code = Value::Null;
                     return predicted;
                 }
             } else {
-                d_nr = self.try_generic_instantiation(name, types);
+                d_nr = if method_template == u32::MAX {
+                    self.try_generic_instantiation(name, types)
+                } else {
+                    self.instantiate_template(method_template, name, types)
+                };
+                // loft#1538 — a template refused at its declaration cannot instantiate, and
+                // the declaration already says why; "Unknown function" here would point the
+                // author at the call instead.  Answer the declared return, so the rest of the
+                // expression types as written.
+                let g_nr = self.data.def_nr(&format!("n_{name}"));
+                if d_nr == u32::MAX && self.refused_templates.contains(&g_nr) {
+                    *code = Value::Null;
+                    return self.data.def(g_nr).returned().clone();
+                }
             }
         }
         // loft#824 — the receiver the type-directed builtins below dispatch on, read
@@ -6985,6 +7033,13 @@ impl Parser {
         if g_nr == u32::MAX || self.data.def(g_nr).def_type() != DefType::Generic {
             return Type::Unknown(0);
         }
+        self.predict_template_return(g_nr, name, types)
+    }
+
+    /// [`Self::predict_generic_return_type`] for the template `g_nr` itself: a free generic
+    /// found by its `n_` name, or a METHOD template (`t_6vector_head`) that a method call
+    /// selected (loft#1539).  `name` is the spelling the call wrote.
+    fn predict_template_return(&mut self, g_nr: u32, name: &str, types: &[Type]) -> Type {
         if types.is_empty() || types[0].is_unknown() {
             return Type::Unknown(0);
         }
@@ -7080,6 +7135,14 @@ impl Parser {
     /// the conversion once `T` is concrete.  The block's `result` is the target type,
     /// which substitution rewrites to the concrete one.
     pub(crate) const TV_NULL_BLOCK: &'static str = "tvnull";
+    /// loft#1537 — an `insert(v, i, e)` whose element type is still a TYPE VARIABLE.  The
+    /// width, the row and the setter are all functions of the element type, so the site is
+    /// stamped with its three arguments and a `result` of the vector's type, and
+    /// [`rewrite_generic_type_defaults`] lowers it through `parse_insert` once `T` is real.
+    pub(crate) const TV_INSERT: &'static str = "tvinsert";
+    /// A `reverse(v)` whose element type is still a TYPE VARIABLE: the width it walks is the
+    /// element's, so it is lowered per monomorph like [`TV_INSERT`](Parser::TV_INSERT).
+    pub(crate) const TV_REVERSE: &'static str = "tvreverse";
 
     /// Specialise a generic `name` for the concrete argument types `types`, returning the
     /// monomorph's def_nr (or `u32::MAX` when `name` names no generic).
@@ -7098,6 +7161,14 @@ impl Parser {
         if g_nr == u32::MAX || self.data.def(g_nr).def_type() != DefType::Generic {
             return u32::MAX;
         }
+        self.instantiate_template(g_nr, name, types)
+    }
+
+    /// [`Self::try_generic_instantiation`] for the template `g_nr` itself: a free generic
+    /// found by its `n_` name, or a METHOD template (`t_6vector_head`) that a method call
+    /// selected (loft#1539).  `name` is the spelling the call wrote, and the monomorph is
+    /// named from it exactly as a free generic's is.
+    fn instantiate_template(&mut self, g_nr: u32, name: &str, types: &[Type]) -> u32 {
         if types.is_empty() || types[0].is_unknown() {
             // First-pass argument types may be incomplete; defer the diagnostic
             // to second pass when types are stable.  Returning MAX here is the
@@ -7213,6 +7284,15 @@ impl Parser {
             // 1:1 so the LEN prefix `original_name` / `find_method_receivers` parse back is
             // still correct.
             let safe = base.replace(['<', '>', ',', ' ', '(', ')'], "_");
+            // loft#1539 — a METHOD template and a free template of the same name bound at the
+            // same type would otherwise mint ONE name, and whichever instantiated first would
+            // answer both calls: the program's meaning would depend on statement order.  The
+            // marker is a spelling no source identifier can take (`__` is the compiler's).
+            let safe = if self.data.def(g_nr).name().starts_with("t_") {
+                format!("__self_{safe}")
+            } else {
+                safe
+            };
             crate::data::Data::mangle_method(&safe, name)
         };
         // Return existing instantiation if already created.
@@ -7495,7 +7575,7 @@ impl Parser {
         // BEFORE the rows are retargeted: a scalar binding contributes no row mapping, so
         // the copy left standing would keep the type variable's own row.
         self.collapse_parametric_tuple_member_copies(d_nr);
-        self.retarget_parametric_type_rows(d_nr, bindings);
+        self.retarget_parametric_type_rows(d_nr, bindings, tmpl_vars);
         // loft#1040 — and lower any `par` clause the template could not: it needs the
         // types this body now carries, so it runs after every substitution above.
         self.expand_deferred_par(d_nr);
@@ -8350,24 +8430,55 @@ impl Parser {
     /// local is declared in source and re-derives its row from the substituted variable
     /// table, whereas the compiler-built `materialized_view_return` block was constructed
     /// once, at template parse, from the type the arm had THEN.
-    fn retarget_parametric_type_rows(&mut self, d_nr: u32, bindings: &[(u32, Type)]) {
-        // stale row -> fresh row, one entry per bound type variable.
-        let mut rows: Vec<(i32, i32)> = Vec::new();
-        for (holder, bound_to) in bindings {
-            let stale = i32::from(self.data.def(*holder).known_type());
-            let fresh = match bound_to.base() {
-                Type::Reference(d, _) | Type::Enum(d, _, _) => {
-                    i32::from(self.data.def(*d).known_type())
-                }
-                _ => continue,
-            };
+    ///
+    /// The type variable's own row is not the only one.  A SCALAR or `text` binding has a row
+    /// too — the element row an append or a removal carries is `integer`'s or `text`'s — and
+    /// skipping those bindings left `OpAppendVector` and `OpRemoveVector` naming
+    /// `__typevar_T`, whose width is zero: a divide by zero at `integer` and a slide of the
+    /// wrong width at `text` (loft#1536).  And a type BUILT over the variable (`vector<T>`)
+    /// was registered with a row of its own at template parse, which is just as stale.
+    fn retarget_parametric_type_rows(
+        &mut self,
+        d_nr: u32,
+        bindings: &[(u32, Type)],
+        tmpl_vars: &Function,
+    ) {
+        fn note(rows: &mut Vec<(i32, i32)>, stale: i32, fresh: i32) {
+            let none = i32::from(u16::MAX);
             if stale != fresh
-                && stale != i32::from(u16::MAX)
-                && fresh != i32::from(u16::MAX)
+                && stale != none
+                && fresh != none
                 && !rows.iter().any(|(s, _)| *s == stale)
             {
                 rows.push((stale, fresh));
             }
+        }
+        // stale row -> fresh row: one entry per bound type variable, then one per type in the
+        // template's variable table that is built over one.
+        let mut rows: Vec<(i32, i32)> = Vec::new();
+        for (holder, bound_to) in bindings {
+            let stale = i32::from(self.data.def(*holder).known_type());
+            // A record or enum keeps its RECORD row, which is also its element row; any other
+            // binding answers the element row every append and removal of it is lowered with.
+            let fresh = match bound_to.base() {
+                Type::Reference(d, _) | Type::Enum(d, _, _) => {
+                    i32::from(self.data.def(*d).known_type())
+                }
+                other => self.append_elem_tp(other),
+            };
+            note(&mut rows, stale, fresh);
+        }
+        for v in 0..tmpl_vars.count() {
+            let tmpl_tp = tmpl_vars.tp(v).clone();
+            let over_a_variable = bindings.iter().any(|(h, _)| tmpl_tp.contains_def(*h));
+            let is_a_variable = matches!(tmpl_tp.base(),
+                Type::Reference(d, _) if bindings.iter().any(|(h, _)| h == d));
+            if !over_a_variable || is_a_variable {
+                continue;
+            }
+            let stale = i32::from(self.get_type(&tmpl_tp));
+            let fresh = i32::from(self.get_type(&Self::substitute_all(tmpl_tp, bindings)));
+            note(&mut rows, stale, fresh);
         }
         if rows.is_empty() {
             return;
@@ -8677,16 +8788,15 @@ impl Parser {
         // ones, not this monomorph's.
         let mut remap: HashMap<u32, u32> = HashMap::new();
         for (t, arg_tp) in targets {
-            let Some(name) = self
-                .data
-                .def(t)
-                .name()
-                .strip_prefix("n_")
-                .map(str::to_string)
-            else {
-                continue;
+            // A free template is stored `n_<name>`; a METHOD template under its receiver's
+            // key, `t_6vector_head` (loft#1539).  Both instantiate from the template itself.
+            let key = self.data.def(t).name().to_string();
+            let name = match key.strip_prefix("n_") {
+                Some(free) => free.to_string(),
+                None if key.starts_with("t_") => Self::method_spelling(&key),
+                None => continue,
             };
-            let inst = self.try_generic_instantiation(&name, std::slice::from_ref(&arg_tp));
+            let inst = self.instantiate_template(t, &name, std::slice::from_ref(&arg_tp));
             if inst != u32::MAX && inst != t {
                 remap.insert(t, inst);
             }
@@ -9253,6 +9363,27 @@ impl Parser {
                     // is already an error, and the same reasoning loft#1016 uses.
                     Value::Block(bl)
                 }
+            }
+            // @FR-G-Mono — a builtin whose lowering is a function of the ELEMENT type, deferred
+            // by the template (`parse_insert`, `parse_reverse`).  `bl.result` came through type
+            // substitution, so it is the CONCRETE vector type by now, and the same parse
+            // function the concrete spelling uses lowers it — width, row and setter from one
+            // home.  A nested generic re-stamps through that call and stays deferred.
+            Value::Block(bl) if bl.name == Self::TV_INSERT || bl.name == Self::TV_REVERSE => {
+                let bl = *bl;
+                let list: Vec<Value> = bl
+                    .operators
+                    .into_iter()
+                    .map(|a| self.rewrite_generic_type_defaults(a, concrete))
+                    .collect();
+                let types = [bl.result.clone()];
+                let mut out = Value::Null;
+                if bl.name == Self::TV_INSERT {
+                    self.parse_insert(&mut out, &list, &types);
+                } else {
+                    self.parse_reverse(&mut out, &list, &types);
+                }
+                out
             }
             Value::Block(bl) if bl.name == Self::TV_DEFAULT_BLOCK => {
                 match self.monomorph_default(concrete) {

@@ -2589,7 +2589,11 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 819 | 477 | 6 | **336** |
+| 820 | 478 | 6 | **336** |
+
+(2026-09-15, @PLN165 phase 0 — loft#1536–#1539: 820 · 478 · 6 · 336.  `Parser::is_type_var_element`,
+which asks whether a collection's element is still a template's type variable, peels with
+`.base()`; nothing else moved.)
 
 (2026-09-15, @PLN163: 819 · 477 · 6 · 336.  `src/lease.rs` added one function that sees through
 the wrapper and `copy_manifest`'s lease check two, all three peeling with `.base()`; the opaque
