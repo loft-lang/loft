@@ -136,7 +136,11 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   source.  This is [heap.md](heap.md) H-Copy (`fv = e.items; fv[0]=99`
                   leaves `e.items[0]`).  A struct-enum value is a heap RECORD exactly as
                   a struct is — `Type::heap_def_nr` names both — and a `(C-Var)` widening
-                  `c: E = s` from a variant is a copy like any other.
+                  `c: E = s` from a variant is a copy like any other.  For a type that
+                  owns a droppable, [heap.md](heap.md) decides what the copy may do: one
+                  whose source is not used after it is a MOVE (H-Move), one of a type with
+                  `OpCopy` takes a second lease (H-Copy-Lease), and any other is a
+                  compile-time error (H-Copy-Refuse).
   (B-Ref-Alias)   the `&τ` annotation makes ANY binding — scalar OR heap — a live LINK
                   to the source instead of a copy.  `d = &v` / `d = &self.data` ALIAS the
                   vector: `d[i] = x` (and `d += …`) write THROUGH to the source, which is
@@ -161,6 +165,9 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   and the author is told — so writes through it stop reaching the
                   container (@PLN130 F2/F4/F8).  A plain bind already copies, so this
                   is consistent with what it meant; a `&` gets B-Ref-Reshape instead.
+                  For a type that owns a droppable with no `OpCopy`, that materialising
+                  copy is refused ([heap.md](heap.md) H-Copy-Refuse): the container still
+                  holds the member, and the error names what disturbed it.
   (B-View-Base)   a projection off a BORROWED base is a VIEW at EVERY element type — not only
                   a struct-typed one.  `for b in bv { c = b.vecf; … }` aliases exactly as
                   `c = b.strf` does, and so does a tuple element.  Ownership of the BASE is the
