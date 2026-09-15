@@ -1,0 +1,102 @@
+diff --git b/src/scopes.rs a/src/scopes.rs
+index a0d047852..67998c338 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -2335,29 +2335,6 @@ fn caller_record_locals(code: &Value, function: &Function, data: &Data) -> BTree
+     }
+ }
+ 
+-/// Every whole-value copy `dst = src` between two locals in `code` whose destination can own a
+-/// release: a heap record whose copy carries a drop, and not an argument, a capture, a loop
+-/// variable or a compiler temp.  Sorted, so what is minted from these is minted in one order.
+-fn local_copy_pairs(code: &Value, function: &Function, data: &Data) -> BTreeSet<(u16, u16)> {
+-    let mut out = BTreeSet::new();
+-    code.walk(&mut |n| {
+-        if let Value::Set(dst, rhs) = n.unspan()
+-            && let Value::Var(src) = rhs.unspan()
+-            && dst != src
+-            && (*dst as usize) < function.count() as usize
+-            && (*src as usize) < function.count() as usize
+-            && !function.name(*dst).starts_with("__")
+-            && !function.is_argument(*dst)
+-            && !function.is_captured(*dst)
+-            && !function.was_loop_var(*dst)
+-            && copy_carries_drop(function, data, *dst, function.tp(*src))
+-        {
+-            out.insert((*dst, *src));
+-        }
+-    });
+-    out
+-}
+-
+ /// Is `v` assigned, anywhere in `code`, a whole-value copy that stops `v` itself — a copy off a
+ /// PARAMETER ([`per_path_stops`])?  Asked of a witnessed local before the scan, so its flag
+ /// exists before the first `Set` that has to write it.
+@@ -3509,23 +3486,6 @@ fn run_scan_phase(
+             scopes.mint_handoff_flag(&mut function, v);
+         }
+     }
+-    // `(H-Drop)` — a local assigned a copy off a FLAGGED local inherits that flag at the copy
+-    // (`scan_set`), so it needs a flag of its own: the record it takes is not its to release on
+-    // exactly the paths it was not the source's.  A fixpoint, because a copy of such a copy
+-    // inherits in turn.
+-    let copy_pairs = local_copy_pairs(orig_code, &function, data);
+-    loop {
+-        let mut minted = false;
+-        for &(dst, src) in &copy_pairs {
+-            if scopes.handed_off.contains_key(&src) && !scopes.handed_off.contains_key(&dst) {
+-                scopes.mint_handoff_flag(&mut function, dst);
+-                minted = true;
+-            }
+-        }
+-        if !minted {
+-            break;
+-        }
+-    }
+     let displace_locals = nullable_locals_that_displace(orig_code, &function, data);
+     for &v in &displace_locals {
+         // loft#1522 — keyed by the VAR, not by its name.  `add_temp_var` identifies a temp by
+@@ -9607,31 +9567,6 @@ impl Scopes<'_> {
+         // runs, branch or not: the witness names the copy and must not hook it.
+         let stops_target = self.copy_flagged_on_target(function, data, v, value)
+             || self.witnessed_copy_stops_itself(function, data, v, value);
+-        // A copy that takes a FLAGGED local's release takes its flag too, read before this
+-        // statement writes the source's: the record is not the destination's to release on
+-        // exactly the paths it was not the source's — a copy off a parameter made in a branch
+-        // arm and handed on after it, or a record a branch arm already handed to another copy.
+-        let inherited = match value.unspan() {
+-            Value::Var(src)
+-                if !stops_target
+-                    && *src != v
+-                    && *src != ov
+-                    && copy_moves_drop_from(function, data, v, *src, false) == Some(*src) =>
+-            {
+-                match (self.handed_off.get(src), self.handed_off.get(&v)) {
+-                    (Some(&from), Some(&to)) => Some(v_set(to, Value::Var(from))),
+-                    _ => None,
+-                }
+-            }
+-            _ => None,
+-        };
+-        let inherits = inherited.is_some();
+-        if let Some(write) = inherited {
+-            witness_update = Some(match witness_update {
+-                Some(prev) => Value::Insert(vec![prev, write]),
+-                None => write,
+-            });
+-        }
+         if let Value::Var(src) = value.unspan()
+             && (stops_target || self.per_path_pairs.contains(&(v, *src)))
+             && let Some(stopped) = per_path_stops(function, data, v, *src)
+@@ -9646,10 +9581,7 @@ impl Scopes<'_> {
+         // from here on is its own to release, whichever arm ran before.  Except the copy that
+         // has just set the variable's OWN flag, a copy off a parameter: what it holds from here
+         // on is the caller's.
+-        if !stops_target
+-            && !inherits
+-            && let Some(&flag) = self.handed_off.get(&v)
+-        {
++        if !stops_target && let Some(&flag) = self.handed_off.get(&v) {
+             witness_update = Some(match witness_update {
+                 Some(prev) => Value::Insert(vec![prev, v_set(flag, Value::Boolean(false))]),
+                 None => v_set(flag, Value::Boolean(false)),

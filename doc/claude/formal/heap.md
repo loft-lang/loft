@@ -941,10 +941,21 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
 
      Guard:
      `tests/scripts/a-parameter-copy-handed-on-to-another-local-is-released-by-the-caller-only.loft`.
-   - **OPEN — handed on from a branch arm.**  `x = mk(); if c { x = p; } if d { y = x; }` with both
-     taken still releases the caller's resource through `y`, then in the caller.  The carrier holds
-     the caller's record on one path only, so the static mark does not apply: `y` has to inherit
-     `x`'s per-path flag at the copy.
+   - ✓ **Handed on from a branch arm — CLOSED 2026-09-15.**  `x = mk(); if c { x = p; } y = x` with
+     `c` true released the caller's resource through `y`, then in the caller: twice, both backends,
+     `LOFT_POISON` clean.  The carrier holds the caller's record on one path only, so the static
+     mark above cannot apply.  The per-path flag that records the answer (loft#1515) belonged to the
+     source alone, so the copy took a release on every path.  The same was measured with the
+     hand-on inside another arm, into a witnessed local given a view, and through a chain
+     (`z = y`).  It also happened with NO parameter: `x = mk(); if c { z = x; } y = x` released the
+     record through `z` and again through `y`.
+
+     A copy of a flagged local now inherits the flag at the copy.  The inherited value is read
+     before the statement writes the source's own flag, so the destination releases on exactly the
+     paths the source would have.  A fixpoint before the scan mints the flag for every such
+     destination.  Unchanged: a carrier that kept its own record, a carrier copied from a local in
+     the arm, and the arm not taken.  Guard:
+     `tests/scripts/a-copy-of-a-local-that-may-not-own-its-record-takes-the-per-path-answer.loft`.
 3. **A hand-off that suppressed a release it does not belong to** — filed from
    `x = mk(K); x = p` (`c_param_reassign`: the displaced record never released, and the parameter's
    copy released inside the callee), and wider than filed: `b = mk(1); b = mk(2); y = b` lost
