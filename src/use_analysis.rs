@@ -4629,6 +4629,213 @@ pub fn post_scope_lints(
     warn_linked_group_append(data, diags, fallback_file);
     // loft#1397 — a payload binding whose subject's place is overwritten with another variant.
     warn_variant_overwritten(data, diags, fallback_file);
+    // @PLN163 P0 — the census of copies of a record with a release (gated `LOFT_DROP_COPY_CENSUS`).
+    drop_copy_census(data);
+}
+
+/// Lists every place the program deep-copies a record that has a release to run — the copies the
+/// copy-lease rules decide about (@PLN163): a type without `OpCopy` refuses them, a type with one
+/// runs it on the new structure.
+///
+/// Two spellings are a copy here:
+///
+/// - an `OpCopyRecord` whose type has a cascade or a hook of its own, the test
+///   [`copied_record_releases`] makes;
+/// - a whole-value bind `v = src` between two variables whose type owns a droppable, which the
+///   generators turn into a copy when they emit it (`copy_manifest` records that side).
+///
+/// A call result bound to a variable is not listed: it duplicates nothing that a live structure
+/// still holds.  The walk runs after the scope pass, so the copies that pass placed (a branch arm's
+/// lift, a return buffer) are listed beside the ones the author wrote.
+///
+/// One line per site on stderr — function, line, destination kind, copied type, the source's root
+/// variable (`-` when the source names none), the destination, and `move` when the op frees its
+/// source — then the count, which is printed even when it is zero.
+pub fn drop_copy_census(data: &Data) {
+    if !crate::keys::drop_copy_census_enabled() {
+        return;
+    }
+    let mut sites = 0;
+    if data.any_drop_hook() {
+        let copy_d = data.def_nr("OpCopyRecord");
+        for d_nr in 0..data.definitions() {
+            let def = data.def(d_nr);
+            if !matches!(def.def_type, DefType::Function) {
+                continue;
+            }
+            let mut cx = Census {
+                data,
+                func: &def.variables,
+                fname: &def.name,
+                copy_d,
+                line: 0,
+                sites: 0,
+            };
+            cx.scan(&def.code);
+            sites += cx.sites;
+        }
+    }
+    eprintln!(
+        "drop-copy census: {sites} site{}",
+        if sites == 1 { "" } else { "s" }
+    );
+}
+
+/// The walk behind [`drop_copy_census`] for one function.
+struct Census<'a> {
+    data: &'a Data,
+    func: &'a Function,
+    fname: &'a str,
+    copy_d: u32,
+    /// The nearest line seen before the node being visited.
+    line: u32,
+    sites: usize,
+}
+
+impl Census<'_> {
+    fn scan(&mut self, node: &Value) {
+        if let Some(p) = node.span_pos() {
+            self.line = p.line;
+        } else if let Value::Line(n) = node {
+            self.line = *n;
+        }
+        let node = node.unspan();
+        match node {
+            Value::Call(d, args)
+                if *d == self.copy_d
+                    && args.len() >= 3
+                    && copied_record_releases(self.data, &args[2]) =>
+            {
+                let (kind, into) = match args[1].unspan() {
+                    Value::Var(v) => {
+                        let name = self.func.name(*v);
+                        // `__disp_N` is the scope pass's snapshot of a record a reassignment
+                        // displaces (`Scopes::displaced_drop`): a copy made so the hook can run
+                        // after the statement, not one the author's program asks for.
+                        let kind = if name.starts_with("__disp_") {
+                            "snapshot"
+                        } else if name.starts_with("__ref") {
+                            "buffer"
+                        } else if name.starts_with("_elm_") {
+                            "element"
+                        } else {
+                            "record"
+                        };
+                        (kind, name.to_string())
+                    }
+                    other => (
+                        "place",
+                        place_root(other, self.data)
+                            .map_or_else(|| "-".to_string(), |r| self.func.name(r).to_string()),
+                    ),
+                };
+                let moved = matches!(args[2].unspan(), Value::Int(tp) if tp & 0x8000 != 0);
+                let tp = copied_record_name(self.data, &args[2]);
+                let mut from = Vec::new();
+                copy_source_roots(&args[0], self.data, self.func, &mut from);
+                self.emit(kind, &tp, &from, &into, moved);
+            }
+            Value::Set(v, rhs)
+                if matches!(rhs.unspan(), Value::Var(src) if src != v)
+                    && self
+                        .data
+                        .type_owns_droppable_anywhere(self.func.tp(*v).base()) =>
+            {
+                let Value::Var(src) = rhs.unspan() else {
+                    unreachable!("matched above")
+                };
+                let kind = if self.func.tp(*v).depend().is_empty() {
+                    "bind"
+                } else {
+                    "bind-view"
+                };
+                let tp = self.data.type_name_str(self.func.tp(*v));
+                let into = self.func.name(*v).to_string();
+                self.emit(kind, &tp, &[*src], &into, false);
+            }
+            _ => {}
+        }
+        node.for_each_child(&mut |c| self.scan(c));
+    }
+
+    /// `from` lists the root of every value the copy may take — one per arm of a join — joined
+    /// with commas, or `-` when no arm names a variable.
+    fn emit(&mut self, kind: &str, tp: &str, from: &[u16], into: &str, moved: bool) {
+        self.sites += 1;
+        let from = if from.is_empty() {
+            "-".to_string()
+        } else {
+            from.iter()
+                .map(|&v| self.func.name(v))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        eprintln!(
+            "drop-copy fn={} line={} kind={kind} type={tp} from={from} into={into}{}",
+            self.fname,
+            self.line,
+            if moved { " move" } else { "" }
+        );
+    }
+}
+
+/// The root variables of every value a copy source may produce: a variable or a projection's
+/// root, the tail of a block, and each arm of a join (`a ?? mk()` reaches a copy as an `if` whose
+/// arms are `a` and a block ending in the call's buffer).  A source that names no variable adds
+/// nothing.
+fn copy_source_roots(src: &Value, data: &Data, func: &Function, out: &mut Vec<u16>) {
+    match src.unspan() {
+        Value::If(_, then, els) => {
+            copy_source_roots(then, data, func, out);
+            copy_source_roots(els, data, func, out);
+        }
+        Value::Block(bl) => {
+            if let Some(tail) = bl.operators.last() {
+                copy_source_roots(tail, data, func, out);
+            }
+        }
+        Value::Insert(ops) => {
+            if let Some(tail) = ops.last() {
+                copy_source_roots(tail, data, func, out);
+            }
+        }
+        other => {
+            if let Some(root) = place_root(other, data) {
+                push_copy_root(root, func, out, &mut Vec::new());
+            }
+        }
+    }
+}
+
+/// Adds `v` to the roots, or — for a compiler-generated view temp — the variables it depends on.
+/// `s.h ?? d` holds the projection in a temp typed `ref(H)["s"]` before the join reads it, and the
+/// structure the copy duplicates is `s`'s member, not the temp.
+fn push_copy_root(v: u16, func: &Function, out: &mut Vec<u16>, seen: &mut Vec<u16>) {
+    if seen.contains(&v) {
+        return;
+    }
+    seen.push(v);
+    let deps = func.tp(v).depend();
+    if func.is_compiler_generated(v) && !deps.is_empty() {
+        for d in deps {
+            push_copy_root(d, func, out, seen);
+        }
+    } else if !out.contains(&v) {
+        out.push(v);
+    }
+}
+
+/// The name of the record type an `OpCopyRecord`'s type argument names, or `?` when it names none.
+fn copied_record_name(data: &Data, tp: &Value) -> String {
+    let Value::Int(tp) = tp.unspan() else {
+        return "?".to_string();
+    };
+    let Ok(known) = u16::try_from(*tp & i32::from(crate::keys::COPY_TP_MASK)) else {
+        return "?".to_string();
+    };
+    (0..data.definitions())
+        .find(|&d| data.def(d).known_type == known)
+        .map_or_else(|| "?".to_string(), |d| data.def(d).name.clone())
 }
 
 /// loft#1397 — a `match` / `is` PAYLOAD binding whose subject's PLACE is overwritten with a

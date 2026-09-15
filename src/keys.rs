@@ -537,6 +537,19 @@ pub fn explain_enabled() -> bool {
     *ON.get_or_init(|| env_set("LOFT_EXPLAIN"))
 }
 
+/// `LOFT_DROP_COPY_CENSUS=1` — @PLN163 P0: list every place the program deep-copies a record
+/// that has a release to run, one line per site on stderr, followed by the site count.
+///
+/// Not a user diagnostic.  It measures how far the copy-lease rules reach — which copies a type
+/// without `OpCopy` will refuse, and which copies of a leasing type will run the hook — so its
+/// audience is this repo.  Compile-time only, and the count line is printed even when it is zero,
+/// so a run that found nothing can be told apart from a run that never looked.
+#[must_use]
+pub fn drop_copy_census_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_DROP_COPY_CENSUS"))
+}
+
 /// `LOFT_COPY_MANIFEST=1` — @PLN130: the emission-manifest GUARD. Each generator records every
 /// deep copy it WRITES; this reports the ones the copy diagnostic produced no verdict for.
 ///
