@@ -65,6 +65,13 @@ closed unit (every use is in the compilation; a fn-ref call is a match over know
 definitions), so every condition is decidable in it and the only boundaries left are
 where a representation is turned back into the promised one: a call into a `use`d
 library, the live-reload arm, and a record's layout in a store (C121's corollary).
+And the UNIT is a build decision: a release copy of a program (`--native-release`)
+emits its `use`d loft libraries' reachable functions into the one program it compiles,
+so there a loft-to-loft library API is no boundary at all — a library is recompiled
+with the game rather than reused as a binary — and what remains is a package's `#rust`
+native (a C ABI), the live-reload arm, a stored record's layout and a placed library
+(PLACEMENT.md § 4 is this rule at the wire).  A library's own published cdylib is the
+build in which its API keeps the promised representation for callers it cannot see.
 
 **In words.** The switch is the before-half of an A/B on one binary and the first
 bisect step for a native-only wrong answer; the falsifier is what makes "the values

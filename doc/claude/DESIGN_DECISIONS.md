@@ -3923,6 +3923,23 @@ provides per function), and the layout of a record inside a store, which persist
 FFI and the debugger read — the rewrites move temporaries and drop copies, they never
 re-lay a stored record.
 
+**The unit is a BUILD decision (owner, same day):** *"There is a special case here and that
+is a release copy of a game: in this scenario we can decide that a library should be
+recompiled instead of just reusing its binary."*  Which API is a boundary depends on what
+one compilation sees, and the three lanes of NATIVE.md § Optimisation tiers see different
+things.  A program run on the interpreter with auto-native libraries has each `use`d
+library as its own unit: every library API is a boundary, and the cdylib bridge
+materialises at it.  A RELEASE copy of a program (`--native-release`) already emits every
+reachable function of its `use`d loft libraries into the one program it compiles — the
+bench's emission carries the drawing library's own `parse_poly` — so there a loft-to-loft
+library API is NOT a boundary: the whole game and its libraries are one unit, every use is
+visible, and a rewrite may cross the API exactly as it crosses a call inside the program.
+What stays a boundary in that lane is a package's `#rust` native (a C ABI the rewrites
+never reach), the live-reload arm, a stored record's layout, and a PLACED library
+(PLACEMENT.md § 4, *a returned VIEW cannot be placed*, is `(R-Escape)` at the wire).  A
+library's own published cdylib is the one build where its API must keep the promised
+representation for callers it will never see.
+
 **What it does not change.**  C120 stands untouched, because it was never about
 representation: a value after a fault IS the contract, and a rewrite that changes it
 changes semantics.  The two rulings are one principle read from both sides — everything
