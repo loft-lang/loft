@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 489 | 465 | **24** |
+| 491 | 467 | **24** |
 
 (2026-09-15, THE JOINED TREE — this branch through loft#1532, ../loft2's drop-release arc through
 its loop-body parameter copy, and @PLN157 through § V-an: 489 · 465 · 24, re-measured rather than
@@ -502,7 +502,10 @@ all three on the peel side, **24** opaque still.  2026-09-14: `scopes::construct
 (`formal/heap.md` D-heap-7 family 6) peels `Span` — +1 site, on the peel side, **24** opaque
 still.  `scopes::branch_tail_vars` (family 7) peels `Span` — +1 site, on the peel side, **24**
 opaque still.  `sink_set_into_arms`' `owners_beside_locals_only` (`formal/binding.md` D-bind-33)
-peels `Span` — +1 site, on the peel side, **24** opaque still.)
+peels `Span` — +1 site, on the peel side, **24** opaque still.  2026-09-15: `use_analysis::projection_root`
+and `written_roots` (`formal/heap.md` D-heap-7 family 4, the `double-move` member-copy clause) peel
+`Span` — +2 sites, both on the peel side, **24** opaque still; attributed by diffing the audit's own
+predicate over HEAD's and the working tree's `use_analysis.rs`.)
 
 
 

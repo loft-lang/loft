@@ -435,9 +435,10 @@ that — it is the release of something outside the program, and such a thing mu
 released exactly once. So the question every site asks is *"which record owns the resource
 now?"*: the owner's death runs the hook, a copy moves the ownership to the copy, and a
 reassignment is a death for the record it displaces. Where two records hold one resource
-by the author's doing — two containers built from one droppable, two copies of one value,
-one hand-off inside a loop body that runs twice — `warning[double-move]` names what it can
-see and the loop shape stays on the author.
+by the author's doing — two containers built from one droppable, two copies of one value, a
+member of a container copied into another container while the first still owns it, one
+hand-off inside a loop body that runs twice — `warning[double-move]` names what it can see and
+the loop shape stays on the author.
 
 **Conformance.** `tests/scripts/139-drop-cascade.loft` (the cascade),
 `a-whole-value-copy-of-a-droppable-releases-once.loft` (the copy moves), and
@@ -1003,13 +1004,33 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
      A copy the flag guards now reads owned in both places, and the flag decides the release
      (`copy_flagged_on_target`).  Guard:
      `tests/scripts/a-copy-off-a-parameter-in-a-branch-arm-keeps-the-release-of-the-path-not-taken.loft`.
-4. **A projection copied into a container** — `s.h`, `vs[0]` or `tt.0` into a field, an enum
-   payload, a vector or a tuple member (`c_field_*`, `c_elem_*`, `c_tuple_*`): twice.  The same
-   projection bound to a LOCAL is a `(B-View)` view and releases once; placed in a container it
-   is a copy, and the source's own container still cascades the member.  This is the question
-   D-heap-1 leaves as a design call — a per-element mark, or `(H-Drop)`'s `warning[double-move]`
-   clause — and it reaches every projection spelling, not only the loop variable and the `match`
-   payload.  Either answer makes today's silence a deviation.
+4. ✓ **A projection copied into a container — CLOSED 2026-09-15 as a WARNING, by the owner's
+   call.**  `s.h`, `vs[0]` or `tt.0` into a field, an enum payload, a vector or a tuple member
+   (`c_field_*`, `c_elem_*`, `c_tuple_*`): twice.  The same projection bound to a LOCAL is a
+   `(B-View)` view and releases once.  Placed in a container it is a copy, and the source's own
+   container still cascades the member.  This was the question D-heap-1 left as a design call: a
+   per-element mark, or `(H-Drop)`'s `warning[double-move]` clause.  It was decided for the
+   WARNING.  There is no runtime dependency and no extra bookkeeping inside structures, because
+   `OpDrop` is meant for a clear lifetime of variable use and works there.  So a member shared by
+   two containers is the author's to restructure, and the release behaviour stays as it is: the
+   gate's cells stay pinned as the shape the warning names.
+
+   The lint keeps such a copy pending on its ROOT and reports it where the root's release is
+   certain:
+   - its scope end;
+   - a rebind of a root that owns its record, which releases the record it displaces, member
+     included;
+   - a `return`, including a root promoted to the caller's return buffer.
+
+   It stays silent where the member is overwritten first (an overwritten member is not released,
+   `(H-Drop-Not)`), even on one path only, and where the rebind's value reads the root, because a
+   warning gates.  A FIELD placed in a tuple literal is not a copy and releases once.  Measured
+   outside it, released twice and pinned in `tests/double_move.rs` as its boundary:
+   - a parameter's member (family 2: the caller owns it);
+   - a loop variable and a `match` payload binding, each a plain variable in the IR rather than a
+     projection;
+   - a tuple MEMBER copied into a tuple, which lands in the new tuple's backing work-ref and not
+     in a container place.
 5. **An element appended to another vector** — `v += [vs[0]]` and `[vs[0]]` (`c_elem_push`,
    `c_elem_veclit`): the interpreter PANICKED reading the element's id as a record number
    (`Store access out of bounds: rec=39001`), and native releases twice.  The double release is
@@ -1148,14 +1169,15 @@ release does to the store table reaches later frames.  That is why the gate runs
 a process of its own, and why a cell's verdict inside a batch is not a measurement of that cell.
 
 **Closes when** every line of `tests/ownership_drop_gate.baseline` and its native twin is gone,
-each retired in the commit of the fix that moved it.  Closed so far: families 5, 6, 7 and 8
-whole, family 3 for sequential code and a taken branch, and family 1's present path.  Still open,
-each with its answer in the rules: family 1's absent path and family 3's two residuals (the loop,
-and the branch not taken — reached also through a written-out join whose other arm copies a
-parameter), which wait on the carrier question — a resolver given a VARIABLE where the answer
-belongs to an ASSIGNMENT.  Family 2 has its answer too, but reaching it needs a fact about the
-caller.  Family 4 waits on D-heap-1's design call.  The shape recorded beside family 7, a
-reassignment from a join with a CALL arm (`p_j1`/`p_j2`), is closed with `binding.md` D-bind-33.
+each retired in the commit of the fix that moved it — except family 4's, which the owner closed as
+`warning[double-move]` and which stay pinned as the shape that warning names, within the boundary
+written under family 4.  Closed so far: families 3, 5, 6, 7 and 8 whole, family 1's present path,
+and family 2's three carrier shapes (a copy the owner witness names, a copy handed on, and a copy
+handed on from a branch arm).  Still open, each with its answer in the rules: family 1's absent
+path, which waits on the carrier question — a resolver given a VARIABLE where the answer belongs to
+an ASSIGNMENT — and family 2's head, a parameter copied out into a container or the return, whose
+answer needs a fact about the caller.  The shape recorded beside family 7, a reassignment from a
+join with a CALL arm (`p_j1`/`p_j2`), is closed with `binding.md` D-bind-33.
 
 ### D-heap-3 — OPENED AND CLOSED (2026-09-10): a struct field projected off a CALL result releases twice
 

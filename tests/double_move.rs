@@ -245,6 +245,336 @@ fn m13_conditional_second_handoff() {
     );
 }
 
+// ── a MEMBER copied into another container (heap.md D-heap-7 family 4) ────────
+//
+// The source container keeps owning the member and its cascade releases it, while the
+// destination releases its copy — so the FIRST copy is already the double.  The owner's call
+// (2026-09-15) is a warning, not runtime bookkeeping: `OpDrop` is meant for a clear lifetime,
+// and this shape is the author's to restructure.  Releases are pinned beside the verdict as
+// everywhere in this file: the lint reports, it never changes what the program does.
+
+/// Run one program with its own declarations and answer `(double_move_warnings, releases)`.
+fn cell_prog(name: &str, decls: &str, body: &str) -> (usize, usize) {
+    let src = format!("{PRELUDE}\n{decls}\nfn main() {{ {body} }}\n");
+    let path = std::env::temp_dir().join(format!("loft_pln139_dm_{name}.loft"));
+    std::fs::write(&path, &src).expect("write temp script");
+    let out = Command::new(loft_bin())
+        .arg("--interpret")
+        .arg(&path)
+        .env_remove("LOFT_NO_DOUBLE_MOVE")
+        .output()
+        .expect("failed to invoke loft binary");
+    let _ = std::fs::remove_file(&path);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    (
+        stderr.matches("double-move").count(),
+        stdout.matches("DROP:").count(),
+    )
+}
+
+#[track_caller]
+fn check_prog(name: &str, decls: &str, body: &str, warnings: usize, releases: usize) {
+    let (w, r) = cell_prog(name, decls, body);
+    assert_eq!(w, warnings, "{name}: double-move warnings — body: {body}");
+    assert_eq!(r, releases, "{name}: releases — body: {body}");
+}
+
+const HOLD: &str = "struct Hold { h: H }";
+
+/// A field into another struct.
+#[test]
+fn p1_field_into_a_field() {
+    check_prog(
+        "p1",
+        HOLD,
+        "s = S { h: mk(1) }; c = Hold { h: s.h }; println(\"{c.h.id}\");",
+        1,
+        2,
+    );
+}
+
+/// A field into an enum payload.
+#[test]
+fn p2_field_into_an_enum_payload() {
+    check_prog(
+        "p2",
+        "enum W { WH { h: H }, WNone }",
+        "s = S { h: mk(2) }; w: W = WH { h: s.h }; \
+         match w { WH { h } => println(\"{h.id}\"), WNone => {} }",
+        1,
+        2,
+    );
+}
+
+/// A field appended to a vector.
+#[test]
+fn p3_field_appended() {
+    check_prog(
+        "p3",
+        "",
+        "s = S { h: mk(3) }; v: vector<H> = []; v += [s.h]; println(\"{v[0].id}\");",
+        1,
+        2,
+    );
+}
+
+/// A field in a vector literal.
+#[test]
+fn p4_field_in_a_vector_literal() {
+    check_prog(
+        "p4",
+        "",
+        "s = S { h: mk(4) }; v: vector<H> = [s.h]; println(\"{v[0].id}\");",
+        1,
+        2,
+    );
+}
+
+/// An element into a struct.
+#[test]
+fn p5_element_into_a_field() {
+    check_prog(
+        "p5",
+        HOLD,
+        "vs: vector<H> = [mk(5)]; c = Hold { h: vs[0] }; println(\"{c.h.id}\");",
+        1,
+        2,
+    );
+}
+
+/// A tuple member into a struct.
+#[test]
+fn p6_tuple_member_into_a_field() {
+    check_prog(
+        "p6",
+        HOLD,
+        "tt = (mk(6), 1); c = Hold { h: tt.0 }; println(\"{c.h.id}\");",
+        1,
+        2,
+    );
+}
+
+/// A nested field into a struct: the root is the outer container.
+#[test]
+fn p7_nested_field_into_a_field() {
+    check_prog(
+        "p7",
+        HOLD,
+        "n = Nest { s: S { h: mk(7) } }; c = Hold { h: n.s.h }; println(\"{c.h.id}\");",
+        1,
+        2,
+    );
+}
+
+/// The source REBUILT after the copy: the rebind releases the member the container also holds.
+#[test]
+fn p8_source_rebuilt_after_the_copy() {
+    check_prog(
+        "p8",
+        HOLD,
+        "s = S { h: mk(8) }; c = Hold { h: s.h }; println(\"{c.h.id}\"); \
+         s = S { h: mk(80) }; println(\"{s.h.id}\");",
+        1,
+        3,
+    );
+}
+
+/// The copy inside an arm: certain on the path that runs it.
+#[test]
+fn p9_copy_inside_an_arm() {
+    check_prog(
+        "p9",
+        HOLD,
+        "s = S { h: mk(9) }; p = true; if p { c = Hold { h: s.h }; println(\"{c.h.id}\"); }",
+        1,
+        2,
+    );
+}
+
+/// The copy inside a loop: one site, one warning, released once per copy and once by `s`.
+#[test]
+fn p10_copy_inside_a_loop() {
+    check_prog(
+        "p10",
+        "",
+        "s = S { h: mk(10) }; v: vector<H> = []; for _i in 0..2 { v += [s.h]; } \
+         println(\"{len(v)}\");",
+        1,
+        3,
+    );
+}
+
+/// The root RETURNED after the copy: it goes on owning the member in the caller.
+#[test]
+fn p11_root_returned_after_the_copy() {
+    check_prog(
+        "p11",
+        "struct Hold { h: H }\n\
+         fn g() -> S { s = S { h: mk(11) }; c = Hold { h: s.h }; println(\"{c.h.id}\"); return s; }",
+        "t = g(); println(\"{t.h.id}\");",
+        1,
+        2,
+    );
+}
+
+/// SILENT — a tuple literal of a member is not a copy: released once.
+#[test]
+fn q1_tuple_literal_is_not_a_copy() {
+    check_prog(
+        "q1",
+        "",
+        "s = S { h: mk(21) }; t = (s.h, 1); println(\"{t.0.id}\");",
+        0,
+        1,
+    );
+}
+
+/// SILENT — a member bound to a local is a view: released once.
+#[test]
+fn q2_member_bound_to_a_local() {
+    check_prog(
+        "q2",
+        "",
+        "s = S { h: mk(22) }; x = s.h; println(\"{x.id}\");",
+        0,
+        1,
+    );
+}
+
+/// SILENT — the member OVERWRITTEN after the copy: `s` releases the new value, the container
+/// the copied one, each once (`(H-Drop-Not)`).
+#[test]
+fn q3_member_overwritten_after_the_copy() {
+    check_prog(
+        "q3",
+        HOLD,
+        "s = S { h: mk(23) }; c = Hold { h: s.h }; s.h = mk(24); \
+         println(\"{c.h.id}{s.h.id}\");",
+        0,
+        2,
+    );
+}
+
+/// SILENT — the copy in an arm, the member overwritten after it.
+#[test]
+fn q4_member_overwritten_after_an_arm() {
+    check_prog(
+        "q4",
+        HOLD,
+        "s = S { h: mk(25) }; p = true; if p { c = Hold { h: s.h }; println(\"{c.h.id}\"); } \
+         s.h = mk(26); println(\"{s.h.id}\");",
+        0,
+        2,
+    );
+}
+
+/// SILENT — the member overwritten inside an arm: single on the path that takes it, double on
+/// the other.  `may` is not `must`, and this tier gates.
+#[test]
+fn q5_member_overwritten_inside_an_arm() {
+    check_prog(
+        "q5",
+        HOLD,
+        "s = S { h: mk(27) }; c = Hold { h: s.h }; p = true; if p { s.h = mk(28); } \
+         println(\"{c.h.id}{s.h.id}\");",
+        0,
+        2,
+    );
+}
+
+/// BLIND SPOT, pinned — a PARAMETER's member: the caller owns it (heap.md family 2), outside
+/// this warning.  Released twice.
+#[test]
+fn z1_parameter_member_is_outside() {
+    check_prog(
+        "z1",
+        "struct Hold { h: H }\nfn g(q: S) { c = Hold { h: q.h }; println(\"{c.h.id}\"); }",
+        "s = S { h: mk(31) }; g(s); println(\"{s.h.id}\");",
+        0,
+        2,
+    );
+}
+
+/// BLIND SPOT, pinned — a LOOP VARIABLE is a plain variable in the IR, not a projection
+/// spelling.  Released twice.
+#[test]
+fn z2_loop_variable_is_outside() {
+    check_prog(
+        "z2",
+        HOLD,
+        "vs: vector<H> = [mk(32)]; for e in vs { c = Hold { h: e }; println(\"{c.h.id}\"); }",
+        0,
+        2,
+    );
+}
+
+/// BLIND SPOT, pinned — a `match` payload binding, likewise a plain variable.  Released twice.
+#[test]
+fn z3_match_payload_is_outside() {
+    check_prog(
+        "z3",
+        "struct Hold { h: H }\nenum W { WH { h: H }, WNone }",
+        "w: W = WH { h: mk(33) }; \
+         match w { WH { h } => { c = Hold { h: h }; println(\"{c.h.id}\"); }, WNone => {} }",
+        0,
+        2,
+    );
+}
+
+/// The source SELF-ASSIGNED after the copy: a no-op, so the member is still `s`'s at scope end.
+#[test]
+fn p12_self_assignment_keeps_the_copy_pending() {
+    check_prog(
+        "p12",
+        HOLD,
+        "s = S { h: mk(12) }; c = Hold { h: s.h }; s = s; println(\"{c.h.id}{s.h.id}\");",
+        1,
+        2,
+    );
+}
+
+/// A VIEW root: `x` views `n`'s member record, and `n`'s cascade releases what the container
+/// also holds.
+#[test]
+fn p13_member_of_a_view_root() {
+    check_prog(
+        "p13",
+        HOLD,
+        "n = Nest { s: S { h: mk(13) } }; x = n.s; c = Hold { h: x.h }; println(\"{c.h.id}\");",
+        1,
+        2,
+    );
+}
+
+/// BLIND SPOT, pinned — the source rebound to a value that READS it: its displaced release is
+/// decided by store identity at run time, so the copy retires.  Released three times here, the
+/// third from `keep` handing the caller back a second record (heap.md family 2's return shape).
+#[test]
+fn z4_rebind_that_reads_the_source_is_outside() {
+    check_prog(
+        "z4",
+        "struct Hold { h: H }\nfn keep(q: S) -> S { return q; }",
+        "s = S { h: mk(34) }; c = Hold { h: s.h }; s = keep(s); println(\"{c.h.id}{s.h.id}\");",
+        0,
+        3,
+    );
+}
+
+/// BLIND SPOT, pinned — a tuple MEMBER copied into a tuple literal lands in the new tuple's
+/// backing work-ref, not a container place.  Released twice.  (A FIELD in a tuple literal is not
+/// a copy at all — `q1`.)
+#[test]
+fn z5_tuple_member_into_a_tuple_is_outside() {
+    check_prog(
+        "z5",
+        "",
+        "tt = (mk(35), 1); t2 = (tt.0, 2); println(\"{t2.0.id}\");",
+        0,
+        2,
+    );
+}
+
 // ── the opt-out ──────────────────────────────────────────────────────────────
 
 /// `LOFT_NO_DOUBLE_MOVE` silences it, and silencing the diagnostic changes nothing about
