@@ -7,7 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Active — P0 and P1 done; P2 (the refusal as a report) next.  Tracked as
+Active — P0, P1 and P2 done; P3 (the refusal as an error) waits on open questions 9 and 10.  Tracked as
 [`@PLN163`](https://github.com/loft-lang/plans/issues/163).  Decided with the owner on 2026-09-15
 after the drop-release arc (`heap.md` D-heap-1, D-heap-7) kept meeting shapes where the compiler
 could not tell which copy should release a resource.
@@ -131,7 +131,7 @@ value; a refusal cell scores the error and its named line.
 |---|---|---|---|
 | **P0** — census: every type with `OpDrop` in the corpus and the published libraries, and every place one is copied today | `LOFT_DROP_COPY_CENSUS` (`use_analysis::drop_copy_census`), the library and consumer trees, the registry cache | `ownership_drop_gate::the_census_names_the_copy_each_cell_makes`: every CROSS and COALESCE cell against a per-axis expectation, and the CROSS `local` cells with the hook removed report `0 sites`.  Falsified: disabling the bind arm fails 54 cells; the join peel and the view-temp dependencies each failed it before they existed | Done |
 | **P1** — the rules above in `formal/heap.md` + `binding.md`, with a deviation for every current behaviour that disagrees | this plan | Every gate cell has a lease verdict (`Once` / `Refused` / `Open`), and `every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation` ties each `Once` cell that fails in a baseline to exactly one OPEN entry: `D-heap-1` (`p_o2`), `D-heap-7` (family 1, 19 cells), `D-heap-10` (`p_i2`).  All 111 `Refused` cells are `D-heap-8`'s, and `D-heap-9` is `OpCopy`.  `registers` reads `OPEN: 5`.  Falsified: closing `D-heap-10` in the register, or removing `p_i2` from a baseline, turns it red.  The census check asks a refused cell for a copy from a variable; marking a fresh-only cell refused turns it red.  Only `c_tuple_tuplem` is `Open` (question 9) | Done |
-| **P2** — the refusal as a REPORT (no error): at every copy site of a refusing type whose source is used afterwards | `copy_manifest::Origin` (both backends' emitted copies) + `ParserMaterialise` | the manifest guard: every emitted copy of a refusing type is reported or proven a move; falsified by disabling one site | **P2a done:** `src/lease.rs` is the `(H-Move)` home, and the census prints its verdict as `lease=`.  `the_census_names_the_copy_each_cell_makes` refuses exactly the 111 `Refused` cells and no `Once` cell, with nothing unreached.  Falsified twice: without the loop fixed point `p_l1`/`p_l2` pass; with a release read as a use, 94 `Once` cells are refused.  Corpus (35 files): 448 moves, 113 refusals (52 caller, 45 container, 16 later, each `later` row read by hand), 0 unreached.  P2b (manifest completeness) and P2c (the corpus rows) open |
+| **P2** — the refusal as a REPORT (no error): at every copy site of a refusing type whose source is used afterwards | `copy_manifest::Origin` (both backends' emitted copies) + `ParserMaterialise` | the manifest guard: every emitted copy of a refusing type is reported or proven a move; falsified by disabling one site | **P2a done:** `src/lease.rs` is the `(H-Move)` home, and the census prints its verdict as `lease=`.  `the_census_names_the_copy_each_cell_makes` refuses exactly the 111 `Refused` cells and no `Once` cell, with nothing unreached.  Falsified twice: without the loop fixed point `p_l1`/`p_l2` pass; with a release read as a use, 94 `Once` cells are refused.  Corpus (35 files): 448 moves, 113 refusals (52 caller, 45 container, 16 later, each `later` row read by hand), 0 unreached.  **P2b done:** every copy of a droppable the interpreter or the native generator emits over the 275 cells has a census verdict — `every_emitted_copy_of_a_droppable_has_a_lease_verdict`, keyed by function and destination, a call result's bind covered by the callee's `return` verdict.  It first found 10 unjudged binds of a callee's moved result, closed by judging every `return` of a droppable.  Falsified: without that, 28 call-result binds are unjudged on the two generators.  Corpus (35 files, both generators): 408 emitted copies of a droppable, 0 without a verdict.  The first run counted 2 more: the parser recorded a materialisation into `__ref_3` in `two_exits` (`1506b`, `1515`) while building the IR, and the scope pass then merged that work variable into the return buffer.  `__ref_3` occurs nowhere in the final body, and both copies into the buffer carry a verdict, so a parser record whose destination is gone names no emitted copy and is not counted.  **P2c:** the corpus rows read; two findings in the open questions (10: a member of a container that dies at the projection is already moved out statically; 11: a returned local tuple was refused, now judged whole) |
 | **P3** — the report becomes a compile error; the published-library gate read row by row | P2 | `tests/scripts` refusal cells (`@EXPECT_ERROR`) on both backends; every library break is a real double release today, or the rule is wrong | Open |
 | **P4** — `OpCopy`: signature check (mirror `check_drop_signature`, `definitions.rs`), synthesized cascade (mirror `synth_drop_cascades`), a call at every copy site on both backends | P1 | drop gate re-baselined on the lease oracle, both backends, `LOFT_POISON`; the matrix's `OpCopy` count per cell | Open |
 | **P5** — remove the machinery that moved a release across a copy, one decider at a time | `scopes::copy_moves_drop_from`, the per-path hand-off flags, the caller-record mark | drop gate and the matrix unchanged after each removal; `introspect_diff` names exactly the removed ops | Open |
@@ -245,6 +245,21 @@ callee copies nothing there.
    are views typed with a dependency and release once.  By `(B-View-Base)` a struct projection off
    an owned base is a view, so the tuple-member spelling is the deviation candidate.  P1 classifies
    it against `tuples.md` `(T-Cons)`, which does not say whether a member is copied in.
+10. **A member projected off a call result that dies in the statement.**  `mk_s(7).h.id` and
+    `r = mk_dense().h` are refused today, as `container`, by the letter of `(H-Copy-Refuse)`.
+    But the compiler already MOVES such a member out, statically: it copies `.h` into a buffer and
+    releases the call result with `OpDropAllExcept(__lift_2, 0, …)`, which skips that member.
+    There is no runtime mark (measured, post-scope IR, 2026-09-15).  Decision 7 declined a move out
+    of a container because it would need "the per-element mark" — a premise that holds for a
+    container that lives on, not for one that dies at the projection.  The same static skip could
+    serve `return s.h` of a local that dies at the return.  Owner's call: is a move out of a
+    container that dies at the move legal (one structure, one drop), with only a container that
+    lives on refused?  Until decided, the report follows the rules as written.
+11. **P2c finding — a returned local tuple is refused as `container`.**  `t = (s, 5); return t`
+    lowers to a `synthetic_tuple_return` block: a hold `__ref_3 = t`, whose type depends on `t`'s
+    member backing rather than on `t`, then a copy of each member into the return buffer.  The
+    census did not see that as a whole-tuple copy; P2b's census recognises the block and resolves
+    the hold, so the return is judged as `t` whole.
 
 ## Cross-arc dependencies
 

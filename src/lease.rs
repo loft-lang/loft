@@ -229,7 +229,16 @@ impl<'a> Frame<'a> {
         {
             let values = self.assigned(current);
             let next = match values.as_slice() {
-                [Leaf::Var(x)] if self.func.tp(current).depend().contains(x) => *x,
+                // A view of `x`: its type depends on `x` — or, for a tuple hold, on exactly the
+                // member backings `x`'s type depends on (`__ref_3 = t` in a returned tuple).
+                [Leaf::Var(x)]
+                    if self.func.tp(current).depend().contains(x)
+                        || (matches!(self.func.tp(current).base(), Type::Tuple(_))
+                            && !self.func.tp(current).depend().is_empty()
+                            && self.func.tp(current).depend() == self.func.tp(*x).depend()) =>
+                {
+                    *x
+                }
                 [Leaf::Member(x)] => {
                     through_member = true;
                     *x
@@ -271,6 +280,12 @@ impl<'a> Frame<'a> {
 
     /// Does the caller hold `var`'s value: a parameter, or a local that holds the caller's record
     /// on every path?
+    /// Is `var` one of the function's return buffers — an argument it fills, not one it receives?
+    #[must_use]
+    pub fn is_buffer(&self, var: u16) -> bool {
+        self.buffers.contains(&var)
+    }
+
     fn caller_holds(&self, var: u16) -> bool {
         (self.func.is_argument(var) && !self.buffers.contains(&var))
             || self.func.holds_caller_record(var)
