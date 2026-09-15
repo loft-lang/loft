@@ -5140,6 +5140,19 @@ struct DoubleMove<'a> {
     cur: Option<Position>,
     /// `(source var, first hand-off, second hand-off)`, one per var per sequence.
     found: Vec<(u16, Position, Position)>,
+    /// PROJECTION hand-offs still pending, by ROOT variable: a member of the root was copied into
+    /// a container at each position, and the root still owns that member.  One map for the whole
+    /// function, not one per arm: a copy made inside an arm or a loop body stays pending past that
+    /// subtree, because the root's release — its scope end, a rebind, a `return` — usually lies
+    /// outside it.  That is also why a subtree's writes retire a pending root before it is scanned.
+    proj: HashMap<u16, Vec<Position>>,
+    /// `(root var, copy position)` for every projection hand-off whose root's release became
+    /// certain while it was still pending.
+    proj_found: Vec<(u16, Position)>,
+    /// The function's hidden return-buffer ARGUMENTS: a local promoted to the caller's buffer is an
+    /// argument in the variable table, but the record it holds goes on to the caller, who releases
+    /// it — so it is a root like any local, unlike a parameter the caller already owns.
+    ret_bufs: HashSet<u16>,
 }
 
 impl DoubleMove<'_> {
@@ -5169,6 +5182,10 @@ impl DoubleMove<'_> {
                 self.scan(cond, st);
                 for arm in [then.as_ref(), els.as_ref()] {
                     kill_assigned(arm, st);
+                    // A member written on one path only is not certainly the member the
+                    // container copied, so a pending projection over it retires — silent is the
+                    // sound answer for a tier that gates.
+                    self.retire_written_roots(arm);
                     self.scan(arm, &mut Handoffs::new());
                 }
             }
@@ -5179,12 +5196,16 @@ impl DoubleMove<'_> {
             // that false negative is the documented boundary.
             Value::Loop(_) | Value::Iter(..) | Value::Parallel(_) => {
                 kill_assigned(node, st);
+                self.retire_written_roots(node);
                 self.scan_children_isolated(node);
             }
-            // Nothing after a terminator runs, so the pending set cannot pair across it.
+            // Nothing after a terminator runs, so the pending set cannot pair across it.  A
+            // pending projection is reported here: the root leaves the frame with its member
+            // still in it, whichever of the two goes back to the caller.
             Value::Return(v) => {
                 self.scan(v, st);
                 st.clear();
+                self.report_all_projections();
             }
             Value::Break(_) | Value::Continue(_) => st.clear(),
             // A reassignment replaces the value, so what was handed off is no longer what
@@ -5195,6 +5216,25 @@ impl DoubleMove<'_> {
             // resource, `scopes::copy_moves_drop_from`), so `t = s; u = s` is the same
             // double release as two containers built from one droppable.
             Value::Set(v, rhs) => {
+                // A pending projection's root REBOUND: decided before the value is scanned, so
+                // nothing inside it can retire the copy first.  A rebind of a root that owns its
+                // record releases the record it displaces, member and all (loft#1362) — the double
+                // is certain, so report.  A self-assignment is a no-op and leaves the copy pending.
+                // A view root releases nothing, and a value that reads the root has its displaced
+                // release decided by identity at run time, so both retire: silent is sound here.
+                if self.proj.contains_key(v) && !matches!(rhs.unspan(), Value::Var(src) if src == v)
+                {
+                    // @FR-O-Proxy asks oracle — whether the rebind releases the record it
+                    // displaces; it decides a report and drives no emission.
+                    if self.func.proxy_says_owned(*v)
+                        && !self.func.is_skip_free(*v)
+                        && !rhs.reads_var(*v)
+                    {
+                        self.report_projection(*v);
+                    } else {
+                        self.proj.remove(v);
+                    }
+                }
                 self.scan(rhs, st);
                 if let Value::Var(src) = rhs.unspan()
                     && crate::scopes::copy_moves_drop_from(self.func, self.data, *v, *src, false)
@@ -5208,12 +5248,16 @@ impl DoubleMove<'_> {
                 for a in args {
                     self.scan(a, st);
                 }
+                self.projection_event(args);
                 self.record(args, st);
             }
             // Everything else — a `Block`/`Insert` statement sequence, an ordinary call, an
             // operand — runs straight through, so its children share the caller's set and
             // are visited in evaluation order.
-            _ => self.scan_children(node, st),
+            _ => {
+                self.retire_call_writes(node);
+                self.scan_children(node, st);
+            }
         }
     }
 
@@ -5228,9 +5272,97 @@ impl DoubleMove<'_> {
         node.for_each_child(&mut |c| self.scan(c, &mut Handoffs::new()));
     }
 
+    /// A copy that touches a pending projection's ROOT.  A copy INTO a place rooted at the root
+    /// overwrites a member, and an overwritten member is not released (`(H-Drop-Not)`), so the
+    /// root's pending copies retire.  A displaced snapshot of the root
+    /// (`OpCopyRecord(root, __disp_N)`), where one appears in the IR this walks, releases the
+    /// root's record, member and all, so its pending copies are reported.  The ordinary rebind is
+    /// not that snapshot here: measured with a trace, this pass sees a rebuild as `Set(root, …)`,
+    /// which the `Set` arm decides.
+    fn projection_event(&mut self, args: &[Value]) {
+        if self.proj.is_empty() {
+            return;
+        }
+        if let (Value::Var(src), Value::Var(dst)) = (args[0].unspan(), args[1].unspan())
+            && (*dst as usize) < self.func.count() as usize
+            && self.func.name(*dst).starts_with("__disp_")
+        {
+            self.report_projection(*src);
+            return;
+        }
+        if let Some(root) = place_root(&args[1], self.data) {
+            self.proj.remove(&root);
+        }
+    }
+
+    /// Report every pending copy of `root`: its release is certain now.
+    fn report_projection(&mut self, root: u16) {
+        if let Some(ats) = self.proj.remove(&root) {
+            for at in ats {
+                self.proj_found.push((root, at));
+            }
+        }
+    }
+
+    /// Report every pending projection hand-off — a `return`, or the end of the body.
+    fn report_all_projections(&mut self) {
+        for (root, ats) in std::mem::take(&mut self.proj) {
+            for at in ats {
+                self.proj_found.push((root, at));
+            }
+        }
+    }
+
+    /// Retire the pending projections whose root a SUBTREE writes (a conditional arm, a loop
+    /// body): the member may not be the one the container copied by the time the root goes.
+    fn retire_written_roots(&mut self, node: &Value) {
+        if self.proj.is_empty() {
+            return;
+        }
+        let (data, copy_d) = (self.data, self.copy_d);
+        let mut written = HashSet::new();
+        node.walk(&mut |n| {
+            written_roots(n, copy_d, data, &mut written);
+            if let Value::Set(v, _) = n.unspan() {
+                written.insert(*v);
+            }
+        });
+        self.proj.retain(|r, _| !written.contains(r));
+    }
+
+    /// Retire the pending projections whose root THIS node writes (not its children).
+    fn retire_call_writes(&mut self, node: &Value) {
+        if self.proj.is_empty() {
+            return;
+        }
+        let mut written = HashSet::new();
+        written_roots(node, self.copy_d, self.data, &mut written);
+        self.proj.retain(|r, _| !written.contains(r));
+    }
+
     /// Record one `OpCopyRecord` that hands its source's ownership away, and report the
     /// SECOND such hand-off of the same variable.
     fn record(&mut self, args: &[Value], st: &mut Handoffs) {
+        // heap.md D-heap-7 family 4 — a MEMBER of a container the frame still holds, copied into
+        // another container: the source container keeps owning that member and its cascade
+        // releases it, while the destination releases its copy, so the FIRST copy is already the
+        // double.  Pending until the root's release is certain, or retired if the member is
+        // overwritten first.  A parameter's member is the caller's (heap.md family 2) and a
+        // capture's is the closure's, so neither is this frame's to report.
+        if let Some(root) = projection_root(&args[0], self.data)
+            && (crate::scopes::copy_hands_off(&args[1], self.func, self.data)
+                || crate::scopes::appends_to_element(&args[1], self.func, self.data))
+            && (root as usize) < self.func.count() as usize
+            && (!self.func.is_argument(root) || self.ret_bufs.contains(&root))
+            && !self.func.is_captured(root)
+            && !self.func.name(root).starts_with('_')
+            && !self.func.name(root).contains('#')
+        {
+            if let Some(at) = self.cur.clone() {
+                self.proj.entry(root).or_default().push(at);
+            }
+            return;
+        }
         // The exact predicate the drop suppression uses (`scopes::collect_drop_transferred`),
         // so the lint and the mechanism cannot drift: a hand-off is what makes the source
         // stop dropping, and this asks the same question of the same node.
@@ -5275,6 +5407,68 @@ impl DoubleMove<'_> {
         } else {
             st.insert(src, at);
         }
+    }
+}
+
+/// The root variable of a PROJECTION — a field, element or tuple-member read (`s.h`, `v[i].h`,
+/// `t.0`) at any depth — or `None` for a bare variable or anything else.
+fn projection_root(node: &Value, data: &Data) -> Option<u16> {
+    match node.unspan() {
+        Value::TupleGet(base, _) => Some(*base),
+        Value::Call(d, args) if data.def(*d).name().starts_with("OpGet") => {
+            place_root(args.first()?, data)
+        }
+        _ => None,
+    }
+}
+
+/// The root variable of a PLACE: the variable itself, or a projection's root.
+fn place_root(node: &Value, data: &Data) -> Option<u16> {
+    match node.unspan() {
+        Value::Var(v) => Some(*v),
+        _ => projection_root(node, data),
+    }
+}
+
+/// The roots ONE node writes: a copy's destination place, the target of a setter, append,
+/// insert, remove, clear or in-place build, and every bare variable handed to a user call,
+/// whose body may write through it.
+fn written_roots(node: &Value, copy_d: u32, data: &Data, out: &mut HashSet<u16>) {
+    match node.unspan() {
+        Value::Call(d, args) => {
+            let name = data.def(*d).name();
+            let place = if *d == copy_d {
+                args.get(1)
+            } else if name.starts_with("OpSet")
+                || name.starts_with("OpAppend")
+                || name.starts_with("OpInsert")
+                || name.starts_with("OpRemove")
+                || name.starts_with("OpClear")
+                || name == "OpDatabase"
+            {
+                args.first()
+            } else {
+                None
+            };
+            if let Some(root) = place.and_then(|p| place_root(p, data)) {
+                out.insert(root);
+            }
+            if !name.starts_with("Op") {
+                for a in args {
+                    if let Value::Var(x) = a.unspan() {
+                        out.insert(*x);
+                    }
+                }
+            }
+        }
+        Value::CallRef(_, args) => {
+            for a in args {
+                if let Value::Var(x) = a.unspan() {
+                    out.insert(*x);
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -5344,8 +5538,21 @@ pub fn warn_double_move(
             copy_d,
             cur: None,
             found: Vec::new(),
+            proj: HashMap::new(),
+            proj_found: Vec::new(),
+            ret_bufs: (0..def.variables.count())
+                .filter(|&v| {
+                    def.variables.is_argument(v)
+                        && def
+                            .attributes
+                            .iter()
+                            .any(|a| a.hidden && a.name == def.variables.name(v))
+                })
+                .collect(),
         };
         cx.scan(&def.code, &mut Handoffs::new());
+        // Whatever is still pending at the end of the body is released by its root's scope exit.
+        cx.report_all_projections();
         for (src, first, at) in std::mem::take(&mut cx.found) {
             let name = def.variables.name(src);
             let ty = data.type_name_str(def.variables.tp(src));
@@ -5394,6 +5601,49 @@ pub fn warn_double_move(
                 condition: Some(format!(
                     "the containers are meant to SHARE — then only one may own `{name}`, and \
                      the other must read it from that one"
+                )),
+                edit: None,
+                concept: "move",
+                concept_ref: "@F106",
+            });
+        }
+        // heap.md D-heap-7 family 4 — a member of a container copied into another container.
+        for (root, at) in std::mem::take(&mut cx.proj_found) {
+            let name = def.variables.name(root);
+            let file = if at.file.is_empty() {
+                def_file
+            } else {
+                at.file.as_str()
+            };
+            let msg = format!(
+                "a member of `{name}` is copied into a container here, and `{name}` still owns \
+                 that member and releases it when `{name}` goes — each owner releases what it \
+                 owns, so this value is released TWICE"
+            );
+            diags.add_at_coded(
+                crate::diagnostics::Level::Warning,
+                Some("double-move"),
+                &msg,
+                file,
+                at.line,
+                at.pos,
+            );
+            diags.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: format!("read the member from `{name}` instead of copying it"),
+                condition: Some(format!(
+                    "the container only needs to see the value `{name}` holds"
+                )),
+                edit: None,
+                concept: "move",
+                concept_ref: "@F106",
+            });
+            diags.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: format!("overwrite the member in `{name}` after the copy"),
+                condition: Some(format!(
+                    "`{name}` is done with the value — an overwritten member is not released, \
+                     so the container becomes its only owner"
                 )),
                 edit: None,
                 concept: "move",
