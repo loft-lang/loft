@@ -1384,12 +1384,19 @@ jobs:
       # install for `cargo` in the repo dir — and `-Zsanitizer` is nightly-only,
       # so a bare `cargo` here runs stable and errors "the option `Z` is only
       # accepted on the nightly compiler".
+      # `--profile sanitizer`, not `ci`: `loft_suite` runs every `tests/scripts` program
+      # inside one test process, and under `-Zsanitizer=address` it is the leg's whole
+      # clock — it grows with the corpus, not with any hang.  `ci`'s 600 s ceiling was
+      # 587 s on the previous green run and killed at 600 s on the next commit that added
+      # one script (run 34980517571: 2022 passed, 0 failed, 1 timed out).  The `sanitizer`
+      # profile in `.config/nextest.toml` is `ci` with that one test's ceiling raised, made
+      # for the nightly legs of `miri.yml` when the same wall was hit there (loft#1527).
       - name: ASan sweep (UAF / OOB; leaks off pending triage)
         env:
           RUSTFLAGS: '-Zsanitizer=address'
           ASAN_OPTIONS: 'detect_leaks=0'
         run: >
-          cargo +nightly-2026-05-28 nextest run --profile ci --release
+          cargo +nightly-2026-05-28 nextest run --profile sanitizer --release
           --target x86_64-unknown-linux-gnu
           --lib --test issues --test wrap --test strings --test frame_vars
           -E 'not (test(library_suite) | test(fill_rs_up_to_date) |

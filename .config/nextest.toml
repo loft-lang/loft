@@ -156,7 +156,9 @@ platform = 'cfg(windows)'
 filter = 'binary(wrap) & test(loft_suite)'
 slow-timeout = { period = "1200s", terminate-after = 1 }
 
-# The profile the nightly sanitizer legs run under (`miri.yml`'s ASan sweep and leak gate).
+# The profile every sanitizer leg runs under: `miri.yml`'s nightly ASan sweep and leak gate,
+# and `ci.yml`'s per-PR ASan sweep since 2026-09-15 (that one sat at 587 s of `ci`'s 600 s
+# and was killed at 600 s by the next commit that added a corpus script — run 34980517571).
 #
 # It is `ci` with ONE difference: `loft_suite`, which runs every `tests/scripts` program
 # serially inside one test process, gets a longer ceiling.  Under `-Zsanitizer=address` that
