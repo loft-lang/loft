@@ -480,20 +480,24 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 502 | 478 | **24** |
+| 502 | 479 | **23** |
+
+(2026-09-15, @PLN163's copy-lease census and verdicts: 501 · 478 · 23, measured commit by commit.
+The census in `use_analysis::drop_copy_census` added two peeling sites; `src/lease.rs` six, five
+peeling and one — `leaves`, which classified leaves `source_leaves` had already unspanned — in the
+neither column until it read each leaf through `unspan` itself; the P2r census arms two more, both
+peeling.)
 
 (2026-09-15, THE JOINED TREE — this branch through @PLN162's close, ../loft2's @PLN163 through
-P2r, and @PLN157 through § V-ao: 502 · 478 · 24, re-measured rather than carried.  Neither input's
-row was the union's: this branch read 489 · 465 · 24, ../loft2's tip measures 501 · 477 · 24 under
-a row still reading 491 · 468 · 23, and § V-ao's own tree 491 · 467 · 24.  Against this branch the
-neither column swapped one site for another: `use_analysis::scan_lost_temp_writes` now reads its
-`__lift_N` argument through its `Span` (the lost-temporary-write lint runs after `scopes::check`
-on every path), and ../loft2's `lease::leaves` joined it — a false positive, since every value
-it matches arrives from `source_leaves`, which binds `src.unspan()`, and that peels to the bottom.  § V-ao's
-`hoist::arith_chain` peels.  #1534 was fixed on both branches; the join keeps ONE home for it,
-`non_sentinel::collect_escapes`'s address-taking arm, which covers the by-reference argument and
-the local link, so § V-ao's `arg_var` — a second reading of the `OpCreateStack` spelling — is not
-carried.)
+its re-measure (b12e15474), and @PLN157 through § V-ao: 502 · 479 · 23, re-measured rather than
+carried.  Neither input's row was the union's: this branch read 489 · 465 · 24, ../loft2 501 · 478
+· 23 and § V-ao's own tree 491 · 467 · 24.  Against this branch the neither column lost
+`use_analysis::scan_lost_temp_writes`, which now reads its `__lift_N` argument through its `Span`
+(the lost-temporary-write lint runs after `scopes::check` on every path); ../loft2's `lease.rs`
+sites all peel.  § V-ao's `hoist::arith_chain` peels.  #1534 was fixed on both branches; the join
+keeps ONE home for it, `non_sentinel::collect_escapes`'s address-taking arm, which covers the
+by-reference argument and the local link, so § V-ao's `arg_var` — a second reading of the
+`OpCreateStack` spelling — is not carried.)
 
 (2026-09-15, THE JOINED TREE — this branch through loft#1532, ../loft2's drop-release arc through
 its loop-body parameter copy, and @PLN157 through § V-an: 489 · 465 · 24, re-measured rather than
@@ -2595,8 +2599,12 @@ and who does not.
 
 (2026-09-15, THE JOINED TREE — this branch through @PLN162's close, ../loft2's @PLN163 through
 P2r, and @PLN157 / @PLN164 through B1: 824 · 483 · 6 · 335, re-measured rather than carried; the
-ratchet reads its 335 / 1316 pin.  This branch read 820 · 479 and @PLN164 B1 817 · 475; each
-counted its own additions and not the others'.)
+ratchet reads its 335 / 1316 pin.  This branch read 820 · 479, ../loft2 819 · 477 and @PLN164 B1
+817 · 475; each counted its own additions and not the others'.)
+
+(2026-09-15, @PLN163: 819 · 477 · 6 · 336.  `src/lease.rs` added one function that sees through
+the wrapper and `copy_manifest`'s lease check two, all three peeling with `.base()`; the opaque
+column and the ratchet are unmoved.)
 
 (2026-09-15, @PLN164 B1: 817 · 475 · 6 · 336 — one function added and it peels:
 `use_analysis::adopts_minted_at_bind` reads a callee's return type through `peel_optional`

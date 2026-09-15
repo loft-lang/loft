@@ -4964,6 +4964,7 @@ impl Census<'_> {
                 let Value::Var(src) = rhs.unspan() else {
                     unreachable!("matched above")
                 };
+                // @FR-O-Proxy asks oracle — only the census's label for the site; drives no emission
                 let kind = if self.func.tp(*v).depend().is_empty() {
                     "bind"
                 } else {

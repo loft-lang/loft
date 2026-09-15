@@ -520,7 +520,7 @@ fn leaves(data: &Data, ops: &Ops, src: &Value) -> Vec<Leaf> {
             if let Some(root) = projection_root(leaf, data) {
                 return Leaf::Member(root);
             }
-            match leaf {
+            match leaf.unspan() {
                 Value::Var(v) => Leaf::Var(*v),
                 Value::Call(op, args) if *op == ops.create_stack => {
                     match args.first().map(Value::unspan) {
