@@ -480,7 +480,12 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 488 | 464 | **24** |
+| 489 | 465 | **24** |
+
+(2026-09-15, THE JOINED TREE — this branch through loft#1532, ../loft2's drop-release arc through
+its loop-body parameter copy, and @PLN157 through § V-an: 489 · 465 · 24, re-measured rather than
+carried.  The pick left this branch's 488 · 464 standing against § V-an's 486 · 462; neither was
+the union's.)
 
 (2026-09-15: @PLN157 § V-an's `hoist::dropped_reads` — the positional walk that finds a
 value local's dropped reads — unspans at its one discriminating site; the opaque count is
@@ -2570,7 +2575,12 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 815 | 473 | 5 | **337** |
+| 816 | 474 | 6 | **336** |
+
+(2026-09-15, THE JOINED TREE — the same union: 816 · 474 · 6 · 336, re-measured rather than
+carried.  This branch's 815 · 473 · 5 · 337 and § V-an's 796 · 454 · 6 · 336 each counted its own
+change against a base the other had moved; the opaque column is § V-an's 336 and the ratchet's
+pin (336 / 1317) holds on the union.)
 
 (2026-09-15, later: @PLN157 § V-an — `hoist::dropped_reads` tests a block's result through
 `.base()` (the peeling column) and `object_own_return` reads the buffer a block's result
