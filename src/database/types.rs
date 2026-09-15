@@ -2241,8 +2241,9 @@ impl Stores {
         self.types.truncate(keep as usize);
         // A surviving row's facts were derived over rows that may now be gone
         // (a forward reference into the batch being rolled back).
-        for t in &self.types {
+        for t in &mut self.types {
             t.facts.forget();
+            t.prefill.forget();
         }
         self.names.retain(|_, &mut nr| nr < keep);
     }
@@ -3314,6 +3315,49 @@ impl std::fmt::Debug for TypeFacts {
     }
 }
 
+/// The PREFILL IMAGE of a record of this type — the bytes the field-by-field default
+/// walk writes for [`Absent::Prefill`](super::structures::Absent), captured from the walk's
+/// first run over a zeroed span and written as ONE block for every later mint
+/// (`@FR-R-Prefill`, [`Stores::set_default_value_nullable`](super::Stores::set_default_value_nullable)).
+/// Derived, like [`TypeFacts`]: no part in equality or in the stored form, and a table
+/// rollback forgets it.
+#[derive(Default, Clone)]
+pub struct PrefillImage(std::sync::OnceLock<Box<[u8]>>);
+
+impl PrefillImage {
+    /// The image, once captured.
+    #[inline]
+    pub(super) fn get(&self) -> Option<&[u8]> {
+        self.0.get().map(|b| &**b)
+    }
+
+    /// Record the walk's bytes; a second capture of the same type changes nothing.
+    pub(super) fn set(&self, img: Box<[u8]>) {
+        let _ = self.0.set(img);
+    }
+
+    pub(super) fn forget(&mut self) {
+        self.0.take();
+    }
+}
+
+/// Derived from `parts`, so two rows with equal parts have equal images whether
+/// or not either has captured one yet.
+impl PartialEq for PrefillImage {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for PrefillImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.get() {
+            Some(img) => write!(f, "PrefillImage({} bytes)", img.len()),
+            None => f.write_str("PrefillImage(?)"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type {
     pub name: String,
@@ -3332,6 +3376,7 @@ pub struct Type {
     /// `Definition::field_groups` instead.
     pub field_groups: Vec<crate::data::LinkedFieldGroup>,
     pub(super) facts: TypeFacts,
+    pub(super) prefill: PrefillImage,
 }
 
 impl Type {
@@ -3383,6 +3428,7 @@ impl Type {
             align,
             field_groups,
             facts: TypeFacts::default(),
+            prefill: PrefillImage::default(),
         }
     }
 
@@ -3404,6 +3450,7 @@ impl Type {
             align: size as u8,
             field_groups: Vec::new(),
             facts: TypeFacts::default(),
+            prefill: PrefillImage::default(),
         }
     }
 
@@ -3419,6 +3466,7 @@ impl Type {
             align: 4,
             field_groups: Vec::new(),
             facts: TypeFacts::default(),
+            prefill: PrefillImage::default(),
         }
     }
 

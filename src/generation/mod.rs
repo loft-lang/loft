@@ -5734,7 +5734,7 @@ extern crate loft;"
         // type's zero on `--native` while the interpreter answers the default.  Folded
         // by the same function the parse-time deposit uses, so the two backends cannot
         // disagree about which defaults are constant.
-        if let Some(c) = crate::typedef::fold_declared_default(declared_default) {
+        if let Some(c) = crate::typedef::fold_declared_default(self.data, declared_default) {
             let lit = match c {
                 crate::keys::Content::Long(n) => format!("loft::keys::Content::Long({n}_i64)"),
                 // `{:?}` on a float round-trips exactly (`1.5` → `1.5`); a declared

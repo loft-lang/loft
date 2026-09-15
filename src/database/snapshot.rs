@@ -483,6 +483,7 @@ fn type_from(p: &Parsed) -> Result<Type, SchemaDecodeError> {
         align: as_u8(field(p, "align")?)?,
         field_groups,
         facts: super::types::TypeFacts::default(),
+        prefill: super::types::PrefillImage::default(),
     })
 }
 
