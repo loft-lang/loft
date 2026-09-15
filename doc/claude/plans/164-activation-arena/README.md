@@ -428,6 +428,11 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
    library's API keeps the promised representation and the boundary materialises; one
    that does not may be rewritten freely.  C5's cells therefore include an ESCAPE row —
    a `pub fn` whose result a consumer could keep — which must read the copy at the bridge.
+   And the unit is a BUILD decision (owner, same day): a release copy of a program already
+   compiles its `use`d loft libraries into the one program (the bench emission carries
+   `parse_poly` itself), so in that lane the drawing library's API is no boundary and C5
+   crosses it; only the library's own published cdylib, a `#rust` native, the live-reload
+   arm, a stored layout and a placed library keep the promised representation.
 5. **`(R-Place)` across stores.**  A result's buffer claimed in the DESTINATION's store
    (the scene's) rather than a store of its own is what makes B2's move a relocation;
    it is also the first place a temporary lives inside another record's store, which is
