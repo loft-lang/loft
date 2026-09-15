@@ -1,0 +1,82 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic METHOD whose receiver is built over the type variable (`fn head<T>(self:
+// vector<T>)`) is called with the dot spelling and answers what its concrete twin answers
+// (`interfaces.md (G-Mono)`, loft#1539).
+//
+// The definition is stored under its receiver's key, `t_6vector_head`, as a template.  A bare
+// call to a free generic instantiates its template; the method call selected the template and
+// called it as it was, so every call failed naming the compiler-internal key.  Four places
+// assumed a template is always a free `n_<name>`: the method call, the nested-generic retarget
+// inside another monomorph, the cross-pass guard that admits a pass-2-only monomorph, and the
+// bare call that finds a method template first.
+//
+// The collision cells pin the ORDER-independence: a free `head<T>` and a method `head<T>` bound
+// at the same type used to mint one monomorph name, so whichever call came first answered both.
+// The concrete twin — a method and a free function of one name — answers the METHOD for both
+// spellings, because a bare call resolves the method spelling first (C97), and so do these.
+//
+// @falsified-at: b12e15474 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1539-a-generic-method-on-a-vector-receiver-instantiates.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit, both backends — the control refuses the file.
+//   ARMED: nothing.
+//   WITNESS: measured as a probe on the same build, a dot call to `head` is refused `Unknown
+//     definition t_6vector_head` on both backends.
+//   HOLDS: nothing on the control compiles; every cell is new.
+
+struct Pt { x: integer, y: integer }
+
+fn head<T>(self: vector<T>) -> T { self[0] }
+
+fn at_or<T>(self: vector<T>, i: integer, d: T) -> T { if i < len(self) { self[i] } else { d } }
+
+fn doubled_head<T>(v: vector<T>) -> vector<T> { [v.head(), v.head()] }
+
+fn numbers() -> vector<integer> { [8, 9] }
+
+fn pick<T>(self: vector<T>) -> T { self[0] }
+
+fn pick<T>(v: vector<T>) -> T { v[len(v) - 1] }
+
+fn test_at_every_kind() {
+  a: vector<integer> = [1, 2];
+  b: vector<text> = ["p", "q"];
+  c: vector<Pt> = [Pt { x: 3, y: 4 }];
+  h = c.head();
+  assert("{a.head()}|{b.head()}|{h.y}" == "1|p|4", "head: {a.head()}|{b.head()}|{h.y}");
+}
+
+fn test_with_an_argument() {
+  a: vector<integer> = [1, 2];
+  assert(a.at_or(1, 7) == 2 && a.at_or(5, 7) == 7, "at_or: {a.at_or(1, 7)} {a.at_or(5, 7)}");
+}
+
+fn test_on_a_call_result() {
+  assert(numbers().head() == 8, "chained: {numbers().head()}");
+}
+
+fn test_inside_another_generic() {
+  a: vector<text> = ["q", "r"];
+  d = doubled_head(a);
+  assert("{d}" == "[\"q\",\"q\"]", "nested: {d}");
+}
+
+fn test_method_call_first() {
+  a: vector<integer> = [4, 5];
+  assert("{a.pick()} {pick(a)}" == "4 4", "method first: {a.pick()} {pick(a)}");
+}
+
+fn test_free_call_first() {
+  a: vector<integer> = [4, 5];
+  assert("{pick(a)} {a.pick()}" == "4 4", "free first: {pick(a)} {a.pick()}");
+}
+
+fn main() {
+  test_at_every_kind();
+  test_with_an_argument();
+  test_on_a_call_result();
+  test_inside_another_generic();
+  test_free_call_first();
+  test_method_call_first();
+}

@@ -18298,6 +18298,50 @@ impl Parser {
         }
     }
 
+    /// loft#1539 — a method call that selected a generic METHOD template (`fn head<T>(self:
+    /// vector<T>)`, stored as `t_6vector_head`).  A template is not callable, so outside another
+    /// template the call names its monomorph, exactly as a bare call to a free generic does in
+    /// `parse_call`: the first pass predicts the return type so a receiving binding is typed
+    /// (`Ok`), the second instantiates.  `Err` carries the definition to call — the monomorph,
+    /// or the selection unchanged when it is not a template or cannot be instantiated, which
+    /// `call_nr` then reports as before.
+    fn generic_method_call(
+        &mut self,
+        val: &mut Value,
+        md_nr: u32,
+        types: &[Type],
+    ) -> Result<Type, u32> {
+        if md_nr == u32::MAX
+            || self.data.def_type(md_nr) != DefType::Generic
+            || self.callable_target(md_nr)
+        {
+            return Err(md_nr);
+        }
+        let name = Self::method_spelling(self.data.def(md_nr).name());
+        if self.first_pass {
+            let predicted = self.predict_template_return(md_nr, &name, types);
+            if predicted.is_unknown() {
+                return Err(md_nr);
+            }
+            *val = Value::Null;
+            return Ok(predicted);
+        }
+        let inst = self.instantiate_template(md_nr, &name, types);
+        Err(if inst == u32::MAX { md_nr } else { inst })
+    }
+
+    /// The method a `t_<LEN><type>_<method>` key names — the spelling a call wrote.  A key of
+    /// any other shape is answered whole.
+    pub(crate) fn method_spelling(key: &str) -> String {
+        key.strip_prefix("t_")
+            .and_then(|rest| {
+                let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+                let len: usize = rest[..digits].parse().ok()?;
+                rest.get(digits + len + 1..)
+            })
+            .map_or_else(|| key.to_string(), str::to_string)
+    }
+
     /// Parse a method call's `(arg, …)` and emit it.  `hint_nr` steers how the arguments
     /// PARSE — `Disp-Hint` (@PLN162): the one candidate the name has at this receiver, or the
     /// attribute slot's routine — an expected collection or interpolation type, a named
@@ -18329,7 +18373,11 @@ impl Parser {
         let mut named_args: Vec<(String, Value, Type)> = Vec::new();
         let mut in_named = false;
         if self.lexer.has_token(")") {
-            let md_nr = self.select_method_def(select, &types);
+            let selected = self.select_method_def(select, &types);
+            let md_nr = match self.generic_method_call(val, selected, &types) {
+                Ok(predicted) => return predicted,
+                Err(md_nr) => md_nr,
+            };
             return self.call_nr(val, md_nr, &list, &types, true, &arg_pos, None);
         }
         loop {
@@ -18398,7 +18446,11 @@ impl Parser {
             }
         }
         self.lexer.token(")");
-        let md_nr = self.select_method_def(select, &types);
+        let selected = self.select_method_def(select, &types);
+        let md_nr = match self.generic_method_call(val, selected, &types) {
+            Ok(predicted) => return predicted,
+            Err(md_nr) => md_nr,
+        };
         if md_nr == u32::MAX {
             // No callee to resolve names against — `call_with_named` would index a
             // definition that is not there.  Hand it on unchanged; the missing method

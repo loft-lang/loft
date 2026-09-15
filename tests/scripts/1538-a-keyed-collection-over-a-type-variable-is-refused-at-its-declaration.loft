@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic whose parameter or return is a keyed collection over its type variable
+// (`hash<T[key]>`, `sorted<T[key]>`) is refused at its declaration, saying why
+// (`interfaces.md (G-Gen)`, loft#1538).
+//
+// A key names a FIELD of the element, and a type variable has no fields until it is
+// instantiated, so no monomorph can resolve one.  The declaration used to compile and then drop
+// out of every call's candidates: each call reported `Unknown function put_all` and nothing
+// pointed at the declaration.  The refusal names the declaration and the cure, and a call to
+// the refused function adds no second message.  C110 keeps keyed collections record sets, so
+// this stays a refusal rather than a feature.
+//
+// @falsified-at: b12e15474 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1538-a-keyed-collection-over-a-type-variable-is-refused-at-its-declaration.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations, both backends.
+//   ARMED: nothing.
+//   WITNESS: on the control neither refusal is emitted (FAIL/2).  Measured as a probe on the
+//     same build, a call to `put_all` reports `Unknown function put_all` and nothing points at
+//     the declaration.
+//   HOLDS: the program is refused on both trees; the message is what moves.
+// @EXPECT_ERROR: parameter `h` is a keyed collection over the type variable T, and its key names a field that T does not have until it is instantiated — declare the collection over a concrete record type (`hash<Entry[key]>`)
+// @EXPECT_ERROR: the return type is a keyed collection over the type variable T, and its key names a field that T does not have until it is instantiated — declare the collection over a concrete record type (`hash<Entry[key]>`)
+
+struct Entry { key: text, val: integer }
+
+fn put_all<T>(h: hash<T[key]>, e: T) -> integer { h += [e]; len(h) }
+
+fn one<T>(e: T) -> sorted<T[key]> { s: sorted<T[key]> = [e]; s }
+
+fn main() {
+  h: hash<Entry[key]> = [];
+  println("{put_all(h, Entry { key: "x", val: 1 })}");
+}

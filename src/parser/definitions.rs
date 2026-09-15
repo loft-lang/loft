@@ -1890,6 +1890,64 @@ impl Parser {
         } else {
             Type::Void
         };
+        // @FR-G-Gen — a keyed collection over the type variable (`hash<T[key]>`) names a FIELD
+        // of `T` as its key, and a type variable has no fields until it is instantiated, so no
+        // monomorph can resolve it.  Refused here, where it is written: the definition used to
+        // compile and drop out of every call's candidates, so each call reported the function
+        // as unknown and nothing pointed at the declaration (loft#1538).
+        if is_generic && !self.first_pass && self.cur_type_var != u32::MAX {
+            let tv = self.cur_type_var;
+            let keyed_over_tv = |t: &Type| {
+                t.any_node(&mut |n| {
+                    // `@FR-N-Shape` — a keyed collection is a SHAPE, alike for `τ` and `τ?`.
+                    matches!(n.base(),
+                        Type::Hash(d, _, _)
+                        | Type::Sorted(d, _, _)
+                        | Type::Index(d, _, _)
+                        | Type::Radix(d, _, _)
+                        | Type::Trie(d, _, _) if *d == tv)
+                })
+            };
+            let at = arguments
+                .iter()
+                .find(|a| keyed_over_tv(&a.typedef))
+                .map(|a| format!("parameter `{}`", a.name))
+                .or_else(|| keyed_over_tv(&result).then(|| "the return type".to_string()));
+            if let Some(at) = at {
+                self.refused_templates.insert(self.context);
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "{at} is a keyed collection over the type variable {type_var_name}, and its \
+                     key names a field that {type_var_name} does not have until it is \
+                     instantiated — declare the collection over a concrete record type \
+                     (`hash<Entry[key]>`)"
+                );
+            }
+        }
+        // loft#1539 — a method whose receiver IS the type variable (`fn show<T>(self: T)`) is
+        // stored under the placeholder's key, `t_1T_show`, and a method call looks its method
+        // up on the RECEIVER's type, so no call can ever reach it: each call reported an
+        // unknown field of whatever it was called on.  Refused where it is written.  A
+        // receiver built over the variable (`self: vector<T>`) is keyed on `vector` and works.
+        let tv = self.cur_type_var;
+        if is_generic
+            && !self.first_pass
+            && tv != u32::MAX
+            && arguments.first().is_some_and(|a| {
+                a.name == "self" && matches!(a.typedef.base(), Type::Reference(d, _) if *d == tv)
+            })
+        {
+            self.refused_templates.insert(self.context);
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "a method's receiver cannot be the type variable {type_var_name} itself — a \
+                 method is found on the receiver's type, and {type_var_name} is not a type \
+                 until it is instantiated; write `fn {fn_name}<{type_var_name}>(x: \
+                 {type_var_name})` and call it as `{fn_name}(x)`"
+            );
+        }
         // @PLN102 Phase 3 (N-Domain) — the domain-partial math fns are declared `-> τ?` in the
         // stdlib (they yield the reserved null out of their real domain). When LOFT_NULLFLOW is
         // OFF, strip the `?` so their return stays non-null and the default surface is byte-

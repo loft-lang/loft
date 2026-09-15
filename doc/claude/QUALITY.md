@@ -2600,7 +2600,18 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 825 | 485 | 6 | **334** |
+| 826 | 486 | 6 | **334** |
+
+(2026-09-15, THE JOINED TREE — this branch through loft#1540 and ../loft2's @PLN165 phase 0
+(bdb84abe8): 826 · 486 · 6 · 334, re-measured rather than carried; the ratchet reads its 334 / 1316
+pin.  The union first read 1317 opaque TESTS, which neither side showed: phase 0's keyed-collection
+refusal in `parse_function` tested `matches!(n, Type::Hash(..) | …)` bare inside a type walk, and
+asked through `n.base()` — a keyed collection is a shape, alike for `τ` and `τ?` — it is back to
+1316.  ../loft2 read 820 · 478 · 6 · 336 against its own pin, and this branch 825 · 485 · 6 · 334.)
+
+(2026-09-15, @PLN165 phase 0 — loft#1536–#1539: 820 · 478 · 6 · 336.  `Parser::is_type_var_element`,
+which asks whether a collection's element is still a template's type variable, peels with
+`.base()`; nothing else moved.)
 
 (2026-09-15, loft#1540: 825 · 485 · 6 · 334 — measured against 824 · 483 · 6 · 335.  The change adds
 one function that discriminates on a `Type` variant, `Parser::mark_const_view`, and it sees through
