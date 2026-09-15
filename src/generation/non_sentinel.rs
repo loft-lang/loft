@@ -235,8 +235,13 @@ fn scan_sets(v: &Value, data: &Data, vars: &HashMap<u16, bool>, acc: &mut HashMa
 /// `Var` given to a fn-ref call (the callee is unknown), a `TuplePut`
 /// destination, an `Iter` variable.  Composite shapes are walked through the
 /// exhaustive child iterator, so no site can be missed by a variant this match
-/// forgot.
-fn collect_escapes(data: &Data, v: &Value, escaped: &mut std::collections::HashSet<u16>) {
+/// forgot.  The non-sentinel proof and the invariant-chain memo
+/// (`hoist::invariant_chains`, @PLN157 § V-ao) both read this one set.
+pub(super) fn collect_escapes(
+    data: &Data,
+    v: &Value,
+    escaped: &mut std::collections::HashSet<u16>,
+) {
     match v.unspan() {
         Value::Call(d_nr, args) => {
             let def = data.def(*d_nr);

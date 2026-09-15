@@ -38,6 +38,14 @@ impl Output<'_> {
         {
             return write!(w, "{name}");
         }
+        // @PLN157 § V-ao (`@FR-R-Invariant`) — a chain an enclosing loop memoised emits
+        // its memo's use; keyed on the node's address like the pre-eval above, and checked
+        // after it so a `_pre_N` that carries the chain keeps its name.
+        if !self.invariant_hoists.is_empty()
+            && let Some(memo) = self.active_invariant(code)
+        {
+            return self.emit_invariant_use(w, &memo);
+        }
         self.output_code_node(w, IrNode::Native(code))
     }
 

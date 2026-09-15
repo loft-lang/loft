@@ -795,6 +795,17 @@ that can `break`, `return` or loop again, a push under a branch, another write t
 path, or a range end that is not a simple invariant declines the loop.
 `LOFT_TRACE_PUSH_FILL=1` names each decline; `LOFT_HOIST_VERIFY=1` re-derives the push
 header at the fill.
+**`LOFT_NO_INVARIANT_HOIST=1`** (@PLN157 § V-ao, `@FR-R-Invariant`, default-ON, generation
+time) makes every invariant integer chain evaluate at every use again — with it off, a
+chain of `+ - * neg & | ^` over literals and variables a loop neither rebinds nor lets
+escape is evaluated at its FIRST use and answered from a memo after (the same value on
+every path, the overflow note fired where the first evaluation stands; declared at the
+innermost loop that spells it so the test peels out — declared one loop out it stayed in
+every tap), the resample tap's `yy * iw + xmin` −5 % on the row — and is the first bisect
+step for a wrong index or arithmetic value inside a loop on native.  `LOFT_HOIST_VERIFY=1`
+re-evaluates the chain at every use and panics when the memo disagrees; that form is what
+found loft#1534, a by-reference argument the non-sentinel proof's escape collector could
+not see.  `LOFT_TRACE_INVARIANT=1` names each memo.
 **`LOFT_RELEASE_PASS_PROBE=1`** (generation time) is a MEASUREMENT INSTRUMENT, never a
 build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal
 division emits the processor's wrapping operator and every float comparison the plain

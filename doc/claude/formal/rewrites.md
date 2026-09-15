@@ -204,6 +204,29 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  end less its start — the `next` counter's current value or `#index +
                  1` — plus one for an inclusive range, taken at loop entry.
 
+  (R-Invariant)  an integer chain — `+`, `-`, `*`, negation, `&`, `|`, `^` (their
+                 `Nullable` twins included) over literals and variables — that a loop
+                 neither REBINDS (a `Set` or `TuplePut` anywhere in the loop, its own
+                 counters included) nor lets ESCAPE (a bare or `OpCreateStack`-spelled
+                 argument to a by-reference parameter or a fn-ref call, a tuple
+                 destination, an iterator variable) holds one value for the loop's whole
+                 extent, so it is evaluated at its FIRST use and answered from a memo
+                 after.  The first-use evaluation is exactly the per-use one: the same
+                 value on every path, the overflow note fired at the point the first
+                 evaluation stands (once, where the per-use form notes once per use; a
+                 zero-trip loop notes nothing).  The memo is declared at the INNERMOST
+                 loop that spells the chain, so its flag is clear on every entry and the
+                 test peels out of the loop.  A shift, a division and a remainder are
+                 not chain ops (their templates raise through `stores`); a chain of
+                 literals alone is the constant folder's; a field read is not a leaf (a
+                 callee could write the record — R-Scalar answers that question); a body
+                 that yields or runs arms in parallel memoises nothing.  Switch
+                 `LOFT_NO_INVARIANT_HOIST`; falsifier `LOFT_HOIST_VERIFY=1` (every use
+                 re-evaluates the chain and compares).  Sites: `hoist::invariant_chains`,
+                 `hoist::arith_chain`, `non_sentinel::collect_escapes` (the one home for
+                 the escape question, the proof's and this rule's), the emitter's
+                 `begin_vector_hoist` and `emit_invariant_use`.
+
   (R-Header)     in a loop body that writes no store, a vector reached by a PURE
                  PATH P — a variable, or const-offset fields over one — has one
                  header (store, record, length) for the whole loop: the emitter

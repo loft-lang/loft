@@ -5372,3 +5372,137 @@ pub const VALUE_RECORD_GETTERS: [&str; 6] = [
     "OpGetByte",
     "OpGetShort",
 ];
+
+// ── @PLN157 § V-ao (`@FR-R-Invariant`) — an invariant integer chain is evaluated once ──
+
+/// The integer ops an invariant chain may be built from: each one's `#rust` template is a
+/// pure, store-free `ops::` call over its operands, so evaluating the chain at its first
+/// use and answering the memo after is exactly the per-iteration evaluation — the same
+/// value on every path, the overflow note (`ops::note_integer_overflow`) fired where the
+/// first evaluation stood.  A shift, a division and a remainder are NOT admitted: their
+/// templates raise through `stores` on a bad amount or a zero divisor, and a memo's
+/// evaluation stands inside expressions that already borrow `stores` (E0502).  The
+/// `Nullable` twins of the three arithmetic ops are the same pure calls.
+const INVARIANT_OPS: [(&str, usize); 10] = [
+    ("OpAddInt", 2),
+    ("OpMinInt", 2),
+    ("OpMulInt", 2),
+    ("OpMinSingleInt", 1),
+    ("OpLandInt", 2),
+    ("OpLorInt", 2),
+    ("OpEorInt", 2),
+    ("OpAddIntNullable", 2),
+    ("OpMinIntNullable", 2),
+    ("OpMulIntNullable", 2),
+];
+
+/// One chain a loop memoises: every node address in the loop that spells it (a body may
+/// spell one chain more than once, and each spelling is registered under its `Span`
+/// wrapper's address and its own), the chain itself — the first spelling, cloned, which the
+/// memo's first-use evaluation is emitted from — its op count and its spelling count.
+pub struct InvariantChain {
+    pub nodes: Vec<usize>,
+    pub chain: Value,
+    pub ops: usize,
+    /// How many times the loop spells the chain.
+    pub spellings: usize,
+}
+
+/// Is `v` a chain of [`INVARIANT_OPS`] over literals and variables the loop neither
+/// rebinds nor lets escape?  Answers `(ops, vars)` — the op count and the variable-leaf
+/// count; a bare leaf is `(0, _)`, and a chain over literals alone is left to the constant
+/// folder, which answers it for free where a memo would cost a test.
+fn arith_chain(v: &Value, data: &Data, banned: &HashSet<u16>) -> Option<(usize, usize)> {
+    match v.unspan() {
+        Value::Int(_) | Value::Long(_) => Some((0, 0)),
+        Value::Var(x) => (!banned.contains(x)).then_some((0, 1)),
+        Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+            let name = data.def(*d).name();
+            let arity = INVARIANT_OPS.iter().find(|(n, _)| *n == name)?.1;
+            if args.len() != arity {
+                return None;
+            }
+            let (mut ops, mut vars) = (1, 0);
+            for a in args {
+                let (o, r) = arith_chain(a, data, banned)?;
+                ops += o;
+                vars += r;
+            }
+            Some((ops, vars))
+        }
+        _ => None,
+    }
+}
+
+/// Structural equality with every `Span` peeled: two spellings of one chain at two source
+/// positions are one memo.
+fn same_chain(a: &Value, b: &Value) -> bool {
+    match (a.unspan(), b.unspan()) {
+        (Value::Call(x, xa), Value::Call(y, ya)) => {
+            x == y && xa.len() == ya.len() && xa.iter().zip(ya).all(|(p, q)| same_chain(p, q))
+        }
+        (p, q) => p == q,
+    }
+}
+
+/// The maximal invariant integer chains of loop `lp`, in first-appearance order, each with
+/// every spelling's node addresses.  Enforces `@FR-R-Invariant`: a leaf is a literal or a
+/// variable the loop never rebinds (`rebound_vars`, the loop's own counters included) and
+/// never lets escape (a bare argument to a by-reference parameter or a fn-ref call, a tuple
+/// destination, an iterator variable — `non_sentinel::collect_escapes`, the one home for
+/// that question); a body that yields or runs arms in parallel memoises nothing.  A chain
+/// belongs to the INNERMOST loop that spells it: a nested loop is not walked, its own pass
+/// memoises what it spells, and its memo is declared where its flag is known clear on
+/// every entry — the form LLVM peels the first-use test out of (measured: declared one
+/// loop out, the flag's state at entry is unknown and the test stays in every tap).
+#[must_use]
+pub fn invariant_chains(lp: &Block, data: &Data) -> Vec<InvariantChain> {
+    if lp
+        .operators
+        .iter()
+        .any(|op| op.any_node(&mut |n| matches!(n, Value::Yield(_) | Value::Parallel(_))))
+    {
+        return Vec::new();
+    }
+    let mut banned = rebound_vars(lp);
+    for op in &lp.operators {
+        super::non_sentinel::collect_escapes(data, op, &mut banned);
+    }
+    let mut out: Vec<InvariantChain> = Vec::new();
+    for op in &lp.operators {
+        collect_chains(op, data, &banned, &mut out);
+    }
+    out
+}
+
+/// Pre-order: a node that is a chain is recorded whole (under its wrapper's address and
+/// its own) and not descended into; a nested loop is left to its own pass; any other
+/// node's children are walked.
+fn collect_chains(v: &Value, data: &Data, banned: &HashSet<u16>, out: &mut Vec<InvariantChain>) {
+    if matches!(v.unspan(), Value::Loop(_)) {
+        return;
+    }
+    if let Some((ops, vars)) = arith_chain(v, data, banned) {
+        if ops == 0 || vars == 0 {
+            return;
+        }
+        let mut addrs = vec![std::ptr::from_ref(v) as usize];
+        let inner = v.unspan();
+        if !std::ptr::eq(inner, v) {
+            addrs.push(std::ptr::from_ref(inner) as usize);
+        }
+        if let Some(row) = out.iter_mut().find(|c| same_chain(&c.chain, v)) {
+            row.nodes.extend(addrs);
+            row.spellings += 1;
+        } else {
+            out.push(InvariantChain {
+                nodes: addrs,
+                chain: inner.clone(),
+                ops,
+                spellings: 1,
+            });
+        }
+        return;
+    }
+    v.for_each_child(&mut |c| collect_chains(c, data, banned, out));
+}
