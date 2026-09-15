@@ -2668,7 +2668,9 @@ aware, the opaque column and the ratchet unmoved.)
 buffer's record definition through `.base().heap_def_nr()` — the peeling column: 817 · 475 ·
 6 · 336; the opaque column and the ratchet's pin (336 / 1317) do not move.  Its companion
 `for_each_return_mut` tells one `Value` variant apart through `unspan`, so the unspan row
-stays at 491 · 467 · 24.)
+stays at 491 · 467 · 24.  Those are the @PLN157 branch's numbers; re-measured on the joined
+tree `tuxedo-work-2026-09-15` the rows read 826 · 486 · 6 · 334 and 504 · 481 · 23 with the
+ratchet at 334 / 1316, the same as before this unit was picked.)
 
 (2026-09-15, loft#1530: `Parser::ref_tuple_subject` is new and asks the subject's `Type::RefVar`
 and `Type::Tuple` off a `.base()`, and `vector_element_cursor_deps` gained the same peeled ask, so
