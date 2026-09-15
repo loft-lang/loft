@@ -3095,7 +3095,7 @@ impl Parser {
     /// arm or an inner block is NOT this shape — those tails have a join to deliver and
     /// the multi-arm machinery already owns them — and answering `None` there leaves them
     /// on the delivery path they have today.
-    fn tail_fresh_object_workref(tail: &Value) -> Option<u16> {
+    pub(crate) fn tail_fresh_object_workref(tail: &Value) -> Option<u16> {
         let mut node = tail.unspan();
         loop {
             match node {

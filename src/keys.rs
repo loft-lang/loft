@@ -1163,6 +1163,29 @@ pub fn adopt_first_bind_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_ADOPT_FIRST_BIND"))
 }
 
+/// @PLN164 B2 (`@FR-R-Place`, `@FR-R-MoveLast`): a call result whose ONE owning destination
+/// on every path that keeps it is a record-literal field inside an element appended to a
+/// PARAMETER's collection gets its return buffer CLAIMED IN that parameter's store, and the
+/// field takes it by RELOCATION at its last use — **DEFAULT ON**, both backends (an IR
+/// rewrite in `place_result`, decided after the scope pass).  Opt OUT with
+/// `LOFT_NO_PLACE_RESULT` (read at PARSE time): the before-half of the A/B on one binary —
+/// a store minted per call and a deep copy into the field — and the first bisect step for a
+/// wrong field, a leak or a double free out of a record built by a call and stored in an
+/// appended element.  `LOFT_STRICT_STORES=1`, `LOFT_POISON=1`, `LOFT_HOIST_VERIFY=1` and
+/// `LOFT_NATIVE_LEAK_CHECK=1` are the falsifiers; `LOFT_TRACE_PLACE=1` names each admission
+/// and each decline.
+pub fn place_result_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PLACE_RESULT"))
+}
+
+/// `LOFT_TRACE_PLACE=1` — one line per bind `place_result` examined: the admission with
+/// its host and destination count, or the decline with the reason.
+pub fn trace_place() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_PLACE"))
+}
+
 /// @PLN157 § V-ag: clearing a store-ROOT vector RESETS its store in one step instead of
 /// walking every element and returning each owned block to the free tree — **DEFAULT ON**,
 /// both backends (a runtime fact).  Opt OUT with `LOFT_NO_STORE_RESET_CLEAR`: the

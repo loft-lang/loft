@@ -268,7 +268,11 @@ impl OpSets {
                 .filter(|&d| d != u32::MAX)
                 .collect()
         };
-        let unconditional_ref_frees = nrs(&["OpFreeRef", "OpFreeRefTag"]);
+        // `OpFreeRecordIn` is @PLN164 B2's exit free of a PLACED result (`place_result`): the
+        // local's record is released, unconditionally, exactly as `OpFreeRef` releases a
+        // store — read as one here so the copy lint sees the local die at the exit rather
+        // than survive its move.
+        let unconditional_ref_frees = nrs(&["OpFreeRef", "OpFreeRefTag", "OpFreeRecordIn"]);
         let conditional_ref_frees = nrs(&["OpFreeRefIfDistinct", "OpFreeRefOrHandUp"]);
         let text_free = data.def_nr("OpFreeText");
         let mut frees: HashSet<u32> = unconditional_ref_frees
@@ -7069,6 +7073,12 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
             // Only survival-split (source-duplicating) copies are user-facing, and only the
             // Avoidable class is the actionable worklist — mirror `report_copies`'s filter.
             if !r.survival || !matches!(r.class, CopyClass::Avoidable) {
+                continue;
+            }
+            // @PLN164 B2 — a copy `place_result` will turn into a relocation is no copy to
+            // report: on the program path this lint reads the parser's IR, before the scope
+            // pass decides, so it asks the deciding pass for its verdict in preview.
+            if r.source != u16::MAX && crate::place_result::admits(data, d_nr, r.source) {
                 continue;
             }
             let ty = if r.source == u16::MAX {

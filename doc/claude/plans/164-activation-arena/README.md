@@ -10,7 +10,8 @@ Tracker: [@PLN164](https://github.com/loft-lang/plans/issues/164) · `status:act
 
 ## Status (REQUIRED)
 
-Active (the owner's go, 2026-09-15).  **P0 done**, **B1 and C4 shipped** the same day — the
+Active (the owner's go, 2026-09-15).  **P0 done**, **B1, C4 and B2 shipped** (B2's caller side
+2026-09-16: a wash on the parse row, structural gain only — § B2 *Measured*) — the
 measurements are under § P0 below and the mechanism under § B1.  What P0 changed in the
 plan: tier 1's ceiling is ~10 % of the parse row, not a fifth, and its store-identity cost
 (287 `store_nr !=` sites in one emission) is real, so A1/A2 stay behind B and C in the
@@ -46,7 +47,7 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
 - **Effort:** M (tiers 1–2) · MH (tier 3)
 - **Design:** ~ — the invariants are named; the store-identity question (§ Edge cases E1)
   is open and decides tier 1's shape.
-- **Last touched:** 2026-09-15 (P0 measured, B1 shipped)
+- **Last touched:** 2026-09-16 (B2 units 2–3 shipped, measured a wash on the parse row)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -263,7 +264,7 @@ five pins pass; fmt and both clippy legs are green.  The negative-default guard'
 and the control build needs more; point `LOFT_FALSIFY_CACHE` at a disk path) — its receipt
 stays the hand measurement recorded in the file.
 
-## B2 — the result built where it will live (IN PROGRESS 2026-09-15, `@FR-R-Place`, `@FR-R-MoveLast`)
+## B2 — the result built where it will live (SHIPPED 2026-09-16, `@FR-R-Place`, `@FR-R-MoveLast`)
 
 *What the instrument found first.*  `loft introspect` on the B2 cells' `read_paint` (four
 literal exits, the library's shape) showed the callee answering a DIFFERENT store per
@@ -289,43 +290,67 @@ the switch restores 1 + 3, the promoted-local shape declined, the cells on both 
 No value moves and, under B1's null buffer, no store count moves: the unit changes the
 callee's CONTRACT, which is what units 2–3 consume.
 
-*Units 2–3 — the design (written before the code).*  The caller side, parse time, one IR
-for both backends (E18):
+*Units 2–3 — the caller side (SHIPPED 2026-09-16).*  `src/place_result.rs`, one IR pass
+for both backends, run inside `scopes::check` after the scan phases have settled the
+function's frees (E18).  For a plain local `v` bound once from a loft-defined callee whose
+every exit is a fresh literal into its `__retbuf` (unit 1's contract), read only as the
+receiver of native operations while it holds the record, and stored ONCE per path into a
+record-literal field of an `_elm_` element `OpNewRecord` appended to a PARAMETER's
+collection, three sites move: `__ref_N = null` → `OpPlaceRecord(X, tp)` (a record claimed in
+`X`'s store, prefilled through the C4 image), `OpCopyRecord(v, dst, tp)` → `OpMoveRecord(v,
+dst, tp)` (the bytes relocate, the heap handles keep their claims, the source's block is
+released on the spot), and the exit pair → one `OpFreeRecordIn(v, tp)` on a path that still
+holds the record and NOTHING on a path that stored it.  The ops are `#rust` templates
+(`default/01_code.loft`); the runtime is `Stores::place_record_prefilled`, `move_record_out`
+and `free_record_in` (with a store-root arm for the null-host fallback, which answers a
+fresh-store buffer).  Switch `LOFT_NO_PLACE_RESULT=1`; `LOFT_TRACE_PLACE=1` names every
+admission and decline.
 
-- **Admission** (`R-Place`), decided in the scope pass beside B1's `adopts_minted_at_bind`
-  for a plain local `v` first-bound from such a call: every use of `v` after the bind is
-  either a READ before any store on that path, or ONE owning destination — a record-literal
-  field `Lit { f: v }` inside an element appended to `X.field += [Lit { … }]` where `X` is a
-  PARAMETER (its store exists at the call and outlives the frame) — after which `v` is dead
-  on that path (`O-Complete`: no read, no rebind, no hand-off, no `?`/`??`); every keeping
-  path names the same `X`; no argument of the call reaches `X`; the callee's return deps
-  name exactly its buffer (B1's gate) and, after unit 1, every exit writes it.  First cut
-  admits the LITERAL-FIELD destination only (the parse row's shape); `X.f = v` and
-  `X.v[i].f = v` (an old value to release first, `H-ClearRelease` per field) and a LOCAL
-  host (its store can die before the buffer is released — the free order question) stay
-  copies and are the unit's named follow-ups.
-- **The IR change**, three sites: the buffer's init `__ref_N = null` becomes
-  `__ref_N = OpPlaceRecord(X, tp)` (a record claimed in `X`'s store, prefilled through the
-  C4 image); the literal group's `OpCopyRecord(v, OpGetField(elm, off, tp), tp)` becomes
-  `OpMoveRecord(v, dst, tp)` (`move_record_shallow` + the source block released, its heap
-  handles kept — `R-MoveAppend`'s mechanics for one record) followed by `v = null`; and
-  the exit frees `OpFreeRef(v)` / `OpFreeRefIfDistinct(__ref_N, v)` become ONE
-  null-guarded `OpFreeRecordIn(v, tp)` (`Stores::free_record_in`: the record's owned heap,
-  then its block — never the host store).  E1 does not bite here: the only owned thing
-  sharing `X`'s store is the placed buffer itself, and its frees are record-level by
-  construction.
-- **Native** follows the ops (`place_record_in`, `move_record_shallow`, `free_record_in`
-  already exist for § V-j); the emitter's own scope-end backstop for a `__ref_` attr must
-  see the placed set (a store-level free of a placed buffer frees the HOST).
-- **Falsifiers:** `LOFT_POISON=1` (the moved-from local's free must find nothing),
-  `LOFT_STRICT_STORES=1` (a record freed twice, a store freed under a placed record), the
-  leak gate on both backends, `LOFT_HOIST_VERIFY=1` for the same-store assertion of the
-  move; cells `B2-place-move-cells.loft` b1–b15 (every decline keeps the copy: b2 E9,
-  b3 E10, b5 the `??`, b6 the aliasing argument, b7 the opaque callee, b10 the rebind,
-  b11 two destinations, b12 two stores; b13 no-heap, b14 text-owning); the store census
-  (`LOFT_TRACE_DB`) must DROP by one per admitted call.  Switch `LOFT_NO_PLACE_RESULT=1`.
-- **New ops renumber** `index/target_surface.json` — `make surface-gen` after rebuilding
-  the wasm rlib.
+*What the matrix found — four things the design did not say.*  (1) The candidate gate is
+not B1's: `adopts_minted_at_bind` admits the promoted-local callee shape; an all-literal
+callee (`read_paint`) takes the older fresh-adopting pairing, so the pass gates on its own
+`placeable_bind` and asks the callee's exits directly.  (2) An exit has THREE spellings —
+`return { Object …; __retbuf }`, `{ Object …; return __retbuf }` (a function with text
+work-refs frees them between the writes and the return), and the parser's bare tail
+`{ Object …; __retbuf }` before the scope pass wraps it (what the copy notice's preview
+sees) — and the local's exit free has two
+as well: `OpFreeRef(v)`, or in a record-returning caller `OpFreeRefIfDistinct(v, __retbuf)`
+(the library's `parse_poly` answers a `Mark`; the first cut declined it).  (3) The design's
+"`v = null` after the move" is unsound: the interpreter lowers a rebind of an owned record
+local as a store-level free of what it held — it would free the HOST — where native emits a
+plain null; and the first cut's zeroing of the source was a runtime stand-in for the path
+state (the owner's question: why zero a source once zero-on-claim is gone?).  So the pass
+records the state at every exit and writes the free that is right there, and a path that
+stored the record rejoining one that holds it declines; `(R-MoveLast)`'s mechanics clause
+now says so.  (4) The copy notice reads the parser's IR on the program path (the lint family
+runs before the scope check there and after it under `loft test` — a pre-existing difference
+the dead-store lint's tests pin, so it stays), and reported a relocated field as a copy that
+"could not be moved"; it now asks the pass for its verdict in preview
+(`place_result::admits`, the same walk on the parser's IR, tolerant of the null init the
+scope pass has not yet prepended).
+
+*Receipts.*  Cells b1–b15 exact on both backends under `LOFT_POISON`, `LOFT_POISON_CLAIM`,
+`LOFT_STRICT_STORES`, `LOFT_HOIST_VERIFY` and `LOFT_NATIVE_LEAK_CHECK`; every intended decline
+fires for its own reason (`LOFT_TRACE_PLACE`); the census 184 → 50 mints, one fewer per
+admitted call (`add_poly` ×64, `add_px` ×30 no-heap, `add_card` ×40 text-owning).  Guard
+`tests/scripts/164-place-result.loft`, `@falsified-at:` the pass made to free on every exit
+(both backends die with `Store access out of bounds … the reference is corrupt`).  Pins
+`tests/place_result.rs`: the IR shape of `add_poly`, the switch, the silent copy notice, the
+census.  The corpus (`tests/scripts` + `tests/docs`) has NO admitted bind — the shape is the
+library's, not the corpus's — so the guard is the only coverage.
+
+*Measured.*  The parse row (`parse_only.loft --n 2000`, `--native-release`, hash `33f6d2b8`,
+this x86-64 box, 2026-09-16): `pp_paint` admitted (three moves, one held exit), and a WASH.
+Wall time on this box now spreads ±10 % between runs of one binary, so the receipt is
+`perf stat -r 5` on the cached binaries: user instructions 8.39 G against 8.39 G, cycles
+3.18 G against 3.23 G, cache misses 6.09 M against 6.11 M (placement / switch off), every
+difference inside its own run-to-run spread.  The reason is the scene: no gradient is used,
+so the `Paint` relocated carries no `spec` data — the copy it replaces was ~30 bytes and the
+store it removes is matched by a claim and a delete in the host store.  What B2 buys on this
+row is structural (no per-call store, no per-call copy), not time; the copy class the
+profile measured at 18.5 % is the points (`pts: smooth_pts(…)`, `Mark.pts`), which are C2
+and C5.  A leak-probe build (the placed block leaked instead of deleted) measured the same,
+so the host store's free-tree churn is not a cost either on this row.
 
 ## The rewrite list — the natural `parse_poly` to its optimal form
 
@@ -504,7 +529,7 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | **A2** — the caller-threaded arena, reset per loop iteration | § Tier 1 | parse row −20 %; E2/E3/E4 cells | Blocked on A1 |
 | **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |
 | **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state) | § B1 | c6 under the pool without `minted_pairs` — the interpreter's rebind free must first match native's `_rb_w_` guard | Blocked on that divergence |
-| **B2** — the result's buffer claimed in its destination's store, the field taking it by relocation at the last use (`R-Place`, `R-MoveLast`) | § The rewrite list | E9–E12 cells under `LOFT_POISON`; the `paint: pp_paint` site emits no `OpCopyRecord` and `read_paint`'s buffer is a record in the scene's store | Open — next |
+| **B2** — the result's buffer claimed in its destination's store, the field taking it by relocation at the last use (`R-Place`, `R-MoveLast`) | § B2 | cells b1–b15 both backends under the falsifiers; the census 184 → 50; `parse_poly`'s `paint: pp_paint` emits `OpMoveRecord` and `read_paint`'s buffer is a record in the scene's store; the parse row a wash (`perf stat`) | Shipped 2026-09-16 |
 | **C1** — element overwrite from a literal in place (`R-InPlaceLiteral`) | § The rewrite list | E13/E14 cells; `acc_pts` emits no temp store | Open |
 | **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § The rewrite list | E15/E16 cells; `smooth_pts` writes `Op.pts` | After C3 (needs no arena: the destination is a record in the scene's store) |
 | **C3** — read-only `?`-discharge as a view (`B-View`'s discharge clause) | § The rewrite list | E17 cells; `acc_pts` copies nothing | Open |
@@ -519,8 +544,9 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
 
 1. P0 — done: tier 1 priced at ≈ 10 % of the row, E1's site count measured; the owner's
    pick between `(store_nr, rec)` identity and a pooled store stays open until A1 is cut.
-2. B1 and C4 — shipped.  Then **B2**,
-   a day, local, feeding the profile's largest remaining class (the copies).
+2. B1, C4 and B2 — shipped.  B2 measured a wash on the parse row (the `Paint` it relocates
+   carries no heap on the bench scene); the copy class the profile measured is the points,
+   which C2 and C5 take.
 3. **C3 then C1** — the `acc_pts` pair, one mechanism each.
 4. **C2** — after C3: it needs the destination C3 makes visible and a single-exit callee
    test; it does NOT need the arena.

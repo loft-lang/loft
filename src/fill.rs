@@ -275,6 +275,9 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     clear,
     append_copy,
     copy_record,
+    place_record,
+    move_record,
+    free_record_in,
     copy_ref_or_null,
     bind_or_copy,
     replace_keyed,
@@ -2431,6 +2434,26 @@ fn append_copy(s: &mut State) {
 
 fn copy_record(s: &mut State) {
     s.copy_record();
+}
+
+fn place_record(s: &mut State) {
+    let v_tp = s.code::<u16>();
+    let v_host = s.get_stack::<DbRef>();
+    let new_value = s.database.place_record_prefilled(&v_host, v_tp);
+    s.put_stack(new_value);
+}
+
+fn move_record(s: &mut State) {
+    let v_tp = s.code::<u16>();
+    let v_dest = s.get_stack::<DbRef>();
+    let v_data = s.get_stack::<DbRef>();
+    s.database.move_record_out(&v_data, &v_dest, v_tp);
+}
+
+fn free_record_in(s: &mut State) {
+    let v_tp = s.code::<u16>();
+    let v_rec = s.get_stack::<DbRef>();
+    s.database.free_record_in(&v_rec, v_tp);
 }
 
 fn copy_ref_or_null(s: &mut State) {
