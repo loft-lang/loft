@@ -131,11 +131,65 @@ value; a refusal cell scores the error and its named line.
 |---|---|---|---|
 | **P0** — census: every type with `OpDrop` in the corpus and the published libraries, and every place one is copied today | `LOFT_DROP_COPY_CENSUS` (`use_analysis::drop_copy_census`), the library and consumer trees, the registry cache | `ownership_drop_gate::the_census_names_the_copy_each_cell_makes`: every CROSS and COALESCE cell against a per-axis expectation, and the CROSS `local` cells with the hook removed report `0 sites`.  Falsified: disabling the bind arm fails 54 cells; the join peel and the view-temp dependencies each failed it before they existed | Done |
 | **P1** — the rules above in `formal/heap.md` + `binding.md`, with a deviation for every current behaviour that disagrees | this plan | Every gate cell has a lease verdict (`Once` / `Refused` / `Open`), and `every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation` ties each `Once` cell that fails in a baseline to exactly one OPEN entry: `D-heap-1` (`p_o2`), `D-heap-7` (family 1, 19 cells), `D-heap-10` (`p_i2`).  All 111 `Refused` cells are `D-heap-8`'s, and `D-heap-9` is `OpCopy`.  `registers` reads `OPEN: 5`.  Falsified: closing `D-heap-10` in the register, or removing `p_i2` from a baseline, turns it red.  The census check asks a refused cell for a copy from a variable; marking a fresh-only cell refused turns it red.  Only `c_tuple_tuplem` is `Open` (question 9) | Done |
-| **P2** — the refusal as a REPORT (no error): at every copy site of a refusing type whose source is used afterwards | `copy_manifest::Origin` (both backends' emitted copies) + `ParserMaterialise` | the manifest guard: every emitted copy of a refusing type is reported or proven a move; falsified by disabling one site | Open |
+| **P2** — the refusal as a REPORT (no error): at every copy site of a refusing type whose source is used afterwards | `copy_manifest::Origin` (both backends' emitted copies) + `ParserMaterialise` | the manifest guard: every emitted copy of a refusing type is reported or proven a move; falsified by disabling one site | **P2a done:** `src/lease.rs` is the `(H-Move)` home, and the census prints its verdict as `lease=`.  `the_census_names_the_copy_each_cell_makes` refuses exactly the 111 `Refused` cells and no `Once` cell, with nothing unreached.  Falsified twice: without the loop fixed point `p_l1`/`p_l2` pass; with a release read as a use, 94 `Once` cells are refused.  Corpus (35 files): 448 moves, 113 refusals (52 caller, 45 container, 16 later, each `later` row read by hand), 0 unreached.  P2b (manifest completeness) and P2c (the corpus rows) open |
 | **P3** — the report becomes a compile error; the published-library gate read row by row | P2 | `tests/scripts` refusal cells (`@EXPECT_ERROR`) on both backends; every library break is a real double release today, or the rule is wrong | Open |
 | **P4** — `OpCopy`: signature check (mirror `check_drop_signature`, `definitions.rs`), synthesized cascade (mirror `synth_drop_cascades`), a call at every copy site on both backends | P1 | drop gate re-baselined on the lease oracle, both backends, `LOFT_POISON`; the matrix's `OpCopy` count per cell | Open |
 | **P5** — remove the machinery that moved a release across a copy, one decider at a time | `scopes::copy_moves_drop_from`, the per-path hand-off flags, the caller-record mark | drop gate and the matrix unchanged after each removal; `introspect_diff` names exactly the removed ops | Open |
 | **P6** — `(H-Elide)`: an elided copy skips its `OpCopy` and the matching drop | C86, `alias-where-correct.md` | matrix cells where elision fires count hooks consistently; `LOFT_LINK_WIDEN` on and off agree on every observable value | Open |
+
+## P2 design — one home for "is the copied value used after the copy?"
+
+**Invariant.** A copy of a type that owns a droppable without `OpCopy` is reported exactly when
+`(H-Move)` says it is not a move, and the report names the use.  The question is answered in ONE
+place, `src/lease.rs`, cited `@FR-H-Move`.
+
+**Why a new home.**  Eight sites already answer a "last use" question.
+- Five are sequential store-liveness walks, and they say so ("Sequential approximation across
+  branches"): `store_liveness_walk`, `last_use_guard`, `lastuse_reclaim`, `store_dead_after_block`,
+  `Variables::last_use`.
+- One is pre-order positional: the survival walk's `last_use_pos`, which counts a release as a use
+  and orders sibling arms by position, so `if c { x = a } else { y = a }` would read as used after.
+- The codegen last-use move answers it for code generation.
+- The double-move scan resets per arm.
+
+None is per path, and the survival walk and the codegen move feed emission.  So P2 leaves them as
+they are, and P5 moves the two that ask H-Move's own question onto the new home.
+
+**The pass.**  A backward liveness pass for one variable over the post-scope structured IR.
+- **Paths:** both arms of every `if` (value-position included), a `loop` iterated to a fixed point,
+  `break`/`continue` taking their target's liveness, and `return` ending the path.
+- **A use** is a read of the variable, or of a variable whose type depends on it.
+- **A kill** is a rebind: a `Set` to a new value, or an in-place `OpDatabase` rebuild.
+- **Not a use:** the scope pass's release scaffolding — a release call on the variable, the null
+  check and `__hoff_` flag test that guard it, the sentinel written after it, and the `__disp_`
+  snapshot a rebind takes.  It is recognised by the release call and those compiler names, which
+  the author cannot write, never by `if` shape alone.
+
+**Classifying a copy's source,** per arm of a join:
+- a PROJECTION, or a variable whose assignment is one (a loop variable, a `match` binding) —
+  refused: the container holds it;
+- a parameter, or a local that holds the caller's record — refused: the caller holds it;
+- otherwise — refused when the pass finds it live after the copy, and a move when it does not.
+
+`return` of a parameter, or of a place reached through one, is a site of its own, because the
+callee copies nothing there.
+
+**Failure paths the cut has to catch.**
+1. A scaffold read as a use: every `Once` cell refused.
+2. A use missed on a path: a `Refused` cell passes (a copy in a loop, a use after `break`).
+3. A member view read as a whole value: a loop variable copied is called a move.
+4. A copy the IR walk never sees: a returned parameter, or a copy only a generator mints.
+
+**Cut.**
+- **P2a** — the pass and the classification, printed as a `lease=` column on each census line.
+  Verified against `lease_verdict` on all 275 gate cells in BOTH directions: a refusal on every
+  `Refused` cell and on no `Once` cell.  Falsified by removing the loop fixed point, and by reading
+  one scaffold as a use.
+- **P2b** — completeness: every copy `copy_manifest.rs` records for a refusing type (keyed by
+  function and destination) matches a census site with a verdict.  Measured over the gate cells
+  and the 35 corpus files.
+- **P2c** — the corpus report: every refusal in the 35 files, read row by row.  This is what P3
+  converts.
 
 ## Phase ordering
 
@@ -169,7 +223,8 @@ value; a refusal cell scores the error and its named line.
 7. **DECIDED 2026-09-15 (owner): refused** for a type without `OpCopy`, a second lease for a type
    with one.  The container's drop is a use of the member, so copying a member out of a container
    whose drop still runs is a copy while the source is used.  The author writes
-   `c = acquire(); …; return c` instead.  Written into P1 as two more consequences.  A PARAMETER
+   `c = acquire(); …; return c` instead.  Written into P1 as two more consequences, and the
+   parameter one CONFIRMED by the owner 2026-09-15 ("refuse parameters in the callee").  A PARAMETER
    is never moved, because the caller holds it, so `return p` and `x = p` are refused too.  That
    narrows `(H-Rebind-Self)` to `a = a` and `a = a ?? d`, since `same(a)` is refused inside `same`.
    The builder idiom keeps a loft spelling: write through the aliasing parameter instead of

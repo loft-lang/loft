@@ -278,6 +278,7 @@ pub mod ir_schema_gen;
 pub mod ir_store;
 pub mod json;
 pub mod keys;
+pub mod lease;
 mod lexer;
 pub mod lsp;
 pub mod native;
