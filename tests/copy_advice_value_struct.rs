@@ -140,3 +140,65 @@ fn inline_value_copies_are_not_advised_interpret() {
 fn inline_value_copies_are_not_advised_native() {
     assert_backend("--native");
 }
+
+/// A second loop over one name binds `f#1` and a third `f#2` (`Variables::loop_binding`) — the
+/// native backend declares a local per name — and the advice printed that stored name: "copy of
+/// R — `f#1` is still used after this point".  The author wrote `f`.  The name comes from
+/// `Variables::written_name`; `tests/scripts/a-diagnostic-names-a-second-loops-variable-as-it-
+/// was-written.loft` carries the values, and this carries the diagnostic, which the suite's
+/// in-process harness never produces (it runs the advice's pass only in the CLI).
+const SHADOWED_LOOPS: &str = r#"
+struct R { id: integer, ws: vector<integer> }
+struct Q { id: integer, ks: vector<integer> }
+fn mk_r(n: integer) -> vector<R> { out: vector<R> = []; for i in 0..n { out += [R { id: i + 1, ws: [i] }]; } out }
+fn mk_q(n: integer) -> vector<Q> { out: vector<Q> = []; for i in 0..n { out += [Q { id: (i + 1) * 10, ks: [i, i] }]; } out }
+fn main() {
+  a: vector<R> = [];
+  for f in mk_r(2) { a += [f]; }
+  b: vector<R> = [];
+  s = 0;
+  for f in mk_r(3) { b += [f]; s += f.id; }
+  c: vector<Q> = [];
+  t = 0;
+  for f in mk_q(2) { c += [f]; t += f.id; }
+  print("{len(a)} {len(b)} {s} {len(c)} {t}\n");
+}
+"#;
+
+fn assert_written_loop_names(backend: &str) {
+    let dir = std::env::temp_dir().join(format!(
+        "loft_written_loop_names_{}",
+        backend.trim_matches('-')
+    ));
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let path = dir.join("shadowed_loops.loft");
+    std::fs::write(&path, SHADOWED_LOOPS).expect("write program");
+    let (stdout, diag, code) = run(backend, &path);
+    assert_eq!(code, Some(0), "[{backend}] the program must run\n{stdout}\n---\n{diag}");
+    assert!(
+        stdout.contains("2 3 6 2 30"),
+        "[{backend}] the program must answer its values\n{stdout}"
+    );
+    for want in [
+        "copy of R — `f` is still used after this point",
+        "copy of Q — `f` is still used after this point",
+    ] {
+        assert!(diag.contains(want), "[{backend}] want `{want}`\n{diag}");
+    }
+    for leaked in ["`f#1`", "`f#2`"] {
+        assert!(
+            !diag.contains(leaked),
+            "[{backend}] the advice names the compiler's {leaked}, which the author never wrote\n{diag}"
+        );
+    }
+}
+
+#[test]
+fn a_second_loops_variable_is_advised_by_its_written_name_interpret() {
+    assert_written_loop_names("--interpret");
+}
+
+#[test]
+fn a_second_loops_variable_is_advised_by_its_written_name_native() {
+    assert_written_loop_names("--native");
+}

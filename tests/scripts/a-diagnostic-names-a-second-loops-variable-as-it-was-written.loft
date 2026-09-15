@@ -7,17 +7,20 @@
 // reads now comes from one place, `Variables::written_name`, which the avoidable-copy advice, the
 // editor's extract-function edit and the `x#break` diagnostic all read.
 //
-// @falsified-at: 94ad85606 — interpret and native both print "copy of R — `f#1` is still used …"
-//   and "copy of Q — `f#2` is still used …", so neither `@EXPECT_WARNING` below matches.
-//   CHANNEL: expectations — measured by hand, because `make falsify` scores exit, asserts, leak,
-//   panic and refusals and reads INERT here: every value is the same on both trees.
-//   ARMED: nothing.
-//   WITNESS: the same two lines on the installed 2026.9.0 build, so the leak predates the branch.
-//   HOLDS: the first loop over `f` still moves (no advice) on both trees; all four asserts pass
-//   on both backends.
+// ⚠ This file does not score the DIAGNOSTIC.  The avoidable-copy advice runs after the scope
+// pass in the `loft` binary only, so `loft_suite`'s in-process harness never produces it and an
+// `@EXPECT_WARNING` here reads "not emitted" on every build (measured: this file first carried
+// two, and the suite failed on them while `loft --interpret` printed both).  The diagnostic
+// contract is `tests/copy_advice_value_struct.rs::a_second_loops_variable_is_advised_by_its_
+// written_name_*`, which reads stderr on both backends.  This file carries the values: that the
+// three loops still append and read the right elements.
 //
-// @EXPECT_WARNING: copy of R — `f` is still used after this point, so it could not be moved
-// @EXPECT_WARNING: copy of Q — `f` is still used after this point, so it could not be moved
+// @falsified-at: none — INERT here by construction, see above; the values were never wrong.
+//   The moving channel is the diagnostic, falsified by hand against 94ad85606's parent build:
+//   interpret and native both print "copy of R — `f#1` is still used …" and "copy of Q — `f#2`
+//   is still used …", which the Rust gate forbids.
+//   WITNESS: the same two lines on the installed 2026.9.0 build, so the leak predates the branch.
+//   HOLDS: the first loop over `f` still moves (no advice); all four asserts pass on both backends.
 
 struct R { id: integer, ws: vector<integer> }
 struct Q { id: integer, ks: vector<integer> }
