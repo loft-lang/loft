@@ -1732,6 +1732,22 @@ fn the_release_records_the_c_toolchain_the_verifier_compares() {
     );
 }
 
+/// @PLN78 step 7 — a Windows link is stamped with the wall clock unless told otherwise.
+///
+/// `rust-lld` writes the link time into the COFF header and the debug directory and a fresh
+/// PDB GUID into the CodeView record: two builds of one source from one root differed in
+/// exactly those 12 bytes.  `/Brepro` derives them from the output, and it has to travel with
+/// the RUSTFLAGS `repro-flags.sh` exports, since those override a config's per-target flags.
+#[test]
+fn repro_flags_make_a_windows_link_deterministic() {
+    let rf = std::fs::read_to_string("scripts/repro-flags.sh").expect("read repro-flags.sh");
+    assert!(
+        rf.contains("MINGW*|MSYS*|CYGWIN*") && rf.contains("-C link-arg=/Brepro"),
+        "scripts/repro-flags.sh must add `-C link-arg=/Brepro` on a Windows host — without it \
+         every Windows release differs from its rebuild in the link timestamp and PDB GUID"
+    );
+}
+
 /// @PLN78 step 7 — every triple we PUBLISH must also be rebuilt from source.
 ///
 /// The two lists drift in one direction that is silent: adding a target to `release.yml`

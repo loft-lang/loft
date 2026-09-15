@@ -43,6 +43,17 @@ RUSTFLAGS="${RUSTFLAGS:-}"
 [ -n "$_repro_sysroot" ] && RUSTFLAGS="$RUSTFLAGS --remap-path-prefix=$_repro_sysroot=/rustc"
 RUSTFLAGS="$RUSTFLAGS --remap-path-prefix=$_repro_cargo_home=/cargo"
 RUSTFLAGS="$RUSTFLAGS --remap-path-prefix=$_repro_src=/src"
+
+# On a Windows host the linker (`rust-lld`, per `.cargo/config.toml`) stamps every link with
+# the wall clock: the COFF header's TimeDateStamp, the debug directory's copy of it, and the
+# CodeView PDB GUID.  Measured 2026-09-15 on a windows-2025-vs2026 runner: two builds of one
+# source from one root differed in exactly those 12 bytes and nothing else.  `/Brepro` makes
+# the linker derive all three from a hash of the output.  It lives HERE rather than in
+# `.cargo/config.toml` because this file exports RUSTFLAGS, which overrides a config's
+# `target.<triple>.rustflags` — and here is where both the release and the verifier get it.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) RUSTFLAGS="$RUSTFLAGS -C link-arg=/Brepro" ;;
+esac
 export RUSTFLAGS
 
 unset _repro_sysroot _repro_cargo_home _repro_src
