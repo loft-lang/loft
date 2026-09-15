@@ -1023,6 +1023,77 @@ its assumptions are written as a rule and checkable by both.
 
 ## Where to resume
 
+**2026-09-15, morning — HAND-OFF after § V-an and the rebase.  START HERE.**
+
+*Branch state.*  `157-native-4x` was rebased onto `main` and EQUALS it: PR #1533
+(squash 7c3f93b3) cherry-picked the four § V-an commits and re-measured QUALITY.md's two
+audit rows on the joined tree, so nothing of this branch was left to replay (`git cherry`
+matched none of the 44 commits by patch-id — a plain `git rebase origin/main` would have
+conflicted 44 times to reach the same tree; `git rebase --onto origin/main <last>` did it
+in one step).  On top of `main` the branch carries only b922d534, PERFORMANCE.md § *The
+clear case first*.  No PR is open; the owner calls the wrap.
+
+*The table on the rebased tree* (this quiet x86-64 box, `compare.py --skip-interp
+--repeat 3 --n-ref 500 --n-native 500`, the scratch clone's `bench/bench.rs` with
+`bench-reference-scene.rs` appended so every row is judged, 14/14 hashes agree):
+
+| row | Rust ns/op | native ns/op | native / Rust |
+|---|---:|---:|---:|
+| hash | 108 116 | 106 310 | 0.98 |
+| fill_circle | 53 660 | 61 700 | 1.15 |
+| fill_star | 18 934 | 23 940 | 1.26 |
+| hair | 14 040 | 27 456 | 1.96 |
+| lock | 1 530 382 | 3 056 902 | 2.00 |
+| composite | 101 050 | 202 306 | 2.00 |
+| lock_curved | 1 322 634 | 3 090 188 | 2.34 |
+| wide_line | 5 826 | 13 622 | 2.34 |
+| fronds | 49 360 | 176 796 | 3.58 |
+| smooth | 308 | 1 178 | 3.82 |
+| **render_lock** | 2 858 728 | 15 599 090 | **5.46** |
+| **resize** | 17 416 716 | 96 948 566 | **5.57** |
+| **parse** | 6 636 | 50 356 | **7.59** |
+| **render_marks** | 887 460 | 7 063 346 | **7.96** |
+
+Ten judged rows under the bar, the four late rows over it.  `parse` came from 10.5×
+(§ V-an); its ratio reads 7.6× here rather than the 6.6× in the § V-an paragraph because
+this run's reference lane was faster (6.6 µs against the recorded 7.2), the native side is
+within noise.
+
+*The next unit, by the owner's rule (PERFORMANCE.md § The clear case first: the case that
+shows in the statistics AND has a visible reason).*  The resample: ONE routine
+(`t_6Canvas_resample`, `graphics/src/graphics.loft`) is 82 / 70 / 57 % of `resize` /
+`render_marks` / `render_lock`, and the reason is read (DESIGN.md § V-aj "The tap in
+machine code": 109 instructions and 35 branches per tap against the reference's 17 and
+1.7 — re-tested hoisted flags, no vectorisation; the release-pass probe puts the checks at
+60 % of the row).  So the queue's items 1 and 2 are the work: `R-InvariantArith` (the
+invariant part of the tap's index arithmetic hoisted at loft level, sound by
+construction), then `R-BoundedNest` (a bound over the nest's inputs taken once, the plain
+vectorised loop under it, the checked loop as fallback — the unit that reaches the
+reference's cycles per tap and takes the three rows under the bar).  The probe is
+`rs_probe.loft` (the graphics `resample` lifted verbatim + the bench row; hash 77de7581;
+last read 95.4 ms/op), the falsifier `LOFT_HOIST_VERIFY=1`, the ceiling
+`LOFT_RELEASE_PASS_PROBE=1` (38.3 ms/op on the probe).
+
+`parse` WAITS, by the same rule: after § V-an its profile is flat (the byte scan at 9 % is
+the largest routine) and what remains is a CLASS — deep record copies, 18.5 % over four
+sites (DESIGN.md § V-an's table: the first bind of a record result copies, an indexed
+element overwrite from a literal, a field assigned from a local at its last use).  That
+class is a memory-model unit (adopt at the first bind, move at the last use) and comes
+after the resample.
+
+*Machine notes for the resample unit.*  A fresh session needs: `cargo build --release`
+(bin AND lib — the native tests link the rlib), a scratch clone of `loft-libs-graphics`
+at `drawing-lock` (250b2cd) — never the consumer's own tree — with the reference appended
+as its header says, and the resample probe rebuilt from `graphics/src/graphics.loft:807`
+(lift the function verbatim, add the bench row's call).  `scripts/emission_audit.py` on
+the emission before running it; `LOFT_TRACE_VALUEREC=1` names the value form's refusing
+test since § V-an.  This box (14 GiB) killed a local `find_problems.sh --subject codegen`
+for memory with nothing else running; the GitHub dispatch (`gh workflow run ci.yml --ref
+157-native-4x -f os=ubuntu-latest`) is the gate here, and after adding any IR-walking
+function run `scripts/ir_walker_audit.py optional` and `unspan`, update QUALITY.md's two
+rows and `make optional-ratchet` BEFORE dispatching — that was the one real red of the
+§ V-an gate.
+
 **2026-09-14, end of day — THE FOUR UNJUDGED ROWS, JUDGED.**  The bench's `parse`,
 `render_lock`, `render_marks` and `resize` rows had no Rust reference, so they were
 measured and never judged.  They have one now — `bench-reference-scene.rs` beside this
