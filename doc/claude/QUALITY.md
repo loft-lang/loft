@@ -2580,7 +2580,12 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 816 | 474 | 6 | **336** |
+| 817 | 475 | 6 | **336** |
+
+(2026-09-15, @PLN164 B1: 817 · 475 · 6 · 336 — one function added and it peels:
+`use_analysis::adopts_minted_at_bind` reads a callee's return type through `peel_optional`
+and declines the nullable spelling by its marker, since a `-> S?` return has no buffer
+attribute to adopt.  The opaque column stays at the ratchet's 336.)
 
 (2026-09-15, THE JOINED TREE — the same union: 816 · 474 · 6 · 336, re-measured rather than
 carried.  This branch's 815 · 473 · 5 · 337 and § V-an's 796 · 454 · 6 · 336 each counted its own

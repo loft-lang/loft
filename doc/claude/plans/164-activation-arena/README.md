@@ -5,19 +5,22 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # 164 — Activation arenas, adopt-at-bind and build-in-place
 
-Tracker: [@PLN164](https://github.com/loft-lang/plans/issues/164) · `status:future` ·
+Tracker: [@PLN164](https://github.com/loft-lang/plans/issues/164) · `status:active` ·
 `subject:store-lifetime`.
 
 ## Status (REQUIRED)
 
-Open — the evaluation is done (2026-09-15, below), the three tiers are named with the
-invariant each rests on, and no phase is cut.  **Not ready:** the owner reviews
-[§ Edge cases](#edge-cases-to-inspect-before-a-phase-is-cut) first — every row there is a
-case that must be admitted, declined or given a rule before the first phase, and a plan
-that starts without that list is the plan-51 shape again (a mechanism validated only where
-its derivations happened to coincide).  Routes here per the docs-vs-plans rule: the
-mechanisms belong to `LIFETIME.md` / `OWNERSHIP_MODEL.md` / `formal/ownership.md` once
-shipped; this directory is the design and the matrix until then.
+Active (the owner's go, 2026-09-15).  **P0 done** and **B1 shipped** the same day — the
+measurements are under § P0 below and the mechanism under § B1.  What P0 changed in the
+plan: tier 1's ceiling is ~10 % of the parse row, not a fifth, and its store-identity cost
+(287 `store_nr !=` sites in one emission) is real, so A1/A2 stay behind B and C in the
+queue and the owner's E1 pick is still open.  B1 took the minimal sound shape — adopt the
+callee's minted store, keep the caller's buffer null — and the matrix found the reason the
+wider one (reuse the buffer across activations, E7) must wait: the interpreter's rebind of a
+promoted buffer local frees a caller-supplied buffer where native guards it (§ B1b).
+Routes here per the docs-vs-plans rule: the mechanisms belong to `LIFETIME.md` /
+`OWNERSHIP_MODEL.md` / `formal/ownership.md` once shipped; this directory is the design and
+the matrix until then.
 
 ## Goal (REQUIRED)
 
@@ -39,7 +42,7 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
 - **Effort:** M (tiers 1–2) · MH (tier 3)
 - **Design:** ~ — the invariants are named; the store-identity question (§ Edge cases E1)
   is open and decides tier 1's shape.
-- **Last touched:** 2026-09-15
+- **Last touched:** 2026-09-15 (P0 measured, B1 shipped)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -118,6 +121,82 @@ stored exactly once gets the destination slot as its return buffer, so `smooth_p
 not a copy.  The per-type prefill image belongs here.  Removes the remaining copies and
 most of the prefill.  The one copy that stays: a vector stored in TWO destinations
 (`Op.pts` and `Mark.pts`) — a record field owns its data, and that is the right answer.
+
+## P0 — what one activation's buffers cost, measured (2026-09-15, this x86-64 box)
+
+The parse bench (`parse_only.loft --n 2000`, `--native-release`, hash `33f6d2b8`) read
+**50.5–54.8 k ns/op** before any change.  Its emission (`--native-emit`) carries **287**
+`store_nr !=` and **39** `store_nr ==` tests — the sites E1 would touch — 37 `OpDatabase`
++ 45 `OpDatabaseNP` mints and 26 `OpCopyRecord` copies.  The runtime census
+(`LOFT_TRACE_DB=1`, two parses) puts the store mints per parse at **~88**: Paint 19, Mark
+19, `vector<Pt>` 18, `vector<float>` 16, PointList 6, Elem 6, Sketch 2.
+
+**What a mint/free pair costs.**  A vector declared inside a loop re-mints its store per
+iteration under `LOFT_NO_LOOP_BUFFER_REUSE=1` and keeps it by default (§ V-al), so the A/B on
+one program prices the pair: **28 → 88 ns/op, ≈ 60 ns** for the smallest buffer (a mint, a
+first claim, a free).  Perf on that probe splits the 60 ns about evenly between the
+store-specific half (`op_database_inner`, `Store::init`, `Stores::clear`, the zeroing
+memset) and the buffer's first claim (`claim`, `claim_block`, `finish_claim`,
+`pre_alloc_vector`), which an arena RECORD pays too.
+
+**So tier 1's ceiling is 88 × 60 ns ≈ 5.3 µs ≈ 10 % of the row**, half of that the
+store-specific part an arena or a pooled store can remove; the plan's "a fifth" counted the
+profile's lifecycle routines, which include per-access costs (`store_mut`, `begin_write`)
+that no store discipline changes.  The hand patch of `parse_poly`'s four eager buffers is
+therefore not worth building: those are 3 of 4 unused per activation (one `smooth_pts` path
+runs), 12 pairs per parse, ≈ 0.7 µs — the arithmetic answers it.  Verdict for the queue:
+**B (the copies, 18.5 % inclusive) and C (the prefill and the discharge copies) before A**,
+and for E1 the pooled-store option is the one to price first when A1 is cut, because it
+keeps identity as it is.  The leak-gate extension (E19) waits for A1's shape.
+
+## B1 — adopt at first bind (SHIPPED 2026-09-15, `@FR-O-Move`)
+
+*The two protocols, side by side.*  `a = mk_lit(i)` (every return a literal, deps `[]`)
+and `b = mk_loc(i)` (`o = P { … }; …; o`, the local promoted onto the buffer, deps
+`["o"]`) lowered differently: `a` adopts a buffer the caller mints once and reuses
+(`OpFreeRefIfDistinct(a, __ref_1)`); `b`'s caller minted a SECOND store and deep-copied
+(`OpCopyRefOrNull` / the `_dst`/`_src` delivery), freeing the callee's — two mints, a copy
+and two frees per call where the callee's one mint would do.  The parse row's `pp_raw =
+read_points(s)` (a `PointList` of four vectors) and the bench's `bs_sk = parse_scene(…)`
+(the whole `Sketch`) are that shape.
+
+*The rule.*  `use_analysis::adopts_minted_at_bind` — ONE home for the three readers — admits
+a direct call to a loft-defined callee whose return deps name exactly its hidden return
+buffer attribute, bound to a plain local (not a parameter — a promoted local is one — not a
+caller-hidden buffer, not handed to the call as its buffer).  `scopes::scan_set` then strips
+the local's deps (it OWNS the minted store) and pairs it with the call's buffer for the
+identity-guarded free the fresh-adopting shape already takes; the interpreter's first-bind
+arm delivers by `OpPutRef` and native's dispatch takes the plain assignment.  A rebind keeps
+the in-place copy on both backends.  Switch `LOFT_NO_ADOPT_FIRST_BIND=1` (parse time).
+
+*What the matrix found.*  `bytecode-comparisons/B1-adopt-first-bind-cells.loft` (c1–c17,
+hand-computed, both backends under `LOFT_STRICT_STORES`, `LOFT_POISON`, `LOFT_POISON_CLAIM`
+and the leak gate) was green before the change and RED after the first cut on the
+interpreter alone: c6, plan 51 cluster 3's `render_lit_then_call`.  The pairing enrolled the
+buffer in `reuse_record_buffers` (the entry-time pool, `@FR-R-Reuse`), so the callee received
+it non-null, its promoted local's literal built into it, and the rebind `cv = alloc_canvas(…)`
+FREED it — the interpreter's reassignment path has no twin of native's `_rb_w_` witness — after
+which the caller's next `Q` took the recycled slot and `p.tag` read it.  The callee's IR is
+identical before and after; the free was a no-op on a null buffer.  So B1 excludes its
+pairings from the pool (`Scopes::minted_pairs`), the buffer stays null, and the callee mints
+per call: **139 → 108 mints** over the cells on the interpreter, 137 → 106 on native.
+
+*Receipts.*  Guard `tests/scripts/164-adopt-first-bind.loft` (its `@falsified-at:` is the
+pool sabotage above), pins `tests/adopt_first_bind.rs`, the ten plan-51 guards green on
+both backends under both switch states.
+
+*Measured.*  The parse bench (`parse_only.loft --n 2000`, `--native-release`, this quiet
+x86-64 box, hash `33f6d2b8` throughout): **50.5–54.8 k → 43.3–44.0 k ns/op**, about
+−14 % on the row — the `PointList` copy at every `read_points` bind and the whole-`Sketch`
+copy at the bench's own `bs_sk = parse_scene(…)` are the binds it removes.  The consumer
+table (`compare.py`, 14 rows) is re-measured when the next unit lands, per the plan's
+phase 5.
+
+**B1b — reuse the buffer across activations for this callee shape** (E7's steady state, 0
+mints per call): blocked on the interpreter's reassignment path freeing a caller-supplied
+buffer held by a promoted buffer local (`143`'s shape); native guards that free with its
+entry-time `_rb_w_<buffer>` witness (loft#1126).  Closing the divergence is the whole of
+B1b, and c6 under the pool without the exclusion is its falsifier.
 
 ## Composition matrix — Stage A (REQUIRED)
 
@@ -210,8 +289,8 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | E4 | `par` arms | one arena, two threads | one arena per arm, marked and released by the arm | THREADING.md's corpus |
 | E5 | records that own heap in an arena (`Elem.ename`) | release-to-mark is O(1) only for no-heap records; text handles must be released (`@FR-H-ClearRelease`) | the mark carries a heap-owner list; a walk over that list, never over the store | a cell with 1 000 text-owning temporaries, `LOFT_NATIVE_LEAK_CHECK` |
 | E6 | an arena record's vector GROWS | growth relocates within the store; `@FR-R-Base` bases and `@FR-R-Header` headers into arena records | an arena mint counts as growth for the enclosing loop's `growth_free`, as a null-discharge buffer does today | `LOFT_HOIST_VERIFY=1` on the parse bench |
-| E7 | adopt at first bind when the buffer is the CALLER's caller's (`ps_p = parse_poly(…, __ref_5)`) | the local and the buffer are one store; the steady state after iteration one already | admit — this IS the steady state; the pin shows iteration one equal to iteration two | `tests/scripts/141-…` (plan 51 cluster I) under the switch |
-| E8 | adopt when the callee handed back a store it did not mint (`O-Opaque`: a fn-ref, a return that borrows a parameter) | adopting a borrowed store frees someone else's | decline unless deps say MINTED; a fn-ref call keeps the copy (its type cannot record) | plan 51 cluster V-c probe 53 |
+| E7 | adopt at first bind when the buffer is the CALLER's caller's (`ps_p = parse_poly(…, __ref_5)`) | the local and the buffer are one store; the steady state after iteration one already | MEASURED (B1): admitted for a fresh-adopting callee already; for a promoted-local callee the reused buffer is freed by the interpreter's rebind of that local (c6) — B1 keeps the buffer null, B1b takes the reuse | `B1-adopt-first-bind-cells.loft` c6; the plan-51 guards under the switch |
+| E8 | adopt when the callee handed back a store it did not mint (`O-Opaque`: a fn-ref, a return that borrows a parameter) | adopting a borrowed store frees someone else's | SHIPPED (B1): `adopts_minted_at_bind` admits only a return whose deps name exactly the callee's buffer attribute; a visible-parameter dep, a `__closure` dep, a `CallRef` and a nullable return decline | c7 (a parameter read), c12 (a branch), c4 (nullable) |
 | E9 | move at last use on ONE path only | `if c { s.p = pp } else { use(pp) }` — dead after on the then-path, live on the else | per-path liveness (`O-Complete`); the move only where dead on EVERY path after, else copy | a branch cell with the value read after on one arm |
 | E10 | move from a `const` parameter, a view, an element | not owned; a move would steal | decline: the oracle's OWN verdict is the gate, `O-Proxy` is not enough here | cells over each source kind |
 | E11 | the moved-from local at scope exit | its free must not run (the record is gone) | the move nulls the source (`@FR-R-MoveAppend` zeroes it); `LOFT_POISON` is the falsifier | poison run |
@@ -229,10 +308,11 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 
 | Item | Source | Verify | Status |
 |---|---|---|---|
-| **P0** — probe first: count the store-identity sites; hand-patch `parse_poly`'s four buffers into one arena store on the emitted Rust; price tier 1 rustc-first; extend the leak gate to records-above-mark (E19) | this README | the hand patch runs green under `LOFT_STRICT_STORES` + the leak gate, or names the E1 site that breaks — either answer cuts A1 | Open |
+| **P0** — probe first: count the store-identity sites; price tier 1; the hand patch judged not worth building by the arithmetic; the leak-gate extension (E19) deferred to A1's shape | § P0 | 287 identity sites in one emission; ~88 mints per parse at ≈ 60 ns a pair: tier 1's ceiling ≈ 10 % of the row | Done 2026-09-15 |
 | **A1** — arena for one activation's own buffers (`__ref_N`, `__ref_p2_N`, literal temps), mark/release at every exit | § Tier 1 | `tests/scripts/164-arena-activation.loft` both backends; plan 51's ten graduated guards under the switch; `emission_audit.py` R-State per record | Blocked on P0 |
 | **A2** — the caller-threaded arena, reset per loop iteration | § Tier 1 | parse row −20 %; E2/E3/E4 cells | Blocked on A1 |
-| **B1** — adopt at first bind | § Tier 2 | `introspect` diff: iteration one's IR equals iteration two's; E7/E8 cells | Open |
+| **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |
+| **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state) | § B1 | c6 under the pool without `minted_pairs` — the interpreter's rebind free must first match native's `_rb_w_` guard | Blocked on that divergence |
 | **B2** — move at last use into a field | § Tier 2 | E9–E12 cells under `LOFT_POISON`; the `paint: pp_paint` site emits no `OpCopyRecord` | Open |
 | **C1** — element overwrite from a literal in place | § Tier 3 | E13/E14 cells; `acc_pts` emits no temp store | Open |
 | **C2** — the destination as return buffer | § Tier 3 | E15/E16 cells; `smooth_pts` writes `Op.pts` | Blocked on A1 (the destination is an arena or scene record) |
@@ -245,9 +325,11 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
 
 ## Phase ordering
 
-1. P0 — it prices tier 1 for the cost of a hand patch and answers E1 before anything is
-   built on it.
-2. B1 and B2 — small, independent of the arena, each removes a copy class today.
+1. P0 — done: tier 1 priced at ≈ 10 % of the row, E1's site count measured; the owner's
+   pick between `(store_nr, rec)` identity and a pooled store stays open until A1 is cut.
+2. B1 (shipped) and B2 — small, independent of the arena, each removes a copy class today;
+   B1b (buffer reuse for the promoted-local shape) after the interpreter's rebind free is
+   guarded as native's is.
 3. A1 then A2 — the largest class, the largest change; A2 is where the parse row moves.
 4. C1, C3, C4 — each a local mechanism; C2 last, it needs A1's destinations.
 5. Re-measure the 14-row bench after each tier (`compare.py`, 14/14 hashes).

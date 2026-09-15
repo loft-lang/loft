@@ -955,3 +955,14 @@ null-encoded form again on both backends: the first bisect step for a wrong valu
 counted loop whose start is a variable or an expression.  Every value the compare and the
 step see is unchanged, so the edges are too — including loft#1525, an inclusive range to
 the type MAXIMUM that never terminates on either form.
+
+**Adopt at first bind (@PLN164 B1, `@FR-O-Move`, default-ON, both backends, parse time):**
+a plain local first-bound from a callee that returns the local it promoted onto its buffer
+(`fn mk() -> P { o = P { … }; …; o }`) adopts the store the callee minted — one mint and one
+free per call where there were two mints, a deep copy and two frees — paired with the call's
+buffer for an identity-guarded free exactly as a literal-returning callee's result is.  The
+buffer stays null on purpose: pooled at function entry it is freed by the interpreter's
+rebind of the promoted local (plan 51 cluster 3's shape; native guards that free with
+`_rb_w_`), which is the plan's B1b.  **`LOFT_NO_ADOPT_FIRST_BIND=1`** restores the copy and
+is the first bisect step for a leak, a double free or a wrong field out of a local bound
+from such a callee; `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` are the falsifiers.

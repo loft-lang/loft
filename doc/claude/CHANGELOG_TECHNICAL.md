@@ -9,6 +9,25 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A plain local's first bind from a build-into-a-local callee adopts the minted store (2026-09-15)
+
+`fn mk() -> P { o = P { … }; …; o }` reports its return as `["o"]`, the local the parser
+promoted onto the hidden buffer, and `b = mk()` copied it on both backends: the caller minted
+a second store, deep-copied the callee's and freed it — where `(O-Move)` transfers the store
+to the binding, and a literal-returning callee's result already adopts.  The callee-level
+predicate (`return_adopts_fresh_store`) declines the shape for a reason that belongs to one
+destination only (a bound local that is itself a return buffer, plan 51 cluster 3), so the
+question is now asked per site: `use_analysis::adopts_minted_at_bind` admits a direct call
+whose return deps name exactly its buffer attribute, bound to a plain local, and `scopes`,
+the interpreter's first-bind arm and native's dispatch read that one answer.  The local owns
+the callee's store, its free is guarded by identity against the call's buffer, and the
+delivery is a bare `PutRef` / plain assignment: one mint and one free per call.  The buffer
+stays null — enrolling it in the entry-time pool hands the callee a store the interpreter's
+rebind of the promoted local frees where native guards it (`_rb_w_`), which the cell matrix
+caught as a use-after-free on `143`'s shape; reuse for this callee shape is @PLN164 B1b.
+Switch `LOFT_NO_ADOPT_FIRST_BIND=1`; guard `tests/scripts/164-adopt-first-bind.loft`; pins
+`tests/adopt_first_bind.rs`.  `formal/ownership.md` D-own-42 (closed).  @PLN164 B1.
+
 ### A counted loop with a computed start pays no null test per iteration (2026-09-13)
 
 `for i in a..b` where `a` is not a literal was lowered with a null-encoded counter: seeded at

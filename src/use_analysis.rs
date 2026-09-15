@@ -3599,6 +3599,73 @@ pub(crate) fn read_only_record_locals(body: &Value, n_vars: usize, data: &Data) 
     cx.ok
 }
 
+/// @PLN164 B1 — does the bind `v = value` ADOPT the record the callee minted?  True when
+/// `value` is a direct call to a loft-defined callee whose return names EXACTLY its own
+/// hidden return buffer (`fn mk() -> P { o = P { … }; …; o }` reports `["o"]`, the buffer
+/// attribute the parser renamed the local onto), and `v` is a PLAIN local: not a parameter
+/// (a local promoted onto a buffer is one), not a caller-side hidden buffer, and not handed
+/// to the call as that buffer.
+///
+/// The rule it keeps is `@FR-O-Move` — *a returned heap value's ownership transfers to the
+/// caller's binding* — where `@FR-O-Buffer`'s fresh leg says what the callee returned: the
+/// buffer the caller passed is the null sentinel for this callee shape, so the callee minted
+/// the store it hands back, and nothing else names it.  `Definition::return_adopts_fresh_store`
+/// declines such a return on purpose — adopting is unsound where the DESTINATION is itself a
+/// return buffer (`render(p) -> Canvas { cv = alloc_canvas(…); cv }`: the inner adoption would
+/// replace the caller's reused buffer, `143-plan51-cluster3-mixed-lit-call`), which is why the
+/// answer is per SITE and reads the destination.  A return that borrows a visible parameter
+/// (`returns_borrowed_view`), a closure returning a capture (the dep names `__closure`, not
+/// the buffer), a fn-ref call (`@FR-O-Opaque`: empty deps cannot license an adopt) and a
+/// nullable return (a synthetic enum with its own delivery, no buffer attribute) all decline.
+///
+/// ONE home for the three readers (the loft#810 discipline): `scopes::scan_set` pairs the
+/// local with the call's buffer so its free is guarded by store identity, and the two backends'
+/// bind arms deliver the call's result directly instead of minting a store and copying.
+#[must_use]
+pub fn adopts_minted_at_bind(
+    data: &Data,
+    function: &crate::variables::Function,
+    v: u16,
+    value: &Value,
+) -> bool {
+    if !crate::keys::adopt_first_bind_enabled() {
+        return false;
+    }
+    let Value::Call(fn_nr, args) = value.unspan() else {
+        return false;
+    };
+    if (*fn_nr as usize) >= data.definitions.len() {
+        return false;
+    }
+    let def = data.def(*fn_nr);
+    if !def.is_loft_defined() || def.return_adopts_fresh_store() || def.returns_borrowed_view() {
+        return false;
+    }
+    // `@FR-N-Shape` — read the nullability marker rather than fall through a missing arm: a
+    // `-> S?` return is loft#896's synthetic enum with its own delivery and no buffer attribute.
+    let (shape, nullable) = def.returned().peel_optional();
+    if nullable || !matches!(shape, Type::Reference(_, _) | Type::Enum(_, true, _)) {
+        return false;
+    }
+    let Some(buf) = def.hidden_return_buffer_attr() else {
+        return false;
+    };
+    let deps = def.returned().depend();
+    if deps.len() != 1 || usize::from(deps[0]) != buf {
+        return false;
+    }
+    if function.is_argument(v) || function.is_caller_hidden_buf(v) || function.is_skip_free(v) {
+        return false;
+    }
+    let name = function.name(v);
+    if name.starts_with("__ref_") || name.starts_with("__rref_") || name.starts_with("__retbuf") {
+        return false;
+    }
+    !args
+        .get(buf)
+        .is_some_and(|a| matches!(a.unspan(), Value::Var(w) if *w == v))
+}
+
 /// @PLN157 § V-g — the three facts about a function BODY that [`view_elision_bind`] reads,
 /// each computed once off the raw body before the scan (`scopes` holds them).
 #[derive(Clone, Copy)]

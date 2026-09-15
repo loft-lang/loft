@@ -385,7 +385,9 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 0.**  `D-own-40` (`(O-Witness)` armed for locals whose assignments do NOT mix, and
+**OPEN: 0.**  `D-own-42` (a plain local's first bind from a callee returning its promoted
+local COPIED where `(O-Move)` transfers) opened and CLOSED 2026-09-15, below; `D-own-40`
+(`(O-Witness)` armed for locals whose assignments do NOT mix, and
 `(O-Owner)` broken while one was) and `D-own-41` (a detach by in-place re-allocation, wiping the
 value being copied in) both opened and CLOSED 2026-09-11, below; `D-own-39` opened and CLOSED
 2026-09-10.  Every earlier deviation this doc has carried is closed; the
@@ -408,6 +410,34 @@ the entry records why the obvious widening is not taken: it answers wrong on `--
 > a struct's has, `tests/scripts/a-struct-enum-whole-value-bind-copies-like-a-struct.loft`);
 > and the `--native` release of a displaced store on a fn-ref re-bind of a USER local, which
 > is loft#1328 and which the `??` hoist sidesteps by releasing in the IR.
+
+### D-own-42 — OPENED AND CLOSED (2026-09-15): a plain local's first bind from a callee that returns its promoted local COPIED where the rule transfers
+
+`(O-Move)` — *a returned heap value's ownership transfers to the caller's binding; the callee
+never frees what it transfers* — and `(O-Buffer)`'s fresh leg: a callee handed the null sentinel
+for its buffer mints the store it hands back, and nothing else names it.  `fn mk() -> P { o = P
+{ … }; …; o }` is that callee: the parser renames `o` onto the hidden buffer and reports the
+return as `["o"]`, a dep naming no parameter.  Both backends nevertheless COPIED at `b = mk()`
+— a second store minted by the caller, a deep copy, the callee's store freed — because the one
+predicate both read (`return_adopts_fresh_store`) declines a hidden-attribute dep for a reason
+that belongs to a DIFFERENT destination: adopting is unsound where the bound local is itself a
+return buffer (`render(p) -> Canvas { cv = alloc_canvas(…); cv }`, plan 51 cluster 3), and the
+predicate is a callee fact that cannot see the destination.  The value was right on every
+program; the cost was two mints, a copy and two frees per call, and the drawing library's
+`parse` row paid it at every `PointList` and at the bench's `Sketch` bind.
+
+**Closed by @PLN164 B1:** the question is asked per SITE, in one home
+(`use_analysis::adopts_minted_at_bind`): a direct call whose return deps name exactly the
+callee's buffer attribute, bound to a plain local — not a parameter, not a caller-hidden
+buffer, not the call's own buffer argument.  `scopes` strips the local's deps and pairs it
+with the call's buffer for the identity-guarded free `(O-Buffer)` already gives a
+literal-returning callee's result; the interpreter binds by `OpPutRef` and native by the plain
+assignment.  The rule did not change: the code now reads the destination the rule was always
+about.  What the matrix caught on the way is recorded in the plan: enrolling such a buffer in
+the entry-time pool hands the callee a store the interpreter's rebind of its promoted local
+frees where native guards it (`_rb_w_`), so the buffer stays null and reuse for that callee
+shape is the plan's B1b.  Guard `tests/scripts/164-adopt-first-bind.loft`; cells
+`plans/164-activation-arena/bytecode-comparisons/B1-adopt-first-bind-cells.loft`.
 
 ### D-own-41 — OPENED AND CLOSED (2026-09-11): the interpreter detached a local by re-allocating its store IN PLACE, wiping the value being copied into it
 

@@ -88,6 +88,15 @@ struct Scopes<'s> {
     /// runtime store-nr check) instead of the unconditional `OpFreeRef`
     /// — see the comment block around `scan_set`'s witness-pairing branch.
     paired_witness: HashMap<u16, u16>,
+    /// @PLN164 B1 — the `__ref_N` buffers paired through `use_analysis::adopts_minted_at_bind`:
+    /// the callee returns the local it promoted onto its buffer, the caller's local adopts the
+    /// store the callee MINTED, and the pairing exists for the identity-guarded free alone.
+    /// `reuse_record_buffers` must not pre-mint these — a buffer handed to such a callee
+    /// non-null is written by its literal and then FREED by the interpreter's rebind of the
+    /// promoted local from a call (`143-plan51-cluster3-mixed-lit-call`'s shape: the free
+    /// native guards with its `_rb_w_` witness fires unguarded on the interpreter), so the
+    /// caller's next turn reads a recycled store.  Reuse for this callee shape is @PLN164 B1b.
+    minted_pairs: HashSet<u16>,
     /// loft#1317 — the `__ref_N` an inline record LITERAL minted, mapped to the local it was
     /// then aliased into.  Separate from [`Scopes::paired_witness`] because the free it
     /// governs is conditional on a fact only `get_free_vars` holds: whether that local is
@@ -3295,6 +3304,7 @@ fn reuse_record_buffers(
     function: &Function,
     data: &Data,
     witness_buffer: &HashMap<u16, Vec<u16>>,
+    minted_pairs: &HashSet<u16>,
     multi_assigned: &HashSet<u16>,
 ) {
     if !crate::keys::retbuf_reuse_enabled() {
@@ -3326,6 +3336,12 @@ fn reuse_record_buffers(
         // The release is not this site's: the scan already placed the buffer's scope-exit
         // free and the result's guarded one.
         if !function.is_caller_hidden_buf(av) || !function.tp(av).depend().is_empty() {
+            continue;
+        }
+        // @PLN164 B1 — a buffer whose callee mints the store its result adopts is paired
+        // for the guarded free only; pre-minting it hands the callee a store its own rebind
+        // frees on the interpreter (`Scopes::minted_pairs`).
+        if !ungated && minted_pairs.contains(&av) {
             continue;
         }
         let Some(td) = function.tp(av).base().heap_def_nr() else {
@@ -3466,6 +3482,7 @@ fn run_scan_phase(
         lift_texts: Vec::new(),
         ret_temp_counter: 0,
         paired_witness: HashMap::new(),
+        minted_pairs: HashSet::new(),
         literal_buffer: HashMap::new(),
         lift_join_witness: HashMap::new(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
@@ -3740,6 +3757,7 @@ fn run_scan_phase(
         &function,
         data,
         &scopes.witness_buffer,
+        &scopes.minted_pairs,
         &scopes.multi_assigned,
     );
     data.definitions[d_nr as usize].code = code;
@@ -9082,6 +9100,13 @@ impl Scopes<'_> {
             && data.def(fn_nr).is_loft_defined()
         {
             let adopts_fresh_store = data.def(fn_nr).return_adopts_fresh_store();
+            // @PLN164 B1 (`@FR-O-Move`) — a plain local bound from a callee that returns
+            // its own promoted local takes the SAME pairing a fresh-adopting callee's result
+            // takes: the deps are stripped below (the local OWNS the store the callee
+            // minted) and its free is guarded by identity against the call's buffer.  One
+            // home decides it for the two backends' bind arms too.
+            let adopts_minted =
+                crate::use_analysis::adopts_minted_at_bind(data, function, v, unspanned_value);
             // @PLN85 `local_source` over-free fix (LOFT_JOIN_OWN): `v` holds an OWNED
             // store (this adopts-fresh call) that a later borrow/join reassignment
             // displaces. Strip `v`'s declared deps so it is OWNED everywhere — the
@@ -9203,7 +9228,7 @@ impl Scopes<'_> {
             // the free (loft#1201).  `OpFreeRefIfDistinct` answers both cases at run time
             // and is conservative in the direction that matters: it frees exactly as the
             // plain free did when the stores DIFFER, and only skips when they alias.
-            if (adopts_fresh_store || publishes_through_ref || vector_shaped)
+            if (adopts_fresh_store || adopts_minted || publishes_through_ref || vector_shaped)
                 && let Value::Call(_, args) = unspanned_value
             {
                 for arg in args {
@@ -9245,6 +9270,9 @@ impl Scopes<'_> {
                             // handed is what gives the value an owner).
                             if av == v {
                                 continue;
+                            }
+                            if adopts_minted && !adopts_fresh_store {
+                                self.minted_pairs.insert(av);
                             }
                             // A vector admitted here ONLY by the alias case below
                             // (`!adopts_fresh_store`, no `&`) takes the inner-slot branch
