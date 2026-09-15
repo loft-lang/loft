@@ -5149,6 +5149,13 @@ struct DoubleMove<'a> {
     /// `(root var, copy position)` for every projection hand-off whose root's release became
     /// certain while it was still pending.
     proj_found: Vec<(u16, Position)>,
+    /// `(parameter, return position)` for every `return` of a parameter's MEMBER: the caller
+    /// still owns that member through the argument it passed, and the caller's copy of the
+    /// result is a second owner.
+    ret_found: Vec<(u16, Position)>,
+    /// Whether the function's result has a release to run — a returned member doubles a
+    /// release only when there is one.
+    ret_cascades: bool,
     /// The function's hidden return-buffer ARGUMENTS: a local promoted to the caller's buffer is an
     /// argument in the variable table, but the record it holds goes on to the caller, who releases
     /// it — so it is a root like any local, unlike a parameter the caller already owns.
@@ -5204,6 +5211,18 @@ impl DoubleMove<'_> {
             // still in it, whichever of the two goes back to the caller.
             Value::Return(v) => {
                 self.scan(v, st);
+                // heap.md D-heap-7 family 2 — a parameter's MEMBER returned.  The callee copies
+                // nothing: the caller copies the view it is handed (`(O-Move)`), while its
+                // argument still owns the member.  A WHOLE parameter returned is a plain value,
+                // which is a release to get right rather than to warn about (heap.md § Standalone
+                // right, encapsulated warned).
+                if self.ret_cascades
+                    && let Some(root) = projection_root(v, self.data)
+                    && self.is_caller_owned(root)
+                    && let Some(at) = self.cur.clone()
+                {
+                    self.ret_found.push((root, at));
+                }
                 st.clear();
                 self.report_all_projections();
             }
@@ -5313,6 +5332,18 @@ impl DoubleMove<'_> {
         }
     }
 
+    /// A genuine PARAMETER, whose record the CALLER owns.  The hidden return-buffer argument is
+    /// not one — it is a local promoted to the caller's buffer, and its record goes on to the
+    /// caller — and neither is a capture, which is the closure's, or a compiler temp.
+    fn is_caller_owned(&self, v: u16) -> bool {
+        (v as usize) < self.func.count() as usize
+            && self.func.is_argument(v)
+            && !self.ret_bufs.contains(&v)
+            && !self.func.is_captured(v)
+            && !self.func.name(v).starts_with('_')
+            && !self.func.name(v).contains('#')
+    }
+
     /// Retire the pending projections whose root a SUBTREE writes (a conditional arm, a loop
     /// body): the member may not be the one the container copied by the time the root goes.
     fn retire_written_roots(&mut self, node: &Value) {
@@ -5347,16 +5378,23 @@ impl DoubleMove<'_> {
         // another container: the source container keeps owning that member and its cascade
         // releases it, while the destination releases its copy, so the FIRST copy is already the
         // double.  Pending until the root's release is certain, or retired if the member is
-        // overwritten first.  A parameter's member is the caller's (heap.md family 2) and a
-        // capture's is the closure's, so neither is this frame's to report.
-        if let Some(root) = projection_root(&args[0], self.data)
+        // overwritten first.  A PARAMETER is the same double one frame out (family 2): the
+        // caller keeps owning what it passed, whether the copy takes a member of it or all of
+        // it.  A capture's member is the closure's, so it is not this frame's to report.  Only a
+        // copy that carries a release counts — a container that owns a droppable somewhere
+        // takes its plain members through the same copy.
+        let whole_parameter = match args[0].unspan() {
+            Value::Var(p) if self.is_caller_owned(*p) => Some(*p),
+            _ => None,
+        };
+        if let Some(root) = projection_root(&args[0], self.data).or(whole_parameter)
             && (crate::scopes::copy_hands_off(&args[1], self.func, self.data)
                 || crate::scopes::appends_to_element(&args[1], self.func, self.data))
             && (root as usize) < self.func.count() as usize
-            && (!self.func.is_argument(root) || self.ret_bufs.contains(&root))
             && !self.func.is_captured(root)
             && !self.func.name(root).starts_with('_')
             && !self.func.name(root).contains('#')
+            && copied_record_releases(self.data, &args[2])
         {
             if let Some(at) = self.cur.clone() {
                 self.proj.entry(root).or_default().push(at);
@@ -5420,6 +5458,25 @@ fn projection_root(node: &Value, data: &Data) -> Option<u16> {
         }
         _ => None,
     }
+}
+
+/// Does an `OpCopyRecord` copy a record that has a release to run?
+///
+/// Its type argument names the copied record's type beside two flag bits, which
+/// [`crate::keys::COPY_TP_MASK`] strips.  A release exists exactly when that type has a cascade
+/// or a hook of its own ([`Data::drop_cascade_nr`]).  The destination is no proof of it: a
+/// container that owns a droppable in one field takes a plain record into another through the
+/// same copy.
+fn copied_record_releases(data: &Data, tp: &Value) -> bool {
+    let Value::Int(tp) = tp.unspan() else {
+        return false;
+    };
+    let Ok(known) = u16::try_from(*tp & i32::from(crate::keys::COPY_TP_MASK)) else {
+        return false;
+    };
+    known != u16::MAX
+        && (0..data.definitions())
+            .any(|d| data.def(d).known_type == known && data.drop_cascade_nr(d) != u32::MAX)
 }
 
 /// The root variable of a PLACE: the variable itself, or a projection's root.
@@ -5540,6 +5597,12 @@ pub fn warn_double_move(
             found: Vec::new(),
             proj: HashMap::new(),
             proj_found: Vec::new(),
+            ret_found: Vec::new(),
+            ret_cascades: def
+                .returned
+                .base()
+                .heap_def_nr()
+                .is_some_and(|t| data.drop_cascade_nr(t) != u32::MAX),
             ret_bufs: (0..def.variables.count())
                 .filter(|&v| {
                     def.variables.is_argument(v)
@@ -5615,6 +5678,10 @@ pub fn warn_double_move(
             } else {
                 at.file.as_str()
             };
+            if cx.is_caller_owned(root) {
+                report_caller_owned_copy(diags, name, file, &at);
+                continue;
+            }
             let msg = format!(
                 "a member of `{name}` is copied into a container here, and `{name}` still owns \
                  that member and releases it when `{name}` goes — each owner releases what it \
@@ -5650,7 +5717,97 @@ pub fn warn_double_move(
                 concept_ref: "@F106",
             });
         }
+        // heap.md D-heap-7 family 2 — a parameter's member returned.
+        for (root, at) in std::mem::take(&mut cx.ret_found) {
+            let file = if at.file.is_empty() {
+                def_file
+            } else {
+                at.file.as_str()
+            };
+            report_returned_parameter_member(diags, def.variables.name(root), file, &at);
+        }
     }
+}
+
+/// The report for a PARAMETER, or a member of one, copied into a container (heap.md D-heap-7
+/// family 2): the caller still owns what it passed, and the container owns a copy.
+fn report_caller_owned_copy(
+    diags: &mut crate::diagnostics::Diagnostics,
+    name: &str,
+    file: &str,
+    at: &Position,
+) {
+    let msg = format!(
+        "`{name}` is a parameter, so its caller still owns what `{name}` holds and releases it, \
+         and this container releases its copy too — each owner releases what it owns, so this \
+         value is released TWICE"
+    );
+    diags.add_at_coded(
+        crate::diagnostics::Level::Warning,
+        Some("double-move"),
+        &msg,
+        file,
+        at.line,
+        at.pos,
+    );
+    diags.fix_last(crate::diagnostics::Fix {
+        kind: crate::diagnostics::FixKind::Conditional,
+        title: "build a new value for the container".to_string(),
+        condition: Some("the container is meant to hold a resource of its own".to_string()),
+        edit: None,
+        concept: "move",
+        concept_ref: "@F106",
+    });
+    diags.fix_last(crate::diagnostics::Fix {
+        kind: crate::diagnostics::FixKind::Conditional,
+        title: "let the caller build the container from its own value".to_string(),
+        condition: Some(
+            "the caller is meant to hand its resource over — only its owner can give it away"
+                .to_string(),
+        ),
+        edit: None,
+        concept: "move",
+        concept_ref: "@F106",
+    });
+}
+
+/// The report for a `return` of a PARAMETER's member (heap.md D-heap-7 family 2): the caller
+/// still owns the member through its argument, and the caller's copy of the result owns it too.
+fn report_returned_parameter_member(
+    diags: &mut crate::diagnostics::Diagnostics,
+    name: &str,
+    file: &str,
+    at: &Position,
+) {
+    let msg = format!(
+        "a member of the parameter `{name}` is returned here — the caller still owns that member \
+         through the argument it passed, and the caller's copy of the result releases it too, \
+         so this value is released TWICE"
+    );
+    diags.add_at_coded(
+        crate::diagnostics::Level::Warning,
+        Some("double-move"),
+        &msg,
+        file,
+        at.line,
+        at.pos,
+    );
+    diags.fix_last(crate::diagnostics::Fix {
+        kind: crate::diagnostics::FixKind::Conditional,
+        title: "return a new value".to_string(),
+        condition: Some("the result is meant to be a resource of its own".to_string()),
+        edit: None,
+        concept: "move",
+        concept_ref: "@F106",
+    });
+    diags.fix_last(crate::diagnostics::Fix {
+        kind: crate::diagnostics::FixKind::Conditional,
+        title: format!("let the caller read the member where it lives, in `{name}`'s argument"),
+        condition: Some("the caller only needs to see the value".to_string()),
+        edit: None,
+        concept: "move",
+        concept_ref: "@F106",
+    });
 }
 
 /// @PLN102 arc C step 4 — the FOLD lint (C5.2).  For every `#superseded "Y"` symbol X in loft's
