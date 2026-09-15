@@ -3945,3 +3945,40 @@ representation: a value after a fault IS the contract, and a rewrite that change
 changes semantics.  The two rulings are one principle read from both sides — everything
 the program cannot observe is the compiler's, everything it can is the language's.
 
+## C123 — one name has one body per receiver type; `both` is how a function takes both spellings
+
+**Catalogue:** @F16 (method and function calls) · INC#8 · `formal/calls.md` (F-OneBody)
+
+### Question
+
+`fn doit(self: Pt)` and `fn doit(p: Pt)` could both be declared.  Which does `doit(p)` reach,
+and should the pair be allowed at all?
+
+### Context
+
+A bare call resolves the method key first ((F-Recv): both spellings of a method resolve
+identically), so `doit(p)` reached the METHOD and the free function was dead.  Nothing said so:
+measured 2026-09-15, `self` then free, free then `self`, free then `both`, a different arity and
+the generic spelling each compiled and answered the method's value from both spellings.  Only a
+`both` method followed by the function was refused, because only `both` registers a bare-name
+dispatcher.
+
+### Decision
+
+**2026-09-15, owner.**  Refused.  Two implementations under one name confuse any programmer:
+when `x.doit()` and `doit(x)` differ, reading a line needs knowing how loft resolves it.  A
+method (`self` or `both`) and a plain-parameter function of one name whose first parameter has
+the same type are refused at whichever is declared second, in either order and at any arity,
+within one source; a program's function beside a stdlib method is the same refusal (C95), and a
+library's beside a stdlib method stays C97's module-scoped warning.  A function on another type
+is an overload and stays legal.
+
+When both spellings are wanted, `fn doit(both: Pt)` declares ONE body for both — in a program
+and a library as well as the stdlib.  The reason `both` exists: a programmer used to Rust writes
+`v.sin()` where the float width is not obvious, and that muscle memory should keep working,
+while a beginner is not forced into a syntax that was invented for Rust and writes `sin(v)`.
+
+### Revisit when
+
+A consumer needs two DIFFERENT behaviours under one name on one type — that is a naming
+problem, and the cure stays a second name.

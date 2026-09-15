@@ -7530,14 +7530,60 @@ impl Data {
         // (`abs(integer)`/`abs(single)`/`abs(float)`; a same-type duplicate is caught by the mangled
         // check below), nor when a free fn merely shares a name with a method on another receiver
         // type (`scale(integer,…)` beside `scale(self: Vec,…)`) — arg-type dispatch keeps it live.
-        let shadows_a_method = !(is_both || is_self)
-            && arguments.first().is_some_and(|a| {
-                let tn = self.type_def_nr(&a.typedef);
-                tn != u32::MAX && {
-                    let sig = Self::sig_type_name(&self.key_type_name(tn), &a.typedef);
-                    own(self, &Self::mangle_method(&sig, fn_name)) != u32::MAX
-                }
-            });
+        // @FR-F-OneBody — one name has ONE body per receiver type, whichever spelling calls it:
+        // `x.doit()` and `doit(x)` must not reach two different functions.  The method key a
+        // first parameter of type `tp` gives this name:
+        let receiver_key = |data: &Self, tp: &Type| -> Option<String> {
+            let tn = data.type_def_nr(tp);
+            (tn != u32::MAX).then(|| {
+                Self::mangle_method(&Self::sig_type_name(&data.key_type_name(tn), tp), fn_name)
+            })
+        };
+        // A plain function declared after a `self`/`both` method on its first parameter's type.
+        // This used to be refused only when the name also had a bare-name definition — which a
+        // `both` method registers and a `self` method does not — so `fn doit(self: Pt)` followed
+        // by `fn doit(p: Pt)` compiled, and `doit(p)` silently ran the method.
+        let shadowed_method = if is_both || is_self {
+            None
+        } else {
+            arguments
+                .first()
+                .and_then(|a| receiver_key(self, &a.typedef))
+                .map(|key| own(self, &key))
+                .filter(|m| *m != u32::MAX)
+        };
+        let shadows_a_method = shadowed_method.is_some();
+        // …and the other order: a `self`/`both` method declared after a plain function of its
+        // name whose first parameter has the method's receiver type, as a single free
+        // definition (`n_<name>`) or as a member of the name's overload set (`f_…`).  Nothing
+        // asked this, so the later method took every call and the function went dead in silence.
+        let shadowed_free = if is_both || is_self {
+            arguments
+                .first()
+                .and_then(|a| receiver_key(self, &a.typedef))
+                .and_then(|key| {
+                    let mut candidates = vec![own(self, &format!("n_{fn_name}"))];
+                    if o_nr != u32::MAX && self.def(o_nr).def_type == DefType::Dynamic {
+                        candidates.extend(self.def(o_nr).attributes.iter().filter_map(|a| {
+                            match a.typedef.base() {
+                                Type::Routine(r) => Some(*r),
+                                _ => None,
+                            }
+                        }));
+                    }
+                    candidates.into_iter().find(|&d| {
+                        d != u32::MAX
+                            && self.def(d).attributes.first().is_some_and(|p| {
+                                p.name != "self"
+                                    && p.name != "both"
+                                    && receiver_key(self, &p.typedef).as_deref()
+                                        == Some(key.as_str())
+                            })
+                    })
+                })
+        } else {
+            None
+        };
         // `Disp-Key` (@PLN162): the name's bare dispatcher — an overload set, from ANY source
         // visible bare, a `use`d library's included — already carrying a definition with this
         // FULL parameter spelling is the same collision `shadows_a_method` names for a method,
@@ -7560,8 +7606,19 @@ impl Data {
                             _ => false,
                         })
                 });
-        if o_nr != u32::MAX
-            && (self.def(o_nr).def_type != DefType::Dynamic || shadows_a_method || carried_spelling)
+        if let Some(other) = shadowed_method.or(shadowed_free) {
+            let bare = fn_name.strip_prefix("n_").unwrap_or(fn_name);
+            diagnostic!(
+                lexer,
+                Level::Error,
+                "Cannot redefine '{bare}' (already defined at {}) — a name has one body per \
+                 receiver type, and `x.{bare}(…)` and `{bare}(x, …)` would reach different \
+                 functions; declare it once with its first parameter named `both` to give that \
+                 body both spellings, or rename one",
+                self.def(other).position
+            );
+        } else if o_nr != u32::MAX
+            && (self.def(o_nr).def_type != DefType::Dynamic || carried_spelling)
         {
             let text = self.redefinition_text(lexer, o_nr, fn_name);
             diagnostic!(lexer, Level::Error, "{text}");

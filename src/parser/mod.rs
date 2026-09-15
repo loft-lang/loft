@@ -6085,10 +6085,10 @@ impl Parser {
             self.first_pass,
         );
         // skip generic templates — they are not callable directly.  A METHOD template the
-        // bare lookup found (`fn head<T>(self: vector<T>)` for `head(a)`) is kept aside: the
-        // lookup resolves the method spelling before the free one, and a concrete method
-        // shadows a same-named free function the same way, so the call instantiates that
-        // template rather than a free `head<T>` (loft#1539).
+        // bare lookup found (`fn head<T>(self: vector<T>)` for `head(a)`) is kept aside and
+        // instantiated: a bare call reaches a method template exactly as it reaches a concrete
+        // `self` method ((F-Recv)), and a free template of that name on that receiver type
+        // cannot also exist ((F-OneBody)) (loft#1539).
         let mut method_template = u32::MAX;
         if d_nr != u32::MAX && self.data.def(d_nr).def_type() == DefType::Generic {
             if self.data.def(d_nr).name().starts_with("t_") {
@@ -7305,10 +7305,11 @@ impl Parser {
             // 1:1 so the LEN prefix `original_name` / `find_method_receivers` parse back is
             // still correct.
             let safe = base.replace(['<', '>', ',', ' ', '(', ')'], "_");
-            // loft#1539 — a METHOD template and a free template of the same name bound at the
-            // same type would otherwise mint ONE name, and whichever instantiated first would
-            // answer both calls: the program's meaning would depend on statement order.  The
-            // marker is a spelling no source identifier can take (`__` is the compiler's).
+            // loft#1539 — a METHOD template and a free template of one name on DIFFERENT
+            // receivers (`f<T>(self: vector<T>)` beside `f<T>(x: (T, integer))`; one receiver
+            // type is refused by (F-OneBody)) bound at the same `T` would otherwise mint ONE
+            // name, and whichever instantiated first would answer both calls.  The marker is a
+            // spelling no source identifier can take (`__` is the compiler's).
             let safe = if self.data.def(g_nr).name().starts_with("t_") {
                 format!("__self_{safe}")
             } else {

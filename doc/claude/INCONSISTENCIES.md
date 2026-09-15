@@ -95,6 +95,11 @@ and `inc08_len_with_both_works_either_way` (a `both:` first-parameter
 registers both forms).  The remaining asymmetry is an acknowledged stdlib
 naming choice, not a language bug.
 
+**2026-09-15:** a method and a free function of one name whose first parameter
+has one type are refused in either order (`formal/calls.md (F-OneBody)`,
+DESIGN_DECISIONS.md C123), so the two call spellings can no longer reach two
+bodies.  `both:` is the one definition for both spellings, in any source.
+
 ---
 
 
