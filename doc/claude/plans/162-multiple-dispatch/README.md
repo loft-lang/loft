@@ -7,12 +7,13 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**IN PROGRESS — every IMPL.md step (1–14) DONE 2026-09-14; D-disp-1 CLOSED 2026-09-15 (a `self`
-set's enum-level member is the `_` arm, and a call through the enum missing a variant is refused
-as `match` without `_` is) and D-disp-2 CLOSED the same day (a nullable enum position dispatches
-on its variant, a null on the static selection); [RULES.md § Deviations](RULES.md#deviations)
-reads OPEN: 0.  DESIGN.md's Q4 is answered (a name's definitions may return different types; a
-runtime dispatch's must agree); Q5 is not done — § Decisions taken.**  The design is
+**FINISHED 2026-09-15 — every IMPL.md step (1–14) DONE 2026-09-14; D-disp-1 CLOSED 2026-09-15 (a
+`self` set's enum-level member is the `_` arm, and a call through the enum missing a variant is
+refused as `match` without `_` is) and D-disp-2 CLOSED the same day (a nullable enum position
+dispatches on its variant, a null on the static selection); [RULES.md § Deviations](RULES.md#deviations)
+reads OPEN: 0.  Every DESIGN.md open question is answered — Q4 (a name's definitions may return
+different types; a runtime dispatch's must agree) and Q5 (the construct is @F122, `Disp-World` is
+recorded on @F78) included — § Decisions taken.**  The design is
 [DESIGN.md](DESIGN.md), carried verbatim as the owner wrote it.  Six open questions in it are
 the owner's to answer and at least one (question 6) changes the rules, so no phase below was to
 start until questions 1, 2 and 6 had answers.  **All three are answered** — 1 and 2 on
@@ -56,7 +57,7 @@ compile time to a direct call wherever the argument types are statically concret
 
 - **Effort:** H — six rules, a new selection pass, a lowering, three backends, two profiles.
 - **Design:** ~ (partial) — the rules are written; three open questions gate the first phase.
-- **Last touched:** 2026-09-15 (D-disp-1 and D-disp-2 closed, OPEN: 0; Q4 answered: only a runtime dispatch needs one return type)
+- **Last touched:** 2026-09-15 (FINISHED: D-disp-1 and D-disp-2 closed, OPEN: 0; Q4 answered; Q5 done as @F122 + @F78)
 
 ## Composition matrix — Stage A
 
@@ -314,8 +315,11 @@ and can follow.
   § Decisions taken item 6: no.  Only a call decided by the runtime variant needs the
   definitions it chooses between to agree, and it is refused when they do not
   ([RULES.md](RULES.md), *One return type per dispatch*).
-- **Q5 (reserve `@F` tags for the construct and for `Disp-World`)** — not done: no
-  `loft-lang/features` issue exists for either.
+- **Q5 (reserve `@F` tags for the construct and for `Disp-World`)** — done 2026-09-15: the
+  construct is **@F122** (*Multiple dispatch — one name, a definition per combination of
+  parameter types*, with a runnable example the catalogue runs on both backends), and
+  `Disp-World` is a section of **@F78** (*Live-reload dispatch*), the mechanism it extends,
+  rather than a second tag for one mechanism.
 
 The gain from (4) is the one worth restating: closedness is not a cost accepted reluctantly,
 it is what lets the compiler enumerate every reachable variant pair and report **which reach

@@ -9,7 +9,7 @@
 // repository, where `@F2` is `F2.md`.
 //
 // The two halves read differently.  An `@F` page says what the feature is and
-// how it aids you, and 70 of the 86 carry a runnable example; the rest
+// how it aids you, and 71 of the 87 carry a runnable example; the rest
 // name what demonstrates them instead, because a loft program cannot run the
 // compiler that runs it.  An `@I` page says what the part does and where it lives
 // in the source — it describes how loft is built, not something you write.
@@ -108,6 +108,7 @@
 // - **@F119** — Store locks (#lock)
 // - **@F120** — Lexer library (lib/lexer)
 // - **@F121** — Parser library (lib/parser)
+// - **@F122** — Multiple dispatch — one name, a definition per combination of parameter types
 //
 // ## Tooling and infrastructure
 //

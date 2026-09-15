@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F122 — GENERATED from loft-lang/features#122 by tools/features/gen.loft — DO NOT EDIT.
+enum Entity {
+    Fireball { power: integer },
+    IceWall { thickness: integer },
+    Crate { weight: integer }
+}
+fn hit(f: Fireball, w: IceWall) -> text {
+    "fire melts the wall"
+}
+fn hit(f: Fireball, c: Crate) -> text {
+    "fire burns the crate"
+}
+fn hit(a: Entity, b: Entity) -> text {
+    "they bump"
+}
+fn main() {
+    things: vector<Entity> = [Fireball { power: 3 }, IceWall { thickness: 2 }, Crate { weight: 5 }];
+    for a in things {
+        for b in things if a#index != b#index {
+            println(hit(a, b));   // fire melts the wall, fire burns the crate, then four bumps
+        }
+    }
+}
