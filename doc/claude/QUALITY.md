@@ -2575,7 +2575,13 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 818 | 476 | 6 | **336** |
+| 820 | 478 | 6 | **336** |
+
+(2026-09-15, @PLN162 D-disp-2 — the change to `parser/dispatch.rs`, `parser/definitions.rs` and
+`parser/mod.rs` (nullable dispatch positions, the rebuild's spelling read, the mixed-return
+refusal) adds two functions that discriminate on a `Type` variant, both seeing through the
+wrapper; the opaque column and the ratchet's pin (336 / 1317) are unchanged.  Measured as a
+delta against the D-disp-1 row; which two functions was not broken out.)
 
 (2026-09-15, @PLN162 D-disp-1 — `refuse_uncovered_variants` tests the synthesised dispatcher's
 receiver and `join_enum_lattice_sets` a definition's first parameter, both through `.base()`

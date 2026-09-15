@@ -610,6 +610,37 @@ fn a_nullable_variant_method_beside_an_enum_level_one_is_ambiguous() {
 }
 
 #[test]
+fn a_dispatch_whose_definitions_return_different_types_is_refused() {
+    // @PLN162, DESIGN.md Q4 where it cannot stay open — a call decided by the runtime variant is
+    // ONE synthesised function with one return type.  `val(Fi) -> integer` beside
+    // `val(En) -> text` read the text through the integer's frame on the interpreter and did not
+    // compile on `--native`.
+    code!(
+        "enum En {\n    Fi { n: integer },\n    Cr { n: integer }\n}\nfn val(f: Fi) -> integer { f.n }\nfn val(e: En) -> text { \"e{e.n}\" }\nfn test() { e: En = Fi { n: 1 }; val(e); }"
+    )
+    .error("`val(En)` is decided by the runtime variant, but its definitions return different types — val(Fi) -> integer and val(En) -> text; give them one return type, or call with a value held at the variant at a_dispatch_whose_definitions_return_different_types_is_refused:7:41");
+}
+
+#[test]
+fn a_variant_dispatch_whose_implementations_return_different_types_is_refused() {
+    // The same question for @F20's synthesised dispatcher, which chose between `val(self: Fi)
+    // -> integer` and `val(self: Cr) -> text` under the first implementation's return type.
+    code!(
+        "enum En {\n    Fi { n: integer },\n    Cr { n: integer }\n}\nfn val(self: Fi) -> integer { self.n }\nfn val(self: Cr) -> text { \"c{self.n}\" }\nfn test() { e: En = Fi { n: 1 }; e.val(); }"
+    )
+    .error("call of `val` on `En` is decided by the runtime variant, but its implementations return different types — val(Fi) -> integer and val(Cr) -> text; give them one return type, or call it on a value held at the variant at a_variant_dispatch_whose_implementations_return_different_types_is_refused:7:42");
+}
+
+#[test]
+fn static_overloads_may_return_different_types() {
+    // The control: a static call reaches ONE definition, so overloads of a name that disagree on
+    // their return type are not the dispatch question and compile without a report.
+    code!(
+        "fn width(a: integer) -> integer { a }\nfn width(a: text) -> text { a }\nfn test() { width(3); width(\"x\"); }"
+    );
+}
+
+#[test]
 fn stub_suppresses_missing_variant_warning() {
     // Rect has an empty-body stub — no warning should be emitted for either variant.
     code!(

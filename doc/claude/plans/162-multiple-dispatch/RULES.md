@@ -311,9 +311,19 @@ and the set's side declares `@ORACLE_TWIN: <the match>`: the sweep holds the pai
 stdout on top of holding each to its own three backends, with a positive control that a
 differing line or exit is caught.
 
+**One return type per dispatch (DESIGN.md Q4, where it cannot stay open — 2026-09-15).**  A
+call decided by the runtime variant is one synthesised function with one return type, so the
+definitions it chooses between must agree on it.  `val(f: Fireball) -> integer` beside
+`val(e: Entity) -> text` read the text through the integer's frame on the interpreter (`[2]`
+where the body says `e2`) and did not compile on `--native` — for a free set since step 13, and
+for @F20's own dispatcher before any of this plan.  Such a call is now refused naming the two
+definitions; a static call reaches one definition and is untouched (`width(integer) ->
+integer` beside `width(text) -> text` compiles and runs).  Whether every definition of a NAME
+must agree — the design's proposal — stays the owner's question.
+
 ## Deviations
 
-OPEN: **1**.
+OPEN: **0**.
 
 - **D-disp-1 — CLOSED 2026-09-15** (opened 2026-09-14, narrowed the same day by step 13).
   What remained after step 13 was the `self` set over variants, in two facets, and the owner
@@ -349,13 +359,25 @@ OPEN: **1**.
   for a `Fireball` held at the enum, exactly as the free pair is (nullability and the enum
   are incomparable abstractions).
 
-- **D-disp-2 — OPEN 2026-09-15.**  A NULLABLE enum position stays static (step 13: *null
-  has no variant*), so an `Entity?` argument holding a `Fireball` reaches the definition its
-  STATIC type selects, not its variant's — the canonical `match` over the same value takes
-  the `Fireball` arm.  With an enum-level `kind(e: Entity)` the call carries the `(N-Store)`
-  warning and answers the enum-level body; with `kind(e: Entity?)` it answers that body in
-  SILENCE.  Measured on both spellings and on a two-position set (`hit(Entity?, Entity)`
-  answered the fallback for a `(Fireball, IceWall)` pair).  Found closing D-disp-1.
+- **D-disp-2 — CLOSED 2026-09-15** (opened the same day, found closing D-disp-1).  A
+  NULLABLE enum position stayed static (step 13: *null has no variant*), so an `Entity?`
+  holding a `Fireball` reached the definition its STATIC type selects — behind the `(N-Store)`
+  warning where that definition takes a dense `Entity`, and in SILENCE where it takes
+  `Entity?` — while the canonical `match` over the same value takes the `Fireball` arm
+  (measured on both spellings, a trailing parameter, a loop over call results, and two
+  positions: `hit(Entity?, Entity)` answered the fallback for a `(Fireball, IceWall)` pair).
+  A nullable position is now dynamic whenever the call HAS a static selection: a present
+  value's variant decides as a dense one's does, and a null — which has no variant — reaches
+  that static selection, exactly what it reached before.  The dispatcher declares each
+  nullable position at the nullability the static selection declares there, so the call into
+  it is checked as the direct call was (the same `(N-Store)` warnings at the same sites with
+  the same text, measured), and a `Disp-World` rebuild recovers what the call routed from the
+  specialisation's spelling.  A call with no static selection keeps its nullable positions
+  static and is answered as before.  Guards:
+  `tests/scripts/a-nullable-enum-argument-is-dispatched-on-its-variant.loft`, the nullable
+  cells of the two step-13 guards (which pinned the static answer, now flipped), and
+  `tests/live_world.rs` (`a_nullable_dynamic_site_keeps_its_null_leaf_across_a_rebuild`,
+  which fails with the spelling step removed).
 
 ## Consequences worth stating
 

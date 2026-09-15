@@ -223,21 +223,22 @@ impl Parser {
 }
 
 impl Parser {
-    /// The positions of `routed` held at a DENSE struct-enum for which the set names one of
-    /// that enum's variants in that position — the positions whose runtime variant decides
-    /// the call (`Disp-Dynamic`).  Empty when the static selection is the whole answer, which
-    /// is every program that compiled before overload sets existed.
-    fn dynamic_positions(&self, main: u32, routed: &[Type]) -> Vec<(usize, u32)> {
+    /// The positions of `routed` held at a struct-enum for which the set names one of that
+    /// enum's variants in that position — the positions whose runtime variant decides the
+    /// call (`Disp-Dynamic`).  Empty when the static selection is the whole answer, which is
+    /// every program that compiled before overload sets existed.  A NULLABLE position counts
+    /// only when `nullable` says a null has somewhere to go (D-disp-2: the definition the
+    /// call's static types select, which is what a null reached before).
+    fn dynamic_positions(&self, main: u32, routed: &[Type], nullable: bool) -> Vec<(usize, u32)> {
         let mut out = Vec::new();
         for (i, t) in routed.iter().enumerate() {
             // An enum VALUE has two spellings — `Enum(e, true, …)` for a local held at the
             // enum, `Reference(e, …)` for an element of a `vector<E>` — and a position test
             // keyed on one of them is blind to the other (the loop over a collection is the
             // design's very shape).  `can_convert` admits both into an enum slot.
-            // A NULLABLE enum position stays static: null has no variant, and the `τ?`
-            // definition is what a null reaches.  Asked first, as the nullability question
-            // it is; the shape below is then read through the wrapper it cannot have.
-            if matches!(t, Type::Optional(_)) {
+            // Nullability is asked first, as the question it is; the shape below is then read
+            // through the wrapper.
+            if matches!(t, Type::Optional(_)) && !nullable {
                 continue;
             }
             let e_nr = match t.base() {
@@ -287,11 +288,14 @@ impl Parser {
     /// answer: the diagnostic is the whole of it.  Built once per (name, spelling), on pass 2
     /// only — the set is complete only then, and pass 1's static placeholder is never emitted.
     /// The shape is @F20's synthesised enum dispatcher generalised from one position to any.
+    /// `fallback` is the definition the call's static types select, when they select one: it
+    /// is what a null at a nullable enum position reaches.
     pub(crate) fn dynamic_dispatcher(
         &mut self,
         source: u16,
         name: &str,
         routed: &[Type],
+        fallback: Option<u32>,
     ) -> Option<u32> {
         if self.first_pass {
             return None;
@@ -300,7 +304,7 @@ impl Parser {
         if main == u32::MAX || self.data.def_type(main) != DefType::Dynamic {
             return None;
         }
-        let positions = self.dynamic_positions(main, routed);
+        let positions = self.dynamic_positions(main, routed, fallback.is_some());
         // `Disp-World` (@PLN162 step 14): in the OPEN profile a static site calls a
         // per-spelling stub too — the one direct call `Disp-Select` picked, as its own
         // function — so that an overload added mid-run has one place per spelling to rebuild
@@ -315,7 +319,7 @@ impl Parser {
         if existing != u32::MAX {
             return Some(existing);
         }
-        self.build_specialisation(source, name, routed, &positions, &dyn_name)
+        self.build_specialisation(source, name, routed, &positions, &dyn_name, fallback)
     }
 
     /// Can a static call of the set `main` take the open profile's per-spelling stub?  Only a
@@ -343,7 +347,8 @@ impl Parser {
     /// The body of a specialisation of `name` for the routed types: one leaf per variant
     /// tuple over `positions`, each the definition `Disp-Select` picks for that tuple, under
     /// the discriminant tests that reach it — or, with no dynamic position (the open profile's
-    /// static stub), the one leaf as the whole body.  Registered as `dyn_name`.
+    /// static stub), the one leaf as the whole body.  Registered as `dyn_name`.  `fallback` is
+    /// the static selection, the leaf a null at a nullable dynamic position reaches.
     fn build_specialisation(
         &mut self,
         source: u16,
@@ -351,6 +356,7 @@ impl Parser {
         routed: &[Type],
         positions: &[(usize, u32)],
         dyn_name: &str,
+        fallback: Option<u32>,
     ) -> Option<u32> {
         // Every variant tuple over the dynamic positions, each with the definition
         // `Disp-Select` picks for it — computed before anything is built, so a refused leaf
@@ -402,6 +408,34 @@ impl Parser {
             }
         }
         let ret = self.data.def(leaves[0].1).returned().clone();
+        // `Disp-Dynamic` over a NULLABLE enum position (D-disp-2): a present value's variant
+        // decides exactly as a dense one's does, and a null — which has no variant — reaches
+        // the definition the call's static types select, which is what it reached before the
+        // position was dynamic.  Only a call that has a static selection makes a nullable
+        // position dynamic (`dynamic_positions`), so a null always has that leaf.
+        let null_leaf = fallback.filter(|_| {
+            positions
+                .iter()
+                .any(|(pos, _)| matches!(routed[*pos], Type::Optional(_)))
+        });
+        // One dispatcher has ONE return type, so the definitions it chooses between must agree
+        // on it — DESIGN.md's open question 4, at the one place it cannot stay open.  A
+        // `Fireball` leaf answering `integer` beside an enum-level leaf answering `text` read the
+        // text through the integer's frame on the interpreter and did not compile on `--native`.
+        // A static site calls one definition and is not this question.
+        let differs = leaves
+            .iter()
+            .map(|(_, d, _)| *d)
+            .chain(null_leaf)
+            .find(|d| {
+                self.data.type_spelling(self.data.def(*d).returned())
+                    != self.data.type_spelling(&ret)
+            });
+        if let Some(other) = differs {
+            self.report_mixed_returns(name, routed, leaves[0].1, other);
+            self.reported_dynamic_refusal = true;
+            return None;
+        }
         let argument = |name: String, typedef: Type, default: Value| Argument {
             name,
             typedef,
@@ -412,25 +446,53 @@ impl Parser {
         };
         // A dynamic position is declared at the ENUM type whichever spelling the call held it
         // in, so the tag read is on an enum-typed variable as @F20's is; the other positions
-        // keep the call's types.
-        let mut args: Vec<Argument> = routed
+        // keep the call's types.  Where a null can arrive, a nullable position takes the
+        // nullability the static selection declares there, so the call into the dispatcher is
+        // checked exactly as the direct call was: the `(N-Store)` warning stays at each call
+        // site instead of moving, once, into this body.
+        let declared: Vec<Type> = routed
             .iter()
             .enumerate()
             .map(|(i, t)| {
-                let tp = match positions.iter().find(|(pos, _)| *pos == i) {
-                    Some((_, e)) => Type::Enum(*e, true, Deps::none()),
-                    None => t.clone(),
-                };
-                argument(format!("d{i}"), tp, Value::Null)
+                let dynamic = positions
+                    .iter()
+                    .find(|(pos, _)| *pos == i)
+                    .map(|(_, e)| Type::Enum(*e, true, Deps::none()));
+                match null_leaf {
+                    Some(fb) if matches!(t, Type::Optional(_)) => {
+                        let base = dynamic.unwrap_or_else(|| t.base().clone());
+                        let wants_null = self
+                            .data
+                            .def(fb)
+                            .attributes
+                            .iter()
+                            .filter(|a| !a.hidden)
+                            .nth(i)
+                            .is_some_and(|a| matches!(a.typedef, Type::Optional(_)));
+                        if wants_null {
+                            Type::optional(base)
+                        } else {
+                            base
+                        }
+                    }
+                    _ => dynamic.unwrap_or_else(|| t.clone()),
+                }
             })
+            .collect();
+        let mut args: Vec<Argument> = declared
+            .iter()
+            .enumerate()
+            .map(|(i, tp)| argument(format!("d{i}"), tp.clone(), Value::Null))
             .collect();
         // The hidden buffers (a text return's accumulator) of the first leaf definition that
         // carries any, forwarded only to the leaves that declare them — @F20's rule.
         let hidden: Vec<Attribute> = leaves
             .iter()
-            .map(|(_, d, _)| {
+            .map(|(_, d, _)| *d)
+            .chain(null_leaf)
+            .map(|d| {
                 self.data
-                    .def(*d)
+                    .def(d)
                     .attributes
                     .iter()
                     .filter(|a| a.hidden)
@@ -469,7 +531,7 @@ impl Parser {
                 .map(|a| (Value::Var(self.vars.var(&a.name)), a.typedef.clone()))
                 .collect();
             let mut ls = Vec::new();
-            for (tuple, d, leaf_types) in &leaves {
+            for (tuple, d, _) in &leaves {
                 let mut cond: Option<Value> = None;
                 for ((pos, _), v) in positions.iter().zip(tuple) {
                     let disc = match self.data.def(*v).attributes().first().map(|a| &a.value) {
@@ -485,46 +547,13 @@ impl Parser {
                         Some(c) => v_if(c, test, Value::Boolean(false)),
                     });
                 }
-                let mut call_args: Vec<Value> = visible.iter().map(|v| Value::Var(*v)).collect();
                 // The leaf's static types: the variant at each dynamic position, which is what
                 // the tag test just established, so the argument check sees no conversion.
-                let mut call_types: Vec<Type> = leaf_types.clone();
-                // An omitted defaulted parameter takes its default here, exactly as at a
-                // direct call, BEFORE the dispatcher's buffers follow: the call is built
-                // positionally, and appended straight after the supplied arguments a
-                // forwarded buffer landed in the omitted parameter's slot (measured:
-                // *expected integer, got &text on argument 2*, on a set with `k: integer = 7`).
-                let omitted: Vec<(Value, Type)> = self
-                    .data
-                    .def(*d)
-                    .attributes
-                    .iter()
-                    .filter(|a| !a.hidden)
-                    .skip(leaf_types.len())
-                    .map(|a| (a.value.clone(), a.typedef.clone()))
-                    .collect();
-                for (v, t) in omitted {
-                    call_args.push(v);
-                    call_types.push(t);
+                let mut call_types = declared.clone();
+                for ((pos, _), v) in positions.iter().zip(tuple) {
+                    call_types[*pos] = Type::Reference(*v, Deps::none());
                 }
-                if self.data.def(*d).attributes.iter().any(|a| a.hidden) {
-                    for (v, t) in &hidden_vars {
-                        call_args.push(v.clone());
-                        call_types.push(t.clone());
-                    }
-                }
-                let at = self.lexer.pos().clone();
-                let arg_pos = vec![at.clone(); call_args.len()];
-                let mut code = Value::Null;
-                self.call_nr(
-                    &mut code,
-                    *d,
-                    &call_args,
-                    &call_types,
-                    true,
-                    &arg_pos,
-                    Some(&at),
-                );
+                let code = self.specialisation_call(*d, call_types, &visible, &hidden_vars);
                 match cond {
                     Some(c) => {
                         let ret_call =
@@ -535,7 +564,12 @@ impl Parser {
                     None => ls.push(Value::Return(Box::new(code))),
                 }
             }
-            if !positions.is_empty() {
+            if let Some(fb) = null_leaf {
+                // Every tag test failed, which only a null can make happen: the static
+                // selection's definition, called with the dispatcher's own parameter types.
+                let code = self.specialisation_call(fb, declared.clone(), &visible, &hidden_vars);
+                ls.push(Value::Return(Box::new(code)));
+            } else if !positions.is_empty() {
                 // Unreachable when every tuple has a leaf, which the refusals above
                 // guarantee; the typed-null return keeps both backends' bodies well-formed.
                 ls.push(Value::Return(Box::new(Value::Null)));
@@ -548,6 +582,56 @@ impl Parser {
         self.vars = saved_vars;
         self.expected = saved_expected;
         built
+    }
+
+    /// One leaf of a specialisation: a call of `d` with the dispatcher's own visible
+    /// parameters under `call_types`.  An omitted defaulted parameter takes its default here,
+    /// exactly as at a direct call, BEFORE the dispatcher's buffers follow: the call is built
+    /// positionally, and appended straight after the supplied arguments a forwarded buffer
+    /// landed in the omitted parameter's slot (measured: *expected integer, got &text on
+    /// argument 2*, on a set with `k: integer = 7`).  The buffers go only to a leaf that
+    /// declares them.
+    fn specialisation_call(
+        &mut self,
+        d: u32,
+        mut call_types: Vec<Type>,
+        visible: &[u16],
+        hidden_vars: &[(Value, Type)],
+    ) -> Value {
+        let supplied = call_types.len();
+        let mut call_args: Vec<Value> = visible.iter().map(|v| Value::Var(*v)).collect();
+        let omitted: Vec<(Value, Type)> = self
+            .data
+            .def(d)
+            .attributes
+            .iter()
+            .filter(|a| !a.hidden)
+            .skip(supplied)
+            .map(|a| (a.value.clone(), a.typedef.clone()))
+            .collect();
+        for (v, t) in omitted {
+            call_args.push(v);
+            call_types.push(t);
+        }
+        if self.data.def(d).attributes.iter().any(|a| a.hidden) {
+            for (v, t) in hidden_vars {
+                call_args.push(v.clone());
+                call_types.push(t.clone());
+            }
+        }
+        let at = self.lexer.pos().clone();
+        let arg_pos = vec![at.clone(); call_args.len()];
+        let mut code = Value::Null;
+        self.call_nr(
+            &mut code,
+            d,
+            &call_args,
+            &call_types,
+            true,
+            &arg_pos,
+            Some(&at),
+        );
+        code
     }
 }
 
@@ -574,29 +658,65 @@ impl Parser {
         let source = def.source;
         // The routed positions are the `d<i>` parameters; the buffers a text return forwards
         // (`__work_…`, `___tret_…`) are the specialisation's own and are minted again.
-        let routed: Vec<Type> = def
+        let mut routed: Vec<Type> = def
             .attributes
             .iter()
             .filter(|a| !a.hidden && !a.name.starts_with("__"))
             .map(|a| a.typedef.clone())
             .collect();
         let bare = full.strip_prefix("n_")?;
-        let name = bare
+        let (name, spelling) = bare
             .split_once("__dyn_")
-            .or_else(|| bare.split_once("__sel_"))?
-            .0
-            .to_string();
+            .or_else(|| bare.split_once("__sel_"))?;
+        let name = name.to_string();
+        // A nullable position may be DECLARED dense (it mirrors the static selection, D-disp-2);
+        // what the call routed is in the spelling the specialisation is named by.
+        let parts: Vec<&str> = spelling.split('#').collect();
+        if parts.len() == routed.len() {
+            for (t, part) in routed.iter_mut().zip(parts) {
+                if part.ends_with('?') && !matches!(t, Type::Optional(_)) {
+                    *t = Type::optional(t.clone());
+                }
+            }
+        }
         let main = self.data.source_nr(source, &name);
         if main == u32::MAX || self.data.def_type(main) != DefType::Dynamic {
             return None;
         }
-        let positions = self.dynamic_positions(main, &routed);
+        let fallback = match self.select_overload(source, &name, &routed) {
+            Selection::One(d) => Some(d),
+            _ => None,
+        };
+        let positions = self.dynamic_positions(main, &routed, fallback.is_some());
         let dyn_name = format!("{bare}__w{world}");
-        self.build_specialisation(source, &name, &routed, &positions, &dyn_name)
+        self.build_specialisation(source, &name, &routed, &positions, &dyn_name, fallback)
     }
 }
 
 impl Parser {
+    /// A dynamic site refused because two of the definitions it chooses between return
+    /// different types: the dispatcher is one function and has one.
+    fn report_mixed_returns(&mut self, name: &str, routed: &[Type], one: u32, other: u32) {
+        let call = routed
+            .iter()
+            .map(|t| t.source_name(&self.data))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let shown = |data: &crate::data::Data, d: u32| {
+            format!(
+                "{} -> {}",
+                data.overload_signature(name, d),
+                data.def(d).returned().source_name(data)
+            )
+        };
+        let (a, b) = (shown(&self.data, one), shown(&self.data, other));
+        crate::diagnostic!(
+            self.lexer,
+            crate::diagnostics::Level::Error,
+            "`{name}({call})` is decided by the runtime variant, but its definitions return different types — {a} and {b}; give them one return type, or call with a value held at the variant"
+        );
+    }
+
     /// A dynamic site refused at one variant tuple, worded from the call the author WROTE —
     /// the static types — down to the tuple the closed enumeration could not decide, which
     /// the author never spelled.

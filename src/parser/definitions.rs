@@ -187,7 +187,10 @@ impl Parser {
     /// arm: refused here, at the call, in `M-Exhaust`'s shape.  It used to be a warning at the
     /// variant's declaration and, at run time, the return type's empty value.  A set nothing
     /// calls through the enum — a method only one variant has — dispatches nothing and is
-    /// complete as written.
+    /// complete as written.  The same call is refused when the implementations return
+    /// different types: the dispatcher is one function with one return type, and an arm
+    /// answering `text` beside one answering `integer` was read through the integer's frame on
+    /// the interpreter and did not compile on `--native`.
     pub(crate) fn refuse_uncovered_variants(&mut self, dispatcher: u32) {
         let Some(Type::Enum(e_nr, true, _)) = self
             .data
@@ -199,9 +202,10 @@ impl Parser {
             return;
         };
         let name = self.data.def(dispatcher).original_name().clone();
+        let enum_name = self.data.def(e_nr).name.clone();
         // @FR-F-Recv — which variant an implementation is FOR is `receiver_def_nr`'s answer,
         // so a `self: V?` receiver counts as an implementation of `V`.
-        let implemented: HashSet<u32> = self
+        let impls: Vec<(u32, u32)> = self
             .data
             .definitions
             .iter()
@@ -211,9 +215,35 @@ impl Parser {
                     && d.synthetic.is_none()
                     && d.original_name().as_str() == name
             })
-            .map(|(nr, _)| self.data.receiver_def_nr(nr as u32))
-            .filter(|v| *v != u32::MAX)
+            .map(|(nr, _)| (nr as u32, self.data.receiver_def_nr(nr as u32)))
+            .filter(|(_, v)| {
+                *v != u32::MAX
+                    && self.data.def(*v).def_type == DefType::EnumValue
+                    && self.data.def(*v).parent == e_nr
+            })
             .collect();
+        let spelling =
+            |data: &crate::data::Data, d: u32| data.type_spelling(data.def(d).returned());
+        if let Some(((first, _), rest)) = impls.split_first()
+            && let Some((other, _)) = rest
+                .iter()
+                .find(|(d, _)| spelling(&self.data, *d) != spelling(&self.data, *first))
+        {
+            let shown = |data: &crate::data::Data, d: u32| {
+                format!(
+                    "{} -> {}",
+                    data.overload_signature(&name, d),
+                    data.def(d).returned().source_name(data)
+                )
+            };
+            let (a, b) = (shown(&self.data, *first), shown(&self.data, *other));
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "call of `{name}` on `{enum_name}` is decided by the runtime variant, but its implementations return different types — {a} and {b}; give them one return type, or call it on a value held at the variant"
+            );
+        }
+        let implemented: HashSet<u32> = impls.iter().map(|(_, v)| *v).collect();
         let missing: Vec<String> = self
             .data
             .definitions
@@ -229,7 +259,6 @@ impl Parser {
         if missing.is_empty() {
             return;
         }
-        let enum_name = self.data.def(e_nr).name.clone();
         diagnostic!(
             self.lexer,
             Level::Error,
@@ -273,9 +302,7 @@ impl Parser {
                 }
                 _ => continue,
             };
-            let group = groups
-                .entry((d.original_name().clone(), e_nr))
-                .or_default();
+            let group = groups.entry((d.original_name().clone(), e_nr)).or_default();
             if at_enum {
                 group.0 = true;
             } else {

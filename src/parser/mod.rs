@@ -5981,7 +5981,8 @@ impl Parser {
                 crate::parser::dispatch::Selection::One(d) => {
                     // `Disp-Dynamic`: a position held at the enum where the set decides by
                     // variant calls the synthesised dispatcher instead.
-                    self.dynamic_dispatcher(source, name, &routed).unwrap_or(d)
+                    self.dynamic_dispatcher(source, name, &routed, Some(d))
+                        .unwrap_or(d)
                 }
                 sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
                     if !self.first_pass {
@@ -5995,7 +5996,7 @@ impl Parser {
                     // positions — then the dispatcher is total and the call is covered; a
                     // tuple it does not cover is refused naming that tuple, and the ladder
                     // answers for a name that is no dynamic site at all.
-                    match self.dynamic_dispatcher(source, name, &routed) {
+                    match self.dynamic_dispatcher(source, name, &routed, None) {
                         Some(dd) => dd,
                         None if !self.first_pass && self.reported_dynamic_refusal => {
                             self.reported_dynamic_refusal = false;
@@ -12654,7 +12655,18 @@ impl Parser {
         // (`min`/`max`/`clamp`/`abs`/… — `is_null_transparent`) PROPAGATE null via a runtime guard
         // (`wrap_null_transparent`), so a nullable arg into their non-null param is intentional, not
         // an unsound store — exempt them (operators already dodge this path via the nullable-op swap).
-        let callee_name = self.data.def(d_nr).original_name();
+        // A specialisation of an overload set (`<name>__dyn_<spelling>`, `<name>__sel_…`,
+        // @PLN162) stands for the call the author wrote: it is named, and exempted, as the name
+        // it dispatches — never by the compiler's own spelling of it.
+        let original = self.data.def(d_nr).original_name().clone();
+        let callee_name = if self.data.def(d_nr).synthetic == Some("dynamic_dispatcher") {
+            original
+                .split_once("__dyn_")
+                .or_else(|| original.split_once("__sel_"))
+                .map_or_else(|| original.clone(), |(set, _)| set.to_string())
+        } else {
+            original
+        };
         let callarg_nstore =
             crate::keys::callarg_nstore_enabled() && !Self::is_null_transparent(&callee_name);
         for (nr, a_code) in list.iter().enumerate() {

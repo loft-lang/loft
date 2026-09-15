@@ -9,8 +9,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 **IN PROGRESS — every IMPL.md step (1–14) DONE 2026-09-14; D-disp-1 CLOSED 2026-09-15 (a `self`
 set's enum-level member is the `_` arm, and a call through the enum missing a variant is refused
-as `match` without `_` is); D-disp-2 — a NULLABLE enum position dispatching statically — OPEN,
-found closing D-disp-1 ([RULES.md § Deviations](RULES.md#deviations)).**  The design is
+as `match` without `_` is) and D-disp-2 CLOSED the same day (a nullable enum position dispatches
+on its variant, a null on the static selection); [RULES.md § Deviations](RULES.md#deviations)
+reads OPEN: 0.  DESIGN.md's Q4 is decided only where a dispatch cannot leave it open, and Q5 is
+not done — § Decisions taken.**  The design is
 [DESIGN.md](DESIGN.md), carried verbatim as the owner wrote it.  Six open questions in it are
 the owner's to answer and at least one (question 6) changes the rules, so no phase below was to
 start until questions 1, 2 and 6 had answers.  **All three are answered** — 1 and 2 on
@@ -54,7 +56,7 @@ compile time to a direct call wherever the argument types are statically concret
 
 - **Effort:** H — six rules, a new selection pass, a lowering, three backends, two profiles.
 - **Design:** ~ (partial) — the rules are written; three open questions gate the first phase.
-- **Last touched:** 2026-09-15 (D-disp-1 closed: `self` sets join their enum's set, a missing variant is refused at the call; D-disp-2 open for nullable enum positions)
+- **Last touched:** 2026-09-15 (D-disp-1 and D-disp-2 closed, OPEN: 0; a dispatch whose definitions return different types is refused)
 
 ## Composition matrix — Stage A
 
@@ -297,6 +299,18 @@ IMPL.md step 3's hint circularity is closed by **`Disp-Hint`** in [RULES.md](RUL
 name with several definitions offers no parse hint, and an argument that needs one is refused
 naming the cure.  The permissive alternative (hint where every candidate agrees) is additive
 and can follow.
+
+**DESIGN.md's open questions 3–5, where each stands (2026-09-15):**
+- **Q3 (ambiguity in the open profile: refuse the add or the call?)** — answered as the design
+  proposes, from the principle: the ADD is refused and the running world is unchanged
+  ([RULES.md](RULES.md), `Disp-World`, implementation form).
+- **Q4 (must every definition of a name agree on its return type?)** — not decided as a rule
+  on names.  Where it cannot stay open it is closed from the principle: a call decided by the
+  runtime variant is refused when the definitions it chooses between return different types,
+  because a dispatcher has one ([RULES.md](RULES.md), *One return type per dispatch*); a static
+  call is untouched.  The name-level refusal the design proposes is the owner's.
+- **Q5 (reserve `@F` tags for the construct and for `Disp-World`)** — not done: no
+  `loft-lang/features` issue exists for either.
 
 The gain from (4) is the one worth restating: closedness is not a cost accepted reluctantly,
 it is what lets the compiler enumerate every reachable variant pair and report **which reach

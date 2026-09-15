@@ -729,8 +729,10 @@ verification step that is fixed on the spot.
 
 ## What I did not verify
 
-- **The hint circularity's two ways out** (fact 3) — neither (a) nor (b) has been prototyped;
-  step 3 owes a probe before it is written.
+- ~~**The hint circularity's two ways out** (fact 3) — neither (a) nor (b) has been prototyped;
+  step 3 owes a probe before it is written.~~  Decided at step 3 as `Disp-Hint`
+  ([RULES.md](RULES.md)): a name with several definitions offers no parse hint; the permissive
+  way out is additive and can follow.
 - ~~**Whether a variant can be spelled as a parameter type in every position**~~ — verified
   by step 0 (finding 5): `fn hit(f: Fireball, w: IceWall)` compiles as a free function.
 - ~~**`Disp-World` against the actual promote path** — its current shape is unread.~~ Read at

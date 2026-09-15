@@ -18244,7 +18244,7 @@ impl Parser {
                 match self.select_overload(u16::MAX, name, &routed) {
                     crate::parser::dispatch::Selection::One(d) => {
                         return self
-                            .dynamic_dispatcher(u16::MAX, name, &routed)
+                            .dynamic_dispatcher(u16::MAX, name, &routed, Some(d))
                             .unwrap_or(d);
                     }
                     sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {

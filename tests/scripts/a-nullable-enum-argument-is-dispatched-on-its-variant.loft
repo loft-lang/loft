@@ -1,0 +1,121 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A NULLABLE enum argument is dispatched on its variant too (@PLN162 D-disp-2,
+// `Disp-Match-Equiv`): an `Entity?` holding a `Fireball` takes the `Fireball` definition, as the
+// canonical `match` over that value takes the `Fireball` arm, and a null — which has no variant —
+// reaches the definition the call's static types select, which is what every value reached
+// before.  `dynamic_positions` skipped a nullable position outright, so that static selection
+// answered for every present value: behind an `(N-Store)` warning where the enum-level
+// definition takes a dense `Entity`, and in silence where it takes `Entity?`.
+// @falsified-at: 409123033 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-nullable-enum-argument-is-dispatched-on-its-variant.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: exit and asserts, on both backends — the control compiles and answers the static
+//   selection for every present value, so `main` stops at the first cell's assert.
+//   ARMED: nothing.
+//   WITNESS: each cell measured on the control with its assert turned into a print:
+//   `entity? 1|entity? 3|none`, `entity 1|entity 3|entity null|entity 1`, `6|8|-1`,
+//   `none;entity? 1;entity? 2;entity? 3;`, `bump 12|bump 21|bump null2|bump 1null`,
+//   `bump 12|bump null2` — every present value took the static selection, and every answer
+//   for a null is the one this file expects.
+//   HOLDS: the dense control answers `fire 5|fire 5` on both trees; the `(N-Store)` warnings
+//   are the same call sites with the same text; clean under strict stores, poison and the
+//   native leak check.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.  The `(N-Store)`
+// warnings this file prints are the documented ones for a nullable value stored into a dense
+// `Entity` parameter, at the same call sites as before the fix.
+
+enum Entity {
+  Fireball { n: integer },
+  IceWall { n: integer },
+  Crate { n: integer },
+}
+
+fn pick(k: integer) -> Entity? {
+  if k == 1 {
+    Fireball { n: 1 }
+  } else if k == 2 {
+    IceWall { n: 2 }
+  } else if k == 3 {
+    Crate { n: 3 }
+  } else {
+    null
+  }
+}
+
+fn seen(f: Fireball) -> text { "fire {f.n}" }
+fn seen(e: Entity?) -> text { if e == null { "none" } else { "entity? {e.n}" } }
+
+fn kind(self: Fireball) -> text { "fire {self.n}" }
+fn kind(self: Entity) -> text { "entity {self.n}" }
+
+fn dmg(self: Fireball, x: integer) -> integer { self.n * 100 + x }
+fn dmg(self: Entity, x: integer) -> integer { if self == null { -1 } else { self.n + x } }
+
+fn meet(a: Fireball, b: IceWall) -> text { "melt {a.n}{b.n}" }
+fn meet(a: Entity?, b: Entity?) -> text { "bump {a.n}{b.n}" }
+
+fn meet2(a: Fireball, b: IceWall) -> text { "melt {a.n}{b.n}" }
+fn meet2(a: Entity, b: Entity) -> text { "bump {a.n}{b.n}" }
+
+fn test_a_nullable_fallback_no_longer_answers_for_a_present_variant() {
+  f = pick(1);
+  c = pick(3);
+  z = pick(0);
+  s = "{seen(f)}|{seen(c)}|{seen(z)}";
+  assert(s == "fire 1|entity? 3|none", "present values by variant, the null to the fallback: {s}");
+}
+
+fn test_a_self_set_on_a_nullable_receiver() {
+  f = pick(1);
+  c = pick(3);
+  z = pick(0);
+  s = "{f.kind()}|{c.kind()}|{z.kind()}|{kind(f)}";
+  assert(s == "fire 1|entity 3|entity null|fire 1", "both spellings, and the null: {s}");
+}
+
+fn test_a_trailing_parameter_on_a_nullable_receiver() {
+  f = pick(1);
+  c = pick(3);
+  z = pick(0);
+  s = "{f.dmg(5)}|{c.dmg(5)}|{z.dmg(5)}";
+  assert(s == "105|8|-1", "the argument reaches every leaf: {s}");
+}
+
+fn test_each_element_of_a_loop() {
+  s = "";
+  for k in 0..4 {
+    s += seen(pick(k)) + ";";
+  }
+  assert(s == "none;fire 1;entity? 2;entity? 3;", "per call result: {s}");
+}
+
+fn test_two_nullable_positions() {
+  s = "{meet(pick(1), pick(2))}|{meet(pick(2), pick(1))}|{meet(pick(0), pick(2))}|{meet(pick(1), pick(0))}";
+  assert(s == "melt 12|bump 21|bump null2|bump 1null", "a null at either position takes the fallback: {s}");
+}
+
+fn test_a_nullable_beside_a_dense_position() {
+  f = pick(1);
+  w: Entity = IceWall { n: 2 };
+  z = pick(0);
+  s = "{meet2(f, w)}|{meet2(z, w)}";
+  assert(s == "melt 12|bump null2", "the dense position still decides: {s}");
+}
+
+// Control: a DENSE value held at the enum was dispatched before, and still is.
+fn test_a_dense_enum_value() {
+  d: Entity = Fireball { n: 5 };
+  s = "{seen(d)}|{d.kind()}";
+  assert(s == "fire 5|fire 5", "a dense enum-held value: {s}");
+}
+
+fn main() {
+  test_a_nullable_fallback_no_longer_answers_for_a_present_variant();
+  test_a_self_set_on_a_nullable_receiver();
+  test_a_trailing_parameter_on_a_nullable_receiver();
+  test_each_element_of_a_loop();
+  test_two_nullable_positions();
+  test_a_nullable_beside_a_dense_position();
+  test_a_dense_enum_value();
+}
