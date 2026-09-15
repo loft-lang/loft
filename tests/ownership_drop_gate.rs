@@ -1041,14 +1041,10 @@ fn expected_roots(name: &str) -> Option<Vec<&'static str>> {
 /// resource type has no `OpDrop` reports no site at all.  The census is what @PLN163 P2 turns
 /// into the refusal report, so a copy it cannot see is a copy the refusal would let through.
 ///
-/// It also checks the lease verdicts against what is copied: a cell the rules refuse duplicates a
-/// value something still holds, so the census must list a copy FROM the variable that holds it,
-/// or the verdict is wrong.  A copy of a fresh value made while building the cell's source
-/// (`from=__lift_2 into=s`) does not count.  Two refused sources are held by no variable of the
-/// cell: a call result's member (`mk_s(…).h`), and a returned PARAMETER or place reached through
-/// one (`return p`, `return p.h`).  The callee copies nothing there; the copy is the caller's bind
-/// of the call result, minted at emission, where `copy_manifest.rs` sees it and this IR walk does
-/// not (@PLN163 P2).
+/// It is also the oracle for `(H-Move)`'s implementation (`src/lease.rs`, @PLN163 P2): the census
+/// refuses a copy in exactly the cells [`lease_verdict`] says the rules refuse, refuses nothing in
+/// a cell that must release once, and never reports a copy its liveness pass did not reach.  The
+/// verdicts are derived by hand from each cell's axes, so the two cannot agree by construction.
 #[test]
 fn the_census_names_the_copy_each_cell_makes() {
     let cells = all_cells();
@@ -1068,19 +1064,30 @@ fn the_census_names_the_copy_each_cell_makes() {
             .flat_map(|f| f.split(','))
             .filter(|f| *f != "-")
             .collect();
-        let held_by_no_variable = c.name.starts_with("c_callproj_")
-            || ["p_g1", "p_g3", "p_g4", "p_g5"].contains(&c.name.as_str())
-            || c.name == "c_param_ret"
-            || c.name == "c_pfield_ret"
-            || (c.name.starts_with("q_") && c.name.contains("_param_") && c.name.ends_with("_ret"));
-        if lease_verdict(&c.name) == Lease::Refused
-            && !held_by_no_variable
-            && !from.iter().any(|f| !f.starts_with('_'))
+        let refusals: Vec<&str> = sites
+            .iter()
+            .filter_map(|l| census_field(l, "lease"))
+            .filter(|l| l.starts_with("refuse:"))
+            .collect();
+        if sites
+            .iter()
+            .any(|l| census_field(l, "lease") == Some("unreached"))
         {
             wrong.push(format!(
-                "{}: refused by the lease rules, but no copy from a variable in {sites:?}",
+                "{}: a copy the liveness pass never reached in {sites:?}",
                 c.name
             ));
+        }
+        match lease_verdict(&c.name) {
+            Lease::Refused if refusals.is_empty() => wrong.push(format!(
+                "{}: refused by the lease rules, but the census refuses nothing in {sites:?}",
+                c.name
+            )),
+            Lease::Once if !refusals.is_empty() => wrong.push(format!(
+                "{}: releases once by the lease rules, but the census refuses {refusals:?}",
+                c.name
+            )),
+            _ => {}
         }
         let Some(roots) = expected_roots(&c.name) else {
             if !c.name.starts_with("p_") {
