@@ -5189,6 +5189,8 @@ struct DoubleMove<'a> {
     /// Whether the function's result has a release to run — a returned member doubles a
     /// release only when there is one.
     ret_cascades: bool,
+    /// Every variable this function emits a drop of, by place root — see [`drop_targets`].
+    released: HashSet<u16>,
     /// The function's hidden return-buffer ARGUMENTS: a local promoted to the caller's buffer is an
     /// argument in the variable table, but the record it holds goes on to the caller, who releases
     /// it — so it is a root like any local, unlike a parameter the caller already owns.
@@ -5365,16 +5367,42 @@ impl DoubleMove<'_> {
         }
     }
 
-    /// A genuine PARAMETER, whose record the CALLER owns.  The hidden return-buffer argument is
+    /// A record the CALLER owns: a genuine PARAMETER, or a local that holds the caller's record on
+    /// every path (`Function::holds_caller_record`).  The hidden return-buffer argument is
     /// not one — it is a local promoted to the caller's buffer, and its record goes on to the
     /// caller — and neither is a capture, which is the closure's, or a compiler temp.
     fn is_caller_owned(&self, v: u16) -> bool {
         (v as usize) < self.func.count() as usize
-            && self.func.is_argument(v)
-            && !self.ret_bufs.contains(&v)
+            && ((self.func.is_argument(v) && !self.ret_bufs.contains(&v))
+                || self.func.holds_caller_record(v))
             && !self.func.is_captured(v)
             && !self.func.name(v).starts_with('_')
             && !self.func.name(v).contains('#')
+    }
+
+    /// Is a member of `root` released by something other than the container it is copied into?
+    ///
+    /// Only then does the copy double a release.  The CALLER releases what a caller-owned root
+    /// holds, and a root promoted to the return buffer goes on to the caller too.  Any other root
+    /// releases its members only where this function emits a drop of it: a copy off a parameter
+    /// stops its destination, so a local written through after that copy holds a resource nothing
+    /// but the container releases.  A view releases nothing itself; its members go wherever its
+    /// base's go.
+    fn member_released_elsewhere(&self, root: u16, depth: u8) -> bool {
+        if self.is_caller_owned(root)
+            || self.ret_bufs.contains(&root)
+            || self.released.contains(&root)
+        {
+            return true;
+        }
+        depth < 8
+            && (root as usize) < self.func.count() as usize
+            && self
+                .func
+                .tp(root)
+                .depend()
+                .into_iter()
+                .any(|base| base != root && self.member_released_elsewhere(base, depth + 1))
     }
 
     /// Retire the pending projections whose root a SUBTREE writes (a conditional arm, a loop
@@ -5428,6 +5456,7 @@ impl DoubleMove<'_> {
             && !self.func.name(root).starts_with('_')
             && !self.func.name(root).contains('#')
             && copied_record_releases(self.data, &args[2])
+            && self.member_released_elsewhere(root, 0)
         {
             if let Some(at) = self.cur.clone() {
                 self.proj.entry(root).or_default().push(at);
@@ -5491,6 +5520,22 @@ fn projection_root(node: &Value, data: &Data) -> Option<u16> {
         }
         _ => None,
     }
+}
+
+/// Every variable whose record this function RELEASES somewhere: the place root of each drop
+/// call's target (`t_1S_OpDropAll(s)`, `t_1H_OpDrop(tt.0)`).  The lint runs after the scope pass
+/// has placed every drop, so it reads that decision here instead of deciding it again.
+fn drop_targets(data: &Data, code: &Value) -> HashSet<u16> {
+    let mut out = HashSet::new();
+    code.walk(&mut |n| {
+        if let Value::Call(d, args) = n
+            && data.is_drop_function(*d)
+            && let Some(root) = args.first().and_then(|a| place_root(a, data))
+        {
+            out.insert(root);
+        }
+    });
+    out
 }
 
 /// Does an `OpCopyRecord` copy a record that has a release to run?
@@ -5633,6 +5678,7 @@ pub fn warn_double_move(
             proj: HashMap::new(),
             proj_found: Vec::new(),
             ret_found: Vec::new(),
+            released: drop_targets(data, &def.code),
             ret_cascades: def
                 .returned
                 .base()
@@ -5714,7 +5760,7 @@ pub fn warn_double_move(
                 at.file.as_str()
             };
             if cx.is_caller_owned(root) {
-                report_caller_owned_copy(diags, name, file, &at);
+                report_caller_owned_copy(diags, name, def.variables.is_argument(root), file, &at);
                 continue;
             }
             let msg = format!(
@@ -5759,7 +5805,13 @@ pub fn warn_double_move(
             } else {
                 at.file.as_str()
             };
-            report_returned_parameter_member(diags, def.variables.name(root), file, &at);
+            report_returned_parameter_member(
+                diags,
+                def.variables.name(root),
+                def.variables.is_argument(root),
+                file,
+                &at,
+            );
         }
     }
 }
@@ -5769,13 +5821,19 @@ pub fn warn_double_move(
 fn report_caller_owned_copy(
     diags: &mut crate::diagnostics::Diagnostics,
     name: &str,
+    parameter: bool,
     file: &str,
     at: &Position,
 ) {
+    let whose = if parameter {
+        format!("`{name}` is a parameter")
+    } else {
+        format!("`{name}` holds its caller's record, copied off a parameter")
+    };
     let msg = format!(
-        "`{name}` is a parameter, so its caller still owns what `{name}` holds and releases it, \
-         and this container releases its copy too — each owner releases what it owns, so this \
-         value is released TWICE"
+        "{whose}, so the caller still owns what `{name}` holds and releases it, and this \
+         container releases its copy too — each owner releases what it owns, so this value is \
+         released TWICE"
     );
     diags.add_at_coded(
         crate::diagnostics::Level::Warning,
@@ -5811,13 +5869,19 @@ fn report_caller_owned_copy(
 fn report_returned_parameter_member(
     diags: &mut crate::diagnostics::Diagnostics,
     name: &str,
+    parameter: bool,
     file: &str,
     at: &Position,
 ) {
+    let whose = if parameter {
+        format!("the parameter `{name}`")
+    } else {
+        format!("`{name}`, which holds its caller's record,")
+    };
     let msg = format!(
-        "a member of the parameter `{name}` is returned here — the caller still owns that member \
-         through the argument it passed, and the caller's copy of the result releases it too, \
-         so this value is released TWICE"
+        "a member of {whose} is returned here — the caller still owns that member through the \
+         argument it passed, and the caller's copy of the result releases it too, so this value \
+         is released TWICE"
     );
     diags.add_at_coded(
         crate::diagnostics::Level::Warning,

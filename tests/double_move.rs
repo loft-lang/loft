@@ -684,11 +684,10 @@ fn f9_member_of_a_local_holding_the_callers_record() {
     );
 }
 
-/// FALSE POSITIVE, pinned — that local WRITTEN through before the copy.  A copy off a parameter
-/// stops its destination, so the member the frame made is released by the container alone: each
-/// record once.  The lint still warns, because it assumes a root releases what it holds.  The
-/// facts that separate this from `f9` exist only after `scopes::check`, and on the program path
-/// the lint runs before it (heap.md D-heap-7 family 4).  When this reads 0, the pin retires.
+/// SILENT — that local WRITTEN through before the copy.  A copy off a parameter stops its
+/// destination, so the scope pass emits no drop of `x`, and the member the frame made is released
+/// by the container alone: each record once.  The lint asks whether anything besides the container
+/// releases the member, and here nothing does.
 #[test]
 fn g6_written_copy_of_a_parameter_releases_nothing_itself() {
     check_prog(
@@ -696,7 +695,7 @@ fn g6_written_copy_of_a_parameter_releases_nothing_itself() {
         "struct Hold { h: H }\n\
          fn g(p: S) { x = p; x.h = mk(96); c = Hold { h: x.h }; println(\"{c.h.id}\"); }",
         "s = S { h: mk(95) }; g(s); println(\"{s.h.id}\");",
-        1,
+        0,
         2,
     );
 }
