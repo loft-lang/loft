@@ -3574,6 +3574,21 @@ impl Store {
         }
     }
 
+    /// Write a record's prefill IMAGE — `img.len()` bytes at byte offset `pos` of
+    /// `rec` — as one block (`@FR-R-Prefill`).  The span is bounds-checked and, under the
+    /// @PLN154 shadow, tagged written as a whole, exactly as [`Self::zero_range`] tags
+    /// the all-zero image.
+    #[inline]
+    pub fn write_image(&mut self, rec: u32, pos: u32, img: &[u8]) {
+        if img.is_empty() {
+            return;
+        }
+        let ptr = self.addr_span_mut(rec, pos, img.len());
+        // SAFETY: `addr_span_mut` bounds-checked `pos..pos+len` within the record's
+        // claim, and `img` is `img.len()` bytes long.
+        unsafe { std::ptr::copy_nonoverlapping(img.as_ptr(), ptr, img.len()) }
+    }
+
     #[inline]
     pub fn copy_block(
         &mut self,

@@ -909,12 +909,17 @@ the staging clause), (R-Prefill) is C4.  What each needs from the IR is in the p
 table: the def-use classes of a value (its owning destinations against its read-only
 uses), per-path liveness at a set (the `avoidable-copy` lint already computes it and
 codegen does not yet read it), the disturbance walk `B-Ref-Reshape` runs for `&`,
-and `R-Callee`'s writer summary.  No switch, site or cell exists yet: each rule
-lands with its phase in the @PLN157 shape (a `LOFT_NO_<unit>` switch, cells with
-hand-computed values on both backends under `LOFT_STRICT_STORES`, `LOFT_POISON` and
-the leak gate, a guard with its `@falsified-at:` receipt), and until then the copy
-each rule replaces is what runs.  The rules are written BEFORE the phases so that a
-question met while building one is answered here rather than decided in the code.
+and `R-Callee`'s writer summary.  (R-Prefill) is built (C4): its ONE site is
+`Stores::prefill_from_image` in `src/database/structures.rs`, the image is READ BACK
+from the walk's first run over a zeroed span rather than computed a second way, the
+switch is `LOFT_NO_PREFILL_IMAGE=1` and the falsifier `LOFT_PREFILL_VERIFY=1` (the walk
+re-run after every image write, a panic where they disagree).  The other three have no
+switch, site or cell yet: each lands with its phase in the @PLN157 shape (a
+`LOFT_NO_<unit>` switch, cells with hand-computed values on both backends under
+`LOFT_STRICT_STORES`, `LOFT_POISON` and the leak gate, a guard with its
+`@falsified-at:` receipt), and until then the copy each rule replaces is what runs.
+The rules are written BEFORE the phases so that a question met while building one is
+answered here rather than decided in the code.
 
 ## Validating the emitted routines against their assumptions
 

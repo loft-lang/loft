@@ -9,6 +9,40 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The default prefill of a minted record is one block write of a per-type image (2026-09-15)
+
+Every record mint that is not proven complete-write (`OpDatabase`, `OpNewRecord`,
+`OpInsertVector`, the hidden buffers) prefilled the record field by field:
+`set_default_value_nullable` walked the type's fields, resolved the store per field,
+recursed into inline records and wrote each sentinel, zero and variant tag through its
+typed setter — 7 % of the drawing library's `parse` row for bytes that are the same on
+every mint of a type.  `(R-Prefill)`: the prefill is now a per-type IMAGE, captured from
+the walk's FIRST run over a zeroed span (so the image is what the walk writes, by
+construction, never a second computation of the defaults) and written as one block for
+every later mint.  A type with a field not laid out yet (`u16::MAX` content) keeps the
+walk — its image would freeze the field's zero where the walk, once the field is laid out,
+writes its sentinel; a `text as Struct` fill (`Absent::Final`, declared defaults and
+interned text) keeps the walk; a table rollback forgets the image like the heap facts.
+One runtime home, so both backends take it.  Switch `LOFT_NO_PREFILL_IMAGE=1`; falsifier
+`LOFT_PREFILL_VERIFY=1` (the walk re-run after every image write, a panic naming the type
+where they disagree — clean over all 1432 `tests/scripts` files on the interpreter and the
+parse bench on native).  Cells `164-activation-arena/bytecode-comparisons/
+C4-prefill-image-cells.loft` (c1–c10, both backends); pins `tests/prefill_image.rs`.
+Measured on the parse bench: 46.4–48.5 k → 42.3–42.8 k ns/op (≈ −11 %, hash unchanged).
+@PLN164 C4.
+
+### A negative declared field default survives a `text as Struct` cast (2026-09-15)
+
+loft#876 folded a CONSTANT declared default onto the schema `Field` so the JSON walker could
+answer a missing key with it; the fold matched plain literals, and `n: integer = -1` is a
+NEGATION of a literal to the parser (`OpMinSingleInt(1)`), so a negative default folded to
+nothing and the cast wrote the type's zero where the struct literal wrote `-1` — the same
+field had two absent values again, for exactly the defaults a programmer reaches for as an
+"unset" marker.  `typedef::fold_declared_default` now sees through a unary minus applied to
+a numeric literal (both backends: the native `init()` replays the same fold).  Guard
+`tests/scripts/a-negative-declared-default-survives-a-cast.loft`.  Found while writing
+@PLN164 C4's cast cell.
+
 ### A plain local's first bind from a build-into-a-local callee adopts the minted store (2026-09-15)
 
 `fn mk() -> P { o = P { … }; …; o }` reports its return as `["o"]`, the local the parser

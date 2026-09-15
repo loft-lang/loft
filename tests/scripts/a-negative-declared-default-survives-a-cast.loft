@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A NEGATIVE declared field default (`n: integer = -1`, `f: float = -2.5`) is honoured by a
+// `text as Struct` cast exactly as a positive one is.  loft#876 folded a constant default
+// onto the schema `Field` so the JSON walker — which sits below the parser with no
+// evaluator — could answer a missing key with it; the fold matched plain literals only,
+// and `-1` is a NEGATION of a literal to the parser (`OpMinSingleInt(1)`), so a negative
+// default folded to nothing and the cast wrote the type's zero where the struct literal
+// wrote `-1`: the same field had two absent values again, for exactly the defaults a
+// programmer reaches for as an "unset" marker (dryopea's `palette_pick: integer = -1`,
+// loft#914).  Found-via: loft#876, while writing @PLN164 C4's cast cell.
+//
+// A negated NUMERIC literal is a constant and folds; a negation of anything else stays a
+// computed default and applies where the constructor runs (the loft#876 split).
+//
+// @falsified-at: hand-measured (2026-09-15) — on the build before the fold saw through the
+// negation, `key-missing n=0 f=0 g=0 p=7` on both backends against the literal's `-1 -2.5 -7`
+// (the value channel moves; no other channel does); after it, every line below is exact
+// on both backends.
+struct D { name: text, n: integer = -1, f: float = -2.5, g: integer = -7, p: integer = 7 }
+const J_MISS: text = `{{ "name": "x" }}`;
+const J_NULL: text = `{{ "name": "x", "n": null, "f": null, "g": null }}`;
+const J_HAVE: text = `{{ "name": "x", "n": 4, "f": 0.5, "g": 0 }}`;
+
+fn main() {
+  lit = D { name: "l" };
+  assert(lit.n == -1 && lit.f == -2.5 && lit.g == -7 && lit.p == 7, "literal {lit.n} {lit.f} {lit.g} {lit.p}");
+  m = J_MISS as D;
+  assert(m.n == -1 && m.f == -2.5 && m.g == -7 && m.p == 7, "key-missing n={m.n} f={m.f} g={m.g} p={m.p}");
+  z = J_NULL as D;
+  assert(z.n == -1 && z.f == -2.5 && z.g == -7, "json-null n={z.n} f={z.f} g={z.g}");
+  h = J_HAVE as D;
+  assert(h.n == 4 && h.f == 0.5 && h.g == 0, "present n={h.n} f={h.f} g={h.g}");
+  println("literal {lit.n} {lit.f} {lit.g}");
+  println("key-missing {m.n} {m.f} {m.g}");
+  println("json-null {z.n} {z.f} {z.g}");
+  println("present {h.n} {h.f} {h.g}");
+}
