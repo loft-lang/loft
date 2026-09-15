@@ -24,7 +24,11 @@ shipped; this directory is the design and the matrix until then.
 **The principle this plan serves (owner, 2026-09-15; GOALS.md § Goal F):** the
 programmer is not assumed to know the store model inside, so the most NATURAL form of a
 program is its CANONICAL form and therefore the one the compiler optimises — not an idiom
-the author learns from a survival guide.  The compiler removes the per-call temporaries a record-returning style mints — a store
+the author learns from a survival guide.  **And the scoping (owner, same day):** this is
+not "optimise everything" — each spelling is first asked *is this natural to write?*, the
+mechanism goes to the spellings that pass, and a contrived spelling keeps today's correct
+copy and is deferred with its row kept.  Most cells of the matrix below may be deferred
+at any moment; the natural ones are where the gain sits.  The compiler removes the per-call temporaries a record-returning style mints — a store
 per hidden buffer per activation, a deep copy at a first bind, at a last-use field
 assignment and at an element overwrite, a copy for a read-only `?`-discharge — without a
 line of the consumer's code changing, and the drawing library's `parse` row goes from
@@ -138,6 +142,18 @@ arena and the placement meet.
 ## Edge cases to inspect before a phase is cut
 
 Numbered for the review.  **Verdict** is the proposal; the owner confirms or moves it.
+Every row is first judged on NATURALNESS: `natural` means a programmer writes it without
+knowing the store model and the mechanism owes it the efficient code; `contrived` means
+the spelling keeps today's copy and the row is deferred — a verdict that is always
+available and never a defect.  The parse library is the reference for "natural": every
+shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
+
+| # | naturalness |
+|---|---|
+| E1–E6, E18, E19 | mechanism-internal — not a spelling; they must hold whatever is admitted |
+| E7, E13, E15, E16, E17, E20 | natural — the library writes them today |
+| E8, E9, E10, E11, E14 | natural — a branch, a parameter, a partial literal are ordinary |
+| E3 (generator), E4 (`par`), E12 (`OpDrop` types) | contrived for this plan — decline the mechanism there, keep the copy, defer |
 
 | # | case | why it bites | proposed verdict | probe |
 |---|---|---|---|---|
