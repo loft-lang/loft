@@ -7,7 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Active — P0 in progress.  Tracked as
+Active — P0 done; P1 (the rules) next, and it waits on open question 7.  Tracked as
 [`@PLN163`](https://github.com/loft-lang/plans/issues/163).  Decided with the owner on 2026-09-15
 after the drop-release arc (`heap.md` D-heap-1, D-heap-7) kept meeting shapes where the compiler
 could not tell which copy should release a resource.
@@ -21,6 +21,12 @@ database cursor type.  **No published library, no consumer (`moros`, `dryopea`, 
 of the 187 packages in the registry cache declares one** — measured with a whole-tree grep for
 `OpDrop` in every file type, controlled by a known hit in `139-drop-cascade.loft`.  So no type in
 published code can be copied under the new rules, and none can be refused.
+
+**Where the corpus copies one.**  `LOFT_DROP_COPY_CENSUS=1` over the 35 files that declare a hook:
+576 copy sites, 362 of them from a variable the author wrote, in 27 files, plus 646 release
+snapshots (below, question 8).  Every file printed the count line.  The census reads the IR after
+the scope pass, which both backends share; P2 proves it against the copies each generator actually
+emits (`copy_manifest.rs`).
 
 **What that decides for P3.**  loft is at contract 0, and `COMPATIBILITY.md` § The error surface is
 one-directional says an error is added *before* the freeze ("be strict now, because you can always
@@ -123,7 +129,7 @@ value; a refusal cell scores the error and its named line.
 
 | Item | Source | Verify | Status |
 |---|---|---|---|
-| **P0** — census: every type with `OpDrop` in the corpus and the published libraries, and every place one is copied today | `copy_manifest.rs`, `--report-copies`, the library gate's trees | the census counts the drop gate's copy cells as copy sites (positive control), and a program with no `OpDrop` reports none | Open |
+| **P0** — census: every type with `OpDrop` in the corpus and the published libraries, and every place one is copied today | `LOFT_DROP_COPY_CENSUS` (`use_analysis::drop_copy_census`), the library and consumer trees, the registry cache | `ownership_drop_gate::the_census_names_the_copy_each_cell_makes`: every CROSS and COALESCE cell against a per-axis expectation, and the CROSS `local` cells with the hook removed report `0 sites`.  Falsified: disabling the bind arm fails 54 cells; the join peel and the view-temp dependencies each failed it before they existed | Done |
 | **P1** — the rules above in `formal/heap.md` + `binding.md`, with a deviation for every current behaviour that disagrees | this plan | `rule_tags.py registers`: the OPEN count equals the drop-gate cells the census classifies as disagreeing | Open |
 | **P2** — the refusal as a REPORT (no error): at every copy site of a refusing type whose source is used afterwards | `copy_manifest::Origin` (both backends' emitted copies) + `ParserMaterialise` | the manifest guard: every emitted copy of a refusing type is reported or proven a move; falsified by disabling one site | Open |
 | **P3** — the report becomes a compile error; the published-library gate read row by row | P2 | `tests/scripts` refusal cells (`@EXPECT_ERROR`) on both backends; every library break is a real double release today, or the rule is wrong | Open |
