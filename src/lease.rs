@@ -1,13 +1,15 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Whether a copy of a droppable value is a MOVE — `formal/heap.md` `(H-Move)`, @FR-H-Move.
+//! Whether the value a copy of a droppable duplicates is USED after the copy — a per-path liveness
+//! answer, @FR-H-Move.
 //!
-//! A copy of a value whose type owns a droppable makes a second structure, and a second structure
-//! needs a lease of its own (`(H-Lease)`).  The one copy that makes none is a move: the value it
-//! copies is not used after it.  This module is where that question is answered for the
-//! copy-lease rules (@PLN163).  The copy census reads it, and so will the refusal
-//! (`(H-Copy-Refuse)`).  Nothing that emits code reads it.
+//! The first version of the copy-lease rules (@PLN163) made a copy of a value not used afterwards a
+//! move, and this module answered that question for the copy census.  `formal/heap.md` now reads a
+//! move off the line itself (`(H-Move)`: only written positions move), so this liveness answer no
+//! longer decides what is valid.  The census still prints it until @PLN163 P2r reworks the report,
+//! and it is kept for `(H-Elide)`, where liveness may decide an optimisation.  Nothing that emits
+//! code reads it.
 //!
 //! **The answer is per path.**  A backward liveness pass for one variable walks the structured IR:
 //! both arms of every `if`, a `loop` to its fixed point, `break` and `continue` to their targets,

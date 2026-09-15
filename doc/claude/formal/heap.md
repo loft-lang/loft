@@ -424,38 +424,47 @@ installed, which the frame does own.
              a member that does, at any depth — holds its OWN lease on the resource, and
              two structures are two drops.  A copy makes a second structure, so it takes a
              second lease (H-Copy-Lease) or is refused (H-Copy-Refuse); only a MOVE (H-Move)
-             hands one lease on.  Moving bytes without making a structure — a vector's
-             growth, a keyed collection's rebalance, a store's compaction — is not a copy.
-  (H-Move)   a copy is a MOVE when the VALUE it copies is not used after it: on no path
-             from the copy, around a loop included, is that value read, written through,
-             passed to a call, captured or copied again.  The source's own release does not
-             count, and neither does a rebind of the source, which gives the NAME a new
-             value.  A move hands the source's lease to the new structure, and the source's
-             release of that value — its scope end, or the displacement by its rebind —
-             does not run.  Two sources are never moved, because something besides their
-             own release still holds the value:
-               - a MEMBER of a container — `s.h`, `v[i]`, `t.0`, a loop variable or a
-                 `match` binding over one, a view of one: the container's drop uses it;
-               - a PARAMETER, or a place reached through one: the caller holds it
-                 (calls.md F-ParamHeap).
+             hands a value to a new owner without one.  Moving bytes without making a
+             structure — a vector's growth, a keyed collection's rebalance, a store's
+             compaction — is not a copy.
+  (H-Move)   a MOVE is WRITTEN, never inferred: whether a position moves is read off the
+             line and the declared types alone, whatever the program does after that line.
+             Three positions move a value:
+               - a FRESH value — a call result, a constructor, a literal — placed where it
+                 is produced: bound, written into a field, element or tuple member,
+                 appended, or returned;
+               - a `return` whose every possible value is a variable this function OWNS
+                 (not a parameter, not a view) or a fresh value — `return a`,
+                 `return a ?? mk()` — since the function's own variables end with it;
+               - a block whose value is a variable declared in that block
+                 (`if c { a = mk(); a } else { … }`).
+             Every other position that places an EXISTING value into a new structure is a
+             COPY.
   (H-Copy-Lease) a copy of a type that declares `fn OpCopy(self: τ)` copies the bytes and
              then runs `OpCopy` on the NEW structure, which takes its own lease there.  A
              struct holding such a member gets a synthesized copy cascade, the mirror of the
              drop cascade: its own `OpCopy` first, then its members'.
-  (H-Copy-Refuse) a copy that is not a move is a COMPILE-TIME ERROR when the copied type
-             owns a droppable that declares no `OpCopy` — the type itself, or a member at
-             any depth.  The error names what made it a copy: the later use of the value,
-             the container whose drop still holds the member, or the caller that holds the
-             parameter.  A copy the compiler inserts is refused the same way and names the
-             construct that forced it: a view materialised because its container is
-             disturbed or dies (binding.md B-View), a `??` default, a returned value
-             (`return s.h`, `return p`).  Legal, because no second structure is made:
-             passing the value as an argument (F-ParamHeap binds without copying), a `&`
-             bind (binding.md B-Ref-Alias), a view that stays a view (B-View), and every
-             move.
-  (H-Rebind-Self) rebinding a variable to its own value — `a = a`, and `a = a ?? d` on
-             the path where `a` is present — makes no new structure: no lease is taken and
-             nothing is released.  On the other path `a = a ?? d` is a move of `d`.
+  (H-Copy-Refuse) a COPY of a type that owns a droppable without `OpCopy` — the type itself,
+             or a member at any depth — is a COMPILE-TIME ERROR on the line that writes it,
+             whatever the program does after that line.  A copy places an EXISTING value —
+             a variable, a parameter, a loop variable, a `match` binding, a member (`s.h`,
+             `v[i]`, `t.0`), a member of a call result (`mk().h`) — into a new structure:
+               - bound to a variable as a whole value (binding.md B-Copy: `x = a`, `x = p`);
+               - written into a field, enum payload, element or tuple member of a literal,
+                 or appended (`S { h: a }`, `v += [a]`, `(a, 1)`);
+               - returned where (H-Move) does not allow it (`return p`, `return s.h`);
+               - as an operand of `??` or an arm of a join in any of those positions
+                 (`x = a ?? mk()`, `x = if c { a } else { mk() }`).
+             Legal, because no second structure is made: a fresh value anywhere, passing a
+             value as an argument (calls.md F-ParamHeap binds without copying), a `&` bind
+             (binding.md B-Ref-Alias), and a view of a member of a variable (B-View,
+             `x = s.h`).  The error names the copy and what to write instead: use the value
+             where it is, pass it, build it where it belongs, or return the owner.
+  (H-View-Drop) a VIEW of a member that owns a droppable without `OpCopy` stays a view: the
+             compiler never turns it into a copy.  Disturbing its container while the view
+             is still used (binding.md B-Disturb) is a COMPILE-TIME ERROR reported at the
+             disturbance and naming the view — (B-Ref-Reshape), for a view the author did
+             not spell with `&`.
   (H-Elide)  the compiler may elide a copy of a type with `OpCopy` together with the drop
              of the structure the copy would have made, where C86's transparent-link
              conditions hold.  Neither hook may rely on running for an elided copy.
@@ -471,13 +480,25 @@ that — it is the release of something outside the program. So the question eve
 own death. Copying a droppable makes a second structure, and a second structure needs a lease
 of its own. A type that can make one says so with `OpCopy`. A type that cannot — an outward
 connection, a writable file, a database cursor, whose duplicates would share one stream and one
-position — has its copies refused at compile time. What makes no second structure stays legal:
-passing a value to a function, a `&` link, a view, and a move, where the source is not used
-again and hands its lease on.
+position — has its copies refused at compile time. Whether a line copies is read off that line
+and the declared types: no later line changes it. What makes no second structure stays legal: a
+fresh value placed where it is made, passing a value to a function, a `&` link, a view, and
+returning what the function owns.
 
 A call such as `a = f(a)` is decided inside `f`.  `return p` of a parameter copies a structure
 the caller still holds, so for a refusing type `f` is refused there.  The loft spelling of that
 idiom does not return the value: `f` writes through its parameter, which aliases the caller's.
+
+**Why the verdict is read off the line.**  The first version of these rules, the same day, made a
+copy of a value that is not used afterwards a move.  Then `x = a; send(x)` compiled and
+`x = a; send(x); send(a)` failed at its FIRST line: a later line decided what an earlier one
+meant.  Correct and incorrect code looked the same to anyone who does not know how the compiler
+reasons, and the owner rules that out — a programmer must be able to judge from the code whether
+it is valid.  Liveness may still decide an optimisation (`(H-Elide)`), never validity.  A
+droppable is a corner of the language with a clean workaround in nearly every case — build the
+value where it belongs, pass it, borrow it — so the strict rule costs little.  It also keeps a
+library that holds a connection readable: every use of `self.db` is a borrow in plain sight, and
+the one line that would duplicate it is the line the error names.
 
 **Why a refusal, and not a moved release, a warning or a mark.**  The earlier rule moved the
 release along with a copy and warned where the owner was unclear.  Wherever both structures
@@ -492,12 +513,11 @@ use cases in `plans/163-copy-leases.md` (DESIGN_DECISIONS.md C121).
 `a-whole-value-copy-of-a-droppable-releases-once.loft` (a whole-value copy), and
 `1362-a-rebind-releases-the-droppable-it-displaces.loft` (the reassignment), each measured
 identical on both backends.  The copy rules have no conformance yet: `(H-Copy-Refuse)` is
-`D-heap-8`, `(H-Copy-Lease)` is `D-heap-9`, and `(H-Rebind-Self)` holds for `a = a` and not for
-`a = a ?? d` (`D-heap-10`).  `tests/ownership_drop_gate.rs` classifies every generated cell
-under these rules and ties each cell that disagrees to its deviation.  Sites: the deaths are
-`scopes::displaced_drop` and `scopes::scope_end_drop`; a move is `scopes::copy_moves_drop_from`
-and `scopes::copy_hands_off`, which until `D-heap-8` closes also move the release across a copy
-whose source is still used.
+`D-heap-8`, `(H-Copy-Lease)` is `D-heap-9`, and `(H-View-Drop)` is `D-heap-11`.
+`tests/ownership_drop_gate.rs` classifies every generated cell under these rules and ties each
+cell that disagrees to its deviation.  Sites: the deaths are `scopes::displaced_drop` and
+`scopes::scope_end_drop`; `scopes::copy_moves_drop_from` and `scopes::copy_hands_off` move the
+release across copies these rules refuse, until `D-heap-8` closes.
 
 ### The soundness bridge — a well-typed program never faults a free
 
@@ -532,13 +552,15 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **5** — `D-heap-8`, `D-heap-9` and `D-heap-10`, below, are the copy-lease rules
-(H-Copy-Refuse, H-Copy-Lease, H-Rebind-Self), written 2026-09-15 before their implementation
-(@PLN163).  They reclassify the two older entries.  Every shape of `D-heap-1` and `D-heap-7` that
-copies a value still in use is now a REFUSAL and belongs to `D-heap-8`; what those two entries keep
-open is the shapes the new rules still require to release once — `D-heap-1` one tuple shape,
-`D-heap-7` family 1.  `tests/ownership_drop_gate.rs` gives every generated cell a lease verdict
-and ties each cell that must release once, and does not, to exactly one of these entries.
+OPEN: **4** — `D-heap-8`, `D-heap-9` and `D-heap-11`, below, are the copy-lease rules
+(H-Copy-Refuse, H-Copy-Lease, H-View-Drop), written 2026-09-15 before their implementation
+(@PLN163), and `D-heap-7` keeps the one cell those rules still require to release once.  The rules
+were revised the same day to judge a copy by its own line (§ Drop, *Why the verdict is read off the
+line*), which reclassified the older entries: every shape of `D-heap-1` and `D-heap-7` that writes a
+copy of an existing value belongs to `D-heap-8`, so `D-heap-1` and `D-heap-10` are CLOSED as
+reclassified, and `D-heap-7` keeps `return a ?? b` over two locals.
+`tests/ownership_drop_gate.rs` gives every generated cell a lease verdict and ties each cell that
+must release once, and does not, to exactly one open entry.
 `D-heap-LIFO`
 CLOSED 2026-09-12 by rewriting the rules to how the mechanism functions.  The count read **1** while `D-heap-LIFO` was
 already written and marked OPEN in the rules section — an `OPEN: n` is a claim to re-measure,
@@ -563,25 +585,25 @@ opposite fault, and a shape found by widening one cell — so the three named th
 open TODAY and not the original filing.  `D-heap-4` (a mixed own/view local's owned record
 freed without its hook) opened and CLOSED 2026-09-10, below.
 
-### D-heap-8 — OPEN (2026-09-15): nothing refuses a copy — a droppable without `OpCopy` whose value is still used is copied
+### D-heap-8 — OPEN (2026-09-15): nothing refuses a copy — a written copy of a droppable without `OpCopy` compiles
 
-- **Violates:** (H-Copy-Refuse); and (H-Move), for the copies it does not refuse.
+- **Violates:** (H-Copy-Refuse).
 - **Where:** no site refuses a copy.  The copy sites are the ones `LOFT_DROP_COPY_CENSUS` lists.
   In place of a refusal, `scopes::copy_moves_drop_from`, `scopes::copy_hands_off`,
   `scopes::appends_to_element` and the per-path hand-off flags move the release to ONE of the two
   structures, and `use_analysis::warn_double_move` warns on some of the shapes inside a structure.
-- **Effect:** a program holding two structures on one resource compiles.  Where the moved release
-  picks the structure that lives longer, the program releases once and is still outside the
-  rules; where it cannot, it releases twice, or while the other structure is in use, with no
-  diagnostic.  The drop gate's cells with a `Refused` verdict are this entry's — most of the
-  baseline, and every CLEAN cell that copies a value still in use (`p_k7`, `p_h2`–`p_h7`, `p_s4`,
-  `p_g1`, `c_param_local`, …).  The census lists 362 copies of a droppable from a variable the
-  author wrote, in 27 corpus files, and the sqldb fixtures' `disown` idiom is one of the shapes.
-- **Status:** OPEN — @PLN163 P2 (the refusal as a report, proven complete against
-  `copy_manifest.rs`), then P3 (the error).
-- **Removal:** the refusal at every copy whose value is still used, naming that use; the refused
-  cells become refusal cells, and the corpus programs making such a copy are rewritten as moves,
-  views or `&` links.
+- **Effect:** a program that writes a copy of a droppable compiles.  Where the moved release picks
+  the structure that lives longer, it releases once and is still outside the rules; where it
+  cannot, it releases twice, or while the other structure is in use, with no diagnostic.  The drop
+  gate's cells with a `Refused` verdict are this entry's: every baseline line but
+  `q_present_local_var_ret`, and every CLEAN cell that writes a copy (`p_k1`, `p_h2`–`p_h7`,
+  `c_local_local`, `c_param_local`, …).  The sqldb fixtures' `cs = sq.db_select(sql);
+  out = RowsSqlite { rs: cs }` is one, rewritten as `out = RowsSqlite { rs: sq.db_select(sql) }`.
+- **Status:** OPEN — @PLN163 P2 (the refusal as a report, reworked to this rule), then P3 (the
+  error).
+- **Removal:** the refusal on every line that writes a copy, naming the copy and what to write
+  instead; the refused cells become refusal cells, and the corpus programs that write such a copy
+  are rewritten.
 
 ### D-heap-9 — OPEN (2026-09-15): `OpCopy` is not a hook
 
@@ -597,27 +619,34 @@ freed without its hook) opened and CLOSED 2026-09-10, below.
 - **Removal:** the signature check, the synthesized copy cascade, and a call at every copy site
   on both backends; the moved release removed wherever a copy leases.
 
-### D-heap-10 — OPEN (2026-09-15): a variable rebound to a `??` over itself releases its record before the read, and again
+### D-heap-11 — OPEN (2026-09-15): a view of a droppable member is turned into a copy when its container is disturbed
 
-- **Violates:** (H-Rebind-Self).
-- **Where:** not read off the IR yet.  The shape is the `??` lowering whose subject is the target
-  itself, next to the release the reassignment takes of the record it displaces
-  (`scopes::displaced_drop`).
-- **Effect:** `a: H? = mk(121); a = a ?? mk(122); println(a.id)` releases 121 before the read and
-  again at scope end, on both backends (gate cell `p_i2`).  `a = a` releases once (`p_i1`).
-- **Status:** OPEN.
-- **Removal:** a rebind whose value, on the path taken, is the target's own value displaces
-  nothing: no release on that path, and no lease handed off.
+- **Violates:** (H-View-Drop).
+- **Where:** `(B-View)`'s materialisation — a bind is given its own copy when its container is
+  disturbed while the view is still used (@PLN130 F2/F4/F8, reported through
+  `copy_manifest::note_materialised_view` and its siblings).
+- **Effect:** for a type that owns a droppable without `OpCopy`, the materialised copy is a second
+  structure on one resource, made by the compiler on a line the author did not write as a copy,
+  with only the advice that writes no longer reach the container.  No gate cell covers it yet.
+- **Status:** OPEN — @PLN163 P3.
+- **Removal:** no materialisation for such a view: the disturbance is a compile-time error naming
+  the view, the answer `(B-Ref-Reshape)` already gives a `&` reference.
 
-### D-heap-1 — OPEN (2026-09-05): a copy of a tuple member releases its resource twice
+### D-heap-10 — CLOSED (2026-09-15, reclassified): a variable rebound to a `??` over itself released its record before the read, and again
 
-**Reclassified 2026-09-15 by the copy-lease rules (@PLN163).**  Four of the five shapes below
-copy a value that is still used, so the rules now REFUSE them and they are `D-heap-8`'s: a
-parameter's member that escapes (the caller holds it), a copy off a loop variable (the vector's
-drop holds the element), a bound projection returned, and a `??`-guarded returned member (the
-tuple's own drop holds the member).  What stays open here is the tuple ASSIGNED TWICE (`p_o2`):
-`u = t` is a move, because the only later event on `t`'s value is the rebind, so each resource
-must be released once.  The rest of this entry records how the shapes were measured.
+Opened the same day against `(H-Rebind-Self)`, which said `a = a ?? d` makes no new structure.
+The revised rules judge a copy by its own line and have no such rule: `a = a ?? mk(122)` writes a
+copy of the existing `a`, so it is refused and belongs to `D-heap-8`.  Measured while open, on both
+backends: `a: H? = mk(121); a = a ?? mk(122); println(a.id)` released 121 before the read and again
+at scope end (gate cell `p_i2`), and `a = a` released once (`p_i1`).
+
+### D-heap-1 — CLOSED (2026-09-15, reclassified): a copy of a tuple member releases its resource twice
+
+**Reclassified 2026-09-15 by the copy-lease rules (@PLN163).**  Every shape below writes a copy of
+an existing value — a parameter's member that escapes, a copy off a loop variable, a bound
+projection returned, a `??`-guarded returned member, and the tuple assigned twice (`u = t`,
+`p_o2`) — so the rules refuse each, and they belong to `D-heap-8`.  The rest of this entry records
+how the shapes were measured.
 
 `(H-Drop)` runs the hook once per resource and moves the responsibility with a copy.  A
 tuple is a container like any other (`layout.md (L-Tuple)`), so `t = (s, 5); u = t` must
@@ -944,16 +973,14 @@ before a cure is chosen for any of them.
 
 ### D-heap-7 — OPEN (2026-09-14): the drop gate's first sweep — eight more families release wrongly, and silently
 
-**Reclassified 2026-09-15 by the copy-lease rules (@PLN163).**  Family 2 (a parameter copied out
-of its callee), family 4 (a projection copied into a container, closed below as a warning) and
-family 7's residual (`x = if c { a } else { p }`) copy a value the caller or the container still
-holds: the rules now REFUSE them, and they are `D-heap-8`'s.  Family 4's warning is the refusal's
-first form, not its closure.  `p_l2`, filed under family 1, copies a variable declared outside a
-loop inside it and is refused too.  What stays open here is family 1: a `??` or an `if` join over
-a local that dies at the copy, placed in a container, releases twice (`c_coalesce_{enum,field,
-push,veclit}`, `q_*_local_*_{field,push}`, `p_j3`, `p_j4`); and its default path loses a release
-(`q_default_local_call_local`, `q_present_local_var_ret`).  Each is a MOVE, which must release
-once.  The families below are the record of the sweep.
+**Reclassified 2026-09-15 by the copy-lease rules (@PLN163), which judge a copy by its own line.**
+Every family below that writes a copy of an existing value — a parameter copied out of its callee
+(family 2), a projection copied into a container (family 4, whose warning is the refusal's first
+form and not its closure), a join or `??` over a local placed anywhere (family 1), family 7's
+residual — is refused by the rules and belongs to `D-heap-8`.  One cell stays open here:
+`return a ?? b` over two locals (`q_present_local_var_ret`), which `(H-Move)` makes a move because
+a function's own variables end with it.  It loses a release on the path that returns `a`: `b` is
+never released.  The families below are the record of the sweep.
 
 `(H-Drop)` releases a resource once, at its owner's death, and moves the release with a copy.
 `tests/ownership_drop_gate.rs` generates 223 cells and scores the release itself (TESTING.md

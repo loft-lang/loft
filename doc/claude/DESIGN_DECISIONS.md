@@ -3848,16 +3848,28 @@ Declined:
 - **a static ownership fact** choosing the owner per copy — D-heap-1's resolver is given a
   variable where the answer belongs to an assignment, and the answer still surprises;
 - **a warning for the shapes inside a structure** — the program still compiles and still
-  releases twice.
+  releases twice;
+- **a move inferred from later use** — the first version of this decision, the same day.
+  `x = a; send(x)` compiled while `x = a; send(x); send(a)` failed at its FIRST line: a later
+  line decided what an earlier one meant, so correct and incorrect code looked the same to
+  anyone who does not know how the compiler reasons.  The owner ruled that out: people must not
+  have to know how loft interprets code to judge whether what they wrote is correct;
+- **a move out of a container that dies at the copy** (`c = open_session().conn`,
+  `return s.conn`) — sound, and statically supported for a call result, but it makes the same
+  pattern valid or invalid depending on whether the container is used again.
 
 ### Decision
 
-**2026-09-15, owner.**  `formal/heap.md` (H-Lease), (H-Move), (H-Copy-Lease), (H-Copy-Refuse),
-(H-Rebind-Self), (H-Elide).  A type with `OpDrop` and no `OpCopy` refuses a copy whose value is
-still used; `OpCopy` makes a second lease; a move hands the lease on.  A container member and a
-parameter are never moved, so `return s.h`, `c = Hold { h: s.h }`, `x = p` and `return p` are
-refused for a type without `OpCopy`.  Sharing a store stays an optimisation that may elide a
-copy together with its drop (C86).  loft is at contract 0 and no published package declares
+**2026-09-15, owner, revised the same day.**  `formal/heap.md` (H-Lease), (H-Move),
+(H-Copy-Lease), (H-Copy-Refuse), (H-View-Drop), (H-Elide).  A copy of a type with `OpDrop` and
+no `OpCopy` is refused on the line that writes it, whatever follows; `OpCopy` makes a second
+lease.  Only WRITTEN positions move a value: a fresh value placed where it is made, a `return`
+of what the function owns, a block yielding its own variable.  So `x = a`, `x = p`,
+`S { h: a }`, `return s.h` and `return p` are refused for a type without `OpCopy`, and a view of
+a droppable member never silently becomes a copy.  A droppable is a corner of the language with
+clean workarounds — build the value where it lives, pass it, borrow it — so the strict local
+rule costs little.  Sharing a store stays an optimisation that may elide a copy together with
+its drop (C86).  loft is at contract 0 and no published package declares
 `OpDrop`, so the refusal lands without a deprecation window (COMPATIBILITY.md § The error
 surface is one-directional).
 
