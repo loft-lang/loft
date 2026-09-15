@@ -514,6 +514,15 @@ fn function_name(param: type, other: type = default_value) -> return_type {
   compile-time check.
   - Every mutation THROUGH the parameter is an **error** — `p += …` (append), `p[i] = …`
     (element), `p.f = …` (field), and nested writes `p.a.b = …`. Reads are always allowed.
+  - A **view** of the value is read-only too: a loop variable over its elements
+    (`for e in p { e.x = 1 }`), an element or field bound to a local (`e = p[0]`, `q = p.inner`,
+    `e = &p[0]`), a loop over such a view, and `e#remove` in a loop over it are all errors that
+    name the view and the value it views. A COPY is the reader's own and stays writable: a
+    scalar or `text` read out (`n = e.x; n += 1`) and a whole-value bind (`v = p; v += […]`).
+    One over-approximation: a view local later rebound to a fresh value (`e = p[0]; e = T{…};
+    e.x = 1`) is still refused — the check follows the bind, not the flow.
+  - Passing the value (or a view of it) to a **`&` parameter** is an error: the callee may write
+    it. Passing it to a `const` parameter is always allowed.
   - Re-pointing the local slot — `p = other` — **is** allowed for a compound type (it
     rebinds the function's own copy of the borrow, not the caller's value). The same is
     true of a value-const **local**: `x: const vector<T> = …`.

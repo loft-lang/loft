@@ -75,6 +75,26 @@ impl Parser {
         if !self.const_write_blocked(nr, op) {
             return;
         }
+        self.report_const_write(nr);
+    }
+
+    /// The refusal of a write through `nr` that `const` forbids — the one wording both write
+    /// guards (`guard_const_write`, `validate_write`) report.
+    ///
+    /// A VIEW of a value-const value (loft#1540, `mark_const_view`) says so and names the value:
+    /// the author wrote `const` on that, not on the view, and "const variable 'f'" would point at
+    /// a declaration that does not exist.
+    pub(crate) fn report_const_write(&mut self, nr: u16) {
+        if let Some(place) = self.const_views.get(&(self.context, nr)).cloned() {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Cannot modify '{}': it is a view of {place}, whose value is read-only; remove \
+                 'const' there, or copy what you change into a local",
+                self.vars.written_name(nr)
+            );
+            return;
+        }
         // `const_report_var` — see loft#1250: a const text argument is promoted to a
         // `__tp_` local, and the promoted local is not marked an argument, so reporting
         // against it demotes "const parameter" to "const variable".

@@ -68,6 +68,22 @@ re-annotated to match.  No new keyword.
     spelling and leaves the common one open.  A direct write through the parameter is
     already refused (`Cannot modify const parameter 'a'`), which is what makes the hole
     invisible: the guarantee reads as enforced right up to the first call.
+  - **Built 2026-09-15 (loft#1540): rule 2 for views, and rule 4 for `&`.**  A view of a
+    value-const value — a loop variable over its elements, an index / field projection or `&`
+    link bound to a local, a loop over such a view, a read off a value-const FIELD — is marked
+    value-const at its bind (`Parser::mark_const_view`), so every existing write guard refuses a
+    write through it, `#remove` included, and the refusal names the view and the value.  A
+    value-const value or view handed to a `&` parameter is refused at the call.  Guards:
+    `tests/scripts/a-view-of-a-const-value-is-read-only.loft` (12 refusals) and
+    `…-leaves-its-copies-writable.loft` (the copies, whole-value binds and `const` hand-offs that
+    must stay legal).  Known over-approximation: the mark follows the BIND, not the flow, so a
+    view local rebound to a fresh value is still refused.
+  - **NOT built — the plain-parameter half, awaiting the owner.**  "Every argument position that
+    can be written" reads two ways, and they differ on real programs: by SIGNATURE (refuse a
+    `const` value handed to any non-`const` heap parameter, which also refuses read-only helpers
+    such as `len_of(v: vector<T>)`), or by BODY (refuse only where the callee writes that
+    parameter, `callee_param_writes` — which makes a call's legality depend on a body the caller
+    does not see, against C121's "judge a line by the line").
 
 ## First principle — two orthogonal facts, and loft already has one of them
 

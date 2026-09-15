@@ -1,0 +1,301 @@
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 2de06d783..f7c8c347a 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -2129,30 +2129,6 @@ use #count instead"
+                 *t = Type::Void;
+                 return;
+             }
+-            // loft#1540 — `#remove` deletes from the collection the loop walks, so over a
+-            // value-const value it is a write through a read-only name, as `ps.remove(i)` is.
+-            // Asked of the loop variable (a view the loop marked) and of the collection
+-            // variable itself, because a loop over scalars marks no view.
+-            if !self.first_pass {
+-                let coll = self.vars.loop_coll_var(index_var);
+-                let place = if let Some(p) = self.const_views.get(&(self.context, index_var)) {
+-                    Some(p.clone())
+-                } else if coll != u16::MAX && self.vars.exists(coll) {
+-                    self.const_view_place(&Value::Var(coll), true)
+-                } else {
+-                    None
+-                };
+-                if let Some(place) = place {
+-                    diagnostic!(
+-                        self.lexer,
+-                        Level::Error,
+-                        "Cannot remove with '{name}#remove': the loop walks {place}, whose \
+-                         value is read-only; remove 'const' there, or build a filtered copy"
+-                    );
+-                    *t = Type::Void;
+-                    return;
+-                }
+-            }
+             // C60 Step 9: reject #remove on a SNAPSHOT walk.  The parser substitutes such
+             // iteration with a scratch rec-nr vector (see parse_for, the
+             // `{id}#hash_scratch` variable), so #remove would remove from the snapshot and
+@@ -3326,8 +3302,6 @@ use #count instead"
+             let errors_before_iterable = self.lexer.diagnostics().error_count();
+             let (iter_var, pre_var, for_var, if_step, create_iter, iter_next) =
+                 self.parse_for_iter_setup(&id, &src_id, &in_type, expr);
+-            // loft#1540 — a loop variable over a value-const value's elements is a view of it.
+-            self.mark_const_view(for_var, &orig_coll_expr, true);
+             // loft#762 — `_` names THIS loop's binding while its body is parsed, and
+             // the outer one again afterwards, so a later `_ = call()` keeps its own
+             // slot instead of retyping the loop's.
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 947c9eb5c..83d5bf24d 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -205,16 +205,6 @@ fn lhs_base_var(v: &Value, data: &crate::parser::Data) -> u16 {
+     }
+ }
+ 
+-/// The right-hand side `code` binds to `dst`: the statement's own `Set(dst, rhs)`, found
+-/// through the `Insert` a lowering may wrap it in (the last `Set` to `dst` is the bind).
+-fn bound_rhs(code: &Value, dst: u16) -> Option<&Value> {
+-    match code.unspan() {
+-        Value::Set(v, rhs) if *v == dst => Some(rhs.as_ref()),
+-        Value::Insert(ops) => ops.iter().rev().find_map(|o| bound_rhs(o, dst)),
+-        _ => None,
+-    }
+-}
+-
+ /// The SUBJECT a NULL DISCHARGE was applied to — `e` in `e?`, `e ?? d`, `e ?? return` — when
+ /// `v` is one, and `None` when it is not.
+ ///
+@@ -2831,15 +2821,6 @@ use a separate collection or add after the loop"
+         let group_to = to.clone();
+         let already = std::mem::replace(&mut self.rebind_lowered, u16::MAX);
+         let tp = self.parse_assign_op_inner(code, op, f_type, to, parent_tp, var_nr, skip_validate);
+-        // loft#1540 — a whole-variable bind that VIEWS a value-const value makes the variable
+-        // read-only too (`mark_const_view`).
+-        if op == "="
+-            && let Value::Var(dst) = to.unspan()
+-            && let Some(rhs) = bound_rhs(code, *dst)
+-        {
+-            let (dst, rhs) = (*dst, rhs.clone());
+-            self.mark_const_view(dst, &rhs, false);
+-        }
+         self.rebind_local_heap_param(code, op, to, var_nr);
+         self.rebind_lowered = already;
+         self.group_reindex_after_vector_write(code, &group_to, &group_parent);
+@@ -8398,88 +8379,6 @@ use a separate collection or add after the loop"
+         true
+     }
+ 
+-    /// loft#1540 — mark `view` value-const when `source` READS it out of a value-const place,
+-    /// and record what that place is, for the refusal.
+-    ///
+-    /// `Const-Value` makes a value read-only through its name, and plan 40's coherence rule 2
+-    /// says how far that reaches: *"reading a field/element of a `const` value yields a `const`
+-    /// view, so immutability can't be laundered by extracting a part"*.  A view is exactly a
+-    /// bind the rules make an ALIAS: a projection (`p = ps[0]`, `q = w.p`, `(B-View)`), a `&`
+-    /// link (`(B-Ref-Alias)`), and a loop variable over the value's elements
+-    /// (`bare_var_views`).  A plain bind of a whole variable COPIES (`(B-Copy)`) and a call's
+-    /// result is moved or copied into the local (`(O-Move)`), so neither is a view of anything:
+-    /// `v2 = ps; v2 += […]` and `a = pick(ps, i); a.x = 1` stay legal.  Only a record or a
+-    /// collection can be a view; a scalar or a `text` read out of one is its own copy.
+-    ///
+-    /// Marking the VIEW is what makes this one change rather than one per write route: every
+-    /// guard that refuses a write through a value-const name (`validate_write`,
+-    /// `const_write_blocked`, the closure capture, `#remove`) now refuses it through the view.
+-    pub(crate) fn mark_const_view(&mut self, view: u16, source: &Value, bare_var_views: bool) {
+-        if view == u16::MAX
+-            || !self.vars.exists(view)
+-            || !matches!(
+-                self.vars.tp(view).peel_link().base(),
+-                Type::Reference(_, _)
+-                    | Type::Enum(_, true, _)
+-                    | Type::Vector(_, _)
+-                    | Type::Sorted(_, _, _)
+-                    | Type::Index(_, _, _)
+-                    | Type::Radix(_, _, _)
+-                    | Type::Trie(_, _, _)
+-                    | Type::Hash(_, _, _)
+-            )
+-        {
+-            return;
+-        }
+-        let Some(place) = self.const_view_place(source, bare_var_views) else {
+-            return;
+-        };
+-        self.vars.set_value_const(view);
+-        self.const_views.insert((self.context, view), place);
+-    }
+-
+-    /// The value-const place `source` reads out of, described for a refusal, or `None` when it
+-    /// reads none — see [`Self::mark_const_view`] for which shapes count.
+-    pub(crate) fn const_view_place(&self, source: &Value, bare_var_views: bool) -> Option<String> {
+-        let mut node = source.unspan();
+-        // The wrappers a right-hand side arrives in, and nothing else.
+-        loop {
+-            match node {
+-                Value::Insert(ops) if ops.len() == 1 => node = ops[0].unspan(),
+-                Value::Block(bl) if bl.operators.len() == 1 => node = bl.operators[0].unspan(),
+-                _ => break,
+-            }
+-        }
+-        let root = match node {
+-            Value::Var(v) if bare_var_views => Some(*v),
+-            Value::Call(d, args)
+-                if matches!(self.data.def(*d).name(), "OpCreateStack" | "OpVarRef") =>
+-            {
+-                match args.first().map(Value::unspan) {
+-                    Some(Value::Var(v)) => Some(*v),
+-                    _ => None,
+-                }
+-            }
+-            other => crate::use_analysis::view_source_place(&self.data, other).map(|(v, _)| v),
+-        };
+-        if let Some(root) = root
+-            && self.vars.exists(root)
+-            && self.vars.is_value_const(root)
+-        {
+-            if let Some(place) = self.const_views.get(&(self.context, root)) {
+-                return Some(place.clone());
+-            }
+-            let report = self.vars.const_report_var(root);
+-            return Some(format!(
+-                "{} '{}'",
+-                self.const_noun(report),
+-                self.vars.written_name(report)
+-            ));
+-        }
+-        self.frozen_through(node, true)
+-            .map(|field| format!("value-const field '{field}'"))
+-    }
+-
+     /// Reject a write that a `const` binding forbids, for a COMPONENT target.
+     ///
+     /// Enforces @FR-Const-Value where the mutation is *through* a name rather than *to*
+@@ -8500,7 +8399,15 @@ use a separate collection or add after the loop"
+         if !self.first_pass {
+             let base = lhs_base_var(to, &self.data);
+             if base != u16::MAX && self.vars.is_value_const(base) {
+-                self.report_const_write(base);
++                // `const_report_var` — see loft#1250.
++                let report = self.vars.const_report_var(base);
++                diagnostic!(
++                    self.lexer,
++                    Level::Error,
++                    "Cannot modify {} '{}'; remove 'const' or use a local copy",
++                    self.const_noun(report),
++                    self.vars.name(report)
++                );
+             } else if let Some(frozen) = self.lhs_frozen_through(to) {
+                 // @PLN40 Phase 2 — the write DEREFERENCES THROUGH a value-const field
+                 // (`s.v[i]=`, `s.v.x=`, deeper): its value is read-only at every depth.
+@@ -8631,14 +8538,6 @@ use a separate collection or add after the loop"
+     /// mirrors the leaf block's `parent_tp`→`known_type`→`Parts::Struct` field lookup,
+     /// but applied at every node so an inner field's `value_const` is reachable.
+     fn lhs_frozen_through(&self, to: &Value) -> Option<String> {
+-        self.frozen_through(to, false)
+-    }
+-
+-    /// [`Self::lhs_frozen_through`], with `include_leaf` also counting the OUTERMOST field.  A
+-    /// READ of `w.ps` where the field `ps` is value-const hands out that field's value, so a
+-    /// view bound from it is read-only (loft#1540); a WRITE to `w.ps` itself is the slot's own
+-    /// rebind or append, which the leaf-field block in `validate_write` decides.
+-    fn frozen_through(&self, to: &Value, include_leaf: bool) -> Option<String> {
+         if self.first_pass {
+             return None;
+         }
+@@ -8687,7 +8586,7 @@ use a separate collection or add after the loop"
+                     };
+                     let f_nr = fields.iter().position(|f| f.position == *pos as u16)?;
+                     let attr = &self.data.def(d_nr).attributes()[f_nr];
+-                    if (include_leaf || !is_leaf) && attr.value_const {
++                    if !is_leaf && attr.value_const {
+                         return Some(format!("{}.{}", self.data.def(d_nr).name(), attr.name));
+                     }
+                     cur_type = attr.typedef.clone();
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 8c017ca4b..18a326195 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -1121,13 +1121,6 @@ pub struct Parser {
+     /// Pushed on entry to the proven branch, truncated to the saved length on exit; a
+     /// reassignment of `v` inside the branch removes it (the proof no longer holds).
+     pub(crate) narrowed_non_null: Vec<u16>,
+-    /// loft#1540 — the VIEWS of a value-const value, keyed by `(context, view variable)`, each
+-    /// with a description of the value-const place it reads out of (`Const-Value`; plan 40's
+-    /// coherence rule 2: *"reading a field/element of a `const` value yields a `const` view"*).
+-    /// The view is marked value-const itself, so every write guard refuses a write through it
+-    /// unchanged; this record is only what the refusal SAYS, because the author never wrote
+-    /// `const` on the view.
+-    pub(crate) const_views: std::collections::HashMap<(u32, u16), String>,
+     /// The same proof for a PROJECTION rather than a name — `if !db.map[k] { … } else { … }`
+     /// proves `db.map[k]` non-null in the else arm, and nothing named it before.
+     ///
+@@ -1544,7 +1537,6 @@ impl Parser {
+             field_read_counts: std::collections::HashMap::new(),
+             defended_field_reads: std::collections::HashSet::new(),
+             narrowed_non_null: Vec::new(),
+-            const_views: std::collections::HashMap::new(),
+             narrowed_non_null_exprs: Vec::new(),
+             divisor_nonzero: Vec::new(),
+             math_sign_proven: Vec::new(),
+@@ -12803,32 +12795,6 @@ impl Parser {
+             if amp_rebind_arg != u16::MAX {
+                 self.ensure_rebind_witness(amp_rebind_arg);
+             }
+-            // loft#1540 — plan 40's rule 4: a value-const value may be handed to a `const`
+-            // parameter and not to a `&` one, whose whole purpose is to write the caller's
+-            // value.  Asked of whole variables (`set(ps)`), projections (`set(ps[0])`) and views
+-            // (`for f in ps { set(f) }`) alike, through the one place that describes them.
+-            if report
+-                && !self.first_pass
+-                && matches!(tp, Type::RefVar(_))
+-                && !self.data.def(d_nr).variables.is_value_const(nr as u16)
+-                && let Some(place) = self.const_view_place(&actual_code, true)
+-            {
+-                // A view names itself and what it views: the author passed `f`, not `ps`.
+-                let what = match actual_code.unspan() {
+-                    Value::Var(v) if self.const_views.contains_key(&(self.context, *v)) => {
+-                        format!("'{}', a view of {place},", self.vars.written_name(*v))
+-                    }
+-                    _ => place,
+-                };
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "Cannot pass {what} to the `&` parameter {} of `{callee_name}`, which may \
+-                     modify it; its value is read-only — pass a local copy, or make the \
+-                     parameter `const` if `{callee_name}` only reads it",
+-                    nr + 1
+-                );
+-            }
+             // @FR-N-Store — the parameter is a slot when this binding is REPORTED and the callee
+             // is not null-transparent; an overload TRIAL (`!report`) and a null-transparent
+             // callee (`abs(x)` propagates the null through a runtime guard) only test the fit.
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index 97fdbf95c..3157193d1 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -75,26 +75,6 @@ impl Parser {
+         if !self.const_write_blocked(nr, op) {
+             return;
+         }
+-        self.report_const_write(nr);
+-    }
+-
+-    /// The refusal of a write through `nr` that `const` forbids — the one wording both write
+-    /// guards (`guard_const_write`, `validate_write`) report.
+-    ///
+-    /// A VIEW of a value-const value (loft#1540, `mark_const_view`) says so and names the value:
+-    /// the author wrote `const` on that, not on the view, and "const variable 'f'" would point at
+-    /// a declaration that does not exist.
+-    pub(crate) fn report_const_write(&mut self, nr: u16) {
+-        if let Some(place) = self.const_views.get(&(self.context, nr)).cloned() {
+-            diagnostic!(
+-                self.lexer,
+-                Level::Error,
+-                "Cannot modify '{}': it is a view of {place}, whose value is read-only; remove \
+-                 'const' there, or copy what you change into a local",
+-                self.vars.written_name(nr)
+-            );
+-            return;
+-        }
+         // `const_report_var` — see loft#1250: a const text argument is promoted to a
+         // `__tp_` local, and the promoted local is not marked an argument, so reporting
+         // against it demotes "const parameter" to "const variable".

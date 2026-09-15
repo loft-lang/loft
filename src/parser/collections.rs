@@ -2129,6 +2129,30 @@ use #count instead"
                 *t = Type::Void;
                 return;
             }
+            // loft#1540 — `#remove` deletes from the collection the loop walks, so over a
+            // value-const value it is a write through a read-only name, as `ps.remove(i)` is.
+            // Asked of the loop variable (a view the loop marked) and of the collection
+            // variable itself, because a loop over scalars marks no view.
+            if !self.first_pass {
+                let coll = self.vars.loop_coll_var(index_var);
+                let place = if let Some(p) = self.const_views.get(&(self.context, index_var)) {
+                    Some(p.clone())
+                } else if coll != u16::MAX && self.vars.exists(coll) {
+                    self.const_view_place(&Value::Var(coll), true)
+                } else {
+                    None
+                };
+                if let Some(place) = place {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot remove with '{name}#remove': the loop walks {place}, whose \
+                         value is read-only; remove 'const' there, or build a filtered copy"
+                    );
+                    *t = Type::Void;
+                    return;
+                }
+            }
             // C60 Step 9: reject #remove on a SNAPSHOT walk.  The parser substitutes such
             // iteration with a scratch rec-nr vector (see parse_for, the
             // `{id}#hash_scratch` variable), so #remove would remove from the snapshot and
@@ -3302,6 +3326,8 @@ use #count instead"
             let errors_before_iterable = self.lexer.diagnostics().error_count();
             let (iter_var, pre_var, for_var, if_step, create_iter, iter_next) =
                 self.parse_for_iter_setup(&id, &src_id, &in_type, expr);
+            // loft#1540 — a loop variable over a value-const value's elements is a view of it.
+            self.mark_const_view(for_var, &orig_coll_expr, true);
             // loft#762 — `_` names THIS loop's binding while its body is parsed, and
             // the outer one again afterwards, so a later `_ = call()` keeps its own
             // slot instead of retyping the loop's.

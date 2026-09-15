@@ -1121,6 +1121,13 @@ pub struct Parser {
     /// Pushed on entry to the proven branch, truncated to the saved length on exit; a
     /// reassignment of `v` inside the branch removes it (the proof no longer holds).
     pub(crate) narrowed_non_null: Vec<u16>,
+    /// loft#1540 — the VIEWS of a value-const value, keyed by `(context, view variable)`, each
+    /// with a description of the value-const place it reads out of (`Const-Value`; plan 40's
+    /// coherence rule 2: *"reading a field/element of a `const` value yields a `const` view"*).
+    /// The view is marked value-const itself, so every write guard refuses a write through it
+    /// unchanged; this record is only what the refusal SAYS, because the author never wrote
+    /// `const` on the view.
+    pub(crate) const_views: std::collections::HashMap<(u32, u16), String>,
     /// The same proof for a PROJECTION rather than a name — `if !db.map[k] { … } else { … }`
     /// proves `db.map[k]` non-null in the else arm, and nothing named it before.
     ///
@@ -1537,6 +1544,7 @@ impl Parser {
             field_read_counts: std::collections::HashMap::new(),
             defended_field_reads: std::collections::HashSet::new(),
             narrowed_non_null: Vec::new(),
+            const_views: std::collections::HashMap::new(),
             narrowed_non_null_exprs: Vec::new(),
             divisor_nonzero: Vec::new(),
             math_sign_proven: Vec::new(),
@@ -12794,6 +12802,34 @@ impl Parser {
             }
             if amp_rebind_arg != u16::MAX {
                 self.ensure_rebind_witness(amp_rebind_arg);
+            }
+            // loft#1540 — plan 40's rule 4: a value-const value may be handed to a `const`
+            // parameter and not to a `&` one, whose whole purpose is to write the caller's
+            // value.  Asked of whole variables (`set(ps)`), projections (`set(ps[0])`) and views
+            // (`for f in ps { set(f) }`) alike, through the one place that describes them.
+            // `@FR-N-Shape` — "is this parameter a `&` link" is a shape question, and a `&τ?`
+            // parameter links exactly as its dense twin does, so it is asked through `base()`.
+            if report
+                && !self.first_pass
+                && matches!(tp.base(), Type::RefVar(_))
+                && !self.data.def(d_nr).variables.is_value_const(nr as u16)
+                && let Some(place) = self.const_view_place(&actual_code, true)
+            {
+                // A view names itself and what it views: the author passed `f`, not `ps`.
+                let what = match actual_code.unspan() {
+                    Value::Var(v) if self.const_views.contains_key(&(self.context, *v)) => {
+                        format!("'{}', a view of {place},", self.vars.written_name(*v))
+                    }
+                    _ => place,
+                };
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Cannot pass {what} to the `&` parameter {} of `{callee_name}`, which may \
+                     modify it; its value is read-only — pass a local copy, or make the \
+                     parameter `const` if `{callee_name}` only reads it",
+                    nr + 1
+                );
             }
             // @FR-N-Store — the parameter is a slot when this binding is REPORTED and the callee
             // is not null-transparent; an overload TRIAL (`!report`) and a null-transparent

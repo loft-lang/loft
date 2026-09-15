@@ -480,7 +480,12 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 502 | 479 | **23** |
+| 504 | 481 | **23** |
+
+(2026-09-15, loft#1540: 504 · 481 · 23 — measured as a delta against 502 · 479 · 23; the change adds
+two functions that discriminate on `Value` variants, and both peel: `Parser::const_view_place`,
+which reads a bind's right-hand side through its `Span` and its one-operator `Insert` / `Block`
+wrapper, and `expressions::bound_rhs`, which finds a statement's `Set` through an `Insert`.)
 
 (2026-09-15, @PLN163's copy-lease census and verdicts: 501 · 478 · 23, measured commit by commit.
 The census in `use_analysis::drop_copy_census` added two peeling sites; `src/lease.rs` six, five
@@ -2595,7 +2600,15 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 824 | 483 | 6 | **335** |
+| 825 | 485 | 6 | **334** |
+
+(2026-09-15, loft#1540: 825 · 485 · 6 · 334 — measured against 824 · 483 · 6 · 335.  The change adds
+one function that discriminates on a `Type` variant, `Parser::mark_const_view`, and it sees through
+the wrapper (`peel_link().base()`): only a record or a collection can be a view.  Its call-site `&`
+gate asked `matches!(tp, Type::RefVar(_))` bare at first, which grew the ratchet's opaque tests to
+1317; asked through `base()`, as "is this parameter a `&` link" is a shape question, the argument
+loop's function reads as seeing through, the opaque column falls to 334 and the ratchet is re-pinned
+at 334 / 1316.)
 
 (2026-09-15, THE JOINED TREE — this branch through @PLN162's close, ../loft2's @PLN163 through
 P2r, and @PLN157 / @PLN164 through B1: 824 · 483 · 6 · 335, re-measured rather than carried; the

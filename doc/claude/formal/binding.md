@@ -308,6 +308,13 @@ source: [../plans/40-const-fields/const-model.md](../plans/40-const-fields/const
                           While the resolver stopped at the discharge and answered
                           "no binding at all" this went unenforced and a `const`
                           parameter was mutated in silence (loft#1211).
+                          "Through this name" includes every VIEW of the value —
+                          a loop variable over its elements, an element or field
+                          bound to a local, a `&` link — because a view names the
+                          same place (`B-View`); a COPY out of it (`B-Copy`, a
+                          scalar or `text` read) is the reader's own.  And the value
+                          may not be handed to a `&` parameter, whose callee writes
+                          it (D-bind-44; the plain-parameter half is D-bind-45).
   (Const-ScalarCollapse)  a by-value SCALAR (`integer` / `float` / `single` /
                           `boolean` / `character`) has no interior distinct from its
                           binding, so it freezes FULLY under EITHER axis:
@@ -374,8 +381,35 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 2.**
+**OPEN: 3.**
 
+* **D-bind-45** *(opened 2026-09-15, OPEN — the owner's decision)* — `(Const-Value)` for a value-const
+  value handed to a PLAIN heap parameter the callee writes: `fn setv(p: P) { p.x = 7; }` called as
+  `setv(ps[0])`, or `for f in ps { setv(f) }`, or `g(ps)` with `fn g(v: vector<P>) { v += […] }`, writes
+  the caller's `const` value on both backends with no diagnostic, because a plain struct or vector
+  parameter names the caller's record (`calls.md` F-ParamHeap).  D-bind-44 closed the `&` spelling; this
+  is the common one plan 40's scope correction names.  **Open because the rules do not say which of two
+  readings holds:** refuse by SIGNATURE (a value-const value may reach only a `const` heap parameter —
+  local to the call, and also refuses read-only helpers such as `len_of(v: vector<T>)`), or refuse by
+  BODY (only where the callee writes the parameter, `callee_param_writes` — keeps readers legal, and
+  makes a call's legality depend on a body the caller does not see).  loft#1540.
+* **D-bind-44** *(opened 2026-09-15, CLOSED 2026-09-15)* — `(Const-Value)` through a VIEW: a value-const
+  value was written, in silence and on both backends, through a loop variable over its elements
+  (`for f in ps { f.x = 5 }`), an element or field bound to a local (`p = ps[0]`, `q = w.p`,
+  `r = &ps[0]`), a loop over such a view, a loop over a value-const FIELD, and `f#remove`; and it could
+  be handed to a `&` parameter, whose callee wrote it.  `ps[0].x = 5` was refused, which made the rest
+  look enforced.  **Where (measured).**  The guards resolve a write to its ROOT variable and ask that
+  variable's flag; a view is a variable of its own, bound by a projection, and nothing gave it the flag.
+  **Closed** by marking the view at its bind (`Parser::mark_const_view`): a projection, a `&` link or a
+  loop over a value-const value — the binds `(B-View)` and `(B-Ref-Alias)` make aliases — gives the view
+  the value's read-only flag, so every existing guard refuses a write through it, and the refusal names
+  the view and what it views.  A bare-variable bind (`(B-Copy)`) and a call's result (`(O-Move)`) are
+  not views and stay writable, as does a scalar or `text` copied out.  A value-const value or view
+  handed to a `&` parameter is refused at the call (plan 40 rule 4).  Measured on both backends over
+  25 cells, and by `--check` over 8566 `.loft` files (this repository and the consumer checkouts):
+  no file gained or lost a refusal, 461 of them never reaching pass 2; one over-approximation remains — the mark follows the bind, so a view local rebound to a
+  fresh value is still refused.  Guards `tests/scripts/a-view-of-a-const-value-is-read-only.loft` and
+  `…-leaves-its-copies-writable.loft`.  loft#1540.
 * **D-bind-43** *(opened 2026-09-14, CLOSED 2026-09-15)* — `(B-Ref-Write)` for a VECTOR written through a
   local `&` link from a named vector: `a: vector<integer> = [1]; n: vector<integer> = [7, 8]; c = &n; c = a`
   must make `n` a copy of `a`, and left `n` at `[7, 8]` on both backends while `c` read a copy of `a` — the

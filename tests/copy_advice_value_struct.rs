@@ -174,7 +174,11 @@ fn assert_written_loop_names(backend: &str) {
     let path = dir.join("shadowed_loops.loft");
     std::fs::write(&path, SHADOWED_LOOPS).expect("write program");
     let (stdout, diag, code) = run(backend, &path);
-    assert_eq!(code, Some(0), "[{backend}] the program must run\n{stdout}\n---\n{diag}");
+    assert_eq!(
+        code,
+        Some(0),
+        "[{backend}] the program must run\n{stdout}\n---\n{diag}"
+    );
     assert!(
         stdout.contains("2 3 6 2 30"),
         "[{backend}] the program must answer its values\n{stdout}"
