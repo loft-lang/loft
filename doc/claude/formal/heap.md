@@ -552,15 +552,16 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **4** — `D-heap-8`, `D-heap-9` and `D-heap-11`, below, are the copy-lease rules
+OPEN: **3** — `D-heap-8`, `D-heap-9` and `D-heap-11`, below, are the copy-lease rules
 (H-Copy-Refuse, H-Copy-Lease, H-View-Drop), written 2026-09-15 before their implementation
-(@PLN163), and `D-heap-7` keeps the one cell those rules still require to release once.  The rules
-were revised the same day to judge a copy by its own line (§ Drop, *Why the verdict is read off the
-line*), which reclassified the older entries: every shape of `D-heap-1` and `D-heap-7` that writes a
-copy of an existing value belongs to `D-heap-8`, so `D-heap-1` and `D-heap-10` are CLOSED as
-reclassified, and `D-heap-7` keeps `return a ?? b` over two locals.
+(@PLN163).  The rules were revised the same day to judge a copy by its own line (§ Drop, *Why the
+verdict is read off the line*), which reclassified the older entries: every shape of `D-heap-1` and
+`D-heap-7` that writes a copy of an existing value belongs to `D-heap-8`, so `D-heap-1` and
+`D-heap-10` are CLOSED as reclassified.  `D-heap-7` kept `return a ?? b` over two locals, the one
+cell those rules still required to release once, and CLOSED 2026-09-15 with the two neighbours
+measuring it found (§ D-heap-7).
 `tests/ownership_drop_gate.rs` gives every generated cell a lease verdict and ties each cell that
-must release once, and does not, to exactly one open entry.
+must release once, and does not, to exactly one open entry — none, since that close.
 `D-heap-LIFO`
 CLOSED 2026-09-12 by rewriting the rules to how the mechanism functions.  The count read **1** while `D-heap-LIFO` was
 already written and marked OPEN in the rules section — an `OPEN: n` is a claim to re-measure,
@@ -971,16 +972,47 @@ variable where the answer belongs to an ASSIGNMENT — and want the design call 
 before a cure is chosen for any of them.
 
 
-### D-heap-7 — OPEN (2026-09-14): the drop gate's first sweep — eight more families release wrongly, and silently
+### D-heap-7 — CLOSED (2026-09-15): the drop gate's first sweep — eight more families release wrongly, and silently
 
 **Reclassified 2026-09-15 by the copy-lease rules (@PLN163), which judge a copy by its own line.**
 Every family below that writes a copy of an existing value — a parameter copied out of its callee
 (family 2), a projection copied into a container (family 4, whose warning is the refusal's first
 form and not its closure), a join or `??` over a local placed anywhere (family 1), family 7's
-residual — is refused by the rules and belongs to `D-heap-8`.  One cell stays open here:
+residual — is refused by the rules and belongs to `D-heap-8`.  One cell stayed open here:
 `return a ?? b` over two locals (`q_present_local_var_ret`), which `(H-Move)` makes a move because
-a function's own variables end with it.  It loses a release on the path that returns `a`: `b` is
+a function's own variables end with it.  It lost a release on the path that returns `a`: `b` was
 never released.  The families below are the record of the sweep.
+
+**CLOSED 2026-09-15 — and the cell was one of three mechanisms, all silent, identical on both
+backends.**  The matrix varied the return's SHAPE (a `??`, an `if`, a `match`, a nested `if`, an
+arm that is a call, an arm that reads the local, separate `return` statements), which local is
+handed out, and whether the returned local is reassigned first — each cell's trace computed by hand
+before it ran.  The filed scope was the first row of the first mechanism:
+
+1. **A join over locals released the local it did not return with no hook.**  Its sources are kept
+   out of the scope-exit sweep as return sources, and the join leg frees each at run time with
+   `OpFreeRefIfDistinct(src, __ret_N)`, which ran no hook — `return if c { a } else { b }`, a
+   `match`, a nested `if` and `return if c { a } else { mk() }` lost it the same way.  The hook now
+   rides that leg, guarded by `OpDistinctStore` on the same pair, so the release and the free cannot
+   disagree about the path, and it runs after the value is computed.  (Moving the hooks INTO the
+   arms, as loft#1515 does for a copied join, was built first and measured wrong: it released the
+   local before a call arm that reads it — `mk(a.id + 2)` saw a released `a`.)
+2. **A later `return b` released `b` twice.**  When an earlier `return a` had renamed `a` onto the
+   return buffer, `return b` copies `b` onto it, and `b` kept its own hook besides the one the copy
+   carries to the caller.  `return_copies_whole_local` is `return_copy_out`'s whole-record twin: the
+   copy owns, the source's hook is skipped at that return.
+3. **The promoted local's own record was displaced with no release.**  The renamed local is an
+   ARGUMENT by slot, and `displaced_drop` refused every argument, so `a = mk(1); a = mk(5); return
+   a` — in a branch or a loop too — never released the first, and the sibling return's re-mint of
+   the buffer (`OpDatabase`) discarded `a`'s record the same way.  The refusal now asks
+   `is_promoted_ret_buffer`: this frame minted what that slot holds.  The re-mint takes the same
+   null-safe snapshot, so a path that never assigned the local releases nothing — measured with the
+   result reassigned into a reused caller buffer, where a release would be the caller's record twice.
+
+The drop gate moved exactly one cell (`q_present_local_var_ret` LOST → clean, both backends), and
+nothing else among its 276.  Guard:
+`tests/scripts/a-return-that-hands-out-one-local-releases-the-others-once.loft` (29 assertions,
+three of them controls that were right before and must stay right).
 
 `(H-Drop)` releases a resource once, at its owner's death, and moves the release with a copy.
 `tests/ownership_drop_gate.rs` generates 223 cells and scores the release itself (TESTING.md

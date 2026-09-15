@@ -480,12 +480,20 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 504 | 481 | **23** |
+| 506 | 483 | **23** |
 
 (2026-09-15, loft#1540: 504 · 481 · 23 — measured as a delta against 502 · 479 · 23; the change adds
 two functions that discriminate on `Value` variants, and both peel: `Parser::const_view_place`,
 which reads a bind's right-hand side through its `Span` and its one-operator `Insert` / `Block`
 wrapper, and `expressions::bound_rhs`, which finds a statement's `Set` through an `Insert`.)
+
+(2026-09-15, D-heap-7's close: 503 · 480 · 23 — `return_copies_whole_local` and
+`scopes::return_tail` discriminate on a return's shape and both peel.)
+
+(2026-09-16, the join: loft#1540's two sites and D-heap-7's two were measured on separate trees —
+504 · 481 · 23 and 503 · 480 · 23, each a delta against 502 · 479 · 23 — so neither pin is right on
+the union.  Re-measured here: **506 · 483 · 23**, the four new peeling sites over that common base.
+A clean textual merge would have kept one branch's number over both branches' code.)
 
 (2026-09-15, @PLN163's copy-lease census and verdicts: 501 · 478 · 23, measured commit by commit.
 The census in `use_analysis::drop_copy_census` added two peeling sites; `src/lease.rs` six, five
