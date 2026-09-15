@@ -1693,6 +1693,45 @@ fn the_release_records_the_build_id_the_verifier_replays() {
     );
 }
 
+/// @PLN78 step 7 — the release RECORDS the platform C toolchain, and the verifier compares its
+/// own against that record before calling a difference the source's.
+///
+/// `ring` compiles C through the `cc` crate with the build host's compiler (`cl.exe`, Apple
+/// clang, `musl-gcc`).  Measured on one Windows runner with one source, rustc and root, two
+/// MSVC toolsets linked different `.text`, `.rdata` and `.pdata` — so a weekly rebuild on a
+/// newer runner image compared against a binary made by a compiler it did not have, and
+/// reported "not reproducible".  The contract spans three files like the build-id one above:
+/// one helper answers the question, the writer records it, the verifier reads it back and asks
+/// the same helper.  A rename in any one would turn every such difference back into a false
+/// "not reproducible", so all ends are pinned here.
+#[test]
+fn the_release_records_the_c_toolchain_the_verifier_compares() {
+    let mk = std::fs::read_to_string("scripts/make-release.sh").expect("read make-release.sh");
+    let vf = std::fs::read_to_string("scripts/repro-verify.sh").expect("read repro-verify.sh");
+    let tc =
+        std::fs::read_to_string("scripts/repro-toolchain.sh").expect("read repro-toolchain.sh");
+
+    assert!(
+        tc.contains("repro_c_toolchain() {"),
+        "scripts/repro-toolchain.sh must define `repro_c_toolchain`, the one answer both scripts ask"
+    );
+    for (name, src) in [("make-release.sh", &mk), ("repro-verify.sh", &vf)] {
+        assert!(
+            src.contains("/repro-toolchain.sh\""),
+            "{name} must source scripts/repro-toolchain.sh — a copied probe drifts from the \
+             one the other script asks"
+        );
+    }
+    assert!(
+        mk.contains("echo \"c-toolchain = $(repro_c_toolchain \"$TRIPLE\")\""),
+        "make-release.sh must record the platform C toolchain in BUILD-INFO"
+    );
+    assert!(
+        vf.contains("^c-toolchain = ") && vf.contains("repro_c_toolchain \"$TARGET\""),
+        "repro-verify.sh must read `c-toolchain` back out of BUILD-INFO and compare its own"
+    );
+}
+
 /// @PLN78 step 7 — every triple we PUBLISH must also be rebuilt from source.
 ///
 /// The two lists drift in one direction that is silent: adding a target to `release.yml`
