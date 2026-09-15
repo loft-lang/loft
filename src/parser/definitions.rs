@@ -1482,6 +1482,35 @@ impl Parser {
                 return Some("panic".to_string());
             }
         }
+        // A keyword where the name belongs.  Say which word and why it is taken, then go on
+        // parsing the definition under a name no call can spell (`#` cannot occur in a loft
+        // identifier), so this one error stands alone instead of a second "unexpected"
+        // report against a definition that is otherwise well formed.
+        // The message does not describe what the word does today: `assert`, `panic`, `sizeof`
+        // and `debug_assert` are reserved so the language can give them more meaning later, and
+        // an error that spelled out the current one would read as a promise not to.
+        if let crate::lexer::LexItem::Token(word) = self.lexer.peek().has
+            && crate::lexer::is_keyword(&word)
+        {
+            if matches!(
+                word.as_str(),
+                "assert" | "panic" | "sizeof" | "debug_assert"
+            ) {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{word}` is reserved: the language gives it a meaning of its own, now and in later versions, so a program cannot define a function by that name; choose another name"
+                );
+            } else {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{word}` is a keyword and cannot name a function; choose another name"
+                );
+            }
+            self.lexer.cont();
+            return Some(format!("{word}#reserved"));
+        }
         diagnostic!(
             self.lexer,
             Level::Error,

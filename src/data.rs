@@ -7280,6 +7280,28 @@ impl Data {
         self.definitions[main as usize].attributes[a_nr].constant = true;
     }
 
+    /// The refusal of a definition whose name `winner` already holds.  A program's function
+    /// under a standard-library FREE function's name (`n_…`) says so — that name is reserved for
+    /// the standard library, whatever the parameters — rather than reading as a duplicate of the
+    /// program's own.  Every other collision keeps naming where the first definition is
+    /// (loft#863), a standard-library METHOD set among them: C95 refuses a free function there
+    /// only for the method's own first-parameter type, so "reserved whatever the parameters"
+    /// would be false for it.
+    fn redefinition_text(&self, lexer: &Lexer, winner: u32, fn_name: &str) -> String {
+        let name = fn_name.strip_prefix("n_").unwrap_or(fn_name);
+        let at = &self.def(winner).position;
+        if self.def(winner).name.starts_with("n_")
+            && crate::portable_path::is_stdlib_source(&at.file)
+            && !crate::portable_path::is_stdlib_source(&lexer.pos().file)
+        {
+            format!(
+                "`{name}` is a standard-library function, and its name is reserved for it: a program cannot define its own `{name}` (the standard library's is at {at}); choose another name"
+            )
+        } else {
+            format!("Cannot redefine '{name}' (already defined at {at})")
+        }
+    }
+
     /// One overload as a reader sees it, `name(τ₁, τ₂)` over its declared parameters — the
     /// ONE rendering both call spellings' diagnostics use.
     #[must_use]
@@ -7541,13 +7563,8 @@ impl Data {
         if o_nr != u32::MAX
             && (self.def(o_nr).def_type != DefType::Dynamic || shadows_a_method || carried_spelling)
         {
-            diagnostic!(
-                lexer,
-                Level::Error,
-                "Cannot redefine '{}' (already defined at {})",
-                fn_name.strip_prefix("n_").unwrap_or(fn_name),
-                self.def(o_nr).position
-            );
+            let text = self.redefinition_text(lexer, o_nr, fn_name);
+            diagnostic!(lexer, Level::Error, "{text}");
         }
         // loft#940 — the C97 residual on the FREE-function side, and the only silent corner of
         // the three. `find_fn` resolves the METHOD spelling `t_<sig>_<name>` before the free
@@ -7677,13 +7694,8 @@ impl Data {
             // Without it a stdlib collision read as a bare "Cannot redefine 'sum'", which
             // does not say that `sum` is the stdlib's rather than a duplicate of the
             // reader's own (loft#863).
-            diagnostic!(
-                lexer,
-                Level::Error,
-                "Cannot redefine '{}' (already defined at {})",
-                fn_name.strip_prefix("n_").unwrap_or(fn_name),
-                self.def(d_nr).position
-            );
+            let text = self.redefinition_text(lexer, d_nr, fn_name);
+            diagnostic!(lexer, Level::Error, "{text}");
             // Report and CONTINUE, under a name nothing can reach.  Answering `u32::MAX`
             // here made `parse_function` return `false` — "this was not a function" —
             // with the lexer parked between the parameter list and the `->`, so the

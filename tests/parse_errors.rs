@@ -1382,11 +1382,14 @@ fn test() {
     );
 }
 
+// The four words the language reserves say so, ONCE: the definition then parses under a name no
+// call can spell, so the second "Syntax error: unexpected 'sizeof'" these used to pin is gone.
+// The message does not describe today's meaning, which the language may extend.
+
 #[test]
 fn keyword_sizeof_as_fn() {
     code!("fn sizeof() {}\nfn test() {}")
-        .error("Expect name in function definition at keyword_sizeof_as_fn:1:10")
-        .error("Syntax error: unexpected 'sizeof' at keyword_sizeof_as_fn:1:10");
+        .error("`sizeof` is reserved: the language gives it a meaning of its own, now and in later versions, so a program cannot define a function by that name; choose another name at keyword_sizeof_as_fn:1:10");
 }
 
 // A10: `fields` is no longer a keyword — it can be used as a function name.
@@ -1394,22 +1397,19 @@ fn keyword_sizeof_as_fn() {
 #[test]
 fn keyword_debug_assert_as_fn() {
     code!("fn debug_assert() {}\nfn test() {}")
-        .error("Expect name in function definition at keyword_debug_assert_as_fn:1:16")
-        .error("Syntax error: unexpected 'debug_assert' at keyword_debug_assert_as_fn:1:16");
+        .error("`debug_assert` is reserved: the language gives it a meaning of its own, now and in later versions, so a program cannot define a function by that name; choose another name at keyword_debug_assert_as_fn:1:16");
 }
 
 #[test]
 fn keyword_assert_as_fn() {
     code!("fn assert() {}\nfn test() {}")
-        .error("Expect name in function definition at keyword_assert_as_fn:1:10")
-        .error("Syntax error: unexpected 'assert' at keyword_assert_as_fn:1:10");
+        .error("`assert` is reserved: the language gives it a meaning of its own, now and in later versions, so a program cannot define a function by that name; choose another name at keyword_assert_as_fn:1:10");
 }
 
 #[test]
 fn keyword_panic_as_fn() {
     code!("fn panic() {}\nfn test() {}")
-        .error("Expect name in function definition at keyword_panic_as_fn:1:9")
-        .error("Syntax error: unexpected 'panic' at keyword_panic_as_fn:1:9");
+        .error("`panic` is reserved: the language gives it a meaning of its own, now and in later versions, so a program cannot define a function by that name; choose another name at keyword_panic_as_fn:1:9");
 }
 
 /// P5.3: operator on generic type T produces a generic-specific error.

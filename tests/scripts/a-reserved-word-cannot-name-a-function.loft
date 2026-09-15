@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A keyword cannot name a function, and the words the language reserves for meanings of its own
+// — `assert`, `panic`, `sizeof`, `debug_assert` — say so, without describing today's meaning (the
+// language may give them more later).  The refusal was "Expect name in function definition"
+// followed by a second "Syntax error: unexpected 'sizeof'" against a definition that was
+// otherwise well formed; now each is ONE error, and the rest of the definition parses under a
+// name no call can spell.
+//
+// @falsified-at: 307d3391a — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-reserved-word-cannot-name-a-function.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations, on both backends — the control refuses the file too, with the old words
+//   ("Expect name in function definition" and a second "Syntax error: unexpected 'sizeof'"), so
+//   none of the three expected errors matches there.
+//   ARMED: nothing.
+//   WITNESS: measured on the control before this file: each of the four reserved words and the
+//   method spelling `fn assert(self: Roster)` gave two errors, the second against a well-formed
+//   definition.
+//   HOLDS: `fn match(…)` is refused on both trees; no leak, panic or runtime cell — a refusal
+//   file, and without a `main` so the harness isolates its cells.
+// @EXPECT_ERROR: `sizeof` is reserved: the language gives it a meaning of its own, now and in later versions, so a program cannot define a function by that name; choose another name
+// @EXPECT_ERROR: `assert` is reserved: the language gives it a meaning of its own, now and in later versions, so a program cannot define a function by that name; choose another name
+// @EXPECT_ERROR: `match` is a keyword and cannot name a function; choose another name
+
+struct Roster { n: integer }
+
+fn sizeof(r: Roster) -> integer { r.n }
+
+fn assert(self: Roster) -> boolean { self.n > 0 }
+
+fn match(r: Roster) -> integer { r.n }
+
+// No `main`: every cell here is a refusal, and a file without one lets the harness isolate its
+// functions — a definition NAMED `assert` is not an assertion that can never run.

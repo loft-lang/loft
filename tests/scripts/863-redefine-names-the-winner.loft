@@ -1,7 +1,12 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @EXPECT_ERROR: Cannot redefine 'sum' (already defined at
+// @EXPECT_ERROR: `sum` is a standard-library function, and its name is reserved for it: a program cannot define its own `sum` (the standard library's is at
+//
+// (2026-09-15: the wording is the reserved-name refusal now — a standard-library free function's
+// name is reserved for it, and the message still says where the winner is.  It was "Cannot
+// redefine 'sum' (already defined at …", the wording of a program defining its own function
+// twice.  The receipt below measured the property, not the words: one error, naming the winner.)
 //
 // A name collision with a stdlib free function reports ONCE, and says where the winner is.
 //

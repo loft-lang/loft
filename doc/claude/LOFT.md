@@ -492,6 +492,11 @@ fn function_name(param: type, other: type = default_value) -> return_type {
 ```
 
 - `pub` prefix makes a definition publicly visible (applies to functions, structs, and enums).
+- Some names are **reserved** and cannot name a program's function: the words `assert`, `panic`,
+  `sizeof` and `debug_assert`, which the language keeps for meanings of its own, and the name of a
+  standard-library function that is not a method (`log_info`, `parallel_for`, …).  Names the
+  compiler only lowers for built-in types stay open: a program may define `sort`, `insert`,
+  `map`, `next` or `exhausted` for its own types, and a call on those types reaches it.
 - `param: type = expr` gives a parameter a **default**, used when the call omits it.
   The expression may build a value of its own — `= []`, `= [1, 2]`, `= "a" + "b"`,
   `= mk()`, `= S { … }` — and may reference EARLIER parameters (`b: text = "x" + a`).
