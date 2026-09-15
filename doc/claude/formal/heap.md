@@ -919,9 +919,32 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
      (`Scopes::witness_hook`).  A release that runs where the local stops owning is emitted
      before the statement's flag writes, so its hook reads the flag of the record it releases.
      Guard: `tests/scripts/a-parameter-copy-the-owner-witness-names-is-released-by-the-caller-only.loft`.
-   - **OPEN — a parameter copy handed on.**  `if c { x = p; } if d { y = x; }` with both taken
-     releases the caller's resource through `y`, then in the caller: twice, both backends.  The
-     copy `y = x` takes `x`'s release (loft#1515), and `x`'s record was never `x`'s to hand on.
+   - ✓ **A parameter copy handed on — CLOSED 2026-09-15 for a carrier that holds the caller's
+     record on every path.**  `x = p; y = x` released the caller's resource at `y`'s scope exit
+     and again in the caller, which then read a record already released: twice, both backends,
+     `LOFT_POISON` clean.  The same happened through a witnessed `y` later given a view.  The one
+     decider every copy asks (`copy_moves_drop_from`) read `x` as an ordinary local, so it moved
+     the release to `y`.
+
+     A local is now marked before the scan (`Function::holds_caller_record`) when:
+     - every assignment that binds a store is a copy off a parameter or off another marked local;
+     - no write place is rooted at it;
+     - it is never passed bare to a call.
+
+     The decider answers a marked local as it answers a parameter.  Measured beside it, and
+     unchanged:
+     - a local written through after the copy (`x = p; x.h = mk(); y = x`) keeps its own release,
+       because its record then holds a resource the frame made;
+     - `x = p; return x` releases twice exactly as `return p` does — the caller-side shape above;
+     - a destination rebound to a fresh record, a carrier that kept its own record, and all-local
+       copies are clean.
+
+     Guard:
+     `tests/scripts/a-parameter-copy-handed-on-to-another-local-is-released-by-the-caller-only.loft`.
+   - **OPEN — handed on from a branch arm.**  `x = mk(); if c { x = p; } if d { y = x; }` with both
+     taken still releases the caller's resource through `y`, then in the caller.  The carrier holds
+     the caller's record on one path only, so the static mark does not apply: `y` has to inherit
+     `x`'s per-path flag at the copy.
 3. **A hand-off that suppressed a release it does not belong to** — filed from
    `x = mk(K); x = p` (`c_param_reassign`: the displaced record never released, and the parameter's
    copy released inside the callee), and wider than filed: `b = mk(1); b = mk(2); y = b` lost

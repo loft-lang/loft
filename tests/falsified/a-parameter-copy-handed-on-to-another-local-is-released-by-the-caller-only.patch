@@ -1,0 +1,190 @@
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 67998c338..51a66ef4c 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -29,7 +29,7 @@
+ 
+ use crate::data::{Block, Context, Data, DefType, Deps, Type, Value, v_if, v_set};
+ use crate::variables::{Function, compute_intervals, size};
+-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
++use std::collections::{BTreeMap, HashMap, HashSet};
+ 
+ struct Scopes<'s> {
+     /// The store-type registry — read for the element type a vector COPY op names
+@@ -2157,15 +2157,7 @@ pub(crate) fn copy_moves_drop_from(
+     if !copy_carries_drop(function, data, v, function.tp(src)) {
+         return None;
+     }
+-    // A local that holds the caller's record on every path answers as the parameter it copies:
+-    // its copies move nothing either (`Function::holds_caller_record`).
+-    Some(
+-        if function.is_argument(src) || function.holds_caller_record(src) {
+-            v
+-        } else {
+-            src
+-        },
+-    )
++    Some(if function.is_argument(src) { v } else { src })
+ }
+ 
+ /// Does copying a value of type `src_tp` into `v` carry a DROP with it?
+@@ -2247,94 +2239,6 @@ fn per_path_stops(function: &Function, data: &Data, dst: u16, src: u16) -> Optio
+     copy_moves_drop_from(function, data, dst, src, false)
+ }
+ 
+-/// The locals that hold the CALLER's record on every path ([`Function::mark_caller_record`]).
+-///
+-/// A heap local qualifies when each assignment that binds a store is a whole-value copy off a
+-/// parameter or off another qualifying local, and nothing can change what its record holds:
+-/// no write place is rooted at it (a field or element write, an in-place rebuild, an append) and
+-/// it is never handed bare to a call, whose body could write through it.  A write after the copy
+-/// (`x = p; x.h = mk()`) puts a resource the frame made into the record, so that local keeps its
+-/// own release.  Compiler temps are left to the scan that built them, and a capture, a loop
+-/// variable and a parameter are never candidates.  A fixpoint, because a copy of a qualifying
+-/// local qualifies only once that local does.
+-fn caller_record_locals(code: &Value, function: &Function, data: &Data) -> BTreeSet<u16> {
+-    let mut copies: BTreeMap<u16, Vec<u16>> = BTreeMap::new();
+-    let mut disqualified: HashSet<u16> = HashSet::new();
+-    code.walk(&mut |n| match n.unspan() {
+-        Value::Set(t, rhs) => match rhs.unspan() {
+-            Value::Var(src) => copies.entry(*t).or_default().push(*src),
+-            r if crate::use_analysis::holds_no_store(data, r) => {}
+-            _ => {
+-                disqualified.insert(*t);
+-            }
+-        },
+-        Value::Call(d, args) => {
+-            let name = data.def(*d).name();
+-            let place = if name == "OpCopyRecord" {
+-                args.get(1)
+-            } else if name.starts_with("OpSet")
+-                || name.starts_with("OpAppend")
+-                || name.starts_with("OpInsert")
+-                || name.starts_with("OpRemove")
+-                || name.starts_with("OpClear")
+-                || name == "OpDatabase"
+-            {
+-                args.first()
+-            } else {
+-                None
+-            };
+-            if let Some(root) = place.and_then(|p| accessor_root_var(p, data)) {
+-                disqualified.insert(root);
+-            }
+-            if !name.starts_with("Op") {
+-                for a in args {
+-                    if let Value::Var(x) = a.unspan() {
+-                        disqualified.insert(*x);
+-                    }
+-                }
+-            }
+-        }
+-        Value::CallRef(_, args) => {
+-            for a in args {
+-                if let Value::Var(x) = a.unspan() {
+-                    disqualified.insert(*x);
+-                }
+-            }
+-        }
+-        _ => {}
+-    });
+-    let candidate = |v: u16| {
+-        (v as usize) < function.count() as usize
+-            && !function.name(v).starts_with("__")
+-            && !function.is_argument(v)
+-            && !function.is_captured(v)
+-            && !function.was_loop_var(v)
+-            && !disqualified.contains(&v)
+-    };
+-    let mut marked: BTreeSet<u16> = BTreeSet::new();
+-    loop {
+-        let mut grew = false;
+-        for (&t, srcs) in &copies {
+-            if marked.contains(&t) || !candidate(t) {
+-                continue;
+-            }
+-            let all_caller = srcs.iter().all(|&s| {
+-                (s as usize) < function.count() as usize
+-                    && !function.name(s).starts_with("__")
+-                    && (function.is_argument(s) || marked.contains(&s))
+-                    && copy_carries_drop(function, data, t, function.tp(s))
+-            });
+-            if all_caller {
+-                marked.insert(t);
+-                grew = true;
+-            }
+-        }
+-        if !grew {
+-            return marked;
+-        }
+-    }
+-}
+-
+ /// Is `v` assigned, anywhere in `code`, a whole-value copy that stops `v` itself — a copy off a
+ /// PARAMETER ([`per_path_stops`])?  Asked of a witnessed local before the scan, so its flag
+ /// exists before the first `Set` that has to write it.
+@@ -3455,13 +3359,6 @@ fn run_scan_phase(
+     // caller owns what it holds (`per_path_stops`).  Stopped on every path instead, the second
+     // lost a release: after `x = mk(); if c { x = p; }` the stopped `x` left `mk()` unreleased
+     // on the path where the copy did not run (heap.md `D-heap-7`, the branch not taken).
+-    // `(H-Drop)` — the locals that hold the caller's record on every path, marked before any reader
+-    // of `copy_moves_drop_from` runs: the per-path registration just below, the statement scan, and
+-    // the double-move lint after the scope pass all read the mark through that one decider.
+-    let caller_records = caller_record_locals(orig_code, &function, data);
+-    for v in caller_records {
+-        function.mark_caller_record(v);
+-    }
+     scopes.per_path_pairs = per_path_handoffs(orig_code)
+         .into_iter()
+         .filter(|&(dst, src)| per_path_stops(&function, data, dst, src).is_some())
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index 60ace2248..1c1b14f50 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -470,8 +470,6 @@ pub struct Function {
+     inline_ref_vars: BTreeSet<u16>,
+     /// Locals assigned a BORROW on one path and an owned value on another (loft#1333).
+     borrow_arm_vars: BTreeSet<u16>,
+-    /// Locals that hold the CALLER's record on every path — see [`Self::mark_caller_record`].
+-    caller_record_vars: BTreeSet<u16>,
+     /// Locals whose store may still be named by the work-ref that CONSTRUCTED it
+     /// (loft#1522) — see [`Self::mark_buffer_witnessed`].
+     buffer_witnessed_vars: BTreeSet<u16>,
+@@ -600,7 +598,6 @@ impl Function {
+             arm_consumed: BTreeSet::new(),
+             inline_ref_vars: BTreeSet::new(),
+             borrow_arm_vars: BTreeSet::new(),
+-            caller_record_vars: BTreeSet::new(),
+             buffer_witnessed_vars: BTreeSet::new(),
+             names: HashMap::new(),
+             loop_scopes: HashSet::new(),
+@@ -875,7 +872,6 @@ impl Function {
+             work_refs: BTreeSet::new(),
+             inline_ref_vars: other.inline_ref_vars.clone(),
+             borrow_arm_vars: other.borrow_arm_vars.clone(),
+-            caller_record_vars: other.caller_record_vars.clone(),
+             buffer_witnessed_vars: other.buffer_witnessed_vars.clone(),
+             names: other.names.clone(),
+             loop_scopes: other.loop_scopes.clone(),
+@@ -3813,21 +3809,6 @@ impl Function {
+         self.borrow_arm_vars.contains(&v)
+     }
+ 
+-    /// Record that `v` holds the CALLER's record on every path: each assignment that binds a
+-    /// store is a whole-value copy off a parameter or off another such local, and nothing writes
+-    /// through `v`.  `(H-Drop)` gives a copy off a parameter no release to move, and a copy of
+-    /// that copy is still the caller's record, so `scopes::copy_moves_drop_from` answers `v` as it
+-    /// answers a parameter.
+-    pub fn mark_caller_record(&mut self, v: u16) {
+-        self.caller_record_vars.insert(v);
+-    }
+-
+-    /// Does `v` hold the caller's record on every path — see [`Self::mark_caller_record`]?
+-    #[must_use]
+-    pub fn holds_caller_record(&self, v: u16) -> bool {
+-        self.caller_record_vars.contains(&v)
+-    }
+-
+     /// Does `v`, a NULLABLE heap local, borrow exactly ONE argument of this function — the
+     /// D-own-16 residual `d: S? = p`, whose single dep names a parameter and nothing else?
+     ///

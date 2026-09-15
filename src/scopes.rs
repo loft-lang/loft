@@ -29,7 +29,7 @@
 
 use crate::data::{Block, Context, Data, DefType, Deps, Type, Value, v_if, v_set};
 use crate::variables::{Function, compute_intervals, size};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 struct Scopes<'s> {
     /// The store-type registry — read for the element type a vector COPY op names
@@ -2164,7 +2164,15 @@ pub(crate) fn copy_moves_drop_from(
     if !copy_carries_drop(function, data, v, function.tp(src)) {
         return None;
     }
-    Some(if function.is_argument(src) { v } else { src })
+    // A local that holds the caller's record on every path answers as the parameter it copies:
+    // its copies move nothing either (`Function::holds_caller_record`).
+    Some(
+        if function.is_argument(src) || function.holds_caller_record(src) {
+            v
+        } else {
+            src
+        },
+    )
 }
 
 /// Does copying a value of type `src_tp` into `v` carry a DROP with it?
@@ -2244,6 +2252,94 @@ fn per_path_handoffs(code: &Value) -> HashSet<(u16, u16)> {
 /// every such copy gets loft#1515's per-path flag, keyed on the side named here.
 fn per_path_stops(function: &Function, data: &Data, dst: u16, src: u16) -> Option<u16> {
     copy_moves_drop_from(function, data, dst, src, false)
+}
+
+/// The locals that hold the CALLER's record on every path ([`Function::mark_caller_record`]).
+///
+/// A heap local qualifies when each assignment that binds a store is a whole-value copy off a
+/// parameter or off another qualifying local, and nothing can change what its record holds:
+/// no write place is rooted at it (a field or element write, an in-place rebuild, an append) and
+/// it is never handed bare to a call, whose body could write through it.  A write after the copy
+/// (`x = p; x.h = mk()`) puts a resource the frame made into the record, so that local keeps its
+/// own release.  Compiler temps are left to the scan that built them, and a capture, a loop
+/// variable and a parameter are never candidates.  A fixpoint, because a copy of a qualifying
+/// local qualifies only once that local does.
+fn caller_record_locals(code: &Value, function: &Function, data: &Data) -> BTreeSet<u16> {
+    let mut copies: BTreeMap<u16, Vec<u16>> = BTreeMap::new();
+    let mut disqualified: HashSet<u16> = HashSet::new();
+    code.walk(&mut |n| match n.unspan() {
+        Value::Set(t, rhs) => match rhs.unspan() {
+            Value::Var(src) => copies.entry(*t).or_default().push(*src),
+            r if crate::use_analysis::holds_no_store(data, r) => {}
+            _ => {
+                disqualified.insert(*t);
+            }
+        },
+        Value::Call(d, args) => {
+            let name = data.def(*d).name();
+            let place = if name == "OpCopyRecord" {
+                args.get(1)
+            } else if name.starts_with("OpSet")
+                || name.starts_with("OpAppend")
+                || name.starts_with("OpInsert")
+                || name.starts_with("OpRemove")
+                || name.starts_with("OpClear")
+                || name == "OpDatabase"
+            {
+                args.first()
+            } else {
+                None
+            };
+            if let Some(root) = place.and_then(|p| accessor_root_var(p, data)) {
+                disqualified.insert(root);
+            }
+            if !name.starts_with("Op") {
+                for a in args {
+                    if let Value::Var(x) = a.unspan() {
+                        disqualified.insert(*x);
+                    }
+                }
+            }
+        }
+        Value::CallRef(_, args) => {
+            for a in args {
+                if let Value::Var(x) = a.unspan() {
+                    disqualified.insert(*x);
+                }
+            }
+        }
+        _ => {}
+    });
+    let candidate = |v: u16| {
+        (v as usize) < function.count() as usize
+            && !function.name(v).starts_with("__")
+            && !function.is_argument(v)
+            && !function.is_captured(v)
+            && !function.was_loop_var(v)
+            && !disqualified.contains(&v)
+    };
+    let mut marked: BTreeSet<u16> = BTreeSet::new();
+    loop {
+        let mut grew = false;
+        for (&t, srcs) in &copies {
+            if marked.contains(&t) || !candidate(t) {
+                continue;
+            }
+            let all_caller = srcs.iter().all(|&s| {
+                (s as usize) < function.count() as usize
+                    && !function.name(s).starts_with("__")
+                    && (function.is_argument(s) || marked.contains(&s))
+                    && copy_carries_drop(function, data, t, function.tp(s))
+            });
+            if all_caller {
+                marked.insert(t);
+                grew = true;
+            }
+        }
+        if !grew {
+            return marked;
+        }
+    }
 }
 
 /// Is `v` assigned, anywhere in `code`, a whole-value copy that stops `v` itself — a copy off a
@@ -3433,6 +3529,13 @@ fn run_scan_phase(
     // caller owns what it holds (`per_path_stops`).  Stopped on every path instead, the second
     // lost a release: after `x = mk(); if c { x = p; }` the stopped `x` left `mk()` unreleased
     // on the path where the copy did not run (heap.md `D-heap-7`, the branch not taken).
+    // `(H-Drop)` — the locals that hold the caller's record on every path, marked before any reader
+    // of `copy_moves_drop_from` runs: the per-path registration just below, the statement scan, and
+    // the double-move lint after the scope pass all read the mark through that one decider.
+    let caller_records = caller_record_locals(orig_code, &function, data);
+    for v in caller_records {
+        function.mark_caller_record(v);
+    }
     scopes.per_path_pairs = per_path_handoffs(orig_code)
         .into_iter()
         .filter(|&(dst, src)| per_path_stops(&function, data, dst, src).is_some())
