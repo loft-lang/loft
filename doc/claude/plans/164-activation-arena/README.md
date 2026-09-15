@@ -139,6 +139,53 @@ are drawn from these, hand-computed, run on both backends under `LOFT_STRICT_STO
 `cross activation destination` is the pair the corpus must cross, since that is where the
 arena and the placement meet.
 
+## How a verdict is reached — the five questions, in order
+
+The owner reviews the PROCEDURE, not twenty tastes (2026-09-15).  Each row is put to
+these questions in order, and the first one that decides, decides:
+
+1. **Spelling, or mechanism property?**  A mechanism property (an identity, a mark
+   discipline, a gate's accounting) is not natural or contrived — it is an invariant the
+   tier must hold for whatever it admits, or the tier is not built.  Its verdict is a
+   falsifier and a named failure mode, nothing else.
+2. **Is the spelling natural?  MEASURED, not judged.**  Two facts: does the consumer
+   corpus write it (a grep over the 15 library files of `loft-libs-graphics`, and the
+   games and the crawler when the row matters), and would a programmer write it without
+   knowing the store model?  Absent from the corpus and explainable only by the store
+   model → contrived → keep today's copy, defer the row.  Present → natural → continue.
+   The corpus is the oracle for "natural" the way the interpreter is the oracle for a
+   value: a spelling absent today may appear, and then the row is re-measured, never
+   re-argued.  Measured 2026-09-15: a record `?`-discharge bound to a local (E17) 45
+   times; a field assigned from a local (E9) 382; a bind-then-return (E20) 96; an
+   element overwritten from a literal (E13) 3; a record fn with two or more literal
+   returns (E15) 6; `x = f(x, …)` on a RECORD or vector (E16) 0 — its 6 hits are scalar
+   `min`; a `yield` statement (E3) 0; a `par` block (E4) 0; an `OpDrop` type (E12) 0.
+3. **Does a written rule already answer it?**  `formal/*.md` first (the debugging
+   policy's *read the formal spec first*).  A rule that answers settles the row and the
+   mechanism implements the rule exactly, no narrower, no wider.  A question no rule can
+   express means the rule wants extending — the OWNER's design call, recorded under
+   § Open design questions; the mechanism never decides it silently.
+4. **What falsifies the verdict?**  A cell with a hand-computed value on both backends
+   under `LOFT_STRICT_STORES`, `LOFT_POISON`, `LOFT_POISON_CLAIM` and the leak gate, and
+   a soft-halt note count where a fault path exists.  A verdict with no falsifier is not
+   a verdict; it is the plan-51 shape.
+5. **What does being wrong cost?**  Admitting wrongly is silent-wrong, a leak or a double
+   free — the freeze-axis class.  Declining wrongly is a missed optimisation the compiler
+   pays itself (Goal F).  The asymmetry decides every doubt: DECLINE, and the decline is
+   always available.
+
+*Where each row was decided.*  At 1: E1, E2, E5, E6, E18, E19.  At 2 (contrived, deferred):
+E3, E4, E12, E16.  At 3 by an existing rule: E7 (`O-Buffer`'s steady state), E8
+(`O-Opaque`: empty deps cannot license an adopt), E9 (`O-Complete`: per path), E10
+(`O-Borrow`: not owned, no move), E11 (`R-MoveAppend`'s zeroing), E13 (the language's
+evaluation order — a literal's fields are evaluated before the assignment stores, so an
+in-place build STAGES them), E14 (loft#914: an omitted field takes its default), E17
+(`B-View` under `B-Disturb`), E20 (§ V-an's phantom, `O-Buffer`).  At 3 with NO rule —
+the owner's call: E1's identity (`O-Buffer` names STORE identity; nothing names a record's
+— open question 1).  At 5 (doubt → decline): E15 (a callee with more than one exit writes
+its destination only at the single exit or declines), E2's handed-up record (copy when the
+mark cannot be re-drawn).
+
 ## Edge cases to inspect before a phase is cut
 
 Numbered for the review.  **Verdict** is the proposal; the owner confirms or moves it.
