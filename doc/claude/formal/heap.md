@@ -543,7 +543,9 @@ past its own subject — which is what an over-wide cell is for:
   SIGNATURE (does the return share the parameter's resource?) rather than about either body.
   ⚠ `return p.0` releases a store already RECYCLED — its hook read an id the program never set
   (`4` where the resource was `131`) — so this shape has a use-after-free face and a cell for it
-  must score the VALUE the hook sees and not only the count;
+  must score the VALUE the hook sees and not only the count.  The CONTAINER spelling and
+  `return p.0` now carry `warning[double-move]` (D-heap-7 family 2); `u = p; return u.0` does
+  not, and the releases of all three are unchanged;
 - a copy off a LOOP VARIABLE over a `vector<(τ, τ)>` — `for e in v { u = e; }`: twice;
 - a tuple variable ASSIGNED TWICE — `t = (s, w); u = t; t = (s2, w2); z = t;`: both twice.
   What the resolver has is the VARIABLE, and each assignment brought its own backings, so
@@ -967,6 +969,27 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
      destination.  Unchanged: a carrier that kept its own record, a carrier copied from a local in
      the arm, and the arm not taken.  Guard:
      `tests/scripts/a-copy-of-a-local-that-may-not-own-its-record-takes-the-per-path-answer.loft`.
+   - ✓ **Placed in a structure — CLOSED 2026-09-15 as a WARNING, by § Standalone right,
+     encapsulated warned.**  `p`, or a member of it, copied into a field, an enum payload or a
+     vector (`c_param_{field,enum,push,veclit}`, `c_pfield_*`, D-heap-1's `p_o5`), and a member
+     returned (`return p.h`, `return p.0`, `c_pfield_ret`): `warning[double-move]` at the copy or
+     at the `return`, and the releases are unchanged.  The family-4 lint already kept a member
+     copy pending on its root, and left a parameter root out only while this family was
+     undecided.  A parameter is now a root, and so is a whole parameter placed in a container.  A
+     copy inside an arm or a loop reports once; one parameter placed in two containers reports
+     twice.
+
+     Outside the warning:
+     - a WHOLE parameter returned or bound (`c_param_ret`, `q_present_param_*_ret`) — a plain
+       value, whose release is still to be made right;
+     - a member overwritten after the copy, which retires the copy;
+     - a miss: the parameter handed on to a call after the copy;
+     - a miss: a member returned as the body's tail without `return`;
+     - a miss: a copy or a view of the parameter whose member is returned (`u = p; return u.0`,
+       `e = p.h; return e`).
+
+     The three misses are pinned in `tests/double_move.rs`, and the corpus reaches the shape once:
+     `1506b`'s `param_member` control now carries the warning.
 3. **A hand-off that suppressed a release it does not belong to** — filed from
    `x = mk(K); x = p` (`c_param_reassign`: the displaced record never released, and the parameter's
    copy released inside the callee), and wider than filed: `b = mk(1); b = mk(2); y = b` lost
@@ -1024,6 +1047,20 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
    `OpDrop` is meant for a clear lifetime of variable use and works there.  So a member shared by
    two containers is the author's to restructure, and the release behaviour stays as it is: the
    gate's cells stay pinned as the shape the warning names.
+
+   **Corrected 2026-09-15: the copy has to carry a release.**  The first version warned whenever
+   the DESTINATION container owned a droppable somewhere.  So a plain member copied into such a
+   container (`Mix { h: mk(), n: s.n }`, and the same through `ns[0]` and `t.0`) was reported
+   while every record released once.  The lint now reads the copied record's type off the copy
+   (`keys::COPY_TP_MASK`) and requires a cascade or a hook.
+
+   Two false positives remain.  Both need facts that exist only after `scopes::check`, and the
+   program path runs this lint BEFORE it, while `loft test` runs it after:
+   - `x = p; x.h = mk(); c = Hold { h: x.h }` — a copy off a parameter stops its destination,
+     so the container is the member's only releaser (`g6`, pinned);
+   - `x = p; t = x; u = x` — the two-owner pairing reads `x` without the caller-record mark the
+     scope pass sets, so it warns on the program path and not under `loft test`.  The pairing
+     code is unchanged from `main`.
 
    The lint keeps such a copy pending on its ROOT and reports it where the root's release is
    certain:
