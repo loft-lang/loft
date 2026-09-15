@@ -94,9 +94,21 @@ library's source does not change.
 
 OPEN: **1**
 
-- **D-perf-1 (OPEN, loft#1426)** — violates (Perf-Weight): the drawing library's routines
+- **D-perf-1 (OPEN, @PLN157)** — violates (Perf-Weight): the drawing library's routines
   run 10–50× behind their pure-Rust twins on `--native-release` (hash-validated lanes, so
   the comparison is admissible under (Perf-Like)). Profiler attribution shows the loft
   side's hot loop matches the reference's, placing the cost in the value model
   (`codegen_runtime` / `DbRef` indirection — PERFORMANCE.md's N1 class), not the library.
   A fix stream is on it; this entry closes when the bench's rows meet the bar.
+
+  **Re-read 2026-09-15, after the issue that named it closed: narrowed, not closed.**  The
+  ten rows the issue FILED are all under the 4× bar on the quiet x86-64 lane (host `laptop`,
+  2026-09-14, tip 011687d9, 14/14 hashes: `hash` 0.90× … `fronds` 3.27×, against the filed
+  10.9–262×), which is what closed the issue on merge.  The entry names the library's
+  routines, not the filed ten, and the bench has four more that are still over the bar on
+  @PLN157's latest scoreboard: `parse` ≈ 7.2× (after § V-an), `render_marks` 8.39×,
+  `render_lock` 5.69×, `resize` 5.79× — the last three are the graphics package's resample —
+  and the aarch64 lane has not been re-measured since `smooth` read 8.44× there.  So the
+  deviation stands for those rows and closes with @PLN157, whose README carries the per-row,
+  per-machine scoreboard.  (Not re-measured on this date: the box was running two other
+  sessions' builds, and a ratio from a loaded box is not a number.)
