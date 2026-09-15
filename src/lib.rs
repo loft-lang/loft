@@ -311,6 +311,7 @@ pub(crate) mod net;
 pub mod ownership_cfg;
 #[cfg(paged_store)]
 pub mod paged_reader;
+pub mod place_result;
 pub mod placement;
 pub mod portable_path;
 pub mod resolution;

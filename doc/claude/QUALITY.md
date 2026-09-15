@@ -2690,6 +2690,14 @@ helpers, and `Parser::names_callers_value` is the one shape question a parameter
 capture share, so the peeling column grows by four: 826 · 486 → 830 · 490, the opaque column and
 the ratchet (334 / 1316) unmoved.  Asked bare first, they grew the ratchet to 336 / 1328.)
 
+(2026-09-16, @PLN164 B2 units 2–3: `place_result` is new — `placeable_bind`, `admit` and
+`note_element` read the nullability off `peel_optional` and `scalar_like` off `.base()`, so all
+four land in the wrapper-aware column: 821 · 479 · 6 · 336, the opaque column and the ratchet's
+pin unmoved.  Its two first cuts of `admit` and `note_element` matched `Type::Reference` bare
+and moved the opaque column to 338 — the audit is what turned them into peeled asks.  The
+`Value` walkers (`names_var`, `collect_vars`, `apply`) peel `Span` or carry a `Span` arm:
+the unspan row reads 500 · 476 · 24.)
+
 (2026-09-15, loft#1530: `Parser::ref_tuple_subject` is new and asks the subject's `Type::RefVar`
 and `Type::Tuple` off a `.base()`, and `vector_element_cursor_deps` gained the same peeled ask, so
 both land in the wrapper-aware column: 812 → 814 total, 470 → 472 aware, the opaque column

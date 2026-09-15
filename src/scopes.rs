@@ -6245,6 +6245,10 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
                 );
             }
         }
+        // @PLN164 B2 (`@FR-R-Place`, `@FR-R-MoveLast`) — a call result built where it will
+        // live: decided here, after the scan has settled the function's frees and before the
+        // slot intervals are computed off the final IR.  One home for both backends.
+        crate::place_result::rewrite(data, d_nr);
         // Plan-57 store-identity gate (Phase 2.5): rewrite store ops to verifying
         // variants (gated; no-op in normal builds).
         if tag_mode {
