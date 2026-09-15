@@ -1732,19 +1732,24 @@ fn the_release_records_the_c_toolchain_the_verifier_compares() {
     );
 }
 
-/// @PLN78 step 7 — a Windows link is stamped with the wall clock unless told otherwise.
+/// @PLN78 step 7 — a Windows link is not deterministic unless told twice.
 ///
-/// `rust-lld` writes the link time into the COFF header and the debug directory and a fresh
-/// PDB GUID into the CodeView record: two builds of one source from one root differed in
-/// exactly those 12 bytes.  `/Brepro` derives them from the output, and it has to travel with
-/// the RUSTFLAGS `repro-flags.sh` exports, since those override a config's per-target flags.
+/// `rust-lld` stamps the COFF header, the debug directory and the CodeView PDB GUID with the
+/// wall clock (12 bytes between two builds of one source from one root).  `/Brepro` turns the
+/// stamp into a hash — of a PDB that is itself not deterministic, so 20 bytes still differed;
+/// only `/DEBUG:NONE` (no PDB, no CodeView record) made two builds byte-identical.  Both flags
+/// travel with the RUSTFLAGS `repro-flags.sh` exports, since those override a config's
+/// per-target flags.
 #[test]
 fn repro_flags_make_a_windows_link_deterministic() {
     let rf = std::fs::read_to_string("scripts/repro-flags.sh").expect("read repro-flags.sh");
     assert!(
-        rf.contains("MINGW*|MSYS*|CYGWIN*") && rf.contains("-C link-arg=/Brepro"),
-        "scripts/repro-flags.sh must add `-C link-arg=/Brepro` on a Windows host — without it \
-         every Windows release differs from its rebuild in the link timestamp and PDB GUID"
+        rf.contains("MINGW*|MSYS*|CYGWIN*")
+            && rf.contains("-C link-arg=/Brepro")
+            && rf.contains("-C link-arg=/DEBUG:NONE"),
+        "scripts/repro-flags.sh must add `-C link-arg=/Brepro -C link-arg=/DEBUG:NONE` on a \
+         Windows host — `/Brepro` alone hashes a PDB that is not deterministic, so every Windows \
+         release would still differ from its rebuild in the link stamp and PDB GUID"
     );
 }
 

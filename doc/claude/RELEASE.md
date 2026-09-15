@@ -966,9 +966,13 @@ exits 3, naming both.  Identical bytes need no record — they are the proof, wh
 musl keeps verifying against a bundle that predates the field.  Pinned by
 `tests/doc_hygiene.rs::the_release_records_the_c_toolchain_the_verifier_compares`.
 
-Still open: on Windows two builds of one source from one root differ in 11-12 bytes
-(identical sections), so even a matching toolset does not yet reproduce — being located
-by a windows-probe run before any flag is added.
+And a Windows link was not deterministic even with everything else equal: two builds of
+one source from one root differed in 12 bytes — the COFF TimeDateStamp, the debug
+directory's copy of it, and the CodeView PDB GUID, i.e. `rust-lld`'s wall clock.
+`/Brepro` alone made the stamp a hash of a PDB that is itself not deterministic (20 bytes
+still differed), and `-C strip=debuginfo` did not stop the PDB under `rust-lld`; adding
+`/DEBUG:NONE` made two builds byte-identical.  `scripts/repro-flags.sh` passes both on a
+Windows host.  No PDB was ever shipped — a Windows bundle's `bin/` holds only `loft.exe`.
 
 ---
 
