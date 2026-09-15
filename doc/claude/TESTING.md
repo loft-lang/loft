@@ -1733,7 +1733,12 @@ exactly one OPEN deviation (`LEASE_DEVIATIONS`), and each listed cell to still f
 retires its cell from the list in the same commit, and a deviation closed in the register while a
 cell still measures it fails.  `the_census_names_the_copy_each_cell_makes` runs
 `LOFT_DROP_COPY_CENSUS` over every cell: a copied structure is reported from its root, a view
-reports nothing, a program with no hook reports `0 sites`, and a `Refused` cell must list a copy.
+reports nothing, a program with no hook reports `0 sites`, and the census refuses a copy in exactly
+the `Refused` cells (`src/lease.rs`, the `(H-Move)` home).
+`every_emitted_copy_of_a_droppable_has_a_lease_verdict` compiles every cell with the census and
+`LOFT_COPY_MANIFEST` on, through the interpreter and the native generator, and requires every copy
+of a droppable a generator EMITS to carry a census verdict — the copies the IR never shows are
+where a refusal built on the IR alone would leak.
 
 **It can fail.**  `the_scorer_names_each_kind_of_wrong_release` feeds a hand-written trace for
 each kind, and `every_cell_is_distinct_and_mints` rejects a cell that could only ever be clean.

@@ -1299,6 +1299,78 @@ fn every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation() {
     );
 }
 
+/// Every copy a code generator EMITS for a droppable has a lease verdict from the census
+/// (@PLN163 P2b).  The census reads the IR after the scope pass, and a generator mints some
+/// copies only when it emits (`copy_manifest.rs`); a copy that reaches no verdict is a copy the
+/// refusal would let through.  Each cell is compiled with both instruments on through
+/// `--native-emit`, which runs the interpreter's code generation and then the native generator
+/// without compiling the result, and `copy_manifest::report` names — once per generator — every
+/// emitted copy of a droppable no verdict covers.
+#[test]
+fn every_emitted_copy_of_a_droppable_has_a_lease_verdict() {
+    let cells = all_cells();
+    let reports = for_each_cell(&cells, "lease_manifest", workers(16), |dir, c| {
+        let path = dir.join(format!("{}.loft", c.name));
+        std::fs::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
+        let out = Command::new(loft_bin())
+            .arg("--native-emit")
+            .arg(dir.join(format!("{}.rs", c.name)))
+            .arg(&path)
+            .current_dir(dir)
+            .env("LOFT_TIMEOUT", "60")
+            .env("LOFT_DROP_COPY_CENSUS", "1")
+            .env("LOFT_COPY_MANIFEST", "1")
+            .output()
+            .unwrap_or_else(|e| panic!("spawn loft for {}: {e}", c.name));
+        String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .filter(|l| {
+                l.starts_with("lease-manifest:") || l.trim_start().starts_with("lease-unjudged")
+            })
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    });
+    let mut wrong = Vec::new();
+    // Emitted copies per generator: the interpreter reports first, the native generator second.
+    let mut emitted = [0usize; 2];
+    for (c, lines) in cells.iter().zip(reports) {
+        let summaries: Vec<&String> = lines
+            .iter()
+            .filter(|l| l.starts_with("lease-manifest:"))
+            .collect();
+        if summaries.len() != 2 {
+            wrong.push(format!(
+                "{}: expected a manifest report from both generators, got {summaries:?}",
+                c.name
+            ));
+            continue;
+        }
+        for (count, summary) in emitted.iter_mut().zip(summaries) {
+            *count += summary
+                .split_whitespace()
+                .nth(1)
+                .and_then(|n| n.parse::<usize>().ok())
+                .unwrap_or(0);
+        }
+        for l in lines
+            .iter()
+            .filter(|l| l.trim_start().starts_with("lease-unjudged"))
+        {
+            wrong.push(format!("{}: {}", c.name, l.trim()));
+        }
+    }
+    assert!(
+        emitted.iter().all(|&n| n > 0),
+        "a generator emitted no copy of a droppable over all cells, so its half measured nothing: \
+         {emitted:?}"
+    );
+    assert!(
+        wrong.is_empty(),
+        "\nlease manifest ({emitted:?} emitted copies, interpreter and native):\n  {}\n",
+        wrong.join("\n  ")
+    );
+}
+
 /// The scorer can FAIL: each kind of finding is produced by the trace that should produce it,
 /// and only that one.  Without this, a scorer that answered "clean" for everything would pass
 /// every baseline it wrote.

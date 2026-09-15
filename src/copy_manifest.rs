@@ -259,6 +259,106 @@ pub fn clear() {
     SITES.with(|s| s.borrow_mut().clear());
 }
 
+thread_local! {
+    /// @PLN163 P2b — the copies the copy census gave an `(H-Move)` verdict, by
+    /// `(function, destination variable)`.  Filled before code generation and never drained by
+    /// [`report`], so the interpreter's and the native generator's manifests are both checked
+    /// against it.
+    static LEASE_SITES: RefCell<std::collections::HashSet<(u32, u16)>> =
+        RefCell::new(std::collections::HashSet::new());
+    /// The functions whose RESULT the census judged: a `return` verdict, or a copy into one of
+    /// their return buffers.  A caller's copy of such a function's result is judged there.
+    static LEASE_RETURNS: RefCell<std::collections::HashSet<u32>> =
+        RefCell::new(std::collections::HashSet::new());
+}
+
+/// Note that the census gave the copy into `var` in function `def_nr` a lease verdict.
+pub fn note_lease_site(def_nr: u32, var: u16) {
+    LEASE_SITES.with(|s| s.borrow_mut().insert((def_nr, var)));
+}
+
+/// Note that the census judged what function `def_nr` returns.
+pub fn note_lease_return(def_nr: u32) {
+    LEASE_RETURNS.with(|s| s.borrow_mut().insert(def_nr));
+}
+
+/// Forget the census's verdicts (before a new census, between compilations in one process).
+pub fn clear_lease() {
+    LEASE_SITES.with(|s| s.borrow_mut().clear());
+    LEASE_RETURNS.with(|s| s.borrow_mut().clear());
+}
+
+/// The emitted copies of a droppable that the copy census gave no lease verdict — the
+/// completeness half of the refusal (@PLN163 P2b, `(H-Copy-Refuse)`): a copy a generator mints
+/// that no verdict covers is a copy the refusal would let through.
+///
+/// A copy is covered when the census judged the same destination in the same function.  A bind
+/// of a CALL result is covered when the census judged what the called function returns, because
+/// that is where the copied value comes from.
+///
+/// A [`Origin::ParserMaterialise`] record is written while the IR is BUILT, and the scope pass
+/// may rewrite its destination afterwards — a return's work variable merged into the return
+/// buffer.  A record whose destination no longer occurs in the function's body names no copy that
+/// is emitted, so it is not counted; the copy that is emitted is judged where it now writes.
+#[must_use]
+pub fn lease_uncovered(data: &crate::data::Data) -> (usize, Vec<CopySite>) {
+    let mut total = 0;
+    let mut out = Vec::new();
+    for site in sites() {
+        if !type_releases(data, site.type_nr) {
+            continue;
+        }
+        if site.origin == Origin::ParserMaterialise
+            && !data
+                .def(site.def_nr)
+                .code
+                .any_node(&mut |n| matches!(n, crate::data::Value::Var(v) if *v == site.var))
+        {
+            continue;
+        }
+        total += 1;
+        let judged = LEASE_SITES.with(|s| s.borrow().contains(&(site.def_nr, site.var)))
+            || called_function(data, site.def_nr, site.var)
+                .is_some_and(|callee| LEASE_RETURNS.with(|r| r.borrow().contains(&callee)));
+        if !judged {
+            out.push(site);
+        }
+    }
+    (total, out)
+}
+
+/// Does the known type `type_nr` have a release to run — a hook, or a cascade over members that
+/// have one?
+fn type_releases(data: &crate::data::Data, type_nr: u16) -> bool {
+    type_nr != u16::MAX
+        && (0..data.definitions())
+            .any(|d| data.def(d).known_type == type_nr && data.drop_cascade_nr(d) != u32::MAX)
+}
+
+/// The user function whose result an assignment of `var` in `def_nr` binds, if one does.
+fn called_function(data: &crate::data::Data, def_nr: u32, var: u16) -> Option<u32> {
+    let mut found = None;
+    data.def(def_nr).code.walk(&mut |n| {
+        if found.is_some() {
+            return;
+        }
+        if let crate::data::Value::Set(v, rhs) = n
+            && *v == var
+        {
+            rhs.walk(&mut |m| {
+                if found.is_none()
+                    && let crate::data::Value::Call(d, _) = m
+                    && matches!(data.def(*d).def_type, crate::data::DefType::Function)
+                    && !data.def(*d).is_operator()
+                {
+                    found = Some(*d);
+                }
+            });
+        }
+    });
+    found
+}
+
 /// The guard: emitted copies the copy diagnostic produced no verdict for.
 ///
 /// A site is COVERED when the analysis classified the same destination binding in the same
@@ -297,6 +397,24 @@ pub fn report(data: &crate::data::Data) -> usize {
         return 0;
     }
     let bad = uncovered(data);
+    if crate::keys::drop_copy_census_enabled() {
+        let (total, unjudged) = lease_uncovered(data);
+        eprintln!(
+            "lease-manifest: {total} emitted {} of a droppable, {} without a lease verdict",
+            if total == 1 { "copy" } else { "copies" },
+            unjudged.len()
+        );
+        for s in &unjudged {
+            let def = data.def(s.def_nr);
+            eprintln!(
+                "  lease-unjudged {} [{:?}]  fn {}  binding `{}`",
+                s.origin.backend(),
+                s.origin,
+                def.name,
+                def.variables.name(s.var)
+            );
+        }
+    }
     clear();
     if bad.is_empty() {
         return 0;

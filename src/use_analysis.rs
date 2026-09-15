@@ -4660,6 +4660,7 @@ pub fn drop_copy_census(data: &Data) {
     if !crate::keys::drop_copy_census_enabled() {
         return;
     }
+    crate::copy_manifest::clear_lease();
     let mut sites = 0;
     if data.any_drop_hook() {
         let copy_d = data.def_nr("OpCopyRecord");
@@ -4670,6 +4671,7 @@ pub fn drop_copy_census(data: &Data) {
             }
             let mut cx = Census {
                 data,
+                d_nr,
                 func: &def.variables,
                 frame: crate::lease::Frame::new(data, def),
                 fname: &def.name,
@@ -4678,6 +4680,7 @@ pub fn drop_copy_census(data: &Data) {
                     .type_owns_droppable_anywhere(def.returned.base())
                     .then(|| data.type_name_str(&def.returned)),
                 whole_tuple: None,
+                rhs_of: None,
                 line: 0,
                 sites: 0,
             };
@@ -4694,6 +4697,7 @@ pub fn drop_copy_census(data: &Data) {
 /// The walk behind [`drop_copy_census`] for one function.
 struct Census<'a> {
     data: &'a Data,
+    d_nr: u32,
     func: &'a Function,
     /// The `(H-Move)` verdicts for this function (`src/lease.rs`).
     frame: crate::lease::Frame<'a>,
@@ -4703,12 +4707,30 @@ struct Census<'a> {
     returned: Option<String>,
     /// The tuple a whole-tuple bind being scanned copies: its member copies are that bind's.
     whole_tuple: Option<u16>,
+    /// The right-hand side of the assignment being scanned, and the variable it assigns — so a
+    /// whole-tuple copy that IS that right-hand side is recorded against its destination.
+    rhs_of: Option<(*const Value, u16)>,
     /// The nearest line seen before the node being visited.
     line: u32,
     sites: usize,
 }
 
 impl Census<'_> {
+    /// Record for the copy-manifest check (@PLN163 P2b) that the copy into `dest` has a lease
+    /// verdict — and, when `dest` is one of the function's return buffers, that its result does.
+    fn note_destination(&self, dest: &Value) {
+        let root = match dest.unspan() {
+            Value::Var(v) => Some(*v),
+            other => place_root(other, self.data),
+        };
+        if let Some(v) = root {
+            crate::copy_manifest::note_lease_site(self.d_nr, v);
+            if self.frame.is_buffer(v) {
+                crate::copy_manifest::note_lease_return(self.d_nr);
+            }
+        }
+    }
+
     fn scan(&mut self, node: &Value) {
         if let Some(p) = node.span_pos() {
             self.line = p.line;
@@ -4717,6 +4739,35 @@ impl Census<'_> {
         }
         let node = node.unspan();
         let mut whole = None;
+        if let Value::Block(bl) = node
+            && bl.name == "synthetic_tuple_return"
+        {
+            // A returned tuple, written member by member into the return buffer through a hold
+            // of the tuple (`__ref_3 = t`): one whole-tuple copy of `t`.
+            if let Some(hold) = bl.operators.iter().find_map(|o| match o.unspan() {
+                Value::Set(h, rhs)
+                    if matches!(rhs.unspan(), Value::Var(_))
+                        && matches!(self.func.tp(*h).base(), Type::Tuple(_)) =>
+                {
+                    Some(*h)
+                }
+                _ => None,
+            }) {
+                let (root, through_member) = self.frame.resolve_view(hold);
+                let lease = if through_member {
+                    lease_column(
+                        self.func,
+                        crate::lease::Lease::Refuse(crate::lease::Refusal::Container(root)),
+                    )
+                } else {
+                    lease_column(self.func, self.frame.var_verdict(node, root))
+                };
+                let tp = self.data.type_name_str(self.func.tp(hold));
+                self.emit("tuple", &tp, &[root], "-", &lease, false);
+                crate::copy_manifest::note_lease_return(self.d_nr);
+                whole = Some(root);
+            }
+        }
         match node {
             Value::Call(d, args)
                 if *d == self.copy_d
@@ -4755,15 +4806,19 @@ impl Census<'_> {
                 let lease = if kind == "snapshot" {
                     "-".to_string()
                 } else {
+                    self.note_destination(&args[1]);
                     lease_column(self.func, self.frame.copy_verdict(node, &args[0]))
                 };
                 self.emit(kind, &tp, &from, &into, &lease, frees);
             }
             // A bind whose type depends on its own source is a VIEW of it — a destructure's
-            // `__ref_2 = u`, a nested copy's `_tuphold_1 = inner` — and copies nothing.
+            // `__ref_2 = u`, a nested copy's `_tuphold_1 = inner` — and copies nothing.  So is a
+            // hold of the whole tuple a returned tuple is written from.
             Value::Set(v, rhs)
                 if matches!(rhs.unspan(), Value::Var(src)
-                    if src != v && !self.func.tp(*v).depend().contains(src))
+                    if src != v
+                        && !self.func.tp(*v).depend().contains(src)
+                        && self.whole_tuple != Some(*src))
                     && self
                         .data
                         .type_owns_droppable_anywhere(self.func.tp(*v).base()) =>
@@ -4779,6 +4834,7 @@ impl Census<'_> {
                 let tp = self.data.type_name_str(self.func.tp(*v));
                 let into = self.func.name(*v).to_string();
                 let lease = lease_column(self.func, self.frame.var_verdict(node, *src));
+                crate::copy_manifest::note_lease_site(self.d_nr, *v);
                 self.emit(kind, &tp, &[*src], &into, &lease, false);
             }
             // A tuple literal that reads every member of one tuple, in order, copies that tuple
@@ -4803,25 +4859,39 @@ impl Census<'_> {
                         let tp = self.data.type_name_str(self.func.tp(base));
                         self.emit("tuple", &tp, &[root], "-", &lease, false);
                     }
+                    if let Some((rhs, v)) = self.rhs_of
+                        && std::ptr::eq(rhs, node)
+                    {
+                        crate::copy_manifest::note_lease_site(self.d_nr, v);
+                    }
                     whole = Some(root);
                 }
             }
+            // Every `return` of a droppable is judged here: refused when it hands out a value the
+            // caller holds, and otherwise a move of what the function made — which is what a
+            // caller's copy of the result copies.
             Value::Return(value) => {
-                if let Some(returned) = self.returned.clone()
-                    && let Some(refusal) = self.frame.return_refusal(value)
-                {
-                    let lease = format!("refuse:{}", refusal.describe(self.func));
-                    self.emit("return", &returned, &[refusal.var()], "-", &lease, false);
+                if let Some(returned) = self.returned.clone() {
+                    crate::copy_manifest::note_lease_return(self.d_nr);
+                    if let Some(refusal) = self.frame.return_refusal(value) {
+                        let lease = format!("refuse:{}", refusal.describe(self.func));
+                        self.emit("return", &returned, &[refusal.var()], "-", &lease, false);
+                    }
                 }
             }
             _ => {}
         }
         let outer = self.whole_tuple;
+        let outer_rhs = self.rhs_of;
         if whole.is_some() {
             self.whole_tuple = whole;
         }
+        if let Value::Set(v, rhs) = node {
+            self.rhs_of = Some((std::ptr::from_ref(rhs.unspan()), *v));
+        }
         node.for_each_child(&mut |c| self.scan(c));
         self.whole_tuple = outer;
+        self.rhs_of = outer_rhs;
     }
 
     /// `from` lists the root of every value the copy may take — one per arm of a join — joined
