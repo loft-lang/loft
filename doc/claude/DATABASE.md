@@ -431,6 +431,22 @@ pub struct Type {
 }
 ```
 
+Two DERIVED cells ride on a `Type` row beside those fields and take no part in equality or
+in the stored form: `facts` (`TypeFacts` — the heap and all-zero facts `heap_facts` derives)
+and `prefill` (`PrefillImage`, `@FR-R-Prefill`).  The prefill image is the bytes the
+field-by-field default walk writes for `Absent::Prefill` — the sentinels, the zeros, the
+variant tag, an inline record's own defaults — captured ONCE from the walk's first run over
+a zeroed span and written as one block (`Store::write_image`) on every later mint of the
+type, in place of the walk's store resolution per field.  It is read back from what the
+walk wrote, never computed a second way, and `LOFT_PREFILL_VERIFY=1` re-runs the walk after
+every image write and panics naming the type where the two disagree.  Three cases keep the
+walk: a type with a field not laid out yet (its image would freeze the field's zero where
+the walk, once the field is laid out, writes its sentinel), `Absent::Final` (the `text as`
+fill — declared defaults and interned text are not a fixed byte pattern), and an image
+whose length no longer matches the layout; a table rollback forgets the image with the
+facts.  `LOFT_NO_PREFILL_IMAGE=1` restores the walk on both backends; `LOFT_TRACE_PREFILL=1`
+names each capture and each use.  The all-zero fast path (`zero_range`) stays in front of it.
+
 ### Parts enum
 
 `Parts` describes the runtime layout and category of a type:

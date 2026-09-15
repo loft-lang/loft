@@ -50,6 +50,14 @@ fn prefill_verify_enabled() -> bool {
     *F.get_or_init(|| std::env::var("LOFT_PREFILL_VERIFY").is_ok_and(|v| v != "0"))
 }
 
+/// `LOFT_TRACE_PREFILL=1` names each image capture and each image use on stderr — what
+/// says whether a run REACHES the image path at all (on `--native` a literal's mint is a
+/// complete write that never prefills, so a cell can pass without exercising the image).
+fn prefill_trace_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("LOFT_TRACE_PREFILL").is_ok_and(|v| v != "0"))
+}
+
 /// Walker-native diagnostic for `walk_parsed_into` failures.
 ///
 /// `at` is a byte offset into the original input; `path` is the
@@ -1739,6 +1747,12 @@ impl Stores {
             // strict-store check it carries is not lost: the mint that reached here
             // claimed through `store_mut` a moment ago.
             self.allocations[rec.store_nr as usize].write_image(rec.rec, rec.pos, img);
+            if prefill_trace_enabled() {
+                eprintln!(
+                    "[prefill] `{}`: image used ({len} bytes)",
+                    self.types[tp as usize].name
+                );
+            }
             if prefill_verify_enabled() {
                 self.prefill_walk(tp, n_fields, Absent::Prefill, rec);
                 let after = self.store(rec).read_span(rec.rec, rec.pos, len);
@@ -1763,6 +1777,12 @@ impl Stores {
         self.prefill_walk(tp, n_fields, Absent::Prefill, rec);
         let img = self.store(rec).read_span(rec.rec, rec.pos, len);
         self.types[tp as usize].prefill.set(img);
+        if prefill_trace_enabled() {
+            eprintln!(
+                "[prefill] `{}`: image captured ({len} bytes)",
+                self.types[tp as usize].name
+            );
+        }
         true
     }
 

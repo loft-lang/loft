@@ -26,8 +26,14 @@ interned text) keeps the walk; a table rollback forgets the image like the heap 
 One runtime home, so both backends take it.  Switch `LOFT_NO_PREFILL_IMAGE=1`; falsifier
 `LOFT_PREFILL_VERIFY=1` (the walk re-run after every image write, a panic naming the type
 where they disagree — clean over all 1432 `tests/scripts` files on the interpreter and the
-parse bench on native).  Cells `164-activation-arena/bytecode-comparisons/
-C4-prefill-image-cells.loft` (c1–c10, both backends); pins `tests/prefill_image.rs`.
+parse bench on native); `LOFT_TRACE_PREFILL=1` names each capture and each use, because a
+run can pass without reaching the image at all (on `--native` a literal's mint is a
+complete write that never prefills, and a callee's buffer is minted once per caller
+activation — the cells' native half was vacuous until c11 re-activated the caller per
+iteration).  Cells `164-activation-arena/bytecode-comparisons/C4-prefill-image-cells.loft`
+(c1–c11, both backends); guard `tests/scripts/164-prefill-image.loft`; pins
+`tests/prefill_image.rs` (the verify run on both backends, the switch, the mint census,
+and an image USE on both backends).
 Measured on the parse bench: 46.4–48.5 k → 42.3–42.8 k ns/op (≈ −11 %, hash unchanged).
 @PLN164 C4.
 

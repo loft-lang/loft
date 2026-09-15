@@ -860,6 +860,15 @@ store-root vector whose elements own heap releases what they own first, closing 
 unbounded leak in every shape-A return buffer (~357 KB per `fronds` call) — and is the
 bisect step for a double free or a wrong value at a cleared vector.  `LOFT_TRACE_CLEAR=1`
 names each clear's shape and element verdict.
+**`LOFT_NO_PREFILL_IMAGE=1`** (@PLN164 C4, `@FR-R-Prefill`, runtime, BOTH backends) makes
+every record mint that is not proven complete-write prefill its defaults field by field
+again — with it off, the prefill is ONE block write of a per-type image captured from the
+walk's first run over a zeroed span (the `parse` row −11 %) — and is the first bisect step
+for a wrong default, sentinel or variant tag in a minted record.  `LOFT_PREFILL_VERIFY=1`
+re-runs the walk after every image write and panics naming the type where the bytes
+disagree; `LOFT_TRACE_PREFILL=1` names each capture and each use — and a cell can pass
+without ever reaching the image, because on `--native` a literal's mint is a complete
+write that never prefills and a callee's buffer is minted once per caller activation.
 **`LOFT_NO_ELEMENT_FIRST=1`** (@PLN157 § V-z) makes a record-literal's vector field
 keep its temp-store build and deep copy again — with it off, a local vector consumed
 exactly once by one append is built INSIDE the appended element (minted at the temp's
