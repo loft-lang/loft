@@ -4,27 +4,41 @@
 
 Unmerged branches across the `loft-lang/loft-libs-*` repos — in-flight or stranded library
 work not yet on each repo's default branch. Squash-merge safe (compared by CONTENT, not
-ancestry). The current installable/origin-main API is `doc/claude/LIBRARIES.md`, a local build (`make libcatalogue`, not committed); this is
+ancestry). The current installable/origin-main API is , a local build (, not committed); this is
 the branch-level view of what is still IN FLIGHT. A branch with an **open PR** is active; one
 that is **unmerged with no open PR** is an *orphan* — stranded work to land or delete.
 Source: `scripts/lib-branch-audit.sh` (@PLN112 / @PLN20 lib-health).
 
-**6 unmerged branch(es) across 4 repo(s); 1 orphan(s) (unmerged, no open PR).**
+**11 unmerged branch(es) across 7 repo(s); 8 orphan(s) (unmerged, no open PR).**
 
 ## loft-libs-assets
 
+- `doc-types-2026-09` — PR no-PR · (1 files) — Document the public types the 2026-09 review f  ⚠ orphan
 - `tuxedo-assets-w6` — PR #11 open · (4 files) — A sprite reaches a page without becoming a fil
+
+## loft-libs-core
+
+- `doc-types-2026-09` — PR no-PR · (2 files) — Document the public types the 2026-09 review f  ⚠ orphan
 
 ## loft-libs-docs
 
-- `unify-library-ci-fpm` — PR #4 open · (2 files) — ci: adopt the unified reusable workflows (pack
+- `doc-types-2026-09` — PR no-PR · (1 files) — Document the public types the 2026-09 review f  ⚠ orphan
 
 ## loft-libs-game
 
 - `tuxedo-audio-bus` — PR #12 open · (8 files) — audio_bus 0.1.0 — one slider, many sounds
-- `unify-library-ci-fpm` — PR #11 open · (3 files) — ci: adopt the unified reusable workflows (pack
 
 ## loft-libs-graphics
 
+- `doc-types-2026-09` — PR no-PR · (5 files) — Document the public types the 2026-09 review f  ⚠ orphan
+- `drawing-lock` — PR no-PR · (12 files) — drawing README: the gap is not the optimisatio  ⚠ orphan
 - `tuxedo-android-gl-port` — PR no-PR · (48 files) — The Android backend compiles, and it feeds the  ⚠ orphan
 - `tuxedo-drawing-w4` — PR #46 open · (14 files) — graphics builds and runs under wasm, canvas an
+
+## loft-libs-net
+
+- `doc-types-2026-09` — PR no-PR · (2 files) — Document the public types the 2026-09 review f  ⚠ orphan
+
+## loft-libs-world
+
+- `doc-types-2026-09` — PR no-PR · (10 files) — Document the public types the 2026-09 review f  ⚠ orphan
