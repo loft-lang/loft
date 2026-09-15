@@ -374,6 +374,44 @@ fn main() {
 }
 ```
 
+### Cache-line contention — what the design guarantees, and what is still unmeasured
+
+By construction the plain return paths share no writable cache line between
+cores: parent stores are borrowed READ-ONLY (`clone_for_light_worker`), every
+worker's writes land in its own scratch stores (4 × 1 024-word stores allocated
+inside its own rayon task), `parallel_workers` gives thread `t` exactly one
+contiguous range `[t·n/T, (t+1)·n/T)` with no stealing inside it, and results are
+collected per worker into that worker's own `Vec` and copied into place
+sequentially after the join by `merge_batches` — so no two cores write
+neighbouring result slots.
+
+Four points are NOT yet established by measurement and are recorded as open in
+[plans/par-contention-measurement.md](plans/par-contention-measurement.md)
+(a read-only review of 2026-09-15; nothing there was run):
+
+- **F1** — the record-returning path (`run_parallel_queue_ref`) hands every worker
+  one `Arc<AtomicU16>` slot dispenser, and `Stores::database_named` clones the
+  `Arc` and does a `fetch_add` on EVERY named allocation: three writes to one
+  shared line per store a worker mints.  True sharing, contended per element if a
+  worker allocates a store per element.
+- **F2** — the same branch grows a worker's `allocations` with placeholders up to
+  every index the dispenser handed out, other workers' included: O(T × total)
+  placeholder pushes in the worst case.
+- **F3** — the dispenser is `u16` and `fetch_add` wraps silently; a record-returning
+  `par` whose results persist past the join may exceed ~65 k dispensed indices.
+  Whether the `#306` cap fires first, or a wrapped low index collides with a parent
+  store, is a correctness question with a cell to write on both backends.
+- **F4** — whether any read path on a borrowed store writes shared memory (a claim
+  check, a budget counter, a statistics field).  TSan-clean does not answer it:
+  TSan reports races, not benign shared atomic writes.
+
+Each needs a probe with a POSITIVE CONTROL (a deliberately contended cell) under
+`perf c2c` before a number is recorded here; a clean result without that control
+proves nothing.  If padding ever becomes relevant, note that some CPUs, Apple
+M-series included, use 128-byte cache lines.  The fixed contiguous ranges also
+leave threads idle when the per-element cost is skewed (F5, an observation for a
+future design discussion, not a defect).
+
 ### `par_fold` — accumulator shorthand
 
 Plan-06 A5 added a shorthand for the pure-fold pattern (every
@@ -384,11 +422,14 @@ state):
 total = par_fold(items, 0, |acc, e| acc + e.value, 4)
 ```
 
-Equivalent to running a `par(...)` over `items` with a `Stitch::Reduce`
-worker.  Native and interpreter both back `par_fold` directly
-(A5 + A5b).  The fused `for ... in ... par(...) { sum += b }`
-form is the user-facing alternative; the parser auto-detects
-pure-fold bodies and routes them through the same runtime.
+The parser lowers it to the builtin `n_parallel_fold`
+(`Parser::parse_par_fold`, `src/parser/builtins.rs`), which both backends
+back with `run_parallel_fold` in `src/parallel.rs` (A5 + A5b).  The
+`Stitch` enum in that file is NOT what backs it: it is a dead placeholder
+(`QueueStitch` is the live dispatch enum) and its own comment says so.
+The fused `for ... in ... par(...) { sum += b }` form is the user-facing
+alternative; the parser auto-detects pure-fold bodies and routes them
+through the same runtime.
 
 ### Design — `par(...)` over any `for`-iterable (partially shipped)
 
@@ -761,31 +802,42 @@ full long-term design.
 
 ## P1 Architecture Summary
 
-Every `run_parallel_*` entry-point in `src/parallel.rs` creates **one fully
-independent `Stores` clone per worker thread** via `stores.clone_for_worker()`
-(`src/database/allocation.rs`).  That clone is moved into the spawned thread;
-the main thread's `stores` is not touched while workers run.
-
-Worker isolation flow:
+**HISTORICAL — the audit below was written against the byte-copy design
+(`clone_for_worker` + `clone_locked`, one deep copy of every active store per
+worker, `run_parallel_direct` writing through a shared `out_ptr`).  That design
+was retired by @PLN108 (2026-07-17) and @PLN117; the current mechanism is
+described in § Multi-threading Safety above, and its risks are the P1-R rows,
+which stay as the record of what was checked.**  Today's flow:
 
 ```
 main thread Stores
-    └── clone_for_worker()          — conservative snapshot: copies every active store
-                                       (captured state is READ-ONLY (C93), so a provably-
-                                       unwritten store is safe to SHARE, not copy — see above)
-            ├── active slots  → clone_locked()   (locked: true, full byte-copy)
-            └── freed slots   → Store::new(100)  (fresh, free: true)
-    └── moved into thread::spawn(move || …)
-            └── State::new_worker(worker_stores, …)
-                    └── Stores::database()       — allocates worker stack at index max
+    └── clone_for_light_worker()    — BORROW: every parent store shared read-only
+                                       (captured state is provably unwritten, C93)
+            ├── parent slots  → shared ptr, read_only:true, borrowed:true (Drop skips dealloc)
+            └── freed slots   → Store::new(100)  (fresh, so a worker may re-initialise it)
+    └── one rayon task per worker (`parallel_workers`, contiguous range per thread)
+            ├── 4 × 1 024-word scratch stores minted INSIDE the task
+            ├── State::new_worker(worker_stores, …)
+            └── results pushed to the worker's own Vec
+    └── join, then `merge_batches` copies every batch into place sequentially
 ```
 
-No `Stores` instance, `Store`, or heap buffer owned by one worker is shared with
-another worker or with the main thread (with the exception analysed in Risk 2 below).
+The record-returning path (`run_parallel_queue_ref`) additionally hands each
+worker a shared `Arc<AtomicU16>` slot dispenser so that stores a worker mints
+survive the join under distinct indices (`worker_allocated_indices`); its
+contention and its `u16` ceiling are the open measurements in § Cache-line
+contention.
+
 
 ---
 
 ## P1 What is Safe
+
+**HISTORICAL — these six properties were verified for the byte-copy design.
+Under the borrow (§ Multi-threading Safety) the first three are replaced by the
+read-only borrow's own guarantees (compiler-carried parent-unwritten, `read_only`
+runtime write-panic, ASan + TSan clean), the `out_ptr` write of the fourth by
+per-worker batches, and the last two still hold as written.**
 
 ### Store memory is fully deep-copied
 
