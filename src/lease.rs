@@ -1,41 +1,35 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Whether the value a copy of a droppable duplicates is USED after the copy — a per-path liveness
-//! answer, @FR-H-Move.
+//! The copy-lease verdicts on a copy of a droppable (@PLN163): what `formal/heap.md` makes of the
+//! line that writes the copy, and — separately — whether the copied value is used afterwards.
 //!
-//! The first version of the copy-lease rules (@PLN163) made a copy of a value not used afterwards a
-//! move, and this module answered that question for the copy census.  `formal/heap.md` now reads a
-//! move off the line itself (`(H-Move)`: only written positions move), so this liveness answer no
-//! longer decides what is valid.  The census still prints it until @PLN163 P2r reworks the report,
-//! and it is kept for `(H-Elide)`, where liveness may decide an optimisation.  Nothing that emits
-//! code reads it.
+//! **The rule read off the line** (`(H-Move)`, `(H-Copy-Refuse)`, @FR-H-Copy-Refuse).  A copy is
+//! judged by what it copies and where the value goes, never by what the program does after it.
+//! What it copies is classified: a fresh value (a call result, a literal), a member of a container,
+//! a `&` link, or a variable — and a compiler temp is judged by what it was given.  Where the value
+//! goes is the [`Placement`] the census reads off the surrounding IR: a new structure, a `return`
+//! (the function's own variables end with it), a block's result (a variable declared in that block
+//! ends with it), or a read through a temporary that nothing outlives.  A fresh value, a read
+//! through, a `return` of a variable the function owns, and the result of a block that declares
+//! the variable are moves; any other existing value placed is a copy the rule refuses.
 //!
-//! **The answer is per path.**  A backward liveness pass for one variable walks the structured IR:
-//! both arms of every `if`, a `loop` to its fixed point, `break` and `continue` to their targets,
-//! and a `return` that ends the path.  So `if c { x = a } else { y = a }` is two moves, while
-//! `x = a` inside a loop over a variable declared outside it is not one.
+//! **The liveness answer** (@FR-H-Move) — is the copied value used after the copy? — was the first
+//! version's move rule and no longer decides validity.  It is kept for `(H-Elide)`, where liveness
+//! may decide an optimisation, and the census prints it beside the verdict so it stays tested.  The
+//! pass is per path: both arms of every `if`, a `loop` to its fixed point, `break` and `continue` to
+//! their targets, and a `return` that ends the path.  A use is a read of a variable that holds the
+//! value or VIEWS it, decided from its assignments (a projection, a `&` link, a join arm its type
+//! also depends on), because a join whose arm lifts the variable into a copy still lists it among
+//! its dependencies.  The scope pass's own work is not a use: a release (a free or drop call, the
+//! null check and `__hoff_` flag test that guard it, the sentinel written after it), the `__disp_`
+//! snapshot a rebind takes, and the `__hoff_` flag writes — each recognised by a call or a name the
+//! author cannot write, never by the shape of an `if` alone.
 //!
-//! **A use of a value is a read of a variable that holds it or VIEWS it.**  A variable views
-//! another when an assignment binds it to a projection of that variable, to a `&` link to it, or to
-//! the variable itself as the arm of a join whose type depends on it.  A type's dependencies alone
-//! are not enough: a join whose arm lifts the variable into a copy still lists it.
-//!
-//! **It reads the IR after the scope pass**, which carries the pass's own work.  None of that
-//! work is a use of a variable.
-//!
-//! - **A release:** a free or a drop call, the null check and `__hoff_` flag test that guard it,
-//!   and the sentinel written after it.
-//! - **A snapshot:** the copy of a displaced record into a `__disp_` temp, which a rebind takes.
-//! - **A hand-off flag:** the writes to the `__hoff_` flags themselves.
-//!
-//! Each is recognised by a call the author cannot write or a name the author cannot write, and
-//! never by the shape of an `if` alone.
-//!
-//! Three sources are never moved, whatever the pass finds.  A MEMBER of a container — a
-//! projection, or a variable assigned one, such as a loop variable or a `match` binding — because
-//! the container's drop still holds it.  A PARAMETER, or a local holding the caller's record,
-//! because the caller holds it.  A CAPTURED variable, because the closure holds it.
+//! Both halves share the sources no position makes legal: a MEMBER of a container (a projection,
+//! or a variable assigned one, such as a loop variable or a `match` binding), a PARAMETER or a
+//! local holding the caller's record, and a CAPTURED variable.  Nothing that emits code reads this
+//! module.
 
 use crate::data::{Data, Definition, Type, Value};
 use crate::use_analysis::{projection_root, releases_first_arg};
@@ -45,7 +39,9 @@ use std::collections::{HashMap, HashSet};
 /// Why a copy is not a move.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refusal {
-    /// The copied value is used again on some path after the copy.
+    /// An existing variable placed into a new structure (`(H-Copy-Refuse)`).
+    Copied(u16),
+    /// The copied value is used again on some path after the copy (the liveness answer).
     Later { var: u16, line: u32 },
     /// The source is a member of a container, and the container's drop still holds it.
     Container(u16),
@@ -61,14 +57,15 @@ impl Refusal {
     pub fn var(&self) -> u16 {
         match self {
             Self::Later { var, .. } => *var,
-            Self::Container(v) | Self::Caller(v) | Self::Captured(v) => *v,
+            Self::Copied(v) | Self::Container(v) | Self::Caller(v) | Self::Captured(v) => *v,
         }
     }
 
-    /// The census spelling: `later:a@12`, `container:s`, `caller:p`, `captured:a`.
+    /// The census spelling: `copy:a`, `later:a@12`, `container:s`, `caller:p`, `captured:a`.
     #[must_use]
     pub fn describe(&self, func: &Function) -> String {
         match self {
+            Self::Copied(v) => format!("copy:{}", func.name(*v)),
             Self::Later { var, line } => format!("later:{}@{line}", func.name(*var)),
             Self::Container(v) => format!("container:{}", func.name(*v)),
             Self::Caller(v) => format!("caller:{}", func.name(*v)),
@@ -80,13 +77,27 @@ impl Refusal {
 /// The verdict on one copy.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Lease {
-    /// `(H-Move)`: no path uses the copied value after the copy.
+    /// A move: one of `(H-Move)`'s written positions — or, for the liveness answer, no later use.
     Move,
-    /// `(H-Copy-Refuse)`: the copy makes a second structure on a value still held.
+    /// The copy makes a second structure on a value something still holds.
     Refuse(Refusal),
-    /// The pass never reached the copy — an IR shape it does not walk.  Reported rather than
-    /// guessed, so a shape the pass misses cannot read as a move.
+    /// The liveness pass never reached the copy — an IR shape it does not walk.  Reported rather
+    /// than guessed, so a shape the pass misses cannot read as a move.
     Unreached,
+}
+
+/// Where the value a copy produces goes: the half of a copy's verdict that is read off the
+/// surrounding code rather than off the source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Placement {
+    /// Into a new structure: a bind, a field, an element, a tuple member.
+    Structure,
+    /// Out of the function, through its return buffer.
+    Return,
+    /// Out of the block at this address, as its result.
+    BlockResult(*const Value),
+    /// Into a read through a temporary: nothing outlives the expression.
+    ReadThrough,
 }
 
 /// One value a source expression may produce, classified: what the copy would duplicate.
@@ -156,13 +167,34 @@ impl<'a> Frame<'a> {
         }
     }
 
-    /// The verdict on the copy at `site`, whose source expression is `src`.  `site` must be a node
-    /// of the function's body (it is found by identity).
+    /// `(H-Copy-Refuse)`'s verdict on a copy of `src` whose value goes to `placement`, read off
+    /// the line: nothing the program does after the copy changes it.
     ///
-    /// Every value `src` may produce is judged: each arm of a join, the tail of a block.  The copy
-    /// is a move only when every one of them is.
+    /// Every value `src` may produce is judged — each arm of a join, the tail of a block — and the
+    /// copy is a move only when every one of them is.
     #[must_use]
-    pub fn copy_verdict(&self, site: &Value, src: &Value) -> Lease {
+    pub fn written_verdict(&self, src: &Value, placement: Placement) -> Lease {
+        let mut followed = HashSet::new();
+        for leaf in leaves(self.data, &self.ops, src) {
+            let verdict = self.written_leaf(leaf, placement, &mut followed);
+            if verdict != Lease::Move {
+                return verdict;
+            }
+        }
+        Lease::Move
+    }
+
+    /// `(H-Copy-Refuse)`'s verdict on a copy of the whole variable `var` whose value goes to
+    /// `placement` — a bind `x = a`, or a whole-tuple copy the parser lowers into member copies.
+    #[must_use]
+    pub fn written_var_verdict(&self, var: u16, placement: Placement) -> Lease {
+        self.written_leaf(Leaf::Var(var), placement, &mut HashSet::new())
+    }
+
+    /// The liveness answer on the copy at `site`, whose source expression is `src`.  `site` must be
+    /// a node of the function's body (it is found by identity).
+    #[must_use]
+    pub fn liveness_verdict(&self, site: &Value, src: &Value) -> Lease {
         for leaf in leaves(self.data, &self.ops, src) {
             let verdict = match leaf {
                 Leaf::Member(root) => Lease::Refuse(self.member_owner(self.resolve_view(root).0)),
@@ -176,10 +208,9 @@ impl<'a> Frame<'a> {
         Lease::Move
     }
 
-    /// The verdict on copying the whole variable `var` at `site` — a plain bind `x = a`, or a
-    /// whole-tuple copy that the parser lowers into member copies.
+    /// The liveness answer on copying the whole variable `var` at `site`.
     #[must_use]
-    pub fn var_verdict(&self, site: &Value, var: u16) -> Lease {
+    pub fn liveness_var_verdict(&self, site: &Value, var: u16) -> Lease {
         self.whole_var(site, var)
     }
 
@@ -252,6 +283,65 @@ impl<'a> Frame<'a> {
         (current, through_member)
     }
 
+    /// Is `var` one of the function's return buffers — an argument it fills, not one it receives?
+    #[must_use]
+    pub fn is_buffer(&self, var: u16) -> bool {
+        self.buffers.contains(&var)
+    }
+
+    /// The rule read off the line, for one value a copy may produce.
+    fn written_leaf(&self, leaf: Leaf, placement: Placement, followed: &mut HashSet<u16>) -> Lease {
+        if placement == Placement::ReadThrough {
+            return Lease::Move;
+        }
+        let var = match leaf {
+            Leaf::Fresh => return Lease::Move,
+            Leaf::Member(root) => {
+                return Lease::Refuse(self.member_owner(self.resolve_view(root).0));
+            }
+            Leaf::Link(v) => return Lease::Refuse(Refusal::Copied(v)),
+            Leaf::Var(v) => v,
+        };
+        if self.buffers.contains(&var) {
+            return Lease::Move;
+        }
+        // A compiler temp copies what it was given; a temp given nothing was built where it is.
+        if self.func.is_compiler_generated(var) && !self.func.is_argument(var) {
+            if !followed.insert(var) {
+                return Lease::Move;
+            }
+            for given in self.assigned(var) {
+                let verdict = self.written_leaf(given, placement, followed);
+                if verdict != Lease::Move {
+                    return verdict;
+                }
+            }
+            return Lease::Move;
+        }
+        if let Some(container) = self.member_container(var) {
+            return Lease::Refuse(self.member_owner(container));
+        }
+        if self.caller_holds(var) {
+            return Lease::Refuse(Refusal::Caller(var));
+        }
+        if self.func.is_captured(var) {
+            return Lease::Refuse(Refusal::Captured(var));
+        }
+        match placement {
+            Placement::Return => Lease::Move,
+            Placement::BlockResult(block) if self.declared_in(var, block) => Lease::Move,
+            _ => Lease::Refuse(Refusal::Copied(var)),
+        }
+    }
+
+    /// Is every assignment that gives `var` a value inside the block at `block`?  A declaration's
+    /// null initialiser, which the compiler hoists to the top of the function, gives no value.
+    fn declared_in(&self, var: u16, block: *const Value) -> bool {
+        let mut counts = (0, 0);
+        count_assignments(self.body, var, block, false, self.ops.database, &mut counts);
+        counts.0 > 0 && counts.1 == 0
+    }
+
     fn whole_var(&self, site: &Value, var: u16) -> Lease {
         if let Some(container) = self.member_container(var) {
             return Lease::Refuse(self.member_owner(container));
@@ -282,12 +372,6 @@ impl<'a> Frame<'a> {
 
     /// Does the caller hold `var`'s value: a parameter, or a local that holds the caller's record
     /// on every path?
-    /// Is `var` one of the function's return buffers — an argument it fills, not one it receives?
-    #[must_use]
-    pub fn is_buffer(&self, var: u16) -> bool {
-        self.buffers.contains(&var)
-    }
-
     fn caller_holds(&self, var: u16) -> bool {
         (self.func.is_argument(var) && !self.buffers.contains(&var))
             || self.func.holds_caller_record(var)
@@ -358,12 +442,41 @@ impl<'a> Frame<'a> {
     }
 }
 
+/// Count the assignments that give `var` a value, as `(inside the block at block, outside it)`.
+fn count_assignments(
+    node: &Value,
+    var: u16,
+    block: *const Value,
+    within: bool,
+    database: u32,
+    counts: &mut (usize, usize),
+) {
+    let node = node.unspan();
+    let within = within || std::ptr::eq(node, block);
+    let gives = match node {
+        Value::Set(v, rhs) => *v == var && !matches!(rhs.unspan(), Value::Null),
+        Value::Call(op, args) => {
+            *op == database
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == var)
+        }
+        _ => false,
+    };
+    if gives {
+        if within {
+            counts.0 += 1;
+        } else {
+            counts.1 += 1;
+        }
+    }
+    node.for_each_child(&mut |c| count_assignments(c, var, block, within, database, counts));
+}
+
 /// The tuple variable a tuple literal copies WHOLE, or `None`.
 ///
 /// `u = t` is lowered into one member copy per member — the same spelling a tuple literal of
 /// members has — so the copy is recognised by its content: every member of ONE tuple, in order,
-/// and nothing else.  Such a literal copies the tuple's whole value, which `(H-Move)` judges as
-/// one variable, rather than a member of a container.
+/// and nothing else.  Such a literal copies the tuple's whole value, which is judged as one
+/// variable rather than as a member of a container.
 #[must_use]
 pub fn whole_tuple_source(func: &Function, rhs: &Value) -> Option<u16> {
     let Value::Tuple(items) = rhs.unspan() else {

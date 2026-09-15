@@ -1733,9 +1733,12 @@ exactly one OPEN deviation (`LEASE_DEVIATIONS`), and each listed cell to still f
 retires its cell from the list in the same commit, and a deviation closed in the register while a
 cell still measures it fails.  `the_census_names_the_copy_each_cell_makes` runs
 `LOFT_DROP_COPY_CENSUS` over every cell: a copied structure is reported from its root, a view
-reports nothing, a program with no hook reports `0 sites`, and the census refuses a copy in exactly
-the cells the superseded liveness reading refuses (`liveness_verdict`; @PLN163 P2r moves it to
-`lease_verdict`, the rule read off the line).
+reports nothing, a program with no hook reports `0 sites`, and each of the census's two verdict
+columns is held to its own hand-derived oracle.  `lease=` — the rule read off the line — refuses in
+exactly the cells `lease_verdict` refuses (201 of 276) and in no `Once` cell; `liveness=` — whether
+the copied value is used afterwards, kept for `(H-Elide)` — refuses in exactly the cells
+`liveness_verdict` refuses and never reports `unreached`.  An `item` site (a droppable placed in a
+tuple literal) is a placement the rule judges, not an emitted copy, so it is not held to a root.
 `every_emitted_copy_of_a_droppable_has_a_lease_verdict` compiles every cell with the census and
 `LOFT_COPY_MANIFEST` on, through the interpreter and the native generator, and requires every copy
 of a droppable a generator EMITS to carry a census verdict — the copies the IR never shows are

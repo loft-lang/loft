@@ -257,6 +257,33 @@ pub fn sites() -> Vec<CopySite> {
 /// Drop the manifest (between compilations in one process — the test harness, the REPL).
 pub fn clear() {
     SITES.with(|s| s.borrow_mut().clear());
+    SELF_BINDS.with(|s| s.borrow_mut().clear());
+}
+
+thread_local! {
+    /// `x = x` statements the parser erased (#330), by function, variable and line: no IR is left
+    /// for the census to find, and the copy-lease rules judge the line all the same (@PLN163).
+    static SELF_BINDS: RefCell<std::collections::BTreeSet<(u32, u16, u32)>> =
+        const { RefCell::new(std::collections::BTreeSet::new()) };
+}
+
+/// Record that the parser erased `var = var` at `line` in `def_nr`.
+pub fn note_self_bind(def_nr: u32, var: u16, line: u32) {
+    if crate::keys::drop_copy_census_enabled() {
+        SELF_BINDS.with(|s| s.borrow_mut().insert((def_nr, var, line)));
+    }
+}
+
+/// The erased `x = x` statements of `def_nr`, as `(var, line)`.
+#[must_use]
+pub fn self_binds(def_nr: u32) -> Vec<(u16, u32)> {
+    SELF_BINDS.with(|s| {
+        s.borrow()
+            .iter()
+            .filter(|(d, _, _)| *d == def_nr)
+            .map(|&(_, v, l)| (v, l))
+            .collect()
+    })
 }
 
 thread_local! {
