@@ -2840,6 +2840,37 @@ fn every_ignore_reason_says_how_it_runs() {
     );
 }
 
+/// The bash that runs `scripts/test_subjects.sh` — Git Bash on Windows, `bash` elsewhere.
+///
+/// ⚠ On Windows a bare `bash` is NOT Git Bash — it resolves to `C:\Windows\System32\bash.exe`,
+/// the WSL launcher, which with no distribution installed prints "Windows Subsystem for Linux
+/// has no installed distributions" to STDOUT (UTF-16) and exits 1.  A windows-probe run of the
+/// identical command passes because the probe runs INSIDE Git Bash, where `bash` resolves to
+/// Git Bash first, while the test process inherits a different PATH order.  `sh` is not the
+/// cure: `test_subjects.sh` needs `BASH_SOURCE` and `[[ ]]`, and `/bin/sh` on Linux is dash.
+/// Every guard here that spawns the script asks this one resolver — it was a closure inside
+/// `every_test_binary_matches_a_subject` alone, and the two loft#1520 guards beside it kept a
+/// bare `bash` and failed the Windows daily the day they reached `main`.
+fn git_bash() -> std::ffi::OsString {
+    #[cfg(windows)]
+    {
+        let mut roots: Vec<std::path::PathBuf> = Vec::new();
+        for var in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
+            if let Some(v) = std::env::var_os(var) {
+                roots.push(std::path::PathBuf::from(v));
+            }
+        }
+        roots.push(std::path::PathBuf::from(r"C:\Program Files"));
+        for r in roots {
+            let c = r.join("Git").join("bin").join("bash.exe");
+            if c.is_file() {
+                return c.into_os_string();
+            }
+        }
+    }
+    std::ffi::OsString::from("bash")
+}
+
 /// Every subject's PATH pattern claims the sources it names — the map `--changed` reads.
 ///
 /// loft#1520: `changed_filter` looped over `${!SUBJECT_PATHS[@]}`, an array nothing ever
@@ -2884,7 +2915,7 @@ fn every_subject_claims_the_paths_it_names() {
              p=$(subject_paths \"$n\") || continue; \
              [[ \"{path}\" =~ $p ]] && echo \"$n\"; done"
         );
-        let out = std::process::Command::new("bash")
+        let out = std::process::Command::new(git_bash())
             .args(["-c", &script])
             .current_dir(root)
             .output()
@@ -2905,7 +2936,7 @@ fn every_subject_claims_the_paths_it_names() {
     // path is unreachable from `--changed` by construction.
     let script = "source scripts/test_subjects.sh; \
                   for n in $SUBJECT_NAMES; do subject_paths \"$n\" >/dev/null || echo \"$n\"; done";
-    let out = std::process::Command::new("bash")
+    let out = std::process::Command::new(git_bash())
         .args(["-c", script])
         .current_dir(root)
         .output()
@@ -2938,7 +2969,7 @@ fn changed_selects_subjects_by_path() {
             "source scripts/test_subjects.sh; changed_paths() {{ printf '%s\\n' {list}; }}; \
              changed_filter HEAD"
         );
-        let out = std::process::Command::new("bash")
+        let out = std::process::Command::new(git_bash())
             .args(["-c", &script])
             .current_dir(root)
             .output()
@@ -2990,38 +3021,10 @@ fn every_test_binary_matches_a_subject() {
     // binaries (bash 5.3.15, Cygwin), so the cause is load on the runner rather than
     // anything in the map.  So: a non-zero exit with BOTH streams empty is retried once,
     // and either way the message names what actually happened.  The retry cannot mask a
-    // genuine finding, because a genuine finding has stdout.
-    // ⚠ On Windows a bare `bash` is NOT Git Bash — it resolves to
-    // `C:\Windows\System32\bash.exe`, the WSL launcher, which with no distribution
-    // installed prints "Windows Subsystem for Linux has no installed distributions" to
-    // STDOUT (UTF-16) and exits 1.  That is the whole story behind this test failing twice
-    // on the Windows daily while a windows-probe run of the identical command passed: the
-    // probe ran INSIDE Git Bash, where `bash` resolves to Git Bash first, and the test
-    // process inherits a different PATH order.  The 20-odd other suites here spawn `sh`,
-    // which System32 does not provide, so this was the only site exposed.  `sh` is not the
-    // cure though — `test_subjects.sh` needs `BASH_SOURCE` and `[[ ]]`, and `/bin/sh` on
-    // Linux is dash.
-    let bash = || -> std::ffi::OsString {
-        #[cfg(windows)]
-        {
-            let mut roots: Vec<std::path::PathBuf> = Vec::new();
-            for var in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
-                if let Some(v) = std::env::var_os(var) {
-                    roots.push(std::path::PathBuf::from(v));
-                }
-            }
-            roots.push(std::path::PathBuf::from(r"C:\Program Files"));
-            for r in roots {
-                let c = r.join("Git").join("bin").join("bash.exe");
-                if c.is_file() {
-                    return c.into_os_string();
-                }
-            }
-        }
-        std::ffi::OsString::from("bash")
-    };
+    // genuine finding, because a genuine finding has stdout.  The shell itself is `git_bash()`
+    // — on Windows a bare `bash` is the WSL launcher, which is what failed this test twice.
     let run = || {
-        std::process::Command::new(bash())
+        std::process::Command::new(git_bash())
             .args([
                 "-c",
                 "source scripts/test_subjects.sh && unmatched_binaries",
