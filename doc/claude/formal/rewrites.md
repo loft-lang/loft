@@ -737,7 +737,11 @@ and loses only the innermost frame NAME from the chain.  Switch
                  `Object` build of the function's own record (the tuple of its writes),
                  a call to an admitted function (its tuple, forwarded), a value local,
                  or a borrowed VIEW of the record (the tuple of its field reads; a view
-                 is never freed, so reading it is all the value form owes) — and that
+                 is never freed, so reading it is all the value form owes) — a heap
+                 field of the record that (O-ViewField) admits is a VIEW LEAF, the
+                 reference to the place it views delivered in the tuple instead of a
+                 claim of its own, and a record whose every heap field is such a leaf
+                 counts as no-heap here — and that
                  the return buffer be mentioned only where the value form drops the
                  mention (a converted `Object`, a dropped buffer argument, a free); the
                  SITE gate asks that every admitted call stand where a tuple is
@@ -808,6 +812,78 @@ symbol and self time is the candidate).  Sites: `vector::get_elem_hoisted_cold`,
 `Stores::vec_set_hoisted_cold`, `Stores::note_format_fault`'s split,
 `Store::raise_out_of_bounds`, `Store::shadow_write`, `State::verify_slot`,
 `State::mark_stale_handles`, `Stores::watch_oob_text_report`.
+
+### A result is built where it will live, moved at its last use, and written over a place
+
+```
+  (R-Place)      a call whose result has ONE owning destination on every path that
+                 keeps it — a field or element of a record living in store S, whether
+                 or not that record exists yet — is handed a return buffer CLAIMED IN
+                 S (R-Callee: a buffer may be a record the caller offered), so the
+                 result is never minted in a store of its own and the later store into
+                 the destination is a relocation within S (R-MoveLast).  When the
+                 destination place EXISTS at the call and no argument of the call
+                 reaches it, the buffer IS the place and nothing moves.  Declines: a
+                 path that reads the result after the store (the destination owns it
+                 then, and B-Copy would show); an argument that reaches the
+                 destination's store (source and destination alias); a callee that
+                 may hand back a store it did not mint (O-Opaque: empty deps license
+                 nothing); a callee that on some exit answers a store other than the
+                 buffer it was handed (the destination would hold the writes of the
+                 exit not taken); a `?`/`??` discharge on the result.  Every other
+                 call keeps its own buffer.
+  (R-MoveLast)   a record-literal field or a field/element assignment whose source is
+                 a LOCAL the ownership oracle marks OWNED (O-Owner: never a parameter,
+                 a view, a `&` link or a witnessed local) and DEAD on every path after
+                 the assignment (O-Complete: no read, no rebind, no hand-off, no
+                 free-guard that names it, in this frame or through a callee it is
+                 passed to) takes the source by RELOCATION when source and destination
+                 share a store — the record's bytes move, its heap handles keep their
+                 claims, the source is zeroed and its scope-exit free finds nothing
+                 (R-MoveAppend's mechanics for one record) — and keeps B-Copy's deep
+                 copy when they do not: a cross-store move copies every claim anyway,
+                 so the rewrite has no gain there, and R-Place is what brings the
+                 source into the destination's store first.
+  (R-InPlaceLiteral) an assignment of a record LITERAL to an existing place — an
+                 element `v[i] = R { … }` or a field `o.f = R { … }` — writes the
+                 literal's fields into that place instead of building the literal in
+                 a temporary store and copying it: every field expression is
+                 evaluated BEFORE the first write (a field may read the old value
+                 through a view of the same place), the old value's owned heap is
+                 released before its slot is reused (H-ClearRelease, per field), and
+                 every field the literal omits is set to its declared default
+                 (loft#914) — so the place holds exactly what the copy would have
+                 left.  An absent element keeps the path the copy takes today; a
+                 literal whose field reads the place through a call the walk cannot
+                 see declines.
+  (R-Prefill)    the default prefill of a minted record — the declared defaults, the
+                 null sentinels and the variant tag a partial literal leaves to the
+                 type — is ONE block write of a per-type IMAGE computed once from the
+                 declaration, never a field-by-field walk; a field whose default is
+                 not a fixed byte pattern keeps the walk for itself alone.  The image
+                 is what the walk writes, so no value changes.
+```
+
+**In words.** @PLN164's rewrite list (its README § *The rewrite list*), derived by
+reading the drawing library's natural `parse_poly` beside the version a programmer
+who knows the store model would write, and asking what the compiler must PROVE to
+reach the second from the first without a line of the first changing.  (R-Place)
+is C2 and the half of B2 that matters: `pp_paint = read_paint(s)` whose only owning
+destination is `Op.paint` inside the scene gets a buffer claimed in the scene's
+store, and `paint: pp_paint` at its last use is then (R-MoveLast)'s relocation
+instead of a deep copy; `pts: smooth_pts(…)` with the op already appended is the
+"buffer IS the place" clause.  (R-InPlaceLiteral) is C1 (`sc.elems[idx] = Elem {
+… }` in `acc_pts`, whose `ename: ap_e.ename` reads the very slot it overwrites —
+the staging clause), (R-Prefill) is C4.  What each needs from the IR is in the plan's
+table: the def-use classes of a value (its owning destinations against its read-only
+uses), per-path liveness at a set (the `avoidable-copy` lint already computes it and
+codegen does not yet read it), the disturbance walk `B-Ref-Reshape` runs for `&`,
+and `R-Callee`'s writer summary.  No switch, site or cell exists yet: each rule
+lands with its phase in the @PLN157 shape (a `LOFT_NO_<unit>` switch, cells with
+hand-computed values on both backends under `LOFT_STRICT_STORES`, `LOFT_POISON` and
+the leak gate, a guard with its `@falsified-at:` receipt), and until then the copy
+each rule replaces is what runs.  The rules are written BEFORE the phases so that a
+question met while building one is answered here rather than decided in the code.
 
 ## Validating the emitted routines against their assumptions
 

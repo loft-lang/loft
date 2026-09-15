@@ -198,6 +198,68 @@ buffer held by a promoted buffer local (`143`'s shape); native guards that free 
 entry-time `_rb_w_<buffer>` witness (loft#1126).  Closing the divergence is the whole of
 B1b, and c6 under the pool without the exclusion is its falsifier.
 
+## The rewrite list — the natural `parse_poly` to its optimal form
+
+**This is not about how a programmer writes loft.**  The programmer writes the natural
+`parse_poly` as it stands in the library; the version below is the SPECIFICATION of what
+the compiler must reach from it, written by reading the two side by side and asking, for
+every difference, what fact on the IR licenses the rewrite and which rule says so.  The
+rules were written first (2026-09-15, `formal/rewrites.md` § *A result is built where it
+will live…*, `formal/ownership.md` `(O-ViewField)`, `formal/binding.md` `(B-View)`), so a
+question met while building a phase is answered there and not decided in the code.
+
+*The target, per `Poly` line:* one `Op` record created in the scene's store, its two
+vectors grown in place, nothing else minted, nothing copied, and the `Mark` a value
+tuple whose `pts` is a view of the op's own vector.  In hand-written form:
+
+```loft
+fn parse_poly(sc: Sketch, s: text, raw: PointList) -> Mark {     // raw: the caller's scratch
+  read_points_into(raw, s);
+  pk = read_paint_kind(s);
+  if len(raw.pts) < (if pk == Stroked { 2 } else { 3 }) { return Mark { matched: true, bad: true } }
+  sc.ops += [Op { kind: Stroke }];          // the one record, built where it lives (R-Mint)
+  o = sc.ops[len(sc.ops) - 1];              // a view (B-View)
+  read_paint_into(o.paint, s);              // the field is the buffer (R-Place)
+  if pk != Stroked { o.kind = Fill; smooth_into(o.pts, raw.pts, raw.smooth, true); }
+  else {
+    o.w = read_width(s, 3); o.color = read_stroke_colour(s);
+    smooth_into(o.pts, raw.pts, raw.smooth, false);
+    if raw.any_width { /* widths appended into o.widths; smoothed in place */ }
+  }
+  Mark { matched: true, bad: false, pts: o.pts }   // pts a VIEW LEAF (O-ViewField), Mark in registers
+}
+```
+
+What the compiler cannot do is the one thing a programmer could: change the contract
+(`Mark` carrying an op index instead of the points, or `parse_poly` growing the element's
+box itself).  `(O-ViewField)` reaches the same cost with the contract as written, which
+is the whole point of Goal F.
+
+| rewrite (per `Poly` line) | IR fact to establish | licence | exists today | phase |
+|---|---|---|---|---|
+| bind `pp_raw`, `pp_paint` without a copy | the callee's return deps name exactly its own buffer; the destination a plain local | `O-Move`, `O-Buffer` | shipped | B1 |
+| `pp_paint`'s buffer claimed in the scene's store; `paint: pp_paint` a relocation, not a deep copy | the result's ONE owning destination is a field of a record in store S on every path that keeps it; `pp_paint` owned and dead on every path after the literal | `R-Place`, `R-MoveLast`, `O-Complete` | the liveness exists as the `avoidable-copy` lint's *"still used after this point"*; codegen does not read it; a buffer claimed in another store is new | B2 |
+| `pts: smooth_pts(…)` fills `Op.pts` directly, no buffer | as above, with the destination place existing at the call and no argument reaching it; the callee writes only its buffer and answers it at every exit | `R-Place` ("the buffer IS the place"), `R-Callee`, E15, E16 | `retbuf_only_writer`; `R-ElemFirst` already builds a vector inside an appended element; the redirection of a call's buffer into a field is missing | C2 |
+| `sc.elems[idx] = Elem{…}` written into the slot | the slot exists; every field expression evaluated before the first write (`ename: ap_e.ename` reads the slot); omitted fields defaulted | `R-InPlaceLiteral`, E13, E14 | complete-write knows the literal's field set | C1 |
+| `ap_e = sc.elems[idx]?` as a view | `ap_e` only read; `sc.elems` not disturbed between bind and last read, in this frame or any callee | `B-View` (the discharge clause), `B-Disturb` | `view_elision_bind` does it for call results; the interprocedural disturbance walk exists for `&` | C3 |
+| `Op { kind: Stroke, … }` prefilled by one block write | the literal's field set against the type's defaults | `R-Prefill` | complete-write has the set; the per-type image is missing | C4 |
+| the four `smooth_pts` buffers not minted at entry | one path runs one call | trivial | goes away with C2 | with C2 |
+| the `PointList` scratch reused across lines | the callee's literal rewrites every field when handed a live buffer; the buffer-holder's rebind never frees it | `R-Reuse`, § V-y | D-own-43 (the interpreter's rebind free) must close first | B1b, A2 |
+| the points written once: `Mark.pts` a view of `Op.pts` | the field's source has an owning destination in `sc` (outlives the frame); every call site only reads it before any disturbance of `sc.ops` | `O-ViewField`, `R-ValueRecord`'s view leaf | no — the rule is new; § V-aa's site fixpoint is the home to extend | C5 |
+
+*What each phase must build,* in the @PLN157 shape: a `LOFT_NO_<unit>` switch, cells with
+hand-computed values on both backends under `LOFT_STRICT_STORES`, `LOFT_POISON`,
+`LOFT_POISON_CLAIM` and the leak gate, a guard with its `@falsified-at:` receipt, pins, the
+subject registered.  Each rule's decline list is its falsifier list: a cell per decline,
+proving the copy still runs there.
+
+*Analyses the phases share* (each wants ONE home, read by the scope pass and both
+backends, the loft#810 discipline B1 followed): the def-use classes of a heap value (its
+owning destinations against its read-only uses — `R-ElemFirst`'s "consumed exactly once"
+generalised); per-path liveness at a set; the disturbance walk between two points for a
+named container; destination existence and aliasing against a call's arguments; the
+callee writer summary; the return shape over all call sites.
+
 ## Composition matrix — Stage A (REQUIRED)
 
 The axes the tiers touch, each with the domain the language offers; every phase's cells
@@ -313,11 +375,12 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | **A2** — the caller-threaded arena, reset per loop iteration | § Tier 1 | parse row −20 %; E2/E3/E4 cells | Blocked on A1 |
 | **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |
 | **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state) | § B1 | c6 under the pool without `minted_pairs` — the interpreter's rebind free must first match native's `_rb_w_` guard | Blocked on that divergence |
-| **B2** — move at last use into a field | § Tier 2 | E9–E12 cells under `LOFT_POISON`; the `paint: pp_paint` site emits no `OpCopyRecord` | Open |
-| **C1** — element overwrite from a literal in place | § Tier 3 | E13/E14 cells; `acc_pts` emits no temp store | Open |
-| **C2** — the destination as return buffer | § Tier 3 | E15/E16 cells; `smooth_pts` writes `Op.pts` | Blocked on A1 (the destination is an arena or scene record) |
-| **C3** — read-only `?`-discharge as a view | § Tier 3 | E17 cells; `acc_pts` copies nothing | Open |
-| **C4** — per-type prefill image | § Tier 3 | `set_default_value_nullable` leaves the parse profile; the `Op` literal's cells | Open |
+| **B2** — the result's buffer claimed in its destination's store, the field taking it by relocation at the last use (`R-Place`, `R-MoveLast`) | § The rewrite list | E9–E12 cells under `LOFT_POISON`; the `paint: pp_paint` site emits no `OpCopyRecord` and `read_paint`'s buffer is a record in the scene's store | Open — next |
+| **C1** — element overwrite from a literal in place (`R-InPlaceLiteral`) | § The rewrite list | E13/E14 cells; `acc_pts` emits no temp store | Open |
+| **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § The rewrite list | E15/E16 cells; `smooth_pts` writes `Op.pts` | After C3 (needs no arena: the destination is a record in the scene's store) |
+| **C3** — read-only `?`-discharge as a view (`B-View`'s discharge clause) | § The rewrite list | E17 cells; `acc_pts` copies nothing | Open |
+| **C4** — per-type prefill image (`R-Prefill`) | § The rewrite list | `set_default_value_nullable` leaves the parse profile; the `Op` literal's cells | Open — with B2 |
+| **C5** — a returned record's heap field as a view leaf (`O-ViewField`, `R-ValueRecord`) | § The rewrite list | the points written once per line: `Mark.pts` names `Op.pts`; an E17 site that appends between the call and the read must read the copy | Open — last; the rule wants the owner's sign-off before its cells |
 
 Every phase: a switch (`LOFT_NO_<unit>=1`), a falsifier, cells in
 `bytecode-comparisons/`, a guard in `tests/scripts/` with its `@falsified-at:` receipt,
@@ -327,12 +390,16 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
 
 1. P0 — done: tier 1 priced at ≈ 10 % of the row, E1's site count measured; the owner's
    pick between `(store_nr, rec)` identity and a pooled store stays open until A1 is cut.
-2. B1 (shipped) and B2 — small, independent of the arena, each removes a copy class today;
-   B1b (buffer reuse for the promoted-local shape) after the interpreter's rebind free is
-   guarded as native's is.
-3. A1 then A2 — the largest class, the largest change; A2 is where the parse row moves.
-4. C1, C3, C4 — each a local mechanism; C2 last, it needs A1's destinations.
-5. Re-measure the 14-row bench after each tier (`compare.py`, 14/14 hashes).
+2. B1 — shipped.  Then **B2 and C4**, a day each, local, feeding the profile's two largest
+   remaining classes (the copies and the prefill).
+3. **C3 then C1** — the `acc_pts` pair, one mechanism each.
+4. **C2** — after C3: it needs the destination C3 makes visible and a single-exit callee
+   test; it does NOT need the arena.
+5. **C5** last, as its own section: it extends a formal rule (`O-ViewField`) and the
+   value-record gate, so the owner signs the rule off before the cells are written.
+6. **B1b** beside them whenever D-own-43 closes (the interpreter's rebind guard); then
+   A1 → A2, whose remaining share is re-measured after the copy phases have moved the mix.
+7. Re-measure the 14-row bench after each phase (`compare.py`, 14/14 hashes).
 
 ## Open design questions
 
@@ -347,6 +414,17 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
    detail with no value, but the leak gate must then read both.
 3. **Where does a moved-from local's `deps` go?**  Tier 2's move needs the scopes pass to
    record "handed off", the same predicate the double-move lint counts.
+4. **`(O-ViewField)` — the owner's sign-off.**  It is the one rule the rewrite list
+   invents rather than refines: a heap field of a returned record delivered as a view of
+   a place that outlives the frame, admitted only when every call site is read-only and
+   undisturbed.  Written 2026-09-15 in `formal/ownership.md` before C5 is cut; the
+   question for the owner is whether a returned view is a shape the language wants at
+   all, or whether the copy is the contract and C5 stays a decline.
+5. **`(R-Place)` across stores.**  A result's buffer claimed in the DESTINATION's store
+   (the scene's) rather than a store of its own is what makes B2's move a relocation;
+   it is also the first place a temporary lives inside another record's store, which is
+   E1's identity question in miniature.  If the owner picks the pooled-store answer for
+   E1, this rule still stands: the placement is per call, decided by the destination.
 
 ## Cross-arc dependencies
 

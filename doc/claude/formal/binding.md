@@ -164,6 +164,11 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   and the author is told — so writes through it stop reaching the
                   container (@PLN130 F2/F4/F8).  A plain bind already copies, so this
                   is consistent with what it meant; a `&` gets B-Ref-Reshape instead.
+                  A `?`-DISCHARGED element read (`e = v[i]?`) is the same projection with
+                  its absence discharged and is a VIEW on the same terms — an absent
+                  element discharges to null, and there is nothing to view (@PLN164 C3;
+                  today the discharge materialises a copy, which the rule permits and
+                  the rewrite removes).
                   A view of a member that owns a droppable without `OpCopy` never
                   materialises: disturbing its container while the view is used is an error
                   at the disturbance ([heap.md](heap.md) H-View-Drop).
