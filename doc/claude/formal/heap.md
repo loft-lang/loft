@@ -894,15 +894,31 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
    nothing, the caller owns — so the callee's copy must not release.  D-heap-1's first shape is
    the tuple-member spelling of this family, and the cure it names (a caller-side fact) is the
    same one.
-   - **OPEN — a parameter copy displaced by a VIEW (found 2026-09-15; no gate cell yet).**
-     `x = p; x = s.h` releases the caller's resource inside the callee, and the caller releases
-     it again: twice, on both backends, `LOFT_POISON` clean.  The same after `x = mk(); x = p`
-     and after `if c { x = p; }` on the path that copied.  Not the mechanism of the rows above,
-     read off the IR.  A local that owns on one assignment and views on another carries the
-     loft#1336 owner witness.  The parameter copy points the witness at its record
-     (`OpRefAlias`), and the view rebind releases the witnessed store WITH the type's hook.  The
-     witness is right about the store, which is the local's to free, and wrong about the
-     release: the copy's resource is the caller's.
+   - ✓ **A parameter copy the owner witness names — CLOSED 2026-09-15.**  `x = p; x = s.h`
+     released the caller's resource inside the callee, and the caller released it again: twice,
+     on both backends, `LOFT_POISON` clean.  Not the mechanism of the rows above, read off the IR.
+     A local that owns on one assignment and views on another carries the loft#1336 owner
+     witness, and a whole-value copy is a store of the local's own (`@FR-B-Copy`), so the
+     parameter copy pointed the witness at its record (`OpRefAlias`).  The witness then released
+     that store WITH the type's hook.  The witness was right about the store, which is the
+     local's to free, and wrong about the release, which is the caller's.  Measured at all four
+     places a witness hooks:
+     - a later field or element view;
+     - an in-place rebuild by a literal;
+     - scope exit;
+     - per iteration inside a loop.
+
+     Each held with the copy unconditional, after a record of the local's own, or in a branch
+     arm, and for a record that holds the resource.  A null or a fresh call displacing the copy
+     was right.
+
+     The cure carries the fact the p_h6 close introduced: a witnessed local assigned a copy off
+     a parameter gets the `__hoff_` flag, the copy sets it, and every other assignment retires it.
+     The in-place rebuild, which is no `Set`, retires it too.  The witness frees the store either
+     way and skips the hook while the flag is set, one home for all four sites
+     (`Scopes::witness_hook`).  A release that runs where the local stops owning is emitted
+     before the statement's flag writes, so its hook reads the flag of the record it releases.
+     Guard: `tests/scripts/a-parameter-copy-the-owner-witness-names-is-released-by-the-caller-only.loft`.
    - **OPEN — a parameter copy handed on.**  `if c { x = p; } if d { y = x; }` with both taken
      releases the caller's resource through `y`, then in the caller: twice, both backends.  The
      copy `y = x` takes `x`'s release (loft#1515), and `x`'s record was never `x`'s to hand on.

@@ -2246,6 +2246,24 @@ fn per_path_stops(function: &Function, data: &Data, dst: u16, src: u16) -> Optio
     copy_moves_drop_from(function, data, dst, src, false)
 }
 
+/// Is `v` assigned, anywhere in `code`, a whole-value copy that stops `v` itself — a copy off a
+/// PARAMETER ([`per_path_stops`])?  Asked of a witnessed local before the scan, so its flag
+/// exists before the first `Set` that has to write it.
+fn assigns_a_self_stopping_copy(code: &Value, function: &Function, data: &Data, v: u16) -> bool {
+    let mut found = false;
+    code.walk(&mut |n| {
+        if !found
+            && let Value::Set(t, rhs) = n.unspan()
+            && *t == v
+            && let Value::Var(src) = rhs.unspan()
+            && per_path_stops(function, data, v, *src) == Some(v)
+        {
+            found = true;
+        }
+    });
+    found
+}
+
 /// The locals a value branch hands back as its arm tails — the sources the statement form
 /// `if c { x = a } else { x = b }` copies from.
 ///
@@ -3428,6 +3446,16 @@ fn run_scan_phase(
     stopped.dedup();
     for var in stopped {
         scopes.mint_handoff_flag(&mut function, var);
+    }
+    // loft#1336 / `(H-Drop)` — a witnessed local assigned a copy off a PARAMETER, anywhere in the
+    // body: the witness releases the store the copy is and must skip its hook, so the local gets
+    // the same flag.  Sorted, so the flags are minted in one order on every compile.
+    let mut witnessed_by_owner: Vec<u16> = scopes.owner_witness.keys().copied().collect();
+    witnessed_by_owner.sort_unstable();
+    for v in witnessed_by_owner {
+        if assigns_a_self_stopping_copy(orig_code, &function, data, v) {
+            scopes.mint_handoff_flag(&mut function, v);
+        }
     }
     let displace_locals = nullable_locals_that_displace(orig_code, &function, data);
     for &v in &displace_locals {
@@ -7636,6 +7664,36 @@ impl Scopes<'_> {
                 && self.handed_off.contains_key(&v))
     }
 
+    /// Is `v = value` a copy off a PARAMETER into a local the loft#1336 owner witness releases?
+    /// The copy is a store of the local's own (`@FR-B-Copy`), so the witness names it, but its
+    /// resource is the caller's (`(H-Drop)`), so the witness must not hook it.  The local's
+    /// `__hoff_` flag records which of the two the witnessed record is.
+    fn witnessed_copy_stops_itself(
+        &self,
+        function: &Function,
+        data: &Data,
+        v: u16,
+        value: &Value,
+    ) -> bool {
+        self.owner_witness.contains_key(&v)
+            && self.handed_off.contains_key(&v)
+            && matches!(value.unspan(), Value::Var(src)
+                if per_path_stops(function, data, v, *src) == Some(v))
+    }
+
+    /// The hook a release through witness `w` runs for witnessed local `v`: the type's cascade
+    /// over the record `w` names, unless that record's release is not this frame's — a copy off
+    /// a parameter, recorded on `v`'s `__hoff_` flag.  One home for the four places a witness
+    /// hooks (a mint's release of what it replaces, a release where the local stops owning, an
+    /// in-place rebuild, scope exit), because a copy the witness names reaches every one of them.
+    fn witness_hook(&self, function: &Function, data: &Data, v: u16, w: u16) -> Option<Value> {
+        let hook = drop_hook(function, w, data)?;
+        Some(match self.handed_off.get(&v) {
+            Some(&flag) => v_if(Value::Var(flag), Value::Null, hook),
+            None => hook,
+        })
+    }
+
     /// The type's scope-end hook for `v`, unless a MOVE-copy already released `v`'s
     /// store — see [`collect_drop_transferred`].  `@FR-H-Drop`: the owner's scope-end
     /// clause.  One home for the rule, because
@@ -8005,7 +8063,7 @@ impl Scopes<'_> {
                     let v = *self.var_mapping.get(ov0).unwrap_or(ov0);
                     if let Some(&w) = self.owner_witness.get(&v) {
                         let mut ops = Vec::new();
-                        if let Some(hook) = drop_hook(function, w, data) {
+                        if let Some(hook) = self.witness_hook(function, data, v, w) {
                             ops.push(hook);
                         }
                         ops.push(v_set(
@@ -8016,6 +8074,13 @@ impl Scopes<'_> {
                         call_args.extend(args.iter().skip(1).cloned());
                         ops.push(Value::Call(*d_nr, call_args));
                         ops.push(witness_points_at(w, v, data));
+                        // The rebuilt record is the local's own, whatever it held before, and a
+                        // rebuild is no `Set`, so the `@FR-O-Latest` retire a `Set` writes is
+                        // written here: left set by an earlier parameter copy, scope exit would
+                        // skip this record's hook.
+                        if let Some(&flag) = self.handed_off.get(&v) {
+                            ops.push(v_set(flag, Value::Boolean(false)));
+                        }
                         return Value::Insert(ops);
                     }
                 }
@@ -9552,9 +9617,12 @@ impl Scopes<'_> {
         // loft#1515 — this copy is one of the per-path hand-offs, so record that it RAN, on the
         // side it stops.  That side's scope-end release reads the flag: on this path the other
         // side owns the resource, on the path that did not copy the stopped side owes its own.
-        let stops_target = self.copy_flagged_on_target(function, data, v, value);
+        // A copy off a parameter into a witnessed local sets the local's flag on every path it
+        // runs, branch or not: the witness names the copy and must not hook it.
+        let stops_target = self.copy_flagged_on_target(function, data, v, value)
+            || self.witnessed_copy_stops_itself(function, data, v, value);
         if let Value::Var(src) = value.unspan()
-            && self.per_path_pairs.contains(&(v, *src))
+            && (stops_target || self.per_path_pairs.contains(&(v, *src)))
             && let Some(stopped) = per_path_stops(function, data, v, *src)
             && let Some(&flag) = self.handed_off.get(&stopped)
         {
@@ -9648,12 +9716,15 @@ impl Scopes<'_> {
                     data.def_nr("OpDistinctStore"),
                     vec![Value::Var(w), Value::Var(v)],
                 ),
-                release_witness(w, function, data),
+                release_witness(w, self.witness_hook(function, data, v, w), data),
                 Value::Null,
             );
             match kind {
                 WitnessSet::Mint => {
-                    prefix.insert(0, release_witness(w, function, data));
+                    prefix.insert(
+                        0,
+                        release_witness(w, self.witness_hook(function, data, v, w), data),
+                    );
                     witness_ops.push(witness_points_at(w, v, data));
                 }
                 WitnessSet::MintReading => {
@@ -9687,8 +9758,11 @@ impl Scopes<'_> {
             // work-ref that delivered it stops naming it, so its scope-end free cannot race
             // the binding's hook.
             all.extend(handoff_disarm);
-            all.extend(witness_update);
+            // The witness's release BEFORE the flag writes: a guarded release is of the record
+            // the local held before this Set, and its hook reads THAT record's `__hoff_` flag,
+            // which the writes below set or retire for the record the local holds now.
             all.append(&mut witness_ops);
+            all.extend(witness_update);
             all.extend(post);
             Value::Insert(all)
         }
@@ -11664,7 +11738,11 @@ impl Scopes<'_> {
                 {
                     guarded.push(free_unless_record_built(v, &records, Some(w), data));
                 }
-                ls.push(release_witness(w, function, data));
+                ls.push(release_witness(
+                    w,
+                    self.witness_hook(function, data, v, w),
+                    data,
+                ));
                 continue;
             }
             // on=4 iteration scratch (`hash_scratch`): a `return` out of an exposed loop
@@ -15772,15 +15850,17 @@ fn captures_built_in_value(value: &Value, data: &Data) -> Vec<(u16, u16)> {
 /// unit, because `OpFreeRef` of a variable does not reset its slot on the interpreter, and a
 /// witness left naming a freed store would release whatever the allocator hands that slot
 /// next.
-fn release_witness(w: u16, function: &Function, data: &Data) -> Value {
+fn release_witness(w: u16, hook: Option<Value>, data: &Data) -> Value {
     // loft#1510 / `(H-Drop)` — the witness releases a store the FRAME minted, so the type's
     // cascade runs first: the bare free released the resource without its hook.  Guarded on
     // the witness holding a record (`ConvBoolFromRef` reads the sentinel's `rec == 0` as
     // false), so a witness that took no store hooks nothing.  Exactly one mechanism claims a
     // witnessed store — the witnessed local never drops (view-typed) and the call's hidden
-    // buffer keeps a bare, hook-less free — so the hook here cannot double.
+    // buffer keeps a bare, hook-less free — so the hook here cannot double.  The hook is the
+    // caller's to pass (`Scopes::witness_hook`): a store the frame minted can hold a record
+    // whose resource it does not own, and the free below runs either way.
     let mut ops = Vec::with_capacity(3);
-    if let Some(hook) = drop_hook(function, w, data) {
+    if let Some(hook) = hook {
         ops.push(hook);
     }
     ops.push(call("OpFreeRef", w, data));
