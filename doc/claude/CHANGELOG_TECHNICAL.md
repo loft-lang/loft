@@ -9,6 +9,24 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Every literal exit of a record function writes the buffer it was handed (2026-09-15)
+
+A function with several `return S { … }` exits built each mid-body literal into a work-ref
+store of its own and only the TAIL literal into the `__retbuf` its caller handed
+(@PLN157 § V's `BuildIntoBuffer` rewrote the tail alone), so `read_paint`'s four exits
+answered three different stores plus the buffer, and the caller adopted whichever came
+back.  `Parser::literal_exits_into_buffer` now applies the same rewrite to every mid-body
+literal return once the tail's delivery is decided — the literal's `OpDatabase` goes
+behind the "caller offered a record" guard and its writes target `__retbuf` — so a callee
+whose exits are all literals answers the ONE buffer; a promoted local beside a literal
+exit (`o = P { … }; if c { return P { … } }; …; o`) declines, because that local IS the
+buffer and the two would share it.  Under adopt-at-bind (B1) the
+caller hands null and the store census does not move; what changes is the callee's
+contract, which is the precondition `(R-Place)` states: a callee that on some exit answers
+a store other than the buffer it was handed cannot be handed a record placed where its
+result will live.  Switch `LOFT_NO_LITERAL_EXIT_BUFFER=1`; pins `tests/literal_exit_buffer.rs`
+(the IR shape on `read_paint`, the switch, both backends).  @PLN164 B2's first unit.
+
 ### The default prefill of a minted record is one block write of a per-type image (2026-09-15)
 
 Every record mint that is not proven complete-write (`OpDatabase`, `OpNewRecord`,

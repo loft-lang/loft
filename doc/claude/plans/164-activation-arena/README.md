@@ -263,6 +263,70 @@ five pins pass; fmt and both clippy legs are green.  The negative-default guard'
 and the control build needs more; point `LOFT_FALSIFY_CACHE` at a disk path) — its receipt
 stays the hand measurement recorded in the file.
 
+## B2 — the result built where it will live (IN PROGRESS 2026-09-15, `@FR-R-Place`, `@FR-R-MoveLast`)
+
+*What the instrument found first.*  `loft introspect` on the B2 cells' `read_paint` (four
+literal exits, the library's shape) showed the callee answering a DIFFERENT store per
+exit: the three mid-body `return Paint { … }` each minted a `__ref_p2_N` work-ref store
+and returned it, and only the tail literal wrote the `__retbuf` the caller handed
+(@PLN157 § V's `BuildIntoBuffer` rewrote the tail alone).  `(R-Place)` declines exactly
+that callee — *on some exit answers a store other than the buffer it was handed* — so the
+row's own callee could not be placed until the callee clause held.
+
+*Unit 1 — every literal exit writes the handed buffer (SHIPPED).*
+`Parser::literal_exits_into_buffer`, run on the function body right AFTER the tail's
+delivery is dispatched: when the buffer is still the unpromoted `__retbuf` and every
+mid-body exit is a fresh literal of its type, each `return S { … }` takes the tail's own
+rewrite (`build_into_return_buffer`: the literal's `OpDatabase` behind the "caller offered
+a record" guard, its writes on `__retbuf`, the work-ref `skip_free`).  It is decided after
+the tail and not at the `return` because the first cut — a mirror inside `parse_return` —
+ran BEFORE the tail promoted a local onto the buffer, so `mk_mix`'s early literal and its
+promoted local `o` shared one buffer and the caller freed a stale ref (the corpus's
+`164-adopt-first-bind` c3, a `BUG (#306)` stack-store free refusal).  A function with any
+non-literal exit keeps its per-exit stores.  Switch `LOFT_NO_LITERAL_EXIT_BUFFER=1`; pins
+`tests/literal_exit_buffer.rs` (the IR shape on `read_paint`: 4 of 4 exits on `__retbuf`,
+the switch restores 1 + 3, the promoted-local shape declined, the cells on both backends).
+No value moves and, under B1's null buffer, no store count moves: the unit changes the
+callee's CONTRACT, which is what units 2–3 consume.
+
+*Units 2–3 — the design (written before the code).*  The caller side, parse time, one IR
+for both backends (E18):
+
+- **Admission** (`R-Place`), decided in the scope pass beside B1's `adopts_minted_at_bind`
+  for a plain local `v` first-bound from such a call: every use of `v` after the bind is
+  either a READ before any store on that path, or ONE owning destination — a record-literal
+  field `Lit { f: v }` inside an element appended to `X.field += [Lit { … }]` where `X` is a
+  PARAMETER (its store exists at the call and outlives the frame) — after which `v` is dead
+  on that path (`O-Complete`: no read, no rebind, no hand-off, no `?`/`??`); every keeping
+  path names the same `X`; no argument of the call reaches `X`; the callee's return deps
+  name exactly its buffer (B1's gate) and, after unit 1, every exit writes it.  First cut
+  admits the LITERAL-FIELD destination only (the parse row's shape); `X.f = v` and
+  `X.v[i].f = v` (an old value to release first, `H-ClearRelease` per field) and a LOCAL
+  host (its store can die before the buffer is released — the free order question) stay
+  copies and are the unit's named follow-ups.
+- **The IR change**, three sites: the buffer's init `__ref_N = null` becomes
+  `__ref_N = OpPlaceRecord(X, tp)` (a record claimed in `X`'s store, prefilled through the
+  C4 image); the literal group's `OpCopyRecord(v, OpGetField(elm, off, tp), tp)` becomes
+  `OpMoveRecord(v, dst, tp)` (`move_record_shallow` + the source block released, its heap
+  handles kept — `R-MoveAppend`'s mechanics for one record) followed by `v = null`; and
+  the exit frees `OpFreeRef(v)` / `OpFreeRefIfDistinct(__ref_N, v)` become ONE
+  null-guarded `OpFreeRecordIn(v, tp)` (`Stores::free_record_in`: the record's owned heap,
+  then its block — never the host store).  E1 does not bite here: the only owned thing
+  sharing `X`'s store is the placed buffer itself, and its frees are record-level by
+  construction.
+- **Native** follows the ops (`place_record_in`, `move_record_shallow`, `free_record_in`
+  already exist for § V-j); the emitter's own scope-end backstop for a `__ref_` attr must
+  see the placed set (a store-level free of a placed buffer frees the HOST).
+- **Falsifiers:** `LOFT_POISON=1` (the moved-from local's free must find nothing),
+  `LOFT_STRICT_STORES=1` (a record freed twice, a store freed under a placed record), the
+  leak gate on both backends, `LOFT_HOIST_VERIFY=1` for the same-store assertion of the
+  move; cells `B2-place-move-cells.loft` b1–b15 (every decline keeps the copy: b2 E9,
+  b3 E10, b5 the `??`, b6 the aliasing argument, b7 the opaque callee, b10 the rebind,
+  b11 two destinations, b12 two stores; b13 no-heap, b14 text-owning); the store census
+  (`LOFT_TRACE_DB`) must DROP by one per admitted call.  Switch `LOFT_NO_PLACE_RESULT=1`.
+- **New ops renumber** `index/target_surface.json` — `make surface-gen` after rebuilding
+  the wasm rlib.
+
 ## The rewrite list — the natural `parse_poly` to its optimal form
 
 **This is not about how a programmer writes loft.**  The programmer writes the natural
