@@ -1690,8 +1690,8 @@ val = lookup(id)       ?? return;    // void function: return nothing
 
 ### Custom iterators (I13)
 
-Any type with a `fn next(self: T) -> Item?` method can be used in a `for` loop.
-Returning `null` from `next` terminates the loop:
+Any struct or struct-enum with a `fn next(self: T) -> Item?` method can be used in a `for`
+loop.  Returning `null` from `next` terminates the loop:
 
 ```
 struct Counter { current: integer, limit: integer }
@@ -1716,7 +1716,16 @@ Declare the item `Item?`, not `Item`.  Both run, but a non-null SCALAR return wa
 Inside the body the loop variable is typed as the non-null `Item`: the loop has already
 ended by the time `next` answers null, so the body never binds one.
 
-`#count` and `#first` work; `#index` and `#remove` are not available.
+`#count` and `#first` work.  `#index` is refused at compile time: it is the position you give
+to `v[i]` to read the same element again, and an iterator's values have no such position —
+`#count` numbers them.  `#remove` is not available either.
+
+The loop walks a COPY of the iterator value, as any bind of a struct copies: after
+`for x in c { }` the caller's `c` is where it was, and `c.next()` starts from there.
+
+A program may also define `fn exhausted(self: T) -> boolean` for its own iterator type.  The
+built-in `exhausted(gen)` answers only for a generator (`iterator<T>`, nullable included); for
+any other type the call reaches the program's definition, or is refused when there is none.
 
 ### Parallel blocks (A15)
 

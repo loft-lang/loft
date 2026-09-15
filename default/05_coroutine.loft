@@ -15,12 +15,7 @@ pub enum CoroutineStatus {
   Exhausted,
 }
 
-/// CO1.6: Returns true if the coroutine has finished producing values.
-pub fn exhausted(gen: reference) -> boolean {
-  OpCoroutineExhausted(gen)
-}
-// Plan-06 phase 5a: #pure — read-only flag inspection.  Under
-// D2.0 (read-only-parent) workers may read parent coroutine
-// state without locking; the operation has no side effects and
-// no parent-store writes.
-#pure
+// `exhausted(gen)` on a generator is the compiler's own lowering to `OpCoroutineExhausted`
+// (`dispatch_call`, for an `iterator<T>` argument).  It is not declared here as a function
+// over `reference`: that declaration answered `true` for any struct and refused a program's
+// own `exhausted` for its own iterator type.

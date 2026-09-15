@@ -2575,7 +2575,11 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 820 | 478 | 6 | **336** |
+| 820 | 479 | 6 | **335** |
+
+(2026-09-15, own iterators — `dispatch_call`'s `exhausted` special form now asks whether its
+argument IS an iterator through `.base()`, so a nullable `iterator<T>?` reaches it: one shape test
+moved from the opaque column to the peeling one, and the ratchet was re-pinned at 335 / 1316.)
 
 (2026-09-15, @PLN162 D-disp-2 — the change to `parser/dispatch.rs`, `parser/definitions.rs` and
 `parser/mod.rs` (nullable dispatch positions, the rebuild's spelling read, the mixed-return

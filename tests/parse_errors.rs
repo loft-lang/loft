@@ -641,6 +641,49 @@ fn static_overloads_may_return_different_types() {
 }
 
 #[test]
+fn index_on_a_programs_iterator_is_refused() {
+    // @F32 — `x#index` is the position to give to `v[i]`; a type's own `next()` yields values
+    // without one.  The loop's `#index` companion exists for every loop, so reading it compiled
+    // to an unset slot and the code generator panicked (*"Incorrect var x#index"*).
+    code!(
+        "struct Ct { at: integer }\nfn next(self: Ct) -> integer? { if self.at > 2 { return null; } self.at += 1; self.at }\nfn test() { c = Ct { at: 0 }; for x in c { assert(x#index > 0, \"i\"); } }"
+    )
+    .error("'x#index' is the position to use with v[i], and this loop walks values without positions (a generator, or a type's next()); use 'x#count' to number them at index_on_a_programs_iterator_is_refused:3:60");
+}
+
+#[test]
+fn index_on_a_generator_is_refused() {
+    // The same question for a generator, whose loop panicked the code generator the same way —
+    // COROUTINE.md claimed `#index` worked there.
+    code!(
+        "fn gen() -> iterator<integer> { for i in 0..2 { yield i; } }\nfn test() { for x in gen() { assert(x#index > 0, \"i\"); } }"
+    )
+    .error("'x#index' is the position to use with v[i], and this loop walks values without positions (a generator, or a type's next()); use 'x#count' to number them at index_on_a_generator_is_refused:2:46");
+}
+
+#[test]
+fn index_on_an_index_collection_is_refused_once() {
+    // An `index<T>` loop's `#index` holds an internal record number, and the refusal said so —
+    // then left the expression without a value, so `p#index > 0` added a second error about
+    // `OpLtInt`'s missing argument.  One refusal, one diagnostic.
+    code!(
+        "struct Pt { k: integer }\nfn test() { ix: index<Pt[k]> = [Pt { k: 2 }]; for p in ix { assert(p#index > 0, \"i\"); } }"
+    )
+    .error("#index is not supported on index<T> collections (it holds an internal record number, not a sequential counter); use #count instead at index_on_an_index_collection_is_refused_once:2:77");
+}
+
+#[test]
+fn exhausted_on_a_type_that_declares_none_is_refused() {
+    // `exhausted` answers for a generator only.  The stdlib's `exhausted(gen: reference)`
+    // accepted any struct and answered `true` — a value that is no generator was reported as
+    // one that finished.
+    code!("struct Rs { n: integer }\nfn test() { r = Rs { n: 1 }; assert(exhausted(r), \"e\"); }")
+        .error(
+            "Unknown function exhausted at exhausted_on_a_type_that_declares_none_is_refused:2:37",
+        );
+}
+
+#[test]
 fn stub_suppresses_missing_variant_warning() {
     // Rect has an empty-body stub — no warning should be emitted for either variant.
     code!(

@@ -1,0 +1,117 @@
+diff --git b/default/05_coroutine.loft a/default/05_coroutine.loft
+index dee553ea1..e424a09fa 100644
+--- b/default/05_coroutine.loft
++++ a/default/05_coroutine.loft
+@@ -15,7 +15,12 @@ pub enum CoroutineStatus {
+   Exhausted,
+ }
+ 
+-// `exhausted(gen)` on a generator is the compiler's own lowering to `OpCoroutineExhausted`
+-// (`dispatch_call`, for an `iterator<T>` argument).  It is not declared here as a function
+-// over `reference`: that declaration answered `true` for any struct and refused a program's
+-// own `exhausted` for its own iterator type.
++/// CO1.6: Returns true if the coroutine has finished producing values.
++pub fn exhausted(gen: reference) -> boolean {
++  OpCoroutineExhausted(gen)
++}
++// Plan-06 phase 5a: #pure — read-only flag inspection.  Under
++// D2.0 (read-only-parent) workers may read parent coroutine
++// state without locking; the operation has no side effects and
++// no parent-store writes.
++#pure
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index eeb17473b..5f2893212 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -508,8 +508,6 @@ impl Parser {
+         if let Type::Iterator(inner, _) = is_type
+             && !self.first_pass
+         {
+-            // A generator yields values, not positions: there is no `v[i]` for `x#index`.
+-            self.positionless_loops.insert((self.context, iter_var));
+             // A handle already in a variable is used in place.  Copying it into a `__gen`
+             // temp would hand a second owner to one coroutine's state store, and the loop's
+             // scope would free it out from under the variable the caller still holds.
+@@ -757,9 +755,6 @@ impl Parser {
+                     // I13: custom iterator protocol — check for fn next(&T) -> Item?
+                     let next_d_nr = self.data.find_fn(u16::MAX, "next", is_type);
+                     if next_d_nr != u32::MAX {
+-                        // A type's own `next()` yields values, not positions: there is no
+-                        // `v[i]` for `x#index`.
+-                        self.positionless_loops.insert((self.context, iter_var));
+                         // Store the iterable in a variable so .next() has a stable target.
+                         let iter_obj_var = self.create_unique("__iter_obj", is_type);
+                         self.vars.defined(iter_obj_var);
+@@ -2037,25 +2032,7 @@ impl Parser {
+ (it holds an internal record number, not a sequential counter); \
+ use #count instead"
+                 );
+-                // An integer in its place, so the expression around it reports nothing more.
+-                *code = Value::Int(0);
+-                *t = I32.clone();
+-            } else if self.positionless_loops.contains(&(
+-                self.context,
+-                self.vars.var(&format!("{base}#index")),
+-            )) {
+-                // `x#index` is the position to give to `v[i]` to read the same element; a
+-                // generator or a type's own `next()` yields values without one.  Refused here
+-                // — the companion variable exists for every loop, so reading it compiled to an
+-                // unset slot and the code generator stopped on it.
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "'{name}#index' is the position to use with v[i], and this loop walks values without positions (a generator, or a type's next()); use '{name}#count' to number them"
+-                );
+-                // An integer in its place, so the expression around it reports nothing more.
+-                *code = Value::Int(0);
+-                *t = I32.clone();
++                *t = Type::Unknown(0);
+             } else {
+                 let i_name = &format!("{base}#index");
+                 if self.vars.name_exists(i_name) {
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index f4ad6fa22..f7b70fb90 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -11200,7 +11200,7 @@ impl Parser {
+             }
+         } else if let Type::Text(_) = in_type {
+             Type::Character
+-        } else if let Type::Reference(_, _) | Type::Integer(_) | Type::Enum(_, true, _) = in_type {
++        } else if let Type::Reference(_, _) | Type::Integer(_) = in_type {
+             // I13: check for custom iterator protocol before falling back.
+             let next_d_nr = self.data.find_fn(u16::MAX, "next", in_type);
+             if next_d_nr != u32::MAX {
+@@ -17471,8 +17471,7 @@ impl Parser {
+                     return Type::Unknown(0);
+                 }
+             }
+-            // A nullable iterator is one too: a null handle answers true (`coroutine_exhausted`).
+-            "exhausted" if types.len() == 1 && matches!(types[0].base(), Type::Iterator(_, _)) => {
++            "exhausted" if types.len() == 1 && matches!(&types[0], Type::Iterator(_, _)) => {
+                 // CO1.3c: exhausted(gen) on a coroutine iterator.
+                 let op = self.data.def_nr("OpCoroutineExhausted");
+                 *val = Value::Call(op, list.to_vec());
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 18a326195..24e47afc5 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -898,10 +898,6 @@ pub struct Parser {
+     /// pass 1's answer to "is a definition of this name still below the call?"
+     /// (`Parser::file_has_pending_fn`).
+     pub(crate) declared_fn_names: HashMap<String, HashMap<String, usize>>,
+-    /// The `{id}#index` variables of loops that walk values WITHOUT positions — a generator,
+-    /// or a type's own `next()` — keyed by (function, variable): `x#index` is the position to
+-    /// give to `v[i]`, and such a loop has none to offer.
+-    pub(crate) positionless_loops: HashSet<(u32, u16)>,
+     /// Set by `iter_op` when `#fields` is encountered. Holds the struct `def_nr`.
+     /// Checked by `parse_for` to take the unrolling path. Reset after use.
+     pub(crate) fields_of: u32,
+@@ -1497,7 +1493,6 @@ impl Parser {
+             expected: Type::Unknown(0),
+             reported_dynamic_refusal: false,
+             declared_fn_names: HashMap::new(),
+-            positionless_loops: HashSet::new(),
+             fields_of: u32::MAX,
+             capture_context: Vec::new(),
+             capture_owner: std::collections::HashMap::new(),

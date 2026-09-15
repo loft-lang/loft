@@ -508,6 +508,8 @@ impl Parser {
         if let Type::Iterator(inner, _) = is_type
             && !self.first_pass
         {
+            // A generator yields values, not positions: there is no `v[i]` for `x#index`.
+            self.positionless_loops.insert((self.context, iter_var));
             // A handle already in a variable is used in place.  Copying it into a `__gen`
             // temp would hand a second owner to one coroutine's state store, and the loop's
             // scope would free it out from under the variable the caller still holds.
@@ -755,6 +757,9 @@ impl Parser {
                     // I13: custom iterator protocol — check for fn next(&T) -> Item?
                     let next_d_nr = self.data.find_fn(u16::MAX, "next", is_type);
                     if next_d_nr != u32::MAX {
+                        // A type's own `next()` yields values, not positions: there is no
+                        // `v[i]` for `x#index`.
+                        self.positionless_loops.insert((self.context, iter_var));
                         // Store the iterable in a variable so .next() has a stable target.
                         let iter_obj_var = self.create_unique("__iter_obj", is_type);
                         self.vars.defined(iter_obj_var);
@@ -2032,7 +2037,25 @@ impl Parser {
 (it holds an internal record number, not a sequential counter); \
 use #count instead"
                 );
-                *t = Type::Unknown(0);
+                // An integer in its place, so the expression around it reports nothing more.
+                *code = Value::Int(0);
+                *t = I32.clone();
+            } else if self
+                .positionless_loops
+                .contains(&(self.context, self.vars.var(&format!("{base}#index"))))
+            {
+                // `x#index` is the position to give to `v[i]` to read the same element; a
+                // generator or a type's own `next()` yields values without one.  Refused here
+                // — the companion variable exists for every loop, so reading it compiled to an
+                // unset slot and the code generator stopped on it.
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "'{name}#index' is the position to use with v[i], and this loop walks values without positions (a generator, or a type's next()); use '{name}#count' to number them"
+                );
+                // An integer in its place, so the expression around it reports nothing more.
+                *code = Value::Int(0);
+                *t = I32.clone();
             } else {
                 let i_name = &format!("{base}#index");
                 if self.vars.name_exists(i_name) {

@@ -125,9 +125,11 @@ for n in count_up(0) {
 }
 ```
 
-The for-loop attributes `#first`, `#count`, and `#index` work on generator
-iterators; they are maintained by the for-loop wrapper, not by the generator
-itself. `e#remove` is a **compile-time error** on a generator iterator — a
+The for-loop attributes `#first` and `#count` work on generator iterators; they
+are maintained by the for-loop wrapper, not by the generator itself.  `e#index`
+is a **compile-time error**: it is the position to give to `v[i]`, and a
+generator's values have none (`#count` numbers them).  `e#remove` is a
+**compile-time error** on a generator iterator too — a
 generator cannot remove a value it has already yielded
 (see [SC-CO-11](#sc-co-11--eremove-inside-a-generator-for-loop-must-be-a-compile-time-error)).
 
@@ -208,7 +210,10 @@ the generator is exhausted. Bound to `OpCoroutineNext`.
 ### `exhausted(gen: iterator<T>) -> boolean`
 
 Returns true if and only if the frame's `status` is `Exhausted`. Safe to call
-on a null iterator (returns true). Bound to `OpExhausted`.
+on a null iterator, `iterator<T>?` (returns true). Lowered by the compiler to
+`OpCoroutineExhausted` for an iterator argument; it is not a stdlib function
+over `reference`, so a program may define `exhausted` for its own iterator
+types, and a call on a type that declares none is refused.
 
 ---
 

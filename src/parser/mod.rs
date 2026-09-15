@@ -898,6 +898,10 @@ pub struct Parser {
     /// pass 1's answer to "is a definition of this name still below the call?"
     /// (`Parser::file_has_pending_fn`).
     pub(crate) declared_fn_names: HashMap<String, HashMap<String, usize>>,
+    /// The `{id}#index` variables of loops that walk values WITHOUT positions — a generator,
+    /// or a type's own `next()` — keyed by (function, variable): `x#index` is the position to
+    /// give to `v[i]`, and such a loop has none to offer.
+    pub(crate) positionless_loops: HashSet<(u32, u16)>,
     /// Set by `iter_op` when `#fields` is encountered. Holds the struct `def_nr`.
     /// Checked by `parse_for` to take the unrolling path. Reset after use.
     pub(crate) fields_of: u32,
@@ -1493,6 +1497,7 @@ impl Parser {
             expected: Type::Unknown(0),
             reported_dynamic_refusal: false,
             declared_fn_names: HashMap::new(),
+            positionless_loops: HashSet::new(),
             fields_of: u32::MAX,
             capture_context: Vec::new(),
             capture_owner: std::collections::HashMap::new(),

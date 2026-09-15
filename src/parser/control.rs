@@ -11200,7 +11200,7 @@ impl Parser {
             }
         } else if let Type::Text(_) = in_type {
             Type::Character
-        } else if let Type::Reference(_, _) | Type::Integer(_) = in_type {
+        } else if let Type::Reference(_, _) | Type::Integer(_) | Type::Enum(_, true, _) = in_type {
             // I13: check for custom iterator protocol before falling back.
             let next_d_nr = self.data.find_fn(u16::MAX, "next", in_type);
             if next_d_nr != u32::MAX {
@@ -17471,7 +17471,8 @@ impl Parser {
                     return Type::Unknown(0);
                 }
             }
-            "exhausted" if types.len() == 1 && matches!(&types[0], Type::Iterator(_, _)) => {
+            // A nullable iterator is one too: a null handle answers true (`coroutine_exhausted`).
+            "exhausted" if types.len() == 1 && matches!(types[0].base(), Type::Iterator(_, _)) => {
                 // CO1.3c: exhausted(gen) on a coroutine iterator.
                 let op = self.data.def_nr("OpCoroutineExhausted");
                 *val = Value::Call(op, list.to_vec());

@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A program's own iterator works like a built-in one (@F32): a type with `next(self) -> Item?`
+// drives a `for`, a struct-ENUM included, and the program may define `exhausted` for it beside
+// the generator's.  Three things stood in the way: `for x in u` over a struct-enum was refused
+// (*"Unknown in expression type Src"* — the loop admitted only a struct or an integer); the
+// stdlib declared `exhausted(gen: reference)`, which answered `true` for ANY struct and made a
+// program's own `exhausted` a redefinition; and `exhausted` on a nullable iterator was refused.
+// The refusals — `x#index` on a loop without positions, `exhausted` on a type that declares
+// none — live in `tests/parse_errors.rs`, where a refusal can be asserted.
+// @falsified-at: 85da4a6d6 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-programs-own-iterator-works-like-a-built-in-one.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit, on both backends — the control refuses the file before any assertion runs:
+//   the program's `exhausted(self: Counter)` is a redefinition of the stdlib's
+//   `exhausted(gen: reference)`, and `for x in u` over a struct-enum is "Unknown in expression
+//   type Src".
+//   ARMED: nothing.
+//   WITNESS: measured cell by cell on the control before this file: the enum loop refused,
+//   the program's `exhausted` refused, `exhausted` on `iterator<integer>?` refused ("expected
+//   reference"), and `exhausted(r)` on a plain struct answered `true`.
+//   HOLDS: `#count` / `#first` over a program's iterator and the loop-walks-a-copy cell answer
+//   the same on both trees; `#index` over a vector, text, a range and a hash is unchanged; clean
+//   under strict stores, poison and the native leak check.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+enum Src {
+  Up { at: integer, stop: integer },
+  Down { at: integer },
+}
+
+fn next(self: Src) -> integer? {
+  match self {
+    Up { at, stop } => if at >= stop { null } else { self.at += 1; at + 1 },
+    Down { at } => if at <= 0 { null } else { self.at -= 1; at },
+  }
+}
+
+struct Counter { at: integer, stop: integer }
+
+fn next(self: Counter) -> integer? {
+  if self.at >= self.stop { return null; }
+  self.at += 1;
+  self.at
+}
+
+fn exhausted(self: Counter) -> boolean { self.at >= self.stop }
+
+fn count_up(start: integer, stop: integer) -> iterator<integer> {
+  for i in start..stop {
+    yield i;
+  }
+}
+
+fn test_a_struct_enum_drives_a_for_loop() {
+  u: Src = Up { at: 0, stop: 2 };
+  d: Src = Down { at: 3 };
+  s = "";
+  for x in u { s += "{x};"; }
+  for x in d { s += "{x}/{x#count};"; }
+  assert(s == "1;2;3/0;2/1;1/2;", "each variant's own next: {s}");
+}
+
+fn test_count_and_first_on_a_programs_iterator() {
+  c = Counter { at: 0, stop: 3 };
+  s = "";
+  for x in c { s += "{x#count}{x#first};"; }
+  assert(s == "0true;1false;2false;", "#count and #first: {s}");
+}
+
+fn test_a_programs_exhausted_beside_the_generators() {
+  m = Counter { at: 0, stop: 2 };
+  s = "";
+  while !exhausted(m) { s += "w{next(m)};"; }
+  g = count_up(1, 2);
+  a = exhausted(g);
+  next(g);
+  next(g);
+  s += "{a} {exhausted(g)} {m.exhausted()}";
+  assert(s == "w1;w2;false true true", "the program's exhausted, then the generator's: {s}");
+}
+
+fn test_exhausted_on_a_nullable_iterator() {
+  z: iterator<integer>? = null;
+  g: iterator<integer>? = count_up(1, 2);
+  s = "{exhausted(z)} {exhausted(g)}";
+  assert(s == "true false", "a null handle is exhausted, a live one is not: {s}");
+}
+
+// The loop walks a COPY of the iterator value, as any bind of a struct copies.
+fn test_the_loop_walks_a_copy() {
+  c = Counter { at: 0, stop: 3 };
+  for _ in c { }
+  assert(c.at == 0, "the caller's iterator is not advanced: {c.at}");
+}
+
+fn main() {
+  test_a_struct_enum_drives_a_for_loop();
+  test_count_and_first_on_a_programs_iterator();
+  test_a_programs_exhausted_beside_the_generators();
+  test_exhausted_on_a_nullable_iterator();
+  test_the_loop_walks_a_copy();
+}
