@@ -24,6 +24,10 @@ description: >-
   one head — how to anchor that question on NAMED RULES cited at each enforcement site,
   so "does this already exist?" becomes a lookup instead of a search, and so two sites
   that implement one rule are distinguishable from two that merely look alike today.
+  ALSO reach for it when deciding or changing what a user-facing construct MEANS — what a
+  bind, a copy, a drop, a return does — and when one rule has collected its third exception
+  or its defect list keeps re-cutting instead of shrinking: the short-term patches are then
+  likely pointing away from the design that is actually needed.
 user-invocable: true
 ---
 
@@ -143,6 +147,23 @@ and therefore the class — *off* it). One misleads, the other generates.
 **first, generative** act — the construction is named *by* building the cheapest
 version, that invariant is then probed (steps 3–4), and only then is the real one
 built. The cheap prototype is where the design gets **pinned**, not merely confirmed.
+
+---
+
+## When the design is a MEANING — decide from the use cases
+
+Both instruments above assume a correct answer exists. What a user-facing construct *means*
+— what a bind, a copy, a drop, a return does — has none: it has the programs people write
+with it, and they pull in different directions. So list those programs (lifetimes that nest
+and cross, resources that can and cannot be shared, the move-like uses), run each today, and
+table every candidate rule's result per program; decide in the rows where they disagree. Do
+not draw the options from the rule text or the defect list — both encode the current model.
+
+**When the patches point the other way.** A local fix answers *"how do I make this case right
+under the current rule?"*, which strengthens the rule even when the rule is wrong. Signs: the
+fix infers an intent the language cannot state; one rule collects exceptions; the defect list
+re-cuts instead of shrinking; each option grows its own machinery. At the third exception to
+one rule, stop patching and walk the use cases.
 
 ---
 
@@ -439,7 +460,8 @@ judgment. Design is intrinsically heavy — it holds the whole composition space
 
 The protocol only covers axes you *know* to vary. The axis invisible at design time —
 the composition no probe imagined — survives any discipline; only real use reveals it.
-That is why the method has a second engine: **the dogfood loop** — real consumers, not
+Walking a construct's use cases before deciding (above) moves many of those axes to design
+time; the rest still need **the second engine: the dogfood loop** — real consumers, not
 toys — is what converts an unknown axis into a known one, and each harvested lesson is
 appended to the axis list your next design's matrix varies. This protocol makes the
 *visible* axes safe; the dogfood loop grows what is visible.
@@ -457,6 +479,10 @@ tells you to reach for:
 - The named-rule register is `doc/claude/formal/` (`@FR-` tags); `scripts/rule_tags.py`
   is the citation instrument (`list` · `check` · `sites <tag>` · `dups`), and
   `formal/README.md` says how a rule is written and cited.
+- A construct's use cases are measured as one program per shape, run on `--interpret` and
+  `--native` (a batch lets one wrong release corrupt the next cell). The full treatment —
+  procedure, the copy-lease worked example, the evidence behind the patch signs — is
+  `doc/claude/DESIGN_PROTOCOL.md` § Deciding what a construct means.
 - The verification questions a finished design answers are
   `doc/claude/DESIGN_VERIFICATION.md § C1`; declined designs are recorded in
   `doc/claude/DESIGN_DECISIONS.md` — check it before re-proposing one.
