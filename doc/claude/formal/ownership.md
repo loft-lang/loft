@@ -8,7 +8,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 **Catalogue:** @F21 (references `&T`), @I60 (deps / lifetime tracker) — Goal E. Roadmap: @PLN85, @PLN87.
 
 > **Rules then deviations** (see [README](README.md)). The rules below are loft's
-> ownership model.  The register is back at **`OPEN: 0`** — `D-own-40` and `D-own-41` both
+> ownership model.  The register stands at **`OPEN: 1`** — `D-own-43`, a masked backend
+> divergence opened 2026-09-15 for @PLN164 B1b to close; `D-own-40` and `D-own-41` both
 > opened and CLOSED 2026-09-11, below.  It read `OPEN: 0` from 2026-07-04 until then, and what
 > moved it was not a new defect but a VALIDATION of loft#1517 against these rules: the zero had
 > been re-measured against its oracle, which covers the JOIN family and does not ask whether a
@@ -90,7 +91,35 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 assigned twice — has no such witness.
   (O-Complete)  PER BINDING, PER PATH, COMPLETE.  Every binding, including every `match`/`if`
                 arm — a set-and-reconcile, not a single-variable structural walk.
+  (O-ViewField) A FIELD OF A RETURNED RECORD MAY BE A VIEW.  Where a heap field of a
+                function's result is assigned from a value that has an OWNING
+                destination in a store the frame does not own — a parameter's store,
+                or one handed up to the caller — so that the place outlives the frame,
+                the field may be delivered as a VIEW of that place instead of a copy of
+                its own, and the return type records the borrow on the field as it
+                records a whole-value borrow (O-Move).  The licence is decided over
+                EVERY call site of the function at once: each site binds the result to
+                a local that only READS the field (a field read, a `const` argument, a
+                length) and reaches its last read with no disturbance (B-Disturb) of
+                the container the view names between the call and that read, in the
+                caller or through what it calls; one site that stores, appends to,
+                rebinds, returns or hands the field to a by-value parameter declines the
+                function whole, and every site keeps the owning copy.  A declined view
+                is a copy, never a stale read.
 ```
+
+**`(O-ViewField)` in words** (@PLN164 C5, written before the phase is cut).  The natural
+`parse_poly` writes its points into the op it appends to the scene AND into the `Mark` it
+returns, and the caller only reads `ps_p.pts` to pass it on; a programmer who knows the
+store model returns the op's index instead.  The compiler may not change that contract,
+so the rule lets the returned field BE the op's vector — a reference in the value tuple
+`(R-ValueRecord)` already returns for scalar records — exactly where every caller could
+not tell the difference: read-only, and no growth of `sc.ops` between the call and the
+last read.  The three parts are the three ways it could be wrong: the source dying with
+the frame (a dangling view), a site that writes or keeps the field (a lost write, a copy
+the caller expected), and a disturbance between the call and the read (a stale view).
+Every part declines to the copy the code emits today, which is the direction
+`(O-Move)` already points.
 
 **In words.** One thing owns each piece of heap, and it's the only thing that frees it.
 When you return a heap value you *give it away* (the function stops owning it); if you
@@ -385,8 +414,11 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 0.**  `D-own-42` (a plain local's first bind from a callee returning its promoted
-local COPIED where `(O-Move)` transfers) opened and CLOSED 2026-09-15, below; `D-own-40`
+**OPEN: 1.**  `D-own-43` (the interpreter's rebind of a promoted buffer local frees the
+buffer the caller handed it — masked while such callees receive the null sentinel) opened
+2026-09-15, below, and closes with @PLN164 B1b.  `D-own-42` (a plain local's first bind
+from a callee returning its promoted local COPIED where `(O-Move)` transfers) opened and
+CLOSED 2026-09-15, below; `D-own-40`
 (`(O-Witness)` armed for locals whose assignments do NOT mix, and
 `(O-Owner)` broken while one was) and `D-own-41` (a detach by in-place re-allocation, wiping the
 value being copied in) both opened and CLOSED 2026-09-11, below; `D-own-39` opened and CLOSED
@@ -410,6 +442,26 @@ the entry records why the obvious widening is not taken: it answers wrong on `--
 > a struct's has, `tests/scripts/a-struct-enum-whole-value-bind-copies-like-a-struct.loft`);
 > and the `--native` release of a displaced store on a fn-ref re-bind of a USER local, which
 > is loft#1328 and which the `??` hoist sidesteps by releasing in the IR.
+
+### D-own-43 — OPEN (2026-09-15): the interpreter's rebind of a promoted buffer local frees the buffer the caller handed it
+
+`(O-Buffer)` — a hidden return buffer is the CALLER's store: the callee fills it and hands
+it back, or mints its own and hands that back — and `(O-Owner)`: the callee never frees what
+the caller owns.  A local the parser promotes onto the buffer (`fn render(p) -> Canvas { cv =
+Canvas { … }; cv = alloc_canvas(…); cv }`, plan 51 cluster 3) IS that buffer parameter, and
+its rebind from a call runs the interpreter's reassignment path: a pre-set free of the store
+the local holds, which is the caller's buffer.  Native guards that free against the buffer
+the frame was handed (`_rb_w_<buffer>`, loft#1126); the interpreter does not, so the two
+backends disagree about who owns a store — the `(O-NoDiverge)` shape D-own-41 already named.
+
+Masked today: such a callee always receives the null sentinel (@PLN164 B1 keeps it so by
+excluding its pairings from the entry-time pool, `Scopes::minted_pairs`), and a free of the
+sentinel is a no-op.  Measured 2026-09-15: B1's cell c6 with that exclusion removed —
+`[strict-store] USE AFTER FREE (read) store #3 type=Q … killed by the free of <anon>` inside
+`render_lit_then_call`, `--interpret` only; the caller's next record took the freed slot and
+`p.tag` read it.  Closes with @PLN164 B1b: the interpreter's reassignment path takes the
+same guard, after which the pool may enrol these buffers and the cell must stay green under
+`LOFT_STRICT_STORES=1` on both backends.
 
 ### D-own-42 — OPENED AND CLOSED (2026-09-15): a plain local's first bind from a callee that returns its promoted local COPIED where the rule transfers
 

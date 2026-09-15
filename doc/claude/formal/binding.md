@@ -161,6 +161,11 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   and the author is told — so writes through it stop reaching the
                   container (@PLN130 F2/F4/F8).  A plain bind already copies, so this
                   is consistent with what it meant; a `&` gets B-Ref-Reshape instead.
+                  A `?`-DISCHARGED element read (`e = v[i]?`) is the same projection with
+                  its absence discharged and is a VIEW on the same terms — an absent
+                  element discharges to null, and there is nothing to view (@PLN164 C3;
+                  today the discharge materialises a copy, which the rule permits and
+                  the rewrite removes).
   (B-View-Base)   a projection off a BORROWED base is a VIEW at EVERY element type — not only
                   a struct-typed one.  `for b in bv { c = b.vecf; … }` aliases exactly as
                   `c = b.strf` does, and so does a tuple element.  Ownership of the BASE is the
