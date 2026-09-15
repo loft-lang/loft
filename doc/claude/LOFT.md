@@ -2566,9 +2566,27 @@ f.exists()      // method syntax
 exists(f)       // free function syntax
 ```
 
-Use `both` when a function should be equally natural as either form.
-`self` registers as a method only; a plain parameter name registers as a
-free function only.
+Use `both` when a function should be equally natural as either form: `v.sin()`
+for a programmer whose fingers learned the Rust convention, `sin(v)` for one who
+never did — neither is forced on the other.  `both` is available to every program
+and library, not only to the standard library.  A `self` method is callable both
+ways as well (`f(x)` resolves to it, see the gotcha above); a plain parameter name
+registers a free function only.
+
+**One name, one body per type.**  A method and a free function with the same name
+whose first parameter has the same type are refused, whichever is declared first:
+
+```
+struct Pt { x: integer }
+fn doit(self: Pt) -> integer { self.x + 1 }
+fn doit(p: Pt) -> integer { p.x + 2 }   // error: Cannot redefine 'doit' … declare it once with `both`
+```
+
+Otherwise `p.doit()` and `doit(p)` would run different code — and before the
+refusal the free one was silently unreachable, because `doit(p)` resolves to the
+method.  When both spellings are wanted, write the one function with `both:`.  A
+free function on a different type (`fn doit(q: Qt)`) is an ordinary overload and
+stays legal.  The rule is `formal/calls.md (F-OneBody)`.
 
 ### Named arguments
 

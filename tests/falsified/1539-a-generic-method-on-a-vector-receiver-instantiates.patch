@@ -1,3 +1,98 @@
+diff --git b/src/data.rs a/src/data.rs
+index c26a6d655..0264824f5 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -7508,60 +7508,14 @@ impl Data {
+         // (`abs(integer)`/`abs(single)`/`abs(float)`; a same-type duplicate is caught by the mangled
+         // check below), nor when a free fn merely shares a name with a method on another receiver
+         // type (`scale(integer,…)` beside `scale(self: Vec,…)`) — arg-type dispatch keeps it live.
+-        // @FR-F-OneBody — one name has ONE body per receiver type, whichever spelling calls it:
+-        // `x.doit()` and `doit(x)` must not reach two different functions.  The method key a
+-        // first parameter of type `tp` gives this name:
+-        let receiver_key = |data: &Self, tp: &Type| -> Option<String> {
+-            let tn = data.type_def_nr(tp);
+-            (tn != u32::MAX).then(|| {
+-                Self::mangle_method(&Self::sig_type_name(&data.key_type_name(tn), tp), fn_name)
+-            })
+-        };
+-        // A plain function declared after a `self`/`both` method on its first parameter's type.
+-        // This used to be refused only when the name also had a bare-name definition — which a
+-        // `both` method registers and a `self` method does not — so `fn doit(self: Pt)` followed
+-        // by `fn doit(p: Pt)` compiled, and `doit(p)` silently ran the method.
+-        let shadowed_method = if is_both || is_self {
+-            None
+-        } else {
+-            arguments
+-                .first()
+-                .and_then(|a| receiver_key(self, &a.typedef))
+-                .map(|key| own(self, &key))
+-                .filter(|m| *m != u32::MAX)
+-        };
+-        let shadows_a_method = shadowed_method.is_some();
+-        // …and the other order: a `self`/`both` method declared after a plain function of its
+-        // name whose first parameter has the method's receiver type, as a single free
+-        // definition (`n_<name>`) or as a member of the name's overload set (`f_…`).  Nothing
+-        // asked this, so the later method took every call and the function went dead in silence.
+-        let shadowed_free = if is_both || is_self {
+-            arguments
+-                .first()
+-                .and_then(|a| receiver_key(self, &a.typedef))
+-                .and_then(|key| {
+-                    let mut candidates = vec![own(self, &format!("n_{fn_name}"))];
+-                    if o_nr != u32::MAX && self.def(o_nr).def_type == DefType::Dynamic {
+-                        candidates.extend(self.def(o_nr).attributes.iter().filter_map(|a| {
+-                            match a.typedef.base() {
+-                                Type::Routine(r) => Some(*r),
+-                                _ => None,
+-                            }
+-                        }));
+-                    }
+-                    candidates.into_iter().find(|&d| {
+-                        d != u32::MAX
+-                            && self.def(d).attributes.first().is_some_and(|p| {
+-                                p.name != "self"
+-                                    && p.name != "both"
+-                                    && receiver_key(self, &p.typedef).as_deref()
+-                                        == Some(key.as_str())
+-                            })
+-                    })
+-                })
+-        } else {
+-            None
+-        };
++        let shadows_a_method = !(is_both || is_self)
++            && arguments.first().is_some_and(|a| {
++                let tn = self.type_def_nr(&a.typedef);
++                tn != u32::MAX && {
++                    let sig = Self::sig_type_name(&self.key_type_name(tn), &a.typedef);
++                    own(self, &Self::mangle_method(&sig, fn_name)) != u32::MAX
++                }
++            });
+         // `Disp-Key` (@PLN162): the name's bare dispatcher — an overload set, from ANY source
+         // visible bare, a `use`d library's included — already carrying a definition with this
+         // FULL parameter spelling is the same collision `shadows_a_method` names for a method,
+@@ -7584,19 +7538,8 @@ impl Data {
+                             _ => false,
+                         })
+                 });
+-        if let Some(other) = shadowed_method.or(shadowed_free) {
+-            let bare = fn_name.strip_prefix("n_").unwrap_or(fn_name);
+-            diagnostic!(
+-                lexer,
+-                Level::Error,
+-                "Cannot redefine '{bare}' (already defined at {}) — a name has one body per \
+-                 receiver type, and `x.{bare}(…)` and `{bare}(x, …)` would reach different \
+-                 functions; declare it once with its first parameter named `both` to give that \
+-                 body both spellings, or rename one",
+-                self.def(other).position
+-            );
+-        } else if o_nr != u32::MAX
+-            && (self.def(o_nr).def_type != DefType::Dynamic || carried_spelling)
++        if o_nr != u32::MAX
++            && (self.def(o_nr).def_type != DefType::Dynamic || shadows_a_method || carried_spelling)
+         {
+             diagnostic!(
+                 lexer,
 diff --git b/src/parser/collections.rs a/src/parser/collections.rs
 index ef572fe58..5f2893212 100644
 --- b/src/parser/collections.rs
@@ -126,7 +221,7 @@ index f6659f542..13bde908d 100644
              // No callee to resolve names against — `call_with_named` would index a
              // definition that is not there.  Hand it on unchanged; the missing method
 diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
-index ebd9ad6fa..068681a4e 100644
+index e7fecb1bd..068681a4e 100644
 --- b/src/parser/definitions.rs
 +++ a/src/parser/definitions.rs
 @@ -1743,63 +1743,6 @@ impl Parser {
@@ -142,7 +237,7 @@ index ebd9ad6fa..068681a4e 100644
 -            let tv = self.cur_type_var;
 -            let keyed_over_tv = |t: &Type| {
 -                t.any_node(&mut |n| {
--                    matches!(n,
+-                    matches!(n.base(),
 -                        Type::Hash(d, _, _)
 -                        | Type::Sorted(d, _, _)
 -                        | Type::Index(d, _, _)
@@ -194,7 +289,7 @@ index ebd9ad6fa..068681a4e 100644
          // stdlib (they yield the reserved null out of their real domain). When LOFT_NULLFLOW is
          // OFF, strip the `?` so their return stays non-null and the default surface is byte-
 diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index b39c27357..e19cd1bdc 100644
+index a085c1398..e19cd1bdc 100644
 --- b/src/parser/mod.rs
 +++ a/src/parser/mod.rs
 @@ -1071,9 +1071,6 @@ pub struct Parser {
@@ -267,10 +362,10 @@ index b39c27357..e19cd1bdc 100644
              self.first_pass,
          );
 -        // skip generic templates — they are not callable directly.  A METHOD template the
--        // bare lookup found (`fn head<T>(self: vector<T>)` for `head(a)`) is kept aside: the
--        // lookup resolves the method spelling before the free one, and a concrete method
--        // shadows a same-named free function the same way, so the call instantiates that
--        // template rather than a free `head<T>` (loft#1539).
+-        // bare lookup found (`fn head<T>(self: vector<T>)` for `head(a)`) is kept aside and
+-        // instantiated: a bare call reaches a method template exactly as it reaches a concrete
+-        // `self` method ((F-Recv)), and a free template of that name on that receiver type
+-        // cannot also exist ((F-OneBody)) (loft#1539).
 -        let mut method_template = u32::MAX;
 +        // skip generic templates — they are not callable directly.
          if d_nr != u32::MAX && self.data.def(d_nr).def_type() == DefType::Generic {
@@ -357,14 +452,15 @@ index b39c27357..e19cd1bdc 100644
          if types.is_empty() || types[0].is_unknown() {
              // First-pass argument types may be incomplete; defer the diagnostic
              // to second pass when types are stable.  Returning MAX here is the
-@@ -7284,15 +7213,6 @@ impl Parser {
+@@ -7284,16 +7213,6 @@ impl Parser {
              // 1:1 so the LEN prefix `original_name` / `find_method_receivers` parse back is
              // still correct.
              let safe = base.replace(['<', '>', ',', ' ', '(', ')'], "_");
--            // loft#1539 — a METHOD template and a free template of the same name bound at the
--            // same type would otherwise mint ONE name, and whichever instantiated first would
--            // answer both calls: the program's meaning would depend on statement order.  The
--            // marker is a spelling no source identifier can take (`__` is the compiler's).
+-            // loft#1539 — a METHOD template and a free template of one name on DIFFERENT
+-            // receivers (`f<T>(self: vector<T>)` beside `f<T>(x: (T, integer))`; one receiver
+-            // type is refused by (F-OneBody)) bound at the same `T` would otherwise mint ONE
+-            // name, and whichever instantiated first would answer both calls.  The marker is a
+-            // spelling no source identifier can take (`__` is the compiler's).
 -            let safe = if self.data.def(g_nr).name().starts_with("t_") {
 -                format!("__self_{safe}")
 -            } else {
@@ -373,7 +469,7 @@ index b39c27357..e19cd1bdc 100644
              crate::data::Data::mangle_method(&safe, name)
          };
          // Return existing instantiation if already created.
-@@ -7575,7 +7495,7 @@ impl Parser {
+@@ -7576,7 +7495,7 @@ impl Parser {
          // BEFORE the rows are retargeted: a scalar binding contributes no row mapping, so
          // the copy left standing would keep the type variable's own row.
          self.collapse_parametric_tuple_member_copies(d_nr);
@@ -382,7 +478,7 @@ index b39c27357..e19cd1bdc 100644
          // loft#1040 — and lower any `par` clause the template could not: it needs the
          // types this body now carries, so it runs after every substitution above.
          self.expand_deferred_par(d_nr);
-@@ -8430,55 +8350,24 @@ impl Parser {
+@@ -8431,55 +8350,24 @@ impl Parser {
      /// local is declared in source and re-derives its row from the substituted variable
      /// table, whereas the compiler-built `materialized_view_return` block was constructed
      /// once, at template parse, from the type the arm had THEN.
@@ -447,7 +543,7 @@ index b39c27357..e19cd1bdc 100644
          }
          if rows.is_empty() {
              return;
-@@ -8788,15 +8677,16 @@ impl Parser {
+@@ -8789,15 +8677,16 @@ impl Parser {
          // ones, not this monomorph's.
          let mut remap: HashMap<u32, u32> = HashMap::new();
          for (t, arg_tp) in targets {
@@ -472,7 +568,7 @@ index b39c27357..e19cd1bdc 100644
              if inst != u32::MAX && inst != t {
                  remap.insert(t, inst);
              }
-@@ -9364,27 +9254,6 @@ impl Parser {
+@@ -9365,27 +9254,6 @@ impl Parser {
                      Value::Block(bl)
                  }
              }

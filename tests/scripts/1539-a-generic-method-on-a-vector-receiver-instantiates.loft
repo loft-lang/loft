@@ -12,10 +12,10 @@
 // inside another monomorph, the cross-pass guard that admits a pass-2-only monomorph, and the
 // bare call that finds a method template first.
 //
-// The collision cells pin the ORDER-independence: a free `head<T>` and a method `head<T>` bound
-// at the same type used to mint one monomorph name, so whichever call came first answered both.
-// The concrete twin — a method and a free function of one name — answers the METHOD for both
-// spellings, because a bare call resolves the method spelling first (C97), and so do these.
+// A method template and a free template of one name on one receiver type are refused at the
+// declaration (`calls.md (F-OneBody)`, guarded by
+// `a-method-and-a-function-of-one-name-on-one-type-are-refused.loft`), so no pair shares a call
+// here; a bare `head(a)` reaches the method template the way it reaches a concrete `self` method.
 //
 // @falsified-at: b12e15474 — interpret exit 1 -> 0, native exit 1 -> 0
 // @falsified-by: tests/falsified/1539-a-generic-method-on-a-vector-receiver-instantiates.patch — interpret exit 1 -> 0, native exit 1 -> 0
@@ -34,10 +34,6 @@ fn at_or<T>(self: vector<T>, i: integer, d: T) -> T { if i < len(self) { self[i]
 fn doubled_head<T>(v: vector<T>) -> vector<T> { [v.head(), v.head()] }
 
 fn numbers() -> vector<integer> { [8, 9] }
-
-fn pick<T>(self: vector<T>) -> T { self[0] }
-
-fn pick<T>(v: vector<T>) -> T { v[len(v) - 1] }
 
 fn test_at_every_kind() {
   a: vector<integer> = [1, 2];
@@ -62,14 +58,9 @@ fn test_inside_another_generic() {
   assert("{d}" == "[\"q\",\"q\"]", "nested: {d}");
 }
 
-fn test_method_call_first() {
+fn test_bare_call() {
   a: vector<integer> = [4, 5];
-  assert("{a.pick()} {pick(a)}" == "4 4", "method first: {a.pick()} {pick(a)}");
-}
-
-fn test_free_call_first() {
-  a: vector<integer> = [4, 5];
-  assert("{pick(a)} {a.pick()}" == "4 4", "free first: {pick(a)} {a.pick()}");
+  assert(head(a) == 4, "bare call: {head(a)}");
 }
 
 fn main() {
@@ -77,6 +68,5 @@ fn main() {
   test_with_an_argument();
   test_on_a_call_result();
   test_inside_another_generic();
-  test_free_call_first();
-  test_method_call_first();
+  test_bare_call();
 }

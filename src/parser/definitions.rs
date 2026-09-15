@@ -1752,7 +1752,7 @@ impl Parser {
             let tv = self.cur_type_var;
             let keyed_over_tv = |t: &Type| {
                 t.any_node(&mut |n| {
-                    matches!(n,
+                    matches!(n.base(),
                         Type::Hash(d, _, _)
                         | Type::Sorted(d, _, _)
                         | Type::Index(d, _, _)
