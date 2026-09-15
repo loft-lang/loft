@@ -22,7 +22,8 @@ fn loft() -> Command {
     let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.env("LOFT_TIMEOUT", "200")
         .env_remove("LOFT_NO_PREFILL_IMAGE")
-        .env_remove("LOFT_PREFILL_VERIFY");
+        .env_remove("LOFT_PREFILL_VERIFY")
+        .env_remove("LOFT_TRACE_PREFILL");
     cmd
 }
 
@@ -125,5 +126,35 @@ fn the_image_changes_no_mint() {
         store_mints(&[]),
         store_mints(OFF),
         "store mints (image, walk)"
+    );
+}
+
+/// How many times the run USED `Mix`'s image (`LOFT_TRACE_PREFILL=1`, one line per use).
+fn image_uses(mode: &str) -> usize {
+    let mut cmd = loft();
+    cmd.arg(mode).arg(cells()).env("LOFT_TRACE_PREFILL", "1");
+    let out = cmd.output().expect("spawn loft");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .filter(|l| l.starts_with("[prefill] `Mix`: image used"))
+        .count()
+}
+
+#[test]
+fn the_cells_use_the_image_on_both_backends() {
+    // A cell that only CAPTURES the image proves nothing about it — and on `--native`
+    // every literal is a complete-write mint that never prefills, so c1–c10 capture
+    // `Mix`'s image there and never use it; c11's re-activated caller is what makes the
+    // native half of the verify pin above non-vacuous.  Both backends must USE the image.
+    let interpret = image_uses("--interpret");
+    let native = image_uses("--native");
+    assert!(
+        interpret > 0 && native > 0,
+        "image uses of `Mix`: interpret {interpret}, native {native}"
     );
 }

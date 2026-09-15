@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
 // @PLN164 C4 — THE PREFILL IMAGE: the default prefill of a minted record (the sentinels,
 // the zeros and the variant tag a partial write leaves to the type) is ONE block write of a
 // per-type image captured from the field-by-field walk's first run (`@FR-R-Prefill`),
@@ -10,6 +12,19 @@
 // (the walk re-run after every image write, a panic where they disagree), `LOFT_POISON=1`,
 // `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1` must answer
 // identically.
+
+//
+// @falsified-at: hand-measured (2026-09-15) — `Stores::prefill_from_image` sabotaged to capture
+// the image BEFORE the walk (an all-zero image): under LOFT_PREFILL_VERIFY=1 both backends
+// panic at the first image USE — `prefill image of \`Mix\` disagrees with the walk: image
+// [0, 0, 0, …], walk [0, 0, 0, 0, 0, 0, 0, 128, …, 248, 127, …, 255, 0]` (the interpreter at
+// its second `Mix` mint, exit 101; native at c11's re-activated caller, exit 1).  The VERIFY
+// channel moves on both; the VALUE channel moves on neither, because every mint the cells
+// reach writes its omitted fields explicitly afterwards (a literal's `to_default`, a
+// `?`-discharge's `construct_default`) — which is why the verifier exists.  Restored, every
+// cell is exact on both backends under LOFT_PREFILL_VERIFY, LOFT_POISON, LOFT_POISON_CLAIM,
+// LOFT_STRICT_STORES and LOFT_NATIVE_LEAK_CHECK, and `LOFT_TRACE_PREFILL=1` counts
+// 2368 / 15 image uses of `Mix` (interpret / native) — the native count is c11's.
 
 struct Mix {
   a: integer?, f: float?, b: boolean?, s: text, t: text?, n: integer = -1, k: integer,

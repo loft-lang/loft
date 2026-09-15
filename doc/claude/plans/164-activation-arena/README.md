@@ -10,7 +10,7 @@ Tracker: [@PLN164](https://github.com/loft-lang/plans/issues/164) · `status:act
 
 ## Status (REQUIRED)
 
-Active (the owner's go, 2026-09-15).  **P0 done** and **B1 shipped** the same day — the
+Active (the owner's go, 2026-09-15).  **P0 done**, **B1 and C4 shipped** the same day — the
 measurements are under § P0 below and the mechanism under § B1.  What P0 changed in the
 plan: tier 1's ceiling is ~10 % of the parse row, not a fifth, and its store-identity cost
 (287 `store_nr !=` sites in one emission) is real, so A1/A2 stay behind B and C in the
@@ -202,7 +202,7 @@ buffer held by a promoted buffer local (`143`'s shape); native guards that free 
 entry-time `_rb_w_<buffer>` witness (loft#1126).  Closing the divergence is the whole of
 B1b, and c6 under the pool without the exclusion is its falsifier.
 
-## C4 — the prefill image (BUILT 2026-09-15, `@FR-R-Prefill`)
+## C4 — the prefill image (SHIPPED 2026-09-15, `@FR-R-Prefill`)
 
 *The mechanism.*  `Stores::set_default_value_nullable`'s `Shape::Record` arm walked the
 type's fields on every mint that is not proven complete-write — a store resolution per
@@ -249,18 +249,19 @@ default record; the rule text is the one to correct when C3 is cut.
 42.3–42.8 k ns/op** (≈ −11 %).  The 14-row `compare.py` table is re-measured when B2
 lands.
 
-*Where to resume (the session that built this lost its shell before the gate).*  The
-source edits are on disk and unverified past `cargo build --release --bin loft` and the
-runs above: (1) `make ship` (fmt + both clippy legs), then `./scripts/find_problems.sh
---changed`; (2) commit the safe point; (3) the sabotage receipt — capture the image
-BEFORE the walk in `prefill_from_image` (an all-zero image), rebuild, run the cells under
-`LOFT_PREFILL_VERIFY=1` on both backends and record the panic (`prefill image of \`Mix\`
-disagrees with the walk`) as the guard's `@falsified-at:` receipt, then undo by the inverse
-edit; (4) graduate the cells to `tests/scripts/164-prefill-image.loft` with that header;
-(5) `tests/prefill_image.rs` is written but has not been compiled — `cargo test --release
---test prefill_image`; (6) `make falsify` on the negative-default guard against
-`7fd2a664`; (7) CLAUDE.md's switch bullet and DATABASE.md's paragraph; (8) `make index`;
-(9) commit + push.
+*Receipt and gate (the next session).*  The sabotage receipt: `prefill_from_image` made to
+capture the image BEFORE the walk (an all-zero image), and under `LOFT_PREFILL_VERIFY=1`
+both backends panic at the first image USE — but only after cell c11 was added: on native
+every `Mix` literal is a complete-write mint (`OpDatabaseNP`) and `mk`'s buffer is minted
+once per activation of its caller, so c1–c10 CAPTURE the image on native and never use it
+(the native half of the receipt was vacuous, which `LOFT_TRACE_PREFILL=1` now makes
+visible: it names each capture and each use, and `tests/prefill_image.rs` pins a use on
+BOTH backends — 2368 / 15 uses of `Mix`, interpret / native).  The guard is
+`tests/scripts/164-prefill-image.loft` with the panic text as its `@falsified-at:`; the
+five pins pass; fmt and both clippy legs are green.  The negative-default guard's
+`make falsify` against `7fd2a664` could not run on this box (`/tmp` is a 7.4 GB RAM tmpfs
+and the control build needs more; point `LOFT_FALSIFY_CACHE` at a disk path) — its receipt
+stays the hand measurement recorded in the file.
 
 ## The rewrite list — the natural `parse_poly` to its optimal form
 
@@ -443,7 +444,7 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | **C1** — element overwrite from a literal in place (`R-InPlaceLiteral`) | § The rewrite list | E13/E14 cells; `acc_pts` emits no temp store | Open |
 | **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § The rewrite list | E15/E16 cells; `smooth_pts` writes `Op.pts` | After C3 (needs no arena: the destination is a record in the scene's store) |
 | **C3** — read-only `?`-discharge as a view (`B-View`'s discharge clause) | § The rewrite list | E17 cells; `acc_pts` copies nothing | Open |
-| **C4** — per-type prefill image (`R-Prefill`) | § C4 | cells c1–c10 both backends under `LOFT_PREFILL_VERIFY`; the verify census over all 1432 corpus files; parse row −11 % | Built 2026-09-15 — mechanism, cells, census and A/B done; the guard's receipt, the pins' compile and the gate are the next session's first step (§ C4 *Where to resume*) |
+| **C4** — per-type prefill image (`R-Prefill`) | § C4 | cells c1–c11 both backends under `LOFT_PREFILL_VERIFY`; the verify census over all 1432 corpus files; the image USED on both backends (`LOFT_TRACE_PREFILL`); parse row −11 % | Shipped 2026-09-15 |
 | **C5** — a returned record's heap field as a view leaf (`O-ViewField`, `R-ValueRecord`, `R-Escape`) | § The rewrite list | the points written once per line: `Mark.pts` names `Op.pts`; an E17 site that appends between the call and the read must read the copy; an escaping `pub fn` result reads the copy at the bridge | Open — last; rule admitted (C122) |
 
 Every phase: a switch (`LOFT_NO_<unit>=1`), a falsifier, cells in
@@ -454,7 +455,7 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
 
 1. P0 — done: tier 1 priced at ≈ 10 % of the row, E1's site count measured; the owner's
    pick between `(store_nr, rec)` identity and a pooled store stays open until A1 is cut.
-2. B1 — shipped.  C4 — built (§ C4; its receipt and gate are the next step).  Then **B2**,
+2. B1 and C4 — shipped.  Then **B2**,
    a day, local, feeding the profile's largest remaining class (the copies).
 3. **C3 then C1** — the `acc_pts` pair, one mechanism each.
 4. **C2** — after C3: it needs the destination C3 makes visible and a single-exit callee
