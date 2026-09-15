@@ -861,6 +861,13 @@ store model to make fewer objects has been handed a form to fill in, which is th
 friction F forbids wearing a performance hat.  The drawing library's `parse` row is
 the measurement (@PLN164): thirteen lines of the natural style cost a dozen store
 lifecycles and four deep copies per line, none asked for by the program.
+**This is not a licence to optimise every path under the sun.**  The test is put to
+each spelling FIRST — *is this natural to write, the form a programmer reaches for
+without knowing the store model?* — and the compiler's effort goes to the spellings
+that pass it.  A contrived spelling keeps today's correct, slower code and is
+DEFERRED with its case written down, which is the ordinary state of most cases at
+any moment and never a defect; the natural ones are few and are where the whole of
+the gain sits.
 
 **Missing a feature is the preferred side — and is not the same as friction.**
 Refusing an operation the language **cannot do safely** (the unsound-capture error
