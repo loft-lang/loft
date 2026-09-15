@@ -480,7 +480,10 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 501 | 478 | **23** |
+| 503 | 480 | **23** |
+
+(2026-09-15, D-heap-7's close: 503 · 480 · 23 — `return_copies_whole_local` and
+`scopes::return_tail` discriminate on a return's shape and both peel.)
 
 (2026-09-15, @PLN163's copy-lease census and verdicts: 501 · 478 · 23, measured commit by commit.
 The census in `use_analysis::drop_copy_census` added two peeling sites; `src/lease.rs` six, five

@@ -10102,8 +10102,12 @@ impl Scopes<'_> {
         // @FR-O-Proxy asks free — the hook is a release, and it follows only where the empty
         // dep list says `v` OWNS the record; the proxy carries its @FR-O-Override veto as one
         // question, so this reads the pair negated rather than two separate escape clauses.
+        // D-heap-7 — the local `classify_ret_promotion` renamed onto the return buffer is an
+        // argument by slot only: this frame minted what it holds, and its assignments displace
+        // a record exactly as a plain local's do (`a = mk(1); a = mk(5); return a` never
+        // released the first).
         if !owned_here
-            || function.is_argument(v)
+            || (function.is_argument(v) && !self.is_promoted_ret_buffer(function, data, v))
             || function.is_captured(v)
             || !function.proxy_says_owned(v)
             || self.drop_transferred.contains(&v)
@@ -10836,6 +10840,15 @@ impl Scopes<'_> {
         } else {
             expr
         };
+        // D-heap-7, `(H-Move)` — a return that COPIES a whole local of this frame onto the return
+        // buffer (`return b` after an earlier `return a` took the buffer) moves that local's
+        // release to the copy, exactly as a copied member's does (`return_copy_out`).  Its own
+        // scope-end hook released it a second time, once here and once at the caller.
+        if is_return
+            && let Some(v) = return_copies_whole_local(expr, function, data, &self.view_backing)
+        {
+            arm_dropped.insert(v);
+        }
         let ret_var = returned_var_null_unified(expr, data.def_nr("OpNullRefSentinel"));
         // @PLN85 cluster II / A.1 part i (OWNERSHIP_MODEL row 100, invariant #5
         // "per binding, per path, complete") — the return-source SET, not the
@@ -11170,6 +11183,8 @@ impl Scopes<'_> {
         } else {
             HashMap::new()
         };
+        // Kept for the null-arm join leg below, which releases its sources after this sweep.
+        let join_skips = (path_skip.clone(), arm_dropped.clone());
         let mut ls = self.get_free_vars(
             function,
             data,
@@ -11258,7 +11273,25 @@ impl Scopes<'_> {
             });
             let mut result = Vec::with_capacity(ls.len() + null_arm_record_sources.len() + 2);
             result.push(v_set(tmp, expr.clone()));
+            let distinct = data.def_nr("OpDistinctStore");
+            let (join_path_skip, join_arm_dropped) = &join_skips;
             for &src in &null_arm_record_sources {
+                // D-heap-7, `(H-Drop)` — the free below releases a source only on the paths that
+                // did not return it, and a record's release is its HOOK as well as its store: this
+                // leg ran no hook, so the arm that returned `a` lost `b`'s release entirely
+                // (`return a ?? b`, `return if c { a } else { b }`).  Guarded by the same store
+                // comparison the free makes, so the two cannot disagree about the path, and placed
+                // after the value is computed, which is where the source's life ends.
+                if !join_arm_dropped.contains(&src)
+                    && let Some(hook) =
+                        self.scope_end_drop(function, src, data, join_path_skip.get(&src).copied())
+                {
+                    result.push(v_if(
+                        Value::Call(distinct, vec![Value::Var(src), Value::Var(tmp)]),
+                        hook,
+                        Value::Null,
+                    ));
+                }
                 result.push(Value::Call(free_if, vec![Value::Var(src), Value::Var(tmp)]));
             }
             result.append(&mut ls);
@@ -17455,6 +17488,62 @@ fn return_copy_out(
         }
         Some((src, skip))
     })
+}
+
+/// D-heap-7 — the whole LOCAL a return copies onto the return buffer, when the copy owns that
+/// local's release.
+///
+/// The twin of [`return_copy_out`] for the whole record rather than one member: `return b`
+/// becomes `{ OpDatabase(buf); OpCopyRecord(b, buf); buf }` when another return already made
+/// the buffer a local of its own.  Only a local that owns its record qualifies — a parameter's
+/// record is the caller's, a VIEW (a local with deps, or one `views` names) releases nothing of
+/// its own — and a copy onto itself is no copy.  `None` keeps the source's full hook, which is
+/// the double release this replaces and never a lost one.
+fn return_copies_whole_local(
+    expr: &Value,
+    function: &Function,
+    data: &Data,
+    views: &HashMap<u16, (u16, (u16, u16))>,
+) -> Option<u16> {
+    let Value::Block(bl) = return_tail(expr) else {
+        return None;
+    };
+    if bl.name != "materialized_view_return" && bl.name != ARMED_VIEW_RETURN {
+        return None;
+    }
+    let copy_nr = data.def_nr("OpCopyRecord");
+    bl.operators.iter().find_map(|op| {
+        let Value::Call(d, args) = op.unspan() else {
+            return None;
+        };
+        if *d != copy_nr {
+            return None;
+        }
+        let (Value::Var(src), Some(Value::Var(dest))) =
+            (args.first()?.unspan(), args.get(1).map(Value::unspan))
+        else {
+            return None;
+        };
+        // @FR-O-Proxy asks free — through `proxy_says_owned`, which carries @FR-O-Override's
+        // veto: the answer decides whose release this is, and a borrow owes none.
+        (src != dest
+            && !function.is_argument(*src)
+            && !views.contains_key(src)
+            && function.proxy_says_owned(*src)
+            && drop_hook(function, *src, data).is_some())
+        .then_some(*src)
+    })
+}
+
+/// The value a return yields: through its span, the `Return` itself and the statements an
+/// `Insert` runs before its last element.
+fn return_tail(v: &Value) -> &Value {
+    match v {
+        Value::Span(b) => return_tail(&b.1),
+        Value::Return(inner) => return_tail(inner),
+        Value::Insert(ops) if !ops.is_empty() => return_tail(&ops[ops.len() - 1]),
+        other => other,
+    }
 }
 
 /// The `(variable, (byte offset, depth))` an `OpGetField` chain reads — the PATH from a

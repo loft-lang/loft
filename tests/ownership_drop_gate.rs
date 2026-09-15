@@ -1255,7 +1255,7 @@ fn liveness_verdict(name: &str) -> Option<Lease> {
 
 /// Each OPEN deviation in `formal/heap.md` that a cell with a `Once` verdict still measures, with
 /// those cells.  A refused cell compiles today and is `D-heap-8`'s, so it is not listed.
-const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[("D-heap-7", &["q_present_local_var_ret"])];
+const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[];
 
 /// Every cell has a lease verdict, and every cell the rules say must release once while a
 /// baseline says it does not is carried by exactly one OPEN deviation in `formal/heap.md`.  A fix
