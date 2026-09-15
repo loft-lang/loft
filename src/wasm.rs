@@ -1065,6 +1065,10 @@ pub fn resume_frame() -> String {
             let Some(session) = slot.as_mut() else {
                 return "{\"running\":false}".to_string();
             };
+            // The session's `Data` moved twice since `execute_argv` installed the
+            // pointers to it (into the session, then into this slot): re-point them at
+            // where it lives now, or the next fn-ref call reads a moved-from table.
+            session.state.rebind_data(&session.data);
             let still_running = session.state.resume();
             if still_running {
                 "{\"running\":true}".to_string()
