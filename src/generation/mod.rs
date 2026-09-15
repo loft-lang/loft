@@ -6,7 +6,7 @@ use crate::data::{Context, Data, DefType, Type, Value};
 use crate::data_store::ValueType;
 use crate::database::Stores;
 use crate::ir_node::{IrBlock, IrNode};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::Write;
 mod calls;
 mod coroutine;
@@ -733,7 +733,7 @@ pub struct Output<'a> {
     pub record_push_disabled: bool,
     /// @PLN157 § V-j (`@FR-R-MoveAppend`) — the paired move-appends of the function being
     /// emitted, keyed by BUFFER variable ([`hoist::move_appends`]); rebuilt per function.
-    pub move_pairs: HashMap<u16, hoist::MoveAppend>,
+    pub move_pairs: BTreeMap<u16, hoist::MoveAppend>,
     /// The same pairs keyed by LOOP VARIABLE, for the copy emitter's gate.
     pub move_by_loopvar: HashMap<u16, hoist::MoveAppend>,
     /// The loop variables of the paired `For` blocks currently being emitted, innermost
@@ -1771,7 +1771,7 @@ impl<'a> Output<'a> {
             mint_hoist_disabled: std::env::var("LOFT_NO_MINT_HOIST").is_ok_and(|v| v != "0"),
             mint_push_headers: Vec::new(),
             record_push_disabled: std::env::var("LOFT_NO_RECORD_PUSH").is_ok_and(|v| v != "0"),
-            move_pairs: HashMap::new(),
+            move_pairs: BTreeMap::new(),
             move_by_loopvar: HashMap::new(),
             active_move_vars: Vec::new(),
             move_append_disabled: std::env::var("LOFT_NO_MOVE_APPEND").is_ok_and(|v| v != "0"),
@@ -2071,7 +2071,7 @@ impl Output<'_> {
             hoist::complete_writes(self.data, self.stores, def_nr)
         };
         self.move_pairs = if self.move_append_disabled {
-            HashMap::new()
+            BTreeMap::new()
         } else {
             hoist::move_appends(self.data, def_nr)
         };

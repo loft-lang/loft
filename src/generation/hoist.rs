@@ -29,7 +29,7 @@
 
 use crate::data::{Block, Data, DefType, Type, Value};
 use crate::database::Stores;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 /// The two ops that turn `(vector, index)` into the address of an element. A hoisted
@@ -2541,7 +2541,7 @@ pub struct MoveAppend {
 /// - the buffer serves ONLY this call: its other appearances are its null declaration and
 ///   its scope-exit frees.
 #[must_use]
-pub fn move_appends(data: &Data, def_nr: u32) -> HashMap<u16, MoveAppend> {
+pub fn move_appends(data: &Data, def_nr: u32) -> BTreeMap<u16, MoveAppend> {
     let def = data.def(def_nr);
     let vars = def.variables();
     let body = def.code();
@@ -2569,7 +2569,10 @@ pub fn move_appends(data: &Data, def_nr: u32) -> HashMap<u16, MoveAppend> {
         }
         false
     });
-    let mut out: HashMap<u16, MoveAppend> = HashMap::new();
+    // Ordered by buffer variable: the emitter walks these pairs to release and re-arm a
+    // host's placed buffers, and a hash order made that text differ between two runs of
+    // one compiler on one program (loft#1535).
+    let mut out: BTreeMap<u16, MoveAppend> = BTreeMap::new();
     let mut dead: HashSet<u16> = HashSet::new();
     body.any_node(&mut |n| {
         if let Value::Block(bl) = n
