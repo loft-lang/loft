@@ -414,12 +414,25 @@ impl Parser {
             return t;
         }
         if self.lexer.has_token("(") {
-            // @F45 — sizeof()
-            if name == "sizeof" {
+            // @F45 — sizeof() / type_name() / typedef(): the compiler's own reading of a TYPE.
+            // A program that declares a function of one of these names keeps the name: the
+            // call parses as an ordinary call, and `dispatch_call` lowers the special form only
+            // when none of the program's definitions takes the argument.  A type NAME as the
+            // argument stays the special form whatever is declared — no function takes a type.
+            let special = if matches!(name, "sizeof" | "type_name" | "typedef")
+                && (self.program_declares_fn(name)
+                    || (self.first_pass && self.file_has_pending_fn(name)))
+                && !self.next_is_type_name_argument()
+            {
+                ""
+            } else {
+                name
+            };
+            if special == "sizeof" {
                 t = self.parse_size(code);
-            } else if name == "type_name" {
+            } else if special == "type_name" {
                 t = self.parse_type_name(code);
-            } else if name == "typedef" {
+            } else if special == "typedef" {
                 let mut p = Value::Null;
                 let et = self.expression(&mut p);
                 self.lexer.token(")");

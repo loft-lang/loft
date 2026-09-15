@@ -1902,6 +1902,13 @@ impl Lexer {
         self.restart(filename);
     }
 
+    /// The text of an in-memory source registered by [`Self::parse_string`], or `None` for a
+    /// file that lives on disk.
+    #[must_use]
+    pub fn virtual_source(&self, filename: &str) -> Option<&str> {
+        self.virtual_files.get(filename).map(String::as_str)
+    }
+
     pub fn switch(&mut self, filename: &str) {
         // An in-memory source registered by `parse_string` re-serves from
         // memory — its name is not an openable path.

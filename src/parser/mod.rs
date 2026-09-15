@@ -894,6 +894,10 @@ pub struct Parser {
     /// Set by `dynamic_dispatcher` when it refused a leaf, so the call site returns rather
     /// than falling to the ladder and reporting the same site a second way.
     pub(crate) reported_dynamic_refusal: bool,
+    /// How many functions of each name each program source FILE declares, by a lexical scan —
+    /// pass 1's answer to "is a definition of this name still below the call?"
+    /// (`Parser::file_has_pending_fn`).
+    pub(crate) declared_fn_names: HashMap<String, HashMap<String, usize>>,
     /// Set by `iter_op` when `#fields` is encountered. Holds the struct `def_nr`.
     /// Checked by `parse_for` to take the unrolling path. Reset after use.
     pub(crate) fields_of: u32,
@@ -1488,6 +1492,7 @@ impl Parser {
             lambda_counter: 0,
             expected: Type::Unknown(0),
             reported_dynamic_refusal: false,
+            declared_fn_names: HashMap::new(),
             fields_of: u32::MAX,
             capture_context: Vec::new(),
             capture_owner: std::collections::HashMap::new(),
@@ -3544,6 +3549,8 @@ impl Parser {
         self.deferred_unknown.clear();
         self.resolutions.clear();
         self.data.reset();
+        // A REPL input reuses its virtual file name with new text.
+        self.declared_fn_names.clear();
         // The source stays the stdlib's, 0: this is the REPL session's entry, where every
         // later input and a debugger's eval resolve their names under that scope, and where
         // a definition colliding with a stdlib one is a collision of ONE key.  A gate that

@@ -17215,14 +17215,27 @@ impl Parser {
         arg_pos: &[Position],
         name_pos: &Position,
     ) -> Type {
+        // Every special case below is the compiler's own lowering of a call NAME, and it is a
+        // candidate of last resort: taken only when no definition the program declares takes
+        // these argument types (`program_definition_applies`).  A program's `sort(r: Roster)`
+        // is what `sort(r)` reaches, and `sort(v)` over a vector still takes the lowering.
+        // Pass 1 cannot see a definition below the call yet, so there the file's own
+        // declarations defer the special form to pass 2, as any later definition is deferred.
+        let special = if self.program_definition_applies(source, name, types)
+            || (self.first_pass && self.file_has_pending_fn(name))
+        {
+            ""
+        } else {
+            name
+        };
         if matches!(
-            name,
+            special,
             "assert" | "panic" | "log_info" | "log_warn" | "log_error" | "log_fatal"
         ) {
             return self.parse_call_diagnostic(val, name, list, types, call_pos);
         }
         self.check_persist_bind_root(name, list, arg_pos);
-        match name {
+        match special {
             // @PLN105 Phase 1 — deliver(tag, value): hand the value's descriptor
             // handle to the host. Lower to OpDeliver(tag, value, db_tp), filling
             // db_tp from the value's static type. The value is passed by VALUE (its
@@ -17463,6 +17476,26 @@ impl Parser {
                 let op = self.data.def_nr("OpCoroutineExhausted");
                 *val = Value::Call(op, list.to_vec());
                 return Type::Boolean;
+            }
+            // `type_name(x)` / `typedef(x)` reach here only when the program declares a function
+            // of that name (`parse_variable` then parses an ordinary call) and none of its
+            // definitions takes `x`: the special form answers for the argument's type, as it
+            // does when nothing is declared.  The argument is not evaluated — `type_of`'s rule.
+            "type_name" if types.len() == 1 => {
+                if !self.first_pass {
+                    *val = Value::Text(self.data.type_name_str(&types[0]));
+                }
+                return Type::Text(Deps::none());
+            }
+            "typedef" if types.len() == 1 => {
+                let tp = self.data.def(self.data.type_def_nr(&types[0])).known_type();
+                *val = Value::Int(i32::from(tp));
+                return Type::Integer(IntegerSpec {
+                    min: 0,
+                    max: 65536,
+                    not_null: false,
+                    forced_size: None,
+                });
             }
             _ => {}
         }

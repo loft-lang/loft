@@ -104,41 +104,169 @@ impl Parser {
             })
             .collect();
         let mut ranked = Vec::new();
-        'routine: for r in routines {
-            let declared: Vec<Type> = self
-                .data
-                .def(r)
-                .attributes
-                .iter()
-                .filter(|p| !p.hidden)
-                .map(|p| p.typedef.clone())
-                .collect();
-            if routed.len() > declared.len() {
-                continue;
+        for r in routines {
+            if let Some(ranks) = self.definition_ranks(r, routed) {
+                ranked.push((r, ranks));
             }
-            // A trailing parameter is admitted when it has a default (the one optionality a
-            // definition carries — owner, 2026-09-14).
-            let trailing_defaulted = self
-                .data
-                .def(r)
-                .attributes
-                .iter()
-                .filter(|p| !p.hidden)
-                .skip(routed.len())
-                .all(|p| p.value != crate::data::Value::Null);
-            if !trailing_defaulted {
-                continue;
-            }
-            let mut ranks = Vec::with_capacity(routed.len());
-            for (arg, param) in routed.iter().zip(&declared) {
-                match self.dispatch_rank(arg, param) {
-                    Some(k) => ranks.push(k),
-                    None => continue 'routine,
-                }
-            }
-            ranked.push((r, ranks));
         }
         Some(ranked)
+    }
+
+    /// How far each routed argument is from definition `r`'s parameter, or `None` when `r`
+    /// does not take the call (`Disp-Applicable`): more arguments than parameters, a trailing
+    /// parameter with no default, or an argument its parameter cannot accept.
+    fn definition_ranks(&mut self, r: u32, routed: &[Type]) -> Option<Vec<Rank>> {
+        let declared: Vec<Type> = self
+            .data
+            .def(r)
+            .attributes
+            .iter()
+            .filter(|p| !p.hidden)
+            .map(|p| p.typedef.clone())
+            .collect();
+        if routed.len() > declared.len() {
+            return None;
+        }
+        // A trailing parameter is admitted when it has a default (the one optionality a
+        // definition carries — owner, 2026-09-14).
+        let trailing_defaulted = self
+            .data
+            .def(r)
+            .attributes
+            .iter()
+            .filter(|p| !p.hidden)
+            .skip(routed.len())
+            .all(|p| p.value != crate::data::Value::Null);
+        if !trailing_defaulted {
+            return None;
+        }
+        routed
+            .iter()
+            .zip(&declared)
+            .map(|(arg, param)| self.dispatch_rank(arg, param))
+            .collect()
+    }
+
+    /// Does a definition the PROGRAM declares — anything outside the stdlib prelude, a
+    /// library's included — take a call of `name` with these argument types?  A compiler
+    /// special case for a call name (`sort` over a vector, `type_of`, `assert`, …) is a
+    /// candidate of last resort: it is taken only when this answers `false`, so no special
+    /// name limits what a program may define, and the call reaches the definition the type
+    /// system selects.  Asked the way the ordinary call asks: the name's overload set first,
+    /// then the ladder.
+    pub(crate) fn program_definition_applies(
+        &mut self,
+        source: u16,
+        name: &str,
+        types: &[Type],
+    ) -> bool {
+        let routed = self.data.routed_types(types);
+        let d = match self.select_overload(source, name, &routed) {
+            Selection::One(d) => d,
+            // Several of the set's definitions tie: the ordinary call reports that.
+            Selection::Ambiguous(_) => return true,
+            Selection::NoneApplicable => return false,
+            Selection::NotDecidable => self.data.select_fn(source, name, types),
+        };
+        d != u32::MAX
+            && self.data.def_type(d) == DefType::Function
+            && !crate::portable_path::is_stdlib_source(&self.data.def(d).position().file)
+            && self.definition_ranks(d, &routed).is_some()
+    }
+
+    /// Does the PROGRAM declare a function named `name` at all?  Asked where a special form
+    /// is recognised before its argument is parsed (`sizeof(…)`, `type_name(…)`,
+    /// `typedef(…)`), so the argument cannot yet say which definition the call reaches: a
+    /// declared function sends the call down the ordinary path, where
+    /// [`Self::program_definition_applies`] decides by the argument's type.
+    pub(crate) fn program_declares_fn(&self, name: &str) -> bool {
+        self.data.definitions.iter().any(|d| {
+            d.def_type == DefType::Function
+                && d.original_name().as_str() == name
+                && !crate::portable_path::is_stdlib_source(&d.position().file)
+        })
+    }
+
+    /// Is the next argument a TYPE name closing the call — `sizeof(Roster)` — which no
+    /// function can take, so the special form keeps it whatever the program declares?
+    /// Reads ahead and restores the lexer.
+    pub(crate) fn next_is_type_name_argument(&mut self) -> bool {
+        let lnk = self.lexer.link();
+        let is_type = match self.lexer.has_identifier() {
+            Some(id) => {
+                let d_nr = self.data.def_nr(&id);
+                d_nr != u32::MAX
+                    && !matches!(
+                        self.data.def_type(d_nr),
+                        DefType::EnumValue
+                            | DefType::Function
+                            | DefType::Dynamic
+                            | DefType::Generic
+                            | DefType::Unknown
+                    )
+                    && self.lexer.has_token(")")
+            }
+            None => false,
+        };
+        self.lexer.revert(lnk);
+        is_type
+    }
+
+    /// Does the current program source FILE declare a function named `name` that pass 1 has
+    /// not reached yet — one BELOW this call?  Pass 1 meets a call before the definitions
+    /// that follow it, so [`Self::program_definition_applies`] cannot see them — and a special
+    /// form answering ITS type on pass 1 while the program's definition answers another on
+    /// pass 2 refuses the program (*"cannot change type from void to text"*).  The file's
+    /// `fn <name>` declarations are counted by a lexical scan and compared with the ones of
+    /// this file already registered: while some are still ahead, the special form waits for
+    /// pass 2, exactly as any call of a later definition waits.  Once all are registered the
+    /// exact type check decides on pass 1 too, so both passes answer alike.  A false positive
+    /// — the words in a comment, a `fn(…)` type — only defers the special form to pass 2;
+    /// the stdlib's own files are never scanned.
+    pub(crate) fn file_has_pending_fn(&mut self, name: &str) -> bool {
+        let file = self.lexer.pos().file.clone();
+        if crate::portable_path::is_stdlib_source(&file) {
+            return false;
+        }
+        if !self.declared_fn_names.contains_key(&file) {
+            let text = self
+                .lexer
+                .virtual_source(&file)
+                .map_or_else(|| Self::read_source(&file), str::to_string);
+            let mut counts: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
+            let mut after_fn = false;
+            for word in text.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
+                if word.is_empty() {
+                    continue;
+                }
+                if after_fn {
+                    *counts.entry(word.to_string()).or_default() += 1;
+                }
+                after_fn = word == "fn";
+            }
+            self.declared_fn_names.insert(file.clone(), counts);
+        }
+        let declared = self
+            .declared_fn_names
+            .get(&file)
+            .and_then(|counts| counts.get(name))
+            .copied()
+            .unwrap_or(0);
+        if declared == 0 {
+            return false;
+        }
+        let reached = self
+            .data
+            .definitions
+            .iter()
+            .filter(|d| {
+                matches!(d.def_type, DefType::Function | DefType::Generic)
+                    && d.original_name().as_str() == name
+                    && d.position().file == file
+            })
+            .count();
+        declared > reached
     }
 
     /// `Disp-Select` over an overload set for the routed argument types.
