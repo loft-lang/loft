@@ -287,18 +287,19 @@ cannot see.
               parameter of the same type τ, at any arity — are REFUSED at whichever is
               declared second, in either order, within one source: `x.m(…)` would reach one
               body and `m(x, …)` the other.  The one definition that answers both spellings
-              is the `both` form, `fn m(both: τ, …)`, in the stdlib, a library and a program
-              alike.  A plain function whose first parameter has ANOTHER type (`m(q: Qt)`
-              beside `m(self: Pt)`) is an overload, kept live by its argument type.
+              is the `self` method, `fn m(self: τ, …)`, in the stdlib, a library and a
+              program alike; `both` is a deprecated spelling of `self` (C123).  A plain
+              function whose first parameter has ANOTHER type (`m(q: Qt)` beside
+              `m(self: Pt)`) is an overload, kept live by its argument type.
 ```
 
 **In words.** Two implementations under one name confuse any reader: when `p.doit()` and
 `doit(p)` can differ, knowing what a line does means knowing how loft resolves it (owner,
-2026-09-15).  So a program says it once.  `both` exists for the programmer who wants either
-spelling — `v.sin()` from muscle memory built in Rust, where the receiver's float width decides,
-and `sin(v)` for one who never learned that convention and should not be forced into it.  A
-`self` method already answers `m(x)` as well ((F-Recv)), so a `self` method never needs a free
-twin; `both` is the spelling that says the free form is intended.
+2026-09-15).  So a program says it once.  Both spellings stay, for two programmers: `v.sin()`
+from muscle memory built in Rust, where the receiver's float width decides, and `sin(v)` for
+one who never learned that convention and should not be forced into it.  A `self` method answers
+both ((F-Recv)), and an import list reaches it by name; `both`, which once was the only spelling
+an import list could find, therefore names nothing more and is deprecated (C123).
 
 Before this was refused in both orders the free function simply went dead: `doit(p)` resolves
 the method key first, so `fn doit(self: Pt)` followed by `fn doit(p: Pt)` answered the method's

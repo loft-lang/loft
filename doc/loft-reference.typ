@@ -7708,103 +7708,103 @@ Whether the sentinel is a legal ANSWER depends on the target, and `dflt` already
 The sentinel arm is SILENT on purpose.  It is not a fault of this store: the operation that produced the sentinel reported at its own site, and reporting again would name `-9223372036854775808` as a value outside the range, which is not a number the program ever computed.
 
 ```rust
-pub fn abs(both: integer) -> integer
+pub fn abs(self: integer) -> integer
 ```
 
 Absolute value. Removes the sign from a negative integer.
 
 ```rust
-pub fn floor_mod(both: integer, divisor: integer) -> integer?
+pub fn floor_mod(self: integer, divisor: integer) -> integer?
 ```
 
 Floor modulo — the remainder that takes the sign of the DIVISOR, so `x.floor\_mod(n)` lands in `\[0, n)` for a positive `n`.  The `%` operator truncates toward zero and keeps the DIVIDEND's sign (`-1 % 3 == -1`); `floor\_mod` wraps (`(-1).floor\_mod(3) == 2`), which is what circular indexing / wrap-around wants (`grid\[(i - 1).floor\_mod(w)\]`).  `x.floor\_mod(0)` is null, like `%` (C80 — an undefined value is a null, never a fault).
 
 ```rust
-pub fn abs(both: single) -> single
+pub fn abs(self: single) -> single
 ```
 
 Absolute value for single-precision floats.
 
 ```rust
-pub fn cos(both: single) -> single
+pub fn cos(self: single) -> single
 ```
 
 Cosine. Use for circular motion: x = r \* cos(angle).
 
 ```rust
-pub fn sin(both: single) -> single
+pub fn sin(self: single) -> single
 ```
 
 Sine. Use for circular motion: y = r \* sin(angle).
 
 ```rust
-pub fn tan(both: single) -> single
+pub fn tan(self: single) -> single
 ```
 
 Tangent. Use for slopes and perspective projection.
 
 ```rust
-pub fn acos(both: single) -> single?
+pub fn acos(self: single) -> single?
 ```
 
 Arc cosine. Returns the angle (in radians) whose cosine is v.
 
 ```rust
-pub fn asin(both: single) -> single?
+pub fn asin(self: single) -> single?
 ```
 
 Arc sine. Returns the angle whose sine is v.
 
 ```rust
-pub fn atan(both: single) -> single
+pub fn atan(self: single) -> single
 ```
 
 Arc tangent of a single value. Returns angle in (-PI/2, PI/2).
 
 ```rust
-pub fn ceil(both: single) -> single
+pub fn ceil(self: single) -> single
 ```
 
 Round up to the nearest integer value. Use to compute required buffer sizes from fractional counts.
 
 ```rust
-pub fn floor(both: single) -> single
+pub fn floor(self: single) -> single
 ```
 
 Round down to the nearest integer value. Use to convert a float position to a tile index.
 
 ```rust
-pub fn round(both: single) -> single
+pub fn round(self: single) -> single
 ```
 
 Round to the nearest integer value (half rounds away from zero).
 
 ```rust
-pub fn sqrt(both: single) -> single?
+pub fn sqrt(self: single) -> single?
 ```
 
 Square root. Use for distances and normalization.
 
 ```rust
-pub fn atan2(both: single, v2: single) -> single
+pub fn atan2(self: single, v2: single) -> single
 ```
 
 Arc tangent of y/x, preserving the correct quadrant. Use instead of atan when you have separate x/y components.
 
 ```rust
-pub fn log(both: single, v2: single) -> single?
+pub fn log(self: single, v2: single) -> single?
 ```
 
 Logarithm of v in the given base. Use for converting between scales (e.g., decibels).
 
 ```rust
-pub fn pow(both: single, v2: single) -> single?
+pub fn pow(self: single, v2: single) -> single?
 ```
 
 Raises base to the power exp. Use for exponential growth curves and scaling.
 
 ```rust
-pub fn abs(both: float) -> float
+pub fn abs(self: float) -> float
 ```
 
 Absolute value for double-precision floats.
@@ -7822,79 +7822,79 @@ pub E = OpMathEFloat()
 Euler's number, the base of natural logarithms (2.71828...).
 
 ```rust
-pub fn cos(both: float) -> float
+pub fn cos(self: float) -> float
 ```
 
 Cosine. Use for circular motion: x = r \* cos(angle).
 
 ```rust
-pub fn sin(both: float) -> float
+pub fn sin(self: float) -> float
 ```
 
 Sine. Use for circular motion: y = r \* sin(angle).
 
 ```rust
-pub fn tan(both: float) -> float
+pub fn tan(self: float) -> float
 ```
 
 Tangent. Use for slopes and perspective projection.
 
 ```rust
-pub fn acos(both: float) -> float?
+pub fn acos(self: float) -> float?
 ```
 
 Arc cosine. Returns the angle (in radians) whose cosine is v.
 
 ```rust
-pub fn asin(both: float) -> float?
+pub fn asin(self: float) -> float?
 ```
 
 Arc sine. Returns the angle whose sine is v.
 
 ```rust
-pub fn atan(both: float) -> float
+pub fn atan(self: float) -> float
 ```
 
 Arc tangent of a single value. Returns angle in (-PI/2, PI/2).
 
 ```rust
-pub fn ceil(both: float) -> float
+pub fn ceil(self: float) -> float
 ```
 
 Round up to the nearest integer value. Use to compute required buffer sizes from fractional counts.
 
 ```rust
-pub fn floor(both: float) -> float
+pub fn floor(self: float) -> float
 ```
 
 Round down to the nearest integer value. Use to convert a float position to a tile index.
 
 ```rust
-pub fn round(both: float) -> float
+pub fn round(self: float) -> float
 ```
 
 Round to the nearest integer value (half rounds away from zero).
 
 ```rust
-pub fn sqrt(both: float) -> float?
+pub fn sqrt(self: float) -> float?
 ```
 
 Square root. Use for distances and normalization.
 
 ```rust
-pub fn atan2(both: float, v2: float) -> float
+pub fn atan2(self: float, v2: float) -> float
 ```
 
 Arc tangent of y/x, preserving the correct quadrant. Use instead of atan when you have separate x/y components.
 
 ```rust
-pub fn log(both: float, v2: float) -> float?
+pub fn log(self: float, v2: float) -> float?
 ```
 
 Logarithm of v in the given base. Use for converting between scales (e.g., decibels).
 
 ```rust
-pub fn pow(both: float, v2: float) -> float?
+pub fn pow(self: float, v2: float) -> float?
 ```
 
 Raises base to the power exp. Use for exponential growth curves and scaling.
@@ -7902,49 +7902,49 @@ Raises base to the power exp. Use for exponential growth curves and scaling.
 == exp / ln / log2 / log10
 
 ```rust
-pub fn exp(both: single) -> single
+pub fn exp(self: single) -> single
 ```
 
 Raises E (2.71828…) to the power v. Use for exponential growth models.
 
 ```rust
-pub fn exp(both: float) -> float
+pub fn exp(self: float) -> float
 ```
 
 Double-precision exp (e^v).
 
 ```rust
-pub fn ln(both: single) -> single?
+pub fn ln(self: single) -> single?
 ```
 
 Natural logarithm (base E). Use for growth rates and information entropy.
 
 ```rust
-pub fn ln(both: float) -> float?
+pub fn ln(self: float) -> float?
 ```
 
 Double-precision natural logarithm.
 
 ```rust
-pub fn log2(both: single) -> single?
+pub fn log2(self: single) -> single?
 ```
 
 Base-2 logarithm. Use for bit-count calculations and information theory.
 
 ```rust
-pub fn log2(both: float) -> float?
+pub fn log2(self: float) -> float?
 ```
 
 Double-precision base-2 logarithm.
 
 ```rust
-pub fn log10(both: single) -> single?
+pub fn log10(self: single) -> single?
 ```
 
 Base-10 logarithm. Use for decibels, orders of magnitude, and display scales.
 
 ```rust
-pub fn log10(both: float) -> float?
+pub fn log10(self: float) -> float?
 ```
 
 Double-precision base-10 logarithm.
@@ -7952,67 +7952,67 @@ Double-precision base-10 logarithm.
 == min / max / clamp
 
 ```rust
-pub fn min(both: integer, b: integer) -> integer
+pub fn min(self: integer, b: integer) -> integer
 ```
 
 Each of these has two overloads: one over non-null values (`-\> τ`) and one over nullable ones (`-\> τ?`).  You get the nullable overload whenever ANY argument is statically nullable — an `integer?`/`single?`/`float?`, or a division result such as `1 / z` — and it propagates: the answer is null if either argument is null.  Otherwise you get the non-null overload and a non-null answer, so a plain `min(a, b)` needs no discharge. Smallest of two integer values.
 
 ```rust
-pub fn max(both: integer, b: integer) -> integer
+pub fn max(self: integer, b: integer) -> integer
 ```
 
 Largest of two integer values.
 
 ```rust
-pub fn clamp(both: integer, lo: integer, hi: integer) -> integer
+pub fn clamp(self: integer, lo: integer, hi: integer) -> integer
 ```
 
 Clamps v into the inclusive range \[lo, hi\]. Returns null if any argument is null.
 
 ```rust
-pub fn min(both: single, b: single) -> single
+pub fn min(self: single, b: single) -> single
 ```
 
 Smallest of two single-precision float values.
 
 ```rust
-pub fn max(both: single, b: single) -> single
+pub fn max(self: single, b: single) -> single
 ```
 
 Largest of two single-precision float values.
 
 ```rust
-pub fn clamp(both: single, lo: single, hi: single) -> single
+pub fn clamp(self: single, lo: single, hi: single) -> single
 ```
 
 Clamps v into the inclusive range \[lo, hi\]. Returns null if any argument is null.
 
 ```rust
-pub fn min(both: float, b: float) -> float
+pub fn min(self: float, b: float) -> float
 ```
 
 Smallest of two double-precision float values.
 
 ```rust
-pub fn max(both: float, b: float) -> float
+pub fn max(self: float, b: float) -> float
 ```
 
 Largest of two double-precision float values.
 
 ```rust
-pub fn clamp(both: float, lo: float, hi: float) -> float
+pub fn clamp(self: float, lo: float, hi: float) -> float
 ```
 
 Clamps v into the inclusive range \[lo, hi\]. Returns null if any argument is null.
 
 ```rust
-pub fn approx(both: float, b: float, eps: float) -> boolean
+pub fn approx(self: float, b: float, eps: float) -> boolean
 ```
 
 Approximate equality: true when a and b differ by at most eps (inclusive). `==` on float/single is EXACT IEEE equality — use `approx` when you want a tolerance, e.g. comparing computed transcendentals: `approx(sqrt(2.0) \* sqrt(2.0), 2.0, 1e-9)`. A null (NaN) operand is not approximately equal to anything, so the result is false.
 
 ```rust
-pub fn approx(both: single, b: single, eps: single) -> boolean
+pub fn approx(self: single, b: single, eps: single) -> boolean
 ```
 
 Approximate equality for single-precision floats (see the float overload).
@@ -8022,19 +8022,19 @@ Approximate equality for single-precision floats (see the float overload).
 Functions for working with text (UTF-8 strings) and character values.
 
 ```rust
-pub fn len(both: text) -> integer
+pub fn len(self: text) -> integer
 ```
 
 Number of characters (Unicode code points) in the text — the human count, as in every mainstream language. For a byte length (bounds checks, the limit of byte-positioned indexing / slicing) use `size`.
 
 ```rust
-pub fn size(both: text) -> integer
+pub fn size(self: text) -> integer
 ```
 
 Number of bytes in the text. This is the bound for byte-positioned operations: `s\[i\]`, slices `s\[a..b\]`, and `find`/`rfind` all use byte offsets. For the human character count use `len`.
 
 ```rust
-pub fn len(both: character) -> integer
+pub fn len(self: character) -> integer
 ```
 
 Byte length of the character's UTF-8 encoding (1–4).
@@ -8069,7 +8069,7 @@ Use it wherever a character COUNT becomes a cut: fitting a label to a width, wra
 Negative bounds count from the end, as a byte slice's do (`char\_slice(-2, n)` is the last two characters); both ends clamp, and a reversed or empty range answers `""` rather than failing.
 
 ```rust
-pub fn trim(both: text) -> text[both]
+pub fn trim(self: text) -> text[self]
 ```
 
 (Path helpers `dir` / `basename` / `join` / `resolve` moved to `02\_files.loft` § Path helpers, so they're available before `03\_text.loft` loads — same call shape, same `pub fn` signatures.) Removes leading and trailing whitespace. Use when processing user input or file content.
@@ -8235,31 +8235,31 @@ Build a one-character text from a Unicode CODE POINT — the inverse of the `ch 
 Operations on vector\<T\> — the primary ordered collection type. Vectors are grown by appending with += and elements are accessed by index. All structures are passed by reference instead of by value
 
 ```rust
-pub fn len(both: vector) -> integer
+pub fn len(self: vector) -> integer
 ```
 
 Number of elements in the vector. Use in loop bounds: for i in 0..v.len().
 
 ```rust
-pub fn len(both: sorted) -> integer
+pub fn len(self: sorted) -> integer
 ```
 
 Number of elements in a sorted collection.
 
 ```rust
-pub fn clear(both: vector)
+pub fn clear(self: vector)
 ```
 
 Remove all elements from the vector, setting its length to 0.
 
 ```rust
-pub fn len(both: hash) -> integer
+pub fn len(self: hash) -> integer
 ```
 
 Number of elements in a hash collection.
 
 ```rust
-pub fn size(both: hash) -> integer
+pub fn size(self: hash) -> integer
 ```
 
 The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (load factor 0.75).  0 for an empty (unallocated) hash.
@@ -8327,13 +8327,13 @@ pub fn eprintln(v1: text)
 Writes v followed by a newline to standard ERROR.
 
 ```rust
-pub fn len(both: spatial) -> integer
+pub fn len(self: spatial) -> integer
 ```
 
 Number of elements in a spatial (radix / Morton tree) collection.
 
 ```rust
-pub fn len(both: trie) -> integer
+pub fn len(self: trie) -> integer
 ```
 
 Number of elements in the trie.
@@ -8562,7 +8562,7 @@ pub fn exists(path: text) -> boolean fs#read
 Stat-equivalent filesystem read; par-safe. Use to check whether a path is accessible before reading or writing it. A RELATIVE path resolves against the program's own directory, or against the working directory under `\#cwd`; an absolute path is used as given, including one outside the project.  This is not an access boundary — the boundary is the `fs` capability a `\[sandbox\]` profile grants or withholds.
 
 ```rust
-pub fn exists(both: File) -> boolean fs#read
+pub fn exists(self: File) -> boolean fs#read
 ```
 
 Filesystem stat (via file()); par-safe. Method form: f = file("path"); if f.exists() { .. } Also callable as exists(file\_obj) via the 'both' parameter name.

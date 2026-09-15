@@ -657,7 +657,7 @@ Before emitting a binary operation or assignment, the parser checks if the actua
 `can_convert` must accept everything `convert` accepts, including the pairs `convert`
 accepts by emitting NOTHING.  It is not `convert`'s subset — it is `validate_convert`'s
 only input, so a pair the two disagree on becomes a refusal with no cause behind it.  A
-bare-collection parameter (`len(both: hash)`) takes any parameterised hash with no
+bare-collection parameter (`len(self: hash)`) takes any parameterised hash with no
 conversion op at all, so `convert` returning `false` there is normal and `can_convert` is
 what actually decides.  When you add an arm to one, add the mirror to the other: loft#824
 was a `RefVar` argument that `convert` peeled and `can_convert` did not, which turned

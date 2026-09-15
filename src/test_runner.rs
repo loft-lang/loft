@@ -1205,23 +1205,41 @@ pub(crate) fn run_tests(
                 total_files += 1;
                 continue;
             }
-            if !no_warnings && !has_expect_warning && !has_fn_warnings {
+            // A warning an `@EXPECT_WARNING` claims — file-level or per-function — is
+            // intentional and stays quiet; every OTHER warning in the file is printed and
+            // gated exactly as in a file that declares no expectation, the rule
+            // `unexpected_errors` above already holds errors to.  Exempting the whole file
+            // instead let an unrelated warning through a library's `--deny-warnings` CI
+            // unseen: `regex`'s test pinned two `shadowed-by-method` warnings, and the
+            // `both-receiver-deprecated` warning on its own source printed nothing and failed
+            // nothing (C123).
+            let claimed = |w: &String| {
+                ann.expect_warnings.iter().any(|s| w.contains(s.as_str()))
+                    || ann
+                        .expect_warnings_fn
+                        .values()
+                        .any(|subs| subs.iter().any(|s| w.contains(s.as_str())))
+            };
+            let unexpected_warnings: Vec<&String> = file_result
+                .warnings
+                .iter()
+                .filter(|w| !claimed(w))
+                .collect();
+            if !no_warnings {
                 // Advice prints alongside warnings — it is reported, just never gated.
-                for w in file_result.warnings.iter().chain(file_result.advice.iter()) {
+                for w in unexpected_warnings
+                    .iter()
+                    .copied()
+                    .chain(file_result.advice.iter().filter(|a| !claimed(a)))
+                {
                     println!("  {w}");
                 }
             }
-            // --deny-warnings (lib-CI gate): any non-expected warning fails
-            // the file.  Errors and @EXPECT_WARNING / per-fn @EXPECT_WARNING
-            // suppress the gate — those warnings are intentional.
-            if deny_warnings
-                && !has_expect_warning
-                && !has_fn_warnings
-                && !file_result.warnings.is_empty()
-            {
+            // --deny-warnings (lib-CI gate): any warning no expectation claims fails the file.
+            if deny_warnings && !unexpected_warnings.is_empty() {
                 println!(
                     "  FAIL  {display_name}  (--deny-warnings: {} unexpected warning(s))",
-                    file_result.warnings.len()
+                    unexpected_warnings.len()
                 );
                 dir_fail += 1;
                 total_files += 1;

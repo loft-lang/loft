@@ -1,7 +1,7 @@
 ==== exit: 1 ====
 ==== stdout ====
 ==== stderr ====
-error: `scaled` is a method on `P56`, and a method is not a function VALUE — there is nothing to pass here. Wrap it: `|x| { x.scaled(…) }`, or declare the function with a plain first-parameter name (not `self` / `both`), which makes it a free function and a usable fn-ref
+error: `scaled` is a method on `P56`, and a method is not a function VALUE — there is nothing to pass here. Wrap it: `|x| { x.scaled(…) }`, or declare the function with a plain first-parameter name (not `self`), which makes it a free function and a usable fn-ref
   --> <cases>/56_method_is_not_a_fn_ref.loft:9:21
   |
 9 |   println("{apply56(scaled, p)}");

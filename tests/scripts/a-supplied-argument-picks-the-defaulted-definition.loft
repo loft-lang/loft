@@ -38,8 +38,8 @@ fn pm(self: A) -> text { "pm-short {self.n}" }
 fn pm(self: A, k: integer = 1) -> text { "pm-long {self.n} {k}" }
 
 // `both`: short beside defaulted
-fn pb(both: A) -> text { "pb-short {both.n}" }
-fn pb(both: A, k: integer = 1) -> text { "pb-long {both.n} {k}" }
+fn pb(self: A) -> text { "pb-short {self.n}" }
+fn pb(self: A, k: integer = 1) -> text { "pb-long {self.n} {k}" }
 
 fn test_free_supplied() {
   a = A { n: 1 };

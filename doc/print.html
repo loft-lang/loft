@@ -3987,71 +3987,71 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p class="section-desc">Whether the sentinel is a legal ANSWER depends on the target, and `dflt` already carries that fact: `uncomputable_default` sets it to `i64::MIN` exactly when the slot can read back null (a nullable target, or `i32`/`i64` whose spare code is the bottom one) and to the type's default otherwise.  So a sentinel is passed through where null is representable and collapsed to the default where it is not — `u8`/`i8`/`u16`/`i16` fill their width and `u32`'s spare is at the top, which no non-null read tests for.</p>
 <p class="section-desc">The sentinel arm is SILENT on purpose.  It is not a fault of this store: the operation that produced the sentinel reported at its own site, and reporting again would name `-9223372036854775808` as a value outside the range, which is not a number the program ever computed.</p>
 <div class="item">
-<pre><code>pub fn abs(both: integer) -&gt; integer</code></pre>
+<pre><code>pub fn abs(self: integer) -&gt; integer</code></pre>
 <p>Absolute value. Removes the sign from a negative integer.</p>
 </div>
 <div class="item">
-<pre><code>pub fn floor_mod(both: integer, divisor: integer) -&gt; integer?</code></pre>
+<pre><code>pub fn floor_mod(self: integer, divisor: integer) -&gt; integer?</code></pre>
 <p>Floor modulo — the remainder that takes the sign of the DIVISOR, so `x.floor_mod(n)` lands in `[0, n)` for a positive `n`.  The `%` operator truncates toward zero and keeps the DIVIDEND's sign (`-1 % 3 == -1`); `floor_mod` wraps (`(-1).floor_mod(3) == 2`), which is what circular indexing / wrap-around wants (`grid[(i - 1).floor_mod(w)]`).  `x.floor_mod(0)` is null, like `%` (C80 — an undefined value is a null, never a fault).</p>
 </div>
 <div class="item">
-<pre><code>pub fn abs(both: single) -&gt; single</code></pre>
+<pre><code>pub fn abs(self: single) -&gt; single</code></pre>
 <p>Absolute value for single-precision floats.</p>
 </div>
 <div class="item">
-<pre><code>pub fn cos(both: single) -&gt; single</code></pre>
+<pre><code>pub fn cos(self: single) -&gt; single</code></pre>
 <p>Cosine. Use for circular motion: x = r * cos(angle).</p>
 </div>
 <div class="item">
-<pre><code>pub fn sin(both: single) -&gt; single</code></pre>
+<pre><code>pub fn sin(self: single) -&gt; single</code></pre>
 <p>Sine. Use for circular motion: y = r * sin(angle).</p>
 </div>
 <div class="item">
-<pre><code>pub fn tan(both: single) -&gt; single</code></pre>
+<pre><code>pub fn tan(self: single) -&gt; single</code></pre>
 <p>Tangent. Use for slopes and perspective projection.</p>
 </div>
 <div class="item">
-<pre><code>pub fn acos(both: single) -&gt; single?</code></pre>
+<pre><code>pub fn acos(self: single) -&gt; single?</code></pre>
 <p>Arc cosine. Returns the angle (in radians) whose cosine is v.</p>
 </div>
 <div class="item">
-<pre><code>pub fn asin(both: single) -&gt; single?</code></pre>
+<pre><code>pub fn asin(self: single) -&gt; single?</code></pre>
 <p>Arc sine. Returns the angle whose sine is v.</p>
 </div>
 <div class="item">
-<pre><code>pub fn atan(both: single) -&gt; single</code></pre>
+<pre><code>pub fn atan(self: single) -&gt; single</code></pre>
 <p>Arc tangent of a single value. Returns angle in (-PI/2, PI/2).</p>
 </div>
 <div class="item">
-<pre><code>pub fn ceil(both: single) -&gt; single</code></pre>
+<pre><code>pub fn ceil(self: single) -&gt; single</code></pre>
 <p>Round up to the nearest integer value. Use to compute required buffer sizes from fractional counts.</p>
 </div>
 <div class="item">
-<pre><code>pub fn floor(both: single) -&gt; single</code></pre>
+<pre><code>pub fn floor(self: single) -&gt; single</code></pre>
 <p>Round down to the nearest integer value. Use to convert a float position to a tile index.</p>
 </div>
 <div class="item">
-<pre><code>pub fn round(both: single) -&gt; single</code></pre>
+<pre><code>pub fn round(self: single) -&gt; single</code></pre>
 <p>Round to the nearest integer value (half rounds away from zero).</p>
 </div>
 <div class="item">
-<pre><code>pub fn sqrt(both: single) -&gt; single?</code></pre>
+<pre><code>pub fn sqrt(self: single) -&gt; single?</code></pre>
 <p>Square root. Use for distances and normalization.</p>
 </div>
 <div class="item">
-<pre><code>pub fn atan2(both: single, v2: single) -&gt; single</code></pre>
+<pre><code>pub fn atan2(self: single, v2: single) -&gt; single</code></pre>
 <p>Arc tangent of y/x, preserving the correct quadrant. Use instead of atan when you have separate x/y components.</p>
 </div>
 <div class="item">
-<pre><code>pub fn log(both: single, v2: single) -&gt; single?</code></pre>
+<pre><code>pub fn log(self: single, v2: single) -&gt; single?</code></pre>
 <p>Logarithm of v in the given base. Use for converting between scales (e.g., decibels).</p>
 </div>
 <div class="item">
-<pre><code>pub fn pow(both: single, v2: single) -&gt; single?</code></pre>
+<pre><code>pub fn pow(self: single, v2: single) -&gt; single?</code></pre>
 <p>Raises base to the power exp. Use for exponential growth curves and scaling.</p>
 </div>
 <div class="item">
-<pre><code>pub fn abs(both: float) -&gt; float</code></pre>
+<pre><code>pub fn abs(self: float) -&gt; float</code></pre>
 <p>Absolute value for double-precision floats.</p>
 </div>
 <div class="item">
@@ -4063,147 +4063,147 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Euler's number, the base of natural logarithms (2.71828...).</p>
 </div>
 <div class="item">
-<pre><code>pub fn cos(both: float) -&gt; float</code></pre>
+<pre><code>pub fn cos(self: float) -&gt; float</code></pre>
 <p>Cosine. Use for circular motion: x = r * cos(angle).</p>
 </div>
 <div class="item">
-<pre><code>pub fn sin(both: float) -&gt; float</code></pre>
+<pre><code>pub fn sin(self: float) -&gt; float</code></pre>
 <p>Sine. Use for circular motion: y = r * sin(angle).</p>
 </div>
 <div class="item">
-<pre><code>pub fn tan(both: float) -&gt; float</code></pre>
+<pre><code>pub fn tan(self: float) -&gt; float</code></pre>
 <p>Tangent. Use for slopes and perspective projection.</p>
 </div>
 <div class="item">
-<pre><code>pub fn acos(both: float) -&gt; float?</code></pre>
+<pre><code>pub fn acos(self: float) -&gt; float?</code></pre>
 <p>Arc cosine. Returns the angle (in radians) whose cosine is v.</p>
 </div>
 <div class="item">
-<pre><code>pub fn asin(both: float) -&gt; float?</code></pre>
+<pre><code>pub fn asin(self: float) -&gt; float?</code></pre>
 <p>Arc sine. Returns the angle whose sine is v.</p>
 </div>
 <div class="item">
-<pre><code>pub fn atan(both: float) -&gt; float</code></pre>
+<pre><code>pub fn atan(self: float) -&gt; float</code></pre>
 <p>Arc tangent of a single value. Returns angle in (-PI/2, PI/2).</p>
 </div>
 <div class="item">
-<pre><code>pub fn ceil(both: float) -&gt; float</code></pre>
+<pre><code>pub fn ceil(self: float) -&gt; float</code></pre>
 <p>Round up to the nearest integer value. Use to compute required buffer sizes from fractional counts.</p>
 </div>
 <div class="item">
-<pre><code>pub fn floor(both: float) -&gt; float</code></pre>
+<pre><code>pub fn floor(self: float) -&gt; float</code></pre>
 <p>Round down to the nearest integer value. Use to convert a float position to a tile index.</p>
 </div>
 <div class="item">
-<pre><code>pub fn round(both: float) -&gt; float</code></pre>
+<pre><code>pub fn round(self: float) -&gt; float</code></pre>
 <p>Round to the nearest integer value (half rounds away from zero).</p>
 </div>
 <div class="item">
-<pre><code>pub fn sqrt(both: float) -&gt; float?</code></pre>
+<pre><code>pub fn sqrt(self: float) -&gt; float?</code></pre>
 <p>Square root. Use for distances and normalization.</p>
 </div>
 <div class="item">
-<pre><code>pub fn atan2(both: float, v2: float) -&gt; float</code></pre>
+<pre><code>pub fn atan2(self: float, v2: float) -&gt; float</code></pre>
 <p>Arc tangent of y/x, preserving the correct quadrant. Use instead of atan when you have separate x/y components.</p>
 </div>
 <div class="item">
-<pre><code>pub fn log(both: float, v2: float) -&gt; float?</code></pre>
+<pre><code>pub fn log(self: float, v2: float) -&gt; float?</code></pre>
 <p>Logarithm of v in the given base. Use for converting between scales (e.g., decibels).</p>
 </div>
 <div class="item">
-<pre><code>pub fn pow(both: float, v2: float) -&gt; float?</code></pre>
+<pre><code>pub fn pow(self: float, v2: float) -&gt; float?</code></pre>
 <p>Raises base to the power exp. Use for exponential growth curves and scaling.</p>
 </div>
 <h2 id="stdlib-exp-ln-log2-log10">exp / ln / log2 / log10</h2>
 <div class="item">
-<pre><code>pub fn exp(both: single) -&gt; single</code></pre>
+<pre><code>pub fn exp(self: single) -&gt; single</code></pre>
 <p>Raises E (2.71828…) to the power v. Use for exponential growth models.</p>
 </div>
 <div class="item">
-<pre><code>pub fn exp(both: float) -&gt; float</code></pre>
+<pre><code>pub fn exp(self: float) -&gt; float</code></pre>
 <p>Double-precision exp (e^v).</p>
 </div>
 <div class="item">
-<pre><code>pub fn ln(both: single) -&gt; single?</code></pre>
+<pre><code>pub fn ln(self: single) -&gt; single?</code></pre>
 <p>Natural logarithm (base E). Use for growth rates and information entropy.</p>
 </div>
 <div class="item">
-<pre><code>pub fn ln(both: float) -&gt; float?</code></pre>
+<pre><code>pub fn ln(self: float) -&gt; float?</code></pre>
 <p>Double-precision natural logarithm.</p>
 </div>
 <div class="item">
-<pre><code>pub fn log2(both: single) -&gt; single?</code></pre>
+<pre><code>pub fn log2(self: single) -&gt; single?</code></pre>
 <p>Base-2 logarithm. Use for bit-count calculations and information theory.</p>
 </div>
 <div class="item">
-<pre><code>pub fn log2(both: float) -&gt; float?</code></pre>
+<pre><code>pub fn log2(self: float) -&gt; float?</code></pre>
 <p>Double-precision base-2 logarithm.</p>
 </div>
 <div class="item">
-<pre><code>pub fn log10(both: single) -&gt; single?</code></pre>
+<pre><code>pub fn log10(self: single) -&gt; single?</code></pre>
 <p>Base-10 logarithm. Use for decibels, orders of magnitude, and display scales.</p>
 </div>
 <div class="item">
-<pre><code>pub fn log10(both: float) -&gt; float?</code></pre>
+<pre><code>pub fn log10(self: float) -&gt; float?</code></pre>
 <p>Double-precision base-10 logarithm.</p>
 </div>
 <h2 id="stdlib-min-max-clamp">min / max / clamp</h2>
 <div class="item">
-<pre><code>pub fn min(both: integer, b: integer) -&gt; integer</code></pre>
+<pre><code>pub fn min(self: integer, b: integer) -&gt; integer</code></pre>
 <p>Each of these has two overloads: one over non-null values (`-&gt; τ`) and one over nullable ones (`-&gt; τ?`).  You get the nullable overload whenever ANY argument is statically nullable — an `integer?`/`single?`/`float?`, or a division result such as `1 / z` — and it propagates: the answer is null if either argument is null.  Otherwise you get the non-null overload and a non-null answer, so a plain `min(a, b)` needs no discharge. Smallest of two integer values.</p>
 </div>
 <div class="item">
-<pre><code>pub fn max(both: integer, b: integer) -&gt; integer</code></pre>
+<pre><code>pub fn max(self: integer, b: integer) -&gt; integer</code></pre>
 <p>Largest of two integer values.</p>
 </div>
 <div class="item">
-<pre><code>pub fn clamp(both: integer, lo: integer, hi: integer) -&gt; integer</code></pre>
+<pre><code>pub fn clamp(self: integer, lo: integer, hi: integer) -&gt; integer</code></pre>
 <p>Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.</p>
 </div>
 <div class="item">
-<pre><code>pub fn min(both: single, b: single) -&gt; single</code></pre>
+<pre><code>pub fn min(self: single, b: single) -&gt; single</code></pre>
 <p>Smallest of two single-precision float values.</p>
 </div>
 <div class="item">
-<pre><code>pub fn max(both: single, b: single) -&gt; single</code></pre>
+<pre><code>pub fn max(self: single, b: single) -&gt; single</code></pre>
 <p>Largest of two single-precision float values.</p>
 </div>
 <div class="item">
-<pre><code>pub fn clamp(both: single, lo: single, hi: single) -&gt; single</code></pre>
+<pre><code>pub fn clamp(self: single, lo: single, hi: single) -&gt; single</code></pre>
 <p>Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.</p>
 </div>
 <div class="item">
-<pre><code>pub fn min(both: float, b: float) -&gt; float</code></pre>
+<pre><code>pub fn min(self: float, b: float) -&gt; float</code></pre>
 <p>Smallest of two double-precision float values.</p>
 </div>
 <div class="item">
-<pre><code>pub fn max(both: float, b: float) -&gt; float</code></pre>
+<pre><code>pub fn max(self: float, b: float) -&gt; float</code></pre>
 <p>Largest of two double-precision float values.</p>
 </div>
 <div class="item">
-<pre><code>pub fn clamp(both: float, lo: float, hi: float) -&gt; float</code></pre>
+<pre><code>pub fn clamp(self: float, lo: float, hi: float) -&gt; float</code></pre>
 <p>Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.</p>
 </div>
 <div class="item">
-<pre><code>pub fn approx(both: float, b: float, eps: float) -&gt; boolean</code></pre>
+<pre><code>pub fn approx(self: float, b: float, eps: float) -&gt; boolean</code></pre>
 <p>Approximate equality: true when a and b differ by at most eps (inclusive). `==` on float/single is EXACT IEEE equality — use `approx` when you want a tolerance, e.g. comparing computed transcendentals: `approx(sqrt(2.0) * sqrt(2.0), 2.0, 1e-9)`. A null (NaN) operand is not approximately equal to anything, so the result is false.</p>
 </div>
 <div class="item">
-<pre><code>pub fn approx(both: single, b: single, eps: single) -&gt; boolean</code></pre>
+<pre><code>pub fn approx(self: single, b: single, eps: single) -&gt; boolean</code></pre>
 <p>Approximate equality for single-precision floats (see the float overload).</p>
 </div>
 <h2 id="stdlib-text">Text</h2>
 <p class="section-desc">Functions for working with text (UTF-8 strings) and character values.</p>
 <div class="item">
-<pre><code>pub fn len(both: text) -&gt; integer</code></pre>
+<pre><code>pub fn len(self: text) -&gt; integer</code></pre>
 <p>Number of characters (Unicode code points) in the text — the human count, as in every mainstream language. For a byte length (bounds checks, the limit of byte-positioned indexing / slicing) use `size`.</p>
 </div>
 <div class="item">
-<pre><code>pub fn size(both: text) -&gt; integer</code></pre>
+<pre><code>pub fn size(self: text) -&gt; integer</code></pre>
 <p>Number of bytes in the text. This is the bound for byte-positioned operations: `s[i]`, slices `s[a..b]`, and `find`/`rfind` all use byte offsets. For the human character count use `len`.</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(both: character) -&gt; integer</code></pre>
+<pre><code>pub fn len(self: character) -&gt; integer</code></pre>
 <p>Byte length of the character's UTF-8 encoding (1–4).</p>
 </div>
 <div class="item">
@@ -4228,7 +4228,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Negative bounds count from the end, as a byte slice's do (`char_slice(-2, n)` is the last two characters); both ends clamp, and a reversed or empty range answers `&quot;&quot;` rather than failing.</p>
 </div>
 <div class="item">
-<pre><code>pub fn trim(both: text) -&gt; text[both]</code></pre>
+<pre><code>pub fn trim(self: text) -&gt; text[self]</code></pre>
 <p>(Path helpers `dir` / `basename` / `join` / `resolve` moved to `02_files.loft` § Path helpers, so they're available before `03_text.loft` loads — same call shape, same `pub fn` signatures.) Removes leading and trailing whitespace. Use when processing user input or file content.</p>
 </div>
 <div class="item">
@@ -4338,23 +4338,23 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <h2 id="stdlib-collections">Collections</h2>
 <p class="section-desc">Operations on vector&lt;T&gt; — the primary ordered collection type. Vectors are grown by appending with += and elements are accessed by index. All structures are passed by reference instead of by value</p>
 <div class="item">
-<pre><code>pub fn len(both: vector) -&gt; integer</code></pre>
+<pre><code>pub fn len(self: vector) -&gt; integer</code></pre>
 <p>Number of elements in the vector. Use in loop bounds: for i in 0..v.len().</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(both: sorted) -&gt; integer</code></pre>
+<pre><code>pub fn len(self: sorted) -&gt; integer</code></pre>
 <p>Number of elements in a sorted collection.</p>
 </div>
 <div class="item">
-<pre><code>pub fn clear(both: vector)</code></pre>
+<pre><code>pub fn clear(self: vector)</code></pre>
 <p>Remove all elements from the vector, setting its length to 0.</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(both: hash) -&gt; integer</code></pre>
+<pre><code>pub fn len(self: hash) -&gt; integer</code></pre>
 <p>Number of elements in a hash collection.</p>
 </div>
 <div class="item">
-<pre><code>pub fn size(both: hash) -&gt; integer</code></pre>
+<pre><code>pub fn size(self: hash) -&gt; integer</code></pre>
 <p>The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (load factor 0.75).  0 for an empty (unallocated) hash.</p>
 </div>
 <h2 id="stdlib-output-and-diagnostics">Output and Diagnostics</h2>
@@ -4399,11 +4399,11 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Writes v followed by a newline to standard ERROR.</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(both: spatial) -&gt; integer</code></pre>
+<pre><code>pub fn len(self: spatial) -&gt; integer</code></pre>
 <p>Number of elements in a spatial (radix / Morton tree) collection.</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(both: trie) -&gt; integer</code></pre>
+<pre><code>pub fn len(self: trie) -&gt; integer</code></pre>
 <p>Number of elements in the trie.</p>
 </div>
 <h2 id="stdlib-vector-aggregates">Vector aggregates</h2>
@@ -4573,7 +4573,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Stat-equivalent filesystem read; par-safe. Use to check whether a path is accessible before reading or writing it. A RELATIVE path resolves against the program's own directory, or against the working directory under `#cwd`; an absolute path is used as given, including one outside the project.  This is not an access boundary — the boundary is the `fs` capability a `[sandbox]` profile grants or withholds.</p>
 </div>
 <div class="item">
-<pre><code>pub fn exists(both: File) -&gt; boolean fs#read</code></pre>
+<pre><code>pub fn exists(self: File) -&gt; boolean fs#read</code></pre>
 <p>Filesystem stat (via file()); par-safe. Method form: f = file(&quot;path&quot;); if f.exists() { .. } Also callable as exists(file_obj) via the 'both' parameter name.</p>
 </div>
 <div class="item">

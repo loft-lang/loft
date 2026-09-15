@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Fixture for tests/scripts/a-self-method-is-imported-by-name.loft: a package whose functions
+// are `self` methods, imported by name.
+
+pub struct Box { n: integer }
+
+pub fn twice(self: Box) -> integer { self.n * 2 }
+
+pub fn shifted(self: Box, by: integer) -> integer { self.n + by }

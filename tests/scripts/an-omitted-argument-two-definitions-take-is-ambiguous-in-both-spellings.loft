@@ -38,8 +38,8 @@ fn pk(a: A, t: text = "x") -> text { "pk-text {a.n} {t}" }
 fn pm(self: A) -> text { "pm-short {self.n}" }
 fn pm(self: A, k: integer = 1) -> text { "pm-long {self.n} {k}" }
 
-fn pb(both: A) -> text { "pb-short {both.n}" }
-fn pb(both: A, k: integer = 1) -> text { "pb-long {both.n} {k}" }
+fn pb(self: A) -> text { "pb-short {self.n}" }
+fn pb(self: A, k: integer = 1) -> text { "pb-long {self.n} {k}" }
 
 fn main() {
   a = A { n: 1 };

@@ -2516,23 +2516,16 @@ len(collection)
 round(PI * 1000.0)
 ```
 
-**Gotcha (INC#8) — method vs. free function is the stdlib author's choice.** The
-language has no rule about which operations *should* be methods vs. free
-functions; it depends entirely on whether the definition's first parameter is
-`self`, `both`, or neither.  Measured, that names two behaviours rather than
-three: a plain first-parameter name is free-ONLY and the method spelling is
-refused by name, while **both `self` and `both` accept the method AND the free
-spelling** — `find_fn` resolves a free call by receiver type, so `f(x)` reaches
-a `self` method.  What separates them is registration, and it shows up in the
-one place neither reaches: **a `self`/`both` method is not a fn-ref value**, so
-it cannot be handed to `map`/`filter` or to a parameter of function type
-(loft#1008 — wrap it in a lambda, `map(v, |q| { q.m(…) })`).  The
-standard library makes this call per-function: `text.starts_with(s)` and
-`text.find(s)` are method-only (`self: text`); `len(v)`, `abs(n)`, `round(x)`
-are both-forms (`both: …`); `sum_of(v)` and `print(s)` are free-only.  A user
-cannot predict the call form without looking it up.  When in doubt, try
-free-function form first — the compiler's "Unknown field" vs. "method not
-found" error makes the available form obvious.
+**Gotcha (INC#8) — a `self` function takes both spellings; a plain one takes
+one.**  A function whose first parameter is `self` answers `x.f(…)` AND `f(x, …)`
+— the second resolves by the receiver's type — and a package's method is imported
+by name like any function (`use lib::(f)`).  A plain first-parameter name makes a
+free function, and its method spelling is refused by name.  **A `self` method is
+not a fn-ref value**, so it cannot be handed to `map`/`filter` or to a parameter of
+function type (loft#1008 — wrap it in a lambda, `map(v, |q| { q.m(…) })`).  In
+the standard library `len(v)`, `abs(n)`, `text.starts_with(s)` are `self`
+functions and callable either way; `sum_of(v)` and `print(s)` are free-only.  When
+in doubt, try the free form first — it works for both kinds.
 
 **A `&` parameter calls like the value it references.**  `&` is how an argument is
 PASSED, not a different type, so inside `fn f(v: &vector<integer>)` the name `v` is
@@ -2551,14 +2544,13 @@ Note the trade the `&` asks for: it earns its place only when the function write
 through it.  A helper that just reads is told *"Parameter 'v' has & but is never
 modified; remove the &"* — drop the `&` and the by-value signature reads the same.
 
-### The `both` parameter name
+### Both call spellings, one definition
 
-When the first parameter is named `both` instead of `self`, the function is
-registered as **both** a method and a free function:
+A `self` function is callable as a method and as a free function:
 
 ```loft
-pub fn exists(both: File) -> boolean {
-  both.format != Format.NotExists
+pub fn exists(self: File) -> boolean {
+  self.format != Format.NotExists
 }
 
 // Can be called as:
@@ -2566,12 +2558,15 @@ f.exists()      // method syntax
 exists(f)       // free function syntax
 ```
 
-Use `both` when a function should be equally natural as either form: `v.sin()`
-for a programmer whose fingers learned the Rust convention, `sin(v)` for one who
-never did — neither is forced on the other.  `both` is available to every program
-and library, not only to the standard library.  A `self` method is callable both
-ways as well (`f(x)` resolves to it, see the gotcha above); a plain parameter name
-registers a free function only.
+Both spellings exist on purpose: `v.sin()` for a programmer whose fingers learned
+the Rust convention, `sin(v)` for one who never did — neither is forced on the
+other, and they reach the same function.
+
+**`both` is deprecated.**  A first parameter named `both` used to be the spelling
+for "method and free function"; `self` now does all of it, including an import by
+name (`use lib::(f)` brings in the methods `lib` declares under that name), so `both`
+names nothing more.  It still compiles and means exactly `self`,
+with the warning `both-receiver-deprecated` — rename the parameter to `self`.
 
 **One name, one body per type.**  A method and a free function with the same name
 whose first parameter has the same type are refused, whichever is declared first:
@@ -2579,14 +2574,14 @@ whose first parameter has the same type are refused, whichever is declared first
 ```
 struct Pt { x: integer }
 fn doit(self: Pt) -> integer { self.x + 1 }
-fn doit(p: Pt) -> integer { p.x + 2 }   // error: Cannot redefine 'doit' … declare it once with `both`
+fn doit(p: Pt) -> integer { p.x + 2 }   // error: Cannot redefine 'doit' … declare it once as a `self` method
 ```
 
 Otherwise `p.doit()` and `doit(p)` would run different code — and before the
 refusal the free one was silently unreachable, because `doit(p)` resolves to the
-method.  When both spellings are wanted, write the one function with `both:`.  A
-free function on a different type (`fn doit(q: Qt)`) is an ordinary overload and
-stays legal.  The rule is `formal/calls.md (F-OneBody)`.
+method.  The one `self` function already takes both spellings.  A free function
+on a different type (`fn doit(q: Qt)`) is an ordinary overload and stays legal.
+The rule is `formal/calls.md (F-OneBody)`.
 
 ### Named arguments
 

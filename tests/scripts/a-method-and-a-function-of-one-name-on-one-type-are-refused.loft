@@ -9,7 +9,8 @@
 // diagnostic, in every order but one: only a `both` method followed by the function was caught,
 // because only `both` registers the bare-name dispatcher the old check looked for.  Each pair
 // below is one of the shapes that compiled in silence, named apart so each expectation matches
-// one diagnostic.  `fn doit(both: Pt)` is the one definition that takes both spellings.
+// one diagnostic.  One `self` method is the definition that takes both spellings; the two `both`
+// pairs keep that deprecated spelling (C123) because the refusal must hold for it too.
 //
 // @falsified-at: bdb84abe8 — interpret exit 1 -> 0, interpret expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches)
 // @falsified-by: tests/falsified/a-method-and-a-function-of-one-name-on-one-type-are-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches)

@@ -14,6 +14,14 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**`self` is the one way to write a method, and `both` is deprecated.**  A function whose first
+parameter is `self` was already callable both as `x.f()` and as `f(x)`; now it can also be
+imported by name, `use lib::(f)`, which was the one thing only a `both` function could do.  So
+`both` means nothing `self` does not, and declaring one prints a warning asking you to rename it
+to `self` — nothing about how it is called changes.  Along the same line, a method and a free
+function with the same name on the same type are refused: `x.doit()` and `doit(x)` must never
+run two different bodies, and before, the free one was silently unreachable.
+
 **A counting loop that starts at a variable is faster.**  `for i in lo..hi` where `lo` is a
 parameter, a local or an expression used to check on every trip whether it was the first one.
 It no longer does, on both backends: a tight loop of that shape runs about a third faster

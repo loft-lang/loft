@@ -220,8 +220,8 @@ fn OpCastFloatFromText(v1: text) -> float;
 fn OpAbsInt(v1: integer) -> integer;
 #rust"ops::op_abs_int(@v1)"
 // Absolute value. Removes the sign from a negative integer.
-pub fn abs(both: integer) -> integer {
-  OpAbsInt(both)
+pub fn abs(self: integer) -> integer {
+  OpAbsInt(self)
 }
 #pure
 
@@ -306,8 +306,8 @@ fn OpFormatStackInt(
 // `floor_mod` wraps (`(-1).floor_mod(3) == 2`), which is what circular indexing
 // / wrap-around wants (`grid[(i - 1).floor_mod(w)]`).  `x.floor_mod(0)` is null,
 // like `%` (C80 — an undefined value is a null, never a fault).
-pub fn floor_mod(both: integer, divisor: integer) -> integer? {
-  ((both % divisor)+divisor) % divisor
+pub fn floor_mod(self: integer, divisor: integer) -> integer? {
+  ((self % divisor)+divisor) % divisor
 }
 #pure
 // Single-precision (32-bit) floating-point math.
@@ -323,8 +323,8 @@ fn OpConvSingleFromNull() -> single;
 fn OpAbsSingle(v1: single) -> single;
 #rust"@v1.abs()"
 // Absolute value for single-precision floats.
-pub fn abs(both: single) -> single {
-  OpAbsSingle(both)
+pub fn abs(self: single) -> single {
+  OpAbsSingle(self)
 }
 #pure
 
@@ -361,64 +361,64 @@ fn OpRemSingleNullable(v1: single, v2: single) -> single;
 fn OpMathFuncSingle(fn_id: const i8, v1: single) -> single;
 #rust"match @fn_id {{ 0 => @v1.cos(), 1 => @v1.sin(), 2 => @v1.tan(), 3 => @v1.acos(), 4 => @v1.asin(), 5 => @v1.atan(), 6 => @v1.ceil(), 7 => @v1.floor(), 8 => @v1.round(), 9 => @v1.sqrt(), _ => f32::NAN }}"
 // Cosine. Use for circular motion: x = r * cos(angle).
-pub fn cos(both: single) -> single {
-  OpMathFuncSingle(0, both)
+pub fn cos(self: single) -> single {
+  OpMathFuncSingle(0, self)
 }
 #pure
 // Sine. Use for circular motion: y = r * sin(angle).
 
-pub fn sin(both: single) -> single {
-  OpMathFuncSingle(1, both)
+pub fn sin(self: single) -> single {
+  OpMathFuncSingle(1, self)
 }
 #pure
 // Tangent. Use for slopes and perspective projection.
 
-pub fn tan(both: single) -> single {
-  OpMathFuncSingle(2, both)
+pub fn tan(self: single) -> single {
+  OpMathFuncSingle(2, self)
 }
 #pure
 // Arc cosine. Returns the angle (in radians) whose cosine is v.
 
-pub fn acos(both: single) -> single? {
-  OpMathFuncSingle(3, both)
+pub fn acos(self: single) -> single? {
+  OpMathFuncSingle(3, self)
 }
 #pure
 // Arc sine. Returns the angle whose sine is v.
 
-pub fn asin(both: single) -> single? {
-  OpMathFuncSingle(4, both)
+pub fn asin(self: single) -> single? {
+  OpMathFuncSingle(4, self)
 }
 #pure
 // Arc tangent of a single value. Returns angle in (-PI/2, PI/2).
 
-pub fn atan(both: single) -> single {
-  OpMathFuncSingle(5, both)
+pub fn atan(self: single) -> single {
+  OpMathFuncSingle(5, self)
 }
 #pure
 // Round up to the nearest integer value.
 // Use to compute required buffer sizes from fractional counts.
 
-pub fn ceil(both: single) -> single {
-  OpMathFuncSingle(6, both)
+pub fn ceil(self: single) -> single {
+  OpMathFuncSingle(6, self)
 }
 #pure
 // Round down to the nearest integer value.
 // Use to convert a float position to a tile index.
 
-pub fn floor(both: single) -> single {
-  OpMathFuncSingle(7, both)
+pub fn floor(self: single) -> single {
+  OpMathFuncSingle(7, self)
 }
 #pure
 // Round to the nearest integer value (half rounds away from zero).
 
-pub fn round(both: single) -> single {
-  OpMathFuncSingle(8, both)
+pub fn round(self: single) -> single {
+  OpMathFuncSingle(8, self)
 }
 #pure
 // Square root. Use for distances and normalization.
 
-pub fn sqrt(both: single) -> single? {
-  OpMathFuncSingle(9, both)
+pub fn sqrt(self: single) -> single? {
+  OpMathFuncSingle(9, self)
 }
 #pure
 
@@ -426,15 +426,15 @@ fn OpMathFunc2Single(fn_id: const i8, v1: single, v2: single) -> single;
 #rust"match @fn_id {{ 0 => @v1.atan2(@v2), 1 => @v1.log(@v2), _ => f32::NAN }}"
 // Arc tangent of y/x, preserving the correct quadrant.
 // Use instead of atan when you have separate x/y components.
-pub fn atan2(both: single, v2: single) -> single {
-  OpMathFunc2Single(0, both, v2)
+pub fn atan2(self: single, v2: single) -> single {
+  OpMathFunc2Single(0, self, v2)
 }
 #pure
 // Logarithm of v in the given base.
 // Use for converting between scales (e.g., decibels).
 
-pub fn log(both: single, v2: single) -> single? {
-  OpMathFunc2Single(1, both, v2)
+pub fn log(self: single, v2: single) -> single? {
+  OpMathFunc2Single(1, self, v2)
 }
 #pure
 
@@ -442,8 +442,8 @@ fn OpPowSingle(v1: single, v2: single) -> single;
 #rust"@v1.powf(@v2)"
 // Raises base to the power exp.
 // Use for exponential growth curves and scaling.
-pub fn pow(both: single, v2: single) -> single? {
-  OpPowSingle(both, v2)
+pub fn pow(self: single, v2: single) -> single? {
+  OpPowSingle(self, v2)
 }
 #pure
 
@@ -478,8 +478,8 @@ fn OpConvFloatFromNull() -> float;
 fn OpAbsFloat(v1: float) -> float;
 #rust"@v1.abs()"
 // Absolute value for double-precision floats.
-pub fn abs(both: float) -> float {
-  OpAbsFloat(both)
+pub fn abs(self: float) -> float {
+  OpAbsFloat(self)
 }
 #pure
 
@@ -494,64 +494,64 @@ pub E = OpMathEFloat();
 fn OpMathFuncFloat(fn_id: const i8, v1: float) -> float;
 #rust"match @fn_id {{ 0 => @v1.cos(), 1 => @v1.sin(), 2 => @v1.tan(), 3 => @v1.acos(), 4 => @v1.asin(), 5 => @v1.atan(), 6 => @v1.ceil(), 7 => @v1.floor(), 8 => @v1.round(), 9 => @v1.sqrt(), _ => f64::NAN }}"
 // Cosine. Use for circular motion: x = r * cos(angle).
-pub fn cos(both: float) -> float {
-  OpMathFuncFloat(0, both)
+pub fn cos(self: float) -> float {
+  OpMathFuncFloat(0, self)
 }
 #pure
 // Sine. Use for circular motion: y = r * sin(angle).
 
-pub fn sin(both: float) -> float {
-  OpMathFuncFloat(1, both)
+pub fn sin(self: float) -> float {
+  OpMathFuncFloat(1, self)
 }
 #pure
 // Tangent. Use for slopes and perspective projection.
 
-pub fn tan(both: float) -> float {
-  OpMathFuncFloat(2, both)
+pub fn tan(self: float) -> float {
+  OpMathFuncFloat(2, self)
 }
 #pure
 // Arc cosine. Returns the angle (in radians) whose cosine is v.
 
-pub fn acos(both: float) -> float? {
-  OpMathFuncFloat(3, both)
+pub fn acos(self: float) -> float? {
+  OpMathFuncFloat(3, self)
 }
 #pure
 // Arc sine. Returns the angle whose sine is v.
 
-pub fn asin(both: float) -> float? {
-  OpMathFuncFloat(4, both)
+pub fn asin(self: float) -> float? {
+  OpMathFuncFloat(4, self)
 }
 #pure
 // Arc tangent of a single value. Returns angle in (-PI/2, PI/2).
 
-pub fn atan(both: float) -> float {
-  OpMathFuncFloat(5, both)
+pub fn atan(self: float) -> float {
+  OpMathFuncFloat(5, self)
 }
 #pure
 // Round up to the nearest integer value.
 // Use to compute required buffer sizes from fractional counts.
 
-pub fn ceil(both: float) -> float {
-  OpMathFuncFloat(6, both)
+pub fn ceil(self: float) -> float {
+  OpMathFuncFloat(6, self)
 }
 #pure
 // Round down to the nearest integer value.
 // Use to convert a float position to a tile index.
 
-pub fn floor(both: float) -> float {
-  OpMathFuncFloat(7, both)
+pub fn floor(self: float) -> float {
+  OpMathFuncFloat(7, self)
 }
 #pure
 // Round to the nearest integer value (half rounds away from zero).
 
-pub fn round(both: float) -> float {
-  OpMathFuncFloat(8, both)
+pub fn round(self: float) -> float {
+  OpMathFuncFloat(8, self)
 }
 #pure
 // Square root. Use for distances and normalization.
 
-pub fn sqrt(both: float) -> float? {
-  OpMathFuncFloat(9, both)
+pub fn sqrt(self: float) -> float? {
+  OpMathFuncFloat(9, self)
 }
 #pure
 
@@ -559,15 +559,15 @@ fn OpMathFunc2Float(fn_id: const i8, v1: float, v2: float) -> float;
 #rust"match @fn_id {{ 0 => @v1.atan2(@v2), 1 => @v1.log(@v2), _ => f64::NAN }}"
 // Arc tangent of y/x, preserving the correct quadrant.
 // Use instead of atan when you have separate x/y components.
-pub fn atan2(both: float, v2: float) -> float {
-  OpMathFunc2Float(0, both, v2)
+pub fn atan2(self: float, v2: float) -> float {
+  OpMathFunc2Float(0, self, v2)
 }
 #pure
 // Logarithm of v in the given base.
 // Use for converting between scales (e.g., decibels).
 
-pub fn log(both: float, v2: float) -> float? {
-  OpMathFunc2Float(1, both, v2)
+pub fn log(self: float, v2: float) -> float? {
+  OpMathFunc2Float(1, self, v2)
 }
 #pure
 
@@ -575,57 +575,57 @@ fn OpPowFloat(v1: float, v2: float) -> float;
 #rust"@v1.powf(@v2)"
 // Raises base to the power exp.
 // Use for exponential growth curves and scaling.
-pub fn pow(both: float, v2: float) -> float? {
-  OpPowFloat(both, v2)
+pub fn pow(self: float, v2: float) -> float? {
+  OpPowFloat(self, v2)
 }
 #pure
 // --- exp / ln / log2 / log10 ---
 // Raises E (2.71828…) to the power v. Use for exponential growth models.
 
-pub fn exp(both: single) -> single {
-  OpPowSingle(E as single, both)
+pub fn exp(self: single) -> single {
+  OpPowSingle(E as single, self)
 }
 #pure
 
 // Double-precision exp (e^v).
-pub fn exp(both: float) -> float {
-  OpPowFloat(E, both)
+pub fn exp(self: float) -> float {
+  OpPowFloat(E, self)
 }
 #pure
 // Natural logarithm (base E). Use for growth rates and information entropy.
 
-pub fn ln(both: single) -> single? {
-  log(both, E as single)
+pub fn ln(self: single) -> single? {
+  log(self, E as single)
 }
 #pure
 
 // Double-precision natural logarithm.
-pub fn ln(both: float) -> float? {
-  log(both, E)
+pub fn ln(self: float) -> float? {
+  log(self, E)
 }
 #pure
 // Base-2 logarithm. Use for bit-count calculations and information theory.
 
-pub fn log2(both: single) -> single? {
-  log(both, 2.0f)
+pub fn log2(self: single) -> single? {
+  log(self, 2.0f)
 }
 #pure
 
 // Double-precision base-2 logarithm.
-pub fn log2(both: float) -> float? {
-  log(both, 2.0)
+pub fn log2(self: float) -> float? {
+  log(self, 2.0)
 }
 #pure
 // Base-10 logarithm. Use for decibels, orders of magnitude, and display scales.
 
-pub fn log10(both: single) -> single? {
-  log(both, 10.0f)
+pub fn log10(self: single) -> single? {
+  log(self, 10.0f)
 }
 #pure
 
 // Double-precision base-10 logarithm.
-pub fn log10(both: float) -> float? {
-  log(both, 10.0)
+pub fn log10(self: float) -> float? {
+  log(self, 10.0)
 }
 #pure
 
@@ -685,62 +685,62 @@ fn OpFormatStackFloat(pos: const u16, val: float, width: integer, precision: int
 // propagates: the answer is null if either argument is null.  Otherwise you get the
 // non-null overload and a non-null answer, so a plain `min(a, b)` needs no discharge.
 // Smallest of two integer values.
-pub fn min(both: integer, b: integer) -> integer {
-  if both <= b { both } else { b }
+pub fn min(self: integer, b: integer) -> integer {
+  if self <= b { self } else { b }
 }
 #pure
 // Largest of two integer values.
-pub fn max(both: integer, b: integer) -> integer {
-  if both >= b { both } else { b }
+pub fn max(self: integer, b: integer) -> integer {
+  if self >= b { self } else { b }
 }
 #pure
 // Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.
-pub fn clamp(both: integer, lo: integer, hi: integer) -> integer {
-  min(max(both, lo), hi)
+pub fn clamp(self: integer, lo: integer, hi: integer) -> integer {
+  min(max(self, lo), hi)
 }
 #pure
 
 // Smallest of two single-precision float values.
-pub fn min(both: single, b: single) -> single {
-  if both <= b { both } else { b }
+pub fn min(self: single, b: single) -> single {
+  if self <= b { self } else { b }
 }
 #pure
 // Largest of two single-precision float values.
-pub fn max(both: single, b: single) -> single {
-  if both >= b { both } else { b }
+pub fn max(self: single, b: single) -> single {
+  if self >= b { self } else { b }
 }
 #pure
 // Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.
-pub fn clamp(both: single, lo: single, hi: single) -> single {
-  min(max(both, lo), hi)
+pub fn clamp(self: single, lo: single, hi: single) -> single {
+  min(max(self, lo), hi)
 }
 #pure
 // Smallest of two double-precision float values.
-pub fn min(both: float, b: float) -> float {
-  if both <= b { both } else { b }
+pub fn min(self: float, b: float) -> float {
+  if self <= b { self } else { b }
 }
 #pure
 // Largest of two double-precision float values.
-pub fn max(both: float, b: float) -> float {
-  if both >= b { both } else { b }
+pub fn max(self: float, b: float) -> float {
+  if self >= b { self } else { b }
 }
 #pure
 // Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.
-pub fn clamp(both: float, lo: float, hi: float) -> float {
-  min(max(both, lo), hi)
+pub fn clamp(self: float, lo: float, hi: float) -> float {
+  min(max(self, lo), hi)
 }
 #pure
 // Approximate equality: true when a and b differ by at most eps (inclusive).
 // `==` on float/single is EXACT IEEE equality — use `approx` when you want a
 // tolerance, e.g. comparing computed transcendentals: `approx(sqrt(2.0) * sqrt(2.0), 2.0, 1e-9)`.
 // A null (NaN) operand is not approximately equal to anything, so the result is false.
-pub fn approx(both: float, b: float, eps: float) -> boolean {
-  if !both || !b { false } else { abs(both - b) <= eps }
+pub fn approx(self: float, b: float, eps: float) -> boolean {
+  if !self || !b { false } else { abs(self - b) <= eps }
 }
 #pure
 // Approximate equality for single-precision floats (see the float overload).
-pub fn approx(both: single, b: single, eps: single) -> boolean {
-  if !both || !b { false } else { abs(both - b) <= eps }
+pub fn approx(self: single, b: single, eps: single) -> boolean {
+  if !self || !b { false } else { abs(self - b) <= eps }
 }
 #pure
 // --- Text ---
@@ -760,8 +760,8 @@ fn OpLengthText(v1: text) -> integer;
 // Number of characters (Unicode code points) in the text — the human
 // count, as in every mainstream language. For a byte length (bounds checks, the
 // limit of byte-positioned indexing / slicing) use `size`.
-pub fn len(both: text) -> integer {
-  OpLengthText(both)
+pub fn len(self: text) -> integer {
+  OpLengthText(self)
 }
 #pure
 
@@ -770,15 +770,15 @@ fn OpSizeText(v1: text) -> integer;
 // Number of bytes in the text. This is the bound for byte-positioned
 // operations: `s[i]`, slices `s[a..b]`, and `find`/`rfind` all use byte offsets.
 // For the human character count use `len`.
-pub fn size(both: text) -> integer {
-  OpSizeText(both)
+pub fn size(self: text) -> integer {
+  OpSizeText(self)
 }
 #pure
 
 fn OpLengthCharacter(v1: character) -> integer;
 // Byte length of the character's UTF-8 encoding (1–4).
-pub fn len(both: character) -> integer {
-  OpLengthCharacter(both)
+pub fn len(self: character) -> integer {
+  OpLengthCharacter(self)
 }
 #pure
 
@@ -1106,8 +1106,8 @@ fn OpDistinctStore(a: reference, b: reference) -> boolean;
 fn OpRefAlias(r: reference) -> reference;
 #rust"@r"
 // Number of elements in the vector. Use in loop bounds: for i in 0..v.len().
-pub fn len(both: vector) -> integer {
-  OpLengthVector(both)
+pub fn len(self: vector) -> integer {
+  OpLengthVector(self)
 }
 #pure
 
@@ -1144,16 +1144,16 @@ fn OpSizeScalar(v: integer, sz: const u16) -> integer;
 fn OpLengthSorted(r: sorted) -> integer;
 #rust"i64::from(vector::length_vector(&@r, &s.database.allocations))"
 // Number of elements in a sorted collection.
-pub fn len(both: sorted) -> integer {
-  OpLengthSorted(both)
+pub fn len(self: sorted) -> integer {
+  OpLengthSorted(self)
 }
 #pure
 
 fn OpClearVector(r: vector);
 #rust"s.database.clear_vector_release(&@r);"
 // Remove all elements from the vector, setting its length to 0.
-pub fn clear(both: vector) {
-  OpClearVector(both)
+pub fn clear(self: vector) {
+  OpClearVector(self)
 }
 #impure(parent_write)
 
@@ -1350,8 +1350,8 @@ type index size(4);
 fn OpLengthHash(r: hash) -> integer;
 #rust"i64::from(hash::count(&@r, &s.database.allocations))"
 // Number of elements in a hash collection.
-pub fn len(both: hash) -> integer {
-  OpLengthHash(both)
+pub fn len(self: hash) -> integer {
+  OpLengthHash(self)
 }
 #pure
 
@@ -1367,8 +1367,8 @@ fn OpSizeHash(r: hash) -> integer;
 // addressing's spare capacity IS the format).  Allocation-local: the entry
 // records live in separate allocations and are not counted.  Grows in steps as
 // the table rehashes (load factor 0.75).  0 for an empty (unallocated) hash.
-pub fn size(both: hash) -> integer {
-  OpSizeHash(both)
+pub fn size(self: hash) -> integer {
+  OpSizeHash(self)
 }
 #pure
 
@@ -1528,8 +1528,8 @@ type trie;
 fn OpLengthSpatial(r: spatial) -> integer;
 #rust"i64::from(codegen_runtime::spatial_len(&@r, &s.database.allocations))"
 // Number of elements in a spatial (radix / Morton tree) collection.
-pub fn len(both: spatial) -> integer {
-  OpLengthSpatial(both)
+pub fn len(self: spatial) -> integer {
+  OpLengthSpatial(self)
 }
 #pure
 // Number of elements in a trie.  Same cached length word as `len(spatial)` —
@@ -1537,8 +1537,8 @@ pub fn len(both: spatial) -> integer {
 fn OpLengthTrie(r: trie) -> integer;
 #rust"i64::from(codegen_runtime::trie_len(&@r, &s.database.allocations))"
 // Number of elements in the trie.
-pub fn len(both: trie) -> integer {
-  OpLengthTrie(both)
+pub fn len(self: trie) -> integer {
+  OpLengthTrie(self)
 }
 #pure
 // Call a predefined system function (but not an operator).

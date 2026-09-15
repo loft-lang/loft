@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A first parameter named `both` still compiles, means exactly `self`, and warns that it is
+// deprecated (DESIGN_DECISIONS.md C123, DIAGNOSTICS.md `both-receiver-deprecated`).
+//
+// Measured over every call spelling, `self` and `both` behaved identically except that only a
+// `both` function could be imported by name; a `self` method now registers its bare name as
+// well, so `both` names nothing more.  The cells pin that the deprecated spelling keeps its
+// whole meaning while it warns — both call spellings, an overload on a second type, named and
+// defaulted arguments — so renaming a published use to `self` changes no call site.
+//
+// @falsified-at: 4444f3e8f — by hand, not by falsify.sh: interpret and native exit 0 on both trees; `both-receiver-deprecated` warnings 0 -> 2
+//   CHANNEL: expectations — the two `@EXPECT_WARNING` lines, which the suite harness (tests/wrap.rs)
+//     fails when unmatched.  `make falsify` scores `@EXPECT_ERROR` and not `@EXPECT_WARNING`, so its
+//     table reads INERT for this file (measured); the receipt above is the control's own binary
+//     (`4444f3e8f-target/debug/loft --path <worktree>`) run on this file, both backends.
+//   ARMED: nothing.
+//   WITNESS: on the control the file runs clean with no warning at all — `both` was an accepted
+//     spelling, so both expected warnings go unmatched.
+//   HOLDS: every assertion passes on both trees — the meaning of `both` is unchanged.
+// @EXPECT_WARNING: `both` as a first parameter is deprecated — `self` already gives `val` both call spellings
+// @EXPECT_WARNING: `both` as a first parameter is deprecated — `self` already gives `add` both call spellings
+
+struct Pt { x: integer }
+struct Qt { y: integer }
+
+fn val(both: Pt) -> integer { both.x }
+fn val(self: Qt) -> integer { self.y }
+
+fn add(both: Pt, n: integer = 1, m: integer = 10) -> integer { both.x + n + m }
+
+fn main() {
+  p = Pt { x: 3 };
+  q = Qt { y: 4 };
+  assert(p.val() == 3 && val(p) == 3, "both spellings of a both method: {p.val()} {val(p)}");
+  assert(q.val() == 4 && val(q) == 4, "the self overload beside it: {q.val()} {val(q)}");
+  assert(add(p, m: 0) == 4 && p.add(m: 0) == 4 && add(p) == 14, "named and defaulted arguments");
+}
