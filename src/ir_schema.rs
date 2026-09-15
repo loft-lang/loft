@@ -843,8 +843,15 @@ fn write_attribute(out: &mut String, a: &Attribute) {
     write_type(out, &a.typedef);
     let _ = write!(
         out,
-        ",\"mutable\":{},\"constant\":{},\"init\":{},\"nullable\":{},\"primary\":{},\"hidden\":{},\"const_field\":{}",
-        a.mutable, a.constant, a.init, a.nullable, a.primary, a.hidden, a.const_field
+        ",\"mutable\":{},\"constant\":{},\"init\":{},\"nullable\":{},\"primary\":{},\"hidden\":{},\"const_field\":{},\"value_const\":{}",
+        a.mutable,
+        a.constant,
+        a.init,
+        a.nullable,
+        a.primary,
+        a.hidden,
+        a.const_field,
+        a.value_const
     );
     out.push_str(",\"value\":");
     write_value(out, &a.value);
@@ -2166,7 +2173,7 @@ mod tests {
         };
         assert_eq!(
             attribute_to_json(&a),
-            r#"{"name":"x","typedef":{"k":"Boolean"},"mutable":false,"constant":true,"init":false,"nullable":false,"primary":false,"hidden":false,"const_field":false,"value":{"k":"Null"},"check":{"k":"Null"},"check_message":{"k":"Null"},"alias_d_nr":0,"assigned_lambda_d_nr":0,"links":""}"#
+            r#"{"name":"x","typedef":{"k":"Boolean"},"mutable":false,"constant":true,"init":false,"nullable":false,"primary":false,"hidden":false,"const_field":false,"value_const":false,"value":{"k":"Null"},"check":{"k":"Null"},"check_message":{"k":"Null"},"alias_d_nr":0,"assigned_lambda_d_nr":0,"links":""}"#
         );
     }
 

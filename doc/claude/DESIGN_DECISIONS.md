@@ -3982,3 +3982,75 @@ while a beginner is not forced into a syntax that was invented for Rust and writ
 
 A consumer needs two DIFFERENT behaviours under one name on one type — that is a naming
 problem, and the cure stays a second name.
+
+## C124 — a `const` value reaches only a `const` parameter; semantics is judged by the line, optimisation by the proof
+
+**Catalogue:** @PLN40 const-model rule 4 · `formal/binding.md` (Const-Value), D-bind-45 · loft#1540 · reads C121 and C122
+
+### Question
+
+A plain record or collection parameter names the caller's value (`calls.md` F-ParamHeap), so a
+`const` value handed to one can be written by the callee: `fn bump(a: Account) { a.balance = 999 }`
+called as `bump(acct)` with `acct: const Account` changed the caller's balance, while
+`acct.balance = 1` was refused.  Which calls should be refused — every plain heap parameter, or
+only those whose callee writes it?
+
+### Context
+
+Measured 2026-09-15 over 8566 `.loft` files (this repository and the consumer checkouts): 592
+distinct call sites pass a `const` value to a plain heap parameter, 446 of them the stdlib's
+`len`, and none to a callee that writes it.  The two readings differ on the other 592.
+
+### Evaluation
+
+| | by SIGNATURE | by the callee's BODY |
+|---|---|---|
+| existing sites refused | 592 (446 disappear once the stdlib marks its read-only parameters) | 0 |
+| judged from | the call and the parameter's declaration | a body the caller does not see |
+| a native (`#rust`) callee | answered by its declaration | no body: always reads as "does not write" — unsound |
+| editing a callee's body | changes nothing at its callers | can make an unchanged caller stop compiling |
+
+### Decision
+
+**2026-09-15, owner.**  By signature.  *"This is clearly a case like we had on ../loft2, where we
+might allow something semantically because we know it is safe, but we don't, because we are strict
+and clear for the programmer on semantics, but allow almost anything possible on optimizations
+(that are verified to be safe)."*
+
+A value-const value — a `const` parameter or local, a view of one (D-bind-44), a read through a
+value-const field — may be passed to a record or collection parameter only when that parameter is
+declared `const` (reported as a warning until the libraries below have migrated, § Rollout); a `&`
+parameter never.  `text` and scalar parameters take their own copy and are
+not affected.  The standard library declares every read-only heap parameter `const`, so a reading
+call such as `len(ps)` stays legal.
+
+This is C121's rule read at a call: what a line MEANS is decided by what is written on it and in
+the signatures it names, never by what the compiler can prove about code elsewhere.  And it is
+C122's freedom kept whole: that a callee does not write a parameter is a fact the compiler may
+still prove and use — to elide a copy, to share a store — as an optimisation, because an
+optimisation changes no answer.  The same proof may license a rewrite; it may not license a call.
+
+### Rollout
+
+**2026-09-15, owner: a gating warning first.**  Measured over 8566 `.loft` files, the refusal lands
+on 102 call sites that reach 17 read-only helper parameters not declared `const`, none of them
+written, all in libraries and games other agents develop.  So the check ships as the `warning`
+`const-to-plain-parameter` (it gates a library's CI under `LOFT_DENY_WARNINGS`), with the cure in the
+message, and becomes the error this decision describes once those parameters are declared.  The
+standard library and this repository's fixture copy of `graphics` already declare theirs.  The
+parameters to mark `const`:
+
+| project | function · parameter | definition |
+|---|---|---|
+| loft-libs-graphics | `gl_set_uniform_mat4` · `mat`, `gl_upload_canvas` · `data`, `group_vbos_draw_all` · `set` | `graphics/src/graphics.loft` |
+| loft-libs-game | `input_tick_from_state` · `keys` | `input/src/input.loft` |
+| dryopea | `flow_build` · `core`, `enemy_engaged` · `core`, `wave_tick` · `core`, `save_world` · `cam` / `palette` / `pw`, `save_markers` · `mw`, `wave_schedule_of` · `waves` | `src/flow.loft`, `src/spawn.loft`, `src/save.loft`, `src/waves.loft` |
+| crawler | `write_int_fn` · `vs`, `write_float_fn` · `vs` | `src/realworld/region_io.loft` |
+| Moros-Economy-Development | `cmp_f` · `a` / `b`, `direct_chain` · `g` | `loft_planet/tests/14-workflow.loft` |
+
+The `&` spelling (D-bind-44) is refused as an error already: it had no call sites to migrate.
+
+### Revisit when
+
+A consumer's read-only helper cannot be declared `const` because a type or generic spelling does
+not accept it — that is a gap in `const`'s syntax to close, not a reason to read the body.

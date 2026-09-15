@@ -1106,7 +1106,7 @@ fn OpDistinctStore(a: reference, b: reference) -> boolean;
 fn OpRefAlias(r: reference) -> reference;
 #rust"@r"
 // Number of elements in the vector. Use in loop bounds: for i in 0..v.len().
-pub fn len(both: vector) -> integer {
+pub fn len(both: const vector) -> integer {
   OpLengthVector(both)
 }
 #pure
@@ -1144,7 +1144,7 @@ fn OpSizeScalar(v: integer, sz: const u16) -> integer;
 fn OpLengthSorted(r: sorted) -> integer;
 #rust"i64::from(vector::length_vector(&@r, &s.database.allocations))"
 // Number of elements in a sorted collection.
-pub fn len(both: sorted) -> integer {
+pub fn len(both: const sorted) -> integer {
   OpLengthSorted(both)
 }
 #pure
@@ -1350,7 +1350,7 @@ type index size(4);
 fn OpLengthHash(r: hash) -> integer;
 #rust"i64::from(hash::count(&@r, &s.database.allocations))"
 // Number of elements in a hash collection.
-pub fn len(both: hash) -> integer {
+pub fn len(both: const hash) -> integer {
   OpLengthHash(both)
 }
 #pure
@@ -1367,7 +1367,7 @@ fn OpSizeHash(r: hash) -> integer;
 // addressing's spare capacity IS the format).  Allocation-local: the entry
 // records live in separate allocations and are not counted.  Grows in steps as
 // the table rehashes (load factor 0.75).  0 for an empty (unallocated) hash.
-pub fn size(both: hash) -> integer {
+pub fn size(both: const hash) -> integer {
   OpSizeHash(both)
 }
 #pure
@@ -1528,7 +1528,7 @@ type trie;
 fn OpLengthSpatial(r: spatial) -> integer;
 #rust"i64::from(codegen_runtime::spatial_len(&@r, &s.database.allocations))"
 // Number of elements in a spatial (radix / Morton tree) collection.
-pub fn len(both: spatial) -> integer {
+pub fn len(both: const spatial) -> integer {
   OpLengthSpatial(both)
 }
 #pure
@@ -1537,7 +1537,7 @@ pub fn len(both: spatial) -> integer {
 fn OpLengthTrie(r: trie) -> integer;
 #rust"i64::from(codegen_runtime::trie_len(&@r, &s.database.allocations))"
 // Number of elements in the trie.
-pub fn len(both: trie) -> integer {
+pub fn len(both: const trie) -> integer {
   OpLengthTrie(both)
 }
 #pure
@@ -1843,7 +1843,7 @@ fn OpReserveVector(r: vector, count: integer, elem_size: const u16);
 // Smallest element in a vector, or null when the vector is empty (the type is
 // honest about the empty case).  Works on any Ordered type (op <).
 // Example: @STD-004
-pub fn min_of < T: Ordered > (v: vector<T>) -> T? {
+pub fn min_of < T: Ordered > (v: const vector<T>) -> T? {
   result = v[0];
   for i in 1..v.len() {
     if v[i] < result { result = v[i] }
@@ -1854,7 +1854,7 @@ pub fn min_of < T: Ordered > (v: vector<T>) -> T? {
 // Largest element in a vector, or null when the vector is empty (the type is
 // honest about the empty case).  Works on any Ordered type (op <).
 // Example: @STD-004
-pub fn max_of < T: Ordered > (v: vector<T>) -> T? {
+pub fn max_of < T: Ordered > (v: const vector<T>) -> T? {
   result = v[0];
   for i in 1..v.len() {
     if result < v[i] { result = v[i] }
@@ -1867,7 +1867,7 @@ pub fn max_of < T: Ordered > (v: vector<T>) -> T? {
 // Example: sum([10, 20, 12], 0) == 42
 // Example: sum([10, 20, 12]) == 42
 // Example: @STD-005
-pub fn sum < T: Addable > (v: vector<T>, init: T? = null) -> T {
+pub fn sum < T: Addable > (v: const vector<T>, init: T? = null) -> T {
   result = init?;
   for i in 0..v.len() { result = result + v[i] };
   result
@@ -1877,7 +1877,7 @@ pub fn sum < T: Addable > (v: vector<T>, init: T? = null) -> T {
 // Superseded by the general `sum(v, init)`; kept as a shim over it
 // (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the
 // shim's call resolves — a forward reference to a generic is not yet supported.
-pub fn sum_of(v: vector<integer>) -> integer {
+pub fn sum_of(v: const vector<integer>) -> integer {
   sum(v, 0)
 }
 #superseded "sum"

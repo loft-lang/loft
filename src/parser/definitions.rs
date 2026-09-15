@@ -4532,9 +4532,14 @@ impl Parser {
         for a_nr in 0..attrs_count {
             let a_name = self.data.attr_name(child_nr, a_nr);
             let a_type = self.data.attr_type(child_nr, a_nr);
+            let a_const = self.data.def(child_nr).attributes()[a_nr].value_const;
             let new_type = Self::substitute_type(a_type, self_nr, &holder);
-            self.data
+            let stub_a = self
+                .data
                 .add_attribute(&mut self.lexer, t_stub_nr, &a_name, new_type);
+            // C124 — the stub stands in for the interface method at a call through a bound, so
+            // it carries that method's `const` (a `self: const Self` answered a plain `self`).
+            self.data.definitions[t_stub_nr as usize].attributes[stub_a].value_const = a_const;
         }
         let ret_type = self.data.def(child_nr).returned().clone();
         let t_ret_type = Self::substitute_type(ret_type, self_nr, &holder);
@@ -4882,12 +4887,16 @@ impl Parser {
                         self.data
                             .add_def(&stub_name, self.lexer.pos(), DefType::Function);
                     for a in &args {
-                        self.data.add_attribute(
+                        let a_nr = self.data.add_attribute(
                             &mut self.lexer,
                             stub_nr,
                             &a.name,
                             a.typedef.clone(),
                         );
+                        // C124 — the interface method's `const` is part of the signature a
+                        // call through a bound is judged by.
+                        self.data.definitions[stub_nr as usize].attributes[a_nr].value_const =
+                            a.constant;
                     }
                     self.data.definitions[stub_nr as usize].parent = d_nr;
                     // loft#734 — a method with NO `->` returns Void, and the stub
@@ -5436,7 +5445,9 @@ impl Parser {
                 name: a.name.clone(),
                 typedef: a.typedef.clone(),
                 default: Value::Null,
-                constant: false,
+                // C124 — the minted default function's parameters keep the `const` the
+                // enclosing signature gave them, so a const argument still reaches it.
+                constant: a.value_const,
                 ref_pos: (0, 0),
                 const_pos: (0, 0),
             })
@@ -5471,7 +5482,8 @@ impl Parser {
                 name: arguments[*i as usize].name.clone(),
                 typedef: arguments[*i as usize].typedef.clone(),
                 default: Value::Null,
-                constant: false,
+                // C124 — the enclosing parameter's `const`, which its own argument may need.
+                constant: arguments[*i as usize].constant,
                 ref_pos: (0, 0),
                 const_pos: (0, 0),
             })
@@ -5512,7 +5524,8 @@ impl Parser {
                 name: arguments[*i as usize].name.clone(),
                 typedef: arguments[*i as usize].typedef.clone(),
                 default: Value::Null,
-                constant: false,
+                // C124 — the enclosing parameter's `const`, which its own argument may need.
+                constant: arguments[*i as usize].constant,
                 ref_pos: (0, 0),
                 const_pos: (0, 0),
             })

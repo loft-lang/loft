@@ -7346,7 +7346,10 @@ impl Parser {
                 name: a.name.clone(),
                 typedef: Self::substitute_all(a.typedef.clone(), &bindings),
                 default: a.value.clone(),
-                constant: false,
+                // C124 — a parameter's `const` is part of the SIGNATURE a call is judged by, so
+                // the monomorph keeps the template's: `sum<T>(v: const vector<T>)` answered a
+                // plain `v` once instantiated, and refused `sum(ps, 0)` over a const `ps`.
+                constant: a.value_const,
                 // A generic instantiation copies the template's parameters; the modifier
                 // position belongs to the template's own source, not this synthetic copy.
                 ref_pos: (0, 0),
@@ -7412,6 +7415,9 @@ impl Parser {
                 .data
                 .add_attribute(&mut self.lexer, d_nr, &a.name, a.typedef.clone());
             self.data.set_attr_value(d_nr, a_nr, a.default.clone());
+            // C124 — registered here and not through `Data::add_fn`, so the template's
+            // `const` has to be carried by hand, or the instance answers a plain parameter.
+            self.data.definitions[d_nr as usize].attributes[a_nr].value_const = a.constant;
         }
         self.data.set_returned(d_nr, new_returned.clone());
         // Trace point: full instantiation result.  Used during plan-17
@@ -12941,10 +12947,21 @@ impl Parser {
             // (`for f in ps { set(f) }`) alike, through the one place that describes them.
             // `@FR-N-Shape` — "is this parameter a `&` link" is a shape question, and a `&τ?`
             // parameter links exactly as its dense twin does, so it is asked through `base()`.
+            // An OP is exempt from both gates below: it is a primitive only the standard
+            // library's own bodies call, where `const` on a parameter means an immediate operand
+            // in the bytecode (`Data::add_op`), not a read-only borrow; the stdlib's `pub fn`
+            // wrapper around it carries the signature a program is judged by.
+            let callee_is_op = self.data.def(d_nr).is_operator();
             if report
                 && !self.first_pass
+                && !callee_is_op
                 && matches!(tp.base(), Type::RefVar(_))
-                && !self.data.def(d_nr).variables.is_value_const(nr as u16)
+                && !self
+                    .data
+                    .def(d_nr)
+                    .attributes()
+                    .get(nr)
+                    .is_some_and(|a| a.value_const)
                 && let Some(place) = self.const_view_place(&actual_code, true)
             {
                 // A view names itself and what it views: the author passed `f`, not `ps`.
@@ -12962,6 +12979,74 @@ impl Parser {
                      parameter `const` if `{callee_name}` only reads it",
                     nr + 1
                 );
+            }
+            // C124 — a value-const value reaches only a `const` parameter.  The `&` gate above
+            // refuses a `&` parameter outright; this one refuses a plain RECORD or COLLECTION
+            // parameter that is not declared `const`, because a plain heap parameter names the
+            // caller's value (`calls.md` F-ParamHeap) and its callee may write it.  Decided by
+            // the SIGNATURE, never the callee's body: what a call means is judged from the call
+            // and the declaration it names (C121), while a proof that the callee does not write
+            // stays an optimisation's to use (C122).  `text` and scalar parameters take their
+            // own copy and are not asked.
+            if report
+                && !self.first_pass
+                && !callee_is_op
+                && !matches!(tp.base(), Type::RefVar(_))
+                && matches!(
+                    tp.peel_link().base(),
+                    Type::Reference(_, _)
+                        | Type::Enum(_, true, _)
+                        | Type::Vector(_, _)
+                        | Type::Sorted(_, _, _)
+                        | Type::Index(_, _, _)
+                        | Type::Radix(_, _, _)
+                        | Type::Trie(_, _, _)
+                        | Type::Hash(_, _, _)
+                )
+                && !self
+                    .data
+                    .def(d_nr)
+                    .attributes()
+                    .get(nr)
+                    .is_some_and(|a| a.value_const)
+                && let Some(place) = self.const_view_place(&actual_code, true)
+            {
+                let what = match actual_code.unspan() {
+                    Value::Var(v) if self.const_views.contains_key(&(self.context, *v)) => {
+                        format!("'{}', a view of {place},", self.vars.written_name(*v))
+                    }
+                    _ => place,
+                };
+                let param = self
+                    .data
+                    .def(d_nr)
+                    .attributes()
+                    .get(nr)
+                    .map_or_else(String::new, |a| format!(" `{}`", a.name));
+                // C124's rollout (owner, 2026-09-15): a gating WARNING first, so the libraries whose
+                // read-only helpers do not yet say `const` can add it before this becomes the
+                // error the ruling describes; the cure is in the message.
+                diagnostic!(
+                    self.lexer,
+                    Level::Warning,
+                    code = "const-to-plain-parameter",
+                    "Cannot pass {what} to parameter {}{param} of `{callee_name}`, which is not \
+                     `const`: its value is read-only, and a plain parameter names the caller's \
+                     value — declare the parameter `const` if `{callee_name}` only reads it, or \
+                     pass a local copy",
+                    nr + 1
+                );
+                // Conditional, and without an edit: whether the callee only reads is the author's
+                // to affirm (C124 decides by the signature, not by reading the body for them), and
+                // the parameter is usually declared in another file than this call.
+                self.lexer.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Conditional,
+                    title: format!("declare parameter{param} of `{callee_name}` `const`"),
+                    condition: Some(format!("`{callee_name}` only reads that parameter")),
+                    edit: None,
+                    concept: "const parameters",
+                    concept_ref: "@F18",
+                });
             }
             // @FR-N-Store — the parameter is a slot when this binding is REPORTED and the callee
             // is not null-transparent; an overload TRIAL (`!report`) and a null-transparent

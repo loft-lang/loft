@@ -1,0 +1,85 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// C124 (formal/binding.md D-bind-45) — a `const` value reaches only a `const` parameter.  It lands
+// as the gating warning `const-to-plain-parameter` first (owner, 2026-09-15), so shipped libraries
+// can declare their read-only parameters before it becomes an error; these pins move to
+// @EXPECT_ERROR then.  A plain record or collection parameter names the caller's value (`calls.md`
+// F-ParamHeap), so a `const` value handed to one could be written by the callee: `bump(acct)` below
+// changed the caller's balance to 999 on both backends while `acct.balance = 1` was refused.  The
+// owner's ruling decides by the SIGNATURE, never the callee's body — `show(acct)` is reported
+// although `show` only reads,
+// because what a call means is judged from the call and the declaration it names (C121), and a
+// proof that a callee does not write stays an optimisation's to use (C122).
+//
+// Every spelling a parameter can be reached by is a cell: a plain function, a read-only one, a
+// view handed on, the standard library's `clear` (which writes), a `self` method, a `both`
+// function, and a generic.  The legal side — `const` parameters, the stdlib's readers, text and
+// scalars, an interface bound — is `a-const-value-passed-to-a-const-parameter-is-legal.loft`.
+//
+// A `main` calls the cells that only READ, and asserts what they answer: a warning compiles, so the
+// file is a program, and the harness needs an entry point.  `writer` and `wipe` are compiled — their
+// warnings are pinned below — but not run, because running them would write the values they were
+// given, which is the behaviour the warning exists to end.
+//
+// @falsified-at: b77e59642 — interpret and native both: the seven `@EXPECT_WARNING` pins match 0/7
+//   there (no diagnostic at all; `bump1542` writes the caller's balance), and 7/7 here as
+//   `Warning[const-to-plain-parameter]` with no error.
+//   CHANNEL: expectations — measured by hand with the frozen control binary, because `make falsify`
+//   scores exit, asserts, leak, panic and refusals and does not read warning pins (TESTING.md
+//   § falsify, "A guard whose subject is a WARNING").
+//   ARMED: nothing.
+//   WITNESS: the same seven cells were refused as errors on the build before the rollout decision
+//   (7/7), so the wording the pins carry is the gate's, not a coincidence of the warning text.
+//   HOLDS: `a-const-value-passed-to-a-const-parameter-is-legal.loft` answers `c124 controls ok` on
+//   both backends with no warning.
+// @EXPECT_WARNING: Cannot pass const parameter 'acct' to parameter 1 `a` of `bump1542`
+// @EXPECT_WARNING: Cannot pass const parameter 'acct' to parameter 1 `a` of `show1542`
+// @EXPECT_WARNING: Cannot pass 'f', a view of const parameter 'accts', to parameter 1 `a` of `show1542`
+// @EXPECT_WARNING: Cannot pass const parameter 'v' to parameter 1 `both` of `clear`
+// @EXPECT_WARNING: Cannot pass const parameter 'acct' to parameter 1 `self` of `peek1542`
+// @EXPECT_WARNING: Cannot pass const parameter 'acct' to parameter 1 `both` of `look1542`
+// @EXPECT_WARNING: Cannot pass const parameter 'v' to parameter 1 `v` of `first1542`
+
+struct Acc1542 { balance: integer }
+
+fn bump1542(a: Acc1542) { a.balance = 999; }
+fn show1542(a: Acc1542) -> integer { a.balance }
+fn peek1542(self: Acc1542) -> integer { self.balance }
+fn look1542(both: Acc1542) -> integer { both.balance }
+fn first1542<T>(v: vector<T>) -> T? { v[0] }
+
+// a callee that writes its parameter
+fn writer(acct: const Acc1542) { bump1542(acct); }
+
+// a callee that only reads, but does not say so
+fn reader(acct: const Acc1542) -> integer { show1542(acct) }
+
+// a view of a const collection handed on
+fn view_on(accts: const vector<Acc1542>) -> integer {
+  s = 0;
+  for f in accts { s += show1542(f); }
+  s
+}
+
+// the standard library's `clear` writes, and stays plain
+fn wipe(v: const vector<integer>) { clear(v); }
+
+// a `self` method
+fn method_self(acct: const Acc1542) -> integer { acct.peek1542() }
+
+// a `both` function
+fn both_form(acct: const Acc1542) -> integer { look1542(acct) }
+
+// a generic
+fn generic(v: const vector<integer>) -> integer { first1542(v) ?? 0 }
+
+fn main() {
+  acct = Acc1542 { balance: 500 };
+  assert(reader(acct) == 500, "reader {reader(acct)}");
+  assert(view_on([Acc1542 { balance: 2 }, Acc1542 { balance: 3 }]) == 5, "view_on");
+  assert(method_self(acct) == 500, "method_self {method_self(acct)}");
+  assert(both_form(acct) == 500, "both_form {both_form(acct)}");
+  assert(generic([7, 8]) == 7, "generic {generic([7, 8])}");
+  assert(acct.balance == 500, "the readers left the balance {acct.balance}");
+}

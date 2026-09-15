@@ -612,6 +612,21 @@ impl Parser {
             .enumerate()
             .map(|(i, tp)| argument(format!("d{i}"), tp.clone(), Value::Null))
             .collect();
+        // C124 — a dispatcher position is `const` exactly when EVERY definition it can choose
+        // declares that parameter `const`: then a const argument reaches the dispatcher, and the
+        // dispatcher hands it on to const parameters only.  One plain member makes the position
+        // plain, and a const argument is refused at the call as it would be by that member.
+        for (i, arg) in args.iter_mut().enumerate() {
+            arg.constant = leaves.iter().map(|(_, d, _)| *d).chain(null_leaf).all(|d| {
+                self.data
+                    .def(d)
+                    .attributes
+                    .iter()
+                    .filter(|a| !a.hidden)
+                    .nth(i)
+                    .is_some_and(|a| a.value_const)
+            });
+        }
         // The hidden buffers (a text return's accumulator) of the first leaf definition that
         // carries any, forwarded only to the leaves that declare them — @F20's rule.
         let hidden: Vec<Attribute> = leaves

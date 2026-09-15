@@ -24,7 +24,7 @@
 <h1>Feature catalogue</h1>
 <article>
 <p>Every language surface and every part of the toolchain the catalogue tracks, in one list.  Each entry has a page of its own in <code>doc/features/</code> in the repository, where <code>@F2</code> is <code>F2.md</code>.</p>
-<p>The two halves read differently.  An <code>@F</code> page says what the feature is and how it aids you, and 70 of the 86 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An <code>@I</code> page says what the part does and where it lives in the source — it describes how loft is built, not something you write.</p>
+<p>The two halves read differently.  An <code>@F</code> page says what the feature is and how it aids you, and 71 of the 87 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An <code>@I</code> page says what the part does and where it lives in the source — it describes how loft is built, not something you write.</p>
 <p>The catalogue is generated from the <code>loft-lang/features</code> issue tracker, which is the single source of truth: every entry is an issue, and <code>make features-check</code> regenerates this page and fails on any difference.  A feature you can name and cannot find below is missing from the TRACKER — that is a gap in the catalogue rather than a gap in loft, and the chapters of this reference are the wider list.</p>
 <h2 id="language-features">Language features</h2>
 <ul>
@@ -114,6 +114,7 @@
 <li><strong>@F119</strong> — Store locks (#lock)</li>
 <li><strong>@F120</strong> — Lexer library (lib/lexer)</li>
 <li><strong>@F121</strong> — Parser library (lib/parser)</li>
+<li><strong>@F122</strong> — Multiple dispatch — one name, a definition per combination of parameter types</li>
 </ul>
 <h2 id="tooling-and-infrastructure">Tooling and infrastructure</h2>
 <ul>
@@ -178,7 +179,7 @@
 // repository, where `@F2` is `F2.md`.
 //
 // The two halves read differently.  An `@F` page says what the feature is and
-// how it aids you, and 70 of the 86 carry a runnable example; the rest
+// how it aids you, and 71 of the 87 carry a runnable example; the rest
 // name what demonstrates them instead, because a loft program cannot run the
 // compiler that runs it.  An `@I` page says what the part does and where it lives
 // in the source — it describes how loft is built, not something you write.
@@ -277,6 +278,7 @@
 // - **@F119** — Store locks (#lock)
 // - **@F120** — Lexer library (lib/lexer)
 // - **@F121** — Parser library (lib/parser)
+// - **@F122** — Multiple dispatch — one name, a definition per combination of parameter types
 //
 // ## Tooling and infrastructure
 //

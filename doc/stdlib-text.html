@@ -150,7 +150,7 @@
 <p>True if the character is a control character.</p>
 </div>
 <div class="item">
-<pre><code>pub fn join(self: vector&lt;text&gt;, sep: text) -&gt; text</code></pre>
+<pre><code>pub fn join(self: const vector&lt;text&gt;, sep: text) -&gt; text</code></pre>
 <p>Joins parts with sep between each consecutive pair. Returns &quot;&quot; for an empty vector. Use to build comma-separated lists, path segments, or any delimited output.</p>
 </div>
 <div class="item">
@@ -158,7 +158,7 @@
 <p>Return the BYTE at position `i` (0..len) as integer 0-255, or 0 for out-of-bounds.  Unlike `text[i]` which decodes the UTF-8 codepoint containing byte `i` (walking back through continuation bytes), `byte_at(i)` is a pure O(1) byte read. Use in ASCII-heavy scanning hot paths (tokenisers, regex- like loops) where the UTF-8 decode is wasted work — every non-ASCII byte still returns a valid 0-255 number; the caller compares against ASCII constants so byte semantics suffice.  ~5-10× faster than `text[i]` for pure-ASCII checks.</p>
 </div>
 <div class="item">
-<pre><code>pub fn text_from_bytes(bytes: vector&lt;u8&gt;) -&gt; text</code></pre>
+<pre><code>pub fn text_from_bytes(bytes: const vector&lt;u8&gt;) -&gt; text</code></pre>
 <p>Build a text from the raw UTF-8 bytes of a vector&lt;u8&gt; — the inverse of byte_at.  Use in binary decoders (CBOR text, HPKE byte composition) that assemble a byte buffer and need to turn it back into text.  Bytes that are not valid UTF-8 yield the empty text (never a crash); validate first if you must tell &quot;empty input&quot; from &quot;invalid bytes&quot; apart.</p>
 </div>
 <div class="item">

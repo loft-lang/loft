@@ -221,6 +221,15 @@ const CODES: &[(&str, &str)] = &[
         "fn f(a: const integer) -> integer { a }\n\
          fn main() { print(\"{f(1)}\"); }",
     ),
+    // C124 — a `const` record handed to a plain record parameter (a warning while the shipped
+    // libraries migrate; the code stays when it becomes an error).
+    (
+        "const-to-plain-parameter",
+        "struct S { a: integer }\n\
+         fn show(s: S) -> integer { s.a }\n\
+         fn f(s: const S) -> integer { show(s) }\n\
+         fn main() { print(\"{f(S { a: 1 })}\"); }",
+    ),
     // The `&` must be FIELD-MUTATED: a read-only `&` raises an error at the same position,
     // and the pretty renderer's cascade dedup then suppresses the advice this pins.
     (

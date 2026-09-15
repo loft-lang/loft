@@ -88,8 +88,8 @@
 <p>describe() uses format strings with field access inside each variant's method.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(c.<span class="fn-call">describe</span>() == <span class="st">"circle with radius 1"</span>, <span class="st">"describe circle: {c.describe()}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(r.<span class="fn-call">describe</span>() == <span class="st">"rect 4 by 5"</span>, <span class="st">"describe rect: {r.describe()}"</span>);</code></pre>
-<h2 id="stubs-for-missing-implementations">Stubs for missing implementations</h2>
-<p>If a variant intentionally has no implementation of a method, the compiler emits a warning ("no implementation of <code>area</code> for variant <code>Rect</code>"). Provide an empty-body stub to silence it: fn area(self: SomeVariant) -&gt; float { } Give the stub a real body — <code>{ 0.0 }</code> — when anything reads its result. An empty body silences the warning and hands back the type's default (0.0 for a float, 0 for an integer, "" for text), which is the same on both backends. That is a real value, not a marker: it is not null, so there is nothing to test for, and a caller cannot tell it from a computed 0.0.</p>
+<h2 id="a-method-on-the-enum-itself-is-the-fallback">A method on the enum itself is the fallback</h2>
+<p>Calling area() on a value held as a <code>Shape</code> works like a match on its variant, and a match must cover every variant. So when only some variants have their own version, the call is refused unless the enum has one too: fn area(self: Shape) -&gt; float { 0.0 } That version is the <code>_</code> arm: a variant with its own area() still runs it, and every other variant runs this one. A method only some variants have is fine as long as nothing calls it on a value held as the enum. An empty-body stub for one variant also covers it: fn area(self: SomeVariant) -&gt; float { } Give the stub a real body — <code>{ 0.0 }</code> — when anything reads its result. An empty body hands back the type's default (0.0 for a float, 0 for an integer, "" for text), which is the same on both backends. That is a real value, not a marker: it is not null, so there is nothing to test for, and a caller cannot tell it from a computed 0.0.</p>
 <h2 id="match-expressions-on-enums">Match expressions on enums</h2>
 <p>Match picks a code path based on the active variant. You must handle every variant, or include a <code>_</code> wildcard arm that catches the rest.</p>
 <pre><code>  axis = match d {
@@ -241,16 +241,21 @@ fn main() {
   // describe() uses format strings with field access inside each variant's method.
   assert(c.describe() == "circle with radius 1", "describe circle: {c.describe()}");
   assert(r.describe() == "rect 4 by 5", "describe rect: {r.describe()}");
-  // ## Stubs for missing implementations
-  // If a variant intentionally has no implementation of a method, the compiler
-  // emits a warning ("no implementation of 'area' for variant 'Rect'"). Provide an
-  // empty-body stub to silence it:
+  // ## A method on the enum itself is the fallback
+  // Calling area() on a value held as a 'Shape' works like a match on its variant,
+  // and a match must cover every variant. So when only some variants have their
+  // own version, the call is refused unless the enum has one too:
+  //   fn area(self: Shape) -&gt; float { 0.0 }
+  // That version is the '_' arm: a variant with its own area() still runs it, and
+  // every other variant runs this one. A method only some variants have is fine as
+  // long as nothing calls it on a value held as the enum.
+  // An empty-body stub for one variant also covers it:
   //   fn area(self: SomeVariant) -&gt; float { }
   // Give the stub a real body — '{ 0.0 }' — when anything reads its result. An
-  // empty body silences the warning and hands back the type's default (0.0 for a
-  // float, 0 for an integer, "" for text), which is the same on both backends.
-  // That is a real value, not a marker: it is not null, so there is nothing to
-  // test for, and a caller cannot tell it from a computed 0.0.
+  // empty body hands back the type's default (0.0 for a float, 0 for an integer,
+  // "" for text), which is the same on both backends. That is a real value, not a
+  // marker: it is not null, so there is nothing to test for, and a caller cannot
+  // tell it from a computed 0.0.
 
   // ## Match expressions on enums
   // Match picks a code path based on the active variant. You must handle

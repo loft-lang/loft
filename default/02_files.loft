@@ -139,7 +139,7 @@ fn OpRmdir(path: text) -> integer fs#update;
 // Reads the entire file as a UTF-8 text value.
 // Use for small configuration files or scripts.
 // Example: @STD-010
-pub fn content(self: File) -> text?fs#read {
+pub fn content(self: const File) -> text?fs#read {
   // A MISSING file reads as null, distinct from an EMPTY file (""),
   // so a missing config is not silently indistinguishable from an empty one.
   if self.format == Format.NotExists { return null }
@@ -163,7 +163,7 @@ pub fn content(self: File) -> text?fs#read {
 // Strips trailing '\r' so CRLF files (Windows) and LF files (Unix) produce
 // identical results. Use when processing line-by-line (logs, CSV, etc.).
 // Example: @STD-011
-pub fn lines(self: File) -> vector<text> fs#read {
+pub fn lines(self: const File) -> vector<text> fs#read {
   result = [];
   // A missing file has no lines, which is why the result is nullable.
   c = self.content() ?? "";
@@ -268,7 +268,7 @@ pub fn exists(path: text) -> boolean fs#read {
 #impure(io)
 // Method form: f = file("path"); if f.exists() { .. }
 // Also callable as exists(file_obj) via the 'both' parameter name.
-pub fn exists(both: File) -> boolean fs#read {
+pub fn exists(both: const File) -> boolean fs#read {
   both.format != Format.NotExists
 }
 #pure
@@ -350,7 +350,7 @@ pub fn read_bytes(path: text) -> vector<u8> ?fs#read;
 // Writes `bytes` to file `path`, truncating any existing content.  Returns
 // true on success.  The inverse of read_bytes; the pair round-trips a
 // non-UTF-8 blob byte-for-byte.
-pub fn write_bytes(path: text, bytes: vector<u8>) -> boolean fs#update;
+pub fn write_bytes(path: text, bytes: const vector<u8>) -> boolean fs#update;
 #rust"stores.fs_write_bytes(@path, @bytes)"
 #impure(io)
 // Truncate or extend the file to exactly `size` bytes.
@@ -470,7 +470,7 @@ pub fn store_persist_bind(r: reference, path: text) -> boolean fs#update;
 // Returns `false` on an I/O or format error, and for a collection whose shape the
 // rebuild cannot carry. The image is sized to its content, with none of the
 // growth slack a bound file keeps.
-pub fn store_persist_copy(r: reference, path: text) -> boolean fs#update;
+pub fn store_persist_copy(r: const reference, path: text) -> boolean fs#update;
 #rust"stores.persist_copy((@r).store_nr, std::path::Path::new(@path))"
 #impure(io)
 
@@ -537,7 +537,7 @@ pub fn store_load_untrusted(r: reference, path: text) -> boolean fs#read;
 //   h: hash<Rec[id]> = []
 //   store_load_key(h, "block.store", 42)
 //   assert(store_verify(h))   // the load produced a sound heap
-pub fn store_verify(r: reference) -> boolean;
+pub fn store_verify(r: const reference) -> boolean;
 #rust"stores.verify_graph_ok(&(@r))"
 
 // Give back the free space at the END of a store-rooted collection's store, and
@@ -747,13 +747,13 @@ pub fn store_lazy_range(local: reference, lo: integer, hi: integer) -> integer;
 // reaching the source now says nothing about what an earlier failure already
 // lost, and answering "healthy" over a traversal that missed data is the silent
 // wrong answer this channel exists to prevent.
-pub fn store_lazy_error(local: reference) -> text;
+pub fn store_lazy_error(local: const reference) -> text;
 #rust"stores.lazy_error(&(@local))"
 
 // How many fetches could not REACH this collection's source.
 // 0 is healthy. The magnitude behind `store_lazy_error`: after a traversal it
 // answers "how incomplete am I".
-pub fn store_lazy_faults(local: reference) -> integer;
+pub fn store_lazy_faults(local: const reference) -> integer;
 #rust"stores.lazy_faults(&(@local))"
 
 // Acknowledge this collection's fetch failures, returning
@@ -849,7 +849,7 @@ pub fn store_load_prefix(local: reference, path: text, pre: text, limit: integer
 // viewport uses it beats either linear order.
 //   pins: spatial<Pin[x, y]> = []
 //   store_load_box(pins, "map.store", [x1, y1], [x2, y2], 200)
-pub fn store_load_box(local: reference, path: text, from: vector<integer>, till: vector<integer>, limit: integer) -> integer fs#read;
+pub fn store_load_box(local: reference, path: text, from: const vector<integer>, till: const vector<integer>, limit: integer) -> integer fs#read;
 #rust"stores.load_box_vec(&(@local), @path, &(@from), &(@till), @limit)"
 #impure(io)
 
@@ -859,7 +859,7 @@ pub fn store_load_box(local: reference, path: text, from: vector<integer>, till:
 // relocation rules as `store_load_key`.
 //   tiles: hash<Tile[id]> = []
 //   got = store_load_keys(tiles, "block.store", [7, 13, 42])   // got == 3
-pub fn store_load_keys(local: reference, path: text, keys: vector<integer>) -> integer fs#read;
+pub fn store_load_keys(local: reference, path: text, keys: const vector<integer>) -> integer fs#read;
 #rust"stores.load_keys_vec(&(@local), @path, &(@keys))"
 #impure(io)
 
@@ -875,7 +875,7 @@ pub fn store_load_keys(local: reference, path: text, keys: vector<integer>) -> i
 // boundary, so no frame is ever the thing that discovers it needs an asset.
 //   art: hash<Blob[bl_key]> = []
 //   got = store_load_keys_text(art, "pack.store", ["page/mobs", "hit.ogg"])
-pub fn store_load_keys_text(local: reference, path: text, keys: vector<text>) -> integer fs#read;
+pub fn store_load_keys_text(local: reference, path: text, keys: const vector<text>) -> integer fs#read;
 #rust"stores.load_keys_text_vec(&(@local), @path, &(@keys))"
 #impure(io)
 
@@ -931,7 +931,7 @@ pub fn seek(self: File, pos: integer) -> boolean fs#update {
 // reports null rather than 0 — 0 is a legitimate position, so returning it would
 // make "not opened" indistinguishable from "at the start".  Discharge with
 // `?? 0` when the distinction does not matter.
-pub fn position(self: File) -> integer {
+pub fn position(self: const File) -> integer {
   self.next
 }
 // Flushes buffered bytes for self to the underlying storage so that the
@@ -951,7 +951,7 @@ pub fn sync(self: File) -> boolean fs#update {
 // (where `list_dir` answers null, because it has no format to check first).
 // Use to iterate over all files in a folder.
 
-pub fn files(self: File) -> vector<File> fs#read {
+pub fn files(self: const File) -> vector<File> fs#read {
   result = [];
   if self.format == Format.Directory { OpGetDir(self.path, result); }
   result

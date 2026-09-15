@@ -1,0 +1,63 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// C124's controls — what the ruling that a `const` value reaches only a `const` parameter must
+// not take away.  Each cell hands a `const` value on and must compile and answer:
+//
+//   c1  to a `const` record parameter                       show2(acct)
+//   c2  a view of a const collection to a `const` parameter  for f in accts { show2(f) }
+//   c3  the standard library's readers, which declare `const` len / sum / max_of / min_of / join
+//   c4  a `self: const` method, both call spellings
+//   c5  text and scalar parameters take their own copy        shout(name), double(k)
+//   c6  a non-const value to a plain parameter still writes  bump(a) → 999
+//   c7  a `const` generic parameter                          first_of(v)
+//   c8  a native that declares `const`                        text_from_bytes(b)
+//   c9  a generic through an interface bound whose method takes `self: const Self`
+//
+// Every expected value is hand-computed, and c6 reads the caller's value afterwards.
+//
+// @falsified-at: none — a LOCK: before C124 every cell answered the same; the refusals it must not
+//   over-reach into are `a-const-value-reaches-only-a-const-parameter.loft`.  c9 is the one
+//   that moved while building: the interface stubs dropped `const`, and it read as a refusal.
+
+struct Acc1543 { balance: integer }
+
+fn show2(a: const Acc1543) -> integer { a.balance }
+fn bump(a: Acc1543) { a.balance = 999; }
+fn peek(self: const Acc1543) -> integer { self.balance }
+fn shout(t: text) -> text { t + "!" }
+fn double(n: integer) -> integer { n * 2 }
+fn first_of<T>(v: const vector<T>) -> T? { v[0] }
+
+interface Shape1543 {
+  fn area(self: const Self) -> integer;
+}
+struct Sq1543 { side: integer }
+fn area(self: const Sq1543) -> integer { self.side * self.side }
+fn measure<T: Shape1543>(x: const T) -> integer { x.area() }
+
+fn c1(acct: const Acc1543) -> integer { show2(acct) }
+fn c2(accts: const vector<Acc1543>) -> integer { s = 0; for f in accts { s += show2(f); } s }
+fn c3(v: const vector<integer>, t: const vector<text>) -> text {
+  "{len(v)} {v.len()} {sum(v, 0)} {max_of(v) ?? 0} {min_of(v) ?? 0} {join(t, "-")}"
+}
+fn c4(acct: const Acc1543) -> integer { acct.peek() + peek(acct) }
+fn c5(name: const text, k: integer) -> text { "{shout(name)} {double(k)}" }
+fn c7(v: const vector<integer>) -> integer { first_of(v) ?? 0 }
+fn c8(b: const vector<u8>) -> text { text_from_bytes(b) }
+
+fn main() {
+  acct = Acc1543 { balance: 500 };
+  assert(c1(acct) == 500, "c1 {c1(acct)}");
+  assert(c2([Acc1543 { balance: 2 }, Acc1543 { balance: 3 }]) == 5, "c2");
+  assert(c3([4, 5, 6], ["a", "b"]) == "3 3 15 6 4 a-b", "c3 {c3([4, 5, 6], ["a", "b"])}");
+  assert(c4(acct) == 1000, "c4 {c4(acct)}");
+  assert(c5("hi", 21) == "hi! 42", "c5 {c5("hi", 21)}");
+  a = Acc1543 { balance: 500 };
+  bump(a);
+  assert(a.balance == 999, "c6 {a.balance}");
+  assert(c7([7, 8]) == 7, "c7 {c7([7, 8])}");
+  assert(c8([104 as u8, 105 as u8]) == "hi", "c8 {c8([104 as u8, 105 as u8])}");
+  assert(measure(Sq1543 { side: 4 }) == 16, "c9 {measure(Sq1543 { side: 4 })}");
+  println("c124 controls ok");
+}

@@ -523,6 +523,15 @@ fn function_name(param: type, other: type = default_value) -> return_type {
     e.x = 1`) is still refused — the check follows the bind, not the flow.
   - Passing the value (or a view of it) to a **`&` parameter** is an error: the callee may write
     it. Passing it to a `const` parameter is always allowed.
+  - Passing it to a plain **record or collection parameter** is reported unless that parameter is
+    declared `const` — decided by the signature, not by whether the callee happens to write
+    (DESIGN_DECISIONS.md C124). It is the warning `const-to-plain-parameter` for now, and becomes an
+    error once the shipped libraries declare their read-only parameters. A read-only helper says so: `fn total(v: const vector<T>)`. The
+    standard library's readers (`len`, `sum`, `join`, the `JsonValue` accessors, …) declare their
+    parameters `const`; its writers (`clear`, `seek`, the `store_load*` targets) do not. `text`
+    and scalar parameters take their own copy and are not affected. A function REFERENCE is the
+    one gap: a function type cannot say `const` yet (`fn(const T)` does not parse), so a `const`
+    value passed through one is not checked.
   - Re-pointing the local slot — `p = other` — **is** allowed for a compound type (it
     rebinds the function's own copy of the borrow, not the caller's value). The same is
     true of a value-const **local**: `x: const vector<T> = …`.

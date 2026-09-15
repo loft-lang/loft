@@ -181,7 +181,7 @@
 <p>A boolean and a character ride in `i` for the reason a bound SQL value does: one integer path is one thing to get right, and the `kind` beside it is what keeps them apart.</p>
 </div>
 <div class="item">
-<pre><code>pub fn reflect_field(value: TypeInfo, position: integer, kt: integer) -&gt; ValueInfo</code></pre>
+<pre><code>pub fn reflect_field(value: const TypeInfo, position: integer, kt: integer) -&gt; ValueInfo</code></pre>
 <p>The value `value` holds at byte `position` — the VALUE half of reflection.</p>
 <p>`type_of` says a record has a `text` at byte 16; this reads it. Together they are what a generic serialiser, an ORM write or a diff needs, and neither half is enough alone:</p>
 <p>```loft t = type_of(row); for f in t.fields { v = field_value(row, f.position); if v.is_null { println(&quot;{f.name}=null&quot;) } else { println(&quot;{f.name}={v.t}&quot;) } } ```</p>
@@ -192,7 +192,7 @@
 <p>The value parameter is declared `TypeInfo` only because loft has no way to spell &quot;any record&quot;; the parser substitutes the real argument, and only the reference ABI matters here. `struct_to_json` (06_json.loft) does the same.</p>
 </div>
 <div class="item">
-<pre><code>pub fn reflect_field_path(value: TypeInfo, path: vector&lt;integer&gt;, kt: integer) -&gt; ValueInfo</code></pre>
+<pre><code>pub fn reflect_field_path(value: const TypeInfo, path: const vector&lt;integer&gt;, kt: integer) -&gt; ValueInfo</code></pre>
 <p>Reads through the SAME `Parts::Struct` field list the store itself is walked by, and allocates the answer into the caller's own stores → par-safe. The value at the end of a PATH of positions — `field_value(x, [8, 0])`.</p>
 <p>`type_of` reports a nested record's fields at positions relative to THAT record, so one number cannot name `origin.x` — and reflection hands back no handle to a nested record to call `field_value` on again. A path closes that: each element is a position in the record the previous element landed in.</p>
 <p>**The offsets must not be added up by the caller.** `field_value(doc, 8 + 0)` asks for a field BEGINNING at byte 8 of `Doc`, which is `origin` itself — the check that makes this ordinary loft rather than a pointer is that a position must begin a field of the type it is read against. So the walk happens inside, one descriptor step per element, each checked the same way.</p>

@@ -861,8 +861,8 @@
 <p>describe() uses format strings with field access inside each variant's method.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(c.<span class="fn-call">describe</span>() == <span class="st">"circle with radius 1"</span>, <span class="st">"describe circle: {c.describe()}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(r.<span class="fn-call">describe</span>() == <span class="st">"rect 4 by 5"</span>, <span class="st">"describe rect: {r.describe()}"</span>);</code></pre>
-<h2 id="stubs-for-missing-implementations">Stubs for missing implementations</h2>
-<p>If a variant intentionally has no implementation of a method, the compiler emits a warning ("no implementation of <code>area</code> for variant <code>Rect</code>"). Provide an empty-body stub to silence it: fn area(self: SomeVariant) -&gt; float { } Give the stub a real body — <code>{ 0.0 }</code> — when anything reads its result. An empty body silences the warning and hands back the type's default (0.0 for a float, 0 for an integer, "" for text), which is the same on both backends. That is a real value, not a marker: it is not null, so there is nothing to test for, and a caller cannot tell it from a computed 0.0.</p>
+<h2 id="a-method-on-the-enum-itself-is-the-fallback">A method on the enum itself is the fallback</h2>
+<p>Calling area() on a value held as a <code>Shape</code> works like a match on its variant, and a match must cover every variant. So when only some variants have their own version, the call is refused unless the enum has one too: fn area(self: Shape) -&gt; float { 0.0 } That version is the <code>_</code> arm: a variant with its own area() still runs it, and every other variant runs this one. A method only some variants have is fine as long as nothing calls it on a value held as the enum. An empty-body stub for one variant also covers it: fn area(self: SomeVariant) -&gt; float { } Give the stub a real body — <code>{ 0.0 }</code> — when anything reads its result. An empty body hands back the type's default (0.0 for a float, 0 for an integer, "" for text), which is the same on both backends. That is a real value, not a marker: it is not null, so there is nothing to test for, and a caller cannot tell it from a computed 0.0.</p>
 <h2 id="match-expressions-on-enums">Match expressions on enums</h2>
 <p>Match picks a code path based on the active variant. You must handle every variant, or include a <code>_</code> wildcard arm that catches the rest.</p>
 <pre><code>  axis = match d {
@@ -2643,10 +2643,10 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
   b = <span class="fn-call">next</span>(gen);
   c = <span class="fn-call">next</span>(gen);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a == <span class="nm">10</span> &amp;&amp; b == <span class="nm">11</span> &amp;&amp; c == <span class="nm">12</span>, <span class="st">"manual next: {a},{b},{c}"</span>);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call"><a href="stdlib-coroutines.html">exhausted</a></span>(gen), <span class="st">"not yet exhausted, though no values remain"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">exhausted</span>(gen), <span class="st">"not yet exhausted, though no values remain"</span>);
   past_end = <span class="fn-call">next</span>(gen);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(past_end == <span class="kw">null</span>, <span class="st">"next past the last value answers null"</span>);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-coroutines.html">exhausted</a></span>(gen), <span class="st">"and now it is exhausted"</span>);</code></pre>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">exhausted</span>(gen), <span class="st">"and now it is exhausted"</span>);</code></pre>
 <h2 id="generators-with-parameters">Generators with parameters</h2>
 <p><code>len_twice</code> takes a text parameter and yields its length twice. The text value is preserved across the yield.</p>
 <pre><code>  lt_total = <span class="nm">0</span>;
@@ -3191,7 +3191,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <section class="print-section" id="33-features">
 <h1>Feature catalogue</h1>
 <p>Every language surface and every part of the toolchain the catalogue tracks, in one list.  Each entry has a page of its own in <code>doc/features/</code> in the repository, where <code>@F2</code> is <code>F2.md</code>.</p>
-<p>The two halves read differently.  An <code>@F</code> page says what the feature is and how it aids you, and 70 of the 86 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An <code>@I</code> page says what the part does and where it lives in the source — it describes how loft is built, not something you write.</p>
+<p>The two halves read differently.  An <code>@F</code> page says what the feature is and how it aids you, and 71 of the 87 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An <code>@I</code> page says what the part does and where it lives in the source — it describes how loft is built, not something you write.</p>
 <p>The catalogue is generated from the <code>loft-lang/features</code> issue tracker, which is the single source of truth: every entry is an issue, and <code>make features-check</code> regenerates this page and fails on any difference.  A feature you can name and cannot find below is missing from the TRACKER — that is a gap in the catalogue rather than a gap in loft, and the chapters of this reference are the wider list.</p>
 <h2 id="language-features">Language features</h2>
 <ul>
@@ -3281,6 +3281,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <li><strong>@F119</strong> — Store locks (#lock)</li>
 <li><strong>@F120</strong> — Lexer library (lib/lexer)</li>
 <li><strong>@F121</strong> — Parser library (lib/parser)</li>
+<li><strong>@F122</strong> — Multiple dispatch — one name, a definition per combination of parameter types</li>
 </ul>
 <h2 id="tooling-and-infrastructure">Tooling and infrastructure</h2>
 <ul>
@@ -4320,7 +4321,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>True if the character is a control character.</p>
 </div>
 <div class="item">
-<pre><code>pub fn join(self: vector&lt;text&gt;, sep: text) -&gt; text</code></pre>
+<pre><code>pub fn join(self: const vector&lt;text&gt;, sep: text) -&gt; text</code></pre>
 <p>Joins parts with sep between each consecutive pair. Returns &quot;&quot; for an empty vector. Use to build comma-separated lists, path segments, or any delimited output.</p>
 </div>
 <div class="item">
@@ -4328,7 +4329,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Return the BYTE at position `i` (0..len) as integer 0-255, or 0 for out-of-bounds.  Unlike `text[i]` which decodes the UTF-8 codepoint containing byte `i` (walking back through continuation bytes), `byte_at(i)` is a pure O(1) byte read. Use in ASCII-heavy scanning hot paths (tokenisers, regex- like loops) where the UTF-8 decode is wasted work — every non-ASCII byte still returns a valid 0-255 number; the caller compares against ASCII constants so byte semantics suffice.  ~5-10× faster than `text[i]` for pure-ASCII checks.</p>
 </div>
 <div class="item">
-<pre><code>pub fn text_from_bytes(bytes: vector&lt;u8&gt;) -&gt; text</code></pre>
+<pre><code>pub fn text_from_bytes(bytes: const vector&lt;u8&gt;) -&gt; text</code></pre>
 <p>Build a text from the raw UTF-8 bytes of a vector&lt;u8&gt; — the inverse of byte_at.  Use in binary decoders (CBOR text, HPKE byte composition) that assemble a byte buffer and need to turn it back into text.  Bytes that are not valid UTF-8 yield the empty text (never a crash); validate first if you must tell &quot;empty input&quot; from &quot;invalid bytes&quot; apart.</p>
 </div>
 <div class="item">
@@ -4338,11 +4339,11 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <h2 id="stdlib-collections">Collections</h2>
 <p class="section-desc">Operations on vector&lt;T&gt; — the primary ordered collection type. Vectors are grown by appending with += and elements are accessed by index. All structures are passed by reference instead of by value</p>
 <div class="item">
-<pre><code>pub fn len(both: vector) -&gt; integer</code></pre>
+<pre><code>pub fn len(both: const vector) -&gt; integer</code></pre>
 <p>Number of elements in the vector. Use in loop bounds: for i in 0..v.len().</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(both: sorted) -&gt; integer</code></pre>
+<pre><code>pub fn len(both: const sorted) -&gt; integer</code></pre>
 <p>Number of elements in a sorted collection.</p>
 </div>
 <div class="item">
@@ -4350,11 +4351,11 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Remove all elements from the vector, setting its length to 0.</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(both: hash) -&gt; integer</code></pre>
+<pre><code>pub fn len(both: const hash) -&gt; integer</code></pre>
 <p>Number of elements in a hash collection.</p>
 </div>
 <div class="item">
-<pre><code>pub fn size(both: hash) -&gt; integer</code></pre>
+<pre><code>pub fn size(both: const hash) -&gt; integer</code></pre>
 <p>The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (load factor 0.75).  0 for an empty (unallocated) hash.</p>
 </div>
 <h2 id="stdlib-output-and-diagnostics">Output and Diagnostics</h2>
@@ -4399,28 +4400,28 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Writes v followed by a newline to standard ERROR.</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(both: spatial) -&gt; integer</code></pre>
+<pre><code>pub fn len(both: const spatial) -&gt; integer</code></pre>
 <p>Number of elements in a spatial (radix / Morton tree) collection.</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(both: trie) -&gt; integer</code></pre>
+<pre><code>pub fn len(both: const trie) -&gt; integer</code></pre>
 <p>Number of elements in the trie.</p>
 </div>
 <h2 id="stdlib-vector-aggregates">Vector aggregates</h2>
 <div class="item">
-<pre><code>pub fn min_of &lt; T: Ordered &gt; (v: vector&lt;T&gt;) -&gt; T?</code></pre>
+<pre><code>pub fn min_of &lt; T: Ordered &gt; (v: const vector&lt;T&gt;) -&gt; T?</code></pre>
 <p>Smallest element in a vector, or null when the vector is empty (the type is honest about the empty case).  Works on any Ordered type (op &lt;).</p>
 </div>
 <div class="item">
-<pre><code>pub fn max_of &lt; T: Ordered &gt; (v: vector&lt;T&gt;) -&gt; T?</code></pre>
+<pre><code>pub fn max_of &lt; T: Ordered &gt; (v: const vector&lt;T&gt;) -&gt; T?</code></pre>
 <p>Largest element in a vector, or null when the vector is empty (the type is honest about the empty case).  Works on any Ordered type (op &lt;).</p>
 </div>
 <div class="item">
-<pre><code>pub fn sum &lt; T: Addable &gt; (v: vector&lt;T&gt;, init: T? = null) -&gt; T</code></pre>
+<pre><code>pub fn sum &lt; T: Addable &gt; (v: const vector&lt;T&gt;, init: T? = null) -&gt; T</code></pre>
 <p>Sum of vector elements.  Works on any Addable type.  `init` is the identity to start from; leave it out and the element type's own zero is used (0, 0.0, &quot;&quot;). Example: sum([10, 20, 12], 0) == 42 Example: sum([10, 20, 12]) == 42</p>
 </div>
 <div class="item">
-<pre><code>pub fn sum_of(v: vector&lt;integer&gt;) -&gt; integer</code></pre>
+<pre><code>pub fn sum_of(v: const vector&lt;integer&gt;) -&gt; integer</code></pre>
 <p>Sum of all integer elements. Returns 0 for an empty vector. Superseded by the general `sum(v, init)`; kept as a shim over it (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the shim's call resolves — a forward reference to a generic is not yet supported.</p>
 </div>
 <div class="item">
@@ -4553,11 +4554,11 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>A handle to a filesystem entry. Fields: path (full path), size (file size in bytes), format (open mode), current (byte position after last read), next (byte position to read next).</p>
 </div>
 <div class="item">
-<pre><code>pub fn content(self: File) -&gt; text?fs#read</code></pre>
+<pre><code>pub fn content(self: const File) -&gt; text?fs#read</code></pre>
 <p>Reads the entire file as a UTF-8 text value. Use for small configuration files or scripts.</p>
 </div>
 <div class="item">
-<pre><code>pub fn lines(self: File) -&gt; vector&lt;text&gt; fs#read</code></pre>
+<pre><code>pub fn lines(self: const File) -&gt; vector&lt;text&gt; fs#read</code></pre>
 <p>Par-safe: reads the file into a worker-local store; the host bridge serialises filesystem access. Reads the file and splits it into lines. Strips trailing '\r' so CRLF files (Windows) and LF files (Unix) produce identical results. Use when processing line-by-line (logs, CSV, etc.).</p>
 </div>
 <div class="item">
@@ -4573,7 +4574,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Stat-equivalent filesystem read; par-safe. Use to check whether a path is accessible before reading or writing it. A RELATIVE path resolves against the program's own directory, or against the working directory under `#cwd`; an absolute path is used as given, including one outside the project.  This is not an access boundary — the boundary is the `fs` capability a `[sandbox]` profile grants or withholds.</p>
 </div>
 <div class="item">
-<pre><code>pub fn exists(both: File) -&gt; boolean fs#read</code></pre>
+<pre><code>pub fn exists(both: const File) -&gt; boolean fs#read</code></pre>
 <p>Filesystem stat (via file()); par-safe. Method form: f = file(&quot;path&quot;); if f.exists() { .. } Also callable as exists(file_obj) via the 'both' parameter name.</p>
 </div>
 <div class="item">
@@ -4613,7 +4614,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Reads the whole file `path` as raw bytes.  A MISSING / unreadable file reads as NULL (distinct from an EMPTY file, `[]`); discharge with `?? []` to keep the old shape.  Binary-exact (round-trips with write_bytes); use for non-UTF-8 data — for text prefer `file(path).content()`.</p>
 </div>
 <div class="item">
-<pre><code>pub fn write_bytes(path: text, bytes: vector&lt;u8&gt;) -&gt; boolean fs#update</code></pre>
+<pre><code>pub fn write_bytes(path: text, bytes: const vector&lt;u8&gt;) -&gt; boolean fs#update</code></pre>
 <p>Writes `bytes` to file `path`, truncating any existing content.  Returns true on success.  The inverse of read_bytes; the pair round-trips a non-UTF-8 blob byte-for-byte.</p>
 </div>
 <div class="item">
@@ -4641,7 +4642,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>It snapshots the whole STORE `r` lives in, which is not always a store of just `r`.  A keyed LOCAL owns its store, so binding it writes a file for that collection.  A keyed FIELD shares its container's store, so binding `pw.painted` above writes a file for `PaintedWorld` — carrying the container and every sibling collection — and that file will NOT load back into a bare `hash&lt;PaintedHex[q, r]&gt;`.  Both are usable; they are just different files.  Bind through the container consistently, or bind a local of the collection's own type when another program has to read the file. The compiler advises at the call when the argument is a field.  `hash` carries its bucket seed in its own record and the comparison-based kinds hold no per-process state, so every persisted image is portable across processes.</p>
 </div>
 <div class="item">
-<pre><code>pub fn store_persist_copy(r: reference, path: text) -&gt; boolean fs#update</code></pre>
+<pre><code>pub fn store_persist_copy(r: const reference, path: text) -&gt; boolean fs#update</code></pre>
 <p>Write an image of `r` laid out for PAGING, and keep the live collection as it is. Use this for a file another program (or a browser) will READ — a vocabulary, a map, any shipped dataset — where what matters is how few pages a query touches.</p>
 <p>`store_persist_bind` copies the live bytes, so every record keeps its place and your references stay valid. That place is the layout: records sit where they were INSERTED, so a `trie` prefix query returning 20 records reads 20 scattered pages. This writes a rebuilt copy instead, with each record placed in its collection's own order — key order for a `trie` — so one prefix is one run. Measured on a 74,692-word vocabulary, one 20-record prefix query: 22 requests and 1.25 MB from a bound image, 4 and 0.26 MB from this one.</p>
 <p>The live collection is untouched: nothing moves, so every reference you hold stays valid, and the file is NOT bound (writes after this do not reach it). Call it when the data is final. To keep writing, use `store_persist_bind`. words: trie&lt;Word[w]&gt; = [] for w in vocabulary() { words += [Word { w: w }] } store_persist_copy(words, &quot;vocab.store&quot;)   // ship this file // a reader pages it: store_load_prefix(local, &quot;vocab.store&quot;, &quot;kerk&quot;, 20)</p>
@@ -4664,7 +4665,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Load a store IMAGE from a local file that may be UNTRUSTED into `r` — the structurally-validated counterpart of store_load. Reads the file and validates its block structure BEFORE adoption, so a crafted or corrupt file cannot hang (0-size block) or drive a heap over-read; it is rejected (false). store_load is faster (validates only in debug) for a file you produced yourself; use this for a file whose provenance you don't control. h: hash&lt;Rec[id]&gt; = [] if !store_load_untrusted(h, &quot;downloaded.store&quot;) { /* rejected — malformed */ }</p>
 </div>
 <div class="item">
-<pre><code>pub fn store_verify(r: reference) -&gt; boolean</code></pre>
+<pre><code>pub fn store_verify(r: const reference) -&gt; boolean</code></pre>
 <p>Structural integrity check of a store-rooted collection's heap graph: verify every internal pointer targets a live record — no dangling / out-of-bounds / cyclic edge. Returns true when sound, false (with a reason on stderr) when not. The verifier behind the working-set loader's confidence: after any `store_load*`, `store_verify(local)` proves the (partial) copy produced a structurally valid heap, not one with a pointer left aimed at the source. h: hash&lt;Rec[id]&gt; = [] store_load_key(h, &quot;block.store&quot;, 42) assert(store_verify(h))   // the load produced a sound heap</p>
 </div>
 <div class="item">
@@ -4710,14 +4711,14 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>The collection must be ORDERED (`sorted` or `index`) — a `hash` has no order to range over — and keyed on ONE column, since two numbers cannot say which value pins a composite key's leading column; use `store_lazy_query` for that. Both bounds are inclusive, in the collection's own key order. A record already resident is left alone. Answers 0 when nothing matched AND when the query could not run; `store_lazy_error` tells those apart.</p>
 </div>
 <div class="item">
-<pre><code>pub fn store_lazy_error(local: reference) -&gt; text</code></pre>
+<pre><code>pub fn store_lazy_error(local: const reference) -&gt; text</code></pre>
 <p>Why a lazy fetch for this collection could not REACH its source, or &quot;&quot; when it is healthy.</p>
 <p>A lookup cannot tell you this. C80 says a value read never raises, so a miss answers `null` whether the key is genuinely absent or the source is unreachable — and those are different facts, one stable and one not. Ask this after a null to tell them apart:</p>
 <p>p = persons[42]; if p == null { why = store_lazy_error(persons); if why == &quot;&quot; { /* really no such person */ } else { /* could not reach: {why} */ } }</p>
 <p>The FIRST failure's reason, kept — not the last: it names the original cause, and later ones are usually the same failure repeating. Nothing clears it but `store_lazy_clear`. An absence does NOT, and neither does a later success: reaching the source now says nothing about what an earlier failure already lost, and answering &quot;healthy&quot; over a traversal that missed data is the silent wrong answer this channel exists to prevent.</p>
 </div>
 <div class="item">
-<pre><code>pub fn store_lazy_faults(local: reference) -&gt; integer</code></pre>
+<pre><code>pub fn store_lazy_faults(local: const reference) -&gt; integer</code></pre>
 <p>How many fetches could not REACH this collection's source. 0 is healthy. The magnitude behind `store_lazy_error`: after a traversal it answers &quot;how incomplete am I&quot;.</p>
 </div>
 <div class="item">
@@ -4746,17 +4747,17 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>`limit` caps the WALK, not just the answer: with `limit` 8 the ninth record is never stepped to, so its pages are never fetched. A negative `limit` means no cap, which on a common prefix reads the whole run. words: trie&lt;Word[w]&gt; = [] store_load_prefix(words, &quot;vocab.store&quot;, &quot;kerk&quot;, 20)</p>
 </div>
 <div class="item">
-<pre><code>pub fn store_load_box(local: reference, path: text, from: vector&lt;integer&gt;, till: vector&lt;integer&gt;, limit: integer) -&gt; integer fs#read</code></pre>
+<pre><code>pub fn store_load_box(local: reference, path: text, from: const vector&lt;integer&gt;, till: const vector&lt;integer&gt;, limit: integer) -&gt; integer fs#read</code></pre>
 <p>Box form: fetch every entry inside the closed bounding box `from`..`till` from a persisted `spatial&lt;T[x, y]&gt;` into `local`, reading only the pages the box walk touches — what a map viewport needs. Returns the count loaded. The corners are vectors so the same call serves 1, 2 or 3 axes, and writing them the other way round names the same box.</p>
 <p>TWO bounds, and a map needs both. `limit` caps the WALK, not just the answer: with `limit` 200 the 201st marker is never stepped to, so its pages are never fetched (a negative `limit` means no cap). And the BOX bounds it — the Morton interval between two corners is a superset the Z-order curve threads in and out of, so a wide, shallow viewport would otherwise read 1.46 M records to return 4 k. Measured on a 3.2 M-point map index: 5.3 pages of 64 KB for the first viewport, ~1.5 for each pan after it, against a 158 MB whole-image download.</p>
 <p>Those numbers assume a dataset written with locality in every axis, which is the one thing this call cannot do for you. The Morton walk is symmetric; a file laid out along ONE axis is not, so a box crossing that axis pays for every stride it crosses. On a 62 500-point grid returning the same 500 records, a 250x2 box read 107 pages of 64 KiB against 7 for its 2x250 mirror, and the two swapped when the identical data was written in the other axis order — 81 % of the image to return 0.8 % of the records. Write such a dataset TILED: it has no bad orientation, and for the square-ish boxes a viewport uses it beats either linear order. pins: spatial&lt;Pin[x, y]&gt; = [] store_load_box(pins, &quot;map.store&quot;, [x1, y1], [x2, y2], 200)</p>
 </div>
 <div class="item">
-<pre><code>pub fn store_load_keys(local: reference, path: text, keys: vector&lt;integer&gt;) -&gt; integer fs#read</code></pre>
+<pre><code>pub fn store_load_keys(local: reference, path: text, keys: const vector&lt;integer&gt;) -&gt; integer fs#read</code></pre>
 <p>Plural form of `store_load_key`: fetch the given integer keys' entries into `local` in one call (the paged reader is opened once and its cache reused), returning how many were found. Keys absent from the remote are skipped. Same relocation rules as `store_load_key`. tiles: hash&lt;Tile[id]&gt; = [] got = store_load_keys(tiles, &quot;block.store&quot;, [7, 13, 42])   // got == 3</p>
 </div>
 <div class="item">
-<pre><code>pub fn store_load_keys_text(local: reference, path: text, keys: vector&lt;text&gt;) -&gt; integer fs#read</code></pre>
+<pre><code>pub fn store_load_keys_text(local: reference, path: text, keys: const vector&lt;text&gt;) -&gt; integer fs#read</code></pre>
 <p>Plural form of `store_load_key_text`, and the text twin of `store_load_keys`: fetch the given text keys' entries into `local` in ONE call, returning how many were found. Keys absent from the remote are skipped. Serves a `hash&lt;T[k]&gt;` and a `trie&lt;T[k]&gt;` alike, like the single-key form.</p>
 <p>Looping `store_load_key_text` is not the same call: each one opens its own reader, so a ring of twenty asset names re-fetches the same 64 KiB bucket-table page twenty times. This opens the reader once and shares its page cache — which is what makes it the PREFETCH call: ask for the ring at a load or level boundary, so no frame is ever the thing that discovers it needs an asset. art: hash&lt;Blob[bl_key]&gt; = [] got = store_load_keys_text(art, &quot;pack.store&quot;, [&quot;page/mobs&quot;, &quot;hit.ogg&quot;])</p>
 </div>
@@ -4775,7 +4776,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Returns false — a no-op — when there is nothing to seek in: a directory, an absent file, a negative `pos`, or a file the process has not yet read from or written to (the OS handle is opened by the first I/O, so seeking before it exists has nothing to move).  Seeking PAST the end is allowed: the position is remembered and a following write extends the file, which is how a free-list or an update-in-place walk lands.</p>
 </div>
 <div class="item">
-<pre><code>pub fn position(self: File) -&gt; integer</code></pre>
+<pre><code>pub fn position(self: const File) -&gt; integer</code></pre>
 <p>The current read/write position in bytes, i.e. where the next read or write will land.  The read side of [seek]; `self#next` is the operator form.</p>
 <p>Distinct from `self#index`, which is where the LAST read STARTED — after `x = f#read as i32` on a fresh file, `position` is 4 and `f#index` is 0.</p>
 <p>A file this process has not read from or written to yet has no position, and reports null rather than 0 — 0 is a legitimate position, so returning it would make &quot;not opened&quot; indistinguishable from &quot;at the start&quot;.  Discharge with `?? 0` when the distinction does not matter.</p>
@@ -4785,7 +4786,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Flushes buffered bytes for self to the underlying storage so that the preceding writes are durable. Use between log records or block boundaries to guarantee that earlier appends have landed on disk before later ones are issued.</p>
 </div>
 <div class="item">
-<pre><code>pub fn files(self: File) -&gt; vector&lt;File&gt; fs#read</code></pre>
+<pre><code>pub fn files(self: const File) -&gt; vector&lt;File&gt; fs#read</code></pre>
 <p>Returns the entries inside a directory, sorted by path — the same order as `list_dir`, so an index into either listing means the same entry. The File must have format == Format.Directory; anything else lists as `[]` (where `list_dir` answers null, because it has no format to check first). Use to iterate over all files in a folder.</p>
 </div>
 <div class="item">
@@ -4952,10 +4953,6 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 }</code></pre>
 <p>Lifecycle state of a coroutine frame. Transitions: Created -&gt; Running -&gt; Suspended -&gt; Running -&gt; ... -&gt; Exhausted.</p>
 </div>
-<div class="item">
-<pre><code>pub fn exhausted(gen: reference) -&gt; boolean</code></pre>
-<p>CO1.6: Returns true if the coroutine has finished producing values.</p>
-</div>
 <h2 id="stdlib-json">JSON</h2>
 <div class="item">
 <pre><code>pub enum JsonValue {
@@ -4987,57 +4984,57 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Populates the runtime's per-call json_errors state (read by json_errors()).  Allocates the result tree into worker-local stores → par-safe; no parent state written. Return a pipe-separated trail of JSON parse errors from the most recent `json_parse` call.  Empty when the parse succeeded.  Each entry carries an RFC 6901 path, a `line:col` location, and a context snippet — see Q1 in `doc/claude/QUALITY.md`.</p>
 </div>
 <div class="item">
-<pre><code>pub fn field(self: JsonValue, name: text) -&gt; JsonValue[self]</code></pre>
+<pre><code>pub fn field(self: const JsonValue, name: text) -&gt; JsonValue[self]</code></pre>
 <p>Observes the runtime's json_errors state populated by json_parse.  No parent writes. JObject indexer — returns the value at `name`, or `JNull` when `self` isn't a JObject or the key is missing.  Chained access like `root.field(&quot;a&quot;).field(&quot;b&quot;)` is safe — every intermediate missing produces `JNull`, never a trap.</p>
 </div>
 <div class="item">
-<pre><code>pub fn item(self: JsonValue, index: integer) -&gt; JsonValue[self]</code></pre>
+<pre><code>pub fn item(self: const JsonValue, index: integer) -&gt; JsonValue[self]</code></pre>
 <p>JArray indexer — returns the element at `index`, or `JNull` when `self` isn't a JArray or the index is out of bounds.</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(self: JsonValue) -&gt; integer</code></pre>
+<pre><code>pub fn len(self: const JsonValue) -&gt; integer</code></pre>
 <p>Length of a JArray's items vector or a JObject's fields vector. Returns `null` (i32::MIN) for any other variant.</p>
 </div>
 <div class="item">
-<pre><code>pub fn as_text(self: JsonValue) -&gt; text</code></pre>
+<pre><code>pub fn as_text(self: const JsonValue) -&gt; text</code></pre>
 <p>Typed extractor — returns `null` on kind mismatch.</p>
 <p>The null is NOT the empty text, and only `??` tells the two apart: on a mismatch `s == &quot;&quot;` is false and `len(s)` is 1, while a field that really holds `&quot;&quot;` compares equal and measures 0.  Reach for `as_text(...) ?? fallback`, never `== &quot;&quot;`.</p>
 </div>
 <div class="item">
-<pre><code>pub fn as_number(self: JsonValue) -&gt; float</code></pre>
+<pre><code>pub fn as_number(self: const JsonValue) -&gt; float</code></pre>
 <p>Typed extractor — returns `null` on kind mismatch.</p>
 </div>
 <div class="item">
-<pre><code>pub fn as_long(self: JsonValue) -&gt; integer</code></pre>
+<pre><code>pub fn as_long(self: const JsonValue) -&gt; integer</code></pre>
 <p>Typed extractor — returns `null` on kind mismatch.  Truncates the underlying `float` toward zero before converting.</p>
 </div>
 <div class="item">
-<pre><code>pub fn as_bool(self: JsonValue) -&gt; boolean?</code></pre>
+<pre><code>pub fn as_bool(self: const JsonValue) -&gt; boolean?</code></pre>
 <p>Typed extractor — returns `null` on kind mismatch.</p>
 <p>Declared `boolean?` and not `boolean`: the doc has always promised the null and the signature could not carry it.  Its three siblings keep the promise because `text`, `float` and `integer` each have an in-band sentinel a non-null return can hold; a two-state Rust `bool` has none, so this one answered `false` for every mismatching kind — for an absent field, for the string `&quot;true&quot;`, and for `1` — indistinguishably from a field that really says `false`.</p>
 </div>
 <div class="item">
-<pre><code>pub fn kind(self: JsonValue) -&gt; text</code></pre>
+<pre><code>pub fn kind(self: const JsonValue) -&gt; text</code></pre>
 <p>Q2 introspection — returns the variant name as text: `&quot;JNull&quot;`, `&quot;JBool&quot;`, `&quot;JNumber&quot;`, `&quot;JString&quot;`, `&quot;JArray&quot;`, or `&quot;JObject&quot;`.  Cheap: reads the discriminant byte, formats a literal.  Useful for logs and conditional branches that don't want to commit to a full pattern match.</p>
 </div>
 <div class="item">
-<pre><code>pub fn keys(self: JsonValue) -&gt; vector&lt;text&gt;</code></pre>
+<pre><code>pub fn keys(self: const JsonValue) -&gt; vector&lt;text&gt;</code></pre>
 <p>Q2 introspection — returns the field-name list of a `JObject` in insertion order, or an empty vector for any other variant. Safe idiom: `for k in v.keys() { ... }` works on any JsonValue because non-objects yield an empty walk.</p>
 </div>
 <div class="item">
-<pre><code>pub fn fields(self: JsonValue) -&gt; vector&lt;JsonField&gt;</code></pre>
+<pre><code>pub fn fields(self: const JsonValue) -&gt; vector&lt;JsonField&gt;</code></pre>
 <p>Q2 introspection — returns the (name, value) entries of a `JObject` in insertion order so callers can iterate as `for entry in fields(v) { … entry.name … entry.value … }`. Values deep-copy (primitives + nested containers — full tree). Empty vector for any other variant.</p>
 </div>
 <div class="item">
-<pre><code>pub fn has_field(self: JsonValue, name: text) -&gt; boolean</code></pre>
+<pre><code>pub fn has_field(self: const JsonValue, name: text) -&gt; boolean</code></pre>
 <p>Q2 introspection — returns true iff `self` is a `JObject` variant carrying a field named `name`.  All other variants (including `JNull` on a parse error) return false, so the common pattern `if v.has_field(&quot;users&quot;) { … }` is safe to write on any JsonValue without first destructuring. Distinguishes &quot;absent&quot; from &quot;present-but-null&quot; — a field whose value is `JNull` still returns `true`.</p>
 </div>
 <div class="item">
-<pre><code>pub fn to_json(self: JsonValue) -&gt; text</code></pre>
+<pre><code>pub fn to_json(self: const JsonValue) -&gt; text</code></pre>
 <p>Q3 serialiser — render a JsonValue to canonical RFC 8259 JSON text.  All six variants serialise; `JArray` / `JObject` recurse through their children (full tree serialisation, nested containers walk naturally).  Strings escape `&quot;`, `\\`, and ASCII control bytes; UTF-8 passes through verbatim. Non-finite numbers render as `null`.</p>
 </div>
 <div class="item">
-<pre><code>pub fn to_json_pretty(self: JsonValue) -&gt; text</code></pre>
+<pre><code>pub fn to_json_pretty(self: const JsonValue) -&gt; text</code></pre>
 <p>Q3 pretty serialiser — `to_json_pretty` produces 2-space indented, one-element-per-line output for non-empty `JArray` / `JObject` containers.  Empty containers render `[]` / `{}` (no newline padding).  Primitives are byte-identical to `to_json` (no nested structure to indent).  After object keys the colon is followed by a single space (`&quot;k&quot;: v`). Useful for golden-file tests and log output.</p>
 </div>
 <div class="item">
@@ -5057,24 +5054,24 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Non-finite inputs touch json_errors state.  Otherwise pure construction into worker stores. Q4 constructor — build a JsonValue set to the `JString` variant carrying the supplied text payload.  The text is copied into the JsonValue's own store, so the returned value owns the string independently of the argument's lifetime.</p>
 </div>
 <div class="item">
-<pre><code>pub fn json_array(items: vector&lt;JsonValue&gt;) -&gt; JsonValue</code></pre>
+<pre><code>pub fn json_array(items: const vector&lt;JsonValue&gt;) -&gt; JsonValue</code></pre>
 <p>Q4 constructor — build a JsonValue set to the `JArray` variant carrying the supplied items.  Each element is deep-copied into the new tree's arena via the shared `dbref_to_parsed` walker, so nested containers and arena-origin subtrees (e.g. a captured `field()` result) embed correctly.  Empty input produces a real empty JArray.</p>
 </div>
 <div class="item">
-<pre><code>pub fn json_object(fields: vector&lt;JsonField&gt;) -&gt; JsonValue</code></pre>
+<pre><code>pub fn json_object(fields: const vector&lt;JsonField&gt;) -&gt; JsonValue</code></pre>
 <p>Build a JsonValue set to the `JObject` variant carrying the supplied fields.  Each field's value deep-copies via the same `dbref_to_parsed` walker as `json_array`, so a JObject can carry captured-subtree JArray / JObject values.  Empty input produces a real empty JObject.</p>
 </div>
 <div class="item">
-<pre><code>pub fn struct_from_jsonvalue(v: JsonValue, struct_kt: integer) -&gt; JsonValue</code></pre>
+<pre><code>pub fn struct_from_jsonvalue(v: const JsonValue, struct_kt: integer) -&gt; JsonValue</code></pre>
 <p>Internal walker — populate a struct of the given `struct_kt` (known-type number) from a JsonValue.  Compile-time codegen for `Struct.parse(JsonValue)` emits exactly one call to this function regardless of struct shape; the runtime walker uses `stores.types[struct_kt].parts` to dispatch on each field's declared type (primitive, nested struct, JsonValue passthrough, or vector). Path-qualified schema-side diagnostics on type mismatches go to `json_errors()`.  Users should not call this directly — write `MyStruct.parse(value)` instead.</p>
 <p>Return type is declared as `JsonValue` here purely because it shares the same DbRef byte layout as the actual `reference[T]` the walker produces — the compile-time codegen at `parse_type_parse` overrides the type to `reference[T]` for the caller while the stack accounting remains correct.</p>
 </div>
 <div class="item">
-<pre><code>pub fn struct_to_json(self_ref: JsonValue, struct_kt: integer) -&gt; text</code></pre>
+<pre><code>pub fn struct_to_json(self_ref: const JsonValue, struct_kt: integer) -&gt; text</code></pre>
 <p>Populates json_errors on type mismatches.  Allocates the result struct into worker stores → par-safe; no parent state writes. P54 Q3 second half — serialise any user struct to canonical JSON. Backs the parser-side intercept for `instance.to_json()`; the `field == &quot;to_json&quot;` rewrite in `src/parser/fields.rs` lowers the method call to `n_struct_to_json(self_ref, struct_kt)`.  Walks `stores.types[struct_kt].parts` via `Stores::show_json` (which reuses the existing `ShowDb` schema walker) and produces RFC 8259 JSON text.  String fields are escaped (`&quot;` / `\` / control bytes); nested structs and vectors recurse; `JsonValue`-typed fields render their inline subtree verbatim.  The first parameter is declared as `JsonValue` purely so the parser type-system accepts the synthesised call regardless of the actual receiver's struct type — the runtime only reads the `struct_kt` discriminant for dispatch.</p>
 </div>
 <div class="item">
-<pre><code>pub fn struct_to_json_pretty(self_ref: JsonValue, struct_kt: integer) -&gt; text</code></pre>
+<pre><code>pub fn struct_to_json_pretty(self_ref: const JsonValue, struct_kt: integer) -&gt; text</code></pre>
 <p>As `struct_to_json` but produces a pretty (2-space-indent, one element per line) form.  Same field-type matrix.</p>
 </div>
 <h2 id="stdlib-type-reflection">Type reflection</h2>
@@ -5236,7 +5233,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>A boolean and a character ride in `i` for the reason a bound SQL value does: one integer path is one thing to get right, and the `kind` beside it is what keeps them apart.</p>
 </div>
 <div class="item">
-<pre><code>pub fn reflect_field(value: TypeInfo, position: integer, kt: integer) -&gt; ValueInfo</code></pre>
+<pre><code>pub fn reflect_field(value: const TypeInfo, position: integer, kt: integer) -&gt; ValueInfo</code></pre>
 <p>The value `value` holds at byte `position` — the VALUE half of reflection.</p>
 <p>`type_of` says a record has a `text` at byte 16; this reads it. Together they are what a generic serialiser, an ORM write or a diff needs, and neither half is enough alone:</p>
 <p>```loft t = type_of(row); for f in t.fields { v = field_value(row, f.position); if v.is_null { println(&quot;{f.name}=null&quot;) } else { println(&quot;{f.name}={v.t}&quot;) } } ```</p>
@@ -5247,7 +5244,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>The value parameter is declared `TypeInfo` only because loft has no way to spell &quot;any record&quot;; the parser substitutes the real argument, and only the reference ABI matters here. `struct_to_json` (06_json.loft) does the same.</p>
 </div>
 <div class="item">
-<pre><code>pub fn reflect_field_path(value: TypeInfo, path: vector&lt;integer&gt;, kt: integer) -&gt; ValueInfo</code></pre>
+<pre><code>pub fn reflect_field_path(value: const TypeInfo, path: const vector&lt;integer&gt;, kt: integer) -&gt; ValueInfo</code></pre>
 <p>Reads through the SAME `Parts::Struct` field list the store itself is walked by, and allocates the answer into the caller's own stores → par-safe. The value at the end of a PATH of positions — `field_value(x, [8, 0])`.</p>
 <p>`type_of` reports a nested record's fields at positions relative to THAT record, so one number cannot name `origin.x` — and reflection hands back no handle to a nested record to call `field_value` on again. A path closes that: each element is a position in the record the previous element landed in.</p>
 <p>**The offsets must not be added up by the caller.** `field_value(doc, 8 + 0)` asks for a field BEGINNING at byte 8 of `Doc`, which is `origin` itself — the check that makes this ordinary loft rather than a pointer is that a position must begin a field of the type it is read against. So the walk happens inside, one descriptor step per element, each checked the same way.</p>

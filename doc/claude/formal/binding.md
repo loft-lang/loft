@@ -383,16 +383,29 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 **OPEN: 3.**
 
-* **D-bind-45** *(opened 2026-09-15, OPEN — the owner's decision)* — `(Const-Value)` for a value-const
-  value handed to a PLAIN heap parameter the callee writes: `fn setv(p: P) { p.x = 7; }` called as
-  `setv(ps[0])`, or `for f in ps { setv(f) }`, or `g(ps)` with `fn g(v: vector<P>) { v += […] }`, writes
-  the caller's `const` value on both backends with no diagnostic, because a plain struct or vector
-  parameter names the caller's record (`calls.md` F-ParamHeap).  D-bind-44 closed the `&` spelling; this
-  is the common one plan 40's scope correction names.  **Open because the rules do not say which of two
-  readings holds:** refuse by SIGNATURE (a value-const value may reach only a `const` heap parameter —
-  local to the call, and also refuses read-only helpers such as `len_of(v: vector<T>)`), or refuse by
-  BODY (only where the callee writes the parameter, `callee_param_writes` — keeps readers legal, and
-  makes a call's legality depend on a body the caller does not see).  loft#1540.
+* **D-bind-45** *(opened 2026-09-15, OPEN — narrowed to one residual)* — `(Const-Value)` for a
+  value-const value handed to a PLAIN heap parameter.  A plain struct or vector parameter names the
+  caller's record (`calls.md` F-ParamHeap), so `fn bump(a: Account) { a.balance = 999 }` called as
+  `bump(acct)` with `acct: const Account` wrote the caller's balance on both backends with no
+  diagnostic.  **Decided (owner, C124): by SIGNATURE.**  A value-const value reaches only a parameter
+  declared `const`; whether the callee's body writes it is not asked — a line's meaning is judged by
+  the line and the signatures it names (C121), and a proof about a body stays an optimisation's
+  (C122).  **Built, as a WARNING first** (`const-to-plain-parameter`, the owner's rollout: 102 call
+  sites in consumer libraries reach 17 read-only helpers not yet declared `const` — DESIGN_DECISIONS.md
+  C124 § Rollout lists them; it becomes an error once they are): the call gate beside D-bind-44's `&`
+  gate, reading the parameter's `const` from
+  the definition's attribute (`Attribute.value_const`, now serialised in the IR store so a cached
+  stdlib or library keeps it); the standard library declares its read-only heap parameters `const`;
+  a generic instance, an interface stub, a bound-method stub, a default-value function and an
+  overload dispatcher carry the `const` of what they copy; an `Op*` primitive is exempt, since only
+  the standard library's own bodies can call one and `const` there means an immediate operand.
+  Guards `tests/scripts/a-const-value-reaches-only-a-const-parameter.loft` and
+  `…-passed-to-a-const-parameter-is-legal.loft`.  **Still open:** a value-const value handed on
+  through a FUNCTION REFERENCE — `op(acct)` with `op: fn(Account)` still writes the caller's value,
+  because a fn-ref call converts its arguments on a path neither gate reaches, and a function type
+  cannot say `const` at all (`fn(const Account)` does not parse), so refusing it would leave no cure
+  but a copy.  Closing it needs `const` in a function type's parameters first (C124 § Revisit when).
+  loft#1540.
 * **D-bind-44** *(opened 2026-09-15, CLOSED 2026-09-15)* — `(Const-Value)` through a VIEW: a value-const
   value was written, in silence and on both backends, through a loop variable over its elements
   (`for f in ps { f.x = 5 }`), an element or field bound to a local (`p = ps[0]`, `q = w.p`,

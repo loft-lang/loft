@@ -78,12 +78,18 @@ re-annotated to match.  No new keyword.
     `…-leaves-its-copies-writable.loft` (the copies, whole-value binds and `const` hand-offs that
     must stay legal).  Known over-approximation: the mark follows the BIND, not the flow, so a
     view local rebound to a fresh value is still refused.
-  - **NOT built — the plain-parameter half, awaiting the owner.**  "Every argument position that
-    can be written" reads two ways, and they differ on real programs: by SIGNATURE (refuse a
-    `const` value handed to any non-`const` heap parameter, which also refuses read-only helpers
-    such as `len_of(v: vector<T>)`), or by BODY (refuse only where the callee writes that
-    parameter, `callee_param_writes` — which makes a call's legality depend on a body the caller
-    does not see, against C121's "judge a line by the line").
+  - **Built 2026-09-15 — the plain-parameter half, by SIGNATURE (owner, DESIGN_DECISIONS.md C124),
+    landing as the warning `const-to-plain-parameter` until the 17 library helpers C124 § Rollout
+    lists declare `const`.**
+    A value-const value reaches a record or collection parameter only when that parameter is
+    declared `const`; the body is never read (C121), and a proof that a callee does not write stays
+    an optimisation's (C122).  The parameter's `const` is carried on the definition's attribute
+    (`Attribute.value_const`, serialised in the IR store — the Phase 2b deferral this needed) and
+    kept by every copy of a signature: generic instances, interface and bound-method stubs,
+    default-value functions, overload dispatchers.  The stdlib's read-only heap parameters are
+    `const`; `Op*` primitives are exempt (only stdlib bodies call them, and `const` there means an
+    immediate operand).  **Open:** a function type cannot spell `const`, so a value-const value
+    handed through a function reference is unchecked (formal/binding.md D-bind-45).
 
 ## First principle — two orthogonal facts, and loft already has one of them
 

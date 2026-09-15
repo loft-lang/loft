@@ -56,7 +56,8 @@ fn hand_const(ps: const vector<P1541>) -> integer {
   s
 }
 
-fn len_of1541(v: vector<P1541>) -> integer { len(v) }
+// C124 — a `const` value reaches only a `const` parameter, so the read-only helper says so.
+fn len_of1541(v: const vector<P1541>) -> integer { len(v) }
 
 fn hand_plain(ps: const vector<P1541>) -> integer { len_of1541(ps) }
 

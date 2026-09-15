@@ -633,6 +633,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t76, "primary", t4);
     db.field(t76, "hidden", t4);
     db.field(t76, "const_field", t4);
+    db.field(t76, "value_const", t4);
     let vec_value = db.vector(t8);
     db.field(t76, "value", vec_value);
     let vec_check = db.vector(t8);

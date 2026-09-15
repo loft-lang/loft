@@ -7775,6 +7775,11 @@ impl Data {
         for a in arguments {
             let a_nr = self.add_attribute(lexer, d_nr, &a.name, a.typedef.clone());
             self.set_attr_value(d_nr, a_nr, a.default.clone());
+            // C124 — the `const` of a parameter is also a fact about the SIGNATURE, read at every
+            // call: a value-const value reaches only a `const` parameter.  Carried on
+            // `value_const`, never on `mutable`/`constant` (the note below), because a native
+            // declaration has no variable table to carry it and the store serialises this one.
+            self.definitions[d_nr as usize].attributes[a_nr].value_const = a.constant;
             // Note: Argument.constant (the `const` keyword on a parameter) is enforced at the
             // parser level via Variable.const_param — NOT by setting Attribute.mutable = false
             // here. Setting mutable = false for a user-defined function parameter would cause

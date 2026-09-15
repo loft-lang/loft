@@ -613,7 +613,7 @@ pub fn group_vbos_destroy(set: &GroupVboSet) {
 
 // Set a mat4 uniform on a shader program. mat is a Mat4.m vector (16 floats).
 // Native codegen: loft_gl_set_mat4(program: i32, name_ptr, name_len, mat_ptr: *const f64, count: u32)
-pub fn gl_set_uniform_mat4(program: integer, name: text, mat: vector<float>);
+pub fn gl_set_uniform_mat4(program: integer, name: text, mat: const vector<float>);
 #native "loft_gl_set_mat4"
 
 // --- Uniforms ---
@@ -869,7 +869,7 @@ pub fn gl_load_texture(path: text) -> integer;
 
 // Upload Canvas pixel data as a GL texture. Returns the texture ID.
 // Converts 0xAARRGGBB packed integers to RGBA bytes for OpenGL.
-pub fn gl_upload_canvas(data: vector<integer>, width: integer, height: integer) -> integer;
+pub fn gl_upload_canvas(data: const vector<integer>, width: integer, height: integer) -> integer;
 #native "loft_gl_upload_canvas"
 
 // Bind a texture to a texture unit (0-based) for rendering.

@@ -695,12 +695,11 @@ fn read_attribute(stores: &Stores, r: Record) -> Attribute {
         mutable: r.field_bool(stores, ds::ATTR_MUTABLE),
         constant: r.field_bool(stores, ds::ATTR_CONSTANT),
         const_field: r.field_bool(stores, ds::ATTR_CONST_FIELD),
-        // @PLN40 Phase 2 — value_const is NOT yet store-serialised (that needs an
-        // ATTRIBUTE_STRIDE bump + a new schema bool offset).  Deferred to Phase 2b: it is
-        // set at PARSE time and drives the compile-time chain-walk, which covers the
-        // compile-and-run path (all current use).  A store round-trip resets it to false;
-        // no store-durable value-const struct exists yet.
-        value_const: false,
+        // C124 — store-serialised: a function's `const` parameter is read at every CALL
+        // (a value-const value reaches only a `const` parameter), and a callee from the
+        // stdlib or a `use`d library arrives through this store, so a round-trip that reset
+        // it would refuse a legal call.  The same bool is a struct field's value-const.
+        value_const: r.field_bool(stores, ds::ATTR_VALUE_CONST),
         init: r.field_bool(stores, ds::ATTR_INIT),
         nullable: r.field_bool(stores, ds::ATTR_NULLABLE),
         primary: r.field_bool(stores, ds::ATTR_PRIMARY),
