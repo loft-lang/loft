@@ -759,14 +759,23 @@ fn cap_address_space(_cmd: &mut Command, _mode: &str) {}
 
 /// Runs every cell alone, `workers` at a time, and answers the verdicts in cell order.
 fn run_all(cells: &[Cell], mode: &str, timeout: &str, workers: usize) -> Vec<Verdict> {
-    let dir = std::env::temp_dir().join(format!(
-        "loft_drop_gate_{}_{}",
-        mode.trim_start_matches('-'),
-        std::process::id()
-    ));
+    for_each_cell(cells, mode.trim_start_matches('-'), workers, |dir, c| {
+        run_cell(dir, c, mode, timeout)
+    })
+}
+
+/// Answers `run(dir, cell)` for every cell, `workers` at a time, in cell order.  `dir` is a
+/// scratch directory of its own, named by `tag`, removed afterwards.
+fn for_each_cell<T: Send>(
+    cells: &[Cell],
+    tag: &str,
+    workers: usize,
+    run: impl Fn(&Path, &Cell) -> T + Sync,
+) -> Vec<T> {
+    let dir = std::env::temp_dir().join(format!("loft_drop_gate_{tag}_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create the gate's scratch directory");
     let next = AtomicUsize::new(0);
-    let results: Mutex<Vec<Option<Verdict>>> = Mutex::new(cells.iter().map(|_| None).collect());
+    let results: Mutex<Vec<Option<T>>> = Mutex::new(cells.iter().map(|_| None).collect());
     std::thread::scope(|s| {
         for _ in 0..workers.max(1) {
             s.spawn(|| {
@@ -775,7 +784,7 @@ fn run_all(cells: &[Cell], mode: &str, timeout: &str, workers: usize) -> Vec<Ver
                     if i >= cells.len() {
                         break;
                     }
-                    let v = run_cell(&dir, &cells[i], mode, timeout);
+                    let v = run(&dir, &cells[i]);
                     results.lock().unwrap()[i] = Some(v);
                 }
             });
@@ -926,6 +935,160 @@ fn every_cell_is_distinct_and_mints() {
             c.name
         );
     }
+}
+
+// ── the copy census (@PLN163 P0) ────────────────────────────────────────────────────────────
+
+/// The `LOFT_DROP_COPY_CENSUS` report for one cell compiled over `prelude`: the site lines of the
+/// cell's OWN functions (the prelude's helpers copy too, in every cell) without the scope pass's
+/// release snapshots, and the count line.  `None` when the census printed no count line, which
+/// means it never ran.
+fn census(dir: &Path, c: &Cell, prelude: &str) -> Option<(Vec<String>, String)> {
+    let path = dir.join(format!("{}.loft", c.name));
+    let text = program(c).replacen(PRELUDE, prelude, 1);
+    std::fs::write(&path, text).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
+    let out = Command::new(loft_bin())
+        .arg("--interpret")
+        .arg(&path)
+        .current_dir(dir)
+        .env("LOFT_TIMEOUT", "60")
+        .env("LOFT_DROP_COPY_CENSUS", "1")
+        .output()
+        .unwrap_or_else(|e| panic!("spawn loft for {}: {e}", c.name));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let count = stderr
+        .lines()
+        .find(|l| l.starts_with("drop-copy census: "))?
+        .to_string();
+    let own = [
+        format!("n_{}", c.name),
+        format!("n_{}_b", c.name),
+        format!("n_{}_m", c.name),
+    ];
+    let sites = stderr
+        .lines()
+        .filter(|l| l.starts_with("drop-copy fn=") && !l.contains(" kind=snapshot "))
+        .filter(|l| census_field(l, "fn").is_some_and(|f| own.iter().any(|o| o == f)))
+        .map(str::to_string)
+        .collect();
+    Some((sites, count))
+}
+
+/// The value of `key=` in a census line.
+fn census_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    line.split_whitespace()
+        .find_map(|t| t.strip_prefix(key)?.strip_prefix('='))
+}
+
+/// The variables a cell's copy must be reported FROM, derived by hand from its two axes.
+///
+/// A source that names a structure is reported from that structure's root when the destination
+/// COPIES it: a field, an enum payload, an element, a whole value bound to a variable
+/// (binding.md `(B-Copy)`).  A PROJECTION bound to a variable or placed in a tuple member is a
+/// VIEW of its root instead — `(B-View)`, `(B-View-Depth)`, `(B-View-Base)` — and so is a
+/// parameter or a `??` placed in a tuple member, so those copy nothing.  One tuple destination is
+/// measured to COPY where the rules predict a view: a tuple MEMBER placed in a tuple, `(tt.0, 1)`,
+/// copies while `(s.h, 1)` views (@PLN163 P1 reads that disagreement).  A fresh source (a call, a
+/// literal, a call result's field) is reported from no user variable.  `None` for a destination
+/// whose copy is not decided yet: a `return` may hand a local over without copying it.
+fn expected_roots(name: &str) -> Option<Vec<&'static str>> {
+    const VIEWING: &[&str] = &[
+        "local", "annot", "nullable", "arm", "arm0", "reassign", "tuplem",
+    ];
+    let parts: Vec<&str> = name.split('_').collect();
+    match parts.as_slice() {
+        [_, _, "ret"] | [_, _, _, _, "ret"] => None,
+        ["c", source, dest] => {
+            let views = VIEWING.contains(dest);
+            let tuplem = *dest == "tuplem";
+            Some(match *source {
+                "local" => vec!["a"],
+                "coalesce" | "param" if !tuplem => vec![if *source == "param" { "p" } else { "a" }],
+                "tuple" if !views || tuplem => vec!["tt"],
+                "field" if !views => vec!["s"],
+                "elem" if !views => vec!["vs"],
+                "pfield" if !views => vec!["p"],
+                _ => vec![],
+            })
+        }
+        ["q", _, _, _, "tuplem"] => Some(vec![]),
+        ["q", _, a, b, dest] => {
+            let mut roots = Vec::new();
+            if *a != "field" || !VIEWING.contains(dest) {
+                roots.push(if *a == "field" { "s" } else { "a" });
+            }
+            if *b == "var" {
+                roots.push("b");
+            }
+            Some(roots)
+        }
+        _ => None,
+    }
+}
+
+/// The census lists the copy each generated cell makes: a copy of a structure is reported from
+/// that structure's root, a fresh value is reported from no user variable, and a program whose
+/// resource type has no `OpDrop` reports no site at all.  The census is what @PLN163 P2 turns
+/// into the refusal report, so a copy it cannot see is a copy the refusal would let through.
+#[test]
+fn the_census_names_the_copy_each_cell_makes() {
+    let cells: Vec<Cell> = cross_cells().into_iter().chain(coalesce_cells()).collect();
+    let reports = for_each_cell(&cells, "census", workers(16), |dir, c| {
+        census(dir, c, PRELUDE)
+    });
+    let mut wrong = Vec::new();
+    for (c, report) in cells.iter().zip(reports) {
+        let Some((sites, _)) = report else {
+            wrong.push(format!("{}: the census never ran", c.name));
+            continue;
+        };
+        // `from=a,b` lists one root per arm of a join; `-` names no variable.
+        let from: Vec<&str> = sites
+            .iter()
+            .filter_map(|l| census_field(l, "from"))
+            .flat_map(|f| f.split(','))
+            .filter(|f| *f != "-")
+            .collect();
+        let Some(roots) = expected_roots(&c.name) else {
+            eprintln!("  undecided {}: {sites:?}", c.name);
+            continue;
+        };
+        for root in &roots {
+            if !from.contains(root) {
+                wrong.push(format!("{}: no copy from `{root}` in {sites:?}", c.name));
+            }
+        }
+        for f in &from {
+            if !f.starts_with('_') && !roots.contains(f) {
+                wrong.push(format!(
+                    "{}: a copy from `{f}`, expected only {roots:?}",
+                    c.name
+                ));
+            }
+        }
+    }
+
+    // The negative half: the same copies of a type with no hook are nobody's to report.
+    let plain = PRELUDE.replacen("fn OpDrop(self: H) { println(\"D{self.id}\"); }\n", "", 1);
+    assert_ne!(plain, PRELUDE, "the prelude's hook line was not found");
+    let locals: Vec<Cell> = cross_cells()
+        .into_iter()
+        .filter(|c| c.name.starts_with("c_local_"))
+        .collect();
+    let plain_reports = for_each_cell(&locals, "census_plain", workers(16), |dir, c| {
+        census(dir, c, &plain)
+    });
+    for (c, report) in locals.iter().zip(plain_reports) {
+        match report {
+            Some((sites, count)) if sites.is_empty() && count == "drop-copy census: 0 sites" => {}
+            other => wrong.push(format!("{} without a hook: {other:?}", c.name)),
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "\ncopy census:\n  {}\n",
+        wrong.join("\n  ")
+    );
 }
 
 /// The scorer can FAIL: each kind of finding is produced by the trace that should produce it,

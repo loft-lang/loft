@@ -7,10 +7,49 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Open — design, no implementation.  Tracked as
+Active — P0 in progress.  Tracked as
 [`@PLN163`](https://github.com/loft-lang/plans/issues/163).  Decided with the owner on 2026-09-15
 after the drop-release arc (`heap.md` D-heap-1, D-heap-7) kept meeting shapes where the compiler
 could not tell which copy should release a resource.
+
+## P0 findings so far
+
+**Who declares `OpDrop`.**  42 files, all in this repository: `tests/scripts` (34), the feature
+example `tests/docs/features/F115.loft`, one error-message case, the `dropscope` fixture library,
+and five sqldb driver fixtures (`sqlite`, `postgres`, `maria`, `duckdb`, `registry`), each a
+database cursor type.  **No published library, no consumer (`moros`, `dryopea`, `crawler`) and none
+of the 187 packages in the registry cache declares one** — measured with a whole-tree grep for
+`OpDrop` in every file type, controlled by a known hit in `139-drop-cascade.loft`.  So no type in
+published code can be copied under the new rules, and none can be refused.
+
+**What that decides for P3.**  loft is at contract 0, and `COMPATIBILITY.md` § The error surface is
+one-directional says an error is added *before* the freeze ("be strict now, because you can always
+relax later but never tighten").  With no published user, P3 needs no deprecation window.  What it
+does need is converting this repository's own uses.
+
+**The sqldb fixtures spell a move by hand.**  `registry.loft` wraps a cursor with
+`out = RowsSqlite { rs: cs }; cs.disown()` (eight sites), and each driver's `disown` zeroes the
+handle so the source's drop does nothing.  Under `(H-Copy-Refuse)`, the `disown` call is a use of
+the source after the copy, so the rule refuses the fixture's own workaround.  The rewrite is the move
+the rule allows: drop the `disown` call and let `cs` die at the copy.  P3 converts these eight sites
+along with the tests.
+
+Measured on both backends against a database-free copy of the shape (a cursor type and a wrapper
+enum, each with a hook that prints when it runs, and a `close` that prints only when it releases a
+live handle): with and without `disown` the trace is `M7 R7 st=7 end Dany C7 Dcur7` — the cursor is
+closed once, at the caller's drop, and never at the arm's end.  So `disown` is already redundant
+today, and the conversion changes no behaviour.
+
+**A first cell for P2.**  The same probe prints `advice[avoidable-copy]: copy of Cur — cs is still
+used after this point` for the variant with NO use after the copy.  P2's refusal needs exactly this
+fact (is the source used after the copy?), and here it already answers wrong.  Narrowed on
+`--interpret`: it fires with no `OpDrop` at all, and the "later use" it names is always the
+function's LAST line, wherever that is and whatever it reads.  The cause is the survival walk
+(`use_analysis.rs`, the `Value::Var` arm that fills `last_use_pos` / `last_use_loc`), which counts
+every read, including the scope pass's release of the source at the function's end.  That walk also
+feeds `scopes::move_elide`, so excluding releases can change what is emitted, not only the advice.
+That makes this P2's first cell rather than a side fix: P2 decides "used after the copy" once, and
+this walk either becomes that home or stops being asked.
 
 ## Goal
 
@@ -121,6 +160,23 @@ value; a refusal cell scores the error and its named line.
    type refuses.
 6. **A non-droppable type that must not be copied** (a `unique struct` modifier, beside `value struct`):
    left out until a use case asks for it.
+7. **Returning a member of a local that is about to die** (`return s.h`).  The census shows a copy
+   into the return buffer (`kind=buffer from=s`), while `s`'s own drop still covers the member.
+   `return a` of a whole local copies nothing, so "a `return` is legal" holds for a whole value only.
+   For a member there are three readings: a second lease, a refusal, or a move OUT of the container.
+   A move out needs the container's drop to skip the member, which is the per-element mark
+   `heap.md` § Standalone right, encapsulated warned already declined.
+8. **The release snapshot.**  A reassignment of a droppable deep-copies the displaced record into
+   `__disp_N` so its hook can run after the statement (`Scopes::displaced_drop`).  That is a real
+   runtime copy that no rule asks for.  It must neither run `OpCopy` nor be refused.  Under
+   `(H-Lease)` the displaced structure is simply dropped, so P5 decides whether the snapshot
+   survives at all.
+9. **A tuple member placed in a tuple copies; a field placed in a tuple views.**  `t = (tt.0, 1)`
+   emits `OpCopyRecord(tt.0, __ref_p2_1)` (`tuple_member_copy`) and releases id 1 twice
+   (`M1 R1 D1 D1`), while `t = (s.h, 1)`, `t = (vs[0], 1)`, `t = (p, 1)` and `t = (a ?? d, 1)`
+   are views typed with a dependency and release once.  By `(B-View-Base)` a struct projection off
+   an owned base is a view, so the tuple-member spelling is the deviation candidate.  P1 classifies
+   it against `tuples.md` `(T-Cons)`, which does not say whether a member is copied in.
 
 ## Cross-arc dependencies
 
