@@ -312,6 +312,17 @@ fn base_var(node: &Value, get_field: u32) -> Option<u16> {
     }
 }
 
+/// Does this call RELEASE its first argument: a free ([`OpSets::frees`]), or a drop hook or cascade
+/// ([`Data::is_drop_function`])?
+///
+/// A release is neither a read of the value nor a write into it.  The lints that count uses read
+/// the IR after `scopes::check`, which places a release for every value it owns; counted as a use,
+/// that release hides the very fact a lint asks about — a copy nothing reads, or a member two
+/// owners release.
+pub(crate) fn releases_first_arg(data: &Data, op: u32) -> bool {
+    data.op_sets().frees.contains(&op) || data.is_drop_function(op)
+}
+
 /// @PLN107 S1 — per-variable ACCESS classification for the dead-store lint. Returns, indexed
 /// by `var_nr`, `(reads, write_targets)`: how many times each local is READ (its value
 /// observed) versus used only as the WRITE-TARGET base of an element/field/keyed setter
@@ -324,15 +335,19 @@ fn base_var(node: &Value, get_field: u32) -> Option<u16> {
 /// it would misread an unused copy as a dead store. Projection handling mirrors
 /// [`projection_ops`]: `d.f[i]=x` → `OpSetInt(OpGetField(Var(d),f), i, v)` descends to the
 /// root var `d`, and the projection's INDEX args are ordinary reads.
-pub(crate) fn dead_store_accesses(body: &Value, n_vars: usize, data: &Data) -> Vec<(u16, u16)> {
+pub(crate) fn dead_store_accesses(body: &Value, func: &Function, data: &Data) -> Vec<(u16, u16)> {
     let ops = data.op_sets();
-    let mut acc = vec![(0u16, 0u16); n_vars];
+    let mut acc = vec![(0u16, 0u16); func.var_count()];
     let cx = AccessCx {
         data,
         projs: &ops.projections,
         writes: &ops.write_first_arg,
         lens: &ops.lengths,
         copy_record: data.def_nr("OpCopyRecord"),
+        database: data.def_nr("OpDatabase"),
+        value_struct_copies: (0..func.count())
+            .filter_map(|v| func.name(v).strip_prefix("__vs_src_")?.parse::<u16>().ok())
+            .collect(),
     };
     classify_access(body, &cx, &mut acc);
     acc
@@ -355,6 +370,14 @@ struct AccessCx<'a> {
     /// (`OpCopyRecord(source, dest, type)`).  `w[i] = Row{…}` lowers to it, so without
     /// this the whole-element assign was invisible to the dead-store lint (loft#670).
     copy_record: u32,
+    /// `OpDatabase` — see [`Self::value_struct_copies`].
+    database: u32,
+    /// The locals `scopes::value_struct_copy` rewrote into a copy of the view they were bound
+    /// from: it names its source temp `__vs_src_<N>` after the destination `N`, and allocates `N`
+    /// with `OpDatabase` before copying into it.  That allocation defines the copy, so it is not a
+    /// read.  Any other `OpDatabase` keeps its read: a record literal is built into its variable
+    /// the same way, and a fresh record is not a lost copy.
+    value_struct_copies: HashSet<u16>,
 }
 
 fn is_setter(op: u32, data: &Data) -> bool {
@@ -380,6 +403,16 @@ fn bump_write(acc: &mut [(u16, u16)], v: u16) {
 /// neither a read nor a copy-mutate write.
 fn classify_access(node: &Value, cx: &AccessCx, acc: &mut [(u16, u16)]) {
     match node.unspan() {
+        // A release observes nothing: see [`releases_first_arg`].
+        Value::Call(op, _) if releases_first_arg(cx.data, *op) => {}
+        Value::Call(op, args)
+            if *op == cx.database
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if cx.value_struct_copies.contains(v)) =>
+        {
+            for a in &args[1..] {
+                classify_access(a, cx, acc);
+            }
+        }
         Value::Var(v) | Value::TupleGet(v, _) | Value::FnRefDnr(v) => bump_read(acc, *v),
         Value::FnRef(_, clos, _) => bump_read(acc, *clos),
         Value::TuplePut(v, _, inner) => {
@@ -5022,7 +5055,7 @@ pub fn warn_dead_stores(
         };
         let func = &def.variables;
         let n = func.var_count();
-        let acc = dead_store_accesses(&def.code, n, data);
+        let acc = dead_store_accesses(&def.code, func, data);
         for i in 0..n {
             let v = i as u16;
             let name = func.name(v);
@@ -5492,6 +5525,8 @@ fn place_root(node: &Value, data: &Data) -> Option<u16> {
 /// whose body may write through it.
 fn written_roots(node: &Value, copy_d: u32, data: &Data, out: &mut HashSet<u16>) {
     match node.unspan() {
+        // A release writes nothing into its argument: see [`releases_first_arg`].
+        Value::Call(d, _) if releases_first_arg(data, *d) => {}
         Value::Call(d, args) => {
             let name = data.def(*d).name();
             let place = if *d == copy_d {
@@ -6002,6 +6037,50 @@ fn copies_a_reachable_place(data: &Data, func: &Function, arg: &Value) -> bool {
     })
 }
 
+/// The call each `__lift_N` temporary holds, with the line of the statement that bound it.
+///
+/// `scopes::check` lifts an inline call argument into a `__lift_N` it binds to that call one
+/// statement before the call that uses it (`Scopes::new_lift_var`), and reserves the slot with a
+/// `Set(v, Null)` at function entry.  Only a binding to a user call counts; a temporary bound to
+/// more than one is left out, because which value reaches the call is then not one fact.
+fn lifted_call_results(
+    data: &Data,
+    code: &Value,
+    func: &Function,
+) -> HashMap<u16, (Value, Option<Position>)> {
+    // `Value::walk` is pre-order and passes through `Span`s, so a statement line reaches the
+    // visitor as the `Value::Line` just before the statement it marks.
+    let mut bound: HashMap<u16, Vec<(Value, Option<u32>)>> = HashMap::new();
+    let mut line: Option<u32> = None;
+    code.walk(&mut |n| {
+        if let Value::Line(l) = n {
+            line = Some(*l);
+        } else if let Value::Set(v, rhs) = n
+            && func.name(*v).starts_with("__lift_")
+            && let Value::Call(d, _) = rhs.unspan()
+            && !data.def(*d).name().starts_with("Op")
+        {
+            bound
+                .entry(*v)
+                .or_default()
+                .push((rhs.unspan().clone(), line));
+        }
+    });
+    bound
+        .into_iter()
+        .filter(|(_, calls)| calls.len() == 1)
+        .map(|(v, mut calls)| {
+            let (call, line) = calls.remove(0);
+            let at = line.map(|line| Position {
+                file: String::new(),
+                line,
+                pos: 0,
+            });
+            (v, (call, at))
+        })
+        .collect()
+}
+
 /// loft#894 — a write through a struct RETURNED from a function, which reaches nothing.
 ///
 /// `hurt(first(s), 10.0)` and `hurt(s.es[0] ?? E {}, 10.0)` are the same types, the same
@@ -6052,11 +6131,13 @@ pub fn warn_lost_temp_writes(
             def.position.file.as_str()
         };
         let mut found = Vec::new();
+        let lifted = lifted_call_results(data, &def.code, &def.variables);
         scan_lost_temp_writes(
             data,
             &def.variables,
             &def.code,
             &mut params,
+            &lifted,
             None,
             &mut found,
         );
@@ -6114,6 +6195,7 @@ fn scan_lost_temp_writes(
     func: &Function,
     node: &Value,
     params: &mut HashMap<u32, HashSet<u16>>,
+    lifted: &HashMap<u16, (Value, Option<Position>)>,
     at: Option<&Position>,
     out: &mut Vec<(u32, u16, Option<Position>)>,
 ) {
@@ -6131,15 +6213,28 @@ fn scan_lost_temp_writes(
                 .or_insert_with(|| write_through_params(data, *callee));
             if !written.is_empty() {
                 for (i, arg) in args.iter().enumerate() {
-                    if written.contains(&(i as u16)) && copies_a_reachable_place(data, func, arg) {
-                        out.push((*callee, i as u16, here.cloned()));
+                    // After `scopes::check` an inline call argument arrives as the `__lift_N`
+                    // bound to it one statement earlier: ask about that binding's value.
+                    let (asked, lift_at) = match arg.unspan() {
+                        Value::Var(v) => lifted
+                            .get(v)
+                            .map_or((arg, None), |(rhs, p)| (rhs, p.as_ref())),
+                        _ => (arg, None),
+                    };
+                    if written.contains(&(i as u16)) && copies_a_reachable_place(data, func, asked)
+                    {
+                        out.push((
+                            *callee,
+                            i as u16,
+                            node.span_pos().or(lift_at).or(at).cloned(),
+                        ));
                     }
                 }
             }
         }
     }
     node.for_each_child(&mut |child| {
-        scan_lost_temp_writes(data, func, child, params, here, out);
+        scan_lost_temp_writes(data, func, child, params, lifted, here, out);
     });
 }
 

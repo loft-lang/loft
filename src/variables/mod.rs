@@ -3297,7 +3297,7 @@ impl Function {
         if std::env::var_os("LOFT_DUMP_READS").is_none() {
             return;
         }
-        let acc = crate::use_analysis::dead_store_accesses(body, self.variables.len(), data);
+        let acc = crate::use_analysis::dead_store_accesses(body, self, data);
         for (i, var) in self.variables.iter().enumerate() {
             if var.name.starts_with('_') || var.name.contains('#') || var.argument {
                 continue;

@@ -480,7 +480,12 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 491 | 467 | **24** |
+| 491 | 468 | **23** |
+
+(2026-09-15: the lost-temporary-write lint now runs on the IR after `scopes::check` on every
+path, where an inline call argument arrives as the `__lift_N` the scope pass bound to it.
+`use_analysis::scan_lost_temp_writes` reads that argument through its `Span` to resolve the call
+it holds, which moves it from the neither column to the peeling one: 491 · 468 · 23.)
 
 (2026-09-15, THE JOINED TREE — this branch through loft#1532, ../loft2's drop-release arc through
 its loop-body parameter copy, and @PLN157 through § V-an: 489 · 465 · 24, re-measured rather than
