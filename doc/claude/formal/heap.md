@@ -968,11 +968,20 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
    - ✓ **CLOSED 2026-09-14 for sequential code and a taken branch.**  The set starts empty and each
      statement arms its hand-offs after it is scanned.  Gate cells `p_h1`–`p_h5` and
      `c_param_reassign`, both backends.
-   - **OPEN — a loop.**  `for … { x = mk(); x = p; }` still releases none of the displaced records
-     (`p_h7`).  A loop body keeps the early seed on purpose: on the next iteration an earlier
-     statement displaces what a later one handed off, so the in-order fact would release the
-     caller's record — the loss is kept rather than converted into a double release.  The answer
-     is per ITERATION, which a static fact cannot give.
+   - ✓ **A loop — CLOSED 2026-09-15.**  `for … { x = mk(); x = p; }` released none of the displaced
+     records (`p_h7`).  A loop body arms its hand-offs before its statements, because on the next
+     iteration an earlier statement displaces what a later one handed off, and a static fact
+     cannot say whether that record is the caller's.  So a copy off a parameter anywhere in the
+     body stopped `x` for the whole function.  Measured wider than the gate's cell:
+     `x = mk(); for … { x = p; x = mk(); }` also lost the last fresh record at scope exit, and a
+     body holding only the copy lost the record it first displaced.
+
+     The answer is per ITERATION, and the destination-keyed runtime flag above gives exactly that.
+     A copy that stops its destination, written in a loop body, is now a per-path hand-off like an
+     arm copy.  The early seed skips it, the copy sets the flag, every other assignment retires it,
+     and each displaced release and the scope-exit drop read it when they run.  A copy that moves
+     its source's release keeps the early seed.  The fresh-records-only loop is unchanged.  Guard:
+     `tests/scripts/a-parameter-copy-in-a-loop-body-keeps-the-release-of-every-record-it-displaces.loft`.
    - ✓ **The branch not taken — CLOSED 2026-09-15.**  `x = mk(); if c { x = p; }` with `c` false
      lost `mk()` (`p_h6`): the copy off the parameter stopped `x` on EVERY path, so on the path
      that never copied nothing released `x`'s own record.  Wider than filed, measured on both

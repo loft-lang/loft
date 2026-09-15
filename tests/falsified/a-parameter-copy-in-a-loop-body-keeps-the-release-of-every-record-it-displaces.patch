@@ -1,0 +1,54 @@
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 36e4accff..a0d047852 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -2238,35 +2238,6 @@ fn per_path_handoffs(code: &Value) -> HashSet<(u16, u16)> {
+     out
+ }
+ 
+-/// The whole-value copies written inside a LOOP body that stop their DESTINATION — a copy off a
+-/// parameter, or off a local that holds the caller's record ([`per_path_stops`]).  In a loop the
+-/// record such a copy leaves in its destination is displaced by the next pass, so whether a
+-/// displaced record is the frame's to release is a per-iteration fact, answered by the same flag an
+-/// arm copy gets.  A copy that moves its SOURCE's release is not returned: the loop's early seed
+-/// keeps deciding that one.
+-fn loop_self_stopping_copies(
+-    code: &Value,
+-    function: &Function,
+-    data: &Data,
+-) -> HashSet<(u16, u16)> {
+-    let mut out: HashSet<(u16, u16)> = HashSet::new();
+-    code.walk(&mut |n| {
+-        if let Value::Loop(lp) = n.unspan() {
+-            for op in &lp.operators {
+-                op.walk(&mut |m| {
+-                    if let Value::Set(v, rhs) = m.unspan()
+-                        && let Value::Var(src) = rhs.unspan()
+-                        && per_path_stops(function, data, *v, *src) == Some(*v)
+-                    {
+-                        out.insert((*v, *src));
+-                    }
+-                });
+-            }
+-        }
+-    });
+-    out
+-}
+-
+ /// Which side does a whole-value copy `dst = src` written in a branch arm stop, on the path that
+ /// runs it?  The answer is [`copy_moves_drop_from`]'s: the SOURCE for a copy that takes its
+ /// release, the DESTINATION for a copy off a PARAMETER, whose caller owns what it holds.  Either
+@@ -3514,13 +3485,8 @@ fn run_scan_phase(
+     for v in caller_records {
+         function.mark_caller_record(v);
+     }
+-    // A copy that stops its DESTINATION written in a LOOP body is per path too — per iteration: the
+-    // next pass displaces what this one copied, so the answer is the flag's (heap.md `D-heap-7`, the
+-    // loop).  A copy that moves its source's release keeps the loop's early seed.
+-    let loop_copies = loop_self_stopping_copies(orig_code, &function, data);
+     scopes.per_path_pairs = per_path_handoffs(orig_code)
+         .into_iter()
+-        .chain(loop_copies)
+         .filter(|&(dst, src)| per_path_stops(&function, data, dst, src).is_some())
+         .collect();
+     let mut stopped: Vec<u16> = scopes

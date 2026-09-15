@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `heap.md (H-Drop)` releases a record once, by its owner, and a rebind is that death for the record
+// it displaces — unless the displaced record is a copy off a PARAMETER, whose resource the caller
+// owns.  Inside a LOOP the two alternate: `for … { x = mk(); x = p; }` displaces the frame's record at
+// `x = p` and the caller's copy at the next `x = mk()`.  The answer is per ITERATION.
+//
+// It was answered once for the whole function: a copy off a parameter anywhere in a loop body stopped
+// `x` for good, so no displaced record of the frame's was released, and neither was the last one at
+// scope exit — silently, on both backends, `LOFT_POISON` clean.  A copy that stops its destination,
+// written in a loop body, is now a per-path hand-off with the destination's runtime flag, the same one a
+// branch arm's copy has had since loft#1515: the copy sets it, every other assignment retires it, and
+// each release reads it when it runs.
+//
+// @falsified-at: 22b71998b — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-parameter-copy-in-a-loop-body-keeps-the-release-of-every-record-it-displaces.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
+// CHANNEL: the assertions on each hook's own trace, IDENTICALLY on both backends.  NOT the leak
+//   channel and NOT `LOFT_POISON`: every store is freed either way; only the author's release is lost.
+// ARMED: no instrument.  The guard writes each hook call to its own trace file and asserts the
+//   string, so an ordinary run on either backend reports it.
+// WITNESS: on the control the first cell, `fresh_then_copy`, drains `W54,W55,R56,R56,56` where the fix
+//   drains `53,W54,54,W55,55,R56,R56,56` — none of the frame's displaced records is released.  The run
+//   stops there; the other cells were measured on the same build in the probe matrix the guard was cut
+//   from: copy-then-fresh lost 61, 62 and the final 63, copy-only lost 71, and fresh-only was clean.
+//
+// The trace file is this guard's own.
+
+fn trace_path() -> text { return "loft_loop_param_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct LpH { id: integer }
+fn OpDrop(self: LpH) { note("{self.id}"); }
+fn lp(id: integer) -> LpH { return LpH { id: id }; }
+
+// A fresh record, then the parameter copy, each iteration.
+fn fresh_then_copy_b(p: LpH) { x = lp(53); for i in 0..2 { x = lp(54 + i); note("W{x.id}"); x = p; } note("R{x.id}"); }
+fn fresh_then_copy() { a = lp(56); fresh_then_copy_b(a); note("R{a.id}"); }
+// The parameter copy, then a fresh record, each iteration.
+fn copy_then_fresh_b(p: LpH) { x = lp(61); for i in 0..2 { x = p; note("W{x.id}"); x = lp(62 + i); } note("R{x.id}"); }
+fn copy_then_fresh() { a = lp(60); copy_then_fresh_b(a); note("R{a.id}"); }
+// Only the parameter copy in the loop.
+fn copy_only_b(p: LpH) { x = lp(71); for _i in 0..2 { x = p; } note("R{x.id}"); }
+fn copy_only() { a = lp(70); copy_only_b(a); note("R{a.id}"); }
+
+// CONTROL — fresh records only.
+fn fresh_only() { x = lp(81); for i in 0..2 { x = lp(82 + i); } note("R{x.id}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  fresh_then_copy(); got = drain();
+  assert(got == "53,W54,54,W55,55,R56,R56,56", "a fresh record then a parameter copy, per iteration: {got}");
+  copy_then_fresh(); got = drain();
+  assert(got == "61,W60,62,W60,R63,63,R60,60", "a parameter copy then a fresh record, per iteration: {got}");
+  copy_only(); got = drain();
+  assert(got == "71,R70,R70,70", "only a parameter copy in the loop: {got}");
+
+  fresh_only(); got = drain();
+  assert(got == "81,82,R83,83", "CONTROL fresh records only: {got}");
+
+  if !delete(trace_path()) { println("trace cleanup failed"); }
+  println("loop parameter drop ok");
+}
