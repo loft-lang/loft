@@ -4475,8 +4475,8 @@ non-sentinel proof's own escape collector — and that collector tested only a B
 argument, while the parser spells a by-reference argument `OpCreateStack(k)`.  So the
 proof had the same hole in shipped code: `k = 2^62; poison(k); r = k + 1` with `n = n * 4`
 in the callee answered `-9223372036854775807` on native (`checked_add` on the sentinel the
-callee wrote) where the interpreter answers `null`.  Fixed at the collector (`arg_var`
-reads both spellings), for the proof and the memo alike; `tests/scripts/1534-by-ref-
+callee wrote) where the interpreter answers `null`.  Fixed at the collector — taking a
+local's address is itself the escape — for the proof and the memo alike; `tests/scripts/1534-by-ref-
 arg-escapes-the-proof.loft` guards it, `LOFT_NO_NN_FAST=1` was the verified workaround on
 the buggy build.  LESSON: an admission that reuses another rule's predicate inherits that
 predicate's holes, and a verify form over a cell corpus is what surfaces them — two

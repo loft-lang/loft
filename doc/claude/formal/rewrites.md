@@ -50,7 +50,7 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  handed to code outside it — keeps the representation the API
                  promises, and the boundary materialises whatever an internal rewrite
                  made of it; one that does not escape may be rewritten in any way its
-                 conditions allow.  (C121, owner 2026-09-15.)
+                 conditions allow.  (C122, owner 2026-09-15.)
 ```
 
 **`(R-Escape)` in words.** Every rule below asks for permission from nobody: it states
@@ -64,7 +64,7 @@ at the boundary — and `(O-ViewField)` takes its scope from here.  A user PROGR
 closed unit (every use is in the compilation; a fn-ref call is a match over known
 definitions), so every condition is decidable in it and the only boundaries left are
 where a representation is turned back into the promised one: a call into a `use`d
-library, the live-reload arm, and a record's layout in a store (C121's corollary).
+library, the live-reload arm, and a record's layout in a store (C122's corollary).
 And the UNIT is a build decision: a release copy of a program (`--native-release`)
 emits its `use`d loft libraries' reachable functions into the one program it compiles,
 so there a loft-to-loft library API is no boundary at all — a library is recompiled

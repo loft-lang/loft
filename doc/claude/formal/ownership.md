@@ -122,7 +122,7 @@ last read.  The three parts are the three ways it could be wrong: the source dyi
 the frame (a dangling view), a site that writes or keeps the field (a lost write, a copy
 the caller expected), and a disturbance between the call and the read (a stale view).
 Every part declines to the copy the code emits today, which is the direction
-`(O-Move)` already points.  Admitted by the owner on 2026-09-15 (C121): the contract is
+`(O-Move)` already points.  Admitted by the owner on 2026-09-15 (C122): the contract is
 semantics, not representation, so a returned view needs only its conditions; the library
 API is the boundary, and a construction that does not escape it may be rewritten freely.
 
