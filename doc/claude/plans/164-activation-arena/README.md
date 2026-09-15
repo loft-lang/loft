@@ -338,6 +338,9 @@ admitted call (`add_poly` ×64, `add_px` ×30 no-heap, `add_card` ×40 text-owni
 `tests/place_result.rs`: the IR shape of `add_poly`, the switch, the silent copy notice, the
 census.  The corpus (`tests/scripts` + `tests/docs`) has NO admitted bind — the shape is the
 library's, not the corpus's — so the guard is the only coverage.
+The gate's one red, the browser kernel differential, was a pre-existing dangling `Data`
+pointer in `wasm::resume_frame` that the changed bytecode made visible (loft#1541, fixed in
+the same arc with `State::rebind_data`).
 
 *Measured.*  The parse row (`parse_only.loft --n 2000`, `--native-release`, hash `33f6d2b8`,
 this x86-64 box, 2026-09-16): `pp_paint` admitted (three moves, one held exit), and a WASH.
