@@ -1068,9 +1068,17 @@ D-heap-1's five shapes are among them (`p_o1`–`p_o5`).  The rest fall outside 
 
    Measured over every `tests/scripts` program on both paths: the program path's `double-move`
    and `lost-write` findings are unchanged, and `loft test` now reports the 14 lost writes it
-   never did.  `x = p; t = x; u = x` no longer warns.  One false positive remains:
-   `x = p; x.h = mk(); c = Hold { h: x.h }`, where a copy off a parameter stops its destination and
-   the container is the member's only releaser (`g6`, pinned).
+   never did.  `x = p; t = x; u = x` no longer warns.
+
+   A member copy is reported only when something besides the container releases the member:
+   - a caller-owned root: a parameter, or a local that holds the caller's record;
+   - the root promoted to the caller's return buffer;
+   - a drop the scope pass emitted for the root;
+   - for a view, its base by the same test.
+
+   `x = p; x.h = mk(); c = Hold { h: x.h }` is therefore silent, and it releases each record once:
+   a copy off a parameter stops its destination, so the container is the member's only releaser
+   (`g6`).
 
    The lint keeps such a copy pending on its ROOT and reports it where the root's release is
    certain:
