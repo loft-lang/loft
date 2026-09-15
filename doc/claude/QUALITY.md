@@ -480,7 +480,13 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 491 | 468 | **23** |
+| 501 | 478 | **23** |
+
+(2026-09-15, @PLN163's copy-lease census and verdicts: 501 · 478 · 23, measured commit by commit.
+The census in `use_analysis::drop_copy_census` added two peeling sites; `src/lease.rs` six, five
+peeling and one — `leaves`, which classified leaves `source_leaves` had already unspanned — in the
+neither column until it read each leaf through `unspan` itself; the P2r census arms two more, both
+peeling.)
 
 (2026-09-15: the lost-temporary-write lint now runs on the IR after `scopes::check` on every
 path, where an inline call argument arrives as the `__lift_N` the scope pass bound to it.
@@ -2583,7 +2589,11 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 816 | 474 | 6 | **336** |
+| 819 | 477 | 6 | **336** |
+
+(2026-09-15, @PLN163: 819 · 477 · 6 · 336.  `src/lease.rs` added one function that sees through
+the wrapper and `copy_manifest`'s lease check two, all three peeling with `.base()`; the opaque
+column and the ratchet are unmoved.)
 
 (2026-09-15, THE JOINED TREE — the same union: 816 · 474 · 6 · 336, re-measured rather than
 carried.  This branch's 815 · 473 · 5 · 337 and § V-an's 796 · 454 · 6 · 336 each counted its own
