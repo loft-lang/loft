@@ -1,0 +1,125 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A tuple member is a field (`layout.md (L-Tuple)`), so a write into it, `w.1 = e`, releases the
+// record it replaces, without that record's hook (`heap.md (H-Drop-Not)`), exactly as a struct
+// field write does.  The loft#1511 pairing tied a literal member to the construction or call that
+// delivered it, so scope exit freed the member and disarmed that claimant: after a write the
+// member held a different record, the original's claimant was disarmed, and nothing released it
+// (loft#1532).  Every cell here answers the right value on both trees; the difference is the
+// leak, which `main` reaches because no cell stops it.  The copy half of the same write is
+// `a-value-written-into-a-tuple-member-is-copied-in.loft`.
+// @falsified-at: cfe16cafa — interpret leaked kt=87 S×7, kt=90 A×1, kt=91 B×1 -> clean, native leaked kt=87 S×7, kt=90 A×1, kt=91 B×1 -> clean
+// @falsified-by: tests/falsified/a-tuple-member-write-releases-the-record-it-replaces.patch — interpret leaked kt=87 S×7, kt=90 A×1, kt=91 B×1 -> clean, native leaked kt=87 S×7, kt=90 A×1, kt=91 B×1 -> clean
+//   CHANNEL: leak — every cell answers the right value on both trees, so exit and asserts do not
+//   move; what moves is the store leak `main` reports at exit, one replaced record per write that
+//   displaced a construction's or a call's record.
+//   ARMED: no instrument — the exit leak report reads it on both backends (native under
+//   `LOFT_NATIVE_LEAK_CHECK=1`, which `make falsify` sets).
+//   WITNESS: the count is the hand count of the cells that replace such a record: two literal
+//   writes 1, the loop 1, the taken branch 1, two call-minted members 2, the null write 1, the
+//   rebind 1 — `S×7` — and the struct-enum cell's `A×1` and `B×1`.
+//   HOLDS: the value of every cell on both trees; the three controls (a member built from a
+//   local, a nested write, a by-value tuple parameter) leak on neither.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct S { n: integer }
+
+enum E { A { n: integer }, B { n: integer, m: integer, s: text } }
+
+fn en(e: E) -> text {
+  match e { A { n } => "A{n}", B { n, m, s } => "B{n},{m},{s}" }
+}
+
+fn mk(n: integer) -> S { S { n: n } }
+
+fn write_param(p: (integer, S)) -> integer {
+  p.1 = S { n: 9 };
+  p.1.n
+}
+
+fn test_a_literal_written_over_a_literal_member() {
+  w = (1, S { n: 6 });
+  w.1 = S { n: 9 };
+  w.1 = S { n: 10 };
+  assert(w.0 == 1 && w.1.n == 10, "two writes: {w.0} {w.1.n}");
+}
+
+fn test_writes_in_a_loop() {
+  w = (1, S { n: 6 });
+  for i in 0..3 { w.1 = S { n: i }; }
+  assert(w.1.n == 2, "the last write: {w.1.n}");
+}
+
+fn test_a_write_on_one_branch() {
+  taken = (1, S { n: 6 });
+  missed = (1, S { n: 6 });
+  for i in 0..2 {
+    if i == 1 { taken.1 = S { n: 9 }; }
+    if i == 7 { missed.1 = S { n: 9 }; }
+  }
+  assert(taken.1.n == 9 && missed.1.n == 6, "one branch each: {taken.1.n} {missed.1.n}");
+}
+
+fn test_a_call_minted_member_written() {
+  w = (1, mk(6));
+  w.1 = S { n: 9 };
+  u = (1, mk(6));
+  u.1 = mk(7);
+  assert(w.1.n == 9 && u.1.n == 7, "over a call's record: {w.1.n} {u.1.n}");
+}
+
+fn test_a_struct_enum_member_of_another_size() {
+  w: (integer, E) = (1, A { n: 1 });
+  w.1 = B { n: 2, m: 3, s: "big" };
+  u: (integer, E) = (1, B { n: 2, m: 3, s: "big" });
+  u.1 = A { n: 1 };
+  assert(en(w.1) == "B2,3,big" && en(u.1) == "A1", "both directions: {en(w.1)} {en(u.1)}");
+}
+
+fn test_null_written_over_a_record() {
+  w: (integer, S?) = (1, S { n: 4 });
+  w.1 = null;
+  assert(w.1 == null, "the member is null");
+}
+
+fn test_a_rebind_after_a_write() {
+  w = (1, S { n: 6 });
+  w.1 = S { n: 9 };
+  first = w.1.n;
+  w = (2, S { n: 4 });
+  assert(first == 9 && w.0 == 2 && w.1.n == 4, "the rebind: {first} {w.0} {w.1.n}");
+}
+
+fn test_a_member_built_from_a_local_then_written() {
+  s = S { n: 3 };
+  w = (1, s);
+  w.1 = S { n: 9 };
+  s.n = 4;
+  assert(w.1.n == 9 && s.n == 4, "a member that owned a copy: {w.1.n} {s.n}");
+}
+
+fn test_a_nested_member_write() {
+  w = ((1, S { n: 6 }), 2);
+  w.0.1 = S { n: 9 };
+  assert(w.0.1.n == 9 && w.1 == 2, "two levels down: {w.0.1.n} {w.1}");
+}
+
+fn test_a_parameter_member_write_leaves_the_caller() {
+  u = (1, S { n: 6 });
+  r = write_param(u);
+  assert(r == 9 && u.1.n == 6, "the callee wrote its own copy: {r} {u.1.n}");
+}
+
+fn main() {
+  test_a_literal_written_over_a_literal_member();
+  test_writes_in_a_loop();
+  test_a_write_on_one_branch();
+  test_a_call_minted_member_written();
+  test_a_struct_enum_member_of_another_size();
+  test_null_written_over_a_record();
+  test_a_rebind_after_a_write();
+  test_a_member_built_from_a_local_then_written();
+  test_a_nested_member_write();
+  test_a_parameter_member_write_leaves_the_caller();
+}

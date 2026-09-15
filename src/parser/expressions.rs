@@ -6848,6 +6848,15 @@ use a separate collection or add after the loop"
                 self.vars.remap_name(&name, shadow);
                 lhs.root = shadow;
             }
+            // loft#1532 — a heap value written into a member is COPIED in: the tuple literal
+            // copies a member (`@FR-T-Cons`) and a struct field write copies its value, and
+            // `layout.md (L-Tuple)` makes the member a field.  The write stored the source's
+            // handle instead, so `w.1 = s; s.n = 1` answered `1` through `w.1`, on both
+            // backends.  The literal's own helper decides what is a place to copy and what is a
+            // fresh value or a parameter that keeps its documented alias.
+            if let Some(member) = member_for_null.as_ref() {
+                self.tuple_member_owned_copy(&mut rhs, member);
+            }
             *code = build_nested_tuple_assign(code, &lhs, rhs);
             return Type::Void;
         }

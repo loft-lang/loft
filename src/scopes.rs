@@ -222,6 +222,13 @@ struct Scopes<'s> {
     /// [`Self::owned_refs`]: intersect-merged at every join, so a pairing that holds on one
     /// path only is dropped (losing the hook, never doubling it).
     tuple_call_mint: HashMap<u16, HashMap<u16, Option<u16>>>,
+    /// loft#1532 — the `(tuple, element)` pairs a member ASSIGNMENT (`t.1 = …`) writes in this
+    /// function, by the variable numbers of the unscanned body.  Such an element is handed to
+    /// the tuple ALONE at the literal that builds it: the construction or call that delivered it
+    /// is disarmed right after that `Set`, and its pairing becomes `None` (a sole owner, as for a
+    /// bufferless mint).  Every member write can then release the record it displaces with no
+    /// other claimant left, on every path, and both arms of a join agree on the pairing.
+    written_tuple_members: HashSet<(u16, u16)>,
     /// D-heap-3 (loft#1506) — a local BOUND to a projection of another local, and the
     /// `(offset, depth)` path from that local's record to the member it views.
     ///
@@ -2912,9 +2919,15 @@ fn tuple_owned_elem_frees(
     data: &Data,
     function: &crate::variables::Function,
     call_mints: Option<&HashMap<u16, Option<u16>>>,
+    only: Option<usize>,
 ) -> Vec<Value> {
     let mut out = Vec::new();
     for &(_offset, idx) in crate::data::owned_elements(elems).iter().rev() {
+        // loft#1532 — a member ASSIGNMENT asks for its ONE element: the same ownership test,
+        // with no pairing handed in, is the bare release `(H-Drop-Not)` gives a displaced field.
+        if only.is_some_and(|o| o != idx) {
+            continue;
+        }
         // @FR-O-Proxy asks free, and @FR-O-Override vetoes it at every such site — this is one:
         // the element test concludes "this element owns its store" from an empty dep list,
         // which is @FR-O-Proxy and unsound alone.  `OpFreeRef(TupleGet(v, i))` releases
@@ -2994,34 +3007,76 @@ fn tuple_call_mints(
     };
     let mut out = HashMap::new();
     for (idx, m) in members.iter().enumerate() {
-        // A member built by an inline CONSTRUCTION (`u = (S { … }, 9)`) is the literal
-        // spelling of the same mint: the record is delivered through the construction's
-        // work-ref, which both the element and the work-ref then name.  The element free
-        // owes the hook exactly as for a call mint, and the work-ref is the buffer to
-        // disarm — without it the work-ref's own scope-end cascade ran the hook on the
-        // store the element free had already released (freed-then-hooked, poison-visible).
-        if let Some(w) = construction_work_ref(m, function) {
-            out.insert(idx as u16, Some(w));
-            continue;
-        }
-        let Value::Call(fn_nr, args) = m.unspan() else {
-            continue;
-        };
-        let def = data.def(*fn_nr);
-        if !def.is_loft_defined() {
-            continue;
-        }
-        if let Some(i) = def.hidden_return_buffer_attr() {
-            if let Some(Value::Var(vr)) = args.get(i).map(Value::unspan)
-                && function.is_caller_hidden_buf(*vr)
-            {
-                out.insert(idx as u16, Some(*vr));
-            }
-        } else if def.return_adopts_fresh_store() && def.returned().base().heap_def_nr().is_some() {
-            out.insert(idx as u16, None);
+        if let Some(claim) = member_mint(m, function, data) {
+            out.insert(idx as u16, claim.claimant());
         }
     }
     Some(out)
+}
+
+/// What delivered a tuple member's record, where [`member_mint`] can PROVE it.
+#[derive(Clone, Copy)]
+enum MemberMint {
+    /// A construction's work-ref or a call's hidden buffer still names the record: the
+    /// claimant to disarm.
+    Claimed(u16),
+    /// A call that adopts a fresh store: the member is the record's only name.
+    Adopted,
+}
+
+impl MemberMint {
+    /// The spelling `Scopes::tuple_call_mint` keeps: the claimant, or `None` for a sole owner.
+    fn claimant(self) -> Option<u16> {
+        match self {
+            Self::Claimed(w) => Some(w),
+            Self::Adopted => None,
+        }
+    }
+}
+
+/// loft#1511 — one tuple MEMBER's mint, or `None` when this cannot PROVE one.  Asked of each
+/// member of a literal ([`tuple_call_mints`]) and of the value a member assignment writes
+/// (loft#1532), so the two cannot disagree about what was minted.
+fn member_mint(m: &Value, function: &Function, data: &Data) -> Option<MemberMint> {
+    // A member built by an inline CONSTRUCTION (`u = (S { … }, 9)`) is the literal
+    // spelling of the same mint: the record is delivered through the construction's
+    // work-ref, which both the element and the work-ref then name.  The element free
+    // owes the hook exactly as for a call mint, and the work-ref is the buffer to
+    // disarm — without it the work-ref's own scope-end cascade ran the hook on the
+    // store the element free had already released (freed-then-hooked, poison-visible).
+    if let Some(w) = construction_work_ref(m, function) {
+        return Some(MemberMint::Claimed(w));
+    }
+    let Value::Call(fn_nr, args) = m.unspan() else {
+        return None;
+    };
+    let def = data.def(*fn_nr);
+    if !def.is_loft_defined() {
+        return None;
+    }
+    if let Some(i) = def.hidden_return_buffer_attr() {
+        if let Some(Value::Var(vr)) = args.get(i).map(Value::unspan)
+            && function.is_caller_hidden_buf(*vr)
+        {
+            return Some(MemberMint::Claimed(*vr));
+        }
+        None
+    } else if def.return_adopts_fresh_store() && def.returned().base().heap_def_nr().is_some() {
+        Some(MemberMint::Adopted)
+    } else {
+        None
+    }
+}
+
+/// loft#1532 — every `(tuple variable, element)` a member assignment writes in `code`.
+fn written_tuple_members_in(code: &Value) -> HashSet<(u16, u16)> {
+    let mut out = HashSet::new();
+    code.walk(&mut |v| {
+        if let Value::TuplePut(t, i, _) = v {
+            out.insert((*t, *i));
+        }
+    });
+    out
 }
 /// @PLN157 § V (Route R, caller half) — allocate a call's hidden RECORD buffer ONCE, so a
 /// callee that builds its return into the buffer it was handed reuses one record per call
@@ -3271,6 +3326,7 @@ fn run_scan_phase(
         // body is the exception — see the `Value::Loop` arm of `scan_inner`.
         drop_transferred: HashSet::new(),
         tuple_call_mint: HashMap::new(),
+        written_tuple_members: written_tuple_members_in(orig_code),
         view_backing: HashMap::new(),
         construction_backing: HashMap::new(),
         lift_field_skip: HashMap::new(),
@@ -8058,11 +8114,11 @@ impl Scopes<'_> {
             Value::TupleGet(var, idx) => {
                 Value::TupleGet(*self.var_mapping.get(var).unwrap_or(var), *idx)
             }
-            Value::TuplePut(var, idx, inner) => Value::TuplePut(
-                *self.var_mapping.get(var).unwrap_or(var),
-                *idx,
-                Box::new(self.scan(inner, function, data)),
-            ),
+            Value::TuplePut(var, idx, inner) => {
+                let v = *self.var_mapping.get(var).unwrap_or(var);
+                let value = self.scan(inner, function, data);
+                self.member_write(v, *idx, value, function, data)
+            }
             // @PLAN53 cluster 2: remap the var-numbers these IR nodes carry through
             // `var_mapping` — exactly like `Var`/`TupleGet`/`TuplePut` above.  They
             // were missing, so when a sibling scope reuses a name (`copy_variable`),
@@ -8284,8 +8340,14 @@ impl Scopes<'_> {
             && !value.reads_var(ov)
         {
             let elems = elems.clone();
-            let frees =
-                tuple_owned_elem_frees(&elems, v, data, function, self.tuple_call_mint.get(&v));
+            let frees = tuple_owned_elem_frees(
+                &elems,
+                v,
+                data,
+                function,
+                self.tuple_call_mint.get(&v),
+                None,
+            );
             if !frees.is_empty() {
                 transition_free = Some(Value::Insert(frees));
             }
@@ -8518,7 +8580,37 @@ impl Scopes<'_> {
         // own call, for the element frees at reassignment and scope exit.
         if matches!(function.tp(v), Type::Tuple(_)) {
             match tuple_call_mints(value, function, data) {
-                Some(m) => {
+                Some(mut m) => {
+                    // loft#1532 — an element a later member assignment writes is handed to the
+                    // tuple ALONE here: its claimant is disarmed after the `Set`, with the other
+                    // hand-off disarms, and it is paired as a sole owner.  See
+                    // `written_tuple_members`.
+                    if let Type::Tuple(elems) = function.tp(v).base() {
+                        let elems = elems.clone();
+                        let mut idxs: Vec<u16> = m.keys().copied().collect();
+                        idxs.sort_unstable();
+                        for idx in idxs {
+                            let owned = !tuple_owned_elem_frees(
+                                &elems,
+                                v,
+                                data,
+                                function,
+                                None,
+                                Some(idx as usize),
+                            )
+                            .is_empty();
+                            if owned
+                                && self.written_tuple_members.contains(&(ov, idx))
+                                && let Some(claim) = m.get_mut(&idx)
+                                && let Some(w) = claim.take()
+                            {
+                                handoff_disarm.push(v_set(
+                                    w,
+                                    Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
+                                ));
+                            }
+                        }
+                    }
                     self.tuple_call_mint.insert(v, m);
                 }
                 None => {
@@ -9557,6 +9649,62 @@ impl Scopes<'_> {
             all.extend(post);
             Value::Insert(all)
         }
+    }
+
+    /// loft#1532 — a member ASSIGNMENT `t.i = e` over an element the tuple owns ALONE: its
+    /// pairing is `None`, handed over at the literal (see `written_tuple_members`) or a
+    /// bufferless mint.  `layout.md (L-Tuple)` makes the member a field, so the record it
+    /// displaces is released and its hook is not run (`heap.md (H-Drop-Not)`); the claimant of
+    /// the value written is disarmed after the put, so the element stays the sole owner and the
+    /// pairing is the same on every path.  Anything else keeps the plain put: an element with
+    /// another claimant, or one this scan cannot pair, releases nothing here.
+    ///
+    /// The release is skipped when the value READS the tuple (`t.1 = f(t.1)`): released before
+    /// the put, it would be read after its release, so a leak is the fallback and never a
+    /// use-after-free.  A value whose mint cannot be proven retires the pairing, so a later write
+    /// releases nothing the tuple does not own.
+    fn member_write(
+        &mut self,
+        v: u16,
+        idx: u16,
+        value: Value,
+        function: &Function,
+        data: &Data,
+    ) -> Value {
+        let put = |value: Value| Value::TuplePut(v, idx, Box::new(value));
+        if !matches!(
+            self.tuple_call_mint.get(&v).and_then(|m| m.get(&idx)),
+            Some(None)
+        ) {
+            return put(value);
+        }
+        let Type::Tuple(elems) = function.tp(v).base() else {
+            return put(value);
+        };
+        let elems = elems.clone();
+        let release = tuple_owned_elem_frees(&elems, v, data, function, None, Some(idx as usize));
+        if release.is_empty() {
+            return put(value);
+        }
+        let claim = member_mint(&value, function, data);
+        let mut ops = Vec::new();
+        if !value.reads_var(v) {
+            ops.extend(release);
+        }
+        ops.push(put(value));
+        match claim {
+            Some(MemberMint::Claimed(w)) => ops.push(v_set(
+                w,
+                Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
+            )),
+            Some(MemberMint::Adopted) => {}
+            None => {
+                if let Some(m) = self.tuple_call_mint.get_mut(&v) {
+                    m.remove(&idx);
+                }
+            }
+        }
+        Value::Insert(ops)
     }
 
     /// [`Self::displaced_drop`] for a statement-level `OpDatabase(v, tp)` that REBUILDS a
@@ -11495,6 +11643,7 @@ impl Scopes<'_> {
                     data,
                     function,
                     self.tuple_call_mint.get(&v),
+                    None,
                 ));
                 continue;
             }

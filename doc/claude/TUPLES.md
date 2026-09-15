@@ -306,6 +306,10 @@ x = t.0                 // element access — works
 t.1 = "world"           // element assignment — works
 ```
 
+An element assignment of a heap value (a record, a struct-enum, a vector) COPIES it in, as the
+tuple literal does, and releases the record it replaces: after `w.1 = s; s.n = 1`, `w.1.n` still
+reads what `s.n` was (loft#1532, `formal/tuples.md` D-tup-14).
+
 A destructuring LHS is a **binding position**, so its names follow the same rule as
 `name = expr`: a name that a definition also uses still mints a local.
 

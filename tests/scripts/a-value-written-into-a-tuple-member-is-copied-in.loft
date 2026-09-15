@@ -1,0 +1,159 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A tuple member is a field (`layout.md (L-Tuple)`), so writing a heap value into one, `w.1 = e`,
+// COPIES it in (`binding.md (B-Copy)`, `tuples.md (T-Cons)`), the way a struct field write does.
+// The write stored the source's handle, so a named source — a local, a field, a vector element,
+// another tuple's member, a vector local — stayed a second name for the member: `w.1 = s;
+// s.n = 1` read `1` through `w.1` (loft#1532).  A literal member built from a field projection,
+// `(1, h.s)`, aliased the same way.  For a droppable member the same write released the value it
+// wrote twice.  The release half of the write is
+// `a-tuple-member-write-releases-the-record-it-replaces.loft`.
+// @falsified-at: cfe16cafa — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-value-written-into-a-tuple-member-is-copied-in.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: exit and asserts — on the control the first cell's copy is an alias and `main` stops
+//   at its assert, so the leak is never reached there; here every cell passes.
+//   ARMED: no instrument — a plain run on either backend reads it.
+//   WITNESS: every cell but one fails on the control when each runs on its own (`--tests`,
+//   interpreter): the six copy cells read `1 1`, `2 2` and `5 5` where the copy gives the hand
+//   value, and the droppable trace reads `alive2,2,2` for `alive2,2`, the value written released
+//   twice.  `test_a_droppable_member_write_is_a_field_write`'s struct-field reference line holds
+//   on both trees.
+//   HOLDS: the struct field write's trace (`alive2,2`) and a tuple with no member write
+//   (`alive1,1`), on both trees; the leak channel is `none` here, and the cells are clean under
+//   strict stores and poison.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct S { n: integer }
+
+struct H { s: S }
+
+fn trace_path() -> text { return "loft_tupwrite_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct TdH { id: integer }
+
+fn OpDrop(self: TdH) { note("{self.id}"); }
+
+fn td_mk(id: integer) -> TdH { return TdH { id: id }; }
+
+struct TdS { h: TdH }
+
+struct TdBox { s: TdS }
+
+fn test_a_local_written_into_a_member_is_copied() {
+  s = S { n: 9 };
+  w = (1, S { n: 6 });
+  w.1 = s;
+  s.n = 1;
+  assert(w.1.n == 9 && s.n == 1, "the member is a copy of the local: {w.1.n} {s.n}");
+}
+
+fn test_a_field_written_into_a_member_is_copied() {
+  h = H { s: S { n: 6 } };
+  w = (1, S { n: 2 });
+  w.1 = h.s;
+  h.s.n = 1;
+  assert(w.1.n == 6 && h.s.n == 1, "the member is a copy of the field: {w.1.n} {h.s.n}");
+}
+
+fn test_a_vector_element_written_into_a_member_is_copied() {
+  v = [S { n: 6 }];
+  w = (1, S { n: 2 });
+  w.1 = v[0];
+  v[0].n = 1;
+  assert(w.1.n == 6 && v[0].n == 1, "the member is a copy of the element: {w.1.n} {v[0].n}");
+}
+
+fn test_another_tuples_member_written_in_is_copied() {
+  u = (7, S { n: 6 });
+  w = (1, S { n: 2 });
+  w.1 = u.1;
+  u.1.n = 1;
+  assert(w.1.n == 6 && u.1.n == 1, "the member is a copy of the other member: {w.1.n} {u.1.n}");
+}
+
+fn test_a_vector_local_written_into_a_member_is_copied() {
+  w = ([1, 2], 3);
+  v2 = [9];
+  w.0 = v2;
+  v2 += [8];
+  assert(len(w.0) == 1 && len(v2) == 2, "the vector member is a copy: {len(w.0)} {len(v2)}");
+}
+
+fn test_a_literal_member_built_from_a_field_is_copied() {
+  h = H { s: S { n: 6 } };
+  w = (1, h.s);
+  w.1.n = 5;
+  assert(w.1.n == 5 && h.s.n == 6, "the literal copied the field: {w.1.n} {h.s.n}");
+}
+
+// A struct FIELD write of a droppable is the reference: the displaced record is not hooked
+// (`(H-Drop-Not)`), and the value written is hooked once, at the owner's death.  It also proves
+// the harness reports drops at all.
+fn d_field() {
+  x = TdBox { s: TdS { h: td_mk(1) } };
+  x.s = TdS { h: td_mk(2) };
+  note("alive{x.s.h.id}");
+}
+
+fn d_member() {
+  t = (7, TdS { h: td_mk(1) });
+  t.1 = TdS { h: td_mk(2) };
+  note("alive{t.1.h.id}");
+}
+
+fn d_member_loop() {
+  t = (7, TdS { h: td_mk(1) });
+  for i in 0..3 { t.1 = TdS { h: td_mk(10 + i) }; }
+  note("alive{t.1.h.id}");
+}
+
+fn d_no_write() {
+  t = (7, TdS { h: td_mk(1) });
+  note("alive{t.1.h.id}");
+}
+
+fn test_a_droppable_member_write_is_a_field_write() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+  d_field();
+  got = drain();
+  assert(got == "alive2,2", "the struct field reference: {got}");
+  d_member();
+  got = drain();
+  assert(got == "alive2,2", "a member write traces as the field write does: {got}");
+  d_member_loop();
+  got = drain();
+  assert(got == "alive12,12", "the last write is the one released at the end: {got}");
+  d_no_write();
+  got = drain();
+  assert(got == "alive1,1", "no write: {got}");
+}
+
+fn main() {
+  test_a_local_written_into_a_member_is_copied();
+  test_a_field_written_into_a_member_is_copied();
+  test_a_vector_element_written_into_a_member_is_copied();
+  test_another_tuples_member_written_in_is_copied();
+  test_a_vector_local_written_into_a_member_is_copied();
+  test_a_literal_member_built_from_a_field_is_copied();
+  test_a_droppable_member_write_is_a_field_write();
+}

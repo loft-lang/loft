@@ -1541,7 +1541,11 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 62 | **12** | 50 |
+| 63 | **13** | 50 |
+
+(2026-09-15, loft#1532: `Parser::tuple_member_owned_copy` already copied a `TupleGet` member and
+now also copies a record PROJECTION, asked through `is_projection_op`, so it arrives on the
+both-spellings side: 62 → 63 total, 12 → 13 handling `TupleGet`, the call-only column unmoved.)
 
 (The four 2026-09-12 arrivals are @PLN157 § V-x's `lit_init_invariant` /
 `flat_lit_member`, § V-y's `group_covers_type` and § V-z's `element_first`, which match
@@ -2562,7 +2566,12 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 814 | 472 | 5 | **337** |
+| 815 | 473 | 5 | **337** |
+
+(2026-09-15, loft#1532: `Scopes::member_write` is new and asks the tuple's `Type::Tuple` off a
+`.base()`, and the literal's transfer in `scan_set` makes the same peeled ask inside a function
+already counted, so one function lands in the wrapper-aware column: 814 → 815 total, 472 → 473
+aware, the opaque column and the ratchet unmoved.)
 
 (2026-09-15, loft#1530: `Parser::ref_tuple_subject` is new and asks the subject's `Type::RefVar`
 and `Type::Tuple` off a `.base()`, and `vector_element_cursor_deps` gained the same peeled ask, so
