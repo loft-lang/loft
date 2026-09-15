@@ -208,6 +208,36 @@ it, not a standing fact.
   closed; four of the five entries it flagged the first time it ran were stale, and this one
   was not.
 
+  ⚠ **TRIED 2026-09-15 and taken back out: building the member-nullable tuple in `Type::optional`
+  does not close this entry, because the rules around it disagree once the in-flight spelling is
+  gone.**  `Type::optional((τ₁, …, τₙ))` returning `(τ₁?, …, τₙ?)` — the rule's own sentence, at
+  the one home every producer of absence asks — was built and measured on both backends:
+  - it CLOSED the three refusals: `w: (integer?, text?) = v[i]` by a plain local index (the cell
+    above; a LOOP-variable index already landed, so a probe written with one reads green on the
+    unfixed build), `fn get(…) -> (integer?, text?) { return v[i]; }` (refused with a false
+    "nullable stored into a non-null return" warning), and a generic `T?` instantiated at a tuple
+    (`.0` refused on `__tuple<integer,text>?`);
+  - and it BROKE `v[i]?` with a plain local index (*"`?` cannot build a default for
+    `(integer?, text?)`"* — the refusal a written `t: (integer?, integer?)` has always met), and
+    put two false warnings on `x: (integer, text) = v[i] ?? (0, "d")`.
+
+  The `Optional(Tuple)` was carrying the one fact the member spelling cannot: an index miss nulls
+  EVERY member at once.  Without it the rules meet head on.  `(N-Coal)` types `e ?? d` as `τ`
+  (non-null members), `(T-Absent)` reads `t ?? d` as "every member null", and the partly present
+  tuple fixed below (`(null, 2) ?? (9, 9)` keeps `(null, 2)`) then holds a null in a member typed
+  non-null — the silent lie the refusal in `fields.rs` exists to prevent.  Typing the result
+  member-nullable instead is the false-warning half.  So the entry wants a DESIGN call before a
+  cure, and the three ways to decide it are:
+  1. `??` and `?` on a tuple discharge MEMBER-wise — `t ?? d` is `(t.0 ?? d.0, …)`, typed
+     `(τ₁, …, τₙ)`, the way `(N-Store)` already polices a tuple element by element.  No lie and no
+     false warning; the observable change is a partly present tuple, `(null, 2) ?? (9, 9)` →
+     `(9, 2)`.
+  2. Keep the all-or-nothing fact in flight — `Optional(Tuple)` stays, and `(T-Absent)`'s "not even
+     in flight" is amended to "never DECLARED"; the landing cell is then a `decl_accepts` arm.
+  3. Keep both as they are and accept the member warnings after `??`.
+  The probe matrix (thirteen cells with `text` members, both backends) is in the session record of
+  2026-09-15 and is the starting guard for whichever is chosen.
+
   ⚠ **loft#1478, CLOSED 2026-09-09, and its lesson is about this doc's own oracle.**  A `text`
   MEMBER of an element read by a variable index did not COMPILE on `--native` (E0308, `&str`
   into a `String` slot), and under that a nested tuple member emitted a move where a clone was
