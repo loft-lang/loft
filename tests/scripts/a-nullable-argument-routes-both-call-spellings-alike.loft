@@ -27,12 +27,12 @@
 
 struct P { x: integer }
 
-fn mix(both: P, n: integer) -> text { "dense({both.x},{n})" }
-fn mix(both: P?, n: integer?) -> text { "opt({both.x ?? -1},{n ?? -1})" }
+fn mix(self: P, n: integer) -> text { "dense({self.x},{n})" }
+fn mix(self: P?, n: integer?) -> text { "opt({self.x ?? -1},{n ?? -1})" }
 
 // one-overload controls: only the dense body, only the nullable body
-fn dense_only(both: P, n: integer) -> text { "dense-only({both.x},{n})" }
-fn opt_only(both: P?, n: integer?) -> text { "opt-only({both.x ?? -1},{n ?? -1})" }
+fn dense_only(self: P, n: integer) -> text { "dense-only({self.x},{n})" }
+fn opt_only(self: P?, n: integer?) -> text { "opt-only({self.x ?? -1},{n ?? -1})" }
 
 fn test_dense_receiver_dense_argument() {
   p = P { x: 1 };

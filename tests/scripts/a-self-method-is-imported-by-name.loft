@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A package's `self` method is imported by name, `use lib::(twice)`, and then answers both call
+// spellings (DESIGN_DECISIONS.md C123, `formal/calls.md` (F-Recv)).
+//
+// An import list looks names up by their bare name, and only a `both` function registered one:
+// `use selfimportlib::(twice, Box)` was refused *"Name 'twice' not found in library"* while the
+// same function declared `both` imported fine — the one difference between the two spellings, and
+// the reason `both` could not simply be deprecated.  A `self` method registers its bare name now.
+//
+// @ARGS: --lib tests/lib
+// @falsified-at: 4444f3e8f — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-self-method-is-imported-by-name.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit, both backends — the control refuses the import list.
+//   ARMED: nothing.
+//   WITNESS: on the control `use selfimportlib::(twice, shifted, Box)` is refused `Name 'twice'
+//     not found in library` (the same refusal measured on a scratch library declaring `self`,
+//     while its `both` twin imported and answered `6 6`).
+//   HOLDS: nothing on the control compiles.
+
+use selfimportlib::(twice, shifted, Box);
+
+fn main() {
+  b = Box { n: 3 };
+  assert(twice(b) == 6 && b.twice() == 6, "twice: {twice(b)} {b.twice()}");
+  assert(shifted(b, 4) == 7 && b.shifted(4) == 7, "shifted: {shifted(b, 4)} {b.shifted(4)}");
+}

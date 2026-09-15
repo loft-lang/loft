@@ -7613,8 +7613,8 @@ impl Data {
                 Level::Error,
                 "Cannot redefine '{bare}' (already defined at {}) — a name has one body per \
                  receiver type, and `x.{bare}(…)` and `{bare}(x, …)` would reach different \
-                 functions; declare it once with its first parameter named `both` to give that \
-                 body both spellings, or rename one",
+                 functions; declare it once as a `self` method, which takes both spellings, or \
+                 rename one",
                 self.def(other).position
             );
         } else if o_nr != u32::MAX
@@ -9738,8 +9738,31 @@ impl Data {
             .get(&(fn_key, lib_source))
             .copied()
             .filter(|&d| self.definitions[d as usize].pub_visible);
-        if found_plain.is_none() && found_fn.is_none() {
+        // C123 — a `self` method is filed under its receiver's key, `t_<LEN><Type>_<name>`,
+        // and has no bare-name definition for an import list to find.  Import every public
+        // method of that name the library declares, each under its own key — exactly what a
+        // wildcard `use lib::*` already brings in — so after `use lib::(twice)` both
+        // `twice(b)` and `b.twice()` resolve by the receiver, as they do after the wildcard.
+        // A method's name is part of its key, so it cannot be imported under an alias.
+        let methods: Vec<(String, u32)> = if bind == name {
+            self.def_names
+                .iter()
+                .filter(|((key, src), d)| {
+                    *src == lib_source
+                        && self.definitions[**d as usize].pub_visible
+                        && Self::method_name_of_key(key) == Some(name)
+                })
+                .map(|((key, _), &d)| (key.clone(), d))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if found_plain.is_none() && found_fn.is_none() && methods.is_empty() {
             return false;
+        }
+        for (key, def_nr) in methods {
+            self.note_ambiguity(&key, into_source, def_nr);
+            self.def_names.entry((key, into_source)).or_insert(def_nr);
         }
         if let Some(def_nr) = found_plain {
             self.note_ambiguity(bind, into_source, def_nr);
@@ -9754,6 +9777,15 @@ impl Data {
                 .or_insert(def_nr);
         }
         true
+    }
+
+    /// The method a `t_<LEN><Type>_<method>` key files, or `None` for a key of any other
+    /// shape — a free function, a type, a bound stub.
+    fn method_name_of_key(key: &str) -> Option<&str> {
+        let rest = key.strip_prefix("t_")?;
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        let len: usize = rest[..digits].parse().ok()?;
+        rest.get(digits + len..)?.strip_prefix('_')
     }
 
     /// Variant of [`import_all`] that **overwrites** forward-reference stubs

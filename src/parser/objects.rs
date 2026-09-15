@@ -821,8 +821,7 @@ impl Parser {
                             "`{name}` is a method on `{on}`, and a method is not a function \
                              VALUE — there is nothing to bind here. Wrap it: `|x| {{ x.{name}(…) \
                              }}`, or declare the function with a plain first-parameter name \
-                             (not `self` / `both`), which makes it a free function and a usable \
-                             fn-ref"
+                             (not `self`), which makes it a free function and a usable fn-ref"
                         );
                     } else if let Some(s) = suggestion {
                         diagnostic_at!(
@@ -848,10 +847,10 @@ impl Parser {
                     t = Type::Never;
                 }
             } else {
-                // loft#1008 — the OTHER half. A `both` receiver registers a dispatch entry
-                // under the PLAIN name (which is what makes the free-call spelling `f(x)`
-                // work), so unlike a `self` method the bare name is FOUND here — as a
-                // `Dynamic` def — and fell through to a silent null. `x = f` bound null with
+                // loft#1008 — the OTHER half. A `both` receiver (deprecated, C123) registers a
+                // dispatch entry under the PLAIN name (which is what makes the free-call
+                // spelling `f(x)` work), so unlike a `self` method the bare name is FOUND
+                // here — as a `Dynamic` def — and fell through to a silent null. `x = f` bound null with
                 // no diagnostic at all, and the error surfaced later as whatever used it
                 // ("Cannot format type null"); in a fn-ref argument it reached the call check
                 // as a bare `Value::Null` with no name attached, reported as *"expected
@@ -867,15 +866,24 @@ impl Parser {
                     if !receivers.is_empty() {
                         reported_method = true;
                         let on = receivers.join("`, `");
+                        // A fn-typed PARAMETER seeds `expected` for its argument (`parse_call`),
+                        // so there the name is being passed; anywhere else it is being bound.
+                        // A `self` method reaches this branch too since it registers its bare
+                        // name (C123), and the argument site's wording is the one it had.
+                        let verb = if matches!(self.expected.base(), Type::Function(_, _, _)) {
+                            "pass"
+                        } else {
+                            "bind"
+                        };
                         diagnostic_at!(
                             self.lexer,
                             name_pos,
                             Level::Error,
                             "`{name}` is a method on `{on}`, and a method is not a function \
-                             VALUE — there is nothing to bind here. Wrap it: `|x| {{ x.{name}(…) \
-                             }}`, or declare the function with a plain first-parameter name \
-                             (not `self` / `both`), which makes it a free function and a usable \
-                             fn-ref"
+                             VALUE — there is nothing to {verb} here. Wrap it: `|x| {{ \
+                             x.{name}(…) }}`, or declare the function with a plain \
+                             first-parameter name (not `self`), which makes it a free function \
+                             and a usable fn-ref"
                         );
                     }
                 }
@@ -1046,8 +1054,8 @@ impl Parser {
                                 "`{name}` is a method on `{on}`, and a method is not a function \
                                  VALUE — there is nothing to bind here. Wrap it: \
                                  `|x| {{ x.{name}(…) }}`, or declare the function with a plain \
-                                 first-parameter name (not `self` / `both`), which makes it a \
-                                 free function and a usable fn-ref"
+                                 first-parameter name (not `self`), which makes it a free \
+                                 function and a usable fn-ref"
                             );
                         }
                     }

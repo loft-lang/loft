@@ -6540,7 +6540,14 @@ impl Parser {
                     let declared_by = if from_stdlib {
                         format!("stdlib declared `{name}` as a method")
                     } else {
-                        format!("`{name}` is declared as a method, not as a free function")
+                        // A method answers the bare spelling too ((F-Recv)) — for a receiver of
+                        // its type, once the name is in scope — so "not a free function" was
+                        // wrong for every method, and pointed away from the import it needed.
+                        format!(
+                            "`{name}` is a method: `{name}(x, …)` reaches it for a receiver of \
+                             that type once the name is in scope — a package's method is \
+                             imported by name, `use <package>::({name})`"
+                        )
                     };
                     diagnostic_at!(
                         self.lexer,
@@ -13113,7 +13120,7 @@ impl Parser {
                             "`{nm}` is a method on `{on}`, and a method is not a function VALUE \
                              — there is nothing to pass here. Wrap it: `|x| {{ x.{nm}(…) }}`, or \
                              declare the function with a plain first-parameter name (not \
-                             `self` / `both`), which makes it a free function and a usable fn-ref"
+                             `self`), which makes it a free function and a usable fn-ref"
                         );
                     } else {
                         self.validate_convert(&context, actual_type, &tp, &pos);

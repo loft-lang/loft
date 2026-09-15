@@ -13,8 +13,8 @@
 // proof that a callee does not write stays an optimisation's to use (C122).
 //
 // Every spelling a parameter can be reached by is a cell: a plain function, a read-only one, a
-// view handed on, the standard library's `clear` (which writes), a `self` method, a `both`
-// function, and a generic.  The legal side — `const` parameters, the stdlib's readers, text and
+// view handed on, the standard library's `clear` (which writes), a `self` method in both call
+// spellings, and a generic.  The legal side — `const` parameters, the stdlib's readers, text and
 // scalars, an interface bound — is `a-const-value-passed-to-a-const-parameter-is-legal.loft`.
 //
 // A `main` calls the cells that only READ, and asserts what they answer: a warning compiles, so the
@@ -36,9 +36,9 @@
 // @EXPECT_WARNING: Cannot pass const parameter 'acct' to parameter 1 `a` of `bump1542`
 // @EXPECT_WARNING: Cannot pass const parameter 'acct' to parameter 1 `a` of `show1542`
 // @EXPECT_WARNING: Cannot pass 'f', a view of const parameter 'accts', to parameter 1 `a` of `show1542`
-// @EXPECT_WARNING: Cannot pass const parameter 'v' to parameter 1 `both` of `clear`
+// @EXPECT_WARNING: Cannot pass const parameter 'v' to parameter 1 `self` of `clear`
 // @EXPECT_WARNING: Cannot pass const parameter 'acct' to parameter 1 `self` of `peek1542`
-// @EXPECT_WARNING: Cannot pass const parameter 'acct' to parameter 1 `both` of `look1542`
+// @EXPECT_WARNING: Cannot pass const parameter 'acct' to parameter 1 `self` of `look1542`
 // @EXPECT_WARNING: Cannot pass const parameter 'v' to parameter 1 `v` of `first1542`
 
 struct Acc1542 { balance: integer }
@@ -46,7 +46,7 @@ struct Acc1542 { balance: integer }
 fn bump1542(a: Acc1542) { a.balance = 999; }
 fn show1542(a: Acc1542) -> integer { a.balance }
 fn peek1542(self: Acc1542) -> integer { self.balance }
-fn look1542(both: Acc1542) -> integer { both.balance }
+fn look1542(self: Acc1542) -> integer { self.balance }
 fn first1542<T>(v: vector<T>) -> T? { v[0] }
 
 // a callee that writes its parameter
@@ -68,7 +68,7 @@ fn wipe(v: const vector<integer>) { clear(v); }
 // a `self` method
 fn method_self(acct: const Acc1542) -> integer { acct.peek1542() }
 
-// a `both` function
+// a `self` method called in its FUNCTION spelling (C123: `self` gives a name both call spellings)
 fn both_form(acct: const Acc1542) -> integer { look1542(acct) }
 
 // a generic

@@ -3978,10 +3978,26 @@ and a library as well as the stdlib.  The reason `both` exists: a programmer use
 `v.sin()` where the float width is not obvious, and that muscle memory should keep working,
 while a beginner is not forced into a syntax that was invented for Rust and writes `sin(v)`.
 
+**Revised the same day, owner: `both` is deprecated.**  Measured over every call spelling on
+both backends, `self` and `both` behaved identically — method and free call, overloads on
+several types, named and default arguments, a nullable or scalar receiver, enum-variant
+dispatch, a generic receiver, a library-qualified call and `use lib::*` — except one: `use
+lib::(name)` found only a `both` function, because only `both` registered its bare name.  An
+import list now also brings in the methods the library files under that name (each under its
+own `t_<LEN><Type>_<name>` key, what `use lib::*` already brought in), so the two spellings mean
+one thing, and the stdlib's 61 `both` functions are `self`.  Registering a bare name for every
+`self` method instead was built and measured first, and refused: it changed overload selection
+(`area(Shape)` became ambiguous against `area(Square?)`) and made one method name shared by two
+packages a refused bare call (loft#850's control).  `both` still compiles and means `self`, with the WARNING
+`both-receiver-deprecated`: a warning gates a library's CI, which is how the published uses
+(`regex`'s `matches`, every version) are found and renamed after this lands.  The call
+surface does not change under the rename.
+
 ### Revisit when
 
 A consumer needs two DIFFERENT behaviours under one name on one type — that is a naming
-problem, and the cure stays a second name.
+problem, and the cure stays a second name.  Remove the `both` spelling once no published
+version declares it.
 
 ## C124 — a `const` value reaches only a `const` parameter; semantics is judged by the line, optimisation by the proof
 

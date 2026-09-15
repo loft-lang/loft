@@ -9824,9 +9824,9 @@ fn quality_6c_free_call_unknown_fn_has_no_method_hint() {
     .error("Unknown function xyzzy_never_defined at quality_6c_free_call_unknown_fn_has_no_method_hint:2:5");
 }
 
-/// `len` is declared `both: vector` — it works equally as method
-/// (`v.len()`) and as free function (`len(v)`).  Guards the `both`
-/// half of the INC#8 story: when an author picks `both`, the
+/// `len` is declared `self: vector` — it works equally as method
+/// (`v.len()`) and as free function (`len(v)`).  Guards the `self`
+/// half of the INC#8 story (C123 deprecated `both`): when an author picks `self`, the
 /// asymmetry disappears.
 #[test]
 fn inc08_len_with_both_works_either_way() {
@@ -12472,7 +12472,7 @@ fn test() {
 /// overloads.  Fix: added `OpLengthHash` (walks the bucket array
 /// via `hash::count`) and `OpLengthIndex` (walks the red-black
 /// tree via `tree::count`).  Hash gets a normal stdlib overload
-/// (`pub fn len(both: hash)`); index uses a parser hook in
+/// (`pub fn len(self: hash)`); index uses a parser hook in
 /// `src/parser/mod.rs::call()` because `OpLengthIndex` needs a
 /// `const u16` bookkeeping-offset arg that's only computable at
 /// parse time via `database.fields(tp)`.

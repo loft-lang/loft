@@ -24,47 +24,47 @@
 <h1>min / max / clamp</h1>
 <article>
 <div class="item">
-<pre><code>pub fn min(both: integer, b: integer) -&gt; integer</code></pre>
+<pre><code>pub fn min(self: integer, b: integer) -&gt; integer</code></pre>
 <p>Each of these has two overloads: one over non-null values (`-&gt; τ`) and one over nullable ones (`-&gt; τ?`).  You get the nullable overload whenever ANY argument is statically nullable — an `integer?`/`single?`/`float?`, or a division result such as `1 / z` — and it propagates: the answer is null if either argument is null.  Otherwise you get the non-null overload and a non-null answer, so a plain `min(a, b)` needs no discharge. Smallest of two integer values.</p>
 </div>
 <div class="item">
-<pre><code>pub fn max(both: integer, b: integer) -&gt; integer</code></pre>
+<pre><code>pub fn max(self: integer, b: integer) -&gt; integer</code></pre>
 <p>Largest of two integer values.</p>
 </div>
 <div class="item">
-<pre><code>pub fn clamp(both: integer, lo: integer, hi: integer) -&gt; integer</code></pre>
+<pre><code>pub fn clamp(self: integer, lo: integer, hi: integer) -&gt; integer</code></pre>
 <p>Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.</p>
 </div>
 <div class="item">
-<pre><code>pub fn min(both: single, b: single) -&gt; single</code></pre>
+<pre><code>pub fn min(self: single, b: single) -&gt; single</code></pre>
 <p>Smallest of two single-precision float values.</p>
 </div>
 <div class="item">
-<pre><code>pub fn max(both: single, b: single) -&gt; single</code></pre>
+<pre><code>pub fn max(self: single, b: single) -&gt; single</code></pre>
 <p>Largest of two single-precision float values.</p>
 </div>
 <div class="item">
-<pre><code>pub fn clamp(both: single, lo: single, hi: single) -&gt; single</code></pre>
+<pre><code>pub fn clamp(self: single, lo: single, hi: single) -&gt; single</code></pre>
 <p>Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.</p>
 </div>
 <div class="item">
-<pre><code>pub fn min(both: float, b: float) -&gt; float</code></pre>
+<pre><code>pub fn min(self: float, b: float) -&gt; float</code></pre>
 <p>Smallest of two double-precision float values.</p>
 </div>
 <div class="item">
-<pre><code>pub fn max(both: float, b: float) -&gt; float</code></pre>
+<pre><code>pub fn max(self: float, b: float) -&gt; float</code></pre>
 <p>Largest of two double-precision float values.</p>
 </div>
 <div class="item">
-<pre><code>pub fn clamp(both: float, lo: float, hi: float) -&gt; float</code></pre>
+<pre><code>pub fn clamp(self: float, lo: float, hi: float) -&gt; float</code></pre>
 <p>Clamps v into the inclusive range [lo, hi]. Returns null if any argument is null.</p>
 </div>
 <div class="item">
-<pre><code>pub fn approx(both: float, b: float, eps: float) -&gt; boolean</code></pre>
+<pre><code>pub fn approx(self: float, b: float, eps: float) -&gt; boolean</code></pre>
 <p>Approximate equality: true when a and b differ by at most eps (inclusive). `==` on float/single is EXACT IEEE equality — use `approx` when you want a tolerance, e.g. comparing computed transcendentals: `approx(sqrt(2.0) * sqrt(2.0), 2.0, 1e-9)`. A null (NaN) operand is not approximately equal to anything, so the result is false.</p>
 </div>
 <div class="item">
-<pre><code>pub fn approx(both: single, b: single, eps: single) -&gt; boolean</code></pre>
+<pre><code>pub fn approx(self: single, b: single, eps: single) -&gt; boolean</code></pre>
 <p>Approximate equality for single-precision floats (see the float overload).</p>
 </div>
 

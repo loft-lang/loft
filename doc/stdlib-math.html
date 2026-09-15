@@ -25,71 +25,71 @@
 <article>
 <div class="section-desc"><p>Functions for numeric computation. All trigonometric functions work in radians. Both single and float variants exist for every function — choose single for speed, float for precision. Integer operations The declared-RANGE guard, applied to the VALUE at a store into a slot that declares one (`integer limit(lo, hi)`, a narrow width).  A value outside `lo..=hi` takes the slot's DEFAULT — `dflt` is the lowest value in range, or the null sentinel where the slot admits null — and reports it, rather than being wrapped, aliased, or dropped.</p><p>It guards the VALUE rather than the store, which is what lets one op reach both a FIELD and a VARIABLE: a variable has no store op to carry the range, and that is why a declared range on a local went unenforced entirely.</p><p>A null passes straight through: whether a null may land in this slot is `(N-Store)`'s question, answered at compile time, and substituting `lo` for it here would quietly invent a value the program never computed.</p><p>Emitted only where the value is NOT provably in range, so ordinary in-range code pays nothing (`parser::expressions::range_guard`). @FR-E-Uncomp-NN — the collapse: a value that does not fit the target's declared range takes the type's DEFAULT, and the sentinel is a value that does not fit either.</p><p>Whether the sentinel is a legal ANSWER depends on the target, and `dflt` already carries that fact: `uncomputable_default` sets it to `i64::MIN` exactly when the slot can read back null (a nullable target, or `i32`/`i64` whose spare code is the bottom one) and to the type's default otherwise.  So a sentinel is passed through where null is representable and collapsed to the default where it is not — `u8`/`i8`/`u16`/`i16` fill their width and `u32`'s spare is at the top, which no non-null read tests for.</p><p>The sentinel arm is SILENT on purpose.  It is not a fault of this store: the operation that produced the sentinel reported at its own site, and reporting again would name `-9223372036854775808` as a value outside the range, which is not a number the program ever computed.</p></div>
 <div class="item">
-<pre><code>pub fn abs(both: integer) -&gt; integer</code></pre>
+<pre><code>pub fn abs(self: integer) -&gt; integer</code></pre>
 <p>Absolute value. Removes the sign from a negative integer.</p>
 </div>
 <div class="item">
-<pre><code>pub fn floor_mod(both: integer, divisor: integer) -&gt; integer?</code></pre>
+<pre><code>pub fn floor_mod(self: integer, divisor: integer) -&gt; integer?</code></pre>
 <p>Floor modulo — the remainder that takes the sign of the DIVISOR, so `x.floor_mod(n)` lands in `[0, n)` for a positive `n`.  The `%` operator truncates toward zero and keeps the DIVIDEND's sign (`-1 % 3 == -1`); `floor_mod` wraps (`(-1).floor_mod(3) == 2`), which is what circular indexing / wrap-around wants (`grid[(i - 1).floor_mod(w)]`).  `x.floor_mod(0)` is null, like `%` (C80 — an undefined value is a null, never a fault).</p>
 </div>
 <div class="item">
-<pre><code>pub fn abs(both: single) -&gt; single</code></pre>
+<pre><code>pub fn abs(self: single) -&gt; single</code></pre>
 <p>Absolute value for single-precision floats.</p>
 </div>
 <div class="item">
-<pre><code>pub fn cos(both: single) -&gt; single</code></pre>
+<pre><code>pub fn cos(self: single) -&gt; single</code></pre>
 <p>Cosine. Use for circular motion: x = r * cos(angle).</p>
 </div>
 <div class="item">
-<pre><code>pub fn sin(both: single) -&gt; single</code></pre>
+<pre><code>pub fn sin(self: single) -&gt; single</code></pre>
 <p>Sine. Use for circular motion: y = r * sin(angle).</p>
 </div>
 <div class="item">
-<pre><code>pub fn tan(both: single) -&gt; single</code></pre>
+<pre><code>pub fn tan(self: single) -&gt; single</code></pre>
 <p>Tangent. Use for slopes and perspective projection.</p>
 </div>
 <div class="item">
-<pre><code>pub fn acos(both: single) -&gt; single?</code></pre>
+<pre><code>pub fn acos(self: single) -&gt; single?</code></pre>
 <p>Arc cosine. Returns the angle (in radians) whose cosine is v.</p>
 </div>
 <div class="item">
-<pre><code>pub fn asin(both: single) -&gt; single?</code></pre>
+<pre><code>pub fn asin(self: single) -&gt; single?</code></pre>
 <p>Arc sine. Returns the angle whose sine is v.</p>
 </div>
 <div class="item">
-<pre><code>pub fn atan(both: single) -&gt; single</code></pre>
+<pre><code>pub fn atan(self: single) -&gt; single</code></pre>
 <p>Arc tangent of a single value. Returns angle in (-PI/2, PI/2).</p>
 </div>
 <div class="item">
-<pre><code>pub fn ceil(both: single) -&gt; single</code></pre>
+<pre><code>pub fn ceil(self: single) -&gt; single</code></pre>
 <p>Round up to the nearest integer value. Use to compute required buffer sizes from fractional counts.</p>
 </div>
 <div class="item">
-<pre><code>pub fn floor(both: single) -&gt; single</code></pre>
+<pre><code>pub fn floor(self: single) -&gt; single</code></pre>
 <p>Round down to the nearest integer value. Use to convert a float position to a tile index.</p>
 </div>
 <div class="item">
-<pre><code>pub fn round(both: single) -&gt; single</code></pre>
+<pre><code>pub fn round(self: single) -&gt; single</code></pre>
 <p>Round to the nearest integer value (half rounds away from zero).</p>
 </div>
 <div class="item">
-<pre><code>pub fn sqrt(both: single) -&gt; single?</code></pre>
+<pre><code>pub fn sqrt(self: single) -&gt; single?</code></pre>
 <p>Square root. Use for distances and normalization.</p>
 </div>
 <div class="item">
-<pre><code>pub fn atan2(both: single, v2: single) -&gt; single</code></pre>
+<pre><code>pub fn atan2(self: single, v2: single) -&gt; single</code></pre>
 <p>Arc tangent of y/x, preserving the correct quadrant. Use instead of atan when you have separate x/y components.</p>
 </div>
 <div class="item">
-<pre><code>pub fn log(both: single, v2: single) -&gt; single?</code></pre>
+<pre><code>pub fn log(self: single, v2: single) -&gt; single?</code></pre>
 <p>Logarithm of v in the given base. Use for converting between scales (e.g., decibels).</p>
 </div>
 <div class="item">
-<pre><code>pub fn pow(both: single, v2: single) -&gt; single?</code></pre>
+<pre><code>pub fn pow(self: single, v2: single) -&gt; single?</code></pre>
 <p>Raises base to the power exp. Use for exponential growth curves and scaling.</p>
 </div>
 <div class="item">
-<pre><code>pub fn abs(both: float) -&gt; float</code></pre>
+<pre><code>pub fn abs(self: float) -&gt; float</code></pre>
 <p>Absolute value for double-precision floats.</p>
 </div>
 <div class="item">
@@ -101,55 +101,55 @@
 <p>Euler's number, the base of natural logarithms (2.71828...).</p>
 </div>
 <div class="item">
-<pre><code>pub fn cos(both: float) -&gt; float</code></pre>
+<pre><code>pub fn cos(self: float) -&gt; float</code></pre>
 <p>Cosine. Use for circular motion: x = r * cos(angle).</p>
 </div>
 <div class="item">
-<pre><code>pub fn sin(both: float) -&gt; float</code></pre>
+<pre><code>pub fn sin(self: float) -&gt; float</code></pre>
 <p>Sine. Use for circular motion: y = r * sin(angle).</p>
 </div>
 <div class="item">
-<pre><code>pub fn tan(both: float) -&gt; float</code></pre>
+<pre><code>pub fn tan(self: float) -&gt; float</code></pre>
 <p>Tangent. Use for slopes and perspective projection.</p>
 </div>
 <div class="item">
-<pre><code>pub fn acos(both: float) -&gt; float?</code></pre>
+<pre><code>pub fn acos(self: float) -&gt; float?</code></pre>
 <p>Arc cosine. Returns the angle (in radians) whose cosine is v.</p>
 </div>
 <div class="item">
-<pre><code>pub fn asin(both: float) -&gt; float?</code></pre>
+<pre><code>pub fn asin(self: float) -&gt; float?</code></pre>
 <p>Arc sine. Returns the angle whose sine is v.</p>
 </div>
 <div class="item">
-<pre><code>pub fn atan(both: float) -&gt; float</code></pre>
+<pre><code>pub fn atan(self: float) -&gt; float</code></pre>
 <p>Arc tangent of a single value. Returns angle in (-PI/2, PI/2).</p>
 </div>
 <div class="item">
-<pre><code>pub fn ceil(both: float) -&gt; float</code></pre>
+<pre><code>pub fn ceil(self: float) -&gt; float</code></pre>
 <p>Round up to the nearest integer value. Use to compute required buffer sizes from fractional counts.</p>
 </div>
 <div class="item">
-<pre><code>pub fn floor(both: float) -&gt; float</code></pre>
+<pre><code>pub fn floor(self: float) -&gt; float</code></pre>
 <p>Round down to the nearest integer value. Use to convert a float position to a tile index.</p>
 </div>
 <div class="item">
-<pre><code>pub fn round(both: float) -&gt; float</code></pre>
+<pre><code>pub fn round(self: float) -&gt; float</code></pre>
 <p>Round to the nearest integer value (half rounds away from zero).</p>
 </div>
 <div class="item">
-<pre><code>pub fn sqrt(both: float) -&gt; float?</code></pre>
+<pre><code>pub fn sqrt(self: float) -&gt; float?</code></pre>
 <p>Square root. Use for distances and normalization.</p>
 </div>
 <div class="item">
-<pre><code>pub fn atan2(both: float, v2: float) -&gt; float</code></pre>
+<pre><code>pub fn atan2(self: float, v2: float) -&gt; float</code></pre>
 <p>Arc tangent of y/x, preserving the correct quadrant. Use instead of atan when you have separate x/y components.</p>
 </div>
 <div class="item">
-<pre><code>pub fn log(both: float, v2: float) -&gt; float?</code></pre>
+<pre><code>pub fn log(self: float, v2: float) -&gt; float?</code></pre>
 <p>Logarithm of v in the given base. Use for converting between scales (e.g., decibels).</p>
 </div>
 <div class="item">
-<pre><code>pub fn pow(both: float, v2: float) -&gt; float?</code></pre>
+<pre><code>pub fn pow(self: float, v2: float) -&gt; float?</code></pre>
 <p>Raises base to the power exp. Use for exponential growth curves and scaling.</p>
 </div>
 

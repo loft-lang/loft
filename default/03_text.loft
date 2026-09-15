@@ -67,8 +67,8 @@ pub fn char_slice(self: text, from: integer, to: integer) -> text {
 // `02_files.loft` § Path helpers, so they're available before
 // `03_text.loft` loads — same call shape, same `pub fn` signatures.)
 // Removes leading and trailing whitespace. Use when processing user input or file content.
-pub fn trim(both: text) -> text[both];
-#rust"@both.trim()"
+pub fn trim(self: text) -> text[self];
+#rust"@self.trim()"
 #pure
 // Removes leading whitespace only.
 pub fn trim_start(self: text) -> text[self];

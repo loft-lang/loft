@@ -2033,6 +2033,15 @@ annotations in the tree were inert** (loft#929).  Both are now fatal, and the ch
 even when the file produced NO diagnostics at all — the other way an expectation went
 unlooked-at.
 
+**An expectation claims only what it names.**  Under `loft test` / `--tests` — the path a
+library's CI takes, with `LOFT_DENY_WARNINGS=1` — an `@EXPECT_WARNING` quiets the warnings
+containing its text and nothing else: every OTHER warning in the file is printed and fails
+`--deny-warnings` exactly as in a file with no expectation.  Until C123 one expectation
+exempted the whole file from both, which is how `regex`'s test, pinning two
+`shadowed-by-method` warnings, hid the `both-receiver-deprecated` warning on its own source
+from its CI (`tests/post_scope_lints_under_tests.rs`,
+`an_expected_warning_does_not_exempt_the_other_warnings_in_its_file`).
+
 The rule is per ANNOTATION, not per file, and that distinction is the whole of it.  An
 annotation written above a `fn` binds to that function; only one written ahead of every
 `fn`/`struct`/`enum` is file-level.  Both kinds are scored by the same predicate — the

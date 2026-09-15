@@ -63,8 +63,8 @@ fn fnref852() -> text {
 // loft#1079 turned on.  `both:` is the one that registers a raw-spelled
 // `Dynamic` entry beside `n_dual852`; `self:` registers only the method
 // `t_7integer_only852`; `plain852` registers only `n_plain852`.
-fn dual852(both: integer) -> integer {
-  both * 10
+fn dual852(self: integer) -> integer {
+  self * 10
 }
 
 fn only852(self: integer) -> integer {

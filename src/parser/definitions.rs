@@ -1948,6 +1948,31 @@ impl Parser {
                  {type_var_name})` and call it as `{fn_name}(x)`"
             );
         }
+        // C123 — `both` as a first parameter is deprecated: `self` already gives a function both
+        // call spellings, so the two names meant one thing.  Still accepted, meaning exactly
+        // `self`, and warned — a warning gates a library's CI, which is how published uses are
+        // found and renamed.
+        if !self.first_pass && arguments.first().is_some_and(|a| a.name == "both") {
+            diagnostic!(
+                self.lexer,
+                Level::Warning,
+                code = "both-receiver-deprecated",
+                "`both` as a first parameter is deprecated — `self` already gives `{fn_name}` \
+                 both call spellings, `x.{fn_name}(…)` and `{fn_name}(x, …)`; rename the \
+                 parameter to `self`"
+            );
+            self.lexer.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: "rename the parameter to `self`, and its uses in the body".to_string(),
+                condition: Some(
+                    "every `both` the body reads is renamed with it — the calls do not change"
+                        .to_string(),
+                ),
+                edit: None,
+                concept: "functions",
+                concept_ref: "@F16",
+            });
+        }
         // @PLN102 Phase 3 (N-Domain) — the domain-partial math fns are declared `-> τ?` in the
         // stdlib (they yield the reserved null out of their real domain). When LOFT_NULLFLOW is
         // OFF, strip the `?` so their return stays non-null and the default surface is byte-

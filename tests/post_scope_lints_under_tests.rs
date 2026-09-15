@@ -257,3 +257,39 @@ fn test_two_plain_vectors_are_not_a_group() {
         "none of the four controls is a double fill; got:\n{out}"
     );
 }
+
+/// A deprecated `both` receiver, read by a test — a warning no expectation below claims.
+const BOTH_RECEIVER: &str = "
+fn twice(both: integer) -> integer { both * 2 }
+fn test_twice() { assert(twice(3) == 6, \"twice\"); }
+";
+
+/// C123 — an `@EXPECT_WARNING` claims the warnings it names and nothing else.  The runner used
+/// to exempt the WHOLE file once any expectation was declared, so every other warning in it
+/// neither printed nor failed `--deny-warnings`: `regex`'s test pinned two `shadowed-by-method`
+/// warnings, and the `both-receiver-deprecated` warning on its own source reached no one.
+#[test]
+fn an_expected_warning_does_not_exempt_the_other_warnings_in_its_file() {
+    let source = format!("// @EXPECT_WARNING: lost-write\n{LOST_WRITE}{BOTH_RECEIVER}");
+    let (out, code) = run_tests("claims_one", &source, &[("LOFT_DENY_WARNINGS", "1")]);
+    assert!(
+        out.contains("both-receiver-deprecated"),
+        "the unclaimed warning must be shown\n{out}"
+    );
+    assert!(
+        out.contains("deny-warnings") && out.contains("FAIL") && code != Some(0),
+        "and it must fail a library's CI, whatever else the file expects\n{out}"
+    );
+}
+
+/// The control: the claimed warning alone still passes under `--deny-warnings`, so the fix did
+/// not turn an intentional warning into a failure.
+#[test]
+fn a_claimed_warning_alone_still_passes_under_deny() {
+    let source = format!("// @EXPECT_WARNING: lost-write\n{LOST_WRITE}");
+    let (out, code) = run_tests("claims_only", &source, &[("LOFT_DENY_WARNINGS", "1")]);
+    assert!(
+        !out.contains("FAIL") && code == Some(0),
+        "an expected warning is intentional and must not fail the file\n{out}"
+    );
+}

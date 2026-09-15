@@ -268,8 +268,8 @@ pub fn exists(path: text) -> boolean fs#read {
 #impure(io)
 // Method form: f = file("path"); if f.exists() { .. }
 // Also callable as exists(file_obj) via the 'both' parameter name.
-pub fn exists(both: const File) -> boolean fs#read {
-  both.format != Format.NotExists
+pub fn exists(self: const File) -> boolean fs#read {
+  self.format != Format.NotExists
 }
 #pure
 // Use to remove a file after processing or as a cleanup step.

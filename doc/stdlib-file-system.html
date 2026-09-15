@@ -96,7 +96,7 @@
 <p>Stat-equivalent filesystem read; par-safe. Use to check whether a path is accessible before reading or writing it. A RELATIVE path resolves against the program's own directory, or against the working directory under `#cwd`; an absolute path is used as given, including one outside the project.  This is not an access boundary — the boundary is the `fs` capability a `[sandbox]` profile grants or withholds.</p>
 </div>
 <div class="item">
-<pre><code>pub fn exists(both: const File) -&gt; boolean fs#read</code></pre>
+<pre><code>pub fn exists(self: const File) -&gt; boolean fs#read</code></pre>
 <p>Filesystem stat (via file()); par-safe. Method form: f = file(&quot;path&quot;); if f.exists() { .. } Also callable as exists(file_obj) via the 'both' parameter name.</p>
 </div>
 <div class="item">
