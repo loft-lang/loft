@@ -468,6 +468,21 @@ compile. Counting said `scan` was called 33 832 → 61 832 → 117 832 times for
 to be doing O(n) work. Only then is a profiler the right instrument, and it went straight to
 `use_analysis::collect_defs`.
 
+### The clear case first
+
+Pick the case that shows up in the statistics AND has a visible reason, and build that one.
+A large routine always has many small spots that could be better; finding them all is hard,
+they may be needed later, and the effort on the first, clear cases is rewarded far better.
+So rank candidates by the profile share TIMES a mechanism you can name and falsify — one
+routine at 57–82 % of three rows whose taps pay a re-tested flag each, one site that
+deep-copies a record at its first bind — build it, re-profile, and rank again.  A profile
+share is what a symbol costs, not what its removal saves, so the second half of the product
+is not optional.  @PLN157 § V-an measured both sides in one evening: the value form's one
+declined shape (≈194 record mints per `parse` call) moved the row, and a field-list clone
+at 1–2 %, taken only because the code was already open, did not.  When a row's profile is
+FLAT — nothing over about 5 % — that is the finding to record: the row is bound by a class
+(DESIGN.md § V-an's table for `parse`), and the unit is the class, not a spot.
+
 ## Benchmark results
 
 Wall-clock milliseconds, **best of 3 warm runs**, single core, Linux x86-64, **refreshed
