@@ -452,7 +452,7 @@ v[i];                // index read
 
 **`v[i]` with a possibly-negative index does NOT null-guard.** Scalar indexing counts from the end for negative `i`, exactly like slices: `v[-1]` is the LAST element, `v[-len]` the first — NOT `null`.  Only `i >= len` (and `i < -len`) yield `null`.  So `if v[i] { … }` and `v[i] ?? d` catch an over-range index but NOT a negative one — a `-1` "not-found" sentinel or a `a - b` underflow silently reads a real element from the end.  When `i` can go negative, test `if i >= 0` FIRST (that `>= 0` check is not redundant with a later null-guard).
 
-**Never swap `vector<STRUCT>` elements in-place via a temp (#338).** `tmp = v[j]` is a VIEW of slot j (not a copy), but `v[j] = v[k]` COPIES into the slot — so `tmp = v[j]; v[j] = v[k]; v[k] = tmp;` silently loses j's record and duplicates k's. Swap scalar fields one by one, or build a fresh vector (selection instead of in-place insertion sort).
+**Never swap `vector<STRUCT>` elements in-place via a temp (loft#338).** `tmp = v[j]` is a VIEW of slot j (not a copy), but `v[j] = v[k]` COPIES into the slot — so `tmp = v[j]; v[j] = v[k]; v[k] = tmp;` silently loses j's record and duplicates k's. Swap scalar fields one by one, or build a fresh vector (selection instead of in-place insertion sort).
 
 ---
 
