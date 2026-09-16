@@ -2653,7 +2653,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 839 | 499 | 6 | **334** |
+| 840 | 500 | 6 | **334** |
 (2026-09-16, the ../loft2 join re-measured on THIS tree: 839 · 499 · 6 · 334.  The tuple
 commits report +1 · +1 against their own branch and are right about what they add; this tree
 reads +4 · +4, because the @PLN164 C1/C2 functions picked from 157 discriminate on `Type`
@@ -2668,6 +2668,29 @@ a gate quietly two wider than the tree it guards.  Re-pinned with `ir_walker_aud
 --write-ratchet`, which is what `--check-ratchet` itself instructs when the count falls.
 ../loft2's tree measures 1314 as well, so the two pins agreeing is the join having CONVERGED,
 not a number carried across a tree boundary.)
+
+(2026-09-16, **D-tup-10 CLOSED** — the owner's tuple-absence ruling.  This tree re-measures
+840 · 500 · 6 · 334 after the pick, against the 839 · 499 · 6 · 334 it read before it; ../loft2
+reports the same +1 · +1 as 835 · 495 against their own 834 · 494, the offset being the @PLN164
+C1/C2 functions this tree carries and their base does not.  One function is
+added, `Parser::is_absent_tuple`, and it SEES THROUGH — its body carries an `Optional` ARM
+(`matches!(t, Type::Optional(_))`) and calls `is_tuple_shape`, which peels with `base()`; either
+qualifies under this former's rule, and the arm is the honest half, because this predicate exists
+to ask ABOUT the wrapper rather than past it.  It answers *"can this tuple be absent?"*, which is
+the one question the `?`/`??` refusal, the null test and the tuple comparison now all ask instead
+of each deciding for itself.  **The OPAQUE column did not move — the third time on this entry —
+and that is again the attribution:** the predicate replaces no opaque site, it ADDS a distinction
+the code did not previously draw at all, between the in-flight `(τ₁, …, τₙ)?` and a tuple a
+program writes down.
+⚠ Attributed by MEASUREMENT, not by reading the diff.  On ../loft2's tree, neutralising that
+single `Type` match drops the row to exactly 834 · 494 and restoring it returns 835 · 495, which
+is what says this function and no other moved it — that A/B is THEIRS, quoted here rather than
+re-run.  What corroborates it on THIS tree is the row moving 839 → 840 with this predicate as the
+only `Type`-discriminating function the pick adds, and `--check-ratchet` reporting both opaque
+columns still AT baseline (334 / 1314).  The audit is a static scan, so that A/B costs no build —
+worth knowing, because the report prints counts and an opaque QUEUE, and a function that sees
+through never appears in the queue.  Grepping the report for the new name finds nothing and
+proves nothing.)
 
 (2026-09-16, D-tup-10's DISCHARGE close — `??` over the boxed spelling: 834 · 494 · 6 · 334,
 re-measured against the 833 · 493 · 6 · 334 the same day's earlier close left.  One function is

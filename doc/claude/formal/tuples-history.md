@@ -6,8 +6,10 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **1** — D-tup-10, whose entry lives in the chapter next door because it is still being
-worked; this register carries the closed ones.  This line read `OPEN: 0` from 2026-09-05 until
+OPEN: **0** — D-tup-10 closed 2026-09-16 by an owner ruling (absence belongs to the `?`, so
+`?`/`??` reach the in-flight tuple alone and a tuple a program writes down exists); its entry
+stays in the chapter next door, where it was worked, with the measurements the ruling was made
+on.  This line read `OPEN: 0` from 2026-09-05 until
 2026-09-10 while D-tup-10 and D-tup-11 were live in [tuples.md](tuples.md) — a register's
 headline is a claim about the chapter beside it, and it decayed the moment an entry was opened
 somewhere else.  D-tup-14 opened and closed 2026-09-14 (below).  D-tup-12 opened and closed 2026-09-10 (below).  D-tup-9 opened and closed 2026-09-05 (loft#1365 — below: the record and scalar bindings by @PLN153 phase 1, the collection half by the @FR-F-Ret join).  (D-tup-8 opened and closed 2026-09-04, loft#1361 — below; D-tup-7 opened and closed 2026-09-04, loft#1350 — below; D-tup-4's KEYED half CLOSED 2026-08-31, loft#1230); D-tup-5 and D-tup-6 opened and closed

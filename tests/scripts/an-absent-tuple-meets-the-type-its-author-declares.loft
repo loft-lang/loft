@@ -35,22 +35,18 @@
 // gave that report.  The expectation matches both lines and no other.
 // @EXPECT_WARNING: of the return value of the non-null type
 //
-// @falsified-at: 0d06d49f5 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
-//   exit 1 -> 0, native 1 assertion failures -> 0.  The moving channel is a2's `q == null`: on
-//   this parent the file COMPILES (the three refusals above closed in an earlier commit) and the
-//   boxed tuple answers the null question by the RECORD's presence, so a CELL fails rather than
-//   the file being refused.  Against the original parent 0d1a0dedd the channel was the exit
-//   alone — the control refuses the file there (a1's landing is a type change), so no assertion
-//   on it is reachable at all, and the eight controls ran green in the probe matrix this guard
-//   was cut from.
-// @falsified-by: tests/falsified/an-absent-tuple-meets-the-type-its-author-declares.patch —
-//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native
-//   1 assertion failures -> 0.
-// HOLDS: leak, panic and expectations are equal on both trees, on both backends — falsify prints
-//   only the channels that MOVE and requires HERE to be clean.  The two neighbouring cures the
-//   cells reject: one that answers the null question from the RECORD alone leaves a2 failing,
-//   and one that reads the MEMBERS without testing the record's presence first reads them off a
-//   null reference in a3, whose record is genuinely absent.
+// @falsified-at: ce24cd697 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/an-absent-tuple-meets-the-type-its-author-declares.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   The moving channel is the NULL QUESTION on what the read landed in.  On that parent a tuple
+//   an author writes down still reported itself absent when every member was null, so a1's
+//   `!(w == null)` fails there; here it holds, because absence belongs to the `?` and a written
+//   tuple exists (`(T-Absent)`, owner ruling 2026-09-16).  a2 and c7 are the same question
+//   through the two other spellings — a declared member-nullable RETURN and a FIELD read.
+//   CHANNEL: the assertions + exit channels, on BOTH backends.
+// HOLDS: leak, panic, free-refusal and expectations are equal on both trees, on both backends —
+//   falsify prints only the channels that MOVE and requires HERE to be clean.  The neighbouring
+//   cure these cells reject: answering the null question from the RECORD's presence rather than
+//   from the TYPE leaves a2 and c7 disagreeing with a1, which is the drift `(T-Absent)` forbids.
 
 fn a1() {
   v: vector<(integer, text)> = [(1, "a"), (2, "bb")];
@@ -59,7 +55,11 @@ fn a1() {
   j = 1;
   u: (integer?, text?) = v[j];
   assert("{w.0} {w.1}" == "null null", "a1 an absent read lands in the declared type: {w.0} {w.1}");
-  assert(w == null, "a1 the landed absent tuple reads as null");
+  // The landing is the point of this cell; the null QUESTION on what it landed in is answered by
+  // `(T-Absent)`'s ruling of 2026-09-16 — a tuple the author WROTE exists, whatever its members
+  // hold, so `w` is not null even holding two of them.  Absence belongs to the in-flight type the
+  // read had before it landed, and c1 beside this cell is where that is still asked.
+  assert(!(w == null), "a1 the landed tuple EXISTS, whatever its members hold");
   assert("{u.0} {u.1}" == "2 bb", "a1 a present read lands in the declared type: {u.0} {u.1}");
   assert(u != null, "a1 the landed present tuple is not null");
 }
@@ -71,13 +71,15 @@ fn a2() {
   q = a2_get(v, 5);
   assert("{p.0} {p.1}" == "2 bb", "a2 a present read returned: {p.0} {p.1}");
   assert("{q.0} {q.1}" == "null null", "a2 an absent read returned: {q.0} {q.1}");
-  // `q == null` IS asserted now, and it is the cell this file exists to hold.  The same
-  // declared type has two representations — a1's `w` is the stack tuple, and a value RETURNED
-  // through the `__tuple<…>` record is the boxed one — and `(T-Absent)` is stated on the TYPE,
-  // so both must answer by their MEMBERS.  The boxed one answered by the RECORD's presence
-  // instead: a return buffer that exists holding two nulls read as PRESENT, so this was
-  // `false` while a1's `w` beside it was `true`.
-  assert(q == null, "a2 the returned absent tuple reads as null");
+  // The two representations of one declared type must still ANSWER ALIKE, which is what this
+  // cell holds: a1's `w` is the stack tuple and `q` is the boxed one a RETURN carries, and
+  // neither is absent.  A declared `-> (integer?, text?)` is the only spelling a function has
+  // for handing an absent read out, and what the caller receives is a tuple that EXISTS holding
+  // null members (`(T-Absent)`, owner ruling 2026-09-16).  Before that ruling this asserted the
+  // opposite, and the defect it caught was the boxed home answering by the RECORD's presence
+  // while the stack home answered by its members — the two homes disagreeing, which is the part
+  // that still must not happen.
+  assert(!(q == null), "a2 the returned tuple EXISTS, as a1's stack twin does");
   // Spelled `!=` rather than a negated `==`, as a1 spells it: the negation is its own path
   // through `null_test`, and a cell that only ever asks `==` leaves it unpinned.
   assert(p != null, "a2 the returned present tuple does not");
@@ -108,7 +110,11 @@ fn a4() {
   misses = 0;
   for i in 0..4 {
     q = a2_get(v, i);
-    if q == null {
+    // The MISS is read off a member, not off the tuple: what the callee returns is typed
+    // `(integer?, text?)`, a tuple that exists, so `q == null` is constantly false there
+    // (`(T-Absent)`, owner ruling 2026-09-16).  The buffer question this cell exists for is
+    // unchanged — a member read is what would go stale.
+    if q.0 == null {
       misses += 1;
       assert("{q.0} {q.1}" == "null null", "a4 a miss in a loop keeps null members: {q.0} {q.1}");
     } else {
@@ -118,16 +124,16 @@ fn a4() {
   assert("{hits} {misses}" == "2 2", "a4 two hits then two misses through one buffer: {hits} {misses}");
   r = a2_get(v, 5);
   s = a2_get(v, 0);
-  assert(r == null, "a4 the miss reads as null");
+  assert("{r.0} {r.1}" == "null null", "a4 the miss reads null members: {r.0} {r.1}");
   assert(s != null, "a4 the hit after a miss reads as present");
   assert("{s.0} {s.1}" == "1 a", "a4 the hit after a miss is not stale: {s.0} {s.1}");
 }
 
-// The DISCHARGE half — `??` over this same boxed spelling — is guarded by
-// `a-boxed-tuple-discharges-its-null-like-the-stack-one.loft`, deliberately NOT here: its cells
-// do not compile on the build they were written to catch, and a compile refusal takes the whole
-// file with it.  Held here, they silenced this file's assertion channel and left the `== null`
-// close with an exit-only receipt — a cell that can refuse the file erases every cell behind it.
+// The DISCHARGE half is `a-tuple-that-exists-has-nothing-to-discharge.loft`, deliberately NOT
+// here: `?` and `??` on a tuple that exists are a compile ERROR (`(T-Absent)`, owner ruling
+// 2026-09-16), and a cell that can refuse the file erases every cell behind it.  Measured when
+// the discharge cells were briefly held here: this file's assertion channel went dead and the
+// `== null` close was left with an exit-only receipt.
 
 fn c1() {
   v: vector<(integer, text)> = [(1, "a"), (2, "bb")];
@@ -181,7 +187,11 @@ fn c7() {
   y = b.t;
   z: (integer?, text?) = b.t;
   assert("{x.0} {x.1}" == "7 g", "c7 a tuple field through a present receiver: {x.0} {x.1}");
-  assert("{y.0} {y.1} {y == null}" == "null null true", "c7 through an absent receiver: {y.0} {y.1}");
+  // A FIELD read yields a tuple that EXISTS, so the null question answers false — the members
+  // are what carry the absent receiver through to the reader, and they read null
+  // (`(T-Absent)`, owner ruling 2026-09-16).  Only an out-of-range READ makes a tuple that is
+  // not there; c1 and c6 beside this cell are where that is still asked.
+  assert("{y.0} {y.1} {y == null}" == "null null false", "c7 through an absent receiver: {y.0} {y.1}");
   assert("{z.0} {z.1}" == "null null", "c7 landed in the declared type: {z.0} {z.1}");
 }
 

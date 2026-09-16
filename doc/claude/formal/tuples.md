@@ -95,25 +95,45 @@ the same two cures. The gap between the rule and the model is
 ```
   (T-Absent)  a TUPLE TYPE is never nullable — `(τ₁, …, τₙ)?` is refused BY NAME at every
               declaration (types.md N-Opt: a tuple is its members' bytes and has no value to
-              spend on absence) — and a tuple that ARRIVES absent is a PRESENT tuple whose
-              members are all null:   optional((τ₁, …, τₙ))  ≡  (τ₁?, …, τₙ?).
-              Every producer of absence means exactly that — an index that misses (`v[i]` on a
-              vector<(τ₁, τ₂)>, N-Index), a generic `T?` instantiated at a tuple, a decoded
-              document whose key is missing.  No author can DECLARE `(τ₁, …, τₙ)?`; the compiler
-              carries such a value with the `?` on the outside (`Optional` around whichever home
+              spend on absence).  ABSENCE BELONGS TO THE `?`, NOT TO THE MEMBERS: exactly one
+              tuple can be absent, the IN-FLIGHT `(τ₁, …, τₙ)?` that a read which MISSES
+              produces — `v[121134133]` on a vector<(τ₁, τ₂)> (N-Index), a keyed miss, a generic
+              `T?` instantiated at a tuple, a decoded document whose key is missing.  That type
+              lives in a local VARIABLE and nowhere else: no author can DECLARE it, and the
+              compiler carries it with the `?` on the outside (`Optional` around whichever home
               the value lives in — the stack tuple, or the `__tuple<…>` record a heap-carrying
-              tuple is boxed into), and that in-flight spelling DENOTES the member-nullable
-              tuple.  So every site must read the two alike (`@FR-N-Shape`: a shape question
-              answers the same for `τ` and `τ?`), and a site that resolved one spelling refused
-              the other for a reason unrelated to the question it asked — D-tup-10, whose three
-              refusals (a landing, a return, a generic's member read) closed 2026-09-16 by
-              peeling at each.  The null QUESTION on a tuple is answered by its members, from ONE home:
-              `t == null` and `t ?? d` read "every member null"; `t?` reads the members'
-              defaults (N-Default, loft#1424); `t.i` on such a tuple is `τᵢ?` (N-Prop) and
-              N-Store polices where it lands.  Owner ruling 2026-09-07 (loft#1423): a tuple has
-              no faithful document form anyway, so its absence is presented as the tuple that
-              exists with nothing in it.  The tag layout a stack `(τ, τ)?` would need is
-              declined in DESIGN_DECISIONS C119.
+              tuple is boxed into).  Every OTHER tuple EXISTS, whatever its members hold: a
+              written `(τ₁?, …, τₙ?)`, a declared member-nullable return, a field read.
+              `(null, null)` written down is a tuple that is THERE, holding two nulls.
+
+              So the operators split, and the split is decided by the TYPE ON THE LINE even
+              though both spellings hold the same all-null bytes at run time:
+                `t?` / `t ?? d`   discharge an ABSENCE — legal on the in-flight tuple, and a
+                                  REFUSAL on a tuple that exists, which has none.  The refusal
+                                  is on the SUBJECT: `(N-Index)` trusts a CONSTANT index, so
+                                  `v[0]` is typed without the `?` yet is still an element read
+                                  that can miss, and it discharges like `v[i]`.
+                `t == null`       asks the in-flight tuple's MEMBERS — all null is how that
+                                  absence is represented — and is constantly FALSE for a tuple
+                                  that exists (`!=` constantly true).
+                `a == b`          compares tuples that EXIST, element by element; a side that is
+                                  absent makes `==` false and `!=` true.
+                `t.i`             is `τᵢ?` on an in-flight tuple (N-Prop); N-Store polices where
+                                  it lands, and discharging THAT member is the cure the refusal
+                                  above names.
+              An in-flight tuple STORED into a slot whose members are each nullable is the
+              sanctioned move: the nulls land, and the slot then holds a tuple that exists.  A
+              slot with a non-null member keeps N-Store's report, per member.
+
+              ⚠ The in-flight tuple carries NO TAG (the layout a stack `(τ, τ)?` would need is
+              declined in DESIGN_DECISIONS C119), so an element that EXISTS holding all-null
+              members is indistinguishable from a miss — `v[i] == null` is true for both.  That
+              is a consequence of the representation, not a defect, and `1477b` pins it.
+
+              Owner rulings: 2026-09-07 (loft#1423) a tuple has no faithful document form, so
+              its absence is presented as the tuple that exists with nothing in it; 2026-09-16
+              settles the rest of the paragraph above — `?`/`??` reach the in-flight tuple only,
+              and a tuple a program writes down exists.  D-tup-10 closed there.
 ```
 
 ### Reference tuples — `&(…)` writes the caller's elements in place
@@ -188,11 +208,52 @@ it, not a standing fact.
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 0.**
 
-- **D-tup-10** *(open, loft#1423 / loft#1451)* — `(T-Absent)` says no `Optional(Tuple)` exists,
-  and the code still mints one wherever absence is synthesised: `Type::optional` wraps a
-  `Tuple` like any other type.
+- **D-tup-10** *(CLOSED 2026-09-16, loft#1423 / loft#1451)* — `(T-Absent)` said no
+  `Optional(Tuple)` exists while the code minted one wherever absence is synthesised:
+  `Type::optional` wrapped a `Tuple` like any other type.
+
+  ✅ **CLOSED 2026-09-16 by an owner ruling, because the rules could not settle it.**  The last
+  live cell was the `?` discharge: it answered the members' defaults on the in-flight
+  `(τ₁, …, τₙ)?` and was REFUSED on the `(τ₁?, …, τₙ?)` this entry's own rule called the same
+  type.  One expression decided it — `u = v[i]; u?` answered while
+  `u: (integer?, text?) = v[i]; u?` refused — and the axis was member-nullability, not the home:
+  the in-flight spelling over a `vector<(τ?, τ?)>` refused too, and so did the boxed one.
+
+  Measuring the cure is what showed the rules did not reach: `(D-Opt)` gives
+  `construct_default(τ?) = null`, so a literal member-wise default of `(integer?, text?)` is
+  `(null, null)` — the absent tuple itself, not `(0, "")`.  The case that separates the readings
+  is a PARTLY PRESENT tuple, which the written spelling can hold and an index miss cannot
+  produce: `??` and `==` are WHOLE-wise on both spellings and agree, so typing the discharge
+  `(integer, text)` would put a live null in a non-null slot on the pass-through path — the lie
+  `(N-Store)` exists to refuse.  So the `≡` above held at the two ENDS, all-present and all-null,
+  and never as type equality.
+
+  **The ruling:** absence belongs to the `?`, not to the members.  Only an out-of-range read
+  makes a tuple that is not there; `(null, null)` written down is a tuple that EXISTS holding two
+  nulls.  `?` and `??` discharge an absence, so they reach the in-flight tuple alone and are a
+  compile error on a tuple that exists; `t == null` is false for one; `==` compares tuples that
+  exist and answers false when a side is absent; and an in-flight tuple STORED into a slot whose
+  members are each nullable is the sanctioned move.  `(T-Absent)` above is rewritten to that, and
+  "every member null" is demoted from the DEFINITION of absence to how the in-flight value is
+  represented.  Guards: `1477` (the member fold, its cells moved to the in-flight spelling),
+  `1477b` (the null question in both spellings, plus the no-tag consequence),
+  `a-tuple-that-exists-has-nothing-to-discharge.loft` (the refusal and its `v[0]` controls), and
+  `an-absent-tuple-meets-the-type-its-author-declares.loft` (the landing).
+
+  ⚠ **The refusal is gated on the SUBJECT, not the type, and that is measured.**  `(N-Index)`
+  trusts a CONSTANT index, so `v[0]` is typed without the `?` while still being an element read
+  that can miss — nine shipped scripts discharge one, and `823` asserts it outright.  A gate
+  written on the type alone passes every refusal cell and breaks all nine.
+
+  ⚠ **It also retired a close of its own.**  `??` over the boxed member-nullable spelling was
+  made to work on 2026-09-16 (guard `a-boxed-tuple-discharges-its-null-like-the-stack-one.loft`)
+  and the ruling makes it an error; that guard is deleted and its one surviving control, the
+  generic `-> T?` route, moved into the refusal guard.  Unmerged, so the cost was one commit.
+
+  The record below is kept as it stood, because the measurements in it are what the ruling was
+  made on.
 
   ⚠ **RE-MEASURED 2026-09-09, both backends: three of the four cells this entry called REFUSED
   now work, and only one still does.**  The entry read as a four-cell refusal and is a one-cell
@@ -392,14 +453,16 @@ it, not a standing fact.
   half-migrates the representation and takes `?` on a tuple down with it.  The written `(τ, τ)?` stays
   refused — that half is `1423-a-nullable-tuple-type-is-refused-by-name.loft` and does not move.
 
-  ⚠ **RE-MEASURED 2026-09-16 after the option-2 ruling and the two closes: this entry does NOT
-  close, and what remains is ONE cell — the `?` discharge.**  The re-measure was owed because
-  the ruling made the entry's own headline claim (*"the code still mints an `Optional(Tuple)`"*)
-  describe what the rule now PRESCRIBES rather than a deviation, so the count could only be
-  settled by asking the cells again.  Its own guards answer green on both backends
-  (`an-absent-tuple-meets-the-type-its-author-declares.loft` a1-a4 + c1-c8, and
-  `a-boxed-tuple-discharges-its-null-like-the-stack-one.loft`), and the declaration refusal
-  holds.  What does not:
+  ⚠ **RE-MEASURED 2026-09-16 — and SUPERSEDED the same day by the ruling above, which closed the
+  entry.**  What follows is the state the ruling was made ON, kept because it is the evidence
+  behind it.  The re-measure said this entry did NOT close and that ONE cell remained, the `?`
+  discharge.  It was owed because the option-2 ruling had turned the entry's own headline claim
+  (*"the code still mints an `Optional(Tuple)`"*) into a description of what the rule
+  PRESCRIBES rather than a deviation, so the count could only be settled by asking the cells
+  again.  Its guards answered green on both backends
+  (`an-absent-tuple-meets-the-type-its-author-declares.loft` a1-a4 + c1-c8, and the
+  boxed-discharge guard the later ruling deleted), and the declaration refusal held.  What did
+  not:
 
   - `?` on the IN-FLIGHT spelling answers the members' defaults and discharges to the NON-NULL
     tuple: `x: (integer, text) = v[i]?` lands, reading `0 ""`.

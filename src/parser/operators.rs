@@ -760,17 +760,29 @@ impl Parser {
             } else {
                 self.cl("OpNot", &[valid])
             });
-        } else if Self::is_tuple_shape(&self.data, tp) {
-            // @FR-T-Absent — a tuple's absence is "every member null", and the rule names
-            // `t == null` and `t ?? d` as ONE question.  So this asks the coalesce's own
-            // answer and negates it, rather than restating the fold: two spellings of one
-            // question that each carried their own member walk would be exactly the drift
-            // `(T-Absent)` says must not exist, and the members' sentinels are already
-            // `coalesce_not_null`'s to know.
+        } else if Self::is_existing_tuple(&self.data, tp) {
+            // `@FR-T-Absent` — a tuple a program writes down EXISTS, whatever its members
+            // hold: `(null, null)` is a tuple that is THERE, holding two nulls.  So `t == null`
+            // is constantly false for it, and `!=` is the tail's negation of that answer.
+            // Only an out-of-range read makes a tuple that is not there, and that one takes
+            // the arm below (owner ruling 2026-09-16, `tuples.md` D-tup-10).
             //
-            // Asked through `is_tuple_shape` so BOTH homes arrive here.  The rule is stated
-            // on the TYPE, not on where the value lives, and this arm deliberately precedes
-            // the `Optional(Reference)` arm below: a boxed tuple matches that one too, and
+            // This arm did not exist before that ruling: both spellings folded the MEMBERS, so
+            // an all-null written tuple reported itself ABSENT.  That was the "absent iff every
+            // member null" convention, which the ruling demotes from the DEFINITION of absence
+            // to how the in-flight value happens to be represented.
+            Value::Boolean(false)
+        } else if Self::is_absent_tuple(&self.data, tp) {
+            // `@FR-T-Absent` — the in-flight `(τ₁, …, τₙ)?` an out-of-range read produces is
+            // the one tuple that can be absent, and all-null members is how it is REPRESENTED.
+            // So this asks the coalesce's own answer and negates it, rather than restating the
+            // fold: two spellings of one question that each carried their own member walk would
+            // be exactly the drift `(T-Absent)` says must not exist, and the members' sentinels
+            // are already `coalesce_not_null`'s to know.
+            //
+            // Reached for BOTH homes — a stack `(τ, τ)?` and the boxed `ref(__tuple<…>)?` a
+            // generic `-> T?` at a tuple delivers — and this arm deliberately precedes the
+            // `Optional(Reference)` arm below: a boxed tuple matches that one too, and
             // answering it there would test the RECORD's presence instead of the members.
             //
             // `coalesce_not_null` addresses members through `Value::TupleGet(var, i)`, so it
@@ -2078,6 +2090,55 @@ impl Parser {
         matches!(t.base(), Type::Tuple(_)) || Self::record_tuple_def(data, t.base()).is_some()
     }
 
+    /// Can this tuple be ABSENT — is it the in-flight `(τ₁, …, τₙ)?` that an out-of-range read
+    /// produces, as opposed to a tuple that exists?
+    ///
+    /// `@FR-T-Absent` — absence belongs to the `?`, never to the members.  `v[121134133]` on a
+    /// `vector<(τ, τ)>` yields `(τ, τ)?`, a type no author may SPELL (`1423` refuses it by name)
+    /// and the index produces anyway; it lives in a LOCAL and nowhere else.  Everything a
+    /// program can write down is a tuple that EXISTS whatever its members hold — a written
+    /// `(τ₁?, …, τₙ?)`, a declared member-nullable return, a field read.  `(null, null)` is such
+    /// a tuple: it is there, holding two nulls.
+    ///
+    /// This is therefore the gate on the three operators that ask about absence — `?` and `??`
+    /// discharge one, and `t == null` tests for one — and the distinction is STATIC, decided by
+    /// the type on the line, even though both spellings hold the same all-null bytes at run
+    /// time.  Both homes qualify: a stack `(τ, τ)?` and the boxed `ref(__tuple<…>)?` that a
+    /// generic `-> T?` instantiated at a tuple delivers.
+    ///
+    /// One home beside [`is_tuple_shape`](Parser::is_tuple_shape), which answers the different
+    /// question *"is this a tuple at all"* — the two are asked together and must not drift.
+    pub(crate) fn is_absent_tuple(data: &crate::data::Data, t: &Type) -> bool {
+        matches!(t, Type::Optional(_)) && Self::is_tuple_shape(data, t)
+    }
+
+    /// Does this type carry a tuple that EXISTS — the receiver `?` and `??` have nothing to
+    /// discharge from?  The complement of [`is_absent_tuple`](Parser::is_absent_tuple) within
+    /// the tuples.
+    pub(crate) fn is_existing_tuple(data: &crate::data::Data, t: &Type) -> bool {
+        Self::is_tuple_shape(data, t) && !Self::is_absent_tuple(data, t)
+    }
+
+    /// Does this `?` / `??` subject name a tuple the program HOLDS — a local, a field read, a
+    /// literal — rather than an ELEMENT READ, whose value may not be there?
+    ///
+    /// The type alone cannot separate the two, and that is measured rather than assumed:
+    /// `(N-Index)` trusts a CONSTANT index by contract, so `v[0]` is typed `(τ₁, …, τₙ)` with no
+    /// `?` even though the read can still miss at run time — `823-element-bind-ownership.loft`
+    /// asserts exactly that ("an out-of-range tuple element is absent"), and nine shipped
+    /// scripts discharge such a read.  Only a VARIABLE index carries the `?` that
+    /// [`is_absent_tuple`](Parser::is_absent_tuple) reads.
+    ///
+    /// So the subject's own spelling decides: a tuple the program holds arrives as its variable
+    /// or as a built tuple value (a field read lowers to a tuple of member reads), while an
+    /// element read arrives as the block that unboxes it.  Keeping the refusal to the held
+    /// spellings is what makes it the owner's 2026-09-16 ruling — `?`/`??` mean nothing on a
+    /// tuple that is there — without withdrawing `v[i] ?? d`, which is the idiom the ruling
+    /// names as the one that must keep working.
+    fn tuple_subject_is_held(code: &Value) -> bool {
+        matches!(code.unspan(), Value::Var(_) | Value::Tuple(_))
+    }
+
     /// The members of a BOXED tuple whose only difference from `stack`'s elements is each
     /// member's `?`, or `None` when the two types are not that pair.
     ///
@@ -2572,9 +2633,15 @@ impl Parser {
         // loft#1003 — `(diagnostic index, line, column)` of a `redundant-coalesce` notice
         // whose deletion span is still open, or `None` when none fired.
         let mut redundant_at: Option<(usize, u32, u32)> = None;
+        // `@FR-T-Absent` — a tuple that EXISTS earns the refusal below, and this lint would put
+        // a contradictory line above it: it says the default "is never used" while the coalesce
+        // it describes is about to be rejected outright.  Measured before the refusal existed,
+        // the pair was worse than contradictory — `s.t ?? (9, "d")` on a field holding
+        // `(null, null)` warned "never used" and then USED the default, answering `9 d`.
         if self.expr_not_null
             && !self.first_pass
             && !matches!(ctp, Type::Optional(_))
+            && !Self::is_existing_tuple(&self.data, ctp)
             && !self.call_declares_nullable(code)
         {
             diagnostic!(
@@ -2636,6 +2703,24 @@ impl Parser {
         // default is a mismatch, and `p ?? 0` inside a `&integer?` parameter was reported as
         // the author's error.  That refusal is half of why @FR-B-Ref-Intro's `&τ` for every
         // τ had to be declined (D-bind-17).
+        // `@FR-T-Absent` — the `?` half's rule, for the same reason: `??` discharges an
+        // absence, a tuple a program writes down EXISTS, and `(null, null)` is such a tuple
+        // rather than an absent one.  Reported and then ALLOWED TO PROCEED, unlike `?`: the
+        // right operand still has to be parsed, and returning here would leave `?? <default>`
+        // unconsumed and cascade a second error about the default (owner ruling 2026-09-16,
+        // `tuples.md` D-tup-10).
+        if !self.first_pass
+            && Self::is_existing_tuple(&self.data, ctp)
+            && Self::tuple_subject_is_held(code)
+        {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`??` has nothing to discharge — `{}` is a tuple that EXISTS, and only a tuple \
+                 read out of range is absent.  Discharge the member you mean (`t.0 ?? d`)",
+                ctp.source_name(&self.data)
+            );
+        }
         *ctp = match &*ctp {
             Type::RefVar(inner) => inner.base().clone(),
             other => other.base().clone(),
@@ -3661,6 +3746,29 @@ impl Parser {
         // discharges it — making `x?` a true synonym for `x ?? <default>`.
         if !self.first_pass {
             Self::rewrite_outer_arith_to_nullable(code, &self.data);
+        }
+        // `@FR-T-Absent` — `?` discharges an ABSENCE, and only the in-flight `(τ₁, …, τₙ)?` an
+        // out-of-range read produces has one.  Every tuple a program writes down EXISTS, so
+        // there is nothing to discharge and no defensible answer to pick: on a member-nullable
+        // tuple `?` could mean the tuple's own default or each member's, and the two disagree
+        // on a PARTLY PRESENT one, where `??` keeps the present member and a whole-value
+        // default would drop it.  Refusing is the owner's 2026-09-16 ruling (`tuples.md`
+        // D-tup-10) — the alternative was to pick a meaning the rules do not settle.
+        if Self::is_existing_tuple(&self.data, ctp) && Self::tuple_subject_is_held(code) {
+            if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`?` has nothing to discharge — `{}` is a tuple that EXISTS, and only a \
+                     tuple read out of range is absent.  Read the member you mean (`t.0`), or \
+                     discharge that member with `?`",
+                    ctp.source_name(&self.data)
+                );
+            }
+            self.expr_not_null = false;
+            let base = ctp.base().clone();
+            *ctp = base;
+            return;
         }
         let base = ctp.base().clone();
         // The single well-definedness check (the home `S{}` shares): a bare reference,
