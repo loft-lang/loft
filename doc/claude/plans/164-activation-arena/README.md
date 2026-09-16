@@ -17,9 +17,10 @@ the gate that declines each library function measured per function (§ C5 *Built
 re-profile's verdict is CORRECTED (2026-09-16, § Re-profiled *The correction*): "the row is the
 scanner, the class is paid down" was read off operator COUNTS and INTERPRETED profiles, and `perf`
 on the release binary itself reads loft runtime 63 %, program 31 % — the class is still two thirds
-of the row.  What P0 priced (the store mint/free pair, 9 %) holds; the per-record churn around it
-(allocator, copies, appends, ≈ 30 %) was never priced, and attributing it to loft lines is the
-next step (P0b) before any phase is cut.**  The
+of the row.  **P0b is done (2026-09-17, § P0b):** charged to loft lines through the inline chain,
+the runtime is 72 % and the store mint/free family 20 % — half of it buffers minted at FUNCTION
+ENTRY on paths that never use them.  Moving those mints to their first use measured −9–10 % by
+hand, so **A0** (§ A0) is cut, after @PLN157's prelude elision (−11–14 %).**  The
 measurements are under § P0 below and the mechanism under § B1.  What P0 changed in the
 plan: tier 1's ceiling is ~10 % of the parse row, not a fifth, and its store-identity cost
 (287 `store_nr !=` sites in one emission) is real, so A1/A2 stay behind B and C in the
@@ -55,8 +56,8 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
 - **Effort:** M (tiers 1–2) · MH (tier 3)
 - **Design:** ~ — the invariants are named; the store-identity question (§ Edge cases E1)
   is open and decides tier 1's shape.
-- **Last touched:** 2026-09-16 (the re-profile's verdict corrected by `perf` on the release binary,
-  the queue re-cut under it, and the frame-prelude lever priced — § Re-profiled *The correction*)
+- **Last touched:** 2026-09-17 (P0b: the release row charged to loft lines, A0 measured and cut —
+  § P0b)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -224,6 +225,121 @@ plan's.
    under 2 % and the correction does not change that.
 4. Re-measure the 14-row `compare.py` table after each of these; the parse row's re-profile is
    re-taken with `perf` on the release binary, never with a count.
+
+*P0b answered item 1 — § P0b below.  It re-cut the queue a second time.*
+
+## P0b — the release row charged to loft lines (DONE 2026-09-17)
+
+**The instrument.**  `scripts/native_attrib.py` takes a `--native-release` binary built with
+frame pointers and line tables — the program AND the runtime rlib it links
+(`RUSTFLAGS=-Cforce-frame-pointers=yes cargo build --profile profiling --lib`; the rustc line
+is in the script's header) — plus the emission and a `perf record --call-graph fp`.  It
+expands each physical frame to its inline chain with `llvm-symbolizer`, charges the sample to
+the innermost frame of the emitted program, and reads the loft line off that frame's
+`// loft:` comment.  A runtime routine is reported under the ENTRY the program called, grouped
+into families.  Run: `taskset -c 2`, `--n 80000`, 16 835 samples, hash `33f6d2b8`, 42.2 k ns/op
+(frame pointers cost a few per cent; shares come from this build, times from the release one).
+
+**Two corrections to the earlier read.**  The runtime share is **72 %**, not 63 %: the self-time
+table counted a runtime helper inlined into a program function (`op_add_long`, `store_mut`,
+`offset_in_bounds`) as program.  And the store mint/free family is **20 %**, not 9 %: the 9 %
+was the store routines' own SELF time, while the entry-inclusive cost also carries the claim,
+the zero fill, `Store::init`'s free header and the release walk each mint pays.
+
+| family (by the entry the program called) | share | where it is charged |
+|---|---:|---|
+| store mint/free | **20.0 %** | `parse_poly` 5.6, `parse_circle` 3.9, `parse_fronds` 2.7, `read_paint` 2.4, `parse_scene_at` 1.6, `no_mark` 1.1 |
+| record mint/copy/move | 11.0 % | `parse_fronds` 4.7, `read_points` 1.6, `parse_poly` 1.1 |
+| store access | 9.6 % | `acc_pts` 2.4, `parse_fronds` 2.0 |
+| vector field copy (`vector_add`) | 9.2 % | `parse_fronds` 5.5, `parse_poly` 2.0, `parse_circle` 1.2 |
+| vector append/grow | 6.7 % | `read_points` 2.1, `fronds` 1.8 |
+| frame prelude | 6.4 % | `matches_at` 2.2, `word_boundary` 1.6, `at` 1.4 |
+| std (`dec2flt`, malloc, memcpy) | 5.0 % | |
+| text | 4.8 % | `t_4text_split` 2.4 |
+| checked arithmetic | 3.8 % | `matches_at` 2.1 |
+| libm | 1.3 % | `circle_pts` |
+| **the program's own code** | **21.2 %** | `matches_at` 5.2, `find_option` 2.8, `t_4text_split` 2.5 |
+
+**By line, two findings carry most of the plan's class.**
+
+1. **Half of the store family is minted at FUNCTION ENTRY, on every path.**  The function
+   prologues alone — before the first loft line runs — take `parse_poly` 4.0 %, `parse_circle`
+   3.1 %, `read_paint` 2.0 % (9.1 % together, their exit frees on top).  The preamble's
+   `__ref_N = null` lowers to a store mint on both backends, and it runs whether or not the
+   path that uses the buffer is taken.  `parse_circle` is called for 7 of the scene's lines and
+   matches ONE: on the other six it mints its two buffers (`Paint`, `vector<Pt>`) and frees them
+   unused.  `parse_poly` mints four, one per `smooth_pts` / `smooth_vals` site, and its three
+   exits take one or two of them.  P0 judged this pattern not worth a hand patch by arithmetic
+   (≈ 0.7 µs); measured, it is the largest single lever the row has.
+2. **`drawing.loft:704` — the `Op` literal appended in the frond loop — is 12.5 % of the row.**
+   `vector_add` 5.1 % (the `pts` and `widths` copies), `OpCopyRecord` 2.5 % + `OpDatabaseNP`
+   1.3 % (the nested `Paint { … }` literal is built in a store of its own and deep-copied into
+   the element's inline `paint` field — per frond), `OpNewRecord` 1.1 %.  The same nested
+   literal is at `:594` (`parse_line_cmd`).  Of the two vector copies, `widths: pf_wids` is the
+   variable's last use; `pts: pf_line` is not (line 707 reads it again), so that copy is the
+   two-destination copy tier 3 keeps.
+
+**The first finding, measured by hand** (`bytecode-comparisons/A0-lazy-mint-hand-patch.py`):
+all 16 entry mints in 7 functions moved to a null-guarded mint in front of the call that takes
+the buffer; the declaration holds the null sentinel; the exits' `OpFreeRef` already ignores a
+null store, so no free moved.
+
+| variant | ns/op (ABAB ×4, `--n 4000`, P-core) | `perf stat -r 5` instructions / cycles | hash |
+|---|---|---|---|
+| as emitted | 38.6–39.8 k | 2 499 M / 583 M | `33f6d2b8` |
+| entry mints lazy | **35.3–35.8 k** (−9 to −10 %) | **2 319 M / 536 M** (−7.2 % / −8.0 %) | `33f6d2b8` |
+
+Both variants run clean under `LOFT_STRICT_STORES=1 LOFT_NATIVE_LEAK_CHECK=1`, and the
+instrument can fail: the same emission with one exit's `OpFreeRef` deleted reports
+`1 stores not freed … main_vector<Pt>×20`.
+
+**Smaller items the attribution names.**  `strict_stores()` shows as 1.8 % of leaf time: the
+store accessors test the switch BEFORE the slot's `free` flag, so the common path pays an atomic
+load that `s.free && strict_stores()` would skip.  `offset_in_bounds` (6.4 % leaf) and
+`begin_write_inner` (4.9 %) are the per-access checks of the store family, which no
+lifecycle phase changes.
+
+### The queue after P0b
+
+1. **@PLN157's transitive-leaf prelude elision** (its row 11) — −11–14 %, measured.
+2. **A0 — the buffer minted at its first use** (§ A0, new) — −9–10 %, measured.
+3. **C6 — a nested record literal built inside the element** (`Op { paint: Paint { … } }`) —
+   attributed at ≈ 4 % (`:704` and `:594`); hand-measure before cutting.
+4. **The last-use vector field** (`widths: pf_wids`) — part of `:704`'s 5.1 %; C5's parked
+   vector `place_result` is the same question and is re-priced here.
+5. **A1/A2** — re-priced after A0 against what is left of the store family (the body half,
+   9.4 %: `Mark` exits, `no_mark`, the per-iteration `Paint` temp C6 removes).
+
+## A0 — the buffer minted at its first use (`@FR-O-Buffer`)
+
+*Invariant:* a hidden return buffer is minted at most once per activation, before the first
+statement that hands it to a callee on the path that runs; a path that never uses it never
+mints it.  `(O-Buffer)` says who owns a buffer and when it is freed; it does not require the
+mint to precede the path.  The free side already holds: every exit frees the buffer with a
+null-tolerant free (native `OpFreeRef` returns on the sentinel; the interpreter's `FreeRef`
+is asked the same question in the cells).
+
+*The shape:* the preamble's `__ref_N = null` becomes the non-allocating sentinel (the
+`OpInitRefSentinel` the interpreter already has for an inline ref, `DbRef::NULL` on native),
+and each statement that passes the buffer to a call is preceded by
+`if OpVectorIsNull(__ref_N) { __ref_N = null }` — the guarded-mint shape a vector `+=` already
+uses (`vectors.rs`, loft#1219), idempotent in a loop.
+
+*Cases to settle before the first cell is written:*
+
+| # | case | why it bites |
+|---|---|---|
+| A0-1 | the buffer used on one branch only, freed at every exit | the plain win; the exit free on the un-minting path must be a no-op on BOTH backends |
+| A0-2 | the buffer used inside a loop | the guard must mint once, not per iteration — a re-mint clears what the previous iteration's result local still reads |
+| A0-3 | a result local ADOPTS the buffer (`p = mk(s)`, deps `["__ref_1"]`) and is read after | the local IS the buffer; the witness compare at the exits (`p.store_nr != __ref_1.store_nr`) must still decline |
+| A0-4 | two call sites in exclusive arms sharing nothing but the exit | each arm mints its own; the exit frees both, one of them null |
+| A0-5 | a buffer the H7 loop rotation (`OpPutRef(__ref_1, __ref_2)`) swaps | the partner must be minted before the swap reads it — a use that is not a call argument |
+| A0-6 | a buffer promoted to `__retbuf` / an adopting `_rb_w_` witness | the promoted path is the caller's store, never minted here — excluded |
+| A0-7 | a generator body and a `par` arm | declined, as every hoist declines them |
+| A0-8 | the interpreter's slot allocator | the preamble `Set` is the buffer's first def (plan 51 cluster IV); the sentinel init must keep that role |
+
+Switch `LOFT_NO_LAZY_BUFFER=1`; falsifiers `LOFT_STRICT_STORES=1`, `LOFT_NATIVE_LEAK_CHECK=1`,
+`LOFT_POISON=1`; cells `bytecode-comparisons/A0-lazy-buffer-cells.loft` on both backends.
 
 ## The three tiers — the invariant each rests on
 
@@ -1176,7 +1292,9 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | Item | Source | Verify | Status |
 |---|---|---|---|
 | **P0** — probe first: count the store-identity sites; price tier 1; the hand patch judged not worth building by the arithmetic; the leak-gate extension (E19) deferred to A1's shape | § P0 | 287 identity sites in one emission; ~88 mints per parse at ≈ 60 ns a pair: tier 1's ceiling ≈ 10 % of the row | Done 2026-09-15 |
-| **P0b** — attribute the runtime's 63 % of the release row to loft lines: a frame-pointer rlib build, `perf` with call chains, an inclusive table per loft function with each family charged to a line | § Re-profiled *The correction* | the allocator, copy and append families each named with the line and the phase that owns it; the store-pair family confirmed at 9 % | **Open — next** (2026-09-16) |
+| **P0b** — attribute the runtime's share of the release row to loft lines: a frame-pointer rlib build, `perf` with call chains, each family charged to a line | § P0b | `scripts/native_attrib.py`; runtime 72 %, store mint/free 20 % (half at function entry), `:704` 12.5 %; A0's lever measured by hand −9–10 % | Done 2026-09-17 |
+| **A0** — the buffer minted at its first use on the path that runs, not at function entry | § A0 | cases A0-1 … A0-8 both backends under the falsifiers; the parse row −9–10 % | **Next** after @PLN157 row 11 |
+| **C6** — a nested record literal built inside the element it is a field of (`Op { paint: Paint { … } }`) | § P0b | attributed ≈ 4 %; hand-measure first | Open |
 | **A1** — arena for one activation's own buffers (`__ref_N`, `__ref_p2_N`, literal temps), mark/release at every exit | § Tier 1 | `tests/scripts/164-arena-activation.loft` both backends; plan 51's ten graduated guards under the switch; `emission_audit.py` R-State per record | Blocked on P0b — the store-pair family is 9 % of the release row; whether the free-tree family (12 %) charges to activation temporaries is what decides the shape |
 | **A2** — the caller-threaded arena, reset per loop iteration | § Tier 1 | parse row −20 %; E2/E3/E4 cells | Blocked on A1 |
 | **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |
@@ -1210,13 +1328,11 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
    row's points class actually sits.
 5. ~~**C5 is next**~~ — steps 1 and 2 built opt-in; the row measured a wash and the `Mark`
    class under 2 %, so step 3 and the vector `place_result` are PARKED (§ C5 *Step 2*).
-6. **P0b** — the attribution on a frame-pointer rlib build (§ Re-profiled *The correction*):
-   the runtime is 63 % of the release row and no line has been charged with it yet.
-7. **Then A1/A2 or the remaining copy sites, whichever the attribution names** — A1 as a pooled
-   store or a release-to-mark arena if the store-pair (9 %) and free-tree (12 %) families charge
-   to activation temporaries; the copy sites if `copy_claims` / `remove_claims_mode` charge to a
-   bind or an assignment.  **B1b** beside them whenever D-own-43 closes (the interpreter's rebind
-   guard).
+6. ~~**P0b**~~ — done (§ P0b): the store family is 20 % of the release row, half of it minted
+   at function entry.
+7. **@PLN157 row 11 (the transitive-leaf prelude), then A0, then C6** — § P0b *The queue after
+   P0b*.  A1/A2 are re-priced after A0 against the body half of the store family.  **B1b**
+   beside them whenever D-own-43 closes (the interpreter's rebind guard).
 8. Re-measure the 14-row bench after each phase (`compare.py`, 14/14 hashes), and the parse
    row's profile with `perf` on the release binary — never with a count.
 

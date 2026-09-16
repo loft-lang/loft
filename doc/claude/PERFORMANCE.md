@@ -455,6 +455,25 @@ while a checkpoint is keyed to the loft function the operator was WRITTEN in. Th
 one question a sampler on optimised code cannot answer, and the reason to keep this
 instrument beside the normal one.
 
+### `scripts/native_attrib.py` — the release binary, charged to loft lines
+
+The third instrument answers what the two above cannot answer together: **on the build that
+ships, which loft LINE drives the runtime's cycles?**  A self-time profile of a release
+binary names runtime routines (`OpDatabase`, `vector_add`) but not the line that called them,
+and it counts a runtime helper inlined into a program function as program.  This tool reads
+`perf record --call-graph fp`, expands every frame to its inline chain with
+`llvm-symbolizer`, and charges each sample to the innermost frame of the emitted program —
+whose `// loft:<file>:<line>` comment names the line.  It prints the runtime share by family
+of the entry the program called, by loft function, and by loft line.
+
+It needs frame pointers and line tables in the program AND in the runtime rlib it links, or
+every chain stops at the runtime boundary; the build recipe is in the script's header
+(`cargo build --profile profiling --lib` with `-Cforce-frame-pointers=yes`, then the release
+rustc line with `-Cdebuginfo=1 -Cforce-frame-pointers=yes`).  Frame pointers cost a few per
+cent, so quote SHARES from this build and TIMES from the release one.  The worked example is
+@PLN164 § P0b: it moved the drawing `parse` row's store family from 9 % (self time) to 20 %
+(entry-inclusive) and found half of it minted at function entry on paths that never used it.
+
 ### Count before you time
 
 For an *asymptotic* question — "why is this quadratic?" — a profiler is the wrong first tool.
