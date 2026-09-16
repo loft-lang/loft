@@ -2654,6 +2654,14 @@ and who does not.
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
 | 835 | 495 | 6 | **334** |
+(2026-09-16, D-tup-10's DISCHARGE close — `??` over the boxed spelling: 834 · 494 · 6 · 334,
+re-measured against the 833 · 493 · 6 · 334 the same day's earlier close left.  One function is
+added, `Parser::boxed_tuple_members_modulo_null`, and it peels: it asks whether a boxed tuple's
+members differ from a stack tuple's elements by nothing but each member's `?`, comparing through
+`base()` on both sides.  **The OPAQUE column did not move for the second time today, and that is
+again the attribution** — the predicate is a peeling site, and it widens nothing: it is consulted
+only where the coalesce chooses its RESULT type, so `unboxes_stored_tuple` and the store
+positions that share it are untouched.)
 
 (2026-09-16, @PLN164 C1: one function added, seeing through the wrapper — `builds_into_element`
 reads a field's declared type through `.base()` to ask whether the record owns a COLLECTION,

@@ -123,6 +123,12 @@ fn a4() {
   assert("{s.0} {s.1}" == "1 a", "a4 the hit after a miss is not stale: {s.0} {s.1}");
 }
 
+// The DISCHARGE half — `??` over this same boxed spelling — is guarded by
+// `a-boxed-tuple-discharges-its-null-like-the-stack-one.loft`, deliberately NOT here: its cells
+// do not compile on the build they were written to catch, and a compile refusal takes the whole
+// file with it.  Held here, they silenced this file's assertion channel and left the `== null`
+// close with an exit-only receipt — a cell that can refuse the file erases every cell behind it.
+
 fn c1() {
   v: vector<(integer, text)> = [(1, "a"), (2, "bb")];
   i = 5;

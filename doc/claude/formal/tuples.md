@@ -286,14 +286,35 @@ it, not a standing fact.
   has no members to read.  That arm precedes the `Optional(Reference)` one on purpose: a boxed
   tuple matches that too, and answering it there is the second route above.
 
-  **What is still open:** `??` over the boxed spelling is refused outright
-  (`coalesce-default-type-mismatch`: *"`??` default of type `(integer, text)` is not assignable
-  to `__tuple<integer?,text?>`"*).  It fails EARLIER than the null question did — in the
-  default's `convert_admitting`, before the coalesce runs — so it is a separate site and a
-  separate close; and it is a loud refusal rather than a silent wrong answer, which is why it
-  did not travel with the wrong boolean.  Measured not assumed: `??` over the STACK
-  member-nullable tuple works (`w: (integer?, integer?) = v[5]; w ?? (0, 0)` → `0 0`), so the
-  refusal belongs to the boxed home and not to member-nullability.
+  ⚠ **CLOSED 2026-09-16, the DISCHARGE half: `??` over the boxed spelling.**  `(T-Absent)` names
+  `t == null` and `t ?? d` as ONE question, so closing only the first left the rule half-kept.
+  The coalesce typed its result from the boxed subject, and the stack default then had nowhere
+  to go — *"`??` default of type `(integer, text)` is not assignable to `__tuple<integer?,text?>`"*.
+
+  The arm that answers this pair already existed (loft#1451): when the subject is boxed and the
+  default is a stack literal, take the STACK spelling, because the value unboxes.  What declined
+  was its GATE — `unboxes_stored_tuple` demands the record's members be `is_equal` to the
+  destination's elements, and `__tuple<integer?,text?>` against `(integer, text)` differs by
+  exactly the `?` per member that `(N-Coal)` is about to discharge.  Measured on the other side:
+  the same `??` over a generic `-> T?` at a tuple has always worked, because that boxes
+  `__tuple<integer,text>` with NON-null members and the equality holds.
+
+  Cure: the result takes the record's OWN members in their stack spelling, `(integer?, text?)` —
+  which is the type the stack home already produces for the same notion, so the two homes agree
+  rather than one inventing an answer.  Nothing is widened: the subject's conversion is then the
+  unbox that arm already names, with its equality holding on both sides.
+
+  ⚠ **Typing it as the NON-null stack tuple would have been unsound, and loudly so:** the
+  subject's conversion would have had to unbox NULLABLE members into NON-NULL elements, which is
+  the store direction `(N-Store)` exists to refuse.  Keeping the members is what makes the cure a
+  retyping rather than a widening.
+
+  Three refusals were measured BEFORE the change and are byte-identical after, each at its own
+  site: a local's retype (*"Variable 'z' cannot change type …"*), a declared non-null tuple
+  RETURN (*"expected `__tuple<integer,text>`, got `__tuple<integer?,text?>` on return"*), and a
+  mixed-home `if` join (*"… on else"*).  `(N-Store)`'s per-member report appears at none of them
+  — every route refuses earlier, on a type comparison — so the boxed member-nullable tuple has no
+  reachable path into a non-null slot for this close to have loosened.  Guard cell a5.
 
   ⚠ **Not this entry, and the cure must not absorb it:** `?` on a member-nullable tuple is
   refused in BOTH homes — `(integer?, integer?)` on the stack refuses identically to

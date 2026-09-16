@@ -1,5 +1,5 @@
 diff --git b/src/parser/operators.rs a/src/parser/operators.rs
-index 4c0ee6d28..a4add53d3 100644
+index f19e01b00..a4add53d3 100644
 --- b/src/parser/operators.rs
 +++ a/src/parser/operators.rs
 @@ -760,7 +760,7 @@ impl Parser {
@@ -23,7 +23,7 @@ index 4c0ee6d28..a4add53d3 100644
              // `coalesce_not_null` addresses members through `Value::TupleGet(var, i)`, so it
              // needs a VAR: an operand that is already one is asked directly, and anything
              // else (a call result, an index read) is bound first.  Without the bind it would
-@@ -2063,21 +2058,6 @@ impl Parser {
+@@ -2063,55 +2058,6 @@ impl Parser {
          self.tuple_elems(t)
      }
  
@@ -42,10 +42,44 @@ index 4c0ee6d28..a4add53d3 100644
 -        matches!(t.base(), Type::Tuple(_)) || Self::record_tuple_def(data, t.base()).is_some()
 -    }
 -
+-    /// The members of a BOXED tuple whose only difference from `stack`'s elements is each
+-    /// member's `?`, or `None` when the two types are not that pair.
+-    ///
+-    /// `@FR-T-Absent` — a tuple is one loft type written two ways, and
+-    /// [`unboxes_stored_tuple`](Parser::unboxes_stored_tuple) answers the pair only when the
+-    /// record's members are `is_equal` to the destination's elements.  A boxed tuple whose
+-    /// members are NULLABLE — `__tuple<integer?,text?>`, which is what a declared
+-    /// `-> (integer?, text?)` return carries — therefore declines against the stack spelling an
+-    /// author writes for it, one `?` per member apart (`D-tup-10`).
+-    ///
+-    /// Answered as the RECORD's own member types, never the stack side's, because the caller
+-    /// needs the spelling that KEEPS the `?`: dropping it would ask a later conversion to put
+-    /// nullable members into non-null elements, which is the store direction `@FR-N-Store`
+-    /// refuses.  With the members kept, that conversion is the unbox `unboxes_stored_tuple`
+-    /// already names and its own equality holds on both sides.
+-    ///
+-    /// Compared through `base()` on both sides, so this asks about the MEMBERS and not about a
+-    /// wrapper either spelling happened to arrive with (`@FR-N-Shape`).
+-    fn boxed_tuple_members_modulo_null(&self, boxed: &Type, stack: &Type) -> Option<Vec<Type>> {
+-        let d_nr = Self::record_tuple_def(&self.data, boxed.base())?;
+-        let Type::Tuple(stack_elems) = stack.base() else {
+-            return None;
+-        };
+-        let attrs = self.data.def(d_nr).attributes();
+-        if attrs.is_empty() || attrs.len() != stack_elems.len() {
+-            return None;
+-        }
+-        attrs
+-            .iter()
+-            .zip(stack_elems)
+-            .all(|(a, d)| a.typedef.base().is_equal(d.base()))
+-            .then(|| attrs.iter().map(|a| a.typedef.clone()).collect())
+-    }
+-
      /// The element types of a TUPLE in any of its spellings, or `None` for a type that is no
      /// tuple.
      ///
-@@ -2749,74 +2729,6 @@ impl Parser {
+@@ -2783,74 +2729,6 @@ impl Parser {
                  prelude.push(cond);
                  v_block(prelude, Type::Boolean, "ncc tuple members")
              }
@@ -120,7 +154,34 @@ index 4c0ee6d28..a4add53d3 100644
          } else if let Type::Enum(syn, true, _) = tp
              && self.data.def(*syn).name.starts_with("__nullable<")
          {
-@@ -4528,15 +4440,9 @@ impl Parser {
+@@ -3342,26 +3220,6 @@ impl Parser {
+             // non-generic `v[i] ?? (7, 7)` produces for the same element type, so the two
+             // spellings of the read answer alike.
+             rhs_type.clone()
+-        } else if let Some(members) = self.boxed_tuple_members_modulo_null(lhs_type, &rhs_type) {
+-            // The same MEET as the arm above, for the spelling that arm cannot take: a boxed
+-            // tuple whose MEMBERS are nullable.  `__tuple<integer?,text?>` is what a declared
+-            // `-> (integer?, text?)` return carries, and against the stack default `(0, "d")`
+-            // the unbox gate's element-wise equality declines — so `??` was refused for a pair
+-            // of types that are the same tuple, one `?` per member apart (`D-tup-10`).
+-            //
+-            // At THIS position the member nullability is not a mismatch: it is exactly what
+-            // `@FR-N-Coal` discharges.  The result therefore takes the record's own members as
+-            // a STACK tuple — `(integer?, text?)` — which is the type the stack home already
+-            // produces for the same notion (`w: (integer?, integer?) = v[i]; w ?? d` answers
+-            // `(integer?, integer?)`), so the two homes AGREE rather than one inventing an
+-            // answer of its own.  That agreement is the whole content of `@FR-T-Absent`.
+-            //
+-            // Taking `rhs_type` here instead — the non-null stack spelling — would be unsound,
+-            // and loudly so: the subject's own conversion below would then have to unbox
+-            // NULLABLE members into NON-NULL elements, which is the store direction
+-            // `@FR-N-Store` exists to refuse.  Keeping the members makes that conversion the
+-            // unbox the arm above already names, whose equality now holds on both sides.
+-            Type::Tuple(members)
+         } else {
+             lhs_type.clone()
+         };
+@@ -4582,15 +4440,9 @@ impl Parser {
              // on '(integer?, integer?)' and 'null'"*) for a type whose `??` beside it worked.
              // Matched on `base()`, so the in-flight `(integer, integer)?` an index miss
              // produces asks what the member-nullable spelling asks.
