@@ -1,0 +1,88 @@
+// A keyed collection returned by a call and bound in a loop is released ONCE per pass.
+//
+// `rs = s_opt(true)` on a keyed local lowers to a lifted call result (`__lift_N`) that
+// `OpReplaceKeyed` copies into `rs` and then frees, because the call's store is the
+// copy's to release.  The lift is marked never-free (`@FR-O-Override`), so its rebind
+// on the next pass through the loop emits no free of the value it held: the op already
+// released that store, and by the next pass its slot may belong to any other store the
+// program made in between — here a vector or a record that has to survive the loop.
+//
+// Cells c1–c4 each put such a store in the slot during the first pass and read it on
+// every pass, over a dense and a nullable return and over `sorted` and `hash`.  c5 has no
+// loop and c6 takes the absent arm: the two controls, correct with or without the rule.
+//
+// Also the case that surfaced it: @PLN164 A0 mints a hidden return buffer at its first
+// use, so the buffer lands in the freed slot during the first pass, and
+// `tests/scripts/1150-…`'s vector control read 0.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-17) — with the never-free mark removed
+//   from `scopes::run_scan_phase`, c1–c4 answer garbage on --interpret and --native, with
+//   and without LOFT_NO_LAZY_BUFFER (c1 `11 1`, c2 `12 2`, c3 `13 3 4294967308`, c4 a
+//   random integer, on the third pass), and LOFT_STRICT_STORES reports 16 uses after free
+//   (`killed by the free of var___lift_1(prev)` on native).  c5 and c6 hold either way.
+//   Restored byte-identically; all six cells green on both backends under
+//   LOFT_STRICT_STORES=1 LOFT_POISON=1.
+
+struct Lr1V { vv: integer }
+struct Lr1R { rv: integer, rw: integer }
+struct Lr1S { sk: integer, sv: integer }
+struct Lr1H { hk: integer, hv: integer }
+
+fn lr_s_opt(c: boolean) -> sorted<Lr1S[sk]>? { if c { [Lr1S { sk: 1, sv: 11 }] } else { null } }
+fn lr_s_dense(n: integer) -> sorted<Lr1S[sk]> { [Lr1S { sk: n, sv: 12 }] }
+fn lr_h_opt(c: boolean) -> hash<Lr1H[hk]>? { if c { [Lr1H { hk: 1, hv: 13 }] } else { null } }
+fn lr_h_dense(n: integer) -> hash<Lr1H[hk]> { [Lr1H { hk: n, hv: 14 }] }
+
+fn lr_cs(x: sorted<Lr1S[sk]>) -> integer { n = 0; for r in x { n += r.sv; } n }
+fn lr_ch(x: hash<Lr1H[hk]>) -> integer { n = 0; for r in x { n += r.hv; } n }
+fn lr_total(x: vector<Lr1V>) -> integer { n = 0; for r in x { n += r.vv; } n }
+
+fn main() {
+  // c1 — nullable sorted; a vector literal takes the slot.
+  c1_keep: vector<Lr1V>? = null;
+  for k in 0..3 {
+    c1_rs = lr_s_opt(true);
+    if k == 0 { c1_keep = [Lr1V { vv: 7 }, Lr1V { vv: 8 }, Lr1V { vv: 9 }]; }
+    assert(lr_cs(c1_rs ?? []) == 11 && lr_total(c1_keep ?? []) == 24,
+      "c1 pass {k}: {lr_cs(c1_rs ?? [])} {lr_total(c1_keep ?? [])}");
+  }
+  // c2 — dense sorted.
+  c2_keep: vector<Lr1V>? = null;
+  for k in 0..3 {
+    c2_rs = lr_s_dense(k);
+    if k == 0 { c2_keep = [Lr1V { vv: 7 }, Lr1V { vv: 8 }, Lr1V { vv: 9 }]; }
+    assert(lr_cs(c2_rs) == 12 && lr_total(c2_keep ?? []) == 24,
+      "c2 pass {k}: {lr_cs(c2_rs)} {lr_total(c2_keep ?? [])}");
+  }
+  // c3 — nullable hash; a record takes the slot.
+  c3_keep: Lr1R? = null;
+  for k in 0..3 {
+    c3_rh = lr_h_opt(true);
+    if k == 0 { c3_keep = Lr1R { rv: 5, rw: 3 }; }
+    c3_rv = if c3_keep != null { c3_keep.rv } else { -1 };
+    c3_rw = if c3_keep != null { c3_keep.rw } else { -1 };
+    assert(lr_ch(c3_rh ?? []) == 13 && c3_rv == 5 && c3_rw == 3,
+      "c3 pass {k}: {lr_ch(c3_rh ?? [])} {c3_rv} {c3_rw}");
+  }
+  // c4 — dense hash.
+  c4_keep: vector<Lr1V>? = null;
+  for k in 0..3 {
+    c4_rh = lr_h_dense(k);
+    if k == 0 { c4_keep = [Lr1V { vv: 7 }, Lr1V { vv: 8 }, Lr1V { vv: 9 }]; }
+    assert(lr_ch(c4_rh) == 14 && lr_total(c4_keep ?? []) == 24,
+      "c4 pass {k}: {lr_ch(c4_rh)} {lr_total(c4_keep ?? [])}");
+  }
+  // c5 — no loop: one bind and no rebind (control).
+  c5_rs = lr_s_opt(true);
+  c5_keep: vector<Lr1V> = [Lr1V { vv: 7 }, Lr1V { vv: 8 }, Lr1V { vv: 9 }];
+  assert(lr_cs(c5_rs ?? []) == 11 && lr_total(c5_keep) == 24, "c5");
+  // c6 — the absent arm in the loop (control).
+  c6_keep: vector<Lr1V>? = null;
+  for k in 0..3 {
+    c6_rs = lr_s_opt(false);
+    if k == 0 { c6_keep = [Lr1V { vv: 7 }, Lr1V { vv: 8 }, Lr1V { vv: 9 }]; }
+    assert(lr_cs(c6_rs ?? []) == 0 && lr_total(c6_keep ?? []) == 24,
+      "c6 pass {k}: {lr_cs(c6_rs ?? [])} {lr_total(c6_keep ?? [])}");
+  }
+  println("164 consumed keyed lift ok");
+}

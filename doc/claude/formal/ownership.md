@@ -440,7 +440,8 @@ implication that reading `deps` is *sufficient*.
 buffer the caller handed it — masked while such callees receive the null sentinel) opened
 2026-09-15, below, and closes with @PLN164 B1b.  `D-own-42` (a plain local's first bind
 from a callee returning its promoted local COPIED where `(O-Move)` transfers) opened and
-CLOSED 2026-09-15, below; `D-own-40`
+CLOSED 2026-09-15, below; `D-own-44` (a consumed lift temp freed again at its rebind) opened
+and CLOSED 2026-09-17, below; `D-own-40`
 (`(O-Witness)` armed for locals whose assignments do NOT mix, and
 `(O-Owner)` broken while one was) and `D-own-41` (a detach by in-place re-allocation, wiping the
 value being copied in) both opened and CLOSED 2026-09-11, below; `D-own-39` opened and CLOSED
@@ -464,6 +465,30 @@ the entry records why the obvious widening is not taken: it answers wrong on `--
 > a struct's has, `tests/scripts/a-struct-enum-whole-value-bind-copies-like-a-struct.loft`);
 > and the `--native` release of a displaced store on a fn-ref re-bind of a USER local, which
 > is loft#1328 and which the `??` hoist sidesteps by releasing in the IR.
+
+### D-own-44 — OPENED AND CLOSED (2026-09-17): a lift temp whose value a consuming op had freed was freed again at its rebind
+
+`(O-Override)` — *a binding marked never-free takes no ownership-derived free in ANY of a
+free's spellings* — and `(O-Owner)`.  `rs = f()` on a keyed local lowers to a lifted call
+result `__lift_N` that `OpReplaceKeyed` copies into `rs` and then FREES (its source-free
+bit): the call's store is the op's to release.  `scopes::mark_lift_handoff` recorded that
+hand-off (loft#890) in a set the scope-exit sweep reads, so the lift took no free at scope
+exit — but the fact never reached the variable, and the second spelling of its free, the
+displaced-store free a REBIND emits (`Function::owns_displaced_store`, both backends), still
+fired.  In a loop the rebind released the slot the op had already freed, which by the next
+pass belonged to whatever store the program made in between: a vector literal read `1` for
+`24`, a record read `3 4294967308` for `5 3`, on both backends, dense and nullable returns,
+`sorted` and `hash` alike — silent without `LOFT_STRICT_STORES`, a panic under
+`LOFT_POISON`.
+
+Closed at the fact: every temp in the hand-off set is marked never-free after the scan
+(`scopes::run_scan_phase`), so both backends' displaced-store predicate answers no through
+the veto it already consults.  It surfaced because @PLN164 A0 moved a buffer mint into the
+first pass, where the freed slot was, and `1150-…`'s vector control read 0; eager minting had
+masked it only because the next call's result happened to reuse the same slot number, which
+made the identity-guarded free decline.  Guard:
+`tests/scripts/164-consumed-keyed-lift-rebind.loft` (c1–c4 fail on both backends with the
+mark removed, c5–c6 are the controls).
 
 ### D-own-43 — OPEN (2026-09-15): the interpreter's rebind of a promoted buffer local frees the buffer the caller handed it
 

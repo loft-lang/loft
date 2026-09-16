@@ -4326,6 +4326,18 @@ fn run_scan_phase(
             );
         }
     }
+    // @FR-O-Override — a temp whose value a consuming op takes over (`mark_lift_handoff`'s
+    // store hand-off: `OpReplaceKeyed` with its source-free bit) owns nothing at ANY later
+    // free, not only at scope exit.  The op either freed the store or declined because it
+    // was a protected borrow, and neither is the temp's to release.  Marked never-free, the
+    // rebind on the next pass through a loop emits no displaced-store free on either
+    // backend — that free released the slot the op had already freed, which by then was
+    // whatever the allocator had handed it to next.
+    let mut transferred: Vec<u16> = scopes.free_transferred.iter().copied().collect();
+    transferred.sort_unstable();
+    for v in transferred {
+        function.set_skip_free(v);
+    }
     // lift vars from `scan_args` are assigned inside conditional branches but
     // their `OpFreeRef` lives at function exit; prepend the null-inits so codegen
     // reserves their slot along every path (see the original comment in check).
