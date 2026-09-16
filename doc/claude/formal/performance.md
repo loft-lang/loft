@@ -124,6 +124,12 @@ OPEN: **1**
   retires that table's open question of lane drift versus a small regression.
   ⚠ `smooth`'s reference reads **240 ns/op** at this size, under the clock's floor (§ `smooth`
   run down: the converged x86 figure was ≈9.6× before § V-ah), so its 4.25× is a noisy row and
-  not a measurement of the gap — the size sweep is what judges it.  The four rows the bench
+  not a measurement of the gap — the size sweep is what judges it.  Confirmed by a second run
+  the same day at the laptop lane's iteration counts (`--repeat 3 --n-ref 500 --n-native 500`,
+  14/14 agreeing): every judged row within 0.1× of the above (`hash` 1.00×, `hair` 1.66×,
+  `fill_circle` 1.19×, `fill_star` 1.50×, `composite` 2.20×, `wide_line` 2.25×, `lock` 2.37×,
+  `lock_curved` 2.86×, `fronds` 3.11×) and `smooth` **4.34×** on a **200 ns/op** reference.
+  More ITERATIONS cannot lift that row off the floor: the floor is the work SIZE (61 px), not
+  the repeat count, which is why § `smooth` run down sweeps the size instead.  The four rows the bench
   grew since carry NO reference in this clone (`parse`, `render_lock`, `render_marks`,
   `resize` print native-only), so they are unjudged here and keep @PLN157's own numbers.
