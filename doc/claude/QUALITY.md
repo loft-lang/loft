@@ -2664,7 +2664,16 @@ unmoved.)
 Four functions added, all four seeing through the wrapper: C3's `disturbed_param_places` reads a
 parameter's kind through `Function::tp(...).base()` exactly as its inline twins do, and the rest
 ask shape questions.  The opaque column and the ratchet are unmoved.)
-
+(2026-09-16, D-tup-10's null-QUESTION close: 833 · 493 · 6 · 334, measured as a delta against
+832 · 492 · 6 · 334 — the audit was run immediately before the change and again after it, rather
+than the new row being carried from the failing gate's message.  One function is added,
+`Parser::is_tuple_shape`, and it peels: it answers *"is this a tuple in ANY of its homes?"*
+through `base()`, which is what lets the `== null` classification and `null_test`'s own gate ask
+ONE question instead of each naming `Type::Tuple` for itself.  **The OPAQUE column did not move,
+and that is the attribution:** the predicate is a peeling site and the two gates it replaced
+peeled already — what changed is that they now also see the `__tuple<…>` record spelling, which
+is the blindness D-tup-10's remaining half was.  A tuple in the boxed home answered the null
+question by the RECORD's presence, so a return buffer holding two nulls read as present.)
 
 (2026-09-15, THE JOINED TREE — this branch through loft#1540 and ../loft2's @PLN165 phase 0
 (bdb84abe8): 826 · 486 · 6 · 334, re-measured rather than carried; the ratchet reads its 334 / 1316

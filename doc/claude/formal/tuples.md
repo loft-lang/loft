@@ -260,19 +260,49 @@ it, not a standing fact.
   - a generic `T?` at a tuple — the record-backed member read peels now, and `Parser::tuple_elems`
     is the one home for "what are this type's tuple element types" across all six spellings.
 
-  **What is still open, measured the same day on both backends (`n1` probe):** the null QUESTION
-  disagrees between the two homes.  `(T-Absent)` says every member decides it, and the stack
-  tuple answers so (`w: (integer?, text?) = v[5]` → `w == null` is **true**), as does an
-  all-integer tuple returned through a plain value (`true`).  A tuple with a heap-carrying member
-  RETURNED through the `__tuple<…>` record answers by the RECORD's presence instead: `q == null`
-  is **false** with every member null.  `??` over that spelling is refused outright
+  ⚠ **CLOSED 2026-09-16, the null QUESTION half: the record home answers by its MEMBERS.**  Both
+  spellings now do, which is what `(T-Absent)` says — the rule is stated on the TYPE, not on
+  where the value lives.  The defect reached that home by TWO routes, and measuring which one a
+  cell took is what kept the cure from being written at the wrong site:
+
+  - a **bare** `ref(__tuple<…>)` — a declared tuple return — matched no flag in the `== null`
+    classification and fell to the generic `==`, which compared the reference against the null
+    sentinel (`OpEqRef`);
+  - an `Optional`-wrapped `ref(__tuple<…>)?` — a generic `T?` at a tuple — matched `ref_null`
+    and took `OpRefIsNull`.
+
+  Both answer by the RECORD, so both read a return buffer holding two nulls as PRESENT.  The
+  second route was RIGHT wherever it was measured before, because the shapes reached for it had
+  a genuinely absent record (`rec == 0`), where the record's answer and the members' agree — an
+  agreement that made the guard's a3 cell pass over an open defect.  The cells that separate
+  them are a record that EXISTS with every member null.
+
+  Cure, one notion at one home: `is_tuple_shape` answers *"is this a tuple in ANY of its
+  homes?"*, and both the classification and `null_test`'s own gate ask it, so a third spelling
+  is added there rather than at either.  `coalesce_not_null` gained the record arm — members
+  read at the synthetic struct's offsets through the same `get_val` that `.0` uses, since
+  `Value::TupleGet` addresses a stack tuple by var and index and has no spelling for a record
+  field.  The presence test comes FIRST and short-circuits, because a record that is not there
+  has no members to read.  That arm precedes the `Optional(Reference)` one on purpose: a boxed
+  tuple matches that too, and answering it there is the second route above.
+
+  **What is still open:** `??` over the boxed spelling is refused outright
   (`coalesce-default-type-mismatch`: *"`??` default of type `(integer, text)` is not assignable
-  to `__tuple<integer?,text?>`"*).  So the entry stays OPEN for the record home's null question,
-  and its cure is the one this close already names — `coalesce_not_null` addresses members
-  through `Value::TupleGet`, which the record spelling cannot answer, so that home needs the
-  member read the `.0` path just gained.  Guard:
-  `tests/scripts/an-absent-tuple-meets-the-type-its-author-declares.loft` (a1/a2/a3 plus eight
-  controls); its a2 cell pins the members and says why it does not pin `== null`.
+  to `__tuple<integer?,text?>`"*).  It fails EARLIER than the null question did — in the
+  default's `convert_admitting`, before the coalesce runs — so it is a separate site and a
+  separate close; and it is a loud refusal rather than a silent wrong answer, which is why it
+  did not travel with the wrong boolean.  Measured not assumed: `??` over the STACK
+  member-nullable tuple works (`w: (integer?, integer?) = v[5]; w ?? (0, 0)` → `0 0`), so the
+  refusal belongs to the boxed home and not to member-nullability.
+
+  ⚠ **Not this entry, and the cure must not absorb it:** `?` on a member-nullable tuple is
+  refused in BOTH homes — `(integer?, integer?)` on the stack refuses identically to
+  `__tuple<integer?,text?>`.  That is the pre-existing refusal recorded above, not a record-home
+  fact, and a probe that reads it as one is measuring member-nullability while believing it is
+  measuring the home.
+
+  Guard: `tests/scripts/an-absent-tuple-meets-the-type-its-author-declares.loft` (a1/a2/a3 plus
+  eight controls); its a2 cell now pins `q == null` on both the absent and the present return.
 
   ⚠ **loft#1478, CLOSED 2026-09-09, and its lesson is about this doc's own oracle.**  A `text`
   MEMBER of an element read by a variable index did not COMPILE on `--native` (E0308, `&str`

@@ -22,7 +22,35 @@
 // members and says so).  Every cell but c4 carries a `text` member: the coercions only a
 // non-`Copy` member needs are where this rule's spellings hid before (loft#1478).
 //
-// @EXPECT_WARNING: stored into the return value of the non-null type
+// And the null QUESTION itself, closed 2026-09-16.  `(T-Absent)` is stated on the TYPE, so both
+// homes must answer it by their MEMBERS; the boxed one answered by the RECORD's presence, and
+// a2's `q` is a return buffer that EXISTS holding two nulls, so it read as PRESENT while a1's
+// `w` beside it — the same declared type on the stack — read as null.  a3 is why that survived
+// being guarded: its record is genuinely ABSENT (`rec == 0`), where the record's answer and the
+// members' agree, so the cell passed over the open defect.  Only a record that exists with every
+// member null separates the two answers, which is what a2 now pins.
+//
+// c8's read is absent-capable and its declared return is not, so `(N-Store)` reports it PER
+// MEMBER — "element 0 of the return value", "element 1 of …" — which is the shape this close
+// gave that report.  The expectation matches both lines and no other.
+// @EXPECT_WARNING: of the return value of the non-null type
+//
+// @falsified-at: 0d06d49f5 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0.  The moving channel is a2's `q == null`: on
+//   this parent the file COMPILES (the three refusals above closed in an earlier commit) and the
+//   boxed tuple answers the null question by the RECORD's presence, so a CELL fails rather than
+//   the file being refused.  Against the original parent 0d1a0dedd the channel was the exit
+//   alone — the control refuses the file there (a1's landing is a type change), so no assertion
+//   on it is reachable at all, and the eight controls ran green in the probe matrix this guard
+//   was cut from.
+// @falsified-by: tests/falsified/an-absent-tuple-meets-the-type-its-author-declares.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native
+//   1 assertion failures -> 0.
+// HOLDS: leak, panic and expectations are equal on both trees, on both backends — falsify prints
+//   only the channels that MOVE and requires HERE to be clean.  The two neighbouring cures the
+//   cells reject: one that answers the null question from the RECORD alone leaves a2 failing,
+//   and one that reads the MEMBERS without testing the record's presence first reads them off a
+//   null reference in a3, whose record is genuinely absent.
 
 fn a1() {
   v: vector<(integer, text)> = [(1, "a"), (2, "bb")];
@@ -43,11 +71,16 @@ fn a2() {
   q = a2_get(v, 5);
   assert("{p.0} {p.1}" == "2 bb", "a2 a present read returned: {p.0} {p.1}");
   assert("{q.0} {q.1}" == "null null", "a2 an absent read returned: {q.0} {q.1}");
-  // NOT asserted here: `q == null`.  The same declared type has two representations — a1's
-  // `w` is the stack tuple and answers the null question by its MEMBERS, as `(T-Absent)` says,
-  // while a value RETURNED through the `__tuple<…>` record answers it by the record's presence
-  // and reads `false` with every member null.  That disagreement is D-tup-10's remaining half
-  // and is measured in the entry; this cell pins the members, which are right in both homes.
+  // `q == null` IS asserted now, and it is the cell this file exists to hold.  The same
+  // declared type has two representations — a1's `w` is the stack tuple, and a value RETURNED
+  // through the `__tuple<…>` record is the boxed one — and `(T-Absent)` is stated on the TYPE,
+  // so both must answer by their MEMBERS.  The boxed one answered by the RECORD's presence
+  // instead: a return buffer that exists holding two nulls read as PRESENT, so this was
+  // `false` while a1's `w` beside it was `true`.
+  assert(q == null, "a2 the returned absent tuple reads as null");
+  // Spelled `!=` rather than a negated `==`, as a1 spells it: the negation is its own path
+  // through `null_test`, and a cell that only ever asks `==` leaves it unpinned.
+  assert(p != null, "a2 the returned present tuple does not");
 }
 
 fn a3_first<T>(v: vector<T>) -> T? { if len(v) > 0 { return v[0]; } return null; }
@@ -59,6 +92,35 @@ fn a3() {
   v = [(4, "d")];
   g = a3_first(v);
   assert("{g.0} {g.1}" == "4 d", "a3 a generic T? at a tuple, present: {g.0} {g.1}");
+}
+
+// a4 — the same boxed return asked in a LOOP.  `matrix_axes` reports this file reaching only
+// one of the two evaluation counts, and the missing one is not a gap for its own sake here: a
+// callee's hidden return buffer is allocated once per caller ACTIVATION and REUSED across
+// calls, so a miss after a hit writes where the hit's members still are.  The null question is
+// asked through that buffer, behind a presence test that is non-zero on every iteration after
+// the first — so a stale member would answer "present" for a row that missed, and the fold
+// would report the PREVIOUS call's members.  Both orders are pinned, because a miss-then-hit
+// staleness travels the other write path.
+fn a4() {
+  v: vector<(integer, text)> = [(1, "a"), (2, "bb")];
+  hits = 0;
+  misses = 0;
+  for i in 0..4 {
+    q = a2_get(v, i);
+    if q == null {
+      misses += 1;
+      assert("{q.0} {q.1}" == "null null", "a4 a miss in a loop keeps null members: {q.0} {q.1}");
+    } else {
+      hits += 1;
+    }
+  }
+  assert("{hits} {misses}" == "2 2", "a4 two hits then two misses through one buffer: {hits} {misses}");
+  r = a2_get(v, 5);
+  s = a2_get(v, 0);
+  assert(r == null, "a4 the miss reads as null");
+  assert(s != null, "a4 the hit after a miss reads as present");
+  assert("{s.0} {s.1}" == "1 a", "a4 the hit after a miss is not stale: {s.0} {s.1}");
 }
 
 fn c1() {
@@ -129,6 +191,7 @@ fn main() {
   a1();
   a2();
   a3();
+  a4();
   c1();
   c2();
   c3();
