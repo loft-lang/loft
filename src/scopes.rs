@@ -3913,7 +3913,10 @@ fn insert_before_uses(ops: &mut Vec<Value>, av: u16, guard: &Value, frees: &[u32
 /// emitters), and the guarded `Set(av, Null)` is the mint.  A path that never makes the
 /// call never mints the store, and every exit's free already tolerates the sentinel
 /// (`@FR-H-FreeNull`).  Declined for a body that suspends or forks (a generator, `par`),
-/// and for a buffer with a second assignment, which this cannot order.
+/// and for a buffer with a second assignment, which this cannot order.  The type test is
+/// on the bare `vector<T>` on purpose: a `vector<T>?` buffer's entry init already writes
+/// the ABSENT sentinel and is minted by another route, so it is declined and keeps its
+/// entry-time behaviour, as does every buffer this does not name.
 fn lazy_buffer_mints(code: &mut Value, function: &mut Function, data: &Data) {
     if !crate::keys::lazy_buffer_enabled() {
         return;

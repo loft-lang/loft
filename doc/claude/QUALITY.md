@@ -480,7 +480,11 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 523 | 500 | **23** |
+| 525 | 502 | **23** |
+
+(2026-09-17, @PLN164 A0: two functions added, both peeling — `scopes::names_outside_free` and
+`scopes::insert_before_uses`, the lazy-buffer walk, which match on `.unspan()` /
+`.unspan_mut()` at every step.  The opaque column is unmoved.)
 
 (2026-09-16, @PLN164 C5 step 2: one more function that discriminates on `Value` variants and
 peels — `namings_avoid_place`, the per-naming disturbance walk, which matches on `.unspan()`
@@ -2660,7 +2664,11 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 836 | 496 | 6 | **334** |
+| 837 | 496 | 7 | **334** |
+
+(2026-09-17, @PLN164 A0: one function added, descending — `scopes::lazy_buffer_mints` names
+a bare `vector<T>` on purpose, because a `vector<T>?` buffer is minted by another route and is
+declined; its doc says so.  The opaque column is unmoved.)
 
 (2026-09-16, @PLN164 C5: one function added, seeing through the wrapper — `view_leaf_type` asks
 whether a record's heap field is a plain `vector<T>`, which a view leaf may deliver, and reads it
