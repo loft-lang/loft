@@ -10,8 +10,10 @@ Tracker: [@PLN164](https://github.com/loft-lang/plans/issues/164) · `status:act
 
 ## Status (REQUIRED)
 
-Active (the owner's go, 2026-09-15).  **P0 done**, **B1, C4, B2, C3, C1 and C2 shipped** (B2's caller side and
-C2 both a wash on the parse row, structural gain only — § B2 and § C2 *Measured*) — the
+Active (the owner's go, 2026-09-15).  **P0 done**, **B1, C4, B2, C3, C1 and C2 shipped**, **C5
+step 1 built OPT-IN** (`LOFT_VIEW_FIELD=1`) — B2's caller side and C2 are both a wash on the parse
+row, structural gain only (§ B2 and § C2 *Measured*), and C5 does not reach the consumer yet, with
+the gate that declines each library function measured per function (§ C5 *Built*).  The
 measurements are under § P0 below and the mechanism under § B1.  What P0 changed in the
 plan: tier 1's ceiling is ~10 % of the parse row, not a fifth, and its store-identity cost
 (287 `store_nr !=` sites in one emission) is real, so A1/A2 stay behind B and C in the
@@ -1021,7 +1023,7 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § C2 | the 11-cell oracle (today's answers, which C2 may not move); the aliasing decline; `(O-Buffer)`'s new clause | Shipped 2026-09-16 — a pure-IR rewrite, the buffer variable re-pointed at the destination; ZERO admitted sites in the parse bench (the emission is byte-identical under the switch) and none in the 15-file consumer corpus, so the gain is structural |
 | **C3** — read-only `?`-discharge as a view (`B-View`'s discharge clause) | § C3 | the discharge ALREADY views (13 shapes measured, both backends), so the phase's content was its other half: `(B-Disturb)` across a CALL.  15 pairs both backends; 7 move under the switch | Shipped 2026-09-16 |
 | **C4** — per-type prefill image (`R-Prefill`) | § C4 | cells c1–c11 both backends under `LOFT_PREFILL_VERIFY`; the verify census over all 1432 corpus files; the image USED on both backends (`LOFT_TRACE_PREFILL`); parse row −11 % | Shipped 2026-09-15 |
-| **C5** — a returned record's heap field as a view leaf (`O-ViewField`, `R-ValueRecord`, `R-Escape`) | § The rewrite list | the points written once per line: `Mark.pts` names `Op.pts`; an E17 site that appends between the call and the read must read the copy; an escaping `pub fn` result reads the copy at the bridge | Open — last; rule admitted (C122) |
+| **C5** — a returned record's heap field as a view leaf (`O-ViewField`, `R-ValueRecord`, `R-Escape`) | § C5 | 2 admissions, 2 positive controls and 15 declines both backends under every falsifier; the native corpus clean with the unit armed; three conditions measured rather than argued (an element read at a site, the disturbance span as an UPPER bound, the exit's empty answer as a proof) | **Step 1 built 2026-09-16, opt-in** (`LOFT_VIEW_FIELD=1`).  The `?`-discharged source is NOT admissible — its ownership is a join — so the admitted shape is the natural one; step 2 owes per-PATH mention counting and a wider source resolution, and the library's own declines are measured per function in § C5 |
 
 Every phase: a switch (`LOFT_NO_<unit>=1`), a falsifier, cells in
 `bytecode-comparisons/`, a guard in `tests/scripts/` with its `@falsified-at:` receipt,
