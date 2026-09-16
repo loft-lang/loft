@@ -13,7 +13,13 @@ Tracker: [@PLN164](https://github.com/loft-lang/plans/issues/164) · `status:act
 Active (the owner's go, 2026-09-15).  **P0 done**, **B1, C4, B2, C3, C1 and C2 shipped**, **C5
 step 1 built OPT-IN** (`LOFT_VIEW_FIELD=1`) — B2's caller side and C2 are both a wash on the parse
 row, structural gain only (§ B2 and § C2 *Measured*), and C5 does not reach the consumer yet, with
-the gate that declines each library function measured per function (§ C5 *Built*).  The
+the gate that declines each library function measured per function (§ C5 *Built*).  **The
+re-profile's verdict is CORRECTED (2026-09-16, § Re-profiled *The correction*): "the row is the
+scanner, the class is paid down" was read off operator COUNTS and INTERPRETED profiles, and `perf`
+on the release binary itself reads loft runtime 63 %, program 31 % — the class is still two thirds
+of the row.  What P0 priced (the store mint/free pair, 9 %) holds; the per-record churn around it
+(allocator, copies, appends, ≈ 30 %) was never priced, and attributing it to loft lines is the
+next step (P0b) before any phase is cut.**  The
 measurements are under § P0 below and the mechanism under § B1.  What P0 changed in the
 plan: tier 1's ceiling is ~10 % of the parse row, not a fifth, and its store-identity cost
 (287 `store_nr !=` sites in one emission) is real, so A1/A2 stay behind B and C in the
@@ -49,8 +55,8 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
 - **Effort:** M (tiers 1–2) · MH (tier 3)
 - **Design:** ~ — the invariants are named; the store-identity question (§ Edge cases E1)
   is open and decides tier 1's shape.
-- **Last touched:** 2026-09-16 (C2 shipped, and then measured on the bench: the rewrite has no
-  site in the consumer, so the parse row's points class stays with C5 — § C2 *Shipped*)
+- **Last touched:** 2026-09-16 (the re-profile's verdict corrected by `perf` on the release binary,
+  the queue re-cut under it, and the frame-prelude lever priced — § Re-profiled *The correction*)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -89,11 +95,12 @@ The profile agrees (program samples only, 20 000 calls, this box):
 | the library's byte scan | ≈ 19 % | `matches_at`, `find_option` (rescans the line per key) — the library's own |
 | the parse logic | ≈ 8 % | `parse_scene_at`, `acc_pts`, `fronds`, the trig |
 
-## Re-profiled after the copy phases (2026-09-16) — the row is the SCANNER now
+## Re-profiled after the copy phases (2026-09-16) — first read as the SCANNER, corrected the same day
 
-The evaluation table above is what this plan was cut from, and four phases later it is stale in
-the way a measurement makes a plan stale rather than wrong.  Re-measured on the same bench, by
-four instruments, each answering a different question:
+**Read § *The correction* below before the four instruments: their numbers stand, the conclusion
+drawn from them does not.**  The evaluation table above is what this plan was cut from, and four
+phases later it is stale in the way a measurement makes a plan stale rather than wrong.
+Re-measured on the same bench, by four instruments, each answering a different question:
 
 **1. Which operators run (`LOFT_NATIVE_CHECKPOINTS=count`, `--native-release`, 300 parses —
 1585 sites, 16.99 M executions, ≈ 56.6 k operators per parse).**  Counts are this instrument's
@@ -130,27 +137,93 @@ P0's own tier-1 ceiling and is now the ceiling for ALL remaining store-lifecycle
 row.**  With C5 armed the census reads 9 `Mark`s instead of 12 — three of the scene's lines lose
 their buffer, 0.45 % of the row, which is the wash § C5 measured.
 
+### The correction (2026-09-16, later the same day) — none of the four instruments measures native cycles
+
+The verdict first drawn from them — *the row is the scanner, the plan's class is paid down* —
+was an instrument artefact, and the way it was reached is the lesson: instrument 1 counts operator
+EXECUTIONS (and its own doc says a count is not time), instrument 2 samples the INTERPRETED run,
+instrument 3 is `perf` over the interpreter (whose dispatch is 22 % of it and whose costs are not
+the native lane's), and instrument 4 is a store census that prices only the store mint/free pair.
+A scanner executes many cheap operators, so it dominates every COUNT; on the release binary those
+operators are a few instructions each, and the time is where the out-of-line runtime calls are.
+
+**`perf` on the `--native-release` binary itself** (the parse bench's release emission compiled
+with loft's own rustc line — `-C opt-level=3 -C codegen-units=1`, 3.3 s — `perf record -F 5000`,
+main core 3K samples, the E-core section's 55 samples discarded; hash `33f6d2b8`, the row at
+39.8–42.4 k ns/op).  Self time by home:
+
+| where the cycles go | share |
+|---|---:|
+| loft runtime | **63 %** |
+| the program (scanner + parse logic, the leaves inlined into their callers) | 31 % |
+| std/libc (`dec2flt` for `as float?`, `memcpy`) | 5 % |
+
+And the runtime's share by family:
+
+| family | routines | share |
+|---|---|---:|
+| store allocator | `claim`, `claim_block`, `finish_claim`, `fl_insert_node` / `fl_take_ge` / `fl_delete_node` (the free tree) | 12 % |
+| store access | `begin_write_inner` 7 %, `store_mut`, `get_elem` | 12 % |
+| record mint / copy / free-walk | `record_new`, `OpFinishRecord`, `link_siblings`, **`copy_claims` 3 %**, **`remove_claims_mode` 2 %** | 10.5 % |
+| store mint / free | `op_database_inner`, `free_named`, `close_file_handle`, `store_budget`, `Store::init` | 9 % |
+| vector append | `vector_add`, `vector_append`, `append_byte` | 8 % |
+| other | `OpFreeRef`, `enum_parent_size`, `record_finish`, text ops | 11 % |
+
+Top self symbols: `n_find_option` 8.5 %, `begin_write_inner` 7.2 %, `n_parse_scene_at` 7.0 %,
+`n_acc_pts` 3.5 %, `claim` 3.1 %, `copy_claims` 3.0 %, `vector_append` 2.7 %, `vector_add`
+2.4 %, `n_fronds` 2.2 %, `remove_claims_mode` 2.1 %.
+
+*What this settles.*  P0's arithmetic holds exactly for what it priced: the store mint/free pair
+is 9 % of the row, which is tier 1's whole ceiling.  What P0 never priced is the per-RECORD churn
+inside and around those stores — every claim through the allocator, the free tree that a release
+inside a live store feeds, the copies the engine profile had lost sight of (`copy_claims` and
+`remove_claims_mode` are still here), the append path — and that is ≈ 30 % of the row.  The plan's
+class is not paid down; it is two thirds of the row, and only the store-pair tenth of it has a
+priced phase.
+
+*What it does not settle: WHICH loft lines drive that churn.*  Both call-graph modes broke at the
+runtime boundary (`--call-graph dwarf` on a `-Cdebuginfo=1 -Cforce-frame-pointers=yes` program
+resolved no chain into the rlib; `lbr` attributed 84 % to an `(inlined)` pseudo-frame), so every
+inclusive column read equal to self.  Attribution needs the rlib built with frame pointers
+(`RUSTFLAGS=-Cforce-frame-pointers=yes cargo build --release --lib` into a separate
+`--target-dir`), and it is the P0-style step before any phase is cut — it decides between the
+arena's release-to-mark (which takes the free-tree half of the temporaries' churn) and the copy
+sites the profile still shows.
+
+**The lever outside the plan, measured on the same emission.**  Every `at(s, i)` call pays the
+frame prelude — `cr_call_push_lean`, `CallGuard`, `FnRefBufGuard` — because `at` calls the
+stdlib's `size`, a loft-bodied `t_` function, and so fails § N4's leaf test; `matches_at`,
+`word_boundary`, `skip_space`, `find_option` and the readers fail it the same way.  The prelude
+hand-removed from those functions in the release emission (`bytecode-comparisons/` carries no
+cell for it; the edit is the deletion of the three prelude lines):
+
+| variant | ns/op (ABAB ×5, `--n 4000`) | hash |
+|---|---|---|
+| as emitted | 39.8–42.4 k | `33f6d2b8` |
+| prelude removed from the scanner's non-recursive functions | **34.5–40.0 k** (−11 to −14 %) | `33f6d2b8` |
+
+That is N4 made TRANSITIVE — a function whose callees are all leaves cannot recurse, so it needs
+no depth entry either — and in the lean tier it loses nothing observable but the depth cap's
+exactness on an acyclic chain.  It is @PLN157's item (its queue carries it as row 11), S-sized.
+The other candidate did nothing: the rlib's `text_byte_at_native` hand-inlined into the crate
+moved the row by noise — LLVM already inlines it across the rlib — so *"LTO into the rlib"* is not
+this row's lever.  After the prelude lever the row reads ≈ 5.4× the Rust reference: the
+program's own 31 % is the floor the consumer's algorithm sets, and the runtime's 63 % is this
+plan's.
+
 ### What that means for the queue
 
-The class this plan was opened for has been PAID DOWN.  At P0 the engine profile read 57 %
-record-and-vector lifecycle; it now reads a few per cent, and the two phases that moved the row
-are exactly the ones that removed copies and prefills (B1 −14 %, C4 −11 %).  What is left of the
-40 µs is the CONSUMER's byte scanner: `at(s, i)` is called ≈ 3 400 times per parse and asks
-`size(s)` on every call, `matches_at` reads byte by byte through it, and `find_option` re-scans
-the line per key (P0 flagged that one already).
-
-So **the remaining copy phases cannot move this row** — C5 step 3 and the vector `place_result`
-are aimed at a class that measures under 2 % — and the two avenues that can are:
-
-* **the LANGUAGE one, which Goal F makes the interesting one**: a small user function called
-  millions of times is a real call in the emitted Rust (§ V-o inlines stdlib one-op wrappers
-  only), and `size(s)` is re-evaluated per call where the caller's loop holds it invariant
-  (§ V-ao hoists an invariant integer chain within a frame, not across a call).  Both are
-  @PLN157-family levers and both are measurable on this row;
-* **the CONSUMER one**: the scanner's own algorithm, which is the library's to change and which
-  this plan deliberately does not ask for (the natural form is the canonical one).
-
-This section is the measurement; what to do with it is the owner's call.
+1. **P0b — attribute the runtime's 63 % to loft lines** on a frame-pointer rlib build (above).
+   A phase cut before this is a phase cut on a hypothesis, which is how the last four went.
+2. **@PLN157's transitive-leaf prelude elision** (its queue row 11) — measured −11–14 %, S,
+   independent of this plan and worth landing first.
+3. **Then, by the attribution:** A1/A2 as a pooled store or a release-to-mark arena if the
+   free-tree and store-pair families charge to activation temporaries; the remaining copy sites
+   (`copy_claims`, `remove_claims_mode`) if they charge to a bind or a field assignment the B/C
+   phases missed.  C5 step 3 and the vector `place_result` stay parked: their class measured
+   under 2 % and the correction does not change that.
+4. Re-measure the 14-row `compare.py` table after each of these; the parse row's re-profile is
+   re-taken with `perf` on the release binary, never with a count.
 
 ## The three tiers — the invariant each rests on
 
@@ -1103,7 +1176,8 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | Item | Source | Verify | Status |
 |---|---|---|---|
 | **P0** — probe first: count the store-identity sites; price tier 1; the hand patch judged not worth building by the arithmetic; the leak-gate extension (E19) deferred to A1's shape | § P0 | 287 identity sites in one emission; ~88 mints per parse at ≈ 60 ns a pair: tier 1's ceiling ≈ 10 % of the row | Done 2026-09-15 |
-| **A1** — arena for one activation's own buffers (`__ref_N`, `__ref_p2_N`, literal temps), mark/release at every exit | § Tier 1 | `tests/scripts/164-arena-activation.loft` both backends; plan 51's ten graduated guards under the switch; `emission_audit.py` R-State per record | Blocked on P0 |
+| **P0b** — attribute the runtime's 63 % of the release row to loft lines: a frame-pointer rlib build, `perf` with call chains, an inclusive table per loft function with each family charged to a line | § Re-profiled *The correction* | the allocator, copy and append families each named with the line and the phase that owns it; the store-pair family confirmed at 9 % | **Open — next** (2026-09-16) |
+| **A1** — arena for one activation's own buffers (`__ref_N`, `__ref_p2_N`, literal temps), mark/release at every exit | § Tier 1 | `tests/scripts/164-arena-activation.loft` both backends; plan 51's ten graduated guards under the switch; `emission_audit.py` R-State per record | Blocked on P0b — the store-pair family is 9 % of the release row; whether the free-tree family (12 %) charges to activation temporaries is what decides the shape |
 | **A2** — the caller-threaded arena, reset per loop iteration | § Tier 1 | parse row −20 %; E2/E3/E4 cells | Blocked on A1 |
 | **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |
 | **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state) | § B1 | c6 under the pool without `minted_pairs` — the interpreter's rebind free must first match native's `_rb_w_` guard | Blocked on that divergence |
@@ -1134,15 +1208,17 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
    byte-identical under the switch and the corpus's 13 `place = call(…)` sites are all scalar
    or `text`.  The gain is structural; § C2 *Shipped* records it and names where the parse
    row's points class actually sits.
-5. **C5 is next** — and it is the keystone for the points, not the last polish the ordering
-   first made it: `pp_pts` has TWO owning destinations (`Op.pts` and the returned `Mark.pts`),
-   which is what declines a vector `place_result`.  The view leaf removes the second, and the
-   `Mark` store per parsed line (12 of the ~68 mints a parse still makes) goes with it.  It
-   extends `(O-ViewField)` and the value-record gate, both of which the owner has signed off
-   (C122).
-6. **B1b** beside them whenever D-own-43 closes (the interpreter's rebind guard); then
-   A1 → A2, whose remaining share is re-measured after the copy phases have moved the mix.
-7. Re-measure the 14-row bench after each phase (`compare.py`, 14/14 hashes).
+5. ~~**C5 is next**~~ — steps 1 and 2 built opt-in; the row measured a wash and the `Mark`
+   class under 2 %, so step 3 and the vector `place_result` are PARKED (§ C5 *Step 2*).
+6. **P0b** — the attribution on a frame-pointer rlib build (§ Re-profiled *The correction*):
+   the runtime is 63 % of the release row and no line has been charged with it yet.
+7. **Then A1/A2 or the remaining copy sites, whichever the attribution names** — A1 as a pooled
+   store or a release-to-mark arena if the store-pair (9 %) and free-tree (12 %) families charge
+   to activation temporaries; the copy sites if `copy_claims` / `remove_claims_mode` charge to a
+   bind or an assignment.  **B1b** beside them whenever D-own-43 closes (the interpreter's rebind
+   guard).
+8. Re-measure the 14-row bench after each phase (`compare.py`, 14/14 hashes), and the parse
+   row's profile with `perf` on the release binary — never with a count.
 
 ## Open design questions
 
