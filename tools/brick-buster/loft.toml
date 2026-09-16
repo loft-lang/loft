@@ -24,6 +24,16 @@ assets   = ">=0.1"
 # sits beside the game so `assets/bb` names the same two files for the packer
 # and for the game — a path a program passes resolves against the PROGRAM's
 # own directory (@PLN146 F4).
+#
+# ⚠ Export `LOFT_HASH_SEED=0x0123456789abcdef` when running this through
+# `loft build`.  A hash draws a random seed per table and stores it in its
+# bucket record, where it decides bucket order, so the same art packs to
+# different bytes every run (loft#710) — and this pack is committed, so each
+# rebuild reads as a change to the art.  `make brick-buster-pack` sets it; an
+# asset cannot yet carry its own environment, so this spelling relies on the
+# caller.  The two spellings are pinned together by
+# `doc_hygiene::brick_buster_pack_step_matches_its_manifest`, and this note is
+# the half of that pairing a manifest can express.
 [[build.asset]]
 name    = "atlas"
 run     = "pack_atlas.loft"

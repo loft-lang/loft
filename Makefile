@@ -1160,10 +1160,30 @@ view: view-refresh
 # `run` in tools/brick-buster/loft.toml's `[[build.asset]]`, and
 # `doc_hygiene::brick_buster_pack_step_matches_its_manifest` pins the
 # two together so they cannot drift apart silently.
+#
+# `LOFT_HASH_SEED` is what makes the pack BYTE-REPRODUCIBLE (loft#710).  A hash
+# draws a random seed per table, stores it in its bucket record, and that seed
+# decides bucket ORDER — so the same art packed twice came out different in ten
+# bytes: the seed word itself, plus two entries that landed in swapped slots.
+# The pack is a COMMITTED artefact, so every rebuild showed as a modification
+# and "the art changed" was indistinguishable from "it was rebuilt again".
+#
+# Pinning it here and nowhere else is deliberate: the randomness is the P253
+# hash-DoS defence, which a running program still wants.  A build that publishes
+# an artefact does not.  The value matches the one the rest of the tree pins
+# (`tests/paged_browser.rs`, `tests/store_persist_loft.rs`).
+#
+# ⚠ Only this spelling is covered.  `[[build.asset]]` accepts `name` / `run` /
+# `lifetime` / `inputs` / `outputs` / `targets` and has no `env` key, and
+# `build_phase::run_asset_command` inherits the ambient environment — so a pack
+# built through `loft build` is reproducible only if the caller exports the seed
+# themselves.  Closing that properly means an `env` key on the asset, which is a
+# change to the manifest surface rather than to this recipe.
 .PHONY: brick-buster-pack
 brick-buster-pack:
 	@echo "  drawing Brick Buster's sprite pack ..."
-	@./target/release/loft --interpret tools/brick-buster/pack_atlas.loft \
+	@LOFT_HASH_SEED=0x0123456789abcdef \
+	    ./target/release/loft --interpret tools/brick-buster/pack_atlas.loft \
 	    >/tmp/loft_bb_pack.log 2>&1 || { \
 	    echo "    FAIL: sprite pack — see /tmp/loft_bb_pack.log"; \
 	    tail -20 /tmp/loft_bb_pack.log; exit 1; }

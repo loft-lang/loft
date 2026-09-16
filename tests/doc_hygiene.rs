@@ -1601,6 +1601,42 @@ fn brick_buster_pack_step_matches_its_manifest() {
             "loft.toml promises `{out}` but nothing in the Makefile checks for it."
         );
     }
+
+    // loft#710 — and the packer must PIN THE HASH SEED, because the pack it writes is a
+    // committed artefact.  A hash draws a random seed per table and stores it in its
+    // bucket record, where it decides bucket ORDER, so the same art packs to different
+    // bytes on every run.  Unpinned, each rebuild shows the pack as modified and "the
+    // sprites changed" cannot be told from "somebody ran `make game`" — the same
+    // indistinguishability the seed switch exists to remove.
+    //
+    // Both spellings are checked, for the reason the rest of this test exists, with one
+    // asymmetry worth stating: a `[[build.asset]]` has no `env` key and
+    // `build_phase::run_asset_command` inherits the ambient environment, so the manifest
+    // CANNOT set the seed.  Its half is the note that tells a `loft build` caller to
+    // export it.  The values must still agree, or the two paths pack different bytes
+    // while both look correct.
+    let seed_after = |text: &str| -> Option<String> {
+        text.split("LOFT_HASH_SEED=").nth(1).map(|rest| {
+            rest.chars()
+                .take_while(char::is_ascii_alphanumeric)
+                .collect()
+        })
+    };
+    let makefile_seed = seed_after(&makefile).expect(
+        "the Makefile's atlas packer must pin LOFT_HASH_SEED=<value>; without it the \
+         committed pack is rebuilt to different bytes every time (loft#710)",
+    );
+    let manifest_seed = seed_after(&toml).expect(
+        "tools/brick-buster/loft.toml must name LOFT_HASH_SEED=<value>: an asset cannot \
+         carry its own environment, so the note is the only way a `loft build` caller \
+         learns the pack needs a pinned seed to be reproducible",
+    );
+    assert_eq!(
+        makefile_seed, manifest_seed,
+        "the Makefile pins LOFT_HASH_SEED={makefile_seed} and the manifest names \
+         {manifest_seed} — one seed spelled twice, so `make game` and `loft build` would \
+         write different packs from identical art."
+    );
 }
 
 /// @PLN78 step 6 — the installer's target triples must be ones a release publishes.
