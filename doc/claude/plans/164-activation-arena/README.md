@@ -47,8 +47,8 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
 - **Effort:** M (tiers 1–2) · MH (tier 3)
 - **Design:** ~ — the invariants are named; the store-identity question (§ Edge cases E1)
   is open and decides tier 1's shape.
-- **Last touched:** 2026-09-16 (C3 shipped: the discharge was already a view, and the
-  phase's real content was `(B-Disturb)` across a call — a silent-wrong on both backends)
+- **Last touched:** 2026-09-16 (C1 step 1 shipped: the shipped in-place FIELD road staged no
+  initialiser, so a literal reading the place it overwrites answered wrong on both backends)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -463,6 +463,66 @@ quadratic.  A/B on one binary (`LOFT_NO_CALLEE_DISTURB`, three runs each): a std
 have shown.  The whole-program map is built once per `check` rather than re-derived per call
 site, which is what keeps it there.
 
+## C1 — the element overwritten from a literal (step 1 SHIPPED 2026-09-16, `@FR-R-InPlaceLiteral`)
+
+*Re-measured first, per C3's lesson, and the row is real this time.*  `sc.elems[idx] = Elem {
+… }` mints a `__ref_p2_N` store, builds the literal in it and `OpCopyRecord`s it into the
+slot — confirmed on the `acc_pts` shape and on four element shapes (full literal, partial
+literal, all-scalar element, element with a vector field).  The store census of the library
+shape mints exactly three stores and this is the third.
+
+*And the re-measurement found the phase is half built already.*  `(R-InPlaceLiteral)` names
+two destinations, an element `v[i] = R { … }` and a field `o.f = R { … }`, and the FIELD one
+has taken the in-place road since long before this plan: its writes take the place as their
+receiver, it mints no store, and it already writes the declared default of every omitted
+field.  Only the ELEMENT destination copies.  So C1's optimisation is narrower than the rule
+reads.
+
+**Step 1 — the staging clause, which was broken (SHIPPED).**  That shipped in-place road
+staged nothing, so an initialiser read storage an earlier field's write had already replaced:
+
+| shape | got | want |
+|---|---:|---:|
+| `o.f = El { a: o.f.b, b: o.f.a }` over `{a:1, b:2}` | **2,2** | 2,1 |
+| the same with the second field read through a call | **2,2** | 2,1 |
+
+Both backends, in silence.  The ELEMENT twin answers correctly — because it copies — which is
+what makes it the oracle and what makes this the prerequisite: redirecting elements to the
+place FIRST would have propagated the defect to them.
+
+#330's hoist is exactly the cure and already existed; it only ever armed for a WHOLE-VARIABLE
+rebind (`v = S { … }`), because `in_place_var` doubles as the retry path's target and that is
+meaningful only for a variable.  `parse_object` now takes a separate hoist root from a
+PROJECTION destination too, read through `projection_container_place`.  The root carries the
+destination's field OFFSET and `Parser::reads_place` spares a read of that variable at a
+DIFFERENT field, so `tw.a = El { a: tw.b.a }` takes no temp; the spare is taken only on proof,
+because sparing wrongly costs the value and staging wrongly costs a stack temp.
+
+*The one conservatism, stated because it is a choice.*  Only `OpGetField` proves disjointness.
+A field read also arrives through the typed accessors (`bx.tag` is `OpGetText(bx, 28)`), whose
+second argument is an offset for some ops and a SIZE for others, so separating them needs a
+list of ops that reads offsets — and such a list drifts silently against a new op, which is
+PERFORMANCE.md § Design P8's measured failure mode for the five mutation deny-lists.  So a
+sibling read spelled with a typed accessor stages a temp it does not need.  It is bounded by
+the literal's own field count, it is pinned either way so a later narrowing is deliberate, and
+closing it wants the field's declared SPAN rather than another list.
+
+*Receipts.*  `tests/scripts/164-in-place-literal.loft`, eighteen cells hand-computed from the
+declarations, clean on both backends under `LOFT_POISON`, `LOFT_POISON_CLAIM`,
+`LOFT_STRICT_STORES` and `LOFT_NATIVE_LEAK_CHECK`; `@falsified-at:` measured by disabling the
+projection arm — c1 and c8 go red on both backends and every other cell is unmoved, which is
+what says the arm stages the initialisers that read the place rather than staging everything.
+Pins `tests/in_place_literal.rs` hold the IR shape.
+
+**Step 2 — the element destination written in place (OPEN).**  The two lowerings are the SAME
+sequence of field writes; only the receiver differs (`OpGetField(bx, …)` against a
+`__ref_p2_N` the copy then moves).  So step 2 is redirecting that receiver and dropping the
+store, the `OpCopyRecord` and the free — with step 1's staging already covering E13 and the
+literal's own lowering already covering E14.  What it still owes: the old element's owned heap
+released before its slot is reused (`H-ClearRelease`, per field), and the ABSENT element,
+which `(R-InPlaceLiteral)` says keeps the copy path.  It needs a `LOFT_NO_<unit>` switch, which
+step 1 does not: a correctness fix has no before-half worth keeping.
+
 ## The rewrite list — the natural `parse_poly` to its optimal form
 
 **This is not about how a programmer writes loft.**  The programmer writes the natural
@@ -505,7 +565,7 @@ is the whole point of Goal F.
 | bind `pp_raw`, `pp_paint` without a copy | the callee's return deps name exactly its own buffer; the destination a plain local | `O-Move`, `O-Buffer` | shipped | B1 |
 | `pp_paint`'s buffer claimed in the scene's store; `paint: pp_paint` a relocation, not a deep copy | the result's ONE owning destination is a field of a record in store S on every path that keeps it; `pp_paint` owned and dead on every path after the literal | `R-Place`, `R-MoveLast`, `O-Complete` | the liveness exists as the `avoidable-copy` lint's *"still used after this point"*; codegen does not read it; a buffer claimed in another store is new | B2 |
 | `pts: smooth_pts(…)` fills `Op.pts` directly, no buffer | as above, with the destination place existing at the call and no argument reaching it; the callee writes only its buffer and answers it at every exit | `R-Place` ("the buffer IS the place"), `R-Callee`, E15, E16 | `retbuf_only_writer`; `R-ElemFirst` already builds a vector inside an appended element; the redirection of a call's buffer into a field is missing | C2 |
-| `sc.elems[idx] = Elem{…}` written into the slot | the slot exists; every field expression evaluated before the first write (`ename: ap_e.ename` reads the slot); omitted fields defaulted | `R-InPlaceLiteral`, E13, E14 | complete-write knows the literal's field set | C1 |
+| `sc.elems[idx] = Elem{…}` written into the slot | the slot exists; every field expression evaluated before the first write (`ename: ap_e.ename` reads the slot); omitted fields defaulted | `R-InPlaceLiteral`, E13, E14 | the FIELD destination already writes in place and defaults the omitted fields; E13's staging shipped as C1 step 1; the ELEMENT receiver is what is left | C1 step 2 |
 | `ap_e = sc.elems[idx]?` as a view | `ap_e` only read; `sc.elems` not disturbed between bind and last read, in this frame or any callee | `B-View` (the discharge clause), `B-Disturb` | the VIEW already; the disturbance walk was this frame only, which is what C3 closed | shipped C3 |
 | `Op { kind: Stroke, … }` prefilled by one block write | the literal's field set against the type's defaults | `R-Prefill` | complete-write has the set; the per-type image is missing | C4 |
 | the four `smooth_pts` buffers not minted at entry | one path runs one call | trivial | goes away with C2 | with C2 |
@@ -641,7 +701,7 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |
 | **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state) | § B1 | c6 under the pool without `minted_pairs` — the interpreter's rebind free must first match native's `_rb_w_` guard | Blocked on that divergence |
 | **B2** — the result's buffer claimed in its destination's store, the field taking it by relocation at the last use (`R-Place`, `R-MoveLast`) | § B2 | cells b1–b15 both backends under the falsifiers; the census 184 → 50; `parse_poly`'s `paint: pp_paint` emits `OpMoveRecord` and `read_paint`'s buffer is a record in the scene's store; the parse row a wash (`perf stat`) | Shipped 2026-09-16 |
-| **C1** — element overwrite from a literal in place (`R-InPlaceLiteral`) | § The rewrite list | E13/E14 cells; `acc_pts` emits no temp store | Open |
+| **C1** — element overwrite from a literal in place (`R-InPlaceLiteral`) | § C1 | step 1 (the STAGING clause, a both-backend silent-wrong on the shipped FIELD road): 18 cells, falsified, pins.  Step 2 (the element receiver) open | Step 1 shipped 2026-09-16 |
 | **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § The rewrite list | E15/E16 cells; `smooth_pts` writes `Op.pts` | After C3 (needs no arena: the destination is a record in the scene's store) |
 | **C3** — read-only `?`-discharge as a view (`B-View`'s discharge clause) | § C3 | the discharge ALREADY views (13 shapes measured, both backends), so the phase's content was its other half: `(B-Disturb)` across a CALL.  15 pairs both backends; 7 move under the switch | Shipped 2026-09-16 |
 | **C4** — per-type prefill image (`R-Prefill`) | § C4 | cells c1–c11 both backends under `LOFT_PREFILL_VERIFY`; the verify census over all 1432 corpus files; the image USED on both backends (`LOFT_TRACE_PREFILL`); parse row −11 % | Shipped 2026-09-15 |
@@ -660,7 +720,9 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
    which C2 and C5 take.
 3. ~~**C3 then C1**~~ — C3 shipped, and it moved no copy: the discharge was already a view
    and the `acc_pts` temporary the evaluation table charged to it is C1's, counted twice.
-   **C1 is next**, and it is the whole of the `acc_pts` pair.
+   **C1 step 1 shipped** (the staging clause, a silent-wrong on the FIELD road that had to be
+   closed BEFORE the element road joins it, or elements inherit it).  **C1 step 2 is next** —
+   the element receiver, which is where the copy actually goes.
 4. **C2** — after C1: it needs a single-exit callee test; it does NOT need the arena.
 5. **C5** last, as its own section: it extends a formal rule (`O-ViewField`) and the
    value-record gate, so the owner signs the rule off before the cells are written.

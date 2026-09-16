@@ -1592,7 +1592,17 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 63 | **13** | 50 |
+| 64 | **14** | 50 |
+
+(2026-09-16, @PLN164 C1 step 1: `Parser::reads_place` asks whether a literal's initialiser reads
+the PLACE it is about to overwrite, so it resolves a projection by op name — 63 → 64.  It arrives
+on the both-spellings side (13 → 14) and the call-only column is UNMOVED, and that is the screen
+earning its keep rather than a coincidence: the function's first cut counted only `Value::Var`
+nodes, which is the call spelling alone, and a `TupleGet` names its variable with no `Var` child.
+The count is what licenses the spare — *this read is provably not the destination* — so a naming
+it could not see would have spared a read it never examined, in the one direction that costs the
+value.  The screen moved the column, the column asked why, and the answer was a hole.  It now
+counts every arm `Value::reads_var` counts.)
 
 (2026-09-15, loft#1532: `Parser::tuple_member_owned_copy` already copied a `TupleGet` member and
 now also copies a record PROJECTION, asked through `is_projection_op`, so it arrives on the
