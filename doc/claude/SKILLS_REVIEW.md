@@ -68,7 +68,7 @@ row whose skill was deleted.
 |---|---|---|
 | `design-protocol` | 2026-09-07 | `ae0c79d2` |
 | `doc-quality` | 2026-09-16 | `e4e97aa9a` |
-| `draw` | 2026-09-07 | `04c08d10` |
+| `draw` | 2026-09-16 | `9720dfd06` |
 | `engineering-rigor` | 2026-09-07 | `b1dc3f1b` |
 | `formal-rules` | 2026-09-16 | `692ece3e1` |
 | `loft-codegen` | 2026-09-16 | `e4e97aa9a` |
