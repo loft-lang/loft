@@ -8572,7 +8572,7 @@ Stat-equivalent filesystem read; par-safe. Use to check whether a path is access
 pub fn exists(self: const File) -> boolean fs#read
 ```
 
-Filesystem stat (via file()); par-safe. Method form: f = file("path"); if f.exists() { .. } Also callable as exists(file\_obj) via the 'both' parameter name.
+Filesystem stat (via file()); par-safe. Method form: f = file("path"); if f.exists() { .. } Also callable as exists(file\_obj): a `self` first parameter gives a function both call spellings, the method one and the free one.
 
 ```rust
 pub fn delete(path: text) -> FileResult fs#update

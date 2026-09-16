@@ -1542,7 +1542,7 @@ type radix;
 type spatial;
 type trie;
 // @PLN48 — number of elements in a spatial<T[x,y]> (radix / Morton tree).  Reads
-// the tree's cached length word (O(1)), mirroring `len(both: hash)`.  Declared
+// the tree's cached length word (O(1)), mirroring `len` on a hash.  Declared
 // after `type spatial` so the parameter type resolves.
 fn OpLengthSpatial(r: spatial) -> integer;
 #rust"i64::from(codegen_runtime::spatial_len(&@r, &s.database.allocations))"
