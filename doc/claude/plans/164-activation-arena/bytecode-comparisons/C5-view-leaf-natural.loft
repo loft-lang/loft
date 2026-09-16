@@ -1,0 +1,38 @@
+// @PLN164 C5 probe 1 — the returned record's heap field, natural and hand-written forms.
+struct Pt { px: integer = 0, py: integer = 0 }
+struct Op { opts: vector<Pt> }
+struct Sc { ops: vector<Op> }
+struct Mark { matched: boolean = false, bad: boolean = false, mpts: vector<Pt> }
+
+fn mk_pts(n: integer) -> vector<Pt> {
+  mp: vector<Pt> = [];
+  for i in 0..n { mp += [Pt { px: i, py: i * 2 }]; }
+  mp
+}
+
+/// The NATURAL form: one local, copied into the appended element AND into the returned record.
+fn add_nat(sc: Sc, n: integer) -> Mark {
+  an_p = mk_pts(n);
+  sc.ops += [Op { opts: an_p }];
+  Mark { matched: true, bad: false, mpts: an_p }
+}
+
+/// The HAND-WRITTEN form a programmer who knows the store model writes: the returned field
+/// already names the element's own vector.
+fn add_view(sc: Sc, n: integer) -> Mark {
+  sc.ops += [Op { opts: [] }];
+  av_o = sc.ops[len(sc.ops) - 1]?;
+  for i in 0..n { av_o.opts += [Pt { px: i, py: i * 2 }]; }
+  Mark { matched: true, bad: false, mpts: av_o.opts }
+}
+
+fn totp(v: const vector<Pt>) -> integer { t = 0; for p in v { t += p.px + p.py; } t }
+
+fn main() {
+  s1 = Sc { ops: [] };
+  m1 = add_nat(s1, 3);
+  println("nat  {m1.matched} {m1.bad} {len(m1.mpts)} {totp(m1.mpts)} {len(s1.ops)} {totp(s1.ops[0]?.opts)}");
+  s2 = Sc { ops: [] };
+  m2 = add_view(s2, 3);
+  println("view {m2.matched} {m2.bad} {len(m2.mpts)} {totp(m2.mpts)} {len(s2.ops)} {totp(s2.ops[0]?.opts)}");
+}
