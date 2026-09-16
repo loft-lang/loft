@@ -110,5 +110,20 @@ OPEN: **1**
   `render_lock` 5.69×, `resize` 5.79× — the last three are the graphics package's resample —
   and the aarch64 lane has not been re-measured since `smooth` read 8.44× there.  So the
   deviation stands for those rows and closes with @PLN157, whose README carries the per-row,
-  per-machine scoreboard.  (Not re-measured on this date: the box was running two other
-  sessions' builds, and a ratio from a loaded box is not a number.)
+  per-machine scoreboard.
+
+  **Re-measured 2026-09-16 on x86-64 Linux (host `tuxedo`, quiet: load 1.4, no other build),
+  tip 6e3f5d239, fresh scratch clone of `drawing-lock` (250b2cd), `compare.py --skip-interp
+  --repeat 5`, 14/14 hashes agreeing: NINE of the ten judged rows under the bar** — `hash`
+  **0.59×** (93 340 ns/op native), `fill_circle` **1.19×** (39 700), `fill_star` **1.46×**
+  (18 840), `hair` **1.62×** (20 360), `composite` **2.26×** (137 520), `wide_line` **2.33×**
+  (10 060), `lock` **2.41×** (2 203 640), `lock_curved` **2.88×** (2 158 880), `fronds`
+  **3.28×** (135 980) — and `smooth` **4.25×** (1 020 / 240) over it.  Against the same box
+  on 2026-09-14 that is `fronds` 4.28× → 3.28× and `smooth` 9.50× → 4.25× (§ V-ah/§ V-ai
+  landing here), with `lock`, `lock_curved` and `composite` back at their 09-12 ratios, which
+  retires that table's open question of lane drift versus a small regression.
+  ⚠ `smooth`'s reference reads **240 ns/op** at this size, under the clock's floor (§ `smooth`
+  run down: the converged x86 figure was ≈9.6× before § V-ah), so its 4.25× is a noisy row and
+  not a measurement of the gap — the size sweep is what judges it.  The four rows the bench
+  grew since carry NO reference in this clone (`parse`, `render_lock`, `render_marks`,
+  `resize` print native-only), so they are unjudged here and keep @PLN157's own numbers.
