@@ -7,8 +7,17 @@ on GitHub Pages, and each can go stale on its own:
 
 | Artefact | Who uses it | Built by | Make target |
 |---|---|---|---|
-| `doc/pkg/loft_bg.wasm` + `doc/pkg/loft.js` | `gallery.html`, `playground.html` | `wasm-pack build --target web` | `make gallery` |
+| `doc/pkg/loft_bg.wasm` + `doc/pkg/loft.js` | `gallery-run.html`, `playground.html` | `wasm-pack build --target web` | `make gallery` |
 | `doc/brick-buster.html` | The featured "click-to-play" arcade game | `loft --html` against a `wasm32-unknown-unknown` libloft.rlib + wasm-opt | `make game` |
+
+⚠ **`gallery.html` makes no DIRECT reference to the bundle — it reaches it one page down.**  It
+is an index linking to `gallery-run.html?example=…`, which is where `./pkg/loft.js` is actually
+imported.  The row above therefore names the page that HOLDS the relationship rather than the
+entry a reader arrives at; it was LOOSE rather than wrong, since the gallery does consume the
+bundle, through that link.  The distinction is about AIM: a render check pointed at
+`gallery.html` loads no wasm and passes while the bundle is broken, which is the exact failure
+this document exists to prevent.  Measured 2026-09-16: 0 occurrences of `pkg/` in
+`gallery.html`, against 3 in each of `gallery-run.html` and `playground.html`.
 
 Both pipelines produce a wasm/js pair that must agree internally.  The
 failure mode is identical: the browser aborts with
