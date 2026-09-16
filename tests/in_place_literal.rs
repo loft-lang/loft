@@ -168,7 +168,7 @@ fn the_cells_hold_on_both_backends_under_every_falsifier() {
         outs.push(String::from_utf8_lossy(&out.stdout).into_owned());
     }
     assert!(
-        outs[0].contains("24 cells"),
+        outs[0].contains("25 cells"),
         "the guard did not reach its last cell:\n{}",
         outs[0]
     );
@@ -213,6 +213,9 @@ fn a_place_that_cannot_be_re_derived_keeps_the_copy() {
         // Measured, not reasoned: in place this released the slot's own vector and then stored
         // the handle back to it, and the field read 0 on both backends.
         ("e_self_heap", "a type with a collection field"),
+        // `@FR-Col-Group`: an element write owes the group its unlink-and-relink, which only
+        // the copy road carries.  In place, `by_k` kept the record under its OLD key.
+        ("e_grouped", "a member of a linked collection group"),
     ] {
         let body = ir(func);
         assert!(

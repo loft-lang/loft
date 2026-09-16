@@ -61,6 +61,14 @@ struct VBox { inner: Vf }
 struct VSc { els: vector<Vf> }
 struct NBox { inner: El? }
 struct Hp { a: integer = 0, nm: text = "", v: vector<integer> }
+// A LINKED COLLECTION GROUP: two collections over one element type in one struct are two routes
+// to a single record set (`@FR-Col-Group`), so an element write owes them the unlink-and-relink
+// that `group_elem_write` wraps the copy with.  Written straight into the slot it is skipped,
+// and `by_k` goes on holding the record under the hash of its OLD key — loft#900's defect by
+// another road.  The group's own guard catches it; this cell keeps the decline visible HERE, at
+// the admission that would otherwise take it.
+struct Ge { k: integer = 0, n: text = "" }
+struct Gw { es: vector<Ge>, by_k: hash<Ge[k]> }
 struct HSc { els: vector<Hp>, calls: integer = 0 }
 
 fn cell(nm: text, got: text, want: text) {
@@ -116,6 +124,7 @@ fn e_heap_partial(sc: HSc) { sc.els[0] = Hp { a: 81 }; }
 // in place the write released the slot's vector and then stored the handle back to it, and the
 // field read 0 on both backends.  A collection-bearing type keeps the copy.
 fn e_self_heap(sc: HSc) { e = sc.els[0]?; sc.els[0] = Hp { a: e.a + 100, nm: e.nm, v: e.v }; }
+fn e_grouped(w: Gw) { w.es[0] = Ge { k: 11, n: "b" }; }
 fn tot(v: vector<integer>) -> integer { t = 0; for x in v { t += x; } t }
 
 fn mkbox() -> Box { Box { inner: El { a: 1, b: 2, nm: "x", tail: 5 }, tag: "TAG" } }
@@ -186,5 +195,9 @@ fn main() {
   p24 = mkhp(); e_self_heap(p24); q24 = p24.els[0]?;
   cell("c24 literal reads the slot's collection", "{q24.a},{q24.nm},{len(q24.v)},{tot(q24.v)}", "101,x,2,3");
 
-  println("164-in-place-literal: 24 cells, every field expression staged before the first write");
+  w25 = Gw { es: [Ge { k: 7, n: "a" }], by_k: [] };
+  e_grouped(w25);
+  cell("c25 linked-group member", "{len(w25.by_k)},{w25.by_k[11]?.n},{w25.es[0]?.k}", "1,b,11");
+
+  println("164-in-place-literal: 25 cells, every field expression staged before the first write");
 }
