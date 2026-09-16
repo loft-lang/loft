@@ -2075,7 +2075,13 @@ impl Parser {
                 || ((context == "if" || context == "match_arm") && !result.is_unknown());
             let tuple_rewritten = !self.first_pass
                 && (context == "return from block" || arm_of_sibling)
-                && matches!(t, Type::Tuple(_))
+                // `@FR-N-Shape` through `base()`: "is this tail a tuple?" is a SHAPE question and
+                // answers alike for `(τ…)` and the in-flight `(τ…)?` an absent read carries
+                // (`@FR-T-Absent`).  Asked bare, a `return v[i]` by a VARIABLE index skipped the
+                // boxing below and then failed `convert` — *"expected `__tuple<integer,text>`,
+                // got `(integer, text)?` on return"* — for a value the same function returns
+                // happily from a constant index (`D-tup-10`).
+                && matches!(t.base(), Type::Tuple(_))
                 && tail_has_tuple_leaf(l[last].unspan(), &self.vars)
                 && matches!(result, Type::Reference(d, _) if self.data.def(*d).name().starts_with("__tuple<"))
                 && {
@@ -16461,7 +16467,10 @@ impl Parser {
             // function's final expression compiles.  parse_return is the statement
             // path; block_result is the tail path — they must agree.
             let tuple_rewritten = !self.first_pass
-                && matches!(t, Type::Tuple(_))
+                // Through `base()`, exactly as `block_result`'s twin above: the statement path
+                // and the tail path must agree about what a tuple is, and an absent tuple is one
+                // (`@FR-N-Shape`, `@FR-T-Absent`, `D-tup-10`).
+                && matches!(t.base(), Type::Tuple(_))
                 && tail_has_tuple_leaf(v.unspan(), &self.vars)
                 && matches!(&r_type, Type::Reference(d, _) if self.data.def(*d).name().starts_with("__tuple<"))
                 && {

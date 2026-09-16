@@ -2523,6 +2523,25 @@ impl Function {
             self.depend_all(var_nr, type_def);
             return self.is_new(var_nr);
         }
+        // `@FR-T-Absent` — the same declaration meeting the value's IN-FLIGHT spelling.  A tuple
+        // that ARRIVES absent (`v[i]` by a variable index, a keyed miss, a generic `T?`) is
+        // `Optional` around either tuple home — the stack tuple, or the `__tuple<…>` record a
+        // heap-carrying one is boxed into — and the type an author DECLARES for that value is the
+        // member-nullable tuple the rule names, `optional((τ₁, …, τₙ)) ≡ (τ₁?, …, τₙ?)`.  Refusing
+        // it told the author their own declaration could not hold the read the compiler had just
+        // typed for them.  Admitted when every declared member admits its own `τᵢ?`, so a member
+        // declared non-null still earns `(N-Store)`'s refusal (`D-tup-10`).
+        if let (Type::Tuple(want), Type::Optional(_)) = (var_tp, type_def)
+            && let Some(got) = Self::absent_tuple_elems(type_def, data)
+            && want.len() == got.len()
+            && want
+                .iter()
+                .zip(got.iter())
+                .all(|(w, g)| Self::decl_accepts(w, &Type::optional(g.clone())))
+        {
+            self.depend_all(var_nr, type_def);
+            return self.is_new(var_nr);
+        }
         // @FR-N-Join — an inferred local's type is the JOIN of its assignments, made optional
         // when any of them may be null; a declared one is @FR-N-Decl's and never widens.
         // @PLN25 DN6 (N-Join): an INFERRED local first assigned a bare `null`, then a
@@ -2753,7 +2772,28 @@ impl Function {
     ///
     /// Deliberately asymmetric: it widens `τ → τ?` and never the reverse, so the
     /// `(N-Store)` direction — a non-null slot fed something nullable — keeps rejecting.
-    fn decl_accepts(want: &Type, got: &Type) -> bool {
+    /// The element types of a tuple in either home — the stack tuple, or the synthetic
+    /// `__tuple<…>` record a heap-carrying one is boxed into — read through any `?` it arrived
+    /// with.  `None` for a type that is no tuple.
+    ///
+    /// `@FR-T-Absent` — an absent tuple is spelled `Optional` around whichever home the value
+    /// lives in, and a site that resolved only one of them refused the other for a reason that
+    /// has nothing to do with the question it was asking (`D-tup-10`).
+    fn absent_tuple_elems(t: &Type, data: &Data) -> Option<Vec<Type>> {
+        match t.base() {
+            Type::Tuple(elems) => Some(elems.clone()),
+            Type::Reference(d, _) if data.def(*d).name().starts_with("__tuple<") => Some(
+                data.def(*d)
+                    .attributes()
+                    .iter()
+                    .map(|a| a.typedef.clone())
+                    .collect(),
+            ),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn decl_accepts(want: &Type, got: &Type) -> bool {
         if want.is_equal(got) {
             return true;
         }
@@ -2764,6 +2804,22 @@ impl Function {
                         .zip(g.iter())
                         .all(|(a, b)| Self::decl_accepts(a, b))
             }
+            // `@FR-T-Absent` — the two spellings of one notion meeting: a tuple that ARRIVES
+            // absent (`v[i]` by a variable index) carries the in-flight `Optional(Tuple)`, and
+            // the DECLARED form of that same value is the member-nullable tuple the rule names,
+            // `optional((τ₁, …, τₙ)) ≡ (τ₁?, …, τₙ?)`.  So the slot admits it exactly when every
+            // member admits its own `τᵢ?` — which keeps `(N-Store)` rejecting a member declared
+            // non-null, element by element, and is why this asks `decl_accepts` again rather
+            // than testing the shapes here (`D-tup-10`).
+            (Type::Tuple(w), Type::Optional(inner)) => match inner.as_ref() {
+                Type::Tuple(g) => {
+                    w.len() == g.len()
+                        && w.iter()
+                            .zip(g.iter())
+                            .all(|(a, b)| Self::decl_accepts(a, &Type::optional(b.clone())))
+                }
+                _ => false,
+            },
             // The scalar rule, unchanged: a `τ?` slot takes a non-null `τ` or a bare null.
             (Type::Optional(inner), _) => inner.is_equal(got.base()) || matches!(got, Type::Null),
             _ => false,

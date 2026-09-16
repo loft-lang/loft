@@ -97,10 +97,17 @@ the same two cures. The gap between the rule and the model is
               declaration (types.md N-Opt: a tuple is its members' bytes and has no value to
               spend on absence) — and a tuple that ARRIVES absent is a PRESENT tuple whose
               members are all null:   optional((τ₁, …, τₙ))  ≡  (τ₁?, …, τₙ?).
-              Every producer of absence synthesises exactly that, and no `Optional(Tuple)` ever
-              exists, not even in flight: an index that misses (`v[i]` on a vector<(τ₁, τ₂)>,
-              N-Index), a generic `T?` instantiated at a tuple, a decoded document whose key is
-              missing.  The null QUESTION on a tuple is answered by its members, from ONE home:
+              Every producer of absence means exactly that — an index that misses (`v[i]` on a
+              vector<(τ₁, τ₂)>, N-Index), a generic `T?` instantiated at a tuple, a decoded
+              document whose key is missing.  No author can DECLARE `(τ₁, …, τₙ)?`; the compiler
+              carries such a value with the `?` on the outside (`Optional` around whichever home
+              the value lives in — the stack tuple, or the `__tuple<…>` record a heap-carrying
+              tuple is boxed into), and that in-flight spelling DENOTES the member-nullable
+              tuple.  So every site must read the two alike (`@FR-N-Shape`: a shape question
+              answers the same for `τ` and `τ?`), and a site that resolved one spelling refused
+              the other for a reason unrelated to the question it asked — D-tup-10, whose three
+              refusals (a landing, a return, a generic's member read) closed 2026-09-16 by
+              peeling at each.  The null QUESTION on a tuple is answered by its members, from ONE home:
               `t == null` and `t ?? d` read "every member null"; `t?` reads the members'
               defaults (N-Default, loft#1424); `t.i` on such a tuple is `τᵢ?` (N-Prop) and
               N-Store polices where it lands.  Owner ruling 2026-09-07 (loft#1423): a tuple has
@@ -237,6 +244,35 @@ it, not a standing fact.
   3. Keep both as they are and accept the member warnings after `??`.
   The probe matrix (thirteen cells with `text` members, both backends) is in the session record of
   2026-09-15 and is the starting guard for whichever is chosen.
+
+  ⚠ **Owner ruling 2026-09-16: option 2 — the in-flight spelling STAYS and only the DECLARATION
+  is refused, so the rule above now reads "never declared" rather than "not even in flight".**
+  The three refusals closed by teaching each site that met the two spellings to read both, and
+  every one of them was a SHAPE question asked without peeling (`@FR-N-Shape`):
+  - the landing (`w: (integer?, text?) = v[i]`) — `change_var_type` admits the in-flight tuple
+    when every declared member admits its own `τᵢ?`, through the same `decl_accepts` a slot
+    already asks, so a member declared non-null still earns `(N-Store)`'s refusal;
+  - the RETURN — the two boxing gates (`block_result`'s and `parse_return`'s) asked
+    `matches!(t, Type::Tuple(_))` bare, so an absent tuple was never boxed into the declared
+    record and then failed `convert` with *"expected `__tuple<…>`, got `(τ…)?` on return"*.  This
+    was never about the member-nullable declaration: a plain `-> (integer, text)` refused the
+    same read, and now takes it with `(N-Store)`'s per-member report;
+  - a generic `T?` at a tuple — the record-backed member read peels now, and `Parser::tuple_elems`
+    is the one home for "what are this type's tuple element types" across all six spellings.
+
+  **What is still open, measured the same day on both backends (`n1` probe):** the null QUESTION
+  disagrees between the two homes.  `(T-Absent)` says every member decides it, and the stack
+  tuple answers so (`w: (integer?, text?) = v[5]` → `w == null` is **true**), as does an
+  all-integer tuple returned through a plain value (`true`).  A tuple with a heap-carrying member
+  RETURNED through the `__tuple<…>` record answers by the RECORD's presence instead: `q == null`
+  is **false** with every member null.  `??` over that spelling is refused outright
+  (`coalesce-default-type-mismatch`: *"`??` default of type `(integer, text)` is not assignable
+  to `__tuple<integer?,text?>`"*).  So the entry stays OPEN for the record home's null question,
+  and its cure is the one this close already names — `coalesce_not_null` addresses members
+  through `Value::TupleGet`, which the record spelling cannot answer, so that home needs the
+  member read the `.0` path just gained.  Guard:
+  `tests/scripts/an-absent-tuple-meets-the-type-its-author-declares.loft` (a1/a2/a3 plus eight
+  controls); its a2 cell pins the members and says why it does not pin `== null`.
 
   ⚠ **loft#1478, CLOSED 2026-09-09, and its lesson is about this doc's own oracle.**  A `text`
   MEMBER of an element read by a variable index did not COMPILE on `--native` (E0308, `&str`

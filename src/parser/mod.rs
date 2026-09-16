@@ -4575,17 +4575,29 @@ impl Parser {
         // (nested tuples included); each element rides the same DN3/DN1 checks below.
         // Arity mismatches are left to the regular type checker.
         fn tuple_elems(data: &crate::data::Data, tp: &Type) -> Option<Vec<Type>> {
-            match tp {
-                Type::Tuple(elems) => Some(elems.clone()),
-                Type::Reference(d, _) if data.def(*d).name().starts_with("__tuple<") => Some(
-                    data.def(*d)
-                        .attributes
-                        .iter()
-                        .map(|a| a.typedef.clone())
-                        .collect(),
-                ),
-                _ => None,
-            }
+            // `@FR-T-Absent` — a tuple that ARRIVES absent is read as the member-nullable one,
+            // `optional((τ₁, …, τₙ)) ≡ (τ₁?, …, τₙ?)`, so the element-wise comparison below sees
+            // `τᵢ?` on the value side and answers per member.  Read BARE, the whole `(τ…)?` was
+            // compared against the declared record instead and reported a store into "the
+            // non-null type `__tuple<integer?,text?>`" — a type whose members are exactly what
+            // the value carries.  The honest half stays: against a non-null `__tuple<τ…>` each
+            // `τᵢ?` still earns its own report (`D-tup-10`).
+            let (base, absent) = tp.peel_optional();
+            let elems: Vec<Type> = match base {
+                Type::Tuple(elems) => elems.clone(),
+                Type::Reference(d, _) if data.def(*d).name().starts_with("__tuple<") => data
+                    .def(*d)
+                    .attributes
+                    .iter()
+                    .map(|a| a.typedef.clone())
+                    .collect(),
+                _ => return None,
+            };
+            Some(if absent {
+                elems.into_iter().map(Type::optional).collect()
+            } else {
+                elems
+            })
         }
         if let (Some(v_elems), Some(t_elems)) = (
             tuple_elems(&self.data, value_tp),

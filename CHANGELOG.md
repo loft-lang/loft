@@ -24,6 +24,13 @@ parameter is a warning for now: declare that parameter `const` if the function o
 (`fn(const T)` for a function type), or pass a copy.  The standard library's readers — `len`,
 `sum`, `join`, the `JsonValue` accessors and more — already declare theirs.
 
+**A tuple read that can miss now fits the type you declare for it.**  Reading `v[i]` from a
+`vector<(integer, text)>` with a variable index can miss, so the value is "a tuple whose members
+are all absent" — which you write as `(integer?, text?)`.  Three things refused that type:
+storing the read in it, returning it from a function declared with it, and reading the members of
+a generic `T?` at a tuple. All three work now. Returning such a read from a function declared
+`-> (integer, text)` works too, and says per member that an absent one becomes null there.
+
 **A function that returns one of its locals releases the others.**  A type with an `OpDrop`
 hook (a file, a socket, a transaction) could miss its release, or get it twice, when a function
 returned one local out of several.  Three shapes did this, silently and on both backends:

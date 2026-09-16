@@ -1696,7 +1696,12 @@ impl Parser {
                     // T1.5: element access through a reference-tuple parameter — pair.0, pair.1.
                     let elems = elems.clone();
                     self.parse_ref_tuple_elem(&mut t, code, &elems);
-                } else if let Some(d_nr) = Self::record_tuple_def(&self.data, &t) {
+                // Through `base()`, for the reason the stack spelling above is: the record-backed
+                // tuple arrives with its `?` on too — a generic `T?` instantiated at a tuple
+                // boxes into `Optional(Reference(__tuple<…>))` — and asking bare sent exactly
+                // that value to the field path, which reported *"`__tuple<integer,text>?` is not
+                // a tuple"* for a read `@FR-T-Absent` says has an answer (`D-tup-10`).
+                } else if let Some(d_nr) = Self::record_tuple_def(&self.data, t.base()) {
                     // P189b: vector-of-tuple loop var / index result —
                     // the loop variable is typed as `Reference(__tuple<…>)`
                     // pointing at inline tuple bytes inside the vector
@@ -2050,17 +2055,40 @@ impl Parser {
         if !matches!(t, Type::Optional(_)) {
             return None;
         }
+        self.tuple_elems(t)
+    }
+
+    /// The element types of a TUPLE in any of its spellings, or `None` for a type that is no
+    /// tuple.
+    ///
+    /// `@FR-T-Absent` / `@FR-N-Shape` — a tuple has three homes (the stack tuple, a `&(…)`
+    /// link, and the record-backed `__tuple<…>` a heap-carrying tuple is boxed into) and each
+    /// of them can arrive with its `?` on, because an index miss, a keyed miss and a generic
+    /// `T?` all mint one.  Six spellings of one notion: a site that asks the shape question
+    /// through this cannot answer for some of them and refuse the rest, which is how a generic
+    /// `T?` at a tuple came to be told *"`__tuple<integer,text>?` is not a tuple"* while the
+    /// stack spelling beside it read its members (`D-tup-10`).
+    pub(crate) fn tuple_elems(&self, t: &Type) -> Option<Vec<Type>> {
         match t.base() {
             Type::Tuple(elems) => Some(elems.clone()),
-            other => Self::record_tuple_def(&self.data, other).map(|d| {
-                self.data
-                    .def(d)
-                    .attributes()
-                    .iter()
-                    .map(|a| a.typedef.clone())
-                    .collect()
-            }),
+            Type::RefVar(inner) => match inner.base() {
+                Type::Tuple(elems) => Some(elems.clone()),
+                other => self.record_tuple_elems(other),
+            },
+            other => self.record_tuple_elems(other),
         }
+    }
+
+    /// The attribute types of the synthetic `__tuple<…>` record, when `t` is one.
+    fn record_tuple_elems(&self, t: &Type) -> Option<Vec<Type>> {
+        Self::record_tuple_def(&self.data, t).map(|d| {
+            self.data
+                .def(d)
+                .attributes()
+                .iter()
+                .map(|a| a.typedef.clone())
+                .collect()
+        })
     }
 
     fn record_tuple_def(data: &crate::data::Data, t: &Type) -> Option<u32> {

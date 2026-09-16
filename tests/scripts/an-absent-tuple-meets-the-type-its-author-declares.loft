@@ -1,0 +1,140 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `(T-Absent)`: a tuple TYPE is never nullable, and a tuple that ARRIVES absent is the present
+// tuple whose members are all null — `optional((τ₁, …, τₙ)) ≡ (τ₁?, …, τₙ?)`.  The compiler
+// carries that value with its `?` on the OUTSIDE (the in-flight spelling, which no author can
+// declare), and the type an author writes for it is the member-nullable tuple.  Where the two
+// spellings met, each site had to recognise both — and three did not (D-tup-10):
+// - a1: landing one in the declared type (`w: (integer?, text?) = v[i]`) was refused as a type
+//   change, in BOTH directions and whether or not the index was in range;
+// - a2: returning one from a function declared with that type was refused — *"expected
+//   `__tuple<integer?,text?>`, got `(integer, text)?` on return"* — with a false warning beside
+//   it, because the boxing gate asked `matches!(t, Type::Tuple(_))` BARE (`@FR-N-Shape`: a shape
+//   question answers alike for `τ` and `τ?`).  The same gate refused a plain `-> (integer, text)`
+//   return of the same read, so a3's neighbour c8 pins that half;
+// - a3: a generic `T?` instantiated at a tuple could not read its members at all (*"`__tuple<
+//   integer,text>?` is not a tuple"*), because the record-backed home was matched bare too.
+//
+// Controls that answered right before and must keep answering the same: c1 (the inferred
+// landing and `== null`), c2 (`??`), c3 (`?`, the members' defaults), c4 (an all-integer
+// tuple), c5 (a nested tuple), c6 (an absent receiver), c7 (a tuple FIELD through an absent
+// receiver), c8 (the same read returned into a NON-null declared tuple, which stores null
+// members and says so).  Every cell but c4 carries a `text` member: the coercions only a
+// non-`Copy` member needs are where this rule's spellings hid before (loft#1478).
+//
+// @EXPECT_WARNING: stored into the return value of the non-null type
+
+fn a1() {
+  v: vector<(integer, text)> = [(1, "a"), (2, "bb")];
+  i = 5;
+  w: (integer?, text?) = v[i];
+  j = 1;
+  u: (integer?, text?) = v[j];
+  assert("{w.0} {w.1}" == "null null", "a1 an absent read lands in the declared type: {w.0} {w.1}");
+  assert(w == null, "a1 the landed absent tuple reads as null");
+  assert("{u.0} {u.1}" == "2 bb", "a1 a present read lands in the declared type: {u.0} {u.1}");
+  assert(u != null, "a1 the landed present tuple is not null");
+}
+
+fn a2_get(v: vector<(integer, text)>, i: integer) -> (integer?, text?) { return v[i]; }
+fn a2() {
+  v: vector<(integer, text)> = [(1, "a"), (2, "bb")];
+  p = a2_get(v, 1);
+  q = a2_get(v, 5);
+  assert("{p.0} {p.1}" == "2 bb", "a2 a present read returned: {p.0} {p.1}");
+  assert("{q.0} {q.1}" == "null null", "a2 an absent read returned: {q.0} {q.1}");
+  // NOT asserted here: `q == null`.  The same declared type has two representations — a1's
+  // `w` is the stack tuple and answers the null question by its MEMBERS, as `(T-Absent)` says,
+  // while a value RETURNED through the `__tuple<…>` record answers it by the record's presence
+  // and reads `false` with every member null.  That disagreement is D-tup-10's remaining half
+  // and is measured in the entry; this cell pins the members, which are right in both homes.
+}
+
+fn a3_first<T>(v: vector<T>) -> T? { if len(v) > 0 { return v[0]; } return null; }
+fn a3() {
+  e: vector<(integer, text)> = [];
+  f = a3_first(e);
+  assert("{f.0} {f.1}" == "null null", "a3 a generic T? at a tuple, absent: {f.0} {f.1}");
+  assert(f == null, "a3 the absent generic tuple reads as null");
+  v = [(4, "d")];
+  g = a3_first(v);
+  assert("{g.0} {g.1}" == "4 d", "a3 a generic T? at a tuple, present: {g.0} {g.1}");
+}
+
+fn c1() {
+  v: vector<(integer, text)> = [(1, "a"), (2, "bb")];
+  i = 5;
+  w = v[i];
+  assert("{w.0} {w.1} {w == null}" == "null null true", "c1 the inferred landing: {w.0} {w.1}");
+}
+
+fn c2() {
+  v: vector<(integer, text)> = [(1, "a"), (2, "bb")];
+  i = 5;
+  j = 1;
+  w = v[i] ?? (0, "d");
+  u = v[j] ?? (0, "d");
+  assert("{w.0} {w.1} {u.0} {u.1}" == "0 d 2 bb", "c2 `??` over a tuple read: {w.0} {w.1} {u.0} {u.1}");
+}
+
+fn c3() {
+  v: vector<(integer, text)> = [(1, "a"), (2, "bb")];
+  i = 5;
+  w = v[i]?;
+  assert("{w.0} [{w.1}]" == "0 []", "c3 `?` gives the members' defaults: {w.0} [{w.1}]");
+}
+
+fn c4() {
+  v: vector<(integer, integer)> = [(1, 10), (2, 20)];
+  i = 5;
+  w: (integer?, integer?) = v[i];
+  assert("{w.0} {w.1}" == "null null", "c4 an all-integer tuple: {w.0} {w.1}");
+}
+
+fn c5() {
+  v: vector<((integer, text), integer)> = [((1, "a"), 10), ((2, "bb"), 20)];
+  i = 5;
+  w = v[i];
+  assert("{w.0.1} {w.1}" == "null null", "c5 a nested tuple: {w.0.1} {w.1}");
+}
+
+fn c6() {
+  v: vector<(integer, text)>? = null;
+  w = v[0];
+  assert("{w.0} {w.1} {w == null}" == "null null true", "c6 an absent receiver: {w.0} {w.1}");
+}
+
+struct TupHolder { t: (integer, text), n: integer }
+fn c7_pick(k: integer) -> TupHolder? { if k > 0 { return TupHolder { t: (7, "g"), n: 1 }; } return null; }
+fn c7() {
+  a = c7_pick(1);
+  b = c7_pick(0);
+  x = a.t;
+  y = b.t;
+  z: (integer?, text?) = b.t;
+  assert("{x.0} {x.1}" == "7 g", "c7 a tuple field through a present receiver: {x.0} {x.1}");
+  assert("{y.0} {y.1} {y == null}" == "null null true", "c7 through an absent receiver: {y.0} {y.1}");
+  assert("{z.0} {z.1}" == "null null", "c7 landed in the declared type: {z.0} {z.1}");
+}
+
+fn c8_get(v: vector<(integer, text)>, i: integer) -> (integer, text) { return v[i]; }
+fn c8() {
+  v: vector<(integer, text)> = [(1, "a"), (2, "bb")];
+  i = 1;
+  p = c8_get(v, i);
+  assert("{p.0} {p.1}" == "2 bb", "c8 a NON-null declared tuple return: {p.0} {p.1}");
+}
+
+fn main() {
+  a1();
+  a2();
+  a3();
+  c1();
+  c2();
+  c3();
+  c4();
+  c5();
+  c6();
+  c7();
+  c8();
+}
