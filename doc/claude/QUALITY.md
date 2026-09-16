@@ -2684,7 +2684,20 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 840 | 500 | 6 | **334** |
+| 841 | 501 | 6 | **334** |
+
+(2026-09-17, @PLN164 C5 on top of the tuple close, re-measured on THIS tree after the WHOLE join:
+841 · 501 · 6 · 334.  One function is added and it sees through the wrapper — `view_leaf_type`
+asks whether a record's heap field is a plain `vector<T>`, which a view leaf may deliver, and reads
+it through `.base()` because a `vector<T>?` is the same shape behind a nullability bit.  The opaque
+column and the ratchet are unmoved (`--check-ratchet`: at baseline, 334 / 1314).  ../loft2 reports
+this unit as 835 · 495 → 836 · 496 against ITS base; the totals differ because the bases do.
+⚠ The 840 · 500 this row read until now was measured BETWEEN the join's two halves — after the
+tuple picks and before C5's code landed — so it was already stale when it was written down.  A
+derived row is true of a tree at a MOMENT, and the only moment that survives the join is its end.
+Measuring one mid-join produces a number that reads as measured and describes a tree that no
+longer exists.)
+
 (2026-09-16, the ../loft2 join re-measured on THIS tree: 839 · 499 · 6 · 334.  The tuple
 commits report +1 · +1 against their own branch and are right about what they add; this tree
 reads +4 · +4, because the @PLN164 C1/C2 functions picked from 157 discriminate on `Type`
