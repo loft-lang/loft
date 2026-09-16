@@ -532,9 +532,12 @@ mod tests {
         // `output_block` (`@FR-R-RetAdopt`).  § V-ah added `OpDistinctStoreEmitter`
         // (a store-identity test against a value local answers `true`) and § V-aj
         // the four integer division/remainder ops into `IntArithEmitter` for the
-        // literal-divisor form (`@FR-R-LitDiv`): 115 measured on 2026-09-15.
+        // literal-divisor form (`@FR-R-LitDiv`): 115 measured on 2026-09-15.  @PLN164 C5
+        // adds one, `ViewFieldReadEmitter` for `OpGetField`: a view-leaf field read off a
+        // value local is the tuple's own reference, and every other `OpGetField` falls
+        // through to the template unchanged (`@FR-O-ViewField`).
         assert!(
-            count <= 115,
+            count <= 116,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );
