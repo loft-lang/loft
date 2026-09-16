@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN164 C1 step 1 (`@FR-R-InPlaceLiteral`, its STAGING clause) — EVERY FIELD EXPRESSION IS
-// EVALUATED BEFORE THE FIRST WRITE.  A record literal assigned to an existing place is written
+// @PLN164 C1 (`@FR-R-InPlaceLiteral`) — A LITERAL ASSIGNED TO AN EXISTING PLACE IS WRITTEN INTO
+// IT, AND EVERY FIELD EXPRESSION IS EVALUATED BEFORE THE FIRST WRITE.  A record literal assigned to an existing place is written
 // INTO that place, so an initialiser that reads the place reads storage the literal is in the
 // middle of replacing: *"a field may read the old value through a view of the same place"*.
 //
@@ -23,9 +23,18 @@
 // record field (c18, which is provably disjoint and takes no temp) and one reading only the
 // same field it writes (c4) must all still answer what they always did.
 //
+// Step 2 adds the ELEMENT destination (`v[i] = S { … }`), which the rule names beside the field
+// and which built its literal in a store of its own and deep-copied it into the slot that
+// already existed.  Its own cells are the hazards a field place does not have: the receiver is
+// emitted once per field write, so a place that is not re-derivable without an observable
+// effect keeps the copy — c19's `v[bump()]` would call `bump` once per field and c20's
+// `v[len(v) - 2]` would re-read a length the writes may have moved.  Both are DECLINES, and
+// they are cells because a decline that silently stopped declining is the expensive direction.
+//
 // `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and
-// `LOFT_NATIVE_LEAK_CHECK=1`: all eighteen cells are clean under every one, on both backends —
-// which is what says the hoisted temps neither leak the old value nor free it twice.
+// `LOFT_NATIVE_LEAK_CHECK=1`: all twenty-three cells are clean under every one, on both
+// backends — which is what says neither the hoisted temps nor the in-place element write leaks
+// the old value or frees it twice.
 //
 // @falsified-at: hand-measured (2026-09-16) — `parse_object`'s projection arm removed, so
 // `self_read_root` stays `None` for a field destination and #330 hoists nothing: `c1` reads
@@ -33,6 +42,13 @@
 // with and without the falsifiers.  The ASSERT channel moves.  Every other cell is unmoved,
 // which is what says the arm is staging the initialisers that read the place and not simply
 // staging everything.
+//
+// @falsified-at: step 2, hand-measured (2026-09-16) — with `LOFT_NO_ELEMENT_IN_PLACE=1` every
+// cell still passes, because the switch restores the COPY and the copy is correct: what it
+// costs is the store and the deep copy, not the answer.  So the falsifier for step 2 is
+// structural and `tests/in_place_literal.rs` carries it — the element assignment's IR must hold
+// no `OpDatabase` and no `OpCopyRecord`, and must regain both under the switch.  A guard that
+// could only read values would pin nothing here, and saying so is the point.
 
 struct El { a: integer = 0, b: integer = 0, nm: text = "", tail: integer = -1 }
 struct Box { inner: El, tag: text = "" }
@@ -44,6 +60,8 @@ struct Vf { v: vector<integer>, n: integer = 0 }
 struct VBox { inner: Vf }
 struct VSc { els: vector<Vf> }
 struct NBox { inner: El? }
+struct Hp { a: integer = 0, nm: text = "", v: vector<integer> }
+struct HSc { els: vector<Hp>, calls: integer = 0 }
 
 fn cell(nm: text, got: text, want: text) {
   assert(got == want, "{nm}: {got}, want {want}");
@@ -83,7 +101,27 @@ fn f_keyed(kv: KV, k: text) { kv.m[k] = El { a: 31, b: 32, nm: k }; }
 fn f_nullable(nb: NBox) { nb.inner = El { a: 41, b: 42, nm: "n" }; }
 fn e_absent(sc: Sc) { sc.els[9] = El { a: 51, b: 52, nm: "gone" }; }
 
+// ---- C1 step 2 — the hazards an ELEMENT destination has that a FIELD one does not ----
+// The receiver is emitted once per field write, so the place has to be re-derivable with no
+// effect the program can see.  A computed index is not, and keeps the copy.
+fn bump(sc: HSc) -> integer { sc.calls += 1; 0 }
+fn e_effect_index(sc: HSc) { sc.els[bump(sc)] = Hp { a: 9, nm: "z", v: [7] }; }
+fn e_computed_index(sc: HSc) { sc.els[len(sc.els) - 2] = Hp { a: 91, nm: "idx", v: [] }; }
+fn e_negative(sc: HSc) { sc.els[-1] = Hp { a: 61, nm: "neg", v: [9] }; }
+// The old element OWNS heap that must be released — once, and before the slot is reused.
+fn e_heap(sc: HSc) { sc.els[0] = Hp { a: 71, nm: "new", v: [7, 7, 7] }; }
+fn e_heap_partial(sc: HSc) { sc.els[0] = Hp { a: 81 }; }
+// The decline a MEASUREMENT bought: the literal reads the slot's own COLLECTION.  Staging binds
+// a field expression to a temp, and `(B-View-Base)` makes a collection projection a VIEW — so
+// in place the write released the slot's vector and then stored the handle back to it, and the
+// field read 0 on both backends.  A collection-bearing type keeps the copy.
+fn e_self_heap(sc: HSc) { e = sc.els[0]?; sc.els[0] = Hp { a: e.a + 100, nm: e.nm, v: e.v }; }
+fn tot(v: vector<integer>) -> integer { t = 0; for x in v { t += x; } t }
+
 fn mkbox() -> Box { Box { inner: El { a: 1, b: 2, nm: "x", tail: 5 }, tag: "TAG" } }
+fn mkhp() -> HSc {
+  HSc { els: [Hp { a: 1, nm: "x", v: [1, 2] }, Hp { a: 3, nm: "y", v: [3] }], calls: 0 }
+}
 fn mksc() -> Sc { Sc { els: [El { a: 1, b: 2, nm: "x", tail: 5 }, El { a: 3, b: 4, nm: "y", tail: 6 }], tag: "T" } }
 
 fn main() {
@@ -133,5 +171,20 @@ fn main() {
   s17 = mksc(); e_absent(s17);
   cell("c17 absent element", "{len(s17.els)},{s17.els[0]?.a}", "2,1");
 
-  println("164-in-place-literal: 18 cells, every field expression staged before the first write");
+  // C1 step 2 — the element place.
+  p19 = mkhp(); e_effect_index(p19); q19 = p19.els[0]?; r19 = p19.els[1]?;
+  cell("c19 index side effect", "{p19.calls},{q19.a},{q19.nm},{r19.a}", "1,9,z,3");
+  p20 = mkhp(); e_computed_index(p20); q20 = p20.els[0]?;
+  cell("c20 computed index", "{q20.a},{q20.nm}", "91,idx");
+  p21 = mkhp(); e_negative(p21); q21 = p21.els[0]?;
+  cell("c21 negative index", "{len(p21.els)},{q21.a},{q21.nm}", "2,1,x");
+  p22 = mkhp(); e_heap(p22); q22 = p22.els[0]?;
+  cell("c22 old heap replaced", "{q22.a},{q22.nm},{len(q22.v)},{tot(q22.v)}", "71,new,3,21");
+  p23 = mkhp(); e_heap_partial(p23); q23 = p23.els[0]?;
+  cell("c23 partial over heap", "{q23.a},[{q23.nm}],{len(q23.v)}", "81,[],0");
+
+  p24 = mkhp(); e_self_heap(p24); q24 = p24.els[0]?;
+  cell("c24 literal reads the slot's collection", "{q24.a},{q24.nm},{len(q24.v)},{tot(q24.v)}", "101,x,2,3");
+
+  println("164-in-place-literal: 24 cells, every field expression staged before the first write");
 }

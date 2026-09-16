@@ -3600,6 +3600,18 @@ impl Parser {
             if names_root {
                 occurrences += 1;
             }
+            // A view of the destination is a read of it under another name: `e =
+            // sc.els[i]?; sc.els[i] = El { a: e.b, … }` reads the very slot the literal
+            // overwrites, and `e` is its own variable.  The deps are what say so — `e` is
+            // typed `ref(El)["sc"]` — and this is `acc_pts`'s own shape, so missing it would
+            // reintroduce the swap the staging exists to stop, one spelling over.
+            if let Value::Var(x) = n
+                && *x != root
+                && self.vars.exists(*x)
+                && self.vars.tp(*x).depend().contains(&root)
+            {
+                occurrences += 1;
+            }
             let Value::Call(d, args) = n else { return };
             if self.data.def(*d).name() != "OpGetField" {
                 return;
@@ -3620,6 +3632,71 @@ impl Parser {
             }
         });
         hits_destination || occurrences > disjoint
+    }
+
+    /// @PLN164 C1 step 2 (@FR-R-InPlaceLiteral) — may a record literal be written straight into
+    /// this vector ELEMENT place, the way one assigned to a FIELD already is?
+    ///
+    /// The rule names an element and a field in one breath; only the field road was built, so an
+    /// element assignment builds the literal in a store of its own and deep-copies it into the
+    /// slot that already exists.
+    ///
+    /// The receiver is emitted ONCE PER FIELD WRITE — that is how the field road works and the
+    /// element road joins it — so the place must be re-derivable with no effect the program can
+    /// see.  A repeatable base and an index that is a LITERAL or a BARE VARIABLE is that, and
+    /// nothing else is admitted: `v[bump()]` would call `bump` once per field, and
+    /// `v[len(v) - 2]` would re-read a length the writes may have changed.  Both keep the copy.
+    ///
+    /// The staging clause is what makes this safe for `acc_pts`'s own shape, where the literal
+    /// reads the slot it overwrites — see [`Self::reads_place`], which counts a view of the
+    /// destination as a read of it.
+    fn builds_into_element(&self, code: &Value, td_nr: u32) -> bool {
+        if !crate::keys::element_in_place_enabled() {
+            return false;
+        }
+        // A COLLECTION field declines the whole type, and this is the one decline that was
+        // measured rather than reasoned.  The staging clause binds a field expression to a
+        // temp, and what that bind MEANS depends on the type: `(B-Copy)` copies a text, so a
+        // literal reading the slot's own text is safe, while `(B-View-Base)` makes a collection
+        // projection a VIEW — so `v[i] = S { c: e.c }` staged a view of the slot's own vector,
+        // the write released that vector before storing the handle back, and the field read 0
+        // on both backends.  Deciding it per FIELD would need the self-read answer, which is
+        // not known until the fields are parsed and the road is already taken; deciding it by
+        // TYPE is decidable here.  It is coarse — a collection-bearing record that reads
+        // nothing of the slot keeps the copy it does not need — and it is the safe direction.
+        // The shape this phase exists for keeps the road: `acc_pts`'s `Elem` is text and
+        // scalars.
+        if self.data.def(td_nr).attributes().iter().any(|a| {
+            matches!(
+                a.typedef.base(),
+                Type::Vector(_, _)
+                    | Type::Hash(_, _, _)
+                    | Type::Index(_, _, _)
+                    | Type::Sorted(_, _, _)
+                    | Type::Radix(_, _, _)
+                    | Type::Trie(_, _, _)
+            )
+        }) {
+            return false;
+        }
+        let Value::Call(d, args) = code.unspan() else {
+            return false;
+        };
+        if !matches!(self.data.def(*d).name(), "OpGetVector" | "OpVectorRef") {
+            return false;
+        }
+        let base_ok = args
+            .first()
+            .is_some_and(|a| Self::is_repeatable_place(&self.data, a));
+        // The INDEX is the last argument in both spellings — `OpGetVector(base, size, index)`
+        // and `OpVectorRef(base, index)` — so it is taken from the end rather than from a
+        // fixed slot, which read the SIZE as the index for the two-argument one and declined
+        // every `OpVectorRef` place by accident.
+        let index_ok = args.len() >= 2
+            && args
+                .last()
+                .is_some_and(|a| matches!(a.unspan(), Value::Int(_) | Value::Var(_)));
+        base_ok && index_ok
     }
 
     pub(crate) fn parse_object_field(
@@ -4167,7 +4244,11 @@ impl Parser {
                 }
                 *code = Value::Var(w);
             }
-        } else if !self.first_pass && !self.is_field(code) && !self.is_captured_dbref(code) {
+        } else if !self.first_pass
+            && !self.is_field(code)
+            && !self.is_captured_dbref(code)
+            && !self.builds_into_element(code, td_nr)
+        {
             new_object = true;
             self.data.set_referenced(td_nr, self.context, Value::Null);
             let ret = self.data.def(td_nr).returned();

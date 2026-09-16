@@ -20,17 +20,34 @@ fn guard() -> PathBuf {
 }
 
 fn loft() -> Command {
-    Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    cmd.env_remove("LOFT_NO_ELEMENT_IN_PLACE");
+    cmd
+}
+
+/// One function's IR as `loft introspect` prints it, with `env` applied.
+fn ir_with(func: &str, env: &[(&str, &str)]) -> String {
+    let mut cmd = loft();
+    cmd.arg("introspect")
+        .arg(guard())
+        .env("LOFT_TIMEOUT", "240");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    ir_of(func, cmd)
 }
 
 /// One function's IR as `loft introspect` prints it.
 fn ir(func: &str) -> String {
-    let out = loft()
-        .arg("introspect")
+    let mut cmd = loft();
+    cmd.arg("introspect")
         .arg(guard())
-        .env("LOFT_TIMEOUT", "240")
-        .output()
-        .expect("spawn loft");
+        .env("LOFT_TIMEOUT", "240");
+    ir_of(func, cmd)
+}
+
+fn ir_of(func: &str, mut cmd: Command) -> String {
+    let out = cmd.output().expect("spawn loft");
     assert!(
         out.status.success(),
         "introspect failed:\n{}",
@@ -151,9 +168,56 @@ fn the_cells_hold_on_both_backends_under_every_falsifier() {
         outs.push(String::from_utf8_lossy(&out.stdout).into_owned());
     }
     assert!(
-        outs[0].contains("18 cells"),
+        outs[0].contains("24 cells"),
         "the guard did not reach its last cell:\n{}",
         outs[0]
     );
     assert_eq!(outs[0], outs[1], "the two backends must print the same");
+}
+
+/// C1 step 2 — an ELEMENT destination writes into the slot: no store minted for the literal, no
+/// deep copy into the slot, and the writes take the element place as their receiver.
+///
+/// This is step 2's whole falsifier, and it has to be structural.  `LOFT_NO_ELEMENT_IN_PLACE=1`
+/// restores the COPY, and every cell still passes under it — because the copy is correct.  What
+/// the switch costs is a store and a deep copy per assignment, which no value can see.
+#[test]
+fn an_element_destination_writes_into_the_slot() {
+    let body = ir("e_partial");
+    assert!(
+        !body.contains("OpDatabase(") && !body.contains("OpCopyRecord"),
+        "an element destination must mint no store and copy nothing:\n{body}"
+    );
+    // Both spellings, because an element read has two (`OpGetVector(base, size, index)` and
+    // `OpVectorRef(base, index)`) and asserting one of them is how this pin first passed
+    // vacuously — the same half-answer QUALITY.md's `spellings` screen exists to find.
+    assert!(
+        body.contains("OpGetVector(") || body.contains("OpVectorRef("),
+        "the writes must take the element place as their receiver:\n{body}"
+    );
+    let off = ir_with("e_partial", &[("LOFT_NO_ELEMENT_IN_PLACE", "1")]);
+    assert!(
+        off.contains("OpDatabase(") && off.contains("OpCopyRecord"),
+        "the switch must restore the temporary store and the copy:\n{off}"
+    );
+}
+
+/// The two DECLINES keep the copy, with the switch off.  A decline that silently stopped
+/// declining is the expensive direction: `v[bump()]` would call `bump` once per field write and
+/// `v[len(v) - 2]` would re-read a length the writes may have moved.
+#[test]
+fn a_place_that_cannot_be_re_derived_keeps_the_copy() {
+    for (func, why) in [
+        ("e_effect_index", "an index with a side effect"),
+        ("e_computed_index", "a computed index"),
+        // Measured, not reasoned: in place this released the slot's own vector and then stored
+        // the handle back to it, and the field read 0 on both backends.
+        ("e_self_heap", "a type with a collection field"),
+    ] {
+        let body = ir(func);
+        assert!(
+            body.contains("OpCopyRecord"),
+            "{why} must keep the copy:\n{body}"
+        );
+    }
 }

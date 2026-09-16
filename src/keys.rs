@@ -1627,6 +1627,22 @@ pub fn view_elision_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VIEW_ELISION"))
 }
 
+/// @PLN164 C1 step 2 (`@FR-R-InPlaceLiteral`) — a record literal assigned to a vector ELEMENT
+/// is written INTO the slot, as the same literal assigned to a FIELD already is, instead of
+/// being built in a temporary store and deep-copied there — **DEFAULT ON**.  Opt OUT with
+/// `LOFT_NO_ELEMENT_IN_PLACE` (read at PARSE time, BOTH backends): the temp-and-copy again, and
+/// the first bisect step for a wrong element, a leak or a double free at `v[i] = S { … }`.
+///
+/// Admitted only where the place can be re-derived for each field write with no effect the
+/// program can see: a repeatable base and an index that is a literal or a bare variable.  A
+/// computed index (`v[bump()]`, `v[len(v) - 2]`) keeps the copy, because the receiver is
+/// emitted once per field and re-running the index would run its effects once per field too.
+#[must_use]
+pub fn element_in_place_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_ELEMENT_IN_PLACE"))
+}
+
 /// @PLN164 C3 (`@FR-B-Disturb`, `@FR-B-View`) — a container GROWN or REMOVED FROM by a
 /// CALLEE, through a parameter the caller handed it, disturbs the caller's place exactly as
 /// the same statement written inline does, so a view live across the call materialises and the
