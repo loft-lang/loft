@@ -3685,6 +3685,15 @@ impl Parser {
         if !matches!(self.data.def(*d).name(), "OpGetVector" | "OpVectorRef") {
             return false;
         }
+        // A member of a LINKED COLLECTION GROUP declines: an element write there owes the group
+        // its maintenance (`@FR-Col-Group` — the record leaves every keyed sibling before it is
+        // replaced and is indexed again under the key it now carries), and writing the literal
+        // straight into the slot skips the whole of it.  Measured: `by_k` went on holding the
+        // record under the hash of its OLD key, which is loft#900's defect returning by another
+        // road.
+        if self.is_grouped_vector_elem(code) {
+            return false;
+        }
         let base_ok = args
             .first()
             .is_some_and(|a| Self::is_repeatable_place(&self.data, a));

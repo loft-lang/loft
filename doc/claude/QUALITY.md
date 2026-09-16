@@ -480,7 +480,11 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 514 | 491 | **23** |
+| 515 | 492 | **23** |
+
+(2026-09-16, @PLN164 C1: one function added over the two steps that discriminates on `Value`
+variants, and it peels — `Parser::reads_place`, whose discriminators run inside a `Value::walk`
+closure, which peels `Span` before calling it.  The opaque column is unmoved.)
 
 (2026-09-16, @PLN164 B2 + C3: 514 · 491 · 23 — measured as a delta against 504 · 481 · 23.  The two
 units add ten functions that discriminate on `Value` variants, and all ten peel: `place_result`'s
@@ -1583,7 +1587,17 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 64 | **14** | 50 |
+| 66 | **14** | 52 |
+
+(2026-09-16, @PLN164 C1 step 2: `Parser::builds_into_element` asks whether a destination is a
+vector ELEMENT place a literal may be written into, and `Parser::is_grouped_vector_elem` whether
+that place is a member of a linked collection group — 64 → 66, both on the call-only side.
+CHECKED rather than bumped, because the column's last move was a real hole: `TupleGet` reads a
+stack tuple member and is not a spelling of a COLLECTION element read, so neither function has a
+second spelling to miss.  What they do have is a deliberate ASYMMETRY, and it is the thing to
+preserve — the admission lists two element ops and the decline lists four, including both
+nullable spellings.  A miss in the admission costs the optimisation; a miss in the decline costs
+the group's agreement, which is loft#900's defect.)
 
 (2026-09-16, @PLN164 C1 step 1: `Parser::reads_place` asks whether a literal's initialiser reads
 the PLACE it is about to overwrite, so it resolves a projection by op name — 63 → 64.  It arrives
@@ -2618,7 +2632,12 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 834 | 494 | 6 | **334** |
+| 835 | 495 | 6 | **334** |
+
+(2026-09-16, @PLN164 C1: one function added, seeing through the wrapper — `builds_into_element`
+reads a field's declared type through `.base()` to ask whether the record owns a COLLECTION,
+which is a shape question and alike for `τ` and `τ?`.  The opaque column and the ratchet are
+unmoved.)
 
 (2026-09-16, @PLN164 B2 + C3: 834 · 494 · 6 · 334 — measured as a delta against 830 · 490 · 6 · 334.
 Four functions added, all four seeing through the wrapper: C3's `disturbed_param_places` reads a
