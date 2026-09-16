@@ -1534,7 +1534,14 @@ impl Output<'_> {
             if i > 0 {
                 write!(w, ", ")?;
             }
-            let getter = self.data.def_nr(super::hoist::value_getter(rt));
+            // @PLN164 C5 — a VIEW-LEAF field of a viewed record is its own field SLOT:
+            // `OpGetField` answers exactly the reference the leaf delivers, so the view's
+            // tuple and a call site's read are the same expression.
+            let getter = if super::hoist::is_view_part(rt) {
+                self.data.def_nr("OpGetField")
+            } else {
+                self.data.def_nr(super::hoist::value_getter(rt))
+            };
             let call = Value::Call(getter, vec![Value::Var(var), Value::Int(*off as i32)]);
             if *rt == "bool" {
                 write!(w, "((")?;
@@ -2348,10 +2355,36 @@ impl Output<'_> {
                 write!(w, "let __obj = ")?;
             }
             write!(w, "(")?;
+            let offs: Vec<i64> = self
+                .value_records
+                .fields
+                .get(&self.def_nr)
+                .map(|f| f.iter().map(|(off, _)| *off).collect())
+                .unwrap_or_default();
             for (i, val) in parts.iter().enumerate() {
                 if i > 0 {
                     write!(w, ", ")?;
                 }
+                // @PLN164 C5 — a VIEW LEAF's element is the PLACE the field views, and a
+                // null reference where the exit writes the field not at all: the empty
+                // literal, whose value in the record form is the prefill's own zero.
+                let Some(val) = val else {
+                    let src = offs.get(i).and_then(|off| {
+                        super::hoist::leaf_source(
+                            self.data,
+                            self.def_nr,
+                            self.data.def(self.def_nr).code(),
+                            bl,
+                            *off,
+                        )
+                    });
+                    if let Some(super::hoist::LeafSource::Place(e)) = src {
+                        self.output_code_inner(w, e)?;
+                    } else {
+                        write!(w, "DbRef::NULL")?;
+                    }
+                    continue;
+                };
                 // A boolean field's operand may be the STORAGE byte (a `u8` parameter or
                 // field read) where the tuple carries `bool`; the coercion is the one
                 // every test predicate uses.
@@ -2378,6 +2411,20 @@ impl Output<'_> {
                 // other statement is a release the return owes, and runs.
                 let builds = |op: &Value| {
                     op.any_node(&mut |n| {
+                        // @PLN164 C5 — the deep COPY into a view-leaf field is part of the
+                        // build too: the leaf hands over the place instead, so the append
+                        // that filled the buffer's field goes with the buffer.
+                        if let Value::Call(d, args) = n
+                            && (*d as usize) < self.data.definitions.len()
+                            && self.data.def(*d).name() == "OpAppendVector"
+                            && let Some(Value::Call(g, gargs)) = args.first().map(Value::unspan)
+                            && (*g as usize) < self.data.definitions.len()
+                            && self.data.def(*g).name() == "OpGetField"
+                            && matches!(gargs.first().map(Value::unspan),
+                                Some(Value::Var(v)) if *v == p)
+                        {
+                            return true;
+                        }
                         matches!(n, Value::Call(d, args)
                             if (*d as usize) < self.data.definitions.len()
                                 && (self.data.def(*d).name().starts_with("OpSet")

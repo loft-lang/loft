@@ -2051,7 +2051,8 @@ impl Output<'_> {
         if !self.value_records.fns.is_empty() {
             self.dead_buffers = hoist::dead_buffers(self.data, def_nr, &self.value_records);
             let admitted: HashSet<u32> = self.value_records.fns.keys().copied().collect();
-            self.value_record_locals = hoist::value_locals_in(self.data, def_nr, &admitted);
+            self.value_record_locals =
+                hoist::value_locals_in(self.data, def_nr, &admitted, &self.value_records.view_offs);
             self.value_leaves = hoist::value_leaves(self.data, def_nr, &self.value_records);
             if admitted.contains(&def_nr) {
                 let def = self.data.def(def_nr);
@@ -2787,15 +2788,46 @@ impl Output<'_> {
         rust_type(tp, &Context::Variable)
     }
 
+    /// The ZERO a value local's declaration binds (@PLN157 § V-ah): the tuple's own
+    /// default, which for a @PLN164 C5 VIEW LEAF is the NULL reference — an unbound view,
+    /// and the same reference an empty-literal exit delivers.  `Default` cannot give it,
+    /// because a `DbRef`'s null is a sentinel store number rather than a zero.
+    #[must_use]
+    pub fn value_tuple_zero(&self, d: u32) -> String {
+        let Some(fields) = self.value_records.fields.get(&d) else {
+            return "Default::default()".to_string();
+        };
+        if !fields.iter().any(|(_, rt)| hoist::is_view_part(rt)) {
+            return "Default::default()".to_string();
+        }
+        let parts: Vec<&str> = fields
+            .iter()
+            .map(|(_, rt)| match *rt {
+                "bool" => "false",
+                "f64" => "0.0f64",
+                "f32" => "0.0f32",
+                hoist::VIEW_LEAF_PART => "DbRef::NULL",
+                _ => "0i64",
+            })
+            .collect();
+        let tail = if parts.len() == 1 { "," } else { "" };
+        format!("({}{tail})", parts.join(", "))
+    }
+
     /// @PLN157 § V-aa (`@FR-R-ValueRecord`) — the per-field VALUES an `Object` block
     /// writes, in field order, or `None` when the block is not the complete
     /// constant-offset write set the value path needs (then the buffer form stands).
+    ///
+    /// A field slot answers `None` where the value form derives the part rather than
+    /// reading it off a write: @PLN164 C5's VIEW LEAF, whose tuple element is the PLACE the
+    /// field views (`hoist::leaf_source`) and whose record-form write is the deep copy the
+    /// leaf removes.  Every other slot must be written, or the whole block declines.
     #[must_use]
     pub fn value_record_parts<'b>(
         &self,
         bl: &'b crate::data::Block,
         tp: u16,
-    ) -> Option<Vec<&'b Value>> {
+    ) -> Option<Vec<Option<&'b Value>>> {
         let n = self
             .value_records
             .index
@@ -2822,13 +2854,46 @@ impl Output<'_> {
             let Some(Value::Int(off)) = args.get(1).map(Value::unspan) else {
                 return None;
             };
+            // @PLN164 C5 — a VIEW-LEAF field's `OpSet*` is the collection slot's own
+            // ZERO-INIT, not a value the tuple carries: a vector field is minted empty and
+            // then appended into, so the write to skip is the one at a view offset.  The
+            // slot stays derived ([`hoist::leaf_source`]).
+            if self
+                .value_records
+                .view_offs
+                .get(&self.def_nr)
+                .is_some_and(|offs| offs.contains(&i64::from(*off)))
+            {
+                continue;
+            }
             let idx = *self.value_records.index.get(&(tp, i64::from(*off)))?;
             if idx >= slots.len() || slots[idx].is_some() {
                 return None;
             }
             slots[idx] = args.get(2);
         }
-        slots.into_iter().collect()
+        // A VIEW-LEAF slot is derived, not written: its own `OpAppendVector` is the copy the
+        // leaf replaces, and the emitter answers the place instead.
+        let views: HashSet<usize> = self
+            .value_records
+            .fields
+            .get(&self.def_nr)
+            .map(|fs| {
+                fs.iter()
+                    .enumerate()
+                    .filter(|(_, (_, rt))| hoist::is_view_part(rt))
+                    .map(|(i, _)| i)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if slots
+            .iter()
+            .enumerate()
+            .any(|(i, v)| v.is_none() && !views.contains(&i))
+        {
+            return None;
+        }
+        Some(slots)
     }
 
     pub fn move_pair_for_block(&self, bl: &crate::data::Block) -> Option<&hoist::MoveAppend> {
@@ -3052,6 +3117,12 @@ impl Output<'_> {
                     "bool" => {
                         format!("__s.store(&__lv).get_byte(__lv.rec, __lv.pos + {off}u32, 0) == 1")
                     }
+                    // @PLN164 C5 — a VIEW LEAF is a reference, and the record the reload
+                    // arm answers holds that field at its own offset: the leaf is the
+                    // field SLOT of that record, which is what the value form hands over.
+                    hoist::VIEW_LEAF_PART => format!(
+                        "DbRef {{ store_nr: __lv.store_nr, rec: __lv.rec, pos: __lv.pos + {off}u32 }}"
+                    ),
                     _ => format!("__s.store(&__lv).get_int(__lv.rec, __lv.pos + {off}u32)"),
                 })
                 .collect();
@@ -6476,12 +6547,13 @@ extern crate loft;"
                     use std::fmt::Write as _;
                     // @PLN157 § V-ah — a returned VALUE local is its tuple, bound at the
                     // tuple's zero: it never names a store.
-                    if let Some(d) = self.value_record_locals.get(&v)
-                        && let Some(t) = self.value_records.tuple.get(d)
+                    if let Some(d) = self.value_record_locals.get(&v).copied()
+                        && let Some(t) = self.value_records.tuple.get(&d)
                     {
+                        let zero = self.value_tuple_zero(d);
                         let _ = write!(
                             vdb_prologue,
-                            "\n  let mut var_{}: {t} = Default::default();",
+                            "\n  let mut var_{}: {t} = {zero};",
                             sanitize(vars.name(v))
                         );
                     } else {
@@ -6557,13 +6629,14 @@ extern crate loft;"
                     // zero, as every returned value local is.
                     let av = vars.var(&a.name);
                     if av != u16::MAX
-                        && let Some(d) = self.value_record_locals.get(&av)
-                        && let Some(t) = self.value_records.tuple.get(d)
+                        && let Some(d) = self.value_record_locals.get(&av).copied()
+                        && let Some(t) = self.value_records.tuple.get(&d)
                     {
                         use std::fmt::Write as _;
+                        let zero = self.value_tuple_zero(d);
                         let _ = write!(
                             vdb_prologue,
-                            "\n  let mut var_{}: {t} = Default::default();",
+                            "\n  let mut var_{}: {t} = {zero};",
                             sanitize(vars.name(av))
                         );
                         self.declared.insert(av);

@@ -411,6 +411,8 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     for name in crate::generation::hoist::SCALAR_GETTERS {
         r.insert(name, Box::new(vector_ops::FusedElementReadEmitter));
     }
+    // @PLN164 C5 — a view-leaf field read off a value local is the tuple's reference.
+    r.insert("OpGetField", Box::new(vector_ops::ViewFieldReadEmitter));
     r.insert("OpGetVector", Box::new(vector_ops::OpGetVectorEmitter));
     // @PLN157 — the loop bound reads the hoisted header's length, not the store table.
     r.insert("OpLengthVector", Box::new(vector_ops::HoistedLengthEmitter));

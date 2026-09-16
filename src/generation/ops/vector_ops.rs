@@ -51,6 +51,44 @@ fn verify(ctx: &EmitCtx<'_, '_>) -> &'static str {
 /// Anything else (no header, an expression instead of a variable for the vector, a getter
 /// with a different shape) emits the `#rust` template unchanged.
 /// Emits `@FR-R-Header` (the fused element read) and falls back to `@FR-R-Scalar`.
+/// @PLN164 C5 (`@FR-O-ViewField`) — `OpGetField` on a local that holds a VALUE-RETURNED
+/// record answers the tuple's own element: a VIEW-LEAF field is delivered as the reference
+/// to the place it views, so `m.pts` is `var_m.2` where the record form read the field slot
+/// out of a record in a store.
+///
+/// Every other `OpGetField` falls through to the `#rust` template unchanged — including a
+/// SCALAR field of a value local, which never reaches here (the scalar getters are
+/// `FusedElementReadEmitter`'s) and a collection field of a record that is still a record.
+pub struct ViewFieldReadEmitter;
+
+impl OpEmitter for ViewFieldReadEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        if let [base, fld, ..] = args
+            && let Value::Var(v) = base.unspan()
+            && let Some(d) = ctx.output.value_record_locals.get(v).copied()
+            && let Some(tp) = ctx.output.value_records.fns.get(&d).copied()
+            && let Value::Int(off) = fld.unspan()
+            && ctx
+                .output
+                .value_records
+                .view_offs
+                .get(&d)
+                .is_some_and(|offs| offs.contains(&i64::from(*off)))
+            && let Some(idx) = ctx
+                .output
+                .value_records
+                .index
+                .get(&(tp, i64::from(*off)))
+                .copied()
+        {
+            let name =
+                super::super::sanitize(ctx.output.data.def(ctx.output.def_nr).variables().name(*v));
+            return write!(ctx.w, "var_{name}.{idx}");
+        }
+        super::default::DefaultEmitter.emit(ctx, args)
+    }
+}
+
 pub struct FusedElementReadEmitter;
 
 impl OpEmitter for FusedElementReadEmitter {
