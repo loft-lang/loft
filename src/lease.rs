@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I60 — Scope & dependency/lifetime tracker (deps)
 
 //! The copy-lease verdicts on a copy of a droppable (@PLN163): what `formal/heap.md` makes of the
 //! line that writes the copy, and — separately — whether the copied value is used afterwards.
