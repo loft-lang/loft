@@ -930,7 +930,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate reference-review skills-review clippy-review
+.PHONY: work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate file-sizes reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -1018,6 +1018,15 @@ nullable-road:  ## @PLN160: where does the nullable lowering leave its dense twi
 # render as a broken target.  A report says what it found; it does not stop the build.
 release-checklist:  ## Per-release checklist: what CI proved, and what is left for a human
 	@python3 scripts/release-checklist.py $(ARGS) || true
+
+# Both halves of "does this file hold ONE subject, at a length someone can use?":
+# how long files are and whether their sections are comparable subjects (file-sizes),
+# and whether a contract doc has absorbed its own history instead of splitting it into
+# an `-history.md` companion (doc_history_report).  A REPORT, never a gate.
+file-sizes:  ## Are doc/source files too long to use, and do they hold one subject?
+	@python3 scripts/file-sizes.py $(ARGS) || true
+	@echo
+	@python3 scripts/doc_history_report.py --top 15 || true
 
 # The liveness census (@PLN156): are the gates themselves still live?  Suppressions
 # justified by CLOSED issues, gate workflows that quietly stopped firing, checklist

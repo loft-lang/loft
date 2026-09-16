@@ -145,14 +145,22 @@ class Item:
         self.passes = passes
         self.check = check
         self.applies = applies
-        # When this item is PRACTICAL to run, earlier than the release window itself
-        # (@PLN156): "mid" = meaningful at the cycle's halfway point, because it
-        # measures overall stability rather than a release artifact; "pre" = can be
-        # completed in the month's last days as pre-work, so the release does not
-        # spill deep into the new month.  Empty = the release window only (it needs
-        # the tag, the draft, or the published assets to exist).  An early run of a
-        # TAG-CANDIDATE item (valgrind, leaks, release-gate, wasm) is early warning,
-        # not the final evidence — redo it on the candidate; ticks belong there.
+        # When this item can be FINISHED, earlier than the release window itself
+        # (@PLN156).  The test is whether its evidence stays valid as the tree moves
+        # on, because a tick is a claim about the release, not about the day it was
+        # made: "mid" = completable at the cycle's halfway point, since it measures
+        # overall stability or a process state rather than a release artifact; "cand"
+        # = worth RUNNING early as warning, but its tick must name the tag candidate,
+        # so it is listed apart at mid and counted nowhere; "pre" = completable in the
+        # month's last days as pre-work, so the release does not spill deep into the
+        # new month.  Empty = the release window only (it needs the tag, the draft, or
+        # the published assets to exist).
+        #
+        # A row that cannot be finished in a phase does not belong in that phase's
+        # tally.  Carrying the sweeps under "mid" made the mid view report 7/12 with
+        # a denominator no halfway run could ever reach, which is a gate whose
+        # threshold has drifted from its subject — it reads as permanent unfinished
+        # work and teaches the reader to skim it.
         self.cadence = cadence
         self.state = NA
         self.evidence = ""
@@ -1043,8 +1051,8 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "GREEN — no invalid access and nothing definitely lost on either backend.  A "
             "possibly-lost record is Rust's interior pointers, not a leak, and a leaked STORE is "
             "M-leaks' question (TESTING.md § Occasional valgrind pass)",
-    cadence="mid pre",
-),
+            cadence="cand pre",
+        ),
         Item(
             "M-leaks",
             "Zero-leak gate re-verified on the TAG CANDIDATE",
@@ -1052,7 +1060,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "22-threading.loft and 80-parallel-block.loft",
             "no `Warning: N stores not freed at program exit`.  A release that leaks "
             "one store per loop iteration is unusable for a server or a game loop",
-            cadence="mid pre",
+            cadence="cand pre",
         ),
         Item(
             "M-ignores",
@@ -1069,7 +1077,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "make wasm-html-test && make gallery, then open doc/gallery.html",
             "RELEASE.md § WASM endpoint: the browser bundle is how most users meet "
             "loft.  All examples load with NO console errors",
-            cadence="mid pre",
+            cadence="cand pre",
         ),
         Item(
             "M-docs-review",
@@ -1111,6 +1119,22 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "is a cdylib the sampler cannot enter), `make profile PROFILE_FLAGS=--engine` "
             "for the native side — a slow routine whose profile matches its reference's hot "
             "loop is an engine-class finding (file it, like loft#1426), not a library bug",
+            cadence="mid pre",
+        ),
+        Item(
+            "M-file-sizes",
+            "Does each doc and source file hold ONE subject, at a length someone can use?",
+            "make file-sizes",
+            "two readings of one question.  SIZE: length alone is not the defect "
+            "(DOC_QUALITY.md rule 4 judges by content — a 70-line module header can be "
+            "right), so the split signal decides — a long file whose largest section is "
+            "a small share of it holds several comparable subjects and wants splitting "
+            "per subject, while one long section is a single subject that is merely long "
+            "and should be left alone.  HISTORY: a contract doc that has absorbed its own "
+            "change history is holding two subjects, and the second belongs in an "
+            "`-history.md` companion — the formal docs are where this concentrates, and a "
+            "companion EXISTING does not mean the history moved into it, so read the share "
+            "and not the `yes`.  Split what a reader cannot navigate",
             cadence="mid pre",
         ),
         Item(
@@ -1257,7 +1281,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "The registry's OWN validator accepts this release's entry (rehearsal of the splice)",
             f"scripts/validator-dryrun.py --version {version}",
             check=lambda: check_validator_dryrun(version, network),
-            cadence="mid pre",
+            cadence="pre",
         ),
         Item(
             "M-registry-splice",
@@ -1389,16 +1413,27 @@ def main() -> int:
         save_state(version, state)
 
     sections = build_items(version, network)
+    early: list[tuple[str, list[Item]]] = []
     if args.phase:
         # The early views: only what is practical NOW is shown or measured, so a
         # mid-cycle audit does not run (or go red on) checks that need the tag, the
         # draft, or the published assets to exist.
+        if args.phase == "mid":
+            # Candidate-bound rows are worth RUNNING at halfway and cannot be
+            # FINISHED there, so they are shown apart and counted nowhere.  Folding
+            # them into the tally is what made the mid view unreachable by
+            # construction; a reader who cannot finish the list stops reading it.
+            early = [
+                (name, [i for i in items if "cand" in i.cadence.split()])
+                for name, items in sections
+            ]
+            early = [(name, items) for name, items in early if items]
         sections = [
             (name, [i for i in items if args.phase in i.cadence.split()])
             for name, items in sections
         ]
         sections = [(name, items) for name, items in sections if items]
-    for _, items in sections:
+    for _, items in sections + early:
         for item in items:
             item.resolve(state)
 
@@ -1425,7 +1460,7 @@ def main() -> int:
                             "cadence": i.cadence,
                             "evidence": i.evidence,
                         }
-                        for name, items in sections
+                        for name, items in sections + early
                         for i in items
                     ],
                 },
@@ -1435,16 +1470,17 @@ def main() -> int:
         return 0
 
     phase_label = {
-        "mid": " — MID-CYCLE stability audit (early warning; redo candidate-bound items on the candidate)",
+        "mid": " — MID-CYCLE stability audit (every counted row below can be FINISHED now)",
         "pre": " — PRE-WORK for the month's last days",
     }.get(args.phase, "")
     print(f"Release checklist — loft {version}   (measured on {head}){phase_label}\n")
     if not args.phase:
         print(
-            "  cadence: [mid] runs meaningfully at the cycle's halfway point (overall\n"
-            "  stability) · [pre] can be finished in the month's last days as pre-work ·\n"
+            "  cadence: [mid] can be FINISHED at the cycle's halfway point (overall\n"
+            "  stability) · [cand] worth running early, but its tick must name the tag\n"
+            "  candidate · [pre] can be finished in the month's last days as pre-work ·\n"
             "  unmarked needs the release window itself.  `--phase mid|pre` works each\n"
-            "  view; an early run of a tag-candidate item is early warning, not its tick.\n"
+            "  view; `--phase mid` lists the [cand] rows apart and counts them nowhere.\n"
         )
     for name, items in sections:
         shown = [i for i in items if i.state != NA]
@@ -1463,6 +1499,21 @@ def main() -> int:
                 print(f"                            how:  {i.how}")
                 if i.passes:
                     print(f"                            pass: {i.passes}")
+        print()
+
+    if early:
+        # Shown because a halfway run of a sweep is genuine early warning; counted
+        # nowhere because its evidence cannot name the tree that ships.
+        print("## Early warning — worth running now, the TICK belongs on the candidate")
+        for _, items in early:
+            for i in items:
+                if i.state == NA:
+                    continue
+                print(f"  {MARK[i.state]}        {i.id:<20} {'[cand]':<10} {i.title}")
+                print(f"                            how:  {i.how}")
+                if i.passes:
+                    print(f"                            pass: {i.passes}")
+        print("  (counted nowhere below — a mid-cycle result is warning, not evidence)")
         print()
 
     auto = [i for _, items in sections for i in items if i.automatic and i.applies]

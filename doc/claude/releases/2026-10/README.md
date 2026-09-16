@@ -35,10 +35,11 @@ for.
 | `A-skills-review` | ❌ | 11 of 11 agent skills owe a read (`make skills-review`) — a skill quoting last month's procedure steers every session that loads it |
 | `A-validator-dryrun` | ❓ | never ran; UNKNOWN is not a pass |
 
-**Manual: 0 of 12 done.**  Eight are bound to the tag candidate (`M-valgrind`, `M-leaks`,
-`M-ignores`, `M-wasm`, `M-docs-review`, `M-monthly-docs`, `M-monthly-bugs`, `M-libs`,
-`M-close-plans`) and are measured when there is one.  Three are the mid-cycle work proper, and are
-the first things this cycle owes:
+**Manual: 0 of 12 done.**  Three of those twelve are bound to the tag candidate (`M-valgrind`,
+`M-leaks`, `M-wasm`) and are measured when there is one — see *The cadence split* below, which
+corrects this paragraph: it first listed nine docs as "eight bound to the candidate" and named
+four rows the next section then treated as mid-cycle work.  The rest are the mid-cycle work
+proper, and these three are the first things this cycle owes:
 
 - **`M-perf-pass`** — `make speed`, and `python3 bench/compare.py` per library against
   `formal/performance.md`'s bar.  ../loft2 has just narrowed `D-perf-1` to the four bench rows still
@@ -67,6 +68,59 @@ the first things this cycle owes:
 - **Filed this cycle**: loft#1544 — `./scripts/idx tag:@PLN<n>` answers an empty list at exit 0 for
   every plan, because the scanner indexes `@P` and `@PLAN` and has no `@PLN` arm.  `needs-design`:
   the two existing families validate locally, while a plan id is an issue number in another repo.
+
+## The cadence split — `[mid]` now means COMPLETABLE (2026-09-16)
+
+The halfway view reported **7/12 manual steps done** against a denominator no halfway run could
+reach: five of the twelve could only be ticked on a tag candidate that does not exist yet.  A
+tally that cannot be completed reads as permanent unfinished work, and a reader learns to skim
+it — the same failure as a gate whose threshold has drifted from its subject.
+
+`[mid]` now means *can be FINISHED here*, and a new `[cand]` marks what is worth RUNNING early
+as warning but whose tick must name the tree that ships (`M-valgrind`, `M-leaks`, `M-wasm`).
+`--phase mid` lists those apart and counts them nowhere.  `A-validator-dryrun` lost `mid` for the
+same reason: rehearsing the registry splice needs an artefact that exists only at the tag, so at
+halfway it can report nothing but exit 3, planting a permanent "never ran" in the view.  That
+answers the open question below in the direction the phase's own definition requires.
+
+The rows were classified on evidence, not on their titles: the seven a human actually finished
+this morning are mid-completable by demonstration; `M-docs-review` is too (this record shows four
+of its five steps done at halfway); and the three `[cand]` rows are the ones the script's own
+comment already named, two of which say "on the TAG CANDIDATE" in their titles.  The mid view now
+reads **7/10**, with `M-ignores` and `M-docs-review` as the two rows actually actionable today.
+
+### New row — `M-file-sizes`, the file-shape census
+
+Added at the owner's ask: *are our files too long for proper use, should they be split per
+subject, and is the change history split from the documentation itself?*  `make file-sizes`
+answers all three (`scripts/file-sizes.py` + the existing `scripts/doc_history_report.py`).
+
+**Length is not the defect** — `DOC_QUALITY.md` rule 4 judges by content — so the report's verdict
+is the SPLIT SIGNAL: the share of a file taken by its largest section.  A small share means
+comparable subjects sharing a file (split it); a dominant one means a single subject that is
+merely long (leave it).  Measured 2026-09-16:
+
+- **Docs** — 1000 files, median 189 lines, 89 over the 700 bar, **36 reading as several
+  subjects**: `PERFORMANCE.md` (32 sections, largest 17 %), `DESIGN_DECISIONS.md` (70, 6 %),
+  `TESTING.md` (36, 20 %), `WASM.md` (22, 13 %), `PLANNING.md` (21, 22 %), `LOFT.md` (29, 16 %),
+  `PACKAGES.md` (39, 22 %), `plans/157-native-4x-drawing/DESIGN.md` (56, 8 %).
+- **Code** — 612 files, median 260, 96 over the 1200 bar, 45 as several subjects.  The giant
+  parser and state files are **KEEP**: one `impl` block is 74–97 % of each, so they are one
+  subject that is merely long.  The real candidate is `src/use_analysis.rs` (167 sections,
+  largest 8 %); `tests/issues.rs` (1550, 1 %) is a test file, where that shape is the point.
+- **History** — the split holds in general: 138 docs carry timeline lines, 5155 of 90 793 (6 %).
+  The exception is the formal contract docs, where it concentrates — `formal/heap.md` is **71 %
+  history with no `-history.md` companion**, the only high-share contract doc without one, and
+  `binding.md` (52 %), `tuples.md` (59 %), `closures.md` (49 %) and `ownership.md` (35 %) all
+  HAVE a companion and still carry that much.  **A companion existing is not evidence the history
+  moved into it** — read the share, not the `yes`.
+
+⚠ The first version of the report was wrong in a way worth recording, because it is the failure
+this project keeps paying for: it divided the largest section by the WHOLE FILE while the sections
+span only from the first anchor to EOF, so a doc with one late `##` scored a 2 % "largest section"
+and read as several subjects.  It flagged `ownership-history.md` as *"1 sections, the largest only
+2 %"* — a sentence that cannot be true.  A denominator that does not match its subject; 7 of 43
+documentation recommendations were false before the guard (`len(secs) < 2` cannot be split) landed.
 
 ## Decisions and questions for the owner
 

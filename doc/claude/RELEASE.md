@@ -1030,17 +1030,28 @@ Three things make it worth working through rather than reading:
 Two properties added by @PLN156, because 2026.8.0's real cost was discovering by hand
 that several "done" things had never been true:
 
-- **Every item carries its CADENCE, and the early views are commands.**  `[mid]` marks
-  an item that runs meaningfully at the cycle's HALFWAY point, because it measures
-  overall stability rather than a release artifact (the leak/valgrind sweeps, the
-  monthly reviews, the liveness census, `A-registry-prev` — the step-4 backstop, worth
-  asking early); `[pre]` marks what can be finished in the month's LAST DAYS as
-  pre-work, so the release does not spill deep into the new month (changelogs, the PDF,
-  the reference review, the release gate on a near-final candidate); unmarked items
-  need the release window itself (the tag, the draft, or the published assets).
-  `make release-checklist ARGS="--phase mid"` (or `pre`) shows and measures exactly
-  that slice.  An early run of a tag-candidate item (valgrind, leaks, release-gate,
-  wasm) is early warning, not its tick — redo it on the candidate.
+- **Every item carries its CADENCE, and the early views are commands.**  The test a
+  marker applies is whether the item can be FINISHED in that phase — whether its
+  evidence stays valid as the tree moves on — because a tick is a claim about the
+  release, not about the day it was made.  `[mid]` marks what is completable at the
+  cycle's HALFWAY point, because it measures overall stability or a process state
+  rather than a release artifact (the monthly reviews, the liveness census, the
+  falsification receipts, the performance pass, the file-shape census,
+  `A-registry-prev` — the step-4 backstop, worth asking early); `[cand]` marks what is
+  worth RUNNING early as warning but whose tick must name the tag candidate (the
+  leak and valgrind sweeps, the wasm endpoint); `[pre]` marks what can be finished in
+  the month's LAST DAYS as pre-work, so the release does not spill deep into the new
+  month (changelogs, the PDF, the reference review, the release gate on a near-final
+  candidate); unmarked items need the release window itself (the tag, the draft, or
+  the published assets).  `make release-checklist ARGS="--phase mid"` (or `pre`) shows
+  and measures exactly that slice, listing the `[cand]` rows apart and counting them
+  nowhere.
+
+  ⚠ **A row that cannot be finished in a phase does not belong in that phase's
+  tally.**  Carrying the sweeps under `[mid]` made the halfway view report `7/12`
+  against a denominator no halfway run could ever reach — a gate whose threshold had
+  drifted from its subject, which reads as permanent unfinished work and teaches the
+  reader to skim the list.  The early warning was worth keeping; counting it was not.
 - **A check that could not run never reads as a check that passed.**  The summary names
   every automatic item that stayed UNKNOWN ("not green: … never ran"), the exit code
   keeps red (1) apart from not-yet-evidence (3) and green (0), and the header stamps
