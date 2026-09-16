@@ -3580,7 +3580,24 @@ impl Parser {
         let mut disjoint = 0usize;
         let mut hits_destination = false;
         value.walk(&mut |n| {
-            if matches!(n, Value::Var(x) if *x == root) {
+            // Every node that NAMES the root, by the same arms `Value::reads_var` uses — a
+            // `TupleGet`, a `Set` target, a `CallRef` callee and an `Iter` subject carry the
+            // variable NUMBER and have no `Value::Var` child, so counting only `Var` would
+            // leave them unaccounted for and the spare below would fire on a read it never
+            // saw.  The count is what licenses the spare, so it has to be complete: a naming
+            // this does not recognise must raise `occurrences`, never sit silently at zero.
+            let names_root = match n {
+                Value::Var(x)
+                | Value::Set(x, _)
+                | Value::TupleGet(x, _)
+                | Value::TuplePut(x, _, _)
+                | Value::FnRefDnr(x)
+                | Value::CallRef(x, _)
+                | Value::Iter(x, _, _, _) => *x == root,
+                Value::FnRef(_, w, _) => *w == root,
+                _ => false,
+            };
+            if names_root {
                 occurrences += 1;
             }
             let Value::Call(d, args) = n else { return };
