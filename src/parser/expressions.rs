@@ -2545,9 +2545,20 @@ use a separate collection or add after the loop"
             matches!(v.unspan(), Value::Call(d, args)
                 if *d == append_nr && args.len() == 3 && *args[0].unspan() == *to.unspan())
         };
+        // @PLN164 C2 — the second way a statement fills this field: it handed the place to a
+        // call as its RETURN BUFFER, so the elements arrive through the callee and no
+        // `OpAppendVector` names the field here at all.  The shape is exact and is only ever
+        // this rewrite's — a `Set` of the destination into a variable the call site minted as a
+        // hidden buffer.  Without it the fill went in and the group was never re-indexed:
+        // `len(g.es)` read 3 while `g.by_x` read 0, which is the silence `(Col-Group)` exists
+        // to prevent and is what the C2 cells caught.
+        let fills_via_buffer = |p: &Self, v: &Value| {
+            matches!(v.unspan(), Value::Set(w, rhs)
+                if p.vars.is_caller_hidden_buf(*w) && *rhs.unspan() == *to.unspan())
+        };
         let (wrote, already_reset) = match &*code {
             Value::Insert(ls) => (
-                ls.iter().any(writes_field),
+                ls.iter().any(writes_field) || ls.iter().any(|o| fills_via_buffer(self, o)),
                 ls.iter()
                     .any(|o| matches!(o.unspan(), Value::Call(d, _) if *d == clear_keyed_nr)),
             ),
@@ -2582,6 +2593,67 @@ use a separate collection or add after the loop"
     /// Every arm of the vector-field replace goes through here, so a group whose
     /// primary is a `vector` cannot be emptied by one arm and left with live views
     /// by another.
+    /// @PLN164 C2 (@FR-R-Place) — hand a call the destination place as its return buffer, so
+    /// its vector result is built where it will live.
+    ///
+    /// `h.v = mkints(n)` mints a buffer store, fills it, clears `h.v` and copies every element
+    /// in, then frees the buffer.  The destination already exists, so the copy buys nothing:
+    /// the rule says that when the place EXISTS at the call and no argument reaches it, the
+    /// buffer IS the place and nothing moves.
+    ///
+    /// The buffer stays the VARIABLE the call site minted — only what it HOLDS changes, from a
+    /// store of its own to the destination's `DbRef`.  That is what keeps this a pure-IR
+    /// rewrite: the call's result type still carries `Deps::frame1(vr)`, so B1's adopt, the
+    /// delivery arms and the free sweep all read what they already read.  The variable is
+    /// re-pointed the way `group_elem_write` re-points its own borrowed temp — `inline_ref`
+    /// plus `skip_free`, because the place is not ours to free (@FR-O-Buffer's clause for a
+    /// buffer that IS a place: not a store of the caller's, never freed, no identity guard).
+    ///
+    /// The caller's clear stays.  The callee's first op clears its buffer too, so the
+    /// `OpClearVector` is redundant — but `clear_vector_field` also emits the KEYED SIBLING
+    /// RESETS a grouped destination needs, and those are not.  The re-index on the other side
+    /// is added by `keyed_sibling_view_fills`, which wraps the finished statement.
+    ///
+    /// Admission is POSITIVE and narrow: a direct call to a loft-defined callee whose LAST
+    /// argument is the hidden buffer this site minted.  The one decline is any other argument
+    /// that reaches the destination's base, and it is true by construction rather than by
+    /// measurement: the callee clears its buffer BEFORE reading its arguments, so
+    /// `h.v = grow(h.v)` would read an emptied vector.
+    fn buffer_is_the_place(
+        &mut self,
+        to: &Value,
+        rhs: &Value,
+        parent_tp: &Type,
+    ) -> Option<Vec<Value>> {
+        if !crate::keys::buffer_is_the_place_enabled() || self.first_pass {
+            return None;
+        }
+        let Value::Call(d_nr, args) = rhs.unspan() else {
+            return None;
+        };
+        if !self.data.def(*d_nr).name.starts_with("n_") || args.is_empty() {
+            return None;
+        }
+        let Some(Value::Var(vr)) = args.last().map(Value::unspan) else {
+            return None;
+        };
+        let vr = *vr;
+        if !self.vars.is_caller_hidden_buf(vr) {
+            return None;
+        }
+        let (base, _) = crate::use_analysis::projection_container_place(&self.data, to)?;
+        let rest: Vec<Value> = args[..args.len() - 1].to_vec();
+        if rest.iter().any(|a| a.reads_var(base)) {
+            return None;
+        }
+        let mut ops = self.clear_vector_field(to, parent_tp);
+        self.vars.mark_inline_ref(vr);
+        self.vars.set_skip_free(vr);
+        ops.push(v_set(vr, to.clone()));
+        ops.push(rhs.clone());
+        Some(ops)
+    }
+
     fn clear_vector_field(&mut self, to: &Value, parent_tp: &Type) -> Vec<Value> {
         let mut ops = self.keyed_sibling_view_resets(to, parent_tp);
         ops.push(self.cl("OpClearVector", std::slice::from_ref(to)));
@@ -5126,6 +5198,10 @@ use a separate collection or add after the loop"
                     let mut ops = vec![init_tmp, fill_tmp];
                     ops.extend(clear);
                     ops.push(append);
+                    *code = Value::Insert(ops);
+                } else if let Some(ops) =
+                    self.buffer_is_the_place(to, &code.clone(), &lhs_parent_tp)
+                {
                     *code = Value::Insert(ops);
                 } else {
                     let rhs_saved = code.clone();

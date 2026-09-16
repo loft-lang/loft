@@ -89,6 +89,15 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 buffer and its free declines against each (O-Complete, per path).  A
                 result reached any other way — a lift temp with a plain free, a local
                 assigned twice — has no such witness.
+                A buffer that IS A DESTINATION PLACE is the exception, and the only one:
+                where (R-Place) hands a call the place its result is going — the place
+                EXISTS at the call and no argument reaches it — the buffer is not a
+                store of the caller's at all.  It is never freed, at frame exit or
+                anywhere, and it needs no identity guard, because there is no second
+                store for the result to be distinct FROM: the result names the
+                destination.  The clause is here rather than in (R-Place) because it is
+                this rule that says what a buffer is; without it the two describe
+                different objects.
   (O-Complete)  PER BINDING, PER PATH, COMPLETE.  Every binding, including every `match`/`if`
                 arm — a set-and-reconcile, not a single-variable structural walk.
   (O-ViewField) A FIELD OF A RETURNED RECORD MAY BE A VIEW.  Where a heap field of a
