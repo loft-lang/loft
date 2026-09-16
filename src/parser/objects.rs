@@ -3547,13 +3547,71 @@ impl Parser {
         self.parse_in_range_body(expr, data, subject_tp, name, in_type, reverse)
     }
 
+    /// @FR-R-InPlaceLiteral's staging clause — does `value` read the PLACE `(root, off)` a
+    /// literal is about to be written into?
+    ///
+    /// A read of `root` at a DIFFERENT field is not a read of the destination: `bx.inner = El {
+    /// a: len(bx.tag) }` reads `bx`, but nothing the literal replaces, and staging it would cost
+    /// a temp for a hazard that is not there.  So a projection of `root` at a disjoint offset is
+    /// SPARED and everything else about `root` is not — a bare read handed to a call, a
+    /// projection this cannot resolve, a re-projection through something else.
+    ///
+    /// The direction is the one every producer in this area keeps: sparing wrongly costs the
+    /// VALUE (the swap that answered `2,2` for `2,1`), staging wrongly costs a stack temp.  So
+    /// the spare is taken only on proof, and the counting is what supplies it — every occurrence
+    /// of `root` must be accounted for by a disjoint projection, or the whole literal stages.
+    ///
+    /// **Only `OpGetField` proves disjointness, and deliberately so.**  A field read also
+    /// arrives through the TYPED accessors (`bx.tag` is `OpGetText(bx, 28)`), whose second
+    /// argument is a field offset for some and a SIZE for others (`OpGetVector(v, size,
+    /// index)`) — telling them apart needs a list of ops that reads offsets, and a list like
+    /// that drifts silently against a new op, which is the failure mode PERFORMANCE.md § Design
+    /// P8 records for the five mutation deny-lists.  So a sibling read spelled with a typed
+    /// accessor stages a temp it does not need.  That is the cheap mistake, it is bounded by
+    /// the literal's own field count, and closing it wants the field's declared SPAN rather
+    /// than another list.
+    fn reads_place(&self, value: &Value, root: u16, off: u32) -> bool {
+        // `ANY_FIELD` is the whole variable — the re-init clears the entire record, so no read
+        // of it is disjoint from what is replaced and the spare below must never apply.
+        if off == crate::use_analysis::ANY_FIELD {
+            return value.reads_var(root);
+        }
+        let mut occurrences = 0usize;
+        let mut disjoint = 0usize;
+        let mut hits_destination = false;
+        value.walk(&mut |n| {
+            if matches!(n, Value::Var(x) if *x == root) {
+                occurrences += 1;
+            }
+            let Value::Call(d, args) = n else { return };
+            if self.data.def(*d).name() != "OpGetField" {
+                return;
+            }
+            let (Some(Value::Var(b)), Some(Value::Int(o))) = (
+                args.first().map(Value::unspan),
+                args.get(1).map(Value::unspan),
+            ) else {
+                return;
+            };
+            if *b != root {
+                return;
+            }
+            if u32::try_from(*o).is_ok_and(|o| o == off) {
+                hits_destination = true;
+            } else {
+                disjoint += 1;
+            }
+        });
+        hits_destination || occurrences > disjoint
+    }
+
     pub(crate) fn parse_object_field(
         &mut self,
         td_nr: u32,
         code: &mut Value,
         list: &mut Vec<Value>,
         found_fields: &mut HashSet<String>,
-        in_place_var: Option<u16>,
+        self_read_root: Option<(u16, u32)>,
         sinks: &mut FieldSinks,
     ) -> bool {
         // Accept both bare identifiers and JSON-style quoted strings as field names.
@@ -3774,12 +3832,21 @@ impl Parser {
                 self.amp_head = AmpHead::No;
                 t
             };
-            // #330: an initialiser that READS the in-place target is hoisted
-            // into a typed temp; the temps run before the OpDatabase re-init
-            // (spliced in parse_object), so they see the OLD record.
-            if let Some(xv) = in_place_var
+            // #330 / @FR-R-InPlaceLiteral — an initialiser that READS the place being
+            // written is hoisted into a typed temp; the temps run before the first write
+            // (spliced in `parse_object`), so every field expression sees the OLD record.
+            //
+            // The root is the DESTINATION's own variable, which is the whole variable for
+            // `v = S { … }` and the base of the projection for `o.f = S { … }`.  Keyed on the
+            // ROOT rather than on the exact place because a field expression reaches the
+            // destination through any number of spellings — `o.f.b`, a view bound earlier
+            // whose deps name `o`, a call handed `o.f` — and hoisting one that turns out not
+            // to alias costs a stack temp, where missing one costs the value: `o.f = S { a:
+            // o.f.b, b: o.f.a }` answered `2,2` for `2,1` on both backends, and so did the
+            // same swap with the second field read through a call (@PLN164 C1).
+            if let Some((xv, xoff)) = self_read_root
                 && !primed
-                && value.reads_var(xv)
+                && self.reads_place(&value, xv, xoff)
             {
                 let tmp = self.vars.work_refs(&exp_tp, &mut self.lexer);
                 if !self.first_pass {
@@ -3863,6 +3930,13 @@ impl Parser {
         let mut list = Vec::new();
         let mut new_object = false;
         let mut in_place_var: Option<u16> = None;
+        // @FR-R-InPlaceLiteral's staging clause — the variable a field initialiser must be
+        // hoisted for, which is NOT `in_place_var`: that one also drives the retry below
+        // (`*code = Value::Var(v_nr)`), which is only meaningful for a whole-variable
+        // destination.  A literal written into a PROJECTION (`o.f = S { … }`, and the element
+        // place C1 adds) writes straight into the place with no re-init, so it needs the
+        // hoist and must not reach the retry.
+        let mut self_read_root: Option<(u16, u32)> = None;
         let mut sinks = FieldSinks::default();
         let work = self.vars.work_ref();
         // Both sequences: the construction arms below mint from the pass-2-only
@@ -3887,6 +3961,19 @@ impl Parser {
         // the answer was DISCARDED — and declining the hint outright loses the `&`-link
         // reshape refusal, which is derived from the in-place construction.
         let hint_is_the_whole_value = !self.prefix_operand && !self.inplace_hint_declined;
+        // A literal written into a PROJECTION place (`o.f = S { … }`) builds THERE — the field
+        // writes take the place as their receiver and there is no temporary — so its
+        // initialisers need @FR-R-InPlaceLiteral's staging exactly as a whole-variable rebind's
+        // do.  Read through the same walk every other reader of "which place is this?" uses, so
+        // the two cannot disagree; a destination it cannot name yields no root and keeps
+        // today's behaviour.
+        if !self.first_pass
+            && !matches!(code, Value::Var(_))
+            && let Some(place) = crate::use_analysis::projection_container_place(&self.data, code)
+            && !self.vars.is_compiler_generated(place.0)
+        {
+            self_read_root = Some(place);
+        }
         if let Value::Var(v_nr) = code
             && hint_is_the_whole_value
         {
@@ -3941,6 +4028,9 @@ impl Parser {
                 // before the initialisers run.
                 if !self.first_pass && !self.vars.is_compiler_generated(*v_nr) {
                     in_place_var = Some(*v_nr);
+                    // The whole variable is the place, so `ANY_FIELD`: every read of it reads
+                    // what the re-init is about to clear.
+                    self_read_root = Some((*v_nr, crate::use_analysis::ANY_FIELD));
                 }
                 self.data.set_referenced(td_nr, self.context, Value::Null);
                 let tp = i32::from(self.data.def(td_nr).known_type());
@@ -4127,7 +4217,7 @@ impl Parser {
                 code,
                 &mut list,
                 &mut found_fields,
-                in_place_var,
+                self_read_root,
                 &mut sinks,
             ) {
                 self.lexer.revert(link);
