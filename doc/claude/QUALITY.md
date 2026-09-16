@@ -2660,6 +2660,15 @@ reads +4 · +4, because the @PLN164 C1/C2 functions picked from 157 discriminate
 variants too and their base did not carry them.  Re-derived with `ir_walker_audit.py optional`.
 The opaque column is unmoved on both sides, which is the ratchet.)
 
+(2026-09-16, the ratchet re-pinned 334 / 1316 -> 334 / 1314 after the join.  The opaque
+FUNCTIONS column is unmoved, which the note above says; the opaque TESTS count FELL by two, and
+that is not the harmless direction it looks.  The ratchet fails only on GROWTH, so a pin left at
+1316 over a tree measuring 1314 would have let two shape tests go blind to `t?` without a word —
+a gate quietly two wider than the tree it guards.  Re-pinned with `ir_walker_audit.py optional
+--write-ratchet`, which is what `--check-ratchet` itself instructs when the count falls.
+../loft2's tree measures 1314 as well, so the two pins agreeing is the join having CONVERGED,
+not a number carried across a tree boundary.)
+
 (2026-09-16, D-tup-10's DISCHARGE close — `??` over the boxed spelling: 834 · 494 · 6 · 334,
 re-measured against the 833 · 493 · 6 · 334 the same day's earlier close left.  One function is
 added, `Parser::boxed_tuple_members_modulo_null`, and it peels: it asks whether a boxed tuple's
