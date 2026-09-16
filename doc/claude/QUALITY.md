@@ -480,7 +480,13 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 516 | 493 | **23** |
+| 522 | 499 | **23** |
+
+(2026-09-16, @PLN164 C5: six functions added that discriminate on `Value` variants, and all six
+peel — the view-leaf walk (`leaf_source`, `appends_into`, `leaf_root`, `buffer_uses_accounted`)
+and its site half (`view_field_reads`, `span_keeps_places`), each matching on `.unspan()` or
+inside an `any_node` closure, which peels `Span` before calling it.  The opaque column is
+unmoved.)
 
 (2026-09-16, @PLN164 C2: one function added that discriminates on `Value` variants, and it
 peels — `Parser::buffer_is_the_place`, whose tests run through `unspan` and inside an `any_node`
@@ -1591,7 +1597,17 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 66 | **14** | 52 |
+| 70 | **14** | 56 |
+
+(2026-09-16, @PLN164 C5: four functions added, all on the call-only side — `leaf_source` and
+`appends_into` read the append into a record's collection FIELD, `leaf_root` resolves that
+field's place to a parameter, and `view_field_reads` recognises a read of it at a call site.
+CHECKED rather than bumped: `TupleGet` reads a stack tuple MEMBER, which is not a spelling of a
+record's collection field, so none of the four has a hole where it would belong.  What this unit
+DID find is the dual in the other direction — the same notion reaching the IR as
+`OpNewRecord(buf, <record>, <field nr>)` and as an element push — and the cure was to account
+every mention of the buffer rather than to match another spelling (`formal/IMPLEMENTATIONS.md`
+§ *One notion, how many SPELLINGS?*).)
 
 (2026-09-16, @PLN164 C1 step 2: `Parser::builds_into_element` asks whether a destination is a
 vector ELEMENT place a literal may be written into, and `Parser::is_grouped_vector_elem` whether
@@ -2636,7 +2652,12 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 835 | 495 | 6 | **334** |
+| 836 | 496 | 6 | **334** |
+
+(2026-09-16, @PLN164 C5: one function added, seeing through the wrapper — `view_leaf_type` asks
+whether a record's heap field is a plain `vector<T>`, which a view leaf may deliver, and reads it
+through `.base()` because a `vector<T>?` is the same shape behind a nullability bit.  The opaque
+column and the ratchet are unmoved.)
 
 (2026-09-16, @PLN164 C1: one function added, seeing through the wrapper — `builds_into_element`
 reads a field's declared type through `.base()` to ask whether the record owns a COLLECTION,
