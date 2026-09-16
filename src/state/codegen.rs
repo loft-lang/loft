@@ -3016,6 +3016,18 @@ impl State {
             // `τ?` (a `P? = null` is parsed to `OpNullRefSentinel`); a compiler temp's
             // preamble does.
             self.gen_set_first_ref_null(stack, v);
+        } else if matches!(stack.function.tp(v).base(), Type::Iterator(_, _))
+            && *value == Value::Null
+        {
+            // loft#1540's neighbour (@PLN162's own iterators): `z: iterator<τ>? = null` is a
+            // null HANDLE — DbRef-sized like a collection's, and `exhausted(z)` reads it as
+            // absent.  Without an arm here it fell to the generic fallthrough below, where
+            // `generate(Null)` pushes nothing, the `stack.position == before` early return
+            // fires, and the slot is left UNWRITTEN: correct only because the preamble
+            // sentinel-inits the frame, and caught by @PLN120 A's debug assertion, which says
+            // a local holding a slot must have a store span.  The sentinel write is the same
+            // one a nullable collection's null-init emits.
+            self.gen_set_first_nullable_collection_null(stack, v);
         } else if let Type::Reference(d_nr, _) = stack.function.tp(v).clone()
             && let Value::Call(op_nr, _) = value.unspan()
             && stack.data.def(*op_nr).name() == "OpCopyRecord"
