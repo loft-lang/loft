@@ -1,0 +1,76 @@
+// @PLN164 C2 boundary matrix — `(R-Place)`'s "the buffer IS the place": a call whose result's
+// destination place EXISTS at the call, and which no argument reaches, is handed that place as
+// its return buffer, so nothing is copied.
+//
+// Today every one of these mints a buffer store, fills it, then CLEARS the destination and
+// APPENDS every element into it.  The values below are today's answers, hand-computed, and they
+// are the oracle: C2 may not move any of them.  The DECLINE rows are the rule's own list and
+// each is here because admitting it would be silent-wrong, not slow.
+struct Pt { x: integer = 0, y: integer = 0 }
+struct Holder { v: vector<integer>, n: integer = 0, tag: text = "" }
+struct Op { kind: integer = 0, pts: vector<Pt>, w: integer = 0 }
+struct Sc { ops: vector<Op> }
+struct Grouped { es: vector<Pt>, by_x: hash<Pt[x]> }
+
+fn ok(nm: text, got: text, want: text) {
+  if got == want { println("{nm}  {got}   ok"); }
+  if got != want { println("{nm}  {got}  want {want}   BROKEN"); }
+}
+fn tot(v: vector<integer>) -> integer { t = 0; for x in v { t += x; } t }
+fn totp(v: vector<Pt>) -> integer { t = 0; for p in v { t += p.x + p.y; } t }
+
+// The callees.
+fn mkints(n: integer) -> vector<integer> { o: vector<integer> = []; for i in 0..n { o += [i]; } o }
+fn mkpts(n: integer) -> vector<Pt> { o: vector<Pt> = []; for i in 0..n { o += [Pt { x: i, y: i * 2 }]; } o }
+fn grow(v: vector<integer>) -> vector<integer> { o: vector<integer> = []; for x in v { o += [x + 1]; } o }
+fn passthrough(v: vector<integer>) -> vector<integer> { v }
+fn two_exits(n: integer) -> vector<integer> {
+  if n < 0 { return [99] }
+  o: vector<integer> = []; for i in 0..n { o += [i]; } o
+}
+fn maybe(n: integer) -> vector<integer>? { if n < 0 { null } else { mkints(n) } }
+
+// ---- ADMISSIONS: the place exists and no argument reaches it ----------------------
+fn a1(h: Holder, n: integer) { h.v = mkints(n); }
+fn a2(sc: Sc, i: integer, n: integer) { o = sc.ops[i]?; o.pts = mkpts(n); }
+fn a3(h: Holder, n: integer) { h.v = mkints(n); h.n = len(h.v); }
+
+// ---- DECLINES the rule lists -----------------------------------------------------
+// d1 — an argument REACHES the destination's store: source and destination alias.
+fn d1(h: Holder) { h.v = grow(h.v); }
+// d2 — the result is READ after the store, so the destination owns it and `B-Copy` would show.
+fn d2(h: Holder, n: integer) -> integer { r = mkints(n); h.v = r; tot(r) }
+// d3 — the callee may hand back a store it did NOT mint (`O-Opaque`: it answers a parameter).
+fn d3(h: Holder, src: vector<integer>) { h.v = passthrough(src); }
+// d4 — the callee answers a store other than its buffer on SOME exit.
+fn d4(h: Holder, n: integer) { h.v = two_exits(n); }
+// d5 — a `??` discharge on the result.
+fn d5(h: Holder, n: integer) { h.v = maybe(n) ?? [7, 7]; }
+// d6 — the destination is a member of a LINKED GROUP (C1's lesson: the group maintenance).
+fn d6(g: Grouped, n: integer) { g.es = mkpts(n); }
+
+fn main() {
+  h1 = Holder { v: [9, 9], n: 1, tag: "t" }; a1(h1, 4);
+  ok("a1 field place       ", "{len(h1.v)},{tot(h1.v)},{h1.n}", "4,6,1");
+  s2 = Sc { ops: [Op { kind: 0, pts: [], w: 0 }] }; a2(s2, 0, 3); o2 = s2.ops[0]?;
+  ok("a2 element's field   ", "{len(o2.pts)},{totp(o2.pts)}", "3,9");
+  h3 = Holder { v: [], n: 0, tag: "t" }; a3(h3, 5);
+  ok("a3 read the dest after", "{len(h3.v)},{tot(h3.v)},{h3.n}", "5,10,5");
+
+  h4 = Holder { v: [1, 2, 3], n: 0, tag: "t" }; d1(h4);
+  ok("d1 arg reaches dest  ", "{len(h4.v)},{tot(h4.v)}", "3,9");
+  h5 = Holder { v: [], n: 0, tag: "t" }; r5 = d2(h5, 4);
+  ok("d2 result read after ", "{len(h5.v)},{tot(h5.v)},{r5}", "4,6,6");
+  h6 = Holder { v: [], n: 0, tag: "t" }; d3(h6, [5, 6]);
+  ok("d3 callee answers arg", "{len(h6.v)},{tot(h6.v)}", "2,11");
+  h7 = Holder { v: [], n: 0, tag: "t" }; d4(h7, -1);
+  ok("d4 two exits (early) ", "{len(h7.v)},{tot(h7.v)}", "1,99");
+  h7b = Holder { v: [], n: 0, tag: "t" }; d4(h7b, 4);
+  ok("d4 two exits (tail)  ", "{len(h7b.v)},{tot(h7b.v)}", "4,6");
+  h8 = Holder { v: [], n: 0, tag: "t" }; d5(h8, -1);
+  ok("d5 discharge (null)  ", "{len(h8.v)},{tot(h8.v)}", "2,14");
+  h8b = Holder { v: [], n: 0, tag: "t" }; d5(h8b, 3);
+  ok("d5 discharge (value) ", "{len(h8b.v)},{tot(h8b.v)}", "3,3");
+  g9 = Grouped { es: [], by_x: [] }; d6(g9, 3);
+  ok("d6 linked group      ", "{len(g9.es)},{len(g9.by_x)},{g9.by_x[2]?.y}", "3,3,4");
+}

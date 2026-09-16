@@ -568,6 +568,47 @@ still passes, since the copy is correct, so what the switch costs is a store and
 that no value can see.  The pin asserts BOTH element spellings, having first passed vacuously by
 asserting one.
 
+## C2 — the destination as return buffer (SCOPED 2026-09-16, not cut)
+
+*Re-measured first, and this row IS real* — unlike C3's.  `h.v = mkints(n)` on an EXISTING
+field place emits, per assignment:
+
+```
+__ref_1 = null                                    // the callee's buffer, a store of its own
+__p154_rhs_1 = n_mkints(n, __ref_1)               // the callee fills it
+OpClearVector(OpGetField(h, 8, 24))               // the destination is emptied
+OpAppendVector(OpGetField(h, 8, 24), __p154_rhs_1, 0)   // every element copied in
+OpFreeRef(__ref_1)                                // the buffer freed
+```
+
+A store, a full element-by-element copy and a free, for a destination that already exists.
+`(R-Place)`'s last clause is exactly this: *"when the destination place EXISTS at the call and
+no argument of the call reaches it, the buffer IS the place and nothing moves."*  The site is
+`expressions.rs`'s vector-field assign (the `__p154_rhs` arm).
+
+**Why it is a B2-sized arc and not a continuation of C1.**  The buffer is not a value the call
+site passes; it is a VARIABLE the call site mints (`parser/mod.rs`, the `Type::Vector` arm of
+the hidden-argument fill): `actual[a_nr] = Value::Var(vr)`, marked `caller_hidden_buf`, and the
+call's RESULT TYPE is given `Deps::frame1(vr)`.  Every downstream reader keys on that variable —
+the adopt at first bind (B1's `adopts_minted_at_bind`), the delivery arms, the scope pass's free
+sweep.  Handing a PLACE instead is not a substitution of one argument: it is a second kind of
+buffer, whose deps name the destination's base and which the callee must not free.  That is the
+shape B2 needed a whole IR pass for (`src/place_result.rs`), and C2 needs its own.
+
+*What is already measured and ready, so the arc starts from here:* the site above, the emitted
+shape above, and an 11-cell matrix whose values are today's answers — the oracle C2 may not move.
+Its rows are the three admissions (a field place, an element's field, a destination read after
+the store) and the rule's own declines, each because admitting it is silent-wrong rather than
+slow: an argument that reaches the destination (`h.v = grow(h.v)`), the result read after the
+store, a callee that answers a PARAMETER (`O-Opaque`), a callee with two exits where only one
+writes the buffer, a `??` discharge on the result — and, added from C1's lesson rather than from
+the rule, a destination that is a member of a LINKED COLLECTION GROUP, whose maintenance only the
+copy road carries.
+
+*One smaller increment was looked for and is not worth cutting alone:* the `__p154_rhs` temp is a
+second binding of the buffer's own storage and could be elided for a call whose arguments cannot
+reach the destination, but that saves a binding and not the COPY, which is the whole row.
+
 ## The rewrite list — the natural `parse_poly` to its optimal form
 
 **This is not about how a programmer writes loft.**  The programmer writes the natural
@@ -747,7 +788,7 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state) | § B1 | c6 under the pool without `minted_pairs` — the interpreter's rebind free must first match native's `_rb_w_` guard | Blocked on that divergence |
 | **B2** — the result's buffer claimed in its destination's store, the field taking it by relocation at the last use (`R-Place`, `R-MoveLast`) | § B2 | cells b1–b15 both backends under the falsifiers; the census 184 → 50; `parse_poly`'s `paint: pp_paint` emits `OpMoveRecord` and `read_paint`'s buffer is a record in the scene's store; the parse row a wash (`perf stat`) | Shipped 2026-09-16 |
 | **C1** — element overwrite from a literal in place (`R-InPlaceLiteral`) | § C1 | step 1 (the STAGING clause, a both-backend silent-wrong on the shipped FIELD road) and step 2 (the element receiver): 25 cells both backends under every falsifier, four declines pinned, the `acc_pts` census 3 → 2 | Shipped 2026-09-16 |
-| **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § The rewrite list | E15/E16 cells; `smooth_pts` writes `Op.pts` | After C3 (needs no arena: the destination is a record in the scene's store) |
+| **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § C2 | E15/E16 cells; `smooth_pts` writes `Op.pts` | SCOPED, not cut — the row re-measured and real, the site and the 11-cell oracle banked; it needs its own IR pass (§ C2) |
 | **C3** — read-only `?`-discharge as a view (`B-View`'s discharge clause) | § C3 | the discharge ALREADY views (13 shapes measured, both backends), so the phase's content was its other half: `(B-Disturb)` across a CALL.  15 pairs both backends; 7 move under the switch | Shipped 2026-09-16 |
 | **C4** — per-type prefill image (`R-Prefill`) | § C4 | cells c1–c11 both backends under `LOFT_PREFILL_VERIFY`; the verify census over all 1432 corpus files; the image USED on both backends (`LOFT_TRACE_PREFILL`); parse row −11 % | Shipped 2026-09-15 |
 | **C5** — a returned record's heap field as a view leaf (`O-ViewField`, `R-ValueRecord`, `R-Escape`) | § The rewrite list | the points written once per line: `Mark.pts` names `Op.pts`; an E17 site that appends between the call and the read must read the copy; an escaping `pub fn` result reads the copy at the bridge | Open — last; rule admitted (C122) |
@@ -767,7 +808,11 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
    the `acc_pts` temporary the evaluation table charged to it was C1's, counted twice); C1
    closed the staging clause on the FIELD road first, because the element road inherits it, and
    then opened the element road — census 3 → 2.
-4. **C2 is next** — it needs a single-exit callee test; it does NOT need the arena.
+4. **C2 is next and is a full arc** — the row is re-measured and real (a store, an
+   element-by-element copy and a free per assignment), but the buffer is a VARIABLE the call
+   site mints and whose number the result's deps carry, so handing a PLACE instead is a second
+   kind of buffer and wants its own IR pass, as B2 did.  § C2 banks the site, the emitted shape
+   and the 11-cell oracle.
 5. **C5** last, as its own section: it extends a formal rule (`O-ViewField`) and the
    value-record gate, so the owner signs the rule off before the cells are written.
 6. **B1b** beside them whenever D-own-43 closes (the interpreter's rebind guard); then
