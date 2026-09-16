@@ -73,16 +73,40 @@ fn a2(sc: Sc, n: integer) -> Mark {
   Mark { matched: true, bad: false, mpts: a2_p }
 }
 
-/// d7 — the same natural shape, but the local is declared `[]` and filled in place, so it is
+/// a3 — the same natural shape with the local declared `[]` and filled in place, so it is
 /// bound to a field of the frame's own `__vdb` backing record rather than to a call's result.
-/// The source resolution does not reach through that binding in step 1, so the record form
-/// stands — a decline that costs the rewrite and no value, and the one the library's
-/// `parse_circle` also takes.
-fn d7(sc: Sc, n: integer) -> Mark {
-  d7_p: vector<Pt> = [];
-  for i in 0..n { d7_p += [Pt { px: i + 1, py: i }]; }
-  sc.ops += [Op { opts: d7_p, ow: n }];
-  Mark { matched: true, bad: false, mpts: d7_p }
+/// Admitted since step 2: what the leaf names is the APPEND's destination either way, and the
+/// binding the local came from does not change where the value ended up.
+fn a3(sc: Sc, n: integer) -> Mark {
+  a3_p: vector<Pt> = [];
+  for i in 0..n { a3_p += [Pt { px: i + 1, py: i }]; }
+  sc.ops += [Op { opts: a3_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: a3_p }
+}
+
+/// a4 — several EXITS, each appending its own element and returning a `Mark` that views it:
+/// the shape every parser writes, and the one a per-BODY mention count declined.  The
+/// question is per PATH — on the path that returns, exactly one append ran.
+fn a4(sc: Sc, n: integer) -> Mark {
+  if n < 0 { return Mark { matched: true, bad: true, mpts: [] } }
+  if n == 0 {
+    a4_z = mkpts(1);
+    sc.ops += [Op { opts: a4_z, ow: 0 }];
+    return Mark { matched: true, bad: false, mpts: a4_z }
+  }
+  a4_p = mkpts(n);
+  sc.ops += [Op { opts: a4_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: a4_p }
+}
+
+/// a5 — a SIBLING field of the same parameter is disturbed between the bind and the read, and
+/// that cannot move the element the leaf names: a vector's growth re-claims its own array and
+/// leaves every other field where it is.  Declining it declined every parser that records a
+/// diagnostic beside its parse.
+fn a5(sc: Sc, n: integer) -> Mark {
+  a5_p = mkpts(n);
+  sc.ops += [Op { opts: a5_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: a5_p }
 }
 
 // ── CALLEE-SIDE DECLINES ───────────────────────────────────────────────────────────
@@ -210,10 +234,26 @@ fn main() {
   m2b = a2(s2b, 4);
   ok("a2 viewing exit       ", "{m2b.matched},{m2b.bad},{len(m2b.mpts)},{totp(m2b.mpts)}", "true,false,4,18");
 
-  // d7 — a local declared `[]` and filled in place.
+  // a3 — a local declared `[]` and filled in place.
   s3 = Sc { ops: [], seen: 0 };
-  m3 = d7(s3, 3);
-  ok("d7 filled in place    ", "{len(m3.mpts)},{totp(m3.mpts)}", "3,9");
+  m3 = a3(s3, 3);
+  ok("a3 filled in place    ", "{len(m3.mpts)},{totp(m3.mpts)}", "3,9");
+
+  // a4 — three exits, each with its own append: the parser shape.
+  s4 = Sc { ops: [], seen: 0 };
+  m4a = a4(s4, -1);
+  ok("a4 empty exit         ", "{m4a.bad},{len(m4a.mpts)}", "true,0");
+  m4b = a4(s4, 0);
+  ok("a4 second exit        ", "{len(m4b.mpts)},{totp(m4b.mpts)}", "1,0");
+  s4c = Sc { ops: [], seen: 0 };
+  m4c = a4(s4c, 3);
+  ok("a4 third exit         ", "{len(m4c.mpts)},{totp(m4c.mpts)},{len(s4c.ops)}", "3,9,1");
+
+  // a5 — a sibling field grows between the bind and the read.
+  s5 = Sc { ops: [], seen: 0 };
+  m5 = a5(s5, 3);
+  s5.seen = s5.seen + 1;
+  ok("a5 sibling disturbed  ", "{len(m5.mpts)},{totp(m5.mpts)},{s5.seen}", "3,9,1");
 
   // d1 — a frame-owned source keeps the copy, and the values are the copy's.
   d1m = d1(3);

@@ -2372,6 +2372,7 @@ impl Output<'_> {
                     let src = offs.get(i).and_then(|off| {
                         super::hoist::leaf_source(
                             self.data,
+                            self.stores,
                             self.def_nr,
                             self.data.def(self.def_nr).code(),
                             bl,

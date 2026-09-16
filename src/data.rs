@@ -1165,7 +1165,20 @@ impl Value {
     /// too-wide answer (a suppressed free), never on a too-narrow one (a
     /// premature free of a store the RHS still reads).
     pub fn reads_var(&self, v: u16) -> bool {
-        self.any_node(&mut |n| match n {
+        self.any_node(&mut |n| n.names_var_here(v))
+    }
+
+    /// Does THIS node name variable `v` — the node itself, not its subtree?
+    ///
+    /// The arm list is the one [`Value::reads_var`] asks over the whole subtree, and it lives
+    /// here so the two cannot drift: a walk that needs to know WHERE a naming stands (under a
+    /// loop, inside a particular call position) cannot use the recursive form, and writing
+    /// the arms a second time is how a spelling gets missed — a `Set` names its target with
+    /// no `Var` child, and so do `TupleGet`, `TuplePut`, `CallRef`, `Iter` and the two
+    /// fn-ref forms.
+    #[must_use]
+    pub fn names_var_here(&self, v: u16) -> bool {
+        match self {
             Value::Var(x)
             | Value::Set(x, _)
             | Value::TupleGet(x, _)
@@ -1175,7 +1188,7 @@ impl Value {
             | Value::Iter(x, _, _, _) => *x == v,
             Value::FnRef(_, w, _) => *w == v,
             _ => false,
-        })
+        }
     }
 
     /// The TAIL expression of this value: descends `Span` wrappers and the

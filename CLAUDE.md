@@ -927,7 +927,10 @@ declines (measured: a removal made the result read the NEXT element's points), a
 function declines whole (`(R-Escape)`).  The exit's own answer is a PROOF rather than a
 fallback: every mention of the return buffer must be one the tuple accounts for, because a
 field filled without an append — a returned vector literal, a record literal's vector field —
-read as "empty" delivered a null view for a vector of eight (`723-ncc-loop-element-bind`).  `LOFT_NO_VIEW_FIELD=1` is the opt-out once it is armed,
+read as "empty" delivered a null view for a vector of eight (`723-ncc-loop-element-bind`).  The
+container question is asked per PATH and per NAMING: a parser appends and returns once per
+branch, and a naming that reaches a SIBLING field or claims a record in the store moves nothing
+in the one the leaf views.  `LOFT_NO_VIEW_FIELD=1` is the opt-out once it is armed,
 and `LOFT_TRACE_VALUEREC=1` names every admission and decline.
 **`LOFT_NO_CALLEE_DISTURB=1`** (@PLN164 C3, `@FR-B-Disturb`, `@FR-B-Ref-Reshape`, BOTH
 backends) makes the disturbance walk read THIS frame's ops only again — with it off, a

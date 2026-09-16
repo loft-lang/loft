@@ -480,7 +480,11 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 522 | 499 | **23** |
+| 523 | 500 | **23** |
+
+(2026-09-16, @PLN164 C5 step 2: one more function that discriminates on `Value` variants and
+peels — `namings_avoid_place`, the per-naming disturbance walk, which matches on `.unspan()`
+at every step.  The opaque column is unmoved.)
 
 (2026-09-16, @PLN164 C5: six functions added that discriminate on `Value` variants, and all six
 peel — the view-leaf walk (`leaf_source`, `appends_into`, `leaf_root`, `buffer_uses_accounted`)
@@ -1597,7 +1601,11 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 70 | **14** | 56 |
+| 71 | **14** | 57 |
+
+(2026-09-16, @PLN164 C5 step 2: one more on the call-only side — `namings_avoid_place` resolves
+what a naming of a container REACHES by op name, and `TupleGet` names a stack tuple member,
+which is not a container at all.)
 
 (2026-09-16, @PLN164 C5: four functions added, all on the call-only side — `leaf_source` and
 `appends_into` read the append into a record's collection FIELD, `leaf_root` resolves that
