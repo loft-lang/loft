@@ -1,11 +1,46 @@
-// @PLN164 C2 boundary matrix — `(R-Place)`'s "the buffer IS the place": a call whose result's
-// destination place EXISTS at the call, and which no argument reaches, is handed that place as
-// its return buffer, so nothing is copied.
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN164 C2 (`@FR-R-Place`, `@FR-O-Buffer`) — THE BUFFER IS THE PLACE: a call whose vector
+// result goes into a destination that already EXISTS, and which no argument of the call
+// reaches, is handed that place as its return buffer.  The result is built where it will live:
+// no buffer store, no element-by-element copy, no free, no temp.
 //
-// Today every one of these mints a buffer store, fills it, then CLEARS the destination and
-// APPENDS every element into it.  The values below are today's answers, hand-computed, and they
-// are the oracle: C2 may not move any of them.  The DECLINE rows are the rule's own list and
-// each is here because admitting it would be silent-wrong, not slow.
+// Every value below is what the program answered BEFORE the rewrite, hand-computed from the
+// declarations — the oracle C2 may not move.  That is the whole design of this guard, because
+// the switch cannot falsify it: `LOFT_NO_BUFFER_IS_PLACE=1` restores the COPY, and the copy is
+// correct, so all eleven cells pass either way.  What the switch costs is a store, a copy and a
+// free, which no value can see, so the STRUCTURAL falsifier lives in `tests/buffer_is_place.rs`
+// and this file is the semantic half.
+//
+// The DECLINE rows are the rule's own list, re-derived against what the vector lowering
+// actually emits rather than taken from the text — § C2 of the plan records which of the
+// rule's five survived and which the lowering had already discharged:
+//   * d1 is the one true BY CONSTRUCTION: the callee clears its buffer before reading its
+//     arguments, so an argument that reaches the destination reads an emptied vector.
+//   * d3 and d4 are shapes the rule declines and the lowering already makes safe (a callee
+//     copies a parameter INTO the buffer and answers the buffer; an early `return [99]` still
+//     fills the buffer) — they are cells so that a lowering change cannot quietly break them.
+//   * d5 never reaches the admission at all: a `??` right-hand side is an `ncc` BLOCK, not a
+//     `Call`.
+//   * d6 is NOT from the rule.  It is C1's lesson: a destination that is a member of a linked
+//     collection group.  Here it is an ADMISSION, unlike in C1 — the group maintenance brackets
+//     the fill (`OpClearKeyed` … `OpIndexGroup`) and a call sits inside that bracket — but only
+//     after `group_reindex_after_vector_write` learned this shape.  Before it did, this cell
+//     read `3,0,0` for `3,3,4`: the vector filled and the keyed view left empty, which is
+//     exactly the silence `@FR-Col-Group` exists to prevent.
+//
+// `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and
+// `LOFT_NATIVE_LEAK_CHECK=1`: clean under every one, on both backends — which is what says a
+// buffer that is a PLACE is never freed (`@FR-O-Buffer`'s clause for it).
+//
+// @falsified-at: hand-measured (2026-09-16) — the semantic channel does NOT move under the
+// switch, and that is recorded rather than hidden: all eleven cells pass with
+// `LOFT_NO_BUFFER_IS_PLACE=1` because the copy it restores is correct.  What was measured is
+// the group cell above, whose `3,0,0` is the one wrong ANSWER this unit could produce and did,
+// before the re-index learned the shape.  The structural receipt — no buffer store, no
+// `OpAppendVector`, no `OpFreeRef` at an admitted call, and all three back under the switch —
+// is pinned in `tests/buffer_is_place.rs`.
+
 struct Pt { x: integer = 0, y: integer = 0 }
 struct Holder { v: vector<integer>, n: integer = 0, tag: text = "" }
 struct Op { kind: integer = 0, pts: vector<Pt>, w: integer = 0 }
@@ -13,8 +48,7 @@ struct Sc { ops: vector<Op> }
 struct Grouped { es: vector<Pt>, by_x: hash<Pt[x]> }
 
 fn ok(nm: text, got: text, want: text) {
-  if got == want { println("{nm}  {got}   ok"); }
-  if got != want { println("{nm}  {got}  want {want}   BROKEN"); }
+  assert(got == want, "{nm}: {got}, want {want}");
 }
 fn tot(v: vector<integer>) -> integer { t = 0; for x in v { t += x; } t }
 fn totp(v: vector<Pt>) -> integer { t = 0; for p in v { t += p.x + p.y; } t }
@@ -73,4 +107,5 @@ fn main() {
   ok("d5 discharge (value) ", "{len(h8b.v)},{tot(h8b.v)}", "3,3");
   g9 = Grouped { es: [], by_x: [] }; d6(g9, 3);
   ok("d6 linked group      ", "{len(g9.es)},{len(g9.by_x)},{g9.by_x[2]?.y}", "3,3,4");
+  println("164-buffer-is-the-place: 11 cells, the result built where it will live");
 }

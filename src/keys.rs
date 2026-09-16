@@ -1627,6 +1627,24 @@ pub fn view_elision_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VIEW_ELISION"))
 }
 
+/// @PLN164 C2 (`@FR-R-Place`'s "the buffer IS the place") — a call whose vector result goes
+/// into a destination place that already EXISTS, and which no argument of the call reaches, is
+/// handed that place as its return buffer, so the result is built where it will live and
+/// nothing is copied — **DEFAULT ON**.  Opt OUT with `LOFT_NO_BUFFER_IS_PLACE` (read at PARSE
+/// time, BOTH backends): the buffer store, the element-by-element `OpAppendVector` and the free
+/// again, and the first bisect step for a wrong, empty or stale vector field after an
+/// assignment from a call.
+///
+/// The buffer stays the VARIABLE the call site mints — only what it holds changes — so the
+/// result's deps, B1's adopt and the scope pass's free sweep are untouched.  `(O-Buffer)` says
+/// what such a buffer is: not a store of the caller's, never freed, and needing no identity
+/// guard, because the result names the destination.
+#[must_use]
+pub fn buffer_is_the_place_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BUFFER_IS_PLACE"))
+}
+
 /// @PLN164 C1 step 2 (`@FR-R-InPlaceLiteral`) — a record literal assigned to a vector ELEMENT
 /// is written INTO the slot, as the same literal assigned to a FIELD already is, instead of
 /// being built in a temporary store and deep-copied there — **DEFAULT ON**.  Opt OUT with
