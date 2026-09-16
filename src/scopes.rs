@@ -1535,6 +1535,23 @@ struct ViewWalk<'a> {
     /// which every reader must treat as *could be any key*: loft#1460's filter may only ever
     /// SPARE a view it can prove names a different record.
     view_keys: HashMap<u16, Vec<Value>>,
+    /// The bindings that name a whole CONTAINER rather than a position inside one, each with
+    /// the place it names DIRECTLY — the `d = &cv.data` half of `(B-Ref-Alias)`'s
+    /// in-versus-to distinction, read off the same walk that answers the place
+    /// ([`crate::use_analysis::view_source_place_indexed`]).
+    ///
+    /// Growing or reshaping that container does not end the place such a binding names: both
+    /// move the ELEMENTS, and this one names the field SLOT that holds them, which the growth
+    /// repoints and the link re-reads.  Only `(B-Disturb)`'s fourth event does — reassigning
+    /// the base leaves the slot itself with nothing to point at — so `shake_places_keyed`
+    /// spares these for the other causes and never for that one (loft#1543).
+    ///
+    /// The DIRECT place is what is stored, not [`Self::resolve_view_root`]'s answer, and the
+    /// sparing matches on it.  A binding whose own container is itself a view resolves to the
+    /// OUTER container, and growing that one moves the record holding this binding's slot —
+    /// which does end its place.  Keyed on the resolved root, such a binding would be spared
+    /// from the one disturbance that genuinely reaches it.
+    whole_container: HashMap<u16, (u16, u32)>,
     /// Views whose container has been disturbed since the bind, and by what. Being shaken is
     /// not yet a verdict — it becomes one at the next use.
     shaken: HashMap<u16, Disturbance>,
@@ -1549,13 +1566,6 @@ struct ViewWalk<'a> {
     /// this frame's own answer, which is what the REFUSAL still reads: extending it would reject
     /// programs that compile today, a separable change, and refusing less is its safe direction.
     disturbed: Option<&'a DisturbedParams>,
-    /// @PLN164 C3 — views that name a container WHOLE rather than a place inside it
-    /// (`d = &cv.data`, not `e = sc.els[i]?`).  Both NAME `(cv, data)`, because the place model
-    /// carries one field offset; what separates them is that a growth moves every ELEMENT while
-    /// the field SLOT it repoints is exactly what the first one re-reads.  Read off the binding
-    /// through `use_analysis::view_source_place_indexed`, the same walk that answers the place,
-    /// so the two cannot disagree about what the chain did.
-    whole_container: HashSet<u16>,
     /// Every place this function REBUILDS in whole — `x.a = [9, 9]` emits an
     /// `OpClearVector` on the field and then exactly the `OpNewRecord`s an append emits, and
     /// the two are SEPARATE statements, so the pairing cannot be seen one statement at a time.
@@ -1601,11 +1611,11 @@ impl ViewWalk<'_> {
             open: vec![Vec::new()],
             bound_at: HashMap::new(),
             view_keys: HashMap::new(),
+            whole_container: HashMap::new(),
             shaken: HashMap::new(),
             out: HashMap::new(),
             cross_frame,
             disturbed,
-            whole_container: HashSet::new(),
             database,
             cleared: HashSet::new(),
             line: start_line,
@@ -1846,11 +1856,26 @@ impl ViewWalk<'_> {
         cause: ViewCause,
         via: Option<u32>,
     ) {
+        // A callee hit carries `Grown` or `Reshaped` and never `Reassigned`:
+        // `disturbed_param_places` inserts only those two, and `Reassigned` is raised on the
+        // INLINE path alone (`self.shake(&established, ViewCause::Reassigned, None)`) — a
+        // callee cannot re-establish its caller's binding, which is what that event means.
+        //
+        // So `names_container_itself`'s `cause != Reassigned` clause is always true HERE and
+        // load-bearing only on the inline side: one predicate, one live dimension per path.
+        // Asserted rather than described, because the premise lives in another function and a
+        // third cause added there would make this silently load-bearing on a path no cell
+        // exercises (loft#1543).
+        debug_assert!(
+            cause != ViewCause::Reassigned,
+            "a callee hit carried Reassigned — `disturbed_param_places` grew a cause, and \
+             `names_container_itself` is now load-bearing on the callee path too"
+        );
         let links: Vec<(u16, u16, u32)> = self
             .open
             .iter()
             .flatten()
-            .filter(|(view, _, _)| self.whole_container.contains(view))
+            .filter(|(view, _, _)| self.whole_container.contains_key(view))
             .copied()
             .collect();
         let before: HashMap<u16, Option<Disturbance>> = links
@@ -1894,6 +1919,9 @@ impl ViewWalk<'_> {
             for frame in &mut self.open {
                 frame.retain(|(view, _, _)| view != v);
             }
+            // Re-read per bind, exactly as `view_keys` is: a slot rebound from an element
+            // read must not keep an earlier bind's whole-container answer (loft#1543).
+            self.whole_container.remove(v);
             // Through `base()`: a nullable `S?` view is the same storage behind a
             // nullability marker (@FR-L-Null), so it is at risk exactly as its dense twin is.
             //
@@ -1903,11 +1931,18 @@ impl ViewWalk<'_> {
             // the BIND copy, which for a collection is decided at PARSE time and cannot hear
             // a scope-pass strip, so the copy is emitted here instead.
             //
-            // A bare `&` link to a whole container is not recorded either, and that is
+            // A bare `&` link to a whole VARIABLE is not recorded either, and that is
             // `base_container_var`'s doing rather than this list's: it answers `None` unless
             // the right-hand side is a PROJECTION, so `pe = &e` names no container while
             // `pw = &w[0]` names `w`.  That is the in-versus-to distinction `(B-Ref-Alias)`
             // needs, and it lives in one place.
+            //
+            // ⚠ That answer does not reach a link to a whole container held in a FIELD:
+            // `pd = &w.data` IS a projection, so it names `(w, off_data)` — the same place
+            // `w.data[0]` names — and the distinction has to be drawn one level finer.  It is
+            // drawn below, on `Self::whole_container`, and spent at the shake rather than here:
+            // such a link must still be shaken by a REASSIGNMENT of `w`, which is the one
+            // disturbance that leaves its slot with nothing to point at (loft#1543).
             // ⚠ THESE TWO TESTS ANSWER DIFFERENT QUESTIONS, AND BOTH ARE LOAD-BEARING.  The
             // type list says WHICH BINDINGS CAN BE VIEWS AT ALL; `value_view_place` says
             // WHICH PLACE a value views.  They were widened for different defects, on
@@ -1987,13 +2022,27 @@ impl ViewWalk<'_> {
                         self.view_keys.remove(v);
                     }
                 }
-                match crate::use_analysis::view_source_place_indexed(self.data, rhs) {
-                    Some((_, false)) => {
-                        self.whole_container.insert(*v);
-                    }
-                    _ => {
-                        self.whole_container.remove(v);
-                    }
+                // `(B-Ref-Alias)`'s in-versus-to distinction, one level finer than the
+                // `pe = &e` case the comment above describes: `d = &cv.data` is a reference
+                // TO the container, where `e = &cv.data[0]` is one INTO it.  Both name the
+                // place `(cv, off_data)` — a place is one variable and one field offset — and
+                // `(B-Disturb)`'s growth tells them apart: it moves every ELEMENT, ending the
+                // second, while it only repoints the field SLOT the first re-reads.
+                //
+                // The `&` is what qualifies, and asking for it is not belt-and-braces: a PLAIN
+                // whole-collection bind reaches this walk too.  Off an owned base and off a
+                // borrowed PARAMETER it copies at parse time into its own `__vdb_N` backing,
+                // whose container is compiler-generated and already unnamed — but off a LOOP
+                // VARIABLE it aliases, and `for b in bv { c = b.vecf; b.vecf += [9] }`
+                // materialises `c` today.  `(B-View)` says it must keep doing so: a plain bind
+                // already meant value semantics, so losing write-through is consistent with
+                // what it asked for, and only a `&` is the ownership decision loft may not
+                // quietly downgrade.  Measured before this was written.
+                if self.function.is_amp_container_link(*v)
+                    && let Some((place, false)) =
+                        crate::use_analysis::view_source_place_indexed(self.data, rhs)
+                {
+                    self.whole_container.insert(*v, place);
                 }
                 for (container, field) in value_view_places(rhs, self.data, self.function) {
                     let (container, field) = self.resolve_view_root(container, field);
@@ -2071,6 +2120,23 @@ impl ViewWalk<'_> {
         self.shake_places_keyed(places, cause, via, &HashMap::new());
     }
 
+    /// Does `view` name the CONTAINER at `place` itself, so that `cause` does not end it?
+    ///
+    /// Three of `(B-Disturb)`'s four events — a removal, a growth, a re-key — move the
+    /// ELEMENTS of a container.  A reference INTO it names one of those positions, so they end
+    /// it; a reference TO it names the field SLOT the container lives in, which a growth
+    /// repoints and the link re-reads, so they do not.  The fourth event does end it:
+    /// reassigning the base gives that slot a new value and leaves nothing to re-read, which
+    /// is why `Reassigned` is excluded here rather than handled by the caller (loft#1543).
+    ///
+    /// Matched EXACTLY against the place the binding names directly — not through
+    /// [`same_place`], whose wildcard would let a disturbance of the whole variable spare a
+    /// binding that names one field of it.  Sparing less is the safe direction: it costs a
+    /// materialise, where the other costs a program its meaning.
+    fn names_container_itself(&self, view: u16, place: (u16, u32), cause: ViewCause) -> bool {
+        cause != ViewCause::Reassigned && self.whole_container.get(&view) == Some(&place)
+    }
+
     /// [`Self::shake_places`] with the keys a keyed REMOVAL named, so a view of a DIFFERENT
     /// record is spared (loft#1460).
     ///
@@ -2101,9 +2167,11 @@ impl ViewWalk<'_> {
             .iter()
             .flatten()
             .filter(|(view, container, field)| {
-                places
-                    .iter()
-                    .any(|&p| same_place((*container, *field), p) && !spared(*view, p))
+                places.iter().any(|&p| {
+                    same_place((*container, *field), p)
+                        && !spared(*view, p)
+                        && !self.names_container_itself(*view, p, cause)
+                })
             })
             .copied()
             .collect();

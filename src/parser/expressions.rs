@@ -3484,6 +3484,21 @@ use a separate collection or add after the loop"
         // `amp_vector_locals`).  A keyed whole-value write already replaces contents rather
         // than minting, so it needs no such registration.
         let amp_vector_bind = amp_collection_bind && matches!(amp_source, Type::Vector(_, _));
+        // @FR-B-Ref-Alias — record on the VARIABLE that the `&` was written at a COLLECTION
+        // bind.  The IR does not carry it: `d = &cv.data` and `d = cv.data` off a BORROWED
+        // base emit the same ops and BOTH alias, so nothing downstream can tell the live link
+        // from the plain view that `(B-View)` may quietly copy.  The view-materialise walk
+        // needs exactly that distinction to spare a link naming a whole container from its
+        // own container's growth (loft#1543).
+        //
+        // A fact of its own rather than `set_amp_link`: that flag is scoped to a struct-typed
+        // projection and its readers are shaped that way, so widening it would change which
+        // programs the whole-record write route and the two refusals decline.  Whether a
+        // collection link should ALSO reach `(B-Ref-Reshape)` — `c = &s.h; s = Host{…}` is a
+        // silent downgrade the rules say to refuse — is that separate question, left open.
+        if amp_collection_bind && var_nr != u16::MAX {
+            self.vars.set_amp_container_link(var_nr);
+        }
         // loft#1371 — the share aliases element writes and appends, but a WHOLE-VALUE write
         // (`pe = [2, 2]`) would mint a fresh store and re-point `pe` at it, leaving the
         // source untouched with nothing said.  Name the local here so `create_vector` clears

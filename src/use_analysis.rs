@@ -3216,7 +3216,7 @@ pub const ANY_FIELD: u32 = u32::MAX;
 /// steps are a lower bound, as everything in this walk is.
 #[must_use]
 pub fn projection_container_place(data: &Data, value: &Value) -> Option<(u16, u32)> {
-    projection_place_of(data, value, false)
+    projection_place_of(data, value, false).map(|(c, f, _)| (c, f))
 }
 
 /// [`projection_container_place`], counting the two NULLABLE element reads as the projections
@@ -3241,52 +3241,50 @@ pub fn projection_container_place(data: &Data, value: &Value) -> Option<(u16, u3
 /// statement about today's readers, not about the language.
 #[must_use]
 pub fn view_source_place(data: &Data, value: &Value) -> Option<(u16, u32)> {
-    projection_place_of(data, value, true)
+    projection_place_of(data, value, true).map(|(c, f, _)| (c, f))
 }
 
-/// [`view_source_place`] with the extra bit that says whether the read went INSIDE the place
-/// it names: did the chain cross an ELEMENT read (`v[i]`, `h[k]`), or does it stop at a field?
+/// [`view_source_place`] with the fact that tells a reference **TO** a container from one
+/// **INTO** it: `true` when the chain read an ELEMENT out of the place, `false` when the
+/// binding names the place itself.
 ///
-/// @FR-B-Disturb ends the place a reference NAMES, and these two name different things.
+/// `(B-Ref-Alias)`'s in-versus-to distinction needs this and the PLACE cannot carry it: a place
+/// is one variable and one field OFFSET, so `d = &cv.data` and `e = cv.data[0]?` both answer
+/// `(cv, off_data)`.  What separates them is `(B-Disturb)`'s growth — it moves every ELEMENT,
+/// ending the second, while it only repoints the field SLOT the first re-reads (loft#1543).
 ///
-/// The two answer different questions about the same chain. `e = sc.els[i]?` and
-/// `d = &cv.data` both NAME `(sc, els)` — the place model carries one field offset, so the
-/// outermost field is as deep as it goes — but only the first names a place INSIDE the
-/// collection. The difference is what a growth does to each: it moves every element, so the
-/// first goes stale, while the second names the field SLOT the growth repoints and re-reads it
-/// (`157-view-header`'s `grown_between` reads `11` because of exactly this).
-///
-/// `true` means *the binding names something inside the container* and is the conservative
-/// answer for a reader deciding whether a disturbance reaches it.
+/// It is a second fact rather than a reading of `nullable_reads`, which the same walk already
+/// carries: that flag says WHICH OPS COUNT as projections at all (the two null-answering
+/// element reads, kept off `is_projection_op` for the deps proxy's sake), and both of its
+/// settings admit element reads and field reads alike.  The two axes cross rather than nest.
 #[must_use]
 pub fn view_source_place_indexed(data: &Data, value: &Value) -> Option<((u16, u32), bool)> {
-    let mut indexed = false;
-    let place = projection_place_walk(data, value, true, &mut indexed)?;
-    Some((place, indexed))
-}
-
-/// The shared peel behind [`projection_container_place`] and [`view_source_place`]:
-/// `nullable_reads` says whether the two null-answering element reads count as projections.
-fn projection_place_of(data: &Data, value: &Value, nullable_reads: bool) -> Option<(u16, u32)> {
-    projection_place_walk(data, value, nullable_reads, &mut false)
+    projection_place_of(data, value, true).map(|(c, f, indexed)| ((c, f), indexed))
 }
 
 /// The one walk behind all three readers, so *what is a projection* has a single answer.
 ///
-/// `indexed` is set where the chain crosses an ELEMENT read rather than a field read.
-fn projection_place_walk(
+/// `nullable_reads` says whether the two null-answering element reads count as projections.
+/// The third element of the answer is set where the chain crosses an ELEMENT read rather than
+/// a field read — carried in the return rather than through an out-parameter, because every
+/// caller wants it or discards it explicitly, and two spellings of one walk is how this
+/// function came to exist twice (loft#1543).
+fn projection_place_of(
     data: &Data,
     value: &Value,
     nullable_reads: bool,
-    indexed: &mut bool,
-) -> Option<(u16, u32)> {
+) -> Option<(u16, u32, bool)> {
     let mut cur = value;
     let mut field = ANY_FIELD;
+    // Did the chain read an ELEMENT out of the place, or does it name the place itself?  Set
+    // by the element-reading ops below and never cleared: one element read anywhere in the
+    // chain means the value lives at a position the container can move.
+    let mut indexed = false;
     loop {
         if let Value::If(_, t, e) = cur.unspan()
             && let Some(v) = variant_check_subject(data, t, e)
         {
-            return Some((v, field));
+            return Some((v, field, indexed));
         }
         let Value::Call(d, args) = cur.unspan() else {
             return None;
@@ -3297,23 +3295,21 @@ fn projection_place_walk(
         if !projects {
             return None;
         }
-        if matches!(
-            name,
-            "OpGetVector"
-                | "OpVectorRef"
-                | "OpGetRecord"
-                | "OpGetVectorNullable"
-                | "OpVectorRefNullable"
-        ) {
-            *indexed = true;
-        }
-        if name == "OpGetField"
-            && let Some(Value::Int(off)) = args.get(1).map(Value::unspan)
-        {
-            field = *off as u32;
+        // Everything that projects and is not the FIELD read reads an element: `v[i]` in its
+        // four spellings and a keyed point lookup.  Written as the complement of `OpGetField`
+        // rather than as its own list, so an op added to `is_projection_op` counts as an
+        // element read by DEFAULT — the conservative direction, because a place read as
+        // indexed keeps today's answer, while one missed from an explicit list would be
+        // treated as naming the container whole and spared a disturbance that reaches it.
+        if name == "OpGetField" {
+            if let Some(Value::Int(off)) = args.get(1).map(Value::unspan) {
+                field = *off as u32;
+            }
+        } else {
+            indexed = true;
         }
         match args.first().map(Value::unspan) {
-            Some(Value::Var(c)) => return Some((*c, field)),
+            Some(Value::Var(c)) => return Some((*c, field, indexed)),
             Some(inner) => cur = inner,
             None => return None,
         }

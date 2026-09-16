@@ -391,28 +391,57 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 3.**
+**OPEN: 2.**
 
-* **D-bind-46** *(opened 2026-09-16, [loft#1543](https://github.com/loft-lang/loft/issues/1543))* —
-  `(B-Ref-Alias)` and `(B-Ref-Reshape)` for a `&` link that names a container WHOLE.  `d =
-  &cv.data; cv.data += [7]; cv.data += [8]; (d[2] ?? -1) + len(d)` reads **0** for **11** on both
-  backends: `d` is COPIED at the bind, so it still holds the one-element vector.  A link to the
-  container names the field SLOT, which a growth repoints and the link re-reads — nothing here
-  could not stay valid — and `(B-Ref-Reshape)` says outright that where a reference cannot be
-  honoured loft REFUSES rather than *"quietly downgrade the reference to a copy"*.  This is that
-  downgrade, for a shape that needed no refusal in the first place.
-  **Not silent:** the copy notice fires and is accurate about what happened, wrong about why.
-  **Where (measured).**  `d = &cv.data` and `e = cv.data[0]?` resolve to the SAME place `(cv,
-  data)` — the place model carries one field offset — so `ViewWalk`'s inline shake cannot tell a
-  binding that names the container from one that names an element inside it.
-  `use_analysis::view_source_place_indexed` answers exactly that (did the chain cross an ELEMENT
-  read), off the same walk; @PLN164 C3's callee half already asks it
-  (`ViewWalk::shake_plain_places`), which is why `157-view-header`'s `grown_between` still reads
-  `11` through a call.  The inline side does not ask it yet, and closing the deviation is making
-  it.
-  **Workarounds (verified, both backends):** take the link after the growth, grow THROUGH the link
-  (`grown_through_view` already does), or read through the container.
-
+* **D-bind-46** *(opened 2026-09-16, CLOSED 2026-09-16)* — `(B-Ref-Alias)`'s in-versus-to
+  distinction at a container held in a FIELD.  `d = &cv.data; cv.data += [7]; cv.data += [8];
+  (d[2] ?? -1) + len(d)` read **0** where 11 is right, on both backends, with the copy-out advice
+  rather than silence.  The SAME body with the two appends moved into a CALLEE read 11 — and that
+  half is pinned by `157-view-header`'s `grown_between` — so one program had two meanings
+  depending on which side of a call the append sat on.  A `remove` under the live link behaved
+  the same way, and a write through the link after a growth was lost (`d[0] = 99` left `cv.data[0]`
+  at 1).  **Where (measured).**  `record_target` already draws the distinction the rule needs —
+  *"`pe = &e` names no container while `pw = &w[0]` names `w`"* — but through `base_container_var`,
+  which reaches only a whole VARIABLE.  A link to a container held in a field IS a projection, so
+  it named `(cv, off_data)`: the same place `cv.data[0]` names, the place model carrying one
+  variable and one field OFFSET.  `(B-Disturb)`'s growth ends only the second of those — it moves
+  every ELEMENT, while it merely repoints the field SLOT that a reference TO the container
+  re-reads.  **Closed** by reporting, off the walk that already answers the place
+  (`projection_place_of`, exposed as `use_analysis::view_source_place_indexed`), whether the chain
+  read an element; `ViewWalk` records the place such a binding names DIRECTLY and
+  `names_container_itself` spares it from `Grown` and `Reshaped`.  `Reassigned` still shakes it —
+  that is the one event which leaves the slot itself with nothing to point at, and sparing it
+  would hand out a link to a store the reassignment released.  The DIRECT place is matched, never
+  `resolve_view_root`'s: a binding whose own container is a view resolves to the OUTER container,
+  and growing THAT does move the record holding this binding's slot.
+  Measured on both backends, byte-identical across a 19-cell matrix, clean under `LOFT_POISON`,
+  the interpreter leak gate and the native leak check, and identical under `LOFT_HOIST_VERIFY=1`
+  and `LOFT_NO_VIEW_HOIST=1` — the native header hoist being the one place the cure could have
+  gone wrong on a single backend.
+  ⚠ **The `&` has to be asked for, and the first cut did not ask.**  A plain whole-collection bind
+  copies at PARSE time into its own `__vdb_N` backing — identically off an owned base and off a
+  borrowed PARAMETER — which read as licence to key the mark on the collection TYPE alone.  Off a
+  LOOP VARIABLE it does not copy: `for b in bv { c = b.vecf; b.vecf += [9] }` aliases and
+  materialises today, and `(B-View)` says it must keep doing so, because a plain bind already meant
+  value semantics.  Hence `amp_container_link`, set where `amp_collection_bind` is decided, and NOT
+  a widening of `is_amp_link`, whose readers are struct-shaped (the whole-record write route gates
+  on `Reference`/`Enum`; the re-key refusal and `(B-Ref-Reshape)`'s refusal would decline different
+  programs).
+  Guard `tests/scripts/a-link-to-a-whole-container-survives-that-containers-growth.loft`.
+  ⚠ Two of its cells passed BEFORE the fix and are controls rather than coverage, which matters
+  before either is cited as evidence: a keyed `a = &s.h` across an add, and a nested
+  `d = &o.inner.data` across a growth.  The nested one passes only because `grown_containers`
+  cannot name a nested place at all (its `OpGetField` arm requires the container to be a bare
+  `Var`), so it is a MISSED disturbance rather than a considered answer — it would pass the same
+  way with the cure reverted.
+  **Left open, and it is the same rule's other half:** a collection link is still quietly
+  downgraded where the rules say REFUSE.  `c = &s.h; s = Host{…}` materialises in silence, which
+  `(B-Ref-Reshape)` calls a compile-time error, because that refusal reads `is_amp_link` and a
+  collection bind is not in its population.  Closing it widens which programs the refusal declines
+  and needs its own measurement over the corpus and the published libraries.
+  Found via @PLN164 C3's matrix (loft#1543).  ⚠ That issue's body names
+  `ViewWalk::shake_plain_places` and `use_analysis::view_source_place_indexed` as code C3 landed;
+  neither existed anywhere — C3 is Open, not shipped, and the two names are its design sketch.
 * **D-bind-45** *(opened 2026-09-15, CLOSED 2026-09-15)* — `(Const-Value)` for a
   value-const value handed to a PLAIN heap parameter.  A plain struct or vector parameter names the
   caller's record (`calls.md` F-ParamHeap), so `fn bump(a: Account) { a.balance = 999 }` called as
