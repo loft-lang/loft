@@ -906,7 +906,11 @@ symbol and self time is the candidate).  Sites: `vector::get_elem_hoisted_cold`,
                  (loft#914) — so the place holds exactly what the copy would have
                  left.  An absent element keeps the path the copy takes today; a
                  literal whose field reads the place through a call the walk cannot
-                 see declines.
+                 see declines.  A NESTED literal that initialises an embedded record
+                 field of a FRESH record — an appended element or a construction
+                 temporary, `sc.ops += [Op { paint: Paint { … } }]` — is written into
+                 that field the same way; nothing can read a fresh record while it
+                 is built, so it needs no staging of its own.
   (R-Prefill)    the default prefill of a minted record — the declared defaults, the
                  null sentinels and the variant tag a partial literal leaves to the
                  type — is ONE block write of a per-type IMAGE computed once from the
@@ -925,7 +929,8 @@ store, and `paint: pp_paint` at its last use is then (R-MoveLast)'s relocation
 instead of a deep copy; `pts: smooth_pts(…)` with the op already appended is the
 "buffer IS the place" clause.  (R-InPlaceLiteral) is C1 (`sc.elems[idx] = Elem {
 … }` in `acc_pts`, whose `ename: ap_e.ename` reads the very slot it overwrites —
-the staging clause), (R-Prefill) is C4.  What each needs from the IR is in the plan's
+the staging clause) and C6 (the nested clause, `Parser::nested_literal_place`, switch
+`LOFT_NO_NESTED_IN_PLACE`), (R-Prefill) is C4.  What each needs from the IR is in the plan's
 table: the def-use classes of a value (its owning destinations against its read-only
 uses), per-path liveness at a set (the `avoidable-copy` lint already computes it and
 codegen does not yet read it), the disturbance walk `B-Ref-Reshape` runs for `&`,

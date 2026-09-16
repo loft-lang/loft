@@ -1063,3 +1063,15 @@ callee is loft-bodied, off any cycle and free of fn-refs drops its depth entry a
 guard in `--native-release`, since there the frame is only a depth count (parse row −12–14 %).
 **`LOFT_NO_LEAF_CHAIN=1`** keeps those frames (one step finer than `LOFT_NO_LEAF_PRELUDE`);
 the named tiers never elide a non-leaf.
+
+**A nested literal is written into its field (@PLN164 C6, `@FR-R-InPlaceLiteral`, default-ON,
+both backends, parse time):** `sc.ops += [Op { paint: Paint { … } }]` writes `Paint`'s fields
+into the element's `paint` field instead of building a store of its own and copying it —
+only where the outer record is fresh (an appended element, a construction temporary), so
+nothing can read the place while it is written (parse row −6–7 %).
+**`LOFT_NO_NESTED_IN_PLACE=1`** builds and copies again, and is the first bisect step for a
+wrong field, a leak or a double free in a record built from a nested literal.
+**`LOFT_NO_APPEND_STAGING=1`** (loft#1548, `(E-Asgn-Compound)`) lets an appended literal's
+field expressions run between the element's mint and its finish again — with it off, a field
+that reads or grows its own container (`s.qs += [Q { b: g(s) }]`) is evaluated first; it is
+the bisect step for a lost or overwritten element out of such an append.

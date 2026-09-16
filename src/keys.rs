@@ -1675,6 +1675,30 @@ pub fn element_in_place_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_ELEMENT_IN_PLACE"))
 }
 
+/// loft#1548 (`(E-Asgn-Compound)`) — an appended record literal whose field expression reads
+/// its own container has its field values evaluated BEFORE the element is minted —
+/// **DEFAULT ON**.  Opt OUT with `LOFT_NO_APPEND_STAGING` (read at PARSE time, BOTH
+/// backends): the values are evaluated between the mint and the finish again, and the first
+/// bisect step for a wrong or missing element out of `c += [S { f: g(c) }]`.
+#[must_use]
+pub fn append_staging_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_APPEND_STAGING"))
+}
+
+/// @PLN164 C6 (`@FR-R-InPlaceLiteral`) — a record literal that initialises an EMBEDDED record
+/// field of another literal (`Op { paint: Paint { … } }`) is written into that field instead
+/// of being built in a store of its own and deep-copied there — **DEFAULT ON**.  Opt OUT with
+/// `LOFT_NO_NESTED_IN_PLACE` (read at PARSE time, BOTH backends): the temp-and-copy again, and
+/// the first bisect step for a wrong field, a leak or a double free in a record built from a
+/// nested literal.  Admitted only where the outer record is FRESH — an appended element or a
+/// temporary — so nothing can read the place while the literal is written.
+#[must_use]
+pub fn nested_in_place_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_NESTED_IN_PLACE"))
+}
+
 /// @PLN164 C3 (`@FR-B-Disturb`, `@FR-B-View`) — a container GROWN or REMOVED FROM by a
 /// CALLEE, through a parameter the caller handed it, disturbs the caller's place exactly as
 /// the same statement written inline does, so a view live across the call materialises and the

@@ -305,8 +305,8 @@ lifecycle phase changes.
    (`@FR-R-LeafChain`): the row 38.8–41.7 k → 33.5–34.1 k ns/op, instructions −19.1 %.
 2. ~~**A0 — the buffer minted at its first use**~~ (§ A0) — BUILT 2026-09-17: the row
    33.5–34.1 k → 31.2–31.4 k ns/op on top of row 11.
-3. **C6 — a nested record literal built inside the element** (`Op { paint: Paint { … } }`) —
-   attributed at ≈ 4 % (`:704` and `:594`); hand-measure before cutting.
+3. ~~**C6 — a nested record literal built inside the element**~~ (§ C6) — BUILT 2026-09-17:
+   hand-measured −8.5 %, built −6–7 %; loft#1548 fixed on the way.
 4. **The last-use vector field** (`widths: pf_wids`) — part of `:704`'s 5.1 %; C5's parked
    vector `place_result` is the same question and is re-priced here.
 5. **A1/A2** — re-priced after A0 against what is left of the store family (the body half,
@@ -378,6 +378,47 @@ mints now guarded, the row 33.5–34.1 k → **31.2–31.4 k ns/op** (−7 %), `
 instructions 2 023 M → 1 871 M (−7.5 %), cycles −6.8 %, hash `33f6d2b8`, clean under all three
 falsifiers.  The hand patch measured −9–10 % on the pre-row-11 emission; together the two
 levers take the row from 38.8–41.7 k to 31.2–31.4 k.
+
+## C6 — a nested record literal built inside the element (BUILT 2026-09-17, `@FR-R-InPlaceLiteral`)
+
+*The row.*  P0b charged `drawing.loft:704` with a `Paint { … }` built in a store of its own
+and deep-copied into the element's inline `paint` field, per frond; the same shape is at
+`:594` and in `parse_lock`/`parse_background`.  The hand patch
+(`bytecode-comparisons/C6-nested-literal-hand-patch.py`, the five sites written straight into
+the field) measured **31.2–32.0 k → 28.5–28.7 k ns/op** (−8.5 %), instructions −5.4 %, hash
+unchanged — twice what the attribution predicted, because the removed store churn also
+relieves the cache.
+
+*The shape built.*  `Parser::nested_literal_place` primes an EMBEDDED record field's value
+with the field's own place (`OpGetField(outer, pos, kt)`) when the value starts with the
+field type's name and `{`, so `parse_object` takes the field road it already has (the
+precedent is `parse_some_payload_object`) and writes the nested fields in place; omitted
+fields take their declared defaults through `object_init`.  Declined: a `reference<T>`
+field (a pointer), a nullable one (a tagged enum), and any destination the program can read
+(`x = S { … }`, `o.f = S { … }`, `v[i] = S { … }` — a nested field expression could read the
+old value after the outer literal has begun overwriting it).  A value that turns out to be
+more than the literal (a postfix) is parsed again the ordinary way, as loft#1304's retry is.
+
+*What the cells found first — loft#1548.*  Cell n4 (a nested field expression that appends
+to the SAME container) answered `0` for `1030` on both backends on the build BEFORE C6: the
+element road minted the element before its field expressions ran, against
+`(E-Asgn-Compound)`.  It was the whole class, not the nested case — `s.qs += [Q { a: i, b:
+g(s) }]` read 0 for 24.  Filed and fixed in this arc (`formal/operational-history.md`
+D-op-10): `Parser::stage_append_fields` evaluates every scalar or text field value, and runs
+every nested construction, ahead of the mint whenever a field value reads the container's
+root.  The parse bench's emission is byte-identical under it (no field there reads its own
+container).  Guard `tests/scripts/1548-an-appended-literal-reads-its-own-container.loft`.
+
+*Verified.*  Seven cells (fresh element, a vector in the nested record, a partial literal,
+the loft#1548 shape, two levels deep, a rebound local, a readable destination) hold on both
+backends in both switch states under `LOFT_STRICT_STORES`, `LOFT_POISON` and
+`LOFT_NATIVE_LEAK_CHECK`; with the switch off the parse bench's emission is byte-identical
+to the build before C6.  Pins `tests/nested_in_place.rs`, subject `codegen`.
+
+*Measured* on the parse bench: the emission reaches the hand patch's instruction count
+(1 870 M → **1 770 M**, −5.4 %), the row **31.2 k → 29.1–29.5 k ns/op** (−6 to −7 %), cycles
+−7.0 %, hash `33f6d2b8`, clean under all three falsifiers.  Together with row 11 and A0 the
+row has moved from 38.8–41.7 k to 29.1–29.5 k this session.
 
 ## The three tiers — the invariant each rests on
 
@@ -1332,7 +1373,7 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | **P0** — probe first: count the store-identity sites; price tier 1; the hand patch judged not worth building by the arithmetic; the leak-gate extension (E19) deferred to A1's shape | § P0 | 287 identity sites in one emission; ~88 mints per parse at ≈ 60 ns a pair: tier 1's ceiling ≈ 10 % of the row | Done 2026-09-15 |
 | **P0b** — attribute the runtime's share of the release row to loft lines: a frame-pointer rlib build, `perf` with call chains, each family charged to a line | § P0b | `scripts/native_attrib.py`; runtime 72 %, store mint/free 20 % (half at function entry), `:704` 12.5 %; A0's lever measured by hand −9–10 % | Done 2026-09-17 |
 | **A0** — the buffer minted at its first use on the path that runs, not at function entry | § A0 | 14 cells both backends, both switch states, under the falsifiers; switch-off byte-identical; the parse row −7 % after row 11 | Built 2026-09-17, default ON (`LOFT_NO_LAZY_BUFFER`) |
-| **C6** — a nested record literal built inside the element it is a field of (`Op { paint: Paint { … } }`) | § P0b | attributed ≈ 4 %; hand-measure first | Open |
+| **C6** — a nested record literal built inside the element it is a field of (`Op { paint: Paint { … } }`) | § C6 | 7 cells both backends, both switch states, under the falsifiers; switch-off byte-identical; the parse row −6–7 %; loft#1548 found and fixed on the way | Built 2026-09-17, default ON (`LOFT_NO_NESTED_IN_PLACE`) |
 | **A1** — arena for one activation's own buffers (`__ref_N`, `__ref_p2_N`, literal temps), mark/release at every exit | § Tier 1 | `tests/scripts/164-arena-activation.loft` both backends; plan 51's ten graduated guards under the switch; `emission_audit.py` R-State per record | Blocked on P0b — the store-pair family is 9 % of the release row; whether the free-tree family (12 %) charges to activation temporaries is what decides the shape |
 | **A2** — the caller-threaded arena, reset per loop iteration | § Tier 1 | parse row −20 %; E2/E3/E4 cells | Blocked on A1 |
 | **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |

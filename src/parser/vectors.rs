@@ -4577,6 +4577,117 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         elm
     }
 
+    /// `(E-Asgn-Compound)` for an appended record literal — `c += [S { … }]` reduces the
+    /// right-hand side, every field expression of the literal included, BEFORE the append
+    /// runs.  The lowering mints the element first (`OpNewRecord`) and writes each field as
+    /// its expression is evaluated, so an expression that reads or grows the container sees
+    /// the half-built element: an append inside a field claims the same slot, and the
+    /// element's writes land on the other one (loft#1548).
+    ///
+    /// When any field value reads the container's root variable, every value of the
+    /// element's field writes is evaluated into a temp, in source order, and the temps are
+    /// placed in front of the mint (returned as the first half; the second is `steps` with
+    /// the values replaced).  A SCALAR or TEXT value is staged into a temp, and a nested
+    /// record construction moves ahead whole.  Any other record or collection value keeps
+    /// its place: it is a view (`@FR-B-View`), and a view taken before the mint could name
+    /// an array the append then moves.  No field reads the root → nothing changes, which is
+    /// every append that does not look at its own container.
+    fn stage_append_fields(
+        &mut self,
+        steps: &[Value],
+        elm: u16,
+        container: &Value,
+    ) -> (Vec<Value>, Vec<Value>) {
+        let root = match container.unspan() {
+            Value::Var(v) => Some(*v),
+            other => {
+                crate::use_analysis::projection_container_place(&self.data, other).map(|p| p.0)
+            }
+        };
+        let untouched = || (Vec::new(), steps.to_vec());
+        if self.first_pass || !crate::keys::append_staging_enabled() {
+            return untouched();
+        }
+        let Some(root) = root else {
+            return untouched();
+        };
+        // The value arguments of a field write: every argument that is not the element's
+        // own place, with its parameter type.
+        let value_args = |data: &crate::data::Data, step: &Value| -> Vec<(usize, Type)> {
+            let Value::Call(d, args) = step.unspan() else {
+                return Vec::new();
+            };
+            let params = data.def(*d).attributes();
+            args.iter()
+                .enumerate()
+                .filter(|(i, a)| {
+                    !a.reads_var(elm)
+                        && params.get(*i).is_some_and(|p| !p.constant)
+                        && !matches!(
+                            a.unspan(),
+                            Value::Int(_)
+                                | Value::Long(_)
+                                | Value::Float(_)
+                                | Value::Single(_)
+                                | Value::Boolean(_)
+                                | Value::Text(_)
+                                | Value::Null
+                                | Value::Enum(_, _)
+                        )
+                })
+                .filter_map(|(i, _)| params.get(i).map(|p| (i, p.typedef.clone())))
+                .collect()
+        };
+        let triggered = steps.iter().any(|s| {
+            let Value::Call(_, args) = s.unspan() else {
+                return false;
+            };
+            value_args(&self.data, s)
+                .iter()
+                .any(|(i, _)| args[*i].reads_var(root))
+        });
+        if !triggered {
+            return untouched();
+        }
+        // A nested record CONSTRUCTION (`OpCopyRecord(Object { … }, <field>, tp)`) builds into
+        // a store of its own, so it is not a view: its statements move in front of the mint
+        // whole, and the copy reads the store they built.
+        let construction = |a: &Value| -> Option<(Vec<Value>, u16)> {
+            let Value::Block(bl) = a.unspan() else {
+                return None;
+            };
+            let (Some(Value::Var(w)), true) =
+                (bl.operators.last().map(Value::unspan), bl.name == "Object")
+            else {
+                return None;
+            };
+            Some((bl.operators[..bl.operators.len() - 1].to_vec(), *w))
+        };
+        let mut staged = Vec::new();
+        let mut out = Vec::with_capacity(steps.len());
+        for s in steps {
+            let args_to_stage: Vec<(usize, Type)> = value_args(&self.data, s);
+            let Value::Call(d, args) = s.unspan() else {
+                out.push(s.clone());
+                continue;
+            };
+            let mut args = args.clone();
+            for (i, tp) in args_to_stage {
+                if let Some((ops, w)) = construction(&args[i]) {
+                    staged.extend(ops);
+                    args[i] = Value::Var(w);
+                } else if crate::data::is_scalar(&tp) || matches!(tp.base(), Type::Text(_)) {
+                    let tmp = self.vars.work_refs(&tp, &mut self.lexer);
+                    self.change_var_type(tmp, &tp);
+                    let value = std::mem::replace(&mut args[i], Value::Var(tmp));
+                    staged.push(v_set(tmp, value));
+                }
+            }
+            out.push(Value::Call(*d, args));
+        }
+        (staged, out)
+    }
+
     pub(crate) fn parse_multiply(&mut self, res: &mut Vec<Value>) -> Option<Type> {
         let mut code = Value::Null;
         let tp = self.parse_operators(&Type::Unknown(0), &mut code, &mut Type::Null, 0);
@@ -5291,6 +5402,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     &[container.clone(), known.clone(), fld.clone()],
                 )
             };
+            let mint_at = ls.len();
             ls.push(v_set(elm, app_v));
             // @P380 (generalized, plan-58 cluster II): a freshly-created
             // vector-of-vectors element is a VECTOR HANDLE (rec-id at offset 0),
@@ -5318,9 +5430,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 };
                 if let Value::Insert(steps) = p {
                     // Inline struct initialization: the steps already write fields into elm.
-                    for l in steps {
-                        ls.push(l.clone());
-                    }
+                    let (staged, steps) = self.stage_append_fields(steps, elm, &container);
+                    ls.extend(steps);
+                    ls.splice(mint_at..mint_at, staged);
                 } else if !self.first_pass
                     && crate::keys::append_in_place_enabled()
                     && let Some((fn_nr, buf_idx, args)) = self.element_call_takes_record_buffer(p)
