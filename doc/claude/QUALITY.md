@@ -2653,7 +2653,13 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 835 | 495 | 6 | **334** |
+| 839 | 499 | 6 | **334** |
+(2026-09-16, the ../loft2 join re-measured on THIS tree: 839 · 499 · 6 · 334.  The tuple
+commits report +1 · +1 against their own branch and are right about what they add; this tree
+reads +4 · +4, because the @PLN164 C1/C2 functions picked from 157 discriminate on `Type`
+variants too and their base did not carry them.  Re-derived with `ir_walker_audit.py optional`.
+The opaque column is unmoved on both sides, which is the ratchet.)
+
 (2026-09-16, D-tup-10's DISCHARGE close — `??` over the boxed spelling: 834 · 494 · 6 · 334,
 re-measured against the 833 · 493 · 6 · 334 the same day's earlier close left.  One function is
 added, `Parser::boxed_tuple_members_modulo_null`, and it peels: it asks whether a boxed tuple's

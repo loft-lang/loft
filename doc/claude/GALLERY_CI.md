@@ -40,26 +40,47 @@ when a PR skipped the rebuild step.
 
 ## Defence layers
 
-Three layers, each individually sufficient against the failure they were
-built for — a wasm/js pair that does not agree — so running all three
-makes it nearly impossible for a STALE or mismatched gallery to reach
-users.
+The layers below split in two.  Most are STRUCTURAL — they ask whether the
+artefacts exist, agree with each other and are served — and each is
+individually sufficient against the failure they were built for: a wasm/js
+pair that does not agree.  One is BEHAVIOURAL: it runs the page.  That one
+was added last, because the structural ones could not see the failure it
+catches.
 
-⚠ **They do not cover a bundle that loads cleanly and draws nothing, and
-one of them asserts that it does.**  Every step of `make gallery` is
-structural — files present, glue and wasm from one build, every asset
-HEAD-200 — so it prints `[7/7] gallery ready` over a page whose canvas
-holds one flat colour (measured 2026-09-16, loft#1545; the identical
-invocation reads 767 distinct colours on `brick-buster.html`, so the
-instrument is not the problem).  No layer opens a browser on the gallery
-path at all: the only browser render in CI is `tests/html_render.rs`,
-and it loads `doc/brick-buster.html`.  Layer 4 sits on the very page that
-renders blank — `doc/gallery-run.html`, where the guard at `:279-289`
-wraps the instantiation itself — and it still cannot fire: it is keyed to
-`LinkError: Failed to grow table`, the STALENESS symptom, so a current
-bundle instantiates cleanly, sets `loftReady`, enables the Run button and
-draws nothing, with the condition never true.  The COUNT of layers was never the measure; what each
-one tests is.
+⚠ **A structural layer cannot see a bundle that loads cleanly and draws
+nothing, and one of them asserted that it could.**  Every step of
+`make gallery` was structural — files present, glue and wasm from one
+build, every asset HEAD-200 — so it printed `gallery ready` over a page
+whose canvas held one flat colour (measured 2026-09-16, loft#1545).  No
+layer opened a browser on the gallery path: the only browser render in CI
+was `tests/html_render.rs`, and it loads `doc/brick-buster.html`.  Layer 4
+sits on the very page that rendered blank — `doc/gallery-run.html`, where
+the guard at `:279-289` wraps the instantiation itself — and it still could
+not fire: it is keyed to `LinkError: Failed to grow table`, the STALENESS
+symptom, so a current bundle instantiates cleanly, sets `loftReady`, enables
+the Run button and draws nothing, with the condition never true.  The COUNT
+of layers was never the measure; what each one tests is.
+
+**Closed by step 7 of 8** (`scripts/gallery_render_check.sh`), which opens
+every listed example in headless Chrome and asserts the page's own status is
+not a failure state.  That is the signal no structural step can reach:
+`gallery-run.html` reports compile and runtime errors into its DOM and never
+to `console.error`, so a console-only check records a clean run while the
+page shows the error in red.
+
+⚠ **A colour threshold is NOT the cure, and this is the part worth keeping:
+the failure was INVERSION, not absence.**  `tests/html_render.rs` does drive
+the paged asset route — `25-brick-buster.loft` reads its atlas through
+`assets::prefetch` / `blobs_path` — and it PASSED for as long as the defect
+existed.  The shipped page scored **767 distinct colours** with its sprite
+atlas entirely missing, because `load_atlas` falls back to procedural
+drawing and reports the failure in WORDS.  An absent test is a gap anyone
+can see; a covering test that returns green is false assurance, and that is
+why this survived.  No value of `--canvas-min-colors` repairs it — the check
+is blind to CONTENT at every colour count.  What works is asserting on the
+program's OWN output, which required `resume_frame` to carry per-frame text:
+a long-lived program otherwise says everything into a buffer that is read at
+a moment which never comes.
 
 ### 1. `make gallery` — local one-shot verify-and-rebuild
 
@@ -67,13 +88,16 @@ one tests is.
 make gallery
 ```
 
-Cleans `doc/pkg/`, rebuilds via `wasm-pack`, verifies the six assets
-the gallery imports, checks timestamps on `loft.js` and
-`loft_bg.wasm` agree (the canonical staleness signal), starts a
-transient http.server, HEAD-probes every URL the gallery loads, and
-only prints `gallery ready` if every step passes.
+Cleans `doc/pkg/`, rebuilds via `wasm-pack`, verifies the files the
+gallery imports — `doc/loft-rt.js` among them, which supplies the page's
+host, and the sprite pack under `doc/assets/`, without which an example
+compiles and runs and draws an empty atlas — checks timestamps on
+`loft.js` and `loft_bg.wasm` agree (the canonical staleness signal),
+starts a transient http.server, HEAD-probes every URL the gallery loads,
+opens every listed example in headless Chrome, and only prints
+`gallery ready` if every step passes.
 
-Fails with `[N/7] ... FAIL ...` pinpointing the stage so the
+Fails with `[N/8] ... FAIL ...` pinpointing the stage so the
 developer can fix it before pushing.
 
 ### 2. PR CI gate (`.github/workflows/ci.yml::gallery` job)
