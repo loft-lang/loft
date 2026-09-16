@@ -495,16 +495,21 @@ No `impl` block needed. Built-in types satisfy `Ordered`, `Equatable`, `Addable`
 
 ---
 
-## The `both` parameter name
+## `self` — one name, both call spellings
 
-Name the first parameter `both` instead of `self` to register a function as
-both a method and a free function:
+Name the first parameter `self` and the function is callable as a method AND as a
+free function:
 
 ```loft
-pub fn exists(both: File) -> boolean { both.format != Format.NotExists }
+pub fn exists(self: const File) -> boolean { self.format != Format.NotExists }
 // f.exists()  — method
 // exists(f)   — free function
 ```
+
+**`both` is the retired spelling for this — do not write it.** It still resolves, and
+still gives both spellings, but it emits `both-receiver-deprecated`, which is a
+`warning`; a library's CI runs with `LOFT_DENY_WARNINGS=1`, so writing `both` turns a
+package's own gate red (C123, [COMPATIBILITY.md](../../../doc/claude/COMPATIBILITY.md)).
 
 ---
 

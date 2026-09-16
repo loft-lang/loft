@@ -76,7 +76,7 @@ row whose skill was deleted.
 | `loft-plan-workflow` | 2026-09-07 | `a9743ea6` |
 | `loft-ship` | 2026-09-07 | `ae0c79d2` |
 | `loft-test` | 2026-09-16 | `e4e97aa9a` |
-| `loft-write` | 2026-09-07 | `ae0c79d2` |
+| `loft-write` | 2026-09-16 | `ad62fbac1` |
 
 ## Findings that outlive a single review
 
