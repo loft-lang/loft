@@ -89,16 +89,28 @@ fn the_switch_restores_the_buffer_store_the_copy_and_the_free() {
     );
 }
 
-/// The one decline that is true BY CONSTRUCTION rather than by measurement: the callee clears
-/// its buffer before reading its arguments, so an argument reaching the destination would read
-/// an emptied vector.
+/// The declines that keep the copy. `d1` is true BY CONSTRUCTION — the callee clears its buffer
+/// before reading its arguments, so an argument reaching the destination would read an emptied
+/// vector. The other two the CORPUS taught, after this unit shipped a first cut without them:
+///
+/// * `d7` — a callee that MINTS into its buffer rather than filling it. A vector LITERAL return
+///   lowers to `OpDatabase` on the buffer PARAMETER, so it would mint over the destination.
+///   Three sampled callees suggested `(R-Place)`'s decline for this was vacuous. It is not.
+/// * `d8` — a field of a struct-ENUM VARIANT, whose place exists only if the enum holds that
+///   variant, so it does not unconditionally EXIST as the rule requires.
 #[test]
-fn an_argument_that_reaches_the_destination_keeps_the_copy() {
-    let body = ir("d1", &[]);
-    assert!(
-        body.contains("OpAppendVector") && body.contains("_p154_rhs"),
-        "`h.v = grow(h.v)` must keep the copy:\n{body}"
-    );
+fn a_place_or_callee_the_rule_declines_keeps_the_copy() {
+    for (func, why) in [
+        ("d1", "an argument that reaches the destination"),
+        ("d7", "a callee that mints into its buffer"),
+        ("d8", "a field of an enum variant"),
+    ] {
+        let body = ir(func, &[]);
+        assert!(
+            body.contains("OpAppendVector"),
+            "{why} must keep the copy:\n{body}"
+        );
+    }
 }
 
 /// A grouped destination is ADMITTED here — unlike C1's in-place literal, the group maintenance
@@ -150,7 +162,7 @@ fn the_cells_hold_on_both_backends_under_every_falsifier() {
         outs.push(String::from_utf8_lossy(&out.stdout).into_owned());
     }
     assert!(
-        outs[0].contains("11 cells"),
+        outs[0].contains("13 cells"),
         "the guard did not reach its last cell:\n{}",
         outs[0]
     );

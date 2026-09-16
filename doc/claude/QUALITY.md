@@ -480,7 +480,11 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 515 | 492 | **23** |
+| 516 | 493 | **23** |
+
+(2026-09-16, @PLN164 C2: one function added that discriminates on `Value` variants, and it
+peels — `Parser::buffer_is_the_place`, whose tests run through `unspan` and inside an `any_node`
+closure, which peels `Span` before calling it.  The opaque column is unmoved.)
 
 (2026-09-16, @PLN164 C1: one function added over the two steps that discriminates on `Value`
 variants, and it peels — `Parser::reads_place`, whose discriminators run inside a `Value::walk`

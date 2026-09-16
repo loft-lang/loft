@@ -2641,6 +2641,38 @@ use a separate collection or add after the loop"
         if !self.vars.is_caller_hidden_buf(vr) {
             return None;
         }
+        // The callee must FILL the buffer it is handed, never MINT into it.  `(R-Place)` says
+        // so — *"a callee that may hand back a store it did not mint"* — and it is not the
+        // vacuous clause three sampled callees suggested: one that returns a vector LITERAL
+        // lowers to `OpDatabase(__vdb_1)` INTO its buffer parameter, replacing whatever DbRef
+        // the caller put there.  Handed the destination, it mints over it, and the write lands
+        // in a record the destination does not name: measured, `payload_bytes` refused with
+        // *"record N claims size 0 … freed or never written"* (loft#810's guard catching this
+        // unit).  So the admission READS THE CALLEE and declines a body that mints into any
+        // argument slot — the positive form of the rule's decline, as B2 unit 1 is for records.
+        let callee = self.data.def(*d_nr);
+        let mint = self.data.def_nr("OpDatabase");
+        let mint_np = self.data.def_nr("OpDatabaseNP");
+        let cvars = &callee.variables;
+        if callee.code.any_node(&mut |n| {
+            matches!(n, Value::Call(d, a) if (*d == mint || *d == mint_np)
+                && matches!(a.first().map(Value::unspan), Some(Value::Var(w)) if cvars.is_argument(*w)))
+        }) {
+            return None;
+        }
+        // The place must EXIST at the call, unconditionally.  A field of a struct-ENUM VARIANT
+        // does not: it lowers through a variant check — `OpGetField(if <tag == V> { subj } else
+        // { OpNullRefSentinel() }, …)` — so on any other variant the base is the sentinel and
+        // the "place" is a record that was never written.  Handing that to a callee as its
+        // buffer makes the callee write into it: measured, `payload_bytes` refused with
+        // *"record N claims size 0 … it has been freed or was never written"*, which is
+        // loft#810's guard catching this unit rather than a value going quietly wrong.
+        // `projection_container_place` sees THROUGH the variant check by design (it answers
+        // which container a view came out of), so the sentinel is what this has to look for.
+        let sentinel = self.data.def_nr("OpNullRefSentinel");
+        if to.any_node(&mut |n| matches!(n, Value::Call(d, a) if *d == sentinel && a.is_empty())) {
+            return None;
+        }
         let (base, _) = crate::use_analysis::projection_container_place(&self.data, to)?;
         let rest: Vec<Value> = args[..args.len() - 1].to_vec();
         if rest.iter().any(|a| a.reads_var(base)) {
