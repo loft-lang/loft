@@ -98,6 +98,14 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 destination.  The clause is here rather than in (R-Place) because it is
                 this rule that says what a buffer is; without it the two describe
                 different objects.
+  (O-LazyBuffer) A HIDDEN RETURN BUFFER IS MINTED WHERE IT IS FIRST USED.  (O-Buffer) says
+                whose store a buffer is and when it is released; it does not tie the MINT
+                to function entry.  The store is minted in front of each statement that
+                hands the buffer to a callee, behind a null test — at most once per
+                activation, and only on a path that makes the call.  A path that does not
+                leaves the slot at the null sentinel, and every exit's free of the sentinel
+                is a no-op (H-FreeNull), so no release moves.  A buffer named only by a
+                free or an identity test is never read, and is never minted.
   (O-Complete)  PER BINDING, PER PATH, COMPLETE.  Every binding, including every `match`/`if`
                 arm — a set-and-reconcile, not a single-variable structural walk.
   (O-ViewField) A FIELD OF A RETURNED RECORD MAY BE A VIEW.  Where a heap field of a

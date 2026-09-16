@@ -303,7 +303,8 @@ lifecycle phase changes.
 
 1. ~~**@PLN157's transitive-leaf prelude elision**~~ (its row 11) — SHIPPED 2026-09-17
    (`@FR-R-LeafChain`): the row 38.8–41.7 k → 33.5–34.1 k ns/op, instructions −19.1 %.
-2. **A0 — the buffer minted at its first use** (§ A0, new) — −9–10 %, measured.
+2. ~~**A0 — the buffer minted at its first use**~~ (§ A0) — BUILT 2026-09-17: the row
+   33.5–34.1 k → 31.2–31.4 k ns/op on top of row 11.
 3. **C6 — a nested record literal built inside the element** (`Op { paint: Paint { … } }`) —
    attributed at ≈ 4 % (`:704` and `:594`); hand-measure before cutting.
 4. **The last-use vector field** (`widths: pf_wids`) — part of `:704`'s 5.1 %; C5's parked
@@ -341,6 +342,42 @@ uses (`vectors.rs`, loft#1219), idempotent in a loop.
 
 Switch `LOFT_NO_LAZY_BUFFER=1`; falsifiers `LOFT_STRICT_STORES=1`, `LOFT_NATIVE_LEAK_CHECK=1`,
 `LOFT_POISON=1`; cells `bytecode-comparisons/A0-lazy-buffer-cells.loft` on both backends.
+
+### Built 2026-09-17 (`@FR-O-LazyBuffer`, default ON)
+
+*Where it lives.*  `scopes::lazy_buffer_mints`, after the scan, so every exit free is already
+in the body and can be told apart from a use (`names_outside_free`: `OpFreeRef`,
+`OpFreeRefIfDistinct`, `OpFreeRefOrHandUp`, the tag ops and `OpDistinctStore` are not uses).
+`insert_before_uses` puts `if OpRefIsNull(b) { b = null }` in front of the innermost statement
+that names the buffer — descending blocks, loops, inserts and `if` arms; a use in an `if`
+condition or a bare arm takes the guard in front of the whole `if`.  The record-buffer pool
+(`reuse_record_buffers`, § V's Route R) places its `OpDatabase` the same way unless its
+ungated control is armed.  Declined: a body that yields or runs `par`, a buffer with a second
+assignment, a null-init that is not a top-level statement (the one left in the parse bench,
+`parse_scene_at`'s `split` buffer, is used on every path anyway).
+
+*The fact both emitters read* is a new `Variable::lazy_buffer` (IR schema, store and JSON
+codecs, cache format 7): the vector null-init writes the sentinel (`OpInitRefSentinel` /
+`DbRef::NULL`) and the interpreter lowers the later `Set(b, Null)` to the owned-vector mint
+(`gen_owned_vector_store`, the same ops the entry init emitted); native's reassignment arm was
+already `OpDatabase`, which mints from the sentinel.  A record buffer needs no mark — its mint
+is an explicit `OpDatabase` in the IR.  The history's warning was the design constraint:
+`mark_inline_ref` would also have RELOCATED the null-init (formal/ownership-history.md, the
+`__vdb` entry), so the mark changes alloc-vs-sentinel and nothing else.
+
+*Verified.*  The 14 cells (13 functions rewritten, `a5`'s rotated pair guarded at the call and
+at the rotation, `f15` the record pool) hold on both backends in both switch states under
+`LOFT_STRICT_STORES`, `LOFT_POISON` and `LOFT_NATIVE_LEAK_CHECK`; with the switch off the
+native emission is byte-identical to the build before A0 and the interpreter's bytecode for
+`f1` is too.  Falsified: an unconditional mint (the null test replaced by `true`) turns `a5`
+into `0 0` on both backends — a re-mint clears the store the loop-carried result holds.  Pins
+`tests/lazy_buffer.rs`, subject `codegen`.
+
+*Measured* on the parse bench (release lean tier, after @PLN157 row 11): 15 of the 16 entry
+mints now guarded, the row 33.5–34.1 k → **31.2–31.4 k ns/op** (−7 %), `perf stat`
+instructions 2 023 M → 1 871 M (−7.5 %), cycles −6.8 %, hash `33f6d2b8`, clean under all three
+falsifiers.  The hand patch measured −9–10 % on the pre-row-11 emission; together the two
+levers take the row from 38.8–41.7 k to 31.2–31.4 k.
 
 ## The three tiers — the invariant each rests on
 
@@ -1294,7 +1331,7 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 |---|---|---|---|
 | **P0** — probe first: count the store-identity sites; price tier 1; the hand patch judged not worth building by the arithmetic; the leak-gate extension (E19) deferred to A1's shape | § P0 | 287 identity sites in one emission; ~88 mints per parse at ≈ 60 ns a pair: tier 1's ceiling ≈ 10 % of the row | Done 2026-09-15 |
 | **P0b** — attribute the runtime's share of the release row to loft lines: a frame-pointer rlib build, `perf` with call chains, each family charged to a line | § P0b | `scripts/native_attrib.py`; runtime 72 %, store mint/free 20 % (half at function entry), `:704` 12.5 %; A0's lever measured by hand −9–10 % | Done 2026-09-17 |
-| **A0** — the buffer minted at its first use on the path that runs, not at function entry | § A0 | cases A0-1 … A0-8 both backends under the falsifiers; the parse row −9–10 % | **Next** after @PLN157 row 11 |
+| **A0** — the buffer minted at its first use on the path that runs, not at function entry | § A0 | 14 cells both backends, both switch states, under the falsifiers; switch-off byte-identical; the parse row −7 % after row 11 | Built 2026-09-17, default ON (`LOFT_NO_LAZY_BUFFER`) |
 | **C6** — a nested record literal built inside the element it is a field of (`Op { paint: Paint { … } }`) | § P0b | attributed ≈ 4 %; hand-measure first | Open |
 | **A1** — arena for one activation's own buffers (`__ref_N`, `__ref_p2_N`, literal temps), mark/release at every exit | § Tier 1 | `tests/scripts/164-arena-activation.loft` both backends; plan 51's ten graduated guards under the switch; `emission_audit.py` R-State per record | Blocked on P0b — the store-pair family is 9 % of the release row; whether the free-tree family (12 %) charges to activation temporaries is what decides the shape |
 | **A2** — the caller-threaded arena, reset per loop iteration | § Tier 1 | parse row −20 %; E2/E3/E4 cells | Blocked on A1 |

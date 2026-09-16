@@ -1047,3 +1047,19 @@ rebind of the promoted local (plan 51 cluster 3's shape; native guards that free
 `_rb_w_`), which is the plan's B1b.  **`LOFT_NO_ADOPT_FIRST_BIND=1`** restores the copy and
 is the first bisect step for a leak, a double free or a wrong field out of a local bound
 from such a callee; `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` are the falsifiers.
+
+**Mint at first use (@PLN164 A0, `@FR-O-LazyBuffer`, default-ON, both backends, scopes
+pass):** a hidden return buffer (`__ref_N`) is minted in front of the statement that hands it
+to a callee, behind `OpRefIsNull`, instead of at function entry — a scanner tried on every
+line and matching one paid its buffers' mint and free on all the others (the drawing parse
+row −7 %).  A vector buffer carries `Variable::lazy_buffer`, so its entry init is the null
+sentinel on both backends and its guarded `Set(b, Null)` is the mint.
+**`LOFT_NO_LAZY_BUFFER=1`** mints at entry again and is the first bisect step for a leak, a
+double free or a wrong value at a call that takes a hidden buffer.
+
+**A frameless call tree carries no prelude (@PLN157 row 11, `@FR-R-LeafChain`, lean tier
+only, generation time):** N4's leaf rule made transitive — a function whose every user
+callee is loft-bodied, off any cycle and free of fn-refs drops its depth entry and buffer
+guard in `--native-release`, since there the frame is only a depth count (parse row −12–14 %).
+**`LOFT_NO_LEAF_CHAIN=1`** keeps those frames (one step finer than `LOFT_NO_LEAF_PRELUDE`);
+the named tiers never elide a non-leaf.
