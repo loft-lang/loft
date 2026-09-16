@@ -690,6 +690,69 @@ with its row credited honestly: **the rewrite for the spelling it admits, struct
 in the consumer measured so far** — and the parse row's points class stays with C5 and the
 vector `place_result` that follows it.
 
+## C5 — a returned record's heap field as a view leaf (`@FR-O-ViewField`, `@FR-R-ValueRecord`)
+
+*The row, re-measured before the phase is cut* (the lesson C3 and C2 each cost).  A parse of the
+bench scene mints **~68 stores** (`LOFT_TRACE_DB=1`, three parses divided out): `vector<Pt>` 18,
+`vector<float>` 16, `Paint` 15, **`Mark` 12**, `PointList` 3, `Sketch` 1.  The `Mark` row is one
+store per parsed line — the hidden buffer for a record of two booleans and a vector — and beside
+it one deep copy of the points into that record.  `Mark` is `(R-ValueRecord)`'s shape in
+everything but the vector: two scalars and one heap field.
+
+*The three rungs, PROVEN as emitted Rust before a line of the compiler changed* (the codegen
+gate: the target hand-written from the real emission, compiled against the release rlib, run
+beside the record form).  Probes `bytecode-comparisons/C5-*.loft`; each target answers exactly
+what the record form answers and is clean under `LOFT_NATIVE_LEAK_CHECK`, `LOFT_POISON`,
+`LOFT_POISON_CLAIM`, `LOFT_STRICT_STORES` and `LOFT_STORES=warn` — and the leak instrument was
+shown able to FAIL on the same binary (dropping one `OpFreeRef` reports `1 stores not freed at
+program exit: kt=88 Sc×1`).
+
+| rung | the loft shape | the leaf the tuple carries |
+|---|---|---|
+| **R1** | `sc.ops += [Op { opts: [] }]; o = sc.ops[len(sc.ops) - 1]?; …; Mark { …, mpts: o.opts }` — the field's source IS a view of a parameter-rooted place | the source expression itself: `DbRef { …var_o…, pos: pos + 0 }` |
+| **R2** | `p = mk_pts(n); sc.ops += [Op { opts: p }]; Mark { …, mpts: p }` — the NATURAL form: the source is a local whose COPY landed in a parameter-rooted place | the append's own destination, the element temp: `DbRef { …var__elm_1…, pos: pos + 0 }` |
+| **R3** | `if n < 0 { return Mark { matched: true, bad: true, mpts: [] } }` — an exit with NO place to view | `DbRef::NULL`.  A null view reads as the empty vector the record form built: `len` 0, an iteration of nothing, `v[0]?.px` 0, a `const` argument 0 — measured equal on every read the oracle makes |
+
+**R3 is what decides whether C5 reaches the consumer at all**, and it was the phase's real
+question: the library's own `parse_poly` carries `return Mark { matched: true, bad: true, pts: [] }`
+and `no_mark()` is that literal whole, so an implementation that declined a place-less exit would
+decline the function the row belongs to.  The empty literal writes NOTHING in the record form —
+it is the prefill's own zero — so the value form owes exactly a reference that reads empty, and
+`DbRef::NULL` is that reference.
+
+**R2 is what the consumer spells**, and it is the rung that also unlocks the vector
+`place_result` C2 could not reach: once the returned field views the element's copy, `pp_pts` has
+ONE owning destination and the call that fills it can build there.
+
+### The cases, written down before the first is worked
+
+Admissions R1–R3 above.  The declines are the falsifier list, one cell each:
+
+| # | case | why it declines |
+|---|---|---|
+| D1 | the source's owning destination is in the FRAME (`p = mk_pts(n); Mark { mpts: p }`, no append into a parameter) | the view would dangle at the return — `(O-ViewField)`'s first condition |
+| D2 | a site WRITES through the field (`m.mpts += [Pt { … }]`) | the rule's site condition: a write through a view is a write into the container the caller never named |
+| D3 | a DISTURBANCE between the call and the last read (`m = add(sc, 3); sc.ops += [Op { … }]; len(m.mpts)`) | growing `sc.ops` relocates the element the view names — `(B-Disturb)`.  Both directions: a disturbance AFTER the last read still admits |
+| D4 | the disturbance is through a CALL (`m = add(sc, 3); grow(sc); len(m.mpts)`) | C3's `disturbed_params_map` is the reach; the argument the leaf roots in is what must stay undisturbed |
+| D5 | a site stores, returns or hands the whole record to a by-value parameter | the existing site gate already declines it; kept as a cell so a gate change cannot quietly admit it |
+| D6 | the function is a library's exported `pub fn` | `(R-Escape)`: an unseen caller never receives a view, so the boundary materialises |
+| D7 | the source local has TWO owning destinations outside the frame | which place the view names is not decided; declining costs the optimisation only |
+| D8 | the callee grows the viewed container after establishing the view (appends a SECOND element, views the first) | the same relocation as D3, inside the frame |
+| D9 | a `text` field, a keyed-collection field, a nullable result | outside step 1's leaf types; the record form stands |
+
+Each decline is also a cell that must keep answering the record form's value, and D2/D3/D4 are the
+three that would be SILENT — the class `silent-wrong` names — so each gets a cell whose value
+MOVES when the decline is removed, not merely a structural pin.
+
+### What it needs
+
+`LOFT_NO_VIEW_FIELD=1` (generation time, native only — the interpreter keeps the record form and
+is the values oracle, as § V-aa's value record already does), the leaf analysis with ONE home read
+by the gate and the emitter, the site gate extended with the read-only and disturbance conditions,
+the live-reload arm reading the field's reference out of the returned record, the cdylib bridge
+materialising it, and the cells above in `tests/scripts/164-view-field.loft` with structural pins
+in `tests/view_field.rs`.
+
 ## The rewrite list — the natural `parse_poly` to its optimal form
 
 **This is not about how a programmer writes loft.**  The programmer writes the natural
