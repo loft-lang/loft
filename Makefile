@@ -681,21 +681,21 @@ gallery-mt:
 #
 # After a successful run, `make serve` will work for local browsing.
 gallery:
-	@echo "  [1/7] cleaning doc/pkg ..."
+	@echo "  [1/8] cleaning doc/pkg ..."
 	@rm -rf doc/pkg
-	@echo "  [2/7] checking wasm-pack ..."
+	@echo "  [2/8] checking wasm-pack ..."
 	@if [ ! -x "$$HOME/.cargo/bin/wasm-pack" ] && ! command -v wasm-pack >/dev/null 2>&1; then \
 		echo "    FAIL: wasm-pack not installed."; \
 		echo "    install with: cargo install wasm-pack"; \
 		exit 1; \
 	fi
-	@echo "  [3/7] building wasm bundle ..."
+	@echo "  [3/8] building wasm bundle ..."
 	@$(MAKE) wasm >/tmp/loft_gallery_wasm.log 2>&1 || { \
 		echo "    FAIL: wasm-pack build failed — see /tmp/loft_gallery_wasm.log"; \
 		tail -20 /tmp/loft_gallery_wasm.log; \
 		exit 1; \
 	}
-	@echo "  [4/7] checking required gallery files ..."
+	@echo "  [4/8] checking required gallery files ..."
 	@missing=0; \
 	for f in doc/gallery.html doc/gallery-run.html doc/gallery-examples.js doc/loft-gl.js \
 	         doc/pkg/loft.js doc/pkg/loft_bg.wasm doc/pkg/loft.d.ts; do \
@@ -705,7 +705,7 @@ gallery:
 		fi; \
 	done; \
 	if [ $$missing -gt 0 ]; then exit 1; fi
-	@echo "  [5/7] checking wasm/js glue are from the same build ..."
+	@echo "  [5/8] checking wasm/js glue are from the same build ..."
 	@js_mtime=$$(stat -c %Y doc/pkg/loft.js); \
 	wasm_mtime=$$(stat -c %Y doc/pkg/loft_bg.wasm); \
 	delta=$$((wasm_mtime - js_mtime)); \
@@ -715,7 +715,7 @@ gallery:
 		echo "    One or both is stale — rerun 'make gallery'."; \
 		exit 1; \
 	fi
-	@echo "  [6/7] starting transient http.server and probing assets ..."
+	@echo "  [6/8] starting transient http.server and probing assets ..."
 	@port=18765; \
 	cd doc && python3 -m http.server $$port --bind 127.0.0.1 \
 	  >/tmp/loft_gallery_server.log 2>&1 & \
@@ -742,7 +742,9 @@ gallery:
 	@# reference so post-deploy browsers fetch fresh.  See
 	@# scripts/cache_bust_html.py for rationale.
 	@python3 scripts/cache_bust_html.py >/dev/null
-	@echo "  [7/7] gallery ready — run 'make serve' and open http://localhost:8000/gallery.html"
+	@echo "  [7/8] rendering every example in a real browser ..."
+	@scripts/gallery_render_check.sh
+	@echo "  [8/8] gallery ready — run 'make serve' and open http://localhost:8000/gallery.html"
 
 # @PLN117 — COOP/COEP so a threaded gallery bundle (`make gallery-mt`) gets
 # crossOriginIsolated === true and par() runs on Web Workers.  Harmless for the
