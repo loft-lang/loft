@@ -1,0 +1,10 @@
+{
+  "M-falsify-receipts": {
+    "at": "2026-09-16 09:10",
+    "note": "make falsify-review run 2026-09-16 on 369f6de7e, and the --since v2026.9.0 read. Census: 486 falsification receipts; controls still publicly reachable 292, unreachable 194 (66 of those carry a patch); 106 patch receipts, 43 still applying and 63 no longer applying (listed by the report, to re-derive or downgrade to a marker). --since v2026.9.0 (24 commits) reads 194 controls unreachable NOW; this item has never run in any recorded cycle, so there is no previous line to subtract and this run ESTABLISHES the baseline the next cycle subtracts from to get the inflow rate. Scoring individual patch receipts with the instrument each names is the per-guard read and stays for the tag candidate."
+  },
+  "M-liveness": {
+    "at": "2026-09-16 09:08",
+    "note": "make release-liveness run 2026-09-16 on 369f6de7e. Reports: no issue-cited suppressions (so no stale rationales); gates whose LAST verdict is a failure = release-gate.yml (2026-09-08) and miri.yml (2026-09-16, the Debug-assertions and LOFT_VERIFY_STACK legs); 4 items never run in any recorded cycle (M-perf-pass, M-liveness, M-falsify-receipts, M-vscode). Acted on the miri red in the same session: the Debug-assertions leg was traced to place_result.rs asking the heap-return ownership question of a closure-returning callee (22 corpus files), fixed; the LOFT_VERIFY_STACK leg measures 0 of 1458 on this branch."
+  }
+}
