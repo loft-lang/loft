@@ -89,6 +89,69 @@ The profile agrees (program samples only, 20 000 calls, this box):
 | the library's byte scan | ≈ 19 % | `matches_at`, `find_option` (rescans the line per key) — the library's own |
 | the parse logic | ≈ 8 % | `parse_scene_at`, `acc_pts`, `fronds`, the trig |
 
+## Re-profiled after the copy phases (2026-09-16) — the row is the SCANNER now
+
+The evaluation table above is what this plan was cut from, and four phases later it is stale in
+the way a measurement makes a plan stale rather than wrong.  Re-measured on the same bench, by
+four instruments, each answering a different question:
+
+**1. Which operators run (`LOFT_NATIVE_CHECKPOINTS=count`, `--native-release`, 300 parses —
+1585 sites, 16.99 M executions, ≈ 56.6 k operators per parse).**  Counts are this instrument's
+trustworthy column:
+
+| function | share of operator executions |
+|---|---:|
+| `at` | 17.8 % |
+| `matches_at` | 12.9 % |
+| `is_word_byte` | 11.8 % |
+| `find_option` | 9.9 % |
+| `t_4text_size` | 9.7 % |
+| `word_boundary` | 9.5 % |
+| `t_4text_split` | 6.7 % |
+| `lower_byte` | 2.4 % |
+| **the byte scanner, together** | **≈ 80 %** |
+| the parse logic (`acc_pts`, `smooth_pts`, `fronds`, `circle_pts`, `read_points`, `parse_fronds`) | ≈ 10 % |
+
+**2. Where the loft-level time goes (`LOFT_PROFILE=1 --interpret`, loft's own sampler).**  A
+different instrument on a different backend, and it agrees: `at` 16.3 %, `is_word_byte` 15.2 %,
+`matches_at` 14.0 %, `find_option` 12.8 %, `word_boundary` 8.0 %, `t_4text_size` 6.3 %,
+`t_4text_split` 4.6 %, `lower_byte` 3.4 % — **the same ≈ 80 %**.
+
+**3. Which of loft's own routines burn cycles (perf over the engine, interpreted).**
+`State::execute_argv` 22 % (the interpreter's dispatch, which the native lane does not pay),
+`store_mut` 4.0 %, malloc/free ≈ 4.5 %, `copy_block` 1.0 %, `begin_write_inner` 1.0 %.  **The
+two routines that headed P0's lifecycle table — `copy_claims` at 8 % and
+`set_default_value_nullable` at 7 % — are no longer in the top eighteen.**
+
+**4. What the program still mints (`LOFT_TRACE_DB=1`, `--native-release`, per parse).**  69
+stores: `vector<Pt>` 18, `vector<float>` 16, `Paint` 15, `Mark` 12, `PointList` 3, `Sketch` 1.
+At the ≈ 60 ns a mint/free pair costs (§ P0) that is **≈ 4 µs of a 40 µs row — 10 %, which is
+P0's own tier-1 ceiling and is now the ceiling for ALL remaining store-lifecycle work in this
+row.**  With C5 armed the census reads 9 `Mark`s instead of 12 — three of the scene's lines lose
+their buffer, 0.45 % of the row, which is the wash § C5 measured.
+
+### What that means for the queue
+
+The class this plan was opened for has been PAID DOWN.  At P0 the engine profile read 57 %
+record-and-vector lifecycle; it now reads a few per cent, and the two phases that moved the row
+are exactly the ones that removed copies and prefills (B1 −14 %, C4 −11 %).  What is left of the
+40 µs is the CONSUMER's byte scanner: `at(s, i)` is called ≈ 3 400 times per parse and asks
+`size(s)` on every call, `matches_at` reads byte by byte through it, and `find_option` re-scans
+the line per key (P0 flagged that one already).
+
+So **the remaining copy phases cannot move this row** — C5 step 3 and the vector `place_result`
+are aimed at a class that measures under 2 % — and the two avenues that can are:
+
+* **the LANGUAGE one, which Goal F makes the interesting one**: a small user function called
+  millions of times is a real call in the emitted Rust (§ V-o inlines stdlib one-op wrappers
+  only), and `size(s)` is re-evaluated per call where the caller's loop holds it invariant
+  (§ V-ao hoists an invariant integer chain within a frame, not across a call).  Both are
+  @PLN157-family levers and both are measurable on this row;
+* **the CONSUMER one**: the scanner's own algorithm, which is the library's to change and which
+  this plan deliberately does not ask for (the natural form is the canonical one).
+
+This section is the measurement; what to do with it is the owner's call.
+
 ## The three tiers — the invariant each rests on
 
 Each tier is a situation the compiler PROVES (C120: no rewrite may change a value after a
