@@ -1627,6 +1627,20 @@ pub fn view_elision_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VIEW_ELISION"))
 }
 
+/// @PLN164 C3 (`@FR-B-Disturb`, `@FR-B-View`) — a container GROWN or REMOVED FROM by a
+/// CALLEE, through a parameter the caller handed it, disturbs the caller's place exactly as
+/// the same statement written inline does, so a view live across the call materialises and the
+/// author is told — **DEFAULT ON**.  Opt OUT with `LOFT_NO_CALLEE_DISTURB` (read at PARSE time,
+/// BOTH backends): the per-frame answer again, and the first bisect step for a wrong value read
+/// through a view whose container a callee changes.  What it restores is the defect — measured,
+/// `e = sc.els[0]?; grow(sc); e.a + e.b` answered `4294967401` where the inline append answers
+/// `3`, and a callee's `remove` read the element that shifted in.
+#[must_use]
+pub fn callee_disturb_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_CALLEE_DISTURB"))
+}
+
 /// @PLN155 phase 2b — which readers DECLINE on `Own::Unknown` instead of keeping the answer
 /// they gave when the fail-open still spelled itself `Owned`?
 ///
