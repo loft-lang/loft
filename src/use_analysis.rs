@@ -3247,6 +3247,8 @@ pub fn view_source_place(data: &Data, value: &Value) -> Option<(u16, u32)> {
 /// [`view_source_place`] with the extra bit that says whether the read went INSIDE the place
 /// it names: did the chain cross an ELEMENT read (`v[i]`, `h[k]`), or does it stop at a field?
 ///
+/// @FR-B-Disturb ends the place a reference NAMES, and these two name different things.
+///
 /// The two answer different questions about the same chain. `e = sc.els[i]?` and
 /// `d = &cv.data` both NAME `(sc, els)` — the place model carries one field offset, so the
 /// outermost field is as deep as it goes — but only the first names a place INSIDE the

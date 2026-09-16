@@ -201,6 +201,18 @@ and runs the diff's subjects first (`scripts/nextest_priority.sh`, an order, nev
 them); and `doc_hygiene::every_test_binary_matches_a_subject`.  Each
 phase's proof — and the numbers the next PR run must confirm — are in the plan file.
 
+**The same hazard, one step smaller: do not REBUILD while a background suite runs.**  The gate
+lock stops a second `make ci`; nothing stops a `cargo build` in the same checkout, and the running
+suite links what it finds rather than what it started with.  Measured 2026-09-16 on
+`157-native-4x`: rebuilding the release binary and the cdylibs under a `find_problems.sh --bg` run
+produced **eleven** failures — three `par_nested`, five `n3_parity`, `ownership_drop_gate`, a
+`poison_claim` TIMEOUT at 300 s — none of which reproduced on a clean run of the same commit, and
+all of which read as ownership regressions rather than as what they were.  One real failure hid
+among them.  So: do every build, `cargo fmt` and `clippy` leg BEFORE arming the suite, and while
+it runs touch only files nothing is compiling — docs, plans, an issue.  This is the sibling of
+PERFORMANCE.md's *never run perf or a bench beside the gate*, and of the same @PLN159 cause: a test
+binary and the artefact it links have to come from one source state.
+
 ### Open work (from @PLN159, closed 2026-09-08)
 
 | item | what | trigger / size |

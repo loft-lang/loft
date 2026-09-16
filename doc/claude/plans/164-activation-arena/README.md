@@ -10,7 +10,7 @@ Tracker: [@PLN164](https://github.com/loft-lang/plans/issues/164) · `status:act
 
 ## Status (REQUIRED)
 
-Active (the owner's go, 2026-09-15).  **P0 done**, **B1, C4 and B2 shipped** (B2's caller side
+Active (the owner's go, 2026-09-15).  **P0 done**, **B1, C4, B2 and C3 shipped** (B2's caller side
 2026-09-16: a wash on the parse row, structural gain only — § B2 *Measured*) — the
 measurements are under § P0 below and the mechanism under § B1.  What P0 changed in the
 plan: tier 1's ceiling is ~10 % of the parse row, not a fifth, and its store-identity cost
@@ -47,7 +47,8 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
 - **Effort:** M (tiers 1–2) · MH (tier 3)
 - **Design:** ~ — the invariants are named; the store-identity question (§ Edge cases E1)
   is open and decides tier 1's shape.
-- **Last touched:** 2026-09-16 (B2 units 2–3 shipped, measured a wash on the parse row)
+- **Last touched:** 2026-09-16 (C3 shipped: the discharge was already a view, and the
+  phase's real content was `(B-Disturb)` across a call — a silent-wrong on both backends)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -355,6 +356,101 @@ profile measured at 18.5 % is the points (`pts: smooth_pts(…)`, `Mark.pts`), w
 and C5.  A leak-probe build (the placed block leaked instead of deleted) measured the same,
 so the host store's free-tree churn is not a cost either on this row.
 
+## C3 — the read-only `?`-discharge (SHIPPED 2026-09-16, `@FR-B-Disturb`, `@FR-B-View`)
+
+*The premise did not survive the matrix, and that is the result.*  C3 was cut to make
+`ap_e = sc.elems[idx]?` a VIEW instead of a copy.  It already is one, on both backends:
+the bind carries the base's dep (`ap_e(1):ref(Elem)["sc"]`), no copy op is emitted, and
+the `__ref_p2_N` store is minted only on the ABSENT arm — which `acc_pts` never takes,
+because `elem_index` appends the element before `acc_pts` is called.  A store census of
+the shape (`LOFT_TRACE_DB=1`, the library's `acc_pts` reproduced against the same `Elem`)
+mints exactly THREE stores: the `Sketch`, the points vector, and the `Elem` temp of
+`sc.elems[idx] = Elem { … }`.  Thirteen discharge shapes were measured — off a parameter,
+off a local, a hash lookup, a nullable field, an all-scalar element, an element with a
+vector field, a struct-enum element, a `&`-based base, a `const` bind, a nested field, a
+rebind in a loop, an explicit `?? default`, a plain undischarged bind — and every one is
+already a view.  The only copies the sweep found are the two that are RIGHT: a
+materialise under `(B-Disturb)`, and the return of a view as a value.
+
+So the evaluation table's row *"a store per `?`-discharged record element + a copy of the
+`Elem`"* is the SAME store and copy as its own next row, *"a store for `Elem {…}` + a copy
+into `sc.elems[idx]`"*, counted twice.  That row is C1's, and C1 is where the `acc_pts`
+temporary actually is.
+
+*What C3 turned out to be.*  Its own condition, as the rewrite list states it: *"`sc.elems`
+not disturbed between bind and last read, **in this frame or any callee**"*.  The view
+existed; the condition was only half-checked.  `ViewWalk::disturb` asserted `(B-Disturb)`
+at one site but computed its input from THIS frame's ops alone, so a view live across a
+call kept reading an address its elements had left:
+
+| shape | inline | through a callee |
+|---|---:|---:|
+| `e = sc.els[0]?; grow(sc, 200); e.a + e.b` | 3 | **4294967401** |
+| the same with two appends (no reallocation) | 3 | 3 |
+| `len(e.nm)` after the growth | 2 | **1** |
+| `e = sc.els[2]?; remove_first(sc); e.a` | 30 | **40** |
+
+Both backends, identical — the divergence is IR-level.  One shape with two meanings,
+decided by which side of a call the append sits on, and by an allocation the author cannot
+see.  `(B-Ref-Reshape)` already states the reach — *"the disturbance may be in this frame
+or in anything the frame CALLS … at any depth"* — and `(B-View)` keys its materialise on
+the same four events, so the rules settled it and only the implementation was short.
+
+*The mechanism.*  `disturbed_params_map`: the container places each definition GROWS or
+REMOVES FROM through a visible parameter, closed over the call graph by the same worklist
+`removed_params_map` uses, unioned into `ViewWalk::disturb` at every call site.  Read
+through the same two producers the inline walk uses, so the `OpClearVector` subtraction
+comes with them and a callee that REBUILDS the field it was handed disturbs nothing,
+exactly as that statement written inline does.  The forward edge does not ask whether the
+parameter is spelled `&`: a plain heap parameter aliases the caller's container identically
+(`calls.md` F-ParamHeap, probe 40 cell X9), so keying on the spelling would let an author
+lose the materialise by taking loft's own `warn_redundant_amp` advice.  Switch
+`LOFT_NO_CALLEE_DISTURB=1`, trace `LOFT_TRACE_DISTURB=1`.
+
+*What the matrix found that the design did not say.*  (1) A binding that names a container
+WHOLE (`d = &cv.data`) resolves to the same place as one that names an element inside it
+(`e = sc.els[i]?`), because the place model carries one field offset — but a growth moves
+every ELEMENT while it merely repoints the field SLOT the first one re-reads.  Shaking it
+broke `157-view-header`'s `grown_between` (11 → 0).  `view_source_place_indexed` answers,
+off the same walk that answers the place, whether the chain crossed an element read.
+(2) The notice had to name the CALLEE: nothing in `c_grow_callee` appends to `sc`, and a
+reader given only *"`sc` grows"* goes looking for a statement that is not in the function —
+the same failure the `Grown` sentence was split off from `Reshaped` to avoid.
+(3) A hidden RETURN BUFFER is an argument slot, so without excluding it every
+record-returning function that fills a vector field reports a disturbance at each of its
+call sites.
+
+*Receipts.*  `tests/scripts/164-callee-disturb.loft`, fifteen PAIRS — each callee cell
+beside the same program written inline, because the inline path has implemented
+`(B-Disturb)` since loft#1373 and is therefore the file's own oracle — with hand-computed
+absolute values beside them, clean on both backends under `LOFT_POISON`,
+`LOFT_POISON_CLAIM`, `LOFT_STRICT_STORES` and `LOFT_NATIVE_LEAK_CHECK`.  Five cells are
+CONTROLS that must keep aliasing and prove it by writing through the view and reading the
+container back.  `@falsified-at:` is measured, not claimed: under the switch seven cells
+move, the same seven on both backends.  Pins `tests/callee_disturb.rs`.
+
+*The two honest costs.*  c7 — a removal BELOW the viewed element — now materialises where
+today's alias answers correctly, because `(B-Disturb)` ends the place a removal renumbers
+whatever happened to sit where, and because the same program written inline has answered
+that way since @PLN130 F2.  That is probe 38 cell C1's objection, and it is a behaviour
+change with no wrong answer behind it.  And the `&`-link twin `link_inline` reads `0` where
+`11` is due — a `&` link silently downgraded to a copy, which `(B-Ref-Reshape)` says loft
+will not do.  It is pre-existing (it reads `0` on `main` and under this unit's switch
+alike), it is a `&` question rather than a plain-view one, and it is FILED rather than
+widened into here.
+
+*Measured on the parse row:* nothing.  C3 removes no copy, because there was none to
+remove — what it removes is a silent wrong answer.  The row's copies are C1, C2 and C5.
+
+*The cost it does have is COMPILE time, and it was worth checking.*  `disturbed_params_map`
+walks every definition once, and `scopes::check` runs per FILE LOAD, so a program with several
+`use`d libraries runs it again over an ever-larger definition table — the shape that would be
+quadratic.  A/B on one binary (`LOFT_NO_CALLEE_DISTURB`, three runs each): a stdlib-only script
+72 ms against 70, `07-control-flow` 57 against 57, and the two library-heavy corpus files
+145 ms against 145 and 144 against 142 — inside the run-to-run spread at the size where it would
+have shown.  The whole-program map is built once per `check` rather than re-derived per call
+site, which is what keeps it there.
+
 ## The rewrite list — the natural `parse_poly` to its optimal form
 
 **This is not about how a programmer writes loft.**  The programmer writes the natural
@@ -398,7 +494,7 @@ is the whole point of Goal F.
 | `pp_paint`'s buffer claimed in the scene's store; `paint: pp_paint` a relocation, not a deep copy | the result's ONE owning destination is a field of a record in store S on every path that keeps it; `pp_paint` owned and dead on every path after the literal | `R-Place`, `R-MoveLast`, `O-Complete` | the liveness exists as the `avoidable-copy` lint's *"still used after this point"*; codegen does not read it; a buffer claimed in another store is new | B2 |
 | `pts: smooth_pts(…)` fills `Op.pts` directly, no buffer | as above, with the destination place existing at the call and no argument reaching it; the callee writes only its buffer and answers it at every exit | `R-Place` ("the buffer IS the place"), `R-Callee`, E15, E16 | `retbuf_only_writer`; `R-ElemFirst` already builds a vector inside an appended element; the redirection of a call's buffer into a field is missing | C2 |
 | `sc.elems[idx] = Elem{…}` written into the slot | the slot exists; every field expression evaluated before the first write (`ename: ap_e.ename` reads the slot); omitted fields defaulted | `R-InPlaceLiteral`, E13, E14 | complete-write knows the literal's field set | C1 |
-| `ap_e = sc.elems[idx]?` as a view | `ap_e` only read; `sc.elems` not disturbed between bind and last read, in this frame or any callee | `B-View` (the discharge clause), `B-Disturb` | `view_elision_bind` does it for call results; the interprocedural disturbance walk exists for `&` | C3 |
+| `ap_e = sc.elems[idx]?` as a view | `ap_e` only read; `sc.elems` not disturbed between bind and last read, in this frame or any callee | `B-View` (the discharge clause), `B-Disturb` | the VIEW already; the disturbance walk was this frame only, which is what C3 closed | shipped C3 |
 | `Op { kind: Stroke, … }` prefilled by one block write | the literal's field set against the type's defaults | `R-Prefill` | complete-write has the set; the per-type image is missing | C4 |
 | the four `smooth_pts` buffers not minted at entry | one path runs one call | trivial | goes away with C2 | with C2 |
 | the `PointList` scratch reused across lines | the callee's literal rewrites every field when handed a live buffer; the buffer-holder's rebind never frees it | `R-Reuse`, § V-y | D-own-43 (the interpreter's rebind free) must close first | B1b, A2 |
@@ -535,7 +631,7 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | **B2** — the result's buffer claimed in its destination's store, the field taking it by relocation at the last use (`R-Place`, `R-MoveLast`) | § B2 | cells b1–b15 both backends under the falsifiers; the census 184 → 50; `parse_poly`'s `paint: pp_paint` emits `OpMoveRecord` and `read_paint`'s buffer is a record in the scene's store; the parse row a wash (`perf stat`) | Shipped 2026-09-16 |
 | **C1** — element overwrite from a literal in place (`R-InPlaceLiteral`) | § The rewrite list | E13/E14 cells; `acc_pts` emits no temp store | Open |
 | **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § The rewrite list | E15/E16 cells; `smooth_pts` writes `Op.pts` | After C3 (needs no arena: the destination is a record in the scene's store) |
-| **C3** — read-only `?`-discharge as a view (`B-View`'s discharge clause) | § The rewrite list | E17 cells; `acc_pts` copies nothing | Open |
+| **C3** — read-only `?`-discharge as a view (`B-View`'s discharge clause) | § C3 | the discharge ALREADY views (13 shapes measured, both backends), so the phase's content was its other half: `(B-Disturb)` across a CALL.  15 pairs both backends; 7 move under the switch | Shipped 2026-09-16 |
 | **C4** — per-type prefill image (`R-Prefill`) | § C4 | cells c1–c11 both backends under `LOFT_PREFILL_VERIFY`; the verify census over all 1432 corpus files; the image USED on both backends (`LOFT_TRACE_PREFILL`); parse row −11 % | Shipped 2026-09-15 |
 | **C5** — a returned record's heap field as a view leaf (`O-ViewField`, `R-ValueRecord`, `R-Escape`) | § The rewrite list | the points written once per line: `Mark.pts` names `Op.pts`; an E17 site that appends between the call and the read must read the copy; an escaping `pub fn` result reads the copy at the bridge | Open — last; rule admitted (C122) |
 
@@ -550,9 +646,10 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
 2. B1, C4 and B2 — shipped.  B2 measured a wash on the parse row (the `Paint` it relocates
    carries no heap on the bench scene); the copy class the profile measured is the points,
    which C2 and C5 take.
-3. **C3 then C1** — the `acc_pts` pair, one mechanism each.
-4. **C2** — after C3: it needs the destination C3 makes visible and a single-exit callee
-   test; it does NOT need the arena.
+3. ~~**C3 then C1**~~ — C3 shipped, and it moved no copy: the discharge was already a view
+   and the `acc_pts` temporary the evaluation table charged to it is C1's, counted twice.
+   **C1 is next**, and it is the whole of the `acc_pts` pair.
+4. **C2** — after C1: it needs a single-exit callee test; it does NOT need the arena.
 5. **C5** last, as its own section: it extends a formal rule (`O-ViewField`) and the
    value-record gate, so the owner signs the rule off before the cells are written.
 6. **B1b** beside them whenever D-own-43 closes (the interpreter's rebind guard); then

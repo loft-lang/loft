@@ -1174,8 +1174,9 @@ fn record_cause(map: &mut HashMap<u16, Disturbance>, view: u16, d: Disturbance) 
 /// attribute list and the argument list at a call site.
 type ParamPlace = (u16, u32);
 
-/// @PLN164 C3 — every definition that GROWS or REMOVES FROM a container reached through one of
-/// its parameters, which places, and which cause, CLOSED OVER THE CALL GRAPH.
+/// @PLN164 C3 (@FR-B-Disturb, @FR-B-View) — every definition that GROWS or REMOVES FROM a
+/// container reached through one of its parameters, which places, and which cause, CLOSED OVER
+/// THE CALL GRAPH.
 ///
 /// `(B-Disturb)`'s events end a place wherever they happen: `(B-Ref-Reshape)` states it
 /// outright — *"the disturbance may be in this frame or in anything the frame CALLS … at any
@@ -1776,8 +1777,8 @@ impl ViewWalk<'_> {
         self.shake(&established, ViewCause::Reassigned, None);
     }
 
-    /// @PLN164 C3 — shake for every container place a CALLEE `stmt` invokes disturbs through
-    /// the arguments it was handed.
+    /// @PLN164 C3 (@FR-B-Disturb) — shake for every container place a CALLEE `stmt` invokes
+    /// disturbs through the arguments it was handed.
     ///
     /// `(B-Disturb)`'s events end a place wherever they happen, and the producers above see
     /// only this frame's ops, so a view survived a growth one frame down and kept reading the
@@ -1824,9 +1825,9 @@ impl ViewWalk<'_> {
 
     /// [`Self::shake_places`] over PLAIN views only, leaving every `&` link alone.
     ///
-    /// The rules split the two and give them different answers: `(B-View)` materialises a plain
+    /// The rules split the two and give them different answers: @FR-B-View materialises a plain
     /// bind, because a plain bind already meant value semantics and losing the alias is
-    /// consistent with what it meant, while `(B-Ref-Reshape)` REFUSES a `&` reference into a
+    /// consistent with what it meant, while @FR-B-Ref-Reshape REFUSES a `&` reference into a
     /// disturbed container — *"loft will not quietly downgrade the reference to a copy"* — and
     /// that refusal is `reshape_refusals`' half of this file, which reads this frame's answer.
     /// So the callee's half has no `&` case to add: materialising one is the thing the rule
