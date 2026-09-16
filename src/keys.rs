@@ -1080,6 +1080,20 @@ pub fn retbuf_reuse_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_REUSE"))
 }
 
+/// `LOFT_NO_LAZY_BUFFER=1` — mint every hidden return buffer at function entry again.
+///
+/// **Default ON** (`@FR-O-LazyBuffer`, @PLN164 A0): a buffer's store is minted in front of
+/// the first statement that hands it to a callee on the path that runs, behind a null test,
+/// so a path that never makes the call never mints it — a scanner tried on every line and
+/// matching one paid two store mints and frees on each of the others.  Both backends read
+/// the same IR.  This switch is the A/B on one binary and the first bisect step for a leak,
+/// a double free or a wrong value at a call that takes a hidden buffer.
+#[must_use]
+pub fn lazy_buffer_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LAZY_BUFFER"))
+}
+
 /// `LOFT_NO_RETBUF_WITNESS_GATE=1` — the POSITIVE CONTROL for
 /// [`retbuf_reuse_enabled`]'s gate. **OPT-IN, DEFAULT OFF; never set in production.**
 ///

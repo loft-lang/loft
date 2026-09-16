@@ -3085,7 +3085,10 @@ impl Output<'_> {
             Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
             _ => false,
         });
-        let chain = !blocked && callees.into_iter().all(|d| self.frameless_chain_from(d, on_path));
+        let chain = !blocked
+            && callees
+                .into_iter()
+                .all(|d| self.frameless_chain_from(d, on_path));
         on_path.remove(&def_nr);
         self.chain_cache.insert(def_nr, chain);
         chain

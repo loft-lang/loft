@@ -136,6 +136,8 @@ pub(crate) struct VarSnapshot<'a> {
     pub caller_hidden_buf: bool,
     /// @PLN157 § V-g — the copy from a borrowing call is elided; read by both emitters.
     pub view_elided: bool,
+    /// A hidden return buffer minted at its first use (`@FR-O-LazyBuffer`); read by both emitters.
+    pub lazy_buffer: bool,
     /// The owner witness of a mixed-ownership local (`@FR-O-Witness`), `u16::MAX` for none.
     pub owner_witness: u16,
 }
@@ -154,6 +156,7 @@ pub(crate) struct RestoredVar {
     pub captured: bool,
     pub caller_hidden_buf: bool,
     pub view_elided: bool,
+    pub lazy_buffer: bool,
     pub owner_witness: u16,
 }
 
@@ -186,6 +189,11 @@ pub struct Variable {
     /// releases only the callee's per-execution minted store, by identity at scope exit.
     /// Set by `scopes::scan_set`, read by both backends' copy arms (`is_view_elided`).
     view_elided: bool,
+    /// A hidden return buffer whose store is minted at its first use on the path that runs
+    /// (`@FR-O-LazyBuffer`): its entry null-init writes the null sentinel, and a later
+    /// `Set(v, Null)` — always behind `OpRefIsNull(v)` — mints the store.  Set by
+    /// `scopes::lazy_buffer_mints`, read by both backends' null-init arms.
+    lazy_buffer: bool,
     /// @PLN130 F9 — this binding was spelled with `&` at a STRUCT-typed projection
     /// (`c = &v[0]`, `c = &o.inner`).  Such a projection is already a VIEW under B-View,
     /// so both spellings lower to byte-identical IR and the `&` used to be dropped as
@@ -634,7 +642,7 @@ impl Function {
         self.variables.len()
     }
 
-    /// The ten codegen-read fields of variable `i`, for the snapshot encoder.  A fact the
+    /// The codegen-read fields of variable `i`, for the snapshot encoder.  A fact the
     /// EMITTERS read belongs here whatever map carries it at parse time: `owner_witness`
     /// was maintained in the IR and restored nowhere, so a warm program-cache run copied
     /// into the record a witnessed local was viewing (`@FR-O-Witness`).
@@ -652,6 +660,7 @@ impl Function {
             captured: v.captured,
             caller_hidden_buf: v.caller_hidden_buf,
             view_elided: v.view_elided,
+            lazy_buffer: v.lazy_buffer,
             owner_witness: self.owner_witness(i as u16).unwrap_or(u16::MAX),
         }
     }
@@ -711,6 +720,7 @@ impl Function {
                 captured: r.captured,
                 caller_hidden_buf: r.caller_hidden_buf,
                 view_elided: r.view_elided,
+                lazy_buffer: r.lazy_buffer,
                 // codegen-irrelevant post-parse defaults (not stored):
                 source: (0, 0),
                 scope: u16::MAX,
@@ -2214,6 +2224,7 @@ impl Function {
             const_binding: false,
             value_const: false,
             view_elided: false,
+            lazy_buffer: false,
             amp_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -2247,6 +2258,7 @@ impl Function {
             const_binding: self.variables[var as usize].const_binding,
             value_const: self.variables[var as usize].value_const,
             view_elided: false,
+            lazy_buffer: false,
             amp_link: self.variables[var as usize].amp_link,
             iteration_source: self.variables[var as usize].iteration_source,
             stack_allocated: false,
@@ -2283,6 +2295,7 @@ impl Function {
             const_binding: false,
             value_const: false,
             view_elided: false,
+            lazy_buffer: false,
             amp_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -2316,6 +2329,7 @@ impl Function {
             const_binding: false,
             value_const: false,
             view_elided: false,
+            lazy_buffer: false,
             amp_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -2952,6 +2966,19 @@ impl Function {
     /// same binds.
     pub fn mark_view_elided(&mut self, var_nr: u16) {
         self.variables[var_nr as usize].view_elided = true;
+    }
+
+    /// Mark `var_nr` as a hidden return buffer minted at its first use — see the
+    /// field's own doc (`@FR-O-LazyBuffer`).
+    pub fn mark_lazy_buffer(&mut self, var_nr: u16) {
+        self.variables[var_nr as usize].lazy_buffer = true;
+    }
+
+    /// Whether `var_nr`'s entry null-init is the sentinel and its store is minted at its
+    /// first use — see [`Self::mark_lazy_buffer`].
+    #[must_use]
+    pub fn is_lazy_buffer(&self, var_nr: u16) -> bool {
+        (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].lazy_buffer
     }
 
     /// Whether `var_nr`'s copy from its borrowing call is elided — see

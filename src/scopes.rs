@@ -3758,6 +3758,7 @@ fn reuse_record_buffers(
     let db_nr = data.def_nr("OpDatabase");
     // Emitted in variable order so identical source compiles to identical IR.
     let mut inserts: Vec<(usize, Value)> = Vec::new();
+    let mut lazy: Vec<(u16, Value)> = Vec::new();
     for av in guarded {
         // @FR-O-Proxy asks alloc — decides whether to ALLOCATE the buffer's store here; a
         // buffer carrying a dep is a view of something else and gets no store of its own.
@@ -3798,14 +3799,171 @@ fn reuse_record_buffers(
         ) else {
             continue;
         };
-        inserts.push((
-            at + 1,
-            Value::Call(db_nr, vec![Value::Var(av), Value::Int(i32::from(known))]),
-        ));
+        let mint = Value::Call(db_nr, vec![Value::Var(av), Value::Int(i32::from(known))]);
+        if !ungated && crate::keys::lazy_buffer_enabled() {
+            // `@FR-O-LazyBuffer` — once per activation still, but only on a path that
+            // reaches the call: the null test lets a later pass through a loop reuse it.
+            lazy.push((av, mint));
+        } else {
+            inserts.push((at + 1, mint));
+        }
     }
     inserts.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
     for (at, op) in inserts {
         bl.operators.insert(at, op);
+    }
+    let is_null = data.def_nr("OpRefIsNull");
+    let frees = free_ops(data);
+    for (av, mint) in lazy {
+        let guard = v_if(
+            Value::Call(is_null, vec![Value::Var(av)]),
+            Value::Insert(vec![mint]),
+            Value::Null,
+        );
+        insert_before_uses(&mut bl.operators, av, &guard, &frees);
+    }
+}
+
+/// The ops that name a store only to release it or to compare its identity: a buffer
+/// mentioned in nothing else is never read, so it needs no store.
+fn free_ops(data: &Data) -> Vec<u32> {
+    [
+        "OpFreeRef",
+        "OpFreeRefIfDistinct",
+        "OpFreeRefOrHandUp",
+        "OpFreeRefTag",
+        "OpStoreTag",
+        "OpDistinctStore",
+    ]
+    .iter()
+    .map(|n| data.def_nr(n))
+    .filter(|&d| d != u32::MAX)
+    .collect()
+}
+
+/// Does `v` name `av` anywhere but inside a free (`free_ops`)?  A `Set(av, Null)` — the
+/// buffer's own null-init or an already inserted mint — is not a use either.  Every other
+/// shape is walked, so a buffer reached through an expression the walker does not name is
+/// still found: the fallback over-reports, and an extra mint on a path that runs the call
+/// anyway is only the eager behaviour.
+fn names_outside_free(v: &Value, av: u16, frees: &[u32]) -> bool {
+    match v.unspan() {
+        Value::Var(x) => *x == av,
+        Value::Call(d, _) if frees.contains(d) => false,
+        Value::Set(x, val) if *x == av && matches!(val.unspan(), Value::Null) => false,
+        other => {
+            let mut hit = false;
+            other.for_each_child(&mut |c| {
+                if !hit && names_outside_free(c, av, frees) {
+                    hit = true;
+                }
+            });
+            hit
+        }
+    }
+}
+
+/// Put `guard` in front of every statement of `ops` that uses `av` (`names_outside_free`),
+/// descending into the statement lists of blocks, loops, inserts and `if` arms so the
+/// guard lands on the innermost list that holds the use.  An `if` whose CONDITION uses
+/// `av`, or whose arm is a bare expression that does, takes the guard in front of the
+/// whole `if`.
+fn insert_before_uses(ops: &mut Vec<Value>, av: u16, guard: &Value, frees: &[u32]) {
+    let mut i = 0;
+    while i < ops.len() {
+        let before = match ops[i].unspan_mut() {
+            Value::Block(bl) | Value::Loop(bl) => {
+                insert_before_uses(&mut bl.operators, av, guard, frees);
+                false
+            }
+            Value::Insert(ls) => {
+                insert_before_uses(ls, av, guard, frees);
+                false
+            }
+            Value::If(cond, a, b) => {
+                if names_outside_free(cond, av, frees) {
+                    true
+                } else {
+                    let mut bare = false;
+                    for arm in [a, b] {
+                        match arm.unspan_mut() {
+                            Value::Block(bl) => {
+                                insert_before_uses(&mut bl.operators, av, guard, frees)
+                            }
+                            Value::Insert(ls) => insert_before_uses(ls, av, guard, frees),
+                            other => bare |= names_outside_free(other, av, frees),
+                        }
+                    }
+                    bare
+                }
+            }
+            other => names_outside_free(other, av, frees),
+        };
+        if before {
+            ops.insert(i, guard.clone());
+            i += 1;
+        }
+        i += 1;
+    }
+}
+
+/// @PLN164 A0 (`@FR-O-LazyBuffer`) — a hidden VECTOR return buffer is minted in front of
+/// the statements that hand it to a callee, behind `OpRefIsNull`, instead of at function
+/// entry: its null-init writes the sentinel (`Function::mark_lazy_buffer` tells both
+/// emitters), and the guarded `Set(av, Null)` is the mint.  A path that never makes the
+/// call never mints the store, and every exit's free already tolerates the sentinel
+/// (`@FR-H-FreeNull`).  Declined for a body that suspends or forks (a generator, `par`),
+/// and for a buffer with a second assignment, which this cannot order.
+fn lazy_buffer_mints(code: &mut Value, function: &mut Function, data: &Data) {
+    if !crate::keys::lazy_buffer_enabled() {
+        return;
+    }
+    if code.any_node(&mut |v| matches!(v, Value::Yield(..) | Value::Parallel(..))) {
+        return;
+    }
+    let Value::Block(bl) = code else { return };
+    let frees = free_ops(data);
+    let is_null = data.def_nr("OpRefIsNull");
+    for av in 0..function.count() {
+        if !function.is_caller_hidden_buf(av)
+            || function.is_argument(av)
+            || function.is_inline_ref(av)
+            || function.is_skip_free(av)
+            || !function.name(av).starts_with("__ref_")
+        {
+            continue;
+        }
+        let Type::Vector(_, dep) = function.tp(av) else {
+            continue;
+        };
+        if !dep.is_empty() {
+            continue;
+        }
+        let top_inits = bl
+            .operators
+            .iter()
+            .filter(|op| matches!(op.unspan(), Value::Set(x, v) if *x == av && matches!(v.unspan(), Value::Null)))
+            .count();
+        let mut sets = 0;
+        for op in &bl.operators {
+            op.walk(&mut |v| {
+                if let Value::Set(x, _) = v
+                    && *x == av
+                {
+                    sets += 1;
+                }
+            });
+        }
+        if top_inits != 1 || sets != 1 {
+            continue;
+        }
+        function.mark_lazy_buffer(av);
+        let guard = v_if(
+            Value::Call(is_null, vec![Value::Var(av)]),
+            Value::Insert(vec![v_set(av, Value::Null)]),
+            Value::Null,
+        );
+        insert_before_uses(&mut bl.operators, av, &guard, &frees);
     }
 }
 
@@ -4190,6 +4348,7 @@ fn run_scan_phase(
         &scopes.minted_pairs,
         &scopes.multi_assigned,
     );
+    lazy_buffer_mints(&mut code, &mut function, data);
     data.definitions[d_nr as usize].code = code;
     data.definitions[d_nr as usize].variables = function;
     #[cfg(debug_assertions)]

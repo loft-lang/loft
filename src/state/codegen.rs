@@ -1825,44 +1825,21 @@ impl State {
                 stack.position += bump;
             }
             let slot_offset = stack.var_pos(v);
-            if stack.function.is_skip_free(v) || stack.function.is_inline_ref(v) {
+            if stack.function.is_skip_free(v)
+                || stack.function.is_inline_ref(v)
+                || stack.function.is_lazy_buffer(v)
+            {
                 // skip_free bindings borrow; inline_ref lift temporaries are
-                // overwritten before read.  Both want a null sentinel in the
-                // slot with no store alloc.
+                // overwritten before read; a lazy buffer mints at its first use
+                // (`@FR-O-LazyBuffer`).  All want a null sentinel in the slot with
+                // no store alloc.
                 stack.add_op("OpInitRefSentinel", self);
                 self.code_add(slot_offset);
             } else if dep.is_empty() {
-                // Owned vector: allocate a fresh store at v's slot, then
-                // init the header's length field (4B) and dep field (1B).
+                // Owned vector: the slot's null-init, then a fresh store at it.
                 stack.add_op("OpInitRef", self);
                 self.code_add(slot_offset);
-                stack.add_op("OpDatabase", self);
-                self.code_add(slot_offset);
-                let name = format!("main_vector<{}>", elm_tp.name(stack.data));
-                let known = stack.data.name_type(&name, self.source);
-                debug_assert_ne!(
-                    known,
-                    u16::MAX,
-                    "Incomplete type {name} in {}",
-                    stack.function.name
-                );
-                self.code_add(known);
-                // Push a DbRef copy of v's slot, set length=0 (4B), set dep byte.
-                stack.add_op("OpVarRef", self);
-                self.code_add(slot_offset);
-                stack.add_op("OpConstInt", self);
-                self.code_add(0i64);
-                // Vector header length field is 4 bytes (u32).
-                stack.add_op("OpSetInt4", self);
-                self.code_add(4u16);
-                // OpCreateStack pointing at v's slot (now the real DbRef).
-                let dep_offset = stack.var_pos(v);
-                self.emit_push_create_stack(stack, dep_offset);
-                stack.add_op("OpConstInt", self);
-                self.code_add(12i64);
-                stack.add_op("OpSetByte", self);
-                self.code_add(4u16);
-                self.code_add(0u16);
+                self.gen_owned_vector_store(stack, v, &elm_tp);
             } else {
                 // Borrowed view: a stack-frame DbRef pointing into dep's
                 // slot.  Must be overwritten by OpPutRef before any field
@@ -1874,6 +1851,42 @@ impl State {
                 self.code_add(dep_offset);
             }
         }
+    }
+
+    /// Allocate a fresh `main_vector<elm>` store at `v`'s slot, which holds a DbRef or the
+    /// null sentinel (`OpDatabase` allocates fresh from the sentinel), then init the
+    /// header's length field (4B) and dep field (1B).  The owned-vector null-init, and the
+    /// mint a lazy buffer's guarded `Set(v, Null)` lowers to (`@FR-O-LazyBuffer`).
+    fn gen_owned_vector_store(&mut self, stack: &mut Stack, v: u16, elm_tp: &Type) {
+        let slot_offset = stack.var_pos(v);
+        stack.add_op("OpDatabase", self);
+        self.code_add(slot_offset);
+        let name = format!("main_vector<{}>", elm_tp.name(stack.data));
+        let known = stack.data.name_type(&name, self.source);
+        debug_assert_ne!(
+            known,
+            u16::MAX,
+            "Incomplete type {name} in {}",
+            stack.function.name
+        );
+        self.code_add(known);
+        // Push a DbRef copy of v's slot, set length=0 (4B), set dep byte.
+        let slot_offset = stack.var_pos(v);
+        stack.add_op("OpVarRef", self);
+        self.code_add(slot_offset);
+        stack.add_op("OpConstInt", self);
+        self.code_add(0i64);
+        // Vector header length field is 4 bytes (u32).
+        stack.add_op("OpSetInt4", self);
+        self.code_add(4u16);
+        // OpCreateStack pointing at v's slot (now the real DbRef).
+        let dep_offset = stack.var_pos(v);
+        self.emit_push_create_stack(stack, dep_offset);
+        stack.add_op("OpConstInt", self);
+        self.code_add(12i64);
+        stack.add_op("OpSetByte", self);
+        self.code_add(4u16);
+        self.code_add(0u16);
     }
 
     /// The null-init of a NULLABLE vector local (`vector<T>?`): the slot takes the null
@@ -4921,6 +4934,16 @@ impl State {
     }
 
     pub(super) fn set_var(&mut self, stack: &mut Stack, var: u16, value: &Value) {
+        // `@FR-O-LazyBuffer` — a lazy buffer's later `Set(v, Null)` is its MINT (the scopes
+        // pass places it behind `OpRefIsNull(v)`); its entry null-init wrote the sentinel.
+        if matches!(value.unspan(), Value::Null)
+            && stack.function.is_lazy_buffer(var)
+            && let Type::Vector(elm_tp, dep) = stack.function.tp(var).clone()
+            && dep.is_empty()
+        {
+            self.gen_owned_vector_store(stack, var, &elm_tp);
+            return;
+        }
         if let Type::RefVar(tp) = stack.function.tp(var).clone() {
             // loft#1372 — the write half of the same peel: `Optional(τ)` stores as `τ`, so
             // the write op is the slot's, and whether the slot may hold null is

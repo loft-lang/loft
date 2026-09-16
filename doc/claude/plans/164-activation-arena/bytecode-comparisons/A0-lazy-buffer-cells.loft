@@ -1,0 +1,153 @@
+// @PLN164 A0 cells — a hidden return buffer is minted at its first use on the path that
+// runs, not at function entry.  The interpreter is the oracle for both switch states; every
+// cell's value is written beside it and must hold on --interpret and --native, with and
+// without LOFT_NO_LAZY_BUFFER=1, under LOFT_STRICT_STORES=1, LOFT_NATIVE_LEAK_CHECK=1 and
+// LOFT_POISON=1.  `main` runs the set three times so a store leaked per call shows.
+struct Pt { x: float, y: float }
+struct Pa { k: integer, c: integer }
+
+fn mk(n: integer) -> vector<Pt> {
+  mk_v: vector<Pt> = [];
+  for i in 0..n { mk_v += [Pt { x: i as float, y: 1.0 }]; }
+  mk_v
+}
+fn mkpa(k: integer) -> Pa { Pa { k: k, c: k * 2 } }
+fn add1(v: const vector<integer>, x: integer) -> vector<integer> {
+  a1_r: vector<integer> = [];
+  for e in v { a1_r += [e]; }
+  a1_r += [x];
+  a1_r
+}
+
+// a1 (A0-1) — used on one branch only: s = 5 … 9 reach the call.  Expect 35.
+fn f1(s: integer) -> integer {
+  if s < 5 { return 0 }
+  f1_p = mk(s);
+  len(f1_p)
+}
+fn a1() -> integer { a1_t = 0; for s in 0..10 { a1_t += f1(s); } a1_t }
+
+// a2 (A0-2) — used inside a loop: lengths 0 … 5 sum to 15; the last x for i = 1 … 5 is
+// i - 1, summing to 10.  Expect "15 10".
+fn a2() -> text {
+  a2_t = 0;
+  a2_x = 0;
+  for i in 0..6 {
+    a2_p = mk(i);
+    a2_t += len(a2_p);
+    if i > 0 { a2_x += (a2_p[i - 1]?.x) as integer; }
+  }
+  "{a2_t} {a2_x}"
+}
+
+// a3 (A0-3) — two buffers, both results adopted and read after.  Expect 34.
+fn a3() -> integer { a3_p = mk(3); a3_q = mk(4); len(a3_p) * 10 + len(a3_q) }
+
+// a4 (A0-4) — exclusive arms, each with its own buffer.  Expect "2 105".
+fn f4(c: boolean) -> integer {
+  if c { f4_a = mk(2); len(f4_a) } else { f4_b = mk(5); len(f4_b) + 100 }
+}
+fn a4() -> text { "{f4(true)} {f4(false)}" }
+
+// a5 (A0-5) — a loop-carried result (the rotated buffer pair).  Expect "4 6".
+fn a5() -> text {
+  a5_v: vector<integer> = [];
+  for i in 0..4 { a5_v = add1(a5_v, i); }
+  a5_s = 0;
+  for e in a5_v { a5_s += e; }
+  "{len(a5_v)} {a5_s}"
+}
+
+// a6 (A0-6) — a function that returns the result local: its buffer is the caller's.
+// Expect 3.
+fn f6(n: integer) -> vector<Pt> { f6_p = mk(n); f6_p }
+fn a6() -> integer { len(f6(3)) }
+
+// a7 — a RECORD buffer on one branch only: s < 3 answers -1 (three times), s = 3, 4, 5
+// answer 6 + 8 + 10.  Expect 21.
+fn f7(s: integer) -> integer {
+  if s < 3 { return -1 }
+  f7_p = mkpa(s);
+  f7_p.c
+}
+fn a7() -> integer { a7_t = 0; for s in 0..6 { a7_t += f7(s); } a7_t }
+
+// a8 — one buffer local reassigned from a second call.  Expect 13.
+fn a8() -> integer { a8_p = mk(1); a8_t = len(a8_p); a8_p = mk(3); a8_t * 10 + len(a8_p) }
+
+// a9 — a call in a loop condition.  Expect 4.
+fn a9() -> integer { a9_i = 0; while len(mk(a9_i)) < 4 { a9_i += 1; } a9_i }
+
+// a10 — an early return inside a loop, before the use.  Expect "200 1".
+fn f10(n: integer) -> integer {
+  for i in 0..n { if i == 2 { return i * 100 } }
+  f10_p = mk(n);
+  len(f10_p)
+}
+fn a10() -> text { "{f10(5)} {f10(1)}" }
+
+// a11 — the use inside a branch inside a loop, taken on some iterations: i = 0, 3, 6, 9.
+// Expect 18.
+fn a11() -> integer {
+  a11_t = 0;
+  for i in 0..10 { if i % 3 == 0 { a11_p = mk(i); a11_t += len(a11_p); } }
+  a11_t
+}
+
+// a12 — the parse_circle shape: the whole body is a loop, and most calls leave before the
+// use.  n = 7 reaches the call (7 points, the last x is 6).  Expect "-1 -1 13".
+fn f12(n: integer) -> integer {
+  f12_i = 0;
+  while true {
+    f12_i += 1;
+    if n < 7 { return -1 }
+    if f12_i < 2 { continue }
+    f12_p = mk(n);
+    return len(f12_p) + (f12_p[n - 1]?.x) as integer
+  }
+  0
+}
+fn a12() -> text { "{f12(1)} {f12(6)} {f12(7)}" }
+
+// a13 — a record and a vector buffer in one function, only one path using both.
+// Expect "0 9 4".
+fn f13(s: integer) -> integer {
+  if s == 0 { return 0 }
+  f13_pa = mkpa(s);
+  if s < 3 { return f13_pa.c }
+  f13_p = mk(s);
+  f13_pa.c + len(f13_p)
+}
+fn a13() -> text { "{f13(0)} {f13(3)} {f13(2)}" }
+
+// a14 — the `read_paint` shape: a record with a vector field, filled through the caller's
+// buffer by one of several literal exits, called on one path only (f14) and inside a loop
+// whose early exit comes first (f15, the parse_circle shape).  f14: -1; kind 0 → 0;
+// 100 + 14; 200 + 12 + 2.  f15: -1; 12.  Expect "-1 0 114 214 -1 12".
+struct Pk { kind: integer, c1: integer, spec: vector<float> }
+fn read_pk(s: integer) -> Pk {
+  if s > 10 { return Pk { kind: 2, c1: s, spec: [1.0, 2.0] } }
+  if s > 5 { return Pk { kind: 1, c1: s * 2, spec: [] } }
+  Pk { kind: 0, c1: 0, spec: [] }
+}
+fn f14(s: integer) -> integer {
+  if s < 3 { return -1 }
+  f14_p = read_pk(s);
+  f14_p.kind * 100 + f14_p.c1 + len(f14_p.spec)
+}
+fn f15(n: integer) -> integer {
+  while true {
+    if n < 7 { return -1 }
+    f15_p = read_pk(n);
+    return f15_p.c1
+  }
+  0
+}
+fn a14() -> text { "{f14(1)} {f14(4)} {f14(7)} {f14(12)} {f15(3)} {f15(12)}" }
+
+fn main() {
+  for _r in 0..3 {
+    println("a1 {a1()} a2 {a2()} a3 {a3()} a4 {a4()} a5 {a5()} a6 {a6()} a7 {a7()}");
+    println("a8 {a8()} a9 {a9()} a10 {a10()} a11 {a11()} a12 {a12()} a13 {a13()} a14 {a14()}");
+  }
+}

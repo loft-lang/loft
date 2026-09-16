@@ -1114,7 +1114,7 @@ fn write_variables(out: &mut String, f: &crate::variables::Function) {
         write_type(out, v.type_def);
         let _ = write!(
             out,
-            ",\"stack_pos\":{},\"uses\":{},\"argument\":{},\"stack_allocated\":{},\"skip_free\":{},\"captured\":{},\"caller_hidden_buf\":{},\"view_elided\":{},\"owner_witness\":{}}}",
+            ",\"stack_pos\":{},\"uses\":{},\"argument\":{},\"stack_allocated\":{},\"skip_free\":{},\"captured\":{},\"caller_hidden_buf\":{},\"view_elided\":{},\"lazy_buffer\":{},\"owner_witness\":{}}}",
             v.stack_pos,
             v.uses,
             v.argument,
@@ -1123,6 +1123,7 @@ fn write_variables(out: &mut String, f: &crate::variables::Function) {
             v.captured,
             v.caller_hidden_buf,
             v.view_elided,
+            v.lazy_buffer,
             v.owner_witness
         );
     }
@@ -1269,6 +1270,7 @@ fn variables_from_parsed(
             captured: as_bool(field(it, "captured")?)?,
             caller_hidden_buf: as_bool(field(it, "caller_hidden_buf")?)?,
             view_elided: as_bool(field(it, "view_elided")?)?,
+            lazy_buffer: as_bool(field(it, "lazy_buffer")?)?,
             owner_witness: as_u16(field(it, "owner_witness")?)?,
         });
     }
