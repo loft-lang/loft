@@ -40,8 +40,26 @@ when a PR skipped the rebuild step.
 
 ## Defence layers
 
-Three layers, each individually sufficient; running all three makes
-it nearly impossible for a broken gallery to reach users.
+Three layers, each individually sufficient against the failure they were
+built for — a wasm/js pair that does not agree — so running all three
+makes it nearly impossible for a STALE or mismatched gallery to reach
+users.
+
+⚠ **They do not cover a bundle that loads cleanly and draws nothing, and
+one of them asserts that it does.**  Every step of `make gallery` is
+structural — files present, glue and wasm from one build, every asset
+HEAD-200 — so it prints `[7/7] gallery ready` over a page whose canvas
+holds one flat colour (measured 2026-09-16, loft#1545; the identical
+invocation reads 767 distinct colours on `brick-buster.html`, so the
+instrument is not the problem).  No layer opens a browser on the gallery
+path at all: the only browser render in CI is `tests/html_render.rs`,
+and it loads `doc/brick-buster.html`.  Layer 4 sits on the very page that
+renders blank — `doc/gallery-run.html`, where the guard at `:279-289`
+wraps the instantiation itself — and it still cannot fire: it is keyed to
+`LinkError: Failed to grow table`, the STALENESS symptom, so a current
+bundle instantiates cleanly, sets `loftReady`, enables the Run button and
+draws nothing, with the condition never true.  The COUNT of layers was never the measure; what each
+one tests is.
 
 ### 1. `make gallery` — local one-shot verify-and-rebuild
 
@@ -101,7 +119,7 @@ says why: an exact stamp reddens these tests on every commit touching
 several times a day.  It catches drift at the scale that actually
 happened.
 
-### 4. Runtime guard (`doc/gallery.html::initLoft`)
+### 4. Runtime guard (`doc/gallery-run.html::initLoft`)
 
 If a mismatch ever reaches a browser despite the above, the gallery
 now translates the cryptic `LinkError: Failed to grow table` into:
