@@ -3779,7 +3779,14 @@ impl Parser {
             )),
             Type::Text(_) => Some((Value::Text(String::new()), tp.clone())),
             // A TUPLE defaults member-wise — the value a written `(0, "")` literal builds, which
-            // is what the `??` spelling of the same discharge hands over.  `has_default` has
+            // is what the `??` spelling of the same discharge hands over.
+            //
+            // Enforces @FR-N-Default for a tuple.  The rule is stated on the TYPE and not on
+            // where the value lives, so this arm and the `Reference(__tuple<…>)` one below are
+            // one answer in two homes; an arm that instead matched whatever the SIBLING spelling
+            // happened to return would anchor on a value that moves, and that one has moved.
+            //
+            // `has_default` has
             // recursed over the members already; a member IT admits and this cannot build (a
             // collection, which the caller parses in its own context) makes the whole tuple
             // unbuildable, and the caller reports that rather than proceeding.  Without this arm
@@ -3877,27 +3884,6 @@ impl Parser {
                 self.cur_type_var_name = saved.1;
                 Some((v_block(vec![v], t.clone(), Self::TV_DEFAULT_BLOCK), t))
             }
-            // A tuple's TWO SPELLINGS must default alike.  `Reference(__tuple<…>)` is a
-            // struct as far as `def_type` is concerned, so it fell into the record arm below
-            // — but `__tuple<integer,integer>` is not a name any loft source can spell, so the
-            // `S {}` sub-parse could not build it and handed back a value whose type was
-            // neither: the coalesce then reported a default *"of type `boolean`"* for a
-            // program containing no boolean (loft#1451).
-            //
-            // ⚠ This arm keeps the two spellings AGREEING, and agreement is not the same as
-            // being right.  `@FR-N-Default` is stated on the TYPE, not on where the value
-            // lives, so a tuple of integers HAS a default under both spellings and the honest
-            // answer is to build it member-wise — which is what the boxed form does once
-            // `Type::Tuple` has a default arm of its own (loft#1424).  Here neither spelling
-            // has one, so both answer `None` and `v[i]?` routes to the recover-as-base path;
-            // the moment the stack form learns to build one, THIS arm becomes the
-            // disagreement.  Closed that way on the joined tree (loft#1451 + loft#1424).
-            //
-            // The general form, because it cost hours: reconciling two spellings by matching
-            // what the SIBLING answers anchors on a value that can move, and this one moved
-            // the same day.  Match the RULE instead — and where reconciling requires PICKING
-            // a behaviour, name the rule that picks it, here, at the site.
-            Type::Reference(d_nr, _) if self.data.def(*d_nr).name().starts_with("__tuple<") => None,
             // A record defaults to `S{}` — every field defaulted, exactly the value a
             // bare `S{}` literal builds (`has_default` has already verified each field
             // has a default).  Parsed from the synthetic `S {}` source so it reuses

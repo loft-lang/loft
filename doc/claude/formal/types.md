@@ -125,8 +125,11 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                compiler error followed on both backends.  The FUNCTION former is closed by the
                predicate; the TUPLE is not, because its absence HAS a form — (T-Absent)'s
                member-nullable tuple — so the cure there is to build that form, not to stop
-               marking absence.  `data::constructs_optional` carries that one carve-out and
-               names tuples.md D-tup-10, which is what closes it.
+               marking absence.  `data::constructs_optional` carries that one carve-out, and
+               the 2026-09-16 option-2 ruling on tuples.md D-tup-10 made it PERMANENT: a `τ?`
+               may not be DECLARED for a tuple, while an absence that ARRIVES is carried with
+               the `?` on the outside.  The two predicates answer two questions — may a `τ?` be
+               declared, may absence be marked in flight — and both stay.
   (N-Idem)     τ?? ≡ τ?                 optional is idempotent — no double-null
   (N-Dense)    vector<τ> stores τ       elements are non-null unless written vector<τ?>
 

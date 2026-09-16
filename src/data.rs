@@ -5591,7 +5591,13 @@ pub fn has_null(tp: &Type) -> bool {
 /// nullable fn-ref — so `has_null` is complete for it, and the two answers coincide everywhere
 /// except the tuple.
 ///
-/// The gap between the two IS `D-tup-10`, and it closes by deleting this function.
+/// ⚠ **Not a temporary carve-out.**  This line read *"the gap between the two IS `D-tup-10`, and
+/// it closes by deleting this function"* until 2026-09-16, when the owner's option-2 ruling on
+/// that entry made the in-flight spelling permanent: `(T-Absent)` refuses `(τ₁, …, τₙ)?` at
+/// every DECLARATION and has the compiler carry an absence that ARRIVES with the `?` on the
+/// OUTSIDE.  So the two predicates answer two different questions and both stay — `has_null`
+/// whether a `τ?` may be DECLARED for this τ, this one whether absence may be MARKED for it in
+/// flight.  What `D-tup-10` still carries is the `?` discharge on a member-nullable tuple.
 #[must_use]
 pub fn constructs_optional(tp: &Type) -> bool {
     has_null(tp) || matches!(tp.base(), Type::Tuple(_))

@@ -2947,9 +2947,14 @@ arise (`(N-Idem)`).
 Two rather than one is the shape of the change and worth the line: the predicate was spelled
 inline at ONE construction site and absent at two others, so giving it a home replaced a
 discriminating site rather than adding three — and the second function exists because the tuple's
-answer is not the rule's yet.  `constructs_optional` is written to be DELETED: the gap between it
-and `has_null` is `tuples.md D-tup-10`, so this row goes back down by one when that closes.  The
+answer is not the rule's yet.  The
 opaque column did not move.
+
+⚠ **This row said `constructs_optional` "is written to be DELETED" and that the row "goes back
+down by one" when `D-tup-10` closes.  Both are wrong since the 2026-09-16 option-2 ruling** —
+the in-flight `Optional(Tuple)` STAYS, so the predicate is the mechanism `(T-Absent)` prescribes
+rather than debt, and this row does not come back down.  Corrected 2026-09-16 beside the same
+claim in `data::constructs_optional`'s own doc and in `types.md (N-Opt)`.
 
 **2026-09-08, loft#1450's `is` half: `750 · 403 · 6 · 341` → `751 · 404 · 6 · 341`.**  One
 function joined the classifier and it SEES THROUGH — `parser::control::parse_is_variant`, which
