@@ -72,10 +72,10 @@ row whose skill was deleted.
 | `engineering-rigor` | 2026-09-07 | `b1dc3f1b` |
 | `formal-rules` | 2026-09-07 | `ae0c79d2` |
 | `loft-codegen` | 2026-09-16 | `e4e97aa9a` |
-| `loft-debug` | 2026-09-07 | `ae0c79d2` |
+| `loft-debug` | 2026-09-16 | `e4e97aa9a` |
 | `loft-plan-workflow` | 2026-09-07 | `a9743ea6` |
 | `loft-ship` | 2026-09-07 | `ae0c79d2` |
-| `loft-test` | 2026-09-07 | `04c08d10` |
+| `loft-test` | 2026-09-16 | `e4e97aa9a` |
 | `loft-write` | 2026-09-07 | `ae0c79d2` |
 
 ## Findings that outlive a single review
