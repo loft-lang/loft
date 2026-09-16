@@ -588,10 +588,22 @@ instead of a store of its own.  Every downstream reader is untouched, and the on
 re-pointing the variable's deps from `Deps::none()` (owned) to the destination's base, plus
 `skip_free` / `inline_ref` — the pattern `group_elem_write` already uses for its `found` temp.
 
-What licenses it is the CALLEE's side, measured: `n_mkints(n, o)` only ever does
-`OpClearVector(o)`, `OpPreAllocVector(o, …)`, `OpPushInt(o, …)`, `return o`.  It never mints a
-store for `o`, and the caller already emits those same ops against a field DbRef today, so a
-field place is a valid buffer.
+What licenses it is the CALLEE's side: `n_mkints(n, o)` only ever does `OpClearVector(o)`,
+`OpPreAllocVector(o, …)`, `OpPushInt(o, …)`, `return o` — it never mints a store for `o`, and
+the caller already emits those same ops against a field DbRef today, so a field place is a valid
+buffer.
+
+⚠ **But that is a property of SOME callees, not of the lowering, and a first cut read it as the
+lowering.**  Three callees were sampled and all three filled the buffer they were handed, which
+made `(R-Place)`'s *"a callee that may hand back a store it did not mint"* look vacuous.  It is
+not: a callee returning a vector LITERAL lowers to `OpDatabase(__vdb_1)` on its buffer
+PARAMETER — it MINTS into the buffer — so handed the destination it mints over the place, and
+the write lands in a record the destination does not name.  The corpus found it
+(`1152-a-vector-value-into-a-group-reaches-every-member`, a refusal from loft#810's guard:
+*"record N claims size 0 … freed or never written"*).  The admission therefore READS THE CALLEE
+and declines a body that mints into any argument slot — the positive form of the rule's decline,
+as B2 unit 1 is for records.  Generalising from three samples is the error, and the rule had
+already written the answer down.
 
 ### The restrictions, re-derived against the measurements
 
@@ -602,15 +614,19 @@ do not all survive as written, and saying which is the point of this section:
 |---|---|
 | an ARGUMENT reaches the destination's store | **essential, and true by construction** — `grow`'s first op is `OpClearVector(o)`, before any read of `v`, so `h.v = grow(h.v)` would read an emptied vector |
 | a path READS the result after the store | **not needed for this clause.**  It belongs to the other `(R-Place)` clause — a buffer claimed in S and then relocated, where the source is moved-from.  Here the result NAMES the destination, so a read of it reads exactly what was written |
-| a callee that may hand back a store it did NOT mint (`O-Opaque`) | **not what the lowering does**: `passthrough`, whose declared type says it borrows a parameter, still copies into the buffer and answers the buffer.  It survives as a POSITIVE admission — a direct call to a loft-defined callee with a hidden vector buffer — rather than as a decline |
+| a callee that may hand back a store it did NOT mint (`O-Opaque`) | **survives, and the first reading of this row was wrong.**  `passthrough` copies its parameter INTO the buffer and answers the buffer, which made the decline look vacuous across three sampled callees — but a callee returning a vector LITERAL mints into its buffer parameter (`OpDatabase(__vdb_1)`) and would mint over the destination.  Implemented as a positive admission that READS the callee's body |
 | a callee that on some exit answers a store OTHER than the buffer | **already true for every callee measured** — `two_exits`' early `return [99]` still clears and appends into `o` and answers `o`.  This is the contract B2 unit 1 had to CREATE for records; the vector lowering establishes it already.  Kept as a cheap ASSERTED check, never re-derived |
 | a `?` / `??` discharge on the result | **structurally excluded** — the right-hand side is an `ncc` BLOCK, not a `Call`, so the admission never sees it |
 
-And one the rule does not have, taken from C1's lesson rather than from the text: a destination
-that is a member of a LINKED COLLECTION GROUP is **not** a decline here, where it was in C1.  The
-maintenance is `OpClearKeyed(g.by_x)` … `OpIndexGroup(g.es, g.by_x)` BRACKETING the fill, and a
-call sits inside that bracket; C1's in-place literal had nowhere to hang it.  Verified, not
-assumed.
+And two the rule does not list.  A destination that is a member of a LINKED COLLECTION GROUP is
+**not** a decline here, where it was in C1: the maintenance is `OpClearKeyed(g.by_x)` …
+`OpIndexGroup(g.es, g.by_x)` BRACKETING the fill, and a call sits inside that bracket, which
+C1's in-place literal had nowhere to hang.  It needed
+`group_reindex_after_vector_write` to learn the shape — it keyed on an `OpAppendVector` naming
+the field, and this rewrite emits none, so the vector filled and the keyed view stayed empty
+(`3,0,0` for `3,3,4`).  And a field of a struct-ENUM VARIANT **is** a decline: it lowers through
+a variant check whose other arm is the null sentinel, so the place exists only if the enum holds
+that variant and does not unconditionally EXIST as `(R-Place)` requires.
 
 ### Where the rules are short — `(O-Buffer)`
 
