@@ -807,7 +807,11 @@ declines, hand-computed against the record form, green on both backends and unde
 `LOFT_POISON`, `LOFT_POISON_CLAIM`, `LOFT_STRICT_STORES` and the leak gate; structural pins in
 `tests/view_field.rs` (the tuple signature, the dropped buffer, the site's tuple read, and every
 decline still declining); registered under the `codegen` subject.  The native corpus runs clean
-with the unit armed (1364 scripts, 0 compile failures).
+with the unit armed (1364 scripts, 0 compile failures), and the curated local set is green for
+the default path: four of its reds were derived rows this unit owed (the three walker audits and
+the emitter registry's cap, re-measured rather than picked) and four were the box under load —
+`loft_suite` 133 s, `poison_claim` 195 s, `html_asyncify` 41 s and the two server tests each pass
+alone.
 
 *Measured on the consumer, and it does not reach it yet.*  With the unit armed, every `Mark`-
 returning function of the drawing library still declines, and the trace says exactly why —
