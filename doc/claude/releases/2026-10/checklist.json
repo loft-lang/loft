@@ -1,4 +1,8 @@
 {
+  "M-close-plans": {
+    "at": "2026-09-16 10:13",
+    "note": "scripts/close-shipped-plans.sh --range v2026.9.0..HEAD --dry-run, 2026-09-16. Eight plan-close directives in range, naming loft-lang/plans issues 149 150 152 153 155 159 160 162, and ALL EIGHT report \"already closed, skipping\". Nothing shipped in this range left a plan open, which is the whole question the step asks. Deliberately run in dry-run only: the acting form calls gh issue close against a separate repo, and closing plan issues is the owner call, not the reviewer one. No outward action taken."
+  },
   "M-falsify-receipts": {
     "at": "2026-09-16 09:10",
     "note": "make falsify-review run 2026-09-16 on 369f6de7e, and the --since v2026.9.0 read. Census: 486 falsification receipts; controls still publicly reachable 292, unreachable 194 (66 of those carry a patch); 106 patch receipts, 43 still applying and 63 no longer applying (listed by the report, to re-derive or downgrade to a marker). --since v2026.9.0 (24 commits) reads 194 controls unreachable NOW; this item has never run in any recorded cycle, so there is no previous line to subtract and this run ESTABLISHES the baseline the next cycle subtracts from to get the inflow rate. Scoring individual patch receipts with the instrument each names is the per-guard read and stays for the tag candidate."
@@ -6,6 +10,14 @@
   "M-liveness": {
     "at": "2026-09-16 09:08",
     "note": "make release-liveness run 2026-09-16 on 369f6de7e. Reports: no issue-cited suppressions (so no stale rationales); gates whose LAST verdict is a failure = release-gate.yml (2026-09-08) and miri.yml (2026-09-16, the Debug-assertions and LOFT_VERIFY_STACK legs); 4 items never run in any recorded cycle (M-perf-pass, M-liveness, M-falsify-receipts, M-vscode). Acted on the miri red in the same session: the Debug-assertions leg was traced to place_result.rs asking the heap-return ownership question of a closure-returning callee (22 corpus files), fixed; the LOFT_VERIFY_STACK leg measures 0 of 1458 on this branch."
+  },
+  "M-monthly-bugs": {
+    "at": "2026-09-16 10:13",
+    "note": "make bug-review run 2026-09-16 over 697 bug issues (#246-#1544, 3 open). ONE rising class: null/sentinel, 12.1 to 4.8 to 18.9 to 25.9 percent across the four bands, +7.1pp against its own peak. Every other class is flat or falling (ownership/free -2.0, par/coroutine -4.5, narrow-int/width -4.5, wasm/browser -8.6, packages/registry -11.7). Payoff check: IntegerSpec::range_to_width PAID OFF, taking narrow-int/width 8.6 to 3.4 percent; four later keystones (Parser::nstore_unwrap_report, Scopes::owns_freeable_store, Function::proxy_says_owned, @FR-N-Road) landed too recently for any band to start above them, so re-run with ARGS=\"--bands 14\" next cycle rather than reading them as unproven. Enumeration exposure names the dangerous pairs: Tuple 76.3 percent omitted with 53 bugs, Parallel 78.1 with 30, Yield 76.9 with 30. Contract pressure: 606 unjudged against 392 judged, so the 15.9 percent strained ratio for 2026-09 is drawn from a minority and is not evidence either way yet. WHAT REMAINS: converting the rising class into ONE generalization is a design act and is not done here."
+  },
+  "M-monthly-docs": {
+    "at": "2026-09-16 10:13",
+    "note": "Both halves run 2026-09-16. make libraries-review: 8 reviewed, 41 never reviewed, 2 exempt, 1 deferred, 6 owe a verdict, 0 stale rows; 1441 published pub items with 36 undocumented (2 fn, 34 type); 359 in-tree pub fns. Five sources moved past their watermark (default, lib/code.loft, lib/lexer.loft, lib/parser.loft, lib/testlib.loft) and EACH reports 0 pub fn line(s) changed, so no public surface moved in any of them. make features-review: 71 entries with a runnable example, 14 exempt, 2 deferred (F47, F100), 0 unwritten, 0 owe a verdict, 35 infra entries needing no example. WHAT REMAINS: the by-hand read of those five prose deltas is NOT done. The census is what this tick records; the zero pub-fn-line finding is why the deltas are low risk, not why they are read."
   },
   "M-perf-pass": {
     "at": "2026-09-16 09:54",
