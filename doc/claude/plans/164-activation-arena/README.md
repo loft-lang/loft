@@ -10,8 +10,8 @@ Tracker: [@PLN164](https://github.com/loft-lang/plans/issues/164) · `status:act
 
 ## Status (REQUIRED)
 
-Active (the owner's go, 2026-09-15).  **P0 done**, **B1, C4, B2, C3 and C1 shipped** (B2's caller side
-2026-09-16: a wash on the parse row, structural gain only — § B2 *Measured*) — the
+Active (the owner's go, 2026-09-15).  **P0 done**, **B1, C4, B2, C3, C1 and C2 shipped** (B2's caller side and
+C2 both a wash on the parse row, structural gain only — § B2 and § C2 *Measured*) — the
 measurements are under § P0 below and the mechanism under § B1.  What P0 changed in the
 plan: tier 1's ceiling is ~10 % of the parse row, not a fifth, and its store-identity cost
 (287 `store_nr !=` sites in one emission) is real, so A1/A2 stay behind B and C in the
@@ -47,8 +47,8 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
 - **Effort:** M (tiers 1–2) · MH (tier 3)
 - **Design:** ~ — the invariants are named; the store-identity question (§ Edge cases E1)
   is open and decides tier 1's shape.
-- **Last touched:** 2026-09-16 (C2 cut: a pure-IR rewrite, the restrictions re-derived against
-  the lowering, and `(O-Buffer)` extended for a buffer that is a place)
+- **Last touched:** 2026-09-16 (C2 shipped, and then measured on the bench: the rewrite has no
+  site in the consumer, so the parse row's points class stays with C5 — § C2 *Shipped*)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -568,7 +568,7 @@ still passes, since the copy is correct, so what the switch costs is a store and
 that no value can see.  The pin asserts BOTH element spellings, having first passed vacuously by
 asserting one.
 
-## C2 — the destination as return buffer (`@FR-R-Place`'s "the buffer IS the place")
+## C2 — the destination as return buffer (SHIPPED 2026-09-16, `@FR-R-Place`, `@FR-O-Buffer`)
 
 *Re-measured first, and this row IS real* — unlike C3's.  `h.v = mkints(n)` on an EXISTING
 field place emits, per assignment:
@@ -659,6 +659,37 @@ loft-defined, hidden vector buffer, every exit answers it), the group bracketing
 the 11-cell oracle in `bytecode-comparisons/C2-buffer-is-the-place-cells.loft` — whose values are
 TODAY's answers and which C2 may not move.
 
+### Shipped — and what the bench then measured
+
+*Mechanism.*  `Parser::buffer_is_the_place` (`src/parser/expressions.rs`) re-points the buffer
+VARIABLE at the destination — `inline_ref` plus `skip_free`, the way `group_elem_write` re-points
+its own temp — where the right-hand side is a direct call to a loft-defined callee with a hidden
+vector buffer, the destination place exists, no argument of the call reaches it, every exit
+answers the buffer and no exit MINTS into it; `group_reindex_after_vector_write` keeps a grouped
+destination's maintenance around the fill.  Switch `LOFT_NO_BUFFER_IS_PLACE=1` (parse time, both
+backends).  Guard `tests/scripts/164-buffer-is-the-place.loft` (11 cells, the two corpus-bought
+declines among them), structural pins `tests/buffer_is_place.rs`, registered under the `scopes`
+subject.
+
+*Measured, and the measurement is a FINDING rather than a confirmation.*  The row is real where
+it is spelled: on `h.v = mkints(n)` the rewrite removes a store, an element-by-element copy, a
+free and a temp per assignment.  **The parse bench spells it nowhere.**  `--native-emit` of
+`bench/parse_only.loft` is byte-identical with the switch on and off (25 686 lines either way,
+under `LOFT_NO_CACHE=1` too, with `parse_poly` and `smooth_pts` in the emission), and the row is
+where B1 left it: 41.8–44.8 k ns/op, hash `33f6d2b8`.  The naturalness question — § How a verdict
+is reached, question 2, which this cut asked of a probe of its own construction instead of the
+corpus — answers the same way: the 15 library files of `loft-libs-graphics` carry **13**
+`place = call(…)` sites and not one of them has a VECTOR result (twelve scalar, one `text`).
+
+*So the row the rewrite list credits to C2 is a different DESTINATION.*  `pts: smooth_pts(…)` is
+a record-LITERAL field of an element being appended, reached through a local
+(`pp_pts = smooth_pts(…)`) — B2's `place_result` shape with a vector instead of a record — and it
+declines today because `pp_pts` has TWO owning destinations, `Op.pts` and the returned `Mark.pts`.
+C5 removes the second one; only then is there ONE destination to place into.  C2 therefore ships
+with its row credited honestly: **the rewrite for the spelling it admits, structural, zero sites
+in the consumer measured so far** — and the parse row's points class stays with C5 and the
+vector `place_result` that follows it.
+
 ## The rewrite list — the natural `parse_poly` to its optimal form
 
 **This is not about how a programmer writes loft.**  The programmer writes the natural
@@ -700,7 +731,7 @@ is the whole point of Goal F.
 |---|---|---|---|---|
 | bind `pp_raw`, `pp_paint` without a copy | the callee's return deps name exactly its own buffer; the destination a plain local | `O-Move`, `O-Buffer` | shipped | B1 |
 | `pp_paint`'s buffer claimed in the scene's store; `paint: pp_paint` a relocation, not a deep copy | the result's ONE owning destination is a field of a record in store S on every path that keeps it; `pp_paint` owned and dead on every path after the literal | `R-Place`, `R-MoveLast`, `O-Complete` | the liveness exists as the `avoidable-copy` lint's *"still used after this point"*; codegen does not read it; a buffer claimed in another store is new | B2 |
-| `pts: smooth_pts(…)` fills `Op.pts` directly, no buffer | as above, with the destination place existing at the call and no argument reaching it; the callee writes only its buffer and answers it at every exit | `R-Place` ("the buffer IS the place"), `R-Callee`, E15, E16 | `retbuf_only_writer`; `R-ElemFirst` already builds a vector inside an appended element; the redirection of a call's buffer into a field is missing | C2 |
+| `pts: smooth_pts(…)` fills `Op.pts` directly, no buffer | as above, with the destination place existing at the call and no argument reaching it; the callee writes only its buffer and answers it at every exit | `R-Place` ("the buffer IS the place"), `R-Callee`, E15, E16 | `retbuf_only_writer`; `R-ElemFirst` already builds a vector inside an appended element; C2 shipped the EXISTING-place road, which this is not — this destination is a literal field reached through a local, so it is a vector `place_result` and it declines on `pp_pts`'s second destination | C5, then a vector `place_result` |
 | `sc.elems[idx] = Elem{…}` written into the slot | the slot exists; every field expression evaluated before the first write (`ename: ap_e.ename` reads the slot); omitted fields defaulted | `R-InPlaceLiteral`, E13, E14 | the FIELD destination already writes in place and defaults the omitted fields; E13's staging shipped as C1 step 1; the ELEMENT receiver is what is left | C1 step 2 |
 | `ap_e = sc.elems[idx]?` as a view | `ap_e` only read; `sc.elems` not disturbed between bind and last read, in this frame or any callee | `B-View` (the discharge clause), `B-Disturb` | the VIEW already; the disturbance walk was this frame only, which is what C3 closed | shipped C3 |
 | `Op { kind: Stroke, … }` prefilled by one block write | the literal's field set against the type's defaults | `R-Prefill` | complete-write has the set; the per-type image is missing | C4 |
@@ -838,7 +869,7 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state) | § B1 | c6 under the pool without `minted_pairs` — the interpreter's rebind free must first match native's `_rb_w_` guard | Blocked on that divergence |
 | **B2** — the result's buffer claimed in its destination's store, the field taking it by relocation at the last use (`R-Place`, `R-MoveLast`) | § B2 | cells b1–b15 both backends under the falsifiers; the census 184 → 50; `parse_poly`'s `paint: pp_paint` emits `OpMoveRecord` and `read_paint`'s buffer is a record in the scene's store; the parse row a wash (`perf stat`) | Shipped 2026-09-16 |
 | **C1** — element overwrite from a literal in place (`R-InPlaceLiteral`) | § C1 | step 1 (the STAGING clause, a both-backend silent-wrong on the shipped FIELD road) and step 2 (the element receiver): 25 cells both backends under every falsifier, four declines pinned, the `acc_pts` census 3 → 2 | Shipped 2026-09-16 |
-| **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § C2 | the 11-cell oracle (today's answers, which C2 may not move); the aliasing decline; `(O-Buffer)`'s new clause | In progress — a pure-IR rewrite, the buffer variable re-pointed at the destination |
+| **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § C2 | the 11-cell oracle (today's answers, which C2 may not move); the aliasing decline; `(O-Buffer)`'s new clause | Shipped 2026-09-16 — a pure-IR rewrite, the buffer variable re-pointed at the destination; ZERO admitted sites in the parse bench (the emission is byte-identical under the switch) and none in the 15-file consumer corpus, so the gain is structural |
 | **C3** — read-only `?`-discharge as a view (`B-View`'s discharge clause) | § C3 | the discharge ALREADY views (13 shapes measured, both backends), so the phase's content was its other half: `(B-Disturb)` across a CALL.  15 pairs both backends; 7 move under the switch | Shipped 2026-09-16 |
 | **C4** — per-type prefill image (`R-Prefill`) | § C4 | cells c1–c11 both backends under `LOFT_PREFILL_VERIFY`; the verify census over all 1432 corpus files; the image USED on both backends (`LOFT_TRACE_PREFILL`); parse row −11 % | Shipped 2026-09-15 |
 | **C5** — a returned record's heap field as a view leaf (`O-ViewField`, `R-ValueRecord`, `R-Escape`) | § The rewrite list | the points written once per line: `Mark.pts` names `Op.pts`; an E17 site that appends between the call and the read must read the copy; an escaping `pub fn` result reads the copy at the bridge | Open — last; rule admitted (C122) |
@@ -858,13 +889,17 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
    the `acc_pts` temporary the evaluation table charged to it was C1's, counted twice); C1
    closed the staging clause on the FIELD road first, because the element road inherits it, and
    then opened the element road — census 3 → 2.
-4. **C2 is next** — the row is re-measured and real (a store, an element-by-element copy, a free
-   and a temp per assignment), and it is a PURE-IR rewrite: the buffer stays the variable the
-   call site mints, and only what it holds changes.  § C2 carries the before/after, the
-   restrictions re-derived against what the lowering actually emits, and the `(O-Buffer)` clause
-   it needs.
-5. **C5** last, as its own section: it extends a formal rule (`O-ViewField`) and the
-   value-record gate, so the owner signs the rule off before the cells are written.
+4. ~~**C2**~~ — shipped, and the bench then said the spelling it admits (`h.v = mkints(n)`,
+   a call result into an EXISTING vector place) has no site in the consumer: the emission is
+   byte-identical under the switch and the corpus's 13 `place = call(…)` sites are all scalar
+   or `text`.  The gain is structural; § C2 *Shipped* records it and names where the parse
+   row's points class actually sits.
+5. **C5 is next** — and it is the keystone for the points, not the last polish the ordering
+   first made it: `pp_pts` has TWO owning destinations (`Op.pts` and the returned `Mark.pts`),
+   which is what declines a vector `place_result`.  The view leaf removes the second, and the
+   `Mark` store per parsed line (12 of the ~68 mints a parse still makes) goes with it.  It
+   extends `(O-ViewField)` and the value-record gate, both of which the owner has signed off
+   (C122).
 6. **B1b** beside them whenever D-own-43 closes (the interpreter's rebind guard); then
    A1 → A2, whose remaining share is re-measured after the copy phases have moved the mix.
 7. Re-measure the 14-row bench after each phase (`compare.py`, 14/14 hashes).

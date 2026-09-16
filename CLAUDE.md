@@ -893,6 +893,34 @@ destination in a local record, a loop, a rejoin of a stored and a held path all 
 Measured 2026-09-16 on the drawing bench's parse row: one store fewer per line and the copy
 gone, and a WASH on every counter (`perf stat`: instructions, cycles and cache misses equal
 within noise) because the record relocated there carries no heap on that scene.
+**`LOFT_NO_ELEMENT_IN_PLACE=1`** (@PLN164 C1, `@FR-R-InPlaceLiteral`, parse time, BOTH
+backends) makes `v[i] = S { … }` build its record in a temp store and deep-copy it into the
+slot again — with it off, the literal writes the slot's fields, as the FIELD destination
+`o.f = S { … }` always has, with every field expression STAGED first (the language evaluates
+a literal's fields before the assignment stores, so `El { a: o.f.b, b: o.f.a }` reads the
+place it is about to overwrite) and an omitted field taking its declared default — and is the
+first bisect step for a wrong element, a leak or a double free at an element assigned from a
+literal.  A computed index keeps the copy (the receiver is re-derived per field write), as do
+a collection-TYPED field and a linked-group member.
+**`LOFT_NO_BUFFER_IS_PLACE=1`** (@PLN164 C2, `@FR-R-Place`, `@FR-O-Buffer`, parse time, BOTH
+backends) makes `h.v = mkints(n)` mint a buffer store, fill it, clear `h.v` and copy every
+element in again — with it off, the call is handed the destination AS its return buffer: the
+buffer stays the variable the call site mints and only what it holds changes, so the result's
+deps and the free sweep are untouched, and `(O-Buffer)` gains the clause that such a buffer is
+never freed — and is the first bisect step for a wrong, empty or stale vector field after an
+assignment from a call.  Declined where an argument reaches the destination, where the callee
+MINTS into its buffer (a returned vector literal does), and for a struct-enum variant's field.
+Measured on the drawing bench's parse row: the consumer spells this nowhere — the emission is
+byte-identical under the switch — so the gain is structural.
+**`LOFT_NO_CALLEE_DISTURB=1`** (@PLN164 C3, `@FR-B-Disturb`, `@FR-B-Ref-Reshape`, BOTH
+backends) makes the disturbance walk read THIS frame's ops only again — with it off, a
+container a CALLEE grows or removes from disturbs the caller's live view of it, so
+`e = sc.els[0]?; grow(sc, 200); e.a + e.b` materialises the view instead of reading an element
+that moved (it answered 4294967401 for 3), the reach closed over the call graph
+(`disturbed_params_map`) and the copy notice naming the callee — and is the bisect step for a
+wrong field read through a view across a call that appends to or removes from a container.
+`LOFT_TRACE_DISTURB=1` names each disturbed place; a hidden `__retbuf` is an argument slot and
+is excluded, or every record-returning function that fills a vector field would report one.
 **`LOFT_NO_ELEMENT_FIRST=1`** (@PLN157 § V-z) makes a record-literal's vector field
 keep its temp-store build and deep copy again — with it off, a local vector consumed
 exactly once by one append is built INSIDE the appended element (minted at the temp's
