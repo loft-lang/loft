@@ -1024,7 +1024,7 @@ impl Value {
     /// Every traversal derives from this — the match is exhaustive on
     /// purpose (no wildcard), so a new `Value` variant forces a decision
     /// here and every walker inherits the edge.
-    pub fn for_each_child(&self, f: &mut impl FnMut(&Value)) {
+    pub fn for_each_child<'a>(&'a self, f: &mut impl FnMut(&'a Value)) {
         match self {
             Value::Span(b) => f(&b.1),
             Value::Call(_, items)
@@ -1072,7 +1072,7 @@ impl Value {
     /// Pre-order search: does `pred` hold on this node or any descendant?
     /// `Span` wrappers are transparent — `pred` never sees them, so node
     /// predicates match on the bare variants.
-    pub fn any_node(&self, pred: &mut impl FnMut(&Value) -> bool) -> bool {
+    pub fn any_node<'a>(&'a self, pred: &mut impl FnMut(&'a Value) -> bool) -> bool {
         if let Value::Span(b) = self {
             return b.1.any_node(pred);
         }
@@ -1148,7 +1148,7 @@ impl Value {
 
     /// Pre-order visitor: calls `f` on this node and every descendant.
     /// `Span` wrappers are transparent, matching [`Value::any_node`].
-    pub fn walk(&self, f: &mut impl FnMut(&Value)) {
+    pub fn walk<'a>(&'a self, f: &mut impl FnMut(&'a Value)) {
         if let Value::Span(b) = self {
             return b.1.walk(f);
         }

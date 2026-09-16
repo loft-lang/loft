@@ -1560,8 +1560,11 @@ impl Output<'_> {
         }
         // @PLN157 § V-ah — a value local's DECLARATION (`x = null` in the IR) binds the
         // tuple's zero, not a null `DbRef`: the local never names a store.
-        if matches!(to, Value::Null) && self.value_record_locals.contains_key(&var) {
-            write!(w, "Default::default()")?;
+        if matches!(to, Value::Null)
+            && let Some(d) = self.value_record_locals.get(&var).copied()
+        {
+            let zero = self.value_tuple_zero(d);
+            write!(w, "{zero}")?;
         } else if matches!(to, Value::Null)
             && rust_type(variables.tp(var), &Context::Variable) == "DbRef"
         {

@@ -387,7 +387,7 @@ fn get_record_literal_keys(value: &Value, data: &Data) -> Option<Vec<Value>> {
 
 /// Do a view's place and a disturbance's place name the same storage?  Equal offsets, or
 /// either side naming the whole variable.
-fn same_place(view: (u16, u32), disturbed: (u16, u32)) -> bool {
+pub fn same_place(view: (u16, u32), disturbed: (u16, u32)) -> bool {
     view.0 == disturbed.0
         && (view.1 == disturbed.1 || view.1 == ANY_FIELD || disturbed.1 == ANY_FIELD)
 }
@@ -1132,7 +1132,7 @@ fn removed_params_map(data: &Data) -> RemovedParams {
 /// carries which one fired. A view reached by both reports the reshape: that is the cause
 /// with something to act on at the container.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ViewCause {
+pub enum ViewCause {
     /// The container is RESHAPED — `v.remove(i)` / `e#remove` renumbers its positions (F2).
     Reshaped,
     /// The container GROWS — an append, an insert or a keyed add can move every element to a
@@ -1172,7 +1172,7 @@ fn record_cause(map: &mut HashMap<u16, Disturbance>, view: u16, d: Disturbance) 
 /// The same `(var, field)` shape every other place in this file carries, read in the callee's
 /// own numbering — argument slots lead the variable numbering, so the slot indexes both the
 /// attribute list and the argument list at a call site.
-type ParamPlace = (u16, u32);
+pub type ParamPlace = (u16, u32);
 
 /// @PLN164 C3 (@FR-B-Disturb, @FR-B-View) — every definition that GROWS or REMOVES FROM a
 /// container reached through one of its parameters, which places, and which cause, CLOSED OVER
@@ -1182,7 +1182,7 @@ type ParamPlace = (u16, u32);
 /// outright — *"the disturbance may be in this frame or in anything the frame CALLS … at any
 /// depth"* — and `(B-View)` keys its materialise on the same four events, so it inherits the
 /// same reach. This is the fact the materialise was missing; see [`ViewWalk::disturb`].
-type DisturbedParams = HashMap<u32, HashMap<ParamPlace, ViewCause>>;
+pub type DisturbedParams = HashMap<u32, HashMap<ParamPlace, ViewCause>>;
 
 /// Compose a place the CALLER handed down with a place the CALLEE disturbed inside it.
 ///
@@ -1196,7 +1196,7 @@ type DisturbedParams = HashMap<u32, HashMap<ParamPlace, ViewCause>>;
 /// a spurious one costs a program its meaning (the measurement [`grown_containers`] records).
 /// Widening `f(o.inner)` + `p.els` to `(o, off_inner)` would shake every view rooted at
 /// `o.inner`, siblings of `els` included, which is exactly that mistake.
-fn compose_param_place(base: (u16, u32), inner: u32) -> Option<ParamPlace> {
+pub fn compose_param_place(base: (u16, u32), inner: u32) -> Option<ParamPlace> {
     match (base.1, inner) {
         (_, ANY_FIELD) => Some(base),
         (ANY_FIELD, off) => Some((base.0, off)),
@@ -1215,7 +1215,7 @@ fn compose_param_place(base: (u16, u32), inner: u32) -> Option<ParamPlace> {
 /// the temp's own `Set` and then `OpCreateStack(temp)`, so the place is one indirection away
 /// and the block carries the binding that resolves it. Read here rather than from walk state
 /// because the binding travels with the argument — there is no ordering to get wrong.
-fn call_arg_place(arg: &Value, data: &Data) -> Option<ParamPlace> {
+pub fn call_arg_place(arg: &Value, data: &Data) -> Option<ParamPlace> {
     if let Value::Insert(ops) = arg.unspan() {
         let place = call_arg_place(ops.last()?, data)?;
         if place.1 != ANY_FIELD {
@@ -1236,6 +1236,50 @@ fn call_arg_place(arg: &Value, data: &Data) -> Option<ParamPlace> {
         Value::Var(c) => Some((*c, ANY_FIELD)),
         other => base_container_place(other, data),
     }
+}
+
+/// @PLN164 C5 — the places `code` DISTURBS in the frame of `def_nr`: what its own ops grow or
+/// remove from, plus what anything it CALLS grows or removes from, mapped back onto the
+/// arguments this frame passed.
+///
+/// One composer for a consumer outside the scope pass — generation's view-leaf gate asks
+/// *"is the place my leaf views disturbed between this call and the last read of it?"*, which
+/// is [`ViewWalk::disturb`]'s question asked over a statement span instead of a binding, and it
+/// has to be answered off the same producers or the two can disagree about what a disturbance
+/// is.  `disturbed` is [`disturbed_params_map`]'s answer for the whole program; `None` leaves
+/// only this frame's own half, which is the pre-C3 reach and never more.
+///
+/// The answer is a LOWER bound in exactly the ways its producers are — a container named by
+/// something other than a variable or a one-step projection is not collected — so a caller that
+/// must be conservative has to treat an unresolvable place as disturbed itself.  What it never
+/// does is report a disturbance that did not happen: every place here comes from a growth, a
+/// removal or a re-establishment the code spells.
+#[must_use]
+pub fn places_disturbed_by(
+    code: &Value,
+    data: &Data,
+    def_nr: u32,
+    database: Option<&crate::database::Stores>,
+    disturbed: Option<&DisturbedParams>,
+) -> HashSet<ParamPlace> {
+    let function = &data.def(def_nr).variables;
+    let mut out = grown_containers(code, data, function, database, &HashSet::new());
+    out.extend(reshaped_containers(code, data, function));
+    if let Some(map) = disturbed {
+        code.walk(&mut |v| {
+            let Value::Call(d, args) = v else { return };
+            let Some(places) = map.get(d) else { return };
+            for &(slot, inner) in places.keys() {
+                if let Some(arg) = args.get(usize::from(slot))
+                    && let Some(base) = call_arg_place(arg, data)
+                    && let Some(place) = compose_param_place(base, inner)
+                {
+                    out.insert(place);
+                }
+            }
+        });
+    }
+    out
 }
 
 /// The parameter places `d_nr`'s OWN body disturbs — the direct answer [`disturbed_params_map`]
@@ -1313,7 +1357,7 @@ fn disturbed_param_places(
 /// A callee reached only through a runtime fn-ref has no static call edge and keeps today's
 /// behaviour — the lower bound, in the direction that costs a materialise rather than a
 /// program's meaning.
-fn disturbed_params_map(
+pub fn disturbed_params_map(
     data: &Data,
     database: Option<&crate::database::Stores>,
 ) -> DisturbedParams {

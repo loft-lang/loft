@@ -912,6 +912,23 @@ assignment from a call.  Declined where an argument reaches the destination, whe
 MINTS into its buffer (a returned vector literal does), and for a struct-enum variant's field.
 Measured on the drawing bench's parse row: the consumer spells this nowhere — the emission is
 byte-identical under the switch — so the gain is structural.
+**`LOFT_VIEW_FIELD=1`** (@PLN164 C5, `@FR-O-ViewField`, `@FR-R-ValueRecord`, **opt-in**,
+generation time, `--native` only) returns a record of two scalars and a vector as a TUPLE
+whose vector element is a REFERENCE to the place the value already lives in — so a
+`Mark { matched, bad, pts }` built from a local the function appended into a parameter's
+collection costs no buffer store and no deep copy, and an exit with an empty literal delivers
+a null view, which reads as the empty vector it replaces.  The interpreter keeps the record
+form and is the values oracle.  Admitted only where the leaf's place outlives the frame and
+every call site READS it: a `?`-discharged element declines (its ownership is a join — the
+absent arm mints in the frame's store), an element read or an iteration at the site declines
+(an element read answers a PLACE the site can write through — measured: the write landed in the
+container, reading 109 where the copy holds 9), a disturbance between the bind and the last read
+declines (measured: a removal made the result read the NEXT element's points), and a `pub`
+function declines whole (`(R-Escape)`).  The exit's own answer is a PROOF rather than a
+fallback: every mention of the return buffer must be one the tuple accounts for, because a
+field filled without an append — a returned vector literal, a record literal's vector field —
+read as "empty" delivered a null view for a vector of eight (`723-ncc-loop-element-bind`).  `LOFT_NO_VIEW_FIELD=1` is the opt-out once it is armed,
+and `LOFT_TRACE_VALUEREC=1` names every admission and decline.
 **`LOFT_NO_CALLEE_DISTURB=1`** (@PLN164 C3, `@FR-B-Disturb`, `@FR-B-Ref-Reshape`, BOTH
 backends) makes the disturbance walk read THIS frame's ops only again — with it off, a
 container a CALLEE grows or removes from disturbs the caller's live view of it, so

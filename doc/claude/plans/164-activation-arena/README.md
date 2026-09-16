@@ -697,7 +697,7 @@ program exit: kt=88 Sc×1`).
 
 | rung | the loft shape | the leaf the tuple carries |
 |---|---|---|
-| **R1** | `sc.ops += [Op { opts: [] }]; o = sc.ops[len(sc.ops) - 1]?; …; Mark { …, mpts: o.opts }` — the field's source IS a view of a parameter-rooted place | the source expression itself: `DbRef { …var_o…, pos: pos + 0 }` |
+| **R1** (⚠ NOT admitted — see § *Built* below: the discharge's ownership is a JOIN) | `sc.ops += [Op { opts: [] }]; o = sc.ops[len(sc.ops) - 1]?; …; Mark { …, mpts: o.opts }` — the field's source IS a view of a parameter-rooted place | the source expression itself: `DbRef { …var_o…, pos: pos + 0 }` |
 | **R2** | `p = mk_pts(n); sc.ops += [Op { opts: p }]; Mark { …, mpts: p }` — the NATURAL form: the source is a local whose COPY landed in a parameter-rooted place | the append's own destination, the element temp: `DbRef { …var__elm_1…, pos: pos + 0 }` |
 | **R3** | `if n < 0 { return Mark { matched: true, bad: true, mpts: [] } }` — an exit with NO place to view | `DbRef::NULL`.  A null view reads as the empty vector the record form built: `len` 0, an iteration of nothing, `v[0]?.px` 0, a `const` argument 0 — measured equal on every read the oracle makes |
 
@@ -734,12 +734,94 @@ MOVES when the decline is removed, not merely a structural pin.
 
 ### What it needs
 
-`LOFT_NO_VIEW_FIELD=1` (generation time, native only — the interpreter keeps the record form and
-is the values oracle, as § V-aa's value record already does), the leaf analysis with ONE home read
-by the gate and the emitter, the site gate extended with the read-only and disturbance conditions,
-the live-reload arm reading the field's reference out of the returned record, the cdylib bridge
-materialising it, and the cells above in `tests/scripts/164-view-field.loft` with structural pins
-in `tests/view_field.rs`.
+`LOFT_VIEW_FIELD=1` (generation time, native only — the interpreter keeps the record form and is
+the values oracle, as § V-aa's value record already does), the leaf analysis with ONE home read by
+the gate and the emitter, the site gate extended with the read-only and disturbance conditions,
+the live-reload arm reading the field's reference out of the returned record, and the cells in
+`tests/scripts/164-view-field.loft` with structural pins in `tests/view_field.rs`.
+
+### Built 2026-09-16, opt-in — and what the build corrected
+
+*Mechanism.*  `hoist::value_records` admits a record that owns heap when every heap field is a
+plain `vector<T>` the body can deliver as a view: `leaf_source` reads the exit's own
+`OpAppendVector` into the buffer — the deep copy the leaf removes — and answers either the PLACE
+to view or `Null` for an exit that writes the field not at all.  `leaf_root` resolves that place
+to a `(parameter, field)` pair by SHAPE, following a local through its single assignment; the
+tuple part is `DbRef`, the site's `OpGetField` read becomes a tuple index
+(`ViewFieldReadEmitter`), the live-reload arm reads the field slot out of the record the
+interpreter answers, and a value local's declaration binds `DbRef::NULL` for the leaf because
+`Default` has no null for a reference.
+
+*R1 is NOT admitted, and the reason corrects the rung proven by hand.*  The hand-written form
+`o = sc.ops[len(sc.ops) - 1]?; … Mark { mpts: o.opts }` reads a `?`-DISCHARGE, whose ownership is
+a JOIN: the absent arm mints its record in the frame's own store, so a leaf naming the container
+would be a view of a store freed at the return — wherever the element was absent.  The
+hand-written proof was sound only because that probe's element is always present, which is
+exactly what a compiler may not assume.  So the ONE admitted callee shape is R2, the natural one,
+and R3's null view rides with it.
+
+*The site conditions, and the measurement that cut them.*  A leaf read is admitted in two
+contexts — an argument at a `const` parameter, and an operand of an op that answers a VALUE
+(`OpLengthVector`, the null tests).  An ELEMENT READ is not one, and that is measured rather than
+argued: `m.pts[0]?.px = 100` reads the leaf with `OpGetVectorNullable` — an op that only reads its
+container — and then WRITES through the element it answered.  On the emission the gate produced
+before the list was narrowed, that write landed in `s.ops[0].opts`, which read 109 where the
+oracle says 9.  The other measured decline is the REMOVAL: with the span test disabled,
+`a = mk(s, 2); b = mk(s, 5); s.ops.remove(0); len(a.mpts)` read `5,30` — the second element's
+points — where `a`'s own copy holds `2,3`.  An APPEND does not move the value in any shape
+measured (fifty growths in a row included), so `b2`/`b3` stand on `(B-Disturb)` rather than on a
+wrong answer of their own, and that is recorded in the guard rather than smoothed over.
+
+*The span test is an UPPER bound, and it had to be written as one.*  `scopes::grown_containers`
+is a documented LOWER bound — a missed disturbance costs a materialise there — and reusing it
+admitted `b2` and `b3`, because an `OpNewRecord` naming its container as `(var, field)` is
+uncollected without the store and because the op's own argument looked like a licensed call
+argument.  The rule the site gate uses instead is on MENTIONS: between the bind and the last read
+the container's root variable may be named ONLY as an argument of a user call whose disturbance
+summary does not reach the place.  Every way to grow a container names the variable that reaches
+it, so a mention cannot be evaded; what it costs is a statement that merely READS the container
+in that span, which declines.
+
+*What declines today, each costing the rewrite and never a value:* a body that names the
+container in more than one statement (so `parse_poly`'s per-path appends decline — the per-PATH
+version is step 2), a site that reads the container between the bind and the last read, an
+element read or an iteration at the site, a `pub` function (`(R-Escape)`: the cdylib bridge
+materialises a tuple field by field, and a reference is not a field it can write), and a `text`
+or keyed field.
+
+*Two declines the CORPUS bought, and both are one mistake: an answer that was a FALLBACK where
+it had to be a proof.*  `leaf_source` read "no `OpAppendVector` into the buffer's field" as "the
+exit leaves the field empty", and a field can be filled without an append — a returned vector
+LITERAL pushes element by element (`OpPushInt(OpGetField(buf, off, _), …)`) and a record
+literal's vector field appends ELEMENTS through the record (`OpNewRecord(buf, <record>, <field
+nr>)`).  Read as empty, each delivered a NULL view for a vector the program had filled:
+`723-ncc-loop-element-bind` measured `len` 0 where its program built eight, on the corpus, with
+nothing else to say so.  The empty answer is now positive — every mention of the buffer in the
+exit must be one the value form ACCOUNTS for (the allocate-or-reuse guard, a scalar `OpSet*`, the
+one recognised append, the block's own yield), and anything else declines — because the value
+form drops the whole block, so an unaccounted mention is work the tuple would lose.  Cells `d6`
+and `d7` are the two shapes, pinned.
+
+*Receipts.*  `tests/scripts/164-view-field.loft` — 2 admissions, 2 positive controls and 15
+declines, hand-computed against the record form, green on both backends and under
+`LOFT_POISON`, `LOFT_POISON_CLAIM`, `LOFT_STRICT_STORES` and the leak gate; structural pins in
+`tests/view_field.rs` (the tuple signature, the dropped buffer, the site's tuple read, and every
+decline still declining); registered under the `codegen` subject.  The native corpus runs clean
+with the unit armed (1364 scripts, 0 compile failures).
+
+*Measured on the consumer, and it does not reach it yet.*  With the unit armed, every `Mark`-
+returning function of the drawing library still declines, and the trace says exactly why —
+which is the point of measuring rather than assuming:
+
+| function | the gate that declined it | what step 2 owes |
+|---|---|---|
+| `parse_poly`, `parse_lock` | *a statement names the leaf's root* — the body appends to `sc.ops` on THREE paths, and the mention count is per BODY | the count has to be per PATH: one append per path is one growth, which is what the leaf lives with |
+| `parse_circle`, `parse_fronds` | *no resolvable source* — the points reach the appended element through a chain `leaf_root` does not follow | the resolution has to reach the shapes a parser actually writes, measured one at a time |
+| `parse_line_cmd` | *the tail is not a value leaf* | § V-aa's own gate, unrelated to the view leaf |
+
+So C5 ships as the RULE's machinery with its conditions measured, and the row it was cut for
+waits on step 2.  It is opt-in for exactly that reason: armed it changes nothing in the
+consumer, and a unit that pays nothing must not also carry risk by default.
 
 ## The rewrite list — the natural `parse_poly` to its optimal form
 
