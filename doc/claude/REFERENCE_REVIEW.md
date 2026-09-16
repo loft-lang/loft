@@ -832,7 +832,7 @@ differently and only a cell could ever have caught the claim.
 
 | chapter source | reviewed through | commit |
 |---|---|---|
-| `default` | 2026-09-05 | `b10ef6d6` |
+| `default` | 2026-09-16 | `ad62fbac1` |
 | `doc/00-vs-python.html` | 2026-09-03 | `b1ccf0e9` |
 | `doc/00-vs-rust.html` | 2026-09-03 | `b1ccf0e9` |
 | `doc/install.html` | 2026-09-03 | `b1ccf0e9` |
@@ -845,7 +845,7 @@ differently and only a cell could ever have caught the claim.
 | `tests/docs/06-function.loft` | 2026-08-31 | `e9643ff6` |
 | `tests/docs/07-vector.loft` | 2026-08-31 | `e9643ff6` |
 | `tests/docs/08-struct.loft` | 2026-09-01 | `e9643ff6` |
-| `tests/docs/09-enum.loft` | 2026-09-01 | `e9643ff6` |
+| `tests/docs/09-enum.loft` | 2026-09-16 | `e5dcf2deb` |
 | `tests/docs/10-sorted.loft` | 2026-08-31 | `e9643ff6` |
 | `tests/docs/11-index.loft` | 2026-08-31 | `e9643ff6` |
 | `tests/docs/12-hash.loft` | 2026-09-01 | `e9643ff6` |
@@ -866,7 +866,7 @@ differently and only a cell could ever have caught the claim.
 | `tests/docs/29-match.loft` | 2026-09-03 | `b1ccf0e9` |
 | `tests/docs/30-formatting.loft` | 2026-09-03 | `b1ccf0e9` |
 | `tests/docs/31-ref-forward.loft` | 2026-09-03 | `b1ccf0e9` |
-| `tests/docs/33-features.loft` | 2026-09-03 | `b1ccf0e9` |
+| `tests/docs/33-features.loft` | 2026-09-16 | `e5dcf2deb` |
 | `tests/docs/34-running.loft` | 2026-09-03 | `b1ccf0e9` |
 | `tests/docs/35-testing.loft` | 2026-09-03 | `b1ccf0e9` |
 | `tests/docs/36-debugging.loft` | 2026-09-03 | `b1ccf0e9` |
