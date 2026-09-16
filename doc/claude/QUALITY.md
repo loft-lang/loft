@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 506 | 483 | **23** |
+| 515 | 492 | **23** |
 
 (2026-09-15, loft#1540: 504 · 481 · 23 — measured as a delta against 502 · 479 · 23; the change adds
 two functions that discriminate on `Value` variants, and both peel: `Parser::const_view_place`,
@@ -490,10 +490,12 @@ wrapper, and `expressions::bound_rhs`, which finds a statement's `Set` through a
 (2026-09-15, D-heap-7's close: 503 · 480 · 23 — `return_copies_whole_local` and
 `scopes::return_tail` discriminate on a return's shape and both peel.)
 
-(2026-09-16, the join: loft#1540's two sites and D-heap-7's two were measured on separate trees —
-504 · 481 · 23 and 503 · 480 · 23, each a delta against 502 · 479 · 23 — so neither pin is right on
-the union.  Re-measured here: **506 · 483 · 23**, the four new peeling sites over that common base.
-A clean textual merge would have kept one branch's number over both branches' code.)
+(2026-09-16, the join of three trees: this branch through loft#1540 and the nullable-iterator slot
+fix, ../loft2 through D-heap-7, and @PLN164 through B2 units 2-3.  Each measured its own delta
+against a different base — 504 · 481 · 23 here, 503 · 480 · 23 there, 500 · 476 · 24 on @PLN164 —
+so no pin is right on the union.  Re-measured on it: **515 · 492 · 23**, the peeling sites of all
+three walks over one tree; the opaque column does not move.  A clean textual merge would have kept
+one branch's number over three branches' code.)
 
 (2026-09-15, @PLN163's copy-lease census and verdicts: 501 · 478 · 23, measured commit by commit.
 The census in `use_analysis::drop_copy_census` added two peeling sites; `src/lease.rs` six, five
@@ -2608,7 +2610,7 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 830 | 490 | 6 | **334** |
+| 834 | 494 | 6 | **334** |
 
 (2026-09-15, THE JOINED TREE — this branch through loft#1540 and ../loft2's @PLN165 phase 0
 (bdb84abe8): 826 · 486 · 6 · 334, re-measured rather than carried; the ratchet reads its 334 / 1316
@@ -2679,6 +2681,11 @@ buffer's record definition through `.base().heap_def_nr()` — the peeling colum
 stays at 491 · 467 · 24.  Those are the @PLN157 branch's numbers; re-measured on the joined
 tree `tuxedo-work-2026-09-15` the rows read 826 · 486 · 6 · 334 and 504 · 481 · 23 with the
 ratchet at 334 / 1316, the same as before this unit was picked.)
+
+(2026-09-16, the same join, optional: **834 · 494 · 6 · 334**, re-measured rather than carried —
+@PLN164 B2 units 2-3 read 821 · 479 · 6 · 336 against its own base and this branch 830 · 490 · 6 ·
+334.  `place_result.rs`'s placement questions and D-heap-7's return-shape reads all peel, so the
+opaque column and the ratchet keep their 334 / 1316 pin.)
 
 (2026-09-15, loft#1540's function-reference half: `Type::function_consts` and
 `Type::with_function_consts` are new — the one way a join reads and sets a function type's `const`
