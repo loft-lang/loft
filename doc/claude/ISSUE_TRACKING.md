@@ -91,8 +91,10 @@ files would.  The win is the *uniform* convention, not GitHub itself.
   makes it an INDEXED token exactly like `@P###` / `@PLAN###`: `scan.loft` finds
   every reference + backlink **fully offline**, and `@GH247` maps to a
   deterministic URL (`github.com/<repo>/issues/247`) with no `gh` call.  Token
-  families: `@P###` = legacy/closed (PROBLEMS.md archive), `@PLAN###` = plans,
-  `@GH###` = live issues.  Optional validation (does it exist / is it closed) is a
+  families: `@P###` = legacy/closed (PROBLEMS.md archive), `@PLN###` = plans (a
+  `loft-lang/plans` issue — the CANONICAL plan tag, and it resolves to that
+  issue's URL just as `@GH###` does), `@PLAN###` = the LEGACY plan spelling
+  still indexed for un-migrated references, `@GH###` = live issues.  Optional validation (does it exist / is it closed) is a
   bolt-on `make index-gh` (`gh issue list --json number,state`), not a
   prerequisite.  Cross-repo: bare `@GH###` = this repo; a qualified spelling for
   other repos (`@GH:<repo>:<n>`) is TBD and the less-common case.

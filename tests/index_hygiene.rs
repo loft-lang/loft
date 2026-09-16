@@ -166,6 +166,39 @@ fn index_hygiene_clean() {
     //     one gate rather than several.
     check_index_matches_git();
 
+    // 1c. loft#1544 — the CANONICAL plan family must be INDEXED, not merely
+    //     well-formed.  `@PLN<n>` is a `loft-lang/plans` issue and CLAUDE.md
+    //     tells every agent to look plan refs up with `./scripts/idx`; the
+    //     family was migrated and the scanner was not, so every such query
+    //     answered `[]` at exit 0 for tags with thousands of references.
+    //
+    //     That failure mode is why this is a gate and not a doc note: an
+    //     unindexed family is INDISTINGUISHABLE from "referenced nowhere".
+    //     Everywhere else an empty list is trustworthy, because a malformed
+    //     query exits 2 — which is exactly what makes a silently-empty answer
+    //     here read as a fact.
+    //
+    //     A floor rather than an exact count: the number moves whenever a plan
+    //     is cited, and pinning it would make every unrelated commit re-pin a
+    //     number.  The floor still fails closed — a scanner that dropped the
+    //     family reports 0, not 20.
+    let index = std::fs::read_to_string("index/tags.json").expect("read index/tags.json");
+    let pln_keys = index
+        .split("\"@PLN")
+        .skip(1)
+        .filter(|chunk| {
+            let digits = chunk.len() - chunk.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+            digits > 0 && chunk[digits..].starts_with("\":")
+        })
+        .count();
+    assert!(
+        pln_keys > 20,
+        "index/tags.json holds {pln_keys} `@PLN<n>` keys — the canonical plan \
+         tag family is not being indexed, so `./scripts/idx tag:@PLN<n>` answers \
+         an empty list at exit 0 for every plan (loft#1544).  The scanner arm is \
+         in tools/indexer/src/scan.loft, beside the `@PLAN` one."
+    );
+
     // 2. Phase 03 — broken @-tag refs.
     let broken_tags = idx_command(&["broken"])
         .output()

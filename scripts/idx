@@ -8,6 +8,11 @@
 #   idx tag:@P259                 — exact tag match
 #   idx tag:@GH247                — GitHub Issue/PR ref (prints its URL too)
 #   idx gh:247                    — same, from a bare number
+#   idx tag:@PLN164               — a loft-lang/plans issue: the CANONICAL plan
+#                                   tag (plan id = issue number), so it prints
+#                                   its URL like @GH.  A hyphenated mention
+#                                   (`@PLN25-F2`) is indexed under its PARENT
+#                                   plan, so this finds those too.
 #   idx tag:@FR-B-Copy            — a FORMAL-RULE citation: every code site that
 #                                   enforces that rule, so "which sites implement
 #                                   this?" is a lookup.  Boundary-exact, so
@@ -194,6 +199,12 @@ case "$QUERY" in
     # space; /issues/<n> redirects to /pull/<n> when n is a PR).  No gh call.
     if [[ "$t" =~ ^@GH([0-9]+)$ ]]; then
       echo "→ https://github.com/loft-lang/loft/issues/${BASH_REMATCH[1]}  (issue or PR — GitHub redirects)"
+    fi
+    # @PLN<n> → the loft-lang/plans issue that IS the plan (CLAUDE.md § Tracker
+    # tags).  Same treatment as @GH and for the same reason: the id lives in a
+    # remote tracker, so the URL is deterministic and no `gh` call is made.
+    if [[ "$t" =~ ^@PLN([0-9]+)$ ]]; then
+      echo "→ https://github.com/loft-lang/plans/issues/${BASH_REMATCH[1]}  (plan ${BASH_REMATCH[1]})"
     fi
     jq --arg t "$t" '.[$t] // []' "$IDX" | filter_kind | add_excerpts
     ;;
