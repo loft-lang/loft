@@ -480,7 +480,13 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 516 | 493 | **23** |
+| 518 | 495 | **23** |
+(2026-09-16, the 157 pick re-measured on THIS tree: 518 · 495 · 23.  The per-unit notes
+below are accurate about what each unit ADDS; the total is not transferable.  Each was a delta
+against its own branch's base, and this branch carries work that one does not, so accumulating
+their steps lands on 516 where the audit reads 518.  Re-derived with `ir_walker_audit.py unspan`,
+which is the only thing that knows which tree it is standing on.)
+
 
 (2026-09-16, @PLN164 C2: one function added that discriminates on `Value` variants, and it
 peels — `Parser::buffer_is_the_place`, whose tests run through `unspan` and inside an `any_node`
