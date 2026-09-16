@@ -30,10 +30,13 @@ fn loft() -> Command {
 /// The generated Rust for the guard, with `env` applied.  `--native-emit` writes a file and
 /// exits, which is the whole compilation this unit changes without running it.
 fn emitted(env: &[(&str, &str)]) -> String {
+    // One path per CALL, not per env: the tests run in parallel in one process, so two of
+    // them sharing a name means one reads a file the other has already removed.
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let out = std::env::temp_dir().join(format!(
         "loft_view_field_{}_{}.rs",
         std::process::id(),
-        env.len()
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     let mut cmd = loft();
     cmd.arg("--native-emit").arg(&out).arg(guard());
@@ -66,7 +69,7 @@ const ON: &[(&str, &str)] = &[("LOFT_VIEW_FIELD", "1")];
 #[test]
 fn an_admitted_function_returns_its_heap_field_as_a_reference() {
     let src = emitted(ON);
-    for func in ["a1", "a2", "c1f", "c2f"] {
+    for func in ["a1", "a2", "a3", "a4", "a5", "c1f", "c2f"] {
         let sig = signature(&src, func);
         assert!(
             sig.contains("-> (bool, bool, DbRef)"),
@@ -126,10 +129,6 @@ fn every_decline_keeps_the_record_form() {
         (
             "d6",
             "the field is filled by a literal, which pushes element by element",
-        ),
-        (
-            "d7",
-            "the source is bound to the frame's own vector backing record",
         ),
         ("b1f", "a site appends to the field"),
         (

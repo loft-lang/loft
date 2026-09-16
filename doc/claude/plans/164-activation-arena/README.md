@@ -827,6 +827,44 @@ the emitter registry's cap, re-measured rather than picked) and four were the bo
 `loft_suite` 133 s, `poison_claim` 195 s, `html_asyncify` 41 s and the two server tests each pass
 alone.
 
+### Step 2 — the gate reaches the consumer, and the row does not move (2026-09-16)
+
+Step 1's two decline classes are closed, and each was a different kind of blindness:
+
+* **Per BODY became per PATH.**  A parser appends and returns once per branch, so a body-wide
+  mention count declined every one of them.  The question is asked per exit now: each exit's
+  own element must be built in the SAME statement list, before it, with no other exit's element
+  built in between, and no build may stand under a loop.
+* **A naming is not a disturbance.**  The mention rule could not tell `sc.unparsed += […]` from
+  `sc.ops += […]`, and B2 puts an `OpPlaceRecord(sc, …)` in every function that places a call's
+  result.  `namings_avoid_place` asks what each naming REACHES: a claim in the store moves
+  nothing, an append names its field by NUMBER (converted through the schema, as
+  `grown_containers` does) and its `OpFinishRecord` half the same way one argument further
+  along, a projection carries the offset, a fixed-width scalar read or write reaches its own
+  field (`IN_PLACE_SET_OPS` and `SCALAR_GETTERS`, the two lists that already carry "moves
+  nothing"), a READ of the watched field itself is a read (`len(sc.ops)` between a bind and its
+  own read moves nothing — `read_context` is the one home the site gate and this walk share),
+  and an argument of a user call is licensed by the call's own disturbance summary.  Everything
+  else still declines.
+
+Two spellings cost a cycle each, and both are the same lesson as step 1's: `OpNewRecord` names
+its field by NUMBER where a place carries a byte OFFSET — read as an offset, a REMOVAL from the
+very container the leaf views compared as a different place, and the `b8` cell measured the
+silence (`5,30` where the copy holds `2,3`) — and `OpFinishRecord`, the append's other half,
+names the container the same way with the field one argument further along.
+
+*Measured on the library:* `parse_poly` and `parse_lock` are now admitted; `parse_circle`,
+`parse_fronds` and `parse_line_cmd` still decline, all three on a source whose copy lands in a
+BRANCH — `sc.ops += [Op { … pts: pc_pts … }]` in each arm of an `if`, with the exit outside it,
+so the leaf's place is the element one of two appends made and no single expression names it.
+
+**And the parse row does not move: 38.4–40.0 k ns/op with the unit armed against 38.4–42.4
+without it, hash `33f6d2b8` both ways — a wash.**  That is the honest answer to the phase's own
+premise.  The evaluation table charged this row a `Mark` store and a points copy per line; the
+store is ~60 ns and there are twelve per parse, so the whole class is ~1.7 % of a 40 µs row
+even when every function is admitted.  What C5 removes is real and what it was expected to be
+worth was not: the parse row's remaining cost is not the `Mark` record.
+
 *Measured on the consumer, and it does not reach it yet.*  With the unit armed, every `Mark`-
 returning function of the drawing library still declines, and the trace says exactly why —
 which is the point of measuring rather than assuming:

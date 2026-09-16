@@ -480,12 +480,22 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 518 | 495 | **23** |
+| 525 | 502 | **23** |
 (2026-09-16, the 157 pick re-measured on THIS tree: 518 · 495 · 23.  The per-unit notes
 below are accurate about what each unit ADDS; the total is not transferable.  Each was a delta
 against its own branch's base, and this branch carries work that one does not, so accumulating
 their steps lands on 516 where the audit reads 518.  Re-derived with `ir_walker_audit.py unspan`,
 which is the only thing that knows which tree it is standing on.)
+
+(2026-09-17, @PLN164 C5 and its step 2, re-measured on THIS tree after the join: 525 · 502 · 23,
+against the 518 · 495 · 23 above.  C5 adds six functions that discriminate on `Value` variants and
+all six peel — the view-leaf walk (`leaf_source`, `appends_into`, `leaf_root`,
+`buffer_uses_accounted`) and its site half (`view_field_reads`, `span_keeps_places`), each matching
+on `.unspan()` or inside an `any_node` closure, which peels `Span` before calling it.  Step 2 adds
+a seventh, `namings_avoid_place`, the per-naming disturbance walk, matching on `.unspan()` at every
+step.  The opaque column is unmoved.  ../loft2's branch reports the same two units as 522 · 499 and
+523 · 500 against ITS base, and both are right about what they add; the totals differ because the
+bases do, which is why this row is measured here and never accumulated.)
 
 
 (2026-09-16, @PLN164 C2: one function added that discriminates on `Value` variants, and it
@@ -1608,7 +1618,28 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 66 | **14** | 52 |
+| 71 | **14** | 57 |
+
+(2026-09-17, re-measured on THIS tree with `ir_walker_audit.py spellings`: 71 · 14 · 57, which is
+what the joined branch reports too.  The two agreeing is CONVERGENCE, not a number carried across
+a tree boundary — the C5 functions are the same on both trees, and the @PLN164 C1/C2 work this
+tree carries beyond theirs resolves no projection by op name, so this table takes no offset where
+the `unspan` and `optional` rows above and below both do.  The row it replaces, 66 · 14 · 52,
+predates C5 entirely and carried no note.)
+
+(2026-09-16, @PLN164 C5 step 2: one more on the call-only side — `namings_avoid_place` resolves
+what a naming of a container REACHES by op name, and `TupleGet` names a stack tuple member,
+which is not a container at all.)
+
+(2026-09-16, @PLN164 C5: four functions added, all on the call-only side — `leaf_source` and
+`appends_into` read the append into a record's collection FIELD, `leaf_root` resolves that
+field's place to a parameter, and `view_field_reads` recognises a read of it at a call site.
+CHECKED rather than bumped: `TupleGet` reads a stack tuple MEMBER, which is not a spelling of a
+record's collection field, so none of the four has a hole where it would belong.  What this unit
+DID find is the dual in the other direction — the same notion reaching the IR as
+`OpNewRecord(buf, <record>, <field nr>)` and as an element push — and the cure was to account
+every mention of the buffer rather than to match another spelling (`formal/IMPLEMENTATIONS.md`
+§ *One notion, how many SPELLINGS?*).)
 
 (2026-09-16, @PLN164 C1 step 2: `Parser::builds_into_element` asks whether a destination is a
 vector ELEMENT place a literal may be written into, and `Parser::is_grouped_vector_elem` whether
