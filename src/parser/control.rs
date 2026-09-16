@@ -671,6 +671,22 @@ impl Parser {
     }
 
     pub(crate) fn parse_block(&mut self, context: &str, val: &mut Value, result: &Type) -> Type {
+        // loft#1540 — an arm handed its SIBLING's function type converts with that type's
+        // `const` parameters set aside: the join is the parameters BOTH arms declare `const`
+        // (`parse_if`, `join_arm_into`), so an arm whose parameter is plain is not refused for
+        // the order the arms were written in.  A declared destination still asks the direction
+        // (`convert`) where the joined value meets it.
+        let sibling_fn;
+        let result = if matches!(context, "else" | "if" | "match_arm")
+            && result
+                .function_consts()
+                .is_some_and(|c| c != crate::data::ConstParams::NONE)
+        {
+            sibling_fn = result.with_function_consts(crate::data::ConstParams::NONE);
+            &sibling_fn
+        } else {
+            result
+        };
         // Cognitive complexity, charged here because `parse_block`'s `context` already names
         // the construct — one hook instead of one per parser entry point.  `match_arm` is
         // deliberately free: `parse_match` charges once for the whole construct, so a wide
@@ -2356,6 +2372,15 @@ impl Parser {
                 } else {
                     result.with_deps_of(t)
                 };
+                // loft#1540 — and its own `const` parameters: the sibling's were set aside for
+                // the conversion (see the top of this function), and the join is what BOTH arms
+                // declare, so an arm reporting the sibling's would decide the join for it.
+                let honest = match t.function_consts() {
+                    Some(own) if honest.function_consts().is_some() => {
+                        honest.with_function_consts(own)
+                    }
+                    _ => honest,
+                };
                 if crate::keys::pln25_dn1_enabled()
                     && matches!(t, Type::Optional(_))
                     && !matches!(honest, Type::Optional(_))
@@ -2565,6 +2590,9 @@ impl Parser {
                 // `formal/closures.md` D-clo-17).
                 let delivery = self.classify_reference_delivery(&t.base().depend(), l, context);
                 self.dispatch_reference_delivery(delivery, td, l);
+                if context == "return from block" {
+                    self.literal_exits_into_buffer(l);
+                }
             } else if crate::parser::vectors::is_keyed(t) {
                 // Enforces @FR-O-Move's second clause for the keyed kinds — *if the return
                 // borrows a parameter, the return type records it*.
@@ -3013,7 +3041,7 @@ impl Parser {
                 Value::CallRef(v, _) => {
                     return *v < vars.count()
                         && vars.is_argument(*v)
-                        && matches!(vars.tp(*v).base(), Type::Function(_, _, _));
+                        && matches!(vars.tp(*v).base(), Type::Function(..));
                 }
                 _ => return false,
             }
@@ -3178,6 +3206,85 @@ impl Parser {
         Self::guard_literal_alloc(&mut l[last], work_ref, guard, db_nr);
         Self::substitute_work_ref(&mut l[last], work_ref, buf_var);
         self.vars.set_skip_free(work_ref);
+    }
+
+    /// @PLN164 B2 (`@FR-R-Place`, the callee clause) — once the tail's delivery is
+    /// decided: when the return buffer is still the unpromoted `__retbuf` and EVERY
+    /// mid-body exit is a fresh literal of its type, each `return S { … }` builds into
+    /// that buffer exactly as the tail literal does ([`Self::build_into_return_buffer`]),
+    /// so the callee answers ONE store whichever exit it takes — the precondition
+    /// `(R-Place)` states for handing a callee a record placed where its result will
+    /// live.  Decided HERE and not at the `return`, because the tail's promotion is not
+    /// known while a mid-body return is parsed: a promoted local (`o = P { … }; …; o`) IS
+    /// the buffer, and a literal exit written into it beside that local handed the caller
+    /// a stale ref to free (`164-adopt-first-bind` c3).  A function with any non-literal
+    /// mid-body exit keeps every per-exit store; the decline is always available.
+    fn literal_exits_into_buffer(&mut self, l: &mut [Value]) {
+        if !crate::keys::value_return_enabled() || !crate::keys::literal_exit_buffer_enabled() {
+            return;
+        }
+        let Some(buf_var) = self.unpromoted_return_buffer_var() else {
+            return;
+        };
+        if !self.record_is_fully_written_by_a_literal(buf_var) {
+            return;
+        }
+        let Some(td) = self.vars.tp(buf_var).base().heap_def_nr() else {
+            return;
+        };
+        let mut work_refs: Vec<u16> = Vec::new();
+        let mut all_literal = true;
+        for op in l.iter() {
+            op.walk(&mut |n| {
+                if let Value::Return(inner) = n {
+                    match Self::tail_fresh_object_workref(inner) {
+                        Some(w) if w == buf_var => {}
+                        Some(w)
+                            if self.vars.is_compiler_generated(w)
+                                && self.vars.tp(w).base().heap_def_nr() == Some(td) =>
+                        {
+                            work_refs.push(w);
+                        }
+                        _ => all_literal = false,
+                    }
+                }
+            });
+        }
+        if !all_literal || work_refs.is_empty() {
+            if crate::keys::trace_ret_promotion() && !work_refs.is_empty() {
+                eprintln!(
+                    "[retpromo] literal-exits fn={} DECLINED: an exit is not a fresh literal",
+                    self.data.def(self.context).name()
+                );
+            }
+            return;
+        }
+        for op in l.iter_mut() {
+            Self::for_each_return_mut(op, &mut |ret| {
+                if let Some(w) = Self::tail_fresh_object_workref(ret)
+                    && work_refs.contains(&w)
+                {
+                    self.build_into_return_buffer(std::slice::from_mut(ret), w, buf_var);
+                }
+            });
+        }
+        if crate::keys::trace_ret_promotion() {
+            eprintln!(
+                "[retpromo] literal-exits fn={} {} mid-body exit(s) built into `__retbuf`",
+                self.data.def(self.context).name(),
+                work_refs.len()
+            );
+        }
+    }
+
+    /// Every `Return` node under `v`, outermost first; a return's own body is not
+    /// descended (a literal exit has no return inside it).
+    fn for_each_return_mut<F: FnMut(&mut Value)>(v: &mut Value, f: &mut F) {
+        if matches!(v.unspan(), Value::Return(_)) {
+            f(v);
+            return;
+        }
+        v.for_each_child_mut(&mut |c| Self::for_each_return_mut(c, f));
     }
 
     /// @PLN157 § V — in the tail's `"Object"` block, drop the work-ref's null init and put
@@ -4853,6 +4960,14 @@ impl Parser {
                 // carries the context those spellings need.
                 let variant_enum = self.variant_parent_enum(&true_type);
                 false_type = self.parse_block("else", &mut false_code, &true_type);
+                // loft#1540 — two functions join to the parameters BOTH declare `const`: the
+                // value is whichever arm ran, so the expression promises no more than either.
+                if let (Some(tc), Some(fc)) =
+                    (true_type.function_consts(), false_type.function_consts())
+                    && tc.common(fc) != tc
+                {
+                    true_type = true_type.with_function_consts(tc.common(fc));
+                }
                 // @FR-C-Var — two DIFFERENT variants of one enum join to the ENUM, and
                 // that is this expression's type.  `parse_block` accepted the sibling arm
                 // and kept its own type (see its `arm_joins_to_enum` carve-out); deciding
@@ -6168,6 +6283,19 @@ impl Parser {
             self.arm_convert_reported = false;
             return tp;
         }
+        // loft#1540 — the sibling's `const` parameters are set aside for the conversion, and
+        // the arm answers with its own: the join is what BOTH declare (`join_arm_into`), as a
+        // block arm's is (`parse_block`).
+        let sibling_fn;
+        let expected = if expected
+            .function_consts()
+            .is_some_and(|c| c != crate::data::ConstParams::NONE)
+        {
+            sibling_fn = expected.with_function_consts(crate::data::ConstParams::NONE);
+            &sibling_fn
+        } else {
+            expected
+        };
         let at = self.lexer.pos().clone();
         let t = self.expression(arm_code);
         self.arm_convert_reported = false;
@@ -6210,6 +6338,10 @@ impl Parser {
         // loft#1103 — the SHAPE is the expected type's, the NULLABILITY the arm's own:
         // `(N-Join)` makes the construct optional iff some arm is.
         let honest = expected.with_deps_of(&t);
+        let honest = match t.function_consts() {
+            Some(own) if honest.function_consts().is_some() => honest.with_function_consts(own),
+            _ => honest,
+        };
         if crate::keys::pln25_dn1_enabled()
             && matches!(t, Type::Optional(_))
             && !matches!(honest, Type::Optional(_))
@@ -11200,7 +11332,7 @@ impl Parser {
             }
         } else if let Type::Text(_) = in_type {
             Type::Character
-        } else if let Type::Reference(_, _) | Type::Integer(_) = in_type {
+        } else if let Type::Reference(_, _) | Type::Integer(_) | Type::Enum(_, true, _) = in_type {
             // I13: check for custom iterator protocol before falling back.
             let next_d_nr = self.data.find_fn(u16::MAX, "next", in_type);
             if next_d_nr != u32::MAX {
@@ -13042,6 +13174,13 @@ impl Parser {
 
     fn join_arm_into(&self, so_far: &Type, arm: &Value, tp: &Type) -> Type {
         let joined = so_far.joined_deps(&self.arm_join_type(arm, tp));
+        // loft#1540 — two functions join to the parameters BOTH declare `const` (see `parse_if`).
+        let joined = match (joined.function_consts(), tp.function_consts()) {
+            (Some(jc), Some(ac)) if jc.common(ac) != jc => {
+                joined.with_function_consts(jc.common(ac))
+            }
+            _ => joined,
+        };
         // @FR-C-Var — when an arm joins to an ENUM the join is that enum, not the variant
         // the earlier arms happened to name.  `parse_if` decides this for its two arms;
         // every `match` arm site reaches it here, which is the one place both the settled
@@ -16885,7 +17024,7 @@ impl Parser {
                 // call fell through to `Unknown function` (loft#1455).
                 let slot_tp = Self::fn_slot_type(self.vars.tp(v_nr)).clone();
                 let through_link = matches!(self.vars.tp(v_nr), Type::RefVar(_));
-                if let Type::Function(param_types, ret_type, _) = slot_tp.clone()
+                if let Type::Function(param_types, ret_type, ..) = slot_tp.clone()
                     && param_types.is_empty()
                 {
                     // @PLN85 L1 — callee-attr-space deps must not leak into the
@@ -16995,7 +17134,7 @@ impl Parser {
                 && arg_idx < self.data.attributes(d_nr)
             {
                 let expected = self.data.attr_type(d_nr, arg_idx);
-                if matches!(expected, Type::Function(_, _, _)) {
+                if matches!(expected, Type::Function(..)) {
                     self.expected = expected;
                 }
             }
@@ -17079,6 +17218,12 @@ impl Parser {
                 && let Type::Vector(elm, _) = types[0].base()
             {
                 let elem = *elm.clone();
+                // loft#1540 — an element of a const collection is read-only; see the twin in
+                // `parse_vector_method`.
+                let elem_const = self.const_view_place(&list[0], true).is_some();
+                let elem_at = |i: usize| {
+                    crate::data::ConstParams::from_flags((0..=i).map(|k| k == i && elem_const))
+                };
                 let hint = match (name, arg_idx) {
                     // loft#945 — `map` is `fn(T) -> U`: the PARAMETER is the element type,
                     // the return is free.  See the twin hint in `parse_vector_method`.
@@ -17086,11 +17231,13 @@ impl Parser {
                         vec![elem.clone()],
                         Box::new(Type::Unknown(0)),
                         Deps::none(),
+                        elem_at(0),
                     )),
                     ("filter" | "any" | "all" | "count_if", 1) => Some(Type::Function(
                         vec![elem],
                         Box::new(Type::Boolean),
                         Deps::none(),
+                        elem_at(0),
                     )),
                     ("reduce", 2) => {
                         let init_tp = types.get(1).cloned().unwrap_or(elem.clone());
@@ -17098,6 +17245,7 @@ impl Parser {
                             vec![init_tp.clone(), elem],
                             Box::new(init_tp),
                             Deps::none(),
+                            elem_at(1),
                         ))
                     }
                     _ => None,
@@ -17215,14 +17363,27 @@ impl Parser {
         arg_pos: &[Position],
         name_pos: &Position,
     ) -> Type {
+        // Every special case below is the compiler's own lowering of a call NAME, and it is a
+        // candidate of last resort: taken only when no definition the program declares takes
+        // these argument types (`program_definition_applies`).  A program's `sort(r: Roster)`
+        // is what `sort(r)` reaches, and `sort(v)` over a vector still takes the lowering.
+        // Pass 1 cannot see a definition below the call yet, so there the file's own
+        // declarations defer the special form to pass 2, as any later definition is deferred.
+        let special = if self.program_definition_applies(source, name, types)
+            || (self.first_pass && self.file_has_pending_fn(name))
+        {
+            ""
+        } else {
+            name
+        };
         if matches!(
-            name,
+            special,
             "assert" | "panic" | "log_info" | "log_warn" | "log_error" | "log_fatal"
         ) {
             return self.parse_call_diagnostic(val, name, list, types, call_pos);
         }
         self.check_persist_bind_root(name, list, arg_pos);
-        match name {
+        match special {
             // @PLN105 Phase 1 — deliver(tag, value): hand the value's descriptor
             // handle to the host. Lower to OpDeliver(tag, value, db_tp), filling
             // db_tp from the value's static type. The value is passed by VALUE (its
@@ -17458,11 +17619,32 @@ impl Parser {
                     return Type::Unknown(0);
                 }
             }
-            "exhausted" if types.len() == 1 && matches!(&types[0], Type::Iterator(_, _)) => {
+            // A nullable iterator is one too: a null handle answers true (`coroutine_exhausted`).
+            "exhausted" if types.len() == 1 && matches!(types[0].base(), Type::Iterator(_, _)) => {
                 // CO1.3c: exhausted(gen) on a coroutine iterator.
                 let op = self.data.def_nr("OpCoroutineExhausted");
                 *val = Value::Call(op, list.to_vec());
                 return Type::Boolean;
+            }
+            // `type_name(x)` / `typedef(x)` reach here only when the program declares a function
+            // of that name (`parse_variable` then parses an ordinary call) and none of its
+            // definitions takes `x`: the special form answers for the argument's type, as it
+            // does when nothing is declared.  The argument is not evaluated — `type_of`'s rule.
+            "type_name" if types.len() == 1 => {
+                if !self.first_pass {
+                    *val = Value::Text(self.data.type_name_str(&types[0]));
+                }
+                return Type::Text(Deps::none());
+            }
+            "typedef" if types.len() == 1 => {
+                let tp = self.data.def(self.data.type_def_nr(&types[0])).known_type();
+                *val = Value::Int(i32::from(tp));
+                return Type::Integer(IntegerSpec {
+                    min: 0,
+                    max: 65536,
+                    not_null: false,
+                    forced_size: None,
+                });
             }
             _ => {}
         }
@@ -17519,13 +17701,13 @@ impl Parser {
             // `try_fn_ref_call` makes before the variable exists in this scope.
             self.capture_context
                 .iter()
-                .find(|(n, t)| n == name && matches!(t, Type::Function(_, _, _)))
+                .find(|(n, t)| n == name && matches!(t, Type::Function(..)))
                 .map(|(_, t)| t.clone())?
         } else {
             self.vars.tp(v_nr).clone()
         };
         match tp.base() {
-            Type::Function(params, _, _) => params.get(arg_idx).cloned(),
+            Type::Function(params, ..) => params.get(arg_idx).cloned(),
             _ => None,
         }
     }
@@ -17554,7 +17736,7 @@ impl Parser {
         let outer_fnref_type = self
             .capture_context
             .iter()
-            .find(|(n, t)| n == name && matches!(t, Type::Function(_, _, _)))
+            .find(|(n, t)| n == name && matches!(t, Type::Function(..)))
             .cloned()
             .map(|(_, t)| t);
         if !self.vars.name_exists(name) {
@@ -17576,7 +17758,7 @@ impl Parser {
         // Through the LINK as well as bare — see the zero-argument twin (loft#1455).
         let slot_tp = Self::fn_slot_type(self.vars.tp(v_nr)).clone();
         let through_link = matches!(self.vars.tp(v_nr), Type::RefVar(_));
-        let Type::Function(param_types, ret_type, _) = slot_tp.clone() else {
+        let Type::Function(param_types, ret_type, _, param_consts) = slot_tp.clone() else {
             return None;
         };
         // @PLN85 L1 — callee-attr-space deps must not leak into the caller
@@ -17648,6 +17830,17 @@ impl Parser {
                 );
                 return Some(*ret_type);
             }
+            for (i, expected) in param_types.iter().enumerate() {
+                self.report_const_argument(
+                    &list[i],
+                    expected,
+                    param_consts.is(i),
+                    crate::parser::ConstHandOff::FnRef {
+                        callee: Some(name),
+                        nr: i,
+                    },
+                );
+            }
             let mut converted = list.to_vec();
             for (i, expected) in param_types.iter().enumerate() {
                 self.convert(&mut converted[i], &types[i], expected);
@@ -17699,7 +17892,7 @@ impl Parser {
             let was_captured = self
                 .capture_context
                 .iter()
-                .any(|(n, t)| n == name && matches!(t, Type::Function(_, _, _)));
+                .any(|(n, t)| n == name && matches!(t, Type::Function(..)));
             if was_captured
                 && self.closure_param != u16::MAX
                 && let closure_rec_d = self.data.def(self.context).closure_record()
@@ -17862,7 +18055,7 @@ impl Parser {
             );
             return Type::Unknown(0);
         };
-        let (fn_param_types, _fn_ret_type) = if let Type::Function(params, ret, _) = &types[2] {
+        let (fn_param_types, _fn_ret_type) = if let Type::Function(params, ret, ..) = &types[2] {
             (params.clone(), *ret.clone())
         } else {
             diagnostic!(
@@ -17879,6 +18072,24 @@ impl Parser {
                 "reduce: function must take exactly two arguments (accumulator, element)"
             );
             return Type::Unknown(0);
+        }
+        // loft#1540 — the elements of a const collection reach the callback's parameter only when
+        // it is `const` (a short lambda over a const subject is hinted so; see `lambda_hint`'s
+        // callers).
+        if !self.first_pass
+            && let Some(consts) = types.get(2).and_then(Type::function_consts)
+            && let Some(elem_param) = fn_param_types.get(1)
+        {
+            let elem_param = elem_param.clone();
+            self.report_const_argument(
+                &list[0],
+                &elem_param,
+                consts.is(1),
+                crate::parser::ConstHandOff::Callback {
+                    builtin: "reduce",
+                    nr: 1,
+                },
+            );
         }
         // loft#956 — the FOLD FUNCTION's first parameter is what the accumulator type is.
         //
@@ -18244,7 +18455,7 @@ impl Parser {
                 match self.select_overload(u16::MAX, name, &routed) {
                     crate::parser::dispatch::Selection::One(d) => {
                         return self
-                            .dynamic_dispatcher(u16::MAX, name, &routed)
+                            .dynamic_dispatcher(u16::MAX, name, &routed, Some(d))
                             .unwrap_or(d);
                     }
                     sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
@@ -18262,6 +18473,50 @@ impl Parser {
                 *fallback
             }
         }
+    }
+
+    /// loft#1539 — a method call that selected a generic METHOD template (`fn head<T>(self:
+    /// vector<T>)`, stored as `t_6vector_head`).  A template is not callable, so outside another
+    /// template the call names its monomorph, exactly as a bare call to a free generic does in
+    /// `parse_call`: the first pass predicts the return type so a receiving binding is typed
+    /// (`Ok`), the second instantiates.  `Err` carries the definition to call — the monomorph,
+    /// or the selection unchanged when it is not a template or cannot be instantiated, which
+    /// `call_nr` then reports as before.
+    fn generic_method_call(
+        &mut self,
+        val: &mut Value,
+        md_nr: u32,
+        types: &[Type],
+    ) -> Result<Type, u32> {
+        if md_nr == u32::MAX
+            || self.data.def_type(md_nr) != DefType::Generic
+            || self.callable_target(md_nr)
+        {
+            return Err(md_nr);
+        }
+        let name = Self::method_spelling(self.data.def(md_nr).name());
+        if self.first_pass {
+            let predicted = self.predict_template_return(md_nr, &name, types);
+            if predicted.is_unknown() {
+                return Err(md_nr);
+            }
+            *val = Value::Null;
+            return Ok(predicted);
+        }
+        let inst = self.instantiate_template(md_nr, &name, types);
+        Err(if inst == u32::MAX { md_nr } else { inst })
+    }
+
+    /// The method a `t_<LEN><type>_<method>` key names — the spelling a call wrote.  A key of
+    /// any other shape is answered whole.
+    pub(crate) fn method_spelling(key: &str) -> String {
+        key.strip_prefix("t_")
+            .and_then(|rest| {
+                let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+                let len: usize = rest[..digits].parse().ok()?;
+                rest.get(digits + len + 1..)
+            })
+            .map_or_else(|| key.to_string(), str::to_string)
     }
 
     /// Parse a method call's `(arg, …)` and emit it.  `hint_nr` steers how the arguments
@@ -18295,7 +18550,11 @@ impl Parser {
         let mut named_args: Vec<(String, Value, Type)> = Vec::new();
         let mut in_named = false;
         if self.lexer.has_token(")") {
-            let md_nr = self.select_method_def(select, &types);
+            let selected = self.select_method_def(select, &types);
+            let md_nr = match self.generic_method_call(val, selected, &types) {
+                Ok(predicted) => return predicted,
+                Err(md_nr) => md_nr,
+            };
             return self.call_nr(val, md_nr, &list, &types, true, &arg_pos, None);
         }
         loop {
@@ -18364,7 +18623,11 @@ impl Parser {
             }
         }
         self.lexer.token(")");
-        let md_nr = self.select_method_def(select, &types);
+        let selected = self.select_method_def(select, &types);
+        let md_nr = match self.generic_method_call(val, selected, &types) {
+            Ok(predicted) => return predicted,
+            Err(md_nr) => md_nr,
+        };
         if md_nr == u32::MAX {
             // No callee to resolve names against — `call_with_named` would index a
             // definition that is not there.  Hand it on unchanged; the missing method

@@ -461,6 +461,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t38, "result", vec_result);
     let vec_dep = db.vector(t0);
     db.field(t38, "dep", vec_dep);
+    db.field(t38, "consts", 0);
     let byte_enum = db.byte(0, false);
     db.field(t39, "enum", byte_enum);
     let vec_inner = db.vector(t7);
@@ -633,6 +634,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t76, "primary", t4);
     db.field(t76, "hidden", t4);
     db.field(t76, "const_field", t4);
+    db.field(t76, "value_const", t4);
     let vec_value = db.vector(t8);
     db.field(t76, "value", vec_value);
     let vec_check = db.vector(t8);

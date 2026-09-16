@@ -25,15 +25,15 @@
 <article>
 <div class="section-desc"><p>Functions for working with text (UTF-8 strings) and character values.</p></div>
 <div class="item">
-<pre><code>pub fn len(both: text) -&gt; integer</code></pre>
+<pre><code>pub fn len(self: text) -&gt; integer</code></pre>
 <p>Number of characters (Unicode code points) in the text — the human count, as in every mainstream language. For a byte length (bounds checks, the limit of byte-positioned indexing / slicing) use `size`.</p>
 </div>
 <div class="item">
-<pre><code>pub fn size(both: text) -&gt; integer</code></pre>
+<pre><code>pub fn size(self: text) -&gt; integer</code></pre>
 <p>Number of bytes in the text. This is the bound for byte-positioned operations: `s[i]`, slices `s[a..b]`, and `find`/`rfind` all use byte offsets. For the human character count use `len`.</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(both: character) -&gt; integer</code></pre>
+<pre><code>pub fn len(self: character) -&gt; integer</code></pre>
 <p>Byte length of the character's UTF-8 encoding (1–4).</p>
 </div>
 <div class="item">
@@ -58,7 +58,7 @@
 <p>Negative bounds count from the end, as a byte slice's do (`char_slice(-2, n)` is the last two characters); both ends clamp, and a reversed or empty range answers `&quot;&quot;` rather than failing.</p>
 </div>
 <div class="item">
-<pre><code>pub fn trim(both: text) -&gt; text[both]</code></pre>
+<pre><code>pub fn trim(self: text) -&gt; text[self]</code></pre>
 <p>(Path helpers `dir` / `basename` / `join` / `resolve` moved to `02_files.loft` § Path helpers, so they're available before `03_text.loft` loads — same call shape, same `pub fn` signatures.) Removes leading and trailing whitespace. Use when processing user input or file content.</p>
 </div>
 <div class="item">
@@ -150,7 +150,7 @@
 <p>True if the character is a control character.</p>
 </div>
 <div class="item">
-<pre><code>pub fn join(self: vector&lt;text&gt;, sep: text) -&gt; text</code></pre>
+<pre><code>pub fn join(self: const vector&lt;text&gt;, sep: text) -&gt; text</code></pre>
 <p>Joins parts with sep between each consecutive pair. Returns &quot;&quot; for an empty vector. Use to build comma-separated lists, path segments, or any delimited output.</p>
 </div>
 <div class="item">
@@ -158,7 +158,7 @@
 <p>Return the BYTE at position `i` (0..len) as integer 0-255, or 0 for out-of-bounds.  Unlike `text[i]` which decodes the UTF-8 codepoint containing byte `i` (walking back through continuation bytes), `byte_at(i)` is a pure O(1) byte read. Use in ASCII-heavy scanning hot paths (tokenisers, regex- like loops) where the UTF-8 decode is wasted work — every non-ASCII byte still returns a valid 0-255 number; the caller compares against ASCII constants so byte semantics suffice.  ~5-10× faster than `text[i]` for pure-ASCII checks.</p>
 </div>
 <div class="item">
-<pre><code>pub fn text_from_bytes(bytes: vector&lt;u8&gt;) -&gt; text</code></pre>
+<pre><code>pub fn text_from_bytes(bytes: const vector&lt;u8&gt;) -&gt; text</code></pre>
 <p>Build a text from the raw UTF-8 bytes of a vector&lt;u8&gt; — the inverse of byte_at.  Use in binary decoders (CBOR text, HPKE byte composition) that assemble a byte buffer and need to turn it back into text.  Bytes that are not valid UTF-8 yield the empty text (never a crash); validate first if you must tell &quot;empty input&quot; from &quot;invalid bytes&quot; apart.</p>
 </div>
 <div class="item">

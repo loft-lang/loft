@@ -2573,15 +2573,21 @@ describe() uses format strings with field access inside each variant's method.
   assert(r.describe() == "rect 4 by 5", "describe rect: {r.describe()}");
 ```
 
-=== Stubs for missing implementations
+=== A method on the enum itself is the fallback
 
-If a variant intentionally has no implementation of a method, the compiler emits a warning ("no implementation of 'area' for variant 'Rect'"). Provide an empty-body stub to silence it:
+Calling area() on a value held as a 'Shape' works like a match on its variant, and a match must cover every variant. So when only some variants have their own version, the call is refused unless the enum has one too:
+
+```
+fn area(self: Shape) -> float { 0.0 }
+```
+
+That version is the '\_' arm: a variant with its own area() still runs it, and every other variant runs this one. A method only some variants have is fine as long as nothing calls it on a value held as the enum. An empty-body stub for one variant also covers it:
 
 ```
 fn area(self: SomeVariant) -> float { }
 ```
 
-Give the stub a real body — '{ 0.0 }' — when anything reads its result. An empty body silences the warning and hands back the type's default (0.0 for a float, 0 for an integer, "" for text), which is the same on both backends. That is a real value, not a marker: it is not null, so there is nothing to test for, and a caller cannot tell it from a computed 0.0.
+Give the stub a real body — '{ 0.0 }' — when anything reads its result. An empty body hands back the type's default (0.0 for a float, 0 for an integer, "" for text), which is the same on both backends. That is a real value, not a marker: it is not null, so there is nothing to test for, and a caller cannot tell it from a computed 0.0.
 
 === Match expressions on enums
 
@@ -6777,7 +6783,7 @@ Calling the inner function directly does the same thing, and calling it twice is
 
 Every language surface and every part of the toolchain the catalogue tracks, in one list.  Each entry has a page of its own in `doc/features/` in the repository, where `\@F2` is `F2.md`.
 
-The two halves read differently.  An `\@F` page says what the feature is and how it aids you, and 70 of the 86 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An `\@I` page says what the part does and where it lives in the source — it describes how loft is built, not something you write.
+The two halves read differently.  An `\@F` page says what the feature is and how it aids you, and 71 of the 87 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An `\@I` page says what the part does and where it lives in the source — it describes how loft is built, not something you write.
 
 The catalogue is generated from the `loft-lang/features` issue tracker, which is the single source of truth: every entry is an issue, and `make features-check` regenerates this page and fails on any difference.  A feature you can name and cannot find below is missing from the TRACKER — that is a gap in the catalogue rather than a gap in loft, and the chapters of this reference are the wider list.
 
@@ -6869,6 +6875,7 @@ The catalogue is generated from the `loft-lang/features` issue tracker, which is
 - \*\*\@F119\*\* — Store locks (\#lock)
 - \*\*\@F120\*\* — Lexer library (lib/lexer)
 - \*\*\@F121\*\* — Parser library (lib/parser)
+- \*\*\@F122\*\* — Multiple dispatch — one name, a definition per combination of parameter types
 
 === Tooling and infrastructure
 
@@ -7708,103 +7715,103 @@ Whether the sentinel is a legal ANSWER depends on the target, and `dflt` already
 The sentinel arm is SILENT on purpose.  It is not a fault of this store: the operation that produced the sentinel reported at its own site, and reporting again would name `-9223372036854775808` as a value outside the range, which is not a number the program ever computed.
 
 ```rust
-pub fn abs(both: integer) -> integer
+pub fn abs(self: integer) -> integer
 ```
 
 Absolute value. Removes the sign from a negative integer.
 
 ```rust
-pub fn floor_mod(both: integer, divisor: integer) -> integer?
+pub fn floor_mod(self: integer, divisor: integer) -> integer?
 ```
 
 Floor modulo — the remainder that takes the sign of the DIVISOR, so `x.floor\_mod(n)` lands in `\[0, n)` for a positive `n`.  The `%` operator truncates toward zero and keeps the DIVIDEND's sign (`-1 % 3 == -1`); `floor\_mod` wraps (`(-1).floor\_mod(3) == 2`), which is what circular indexing / wrap-around wants (`grid\[(i - 1).floor\_mod(w)\]`).  `x.floor\_mod(0)` is null, like `%` (C80 — an undefined value is a null, never a fault).
 
 ```rust
-pub fn abs(both: single) -> single
+pub fn abs(self: single) -> single
 ```
 
 Absolute value for single-precision floats.
 
 ```rust
-pub fn cos(both: single) -> single
+pub fn cos(self: single) -> single
 ```
 
 Cosine. Use for circular motion: x = r \* cos(angle).
 
 ```rust
-pub fn sin(both: single) -> single
+pub fn sin(self: single) -> single
 ```
 
 Sine. Use for circular motion: y = r \* sin(angle).
 
 ```rust
-pub fn tan(both: single) -> single
+pub fn tan(self: single) -> single
 ```
 
 Tangent. Use for slopes and perspective projection.
 
 ```rust
-pub fn acos(both: single) -> single?
+pub fn acos(self: single) -> single?
 ```
 
 Arc cosine. Returns the angle (in radians) whose cosine is v.
 
 ```rust
-pub fn asin(both: single) -> single?
+pub fn asin(self: single) -> single?
 ```
 
 Arc sine. Returns the angle whose sine is v.
 
 ```rust
-pub fn atan(both: single) -> single
+pub fn atan(self: single) -> single
 ```
 
 Arc tangent of a single value. Returns angle in (-PI/2, PI/2).
 
 ```rust
-pub fn ceil(both: single) -> single
+pub fn ceil(self: single) -> single
 ```
 
 Round up to the nearest integer value. Use to compute required buffer sizes from fractional counts.
 
 ```rust
-pub fn floor(both: single) -> single
+pub fn floor(self: single) -> single
 ```
 
 Round down to the nearest integer value. Use to convert a float position to a tile index.
 
 ```rust
-pub fn round(both: single) -> single
+pub fn round(self: single) -> single
 ```
 
 Round to the nearest integer value (half rounds away from zero).
 
 ```rust
-pub fn sqrt(both: single) -> single?
+pub fn sqrt(self: single) -> single?
 ```
 
 Square root. Use for distances and normalization.
 
 ```rust
-pub fn atan2(both: single, v2: single) -> single
+pub fn atan2(self: single, v2: single) -> single
 ```
 
 Arc tangent of y/x, preserving the correct quadrant. Use instead of atan when you have separate x/y components.
 
 ```rust
-pub fn log(both: single, v2: single) -> single?
+pub fn log(self: single, v2: single) -> single?
 ```
 
 Logarithm of v in the given base. Use for converting between scales (e.g., decibels).
 
 ```rust
-pub fn pow(both: single, v2: single) -> single?
+pub fn pow(self: single, v2: single) -> single?
 ```
 
 Raises base to the power exp. Use for exponential growth curves and scaling.
 
 ```rust
-pub fn abs(both: float) -> float
+pub fn abs(self: float) -> float
 ```
 
 Absolute value for double-precision floats.
@@ -7822,79 +7829,79 @@ pub E = OpMathEFloat()
 Euler's number, the base of natural logarithms (2.71828...).
 
 ```rust
-pub fn cos(both: float) -> float
+pub fn cos(self: float) -> float
 ```
 
 Cosine. Use for circular motion: x = r \* cos(angle).
 
 ```rust
-pub fn sin(both: float) -> float
+pub fn sin(self: float) -> float
 ```
 
 Sine. Use for circular motion: y = r \* sin(angle).
 
 ```rust
-pub fn tan(both: float) -> float
+pub fn tan(self: float) -> float
 ```
 
 Tangent. Use for slopes and perspective projection.
 
 ```rust
-pub fn acos(both: float) -> float?
+pub fn acos(self: float) -> float?
 ```
 
 Arc cosine. Returns the angle (in radians) whose cosine is v.
 
 ```rust
-pub fn asin(both: float) -> float?
+pub fn asin(self: float) -> float?
 ```
 
 Arc sine. Returns the angle whose sine is v.
 
 ```rust
-pub fn atan(both: float) -> float
+pub fn atan(self: float) -> float
 ```
 
 Arc tangent of a single value. Returns angle in (-PI/2, PI/2).
 
 ```rust
-pub fn ceil(both: float) -> float
+pub fn ceil(self: float) -> float
 ```
 
 Round up to the nearest integer value. Use to compute required buffer sizes from fractional counts.
 
 ```rust
-pub fn floor(both: float) -> float
+pub fn floor(self: float) -> float
 ```
 
 Round down to the nearest integer value. Use to convert a float position to a tile index.
 
 ```rust
-pub fn round(both: float) -> float
+pub fn round(self: float) -> float
 ```
 
 Round to the nearest integer value (half rounds away from zero).
 
 ```rust
-pub fn sqrt(both: float) -> float?
+pub fn sqrt(self: float) -> float?
 ```
 
 Square root. Use for distances and normalization.
 
 ```rust
-pub fn atan2(both: float, v2: float) -> float
+pub fn atan2(self: float, v2: float) -> float
 ```
 
 Arc tangent of y/x, preserving the correct quadrant. Use instead of atan when you have separate x/y components.
 
 ```rust
-pub fn log(both: float, v2: float) -> float?
+pub fn log(self: float, v2: float) -> float?
 ```
 
 Logarithm of v in the given base. Use for converting between scales (e.g., decibels).
 
 ```rust
-pub fn pow(both: float, v2: float) -> float?
+pub fn pow(self: float, v2: float) -> float?
 ```
 
 Raises base to the power exp. Use for exponential growth curves and scaling.
@@ -7902,49 +7909,49 @@ Raises base to the power exp. Use for exponential growth curves and scaling.
 == exp / ln / log2 / log10
 
 ```rust
-pub fn exp(both: single) -> single
+pub fn exp(self: single) -> single
 ```
 
 Raises E (2.71828…) to the power v. Use for exponential growth models.
 
 ```rust
-pub fn exp(both: float) -> float
+pub fn exp(self: float) -> float
 ```
 
 Double-precision exp (e^v).
 
 ```rust
-pub fn ln(both: single) -> single?
+pub fn ln(self: single) -> single?
 ```
 
 Natural logarithm (base E). Use for growth rates and information entropy.
 
 ```rust
-pub fn ln(both: float) -> float?
+pub fn ln(self: float) -> float?
 ```
 
 Double-precision natural logarithm.
 
 ```rust
-pub fn log2(both: single) -> single?
+pub fn log2(self: single) -> single?
 ```
 
 Base-2 logarithm. Use for bit-count calculations and information theory.
 
 ```rust
-pub fn log2(both: float) -> float?
+pub fn log2(self: float) -> float?
 ```
 
 Double-precision base-2 logarithm.
 
 ```rust
-pub fn log10(both: single) -> single?
+pub fn log10(self: single) -> single?
 ```
 
 Base-10 logarithm. Use for decibels, orders of magnitude, and display scales.
 
 ```rust
-pub fn log10(both: float) -> float?
+pub fn log10(self: float) -> float?
 ```
 
 Double-precision base-10 logarithm.
@@ -7952,67 +7959,67 @@ Double-precision base-10 logarithm.
 == min / max / clamp
 
 ```rust
-pub fn min(both: integer, b: integer) -> integer
+pub fn min(self: integer, b: integer) -> integer
 ```
 
 Each of these has two overloads: one over non-null values (`-\> τ`) and one over nullable ones (`-\> τ?`).  You get the nullable overload whenever ANY argument is statically nullable — an `integer?`/`single?`/`float?`, or a division result such as `1 / z` — and it propagates: the answer is null if either argument is null.  Otherwise you get the non-null overload and a non-null answer, so a plain `min(a, b)` needs no discharge. Smallest of two integer values.
 
 ```rust
-pub fn max(both: integer, b: integer) -> integer
+pub fn max(self: integer, b: integer) -> integer
 ```
 
 Largest of two integer values.
 
 ```rust
-pub fn clamp(both: integer, lo: integer, hi: integer) -> integer
+pub fn clamp(self: integer, lo: integer, hi: integer) -> integer
 ```
 
 Clamps v into the inclusive range \[lo, hi\]. Returns null if any argument is null.
 
 ```rust
-pub fn min(both: single, b: single) -> single
+pub fn min(self: single, b: single) -> single
 ```
 
 Smallest of two single-precision float values.
 
 ```rust
-pub fn max(both: single, b: single) -> single
+pub fn max(self: single, b: single) -> single
 ```
 
 Largest of two single-precision float values.
 
 ```rust
-pub fn clamp(both: single, lo: single, hi: single) -> single
+pub fn clamp(self: single, lo: single, hi: single) -> single
 ```
 
 Clamps v into the inclusive range \[lo, hi\]. Returns null if any argument is null.
 
 ```rust
-pub fn min(both: float, b: float) -> float
+pub fn min(self: float, b: float) -> float
 ```
 
 Smallest of two double-precision float values.
 
 ```rust
-pub fn max(both: float, b: float) -> float
+pub fn max(self: float, b: float) -> float
 ```
 
 Largest of two double-precision float values.
 
 ```rust
-pub fn clamp(both: float, lo: float, hi: float) -> float
+pub fn clamp(self: float, lo: float, hi: float) -> float
 ```
 
 Clamps v into the inclusive range \[lo, hi\]. Returns null if any argument is null.
 
 ```rust
-pub fn approx(both: float, b: float, eps: float) -> boolean
+pub fn approx(self: float, b: float, eps: float) -> boolean
 ```
 
 Approximate equality: true when a and b differ by at most eps (inclusive). `==` on float/single is EXACT IEEE equality — use `approx` when you want a tolerance, e.g. comparing computed transcendentals: `approx(sqrt(2.0) \* sqrt(2.0), 2.0, 1e-9)`. A null (NaN) operand is not approximately equal to anything, so the result is false.
 
 ```rust
-pub fn approx(both: single, b: single, eps: single) -> boolean
+pub fn approx(self: single, b: single, eps: single) -> boolean
 ```
 
 Approximate equality for single-precision floats (see the float overload).
@@ -8022,19 +8029,19 @@ Approximate equality for single-precision floats (see the float overload).
 Functions for working with text (UTF-8 strings) and character values.
 
 ```rust
-pub fn len(both: text) -> integer
+pub fn len(self: text) -> integer
 ```
 
 Number of characters (Unicode code points) in the text — the human count, as in every mainstream language. For a byte length (bounds checks, the limit of byte-positioned indexing / slicing) use `size`.
 
 ```rust
-pub fn size(both: text) -> integer
+pub fn size(self: text) -> integer
 ```
 
 Number of bytes in the text. This is the bound for byte-positioned operations: `s\[i\]`, slices `s\[a..b\]`, and `find`/`rfind` all use byte offsets. For the human character count use `len`.
 
 ```rust
-pub fn len(both: character) -> integer
+pub fn len(self: character) -> integer
 ```
 
 Byte length of the character's UTF-8 encoding (1–4).
@@ -8069,7 +8076,7 @@ Use it wherever a character COUNT becomes a cut: fitting a label to a width, wra
 Negative bounds count from the end, as a byte slice's do (`char\_slice(-2, n)` is the last two characters); both ends clamp, and a reversed or empty range answers `""` rather than failing.
 
 ```rust
-pub fn trim(both: text) -> text[both]
+pub fn trim(self: text) -> text[self]
 ```
 
 (Path helpers `dir` / `basename` / `join` / `resolve` moved to `02\_files.loft` § Path helpers, so they're available before `03\_text.loft` loads — same call shape, same `pub fn` signatures.) Removes leading and trailing whitespace. Use when processing user input or file content.
@@ -8207,7 +8214,7 @@ pub fn is_control(self: character) -> boolean
 True if the character is a control character.
 
 ```rust
-pub fn join(self: vector<text>, sep: text) -> text
+pub fn join(self: const vector<text>, sep: text) -> text
 ```
 
 Joins parts with sep between each consecutive pair. Returns "" for an empty vector. Use to build comma-separated lists, path segments, or any delimited output.
@@ -8219,7 +8226,7 @@ pub fn byte_at(self: text, i: integer) -> integer
 Return the BYTE at position `i` (0..len) as integer 0-255, or 0 for out-of-bounds.  Unlike `text\[i\]` which decodes the UTF-8 codepoint containing byte `i` (walking back through continuation bytes), `byte\_at(i)` is a pure O(1) byte read. Use in ASCII-heavy scanning hot paths (tokenisers, regex- like loops) where the UTF-8 decode is wasted work — every non-ASCII byte still returns a valid 0-255 number; the caller compares against ASCII constants so byte semantics suffice.  ~5-10× faster than `text\[i\]` for pure-ASCII checks.
 
 ```rust
-pub fn text_from_bytes(bytes: vector<u8>) -> text
+pub fn text_from_bytes(bytes: const vector<u8>) -> text
 ```
 
 Build a text from the raw UTF-8 bytes of a vector\<u8\> — the inverse of byte\_at.  Use in binary decoders (CBOR text, HPKE byte composition) that assemble a byte buffer and need to turn it back into text.  Bytes that are not valid UTF-8 yield the empty text (never a crash); validate first if you must tell "empty input" from "invalid bytes" apart.
@@ -8235,31 +8242,31 @@ Build a one-character text from a Unicode CODE POINT — the inverse of the `ch 
 Operations on vector\<T\> — the primary ordered collection type. Vectors are grown by appending with += and elements are accessed by index. All structures are passed by reference instead of by value
 
 ```rust
-pub fn len(both: vector) -> integer
+pub fn len(self: const vector) -> integer
 ```
 
 Number of elements in the vector. Use in loop bounds: for i in 0..v.len().
 
 ```rust
-pub fn len(both: sorted) -> integer
+pub fn len(self: const sorted) -> integer
 ```
 
 Number of elements in a sorted collection.
 
 ```rust
-pub fn clear(both: vector)
+pub fn clear(self: vector)
 ```
 
 Remove all elements from the vector, setting its length to 0.
 
 ```rust
-pub fn len(both: hash) -> integer
+pub fn len(self: const hash) -> integer
 ```
 
 Number of elements in a hash collection.
 
 ```rust
-pub fn size(both: hash) -> integer
+pub fn size(self: const hash) -> integer
 ```
 
 The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (load factor 0.75).  0 for an empty (unallocated) hash.
@@ -8327,13 +8334,13 @@ pub fn eprintln(v1: text)
 Writes v followed by a newline to standard ERROR.
 
 ```rust
-pub fn len(both: spatial) -> integer
+pub fn len(self: const spatial) -> integer
 ```
 
 Number of elements in a spatial (radix / Morton tree) collection.
 
 ```rust
-pub fn len(both: trie) -> integer
+pub fn len(self: const trie) -> integer
 ```
 
 Number of elements in the trie.
@@ -8341,25 +8348,25 @@ Number of elements in the trie.
 == Vector aggregates
 
 ```rust
-pub fn min_of < T: Ordered > (v: vector<T>) -> T?
+pub fn min_of < T: Ordered > (v: const vector<T>) -> T?
 ```
 
 Smallest element in a vector, or null when the vector is empty (the type is honest about the empty case).  Works on any Ordered type (op \<).
 
 ```rust
-pub fn max_of < T: Ordered > (v: vector<T>) -> T?
+pub fn max_of < T: Ordered > (v: const vector<T>) -> T?
 ```
 
 Largest element in a vector, or null when the vector is empty (the type is honest about the empty case).  Works on any Ordered type (op \<).
 
 ```rust
-pub fn sum < T: Addable > (v: vector<T>, init: T? = null) -> T
+pub fn sum < T: Addable > (v: const vector<T>, init: T? = null) -> T
 ```
 
 Sum of vector elements.  Works on any Addable type.  `init` is the identity to start from; leave it out and the element type's own zero is used (0, 0.0, ""). Example: sum(\[10, 20, 12\], 0) == 42 Example: sum(\[10, 20, 12\]) == 42
 
 ```rust
-pub fn sum_of(v: vector<integer>) -> integer
+pub fn sum_of(v: const vector<integer>) -> integer
 ```
 
 Sum of all integer elements. Returns 0 for an empty vector. Superseded by the general `sum(v, init)`; kept as a shim over it (the old form keeps working). `sum\_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the shim's call resolves — a forward reference to a generic is not yet supported.
@@ -8532,13 +8539,13 @@ pub struct File {
 A handle to a filesystem entry. Fields: path (full path), size (file size in bytes), format (open mode), current (byte position after last read), next (byte position to read next).
 
 ```rust
-pub fn content(self: File) -> text?fs#read
+pub fn content(self: const File) -> text?fs#read
 ```
 
 Reads the entire file as a UTF-8 text value. Use for small configuration files or scripts.
 
 ```rust
-pub fn lines(self: File) -> vector<text> fs#read
+pub fn lines(self: const File) -> vector<text> fs#read
 ```
 
 Par-safe: reads the file into a worker-local store; the host bridge serialises filesystem access. Reads the file and splits it into lines. Strips trailing '\\r' so CRLF files (Windows) and LF files (Unix) produce identical results. Use when processing line-by-line (logs, CSV, etc.).
@@ -8562,7 +8569,7 @@ pub fn exists(path: text) -> boolean fs#read
 Stat-equivalent filesystem read; par-safe. Use to check whether a path is accessible before reading or writing it. A RELATIVE path resolves against the program's own directory, or against the working directory under `\#cwd`; an absolute path is used as given, including one outside the project.  This is not an access boundary — the boundary is the `fs` capability a `\[sandbox\]` profile grants or withholds.
 
 ```rust
-pub fn exists(both: File) -> boolean fs#read
+pub fn exists(self: const File) -> boolean fs#read
 ```
 
 Filesystem stat (via file()); par-safe. Method form: f = file("path"); if f.exists() { .. } Also callable as exists(file\_obj) via the 'both' parameter name.
@@ -8622,7 +8629,7 @@ pub fn read_bytes(path: text) -> vector<u8> ?fs#read
 Reads the whole file `path` as raw bytes.  A MISSING / unreadable file reads as NULL (distinct from an EMPTY file, `\[\]`); discharge with `?? \[\]` to keep the old shape.  Binary-exact (round-trips with write\_bytes); use for non-UTF-8 data — for text prefer `file(path).content()`.
 
 ```rust
-pub fn write_bytes(path: text, bytes: vector<u8>) -> boolean fs#update
+pub fn write_bytes(path: text, bytes: const vector<u8>) -> boolean fs#update
 ```
 
 Writes `bytes` to file `path`, truncating any existing content.  Returns true on success.  The inverse of read\_bytes; the pair round-trips a non-UTF-8 blob byte-for-byte.
@@ -8660,7 +8667,7 @@ Typical dryopea-style pattern: pw = PaintedWorld { painted: \[\] }   // painted'
 It snapshots the whole STORE `r` lives in, which is not always a store of just `r`.  A keyed LOCAL owns its store, so binding it writes a file for that collection.  A keyed FIELD shares its container's store, so binding `pw.painted` above writes a file for `PaintedWorld` — carrying the container and every sibling collection — and that file will NOT load back into a bare `hash\<PaintedHex\[q, r\]\>`.  Both are usable; they are just different files.  Bind through the container consistently, or bind a local of the collection's own type when another program has to read the file. The compiler advises at the call when the argument is a field.  `hash` carries its bucket seed in its own record and the comparison-based kinds hold no per-process state, so every persisted image is portable across processes.
 
 ```rust
-pub fn store_persist_copy(r: reference, path: text) -> boolean fs#update
+pub fn store_persist_copy(r: const reference, path: text) -> boolean fs#update
 ```
 
 Write an image of `r` laid out for PAGING, and keep the live collection as it is. Use this for a file another program (or a browser) will READ — a vocabulary, a map, any shipped dataset — where what matters is how few pages a query touches.
@@ -8693,7 +8700,7 @@ pub fn store_load_untrusted(r: reference, path: text) -> boolean fs#read
 Load a store IMAGE from a local file that may be UNTRUSTED into `r` — the structurally-validated counterpart of store\_load. Reads the file and validates its block structure BEFORE adoption, so a crafted or corrupt file cannot hang (0-size block) or drive a heap over-read; it is rejected (false). store\_load is faster (validates only in debug) for a file you produced yourself; use this for a file whose provenance you don't control. h: hash\<Rec\[id\]\> = \[\] if !store\_load\_untrusted(h, "downloaded.store") { /\* rejected — malformed \*/ }
 
 ```rust
-pub fn store_verify(r: reference) -> boolean
+pub fn store_verify(r: const reference) -> boolean
 ```
 
 Structural integrity check of a store-rooted collection's heap graph: verify every internal pointer targets a live record — no dangling / out-of-bounds / cyclic edge. Returns true when sound, false (with a reason on stderr) when not. The verifier behind the working-set loader's confidence: after any `store\_load\*`, `store\_verify(local)` proves the (partial) copy produced a structurally valid heap, not one with a pointer left aimed at the source. h: hash\<Rec\[id\]\> = \[\] store\_load\_key(h, "block.store", 42) assert(store\_verify(h))   // the load produced a sound heap
@@ -8751,7 +8758,7 @@ store\_lazy\_range(events, 100, 199);   // one query, up to 100 records for e in
 The collection must be ORDERED (`sorted` or `index`) — a `hash` has no order to range over — and keyed on ONE column, since two numbers cannot say which value pins a composite key's leading column; use `store\_lazy\_query` for that. Both bounds are inclusive, in the collection's own key order. A record already resident is left alone. Answers 0 when nothing matched AND when the query could not run; `store\_lazy\_error` tells those apart.
 
 ```rust
-pub fn store_lazy_error(local: reference) -> text
+pub fn store_lazy_error(local: const reference) -> text
 ```
 
 Why a lazy fetch for this collection could not REACH its source, or "" when it is healthy.
@@ -8760,7 +8767,7 @@ p = persons\[42\]; if p == null { why = store\_lazy\_error(persons); if why == "
 The FIRST failure's reason, kept — not the last: it names the original cause, and later ones are usually the same failure repeating. Nothing clears it but `store\_lazy\_clear`. An absence does NOT, and neither does a later success: reaching the source now says nothing about what an earlier failure already lost, and answering "healthy" over a traversal that missed data is the silent wrong answer this channel exists to prevent.
 
 ```rust
-pub fn store_lazy_faults(local: reference) -> integer
+pub fn store_lazy_faults(local: const reference) -> integer
 ```
 
 How many fetches could not REACH this collection's source. 0 is healthy. The magnitude behind `store\_lazy\_error`: after a traversal it answers "how incomplete am I".
@@ -8801,7 +8808,7 @@ Prefix form: fetch every entry whose text key begins with `pre` from a persisted
 `limit` caps the WALK, not just the answer: with `limit` 8 the ninth record is never stepped to, so its pages are never fetched. A negative `limit` means no cap, which on a common prefix reads the whole run. words: trie\<Word\[w\]\> = \[\] store\_load\_prefix(words, "vocab.store", "kerk", 20)
 
 ```rust
-pub fn store_load_box(local: reference, path: text, from: vector<integer>, till: vector<integer>, limit: integer) -> integer fs#read
+pub fn store_load_box(local: reference, path: text, from: const vector<integer>, till: const vector<integer>, limit: integer) -> integer fs#read
 ```
 
 Box form: fetch every entry inside the closed bounding box `from`..`till` from a persisted `spatial\<T\[x, y\]\>` into `local`, reading only the pages the box walk touches — what a map viewport needs. Returns the count loaded. The corners are vectors so the same call serves 1, 2 or 3 axes, and writing them the other way round names the same box.
@@ -8809,13 +8816,13 @@ TWO bounds, and a map needs both. `limit` caps the WALK, not just the answer: wi
 Those numbers assume a dataset written with locality in every axis, which is the one thing this call cannot do for you. The Morton walk is symmetric; a file laid out along ONE axis is not, so a box crossing that axis pays for every stride it crosses. On a 62 500-point grid returning the same 500 records, a 250x2 box read 107 pages of 64 KiB against 7 for its 2x250 mirror, and the two swapped when the identical data was written in the other axis order — 81 % of the image to return 0.8 % of the records. Write such a dataset TILED: it has no bad orientation, and for the square-ish boxes a viewport uses it beats either linear order. pins: spatial\<Pin\[x, y\]\> = \[\] store\_load\_box(pins, "map.store", \[x1, y1\], \[x2, y2\], 200)
 
 ```rust
-pub fn store_load_keys(local: reference, path: text, keys: vector<integer>) -> integer fs#read
+pub fn store_load_keys(local: reference, path: text, keys: const vector<integer>) -> integer fs#read
 ```
 
 Plural form of `store\_load\_key`: fetch the given integer keys' entries into `local` in one call (the paged reader is opened once and its cache reused), returning how many were found. Keys absent from the remote are skipped. Same relocation rules as `store\_load\_key`. tiles: hash\<Tile\[id\]\> = \[\] got = store\_load\_keys(tiles, "block.store", \[7, 13, 42\])   // got == 3
 
 ```rust
-pub fn store_load_keys_text(local: reference, path: text, keys: vector<text>) -> integer fs#read
+pub fn store_load_keys_text(local: reference, path: text, keys: const vector<text>) -> integer fs#read
 ```
 
 Plural form of `store\_load\_key\_text`, and the text twin of `store\_load\_keys`: fetch the given text keys' entries into `local` in ONE call, returning how many were found. Keys absent from the remote are skipped. Serves a `hash\<T\[k\]\>` and a `trie\<T\[k\]\>` alike, like the single-key form.
@@ -8842,7 +8849,7 @@ Equivalent to `self\#next = pos`, which is the operator form and has always work
 Returns false — a no-op — when there is nothing to seek in: a directory, an absent file, a negative `pos`, or a file the process has not yet read from or written to (the OS handle is opened by the first I/O, so seeking before it exists has nothing to move).  Seeking PAST the end is allowed: the position is remembered and a following write extends the file, which is how a free-list or an update-in-place walk lands.
 
 ```rust
-pub fn position(self: File) -> integer
+pub fn position(self: const File) -> integer
 ```
 
 The current read/write position in bytes, i.e. where the next read or write will land.  The read side of \[seek\]; `self\#next` is the operator form.
@@ -8856,7 +8863,7 @@ pub fn sync(self: File) -> boolean fs#update
 Flushes buffered bytes for self to the underlying storage so that the preceding writes are durable. Use between log records or block boundaries to guarantee that earlier appends have landed on disk before later ones are issued.
 
 ```rust
-pub fn files(self: File) -> vector<File> fs#read
+pub fn files(self: const File) -> vector<File> fs#read
 ```
 
 Returns the entries inside a directory, sorted by path — the same order as `list\_dir`, so an index into either listing means the same entry. The File must have format == Format.Directory; anything else lists as `\[\]` (where `list\_dir` answers null, because it has no format to check first). Use to iterate over all files in a folder.
@@ -9093,12 +9100,6 @@ pub enum CoroutineStatus {
 
 Lifecycle state of a coroutine frame. Transitions: Created -\> Running -\> Suspended -\> Running -\> ... -\> Exhausted.
 
-```rust
-pub fn exhausted(gen: reference) -> boolean
-```
-
-CO1.6: Returns true if the coroutine has finished producing values.
-
 == JSON
 
 ```rust
@@ -9139,81 +9140,81 @@ pub fn json_errors() -> text
 Populates the runtime's per-call json\_errors state (read by json\_errors()).  Allocates the result tree into worker-local stores → par-safe; no parent state written. Return a pipe-separated trail of JSON parse errors from the most recent `json\_parse` call.  Empty when the parse succeeded.  Each entry carries an RFC 6901 path, a `line:col` location, and a context snippet — see Q1 in `doc/claude/QUALITY.md`.
 
 ```rust
-pub fn field(self: JsonValue, name: text) -> JsonValue[self]
+pub fn field(self: const JsonValue, name: text) -> JsonValue[self]
 ```
 
 Observes the runtime's json\_errors state populated by json\_parse.  No parent writes. JObject indexer — returns the value at `name`, or `JNull` when `self` isn't a JObject or the key is missing.  Chained access like `root.field("a").field("b")` is safe — every intermediate missing produces `JNull`, never a trap.
 
 ```rust
-pub fn item(self: JsonValue, index: integer) -> JsonValue[self]
+pub fn item(self: const JsonValue, index: integer) -> JsonValue[self]
 ```
 
 JArray indexer — returns the element at `index`, or `JNull` when `self` isn't a JArray or the index is out of bounds.
 
 ```rust
-pub fn len(self: JsonValue) -> integer
+pub fn len(self: const JsonValue) -> integer
 ```
 
 Length of a JArray's items vector or a JObject's fields vector. Returns `null` (i32::MIN) for any other variant.
 
 ```rust
-pub fn as_text(self: JsonValue) -> text
+pub fn as_text(self: const JsonValue) -> text
 ```
 
 Typed extractor — returns `null` on kind mismatch.
 The null is NOT the empty text, and only `??` tells the two apart: on a mismatch `s == ""` is false and `len(s)` is 1, while a field that really holds `""` compares equal and measures 0.  Reach for `as\_text(...) ?? fallback`, never `== ""`.
 
 ```rust
-pub fn as_number(self: JsonValue) -> float
+pub fn as_number(self: const JsonValue) -> float
 ```
 
 Typed extractor — returns `null` on kind mismatch.
 
 ```rust
-pub fn as_long(self: JsonValue) -> integer
+pub fn as_long(self: const JsonValue) -> integer
 ```
 
 Typed extractor — returns `null` on kind mismatch.  Truncates the underlying `float` toward zero before converting.
 
 ```rust
-pub fn as_bool(self: JsonValue) -> boolean?
+pub fn as_bool(self: const JsonValue) -> boolean?
 ```
 
 Typed extractor — returns `null` on kind mismatch.
 Declared `boolean?` and not `boolean`: the doc has always promised the null and the signature could not carry it.  Its three siblings keep the promise because `text`, `float` and `integer` each have an in-band sentinel a non-null return can hold; a two-state Rust `bool` has none, so this one answered `false` for every mismatching kind — for an absent field, for the string `"true"`, and for `1` — indistinguishably from a field that really says `false`.
 
 ```rust
-pub fn kind(self: JsonValue) -> text
+pub fn kind(self: const JsonValue) -> text
 ```
 
 Q2 introspection — returns the variant name as text: `"JNull"`, `"JBool"`, `"JNumber"`, `"JString"`, `"JArray"`, or `"JObject"`.  Cheap: reads the discriminant byte, formats a literal.  Useful for logs and conditional branches that don't want to commit to a full pattern match.
 
 ```rust
-pub fn keys(self: JsonValue) -> vector<text>
+pub fn keys(self: const JsonValue) -> vector<text>
 ```
 
 Q2 introspection — returns the field-name list of a `JObject` in insertion order, or an empty vector for any other variant. Safe idiom: `for k in v.keys() { ... }` works on any JsonValue because non-objects yield an empty walk.
 
 ```rust
-pub fn fields(self: JsonValue) -> vector<JsonField>
+pub fn fields(self: const JsonValue) -> vector<JsonField>
 ```
 
 Q2 introspection — returns the (name, value) entries of a `JObject` in insertion order so callers can iterate as `for entry in fields(v) { … entry.name … entry.value … }`. Values deep-copy (primitives + nested containers — full tree). Empty vector for any other variant.
 
 ```rust
-pub fn has_field(self: JsonValue, name: text) -> boolean
+pub fn has_field(self: const JsonValue, name: text) -> boolean
 ```
 
 Q2 introspection — returns true iff `self` is a `JObject` variant carrying a field named `name`.  All other variants (including `JNull` on a parse error) return false, so the common pattern `if v.has\_field("users") { … }` is safe to write on any JsonValue without first destructuring. Distinguishes "absent" from "present-but-null" — a field whose value is `JNull` still returns `true`.
 
 ```rust
-pub fn to_json(self: JsonValue) -> text
+pub fn to_json(self: const JsonValue) -> text
 ```
 
 Q3 serialiser — render a JsonValue to canonical RFC 8259 JSON text.  All six variants serialise; `JArray` / `JObject` recurse through their children (full tree serialisation, nested containers walk naturally).  Strings escape `"`, `\\\\`, and ASCII control bytes; UTF-8 passes through verbatim. Non-finite numbers render as `null`.
 
 ```rust
-pub fn to_json_pretty(self: JsonValue) -> text
+pub fn to_json_pretty(self: const JsonValue) -> text
 ```
 
 Q3 pretty serialiser — `to\_json\_pretty` produces 2-space indented, one-element-per-line output for non-empty `JArray` / `JObject` containers.  Empty containers render `\[\]` / `{}` (no newline padding).  Primitives are byte-identical to `to\_json` (no nested structure to indent).  After object keys the colon is followed by a single space (`"k": v`). Useful for golden-file tests and log output.
@@ -9243,32 +9244,32 @@ pub fn json_string(v: text) -> JsonValue
 Non-finite inputs touch json\_errors state.  Otherwise pure construction into worker stores. Q4 constructor — build a JsonValue set to the `JString` variant carrying the supplied text payload.  The text is copied into the JsonValue's own store, so the returned value owns the string independently of the argument's lifetime.
 
 ```rust
-pub fn json_array(items: vector<JsonValue>) -> JsonValue
+pub fn json_array(items: const vector<JsonValue>) -> JsonValue
 ```
 
 Q4 constructor — build a JsonValue set to the `JArray` variant carrying the supplied items.  Each element is deep-copied into the new tree's arena via the shared `dbref\_to\_parsed` walker, so nested containers and arena-origin subtrees (e.g. a captured `field()` result) embed correctly.  Empty input produces a real empty JArray.
 
 ```rust
-pub fn json_object(fields: vector<JsonField>) -> JsonValue
+pub fn json_object(fields: const vector<JsonField>) -> JsonValue
 ```
 
 Build a JsonValue set to the `JObject` variant carrying the supplied fields.  Each field's value deep-copies via the same `dbref\_to\_parsed` walker as `json\_array`, so a JObject can carry captured-subtree JArray / JObject values.  Empty input produces a real empty JObject.
 
 ```rust
-pub fn struct_from_jsonvalue(v: JsonValue, struct_kt: integer) -> JsonValue
+pub fn struct_from_jsonvalue(v: const JsonValue, struct_kt: integer) -> JsonValue
 ```
 
 Internal walker — populate a struct of the given `struct\_kt` (known-type number) from a JsonValue.  Compile-time codegen for `Struct.parse(JsonValue)` emits exactly one call to this function regardless of struct shape; the runtime walker uses `stores.types\[struct\_kt\].parts` to dispatch on each field's declared type (primitive, nested struct, JsonValue passthrough, or vector). Path-qualified schema-side diagnostics on type mismatches go to `json\_errors()`.  Users should not call this directly — write `MyStruct.parse(value)` instead.
 Return type is declared as `JsonValue` here purely because it shares the same DbRef byte layout as the actual `reference\[T\]` the walker produces — the compile-time codegen at `parse\_type\_parse` overrides the type to `reference\[T\]` for the caller while the stack accounting remains correct.
 
 ```rust
-pub fn struct_to_json(self_ref: JsonValue, struct_kt: integer) -> text
+pub fn struct_to_json(self_ref: const JsonValue, struct_kt: integer) -> text
 ```
 
 Populates json\_errors on type mismatches.  Allocates the result struct into worker stores → par-safe; no parent state writes. P54 Q3 second half — serialise any user struct to canonical JSON. Backs the parser-side intercept for `instance.to\_json()`; the `field == "to\_json"` rewrite in `src/parser/fields.rs` lowers the method call to `n\_struct\_to\_json(self\_ref, struct\_kt)`.  Walks `stores.types\[struct\_kt\].parts` via `Stores::show\_json` (which reuses the existing `ShowDb` schema walker) and produces RFC 8259 JSON text.  String fields are escaped (`"` / `\\` / control bytes); nested structs and vectors recurse; `JsonValue`-typed fields render their inline subtree verbatim.  The first parameter is declared as `JsonValue` purely so the parser type-system accepts the synthesised call regardless of the actual receiver's struct type — the runtime only reads the `struct\_kt` discriminant for dispatch.
 
 ```rust
-pub fn struct_to_json_pretty(self_ref: JsonValue, struct_kt: integer) -> text
+pub fn struct_to_json_pretty(self_ref: const JsonValue, struct_kt: integer) -> text
 ```
 
 As `struct\_to\_json` but produces a pretty (2-space-indent, one element per line) form.  Same field-type matrix.
@@ -9451,7 +9452,7 @@ One field's VALUE, read out of a record at the position reflection reported.
 A boolean and a character ride in `i` for the reason a bound SQL value does: one integer path is one thing to get right, and the `kind` beside it is what keeps them apart.
 
 ```rust
-pub fn reflect_field(value: TypeInfo, position: integer, kt: integer) -> ValueInfo
+pub fn reflect_field(value: const TypeInfo, position: integer, kt: integer) -> ValueInfo
 ```
 
 The value `value` holds at byte `position` — the VALUE half of reflection.
@@ -9464,7 +9465,7 @@ The value `value` holds at byte `position` — the VALUE half of reflection.
 The value parameter is declared `TypeInfo` only because loft has no way to spell "any record"; the parser substitutes the real argument, and only the reference ABI matters here. `struct\_to\_json` (06\_json.loft) does the same.
 
 ```rust
-pub fn reflect_field_path(value: TypeInfo, path: vector<integer>, kt: integer) -> ValueInfo
+pub fn reflect_field_path(value: const TypeInfo, path: const vector<integer>, kt: integer) -> ValueInfo
 ```
 
 Reads through the SAME `Parts::Struct` field list the store itself is walked by, and allocates the answer into the caller's own stores → par-safe. The value at the end of a PATH of positions — `field\_value(x, \[8, 0\])`.

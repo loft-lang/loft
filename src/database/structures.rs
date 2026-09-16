@@ -35,6 +35,29 @@ pub enum Absent {
     Final,
 }
 
+/// `LOFT_NO_PREFILL_IMAGE=1` restores the field-by-field default walk for every mint
+/// (`@FR-R-Prefill`) — the bisect step for a wrong default or sentinel in a minted record
+/// on either backend.  Read once: this runs on every record allocation.
+fn prefill_image_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| !std::env::var("LOFT_NO_PREFILL_IMAGE").is_ok_and(|v| v != "0"))
+}
+
+/// `LOFT_PREFILL_VERIFY=1` runs the walk after every image write and panics where the two
+/// disagree — the falsifier for "the image is what the walk writes".
+fn prefill_verify_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("LOFT_PREFILL_VERIFY").is_ok_and(|v| v != "0"))
+}
+
+/// `LOFT_TRACE_PREFILL=1` names each image capture and each image use on stderr — what
+/// says whether a run REACHES the image path at all (on `--native` a literal's mint is a
+/// complete write that never prefills, so a cell can pass without exercising the image).
+fn prefill_trace_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("LOFT_TRACE_PREFILL").is_ok_and(|v| v != "0"))
+}
+
 /// Walker-native diagnostic for `walk_parsed_into` failures.
 ///
 /// `at` is a byte offset into the original input; `path` is the
@@ -1666,6 +1689,126 @@ impl Stores {
         self.set_default_value_nullable(tp, true, Absent::Final, rec);
     }
 
+    /// The field-by-field default walk of a record type — what
+    /// [`Self::set_default_value_nullable`] writes for a `Shape::Record`, and the ORACLE
+    /// the prefill image is captured from (`@FR-R-Prefill`).
+    fn prefill_walk(&mut self, tp: u16, n_fields: usize, why: Absent, rec: &DbRef) {
+        for f_nr in 0..n_fields {
+            let (position, content, nullable, is_type_tag) = {
+                let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+                    &self.types[tp as usize].parts
+                else {
+                    unreachable!()
+                };
+                let f = &fields[f_nr];
+                (
+                    f.position,
+                    f.content,
+                    f.nullable,
+                    f.name == "type" && f.position == 0,
+                )
+            };
+            if is_type_tag {
+                self.store_mut(rec)
+                    .set_short(rec.rec, rec.pos, 0, i32::from(tp));
+                continue;
+            }
+            let slot = DbRef {
+                store_nr: rec.store_nr,
+                rec: rec.rec,
+                pos: rec.pos + u32::from(position),
+            };
+            if why == Absent::Final && self.write_declared_default(tp, f_nr as u16, &slot) {
+                continue;
+            }
+            self.set_default_value_nullable(content, nullable, why, &slot);
+        }
+    }
+
+    /// `@FR-R-Prefill` — prefill `rec` from the type's image, capturing the image from
+    /// the walk's first run when there is none yet.  `false` leaves the walk to the
+    /// caller: an image whose length no longer matches the layout, or a type with a
+    /// field not laid out yet (`u16::MAX` content — the walk writes nothing for it now
+    /// and its sentinel once it is laid out, so an image captured now would freeze the
+    /// wrong bytes).
+    ///
+    /// The image is what the walk writes, by construction: it is READ BACK from the
+    /// first record the walk filled over a zeroed span, never computed a second way.
+    /// `LOFT_PREFILL_VERIFY=1` re-runs the walk after every image write and panics where
+    /// the two disagree — the falsifier for that claim.
+    fn prefill_from_image(&mut self, tp: u16, n_fields: usize, size: u16, rec: &DbRef) -> bool {
+        let len = u32::from(size);
+        if let Some(img) = self.types[tp as usize].prefill.get() {
+            if img.len() != len as usize {
+                return false;
+            }
+            // The image borrows `types`; the store is reached by field so the two
+            // borrows are disjoint — `store_mut` would take the whole of `self`.  The
+            // strict-store check it carries is not lost: the mint that reached here
+            // claimed through `store_mut` a moment ago.
+            self.allocations[rec.store_nr as usize].write_image(rec.rec, rec.pos, img);
+            if prefill_trace_enabled() {
+                eprintln!(
+                    "[prefill] `{}`: image used ({len} bytes)",
+                    self.types[tp as usize].name
+                );
+            }
+            if prefill_verify_enabled() {
+                self.prefill_walk(tp, n_fields, Absent::Prefill, rec);
+                let after = self.store(rec).read_span(rec.rec, rec.pos, len);
+                let img = self.types[tp as usize]
+                    .prefill
+                    .get()
+                    .expect("captured above");
+                assert!(
+                    *after == *img,
+                    "prefill image of `{}` disagrees with the walk: image {:?}, walk {:?}",
+                    self.types[tp as usize].name,
+                    img,
+                    after
+                );
+            }
+            return true;
+        }
+        if !self.layout_complete(tp, &mut Vec::new()) {
+            return false;
+        }
+        self.store_mut(rec).zero_range(rec.rec, rec.pos, len);
+        self.prefill_walk(tp, n_fields, Absent::Prefill, rec);
+        let img = self.store(rec).read_span(rec.rec, rec.pos, len);
+        self.types[tp as usize].prefill.set(img);
+        if prefill_trace_enabled() {
+            eprintln!(
+                "[prefill] `{}`: image captured ({len} bytes)",
+                self.types[tp as usize].name
+            );
+        }
+        true
+    }
+
+    /// Whether every field the prefill walk of `tp` reaches is laid out — no `u16::MAX`
+    /// content and no `u16::MAX` size on the inline record tree.  A struct field is
+    /// INLINE (the walk recurses into it at its position); a pointer field is a
+    /// `ChildRec`/`DbRef` part and a collection field a handle, so neither recurses.
+    fn layout_complete(&self, tp: u16, seen: &mut Vec<u16>) -> bool {
+        let Some(row) = self.types.get(tp as usize) else {
+            return false;
+        };
+        if seen.contains(&tp) {
+            return true;
+        }
+        seen.push(tp);
+        match &row.parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
+                row.size != u16::MAX
+                    && fields
+                        .iter()
+                        .all(|f| f.content != u16::MAX && self.layout_complete(f.content, seen))
+            }
+            _ => true,
+        }
+    }
+
     /// The absent value of a struct FIELD, which is not the same question as the
     /// absent value of its TYPE.
     ///
@@ -1831,44 +1974,23 @@ impl Stores {
                 // A record whose default is all zero bytes — no nullable field, no
                 // declared default, no text, no variant tag, recursively — is one
                 // `zero_range` rather than a walk writing each field's zero.
-                if self.heap_facts(tp).1 {
-                    let size = self.types[tp as usize].size;
-                    if size != u16::MAX {
+                let size = self.types[tp as usize].size;
+                if size != u16::MAX {
+                    if self.heap_facts(tp).1 {
                         self.store_mut(rec)
                             .zero_range(rec.rec, rec.pos, u32::from(size));
                         return;
                     }
-                }
-                for f_nr in 0..n_fields {
-                    let (position, content, nullable, is_type_tag) = {
-                        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
-                            &self.types[tp as usize].parts
-                        else {
-                            unreachable!()
-                        };
-                        let f = &fields[f_nr];
-                        (
-                            f.position,
-                            f.content,
-                            f.nullable,
-                            f.name == "type" && f.position == 0,
-                        )
-                    };
-                    if is_type_tag {
-                        self.store_mut(rec)
-                            .set_short(rec.rec, rec.pos, 0, i32::from(tp));
-                        continue;
+                    // @FR-R-Prefill — every other prefill is one block write of the
+                    // type's image, captured from the walk's first run.
+                    if why == Absent::Prefill
+                        && prefill_image_enabled()
+                        && self.prefill_from_image(tp, n_fields, size, rec)
+                    {
+                        return;
                     }
-                    let slot = DbRef {
-                        store_nr: rec.store_nr,
-                        rec: rec.rec,
-                        pos: rec.pos + u32::from(position),
-                    };
-                    if why == Absent::Final && self.write_declared_default(tp, f_nr as u16, &slot) {
-                        continue;
-                    }
-                    self.set_default_value_nullable(content, nullable, why, &slot);
                 }
+                self.prefill_walk(tp, n_fields, why, rec);
             }
             Shape::Other => {
                 // Zero is the EMPTY collection, which is the right absent value for a

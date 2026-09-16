@@ -795,6 +795,17 @@ that can `break`, `return` or loop again, a push under a branch, another write t
 path, or a range end that is not a simple invariant declines the loop.
 `LOFT_TRACE_PUSH_FILL=1` names each decline; `LOFT_HOIST_VERIFY=1` re-derives the push
 header at the fill.
+**`LOFT_NO_INVARIANT_HOIST=1`** (@PLN157 § V-ao, `@FR-R-Invariant`, default-ON, generation
+time) makes every invariant integer chain evaluate at every use again — with it off, a
+chain of `+ - * neg & | ^` over literals and variables a loop neither rebinds nor lets
+escape is evaluated at its FIRST use and answered from a memo after (the same value on
+every path, the overflow note fired where the first evaluation stands; declared at the
+innermost loop that spells it so the test peels out — declared one loop out it stayed in
+every tap), the resample tap's `yy * iw + xmin` −5 % on the row — and is the first bisect
+step for a wrong index or arithmetic value inside a loop on native.  `LOFT_HOIST_VERIFY=1`
+re-evaluates the chain at every use and panics when the memo disagrees; that form is what
+found loft#1534, a by-reference argument the non-sentinel proof's escape collector could
+not see.  `LOFT_TRACE_INVARIANT=1` names each memo.
 **`LOFT_RELEASE_PASS_PROBE=1`** (generation time) is a MEASUREMENT INSTRUMENT, never a
 build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal
 division emits the processor's wrapping operator and every float comparison the plain
@@ -849,6 +860,21 @@ store-root vector whose elements own heap releases what they own first, closing 
 unbounded leak in every shape-A return buffer (~357 KB per `fronds` call) — and is the
 bisect step for a double free or a wrong value at a cleared vector.  `LOFT_TRACE_CLEAR=1`
 names each clear's shape and element verdict.
+**`LOFT_NO_PREFILL_IMAGE=1`** (@PLN164 C4, `@FR-R-Prefill`, runtime, BOTH backends) makes
+every record mint that is not proven complete-write prefill its defaults field by field
+again — with it off, the prefill is ONE block write of a per-type image captured from the
+walk's first run over a zeroed span (the `parse` row −11 %) — and is the first bisect step
+for a wrong default, sentinel or variant tag in a minted record.  `LOFT_PREFILL_VERIFY=1`
+re-runs the walk after every image write and panics naming the type where the bytes
+disagree; `LOFT_TRACE_PREFILL=1` names each capture and each use — and a cell can pass
+without ever reaching the image, because on `--native` a literal's mint is a complete
+write that never prefills and a callee's buffer is minted once per caller activation.
+**`LOFT_NO_LITERAL_EXIT_BUFFER=1`** (@PLN164 B2, `@FR-R-Place`'s callee clause, parse
+time, BOTH backends) makes a mid-body `return S { … }` build its record in a store of its
+own again — with it off, every literal exit of a record function writes the `__retbuf`
+the caller handed, through the same null-guarded mint the TAIL literal has used since
+@PLN157 § V, so a callee with several literal exits answers ONE store — and is the first
+bisect step for a wrong record out of a callee with more than one literal exit.
 **`LOFT_NO_ELEMENT_FIRST=1`** (@PLN157 § V-z) makes a record-literal's vector field
 keep its temp-store build and deep copy again — with it off, a local vector consumed
 exactly once by one append is built INSIDE the appended element (minted at the temp's
@@ -944,3 +970,14 @@ null-encoded form again on both backends: the first bisect step for a wrong valu
 counted loop whose start is a variable or an expression.  Every value the compare and the
 step see is unchanged, so the edges are too — including loft#1525, an inclusive range to
 the type MAXIMUM that never terminates on either form.
+
+**Adopt at first bind (@PLN164 B1, `@FR-O-Move`, default-ON, both backends, parse time):**
+a plain local first-bound from a callee that returns the local it promoted onto its buffer
+(`fn mk() -> P { o = P { … }; …; o }`) adopts the store the callee minted — one mint and one
+free per call where there were two mints, a deep copy and two frees — paired with the call's
+buffer for an identity-guarded free exactly as a literal-returning callee's result is.  The
+buffer stays null on purpose: pooled at function entry it is freed by the interpreter's
+rebind of the promoted local (plan 51 cluster 3's shape; native guards that free with
+`_rb_w_`), which is the plan's B1b.  **`LOFT_NO_ADOPT_FIRST_BIND=1`** restores the copy and
+is the first bisect step for a leak, a double free or a wrong field out of a local bound
+from such a callee; `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` are the falsifiers.

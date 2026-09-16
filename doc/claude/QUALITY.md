@@ -480,7 +480,29 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 489 | 465 | **24** |
+| 504 | 481 | **23** |
+
+(2026-09-15, loft#1540: 504 · 481 · 23 — measured as a delta against 502 · 479 · 23; the change adds
+two functions that discriminate on `Value` variants, and both peel: `Parser::const_view_place`,
+which reads a bind's right-hand side through its `Span` and its one-operator `Insert` / `Block`
+wrapper, and `expressions::bound_rhs`, which finds a statement's `Set` through an `Insert`.)
+
+(2026-09-15, @PLN163's copy-lease census and verdicts: 501 · 478 · 23, measured commit by commit.
+The census in `use_analysis::drop_copy_census` added two peeling sites; `src/lease.rs` six, five
+peeling and one — `leaves`, which classified leaves `source_leaves` had already unspanned — in the
+neither column until it read each leaf through `unspan` itself; the P2r census arms two more, both
+peeling.)
+
+(2026-09-15, THE JOINED TREE — this branch through @PLN162's close, ../loft2's @PLN163 through
+its re-measure (b12e15474), and @PLN157 through § V-ao: 502 · 479 · 23, re-measured rather than
+carried.  Neither input's row was the union's: this branch read 489 · 465 · 24, ../loft2 501 · 478
+· 23 and § V-ao's own tree 491 · 467 · 24.  Against this branch the neither column lost
+`use_analysis::scan_lost_temp_writes`, which now reads its `__lift_N` argument through its `Span`
+(the lost-temporary-write lint runs after `scopes::check` on every path); ../loft2's `lease.rs`
+sites all peel.  § V-ao's `hoist::arith_chain` peels.  #1534 was fixed on both branches; the join
+keeps ONE home for it, `non_sentinel::collect_escapes`'s address-taking arm, which covers the
+by-reference argument and the local link, so § V-ao's `arg_var` — a second reading of the
+`OpCreateStack` spelling — is not carried.)
 
 (2026-09-15, THE JOINED TREE — this branch through loft#1532, ../loft2's drop-release arc through
 its loop-body parameter copy, and @PLN157 through § V-an: 489 · 465 · 24, re-measured rather than
@@ -502,7 +524,10 @@ all three on the peel side, **24** opaque still.  2026-09-14: `scopes::construct
 (`formal/heap.md` D-heap-7 family 6) peels `Span` — +1 site, on the peel side, **24** opaque
 still.  `scopes::branch_tail_vars` (family 7) peels `Span` — +1 site, on the peel side, **24**
 opaque still.  `sink_set_into_arms`' `owners_beside_locals_only` (`formal/binding.md` D-bind-33)
-peels `Span` — +1 site, on the peel side, **24** opaque still.)
+peels `Span` — +1 site, on the peel side, **24** opaque still.  2026-09-15: `use_analysis::projection_root`
+and `written_roots` (`formal/heap.md` D-heap-7 family 4, the `double-move` member-copy clause) peel
+`Span` — +2 sites, both on the peel side, **24** opaque still; attributed by diffing the audit's own
+predicate over HEAD's and the working tree's `use_analysis.rs`.)
 
 
 
@@ -2575,7 +2600,54 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 816 | 474 | 6 | **336** |
+| 830 | 490 | 6 | **334** |
+
+(2026-09-15, THE JOINED TREE — this branch through loft#1540 and ../loft2's @PLN165 phase 0
+(bdb84abe8): 826 · 486 · 6 · 334, re-measured rather than carried; the ratchet reads its 334 / 1316
+pin.  The union first read 1317 opaque TESTS, which neither side showed: phase 0's keyed-collection
+refusal in `parse_function` tested `matches!(n, Type::Hash(..) | …)` bare inside a type walk, and
+asked through `n.base()` — a keyed collection is a shape, alike for `τ` and `τ?` — it is back to
+1316.  ../loft2 read 820 · 478 · 6 · 336 against its own pin, and this branch 825 · 485 · 6 · 334.)
+
+(2026-09-15, @PLN165 phase 0 — loft#1536–#1539: 820 · 478 · 6 · 336.  `Parser::is_type_var_element`,
+which asks whether a collection's element is still a template's type variable, peels with
+`.base()`; nothing else moved.)
+
+(2026-09-15, loft#1540: 825 · 485 · 6 · 334 — measured against 824 · 483 · 6 · 335.  The change adds
+one function that discriminates on a `Type` variant, `Parser::mark_const_view`, and it sees through
+the wrapper (`peel_link().base()`): only a record or a collection can be a view.  Its call-site `&`
+gate asked `matches!(tp, Type::RefVar(_))` bare at first, which grew the ratchet's opaque tests to
+1317; asked through `base()`, as "is this parameter a `&` link" is a shape question, the argument
+loop's function reads as seeing through, the opaque column falls to 334 and the ratchet is re-pinned
+at 334 / 1316.)
+
+(2026-09-15, THE JOINED TREE — this branch through @PLN162's close, ../loft2's @PLN163 through
+P2r, and @PLN157 / @PLN164 through B1: 824 · 483 · 6 · 335, re-measured rather than carried; the
+ratchet reads its 335 / 1316 pin.  This branch read 820 · 479, ../loft2 819 · 477 and @PLN164 B1
+817 · 475; each counted its own additions and not the others'.)
+
+(2026-09-15, @PLN163: 819 · 477 · 6 · 336.  `src/lease.rs` added one function that sees through
+the wrapper and `copy_manifest`'s lease check two, all three peeling with `.base()`; the opaque
+column and the ratchet are unmoved.)
+
+(2026-09-15, @PLN164 B1: 817 · 475 · 6 · 336 — one function added and it peels:
+`use_analysis::adopts_minted_at_bind` reads a callee's return type through `peel_optional`
+and declines the nullable spelling by its marker, since a `-> S?` return has no buffer
+attribute to adopt.  The opaque column stays at the ratchet's 336.)
+
+(2026-09-15, own iterators — `dispatch_call`'s `exhausted` special form now asks whether its
+argument IS an iterator through `.base()`, so a nullable `iterator<T>?` reaches it: one shape test
+moved from the opaque column to the peeling one, and the ratchet was re-pinned at 335 / 1316.)
+
+(2026-09-15, @PLN162 D-disp-2 — the change to `parser/dispatch.rs`, `parser/definitions.rs` and
+`parser/mod.rs` (nullable dispatch positions, the rebuild's spelling read, the mixed-return
+refusal) adds two functions that discriminate on a `Type` variant, both seeing through the
+wrapper; the opaque column and the ratchet's pin (336 / 1317) are unchanged.  Measured as a
+delta against the D-disp-1 row; which two functions was not broken out.)
+
+(2026-09-15, @PLN162 D-disp-1 — `refuse_uncovered_variants` tests the synthesised dispatcher's
+receiver and `join_enum_lattice_sets` a definition's first parameter, both through `.base()`
+(the peeling column, +2); the opaque column and the ratchet's pin (336 / 1317) are unchanged.)
 
 (2026-09-15, THE JOINED TREE — the same union: 816 · 474 · 6 · 336, re-measured rather than
 carried.  This branch's 815 · 473 · 5 · 337 and § V-an's 796 · 454 · 6 · 336 each counted its own
@@ -2591,6 +2663,24 @@ names through `Type::depend`, the keystone; the opaque column fell by one and th
 `.base()`, and the literal's transfer in `scan_set` makes the same peeled ask inside a function
 already counted, so one function lands in the wrapper-aware column: 814 → 815 total, 472 → 473
 aware, the opaque column and the ratchet unmoved.)
+
+(2026-09-15, @PLN164 B2 unit 1: `Parser::literal_exits_into_buffer` is new and reads the
+buffer's record definition through `.base().heap_def_nr()` — the peeling column: 817 · 475 ·
+6 · 336; the opaque column and the ratchet's pin (336 / 1317) do not move.  Its companion
+`for_each_return_mut` tells one `Value` variant apart through `unspan`, so the unspan row
+stays at 491 · 467 · 24.  Those are the @PLN157 branch's numbers; re-measured on the joined
+tree `tuxedo-work-2026-09-15` the rows read 826 · 486 · 6 · 334 and 504 · 481 · 23 with the
+ratchet at 334 / 1316, the same as before this unit was picked.)
+
+(2026-09-15, loft#1540's function-reference half: `Type::function_consts` and
+`Type::with_function_consts` are new — the one way a join reads and sets a function type's `const`
+parameters, the first through `.base()` and the second with an `Optional` arm — and
+`Parser::report_const_argument` takes over `process_call_args`'s two argument gates, asking the
+parameter's shape through `.base()` as they did.  The join sites (`parse_if`, `join_arm_into`, the
+sibling-arm conversions, `parse_item`, `change_var_type`, the callback builtins) ask through the
+helpers, and `Parser::names_callers_value` is the one shape question a parameter and a closure's
+capture share, so the peeling column grows by four: 826 · 486 → 830 · 490, the opaque column and
+the ratchet (334 / 1316) unmoved.  Asked bare first, they grew the ratchet to 336 / 1328.)
 
 (2026-09-15, loft#1530: `Parser::ref_tuple_subject` is new and asks the subject's `Type::RefVar`
 and `Type::Tuple` off a `.base()`, and `vector_element_cursor_deps` gained the same peeled ask, so

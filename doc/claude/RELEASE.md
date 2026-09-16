@@ -938,6 +938,42 @@ remap flags derived from *its* fixed paths, and a CI leg that builds twice from
 different original locations and diffs.  The first of those is the real cost, and
 it is the piece a flag-level fix cannot substitute for.
 
+**Measured 2026-09-15 — paths are no longer the blocker; the platform C toolchain is.**
+
+The path half above was closed without a container: `scripts/repro-flags.sh` remaps
+the three roots on BOTH sides (release and verifier source it), and `build.rs` drops
+every `--remap-path-prefix` entry before baking `LOFT_BUILD_RUSTFLAGS`, which is what
+the #274 objection in point 5 needed.  Bundles carry `reproducible-paths = yes`, and
+the weekly `repro-build.yml` rebuilds v2026.9.0 for `x86_64-unknown-linux-musl`
+byte-identically.
+
+The two targets that still failed (`x86_64-pc-windows-msvc`, `aarch64-apple-darwin`,
+red on 09-07 and 09-14) did not differ in paths — the published binaries embed only
+`/rustc/<hash>/...` — but in **code**: the MSVC rebuild had `.text` 384 bytes smaller
+and four fewer `.pdata` entries.  loft compiles C: `ring` (via rustls → ureq) builds
+through the `cc` crate with the host's compiler — `cl.exe` from the runner image's
+Visual Studio toolset, Apple clang on macOS.  On ONE Windows runner, with one source,
+one rustc (1.98.1) and one build root, the default toolset (14.51) linked
+`.text 0xbd1586` and `-vcvars_ver=14.44` linked `.text 0xbd1656`; the published binary,
+cut on an image two weeks older, has `0xbd1706`.  A hosted runner's toolset moves with
+its image, so the weekly job compared against a binary made by a compiler it no longer
+had, and reported the difference as the source's.
+
+So a bundle now records its `c-toolchain` in BUILD-INFO (`scripts/repro-toolchain.sh`,
+sourced by `make-release.sh` and `repro-verify.sh`), and the verifier calls a
+difference the source's only when its own C toolchain matches that record; otherwise it
+exits 3, naming both.  Identical bytes need no record — they are the proof, which is why
+musl keeps verifying against a bundle that predates the field.  Pinned by
+`tests/doc_hygiene.rs::the_release_records_the_c_toolchain_the_verifier_compares`.
+
+And a Windows link was not deterministic even with everything else equal: two builds of
+one source from one root differed in 12 bytes — the COFF TimeDateStamp, the debug
+directory's copy of it, and the CodeView PDB GUID, i.e. `rust-lld`'s wall clock.
+`/Brepro` alone made the stamp a hash of a PDB that is itself not deterministic (20 bytes
+still differed), and `-C strip=debuginfo` did not stop the PDB under `rust-lld`; adding
+`/DEBUG:NONE` made two builds byte-identical.  `scripts/repro-flags.sh` passes both on a
+Windows host.  No PDB was ever shipped — a Windows bundle's `bin/` holds only `loft.exe`.
+
 ---
 
 ## Tooling prerequisites for release verification

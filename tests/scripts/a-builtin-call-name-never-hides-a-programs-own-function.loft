@@ -1,0 +1,96 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A compiler special case for a call NAME — `sort`, `insert`, `map`, `type_of`, `type_name`, … —
+// never hides a function the program declares.  `dispatch_call` lowered those names before any
+// definition was looked up, so a program's own `sort(r: Roster)` was unreachable: the call was
+// refused with the special case's message (*"sort requires a vector argument"*), or — for
+// `type_of`, `type_name`, `typedef` and `field_value` — answered the special case in SILENCE.
+// Now a special case is taken only when no definition the program declares takes the argument
+// types, so the call reaches what the type system selects, and the special case still answers
+// for the types it was written for.  The method spelling `r.sort()` was never intercepted.
+// @falsified-at: e71f6634e — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-builtin-call-name-never-hides-a-programs-own-function.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit, on both backends — the control refuses to compile the file (`sort(r)`:
+//   "sort requires a vector argument"), so no assertion is reached there.
+//   ARMED: nothing.
+//   WITNESS: measured name by name on the control, one user function per special name taking a
+//   struct: 13 names refused the call with the special case's message, and `type_of`,
+//   `field_value`, `type_name` and `typedef` answered the special case in silence (`type_name(r)`
+//   printed `Roster`, `typedef(r)` printed `85`); with the definition below `main` and the result
+//   bound to a variable, pass 1 took the special form's type and pass 2 refused the program.
+//   HOLDS: the special forms' own answers are unchanged — `type_name(v)`, `type_name(Roster)` and
+//   `typedef(v)` print the same on both trees; clean under strict stores, poison and the native
+//   leak check.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct Roster { n: integer }
+struct Queue { m: integer }
+
+fn sort(r: Roster) -> text { "sortR {r.n}" }
+fn insert(r: Roster, k: text, x: integer) -> text { "ins {r.n} {k} {x}" }
+fn map(r: Roster, k: integer) -> integer { r.n * k }
+fn count_if(r: Roster, k: integer) -> integer { r.n + k }
+fn type_name(r: Roster) -> text { "tn {r.n}" }
+fn typedef(r: Roster) -> text { "td {r.n}" }
+fn field_value(r: Roster, k: integer) -> integer { r.n * 100 + k }
+
+fn test_a_programs_sort_beside_the_vector_sort() {
+  r = Roster { n: 5 };
+  v: vector<integer> = [3, 1, 2];
+  sort(v);
+  s = "{sort(r)} {v}";
+  assert(s == "sortR 5 [1,2,3]", "both reachable: {s}");
+}
+
+fn test_a_programs_insert_beside_the_vector_insert() {
+  r = Roster { n: 5 };
+  v: vector<integer> = [1, 2, 3];
+  insert(v, 1, 9);
+  s = "{insert(r, "a", 7)} {v}";
+  assert(s == "ins 5 a 7 [1,9,2,3]", "both reachable: {s}");
+}
+
+fn test_a_programs_map_and_count_if() {
+  r = Roster { n: 5 };
+  s = "{map(r, 2)}|{count_if(r, 1)}";
+  assert(s == "10|6", "the program's definitions: {s}");
+}
+
+// The four that answered the special case in silence.
+fn test_type_name_typedef_and_field_value_are_not_hijacked() {
+  r = Roster { n: 5 };
+  v: vector<integer> = [1];
+  s = "{type_name(r)}|{typedef(r)}|{field_value(r, 3)}|{type_name(v)}|{type_name(Roster)}";
+  assert(s == "tn 5|td 5|503|vector<integer>|Roster", "the program's for a Roster, the special form otherwise: {s}");
+}
+
+fn test_a_definition_below_the_call_bound_to_a_variable() {
+  r = Roster { n: 5 };
+  q = Queue { m: 6 };
+  a = reverse(r);
+  b = type_of(q);
+  s = "{a}|{b}";
+  assert(s == "15|to 6", "pass 1 waits for the definition below: {s}");
+}
+
+fn test_the_special_form_still_answers_its_own_types() {
+  v: vector<integer> = [2, 1];
+  t = type_of(v);
+  reverse(v);
+  s = "{t.name}|{v}";
+  assert(s == "vector<integer>|[1,2]", "the special forms for a vector: {s}");
+}
+
+fn main() {
+  test_a_programs_sort_beside_the_vector_sort();
+  test_a_programs_insert_beside_the_vector_insert();
+  test_a_programs_map_and_count_if();
+  test_type_name_typedef_and_field_value_are_not_hijacked();
+  test_a_definition_below_the_call_bound_to_a_variable();
+  test_the_special_form_still_answers_its_own_types();
+}
+
+// Declared BELOW every call on purpose.
+fn reverse(r: Roster) -> integer { r.n * 3 }
+fn type_of(q: Queue) -> text { "to {q.m}" }

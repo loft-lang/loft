@@ -258,6 +258,58 @@ fn an_added_overload_is_selected_by_the_running_loop() {
     }
 }
 
+/// D-disp-2 across a rebuild: a dispatcher over a NULLABLE enum position declares that position
+/// at the static selection's nullability — dense here, `hit(a: Entity, b: Entity)` — so the
+/// rebuild must recover what the call ROUTED from the specialisation's spelling, or the rebuilt
+/// dispatcher loses the leaf a null takes.  A present pair takes the added definition from the
+/// next round on; the null keeps reaching the fallback in both worlds.
+#[test]
+fn a_nullable_dynamic_site_keeps_its_null_leaf_across_a_rebuild() {
+    let src = |defs: &str| {
+        format!(
+            "{ENUM}\n{defs}\nfn spin() -> integer {{\n  s = 0;\n  for i in 0..300000 {{ s += i % 3; }}\n  s\n}}\n\nfn main() {{\n  ns: Entity? = Slime {{ n: 4 }};\n  nw: Entity? = IceWall {{ n: 5 }};\n  nz: Entity? = null;\n  round = 0;\n  while round < 400 {{\n    z = spin();\n    print(\"round {{round}} {{z}}: A={{hit(ns, nw)}} B={{hit(nz, nw)}}\\n\");\n    round += 1;\n  }}\n}}\n"
+        )
+    };
+    let mut s = Session::start("nullable", &src(SET));
+    for l in s.rounds(2) {
+        assert_eq!(
+            cell(&l, "A"),
+            "any-any 45",
+            "before the add, a present pair reaches the fallback: {l}"
+        );
+        assert_eq!(
+            cell(&l, "B"),
+            "any-any null5",
+            "a null reaches the fallback: {l}"
+        );
+    }
+    s.edit(&format!("{}{ADDED}", src(SET)));
+    let report = s.report("added — world 1");
+    assert!(
+        report.contains("specialisation(s) of 'hit' rebuilt"),
+        "the nullable site's dispatcher is rebuilt: {report}"
+    );
+    let first = s.round_where(
+        |l| cell(l, "A") == "slime-wall 45",
+        |l| {
+            assert_eq!(
+                cell(l, "A"),
+                "any-any 45",
+                "a round before the swap reads the old world whole: {l}"
+            );
+        },
+    );
+    assert_eq!(
+        cell(&first, "B"),
+        "any-any null5",
+        "the rebuilt dispatcher still sends a null to the fallback: {first}"
+    );
+    for l in s.rounds(4) {
+        assert_eq!(cell(&l, "A"), "slime-wall 45", "{l}");
+        assert_eq!(cell(&l, "B"), "any-any null5", "{l}");
+    }
+}
+
 /// (d): an add that ties a pair the running program serves is refused, naming the tuple, and
 /// the world is unchanged — the loop keeps its selections.
 #[test]

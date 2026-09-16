@@ -75,6 +75,26 @@ impl Parser {
         if !self.const_write_blocked(nr, op) {
             return;
         }
+        self.report_const_write(nr);
+    }
+
+    /// The refusal of a write through `nr` that `const` forbids — the one wording both write
+    /// guards (`guard_const_write`, `validate_write`) report.
+    ///
+    /// A VIEW of a value-const value (loft#1540, `mark_const_view`) says so and names the value:
+    /// the author wrote `const` on that, not on the view, and "const variable 'f'" would point at
+    /// a declaration that does not exist.
+    pub(crate) fn report_const_write(&mut self, nr: u16) {
+        if let Some(place) = self.const_views.get(&(self.context, nr)).cloned() {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Cannot modify '{}': it is a view of {place}, whose value is read-only; remove \
+                 'const' there, or copy what you change into a local",
+                self.vars.written_name(nr)
+            );
+            return;
+        }
         // `const_report_var` — see loft#1250: a const text argument is promoted to a
         // `__tp_` local, and the promoted local is not marked an argument, so reporting
         // against it demotes "const parameter" to "const variable".
@@ -1515,7 +1535,7 @@ impl Parser {
             // `if c { [1,2] } else { [3,4] }[0]` is unaffected, because its type is a
             // vector, not `Void`.
             || (self.lexer.peek_token("[") && !matches!(t, Type::Void))
-            || (self.lexer.peek_token("(") && matches!(t, Type::Function(_, _, _)))
+            || (self.lexer.peek_token("(") && matches!(t, Type::Function(..)))
             || self.lexer.peek_token("?")
         {
             // @PLN116 — postfix default-fallback `x?`.  Handled first (a default-
@@ -1878,7 +1898,7 @@ impl Parser {
                 self.lexer.token("]");
             } else if self.lexer.has_token("(") {
                 // chained call on a Type::Function expression — expr(args).
-                if let Type::Function(param_types, ret_type, fn_deps) = t.clone() {
+                if let Type::Function(param_types, ret_type, fn_deps, fn_consts) = t.clone() {
                     // @PLN85 t1 — does the SOURCE fn-ref OWN a freshly-minted
                     // closure?  A closure-factory return (`make_greeter(..)`) carries
                     // a `CalleeFrame` dep (the lambda's `___clos_N` work var); a
@@ -1907,6 +1927,7 @@ impl Parser {
                         } else {
                             crate::data::Deps::none()
                         },
+                        fn_consts,
                     );
                     // Allocate temp variable on BOTH passes (consistent unique counter).
                     let fn_work = self.create_unique("__fn_ref_tmp", &fn_type);
@@ -1952,6 +1973,19 @@ impl Parser {
                     }
                     self.lexer.token(")");
                     if !self.first_pass {
+                        for (i, expected) in param_types.iter().enumerate() {
+                            if let Some(arg) = list.get(i) {
+                                self.report_const_argument(
+                                    arg,
+                                    expected,
+                                    fn_consts.is(i),
+                                    crate::parser::ConstHandOff::FnRef {
+                                        callee: None,
+                                        nr: i,
+                                    },
+                                );
+                            }
+                        }
                         let mut converted = list;
                         for (i, expected) in param_types.iter().enumerate() {
                             if i < converted.len() {

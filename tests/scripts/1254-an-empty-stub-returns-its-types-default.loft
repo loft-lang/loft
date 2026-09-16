@@ -4,8 +4,8 @@
 // An empty-body stub returns its type's DEFAULT, not whatever the stack held (loft#1254).
 //
 // A stub with an empty body is a supported affordance — `definitions.rs` recognises
-// `body_empty && first_is_self` as an intentional skip, and the Enums chapter tells a reader
-// to write one to silence "no implementation of 'area' for variant 'Rect'".  But the emitted
+// `body_empty && first_is_self` as an intentional skip, and the Enums chapter offers one as a
+// variant's answer when a call through the enum needs every variant covered.  But the emitted
 // function pushed nothing before its `OpReturn`, and `add_return` copies `size(return_type)`
 // bytes off the frame regardless — so the caller received whatever was there.
 //

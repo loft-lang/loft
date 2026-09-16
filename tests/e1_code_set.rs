@@ -21,6 +21,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 /// THE GOLDEN: the frozen E1 code set + a minimal program that triggers each. Adding /
 /// renaming / removing a code must update this array (a reviewed diff).
 const CODES: &[(&str, &str)] = &[
+    // C123 — `both` as a first parameter is deprecated in favour of `self`, which already
+    // takes both call spellings; the declaration still compiles and means `self`.
+    (
+        "both-receiver-deprecated",
+        "fn twice(both: integer) -> integer { both * 2 }\nfn main() { print(\"{twice(2)}\"); }",
+    ),
     // @PLN131 — the copy notice is the diagnostic the suggestions work attaches to, so it
     // got the first of this arc's codes. `s` survives the construction, so the copy is
     // avoidable rather than forced.
@@ -220,6 +226,15 @@ const CODES: &[(&str, &str)] = &[
         "needless-const-parameter",
         "fn f(a: const integer) -> integer { a }\n\
          fn main() { print(\"{f(1)}\"); }",
+    ),
+    // C124 — a `const` record handed to a plain record parameter (a warning while the shipped
+    // libraries migrate; the code stays when it becomes an error).
+    (
+        "const-to-plain-parameter",
+        "struct S { a: integer }\n\
+         fn show(s: S) -> integer { s.a }\n\
+         fn f(s: const S) -> integer { show(s) }\n\
+         fn main() { print(\"{f(S { a: 1 })}\"); }",
     ),
     // The `&` must be FIELD-MUTATED: a read-only `&` raises an error at the same position,
     // and the pretty renderer's cascade dedup then suppresses the advice this pins.

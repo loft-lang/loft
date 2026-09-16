@@ -1,0 +1,584 @@
+<!--
+Copyright (c) 2026 Jurjen Stellingwerff
+SPDX-License-Identifier: LGPL-3.0-or-later
+-->
+
+# 164 — Activation arenas, adopt-at-bind and build-in-place
+
+Tracker: [@PLN164](https://github.com/loft-lang/plans/issues/164) · `status:active` ·
+`subject:store-lifetime`.
+
+## Status (REQUIRED)
+
+Active (the owner's go, 2026-09-15).  **P0 done**, **B1 and C4 shipped** the same day — the
+measurements are under § P0 below and the mechanism under § B1.  What P0 changed in the
+plan: tier 1's ceiling is ~10 % of the parse row, not a fifth, and its store-identity cost
+(287 `store_nr !=` sites in one emission) is real, so A1/A2 stay behind B and C in the
+queue and the owner's E1 pick is still open.  B1 took the minimal sound shape — adopt the
+callee's minted store, keep the caller's buffer null — and the matrix found the reason the
+wider one (reuse the buffer across activations, E7) must wait: the interpreter's rebind of a
+promoted buffer local frees a caller-supplied buffer where native guards it (§ B1b).
+Routes here per the docs-vs-plans rule: the mechanisms belong to `LIFETIME.md` /
+`OWNERSHIP_MODEL.md` / `formal/ownership.md` once shipped; this directory is the design and
+the matrix until then.
+
+## Goal (REQUIRED)
+
+**The principle this plan serves (owner, 2026-09-15; GOALS.md § Goal F):** the
+programmer is not assumed to know the store model inside, so the most NATURAL form of a
+program is its CANONICAL form and therefore the one the compiler optimises — not an idiom
+the author learns from a survival guide.  **And the scoping (owner, same day):** this is
+not "optimise everything" — each spelling is first asked *is this natural to write?*, the
+mechanism goes to the spellings that pass, and a contrived spelling keeps today's correct
+copy and is deferred with its row kept.  Most cells of the matrix below may be deferred
+at any moment; the natural ones are where the gain sits.  **And the licence (owner,
+2026-09-15, C122, `(R-Escape)`):** the contract is semantics, not representation — a
+rewrite needs its validated conditions and nothing else; the one boundary is a library API,
+whose callers are unseen, and a construction that does not escape it may be rewritten in
+any way its conditions allow.  The compiler removes the per-call temporaries a record-returning style mints — a store
+per hidden buffer per activation, a deep copy at a first bind, at a last-use field
+assignment and at an element overwrite, a copy for a read-only `?`-discharge — without a
+line of the consumer's code changing, and the drawing library's `parse` row goes from
+7.6× the Rust reference toward 3× as the measurement of it.
+
+## Effort + design
+
+- **Effort:** M (tiers 1–2) · MH (tier 3)
+- **Design:** ~ — the invariants are named; the store-identity question (§ Edge cases E1)
+  is open and decides tier 1's shape.
+- **Last touched:** 2026-09-15 (P0 measured, B1 shipped)
+
+## The evaluation — what one parsed line costs, and why
+
+The owner's premise, stated 2026-09-15: *knowing this fact of loft I would look at the
+parse implementation to make fewer objects; but what I really want is a compiler that
+determines this problem itself and makes efficient code for it.*  So the library
+(`loft-libs-graphics`, `drawing/src/drawing.loft`, `parse_poly` and its callees) is the
+FIXED input; it is written in the natural style — build a record, return it, put it in a
+field — and the question is what the compiler mints around that style.
+
+A census of the emitted Rust (`--native-emit` of the bench's `parse_only.loft`, counting
+store mints, record mints, deep copies and frees per function and attributing each to its
+loft line) says, for ONE `Poly` line:
+
+| temporary | mechanism that mints it | needed by the program? |
+|---|---|---:|
+| 4 stores at `parse_poly` entry (`__ref_3..6`) | every record-returning callee gets a caller-minted return buffer, one STORE each, freed at exit | no — dead at exit |
+| a store for `pp_raw` + a deep copy of the `PointList` (4 vectors) | the first bind of a call result copies: `OpBindOrCopy` adopts only a store the local already holds, and a fresh local holds none (`O-Buffer`) | no — the buffer could be adopted |
+| a store per `?`-discharged record element (`ap_e = sc.elems[idx]?` in `acc_pts`) + a copy of the `Elem`, its `ename` text included | `?` on a record element materialises a record; `Elem` owns text, so § V-ad's all-scalar buffer does not apply | no — only read, field by field |
+| a store for `Elem {…}` + a copy into `sc.elems[idx]` | an indexed overwrite from a literal builds in a temp and copies | no — the slot exists |
+| a deep copy of `Paint` (with its `spec` vector) into the `Op` | `paint: pp_paint` copies at `pp_paint`'s last use | no — a move would do |
+| the points vector copied into `Op.pts` and again into `Mark.pts` | `smooth_pts` builds in its own buffer; each destination copies | one copy at most |
+| a default prefill of every minted record | a partial literal defaults the rest field by field (`set_default_value_nullable`) | no — a per-type image is one block write |
+
+Per line that is a dozen store mint/free pairs, four deep copies and three copies of the
+points, on a scene of thirteen lines.  The `Op` itself is ALREADY built in place in the
+scene's store (`@FR-R-Mint`/`@FR-R-PushRec`), and the `Mark` already lands in a buffer
+`parse_scene_at` mints once for the whole scene and hands down — so two of the objects
+already live in a longer-lived container; everything below `parse_poly` does not.
+
+The profile agrees (program samples only, 20 000 calls, this box):
+
+| class | share | routines |
+|---|---:|---|
+| record and vector lifecycle | ≈ 57 % | `copy_claims` 8, `set_default_value_nullable` 7, `begin_write_inner` 4, `remove_claims_mode` 3.5, `store_mut` 4.7, `free_named` 3, `claim` 2.7, `Store::init` 1.8, `store_budget` 1.8, `close_file_handle` 1.2, `owned_walk` 1.4 … |
+| the library's byte scan | ≈ 19 % | `matches_at`, `find_option` (rescans the line per key) — the library's own |
+| the parse logic | ≈ 8 % | `parse_scene_at`, `acc_pts`, `fronds`, the trig |
+
+## The three tiers — the invariant each rests on
+
+Each tier is a situation the compiler PROVES (C120: no rewrite may change a value after a
+fault; only situations we know), switchable and falsifiable in the @PLN157 style, and
+lands on BOTH backends where it changes the IR (the interpreter is the values oracle, and
+`O-NoDiverge` says the two translate the same `deps` facts).
+
+**Tier 1 — the activation arena.**  *Invariant:* a hidden return buffer (`__ref_N`, a
+`__ref_p2_N` discharge buffer, a literal's temp) never outlives the activation that minted
+it (`O-Buffer`: the buffer is the caller's store, freed at frame exit; a result that must
+survive is adopted, copied or moved OUT of it).  So every buffer of an activation may be a
+RECORD in one store instead of a store each, allocated past a mark taken at entry and
+released to that mark at every exit.  The store is the CALLER's, threaded down like the
+buffer itself is today (`R-Callee`: "a return buffer may be a record the caller offered"),
+so a loop such as `parse_scene_at`'s line loop resets one arena per iteration — the
+compiler can see nothing minted since the loop head survives except what was appended to
+`sc`.  Removes the store mint/free pair per temporary: `Store::init`, `database_named`,
+`store_budget`, `close_file_handle`, `owned_walk`, `free_named` — about a fifth of the row.
+*What it must keep:* every rule keyed on STORE IDENTITY (§ Edge cases E1).
+
+**Tier 2 — adopt at first bind, move at last use.**  *Invariant:* `O-Move` — a returned
+heap value's ownership transfers to the caller's binding.  Today `OpBindOrCopy` honours it
+only when the local already holds a store; the first bind copies.  Adopting the buffer at
+the first bind makes iteration one what iteration two already is.  And `B-Copy`'s copy at
+`paint: pp_paint` is a copy of a value nobody reads again: when the ownership oracle says
+the local OWNS its store and liveness says it is dead on every path after the assignment,
+the field takes the record by MOVE (bytes relocate, heap handles never change store —
+`@FR-R-MoveAppend`'s relocation, applied to one record).  Removes the deep-copy class, about
+a sixth of the row.
+
+**Tier 3 — build where it will live.**  *Invariant:* a value whose ONLY destination is
+known at the site it is built may be built THERE (`@FR-R-ElemFirst` states it for a vector
+consumed by one append; this generalises the destination).  Three shapes: an indexed
+overwrite from a literal writes the slot's fields (the old element's owned heap released
+first, a partial literal's omitted fields set to their defaults); a call whose result is
+stored exactly once gets the destination slot as its return buffer, so `smooth_pts` fills
+`Op.pts` directly; a `?`-discharged record element that is only read is a VIEW (`B-View`),
+not a copy.  The per-type prefill image belongs here.  Removes the remaining copies and
+most of the prefill.  The one copy that stays: a vector stored in TWO destinations
+(`Op.pts` and `Mark.pts`) — a record field owns its data, and that is the right answer.
+
+## P0 — what one activation's buffers cost, measured (2026-09-15, this x86-64 box)
+
+The parse bench (`parse_only.loft --n 2000`, `--native-release`, hash `33f6d2b8`) read
+**50.5–54.8 k ns/op** before any change.  Its emission (`--native-emit`) carries **287**
+`store_nr !=` and **39** `store_nr ==` tests — the sites E1 would touch — 37 `OpDatabase`
++ 45 `OpDatabaseNP` mints and 26 `OpCopyRecord` copies.  The runtime census
+(`LOFT_TRACE_DB=1`, two parses) puts the store mints per parse at **~88**: Paint 19, Mark
+19, `vector<Pt>` 18, `vector<float>` 16, PointList 6, Elem 6, Sketch 2.
+
+**What a mint/free pair costs.**  A vector declared inside a loop re-mints its store per
+iteration under `LOFT_NO_LOOP_BUFFER_REUSE=1` and keeps it by default (§ V-al), so the A/B on
+one program prices the pair: **28 → 88 ns/op, ≈ 60 ns** for the smallest buffer (a mint, a
+first claim, a free).  Perf on that probe splits the 60 ns about evenly between the
+store-specific half (`op_database_inner`, `Store::init`, `Stores::clear`, the zeroing
+memset) and the buffer's first claim (`claim`, `claim_block`, `finish_claim`,
+`pre_alloc_vector`), which an arena RECORD pays too.
+
+**So tier 1's ceiling is 88 × 60 ns ≈ 5.3 µs ≈ 10 % of the row**, half of that the
+store-specific part an arena or a pooled store can remove; the plan's "a fifth" counted the
+profile's lifecycle routines, which include per-access costs (`store_mut`, `begin_write`)
+that no store discipline changes.  The hand patch of `parse_poly`'s four eager buffers is
+therefore not worth building: those are 3 of 4 unused per activation (one `smooth_pts` path
+runs), 12 pairs per parse, ≈ 0.7 µs — the arithmetic answers it.  Verdict for the queue:
+**B (the copies, 18.5 % inclusive) and C (the prefill and the discharge copies) before A**,
+and for E1 the pooled-store option is the one to price first when A1 is cut, because it
+keeps identity as it is.  The leak-gate extension (E19) waits for A1's shape.
+
+## B1 — adopt at first bind (SHIPPED 2026-09-15, `@FR-O-Move`)
+
+*The two protocols, side by side.*  `a = mk_lit(i)` (every return a literal, deps `[]`)
+and `b = mk_loc(i)` (`o = P { … }; …; o`, the local promoted onto the buffer, deps
+`["o"]`) lowered differently: `a` adopts a buffer the caller mints once and reuses
+(`OpFreeRefIfDistinct(a, __ref_1)`); `b`'s caller minted a SECOND store and deep-copied
+(`OpCopyRefOrNull` / the `_dst`/`_src` delivery), freeing the callee's — two mints, a copy
+and two frees per call where the callee's one mint would do.  The parse row's `pp_raw =
+read_points(s)` (a `PointList` of four vectors) and the bench's `bs_sk = parse_scene(…)`
+(the whole `Sketch`) are that shape.
+
+*The rule.*  `use_analysis::adopts_minted_at_bind` — ONE home for the three readers — admits
+a direct call to a loft-defined callee whose return deps name exactly its hidden return
+buffer attribute, bound to a plain local (not a parameter — a promoted local is one — not a
+caller-hidden buffer, not handed to the call as its buffer).  `scopes::scan_set` then strips
+the local's deps (it OWNS the minted store) and pairs it with the call's buffer for the
+identity-guarded free the fresh-adopting shape already takes; the interpreter's first-bind
+arm delivers by `OpPutRef` and native's dispatch takes the plain assignment.  A rebind keeps
+the in-place copy on both backends.  Switch `LOFT_NO_ADOPT_FIRST_BIND=1` (parse time).
+
+*What the matrix found.*  `bytecode-comparisons/B1-adopt-first-bind-cells.loft` (c1–c17,
+hand-computed, both backends under `LOFT_STRICT_STORES`, `LOFT_POISON`, `LOFT_POISON_CLAIM`
+and the leak gate) was green before the change and RED after the first cut on the
+interpreter alone: c6, plan 51 cluster 3's `render_lit_then_call`.  The pairing enrolled the
+buffer in `reuse_record_buffers` (the entry-time pool, `@FR-R-Reuse`), so the callee received
+it non-null, its promoted local's literal built into it, and the rebind `cv = alloc_canvas(…)`
+FREED it — the interpreter's reassignment path has no twin of native's `_rb_w_` witness — after
+which the caller's next `Q` took the recycled slot and `p.tag` read it.  The callee's IR is
+identical before and after; the free was a no-op on a null buffer.  So B1 excludes its
+pairings from the pool (`Scopes::minted_pairs`), the buffer stays null, and the callee mints
+per call: **139 → 108 mints** over the cells on the interpreter, 137 → 106 on native.
+
+*Receipts.*  Guard `tests/scripts/164-adopt-first-bind.loft` (its `@falsified-at:` is the
+pool sabotage above), pins `tests/adopt_first_bind.rs`, the ten plan-51 guards green on
+both backends under both switch states.
+
+*Measured.*  The parse bench (`parse_only.loft --n 2000`, `--native-release`, this quiet
+x86-64 box, hash `33f6d2b8` throughout): **50.5–54.8 k → 43.3–44.0 k ns/op**, about
+−14 % on the row — the `PointList` copy at every `read_points` bind and the whole-`Sketch`
+copy at the bench's own `bs_sk = parse_scene(…)` are the binds it removes.  The consumer
+table (`compare.py`, 14 rows) is re-measured when the next unit lands, per the plan's
+phase 5.
+
+**B1b — reuse the buffer across activations for this callee shape** (E7's steady state, 0
+mints per call): blocked on the interpreter's reassignment path freeing a caller-supplied
+buffer held by a promoted buffer local (`143`'s shape); native guards that free with its
+entry-time `_rb_w_<buffer>` witness (loft#1126).  Closing the divergence is the whole of
+B1b, and c6 under the pool without the exclusion is its falsifier.
+
+## C4 — the prefill image (SHIPPED 2026-09-15, `@FR-R-Prefill`)
+
+*The mechanism.*  `Stores::set_default_value_nullable`'s `Shape::Record` arm walked the
+type's fields on every mint that is not proven complete-write — a store resolution per
+field, a recursion per inline record, a typed setter per sentinel — for bytes that are the
+same on every mint of a type (7 % of the parse row).  The arm now asks
+`prefill_from_image` first: the type row carries a `PrefillImage` cell beside its
+`TypeFacts`; the first `Absent::Prefill` of a COMPLETE type zeroes the span, runs the walk
+once and reads the span back as the image; every later mint is one `Store::write_image`
+(a bounds-checked block copy, shadow-tagged as `zero_range` is).  The image is what the
+walk writes BY CONSTRUCTION — it is never computed a second way — and
+`LOFT_PREFILL_VERIFY=1` is the falsifier: the walk re-run after every image write, a panic
+naming the type where the bytes disagree.  Declines, each keeping the walk: a type with a
+field not laid out yet (`u16::MAX` content — `layout_complete` walks the inline record
+tree; an image captured then would freeze the field's zero where the walk, once the field
+is laid out, writes its sentinel), an image whose length no longer matches the layout, and
+`Absent::Final` (the `text as Struct` fill: declared defaults and interned text are not a
+fixed byte pattern).  A table rollback forgets the image with the facts.  The all-zero
+fast path (`heap_facts(tp).1` → `zero_range`) stays in front of it.  One runtime home, so
+the interpreter, `--native` and wasm take it together.  Switch `LOFT_NO_PREFILL_IMAGE=1`.
+
+*What the matrix found.*  The prefill is VALUE-INVISIBLE in every shape the cells reach:
+a literal writes each omitted field's default explicitly (`to_default`, loft#914), a
+`?`-discharge of an absent element answers `construct_default(T)` (LOFT.md § `?`:
+`points[i]?` → `Point{}`, the declared default and the inline record's defaults included
+— c8 measured it equal to a bare `Mix {}` on every binary), and the `text as` fill is
+`Final`.  So the value channel cannot move under a wrong image; the receipt for "no
+value changes" is the VERIFY census: all 1432 `tests/scripts` files on the interpreter
+(the one panic is `75-native-stub`'s `@EXPECT_FAIL`), the parse bench on native, and the
+cells on both backends under `LOFT_PREFILL_VERIFY`, `LOFT_POISON`, `LOFT_POISON_CLAIM`,
+`LOFT_STRICT_STORES` and the leak gate.  Two side-findings, neither C4's: a NEGATIVE
+declared default (`n: integer = -1`) was dropped by a `text as Struct` cast because
+loft#876's fold matched plain literals and `-1` is `OpMinSingleInt(1)` — fixed in
+`typedef::fold_declared_default` with guard
+`tests/scripts/a-negative-declared-default-survives-a-cast.loft`; and a `single`-typed
+declared default (`a: single = 1.5`) writes 0 in a struct LITERAL on the interpreter and
+fails native compilation (`set_single` handed an `f64`), on the pre-B1 binary too — to be
+filed (`hit-by:loft`, `silent-wrong`), repro in the next session's notes.  And a doc
+inconsistency for C3: `formal/binding.md` `(B-View)`'s discharge clause says "an absent
+element discharges to null" where LOFT.md § `?` and every backend answer the type's
+default record; the rule text is the one to correct when C3 is cut.
+
+*Measured.*  The parse bench (`parse_only.loft --n 2000`, `--native-release`, hash
+`33f6d2b8`, interleaved A/B on one binary): **46.4–48.5 k (`LOFT_NO_PREFILL_IMAGE=1`) →
+42.3–42.8 k ns/op** (≈ −11 %).  The 14-row `compare.py` table is re-measured when B2
+lands.
+
+*Receipt and gate (the next session).*  The sabotage receipt: `prefill_from_image` made to
+capture the image BEFORE the walk (an all-zero image), and under `LOFT_PREFILL_VERIFY=1`
+both backends panic at the first image USE — but only after cell c11 was added: on native
+every `Mix` literal is a complete-write mint (`OpDatabaseNP`) and `mk`'s buffer is minted
+once per activation of its caller, so c1–c10 CAPTURE the image on native and never use it
+(the native half of the receipt was vacuous, which `LOFT_TRACE_PREFILL=1` now makes
+visible: it names each capture and each use, and `tests/prefill_image.rs` pins a use on
+BOTH backends — 2368 / 15 uses of `Mix`, interpret / native).  The guard is
+`tests/scripts/164-prefill-image.loft` with the panic text as its `@falsified-at:`; the
+five pins pass; fmt and both clippy legs are green.  The negative-default guard's
+`make falsify` against `7fd2a664` could not run on this box (`/tmp` is a 7.4 GB RAM tmpfs
+and the control build needs more; point `LOFT_FALSIFY_CACHE` at a disk path) — its receipt
+stays the hand measurement recorded in the file.
+
+## B2 — the result built where it will live (IN PROGRESS 2026-09-15, `@FR-R-Place`, `@FR-R-MoveLast`)
+
+*What the instrument found first.*  `loft introspect` on the B2 cells' `read_paint` (four
+literal exits, the library's shape) showed the callee answering a DIFFERENT store per
+exit: the three mid-body `return Paint { … }` each minted a `__ref_p2_N` work-ref store
+and returned it, and only the tail literal wrote the `__retbuf` the caller handed
+(@PLN157 § V's `BuildIntoBuffer` rewrote the tail alone).  `(R-Place)` declines exactly
+that callee — *on some exit answers a store other than the buffer it was handed* — so the
+row's own callee could not be placed until the callee clause held.
+
+*Unit 1 — every literal exit writes the handed buffer (SHIPPED).*
+`Parser::literal_exits_into_buffer`, run on the function body right AFTER the tail's
+delivery is dispatched: when the buffer is still the unpromoted `__retbuf` and every
+mid-body exit is a fresh literal of its type, each `return S { … }` takes the tail's own
+rewrite (`build_into_return_buffer`: the literal's `OpDatabase` behind the "caller offered
+a record" guard, its writes on `__retbuf`, the work-ref `skip_free`).  It is decided after
+the tail and not at the `return` because the first cut — a mirror inside `parse_return` —
+ran BEFORE the tail promoted a local onto the buffer, so `mk_mix`'s early literal and its
+promoted local `o` shared one buffer and the caller freed a stale ref (the corpus's
+`164-adopt-first-bind` c3, a `BUG (#306)` stack-store free refusal).  A function with any
+non-literal exit keeps its per-exit stores.  Switch `LOFT_NO_LITERAL_EXIT_BUFFER=1`; pins
+`tests/literal_exit_buffer.rs` (the IR shape on `read_paint`: 4 of 4 exits on `__retbuf`,
+the switch restores 1 + 3, the promoted-local shape declined, the cells on both backends).
+No value moves and, under B1's null buffer, no store count moves: the unit changes the
+callee's CONTRACT, which is what units 2–3 consume.
+
+*Units 2–3 — the design (written before the code).*  The caller side, parse time, one IR
+for both backends (E18):
+
+- **Admission** (`R-Place`), decided in the scope pass beside B1's `adopts_minted_at_bind`
+  for a plain local `v` first-bound from such a call: every use of `v` after the bind is
+  either a READ before any store on that path, or ONE owning destination — a record-literal
+  field `Lit { f: v }` inside an element appended to `X.field += [Lit { … }]` where `X` is a
+  PARAMETER (its store exists at the call and outlives the frame) — after which `v` is dead
+  on that path (`O-Complete`: no read, no rebind, no hand-off, no `?`/`??`); every keeping
+  path names the same `X`; no argument of the call reaches `X`; the callee's return deps
+  name exactly its buffer (B1's gate) and, after unit 1, every exit writes it.  First cut
+  admits the LITERAL-FIELD destination only (the parse row's shape); `X.f = v` and
+  `X.v[i].f = v` (an old value to release first, `H-ClearRelease` per field) and a LOCAL
+  host (its store can die before the buffer is released — the free order question) stay
+  copies and are the unit's named follow-ups.
+- **The IR change**, three sites: the buffer's init `__ref_N = null` becomes
+  `__ref_N = OpPlaceRecord(X, tp)` (a record claimed in `X`'s store, prefilled through the
+  C4 image); the literal group's `OpCopyRecord(v, OpGetField(elm, off, tp), tp)` becomes
+  `OpMoveRecord(v, dst, tp)` (`move_record_shallow` + the source block released, its heap
+  handles kept — `R-MoveAppend`'s mechanics for one record) followed by `v = null`; and
+  the exit frees `OpFreeRef(v)` / `OpFreeRefIfDistinct(__ref_N, v)` become ONE
+  null-guarded `OpFreeRecordIn(v, tp)` (`Stores::free_record_in`: the record's owned heap,
+  then its block — never the host store).  E1 does not bite here: the only owned thing
+  sharing `X`'s store is the placed buffer itself, and its frees are record-level by
+  construction.
+- **Native** follows the ops (`place_record_in`, `move_record_shallow`, `free_record_in`
+  already exist for § V-j); the emitter's own scope-end backstop for a `__ref_` attr must
+  see the placed set (a store-level free of a placed buffer frees the HOST).
+- **Falsifiers:** `LOFT_POISON=1` (the moved-from local's free must find nothing),
+  `LOFT_STRICT_STORES=1` (a record freed twice, a store freed under a placed record), the
+  leak gate on both backends, `LOFT_HOIST_VERIFY=1` for the same-store assertion of the
+  move; cells `B2-place-move-cells.loft` b1–b15 (every decline keeps the copy: b2 E9,
+  b3 E10, b5 the `??`, b6 the aliasing argument, b7 the opaque callee, b10 the rebind,
+  b11 two destinations, b12 two stores; b13 no-heap, b14 text-owning); the store census
+  (`LOFT_TRACE_DB`) must DROP by one per admitted call.  Switch `LOFT_NO_PLACE_RESULT=1`.
+- **New ops renumber** `index/target_surface.json` — `make surface-gen` after rebuilding
+  the wasm rlib.
+
+## The rewrite list — the natural `parse_poly` to its optimal form
+
+**This is not about how a programmer writes loft.**  The programmer writes the natural
+`parse_poly` as it stands in the library; the version below is the SPECIFICATION of what
+the compiler must reach from it, written by reading the two side by side and asking, for
+every difference, what fact on the IR licenses the rewrite and which rule says so.  The
+rules were written first (2026-09-15, `formal/rewrites.md` § *A result is built where it
+will live…*, `formal/ownership.md` `(O-ViewField)`, `formal/binding.md` `(B-View)`), so a
+question met while building a phase is answered there and not decided in the code.
+
+*The target, per `Poly` line:* one `Op` record created in the scene's store, its two
+vectors grown in place, nothing else minted, nothing copied, and the `Mark` a value
+tuple whose `pts` is a view of the op's own vector.  In hand-written form:
+
+```loft
+fn parse_poly(sc: Sketch, s: text, raw: PointList) -> Mark {     // raw: the caller's scratch
+  read_points_into(raw, s);
+  pk = read_paint_kind(s);
+  if len(raw.pts) < (if pk == Stroked { 2 } else { 3 }) { return Mark { matched: true, bad: true } }
+  sc.ops += [Op { kind: Stroke }];          // the one record, built where it lives (R-Mint)
+  o = sc.ops[len(sc.ops) - 1];              // a view (B-View)
+  read_paint_into(o.paint, s);              // the field is the buffer (R-Place)
+  if pk != Stroked { o.kind = Fill; smooth_into(o.pts, raw.pts, raw.smooth, true); }
+  else {
+    o.w = read_width(s, 3); o.color = read_stroke_colour(s);
+    smooth_into(o.pts, raw.pts, raw.smooth, false);
+    if raw.any_width { /* widths appended into o.widths; smoothed in place */ }
+  }
+  Mark { matched: true, bad: false, pts: o.pts }   // pts a VIEW LEAF (O-ViewField), Mark in registers
+}
+```
+
+What the compiler cannot do is the one thing a programmer could: change the contract
+(`Mark` carrying an op index instead of the points, or `parse_poly` growing the element's
+box itself).  `(O-ViewField)` reaches the same cost with the contract as written, which
+is the whole point of Goal F.
+
+| rewrite (per `Poly` line) | IR fact to establish | licence | exists today | phase |
+|---|---|---|---|---|
+| bind `pp_raw`, `pp_paint` without a copy | the callee's return deps name exactly its own buffer; the destination a plain local | `O-Move`, `O-Buffer` | shipped | B1 |
+| `pp_paint`'s buffer claimed in the scene's store; `paint: pp_paint` a relocation, not a deep copy | the result's ONE owning destination is a field of a record in store S on every path that keeps it; `pp_paint` owned and dead on every path after the literal | `R-Place`, `R-MoveLast`, `O-Complete` | the liveness exists as the `avoidable-copy` lint's *"still used after this point"*; codegen does not read it; a buffer claimed in another store is new | B2 |
+| `pts: smooth_pts(…)` fills `Op.pts` directly, no buffer | as above, with the destination place existing at the call and no argument reaching it; the callee writes only its buffer and answers it at every exit | `R-Place` ("the buffer IS the place"), `R-Callee`, E15, E16 | `retbuf_only_writer`; `R-ElemFirst` already builds a vector inside an appended element; the redirection of a call's buffer into a field is missing | C2 |
+| `sc.elems[idx] = Elem{…}` written into the slot | the slot exists; every field expression evaluated before the first write (`ename: ap_e.ename` reads the slot); omitted fields defaulted | `R-InPlaceLiteral`, E13, E14 | complete-write knows the literal's field set | C1 |
+| `ap_e = sc.elems[idx]?` as a view | `ap_e` only read; `sc.elems` not disturbed between bind and last read, in this frame or any callee | `B-View` (the discharge clause), `B-Disturb` | `view_elision_bind` does it for call results; the interprocedural disturbance walk exists for `&` | C3 |
+| `Op { kind: Stroke, … }` prefilled by one block write | the literal's field set against the type's defaults | `R-Prefill` | complete-write has the set; the per-type image is missing | C4 |
+| the four `smooth_pts` buffers not minted at entry | one path runs one call | trivial | goes away with C2 | with C2 |
+| the `PointList` scratch reused across lines | the callee's literal rewrites every field when handed a live buffer; the buffer-holder's rebind never frees it | `R-Reuse`, § V-y | D-own-43 (the interpreter's rebind free) must close first | B1b, A2 |
+| the points written once: `Mark.pts` a view of `Op.pts` | the field's source has an owning destination in `sc` (outlives the frame); every call site only reads it before any disturbance of `sc.ops` | `O-ViewField`, `R-ValueRecord`'s view leaf | no — the rule is new; § V-aa's site fixpoint is the home to extend | C5 |
+
+*What each phase must build,* in the @PLN157 shape: a `LOFT_NO_<unit>` switch, cells with
+hand-computed values on both backends under `LOFT_STRICT_STORES`, `LOFT_POISON`,
+`LOFT_POISON_CLAIM` and the leak gate, a guard with its `@falsified-at:` receipt, pins, the
+subject registered.  Each rule's decline list is its falsifier list: a cell per decline,
+proving the copy still runs there.
+
+*Analyses the phases share* (each wants ONE home, read by the scope pass and both
+backends, the loft#810 discipline B1 followed): the def-use classes of a heap value (its
+owning destinations against its read-only uses — `R-ElemFirst`'s "consumed exactly once"
+generalised); per-path liveness at a set; the disturbance walk between two points for a
+named container; destination existence and aliasing against a call's arguments; the
+callee writer summary; the return shape over all call sites.
+
+## Composition matrix — Stage A (REQUIRED)
+
+The axes the tiers touch, each with the domain the language offers; every phase's cells
+are drawn from these, hand-computed, run on both backends under `LOFT_STRICT_STORES=1`,
+`LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and `LOFT_NATIVE_LEAK_CHECK=1`:
+
+| axis | domain |
+|---|---|
+| callee kind | user fn · fn-ref (`O-Opaque`: empty deps) · `#rust` native · generic instance · twin (`__inv`) |
+| result shape | all-scalar (a § V-aa value record) · record with vectors · record with text · nullable record · struct-enum · tuple |
+| binding | first bind · rebind in a loop · a value-branch join (`O-Complete`) · a `?? default` discharge · `return f(…)` (§ V-an's phantom) |
+| activation | plain · recursive · generator (`yield` inside) · `par` arm · a closure body |
+| exit | fall-through · early `return` · `break`/`continue` · a fault (`LOFT_DEV_SOFT_HALT`) |
+| destination | fresh local · existing local · record field · vector element (append / overwrite) · the function's own result · two destinations |
+| aliasing | none · the source IS the destination's old value (`ename: ap_e.ename`) · a `&` view live across the write (`B-Disturb`) |
+
+`python3 scripts/matrix_axes.py file <cells>` measures which values a cell corpus reaches;
+`cross activation destination` is the pair the corpus must cross, since that is where the
+arena and the placement meet.
+
+## How a verdict is reached — the five questions, in order
+
+The owner reviews the PROCEDURE, not twenty tastes (2026-09-15).  Each row is put to
+these questions in order, and the first one that decides, decides:
+
+1. **Spelling, or mechanism property?**  A mechanism property (an identity, a mark
+   discipline, a gate's accounting) is not natural or contrived — it is an invariant the
+   tier must hold for whatever it admits, or the tier is not built.  Its verdict is a
+   falsifier and a named failure mode, nothing else.
+2. **Is the spelling natural?  MEASURED, not judged.**  Two facts: does the consumer
+   corpus write it (a grep over the 15 library files of `loft-libs-graphics`, and the
+   games and the crawler when the row matters), and would a programmer write it without
+   knowing the store model?  Absent from the corpus and explainable only by the store
+   model → contrived → keep today's copy, defer the row.  Present → natural → continue.
+   The corpus is the oracle for "natural" the way the interpreter is the oracle for a
+   value: a spelling absent today may appear, and then the row is re-measured, never
+   re-argued.  Measured 2026-09-15: a record `?`-discharge bound to a local (E17) 45
+   times; a field assigned from a local (E9) 382; a bind-then-return (E20) 96; an
+   element overwritten from a literal (E13) 3; a record fn with two or more literal
+   returns (E15) 6; `x = f(x, …)` on a RECORD or vector (E16) 0 — its 6 hits are scalar
+   `min`; a `yield` statement (E3) 0; a `par` block (E4) 0; an `OpDrop` type (E12) 0.
+3. **Does a written rule already answer it?**  `formal/*.md` first (the debugging
+   policy's *read the formal spec first*).  A rule that answers settles the row and the
+   mechanism implements the rule exactly, no narrower, no wider.  A question no rule can
+   express means the rule wants extending — the OWNER's design call, recorded under
+   § Open design questions; the mechanism never decides it silently.
+4. **What falsifies the verdict?**  A cell with a hand-computed value on both backends
+   under `LOFT_STRICT_STORES`, `LOFT_POISON`, `LOFT_POISON_CLAIM` and the leak gate, and
+   a soft-halt note count where a fault path exists.  A verdict with no falsifier is not
+   a verdict; it is the plan-51 shape.
+5. **What does being wrong cost?**  Admitting wrongly is silent-wrong, a leak or a double
+   free — the freeze-axis class.  Declining wrongly is a missed optimisation the compiler
+   pays itself (Goal F).  The asymmetry decides every doubt: DECLINE, and the decline is
+   always available.
+
+*Where each row was decided.*  At 1: E1, E2, E5, E6, E18, E19.  At 2 (contrived, deferred):
+E3, E4, E12, E16.  At 3 by an existing rule: E7 (`O-Buffer`'s steady state), E8
+(`O-Opaque`: empty deps cannot license an adopt), E9 (`O-Complete`: per path), E10
+(`O-Borrow`: not owned, no move), E11 (`R-MoveAppend`'s zeroing), E13 (the language's
+evaluation order — a literal's fields are evaluated before the assignment stores, so an
+in-place build STAGES them), E14 (loft#914: an omitted field takes its default), E17
+(`B-View` under `B-Disturb`), E20 (§ V-an's phantom, `O-Buffer`).  At 3 with NO rule —
+the owner's call: E1's identity (`O-Buffer` names STORE identity; nothing names a record's
+— open question 1).  At 5 (doubt → decline): E15 (a callee with more than one exit writes
+its destination only at the single exit or declines), E2's handed-up record (copy when the
+mark cannot be re-drawn).
+
+## Edge cases to inspect before a phase is cut
+
+Numbered for the review.  **Verdict** is the proposal; the owner confirms or moves it.
+Every row is first judged on NATURALNESS: `natural` means a programmer writes it without
+knowing the store model and the mechanism owes it the efficient code; `contrived` means
+the spelling keeps today's copy and the row is deferred — a verdict that is always
+available and never a defect.  The parse library is the reference for "natural": every
+shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
+
+| # | naturalness |
+|---|---|
+| E1–E6, E18, E19 | mechanism-internal — not a spelling; they must hold whatever is admitted |
+| E7, E13, E15, E16, E17, E20 | natural — the library writes them today |
+| E8, E9, E10, E11, E14 | natural — a branch, a parameter, a partial literal are ordinary |
+| E3 (generator), E4 (`par`), E12 (`OpDrop` types) | contrived for this plan — decline the mechanism there, keep the copy, defer |
+
+| # | case | why it bites | proposed verdict | probe |
+|---|---|---|---|---|
+| E1 | **store identity is the free protocol's key.**  `OpFreeRefIfDistinct(v, __ref_N)` declines the local's free when `v.store_nr == __ref_N.store_nr` (`O-Buffer`), `OpDistinctStore` answers `store_nr !=`, and § V-af's witnesses are store identities | two buffers in one arena share a `store_nr`, so "same store" no longer means "same object": a free declines that should fire (leak) or a witness matches the wrong buffer | identity becomes `(store_nr, rec)`; `free_displaced` and the witness compare both; `emission_audit.py` R-State counts holders per record | count the sites (`grep -c store_nr !=` on an emission), then a hand-patched arena of `parse_poly`'s four buffers under `LOFT_STRICT_STORES` |
+| E2 | recursion | a caller-threaded arena grows with depth; a mark/release at each activation exit keeps it a stack, but a result adopted from the arena by the CALLER's local (tier 2) sits above the callee's mark | release-to-mark only what the activation minted and did not hand up; a handed-up record is re-marked to the caller | a recursive record builder, depth 1 000, leak gate |
+| E3 | a generator | the activation SUSPENDS; a local arena dies at the yield | the arena is a persistent field of the generator, or tier 1 declines a body with `yield` (as every hoist does) | the coroutine corpus under the switch |
+| E4 | `par` arms | one arena, two threads | one arena per arm, marked and released by the arm | THREADING.md's corpus |
+| E5 | records that own heap in an arena (`Elem.ename`) | release-to-mark is O(1) only for no-heap records; text handles must be released (`@FR-H-ClearRelease`) | the mark carries a heap-owner list; a walk over that list, never over the store | a cell with 1 000 text-owning temporaries, `LOFT_NATIVE_LEAK_CHECK` |
+| E6 | an arena record's vector GROWS | growth relocates within the store; `@FR-R-Base` bases and `@FR-R-Header` headers into arena records | an arena mint counts as growth for the enclosing loop's `growth_free`, as a null-discharge buffer does today | `LOFT_HOIST_VERIFY=1` on the parse bench |
+| E7 | adopt at first bind when the buffer is the CALLER's caller's (`ps_p = parse_poly(…, __ref_5)`) | the local and the buffer are one store; the steady state after iteration one already | MEASURED (B1): admitted for a fresh-adopting callee already; for a promoted-local callee the reused buffer is freed by the interpreter's rebind of that local (c6) — B1 keeps the buffer null, B1b takes the reuse | `B1-adopt-first-bind-cells.loft` c6; the plan-51 guards under the switch |
+| E8 | adopt when the callee handed back a store it did not mint (`O-Opaque`: a fn-ref, a return that borrows a parameter) | adopting a borrowed store frees someone else's | SHIPPED (B1): `adopts_minted_at_bind` admits only a return whose deps name exactly the callee's buffer attribute; a visible-parameter dep, a `__closure` dep, a `CallRef` and a nullable return decline | c7 (a parameter read), c12 (a branch), c4 (nullable) |
+| E9 | move at last use on ONE path only | `if c { s.p = pp } else { use(pp) }` — dead after on the then-path, live on the else | per-path liveness (`O-Complete`); the move only where dead on EVERY path after, else copy | a branch cell with the value read after on one arm |
+| E10 | move from a `const` parameter, a view, an element | not owned; a move would steal | decline: the oracle's OWN verdict is the gate, `O-Proxy` is not enough here | cells over each source kind |
+| E11 | the moved-from local at scope exit | its free must not run (the record is gone) | the move nulls the source (`@FR-R-MoveAppend` zeroes it); `LOFT_POISON` is the falsifier | poison run |
+| E12 | a type with `OpDrop` (@PLN163 copy leases) | a move must not run the drop; a copy must take a lease | a moved record keeps its lease; interacts with @PLN163's rule — decide there | @PLN163's cells |
+| E13 | **self-referential overwrite**: `sc.elems[idx] = Elem { ename: ap_e.ename, … }` where `ap_e` views the SAME slot | building in place overwrites a field the literal still reads | evaluate every field expression before the first write (a stage), or decline in-place when any field reads through the destination | the `acc_pts` shape as a cell, hand-computed |
+| E14 | a partial literal overwrite | omitted fields must become defaults, not keep the old element's values | write the defaults (the prefill image) before the named fields | a cell with an omitted field that was non-default before |
+| E15 | the destination as return buffer when the callee exits EARLY | `if len(pts) < 2 { return Mark{…} }` leaves the destination half-written | a callee that returns on more than one path writes the destination only at its single exit, or declines | `parse_poly`'s three returns |
+| E16 | the destination as return buffer when the callee READS the destination (`v = f(v)`) | source and destination alias | decline when any argument reaches the destination's store | a cell `s.pts = grow(s.pts)` |
+| E17 | a `?`-discharged read used as a view while the container is DISTURBED before the last read | `ap_e = sc.elems[idx]?` then `sc.elems += […]` then `ap_e.bx0` | `B-Disturb` — a view is admitted only when no disturbance stands between the bind and the last read | a cell with an append between |
+| E18 | the interpreter | tier 1 and 3 change the IR (where buffers live, where a literal builds), so both backends must agree — and the interpreter's `OpDatabase` per buffer is the same IR | parse-time change, one IR; the emitter's hoists read the arena as a store | the whole `tests/scripts` corpus on both backends |
+| E19 | `LOFT_STRICT_STORES` / the leak gate's accounting | a store that hosts many buffers is one store to the gate; a leaked RECORD inside it is invisible to a store-count gate | the gate counts records above the mark at exit, not stores | extend the gate first (a probe-first phase) |
+| E20 | a buffer adopted by a local that is then RETURNED (`n = f(); …; n`) | § V-an's phantom: the result lands in the function's OWN buffer, which is the caller's arena, not this activation's | the phantom is above the mark by construction; pin it | `V-an-chain-cells` under the switch |
+
+## Sub-arcs (REQUIRED)
+
+| Item | Source | Verify | Status |
+|---|---|---|---|
+| **P0** — probe first: count the store-identity sites; price tier 1; the hand patch judged not worth building by the arithmetic; the leak-gate extension (E19) deferred to A1's shape | § P0 | 287 identity sites in one emission; ~88 mints per parse at ≈ 60 ns a pair: tier 1's ceiling ≈ 10 % of the row | Done 2026-09-15 |
+| **A1** — arena for one activation's own buffers (`__ref_N`, `__ref_p2_N`, literal temps), mark/release at every exit | § Tier 1 | `tests/scripts/164-arena-activation.loft` both backends; plan 51's ten graduated guards under the switch; `emission_audit.py` R-State per record | Blocked on P0 |
+| **A2** — the caller-threaded arena, reset per loop iteration | § Tier 1 | parse row −20 %; E2/E3/E4 cells | Blocked on A1 |
+| **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |
+| **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state) | § B1 | c6 under the pool without `minted_pairs` — the interpreter's rebind free must first match native's `_rb_w_` guard | Blocked on that divergence |
+| **B2** — the result's buffer claimed in its destination's store, the field taking it by relocation at the last use (`R-Place`, `R-MoveLast`) | § The rewrite list | E9–E12 cells under `LOFT_POISON`; the `paint: pp_paint` site emits no `OpCopyRecord` and `read_paint`'s buffer is a record in the scene's store | Open — next |
+| **C1** — element overwrite from a literal in place (`R-InPlaceLiteral`) | § The rewrite list | E13/E14 cells; `acc_pts` emits no temp store | Open |
+| **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § The rewrite list | E15/E16 cells; `smooth_pts` writes `Op.pts` | After C3 (needs no arena: the destination is a record in the scene's store) |
+| **C3** — read-only `?`-discharge as a view (`B-View`'s discharge clause) | § The rewrite list | E17 cells; `acc_pts` copies nothing | Open |
+| **C4** — per-type prefill image (`R-Prefill`) | § C4 | cells c1–c11 both backends under `LOFT_PREFILL_VERIFY`; the verify census over all 1432 corpus files; the image USED on both backends (`LOFT_TRACE_PREFILL`); parse row −11 % | Shipped 2026-09-15 |
+| **C5** — a returned record's heap field as a view leaf (`O-ViewField`, `R-ValueRecord`, `R-Escape`) | § The rewrite list | the points written once per line: `Mark.pts` names `Op.pts`; an E17 site that appends between the call and the read must read the copy; an escaping `pub fn` result reads the copy at the bridge | Open — last; rule admitted (C122) |
+
+Every phase: a switch (`LOFT_NO_<unit>=1`), a falsifier, cells in
+`bytecode-comparisons/`, a guard in `tests/scripts/` with its `@falsified-at:` receipt,
+the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN157 shape.
+
+## Phase ordering
+
+1. P0 — done: tier 1 priced at ≈ 10 % of the row, E1's site count measured; the owner's
+   pick between `(store_nr, rec)` identity and a pooled store stays open until A1 is cut.
+2. B1 and C4 — shipped.  Then **B2**,
+   a day, local, feeding the profile's largest remaining class (the copies).
+3. **C3 then C1** — the `acc_pts` pair, one mechanism each.
+4. **C2** — after C3: it needs the destination C3 makes visible and a single-exit callee
+   test; it does NOT need the arena.
+5. **C5** last, as its own section: it extends a formal rule (`O-ViewField`) and the
+   value-record gate, so the owner signs the rule off before the cells are written.
+6. **B1b** beside them whenever D-own-43 closes (the interpreter's rebind guard); then
+   A1 → A2, whose remaining share is re-measured after the copy phases have moved the mix.
+7. Re-measure the 14-row bench after each phase (`compare.py`, 14/14 hashes).
+
+## Open design questions
+
+1. **E1 — what is an object's identity once buffers share a store?**  `(store_nr, rec)`
+   is the proposal; it touches `free_displaced`, `OpDistinctStore`, the § V-af witness
+   and the audit.  Or: keep one store per buffer and make the STORE cheap (a pooled
+   `Store` with no file handle, no budget row) — a smaller change that keeps identity as
+   it is and takes less of the fifth.  The owner picks; P0 measures both.
+2. **Is the arena a parse-time IR fact (both backends) or an emission fact?**  The
+   buffers are IR (`OpDatabase(__ref_N)`), so tier 1 is IR-level unless the interpreter
+   keeps stores and only native pools them — which `O-NoDiverge` allows for a lifecycle
+   detail with no value, but the leak gate must then read both.
+3. **Where does a moved-from local's `deps` go?**  Tier 2's move needs the scopes pass to
+   record "handed off", the same predicate the double-move lint counts.
+4. **`(O-ViewField)` — DECIDED (owner, 2026-09-15, C122): admitted.**  *"The current
+   contract is about semantics, not about optimisations; we can do anything for that as
+   long as we can validate the conditions where it is correct.  The biggest problem here
+   is a library API where we cannot know how it will be used.  But if a construction
+   doesn't escape a library then we can rewrite whatever we want."*  Recorded as
+   `(R-Escape)` in `formal/rewrites.md`, which every rule in the rewrite list now reads:
+   a rule needs its validated conditions and nothing else; a construction that escapes a
+   library's API keeps the promised representation and the boundary materialises; one
+   that does not may be rewritten freely.  C5's cells therefore include an ESCAPE row —
+   a `pub fn` whose result a consumer could keep — which must read the copy at the bridge.
+   And the unit is a BUILD decision (owner, same day): a release copy of a program already
+   compiles its `use`d loft libraries into the one program (the bench emission carries
+   `parse_poly` itself), so in that lane the drawing library's API is no boundary and C5
+   crosses it; only the library's own published cdylib, a `#rust` native, the live-reload
+   arm, a stored layout and a placed library keep the promised representation.
+5. **`(R-Place)` across stores.**  A result's buffer claimed in the DESTINATION's store
+   (the scene's) rather than a store of its own is what makes B2's move a relocation;
+   it is also the first place a temporary lives inside another record's store, which is
+   E1's identity question in miniature.  If the owner picks the pooled-store answer for
+   E1, this rule still stands: the placement is per call, decided by the destination.
+
+## Cross-arc dependencies
+
+- **@PLN157** — the parse row's bar is that plan's; this plan is its parse unit, split
+  out because it is a memory-model change, not a rewrite of a loop.
+- **plan 51 (hidden-buffer aliasing, finished)** — its five clusters are the shapes an
+  arena must not reopen; its ten graduated guards run under every switch here.
+- **@PLN163 (copy leases)** — E12: a moved `OpDrop` record and its lease.
+- **loft#1336 (owner witness)** — a witness is a store identity; E1 changes it.
+
+## See also
+
+- `LIFETIME.md` (`OpBindOrCopy`, the adopt-or-copy delivery), `OWNERSHIP_MODEL.md`,
+  `formal/ownership.md` (`O-Buffer`, `O-Move`, `O-Complete`), `formal/binding.md`
+  (`B-Copy`, `B-View`, `B-Disturb`), `formal/rewrites.md` (`R-Callee`, `R-ElemFirst`,
+  `R-MoveAppend`, `R-Mint`, `R-PushRec`), `formal/heap.md` (`H-ClearRelease`).
+- @PLN157 `DESIGN.md` § V-an (the parse table this plan starts from) and § V-ao (the
+  census).
+- The tracker issue: [@PLN164](https://github.com/loft-lang/plans/issues/164).

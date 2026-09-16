@@ -1,0 +1,200 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN164 C4 — THE PREFILL IMAGE: the default prefill of a minted record (the sentinels,
+// the zeros and the variant tag a partial write leaves to the type) is ONE block write of a
+// per-type image captured from the field-by-field walk's first run (`@FR-R-Prefill`),
+// never the walk again.  The image is what the walk writes, by construction; these cells
+// put every default KIND the walk knows — a nullable integer, float, boolean, text and
+// character, a narrow `i16?` and `u8`, a declared default, an inline record, a variant tag
+// — through every mint path (a literal, a loop of appends, a keyed insert, a hidden return
+// buffer, a `?`-discharge, a `text as` cast, a forward-referenced type) and assert the
+// hand-computed value on both backends.  `LOFT_NO_PREFILL_IMAGE=1`, `LOFT_PREFILL_VERIFY=1`
+// (the walk re-run after every image write, a panic where they disagree), `LOFT_POISON=1`,
+// `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1` must answer
+// identically.
+
+//
+// @falsified-at: hand-measured (2026-09-15) — `Stores::prefill_from_image` sabotaged to capture
+// the image BEFORE the walk (an all-zero image): under LOFT_PREFILL_VERIFY=1 both backends
+// panic at the first image USE — `prefill image of \`Mix\` disagrees with the walk: image
+// [0, 0, 0, …], walk [0, 0, 0, 0, 0, 0, 0, 128, …, 248, 127, …, 255, 0]` (the interpreter at
+// its second `Mix` mint, exit 101; native at c11's re-activated caller, exit 1).  The VERIFY
+// channel moves on both; the VALUE channel moves on neither, because every mint the cells
+// reach writes its omitted fields explicitly afterwards (a literal's `to_default`, a
+// `?`-discharge's `construct_default`) — which is why the verifier exists.  Restored, every
+// cell is exact on both backends under LOFT_PREFILL_VERIFY, LOFT_POISON, LOFT_POISON_CLAIM,
+// LOFT_STRICT_STORES and LOFT_NATIVE_LEAK_CHECK, and `LOFT_TRACE_PREFILL=1` counts
+// 2368 / 15 image uses of `Mix` (interpret / native) — the native count is c11's.
+
+struct Mix {
+  a: integer?, f: float?, b: boolean?, s: text, t: text?, n: integer = -1, k: integer,
+  sh: i16?, by: u8, c: character?
+}
+struct Pt { x: float, y: float }
+struct Holder { id: integer, at: Pt, tag: text? }
+enum Shape { Dot { x: integer, w: u8? }, Box { w: integer, h: integer, label: text } }
+struct Bag { items: vector<Mix>, shapes: vector<Shape>, holders: vector<Holder> }
+struct Outer { inner: Inner?, n: integer?, id: integer }
+struct Inner { q: integer?, r: float = 2.5 }
+
+fn check_mix(m: Mix, k: integer, where: text) {
+  assert(m.a == null, "{where} a {m.a}");
+  assert(m.f == null, "{where} f {m.f}");
+  assert(m.b == null, "{where} b {m.b}");
+  assert(m.s == "", "{where} s '{m.s}'");
+  assert(m.t == null, "{where} t {m.t}");
+  assert(m.n == -1, "{where} n {m.n}");
+  assert(m.k == k, "{where} k {m.k}");
+  assert(m.sh == null, "{where} sh {m.sh}");
+  assert(m.by == 0, "{where} by {m.by}");
+  assert(m.c == null, "{where} c {m.c}");
+}
+
+// c1 — a partial literal: every omitted field reads its declared value.
+fn c1() {
+  m = Mix { k: 5 };
+  check_mix(m, 5, "c1");
+  println("c1 {m.k} {m.n}");
+}
+
+// c2 — the same type appended 300 times: the image path after the first mint.
+fn c2() {
+  bag = Bag { items: [], shapes: [], holders: [] };
+  for i in 0..300 { bag.items += [Mix { k: i }]; }
+  s = 0;
+  for i in 0..300 {
+    e = bag.items[i]?;
+    if e == null { assert(false, "c2 absent {i}"); return; }
+    check_mix(e, i, "c2[{i}]");
+    s += e.k;
+  }
+  assert(s == 44850 && len(bag.items) == 300, "c2 {s} {len(bag.items)}");
+  println("c2 {s} {len(bag.items)}");
+}
+
+// c3 — variant records: the tag the prefill writes, the omitted fields of each variant.
+fn c3() {
+  bag = Bag { items: [], shapes: [], holders: [] };
+  for i in 0..40 {
+    if i % 3 == 0 { bag.shapes += [Dot { x: i }]; } else { bag.shapes += [Box { w: i, h: 2 }]; }
+  }
+  dots = 0; boxes = 0; sw = 0;
+  for sh in bag.shapes {
+    match sh {
+      Dot { x, w } => { dots += 1; assert(w == null, "c3 dot w {w}"); sw += x; },
+      Box { w, h, label } => { boxes += 1; assert(h == 2 && label == "", "c3 box {h} '{label}'"); sw += w; },
+    }
+  }
+  assert(dots == 14 && boxes == 26 && sw == 780, "c3 {dots} {boxes} {sw}");
+  println("c3 {dots} {boxes} {sw}");
+}
+
+// c4 — an inline record field omitted: its own defaults, recursively.
+fn c4() {
+  h = Holder { id: 3 };
+  assert(h.at.x == 0.0 && h.at.y == 0.0 && h.tag == null && h.id == 3, "c4 {h.at.x} {h.at.y} {h.tag}");
+  bag = Bag { items: [], shapes: [], holders: [] };
+  for i in 0..50 { bag.holders += [Holder { id: i, at: Pt { x: i as float, y: 0.5 } }]; }
+  sx = 0.0;
+  for hh in bag.holders { sx += hh.at.x + hh.at.y; assert(hh.tag == null, "c4 tag"); }
+  assert(sx == 1250.0, "c4 {sx}");
+  println("c4 {h.id} {sx}");
+}
+
+// c5 — a hidden return buffer, written by a different literal on each path.
+fn mk(i: integer) -> Mix {
+  if i % 2 == 0 { return Mix { k: i, a: i * 10 } }
+  Mix { k: i, t: "t{i}" }
+}
+fn c5() {
+  sa = 0; st = 0;
+  for i in 0..20 {
+    m = mk(i);
+    assert(m.n == -1 && m.s == "" && m.b == null && m.sh == null, "c5 {i}");
+    if i % 2 == 0 { assert(m.a == i * 10 && m.t == null, "c5 even {i}"); sa += m.a ?? 0; }
+    else { assert(m.a == null && m.t == "t{i}", "c5 odd {i}"); st += 1; }
+  }
+  assert(sa == 900 && st == 10, "c5 {sa} {st}");
+  println("c5 {sa} {st}");
+}
+
+// c6 — `text as`: the FINAL fill (declared defaults honoured, text interned) keeps the walk.
+fn c6() {
+  m = "{{\"k\": 9}}" as Mix;
+  check_mix(m, 9, "c6");
+  o = "{{\"id\": 4}}" as Outer;
+  assert(o.inner == null && o.n == null && o.id == 4, "c6 outer {o.n} {o.id}");
+  println("c6 {m.k} {m.n} {o.id}");
+}
+
+// c7 — 2 000 mints of one type through nested loops: the steady state, summed.
+fn c7() {
+  s = 0;
+  for i in 0..40 {
+    bag = Bag { items: [], shapes: [], holders: [] };
+    for j in 0..50 { bag.items += [Mix { k: j, by: 7 }]; }
+    for e in bag.items { assert(e.a == null && e.by == 7 && e.n == -1, "c7 {i}"); s += e.k; }
+  }
+  assert(s == 49000, "c7 {s}");
+  println("c7 {s}");
+}
+
+// c8 — a `?`-discharge: an absent element answers the type's DEFAULT record (LOFT.md
+// § `?`: `points[i]?` → `Point{}`, every field defaulted, the declared default included),
+// a present one the element's own values.
+fn c8() {
+  bag = Bag { items: [Mix { k: 1 }], shapes: [], holders: [] };
+  e = bag.items[9]?;
+  check_mix(e, 0, "c8 absent");
+  p = bag.items[0]?;
+  check_mix(p, 1, "c8 present");
+  println("c8 {e.k} {p.k}");
+}
+
+// c9 — a forward-referenced type (`Outer` names `Inner` before it is declared).  A read
+// THROUGH `o.inner` does not compile today (loft: "Unknown type unknown(N)?" on a
+// forward-referenced nullable struct field, filed beside this plan); the cell reads the
+// fields beside it.
+fn c9() {
+  o = Outer { id: 7 };
+  assert(o.inner == null && o.n == null && o.id == 7, "c9 {o.n} {o.id}");
+  o.inner = Inner { q: 3 };
+  assert(o.inner != null, "c9 inner set");
+  println("c9 {o.id} {o.n}");
+}
+
+// c10 — a keyed insert: the element record minted by the container.
+fn c10() {
+  h: hash<Mix[k]> = [];
+  for i in 0..25 { h[i] = Mix { k: i }; }
+  s = 0;
+  for i in 0..25 {
+    e = h[i]?;
+    if e == null { assert(false, "c10 miss {i}"); return; }
+    check_mix(e, i, "c10[{i}]");
+    s += e.k;
+  }
+  assert(s == 300, "c10 {s}");
+  println("c10 {s}");
+}
+
+// c11 — a hidden return buffer minted per ACTIVATION of its caller: on native every `Mix`
+// literal is a complete-write mint (`OpDatabaseNP`) and `mk`'s buffer is minted once per
+// activation of `c5`, so c1–c10 CAPTURE the image on native and never use it; this cell
+// re-activates the caller thirty times, so the image is used on both backends.
+fn wrap(i: integer) -> integer {
+  m = mk(i);
+  assert(m.n == -1 && m.s == "" && m.b == null && m.sh == null && m.c == null, "c11 {i}");
+  m.k + m.n
+}
+fn c11() {
+  s = 0;
+  for i in 0..30 { s += wrap(i); }
+  assert(s == 405, "c11 {s}");
+  println("c11 {s}");
+}
+
+fn main() {
+  c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11();
+  println("ok");
+}

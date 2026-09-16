@@ -52,8 +52,8 @@ fn melt(self: Fire, w: Wall) -> text { "melt-wall {self.n}{w.n}" }
 fn melt(self: Fire, c: Crate) -> text { "melt-crate {self.n}{c.n}" }
 
 // `both` at two arities — both call spellings
-fn burn(both: Fire) -> text { "burn1 {both.n}" }
-fn burn(both: Fire, k: integer) -> text { "burn2 {both.n} {k}" }
+fn burn(self: Fire) -> text { "burn1 {self.n}" }
+fn burn(self: Fire, k: integer) -> text { "burn2 {self.n} {k}" }
 
 // free, dense and `τ?` — the nullability IS a type
 fn tag(p: P) -> text { "dense {p.x}" }

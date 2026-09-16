@@ -88,6 +88,15 @@ struct Scopes<'s> {
     /// runtime store-nr check) instead of the unconditional `OpFreeRef`
     /// — see the comment block around `scan_set`'s witness-pairing branch.
     paired_witness: HashMap<u16, u16>,
+    /// @PLN164 B1 — the `__ref_N` buffers paired through `use_analysis::adopts_minted_at_bind`:
+    /// the callee returns the local it promoted onto its buffer, the caller's local adopts the
+    /// store the callee MINTED, and the pairing exists for the identity-guarded free alone.
+    /// `reuse_record_buffers` must not pre-mint these — a buffer handed to such a callee
+    /// non-null is written by its literal and then FREED by the interpreter's rebind of the
+    /// promoted local from a call (`143-plan51-cluster3-mixed-lit-call`'s shape: the free
+    /// native guards with its `_rb_w_` witness fires unguarded on the interpreter), so the
+    /// caller's next turn reads a recycled store.  Reuse for this callee shape is @PLN164 B1b.
+    minted_pairs: HashSet<u16>,
     /// loft#1317 — the `__ref_N` an inline record LITERAL minted, mapped to the local it was
     /// then aliased into.  Separate from [`Scopes::paired_witness`] because the free it
     /// governs is conditional on a fact only `get_free_vars` holds: whether that local is
@@ -2988,7 +2997,7 @@ pub(crate) fn collect_fnref_targets(code: &Value, function: &Function) -> HashMa
     let mut out: HashMap<u16, u32> = HashMap::new();
     code.walk(&mut |v| {
         let Value::Set(var, rhs) = v else { return };
-        if !matches!(function.tp(*var).base(), Type::Function(_, _, _)) {
+        if !matches!(function.tp(*var).base(), Type::Function(..)) {
             return;
         }
         // Which definition this right-hand side names is read by
@@ -3029,7 +3038,7 @@ pub(crate) fn collect_fnref_captures(
     let mut out: HashMap<u16, Vec<(i32, u16)>> = HashMap::new();
     code.walk(&mut |v| {
         let Value::Set(var, rhs) = v else { return };
-        if !matches!(function.tp(*var).base(), Type::Function(_, _, _)) {
+        if !matches!(function.tp(*var).base(), Type::Function(..)) {
             return;
         }
         // The closure variable this assignment builds — named by the `FnRef` it yields, so a
@@ -3295,6 +3304,7 @@ fn reuse_record_buffers(
     function: &Function,
     data: &Data,
     witness_buffer: &HashMap<u16, Vec<u16>>,
+    minted_pairs: &HashSet<u16>,
     multi_assigned: &HashSet<u16>,
 ) {
     if !crate::keys::retbuf_reuse_enabled() {
@@ -3326,6 +3336,12 @@ fn reuse_record_buffers(
         // The release is not this site's: the scan already placed the buffer's scope-exit
         // free and the result's guarded one.
         if !function.is_caller_hidden_buf(av) || !function.tp(av).depend().is_empty() {
+            continue;
+        }
+        // @PLN164 B1 — a buffer whose callee mints the store its result adopts is paired
+        // for the guarded free only; pre-minting it hands the callee a store its own rebind
+        // frees on the interpreter (`Scopes::minted_pairs`).
+        if !ungated && minted_pairs.contains(&av) {
             continue;
         }
         let Some(td) = function.tp(av).base().heap_def_nr() else {
@@ -3466,6 +3482,7 @@ fn run_scan_phase(
         lift_texts: Vec::new(),
         ret_temp_counter: 0,
         paired_witness: HashMap::new(),
+        minted_pairs: HashSet::new(),
         literal_buffer: HashMap::new(),
         lift_join_witness: HashMap::new(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
@@ -3740,6 +3757,7 @@ fn run_scan_phase(
         &function,
         data,
         &scopes.witness_buffer,
+        &scopes.minted_pairs,
         &scopes.multi_assigned,
     );
     data.definitions[d_nr as usize].code = code;
@@ -6467,7 +6485,7 @@ fn arm_value_delivers_record(leaf: &Value, r: u16, function: &Function) -> bool 
         // record unfreed on every omitting path.
         Value::Var(v) if (*v as usize) < function.count() as usize => {
             match function.tp(*v).base() {
-                Type::Function(_, _, deps) => deps.as_slice().contains(&r),
+                Type::Function(_, _, deps, ..) => deps.as_slice().contains(&r),
                 _ => true,
             }
         }
@@ -6958,7 +6976,7 @@ fn closure_records_of_source(data: &Data, function: &Function, v: u16, out: &mut
         // here: every entry of a def-space list names the CALLEE's attributes or the
         // CALLEE's frame, never a record of this function, so nothing it carries can pass
         // the caller's membership test (`85-closure-factory-discarded-free`).
-        Type::Function(_, _, deps) => {
+        Type::Function(_, _, deps, ..) => {
             for w in deps.as_slice() {
                 if !out.contains(w) {
                     out.push(*w);
@@ -9082,6 +9100,13 @@ impl Scopes<'_> {
             && data.def(fn_nr).is_loft_defined()
         {
             let adopts_fresh_store = data.def(fn_nr).return_adopts_fresh_store();
+            // @PLN164 B1 (`@FR-O-Move`) — a plain local bound from a callee that returns
+            // its own promoted local takes the SAME pairing a fresh-adopting callee's result
+            // takes: the deps are stripped below (the local OWNS the store the callee
+            // minted) and its free is guarded by identity against the call's buffer.  One
+            // home decides it for the two backends' bind arms too.
+            let adopts_minted =
+                crate::use_analysis::adopts_minted_at_bind(data, function, v, unspanned_value);
             // @PLN85 `local_source` over-free fix (LOFT_JOIN_OWN): `v` holds an OWNED
             // store (this adopts-fresh call) that a later borrow/join reassignment
             // displaces. Strip `v`'s declared deps so it is OWNED everywhere — the
@@ -9203,7 +9228,7 @@ impl Scopes<'_> {
             // the free (loft#1201).  `OpFreeRefIfDistinct` answers both cases at run time
             // and is conservative in the direction that matters: it frees exactly as the
             // plain free did when the stores DIFFER, and only skips when they alias.
-            if (adopts_fresh_store || publishes_through_ref || vector_shaped)
+            if (adopts_fresh_store || adopts_minted || publishes_through_ref || vector_shaped)
                 && let Value::Call(_, args) = unspanned_value
             {
                 for arg in args {
@@ -9245,6 +9270,9 @@ impl Scopes<'_> {
                             // handed is what gives the value an owner).
                             if av == v {
                                 continue;
+                            }
+                            if adopts_minted && !adopts_fresh_store {
+                                self.minted_pairs.insert(av);
                             }
                             // A vector admitted here ONLY by the alias case below
                             // (`!adopts_fresh_store`, no `&`) takes the inner-slot branch
@@ -11794,7 +11822,7 @@ impl Scopes<'_> {
                     // caller read `internal error: invalid fn-ref`.  The interpreter answered
                     // correctly by accident, off eval-stack top, which is the same accident
                     // loft#957 names one carve-out earlier in this list.
-                    || matches!(tp.base(), Type::Function(_, _, _)))
+                    || matches!(tp.base(), Type::Function(..)))
                     && !matches!(tp.base(), Type::Iterator(_, _))
                 {
                     // loft#957 — the same eval-stack reliance P236 names above, for
@@ -12450,7 +12478,7 @@ impl Scopes<'_> {
             // free the closure DbRef embedded at offset+4 in a fn-ref slot.
             // The 16-byte fn-ref stack slot is reclaimed by FreeStack, but the closure
             // store record at offset+4 must be explicitly freed via OpFreeRef.
-            if let Type::Function(_, _, _) = function.tp(v) {
+            if let Type::Function(..) = function.tp(v) {
                 // fn-ref variables OWN their closure store. The dep list
                 // tracks captured variables, not store borrowing. Always
                 // emit OpFreeRef unless the fn-ref is the return value.
@@ -12484,7 +12512,7 @@ impl Scopes<'_> {
                 // side never does.
                 let mut carried: Vec<u16> = Vec::new();
                 closure_records_of_source(data, function, v, &mut carried);
-                let link_carries = matches!(function.tp(v), Type::Function(_, _, _))
+                let link_carries = matches!(function.tp(v), Type::Function(..))
                     && carried.iter().any(|w| link_delivered.contains(w));
                 let in_ret = tp.depend().contains(&v)
                     || ret_carries
@@ -13277,7 +13305,7 @@ impl Scopes<'_> {
         if !callee.is_loft_defined() {
             return None;
         }
-        if matches!(callee.returned().base(), Type::Function(_, _, _)) {
+        if matches!(callee.returned().base(), Type::Function(..)) {
             return None;
         }
         if !callee.returns_borrowed_view() {
@@ -13343,7 +13371,7 @@ impl Scopes<'_> {
         // heap returns alone — the shape test below names them — so the ownership question
         // is asked only of a callee that has one.  Without the gate, `fn make_adder(b) ->
         // fn(integer) -> integer` tripped that assert before any of its own work ran.
-        if matches!(callee.returned().base(), Type::Function(_, _, _)) {
+        if matches!(callee.returned().base(), Type::Function(..)) {
             return None;
         }
         if !callee.returns_borrowed_view() {
@@ -14941,7 +14969,7 @@ impl Scopes<'_> {
                         // name the closure the call reads.
                         Value::CallRef(fn_var, _) => !matches!(
                             function.tp(*fn_var),
-                            Type::Function(_, _, d) if d.is_empty()
+                            Type::Function(_, _, d, ..) if d.is_empty()
                         ),
                         _ => false,
                     },
@@ -15140,10 +15168,10 @@ impl Scopes<'_> {
                 // A non-capturing return carries the null closure sentinel → the free
                 // is a safe no-op; a borrowed fn-ref copy is marked `skip_free`
                 // elsewhere, so only a freshly produced closure is lifted here.
-                if let Type::Function(params, ret, _) = returned {
+                if let Type::Function(params, ret, _, consts) = returned {
                     return Some(Self::reopt(
                         opt,
-                        Type::Function(params.clone(), ret.clone(), Deps::none()),
+                        Type::Function(params.clone(), ret.clone(), Deps::none(), *consts),
                     ));
                 }
             }
@@ -16670,7 +16698,7 @@ impl Scopes<'_> {
                     // bytes of uninitialised stack as the closure half.  The `if` spelling of
                     // the identical choice is correct precisely because it IS hoisted, which
                     // gives both arms a `fn`-typed destination to be padded against.
-                    let is_fnref_result = matches!(block.result.base(), Type::Function(_, _, _));
+                    let is_fnref_result = matches!(block.result.base(), Type::Function(..));
                     let mut hoist_tmp: Option<u16> = None;
                     if is_return
                         && (!free.is_empty() || !trailing_frees.is_empty())

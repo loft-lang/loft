@@ -9,6 +9,83 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Every literal exit of a record function writes the buffer it was handed (2026-09-15)
+
+A function with several `return S { … }` exits built each mid-body literal into a work-ref
+store of its own and only the TAIL literal into the `__retbuf` its caller handed
+(@PLN157 § V's `BuildIntoBuffer` rewrote the tail alone), so `read_paint`'s four exits
+answered three different stores plus the buffer, and the caller adopted whichever came
+back.  `Parser::literal_exits_into_buffer` now applies the same rewrite to every mid-body
+literal return once the tail's delivery is decided — the literal's `OpDatabase` goes
+behind the "caller offered a record" guard and its writes target `__retbuf` — so a callee
+whose exits are all literals answers the ONE buffer; a promoted local beside a literal
+exit (`o = P { … }; if c { return P { … } }; …; o`) declines, because that local IS the
+buffer and the two would share it.  Under adopt-at-bind (B1) the
+caller hands null and the store census does not move; what changes is the callee's
+contract, which is the precondition `(R-Place)` states: a callee that on some exit answers
+a store other than the buffer it was handed cannot be handed a record placed where its
+result will live.  Switch `LOFT_NO_LITERAL_EXIT_BUFFER=1`; pins `tests/literal_exit_buffer.rs`
+(the IR shape on `read_paint`, the switch, both backends).  @PLN164 B2's first unit.
+
+### The default prefill of a minted record is one block write of a per-type image (2026-09-15)
+
+Every record mint that is not proven complete-write (`OpDatabase`, `OpNewRecord`,
+`OpInsertVector`, the hidden buffers) prefilled the record field by field:
+`set_default_value_nullable` walked the type's fields, resolved the store per field,
+recursed into inline records and wrote each sentinel, zero and variant tag through its
+typed setter — 7 % of the drawing library's `parse` row for bytes that are the same on
+every mint of a type.  `(R-Prefill)`: the prefill is now a per-type IMAGE, captured from
+the walk's FIRST run over a zeroed span (so the image is what the walk writes, by
+construction, never a second computation of the defaults) and written as one block for
+every later mint.  A type with a field not laid out yet (`u16::MAX` content) keeps the
+walk — its image would freeze the field's zero where the walk, once the field is laid out,
+writes its sentinel; a `text as Struct` fill (`Absent::Final`, declared defaults and
+interned text) keeps the walk; a table rollback forgets the image like the heap facts.
+One runtime home, so both backends take it.  Switch `LOFT_NO_PREFILL_IMAGE=1`; falsifier
+`LOFT_PREFILL_VERIFY=1` (the walk re-run after every image write, a panic naming the type
+where they disagree — clean over all 1432 `tests/scripts` files on the interpreter and the
+parse bench on native); `LOFT_TRACE_PREFILL=1` names each capture and each use, because a
+run can pass without reaching the image at all (on `--native` a literal's mint is a
+complete write that never prefills, and a callee's buffer is minted once per caller
+activation — the cells' native half was vacuous until c11 re-activated the caller per
+iteration).  Cells `164-activation-arena/bytecode-comparisons/C4-prefill-image-cells.loft`
+(c1–c11, both backends); guard `tests/scripts/164-prefill-image.loft`; pins
+`tests/prefill_image.rs` (the verify run on both backends, the switch, the mint census,
+and an image USE on both backends).
+Measured on the parse bench: 46.4–48.5 k → 42.3–42.8 k ns/op (≈ −11 %, hash unchanged).
+@PLN164 C4.
+
+### A negative declared field default survives a `text as Struct` cast (2026-09-15)
+
+loft#876 folded a CONSTANT declared default onto the schema `Field` so the JSON walker could
+answer a missing key with it; the fold matched plain literals, and `n: integer = -1` is a
+NEGATION of a literal to the parser (`OpMinSingleInt(1)`), so a negative default folded to
+nothing and the cast wrote the type's zero where the struct literal wrote `-1` — the same
+field had two absent values again, for exactly the defaults a programmer reaches for as an
+"unset" marker.  `typedef::fold_declared_default` now sees through a unary minus applied to
+a numeric literal (both backends: the native `init()` replays the same fold).  Guard
+`tests/scripts/a-negative-declared-default-survives-a-cast.loft`.  Found while writing
+@PLN164 C4's cast cell.
+
+### A plain local's first bind from a build-into-a-local callee adopts the minted store (2026-09-15)
+
+`fn mk() -> P { o = P { … }; …; o }` reports its return as `["o"]`, the local the parser
+promoted onto the hidden buffer, and `b = mk()` copied it on both backends: the caller minted
+a second store, deep-copied the callee's and freed it — where `(O-Move)` transfers the store
+to the binding, and a literal-returning callee's result already adopts.  The callee-level
+predicate (`return_adopts_fresh_store`) declines the shape for a reason that belongs to one
+destination only (a bound local that is itself a return buffer, plan 51 cluster 3), so the
+question is now asked per site: `use_analysis::adopts_minted_at_bind` admits a direct call
+whose return deps name exactly its buffer attribute, bound to a plain local, and `scopes`,
+the interpreter's first-bind arm and native's dispatch read that one answer.  The local owns
+the callee's store, its free is guarded by identity against the call's buffer, and the
+delivery is a bare `PutRef` / plain assignment: one mint and one free per call.  The buffer
+stays null — enrolling it in the entry-time pool hands the callee a store the interpreter's
+rebind of the promoted local frees where native guards it (`_rb_w_`), which the cell matrix
+caught as a use-after-free on `143`'s shape; reuse for this callee shape is @PLN164 B1b.
+Switch `LOFT_NO_ADOPT_FIRST_BIND=1`; guard `tests/scripts/164-adopt-first-bind.loft`; pins
+`tests/adopt_first_bind.rs`.  `formal/ownership.md` D-own-42 (closed).  @PLN164 B1.
+
 ### A counted loop with a computed start pays no null test per iteration (2026-09-13)
 
 `for i in a..b` where `a` is not a literal was lowered with a null-encoded counter: seeded at

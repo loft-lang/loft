@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The name of a standard-library function that is not a method is reserved for it: a program
+// cannot define its own, whatever the parameters.  The refusal read "Cannot redefine 'log_info'
+// (already defined at 01_code.loft:1404:59)" — the wording of a program defining its own function
+// twice — and now says the name belongs to the standard library.  A program's duplicate of its
+// own function keeps the "Cannot redefine" wording, and a name the compiler only lowers for
+// built-in types (`sort`, `insert`, `next`, `exhausted`) stays open — see
+// `a-builtin-call-name-never-hides-a-programs-own-function.loft`.
+//
+// @falsified-at: 307d3391a — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-standard-library-function-name-is-reserved.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations, on both backends — the control refuses both definitions too, as
+//   "Cannot redefine 'log_info' (already defined at …)", so neither expected error matches there.
+//   ARMED: nothing.
+//   WITNESS: measured on the control before this file: every `log_*`, `parallel_for`, and the
+//   stdlib's exact `log_info` signature read "Cannot redefine" — the wording of a duplicate.
+//   HOLDS: a program's duplicate of its own function and C95's `floor_mod` / `clamp` keep "Cannot
+//   redefine" on both trees; a program's `len(r: Roster)` still works.
+// @EXPECT_ERROR: `log_info` is a standard-library function, and its name is reserved for it: a program cannot define its own `log_info`
+// @EXPECT_ERROR: `parallel_for` is a standard-library function, and its name is reserved for it: a program cannot define its own `parallel_for`
+
+struct Roster { n: integer }
+
+fn log_info(r: Roster) -> text { "roster {r.n}" }
+
+fn parallel_for(r: Roster) -> integer { r.n }
+
+fn main() {
+  r = Roster { n: 5 };
+  println("{r.n}");
+}

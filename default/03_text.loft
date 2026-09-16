@@ -67,8 +67,8 @@ pub fn char_slice(self: text, from: integer, to: integer) -> text {
 // `02_files.loft` § Path helpers, so they're available before
 // `03_text.loft` loads — same call shape, same `pub fn` signatures.)
 // Removes leading and trailing whitespace. Use when processing user input or file content.
-pub fn trim(both: text) -> text[both];
-#rust"@both.trim()"
+pub fn trim(self: text) -> text[self];
+#rust"@self.trim()"
 #pure
 // Removes leading whitespace only.
 pub fn trim_start(self: text) -> text[self];
@@ -212,7 +212,7 @@ pub fn is_control(self: character) -> boolean;
 // Joins parts with sep between each consecutive pair. Returns "" for an empty vector.
 // Use to build comma-separated lists, path segments, or any delimited output.
 // Example: @STD-003
-pub fn join(self: vector<text>, sep: text) -> text {
+pub fn join(self: const vector<text>, sep: text) -> text {
   result = "";
   for p in self {
     if !p#first { result += sep; }
@@ -256,7 +256,7 @@ pub fn byte_at(self: text, i: integer) -> integer;
 // assemble a byte buffer and need to turn it back into text.  Bytes that are
 // not valid UTF-8 yield the empty text (never a crash); validate first if you
 // must tell "empty input" from "invalid bytes" apart.
-pub fn text_from_bytes(bytes: vector<u8>) -> text;
+pub fn text_from_bytes(bytes: const vector<u8>) -> text;
 #rust"stores.text_from_bytes_native(@bytes)"
 #pure
 // Build a one-character text from a Unicode CODE POINT — the inverse of the

@@ -90,16 +90,21 @@ fn main() {
   // describe() uses format strings with field access inside each variant's method.
   assert(c.describe() == "circle with radius 1", "describe circle: {c.describe()}");
   assert(r.describe() == "rect 4 by 5", "describe rect: {r.describe()}");
-  // ## Stubs for missing implementations
-  // If a variant intentionally has no implementation of a method, the compiler
-  // emits a warning ("no implementation of 'area' for variant 'Rect'"). Provide an
-  // empty-body stub to silence it:
+  // ## A method on the enum itself is the fallback
+  // Calling area() on a value held as a 'Shape' works like a match on its variant,
+  // and a match must cover every variant. So when only some variants have their
+  // own version, the call is refused unless the enum has one too:
+  //   fn area(self: Shape) -> float { 0.0 }
+  // That version is the '_' arm: a variant with its own area() still runs it, and
+  // every other variant runs this one. A method only some variants have is fine as
+  // long as nothing calls it on a value held as the enum.
+  // An empty-body stub for one variant also covers it:
   //   fn area(self: SomeVariant) -> float { }
   // Give the stub a real body — '{ 0.0 }' — when anything reads its result. An
-  // empty body silences the warning and hands back the type's default (0.0 for a
-  // float, 0 for an integer, "" for text), which is the same on both backends.
-  // That is a real value, not a marker: it is not null, so there is nothing to
-  // test for, and a caller cannot tell it from a computed 0.0.
+  // empty body hands back the type's default (0.0 for a float, 0 for an integer,
+  // "" for text), which is the same on both backends. That is a real value, not a
+  // marker: it is not null, so there is nothing to test for, and a caller cannot
+  // tell it from a computed 0.0.
 
   // ## Match expressions on enums
   // Match picks a code path based on the active variant. You must handle

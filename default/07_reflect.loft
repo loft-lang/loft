@@ -277,7 +277,7 @@ pub struct ValueInfo {
 // The value parameter is declared `TypeInfo` only because loft has no way to
 // spell "any record"; the parser substitutes the real argument, and only the
 // reference ABI matters here. `struct_to_json` (06_json.loft) does the same.
-pub fn reflect_field(value: TypeInfo, position: integer, kt: integer) -> ValueInfo;
+pub fn reflect_field(value: const TypeInfo, position: integer, kt: integer) -> ValueInfo;
 // Reads through the SAME `Parts::Struct` field list the store itself is walked
 // by, and allocates the answer into the caller's own stores → par-safe.
 #impure(host_io)
@@ -312,5 +312,5 @@ pub fn reflect_field(value: TypeInfo, position: integer, kt: integer) -> ValueIn
 // `field_value(x, path)` is intercepted in `src/parser/control.rs` beside the
 // single-position form and lowered to `reflect_field_path(x, path, <type-id>)`,
 // so the type id is a parse-time constant on both backends.
-pub fn reflect_field_path(value: TypeInfo, path: vector<integer>, kt: integer) -> ValueInfo;
+pub fn reflect_field_path(value: const TypeInfo, path: const vector<integer>, kt: integer) -> ValueInfo;
 #impure(host_io)

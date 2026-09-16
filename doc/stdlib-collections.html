@@ -25,23 +25,23 @@
 <article>
 <div class="section-desc"><p>Operations on vector&lt;T&gt; — the primary ordered collection type. Vectors are grown by appending with += and elements are accessed by index. All structures are passed by reference instead of by value</p></div>
 <div class="item">
-<pre><code>pub fn len(both: vector) -&gt; integer</code></pre>
+<pre><code>pub fn len(self: const vector) -&gt; integer</code></pre>
 <p>Number of elements in the vector. Use in loop bounds: for i in 0..v.len().</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(both: sorted) -&gt; integer</code></pre>
+<pre><code>pub fn len(self: const sorted) -&gt; integer</code></pre>
 <p>Number of elements in a sorted collection.</p>
 </div>
 <div class="item">
-<pre><code>pub fn clear(both: vector)</code></pre>
+<pre><code>pub fn clear(self: vector)</code></pre>
 <p>Remove all elements from the vector, setting its length to 0.</p>
 </div>
 <div class="item">
-<pre><code>pub fn len(both: hash) -&gt; integer</code></pre>
+<pre><code>pub fn len(self: const hash) -&gt; integer</code></pre>
 <p>Number of elements in a hash collection.</p>
 </div>
 <div class="item">
-<pre><code>pub fn size(both: hash) -&gt; integer</code></pre>
+<pre><code>pub fn size(self: const hash) -&gt; integer</code></pre>
 <p>The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (load factor 0.75).  0 for an empty (unallocated) hash.</p>
 </div>
 

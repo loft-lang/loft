@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic method whose receiver IS the type variable (`fn twice_of<T>(self: T)`) is refused at
+// its declaration (`interfaces.md (G-Gen)`, loft#1539).
+//
+// A method is found on its receiver's type, and the definition is stored under the type
+// variable's placeholder, `t_1T_twice_of` — a key no receiver can spell, so no call could reach
+// it and each one reported an unknown field of whatever it was called on.  A receiver built over
+// the variable (`self: vector<T>`) is keyed on `vector` and works: that half is the sibling
+// guard `1539-a-generic-method-on-a-vector-receiver-instantiates.loft`.
+//
+// @falsified-at: b12e15474 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1539b-a-generic-method-on-the-type-variable-itself-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations, both backends.
+//   ARMED: nothing.
+//   WITNESS: on the control the refusal is not emitted (FAIL/1).
+//   HOLDS: leak and panic are `none` on both trees.
+// @EXPECT_ERROR: a method's receiver cannot be the type variable T itself — a method is found on the receiver's type, and T is not a type until it is instantiated; write `fn twice_of<T>(x: T)` and call it as `twice_of(x)`
+
+fn twice_of<T>(self: T) -> vector<T> { [self, self] }
+
+fn main() {
+  println("declared");
+}

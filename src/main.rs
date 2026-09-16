@@ -8933,9 +8933,6 @@ fn main() {
     if let Some(map) = script_line_map.as_deref() {
         p.diagnostics.remap_lines(&abs_file, map);
     }
-    // loft#985 — the post-scope-check lint family lives in ONE place, so the program path
-    // here and `loft test` run the same set; the error gate (loft#883) travels with it.
-    loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
     // @PLN24 arc B — the interpreter calls `#c` bindings for real now; what
     // remains gated is the ONE shape the contract does not cover.
     //
@@ -8948,6 +8945,15 @@ fn main() {
     // raising the interpreter to meet rustc rather than narrowing what already
     // compiles.
     loft::use_analysis::c_binding_call_unsupported(&p.data, &mut p.diagnostics, &abs_file);
+    // loft#985 — the post-scope-check lint family lives in ONE place, so the program path
+    // here and `loft test` run the same set; the error gate (loft#883) travels with it.
+    // The scope pass runs first, as it does under `loft test`: the lints read the ownership
+    // verdicts, the materialised copies and the drops it places.  A program with an error
+    // stops at the check below and is never compiled, so it needs neither.
+    if p.diagnostics.level() < Level::Error {
+        scopes::check(&mut p.data, &mut p.database);
+        loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
+    }
     // @PLN102 build step 2/3 — report-only link oracles (no-op unless LOFT_DUMP_LINK_SAFE/OBS).
     loft::use_analysis::dump_link_safety(&p.data);
     loft::use_analysis::dump_link_observability(&p.data);
@@ -9059,7 +9065,6 @@ fn main() {
             std::process::exit(1);
         }
     }
-    scopes::check(&mut p.data, &mut p.database);
     // @PLN90 Step 5 — the user-facing copy report, emitted ONCE here (the whole program is now
     // loaded + checked) rather than per file-load. Gated on `--report-copies`; a no-op otherwise.
     loft::use_analysis::report_copies(&p.data);

@@ -1,0 +1,349 @@
+diff --git b/src/lexer.rs a/src/lexer.rs
+index 8abcaf2bc..0922d9642 100644
+--- b/src/lexer.rs
++++ a/src/lexer.rs
+@@ -1902,13 +1902,6 @@ impl Lexer {
+         self.restart(filename);
+     }
+ 
+-    /// The text of an in-memory source registered by [`Self::parse_string`], or `None` for a
+-    /// file that lives on disk.
+-    #[must_use]
+-    pub fn virtual_source(&self, filename: &str) -> Option<&str> {
+-        self.virtual_files.get(filename).map(String::as_str)
+-    }
+-
+     pub fn switch(&mut self, filename: &str) {
+         // An in-memory source registered by `parse_string` re-serves from
+         // memory — its name is not an openable path.
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index f7b70fb90..7c8e4b17a 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -17215,27 +17215,14 @@ impl Parser {
+         arg_pos: &[Position],
+         name_pos: &Position,
+     ) -> Type {
+-        // Every special case below is the compiler's own lowering of a call NAME, and it is a
+-        // candidate of last resort: taken only when no definition the program declares takes
+-        // these argument types (`program_definition_applies`).  A program's `sort(r: Roster)`
+-        // is what `sort(r)` reaches, and `sort(v)` over a vector still takes the lowering.
+-        // Pass 1 cannot see a definition below the call yet, so there the file's own
+-        // declarations defer the special form to pass 2, as any later definition is deferred.
+-        let special = if self.program_definition_applies(source, name, types)
+-            || (self.first_pass && self.file_has_pending_fn(name))
+-        {
+-            ""
+-        } else {
+-            name
+-        };
+         if matches!(
+-            special,
++            name,
+             "assert" | "panic" | "log_info" | "log_warn" | "log_error" | "log_fatal"
+         ) {
+             return self.parse_call_diagnostic(val, name, list, types, call_pos);
+         }
+         self.check_persist_bind_root(name, list, arg_pos);
+-        match special {
++        match name {
+             // @PLN105 Phase 1 — deliver(tag, value): hand the value's descriptor
+             // handle to the host. Lower to OpDeliver(tag, value, db_tp), filling
+             // db_tp from the value's static type. The value is passed by VALUE (its
+@@ -17477,26 +17464,6 @@ impl Parser {
+                 *val = Value::Call(op, list.to_vec());
+                 return Type::Boolean;
+             }
+-            // `type_name(x)` / `typedef(x)` reach here only when the program declares a function
+-            // of that name (`parse_variable` then parses an ordinary call) and none of its
+-            // definitions takes `x`: the special form answers for the argument's type, as it
+-            // does when nothing is declared.  The argument is not evaluated — `type_of`'s rule.
+-            "type_name" if types.len() == 1 => {
+-                if !self.first_pass {
+-                    *val = Value::Text(self.data.type_name_str(&types[0]));
+-                }
+-                return Type::Text(Deps::none());
+-            }
+-            "typedef" if types.len() == 1 => {
+-                let tp = self.data.def(self.data.type_def_nr(&types[0])).known_type();
+-                *val = Value::Int(i32::from(tp));
+-                return Type::Integer(IntegerSpec {
+-                    min: 0,
+-                    max: 65536,
+-                    not_null: false,
+-                    forced_size: None,
+-                });
+-            }
+             _ => {}
+         }
+         // loft#1147 — `assert_eq` / `assert_ne` take the CALLER's position, exactly as
+diff --git b/src/parser/dispatch.rs a/src/parser/dispatch.rs
+index ee48072c1..3232af647 100644
+--- b/src/parser/dispatch.rs
++++ a/src/parser/dispatch.rs
+@@ -104,169 +104,41 @@ impl Parser {
+             })
+             .collect();
+         let mut ranked = Vec::new();
+-        for r in routines {
+-            if let Some(ranks) = self.definition_ranks(r, routed) {
+-                ranked.push((r, ranks));
++        'routine: for r in routines {
++            let declared: Vec<Type> = self
++                .data
++                .def(r)
++                .attributes
++                .iter()
++                .filter(|p| !p.hidden)
++                .map(|p| p.typedef.clone())
++                .collect();
++            if routed.len() > declared.len() {
++                continue;
+             }
+-        }
+-        Some(ranked)
+-    }
+-
+-    /// How far each routed argument is from definition `r`'s parameter, or `None` when `r`
+-    /// does not take the call (`Disp-Applicable`): more arguments than parameters, a trailing
+-    /// parameter with no default, or an argument its parameter cannot accept.
+-    fn definition_ranks(&mut self, r: u32, routed: &[Type]) -> Option<Vec<Rank>> {
+-        let declared: Vec<Type> = self
+-            .data
+-            .def(r)
+-            .attributes
+-            .iter()
+-            .filter(|p| !p.hidden)
+-            .map(|p| p.typedef.clone())
+-            .collect();
+-        if routed.len() > declared.len() {
+-            return None;
+-        }
+-        // A trailing parameter is admitted when it has a default (the one optionality a
+-        // definition carries — owner, 2026-09-14).
+-        let trailing_defaulted = self
+-            .data
+-            .def(r)
+-            .attributes
+-            .iter()
+-            .filter(|p| !p.hidden)
+-            .skip(routed.len())
+-            .all(|p| p.value != crate::data::Value::Null);
+-        if !trailing_defaulted {
+-            return None;
+-        }
+-        routed
+-            .iter()
+-            .zip(&declared)
+-            .map(|(arg, param)| self.dispatch_rank(arg, param))
+-            .collect()
+-    }
+-
+-    /// Does a definition the PROGRAM declares — anything outside the stdlib prelude, a
+-    /// library's included — take a call of `name` with these argument types?  A compiler
+-    /// special case for a call name (`sort` over a vector, `type_of`, `assert`, …) is a
+-    /// candidate of last resort: it is taken only when this answers `false`, so no special
+-    /// name limits what a program may define, and the call reaches the definition the type
+-    /// system selects.  Asked the way the ordinary call asks: the name's overload set first,
+-    /// then the ladder.
+-    pub(crate) fn program_definition_applies(
+-        &mut self,
+-        source: u16,
+-        name: &str,
+-        types: &[Type],
+-    ) -> bool {
+-        let routed = self.data.routed_types(types);
+-        let d = match self.select_overload(source, name, &routed) {
+-            Selection::One(d) => d,
+-            // Several of the set's definitions tie: the ordinary call reports that.
+-            Selection::Ambiguous(_) => return true,
+-            Selection::NoneApplicable => return false,
+-            Selection::NotDecidable => self.data.select_fn(source, name, types),
+-        };
+-        d != u32::MAX
+-            && self.data.def_type(d) == DefType::Function
+-            && !crate::portable_path::is_stdlib_source(&self.data.def(d).position().file)
+-            && self.definition_ranks(d, &routed).is_some()
+-    }
+-
+-    /// Does the PROGRAM declare a function named `name` at all?  Asked where a special form
+-    /// is recognised before its argument is parsed (`sizeof(…)`, `type_name(…)`,
+-    /// `typedef(…)`), so the argument cannot yet say which definition the call reaches: a
+-    /// declared function sends the call down the ordinary path, where
+-    /// [`Self::program_definition_applies`] decides by the argument's type.
+-    pub(crate) fn program_declares_fn(&self, name: &str) -> bool {
+-        self.data.definitions.iter().any(|d| {
+-            d.def_type == DefType::Function
+-                && d.original_name().as_str() == name
+-                && !crate::portable_path::is_stdlib_source(&d.position().file)
+-        })
+-    }
+-
+-    /// Is the next argument a TYPE name closing the call — `sizeof(Roster)` — which no
+-    /// function can take, so the special form keeps it whatever the program declares?
+-    /// Reads ahead and restores the lexer.
+-    pub(crate) fn next_is_type_name_argument(&mut self) -> bool {
+-        let lnk = self.lexer.link();
+-        let is_type = match self.lexer.has_identifier() {
+-            Some(id) => {
+-                let d_nr = self.data.def_nr(&id);
+-                d_nr != u32::MAX
+-                    && !matches!(
+-                        self.data.def_type(d_nr),
+-                        DefType::EnumValue
+-                            | DefType::Function
+-                            | DefType::Dynamic
+-                            | DefType::Generic
+-                            | DefType::Unknown
+-                    )
+-                    && self.lexer.has_token(")")
++            // A trailing parameter is admitted when it has a default (the one optionality a
++            // definition carries — owner, 2026-09-14).
++            let trailing_defaulted = self
++                .data
++                .def(r)
++                .attributes
++                .iter()
++                .filter(|p| !p.hidden)
++                .skip(routed.len())
++                .all(|p| p.value != crate::data::Value::Null);
++            if !trailing_defaulted {
++                continue;
+             }
+-            None => false,
+-        };
+-        self.lexer.revert(lnk);
+-        is_type
+-    }
+-
+-    /// Does the current program source FILE declare a function named `name` that pass 1 has
+-    /// not reached yet — one BELOW this call?  Pass 1 meets a call before the definitions
+-    /// that follow it, so [`Self::program_definition_applies`] cannot see them — and a special
+-    /// form answering ITS type on pass 1 while the program's definition answers another on
+-    /// pass 2 refuses the program (*"cannot change type from void to text"*).  The file's
+-    /// `fn <name>` declarations are counted by a lexical scan and compared with the ones of
+-    /// this file already registered: while some are still ahead, the special form waits for
+-    /// pass 2, exactly as any call of a later definition waits.  Once all are registered the
+-    /// exact type check decides on pass 1 too, so both passes answer alike.  A false positive
+-    /// — the words in a comment, a `fn(…)` type — only defers the special form to pass 2;
+-    /// the stdlib's own files are never scanned.
+-    pub(crate) fn file_has_pending_fn(&mut self, name: &str) -> bool {
+-        let file = self.lexer.pos().file.clone();
+-        if crate::portable_path::is_stdlib_source(&file) {
+-            return false;
+-        }
+-        if !self.declared_fn_names.contains_key(&file) {
+-            let text = self
+-                .lexer
+-                .virtual_source(&file)
+-                .map_or_else(|| Self::read_source(&file), str::to_string);
+-            let mut counts: std::collections::HashMap<String, usize> =
+-                std::collections::HashMap::new();
+-            let mut after_fn = false;
+-            for word in text.split(|c: char| !(c.is_alphanumeric() || c == '_')) {
+-                if word.is_empty() {
+-                    continue;
+-                }
+-                if after_fn {
+-                    *counts.entry(word.to_string()).or_default() += 1;
++            let mut ranks = Vec::with_capacity(routed.len());
++            for (arg, param) in routed.iter().zip(&declared) {
++                match self.dispatch_rank(arg, param) {
++                    Some(k) => ranks.push(k),
++                    None => continue 'routine,
+                 }
+-                after_fn = word == "fn";
+             }
+-            self.declared_fn_names.insert(file.clone(), counts);
++            ranked.push((r, ranks));
+         }
+-        let declared = self
+-            .declared_fn_names
+-            .get(&file)
+-            .and_then(|counts| counts.get(name))
+-            .copied()
+-            .unwrap_or(0);
+-        if declared == 0 {
+-            return false;
+-        }
+-        let reached = self
+-            .data
+-            .definitions
+-            .iter()
+-            .filter(|d| {
+-                matches!(d.def_type, DefType::Function | DefType::Generic)
+-                    && d.original_name().as_str() == name
+-                    && d.position().file == file
+-            })
+-            .count();
+-        declared > reached
++        Some(ranked)
+     }
+ 
+     /// `Disp-Select` over an overload set for the routed argument types.
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 24e47afc5..de9d0732b 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -894,10 +894,6 @@ pub struct Parser {
+     /// Set by `dynamic_dispatcher` when it refused a leaf, so the call site returns rather
+     /// than falling to the ladder and reporting the same site a second way.
+     pub(crate) reported_dynamic_refusal: bool,
+-    /// How many functions of each name each program source FILE declares, by a lexical scan —
+-    /// pass 1's answer to "is a definition of this name still below the call?"
+-    /// (`Parser::file_has_pending_fn`).
+-    pub(crate) declared_fn_names: HashMap<String, HashMap<String, usize>>,
+     /// Set by `iter_op` when `#fields` is encountered. Holds the struct `def_nr`.
+     /// Checked by `parse_for` to take the unrolling path. Reset after use.
+     pub(crate) fields_of: u32,
+@@ -1492,7 +1488,6 @@ impl Parser {
+             lambda_counter: 0,
+             expected: Type::Unknown(0),
+             reported_dynamic_refusal: false,
+-            declared_fn_names: HashMap::new(),
+             fields_of: u32::MAX,
+             capture_context: Vec::new(),
+             capture_owner: std::collections::HashMap::new(),
+@@ -3549,8 +3544,6 @@ impl Parser {
+         self.deferred_unknown.clear();
+         self.resolutions.clear();
+         self.data.reset();
+-        // A REPL input reuses its virtual file name with new text.
+-        self.declared_fn_names.clear();
+         // The source stays the stdlib's, 0: this is the REPL session's entry, where every
+         // later input and a debugger's eval resolve their names under that scope, and where
+         // a definition colliding with a stdlib one is a collision of ONE key.  A gate that
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index a5cbd56be..410816dc3 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -414,25 +414,12 @@ impl Parser {
+             return t;
+         }
+         if self.lexer.has_token("(") {
+-            // @F45 — sizeof() / type_name() / typedef(): the compiler's own reading of a TYPE.
+-            // A program that declares a function of one of these names keeps the name: the
+-            // call parses as an ordinary call, and `dispatch_call` lowers the special form only
+-            // when none of the program's definitions takes the argument.  A type NAME as the
+-            // argument stays the special form whatever is declared — no function takes a type.
+-            let special = if matches!(name, "sizeof" | "type_name" | "typedef")
+-                && (self.program_declares_fn(name)
+-                    || (self.first_pass && self.file_has_pending_fn(name)))
+-                && !self.next_is_type_name_argument()
+-            {
+-                ""
+-            } else {
+-                name
+-            };
+-            if special == "sizeof" {
++            // @F45 — sizeof()
++            if name == "sizeof" {
+                 t = self.parse_size(code);
+-            } else if special == "type_name" {
++            } else if name == "type_name" {
+                 t = self.parse_type_name(code);
+-            } else if special == "typedef" {
++            } else if name == "typedef" {
+                 let mut p = Value::Null;
+                 let et = self.expression(&mut p);
+                 self.lexer.token(")");

@@ -1170,10 +1170,7 @@ impl Function {
         while c != u16::MAX {
             let v = self.loops[c as usize].variable;
             if v != u16::MAX {
-                let n = self.name(v);
-                // The parser mangles a shadowed loop variable to `i#1`; the author wrote
-                // the part before the `#`, and that is what they can type back.
-                let n = n.split('#').next().unwrap_or(n);
+                let n = self.written_name(v);
                 if !n.is_empty() && !out.iter().any(|s: &String| s == n) {
                     out.push(n.to_string());
                 }
@@ -1281,6 +1278,26 @@ impl Function {
             return "??";
         }
         &self.variables[var_nr as usize].name
+    }
+
+    /// The name as the author wrote it — for text a person reads (a diagnostic, an editor
+    /// edit).  A second loop over one name binds `f#1` ([`Self::loop_binding`]) because the
+    /// native backend declares a local per name; the author wrote `f`, and `f` is what they
+    /// can type back.  Only that numeric suffix is removed: `f#index` and `f#count` are
+    /// names the author writes themselves.
+    #[must_use]
+    pub fn written_name(&self, var_nr: u16) -> &str {
+        let name = self.name(var_nr);
+        match name.rsplit_once('#') {
+            Some((written, nr))
+                if !written.is_empty()
+                    && !nr.is_empty()
+                    && nr.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                written
+            }
+            _ => name,
+        }
     }
 
     pub fn set_scope(&mut self, var_nr: u16, scope: u16) {
@@ -1536,7 +1553,7 @@ impl Function {
             (T::Tuple(xs), T::Tuple(ys)) => {
                 xs.len() == ys.len() && xs.iter().zip(ys).all(|(x, y)| Self::refines(x, y))
             }
-            (T::Function(xa, xr, _), T::Function(ya, yr, _)) => {
+            (T::Function(xa, xr, ..), T::Function(ya, yr, ..)) => {
                 xa.len() == ya.len()
                     && xa.iter().zip(ya).all(|(x, y)| Self::refines(x, y))
                     && Self::refines(xr, yr)
@@ -2371,7 +2388,7 @@ impl Function {
         // either way, so the frame the two passes lay out is unchanged.
         let adopt_fnref_ret = matches!(
             (var_tp, type_def),
-            (Type::Function(_, cur, _), Type::Function(_, new, _))
+            (Type::Function(_, cur, ..), Type::Function(_, new, ..))
                 if cur.is_equal(new) && cur.depend() != new.depend()
         );
         if adopt_fnref_ret {
@@ -2379,6 +2396,21 @@ impl Function {
             self.variables[var_nr as usize].type_def = type_def.clone();
             self.depend_all(var_nr, type_def);
             return self.is_new(var_nr);
+        }
+        // loft#1540 — a fn-ref local assigned functions whose parameters differ in `const` holds
+        // whichever ran last, so a parameter is `const` for the local only when it is for every
+        // function assigned to it.  `is_equal` compares by shape and would keep the first mask.
+        if let (Some(cur), Some(new)) = (
+            self.variables[var_nr as usize].type_def.function_consts(),
+            type_def.function_consts(),
+        ) && self.variables[var_nr as usize].type_def.is_equal(type_def)
+            && cur.common(new) != cur
+        {
+            let met = self.variables[var_nr as usize]
+                .type_def
+                .with_function_consts(cur.common(new));
+            self.trace_type_change(var_nr, &met, "change_var_type(fn-ref const parameters)");
+            self.variables[var_nr as usize].type_def = met;
         }
         // @P376 — assigning the `Never` poison (an errored struct construction,
         // pass 2) to an as-yet-`Unknown` variable must OVERWRITE it to `Never`,
@@ -3297,7 +3329,7 @@ impl Function {
         if std::env::var_os("LOFT_DUMP_READS").is_none() {
             return;
         }
-        let acc = crate::use_analysis::dead_store_accesses(body, self.variables.len(), data);
+        let acc = crate::use_analysis::dead_store_accesses(body, self, data);
         for (i, var) in self.variables.iter().enumerate() {
             if var.name.starts_with('_') || var.name.contains('#') || var.argument {
                 continue;
@@ -4380,7 +4412,7 @@ pub fn size(tp: &Type, context: &Context) -> u16 {
         Type::Boolean | Type::Enum(_, false, _) => 1,
         Type::Single | Type::Character => 4,
         Type::Integer(_) | Type::Float => 8,
-        Type::Function(_, _, _) => 20, // Phase 2c: 8B d_nr (i64) + 12B closure DbRef
+        Type::Function(..) => 20, // Phase 2c: 8B d_nr (i64) + 12B closure DbRef
         Type::Text(_) if context == &Context::Variable => size_of::<String>() as u16,
         Type::Text(_) => size_of::<&str>() as u16,
         Type::RefVar(_)
@@ -4419,7 +4451,7 @@ pub fn align(tp: &Type) -> u8 {
         Type::Optional(inner) => align(inner),
         Type::Boolean | Type::Enum(_, false, _) => 1,
         Type::Single | Type::Character => 4,
-        Type::Integer(_) | Type::Float | Type::Function(_, _, _) => 8,
+        Type::Integer(_) | Type::Float | Type::Function(..) => 8,
         // String (Variable) and Str (otherwise) both hold a raw pointer → align 8.
         Type::Text(_) => 8,
         Type::RefVar(_)

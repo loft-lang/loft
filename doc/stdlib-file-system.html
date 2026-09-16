@@ -76,11 +76,11 @@
 <p>A handle to a filesystem entry. Fields: path (full path), size (file size in bytes), format (open mode), current (byte position after last read), next (byte position to read next).</p>
 </div>
 <div class="item">
-<pre><code>pub fn content(self: File) -&gt; text?fs#read</code></pre>
+<pre><code>pub fn content(self: const File) -&gt; text?fs#read</code></pre>
 <p>Reads the entire file as a UTF-8 text value. Use for small configuration files or scripts.</p>
 </div>
 <div class="item">
-<pre><code>pub fn lines(self: File) -&gt; vector&lt;text&gt; fs#read</code></pre>
+<pre><code>pub fn lines(self: const File) -&gt; vector&lt;text&gt; fs#read</code></pre>
 <p>Par-safe: reads the file into a worker-local store; the host bridge serialises filesystem access. Reads the file and splits it into lines. Strips trailing '\r' so CRLF files (Windows) and LF files (Unix) produce identical results. Use when processing line-by-line (logs, CSV, etc.).</p>
 </div>
 <div class="item">
@@ -96,7 +96,7 @@
 <p>Stat-equivalent filesystem read; par-safe. Use to check whether a path is accessible before reading or writing it. A RELATIVE path resolves against the program's own directory, or against the working directory under `#cwd`; an absolute path is used as given, including one outside the project.  This is not an access boundary — the boundary is the `fs` capability a `[sandbox]` profile grants or withholds.</p>
 </div>
 <div class="item">
-<pre><code>pub fn exists(both: File) -&gt; boolean fs#read</code></pre>
+<pre><code>pub fn exists(self: const File) -&gt; boolean fs#read</code></pre>
 <p>Filesystem stat (via file()); par-safe. Method form: f = file(&quot;path&quot;); if f.exists() { .. } Also callable as exists(file_obj) via the 'both' parameter name.</p>
 </div>
 <div class="item">
@@ -136,7 +136,7 @@
 <p>Reads the whole file `path` as raw bytes.  A MISSING / unreadable file reads as NULL (distinct from an EMPTY file, `[]`); discharge with `?? []` to keep the old shape.  Binary-exact (round-trips with write_bytes); use for non-UTF-8 data — for text prefer `file(path).content()`.</p>
 </div>
 <div class="item">
-<pre><code>pub fn write_bytes(path: text, bytes: vector&lt;u8&gt;) -&gt; boolean fs#update</code></pre>
+<pre><code>pub fn write_bytes(path: text, bytes: const vector&lt;u8&gt;) -&gt; boolean fs#update</code></pre>
 <p>Writes `bytes` to file `path`, truncating any existing content.  Returns true on success.  The inverse of read_bytes; the pair round-trips a non-UTF-8 blob byte-for-byte.</p>
 </div>
 <div class="item">
@@ -164,7 +164,7 @@
 <p>It snapshots the whole STORE `r` lives in, which is not always a store of just `r`.  A keyed LOCAL owns its store, so binding it writes a file for that collection.  A keyed FIELD shares its container's store, so binding `pw.painted` above writes a file for `PaintedWorld` — carrying the container and every sibling collection — and that file will NOT load back into a bare `hash&lt;PaintedHex[q, r]&gt;`.  Both are usable; they are just different files.  Bind through the container consistently, or bind a local of the collection's own type when another program has to read the file. The compiler advises at the call when the argument is a field.  `hash` carries its bucket seed in its own record and the comparison-based kinds hold no per-process state, so every persisted image is portable across processes.</p>
 </div>
 <div class="item">
-<pre><code>pub fn store_persist_copy(r: reference, path: text) -&gt; boolean fs#update</code></pre>
+<pre><code>pub fn store_persist_copy(r: const reference, path: text) -&gt; boolean fs#update</code></pre>
 <p>Write an image of `r` laid out for PAGING, and keep the live collection as it is. Use this for a file another program (or a browser) will READ — a vocabulary, a map, any shipped dataset — where what matters is how few pages a query touches.</p>
 <p>`store_persist_bind` copies the live bytes, so every record keeps its place and your references stay valid. That place is the layout: records sit where they were INSERTED, so a `trie` prefix query returning 20 records reads 20 scattered pages. This writes a rebuilt copy instead, with each record placed in its collection's own order — key order for a `trie` — so one prefix is one run. Measured on a 74,692-word vocabulary, one 20-record prefix query: 22 requests and 1.25 MB from a bound image, 4 and 0.26 MB from this one.</p>
 <p>The live collection is untouched: nothing moves, so every reference you hold stays valid, and the file is NOT bound (writes after this do not reach it). Call it when the data is final. To keep writing, use `store_persist_bind`. words: trie&lt;Word[w]&gt; = [] for w in vocabulary() { words += [Word { w: w }] } store_persist_copy(words, &quot;vocab.store&quot;)   // ship this file // a reader pages it: store_load_prefix(local, &quot;vocab.store&quot;, &quot;kerk&quot;, 20)</p>
@@ -187,7 +187,7 @@
 <p>Load a store IMAGE from a local file that may be UNTRUSTED into `r` — the structurally-validated counterpart of store_load. Reads the file and validates its block structure BEFORE adoption, so a crafted or corrupt file cannot hang (0-size block) or drive a heap over-read; it is rejected (false). store_load is faster (validates only in debug) for a file you produced yourself; use this for a file whose provenance you don't control. h: hash&lt;Rec[id]&gt; = [] if !store_load_untrusted(h, &quot;downloaded.store&quot;) { /* rejected — malformed */ }</p>
 </div>
 <div class="item">
-<pre><code>pub fn store_verify(r: reference) -&gt; boolean</code></pre>
+<pre><code>pub fn store_verify(r: const reference) -&gt; boolean</code></pre>
 <p>Structural integrity check of a store-rooted collection's heap graph: verify every internal pointer targets a live record — no dangling / out-of-bounds / cyclic edge. Returns true when sound, false (with a reason on stderr) when not. The verifier behind the working-set loader's confidence: after any `store_load*`, `store_verify(local)` proves the (partial) copy produced a structurally valid heap, not one with a pointer left aimed at the source. h: hash&lt;Rec[id]&gt; = [] store_load_key(h, &quot;block.store&quot;, 42) assert(store_verify(h))   // the load produced a sound heap</p>
 </div>
 <div class="item">
@@ -233,14 +233,14 @@
 <p>The collection must be ORDERED (`sorted` or `index`) — a `hash` has no order to range over — and keyed on ONE column, since two numbers cannot say which value pins a composite key's leading column; use `store_lazy_query` for that. Both bounds are inclusive, in the collection's own key order. A record already resident is left alone. Answers 0 when nothing matched AND when the query could not run; `store_lazy_error` tells those apart.</p>
 </div>
 <div class="item">
-<pre><code>pub fn store_lazy_error(local: reference) -&gt; text</code></pre>
+<pre><code>pub fn store_lazy_error(local: const reference) -&gt; text</code></pre>
 <p>Why a lazy fetch for this collection could not REACH its source, or &quot;&quot; when it is healthy.</p>
 <p>A lookup cannot tell you this. C80 says a value read never raises, so a miss answers `null` whether the key is genuinely absent or the source is unreachable — and those are different facts, one stable and one not. Ask this after a null to tell them apart:</p>
 <p>p = persons[42]; if p == null { why = store_lazy_error(persons); if why == &quot;&quot; { /* really no such person */ } else { /* could not reach: {why} */ } }</p>
 <p>The FIRST failure's reason, kept — not the last: it names the original cause, and later ones are usually the same failure repeating. Nothing clears it but `store_lazy_clear`. An absence does NOT, and neither does a later success: reaching the source now says nothing about what an earlier failure already lost, and answering &quot;healthy&quot; over a traversal that missed data is the silent wrong answer this channel exists to prevent.</p>
 </div>
 <div class="item">
-<pre><code>pub fn store_lazy_faults(local: reference) -&gt; integer</code></pre>
+<pre><code>pub fn store_lazy_faults(local: const reference) -&gt; integer</code></pre>
 <p>How many fetches could not REACH this collection's source. 0 is healthy. The magnitude behind `store_lazy_error`: after a traversal it answers &quot;how incomplete am I&quot;.</p>
 </div>
 <div class="item">
@@ -269,17 +269,17 @@
 <p>`limit` caps the WALK, not just the answer: with `limit` 8 the ninth record is never stepped to, so its pages are never fetched. A negative `limit` means no cap, which on a common prefix reads the whole run. words: trie&lt;Word[w]&gt; = [] store_load_prefix(words, &quot;vocab.store&quot;, &quot;kerk&quot;, 20)</p>
 </div>
 <div class="item">
-<pre><code>pub fn store_load_box(local: reference, path: text, from: vector&lt;integer&gt;, till: vector&lt;integer&gt;, limit: integer) -&gt; integer fs#read</code></pre>
+<pre><code>pub fn store_load_box(local: reference, path: text, from: const vector&lt;integer&gt;, till: const vector&lt;integer&gt;, limit: integer) -&gt; integer fs#read</code></pre>
 <p>Box form: fetch every entry inside the closed bounding box `from`..`till` from a persisted `spatial&lt;T[x, y]&gt;` into `local`, reading only the pages the box walk touches — what a map viewport needs. Returns the count loaded. The corners are vectors so the same call serves 1, 2 or 3 axes, and writing them the other way round names the same box.</p>
 <p>TWO bounds, and a map needs both. `limit` caps the WALK, not just the answer: with `limit` 200 the 201st marker is never stepped to, so its pages are never fetched (a negative `limit` means no cap). And the BOX bounds it — the Morton interval between two corners is a superset the Z-order curve threads in and out of, so a wide, shallow viewport would otherwise read 1.46 M records to return 4 k. Measured on a 3.2 M-point map index: 5.3 pages of 64 KB for the first viewport, ~1.5 for each pan after it, against a 158 MB whole-image download.</p>
 <p>Those numbers assume a dataset written with locality in every axis, which is the one thing this call cannot do for you. The Morton walk is symmetric; a file laid out along ONE axis is not, so a box crossing that axis pays for every stride it crosses. On a 62 500-point grid returning the same 500 records, a 250x2 box read 107 pages of 64 KiB against 7 for its 2x250 mirror, and the two swapped when the identical data was written in the other axis order — 81 % of the image to return 0.8 % of the records. Write such a dataset TILED: it has no bad orientation, and for the square-ish boxes a viewport uses it beats either linear order. pins: spatial&lt;Pin[x, y]&gt; = [] store_load_box(pins, &quot;map.store&quot;, [x1, y1], [x2, y2], 200)</p>
 </div>
 <div class="item">
-<pre><code>pub fn store_load_keys(local: reference, path: text, keys: vector&lt;integer&gt;) -&gt; integer fs#read</code></pre>
+<pre><code>pub fn store_load_keys(local: reference, path: text, keys: const vector&lt;integer&gt;) -&gt; integer fs#read</code></pre>
 <p>Plural form of `store_load_key`: fetch the given integer keys' entries into `local` in one call (the paged reader is opened once and its cache reused), returning how many were found. Keys absent from the remote are skipped. Same relocation rules as `store_load_key`. tiles: hash&lt;Tile[id]&gt; = [] got = store_load_keys(tiles, &quot;block.store&quot;, [7, 13, 42])   // got == 3</p>
 </div>
 <div class="item">
-<pre><code>pub fn store_load_keys_text(local: reference, path: text, keys: vector&lt;text&gt;) -&gt; integer fs#read</code></pre>
+<pre><code>pub fn store_load_keys_text(local: reference, path: text, keys: const vector&lt;text&gt;) -&gt; integer fs#read</code></pre>
 <p>Plural form of `store_load_key_text`, and the text twin of `store_load_keys`: fetch the given text keys' entries into `local` in ONE call, returning how many were found. Keys absent from the remote are skipped. Serves a `hash&lt;T[k]&gt;` and a `trie&lt;T[k]&gt;` alike, like the single-key form.</p>
 <p>Looping `store_load_key_text` is not the same call: each one opens its own reader, so a ring of twenty asset names re-fetches the same 64 KiB bucket-table page twenty times. This opens the reader once and shares its page cache — which is what makes it the PREFETCH call: ask for the ring at a load or level boundary, so no frame is ever the thing that discovers it needs an asset. art: hash&lt;Blob[bl_key]&gt; = [] got = store_load_keys_text(art, &quot;pack.store&quot;, [&quot;page/mobs&quot;, &quot;hit.ogg&quot;])</p>
 </div>
@@ -298,7 +298,7 @@
 <p>Returns false — a no-op — when there is nothing to seek in: a directory, an absent file, a negative `pos`, or a file the process has not yet read from or written to (the OS handle is opened by the first I/O, so seeking before it exists has nothing to move).  Seeking PAST the end is allowed: the position is remembered and a following write extends the file, which is how a free-list or an update-in-place walk lands.</p>
 </div>
 <div class="item">
-<pre><code>pub fn position(self: File) -&gt; integer</code></pre>
+<pre><code>pub fn position(self: const File) -&gt; integer</code></pre>
 <p>The current read/write position in bytes, i.e. where the next read or write will land.  The read side of [seek]; `self#next` is the operator form.</p>
 <p>Distinct from `self#index`, which is where the LAST read STARTED — after `x = f#read as i32` on a fresh file, `position` is 4 and `f#index` is 0.</p>
 <p>A file this process has not read from or written to yet has no position, and reports null rather than 0 — 0 is a legitimate position, so returning it would make &quot;not opened&quot; indistinguishable from &quot;at the start&quot;.  Discharge with `?? 0` when the distinction does not matter.</p>
@@ -308,7 +308,7 @@
 <p>Flushes buffered bytes for self to the underlying storage so that the preceding writes are durable. Use between log records or block boundaries to guarantee that earlier appends have landed on disk before later ones are issued.</p>
 </div>
 <div class="item">
-<pre><code>pub fn files(self: File) -&gt; vector&lt;File&gt; fs#read</code></pre>
+<pre><code>pub fn files(self: const File) -&gt; vector&lt;File&gt; fs#read</code></pre>
 <p>Returns the entries inside a directory, sorted by path — the same order as `list_dir`, so an index into either listing means the same entry. The File must have format == Format.Directory; anything else lists as `[]` (where `list_dir` answers null, because it has no format to check first). Use to iterate over all files in a folder.</p>
 </div>
 <div class="item">

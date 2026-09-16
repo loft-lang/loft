@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1540 — a `const` value was written, in silence, through any VIEW of it.  `ps[0].x = 5`
+// was refused ("Cannot modify const parameter 'ps'"), while `for f in ps { f.x = 5 }`,
+// `p = ps[0]; p.x = 7`, `p = &ps[0]`, `q = w.p` and a loop over a value-const FIELD all wrote the
+// caller's value on both backends, and `f#remove` removed from it.  `(Const-Value)` makes the
+// value read-only through its name; plan 40's coherence rule 2 says how far: *"reading a
+// field/element of a `const` value yields a `const` view"*.  Rule 4 closes the hand-off: a `const`
+// value may not be passed to a `&` parameter.
+//
+// The refusal names the view and what it views, because the author wrote `const` on the value,
+// not on the view.  Every cell here is a refusal; the controls that must stay legal — a scalar or
+// text copied out, a whole-value copy, a non-const parameter, a `const` parameter handed on — are
+// `a-view-of-a-const-value-leaves-its-copies-writable.loft`, which has a `main` and asserts.
+//
+// No `main`: a file of refusals lets the harness isolate its functions.
+//
+// @falsified-at: 05eb047a4 — interpret exit 1 -> 0, interpret expectations FAIL/12 -> 0/12 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/12 -> 0/12 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-view-of-a-const-value-is-read-only.patch — interpret exit 1 -> 0, interpret expectations FAIL/12 -> 0/12 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/12 -> 0/12 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations, on both backends — the control compiles every cell, so none of the
+//   twelve expected refusals occurs there.
+//   ARMED: nothing.
+//   WITNESS: measured before this file, on the pre-fix and the installed 2026.9.0 builds, in the
+//   probe matrix these cells come from: every view shape wrote the caller's value on both backends
+//   and `f#remove` removed an element, with no diagnostic.
+//   HOLDS: the direct `ps[0].x = 5` refusal keeps its wording on both trees.
+// @EXPECT_ERROR: Cannot modify 'f': it is a view of const parameter 'ps', whose value is read-only
+// @EXPECT_ERROR: Cannot modify 'p': it is a view of const parameter 'ps', whose value is read-only
+// @EXPECT_ERROR: Cannot modify 'r': it is a view of const parameter 'ps', whose value is read-only
+// @EXPECT_ERROR: Cannot modify 'q': it is a view of const parameter 'w', whose value is read-only
+// @EXPECT_ERROR: Cannot modify 'e': it is a view of const parameter 'w', whose value is read-only
+// @EXPECT_ERROR: Cannot modify 'g': it is a view of const parameter 'ps', whose value is read-only
+// @EXPECT_ERROR: Cannot modify 'items': it is a view of const parameter 'ps', whose value is read-only
+// @EXPECT_ERROR: Cannot modify 'inner': it is a view of const parameter 'ws', whose value is read-only
+// @EXPECT_ERROR: Cannot modify 'h': it is a view of value-const field 'Box1540.ps', whose value is read-only
+// @EXPECT_ERROR: Cannot modify 'l': it is a view of const variable 'local', whose value is read-only
+// @EXPECT_ERROR: Cannot remove with 'd#remove': the loop walks const parameter 'ps', whose value is read-only
+// @EXPECT_ERROR: Cannot pass 'k', a view of const parameter 'ps', to the `&` parameter 1 of `poke1540`
+
+struct P1540 { x: integer, name: text, items: vector<integer> }
+struct W1540 { p: P1540, ps: vector<P1540> }
+struct Box1540 { ps: const vector<P1540> }
+
+fn poke1540(p: &P1540) { p.x = 9; }
+
+// a loop variable over a const parameter's elements
+fn loop_field(ps: const vector<P1540>) { for f in ps { f.x = 5; } }
+
+// an element bound by index
+fn index_bind(ps: const vector<P1540>) { p = ps[0]; p.x = 7; }
+
+// an element bound with `&`
+fn amp_bind(ps: const vector<P1540>) { r = &ps[0]; r.x = 8; }
+
+// a record field's view
+fn field_bind(w: const W1540) { q = w.p; q.x = 2; }
+
+// a loop over a const record's vector field
+fn loop_over_field(w: const W1540) { for e in w.ps { e.x = 6; } }
+
+// a text field written through the view
+fn text_field(ps: const vector<P1540>) { for g in ps { g.name = "changed"; } }
+
+// a vector member of an element, appended through its view
+fn member_append(ps: const vector<P1540>) { items = ps[0].items; items += [9]; }
+
+// a view of a view: the inner loop over the outer loop variable's field
+fn nested(ws: const vector<W1540>) { for w in ws { for inner in w.ps { inner.x = 3; } } }
+
+// a loop over a value-const FIELD of a plain parameter
+fn const_field(b: Box1540) { for h in b.ps { h.x = 4; } }
+
+// a const LOCAL
+fn const_local() { local: const vector<P1540> = [P1540 { x: 1, name: "a", items: [] }]; for l in local { l.x = 1; } }
+
+// #remove over a const collection
+fn remove_const(ps: const vector<P1540>) { for d in ps { if d.x > 1 { d#remove; } } }
+
+// a view handed to a `&` parameter (plan 40 rule 4)
+fn hand_on(ps: const vector<P1540>) { for k in ps { poke1540(k); } }

@@ -14,6 +14,24 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A `const` value stays read-only wherever you hand it.**  `fn total(v: const vector<T>)`
+promised not to change `v`, but the value could still be changed by handing it on: to a function
+whose parameter is plain, through a function reference, to a `map` or `filter` callback, or from a
+closure that captured it.  Each of those now says so.  A write through a lambda's `const`
+parameter, through a closure's capture, or through a short `|p|` callback over a `const`
+collection is an error, like any other write to a `const` value.  Handing the value to a plain
+parameter is a warning for now: declare that parameter `const` if the function only reads it
+(`fn(const T)` for a function type), or pass a copy.  The standard library's readers — `len`,
+`sum`, `join`, the `JsonValue` accessors and more — already declare theirs.
+
+**`self` is the one way to write a method, and `both` is deprecated.**  A function whose first
+parameter is `self` was already callable both as `x.f()` and as `f(x)`; now it can also be
+imported by name, `use lib::(f)`, which was the one thing only a `both` function could do.  So
+`both` means nothing `self` does not, and declaring one prints a warning asking you to rename it
+to `self` — nothing about how it is called changes.  Along the same line, a method and a free
+function with the same name on the same type are refused: `x.doit()` and `doit(x)` must never
+run two different bodies, and before, the free one was silently unreachable.
+
 **A counting loop that starts at a variable is faster.**  `for i in lo..hi` where `lo` is a
 parameter, a local or an expression used to check on every trip whether it was the first one.
 It no longer does, on both backends: a tight loop of that shape runs about a third faster

@@ -48,7 +48,7 @@ fn short_type(tp: &Type) -> String {
         Type::Radix(t, _, _) => format!("spatial({t})"),
         Type::Trie(t, _, _) => format!("trie({t})"),
         Type::Hash(t, _, _) => format!("hash({t})"),
-        Type::Function(_, _, _) => "fn".to_string(),
+        Type::Function(..) => "fn".to_string(),
         Type::Rewritten(inner) => format!("~{}", short_type(inner)),
         Type::Tuple(elems) => {
             let es: Vec<String> = elems.iter().map(short_type).collect();

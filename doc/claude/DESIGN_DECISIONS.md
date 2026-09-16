@@ -3185,6 +3185,11 @@ day), `t = s; return t` three times.  `scopes::copy_moves_drop_from` is the one 
 a parameter leaves the caller as the owner.  Guard:
 `tests/scripts/a-whole-value-copy-of-a-droppable-releases-once.loft`.
 
+**Revised 2026-09-15 by C121.**  Only a MOVE — a copy whose source value is not used after it —
+hands the release on.  A copy whose value is still used makes a second structure, which takes
+its own lease through `OpCopy` or is refused at compile time.  The move-on-construction above
+stands for a source that dies at the copy.
+
 **And to the reassignment (2026-09-05, loft#1362).**  A rebind is the owner's death for the
 record it displaces, and the hook ran at scope end only — a struct literal assigned to a live
 local is rebuilt IN PLACE, so the old record's bytes were gone before anything could read
@@ -3806,3 +3811,288 @@ or the browser.  The evidence that licenses it is the in-house testing's fault-f
 ledger; the registry's own artefacts never lose the layer.  That is also why the proofs
 come first: a check retired by a proof is retired inside the library's ordinary build
 and reaches every consumer, checks intact.
+
+## C121 — a copy of a droppable takes its own lease or is refused; the release no longer moves with a copy
+
+**Catalogue:** @F-drop (`OpDrop`) · @PLN163 · revises C111's whole-value extension
+
+### Question
+
+A type with `OpDrop` releases something outside the program.  When its value is copied — a
+bind, a field, an element, a return — which copy releases it?
+
+### Context
+
+C111 moved the release with a copy into a container, and on 2026-09-04 extended that to every
+whole-value copy: the copy owns, the source stops dropping.  The drop gate then measured 94
+cells releasing wrongly, and cure after cure met a shape where the compiler could not tell which
+copy should release (`formal/heap.md` D-heap-1, D-heap-7).  On the morning of 2026-09-15 the
+shapes inside a structure were closed as `warning[double-move]`.
+
+### Evaluation — from the use cases
+
+| program | the release moving with a copy | what the use case needs |
+|---|---|---|
+| `a = mk(); b = a; b.id = 4` | one drop; `a`'s structure is never dropped | two structures, two drops |
+| `b = a` in a block, `a` read after it | `b` releases while `a` is still in use | the copy needs a lease of its own |
+| an outward connection, a writable file | — | a duplicate shares one stream and one position, so no second lease can exist: the copy is refused |
+| `c = Hold { h: s.h }`, `return s.h` | the release goes with one of two structures | refused: the container's drop still holds the member |
+| `a = a` | — | one structure |
+
+Declined:
+
+- **the release moving with a copy** — it leaves one structure working while its resource is
+  gone, or releases twice;
+- **a mark inside the container** recording which member was moved out — bookkeeping inside
+  structures, and a guess for the programmer about which structure still works;
+- **a static ownership fact** choosing the owner per copy — D-heap-1's resolver is given a
+  variable where the answer belongs to an assignment, and the answer still surprises;
+- **a warning for the shapes inside a structure** — the program still compiles and still
+  releases twice;
+- **a move inferred from later use** — the first version of this decision, the same day.
+  `x = a; send(x)` compiled while `x = a; send(x); send(a)` failed at its FIRST line: a later
+  line decided what an earlier one meant, so correct and incorrect code looked the same to
+  anyone who does not know how the compiler reasons.  The owner ruled that out: people must not
+  have to know how loft interprets code to judge whether what they wrote is correct;
+- **a move out of a container that dies at the copy** (`c = open_session().conn`,
+  `return s.conn`) — sound, and statically supported for a call result, but it makes the same
+  pattern valid or invalid depending on whether the container is used again.
+
+### Decision
+
+**2026-09-15, owner, revised the same day.**  `formal/heap.md` (H-Lease), (H-Move),
+(H-Copy-Lease), (H-Copy-Refuse), (H-View-Drop), (H-Elide).  A copy of a type with `OpDrop` and
+no `OpCopy` is refused on the line that writes it, whatever follows; `OpCopy` makes a second
+lease.  Only WRITTEN positions move a value: a fresh value placed where it is made, a `return`
+of what the function owns, a block yielding its own variable.  So `x = a`, `x = p`,
+`S { h: a }`, `return s.h` and `return p` are refused for a type without `OpCopy`, and a view of
+a droppable member never silently becomes a copy.  A droppable is a corner of the language with
+clean workarounds — build the value where it lives, pass it, borrow it — so the strict local
+rule costs little.  Sharing a store stays an optimisation that may elide a copy together with
+its drop (C86).  loft is at contract 0 and no published package declares
+`OpDrop`, so the refusal lands without a deprecation window (COMPATIBILITY.md § The error
+surface is one-directional).
+
+### Revisit when
+
+A consumer needs a droppable OUT of a container it keeps using — a pool that hands out one
+connection and keeps the rest.  That wants a named operation that empties the member (a
+`take`), which is additive; it is not a reason to move a release with an implicit copy again.
+
+## C122 — The contract is semantics; a rewrite is free wherever its conditions are validated, and a library API is the one boundary
+
+**Asked (2026-09-15, @PLN164 C5, `formal/ownership.md` `(O-ViewField)`):** may a record a
+function returns carry a heap field that is a VIEW into a store the caller already owns —
+`Mark.pts` naming the op's own vector in the scene instead of a second copy of the points
+— when every call site only reads it and nothing disturbs the container between the call
+and the read?  The natural `parse_poly` writes its points twice; a programmer who knows the
+store model returns an index instead; the compiler may not change that contract, so the
+question was whether a returned view is a shape the language wants at all.
+
+**Decision (owner, 2026-09-15): admitted, and the question was smaller than asked.**  *"The
+current contract is about semantics, not about optimisations; we can do anything for that
+as long as we can validate the conditions where it is correct.  The biggest problem here is
+a library API where we cannot know how it will be used.  But if a construction doesn't
+escape a library then we can rewrite whatever we want."*
+
+**What it settles.**  The language's contract is what a program computes and what it can
+observe — values, faults, the order of effects — never how a value is represented, where
+it lives, or how many stores or copies it takes to get there.  A rewrite therefore needs no
+permission from the contract: it needs its CONDITIONS, stated as a rule and validated on the
+IR, under which the observable behaviour is unchanged; where a condition cannot be
+validated the rewrite declines and the unrewritten form runs.  The one place validation is
+impossible is a library's exported API, whose callers the compiler cannot see: a
+construction that ESCAPES the unit — is answered to, stored by, or handed to code outside it
+— keeps the representation the API promises, and the boundary materialises whatever an
+internal rewrite made of it (as the cdylib bridge already materialises a value tuple).  A
+construction that does not escape may be rewritten in any way its conditions allow.  This
+is recorded as `(R-Escape)` in `formal/rewrites.md`, every rewrite rule reads it, and
+`(O-ViewField)` takes its scope from it: decided over the call sites the compiler sees
+whole, never over an unseen one.
+
+**The corollary for a user program (owner, same day):** *"So for a user program we are
+totally free, because we know how things are used by just reading its code."*  A program is
+a closed unit — every use of every construction is in the compilation, and a fn-ref call is
+a match over the known candidate definitions, so no callee is unseen — and every rule's
+conditions are decidable in it.  What remains a boundary inside a program is not a limit on
+the rewrite but a place where a rewritten representation is turned back into the promised
+one: a call into a library the program `use`s (its API is compiled separately and is
+materialised at the call, both ways), the live-reload and debugger arm (a function flipped
+to the interpreter takes and answers the contract's records, as `(R-ValueRecord)` already
+provides per function), and the layout of a record inside a store, which persistence, the
+FFI and the debugger read — the rewrites move temporaries and drop copies, they never
+re-lay a stored record.
+
+**The unit is a BUILD decision (owner, same day):** *"There is a special case here and that
+is a release copy of a game: in this scenario we can decide that a library should be
+recompiled instead of just reusing its binary."*  Which API is a boundary depends on what
+one compilation sees, and the three lanes of NATIVE.md § Optimisation tiers see different
+things.  A program run on the interpreter with auto-native libraries has each `use`d
+library as its own unit: every library API is a boundary, and the cdylib bridge
+materialises at it.  A RELEASE copy of a program (`--native-release`) already emits every
+reachable function of its `use`d loft libraries into the one program it compiles — the
+bench's emission carries the drawing library's own `parse_poly` — so there a loft-to-loft
+library API is NOT a boundary: the whole game and its libraries are one unit, every use is
+visible, and a rewrite may cross the API exactly as it crosses a call inside the program.
+What stays a boundary in that lane is a package's `#rust` native (a C ABI the rewrites
+never reach), the live-reload arm, a stored record's layout, and a PLACED library
+(PLACEMENT.md § 4, *a returned VIEW cannot be placed*, is `(R-Escape)` at the wire).  A
+library's own published cdylib is the one build where its API must keep the promised
+representation for callers it will never see.
+
+**What it does not change.**  C120 stands untouched, because it was never about
+representation: a value after a fault IS the contract, and a rewrite that changes it
+changes semantics.  The two rulings are one principle read from both sides — everything
+the program cannot observe is the compiler's, everything it can is the language's.
+
+## C123 — one name has one body per receiver type; `both` is how a function takes both spellings
+
+**Catalogue:** @F16 (method and function calls) · INC#8 · `formal/calls.md` (F-OneBody)
+
+### Question
+
+`fn doit(self: Pt)` and `fn doit(p: Pt)` could both be declared.  Which does `doit(p)` reach,
+and should the pair be allowed at all?
+
+### Context
+
+A bare call resolves the method key first ((F-Recv): both spellings of a method resolve
+identically), so `doit(p)` reached the METHOD and the free function was dead.  Nothing said so:
+measured 2026-09-15, `self` then free, free then `self`, free then `both`, a different arity and
+the generic spelling each compiled and answered the method's value from both spellings.  Only a
+`both` method followed by the function was refused, because only `both` registers a bare-name
+dispatcher.
+
+### Decision
+
+**2026-09-15, owner.**  Refused.  Two implementations under one name confuse any programmer:
+when `x.doit()` and `doit(x)` differ, reading a line needs knowing how loft resolves it.  A
+method (`self` or `both`) and a plain-parameter function of one name whose first parameter has
+the same type are refused at whichever is declared second, in either order and at any arity,
+within one source; a program's function beside a stdlib method is the same refusal (C95), and a
+library's beside a stdlib method stays C97's module-scoped warning.  A function on another type
+is an overload and stays legal.
+
+When both spellings are wanted, `fn doit(both: Pt)` declares ONE body for both — in a program
+and a library as well as the stdlib.  The reason `both` exists: a programmer used to Rust writes
+`v.sin()` where the float width is not obvious, and that muscle memory should keep working,
+while a beginner is not forced into a syntax that was invented for Rust and writes `sin(v)`.
+
+**Revised the same day, owner: `both` is deprecated.**  Measured over every call spelling on
+both backends, `self` and `both` behaved identically — method and free call, overloads on
+several types, named and default arguments, a nullable or scalar receiver, enum-variant
+dispatch, a generic receiver, a library-qualified call and `use lib::*` — except one: `use
+lib::(name)` found only a `both` function, because only `both` registered its bare name.  An
+import list now also brings in the methods the library files under that name (each under its
+own `t_<LEN><Type>_<name>` key, what `use lib::*` already brought in), so the two spellings mean
+one thing, and the stdlib's 61 `both` functions are `self`.  Registering a bare name for every
+`self` method instead was built and measured first, and refused: it changed overload selection
+(`area(Shape)` became ambiguous against `area(Square?)`) and made one method name shared by two
+packages a refused bare call (loft#850's control).  `both` still compiles and means `self`, with the WARNING
+`both-receiver-deprecated`: a warning gates a library's CI, which is how the published uses
+(`regex`'s `matches`, every version) are found and renamed after this lands.  The call
+surface does not change under the rename.
+
+### Revisit when
+
+A consumer needs two DIFFERENT behaviours under one name on one type — that is a naming
+problem, and the cure stays a second name.  Remove the `both` spelling once no published
+version declares it.
+
+## C124 — a `const` value reaches only a `const` parameter; semantics is judged by the line, optimisation by the proof
+
+**Catalogue:** @PLN40 const-model rule 4 · `formal/binding.md` (Const-Value), D-bind-45 (closed) · loft#1540 · reads C121 and C122
+
+### Question
+
+A plain record or collection parameter names the caller's value (`calls.md` F-ParamHeap), so a
+`const` value handed to one can be written by the callee: `fn bump(a: Account) { a.balance = 999 }`
+called as `bump(acct)` with `acct: const Account` changed the caller's balance, while
+`acct.balance = 1` was refused.  Which calls should be refused — every plain heap parameter, or
+only those whose callee writes it?
+
+### Context
+
+Measured 2026-09-15 over 8566 `.loft` files (this repository and the consumer checkouts): 592
+distinct call sites pass a `const` value to a plain heap parameter, 446 of them the stdlib's
+`len`, and none to a callee that writes it.  The two readings differ on the other 592.
+
+### Evaluation
+
+| | by SIGNATURE | by the callee's BODY |
+|---|---|---|
+| existing sites refused | 592 (446 disappear once the stdlib marks its read-only parameters) | 0 |
+| judged from | the call and the parameter's declaration | a body the caller does not see |
+| a native (`#rust`) callee | answered by its declaration | no body: always reads as "does not write" — unsound |
+| editing a callee's body | changes nothing at its callers | can make an unchanged caller stop compiling |
+
+### Decision
+
+**2026-09-15, owner.**  By signature.  *"This is clearly a case like we had on ../loft2, where we
+might allow something semantically because we know it is safe, but we don't, because we are strict
+and clear for the programmer on semantics, but allow almost anything possible on optimizations
+(that are verified to be safe)."*
+
+A value-const value — a `const` parameter or local, a view of one (D-bind-44), a read through a
+value-const field — may be passed to a record or collection parameter only when that parameter is
+declared `const` (reported as a warning until the libraries below have migrated, § Rollout); a `&`
+parameter never.  `text` and scalar parameters take their own copy and are
+not affected.  The standard library declares every read-only heap parameter `const`, so a reading
+call such as `len(ps)` stays legal.
+
+This is C121's rule read at a call: what a line MEANS is decided by what is written on it and in
+the signatures it names, never by what the compiler can prove about code elsewhere.  And it is
+C122's freedom kept whole: that a callee does not write a parameter is a fact the compiler may
+still prove and use — to elide a copy, to share a store — as an optimisation, because an
+optimisation changes no answer.  The same proof may license a rewrite; it may not license a call.
+
+### Rollout
+
+**2026-09-15, owner: a gating warning first.**  Measured over 8566 `.loft` files, the refusal lands
+on 102 call sites that reach 17 read-only helper parameters not declared `const`, none of them
+written, all in libraries and games other agents develop.  So the check ships as the `warning`
+`const-to-plain-parameter` (it gates a library's CI under `LOFT_DENY_WARNINGS`), with the cure in the
+message, and becomes the error this decision describes once those parameters are declared.  The
+standard library and this repository's fixture copy of `graphics` already declare theirs.  The
+parameters to mark `const`:
+
+| project | function · parameter | definition |
+|---|---|---|
+| loft-libs-graphics | `gl_set_uniform_mat4` · `mat`, `gl_upload_canvas` · `data`, `group_vbos_draw_all` · `set` | `graphics/src/graphics.loft` |
+| loft-libs-game | `input_tick_from_state` · `keys` | `input/src/input.loft` |
+| dryopea | `flow_build` · `core`, `enemy_engaged` · `core`, `wave_tick` · `core`, `save_world` · `cam` / `palette` / `pw`, `save_markers` · `mw`, `wave_schedule_of` · `waves` | `src/flow.loft`, `src/spawn.loft`, `src/save.loft`, `src/waves.loft` |
+| crawler | `write_int_fn` · `vs`, `write_float_fn` · `vs` | `src/realworld/region_io.loft` |
+| Moros-Economy-Development | `cmp_f` · `a` / `b`, `direct_chain` · `g` | `loft_planet/tests/14-workflow.loft` |
+
+The `&` spelling (D-bind-44) is refused as an error already: it had no call sites to migrate.
+
+### Function references and callbacks
+
+**2026-09-15, closing D-bind-45.**  A function reference is a call whose signature is its TYPE, so
+the ruling reaches it once the type can say `const`: `fn(const T)` parses, a function value carries
+which of its parameters are `const` (a named function's from its declaration, a lambda's from its
+own), and the IR store keeps it.  From there the rule is read exactly as for a declared function:
+
+- A value-const value passed to a reference's parameter that its type does not declare `const` is
+  the same `const-to-plain-parameter` warning; to a `&` parameter, the same error.
+- A function whose parameter is plain may not stand where a slot promises `fn(const T)` — an
+  argument, a struct field, a return — or a caller trusting the promise would hand a read-only value
+  to a function that may write it.  The other direction is free.
+- A slot that may hold either of two functions promises only the `const` both declare: a fn-ref
+  local reassigned, a value `if`, a `match`.  Joining by the first arm instead refused a program
+  for the order its arms were written in.
+- The elements of a `const` collection handed to `map`, `filter`, `any`, `all`, `count_if` or
+  `reduce` reach the callback's element parameter on the same terms.  A short `|p|` callback is
+  hinted by its collection, so over a `const` one its parameter is `const` and a write in its body
+  is refused as any write through a `const` binding is.
+- A lambda's `const` parameter is read-only in its body, as a named function's is; and a closure
+  capturing a value-const value (a view of one included) holds it as a read-only field of its
+  record, which LOFT.md § Closures already promised for a scalar.
+
+No rollout table: before `fn(const T)` parsed nothing could be declared that way, and the
+population is measured in the commit that closed it.
+
+### Revisit when
+
+A consumer's read-only helper cannot be declared `const` because a type or generic spelling does
+not accept it — that is a gap in `const`'s syntax to close, not a reason to read the body.

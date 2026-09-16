@@ -539,47 +539,148 @@ fn fn_name_as_typedef() {
 }
 
 #[test]
-fn missing_variant_impl() {
-    // area() is only defined for Circle; Rect has no area() — expect a warning at Rect's definition.
+fn a_method_one_variant_has_says_nothing_until_called_through_the_enum() {
+    // @PLN162 D-disp-1 — `area` only for `Circle` is a method of `Circle`: a call on a value
+    // held at the variant is a direct call and complete as written, so nothing is reported.
+    // It used to warn at `Rect`'s declaration whether or not anything dispatched.  This
+    // harness fails on any diagnostic the fixture does not assert, so the old warning coming
+    // back goes red here.
     code!(
-        "enum Shape {\n    Circle { r: float },\n    Rect { w: float, h: float }\n}\nfn area(self: Circle) -> float { self.r * self.r }\nfn test() { 1 + 1; }"
+        "enum Shape {\n    Circle { r: float },\n    Rect { w: float, h: float }\n}\nfn area(self: Circle) -> float { self.r * self.r }\nfn test() { c = Circle { r: 2.0 }; c.area(); }"
+    );
+}
+
+#[test]
+fn a_call_through_the_enum_missing_a_variant_is_refused() {
+    // @PLN162 `Disp-Exhaustive`, D-disp-1 — a call on a value held at the ENUM is the `match`
+    // the synthesised dispatcher stands for, and `Rect` has no arm: refused at the call, in
+    // `M-Exhaust`'s shape, on both spellings.  It compiled with a warning and answered the
+    // return type's empty value at run time.
+    code!(
+        "enum Shape {\n    Circle { r: float },\n    Rect { w: float, h: float }\n}\nfn area(self: Circle) -> float { self.r * self.r }\nfn test() { s: Shape = Circle { r: 1.0 }; s.area(); area(s); }"
     )
-    .warning("no implementation of 'area' for variant 'Rect' at missing_variant_impl:3:11");
+    .error("call of `area` on `Shape` is not exhaustive — missing: Rect; add `fn area(self: …)` for each missing variant, or a fallback `fn area(self: Shape)` that every variant without one reaches at a_call_through_the_enum_missing_a_variant_is_refused:6:52")
+    .error("call of `area` on `Shape` is not exhaustive — missing: Rect; add `fn area(self: …)` for each missing variant, or a fallback `fn area(self: Shape)` that every variant without one reaches at a_call_through_the_enum_missing_a_variant_is_refused:6:61");
 }
 
 #[test]
 fn nullable_receiver_implements_its_variant() {
     // loft#1427 — a `self: Sq?` receiver IS an implementation of `Sq` (`@FR-F-Recv`), so the
-    // warning must name only the variant that has none.  Asked bare, the scan reported `Sq`
-    // too — a warning for an implementation written three lines above it — and this harness
-    // fails on any warning the fixture does not assert, so the extra one goes red here.
+    // refusal must name only the variant that has none.  Asked bare, the scan reported `Sq`
+    // too — for an implementation written three lines above it.
     //
-    // Measured against e9f45817 in the cached falsify worktree: FAILS there with
-    // *"Found 'Warning: no implementation of 'ar' for variant 'Sq'' Expected ''"*.  Worth the
-    // check rather than assuming — a `code!` snippet parses as STDLIB source, so a feature
-    // gated on `source != STD_SOURCE` is inert inside one (TESTING.md § The `Test` struct).
-    // The dispatcher scan is not one of those, which is what this measurement establishes.
+    // Measured against e9f45817 in the cached falsify worktree (as the warning it was then):
+    // FAILS there with *"Found 'Warning: no implementation of 'ar' for variant 'Sq''
+    // Expected ''"*.  Worth the check rather than assuming — a `code!` snippet parses as
+    // STDLIB source, so a feature gated on `source != STD_SOURCE` is inert inside one
+    // (TESTING.md § The `Test` struct).  The dispatcher scan is not one of those.
     code!(
-        "enum Sh {\n    Ci { r: integer },\n    Sq { s: integer },\n    Tr { t: integer }\n}\nfn ar(self: Ci) -> integer { self.r }\nfn ar(self: Sq?) -> integer { if self == null { 0 } else { self.s } }\nfn test() { 1 + 1; }"
+        "enum Sh {\n    Ci { r: integer },\n    Sq { s: integer },\n    Tr { t: integer }\n}\nfn ar(self: Ci) -> integer { self.r }\nfn ar(self: Sq?) -> integer { if self == null { 0 } else { self.s } }\nfn test() { s: Sh = Ci { r: 1 }; s.ar(); }"
     )
-    .warning("no implementation of 'ar' for variant 'Tr' at nullable_receiver_implements_its_variant:4:9");
+    .error("call of `ar` on `Sh` is not exhaustive — missing: Tr; add `fn ar(self: …)` for each missing variant, or a fallback `fn ar(self: Sh)` that every variant without one reaches at nullable_receiver_implements_its_variant:8:41");
 }
 
 #[test]
-fn a_second_method_gets_its_own_missing_variant_warning() {
-    // loft#1435 — the dispatcher scan is keyed by the enum AND the method name, so the
-    // missing-implementation warning is asked per method.  Keyed by the enum alone, `Sq`
-    // implementing `ar` silenced the warning about `per`, which it does not implement — and
-    // this harness fails on any warning the fixture does not assert, so a regression that
-    // brings the extra one back goes red here too.
+fn a_second_method_gets_its_own_missing_variant_refusal() {
+    // loft#1435 — the dispatcher scan is keyed by the enum AND the method name, so coverage
+    // is asked per method.  Keyed by the enum alone, `Sq` implementing `ar` silenced the
+    // report about `per`, which it does not implement.  `s.ar()` through the enum is covered
+    // and says nothing; `s.per()` is refused naming `Sq`.
     //
-    // Measured against e9f45817: FAILS there with *"Found '' Expected 'Warning: no
-    // implementation of 'per' for variant 'Sq''"* — the warning this asserts is simply absent
-    // on that build.
+    // Measured against e9f45817 (as the warning it was then): FAILS there with *"Found ''
+    // Expected 'Warning: no implementation of 'per' for variant 'Sq''"*.
     code!(
-        "enum Sh {\n    Ci { r: integer },\n    Sq { s: integer }\n}\nfn ar(self: Ci) -> integer { self.r }\nfn ar(self: Sq) -> integer { self.s }\nfn per(self: Ci) -> integer { self.r * 2 }\nfn test() { 1 + 1; }"
+        "enum Sh {\n    Ci { r: integer },\n    Sq { s: integer }\n}\nfn ar(self: Ci) -> integer { self.r }\nfn ar(self: Sq) -> integer { self.s }\nfn per(self: Ci) -> integer { self.r * 2 }\nfn test() { s: Sh = Ci { r: 1 }; s.ar(); s.per(); }"
     )
-    .warning("no implementation of 'per' for variant 'Sq' at a_second_method_gets_its_own_missing_variant_warning:3:9");
+    .error("call of `per` on `Sh` is not exhaustive — missing: Sq; add `fn per(self: …)` for each missing variant, or a fallback `fn per(self: Sh)` that every variant without one reaches at a_second_method_gets_its_own_missing_variant_refusal:8:50");
+}
+
+#[test]
+fn a_nullable_variant_method_beside_an_enum_level_one_is_ambiguous() {
+    // @PLN162 `Disp-Specific` — `self: Fi?` widens the variant's NULLABILITY and `self: En`
+    // widens the variant to its ENUM: two abstractions of different kinds, incomparable, so a
+    // `Fi` held at the enum is taken by both and nothing ranks them.  The same pair of FREE
+    // definitions is refused the same way; before the two spellings were one set, the method
+    // spelling answered the enum-level body in silence.
+    code!(
+        "enum En {\n    Fi { n: integer },\n    Cr { n: integer }\n}\nfn kd(self: Fi?) -> integer { 1 }\nfn kd(self: En) -> integer { self.n }\nfn test() { f: En = Fi { n: 1 }; f.kd(); }"
+    )
+    .warning("Parameter self is never read at a_nullable_variant_method_beside_an_enum_level_one_is_ambiguous:5:30")
+    .error("`kd(En)` is ambiguous at (Fi) — that pair is taken by kd(Fi?) and kd(En) and nothing ranks them; give the call the arguments that pick one, or drop one definition at a_nullable_variant_method_beside_an_enum_level_one_is_ambiguous:7:41");
+}
+
+#[test]
+fn a_dispatch_whose_definitions_return_different_types_is_refused() {
+    // @PLN162, DESIGN.md Q4 where it cannot stay open — a call decided by the runtime variant is
+    // ONE synthesised function with one return type.  `val(Fi) -> integer` beside
+    // `val(En) -> text` read the text through the integer's frame on the interpreter and did not
+    // compile on `--native`.
+    code!(
+        "enum En {\n    Fi { n: integer },\n    Cr { n: integer }\n}\nfn val(f: Fi) -> integer { f.n }\nfn val(e: En) -> text { \"e{e.n}\" }\nfn test() { e: En = Fi { n: 1 }; val(e); }"
+    )
+    .error("`val(En)` is decided by the runtime variant, but its definitions return different types — val(Fi) -> integer and val(En) -> text; give them one return type, or call with a value held at the variant at a_dispatch_whose_definitions_return_different_types_is_refused:7:41");
+}
+
+#[test]
+fn a_variant_dispatch_whose_implementations_return_different_types_is_refused() {
+    // The same question for @F20's synthesised dispatcher, which chose between `val(self: Fi)
+    // -> integer` and `val(self: Cr) -> text` under the first implementation's return type.
+    code!(
+        "enum En {\n    Fi { n: integer },\n    Cr { n: integer }\n}\nfn val(self: Fi) -> integer { self.n }\nfn val(self: Cr) -> text { \"c{self.n}\" }\nfn test() { e: En = Fi { n: 1 }; e.val(); }"
+    )
+    .error("call of `val` on `En` is decided by the runtime variant, but its implementations return different types — val(Fi) -> integer and val(Cr) -> text; give them one return type, or call it on a value held at the variant at a_variant_dispatch_whose_implementations_return_different_types_is_refused:7:42");
+}
+
+#[test]
+fn static_overloads_may_return_different_types() {
+    // The control: a static call reaches ONE definition, so overloads of a name that disagree on
+    // their return type are not the dispatch question and compile without a report.
+    code!(
+        "fn width(a: integer) -> integer { a }\nfn width(a: text) -> text { a }\nfn test() { width(3); width(\"x\"); }"
+    );
+}
+
+#[test]
+fn index_on_a_programs_iterator_is_refused() {
+    // @F32 — `x#index` is the position to give to `v[i]`; a type's own `next()` yields values
+    // without one.  The loop's `#index` companion exists for every loop, so reading it compiled
+    // to an unset slot and the code generator panicked (*"Incorrect var x#index"*).
+    code!(
+        "struct Ct { at: integer }\nfn next(self: Ct) -> integer? { if self.at > 2 { return null; } self.at += 1; self.at }\nfn test() { c = Ct { at: 0 }; for x in c { assert(x#index > 0, \"i\"); } }"
+    )
+    .error("'x#index' is the position to use with v[i], and this loop walks values without positions (a generator, or a type's next()); use 'x#count' to number them at index_on_a_programs_iterator_is_refused:3:60");
+}
+
+#[test]
+fn index_on_a_generator_is_refused() {
+    // The same question for a generator, whose loop panicked the code generator the same way —
+    // COROUTINE.md claimed `#index` worked there.
+    code!(
+        "fn gen() -> iterator<integer> { for i in 0..2 { yield i; } }\nfn test() { for x in gen() { assert(x#index > 0, \"i\"); } }"
+    )
+    .error("'x#index' is the position to use with v[i], and this loop walks values without positions (a generator, or a type's next()); use 'x#count' to number them at index_on_a_generator_is_refused:2:46");
+}
+
+#[test]
+fn index_on_an_index_collection_is_refused_once() {
+    // An `index<T>` loop's `#index` holds an internal record number, and the refusal said so —
+    // then left the expression without a value, so `p#index > 0` added a second error about
+    // `OpLtInt`'s missing argument.  One refusal, one diagnostic.
+    code!(
+        "struct Pt { k: integer }\nfn test() { ix: index<Pt[k]> = [Pt { k: 2 }]; for p in ix { assert(p#index > 0, \"i\"); } }"
+    )
+    .error("#index is not supported on index<T> collections (it holds an internal record number, not a sequential counter); use #count instead at index_on_an_index_collection_is_refused_once:2:77");
+}
+
+#[test]
+fn exhausted_on_a_type_that_declares_none_is_refused() {
+    // `exhausted` answers for a generator only.  The stdlib's `exhausted(gen: reference)`
+    // accepted any struct and answered `true` — a value that is no generator was reported as
+    // one that finished.
+    code!("struct Rs { n: integer }\nfn test() { r = Rs { n: 1 }; assert(exhausted(r), \"e\"); }")
+        .error(
+            "Unknown function exhausted at exhausted_on_a_type_that_declares_none_is_refused:2:37",
+        );
 }
 
 #[test]
@@ -678,10 +779,7 @@ fn direct_call_unimplemented_variant() {
 fn area(self: Circle) -> float { self.r * self.r }
 fn test() { r = Rect { w: 3.0, h: 4.0 }; r.area(); }"
     )
-    .error("Unknown field Rect.area at direct_call_unimplemented_variant:3:49")
-    .warning(
-        "no implementation of 'area' for variant 'Rect' at direct_call_unimplemented_variant:1:41",
-    );
+    .error("Unknown field Rect.area at direct_call_unimplemented_variant:3:49");
 }
 
 // --- parallel_for: extra context-argument count validation ---
@@ -1284,11 +1382,14 @@ fn test() {
     );
 }
 
+// The four words the language reserves say so, ONCE: the definition then parses under a name no
+// call can spell, so the second "Syntax error: unexpected 'sizeof'" these used to pin is gone.
+// The message does not describe today's meaning, which the language may extend.
+
 #[test]
 fn keyword_sizeof_as_fn() {
     code!("fn sizeof() {}\nfn test() {}")
-        .error("Expect name in function definition at keyword_sizeof_as_fn:1:10")
-        .error("Syntax error: unexpected 'sizeof' at keyword_sizeof_as_fn:1:10");
+        .error("`sizeof` is reserved: the language gives it a meaning of its own, now and in later versions, so a program cannot define a function by that name; choose another name at keyword_sizeof_as_fn:1:10");
 }
 
 // A10: `fields` is no longer a keyword — it can be used as a function name.
@@ -1296,22 +1397,19 @@ fn keyword_sizeof_as_fn() {
 #[test]
 fn keyword_debug_assert_as_fn() {
     code!("fn debug_assert() {}\nfn test() {}")
-        .error("Expect name in function definition at keyword_debug_assert_as_fn:1:16")
-        .error("Syntax error: unexpected 'debug_assert' at keyword_debug_assert_as_fn:1:16");
+        .error("`debug_assert` is reserved: the language gives it a meaning of its own, now and in later versions, so a program cannot define a function by that name; choose another name at keyword_debug_assert_as_fn:1:16");
 }
 
 #[test]
 fn keyword_assert_as_fn() {
     code!("fn assert() {}\nfn test() {}")
-        .error("Expect name in function definition at keyword_assert_as_fn:1:10")
-        .error("Syntax error: unexpected 'assert' at keyword_assert_as_fn:1:10");
+        .error("`assert` is reserved: the language gives it a meaning of its own, now and in later versions, so a program cannot define a function by that name; choose another name at keyword_assert_as_fn:1:10");
 }
 
 #[test]
 fn keyword_panic_as_fn() {
     code!("fn panic() {}\nfn test() {}")
-        .error("Expect name in function definition at keyword_panic_as_fn:1:9")
-        .error("Syntax error: unexpected 'panic' at keyword_panic_as_fn:1:9");
+        .error("`panic` is reserved: the language gives it a meaning of its own, now and in later versions, so a program cannot define a function by that name; choose another name at keyword_panic_as_fn:1:9");
 }
 
 /// P5.3: operator on generic type T produces a generic-specific error.

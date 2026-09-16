@@ -181,31 +181,149 @@ impl Parser {
         }
     }
 
-    pub(crate) fn warn_missing_enum_variants(&mut self, e_nr: u32, nrs: &[usize], name: &str) {
+    /// `Disp-Exhaustive` over @F20's synthesised dispatcher (@PLN162, D-disp-1).  A call that
+    /// reaches the dispatcher holds its receiver at the ENUM, so it is the `match` the
+    /// dispatcher stands for, and a variant with no implementation is that `match` missing an
+    /// arm: refused here, at the call, in `M-Exhaust`'s shape.  It used to be a warning at the
+    /// variant's declaration and, at run time, the return type's empty value.  A set nothing
+    /// calls through the enum — a method only one variant has — dispatches nothing and is
+    /// complete as written.  The same call is refused when the implementations return
+    /// different types: the dispatcher is one function with one return type, and an arm
+    /// answering `text` beside one answering `integer` was read through the integer's frame on
+    /// the interpreter and did not compile on `--native`.
+    pub(crate) fn refuse_uncovered_variants(&mut self, dispatcher: u32) {
+        let Some(Type::Enum(e_nr, true, _)) = self
+            .data
+            .def(dispatcher)
+            .attributes
+            .first()
+            .map(|a| a.typedef.base().clone())
+        else {
+            return;
+        };
+        let name = self.data.def(dispatcher).original_name().clone();
+        let enum_name = self.data.def(e_nr).name.clone();
         // @FR-F-Recv — which variant an implementation is FOR is `receiver_def_nr`'s answer,
-        // so a `self: V?` receiver counts as an implementation of `V`.  Asked bare, this
-        // reported "no implementation of 'area' for variant 'Square'" with one written five
-        // lines above it.
-        let implemented: HashSet<u32> = nrs
-            .iter()
-            .map(|nr| self.data.receiver_def_nr(*nr as u32))
-            .filter(|a_nr| *a_nr != u32::MAX)
-            .collect();
-        let missing: Vec<(String, Position)> = self
+        // so a `self: V?` receiver counts as an implementation of `V`.
+        let impls: Vec<(u32, u32)> = self
             .data
             .definitions
             .iter()
             .enumerate()
-            .filter(|(_, v)| v.def_type == DefType::EnumValue && v.parent == e_nr)
-            .filter(|(v_nr, _)| !implemented.contains(&(*v_nr as u32)))
-            .map(|(_, v)| (v.name.clone(), v.position.clone()))
+            .filter(|(_, d)| {
+                d.def_type == DefType::Function
+                    && d.synthetic.is_none()
+                    && d.original_name().as_str() == name
+            })
+            .map(|(nr, _)| (nr as u32, self.data.receiver_def_nr(nr as u32)))
+            .filter(|(_, v)| {
+                *v != u32::MAX
+                    && self.data.def(*v).def_type == DefType::EnumValue
+                    && self.data.def(*v).parent == e_nr
+            })
             .collect();
-        for (variant_name, pos) in &missing {
-            self.lexer.pos_diagnostic(
-                Level::Warning,
-                pos,
-                &format!("no implementation of '{name}' for variant '{variant_name}'"),
+        let spelling =
+            |data: &crate::data::Data, d: u32| data.type_spelling(data.def(d).returned());
+        if let Some(((first, _), rest)) = impls.split_first()
+            && let Some((other, _)) = rest
+                .iter()
+                .find(|(d, _)| spelling(&self.data, *d) != spelling(&self.data, *first))
+        {
+            let shown = |data: &crate::data::Data, d: u32| {
+                format!(
+                    "{} -> {}",
+                    data.overload_signature(&name, d),
+                    data.def(d).returned().source_name(data)
+                )
+            };
+            let (a, b) = (shown(&self.data, *first), shown(&self.data, *other));
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "call of `{name}` on `{enum_name}` is decided by the runtime variant, but its implementations return different types — {a} and {b}; give them one return type, or call it on a value held at the variant"
             );
+        }
+        let implemented: HashSet<u32> = impls.iter().map(|(_, v)| *v).collect();
+        let missing: Vec<String> = self
+            .data
+            .definitions
+            .iter()
+            .enumerate()
+            .filter(|(v_nr, v)| {
+                v.def_type == DefType::EnumValue
+                    && v.parent == e_nr
+                    && !implemented.contains(&(*v_nr as u32))
+            })
+            .map(|(_, v)| v.name.clone())
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "call of `{name}` on `{enum_name}` is not exhaustive — missing: {}; add `fn {name}(self: …)` for each missing variant, or a fallback `fn {name}(self: {enum_name})` that every variant without one reaches",
+            missing.join(", ")
+        );
+    }
+
+    /// `Disp-Specific` / `Disp-Fallback` (@PLN162): the definitions of one name whose first
+    /// parameter is an enum or one of its variants are ONE overload set, however each is
+    /// spelled.  `kind(self: Fireball)` beside `kind(self: Entity)` — or beside a free
+    /// `kind(e: Entity)` — live under different keys, so nothing made them one: no bare
+    /// dispatcher existed, a receiver held at the enum reached the enum-level definition
+    /// whatever its runtime variant, and @F20 yielded to that definition.  The canonical
+    /// `match` (`Disp-Match-Equiv`) takes the variant's arm and leaves the enum-level body as
+    /// its `_`.  Joined once the file's definitions are all known and before @F20 asks whether
+    /// a set owns its dispatch, so selection ranks the variant above the enum and
+    /// `Disp-Dynamic` builds that `match` for an enum-held position.  A group with no
+    /// enum-level member stays @F20's, whose dispatcher already IS the set's `match`.  A name
+    /// another source holds as a set is not joined, exactly as `add_fn` does not join one.
+    fn join_enum_lattice_sets(&mut self) {
+        let source = self.data.source;
+        // (name, enum) → (has an enum-level member, has a variant member, members)
+        let mut groups: std::collections::BTreeMap<(String, u32), (bool, bool, Vec<u32>)> =
+            std::collections::BTreeMap::new();
+        for (d_nr, d) in self.data.definitions.iter().enumerate() {
+            if d.def_type != DefType::Function
+                || d.source != source
+                || d.synthetic.is_some()
+                || crate::portable_path::is_stdlib_source(&d.position.file)
+            {
+                continue;
+            }
+            let Some(first) = d.attributes.iter().find(|a| !a.hidden) else {
+                continue;
+            };
+            let (e_nr, at_enum) = match first.typedef.base() {
+                Type::Enum(e, true, _) => (*e, true),
+                Type::Reference(v, _) if self.data.def(*v).def_type == DefType::EnumValue => {
+                    (self.data.def(*v).parent, false)
+                }
+                _ => continue,
+            };
+            let group = groups.entry((d.original_name().clone(), e_nr)).or_default();
+            if at_enum {
+                group.0 = true;
+            } else {
+                group.1 = true;
+            }
+            group.2.push(d_nr as u32);
+        }
+        for ((name, _), (at_enum, at_variant, members)) in groups {
+            if !(at_enum && at_variant) {
+                continue;
+            }
+            let main = self.data.def_nr(&name);
+            if main != u32::MAX
+                && (self.data.def(main).def_type != DefType::Dynamic
+                    || self.data.def(main).source != source)
+            {
+                continue;
+            }
+            for member in members {
+                self.data.admit_overload_set(&mut self.lexer, &name, member);
+            }
         }
     }
 
@@ -380,13 +498,13 @@ impl Parser {
         self.data.definitions[fn_nr as usize].code =
             v_block(ls, self.data.def(from_nr).returned().clone(), "dynamic_fn");
         self.data.definitions[self.context as usize].variables = self.vars.clone();
-        self.warn_missing_enum_variants(e_nr, nrs, &name);
     }
 
     pub(crate) fn enum_fn(&mut self) {
         if !self.first_pass {
             return;
         }
+        self.join_enum_lattice_sets();
         let mut todo = HashMap::new();
         for (d_nr, d) in self.data.definitions.iter().enumerate() {
             if d.def_type != DefType::Function || d.attributes.is_empty() {
@@ -1364,6 +1482,35 @@ impl Parser {
                 return Some("panic".to_string());
             }
         }
+        // A keyword where the name belongs.  Say which word and why it is taken, then go on
+        // parsing the definition under a name no call can spell (`#` cannot occur in a loft
+        // identifier), so this one error stands alone instead of a second "unexpected"
+        // report against a definition that is otherwise well formed.
+        // The message does not describe what the word does today: `assert`, `panic`, `sizeof`
+        // and `debug_assert` are reserved so the language can give them more meaning later, and
+        // an error that spelled out the current one would read as a promise not to.
+        if let crate::lexer::LexItem::Token(word) = self.lexer.peek().has
+            && crate::lexer::is_keyword(&word)
+        {
+            if matches!(
+                word.as_str(),
+                "assert" | "panic" | "sizeof" | "debug_assert"
+            ) {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{word}` is reserved: the language gives it a meaning of its own, now and in later versions, so a program cannot define a function by that name; choose another name"
+                );
+            } else {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{word}` is a keyword and cannot name a function; choose another name"
+                );
+            }
+            self.lexer.cont();
+            return Some(format!("{word}#reserved"));
+        }
         diagnostic!(
             self.lexer,
             Level::Error,
@@ -1743,6 +1890,89 @@ impl Parser {
         } else {
             Type::Void
         };
+        // @FR-G-Gen — a keyed collection over the type variable (`hash<T[key]>`) names a FIELD
+        // of `T` as its key, and a type variable has no fields until it is instantiated, so no
+        // monomorph can resolve it.  Refused here, where it is written: the definition used to
+        // compile and drop out of every call's candidates, so each call reported the function
+        // as unknown and nothing pointed at the declaration (loft#1538).
+        if is_generic && !self.first_pass && self.cur_type_var != u32::MAX {
+            let tv = self.cur_type_var;
+            let keyed_over_tv = |t: &Type| {
+                t.any_node(&mut |n| {
+                    // `@FR-N-Shape` — a keyed collection is a SHAPE, alike for `τ` and `τ?`.
+                    matches!(n.base(),
+                        Type::Hash(d, _, _)
+                        | Type::Sorted(d, _, _)
+                        | Type::Index(d, _, _)
+                        | Type::Radix(d, _, _)
+                        | Type::Trie(d, _, _) if *d == tv)
+                })
+            };
+            let at = arguments
+                .iter()
+                .find(|a| keyed_over_tv(&a.typedef))
+                .map(|a| format!("parameter `{}`", a.name))
+                .or_else(|| keyed_over_tv(&result).then(|| "the return type".to_string()));
+            if let Some(at) = at {
+                self.refused_templates.insert(self.context);
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "{at} is a keyed collection over the type variable {type_var_name}, and its \
+                     key names a field that {type_var_name} does not have until it is \
+                     instantiated — declare the collection over a concrete record type \
+                     (`hash<Entry[key]>`)"
+                );
+            }
+        }
+        // loft#1539 — a method whose receiver IS the type variable (`fn show<T>(self: T)`) is
+        // stored under the placeholder's key, `t_1T_show`, and a method call looks its method
+        // up on the RECEIVER's type, so no call can ever reach it: each call reported an
+        // unknown field of whatever it was called on.  Refused where it is written.  A
+        // receiver built over the variable (`self: vector<T>`) is keyed on `vector` and works.
+        let tv = self.cur_type_var;
+        if is_generic
+            && !self.first_pass
+            && tv != u32::MAX
+            && arguments.first().is_some_and(|a| {
+                a.name == "self" && matches!(a.typedef.base(), Type::Reference(d, _) if *d == tv)
+            })
+        {
+            self.refused_templates.insert(self.context);
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "a method's receiver cannot be the type variable {type_var_name} itself — a \
+                 method is found on the receiver's type, and {type_var_name} is not a type \
+                 until it is instantiated; write `fn {fn_name}<{type_var_name}>(x: \
+                 {type_var_name})` and call it as `{fn_name}(x)`"
+            );
+        }
+        // C123 — `both` as a first parameter is deprecated: `self` already gives a function both
+        // call spellings, so the two names meant one thing.  Still accepted, meaning exactly
+        // `self`, and warned — a warning gates a library's CI, which is how published uses are
+        // found and renamed.
+        if !self.first_pass && arguments.first().is_some_and(|a| a.name == "both") {
+            diagnostic!(
+                self.lexer,
+                Level::Warning,
+                code = "both-receiver-deprecated",
+                "`both` as a first parameter is deprecated — `self` already gives `{fn_name}` \
+                 both call spellings, `x.{fn_name}(…)` and `{fn_name}(x, …)`; rename the \
+                 parameter to `self`"
+            );
+            self.lexer.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: "rename the parameter to `self`, and its uses in the body".to_string(),
+                condition: Some(
+                    "every `both` the body reads is renamed with it — the calls do not change"
+                        .to_string(),
+                ),
+                edit: None,
+                concept: "functions",
+                concept_ref: "@F16",
+            });
+        }
         // @PLN102 Phase 3 (N-Domain) — the domain-partial math fns are declared `-> τ?` in the
         // stdlib (they yield the reserved null out of their real domain). When LOFT_NULLFLOW is
         // OFF, strip the `?` so their return stays non-null and the default surface is byte-
@@ -1824,7 +2054,7 @@ impl Parser {
             if elems.iter().any(crate::data::has_lifetime_concern)
                 || (self.par_worker_defs.contains(&self.context)
                     && u32::from(crate::variables::size(&result, &crate::data::Context::Argument)) > 8
-                    && !elems.iter().any(|e| matches!(e, crate::data::Type::Function(_, _, _)))));
+                    && !elems.iter().any(|e| matches!(e, crate::data::Type::Function(..)))));
         // @PLN85 generic-tuple-return-fix.md — a generic template whose return SHAPE
         // is already concrete (`-> (text, text)`, no `T` in any element) is not the
         // "T resolves later" case the skip guards; let it ride the same promotion the
@@ -2664,13 +2894,26 @@ impl Parser {
     pub(crate) fn parse_fn_type(&mut self, d_nr: u32) -> Type {
         let mut r_type = Type::Void;
         let mut args = Vec::new();
+        let mut consts = Vec::new();
         self.lexer.token("(");
         loop {
             if self.lexer.peek_token(")") {
                 break;
             }
+            // loft#1540 — `fn(const T)`: a parameter the function behind the reference may not
+            // write, so a value-const value can be handed through it (C124, D-bind-45).
+            let is_const = self.lexer.has_keyword("const");
+            if is_const && args.len() >= crate::data::ConstParams::LIMIT {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "A function type can declare `const` on its first {} parameters only",
+                    crate::data::ConstParams::LIMIT
+                );
+            }
             if let Some(tp) = self.parse_type_full(d_nr, false) {
                 args.push(tp);
+                consts.push(is_const);
             }
             if !self.lexer.has_token(",") {
                 break;
@@ -2682,7 +2925,12 @@ impl Parser {
         {
             r_type = tp2;
         }
-        Type::Function(args, Box::new(r_type), crate::data::Deps::none())
+        Type::Function(
+            args,
+            Box::new(r_type),
+            crate::data::Deps::none(),
+            crate::data::ConstParams::from_flags(consts),
+        )
     }
 
     // <type> ::= <identifier> [::<identifier>] [ '<' ( <sub_type> | <type> ) '>' ] [ <depend> ] [ '?' ]
@@ -4327,9 +4575,14 @@ impl Parser {
         for a_nr in 0..attrs_count {
             let a_name = self.data.attr_name(child_nr, a_nr);
             let a_type = self.data.attr_type(child_nr, a_nr);
+            let a_const = self.data.def(child_nr).attributes()[a_nr].value_const;
             let new_type = Self::substitute_type(a_type, self_nr, &holder);
-            self.data
+            let stub_a = self
+                .data
                 .add_attribute(&mut self.lexer, t_stub_nr, &a_name, new_type);
+            // C124 — the stub stands in for the interface method at a call through a bound, so
+            // it carries that method's `const` (a `self: const Self` answered a plain `self`).
+            self.data.definitions[t_stub_nr as usize].attributes[stub_a].value_const = a_const;
         }
         let ret_type = self.data.def(child_nr).returned().clone();
         let t_ret_type = Self::substitute_type(ret_type, self_nr, &holder);
@@ -4677,12 +4930,16 @@ impl Parser {
                         self.data
                             .add_def(&stub_name, self.lexer.pos(), DefType::Function);
                     for a in &args {
-                        self.data.add_attribute(
+                        let a_nr = self.data.add_attribute(
                             &mut self.lexer,
                             stub_nr,
                             &a.name,
                             a.typedef.clone(),
                         );
+                        // C124 — the interface method's `const` is part of the signature a
+                        // call through a bound is judged by.
+                        self.data.definitions[stub_nr as usize].attributes[a_nr].value_const =
+                            a.constant;
                     }
                     self.data.definitions[stub_nr as usize].parent = d_nr;
                     // loft#734 — a method with NO `->` returns Void, and the stub
@@ -5231,7 +5488,9 @@ impl Parser {
                 name: a.name.clone(),
                 typedef: a.typedef.clone(),
                 default: Value::Null,
-                constant: false,
+                // C124 — the minted default function's parameters keep the `const` the
+                // enclosing signature gave them, so a const argument still reaches it.
+                constant: a.value_const,
                 ref_pos: (0, 0),
                 const_pos: (0, 0),
             })
@@ -5266,7 +5525,8 @@ impl Parser {
                 name: arguments[*i as usize].name.clone(),
                 typedef: arguments[*i as usize].typedef.clone(),
                 default: Value::Null,
-                constant: false,
+                // C124 — the enclosing parameter's `const`, which its own argument may need.
+                constant: arguments[*i as usize].constant,
                 ref_pos: (0, 0),
                 const_pos: (0, 0),
             })
@@ -5307,7 +5567,8 @@ impl Parser {
                 name: arguments[*i as usize].name.clone(),
                 typedef: arguments[*i as usize].typedef.clone(),
                 default: Value::Null,
-                constant: false,
+                // C124 — the enclosing parameter's `const`, which its own argument may need.
+                constant: arguments[*i as usize].constant,
                 ref_pos: (0, 0),
                 const_pos: (0, 0),
             })

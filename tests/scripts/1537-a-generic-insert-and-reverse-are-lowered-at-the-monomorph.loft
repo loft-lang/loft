@@ -1,0 +1,96 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic that forwards to `insert` or `reverse` answers what its concrete twin answers at
+// every element kind (`interfaces.md (G-Mono)`, loft#1537).
+//
+// Both builtins are lowered by a compiler special case that reads the element type: its stored
+// width, its schema row and — for `insert` — the setter that writes the new element.  Inside a
+// template that type is the type variable, whose placeholder is an attribute-less struct, so
+// the template chose a width that fits no real element and a RECORD copy for every element.
+// Substitution cannot repair a choice of op.  So neither was ever right, not even at a record:
+// `insert` at `integer` panicked on the interpreter and did not compile on `--native`, at
+// `text` it faulted, at `Pt` it wrote a zeroed neighbour; `reverse` answered `[0,0,3]`,
+// `[null,null,null]` and a torn record.  Both now defer to the monomorph, which lowers them
+// through the same function the concrete spelling uses.
+//
+// `v[i] = e` and `v += [e]` in a generic were already right and are the controls.
+//
+// @falsified-at: b12e15474 — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0
+// @falsified-by: tests/falsified/1537-a-generic-insert-and-reverse-are-lowered-at-the-monomorph.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0
+//   CHANNEL: exit + panic on the interpreter, exit (a rustc refusal) on `--native`.
+//   ARMED: nothing.
+//   WITNESS: on the control `put_at([1,2], 1, 9)` panics at `src/database/allocation.rs:1622`
+//     on the interpreter and `--native` refuses the emitted `OpCopyRecord` on an `i64` (E0610);
+//     `rev([1,2,3])` answers `[0,0,3]`, and `put_at` at `Pt` answers `6 0`.
+//   HOLDS: the element-write controls.
+
+struct Pt { x: integer, y: integer }
+
+fn put_at<T>(v: vector<T>, i: integer, e: T) { insert(v, i, e); }
+
+fn rev<T>(v: vector<T>) { reverse(v); }
+
+fn front_then_flip<T>(v: vector<T>, e: T) { put_at(v, 0, e); rev(v); }
+
+fn set_at<T>(v: vector<T>, i: integer, e: T) { v[i] = e; }
+
+fn test_insert_at_a_scalar() {
+  a: vector<integer> = [1, 2];
+  put_at(a, 1, 9);
+  assert("{a}" == "[1,9,2]", "insert in the middle: {a}");
+  put_at(a, 0, 7);
+  put_at(a, 4, 8);
+  assert("{a}" == "[7,1,9,2,8]", "insert at both ends: {a}");
+}
+
+fn test_insert_at_a_text() {
+  a: vector<text> = ["a", "b"];
+  put_at(a, 1, "z");
+  assert("{a}" == "[\"a\",\"z\",\"b\"]", "insert at text: {a}");
+}
+
+fn test_insert_at_a_record() {
+  a: vector<Pt> = [Pt { x: 1, y: 2 }];
+  put_at(a, 0, Pt { x: 5, y: 6 });
+  assert(len(a) == 2 && a[0].y == 6 && a[1].y == 2, "insert at Pt: {a[0].y} {a[1].y}");
+}
+
+fn test_reverse() {
+  a: vector<integer> = [1, 2, 3];
+  rev(a);
+  assert("{a}" == "[3,2,1]", "reverse at integer: {a}");
+  n: vector<u8> = [1, 2, 250];
+  rev(n);
+  assert("{n}" == "[250,2,1]", "reverse at u8: {n}");
+  s: vector<text> = ["a", "b", "c"];
+  rev(s);
+  assert("{s}" == "[\"c\",\"b\",\"a\"]", "reverse at text: {s}");
+  p: vector<Pt> = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }];
+  rev(p);
+  assert(p[0].y == 4 && p[1].y == 2, "reverse at Pt: {p[0].y} {p[1].y}");
+}
+
+fn test_through_another_generic() {
+  a: vector<text> = ["a", "b"];
+  front_then_flip(a, "z");
+  assert("{a}" == "[\"b\",\"a\",\"z\"]", "nested at text: {a}");
+  b: vector<integer> = [4];
+  front_then_flip(b, 5);
+  assert("{b}" == "[4,5]", "nested at integer: {b}");
+}
+
+fn test_element_write_controls() {
+  a: vector<text> = ["x", "y"];
+  set_at(a, 0, "z");
+  assert("{a}" == "[\"z\",\"y\"]", "v[i] = e at text: {a}");
+}
+
+fn main() {
+  test_insert_at_a_scalar();
+  test_insert_at_a_text();
+  test_insert_at_a_record();
+  test_reverse();
+  test_through_another_generic();
+  test_element_write_controls();
+}

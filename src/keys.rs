@@ -537,6 +537,19 @@ pub fn explain_enabled() -> bool {
     *ON.get_or_init(|| env_set("LOFT_EXPLAIN"))
 }
 
+/// `LOFT_DROP_COPY_CENSUS=1` — @PLN163 P0: list every place the program deep-copies a record
+/// that has a release to run, one line per site on stderr, followed by the site count.
+///
+/// Not a user diagnostic.  It measures how far the copy-lease rules reach — which copies a type
+/// without `OpCopy` will refuse, and which copies of a leasing type will run the hook — so its
+/// audience is this repo.  Compile-time only, and the count line is printed even when it is zero,
+/// so a run that found nothing can be told apart from a run that never looked.
+#[must_use]
+pub fn drop_copy_census_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_DROP_COPY_CENSUS"))
+}
+
 /// `LOFT_COPY_MANIFEST=1` — @PLN130: the emission-manifest GUARD. Each generator records every
 /// deep copy it WRITES; this reports the ones the copy diagnostic produced no verdict for.
 ///
@@ -1017,6 +1030,15 @@ pub fn value_return_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VALUE_RETURN"))
 }
 
+/// `LOFT_NO_LITERAL_EXIT_BUFFER=1` keeps a mid-body `return S { … }` building its record in
+/// a store of its own (@PLN164 B2, `@FR-R-Place`'s callee clause: a callee that on some exit
+/// answers a store other than the buffer it was handed cannot be placed) — the bisect step
+/// for a wrong record out of a callee with more than one literal exit.
+pub fn literal_exit_buffer_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LITERAL_EXIT_BUFFER"))
+}
+
 /// The two flag bits `OpCopyRecord` carries in its `tp` operand beside the type id, so
 /// a type id is at most `0x3FFF` (16 383 types — `debug_assert`ed where the parser sets a
 /// bit).  Every decoder masks with [`COPY_TP_MASK`]; a decoder that masks only one bit
@@ -1125,6 +1147,20 @@ pub fn inplace_callee_hoist_enabled() -> bool {
 pub fn join_buffer_witness_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_JOIN_BUFFER_WITNESS"))
+}
+
+/// @PLN164 B1 (`@FR-O-Move`): a plain local first-bound from a call whose return names only
+/// the callee's OWN hidden return buffer (`fn mk() -> P { o = P { … }; …; o }`) ADOPTS the
+/// store the callee minted instead of minting a second one and deep-copying it — **DEFAULT
+/// ON**, both backends (an IR fact: the local is paired with the call's buffer exactly as a
+/// literal-returning callee's result already is).  Opt OUT with `LOFT_NO_ADOPT_FIRST_BIND`
+/// (read at PARSE time): the before-half of the A/B on one binary — two stores and a deep
+/// copy per such bind — and the first bisect step for a leak, a double free or a wrong
+/// field out of a local bound from a build-into-a-local callee.  `LOFT_STRICT_STORES=1`,
+/// `LOFT_POISON=1` and `LOFT_NATIVE_LEAK_CHECK=1` are the falsifiers.
+pub fn adopt_first_bind_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_ADOPT_FIRST_BIND"))
 }
 
 /// @PLN157 § V-ag: clearing a store-ROOT vector RESETS its store in one step instead of

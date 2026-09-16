@@ -232,7 +232,12 @@ mod tests {
     #[test]
     fn fn_ref_slot_matches_variables_size() {
         let int = Type::Integer(crate::data::IntegerSpec::wide());
-        let f = Type::Function(Vec::new(), Box::new(int), Deps::default());
+        let f = Type::Function(
+            Vec::new(),
+            Box::new(int),
+            Deps::default(),
+            crate::data::ConstParams::NONE,
+        );
         assert_eq!(
             FN_REF_SLOT,
             variables::size(&f, &Context::Variable),

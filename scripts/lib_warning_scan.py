@@ -45,8 +45,15 @@ from pathlib import Path
 
 # The test runner prints one line per warning:
 #     "  Warning: <message> at <file>:<line>:<col>"
+#     "  Warning[<code>]: <message> at <file>:<line>:<col>"   (a coded diagnostic)
 # The message itself may contain " at ", so the location is anchored at the end.
-WARNING_RE = re.compile(r"^\s*Warning:\s*(?P<msg>.*?)(?:\s+at\s+(?P<loc>\S+:\d+:\d+))?\s*$")
+# The `[code]` form is how every diagnostic with a stable identity renders; matching only
+# `Warning:` read all of them as no warning at all, so a coded deprecation on a library's own
+# source (C123's `both-receiver-deprecated`) never reached this table.
+WARNING_RE = re.compile(
+    r"^\s*Warning(?:\[(?P<code>[A-Za-z0-9_-]+)\])?:\s*(?P<msg>.*?)"
+    r"(?:\s+at\s+(?P<loc>\S+:\d+:\d+))?\s*$"
+)
 
 # A warning KIND is its message with the variable parts blanked out, so
 # "`&` on parameter `m` only slows it down" and the same for `dst` count as one
@@ -78,7 +85,7 @@ def parse_warnings(text: str, root: Path):
     own, deps = {}, {}
     root_str = str(root.resolve()) if root else None
     for line in text.splitlines():
-        if "Warning:" not in line:
+        if "Warning" not in line:
             continue
         m = WARNING_RE.match(line)
         if not m:
@@ -94,7 +101,10 @@ def parse_warnings(text: str, root: Path):
         # A location-less warning is attributed to the package — it is more useful
         # to over-report our own debt than to lose a warning in the deps bucket.
         bucket = own if (inside or not file_part) else deps
-        bucket[(msg, loc)] = {"message": msg, "location": loc, "kind": warning_kind(msg)}
+        # A coded warning's kind IS its code — the frozen identity (DIAGNOSTICS.md);
+        # an uncoded one keeps the mechanical kind derived from its message.
+        kind = m.group("code") or warning_kind(msg)
+        bucket[(msg, loc)] = {"message": msg, "location": loc, "kind": kind}
     return list(own.values()), list(deps.values())
 
 

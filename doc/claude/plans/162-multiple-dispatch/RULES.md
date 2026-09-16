@@ -298,9 +298,12 @@ above: the ADD is refused** — a rebuild that leaves a served tuple ambiguous, 
 definition takes, is reported naming the tuple and the world is unchanged; a removed or
 re-signatured overload is refused too (the world only grows, and a signature is the frame a
 call site embeds); and a second definition of a name that was ONE function is refused,
-because its sites were direct calls with nothing to rebuild.  Not reached: a `self` set
-(D-disp-1's remainder), and the native live-flip binary, whose compiled callers keep the
-world they were built in until flipped — recorded, not closed.
+because its sites were direct calls with nothing to rebuild.  Not reached: ADDING a `self`
+overload mid-run — since D-disp-1's closure a `self` set over an enum with an enum-level
+member is an ordinary set, and its values under the open profile are measured
+(`a-method-at-the-enum-is-the-wildcard-…`, `35-dispatch-self-set` under
+`LOFT_LIVE_RELOAD=1`), but no add was tried — and the native live-flip binary, whose compiled
+callers keep the world they were built in until flipped — recorded, not closed.
 
 **Disp-Match-Equiv, in the oracle (IMPL.md step 14, 2026-09-14).**  A dispatch set and its
 canonical `match` are two programs of the differential-oracle corpus, `tests/oracle/34-…`,
@@ -308,27 +311,77 @@ and the set's side declares `@ORACLE_TWIN: <the match>`: the sweep holds the pai
 stdout on top of holding each to its own three backends, with a positive control that a
 differing line or exit is caught.
 
+**One return type per dispatch (DESIGN.md Q4, answered — 2026-09-15).**  A
+call decided by the runtime variant is one synthesised function with one return type, so the
+definitions it chooses between must agree on it.  `val(f: Fireball) -> integer` beside
+`val(e: Entity) -> text` read the text through the integer's frame on the interpreter (`[2]`
+where the body says `e2`) and did not compile on `--native` — for a free set since step 13, and
+for @F20's own dispatcher before any of this plan.  Such a call is now refused naming the two
+definitions; a static call reaches one definition and is untouched (`width(integer) ->
+integer` beside `width(text) -> text` compiles and runs).  **That is the whole rule (owner,
+2026-09-15, answering Q4): the definitions of a NAME may return different types; only a
+dispatch decided at run time needs the definitions it chooses between to agree.**  The design's
+proposal — refuse the name — was declined: it would refuse the stdlib's own overload sets
+(`abs` on an `integer` returns `integer`, on a `single` returns `single`) and working programs
+like `width`, for a benefit, one result type to infer, that only a runtime dispatch needs.
+
 ## Deviations
 
-OPEN: **1**.
+OPEN: **0**.
 
-- **D-disp-1 — OPEN 2026-09-14, NARROWED the same day by step 13.**  For every set that
-  owns its dispatch (a free member, or an enum-level definition) the dynamic dispatcher
-  refuses a missing tuple at compile time; what remains is the `self` set over variants, in
-  two facets — the one below, and a `self` set WITH an enum-level member (`kind(self:
-  Fireball)` beside `kind(self: Entity)`), which has no bare dispatcher, so @F20 yields and an
-  enum-held receiver reaches the enum-level definition rather than its runtime variant's.
-  Both pinned as measured in one file.  `Disp-Exhaustive` says no runtime *"no method"* path exists, and @F20's synthesised
-  enum dispatcher has one: with `tag(self: Fireball)` and
-  `tag(self: IceWall)` declared and `Crate` left out, `c.tag()` on a `Crate` held at `Entity`
-  is a compile-time WARNING (*no implementation of 'tag' for variant 'Crate'*) and at runtime
-  an EMPTY value — not null, not a refusal — on both backends, pinned AS MEASURED by
-  `tests/scripts/d-disp-1-a-missing-variant-is-a-warning-and-an-empty-value.loft`, which the
-  closure flips.  Pre-existing; it is the shape step 13's rule
-  must close: a call whose argument is held at the enum is covered by an enum-level
-  definition or by an implementation for EVERY variant, and otherwise refused — which turns
-  a warning today's programs compile with into a refusal, so it is a
-  [COMPATIBILITY.md](../../COMPATIBILITY.md) decision at contract 0 and the owner's.
+- **D-disp-1 — CLOSED 2026-09-15** (opened 2026-09-14, narrowed the same day by step 13).
+  What remained after step 13 was the `self` set over variants, in two facets, and the owner
+  decided both in one sentence: *the refusal is the same shape as the match without `_`, and
+  the enum-level definition is the `_` variant — every case with no more specific
+  implementation.*
+  - **The enum-level member is `_`.**  `kind(self: Fireball)` beside `kind(self: Entity)` — or
+    beside a free `kind(e: Entity)` — lived under different keys (`t_8Fireball_kind`,
+    `t_6Entity_kind`, `n_kind`), so nothing made them one set: no bare dispatcher existed,
+    @F20 yielded to the enum-level definition, and a receiver held at the enum answered the
+    enum-level body whatever its variant — on both backends, with no diagnostic, even with
+    every variant implemented.  `Parser::join_enum_lattice_sets` now makes every definition
+    of one name whose first parameter is an enum or one of its variants ONE overload set
+    (once the file's definitions are known, before @F20 asks whether a set owns its
+    dispatch), so `Disp-Specific` ranks the variant above the enum and step 13's dispatcher
+    builds the `match`.  A group with no enum-level member stays @F20's, whose dispatcher
+    already is that `match`.
+  - **A missing variant is `match` without `_`.**  With `tag(self: Fireball)` and
+    `tag(self: IceWall)` declared and `Crate` left out, a call through `Entity` was a
+    WARNING at `Crate`'s declaration and an EMPTY value at run time.  It is now refused at
+    the call, in `M-Exhaust`'s shape (*call of `tag` on `Entity` is not exhaustive —
+    missing: Crate; add … or a fallback `fn tag(self: Entity)`*), by
+    `Parser::refuse_uncovered_variants` at `call_nr`, where both spellings and every
+    receiver spelling arrive.  A method only some variants have, called only on those
+    variants, dispatches nothing and says nothing — the warning fired for it too.
+  The warning was the leniency that let a half-built set run; at contract 0 turning it into
+  the refusal is the owner's call, taken.  Measured over 1 554 corpus files and 3 331 more
+  (the repo's fixture libraries, tools and docs, and nineteen sibling projects): the only
+  programs refused are the two that pinned the old behaviour; `813-variant-bounded-generic`
+  forms a set and answers unchanged.  Guards: `tests/scripts/a-method-at-the-enum-is-the-wildcard-for-variants-without-their-own.loft`,
+  the refusals in `tests/parse_errors.rs`, and `tests/oracle/35-dispatch-self-set.loft` held
+  to its `match` twin.  A `self: Fireball?` member beside `self: Entity` is `Disp-Ambiguous`
+  for a `Fireball` held at the enum, exactly as the free pair is (nullability and the enum
+  are incomparable abstractions).
+
+- **D-disp-2 — CLOSED 2026-09-15** (opened the same day, found closing D-disp-1).  A
+  NULLABLE enum position stayed static (step 13: *null has no variant*), so an `Entity?`
+  holding a `Fireball` reached the definition its STATIC type selects — behind the `(N-Store)`
+  warning where that definition takes a dense `Entity`, and in SILENCE where it takes
+  `Entity?` — while the canonical `match` over the same value takes the `Fireball` arm
+  (measured on both spellings, a trailing parameter, a loop over call results, and two
+  positions: `hit(Entity?, Entity)` answered the fallback for a `(Fireball, IceWall)` pair).
+  A nullable position is now dynamic whenever the call HAS a static selection: a present
+  value's variant decides as a dense one's does, and a null — which has no variant — reaches
+  that static selection, exactly what it reached before.  The dispatcher declares each
+  nullable position at the nullability the static selection declares there, so the call into
+  it is checked as the direct call was (the same `(N-Store)` warnings at the same sites with
+  the same text, measured), and a `Disp-World` rebuild recovers what the call routed from the
+  specialisation's spelling.  A call with no static selection keeps its nullable positions
+  static and is answered as before.  Guards:
+  `tests/scripts/a-nullable-enum-argument-is-dispatched-on-its-variant.loft`, the nullable
+  cells of the two step-13 guards (which pinned the static answer, now flipped), and
+  `tests/live_world.rs` (`a_nullable_dynamic_site_keeps_its_null_leaf_across_a_rebuild`,
+  which fails with the spelling step removed).
 
 ## Consequences worth stating
 

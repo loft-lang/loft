@@ -24,19 +24,19 @@
 <h1>Vector aggregates</h1>
 <article>
 <div class="item">
-<pre><code>pub fn min_of &lt; T: Ordered &gt; (v: vector&lt;T&gt;) -&gt; T?</code></pre>
+<pre><code>pub fn min_of &lt; T: Ordered &gt; (v: const vector&lt;T&gt;) -&gt; T?</code></pre>
 <p>Smallest element in a vector, or null when the vector is empty (the type is honest about the empty case).  Works on any Ordered type (op &lt;).</p>
 </div>
 <div class="item">
-<pre><code>pub fn max_of &lt; T: Ordered &gt; (v: vector&lt;T&gt;) -&gt; T?</code></pre>
+<pre><code>pub fn max_of &lt; T: Ordered &gt; (v: const vector&lt;T&gt;) -&gt; T?</code></pre>
 <p>Largest element in a vector, or null when the vector is empty (the type is honest about the empty case).  Works on any Ordered type (op &lt;).</p>
 </div>
 <div class="item">
-<pre><code>pub fn sum &lt; T: Addable &gt; (v: vector&lt;T&gt;, init: T? = null) -&gt; T</code></pre>
+<pre><code>pub fn sum &lt; T: Addable &gt; (v: const vector&lt;T&gt;, init: T? = null) -&gt; T</code></pre>
 <p>Sum of vector elements.  Works on any Addable type.  `init` is the identity to start from; leave it out and the element type's own zero is used (0, 0.0, &quot;&quot;). Example: sum([10, 20, 12], 0) == 42 Example: sum([10, 20, 12]) == 42</p>
 </div>
 <div class="item">
-<pre><code>pub fn sum_of(v: vector&lt;integer&gt;) -&gt; integer</code></pre>
+<pre><code>pub fn sum_of(v: const vector&lt;integer&gt;) -&gt; integer</code></pre>
 <p>Sum of all integer elements. Returns 0 for an empty vector. Superseded by the general `sum(v, init)`; kept as a shim over it (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the shim's call resolves — a forward reference to a generic is not yet supported.</p>
 </div>
 <div class="item">

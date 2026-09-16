@@ -76,17 +76,17 @@ pub fn json_errors() -> text;
 /// `self` isn't a JObject or the key is missing.  Chained access
 /// like `root.field("a").field("b")` is safe — every intermediate
 /// missing produces `JNull`, never a trap.
-pub fn field(self: JsonValue, name: text) -> JsonValue[self];
+pub fn field(self: const JsonValue, name: text) -> JsonValue[self];
 #pure
 
 /// JArray indexer — returns the element at `index`, or `JNull` when
 /// `self` isn't a JArray or the index is out of bounds.
-pub fn item(self: JsonValue, index: integer) -> JsonValue[self];
+pub fn item(self: const JsonValue, index: integer) -> JsonValue[self];
 #pure
 
 /// Length of a JArray's items vector or a JObject's fields vector.
 /// Returns `null` (i32::MIN) for any other variant.
-pub fn len(self: JsonValue) -> integer;
+pub fn len(self: const JsonValue) -> integer;
 #pure
 
 /// Typed extractor — returns `null` on kind mismatch.
@@ -94,16 +94,16 @@ pub fn len(self: JsonValue) -> integer;
 /// The null is NOT the empty text, and only `??` tells the two apart: on a mismatch
 /// `s == ""` is false and `len(s)` is 1, while a field that really holds `""` compares
 /// equal and measures 0.  Reach for `as_text(...) ?? fallback`, never `== ""`.
-pub fn as_text(self: JsonValue) -> text;
+pub fn as_text(self: const JsonValue) -> text;
 #pure
 
 /// Typed extractor — returns `null` on kind mismatch.
-pub fn as_number(self: JsonValue) -> float;
+pub fn as_number(self: const JsonValue) -> float;
 #pure
 
 /// Typed extractor — returns `null` on kind mismatch.  Truncates the
 /// underlying `float` toward zero before converting.
-pub fn as_long(self: JsonValue) -> integer;
+pub fn as_long(self: const JsonValue) -> integer;
 #pure
 
 /// Typed extractor — returns `null` on kind mismatch.
@@ -114,7 +114,7 @@ pub fn as_long(self: JsonValue) -> integer;
 /// `bool` has none, so this one answered `false` for every mismatching kind — for an absent
 /// field, for the string `"true"`, and for `1` — indistinguishably from a field that really
 /// says `false`.
-pub fn as_bool(self: JsonValue) -> boolean?;
+pub fn as_bool(self: const JsonValue) -> boolean?;
 #pure
 
 /// Q2 introspection — returns the variant name as text:
@@ -122,14 +122,14 @@ pub fn as_bool(self: JsonValue) -> boolean?;
 /// or `"JObject"`.  Cheap: reads the discriminant byte, formats
 /// a literal.  Useful for logs and conditional branches that
 /// don't want to commit to a full pattern match.
-pub fn kind(self: JsonValue) -> text;
+pub fn kind(self: const JsonValue) -> text;
 #pure
 
 /// Q2 introspection — returns the field-name list of a `JObject`
 /// in insertion order, or an empty vector for any other variant.
 /// Safe idiom: `for k in v.keys() { ... }` works on any JsonValue
 /// because non-objects yield an empty walk.
-pub fn keys(self: JsonValue) -> vector<text>;
+pub fn keys(self: const JsonValue) -> vector<text>;
 #pure
 
 /// Q2 introspection — returns the (name, value) entries of a
@@ -137,7 +137,7 @@ pub fn keys(self: JsonValue) -> vector<text>;
 /// `for entry in fields(v) { … entry.name … entry.value … }`.
 /// Values deep-copy (primitives + nested containers — full tree).
 /// Empty vector for any other variant.
-pub fn fields(self: JsonValue) -> vector<JsonField>;
+pub fn fields(self: const JsonValue) -> vector<JsonField>;
 #pure
 
 /// Q2 introspection — returns true iff `self` is a `JObject`
@@ -147,7 +147,7 @@ pub fn fields(self: JsonValue) -> vector<JsonField>;
 /// write on any JsonValue without first destructuring.
 /// Distinguishes "absent" from "present-but-null" — a field
 /// whose value is `JNull` still returns `true`.
-pub fn has_field(self: JsonValue, name: text) -> boolean;
+pub fn has_field(self: const JsonValue, name: text) -> boolean;
 #pure
 
 /// Q3 serialiser — render a JsonValue to canonical RFC 8259 JSON
@@ -156,7 +156,7 @@ pub fn has_field(self: JsonValue, name: text) -> boolean;
 /// containers walk naturally).  Strings escape `"`, `\\`, and
 /// ASCII control bytes; UTF-8 passes through verbatim.
 /// Non-finite numbers render as `null`.
-pub fn to_json(self: JsonValue) -> text;
+pub fn to_json(self: const JsonValue) -> text;
 #pure
 
 /// Q3 pretty serialiser — `to_json_pretty` produces 2-space
@@ -166,7 +166,7 @@ pub fn to_json(self: JsonValue) -> text;
 /// `to_json` (no nested structure to indent).  After object
 /// keys the colon is followed by a single space (`"k": v`).
 /// Useful for golden-file tests and log output.
-pub fn to_json_pretty(self: JsonValue) -> text;
+pub fn to_json_pretty(self: const JsonValue) -> text;
 #pure
 
 /// Q4 constructor — build a JsonValue set to the `JNull` variant.
@@ -207,7 +207,7 @@ pub fn json_string(v: text) -> JsonValue;
 /// `field()` result) embed correctly.  Empty input produces a
 /// real empty JArray.
 // Example: @STD-008
-pub fn json_array(items: vector<JsonValue>) -> JsonValue;
+pub fn json_array(items: const vector<JsonValue>) -> JsonValue;
 #pure
 
 /// Build a JsonValue set to the `JObject` variant carrying the supplied
@@ -215,7 +215,7 @@ pub fn json_array(items: vector<JsonValue>) -> JsonValue;
 /// walker as `json_array`, so a JObject can carry captured-subtree JArray
 /// / JObject values.  Empty input produces a real empty JObject.
 // Example: @STD-008
-pub fn json_object(fields: vector<JsonField>) -> JsonValue;
+pub fn json_object(fields: const vector<JsonField>) -> JsonValue;
 #pure
 
 /// Internal walker — populate a struct of the given `struct_kt`
@@ -234,7 +234,7 @@ pub fn json_object(fields: vector<JsonField>) -> JsonValue;
 /// `parse_type_parse` overrides the type to `reference[T]` for the
 /// caller while the stack accounting remains correct.
 // Example: @STD-009
-pub fn struct_from_jsonvalue(v: JsonValue, struct_kt: integer) -> JsonValue;
+pub fn struct_from_jsonvalue(v: const JsonValue, struct_kt: integer) -> JsonValue;
 // Populates json_errors on
 // type mismatches.  Allocates the result struct into worker
 // stores → par-safe; no parent state writes.
@@ -253,8 +253,8 @@ pub fn struct_from_jsonvalue(v: JsonValue, struct_kt: integer) -> JsonValue;
 /// call regardless of the actual receiver's struct type — the runtime
 /// only reads the `struct_kt` discriminant for dispatch.
 // Example: @STD-009
-pub fn struct_to_json(self_ref: JsonValue, struct_kt: integer) -> text;
+pub fn struct_to_json(self_ref: const JsonValue, struct_kt: integer) -> text;
 
 /// As `struct_to_json` but produces a pretty (2-space-indent, one
 /// element per line) form.  Same field-type matrix.
-pub fn struct_to_json_pretty(self_ref: JsonValue, struct_kt: integer) -> text;
+pub fn struct_to_json_pretty(self_ref: const JsonValue, struct_kt: integer) -> text;

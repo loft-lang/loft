@@ -1170,7 +1170,12 @@ jobs:
     # Never from a PR: a pull request must not be able to open an issue on the repo.
     # Never from the release gate either: its run is evidence for a candidate, and a
     # green candidate must not auto-CLOSE an issue main's nightly opened.
-    if: always() && github.event_name != 'pull_request' && !inputs.from_gate
+    # And never from a run of any OTHER branch, for the same reason: the issue tracks the
+    # default branch's nightly, and a `workflow_dispatch` on a feature branch is evidence
+    # for that branch.  It did close one: loft#1527 was auto-closed by a green dispatch on
+    # the branch carrying its fix, while `main` — which did not have the fix yet — was
+    # still red on both gates it named.
+    if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -1247,7 +1252,9 @@ jobs:
     needs: [stale-plans-audit, miri, asan, asan-leak-gate, poison, stack-shadow, tsan,
             native-asan, valgrind, release-gate-sweeps, debug-asserts, toolchain-matrix,
             index-hygiene, library-health]
-    if: always() && github.event_name != 'pull_request' && !inputs.from_gate
+    # The digest describes the default branch's nightlies, so it follows `notify`: not a
+    # PR, not the release gate, and not a dispatch on another branch.
+    if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     permissions:
       contents: read

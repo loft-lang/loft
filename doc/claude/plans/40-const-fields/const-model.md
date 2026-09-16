@@ -68,6 +68,30 @@ re-annotated to match.  No new keyword.
     spelling and leaves the common one open.  A direct write through the parameter is
     already refused (`Cannot modify const parameter 'a'`), which is what makes the hole
     invisible: the guarantee reads as enforced right up to the first call.
+  - **Built 2026-09-15 (loft#1540): rule 2 for views, and rule 4 for `&`.**  A view of a
+    value-const value — a loop variable over its elements, an index / field projection or `&`
+    link bound to a local, a loop over such a view, a read off a value-const FIELD — is marked
+    value-const at its bind (`Parser::mark_const_view`), so every existing write guard refuses a
+    write through it, `#remove` included, and the refusal names the view and the value.  A
+    value-const value or view handed to a `&` parameter is refused at the call.  Guards:
+    `tests/scripts/a-view-of-a-const-value-is-read-only.loft` (12 refusals) and
+    `…-leaves-its-copies-writable.loft` (the copies, whole-value binds and `const` hand-offs that
+    must stay legal).  Known over-approximation: the mark follows the BIND, not the flow, so a
+    view local rebound to a fresh value is still refused.
+  - **Built 2026-09-15 — the plain-parameter half, by SIGNATURE (owner, DESIGN_DECISIONS.md C124),
+    landing as the warning `const-to-plain-parameter` until the 17 library helpers C124 § Rollout
+    lists declare `const`.**
+    A value-const value reaches a record or collection parameter only when that parameter is
+    declared `const`; the body is never read (C121), and a proof that a callee does not write stays
+    an optimisation's (C122).  The parameter's `const` is carried on the definition's attribute
+    (`Attribute.value_const`, serialised in the IR store — the Phase 2b deferral this needed) and
+    kept by every copy of a signature: generic instances, interface and bound-method stubs,
+    default-value functions, overload dispatchers.  The stdlib's read-only heap parameters are
+    `const`; `Op*` primitives are exempt (only stdlib bodies call them, and `const` there means an
+    immediate operand).  The function-reference half followed the same day (D-bind-45 closed): a
+    function type spells `const` (`fn(const T)`, a `ConstParams` mask beside the parameter types —
+    still no `Type::Const`), and a reference's call, a builtin's callback, a lambda's `const`
+    parameter and a closure's capture are judged by it.
 
 ## First principle — two orthogonal facts, and loft already has one of them
 

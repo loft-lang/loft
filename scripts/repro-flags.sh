@@ -43,6 +43,22 @@ RUSTFLAGS="${RUSTFLAGS:-}"
 [ -n "$_repro_sysroot" ] && RUSTFLAGS="$RUSTFLAGS --remap-path-prefix=$_repro_sysroot=/rustc"
 RUSTFLAGS="$RUSTFLAGS --remap-path-prefix=$_repro_cargo_home=/cargo"
 RUSTFLAGS="$RUSTFLAGS --remap-path-prefix=$_repro_src=/src"
+
+# On a Windows host the linker (`rust-lld`, per `.cargo/config.toml`) is not deterministic by
+# default, and it took three measurements on a windows-2025-vs2026 runner to say why.  Two
+# builds of one source from one root differed in exactly 12 bytes: the COFF header's
+# TimeDateStamp, the debug directory's copy of it, and the CodeView PDB GUID — the wall clock.
+# `/Brepro` alone replaced the clock with a hash, but the hash covers the PDB the link writes
+# beside the exe, and that PDB is not deterministic, so 20 bytes still differed.
+# `-C strip=debuginfo` did NOT stop the PDB under rust-lld.  `/DEBUG:NONE` does: no PDB, no
+# CodeView record, and two builds came out byte-identical (0 differing bytes).  The PDB was
+# never shipped — a Windows bundle's `bin/` holds only `loft.exe` — so nothing is lost.
+# These live HERE rather than in `.cargo/config.toml` because this file exports RUSTFLAGS,
+# which overrides a config's `target.<triple>.rustflags`, and here is where both the release
+# and the verifier get them.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*) RUSTFLAGS="$RUSTFLAGS -C link-arg=/Brepro -C link-arg=/DEBUG:NONE" ;;
+esac
 export RUSTFLAGS
 
 unset _repro_sysroot _repro_cargo_home _repro_src

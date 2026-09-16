@@ -136,7 +136,10 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   source.  This is [heap.md](heap.md) H-Copy (`fv = e.items; fv[0]=99`
                   leaves `e.items[0]`).  A struct-enum value is a heap RECORD exactly as
                   a struct is — `Type::heap_def_nr` names both — and a `(C-Var)` widening
-                  `c: E = s` from a variant is a copy like any other.
+                  `c: E = s` from a variant is a copy like any other.  For a type that
+                  owns a droppable without `OpCopy`, such a bind is a compile-time error on
+                  its own line, whatever follows it ([heap.md](heap.md) H-Copy-Refuse); with
+                  `OpCopy` it takes a second lease (H-Copy-Lease).
   (B-Ref-Alias)   the `&τ` annotation makes ANY binding — scalar OR heap — a live LINK
                   to the source instead of a copy.  `d = &v` / `d = &self.data` ALIAS the
                   vector: `d[i] = x` (and `d += …`) write THROUGH to the source, which is
@@ -161,6 +164,14 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   and the author is told — so writes through it stop reaching the
                   container (@PLN130 F2/F4/F8).  A plain bind already copies, so this
                   is consistent with what it meant; a `&` gets B-Ref-Reshape instead.
+                  A `?`-DISCHARGED element read (`e = v[i]?`) is the same projection with
+                  its absence discharged and is a VIEW on the same terms — an absent
+                  element discharges to null, and there is nothing to view (@PLN164 C3;
+                  today the discharge materialises a copy, which the rule permits and
+                  the rewrite removes).
+                  A view of a member that owns a droppable without `OpCopy` never
+                  materialises: disturbing its container while the view is used is an error
+                  at the disturbance ([heap.md](heap.md) H-View-Drop).
   (B-View-Base)   a projection off a BORROWED base is a VIEW at EVERY element type — not only
                   a struct-typed one.  `for b in bv { c = b.vecf; … }` aliases exactly as
                   `c = b.strf` does, and so does a tuple element.  Ownership of the BASE is the
@@ -297,6 +308,13 @@ source: [../plans/40-const-fields/const-model.md](../plans/40-const-fields/const
                           While the resolver stopped at the discharge and answered
                           "no binding at all" this went unenforced and a `const`
                           parameter was mutated in silence (loft#1211).
+                          "Through this name" includes every VIEW of the value —
+                          a loop variable over its elements, an element or field
+                          bound to a local, a `&` link — because a view names the
+                          same place (`B-View`); a COPY out of it (`B-Copy`, a
+                          scalar or `text` read) is the reader's own.  And the value
+                          may not be handed to a `&` parameter, whose callee writes
+                          it (D-bind-44; the plain-parameter half is D-bind-45).
   (Const-ScalarCollapse)  a by-value SCALAR (`integer` / `float` / `single` /
                           `boolean` / `character`) has no interior distinct from its
                           binding, so it freezes FULLY under EITHER axis:
@@ -365,6 +383,49 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 **OPEN: 2.**
 
+* **D-bind-45** *(opened 2026-09-15, CLOSED 2026-09-15)* — `(Const-Value)` for a
+  value-const value handed to a PLAIN heap parameter.  A plain struct or vector parameter names the
+  caller's record (`calls.md` F-ParamHeap), so `fn bump(a: Account) { a.balance = 999 }` called as
+  `bump(acct)` with `acct: const Account` wrote the caller's balance on both backends with no
+  diagnostic.  **Decided (owner, C124): by SIGNATURE.**  A value-const value reaches only a parameter
+  declared `const`; whether the callee's body writes it is not asked — a line's meaning is judged by
+  the line and the signatures it names (C121), and a proof about a body stays an optimisation's
+  (C122).  **Built, as a WARNING first** (`const-to-plain-parameter`, the owner's rollout: 102 call
+  sites in consumer libraries reach 17 read-only helpers not yet declared `const` — DESIGN_DECISIONS.md
+  C124 § Rollout lists them; it becomes an error once they are): the call gate beside D-bind-44's `&`
+  gate, reading the parameter's `const` from
+  the definition's attribute (`Attribute.value_const`, now serialised in the IR store so a cached
+  stdlib or library keeps it); the standard library declares its read-only heap parameters `const`;
+  a generic instance, an interface stub, a bound-method stub, a default-value function and an
+  overload dispatcher carry the `const` of what they copy; an `Op*` primitive is exempt, since only
+  the standard library's own bodies can call one and `const` there means an immediate operand.
+  Guards `tests/scripts/a-const-value-reaches-only-a-const-parameter.loft` and
+  `…-passed-to-a-const-parameter-is-legal.loft`.  **Closed with the function-reference half:** a function type spells `const` (`fn(const T)`,
+  carried as `ConstParams` beside the parameter types rather than as a wrapper on them), so a call
+  through a reference, a builtin's callback (`map` / `filter` / `any` / `all` / `count_if` /
+  `reduce`) and a lambda's own `const` parameter are judged by the same signature rule; a
+  plain-parameter function is refused where `fn(const T)` is expected, a join of functions keeps the
+  `const` every arm declares, and a closure's capture of a value-const value is a value-const field
+  of its record.  Guards `tests/scripts/a-const-value-reaches-a-function-reference-only-through-const.loft`,
+  `…-is-not-written-through-a-const-lambda-or-a-closure.loft` and
+  `…-through-a-const-function-type-is-legal.loft`.  loft#1540.
+* **D-bind-44** *(opened 2026-09-15, CLOSED 2026-09-15)* — `(Const-Value)` through a VIEW: a value-const
+  value was written, in silence and on both backends, through a loop variable over its elements
+  (`for f in ps { f.x = 5 }`), an element or field bound to a local (`p = ps[0]`, `q = w.p`,
+  `r = &ps[0]`), a loop over such a view, a loop over a value-const FIELD, and `f#remove`; and it could
+  be handed to a `&` parameter, whose callee wrote it.  `ps[0].x = 5` was refused, which made the rest
+  look enforced.  **Where (measured).**  The guards resolve a write to its ROOT variable and ask that
+  variable's flag; a view is a variable of its own, bound by a projection, and nothing gave it the flag.
+  **Closed** by marking the view at its bind (`Parser::mark_const_view`): a projection, a `&` link or a
+  loop over a value-const value — the binds `(B-View)` and `(B-Ref-Alias)` make aliases — gives the view
+  the value's read-only flag, so every existing guard refuses a write through it, and the refusal names
+  the view and what it views.  A bare-variable bind (`(B-Copy)`) and a call's result (`(O-Move)`) are
+  not views and stay writable, as does a scalar or `text` copied out.  A value-const value or view
+  handed to a `&` parameter is refused at the call (plan 40 rule 4).  Measured on both backends over
+  25 cells, and by `--check` over 8566 `.loft` files (this repository and the consumer checkouts):
+  no file gained or lost a refusal, 461 of them never reaching pass 2; one over-approximation remains — the mark follows the bind, so a view local rebound to a
+  fresh value is still refused.  Guards `tests/scripts/a-view-of-a-const-value-is-read-only.loft` and
+  `…-leaves-its-copies-writable.loft`.  loft#1540.
 * **D-bind-43** *(opened 2026-09-14, CLOSED 2026-09-15)* — `(B-Ref-Write)` for a VECTOR written through a
   local `&` link from a named vector: `a: vector<integer> = [1]; n: vector<integer> = [7, 8]; c = &n; c = a`
   must make `n` a copy of `a`, and left `n` at `[7, 8]` on both backends while `c` read a copy of `a` — the

@@ -850,6 +850,25 @@ programmer or the compiler?*
 - a lifetime annotation, a `move`, a "restructure it so I can prove it" error —
   serves the compiler: **refuse** — infer it, default it, or drop the feature.
 
+**The natural form is the canonical form — and so the optimised one (owner, 2026-09-15).**
+F has a performance half.  The programmer is not assumed to know the store model
+inside — that a record returned from a call lives in a hidden buffer, that a first
+bind copies, that a field assigned from a local copies again — so the most natural
+spelling of a program (*build a record, return it, put it in a field*) is the
+CANONICAL spelling, and the compiler owes it the efficient code: it determines the
+temporaries itself and removes them.  A consumer that rewrites its parser around the
+store model to make fewer objects has been handed a form to fill in, which is the
+friction F forbids wearing a performance hat.  The drawing library's `parse` row is
+the measurement (@PLN164): thirteen lines of the natural style cost a dozen store
+lifecycles and four deep copies per line, none asked for by the program.
+**This is not a licence to optimise every path under the sun.**  The test is put to
+each spelling FIRST — *is this natural to write, the form a programmer reaches for
+without knowing the store model?* — and the compiler's effort goes to the spellings
+that pass it.  A contrived spelling keeps today's correct, slower code and is
+DEFERRED with its case written down, which is the ordinary state of most cases at
+any moment and never a defect; the natural ones are few and are where the whole of
+the gain sits.
+
 **Missing a feature is the preferred side — and is not the same as friction.**
 Refusing an operation the language **cannot do safely** (the unsound-capture error
 in `parallel{}` → "use `for par`") is *missing a feature*, not pushing work onto

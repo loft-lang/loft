@@ -1,0 +1,105 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1540, C124 (formal/binding.md D-bind-45) — a `const` value reaches a function REFERENCE's
+// parameter only when the function TYPE declares it `const`.  C124 decides a call by the signature
+// it names; a reference names its type, and until `fn(const T)` parsed that type could not say
+// `const` at all, so `op(acct)` with `op: fn(Account)` wrote the caller's balance on both backends
+// with no diagnostic while `acct.balance = 1` was refused.  The same held for the elements of a
+// `const` collection handed to `map` / `count_if` / `reduce`'s callback.
+//
+// These cells land as C124's gating warning `const-to-plain-parameter`, the owner's rollout for the
+// whole plain-parameter rule.  Every spelling a reference reaches a call by is a cell: a local
+// bound to a named function, a fn-typed parameter, a lambda, a struct field, a view handed on, a
+// local REASSIGNED from a `const`-parameter function to a plain one, a value `if`, a `match`, a
+// vector of functions, and the three callback builtins in both call spellings.  The reassignment
+// and the two branches are the JOIN cells: a slot that may hold either function promises only the
+// `const` both declare, so the plain one decides them.
+//
+// The refusals (a write through a `const` lambda parameter or a closure capture, a plain-parameter
+// function converted into `fn(const T)`) are `a-const-value-is-not-written-through-a-const-lambda-or-a-closure.loft`;
+// the controls that stay legal are `a-const-value-through-a-const-function-type-is-legal.loft`.
+//
+// A `main` runs a reading call and asserts it: a warning compiles, so the file is a program and the
+// harness needs an entry point.  The cells are compiled — their warnings are pinned below — but not
+// run, because running them would write the values they were given.
+//
+// @falsified-at: 01893a542 — interpret and native both: the thirteen `@EXPECT_WARNING` pins match
+//   0/13 there (exit 0, no diagnostic at all: every cell compiles and would write the caller's
+//   value), and 13/13 here as `Warning[const-to-plain-parameter]` with no error.
+//   CHANNEL: expectations — measured by hand with the frozen control binary (`--path` its own
+//   tree), because `make falsify` scores exit, asserts, leak, panic and refusals and does not read
+//   warning pins (TESTING.md § falsify, "A guard whose subject is a WARNING").
+//   ARMED: nothing.
+//   WITNESS: the probe matrix these cells come from ran each one on the control's source: the
+//   reference spellings wrote 999 / 7 / 6, the joins 999, and the callbacks every element.
+//   HOLDS: `a-const-value-through-a-const-function-type-is-legal.loft` answers `fnref controls ok`
+//   on both backends with no warning.
+// @EXPECT_WARNING: Cannot pass const parameter 'a1' to parameter 1 of the function reference `op1`
+// @EXPECT_WARNING: Cannot pass const parameter 'a2' to parameter 1 of the function reference `op2`
+// @EXPECT_WARNING: Cannot pass const parameter 'a3' to parameter 1 of the function reference `op3`
+// @EXPECT_WARNING: Cannot pass const parameter 'a4' to parameter 1 of the function reference `g4`
+// @EXPECT_WARNING: Cannot pass 'f5', a view of const parameter 'ps5', to parameter 1 of the function reference `op5`
+// @EXPECT_WARNING: Cannot pass const parameter 'a6' to parameter 1 of the function reference `op6`
+// @EXPECT_WARNING: Cannot pass const parameter 'a7' to parameter 1 of the function reference `op7`
+// @EXPECT_WARNING: Cannot pass const parameter 'a8' to parameter 1 of the function reference `o8`
+// @EXPECT_WARNING: Cannot pass const parameter 'a9' to parameter 1 of the function reference `op9`
+// @EXPECT_WARNING: Cannot pass the elements of const parameter 'ps10' to `map`'s callback, whose parameter 1 is not `const`
+// @EXPECT_WARNING: Cannot pass the elements of const parameter 'ps11' to `map`'s callback, whose parameter 1 is not `const`
+// @EXPECT_WARNING: Cannot pass the elements of const parameter 'ps12' to `count_if`'s callback, whose parameter 1 is not `const`
+// @EXPECT_WARNING: Cannot pass the elements of const parameter 'ps13' to `reduce`'s callback, whose parameter 2 is not `const`
+
+struct Acc1540 { balance: integer }
+struct Pt1540 { x: integer }
+struct Hold1540 { f: fn(Acc1540) }
+
+fn bump1540(a: Acc1540) { a.balance = 999; }
+fn peek1540(a: const Acc1540) { a.balance; }
+fn read1540(a: const Acc1540) -> integer { a.balance }
+fn setx1540(p: Pt1540) -> integer { p.x = 5; 1 }
+fn isx1540(p: Pt1540) -> boolean { p.x = 8; true }
+fn addx1540(acc: integer, p: Pt1540) -> integer { p.x = 4; acc + 1 }
+fn setp1540(p: Pt1540) { p.x = 6; }
+
+// a local bound to a named function
+fn cell1(a1: const Acc1540) { op1 = bump1540; op1(a1); }
+
+// a fn-typed parameter
+fn cell2(a2: const Acc1540, op2: fn(Acc1540)) { op2(a2); }
+
+// a lambda whose parameter is plain
+fn cell3(a3: const Acc1540) { op3 = fn(x: Acc1540) { x.balance = 7; }; op3(a3); }
+
+// a function held in a struct field
+fn cell4(a4: const Acc1540, h: const Hold1540) { g4 = h.f; g4(a4); }
+
+// a view of a const collection handed on
+fn cell5(ps5: const vector<Pt1540>, op5: fn(Pt1540)) { for f5 in ps5 { op5(f5); } }
+
+// a local reassigned from a const-parameter function to a plain one: it holds either
+fn cell6(a6: const Acc1540) {
+  op6 = peek1540;
+  op6(Acc1540 { balance: 1 });
+  op6 = bump1540;
+  op6(a6);
+}
+
+// a value `if` over both
+fn cell7(a7: const Acc1540, c: boolean) { op7 = if c { peek1540 } else { bump1540 }; op7(a7); }
+
+// a vector of both
+fn cell8(a8: const Acc1540) { for o8 in [peek1540, bump1540] { o8(a8); } }
+
+// a `match` over both
+fn cell9(a9: const Acc1540, c: integer) { op9 = match c { 0 => peek1540, _ => bump1540 }; op9(a9); }
+
+// the callback builtins, a named function whose parameter is plain
+fn cell10(ps10: const vector<Pt1540>) -> integer { len(map(ps10, setx1540)) }
+fn cell11(ps11: const vector<Pt1540>) -> integer { len(ps11.map(setx1540)) }
+fn cell12(ps12: const vector<Pt1540>) -> integer { count_if(ps12, isx1540) }
+fn cell13(ps13: const vector<Pt1540>) -> integer { reduce(ps13, 0, addx1540) }
+
+fn main() {
+  acct = Acc1540 { balance: 500 };
+  assert(read1540(acct) == 500, "read {read1540(acct)}");
+}

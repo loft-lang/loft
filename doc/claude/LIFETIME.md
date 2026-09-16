@@ -287,6 +287,25 @@ backends on a missing key).  Native's first-bind then ALIASES such a return rath
 deep-copying it (`generation/dispatch.rs`), which is what the interpreter already
 emitted (a bare `PutRef`) — without that the copy is a store the IR never frees.
 
+**A plain local's first bind from a callee that returns its promoted local ADOPTS the
+minted store (@PLN164 B1, `@FR-O-Move`).**  `fn mk() -> P { o = P { … }; …; o }` reports
+its return as `["o"]` — the local the parser renamed onto the hidden buffer — and
+`return_adopts_fresh_store` declines that on purpose, because adopting is unsound where the
+DESTINATION is itself a return buffer (`render(p) -> Canvas { cv = alloc_canvas(…); cv }`,
+`143-plan51-cluster3-mixed-lit-call`).  Read per SITE instead, the answer is the fresh-adopting
+one whenever the destination is a plain local: `use_analysis::adopts_minted_at_bind` (one home
+for `scopes`, the interpreter's first-bind arm and native's dispatch) admits a direct call whose
+return deps name exactly its buffer attribute, bound to a local that is not a parameter, not a
+caller-hidden buffer and not the call's own buffer argument.  The local's deps are stripped (it
+owns the store the callee minted), its free is paired with the call's buffer by identity as a
+literal-returning callee's result already is, and the delivery is a bare `PutRef` / plain
+assignment — one mint and one free per call where there were two mints, a deep copy and two
+frees.  The caller's buffer stays NULL: enrolling it in the entry-time pool (`@FR-R-Reuse`)
+hands the callee a store its own rebind of the promoted local then frees on the interpreter,
+which native guards with its `_rb_w_` witness and the interpreter does not (the plan's B1b).
+A rebind keeps the in-place copy on both backends.  `LOFT_NO_ADOPT_FIRST_BIND=1` restores the
+copy; `tests/scripts/164-adopt-first-bind.loft` and `tests/adopt_first_bind.rs` are the receipts.
+
 **A branch join carries what EITHER arm borrows (loft#978).**  `it = if fresh { Item {
 … } } else { b.items["one"]? }` delivers a fresh record on one path and a view into `b`
 on the other, and which one ran is a run-time fact — so the local's type has to admit it

@@ -6,7 +6,7 @@ use crate::data::{Context, Data, DefType, Type, Value};
 use crate::data_store::ValueType;
 use crate::database::Stores;
 use crate::ir_node::{IrBlock, IrNode};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::Write;
 mod calls;
 mod coroutine;
@@ -188,7 +188,7 @@ fn collect_tuple_fn_refs(elems: &[Type], inner: &Value, calls: &mut HashSet<u32>
     }
     for (e, item) in elems.iter().zip(items.iter()) {
         match e.base() {
-            Type::Function(_, _, _) => collect_int_fn_refs(IrNode::Native(item), calls),
+            Type::Function(..) => collect_int_fn_refs(IrNode::Native(item), calls),
             Type::Tuple(nested) if nested.iter().any(crate::data::tuple_carries_fn_ref) => {
                 collect_tuple_fn_refs(nested, item, calls);
             }
@@ -253,7 +253,7 @@ fn collect_fn_ref_literals(
             // once.  Hand-rolled here and at four more sites across loft#1443/#1454/#1455
             // before the accessor reached this tree.
             let slot_tp = variables.tp(*var).peel_link();
-            if matches!(slot_tp, Type::Function(_, _, _) | Type::Routine(_)) {
+            if matches!(slot_tp, Type::Function(..) | Type::Routine(_)) {
                 collect_int_fn_refs(IrNode::Native(inner), calls);
             }
             // loft#1069 — a fn-ref stored into a TUPLE MEMBER. `t: (fn(…), integer) =
@@ -286,7 +286,7 @@ fn collect_fn_ref_literals(
             if let Type::Tuple(elems) = variables.tp(*var)
                 && elems
                     .get(*idx as usize)
-                    .is_some_and(|e| matches!(e.base(), Type::Function(_, _, _)))
+                    .is_some_and(|e| matches!(e.base(), Type::Function(..)))
             {
                 collect_int_fn_refs(IrNode::Native(inner), calls);
             }
@@ -328,7 +328,7 @@ fn collect_fn_ref_literals(
                 if idx < callee.attributes.len()
                     && matches!(
                         callee.attributes[idx].typedef,
-                        Type::Function(_, _, _) | Type::Routine(_)
+                        Type::Function(..) | Type::Routine(_)
                     )
                 {
                     collect_int_fn_refs(IrNode::Native(a), calls);
@@ -346,12 +346,12 @@ fn collect_fn_ref_literals(
         // place a lambda callee declares them.  Over-approximation is correctness-safe here
         // exactly as it is for @P299 and loft#1069 — it can only emit an unused candidate.
         Value::CallRef(v_nr, args) => {
-            if let Type::Function(param_types, _, _) = variables.tp(*v_nr) {
+            if let Type::Function(param_types, ..) = variables.tp(*v_nr) {
                 for (idx, a) in args.iter().enumerate() {
                     if idx < param_types.len()
                         && matches!(
                             param_types[idx].base(),
-                            Type::Function(_, _, _) | Type::Routine(_)
+                            Type::Function(..) | Type::Routine(_)
                         )
                     {
                         collect_int_fn_refs(IrNode::Native(a), calls);
@@ -405,7 +405,7 @@ pub fn reachable_functions(data: &Data, entry_defs: &[u32]) -> HashSet<u32> {
         // #263: a fn-ref returned as a bare d_nr is only a fn-ref literal when
         // this def's return type IS a fn-ref — otherwise an ordinary integer
         // return would be misread as a reachable fn d_nr.
-        let returns_fn = matches!(def.returned(), Type::Function(_, _, _) | Type::Routine(_));
+        let returns_fn = matches!(def.returned(), Type::Function(..) | Type::Routine(_));
         collect_fn_ref_literals(def.code(), data, def.variables(), &mut calls, returns_fn);
         for c in calls {
             if !reachable.contains(&c) {
@@ -672,6 +672,17 @@ pub struct Output<'a> {
     /// `(variable, field offset)` → the Rust local holding the value the prelude read
     /// once.  Pushed and popped beside [`Self::vec_headers`], one frame per `Value::Loop`.
     pub scalar_hoists: Vec<HashMap<hoist::ScalarKey, String>>,
+    /// @PLN157 § V-ao (`@FR-R-Invariant`) — the invariant integer chains of the enclosing
+    /// loops, innermost last: node address (a spelling's `Span` wrapper and its inner node
+    /// both) → the memo's `__ia_N` local and the chain its first use evaluates.  A chain an
+    /// enclosing frame holds is served from that frame.  Pushed and popped beside the
+    /// other hoist frames.
+    pub invariant_hoists: Vec<HashMap<usize, std::rc::Rc<(String, Value)>>>,
+    /// `LOFT_NO_INVARIANT_HOIST=1` — every invariant integer chain is evaluated at every
+    /// use again, as before @PLN157 § V-ao; the bisect step for a wrong index or a wrong
+    /// arithmetic value inside a loop on native.  `LOFT_HOIST_VERIFY=1` is the falsifier
+    /// (every use re-evaluates the chain and compares it with the memo).
+    pub invariant_hoist_disabled: bool,
     /// Per-definition memo behind [`hoist::may_write_store`], shared across every loop in
     /// the program so the call-graph walk runs once per callee.
     pub hoist_cache: HashMap<u32, bool>,
@@ -722,7 +733,7 @@ pub struct Output<'a> {
     pub record_push_disabled: bool,
     /// @PLN157 § V-j (`@FR-R-MoveAppend`) — the paired move-appends of the function being
     /// emitted, keyed by BUFFER variable ([`hoist::move_appends`]); rebuilt per function.
-    pub move_pairs: HashMap<u16, hoist::MoveAppend>,
+    pub move_pairs: BTreeMap<u16, hoist::MoveAppend>,
     /// The same pairs keyed by LOOP VARIABLE, for the copy emitter's gate.
     pub move_by_loopvar: HashMap<u16, hoist::MoveAppend>,
     /// The loop variables of the paired `For` blocks currently being emitted, innermost
@@ -1411,7 +1422,7 @@ pub fn rust_type(tp: &Type, context: &Context) -> String {
         | Type::Iterator(_, _) => "DbRef",
         Type::Routine(_) => "u32",
         // C39/A5.6: fn-ref carries d_nr + closure DbRef as a tuple.
-        Type::Function(_, _, _) => "(u32, DbRef)",
+        Type::Function(..) => "(u32, DbRef)",
         Type::Unknown(_) => "??",
         Type::Keys => "&[Key]",
         Type::Void => "()",
@@ -1632,7 +1643,7 @@ pub(super) fn default_native_value_in(tp: &Type, context: &Context) -> String {
         // `Str` sentinel, exactly like `text`) — without this it fell to the `0` catch-all.
         Type::Optional(inner) => default_native_value_in(inner, context),
         Type::Routine(_) => "0_u32".into(),
-        Type::Function(_, _, _) => "(0_u32, DbRef::NULL)".into(),
+        Type::Function(..) => "(0_u32, DbRef::NULL)".into(),
         Type::Reference(_, _)
         | Type::Vector(_, _)
         | Type::Sorted(_, _, _)
@@ -1746,6 +1757,9 @@ impl<'a> Output<'a> {
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
             scalar_hoist_disabled: std::env::var("LOFT_NO_SCALAR_HOIST").is_ok_and(|v| v != "0"),
+            invariant_hoists: Vec::new(),
+            invariant_hoist_disabled: std::env::var("LOFT_NO_INVARIANT_HOIST")
+                .is_ok_and(|v| v != "0"),
             fill_hoist_disabled: !crate::keys::fill_hoist_enabled(),
             view_hoist_disabled: std::env::var("LOFT_NO_VIEW_HOIST").is_ok_and(|v| v != "0"),
             wrapper_inline_disabled: std::env::var("LOFT_NO_WRAPPER_INLINE")
@@ -1757,7 +1771,7 @@ impl<'a> Output<'a> {
             mint_hoist_disabled: std::env::var("LOFT_NO_MINT_HOIST").is_ok_and(|v| v != "0"),
             mint_push_headers: Vec::new(),
             record_push_disabled: std::env::var("LOFT_NO_RECORD_PUSH").is_ok_and(|v| v != "0"),
-            move_pairs: HashMap::new(),
+            move_pairs: BTreeMap::new(),
             move_by_loopvar: HashMap::new(),
             active_move_vars: Vec::new(),
             move_append_disabled: std::env::var("LOFT_NO_MOVE_APPEND").is_ok_and(|v| v != "0"),
@@ -2057,7 +2071,7 @@ impl Output<'_> {
             hoist::complete_writes(self.data, self.stores, def_nr)
         };
         self.move_pairs = if self.move_append_disabled {
-            HashMap::new()
+            BTreeMap::new()
         } else {
             hoist::move_appends(self.data, def_nr)
         };
@@ -2422,6 +2436,44 @@ impl Output<'_> {
             lines.push(format!("let {name} = {operand};"));
             scalar_frame.insert(key, name);
         }
+        // @PLN157 § V-ao (`@FR-R-Invariant`) — each invariant integer chain the loop itself
+        // spells (a nested loop's are its own) takes a memo local pair here: the value, and
+        // whether its first use has evaluated it.  The first use evaluates the chain where it
+        // stands — the same value, the overflow note fired at the same point — and every
+        // later use answers the memo; the pair is declared at THIS loop so its flag is clear
+        // on every entry, the form LLVM peels the test out of.
+        let mut invariant_frame: HashMap<usize, std::rc::Rc<(String, Value)>> = HashMap::new();
+        if !self.invariant_hoist_disabled {
+            let trace = std::env::var("LOFT_TRACE_INVARIANT").is_ok();
+            for ch in hoist::invariant_chains(lp, self.data) {
+                if ch
+                    .nodes
+                    .iter()
+                    .any(|a| self.invariant_hoists.iter().any(|f| f.contains_key(a)))
+                {
+                    continue;
+                }
+                self.hoist_counter += 1;
+                let name = format!("__ia_{}", self.hoist_counter);
+                if trace {
+                    eprintln!(
+                        "invariant: {} loop {} memo {name}: {} ops, {} spelling(s)",
+                        self.data.def(self.def_nr).name(),
+                        lp.scope,
+                        ch.ops,
+                        ch.spellings
+                    );
+                }
+                lines.push(format!(
+                    "let mut {name}: i64 = i64::MIN; let mut {name}_set = false; //@PLN157 § V-ao invariant chain, {} ops",
+                    ch.ops
+                ));
+                let memo = std::rc::Rc::new((name, ch.chain));
+                for a in ch.nodes {
+                    invariant_frame.insert(a, memo.clone());
+                }
+            }
+        }
         let opened = !lines.is_empty();
         if opened {
             writeln!(w, "{{ //loft#885 loop-invariant vector headers")?;
@@ -2434,6 +2486,7 @@ impl Output<'_> {
         self.vec_headers.push(frame);
         self.vec_bases.push(base_frame);
         self.scalar_hoists.push(scalar_frame);
+        self.invariant_hoists.push(invariant_frame);
         self.push_headers.push(push_frame);
         self.mint_push_headers.push(mint_frame);
         Ok(opened)
@@ -2444,6 +2497,7 @@ impl Output<'_> {
         self.vec_headers.pop();
         self.vec_bases.pop();
         self.scalar_hoists.pop();
+        self.invariant_hoists.pop();
         self.push_headers.pop();
         self.mint_push_headers.pop();
         if opened {
@@ -2630,6 +2684,42 @@ impl Output<'_> {
             .iter()
             .rev()
             .find_map(|f| f.get(key).map(String::as_str))
+    }
+
+    /// @PLN157 § V-ao (`@FR-R-Invariant`) — the memo an enclosing loop holds for the chain
+    /// spelled at `node`, when one does.
+    #[must_use]
+    pub fn active_invariant(&self, node: &Value) -> Option<std::rc::Rc<(String, Value)>> {
+        let key = std::ptr::from_ref(node) as usize;
+        self.invariant_hoists
+            .iter()
+            .rev()
+            .find_map(|f| f.get(&key).cloned())
+    }
+
+    /// Emit a memoised chain's use: the first use evaluates the chain where it stands and
+    /// records it, every later use answers the memo.  Under `LOFT_HOIST_VERIFY=1` every use
+    /// evaluates the chain and asserts the memo agrees — the falsifier for a leaf the
+    /// admission wrongly called invariant.  The chain is emitted from the memo's own clone,
+    /// whose nodes no frame holds, so this cannot re-enter the substitution.
+    pub(super) fn emit_invariant_use(
+        &mut self,
+        w: &mut dyn Write,
+        memo: &(String, Value),
+    ) -> std::io::Result<()> {
+        let (name, chain) = memo;
+        if self.hoist_verify {
+            write!(w, "{{ let __c = (")?;
+            self.output_code_inner(w, chain)?;
+            write!(
+                w,
+                "); if !{name}_set {{ {name} = __c; {name}_set = true; }} assert!(__c == {name}, \"@FR-R-Invariant: memo {name} disagrees with a fresh evaluation\"); {name} }}"
+            )
+        } else {
+            write!(w, "{{ if !{name}_set {{ {name} = (")?;
+            self.output_code_inner(w, chain)?;
+            write!(w, "); {name}_set = true; }} {name} }}")
+        }
     }
 
     /// Whether this getter call reads a record scalar an enclosing loop hoisted
@@ -5290,7 +5380,7 @@ extern crate loft;"
                     // recurse into the closure-record struct first so
                     // its `t{N}` binding precedes the field emission,
                     // mirroring `fill_database`'s inline recursion.
-                    Type::Function(_, _, _) => (a.assigned_lambda_d_nr != u32::MAX)
+                    Type::Function(..) => (a.assigned_lambda_d_nr != u32::MAX)
                         .then(|| self.data.def(a.assigned_lambda_d_nr).closure_record())
                         .filter(|cr| *cr != u32::MAX)
                         .map(|cr| self.data.def(cr).known_type())
@@ -5644,7 +5734,7 @@ extern crate loft;"
         // type's zero on `--native` while the interpreter answers the default.  Folded
         // by the same function the parse-time deposit uses, so the two backends cannot
         // disagree about which defaults are constant.
-        if let Some(c) = crate::typedef::fold_declared_default(declared_default) {
+        if let Some(c) = crate::typedef::fold_declared_default(self.data, declared_default) {
             let lit = match c {
                 crate::keys::Content::Long(n) => format!("loft::keys::Content::Long({n}_i64)"),
                 // `{:?}` on a float round-trips exactly (`1.5` → `1.5`); a declared
@@ -5763,7 +5853,7 @@ extern crate loft;"
             // `known_type` is `u16::MAX` → emits `db.vector(u16::MAX)`
             // which panics in `Stores::field`'s parent-tracking when the
             // wrapper struct is registered.
-            if matches!(c, Type::Function(_, _, _)) {
+            if matches!(c, Type::Function(..)) {
                 let narrow = self.stores.name("int<0,false>");
                 if narrow != u16::MAX {
                     // @P353: an empty `vector<fn(…)>` literal registers its
@@ -6027,7 +6117,7 @@ extern crate loft;"
             )?;
             return Ok(());
         }
-        if matches!(typedef, Type::Function(_, _, _)) {
+        if matches!(typedef, Type::Function(..)) {
             // Storage holds the 4-byte i32 d_nr.  When a capturing
             // closure was assigned to this attribute, the parser split
             // it into TWO database fields (`<attr>` +
@@ -6429,7 +6519,7 @@ extern crate loft;"
                 if vars.is_argument(v) || self.declared.contains(&v) {
                     continue;
                 }
-                if !matches!(vars.tp(v).base(), Type::Function(_, _, _)) {
+                if !matches!(vars.tp(v).base(), Type::Function(..)) {
                     continue;
                 }
                 use std::fmt::Write as _;

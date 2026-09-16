@@ -492,6 +492,11 @@ fn function_name(param: type, other: type = default_value) -> return_type {
 ```
 
 - `pub` prefix makes a definition publicly visible (applies to functions, structs, and enums).
+- Some names are **reserved** and cannot name a program's function: the words `assert`, `panic`,
+  `sizeof` and `debug_assert`, which the language keeps for meanings of its own, and the name of a
+  standard-library function that is not a method (`log_info`, `parallel_for`, …).  Names the
+  compiler only lowers for built-in types stay open: a program may define `sort`, `insert`,
+  `map`, `next` or `exhausted` for its own types, and a call on those types reaches it.
 - `param: type = expr` gives a parameter a **default**, used when the call omits it.
   The expression may build a value of its own — `= []`, `= [1, 2]`, `= "a" + "b"`,
   `= mk()`, `= S { … }` — and may reference EARLIER parameters (`b: text = "x" + a`).
@@ -509,6 +514,33 @@ fn function_name(param: type, other: type = default_value) -> return_type {
   compile-time check.
   - Every mutation THROUGH the parameter is an **error** — `p += …` (append), `p[i] = …`
     (element), `p.f = …` (field), and nested writes `p.a.b = …`. Reads are always allowed.
+  - A **view** of the value is read-only too: a loop variable over its elements
+    (`for e in p { e.x = 1 }`), an element or field bound to a local (`e = p[0]`, `q = p.inner`,
+    `e = &p[0]`), a loop over such a view, and `e#remove` in a loop over it are all errors that
+    name the view and the value it views. A COPY is the reader's own and stays writable: a
+    scalar or `text` read out (`n = e.x; n += 1`) and a whole-value bind (`v = p; v += […]`).
+    One over-approximation: a view local later rebound to a fresh value (`e = p[0]; e = T{…};
+    e.x = 1`) is still refused — the check follows the bind, not the flow.
+  - Passing the value (or a view of it) to a **`&` parameter** is an error: the callee may write
+    it. Passing it to a `const` parameter is always allowed.
+  - Passing it to a plain **record or collection parameter** is reported unless that parameter is
+    declared `const` — decided by the signature, not by whether the callee happens to write
+    (DESIGN_DECISIONS.md C124). It is the warning `const-to-plain-parameter` for now, and becomes an
+    error once the shipped libraries declare their read-only parameters. A read-only helper says so: `fn total(v: const vector<T>)`. The
+    standard library's readers (`len`, `sum`, `join`, the `JsonValue` accessors, …) declare their
+    parameters `const`; its writers (`clear`, `seek`, the `store_load*` targets) do not. `text`
+    and scalar parameters take their own copy and are not affected.
+  - A **function reference** is judged by its TYPE the same way: `fn(const T)` declares a
+    parameter the functions it holds may not write, and a `const` value passed through a
+    reference whose type does not say so is the same warning. A function whose parameter is plain
+    cannot stand where `fn(const T)` is expected (an argument, a field, a return); the other
+    direction is free. A local, an `if` or a `match` that may hold functions with different
+    `const` parameters promises only the `const` they all declare.
+  - The elements of a `const` collection handed to `map`, `filter`, `any`, `all`, `count_if` or
+    `reduce` reach the callback on the same terms: a short `|p|` callback over one gets a `const`
+    parameter, and a named function whose parameter is plain is the warning.
+  - A lambda's `const` parameter is read-only in its body, and a closure that captures a `const`
+    value — or a view of one — cannot write it.
   - Re-pointing the local slot — `p = other` — **is** allowed for a compound type (it
     rebinds the function's own copy of the borrow, not the caller's value). The same is
     true of a value-const **local**: `x: const vector<T> = …`.
@@ -1135,6 +1167,11 @@ fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }
 result = apply(fn double_it, 5)
 ```
 
+A parameter of a function type may be `const` — `fn(const Score) -> integer` — which says the
+functions the reference holds only read it, so a `const` value may be passed through it.  A
+function whose parameter is plain is refused where `fn(const T)` is expected; one whose parameter
+is `const` fits a plain `fn(T)` slot as well.
+
 **Lambda expressions** produce an inline anonymous function at the expression level.
 Two syntactic forms are available:
 
@@ -1239,7 +1276,8 @@ add5(10)               // 15
 - Struct references: the DbRef is copied — both point to the same store
   record while both are alive, and mutations from either side are visible to
   the other (#318/C75 bound such closures to the frame that owns the
-  captures).
+  captures).  A capture of a `const` value, or of a view of one, is read-only
+  inside the closure as well (loft#1540).
 - Collections (`hash` / `vector` / `sorted` / `index`): captured by shared
   DbRef — the closure **borrows** the outer collection (like a struct
   reference).  Inside the closure the full surface works and every mutation
@@ -1690,8 +1728,8 @@ val = lookup(id)       ?? return;    // void function: return nothing
 
 ### Custom iterators (I13)
 
-Any type with a `fn next(self: T) -> Item?` method can be used in a `for` loop.
-Returning `null` from `next` terminates the loop:
+Any struct or struct-enum with a `fn next(self: T) -> Item?` method can be used in a `for`
+loop.  Returning `null` from `next` terminates the loop:
 
 ```
 struct Counter { current: integer, limit: integer }
@@ -1716,7 +1754,16 @@ Declare the item `Item?`, not `Item`.  Both run, but a non-null SCALAR return wa
 Inside the body the loop variable is typed as the non-null `Item`: the loop has already
 ended by the time `next` answers null, so the body never binds one.
 
-`#count` and `#first` work; `#index` and `#remove` are not available.
+`#count` and `#first` work.  `#index` is refused at compile time: it is the position you give
+to `v[i]` to read the same element again, and an iterator's values have no such position —
+`#count` numbers them.  `#remove` is not available either.
+
+The loop walks a COPY of the iterator value, as any bind of a struct copies: after
+`for x in c { }` the caller's `c` is where it was, and `c.next()` starts from there.
+
+A program may also define `fn exhausted(self: T) -> boolean` for its own iterator type.  The
+built-in `exhausted(gen)` answers only for a generator (`iterator<T>`, nullable included); for
+any other type the call reaches the program's definition, or is refused when there is none.
 
 ### Parallel blocks (A15)
 
@@ -2516,23 +2563,16 @@ len(collection)
 round(PI * 1000.0)
 ```
 
-**Gotcha (INC#8) — method vs. free function is the stdlib author's choice.** The
-language has no rule about which operations *should* be methods vs. free
-functions; it depends entirely on whether the definition's first parameter is
-`self`, `both`, or neither.  Measured, that names two behaviours rather than
-three: a plain first-parameter name is free-ONLY and the method spelling is
-refused by name, while **both `self` and `both` accept the method AND the free
-spelling** — `find_fn` resolves a free call by receiver type, so `f(x)` reaches
-a `self` method.  What separates them is registration, and it shows up in the
-one place neither reaches: **a `self`/`both` method is not a fn-ref value**, so
-it cannot be handed to `map`/`filter` or to a parameter of function type
-(loft#1008 — wrap it in a lambda, `map(v, |q| { q.m(…) })`).  The
-standard library makes this call per-function: `text.starts_with(s)` and
-`text.find(s)` are method-only (`self: text`); `len(v)`, `abs(n)`, `round(x)`
-are both-forms (`both: …`); `sum_of(v)` and `print(s)` are free-only.  A user
-cannot predict the call form without looking it up.  When in doubt, try
-free-function form first — the compiler's "Unknown field" vs. "method not
-found" error makes the available form obvious.
+**Gotcha (INC#8) — a `self` function takes both spellings; a plain one takes
+one.**  A function whose first parameter is `self` answers `x.f(…)` AND `f(x, …)`
+— the second resolves by the receiver's type — and a package's method is imported
+by name like any function (`use lib::(f)`).  A plain first-parameter name makes a
+free function, and its method spelling is refused by name.  **A `self` method is
+not a fn-ref value**, so it cannot be handed to `map`/`filter` or to a parameter of
+function type (loft#1008 — wrap it in a lambda, `map(v, |q| { q.m(…) })`).  In
+the standard library `len(v)`, `abs(n)`, `text.starts_with(s)` are `self`
+functions and callable either way; `sum_of(v)` and `print(s)` are free-only.  When
+in doubt, try the free form first — it works for both kinds.
 
 **A `&` parameter calls like the value it references.**  `&` is how an argument is
 PASSED, not a different type, so inside `fn f(v: &vector<integer>)` the name `v` is
@@ -2551,14 +2591,13 @@ Note the trade the `&` asks for: it earns its place only when the function write
 through it.  A helper that just reads is told *"Parameter 'v' has & but is never
 modified; remove the &"* — drop the `&` and the by-value signature reads the same.
 
-### The `both` parameter name
+### Both call spellings, one definition
 
-When the first parameter is named `both` instead of `self`, the function is
-registered as **both** a method and a free function:
+A `self` function is callable as a method and as a free function:
 
 ```loft
-pub fn exists(both: File) -> boolean {
-  both.format != Format.NotExists
+pub fn exists(self: File) -> boolean {
+  self.format != Format.NotExists
 }
 
 // Can be called as:
@@ -2566,9 +2605,30 @@ f.exists()      // method syntax
 exists(f)       // free function syntax
 ```
 
-Use `both` when a function should be equally natural as either form.
-`self` registers as a method only; a plain parameter name registers as a
-free function only.
+Both spellings exist on purpose: `v.sin()` for a programmer whose fingers learned
+the Rust convention, `sin(v)` for one who never did — neither is forced on the
+other, and they reach the same function.
+
+**`both` is deprecated.**  A first parameter named `both` used to be the spelling
+for "method and free function"; `self` now does all of it, including an import by
+name (`use lib::(f)` brings in the methods `lib` declares under that name), so `both`
+names nothing more.  It still compiles and means exactly `self`,
+with the warning `both-receiver-deprecated` — rename the parameter to `self`.
+
+**One name, one body per type.**  A method and a free function with the same name
+whose first parameter has the same type are refused, whichever is declared first:
+
+```
+struct Pt { x: integer }
+fn doit(self: Pt) -> integer { self.x + 1 }
+fn doit(p: Pt) -> integer { p.x + 2 }   // error: Cannot redefine 'doit' … declare it once as a `self` method
+```
+
+Otherwise `p.doit()` and `doit(p)` would run different code — and before the
+refusal the free one was silently unreachable, because `doit(p)` resolves to the
+method.  The one `self` function already takes both spellings.  A free function
+on a different type (`fn doit(q: Qt)`) is an ordinary overload and stays legal.
+The rule is `formal/calls.md (F-OneBody)`.
 
 ### Named arguments
 

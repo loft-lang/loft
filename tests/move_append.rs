@@ -124,6 +124,59 @@ fn each_cell_pairs_exactly_the_loops_predicted() {
     let _ = std::fs::remove_file(&out);
 }
 
+/// loft#1535 — the emission is a function of the program.  c22's host holds TWO placed
+/// buffers, and the release at the host's death and the re-arm at its `OpDatabase` walk
+/// them; that walk read a hash map, so two runs of one compiler emitted the two buffers in
+/// either order (measured: 2 hashes in 8 runs).  Both orders null and release the same
+/// records, so no value could show it — only the text, which `introspect_diff.sh` and a
+/// reproducible build read.  Each run is a fresh process and so a fresh hash seed: every
+/// run must emit the same bytes, and c22 must name its buffers in declaration order, which
+/// one run of the old walk already missed half the time.
+#[test]
+fn two_runs_emit_the_same_text() {
+    const RUNS: usize = 8;
+    let texts: Vec<String> = (0..RUNS)
+        .map(|i| {
+            std::thread::spawn(move || {
+                let out = std::env::temp_dir().join(format!(
+                    "loft_move_append_det_{}_{i}.rs",
+                    std::process::id()
+                ));
+                let rust = emit(&cells(), &out, &[]);
+                let _ = std::fs::remove_file(&out);
+                rust
+            })
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|h| h.join().expect("an emission thread panicked"))
+        .collect();
+    let body = |rust: &str| -> String {
+        let start = rust.find("\nfn n_c22(").expect("n_c22 was not emitted") + 1;
+        let rest = &rust[start..];
+        let end = rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3);
+        rest[..end].to_string()
+    };
+    for (i, text) in texts.iter().enumerate() {
+        let c22 = body(text);
+        let death_1 = c22.find("free_record_in(&(var___ref_1)");
+        let death_2 = c22.find("free_record_in(&(var___ref_2)");
+        assert!(
+            death_1.is_some() && death_1 < death_2,
+            "run {i}: n_c22's host death does not release __ref_1 before __ref_2"
+        );
+        assert!(
+            c22.contains("var___ref_1 = DbRef::NULL; var___ref_2 = DbRef::NULL;")
+                && !c22.contains("var___ref_2 = DbRef::NULL; var___ref_1 = DbRef::NULL;"),
+            "run {i}: n_c22's host re-arm does not null __ref_1 before __ref_2"
+        );
+        assert!(
+            *text == texts[0],
+            "run {i} emitted different Rust than run 0 for the same program"
+        );
+    }
+}
+
 #[test]
 fn the_switch_restores_the_deep_copy() {
     let out = std::env::temp_dir().join("loft_move_append_off.rs");

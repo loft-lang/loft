@@ -4415,3 +4415,112 @@ The next unit for the row is the first row of that table — a record result's F
 adopting the callee's store instead of copying it, and an element overwrite or a
 last-use field assignment MOVING the source — the memory-model class the README's queue
 names; the prefill image is the second.
+
+## V-ao — an invariant integer chain is evaluated once per loop entry (2026-09-15)
+
+**Invariant (`@FR-R-Invariant`, formal/rewrites.md).**  An integer chain — `+`, `-`,
+`*`, negation, `&`, `|`, `^`, their `Nullable` twins — over literals and variables a loop
+neither REBINDS (a `Set` or `TuplePut` anywhere in it, its own counters included) nor lets
+ESCAPE (an argument to a by-reference parameter or a fn-ref call, bare or spelled
+`OpCreateStack(k)`; a tuple destination; an iterator variable) holds one value for the
+loop's whole extent.  So it is evaluated at its FIRST use and answered from a memo after:
+`let mut __ia_N = MIN; let mut __ia_N_set = false;` at the loop's prelude, and every
+spelling of the chain emits `{ if !__ia_N_set { __ia_N = <chain>; __ia_N_set = true; }
+__ia_N }`.  The first-use evaluation is exactly the per-use one — the same value on every
+path, and the overflow note (`ops::note_integer_overflow`, the soft-halt line) fired at the
+point the first evaluation stands: once where the per-use form notes once per use, never for
+a zero-trip loop, and on the second iteration when a `continue` takes the first.  That is
+what makes it a rewrite of a SITUATION WE KNOW under C120 and not a policy: nothing is
+assumed about the values, the memo only skips re-computing what the leaves cannot change.
+A shift, a division and a remainder are not chain ops — their templates raise through
+`stores`, and the memo's evaluation stands inside expressions that already borrow it
+(E0502).  A chain of literals alone is the constant folder's (`22 - 1` memoised costs a
+test where LLVM folds it for free).  A field read is not a leaf; R-Scalar answers whether a
+record field can change, and its `__vs_N` local is a variable spelling the chain walk does
+not see — the two tiers compose by the emitter, not by the walk.
+
+**Priced first, rustc-first.**  The design's premise (DESIGN.md § V-aj "The tap in machine
+code"): LLVM already hoists the invariant part of `(yy × iw + xmin + x) × 4 + ch`, but
+every hoisted op carries the fault note as a side effect that must fire on the right
+iteration, so its overflow and sentinel flags are spilled and RE-TESTED per tap.  Two
+hand-patched forms of the resample probe's tap against the shipped emission, min of five:
+
+| form | ms/op | vs shipped |
+|---|---:|---:|
+| shipped (79c57f0f) | 97.4 | — |
+| the chain in a prelude local, guarded by the range's trip test (`if 0 < rl_n { … } else { MIN }`) | 91.6 | −6.0 % |
+| the lazy first-use memo | 90.0 | −7.6 % |
+
+The lazy form is as fast or faster (LLVM peels the flag test out once it knows the flag is
+clear on entry), exact under soft-halt where the guarded prelude was not (a chain that
+stands after a `continue` the first iteration takes would have been evaluated by the
+prelude and not by the program), and asks for no range shape at all — a `while`, a `for x
+in v` and the range's own end expression take the same memo.  It is the form built.
+
+**What the build corrected.**  (1) The first build declared each memo at the OUTERMOST
+loop over which the chain is invariant — the tap's `yy * iw + xmin` at the ch loop, one
+loop out from the x loop that spells it.  Every cell exact, and the probe read 95.1
+against the hand patch's 90.0: on entry to the x loop the flag's state is unknown (a
+previous channel may have set it), so LLVM cannot peel the test and it stays in every tap.
+Declared at the innermost loop that spells the chain the flag is clear on every entry, the
+test peels, and the probe reads 92.7.  The cells cannot see placement — only the pin's
+count of memos per function can — so `rewrites-history.md` records it as the sabotage
+that stays green.  (2) The literal-only chain (`RESAMPLE_PREC - 1` inside the shift
+template) was memoised where the constant folder folds it; a chain now needs a variable
+leaf.  (3) **loft#1534**, found by the instrument before the unit was an hour old: cell m3
+hands `k` to `bump(n: &integer)` inside the loop and the memo held `k * 100` across the
+callee's writes (native 303 for 2403; `LOFT_HOIST_VERIFY=1` panicked at the first use
+after the call).  The leaf admission reads `non_sentinel::collect_escapes`, the
+non-sentinel proof's own escape collector — and that collector tested only a BARE `Var`
+argument, while the parser spells a by-reference argument `OpCreateStack(k)`.  So the
+proof had the same hole in shipped code: `k = 2^62; poison(k); r = k + 1` with `n = n * 4`
+in the callee answered `-9223372036854775807` on native (`checked_add` on the sentinel the
+callee wrote) where the interpreter answers `null`.  Fixed at the collector — taking a
+local's address is itself the escape — for the proof and the memo alike; `tests/scripts/1534-by-ref-
+arg-escapes-the-proof.loft` guards it, `LOFT_NO_NN_FAST=1` was the verified workaround on
+the buggy build.  LESSON: an admission that reuses another rule's predicate inherits that
+predicate's holes, and a verify form over a cell corpus is what surfaces them — two
+tiers, one collector, one fix.
+
+**What it is worth.**  The resample probe (`rs_probe.loft`, hash 77de7581) 97.6 → 92.7
+ms/op, −5 %, the memo in the horizontal tap (`yy * rl_iw + rl_xmin`, per x-loop entry),
+the two prefill loops' range ends (`rl_iw * rl_ih`, `ow * rl_ih * 4`, per iteration of the
+test before) and the write indexes.  The VERTICAL tap gets nothing: its chain is
+`(((rl_ymin + y) * ow) + xx) * 4 + ch` with the counter innermost, and the distributive
+form `rl_ymin * ow + y * ow` is not value-preserving under overflow (`a = -2^61 - 1`,
+`x = 2`: `(a + x) * 4` is a number, `a * 4` is the sentinel) — that is R-Range's question,
+not this rule's.  The consumer lane after it (compare.py, `--n-ref 500 --n-native 500`,
+14/14 hashes) — the three resample rows moved by the memo alone, `parse` within noise, the ten judged rows where they were:
+
+| row | Rust ns/op | native ns/op | native / Rust | before |
+|---|---:|---:|---:|---:|
+| hash | 115 184 | 111 300 | 0.97 | 0.98 |
+| fill_circle | 53 672 | 61 584 | 1.15 | 1.15 |
+| fill_star | 19 212 | 23 698 | 1.23 | 1.26 |
+| hair | 14 036 | 27 994 | 1.99 | 1.96 |
+| composite | 100 924 | 202 008 | 2.00 | 2.00 |
+| lock | 1 546 460 | 3 152 228 | 2.04 | 2.00 |
+| wide_line | 5 854 | 13 638 | 2.33 | 2.34 |
+| lock_curved | 1 314 394 | 3 183 058 | 2.42 | 2.34 |
+| smooth | 330 | 1 158 | 3.51 | 3.82 |
+| fronds | 49 088 | 178 558 | 3.64 | 3.58 |
+| **resize** | 17 921 822 | 89 713 362 | **5.01** | 5.57 |
+| **render_lock** | 2 863 532 | 14 844 338 | **5.18** | 5.46 |
+| **render_marks** | 884 676 | 6 553 520 | **7.41** | 7.96 |
+| **parse** | 6 654 | 50 294 | **7.56** | 7.59 |
+
+
+**Cells** `bytecode-comparisons/V-ao-invariant-arith-cells.loft` (m1–m16, hand-computed,
+both backends exact under `LOFT_HOIST_VERIFY`, `LOFT_NATIVE_LEAK_CHECK`,
+`LOFT_NO_INVARIANT_HOIST`, `LOFT_NO_NN_FAST`): the tap shape, a rebound leaf, a
+by-reference escape, an overflowing chain (the memo holds the null), a zero-trip loop, a
+chain after a `continue`, a nest (the memo at the j loop, `a * b + i * 10` whole), one
+chain spelled twice (one memo), a `while`, the range's own end, a vector iteration, the
+negation and bitwise ops, a field read (no leaf), parameters (leaves), a fn-ref escape, a
+leaf rebound in a nested loop.  `tests/invariant_arith.rs` pins the emission and counts
+the soft-halt notes (memo 1 / per-use 3 / zero-trip 0 / after-continue 1) and carries
+loft#1534's regression; `tests/scripts/157-invariant-arith.loft` carries the values with
+its sabotage receipt.  Switch `LOFT_NO_INVARIANT_HOIST` (generation time; the emission
+with it is byte-identical to the one before the unit); `LOFT_HOIST_VERIFY=1` re-evaluates
+at every use; `LOFT_TRACE_INVARIANT=1` names each memo.  Walker audit: unspan 491 · 467 ·
+24 (two sites, both peel), optional unchanged.

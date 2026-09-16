@@ -67,6 +67,8 @@ TARGETS=("$@"); [ ${#TARGETS[@]} -eq 0 ] && TARGETS=("$HOST")
 # flags, every release would be unverifiable and it would look like a source
 # problem.  See scripts/repro-flags.sh.
 . "$(dirname "$0")/repro-flags.sh"
+# `repro_c_toolchain`, which BUILD-INFO records below — the same file repro-verify.sh asks.
+. "$(dirname "$0")/repro-toolchain.sh"
 
 
 
@@ -138,6 +140,10 @@ QS
     # so `git rev-parse` there falls through to a timestamp and the binary can never
     # match.  A release that omits this line is unverifiable, not different.
     echo "commit = $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    # The platform C toolchain `ring`'s C code was compiled with (scripts/repro-toolchain.sh).
+    # A rebuild with another one differs by construction, so a verifier that cannot match
+    # it reports "cannot verify" instead of blaming the source for the bytes.
+    echo "c-toolchain = $(repro_c_toolchain "$TRIPLE")"
   } > "$stage/BUILD-INFO"
 
   ( cd "$stage" && find . -type f ! -name SHA256SUMS | sort | sed 's|^\./||' | xargs $SHA256 > SHA256SUMS )

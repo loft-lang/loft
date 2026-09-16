@@ -48,7 +48,7 @@ use crate::lexer::Lexer;
 /// this a real frame lets `.github/lsan_suppressions.txt` name exactly the one deliberate
 /// leak and nothing else.
 #[inline(never)]
-pub(crate) fn fold_declared_default(value: &Value) -> Option<Content> {
+pub(crate) fn fold_declared_default(data: &Data, value: &Value) -> Option<Content> {
     match value.unspan() {
         Value::Int(i) => Some(Content::Long(i64::from(*i))),
         Value::Long(i) => Some(Content::Long(*i)),
@@ -65,6 +65,24 @@ pub(crate) fn fold_declared_default(value: &Value) -> Option<Content> {
         Value::Text(s) => Some(Content::Str(Str::new(Box::leak(
             s.clone().into_boxed_str(),
         )))),
+        // `= -1` is a literal to the reader and a NEGATION of one to the parser
+        // (`OpMinSingleInt(1)`), so a negative default folded to nothing and the cast
+        // wrote the type's zero where the literal wrote `-1`.  A negated numeric literal
+        // is a constant; a negation of anything else stays computed.
+        Value::Call(d_nr, args)
+            if args.len() == 1
+                && matches!(
+                    data.def(*d_nr).name.as_str(),
+                    "OpMinSingleInt" | "OpMinSingleFloat" | "OpMinSingleSingle"
+                ) =>
+        {
+            match fold_declared_default(data, &args[0])? {
+                Content::Long(n) => n.checked_neg().map(Content::Long),
+                Content::Float(f) => Some(Content::Float(-f)),
+                Content::Single(f) => Some(Content::Single(-f)),
+                Content::Str(_) => None,
+            }
+        }
         _ => None,
     }
 }
@@ -1294,7 +1312,7 @@ pub(crate) fn fill_database(data: &mut Data, database: &mut Stores, d_nr: u32) {
                     database.trie(c_tp, &key)
                 }
                 Type::Enum(t, _, _) if data.def(t).name == "enumerate" => database.byte(0, false),
-                Type::Function(_, _, _) => {
+                Type::Function(..) => {
                     // P213: when a capturing-lambda assignment has been
                     // seen at this attribute (its d_nr recorded on
                     // `assigned_lambda_d_nr` during first-pass parsing
@@ -1413,7 +1431,7 @@ pub(crate) fn fill_database(data: &mut Data, database: &mut Stores, d_nr: u32) {
             // loft#876 — the same "ONE parse-time site that knows" for the field's
             // DECLARED default.  It lives here as an IR node and the store layer has no
             // evaluator, so a cast could not consult it and wrote the type's zero.
-            if let Some(c) = fold_declared_default(&data.def(d_nr).attributes[a_nr].value) {
+            if let Some(c) = fold_declared_default(data, &data.def(d_nr).attributes[a_nr].value) {
                 database.set_field_default(s_type, &data.attr_name(d_nr, a_nr), c);
             }
         }

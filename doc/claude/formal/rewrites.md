@@ -40,7 +40,38 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  rewrite assumed and panics when it is stale (LOFT_HOIST_VERIFY=1), or
                  an emission pin where there is nothing to re-derive.  The interpreter
                  applies no rewrite and is the oracle of every cell.
+  (R-Escape)     the contract is SEMANTICS — what a program computes and can observe —
+                 never a representation: how many stores or copies a value takes, or
+                 where it lives, is the compiler's to change wherever the rule's
+                 CONDITIONS are validated on the IR, and where they cannot be the
+                 rewrite declines to the unrewritten form.  The one boundary is a
+                 library's exported API, whose callers the compiler cannot see: a
+                 construction that ESCAPES the unit — answered to, stored by, or
+                 handed to code outside it — keeps the representation the API
+                 promises, and the boundary materialises whatever an internal rewrite
+                 made of it; one that does not escape may be rewritten in any way its
+                 conditions allow.  (C122, owner 2026-09-15.)
 ```
+
+**`(R-Escape)` in words.** Every rule below asks for permission from nobody: it states
+the conditions under which a program cannot tell the rewritten form from the written one,
+and the compiler validates those conditions or declines.  What it may never do is change
+a value, a fault or an effect (C120 is the same principle from the other side), or hand a
+representation of its own choosing across a library's API, where the callers that would
+have to validate the conditions are not in the compilation.  `(R-ValueRecord)`'s bridge
+clause is the existing instance — a value tuple inside the library, the promised record
+at the boundary — and `(O-ViewField)` takes its scope from here.  A user PROGRAM is a
+closed unit (every use is in the compilation; a fn-ref call is a match over known
+definitions), so every condition is decidable in it and the only boundaries left are
+where a representation is turned back into the promised one: a call into a `use`d
+library, the live-reload arm, and a record's layout in a store (C122's corollary).
+And the UNIT is a build decision: a release copy of a program (`--native-release`)
+emits its `use`d loft libraries' reachable functions into the one program it compiles,
+so there a loft-to-loft library API is no boundary at all — a library is recompiled
+with the game rather than reused as a binary — and what remains is a package's `#rust`
+native (a C ABI), the live-reload arm, a stored record's layout and a placed library
+(PLACEMENT.md § 4 is this rule at the wire).  A library's own published cdylib is the
+build in which its API keeps the promised representation for callers it cannot see.
 
 **In words.** The switch is the before-half of an A/B on one binary and the first
 bisect step for a native-only wrong answer; the falsifier is what makes "the values
@@ -203,6 +234,29 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  would leave them (`R-Fill`'s own tail).  The trip count is the range's
                  end less its start — the `next` counter's current value or `#index +
                  1` — plus one for an inclusive range, taken at loop entry.
+
+  (R-Invariant)  an integer chain — `+`, `-`, `*`, negation, `&`, `|`, `^` (their
+                 `Nullable` twins included) over literals and variables — that a loop
+                 neither REBINDS (a `Set` or `TuplePut` anywhere in the loop, its own
+                 counters included) nor lets ESCAPE (a bare or `OpCreateStack`-spelled
+                 argument to a by-reference parameter or a fn-ref call, a tuple
+                 destination, an iterator variable) holds one value for the loop's whole
+                 extent, so it is evaluated at its FIRST use and answered from a memo
+                 after.  The first-use evaluation is exactly the per-use one: the same
+                 value on every path, the overflow note fired at the point the first
+                 evaluation stands (once, where the per-use form notes once per use; a
+                 zero-trip loop notes nothing).  The memo is declared at the INNERMOST
+                 loop that spells the chain, so its flag is clear on every entry and the
+                 test peels out of the loop.  A shift, a division and a remainder are
+                 not chain ops (their templates raise through `stores`); a chain of
+                 literals alone is the constant folder's; a field read is not a leaf (a
+                 callee could write the record — R-Scalar answers that question); a body
+                 that yields or runs arms in parallel memoises nothing.  Switch
+                 `LOFT_NO_INVARIANT_HOIST`; falsifier `LOFT_HOIST_VERIFY=1` (every use
+                 re-evaluates the chain and compares).  Sites: `hoist::invariant_chains`,
+                 `hoist::arith_chain`, `non_sentinel::collect_escapes` (the one home for
+                 the escape question, the proof's and this rule's), the emitter's
+                 `begin_vector_hoist` and `emit_invariant_use`.
 
   (R-Header)     in a loop body that writes no store, a vector reached by a PURE
                  PATH P — a variable, or const-offset fields over one — has one
@@ -609,11 +663,17 @@ loop.  Sites: `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoiste
                  Also required — the buffer is used ONCE and its result local is
                  assigned ONCE, since a second use has one guarded site and one this
                  did not read, and a reassignment frees the store it displaces.
+                 A buffer whose callee MINTS the store its result adopts (O-Move at
+                 a plain local's first bind, @PLN164 B1) is paired for the guarded
+                 free alone and NOT allocated here: handed non-null to a callee that
+                 rebinds its promoted local from a call, it is freed by that rebind.
                  Every other buffer keeps its per-call mint.
 ```
 
 **In words.** @PLN157 § V and § V-af.  `scopes::reuse_record_buffers` inserts the
-`OpDatabase` and `scopes`'s pairing supplies the witness; the positive control
+`OpDatabase` and `scopes`'s pairing supplies the witness (`Scopes::minted_pairs` names the
+adopt-at-bind pairings it skips — @PLN164 B1's matrix measured the use-after-free that
+pooling one produces on the interpreter, plan 51 cluster 3's shape); the positive control
 `LOFT_NO_RETBUF_WITNESS_GATE=1` allocates every buffer, guarded or not, and
 `LOFT_STRICT_STORES=1` then reports the use-after-free at exactly the sites the gate
 declines — which is how the condition is falsified rather than asserted.  Switches
@@ -708,7 +768,11 @@ and loses only the innermost frame NAME from the chain.  Switch
                  `Object` build of the function's own record (the tuple of its writes),
                  a call to an admitted function (its tuple, forwarded), a value local,
                  or a borrowed VIEW of the record (the tuple of its field reads; a view
-                 is never freed, so reading it is all the value form owes) — and that
+                 is never freed, so reading it is all the value form owes) — a heap
+                 field of the record that (O-ViewField) admits is a VIEW LEAF, the
+                 reference to the place it views delivered in the tuple instead of a
+                 claim of its own, and a record whose every heap field is such a leaf
+                 counts as no-heap here — and that
                  the return buffer be mentioned only where the value form drops the
                  mention (a converted `Object`, a dropped buffer argument, a free); the
                  SITE gate asks that every admitted call stand where a tuple is
@@ -779,6 +843,90 @@ symbol and self time is the candidate).  Sites: `vector::get_elem_hoisted_cold`,
 `Stores::vec_set_hoisted_cold`, `Stores::note_format_fault`'s split,
 `Store::raise_out_of_bounds`, `Store::shadow_write`, `State::verify_slot`,
 `State::mark_stale_handles`, `Stores::watch_oob_text_report`.
+
+### A result is built where it will live, moved at its last use, and written over a place
+
+```
+  (R-Place)      a call whose result has ONE owning destination on every path that
+                 keeps it — a field or element of a record living in store S, whether
+                 or not that record exists yet — is handed a return buffer CLAIMED IN
+                 S (R-Callee: a buffer may be a record the caller offered), so the
+                 result is never minted in a store of its own and the later store into
+                 the destination is a relocation within S (R-MoveLast).  When the
+                 destination place EXISTS at the call and no argument of the call
+                 reaches it, the buffer IS the place and nothing moves.  Declines: a
+                 path that reads the result after the store (the destination owns it
+                 then, and B-Copy would show); an argument that reaches the
+                 destination's store (source and destination alias); a callee that
+                 may hand back a store it did not mint (O-Opaque: empty deps license
+                 nothing); a callee that on some exit answers a store other than the
+                 buffer it was handed (the destination would hold the writes of the
+                 exit not taken); a `?`/`??` discharge on the result.  Every other
+                 call keeps its own buffer.
+  (R-MoveLast)   a record-literal field or a field/element assignment whose source is
+                 a LOCAL the ownership oracle marks OWNED (O-Owner: never a parameter,
+                 a view, a `&` link or a witnessed local) and DEAD on every path after
+                 the assignment (O-Complete: no read, no rebind, no hand-off, no
+                 free-guard that names it, in this frame or through a callee it is
+                 passed to) takes the source by RELOCATION when source and destination
+                 share a store — the record's bytes move, its heap handles keep their
+                 claims, the source is zeroed and its scope-exit free finds nothing
+                 (R-MoveAppend's mechanics for one record) — and keeps B-Copy's deep
+                 copy when they do not: a cross-store move copies every claim anyway,
+                 so the rewrite has no gain there, and R-Place is what brings the
+                 source into the destination's store first.
+  (R-InPlaceLiteral) an assignment of a record LITERAL to an existing place — an
+                 element `v[i] = R { … }` or a field `o.f = R { … }` — writes the
+                 literal's fields into that place instead of building the literal in
+                 a temporary store and copying it: every field expression is
+                 evaluated BEFORE the first write (a field may read the old value
+                 through a view of the same place), the old value's owned heap is
+                 released before its slot is reused (H-ClearRelease, per field), and
+                 every field the literal omits is set to its declared default
+                 (loft#914) — so the place holds exactly what the copy would have
+                 left.  An absent element keeps the path the copy takes today; a
+                 literal whose field reads the place through a call the walk cannot
+                 see declines.
+  (R-Prefill)    the default prefill of a minted record — the declared defaults, the
+                 null sentinels and the variant tag a partial literal leaves to the
+                 type — is ONE block write of a per-type IMAGE computed once from the
+                 declaration, never a field-by-field walk; a field whose default is
+                 not a fixed byte pattern keeps the walk for itself alone.  The image
+                 is what the walk writes, so no value changes.
+```
+
+**In words.** @PLN164's rewrite list (its README § *The rewrite list*), derived by
+reading the drawing library's natural `parse_poly` beside the version a programmer
+who knows the store model would write, and asking what the compiler must PROVE to
+reach the second from the first without a line of the first changing.  (R-Place)
+is C2 and the half of B2 that matters: `pp_paint = read_paint(s)` whose only owning
+destination is `Op.paint` inside the scene gets a buffer claimed in the scene's
+store, and `paint: pp_paint` at its last use is then (R-MoveLast)'s relocation
+instead of a deep copy; `pts: smooth_pts(…)` with the op already appended is the
+"buffer IS the place" clause.  (R-InPlaceLiteral) is C1 (`sc.elems[idx] = Elem {
+… }` in `acc_pts`, whose `ename: ap_e.ename` reads the very slot it overwrites —
+the staging clause), (R-Prefill) is C4.  What each needs from the IR is in the plan's
+table: the def-use classes of a value (its owning destinations against its read-only
+uses), per-path liveness at a set (the `avoidable-copy` lint already computes it and
+codegen does not yet read it), the disturbance walk `B-Ref-Reshape` runs for `&`,
+and `R-Callee`'s writer summary.  (R-Place)'s callee clause — *a callee that on some
+exit answers a store other than the buffer it was handed* declines — is what
+`Parser::literal_exits_into_buffer` makes true for every callee whose exits are ALL
+literals: once the tail's delivery is decided and the buffer is still the unpromoted
+`__retbuf`, each mid-body `return S { … }` builds into it as the tail literal does
+(switch `LOFT_NO_LITERAL_EXIT_BUFFER=1`), where before it minted a store per exit and the
+caller adopted whichever came back; a callee with a promoted local beside a literal exit
+keeps its per-exit stores.  (R-Prefill) is built (C4): its ONE site is
+`Stores::prefill_from_image` in `src/database/structures.rs`, the image is READ BACK
+from the walk's first run over a zeroed span rather than computed a second way, the
+switch is `LOFT_NO_PREFILL_IMAGE=1` and the falsifier `LOFT_PREFILL_VERIFY=1` (the walk
+re-run after every image write, a panic where they disagree).  The other three have no
+switch, site or cell yet: each lands with its phase in the @PLN157 shape (a
+`LOFT_NO_<unit>` switch, cells with hand-computed values on both backends under
+`LOFT_STRICT_STORES`, `LOFT_POISON` and the leak gate, a guard with its
+`@falsified-at:` receipt), and until then the copy each rule replaces is what runs.
+The rules are written BEFORE the phases so that a question met while building one is
+answered here rather than decided in the code.
 
 ## Validating the emitted routines against their assumptions
 

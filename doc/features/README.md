@@ -100,6 +100,7 @@ canonical; these pages are its generated shadow. Regenerate with
 | [@F119](F119.md) | Store locks (#lock) |
 | [@F120](F120.md) | Lexer library (lib/lexer) |
 | [@F121](F121.md) | Parser library (lib/parser) |
+| [@F122](F122.md) | Multiple dispatch — one name, a definition per combination of parameter types |
 
 ## Infrastructure (`@I`)
 

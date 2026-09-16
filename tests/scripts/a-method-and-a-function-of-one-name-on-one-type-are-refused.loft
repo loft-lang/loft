@@ -1,0 +1,64 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A method and a free function of one name whose first parameter has one type are refused at
+// whichever is declared second (`formal/calls.md (F-OneBody)`, DESIGN_DECISIONS.md C123).
+//
+// A bare call resolves the method key first, so `doit(p)` reached the METHOD and the free
+// function went dead — `p.doit()` and `doit(p)` answered the method's value alike, with no
+// diagnostic, in every order but one: only a `both` method followed by the function was caught,
+// because only `both` registers the bare-name dispatcher the old check looked for.  Each pair
+// below is one of the shapes that compiled in silence, named apart so each expectation matches
+// one diagnostic.  One `self` method is the definition that takes both spellings; the two `both`
+// pairs keep that deprecated spelling (C123) because the refusal must hold for it too.
+//
+// @falsified-at: bdb84abe8 — interpret exit 1 -> 0, interpret expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-method-and-a-function-of-one-name-on-one-type-are-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations, both backends.
+//   ARMED: nothing.
+//   WITNESS: on the control none of the seven refusals is emitted (FAIL/7).  Measured as probes
+//     on that build: a `self` method then a function on its type answers `5 5` from both
+//     spellings where the free body says 6, the same pair in the other order answers `5 5` too,
+//     a program `starts_with(t: text, p: text)` beside the stdlib method compiles, and only a
+//     `both` method followed by the function is refused, with the short "Cannot redefine".
+//   HOLDS: leak and panic are `none` on both trees.
+// @EXPECT_ERROR: `x.dual_self(…)` and `dual_self(x, …)` would reach different functions
+// @EXPECT_ERROR: `x.dual_free_first(…)` and `dual_free_first(x, …)` would reach different functions
+// @EXPECT_ERROR: `x.dual_both_first(…)` and `dual_both_first(x, …)` would reach different functions
+// @EXPECT_ERROR: `x.dual_both_last(…)` and `dual_both_last(x, …)` would reach different functions
+// @EXPECT_ERROR: `x.dual_arity(…)` and `dual_arity(x, …)` would reach different functions
+// @EXPECT_ERROR: `x.dual_generic(…)` and `dual_generic(x, …)` would reach different functions
+// @EXPECT_ERROR: `x.starts_with(…)` and `starts_with(x, …)` would reach different functions
+
+struct Pt { x: integer }
+
+// a `self` method, then a free function on its receiver type
+fn dual_self(self: Pt) -> integer { self.x + 1 }
+fn dual_self(p: Pt) -> integer { p.x + 2 }
+
+// the free function first
+fn dual_free_first(p: Pt) -> integer { p.x + 2 }
+fn dual_free_first(self: Pt) -> integer { self.x + 1 }
+
+// a `both` method, then a free function
+fn dual_both_first(both: Pt) -> integer { both.x + 1 }
+fn dual_both_first(p: Pt) -> integer { p.x + 2 }
+
+// a free function, then a `both` method
+fn dual_both_last(p: Pt) -> integer { p.x + 2 }
+fn dual_both_last(both: Pt) -> integer { both.x + 1 }
+
+// another arity does not make the free spelling reachable: `dual_arity(p, 3)` resolves the method
+fn dual_arity(self: Pt) -> integer { self.x + 1 }
+fn dual_arity(p: Pt, k: integer) -> integer { p.x + k }
+
+// the generic spelling is keyed the same way
+fn dual_generic<T>(self: vector<T>) -> T { self[0] }
+fn dual_generic<T>(v: vector<T>) -> T { v[len(v) - 1] }
+
+// a program's function beside a stdlib method of the name
+fn starts_with(t: text, p: text) -> boolean { len(t) > len(p) }
+
+fn main() {
+  println("refused");
+}

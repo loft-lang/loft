@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1540 — the controls `fn(const T)` must keep legal, with no diagnostic and the values
+// hand-computed below.  The refusals are `a-const-value-is-not-written-through-a-const-lambda-or-a-closure.loft`
+// and the warnings `a-const-value-reaches-a-function-reference-only-through-const.loft`.
+//
+// - A `const` value passed through a reference whose type says `fn(const T)`, including a lambda
+//   with a `const` parameter and a function held in a struct field.
+// - A function whose parameter IS `const` standing where `fn(T)` is expected: the other direction
+//   of the conversion is free, since a `const` parameter takes anything a plain one takes.
+// - A value `if` and a `match` whose arms are all `const`-parameter functions: the join keeps the
+//   `const` every arm declares (a plain arm is the warning cell).
+// - A NON-const value through a plain reference still writes (999), a non-const record captured by
+//   a closure still shares its storage (5, LOFT.md § Closures), and a short callback over a non-const
+//   collection still writes its elements: the rule is about read-only values only.
+// - A short callback and a closure that only READ a const value, and `reduce` with a named
+//   function whose element parameter is `const`.
+//
+// @falsified-at: 01893a542 — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit, on both backends — the control does not parse `fn(const Acc1542)`, so the file
+//   does not compile there; here it compiles, runs every assertion and prints `fnref controls ok`.
+//   ARMED: nothing.
+//   WITNESS: the probe matrix measured the join cells against the fix before the join rule: an `if`
+//   of two `const`-parameter functions was refused (`expected fn(const Account), got fn(Account)`)
+//   or warned depending on arm order, which `if_of_const_fns` / `match_of_const_fns` pin as quiet.
+//   HOLDS: the non-const controls answer 999, 5 and 7 on both trees' semantics.
+
+struct Acc1542 { balance: integer }
+struct Pt1542 { x: integer }
+struct Hold1542 { f: fn(const Acc1542) -> integer }
+
+fn bump1542(a: Acc1542) { a.balance = 999; }
+fn read1542(a: const Acc1542) -> integer { a.balance }
+fn read2_1542(a: const Acc1542) -> integer { a.balance + 1 }
+fn addc1542(acc: integer, p: const Pt1542) -> integer { acc + p.x }
+
+fn through_const_type(a: const Acc1542, op: fn(const Acc1542) -> integer) -> integer { op(a) }
+fn through_const_lambda(a: const Acc1542) -> integer {
+  op = fn(x: const Acc1542) -> integer { x.balance * 2 };
+  op(a)
+}
+fn through_field(a: const Acc1542) -> integer { h = Hold1542 { f: read1542 }; g = h.f; g(a) }
+fn const_fn_into_plain_slot(a: Acc1542, op: fn(Acc1542) -> integer) -> integer { op(a) }
+fn if_of_const_fns(a: const Acc1542, c: boolean) -> integer {
+  op = if c { read1542 } else { read2_1542 };
+  op(a)
+}
+fn match_of_const_fns(a: const Acc1542, c: integer) -> integer {
+  op = match c { 0 => read1542, _ => read2_1542 };
+  op(a)
+}
+fn non_const_writes(a: Acc1542, op: fn(Acc1542)) { op(a); }
+fn non_const_capture_shares(a: Acc1542) { op = fn() { a.balance = 5; }; op(); }
+fn non_const_callback_writes(ps: vector<Pt1542>) -> integer { len(map(ps, |p| { p.x = 7; 1 })) }
+fn const_callback_reads(ps: const vector<Pt1542>) -> vector<integer> { map(ps, |p| { p.x * 2 }) }
+fn const_capture_reads(a: const Acc1542) -> integer { op = fn() -> integer { a.balance + 3 }; op() }
+fn const_reduce(ps: const vector<Pt1542>) -> integer { reduce(ps, 0, addc1542) }
+
+fn main() {
+  acct = Acc1542 { balance: 500 };
+  assert(through_const_type(acct, read1542) == 500, "through_const_type");
+  assert(through_const_lambda(acct) == 1000, "through_const_lambda {through_const_lambda(acct)}");
+  assert(through_field(acct) == 500, "through_field {through_field(acct)}");
+  assert(const_fn_into_plain_slot(acct, read1542) == 500, "const_fn_into_plain_slot");
+  assert(if_of_const_fns(acct, false) == 501, "if_of_const_fns {if_of_const_fns(acct, false)}");
+  assert(match_of_const_fns(acct, 0) == 500, "match_of_const_fns {match_of_const_fns(acct, 0)}");
+  assert(acct.balance == 500, "the readers left the balance {acct.balance}");
+  w = Acc1542 { balance: 500 };
+  non_const_writes(w, bump1542);
+  assert(w.balance == 999, "non_const_writes {w.balance}");
+  s = Acc1542 { balance: 500 };
+  non_const_capture_shares(s);
+  assert(s.balance == 5, "non_const_capture_shares {s.balance}");
+  v = [Pt1542 { x: 1 }, Pt1542 { x: 2 }];
+  assert(non_const_callback_writes(v) == 2 && v[0].x == 7 && v[1].x == 7, "non_const_callback_writes {v[0].x} {v[1].x}");
+  c = [Pt1542 { x: 1 }, Pt1542 { x: 2 }];
+  doubled = const_callback_reads(c);
+  assert(len(doubled) == 2 && doubled[0] == 2 && doubled[1] == 4, "const_callback_reads");
+  assert(const_capture_reads(acct) == 503, "const_capture_reads {const_capture_reads(acct)}");
+  assert(const_reduce(c) == 3, "const_reduce {const_reduce(c)}");
+  assert(c[0].x == 1 && c[1].x == 2, "the const readers left the elements {c[0].x} {c[1].x}");
+  println("fnref controls ok");
+}

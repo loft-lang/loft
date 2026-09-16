@@ -1,6 +1,6 @@
 struct P57 { n: integer }
 
-fn tripled(both: P57) -> integer { both.n * 3 }
+fn tripled(self: P57) -> integer { self.n * 3 }
 
 fn apply57(f: fn(P57) -> integer, p: P57) -> integer { f(p) }
 

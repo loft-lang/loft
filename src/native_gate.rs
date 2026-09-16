@@ -200,7 +200,7 @@ pub fn classify_bridge_attr(a: &crate::data::Attribute, ret_text: bool) -> Optio
         // Valid iff the function actually returns text.
         return ret_text.then_some(BridgeAttrKind::WorkText);
     }
-    if matches!(a.typedef.base(), Type::Function(_, _, _)) {
+    if matches!(a.typedef.base(), Type::Function(..)) {
         return None; // closures — not handled (was a '__' name test)
     }
     is_bridge_type(&a.typedef).then_some(BridgeAttrKind::Marshal)

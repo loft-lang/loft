@@ -44,9 +44,19 @@ holder_raw() { [ -f "$HOLDER" ] && cat "$HOLDER" 2>/dev/null; }
 # it an orphan.  That is worse than the silence it replaces, so the file only ever
 # supplies the human LABEL (which checkout), and `ppid` decides.
 #
-# The discriminator: a process whose gate died is reparented to init, so `ppid == 1`.  A
-# holder still inside a live process tree has a real parent.  A holder is also accounted
-# for if some checkout's `.ci-running` names it and that pid is alive.
+# The discriminator: a process whose gate died is reparented to a REAPER — init (pid 1),
+# or the subreaper standing in for it: a session run under a user `systemd` instance
+# (`systemd --user`, itself a child of 1) reaps that session's orphans, so `ppid == 1`
+# alone read a genuine orphan as LIVE there (measured 2026-09-15: cell 4's holder came
+# back with ppid 5837, `systemd`, and the selftest failed 3 of 10 on a box where every
+# gate is such a session).  A holder still inside a live process tree has a real parent.
+# A holder is also accounted for if some checkout's `.ci-running` names it and that pid
+# is alive.
+reaper() {        # is pid $1 init, or a user-instance subreaper (`systemd`/`init` by name)?
+    [ "${1:-1}" = 1 ] && return 0
+    case "$(cat /proc/"$1"/comm 2>/dev/null)" in systemd|init) return 0;; esac
+    return 1
+}
 holder_pids() {   # pid<TAB>ppid<TAB>cwd, one per process holding the lock on ANY fd
     local p fd
     for p in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
@@ -91,7 +101,7 @@ state() {
     while IFS=$'\t' read -r pid ppid cwd; do
         [ -n "${pid:-}" ] || continue
         any=1
-        if [ "${ppid:-1}" != 1 ] || live_claim "$pid"; then
+        if ! reaper "${ppid:-1}" || live_claim "$pid"; then
             echo "HELD_LIVE $pid ${cwd:-?}"; return
         fi
         [ -z "$best_pid" ] && { best_pid=$pid; best_cwd=$cwd; }
@@ -136,7 +146,7 @@ fd_holders() {
             et=$(ps -o etimes= -p "$p" 2>/dev/null | tr -d ' ')
             printf '  pid %-8s fd %-3s %-18s ppid %-8s %5ss  %s%s\n' \
                 "$p" "$(basename "$fd")" "$comm" "$ppid" "${et:-?}" "${cwd:-?}" \
-                "$([ "$ppid" = 1 ] && echo '   <== ORPHAN (reparented to init)')"
+                "$(reaper "$ppid" && echo '   <== ORPHAN (reparented to init or its reaper)')"
             break
         done
     done
@@ -165,7 +175,7 @@ doctor() {
     case "$(state)" in
       HELD_ORPHAN*)
         echo "VERDICT: the lock is held by a process that is NOT a running gate."
-        echo "  An orphan above (ppid 1) inherited fd 9 from a gate that died."
+        echo "  An orphan above (reparented to init or a user systemd) inherited fd 9 from a gate that died."
         echo "  Killing that pid releases every queued gate on this box.";;
       HELD_LIVE*)
         echo "VERDICT: a real gate holds the lock — this is an ordinary queue.";;

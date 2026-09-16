@@ -119,7 +119,7 @@ impl OpEmitter for OpFreeRefEmitter {
             if let Value::Var(v) = db_val
                 && matches!(
                     ctx.output.data.def(ctx.output.def_nr).variables().tp(*v),
-                    Type::Function(_, _, _)
+                    Type::Function(..)
                 )
             {
                 let vn = format!(
@@ -230,7 +230,7 @@ impl OpEmitter for OpFreeRefTagEmitter {
             if let Value::Var(v) = db_val
                 && matches!(
                     ctx.output.data.def(ctx.output.def_nr).variables().tp(*v),
-                    Type::Function(_, _, _)
+                    Type::Function(..)
                 )
             {
                 let vn = format!(

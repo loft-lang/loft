@@ -1693,6 +1693,66 @@ fn the_release_records_the_build_id_the_verifier_replays() {
     );
 }
 
+/// @PLN78 step 7 — the release RECORDS the platform C toolchain, and the verifier compares its
+/// own against that record before calling a difference the source's.
+///
+/// `ring` compiles C through the `cc` crate with the build host's compiler (`cl.exe`, Apple
+/// clang, `musl-gcc`).  Measured on one Windows runner with one source, rustc and root, two
+/// MSVC toolsets linked different `.text`, `.rdata` and `.pdata` — so a weekly rebuild on a
+/// newer runner image compared against a binary made by a compiler it did not have, and
+/// reported "not reproducible".  The contract spans three files like the build-id one above:
+/// one helper answers the question, the writer records it, the verifier reads it back and asks
+/// the same helper.  A rename in any one would turn every such difference back into a false
+/// "not reproducible", so all ends are pinned here.
+#[test]
+fn the_release_records_the_c_toolchain_the_verifier_compares() {
+    let mk = std::fs::read_to_string("scripts/make-release.sh").expect("read make-release.sh");
+    let vf = std::fs::read_to_string("scripts/repro-verify.sh").expect("read repro-verify.sh");
+    let tc =
+        std::fs::read_to_string("scripts/repro-toolchain.sh").expect("read repro-toolchain.sh");
+
+    assert!(
+        tc.contains("repro_c_toolchain() {"),
+        "scripts/repro-toolchain.sh must define `repro_c_toolchain`, the one answer both scripts ask"
+    );
+    for (name, src) in [("make-release.sh", &mk), ("repro-verify.sh", &vf)] {
+        assert!(
+            src.contains("/repro-toolchain.sh\""),
+            "{name} must source scripts/repro-toolchain.sh — a copied probe drifts from the \
+             one the other script asks"
+        );
+    }
+    assert!(
+        mk.contains("echo \"c-toolchain = $(repro_c_toolchain \"$TRIPLE\")\""),
+        "make-release.sh must record the platform C toolchain in BUILD-INFO"
+    );
+    assert!(
+        vf.contains("^c-toolchain = ") && vf.contains("repro_c_toolchain \"$TARGET\""),
+        "repro-verify.sh must read `c-toolchain` back out of BUILD-INFO and compare its own"
+    );
+}
+
+/// @PLN78 step 7 — a Windows link is not deterministic unless told twice.
+///
+/// `rust-lld` stamps the COFF header, the debug directory and the CodeView PDB GUID with the
+/// wall clock (12 bytes between two builds of one source from one root).  `/Brepro` turns the
+/// stamp into a hash — of a PDB that is itself not deterministic, so 20 bytes still differed;
+/// only `/DEBUG:NONE` (no PDB, no CodeView record) made two builds byte-identical.  Both flags
+/// travel with the RUSTFLAGS `repro-flags.sh` exports, since those override a config's
+/// per-target flags.
+#[test]
+fn repro_flags_make_a_windows_link_deterministic() {
+    let rf = std::fs::read_to_string("scripts/repro-flags.sh").expect("read repro-flags.sh");
+    assert!(
+        rf.contains("MINGW*|MSYS*|CYGWIN*")
+            && rf.contains("-C link-arg=/Brepro")
+            && rf.contains("-C link-arg=/DEBUG:NONE"),
+        "scripts/repro-flags.sh must add `-C link-arg=/Brepro -C link-arg=/DEBUG:NONE` on a \
+         Windows host — `/Brepro` alone hashes a PDB that is not deterministic, so every Windows \
+         release would still differ from its rebuild in the link stamp and PDB GUID"
+    );
+}
+
 /// @PLN78 step 7 — every triple we PUBLISH must also be rebuilt from source.
 ///
 /// The two lists drift in one direction that is silent: adding a target to `release.yml`
@@ -2840,6 +2900,37 @@ fn every_ignore_reason_says_how_it_runs() {
     );
 }
 
+/// The bash that runs `scripts/test_subjects.sh` — Git Bash on Windows, `bash` elsewhere.
+///
+/// ⚠ On Windows a bare `bash` is NOT Git Bash — it resolves to `C:\Windows\System32\bash.exe`,
+/// the WSL launcher, which with no distribution installed prints "Windows Subsystem for Linux
+/// has no installed distributions" to STDOUT (UTF-16) and exits 1.  A windows-probe run of the
+/// identical command passes because the probe runs INSIDE Git Bash, where `bash` resolves to
+/// Git Bash first, while the test process inherits a different PATH order.  `sh` is not the
+/// cure: `test_subjects.sh` needs `BASH_SOURCE` and `[[ ]]`, and `/bin/sh` on Linux is dash.
+/// Every guard here that spawns the script asks this one resolver — it was a closure inside
+/// `every_test_binary_matches_a_subject` alone, and the two loft#1520 guards beside it kept a
+/// bare `bash` and failed the Windows daily the day they reached `main`.
+fn git_bash() -> std::ffi::OsString {
+    #[cfg(windows)]
+    {
+        let mut roots: Vec<std::path::PathBuf> = Vec::new();
+        for var in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
+            if let Some(v) = std::env::var_os(var) {
+                roots.push(std::path::PathBuf::from(v));
+            }
+        }
+        roots.push(std::path::PathBuf::from(r"C:\Program Files"));
+        for r in roots {
+            let c = r.join("Git").join("bin").join("bash.exe");
+            if c.is_file() {
+                return c.into_os_string();
+            }
+        }
+    }
+    std::ffi::OsString::from("bash")
+}
+
 /// Every subject's PATH pattern claims the sources it names — the map `--changed` reads.
 ///
 /// loft#1520: `changed_filter` looped over `${!SUBJECT_PATHS[@]}`, an array nothing ever
@@ -2884,7 +2975,7 @@ fn every_subject_claims_the_paths_it_names() {
              p=$(subject_paths \"$n\") || continue; \
              [[ \"{path}\" =~ $p ]] && echo \"$n\"; done"
         );
-        let out = std::process::Command::new("bash")
+        let out = std::process::Command::new(git_bash())
             .args(["-c", &script])
             .current_dir(root)
             .output()
@@ -2905,7 +2996,7 @@ fn every_subject_claims_the_paths_it_names() {
     // path is unreachable from `--changed` by construction.
     let script = "source scripts/test_subjects.sh; \
                   for n in $SUBJECT_NAMES; do subject_paths \"$n\" >/dev/null || echo \"$n\"; done";
-    let out = std::process::Command::new("bash")
+    let out = std::process::Command::new(git_bash())
         .args(["-c", script])
         .current_dir(root)
         .output()
@@ -2938,7 +3029,7 @@ fn changed_selects_subjects_by_path() {
             "source scripts/test_subjects.sh; changed_paths() {{ printf '%s\\n' {list}; }}; \
              changed_filter HEAD"
         );
-        let out = std::process::Command::new("bash")
+        let out = std::process::Command::new(git_bash())
             .args(["-c", &script])
             .current_dir(root)
             .output()
@@ -2990,38 +3081,10 @@ fn every_test_binary_matches_a_subject() {
     // binaries (bash 5.3.15, Cygwin), so the cause is load on the runner rather than
     // anything in the map.  So: a non-zero exit with BOTH streams empty is retried once,
     // and either way the message names what actually happened.  The retry cannot mask a
-    // genuine finding, because a genuine finding has stdout.
-    // ⚠ On Windows a bare `bash` is NOT Git Bash — it resolves to
-    // `C:\Windows\System32\bash.exe`, the WSL launcher, which with no distribution
-    // installed prints "Windows Subsystem for Linux has no installed distributions" to
-    // STDOUT (UTF-16) and exits 1.  That is the whole story behind this test failing twice
-    // on the Windows daily while a windows-probe run of the identical command passed: the
-    // probe ran INSIDE Git Bash, where `bash` resolves to Git Bash first, and the test
-    // process inherits a different PATH order.  The 20-odd other suites here spawn `sh`,
-    // which System32 does not provide, so this was the only site exposed.  `sh` is not the
-    // cure though — `test_subjects.sh` needs `BASH_SOURCE` and `[[ ]]`, and `/bin/sh` on
-    // Linux is dash.
-    let bash = || -> std::ffi::OsString {
-        #[cfg(windows)]
-        {
-            let mut roots: Vec<std::path::PathBuf> = Vec::new();
-            for var in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
-                if let Some(v) = std::env::var_os(var) {
-                    roots.push(std::path::PathBuf::from(v));
-                }
-            }
-            roots.push(std::path::PathBuf::from(r"C:\Program Files"));
-            for r in roots {
-                let c = r.join("Git").join("bin").join("bash.exe");
-                if c.is_file() {
-                    return c.into_os_string();
-                }
-            }
-        }
-        std::ffi::OsString::from("bash")
-    };
+    // genuine finding, because a genuine finding has stdout.  The shell itself is `git_bash()`
+    // — on Windows a bare `bash` is the WSL launcher, which is what failed this test twice.
     let run = || {
-        std::process::Command::new(bash())
+        std::process::Command::new(git_bash())
             .args([
                 "-c",
                 "source scripts/test_subjects.sh && unmatched_binaries",

@@ -143,7 +143,22 @@ test-group = 'html-wasm-serial'
 filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use_native) + binary(multiplayer_v2) + binary(multiplayer_v3) + binary(wasm_debug_relay)'
 test-group = 'heavy-serial'
 
-# The profile the nightly sanitizer legs run under (`miri.yml`'s ASan sweep and leak gate).
+# `loft_suite` runs every `tests/scripts` program serially in one test, so its clock grows with
+# the corpus, and the Windows runner is the slowest `ci` host.  Measured on the daily
+# `Test (windows-latest)` job: 414.9 s, 430.2 s and 432.6 s at 4762 tests (09-11..09-13, green),
+# then KILLED at 600 s and 509.2 s on its retry at 4807 (09-14, reported FLAKY) — 72-85 % of the
+# ceiling, one slow runner from red.  The same shape as the sanitizer legs below, cured the same
+# way: this one test on this one platform gets a longer ceiling, and `ci`'s 600 s stays the hang
+# guard everywhere else (a hung script inside the suite is also caught by the per-program
+# watchdog, which the ceiling here does not replace).
+[[profile.ci.overrides]]
+platform = 'cfg(windows)'
+filter = 'binary(wrap) & test(loft_suite)'
+slow-timeout = { period = "1200s", terminate-after = 1 }
+
+# The profile every sanitizer leg runs under: `miri.yml`'s nightly ASan sweep and leak gate,
+# and `ci.yml`'s per-PR ASan sweep since 2026-09-15 (that one sat at 587 s of `ci`'s 600 s
+# and was killed at 600 s by the next commit that added a corpus script — run 34980517571).
 #
 # It is `ci` with ONE difference: `loft_suite`, which runs every `tests/scripts` program
 # serially inside one test process, gets a longer ceiling.  Under `-Zsanitizer=address` that

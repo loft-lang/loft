@@ -68,6 +68,23 @@ fn registry_fn_hint(_name: &str, _resolved: &[String]) -> Option<String> {
     None
 }
 
+/// Where a value is handed to a parameter, for [`Parser::report_const_argument`] (loft#1540,
+/// C124): which signature is asked, and how the diagnostic names it.
+#[derive(Clone, Copy)]
+pub(crate) enum ConstHandOff<'a> {
+    /// Parameter `nr` (0-based) of the declared function `callee`, named `param` when it has a name.
+    Declared {
+        callee: &'a str,
+        nr: usize,
+        param: Option<&'a str>,
+    },
+    /// Parameter `nr` of the function a reference holds: `callee` is the reference's name, or
+    /// `None` for a call on a function-typed expression (`make()(x)`).
+    FnRef { callee: Option<&'a str>, nr: usize },
+    /// The elements of a collection handed to `builtin`'s callback as its parameter `nr`.
+    Callback { builtin: &'a str, nr: usize },
+}
+
 /// @PLN102 case B (soften-nullflow-discharge.md) — the sign / lower-bound lattice used to
 /// prove a domain-fault op's argument is in its safe domain (`sqrt` needs `≥ 0`, `ln` needs
 /// `> 0`). `Pos ⊑ NonNeg ⊑ Unknown` (stronger → weaker); `Unknown` is the conservative default.
@@ -894,6 +911,14 @@ pub struct Parser {
     /// Set by `dynamic_dispatcher` when it refused a leaf, so the call site returns rather
     /// than falling to the ladder and reporting the same site a second way.
     pub(crate) reported_dynamic_refusal: bool,
+    /// How many functions of each name each program source FILE declares, by a lexical scan —
+    /// pass 1's answer to "is a definition of this name still below the call?"
+    /// (`Parser::file_has_pending_fn`).
+    pub(crate) declared_fn_names: HashMap<String, HashMap<String, usize>>,
+    /// The `{id}#index` variables of loops that walk values WITHOUT positions — a generator,
+    /// or a type's own `next()` — keyed by (function, variable): `x#index` is the position to
+    /// give to `v[i]`, and such a loop has none to offer.
+    pub(crate) positionless_loops: HashSet<(u32, u16)>,
     /// Set by `iter_op` when `#fields` is encountered. Holds the struct `def_nr`.
     /// Checked by `parse_for` to take the unrolling path. Reset after use.
     pub(crate) fields_of: u32,
@@ -911,6 +936,13 @@ pub struct Parser {
     /// minted in the frame that holds the variable, not in the closure that passes it along
     /// (loft#1236).
     pub(crate) capture_owner: std::collections::HashMap<String, u32>,
+    /// loft#1540 — the names in `capture_context` whose value is read-only: an enclosing binding
+    /// marked value-const, or a capture the enclosing lambda itself received read-only.  A
+    /// capture shares a record or collection with the binding it names (LOFT.md § Closures), so
+    /// the closure may write it no more than that binding may.
+    pub(crate) capture_const: std::collections::HashSet<String>,
+    /// The `capture_const` of each enclosing lambda, restored where `capture_context` is.
+    pub(crate) capture_const_saved: Vec<std::collections::HashSet<String>>,
     /// Captures a lambda REBINDS whole-value (`p = [..]`), keyed by the lambda's def.
     ///
     /// Recorded where the assignment is parsed, because by the time the lambda closes its
@@ -1071,6 +1103,9 @@ pub struct Parser {
     /// loft#1023 — `(monomorph, template, bindings, concrete)` for each monomorph built
     /// from a template whose pass-2 body had not been parsed yet.
     pub(crate) stale_monomorphs: Vec<(u32, u32, Vec<(u32, Type)>, Type)>,
+    /// Generic templates refused at their own declaration (loft#1538): a call to one is
+    /// already an error the declaration names, so the call adds no second message.
+    pub(crate) refused_templates: std::collections::HashSet<u32>,
     /// @PLN99 Arc C — set by `convert` when it dispatches a struct/reference-returning
     /// USER conversion (`x as T` via `fn OpConvTFromS`).  Such a conversion ALLOCATES a
     /// fresh owned store, so its result must NOT inherit the source's deps (the reinterpret-
@@ -1113,6 +1148,13 @@ pub struct Parser {
     /// Pushed on entry to the proven branch, truncated to the saved length on exit; a
     /// reassignment of `v` inside the branch removes it (the proof no longer holds).
     pub(crate) narrowed_non_null: Vec<u16>,
+    /// loft#1540 — the VIEWS of a value-const value, keyed by `(context, view variable)`, each
+    /// with a description of the value-const place it reads out of (`Const-Value`; plan 40's
+    /// coherence rule 2: *"reading a field/element of a `const` value yields a `const` view"*).
+    /// The view is marked value-const itself, so every write guard refuses a write through it
+    /// unchanged; this record is only what the refusal SAYS, because the author never wrote
+    /// `const` on the view.
+    pub(crate) const_views: std::collections::HashMap<(u32, u16), String>,
     /// The same proof for a PROJECTION rather than a name — `if !db.map[k] { … } else { … }`
     /// proves `db.map[k]` non-null in the else arm, and nothing named it before.
     ///
@@ -1488,9 +1530,13 @@ impl Parser {
             lambda_counter: 0,
             expected: Type::Unknown(0),
             reported_dynamic_refusal: false,
+            declared_fn_names: HashMap::new(),
+            positionless_loops: HashSet::new(),
             fields_of: u32::MAX,
             capture_context: Vec::new(),
             capture_owner: std::collections::HashMap::new(),
+            capture_const: std::collections::HashSet::new(),
+            capture_const_saved: Vec::new(),
             rebound_captures: std::collections::HashMap::new(),
             captured_names: Vec::new(),
             branch_sunk_vectors: std::collections::HashSet::new(),
@@ -1521,12 +1567,14 @@ impl Parser {
             last_place_discharge: false,
             pass2_bodies: std::collections::HashSet::new(),
             stale_monomorphs: Vec::new(),
+            refused_templates: std::collections::HashSet::new(),
             conv_owned_result: None,
             trace_types: false,
             trace_types_lines: Vec::new(),
             field_read_counts: std::collections::HashMap::new(),
             defended_field_reads: std::collections::HashSet::new(),
             narrowed_non_null: Vec::new(),
+            const_views: std::collections::HashMap::new(),
             narrowed_non_null_exprs: Vec::new(),
             divisor_nonzero: Vec::new(),
             math_sign_proven: Vec::new(),
@@ -2643,7 +2691,7 @@ impl Parser {
                 &Type::Tuple(elems.clone()),
                 &crate::data::Context::Argument,
             )) <= 8
-                || elems.iter().any(|e| matches!(e, Type::Function(_, _, _)))
+                || elems.iter().any(|e| matches!(e, Type::Function(..)))
             {
                 continue;
             }
@@ -3010,12 +3058,23 @@ impl Parser {
     /// `n_<fn>` template exist as a `DefType::Generic`?  Only such defs are
     /// legal pass-2-only appends of the Function kind — a source-declared
     /// method parses in pass 1 and can never appear as a trailing pass-2 def.
+    ///
+    /// A METHOD template (`fn head<T>(self: vector<T>)`) is stored under its receiver's key,
+    /// `t_6vector_head`, rather than as `n_head`, and instantiates on pass 2 the same way
+    /// (loft#1539) — so a template of either spelling makes the name legal.
     fn h5_names_a_generic_template(&self, name: &str) -> bool {
         let Some((_, fn_name)) = Self::h5_split_mangled(name) else {
             return false;
         };
         let g_nr = self.data.def_nr(&format!("n_{fn_name}"));
-        g_nr != u32::MAX && matches!(self.data.def_type(g_nr), DefType::Generic)
+        if g_nr != u32::MAX && matches!(self.data.def_type(g_nr), DefType::Generic) {
+            return true;
+        }
+        (0..self.data.definitions()).any(|d| {
+            matches!(self.data.def_type(d), DefType::Generic)
+                && Self::h5_split_mangled(self.data.def(d).name())
+                    .is_some_and(|(_, method)| method == fn_name)
+        })
     }
 
     /// Split `t_<LEN><Type>_<fn>` into its type name and function name.
@@ -3544,6 +3603,8 @@ impl Parser {
         self.deferred_unknown.clear();
         self.resolutions.clear();
         self.data.reset();
+        // A REPL input reuses its virtual file name with new text.
+        self.declared_fn_names.clear();
         // The source stays the stdlib's, 0: this is the REPL session's entry, where every
         // later input and a debugger's eval resolve their names under that scope, and where
         // a definition colliding with a stdlib one is a collision of ONE key.  A gate that
@@ -3849,12 +3910,20 @@ impl Parser {
         // while a nested element registered level-COLLAPSED.  Now that
         // `vector<vector<T>>` registers honestly, `vector_of` is the CONTAINER
         // and passing it strode `vector_add` one level too deep.
+        // An element with no row answers `u16::MAX`, the "no such type" sentinel, rather than
+        // indexing the schema with it.  A template's type variable is one: `a + b` over a
+        // `vector<T>` was an internal compiler error here while its concrete twin got the
+        // refusal it earns.  A monomorph asks again with the concrete element.
         i32::from(
             self.data
                 .vector_element_type(content, &mut self.database)
                 .unwrap_or_else(|| {
                     let vec_tp = self.vector_of(content);
-                    self.database.content(vec_tp)
+                    if vec_tp == u16::MAX {
+                        u16::MAX
+                    } else {
+                        self.database.content(vec_tp)
+                    }
                 }),
         )
     }
@@ -3871,11 +3940,176 @@ impl Parser {
     /// absent; it says nothing about the signature a value in it would have, and a
     /// hint that dropped out on `?` would make the rule depend on it (loft#1067).
     pub(crate) fn lambda_hint(&self) -> Type {
-        if matches!(self.expected.base(), Type::Function(_, _, _)) {
+        if matches!(self.expected.base(), Type::Function(..)) {
             self.expected.base().clone()
         } else {
             Type::Unknown(0)
         }
+    }
+
+    /// Does a binding of this type NAME the value it was given — a record, a struct-enum or a
+    /// collection — rather than hold its own copy, as a scalar and `text` do?  The question
+    /// C124 asks of a parameter (`calls.md` F-ParamHeap) and loft#1540 of a closure's capture
+    /// (LOFT.md § Closures: a record or collection capture shares the value).  A `&` link is
+    /// peeled first; whether the binding IS a link is the caller's separate question.
+    pub(crate) fn names_callers_value(tp: &Type) -> bool {
+        matches!(
+            tp.peel_link().base(),
+            Type::Reference(_, _)
+                | Type::Enum(_, true, _)
+                | Type::Vector(_, _)
+                | Type::Sorted(_, _, _)
+                | Type::Index(_, _, _)
+                | Type::Radix(_, _, _)
+                | Type::Trie(_, _, _)
+                | Type::Hash(_, _, _)
+        )
+    }
+
+    /// loft#1540 / C124 — may this value be handed to this parameter?  The one question every
+    /// hand-off asks: a value-const value (a `const` parameter or local, a view of one, a read
+    /// through a value-const field) reaches a `&` parameter never, and a record or collection
+    /// parameter only when that parameter is `const`.  `text` and scalar parameters take their
+    /// own copy and are not asked.
+    ///
+    /// Decided by the SIGNATURE the hand-off names — a declared function's, a function type's
+    /// (`fn(const T)`), a builtin callback's — never by the body behind it: what a call means is
+    /// judged from the call and the declaration it names (C121), while a proof that a body does
+    /// not write stays an optimisation's to use (C122).  A `&` parameter is refused as an error
+    /// (plan 40's rule 4); a plain one is the gating warning `const-to-plain-parameter`, C124's
+    /// rollout (owner, 2026-09-15), whose cure is in the message.
+    ///
+    /// `@FR-N-Shape` — "is this parameter a `&` link" is a shape question, and a `&τ?` parameter
+    /// links exactly as its dense twin does, so it is asked through `base()`.
+    pub(crate) fn report_const_argument(
+        &mut self,
+        actual: &Value,
+        param_tp: &Type,
+        param_const: bool,
+        at: ConstHandOff<'_>,
+    ) {
+        if param_const {
+            return;
+        }
+        let is_link = matches!(param_tp.base(), Type::RefVar(_));
+        let is_heap = !is_link && Self::names_callers_value(param_tp);
+        if !is_link && !is_heap {
+            return;
+        }
+        let Some(place) = self.const_view_place(actual, true) else {
+            return;
+        };
+        // A view names itself and what it views: the author passed `f`, not `ps`.
+        let what = match (&at, actual.unspan()) {
+            (ConstHandOff::Callback { .. }, _) => format!("the elements of {place}"),
+            (_, Value::Var(v)) if self.const_views.contains_key(&(self.context, *v)) => {
+                format!("'{}', a view of {place},", self.vars.written_name(*v))
+            }
+            _ => place,
+        };
+        let (fix_title, fix_condition) = match at {
+            ConstHandOff::Declared { callee, nr, param } => {
+                if is_link {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot pass {what} to the `&` parameter {} of `{callee}`, which may \
+                         modify it; its value is read-only — pass a local copy, or make the \
+                         parameter `const` if `{callee}` only reads it",
+                        nr + 1
+                    );
+                    return;
+                }
+                let param = param.map_or_else(String::new, |a| format!(" `{a}`"));
+                diagnostic!(
+                    self.lexer,
+                    Level::Warning,
+                    code = "const-to-plain-parameter",
+                    "Cannot pass {what} to parameter {}{param} of `{callee}`, which is not \
+                     `const`: its value is read-only, and a plain parameter names the caller's \
+                     value — declare the parameter `const` if `{callee}` only reads it, or \
+                     pass a local copy",
+                    nr + 1
+                );
+                (
+                    format!("declare parameter{param} of `{callee}` `const`"),
+                    format!("`{callee}` only reads that parameter"),
+                )
+            }
+            ConstHandOff::FnRef { callee, nr } => {
+                let label = callee.map_or_else(
+                    || "the called function value".to_string(),
+                    |c| format!("the function reference `{c}`"),
+                );
+                if is_link {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot pass {what} to the `&` parameter {} of {label}, which may modify \
+                         it; its value is read-only — pass a local copy, or declare the \
+                         parameter `const` in the function type (`fn(const …)`) if every \
+                         function it holds only reads it",
+                        nr + 1
+                    );
+                    return;
+                }
+                diagnostic!(
+                    self.lexer,
+                    Level::Warning,
+                    code = "const-to-plain-parameter",
+                    "Cannot pass {what} to parameter {} of {label}, whose function type does not \
+                     declare it `const`: its value is read-only, and a plain parameter names the \
+                     caller's value — declare it `const` in the function type (`fn(const …)`) if \
+                     every function it holds only reads it, or pass a local copy",
+                    nr + 1
+                );
+                (
+                    format!("declare parameter {} of {label}'s type `const`", nr + 1),
+                    format!("every function {label} holds only reads that parameter"),
+                )
+            }
+            ConstHandOff::Callback { builtin, nr } => {
+                if is_link {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot pass {what} to `{builtin}`'s callback, whose parameter {} is `&` \
+                         and may modify them; their value is read-only — pass a copy of the \
+                         collection",
+                        nr + 1
+                    );
+                    return;
+                }
+                diagnostic!(
+                    self.lexer,
+                    Level::Warning,
+                    code = "const-to-plain-parameter",
+                    "Cannot pass {what} to `{builtin}`'s callback, whose parameter {} is not \
+                     `const`: their value is read-only, and a plain parameter names the caller's \
+                     value — declare that parameter `const` if the callback only reads it, or \
+                     pass a copy of the collection",
+                    nr + 1
+                );
+                (
+                    format!(
+                        "declare parameter {} of the callback passed to `{builtin}` `const`",
+                        nr + 1
+                    ),
+                    "the callback only reads that parameter".to_string(),
+                )
+            }
+        };
+        // Conditional, and without an edit: whether the callee only reads is the author's to
+        // affirm (C124 decides by the signature, not by reading the body for them), and the
+        // parameter is usually declared in another place than this hand-off.
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: fix_title,
+            condition: Some(fix_condition),
+            edit: None,
+            concept: "const parameters",
+            concept_ref: "@F18",
+        });
     }
 
     /// May this expected type seed a short lambda's parameter types?
@@ -3885,7 +4119,7 @@ impl Parser {
     /// element, a block tail and a parameter default (loft#1067). LOFT.md states the
     /// rule as *the expected type wherever there is one* — this is "wherever".
     pub(crate) fn seeds_lambda_hint(tp: &Type) -> bool {
-        matches!(tp.base(), Type::Function(_, _, _))
+        matches!(tp.base(), Type::Function(..))
     }
 
     /// The tuple type a `⇐` push should carry for `tp` — the one home for the tuple
@@ -4788,6 +5022,20 @@ impl Parser {
 
     #[track_caller]
     fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
+        // loft#1540 — a function value meets a function-typed slot only in the direction `const`
+        // allows: a function whose parameter is plain may not stand where the slot promises that
+        // parameter is `const` (`ConstParams::stands_for`), or a caller trusting the promise hands a
+        // read-only value to a function that may write it.  Asked before every accept below,
+        // because `is_equal` compares function types by shape and would take it.
+        // Pass 2 only, as every refusal here: on pass 1 a function declared further down has not
+        // yet said which of its parameters are `const`.
+        if !self.first_pass
+            && let (Type::Function(.., have), Type::Function(.., want)) =
+                (is_type.base(), should.base())
+            && !have.stands_for(*want)
+        {
+            return false;
+        }
         // @PLAN48 P2: implicitly narrowing a loft `integer` to a smaller explicit
         // width (e.g. `integer` → `i32`) loses data and must be an explicit `as`.
         // A constant that provably fits is exempt.  Emit here, then fall through to
@@ -5730,7 +5978,13 @@ impl Parser {
                 return true;
             }
             // Function types with compatible params and return type.
-            if let (Type::Function(tp, tr, _), Type::Function(sp, sr, _)) = (test_type, should)
+            // loft#1540 — and the direction of `const`: a function whose parameter is plain may
+            // not stand where the expected signature promises that parameter is `const`
+            // (`ConstParams::stands_for`), or a caller trusting the promise hands a read-only
+            // value to a function that may write it.
+            if let (Type::Function(tp, tr, _, tc), Type::Function(sp, sr, _, sc)) =
+                (test_type, should)
+                && tc.stands_for(*sc)
                 && tp.len() == sp.len()
                 && tp.iter().zip(sp.iter()).all(|(a, b)| a.is_equal(b))
                 && tr.is_equal(sr)
@@ -5981,7 +6235,8 @@ impl Parser {
                 crate::parser::dispatch::Selection::One(d) => {
                     // `Disp-Dynamic`: a position held at the enum where the set decides by
                     // variant calls the synthesised dispatcher instead.
-                    self.dynamic_dispatcher(source, name, &routed).unwrap_or(d)
+                    self.dynamic_dispatcher(source, name, &routed, Some(d))
+                        .unwrap_or(d)
                 }
                 sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
                     if !self.first_pass {
@@ -5995,7 +6250,7 @@ impl Parser {
                     // positions — then the dispatcher is total and the call is covered; a
                     // tuple it does not cover is refused naming that tuple, and the ladder
                     // answers for a name that is no dynamic site at all.
-                    match self.dynamic_dispatcher(source, name, &routed) {
+                    match self.dynamic_dispatcher(source, name, &routed, None) {
                         Some(dd) => dd,
                         None if !self.first_pass && self.reported_dynamic_refusal => {
                             self.reported_dynamic_refusal = false;
@@ -6040,8 +6295,16 @@ impl Parser {
             },
             self.first_pass,
         );
-        // skip generic templates — they are not callable directly.
+        // skip generic templates — they are not callable directly.  A METHOD template the
+        // bare lookup found (`fn head<T>(self: vector<T>)` for `head(a)`) is kept aside and
+        // instantiated: a bare call reaches a method template exactly as it reaches a concrete
+        // `self` method ((F-Recv)), and a free template of that name on that receiver type
+        // cannot also exist ((F-OneBody)) (loft#1539).
+        let mut method_template = u32::MAX;
         if d_nr != u32::MAX && self.data.def(d_nr).def_type() == DefType::Generic {
+            if self.data.def(d_nr).name().starts_with("t_") {
+                method_template = d_nr;
+            }
             d_nr = u32::MAX;
         }
         // @PLN115 S5 — record a free-function CALL as a Global reference at its
@@ -6089,13 +6352,30 @@ impl Parser {
         // exactly as before).
         if d_nr == u32::MAX {
             if self.first_pass {
-                let predicted = self.predict_generic_return_type(name, types);
+                let predicted = if method_template == u32::MAX {
+                    self.predict_generic_return_type(name, types)
+                } else {
+                    self.predict_template_return(method_template, name, types)
+                };
                 if !predicted.is_unknown() {
                     *code = Value::Null;
                     return predicted;
                 }
             } else {
-                d_nr = self.try_generic_instantiation(name, types);
+                d_nr = if method_template == u32::MAX {
+                    self.try_generic_instantiation(name, types)
+                } else {
+                    self.instantiate_template(method_template, name, types)
+                };
+                // loft#1538 — a template refused at its declaration cannot instantiate, and
+                // the declaration already says why; "Unknown function" here would point the
+                // author at the call instead.  Answer the declared return, so the rest of the
+                // expression types as written.
+                let g_nr = self.data.def_nr(&format!("n_{name}"));
+                if d_nr == u32::MAX && self.refused_templates.contains(&g_nr) {
+                    *code = Value::Null;
+                    return self.data.def(g_nr).returned().clone();
+                }
             }
         }
         // loft#824 — the receiver the type-directed builtins below dispatch on, read
@@ -6471,7 +6751,14 @@ impl Parser {
                     let declared_by = if from_stdlib {
                         format!("stdlib declared `{name}` as a method")
                     } else {
-                        format!("`{name}` is declared as a method, not as a free function")
+                        // A method answers the bare spelling too ((F-Recv)) — for a receiver of
+                        // its type, once the name is in scope — so "not a free function" was
+                        // wrong for every method, and pointed away from the import it needed.
+                        format!(
+                            "`{name}` is a method: `{name}(x, …)` reaches it for a receiver of \
+                             that type once the name is in scope — a package's method is \
+                             imported by name, `use <package>::({name})`"
+                        )
                     };
                     diagnostic_at!(
                         self.lexer,
@@ -6962,7 +7249,7 @@ impl Parser {
             &returned,
             &crate::data::Context::Argument,
         )) > 8;
-        let has_fn = elems.iter().any(|e| matches!(e, Type::Function(_, _, _)));
+        let has_fn = elems.iter().any(|e| matches!(e, Type::Function(..)));
         if elems.iter().any(crate::data::has_lifetime_concern) || (wide && !has_fn) {
             let elems_clone = elems.clone();
             let synth = self.data.tuple_def(&mut self.lexer, &elems_clone);
@@ -6985,6 +7272,13 @@ impl Parser {
         if g_nr == u32::MAX || self.data.def(g_nr).def_type() != DefType::Generic {
             return Type::Unknown(0);
         }
+        self.predict_template_return(g_nr, name, types)
+    }
+
+    /// [`Self::predict_generic_return_type`] for the template `g_nr` itself: a free generic
+    /// found by its `n_` name, or a METHOD template (`t_6vector_head`) that a method call
+    /// selected (loft#1539).  `name` is the spelling the call wrote.
+    fn predict_template_return(&mut self, g_nr: u32, name: &str, types: &[Type]) -> Type {
         if types.is_empty() || types[0].is_unknown() {
             return Type::Unknown(0);
         }
@@ -7080,6 +7374,14 @@ impl Parser {
     /// the conversion once `T` is concrete.  The block's `result` is the target type,
     /// which substitution rewrites to the concrete one.
     pub(crate) const TV_NULL_BLOCK: &'static str = "tvnull";
+    /// loft#1537 — an `insert(v, i, e)` whose element type is still a TYPE VARIABLE.  The
+    /// width, the row and the setter are all functions of the element type, so the site is
+    /// stamped with its three arguments and a `result` of the vector's type, and
+    /// [`rewrite_generic_type_defaults`] lowers it through `parse_insert` once `T` is real.
+    pub(crate) const TV_INSERT: &'static str = "tvinsert";
+    /// A `reverse(v)` whose element type is still a TYPE VARIABLE: the width it walks is the
+    /// element's, so it is lowered per monomorph like [`TV_INSERT`](Parser::TV_INSERT).
+    pub(crate) const TV_REVERSE: &'static str = "tvreverse";
 
     /// Specialise a generic `name` for the concrete argument types `types`, returning the
     /// monomorph's def_nr (or `u32::MAX` when `name` names no generic).
@@ -7098,6 +7400,14 @@ impl Parser {
         if g_nr == u32::MAX || self.data.def(g_nr).def_type() != DefType::Generic {
             return u32::MAX;
         }
+        self.instantiate_template(g_nr, name, types)
+    }
+
+    /// [`Self::try_generic_instantiation`] for the template `g_nr` itself: a free generic
+    /// found by its `n_` name, or a METHOD template (`t_6vector_head`) that a method call
+    /// selected (loft#1539).  `name` is the spelling the call wrote, and the monomorph is
+    /// named from it exactly as a free generic's is.
+    fn instantiate_template(&mut self, g_nr: u32, name: &str, types: &[Type]) -> u32 {
         if types.is_empty() || types[0].is_unknown() {
             // First-pass argument types may be incomplete; defer the diagnostic
             // to second pass when types are stable.  Returning MAX here is the
@@ -7213,6 +7523,16 @@ impl Parser {
             // 1:1 so the LEN prefix `original_name` / `find_method_receivers` parse back is
             // still correct.
             let safe = base.replace(['<', '>', ',', ' ', '(', ')'], "_");
+            // loft#1539 — a METHOD template and a free template of one name on DIFFERENT
+            // receivers (`f<T>(self: vector<T>)` beside `f<T>(x: (T, integer))`; one receiver
+            // type is refused by (F-OneBody)) bound at the same `T` would otherwise mint ONE
+            // name, and whichever instantiated first would answer both calls.  The marker is a
+            // spelling no source identifier can take (`__` is the compiler's).
+            let safe = if self.data.def(g_nr).name().starts_with("t_") {
+                format!("__self_{safe}")
+            } else {
+                safe
+            };
             crate::data::Data::mangle_method(&safe, name)
         };
         // Return existing instantiation if already created.
@@ -7244,7 +7564,10 @@ impl Parser {
                 name: a.name.clone(),
                 typedef: Self::substitute_all(a.typedef.clone(), &bindings),
                 default: a.value.clone(),
-                constant: false,
+                // C124 — a parameter's `const` is part of the SIGNATURE a call is judged by, so
+                // the monomorph keeps the template's: `sum<T>(v: const vector<T>)` answered a
+                // plain `v` once instantiated, and refused `sum(ps, 0)` over a const `ps`.
+                constant: a.value_const,
                 // A generic instantiation copies the template's parameters; the modifier
                 // position belongs to the template's own source, not this synthetic copy.
                 ref_pos: (0, 0),
@@ -7310,6 +7633,9 @@ impl Parser {
                 .data
                 .add_attribute(&mut self.lexer, d_nr, &a.name, a.typedef.clone());
             self.data.set_attr_value(d_nr, a_nr, a.default.clone());
+            // C124 — registered here and not through `Data::add_fn`, so the template's
+            // `const` has to be carried by hand, or the instance answers a plain parameter.
+            self.data.definitions[d_nr as usize].attributes[a_nr].value_const = a.constant;
         }
         self.data.set_returned(d_nr, new_returned.clone());
         // Trace point: full instantiation result.  Used during plan-17
@@ -7495,7 +7821,7 @@ impl Parser {
         // BEFORE the rows are retargeted: a scalar binding contributes no row mapping, so
         // the copy left standing would keep the type variable's own row.
         self.collapse_parametric_tuple_member_copies(d_nr);
-        self.retarget_parametric_type_rows(d_nr, bindings);
+        self.retarget_parametric_type_rows(d_nr, bindings, tmpl_vars);
         // loft#1040 — and lower any `par` clause the template could not: it needs the
         // types this body now carries, so it runs after every substitution above.
         self.expand_deferred_par(d_nr);
@@ -8350,24 +8676,55 @@ impl Parser {
     /// local is declared in source and re-derives its row from the substituted variable
     /// table, whereas the compiler-built `materialized_view_return` block was constructed
     /// once, at template parse, from the type the arm had THEN.
-    fn retarget_parametric_type_rows(&mut self, d_nr: u32, bindings: &[(u32, Type)]) {
-        // stale row -> fresh row, one entry per bound type variable.
-        let mut rows: Vec<(i32, i32)> = Vec::new();
-        for (holder, bound_to) in bindings {
-            let stale = i32::from(self.data.def(*holder).known_type());
-            let fresh = match bound_to.base() {
-                Type::Reference(d, _) | Type::Enum(d, _, _) => {
-                    i32::from(self.data.def(*d).known_type())
-                }
-                _ => continue,
-            };
+    ///
+    /// The type variable's own row is not the only one.  A SCALAR or `text` binding has a row
+    /// too — the element row an append or a removal carries is `integer`'s or `text`'s — and
+    /// skipping those bindings left `OpAppendVector` and `OpRemoveVector` naming
+    /// `__typevar_T`, whose width is zero: a divide by zero at `integer` and a slide of the
+    /// wrong width at `text` (loft#1536).  And a type BUILT over the variable (`vector<T>`)
+    /// was registered with a row of its own at template parse, which is just as stale.
+    fn retarget_parametric_type_rows(
+        &mut self,
+        d_nr: u32,
+        bindings: &[(u32, Type)],
+        tmpl_vars: &Function,
+    ) {
+        fn note(rows: &mut Vec<(i32, i32)>, stale: i32, fresh: i32) {
+            let none = i32::from(u16::MAX);
             if stale != fresh
-                && stale != i32::from(u16::MAX)
-                && fresh != i32::from(u16::MAX)
+                && stale != none
+                && fresh != none
                 && !rows.iter().any(|(s, _)| *s == stale)
             {
                 rows.push((stale, fresh));
             }
+        }
+        // stale row -> fresh row: one entry per bound type variable, then one per type in the
+        // template's variable table that is built over one.
+        let mut rows: Vec<(i32, i32)> = Vec::new();
+        for (holder, bound_to) in bindings {
+            let stale = i32::from(self.data.def(*holder).known_type());
+            // A record or enum keeps its RECORD row, which is also its element row; any other
+            // binding answers the element row every append and removal of it is lowered with.
+            let fresh = match bound_to.base() {
+                Type::Reference(d, _) | Type::Enum(d, _, _) => {
+                    i32::from(self.data.def(*d).known_type())
+                }
+                other => self.append_elem_tp(other),
+            };
+            note(&mut rows, stale, fresh);
+        }
+        for v in 0..tmpl_vars.count() {
+            let tmpl_tp = tmpl_vars.tp(v).clone();
+            let over_a_variable = bindings.iter().any(|(h, _)| tmpl_tp.contains_def(*h));
+            let is_a_variable = matches!(tmpl_tp.base(),
+                Type::Reference(d, _) if bindings.iter().any(|(h, _)| h == d));
+            if !over_a_variable || is_a_variable {
+                continue;
+            }
+            let stale = i32::from(self.get_type(&tmpl_tp));
+            let fresh = i32::from(self.get_type(&Self::substitute_all(tmpl_tp, bindings)));
+            note(&mut rows, stale, fresh);
         }
         if rows.is_empty() {
             return;
@@ -8677,16 +9034,15 @@ impl Parser {
         // ones, not this monomorph's.
         let mut remap: HashMap<u32, u32> = HashMap::new();
         for (t, arg_tp) in targets {
-            let Some(name) = self
-                .data
-                .def(t)
-                .name()
-                .strip_prefix("n_")
-                .map(str::to_string)
-            else {
-                continue;
+            // A free template is stored `n_<name>`; a METHOD template under its receiver's
+            // key, `t_6vector_head` (loft#1539).  Both instantiate from the template itself.
+            let key = self.data.def(t).name().to_string();
+            let name = match key.strip_prefix("n_") {
+                Some(free) => free.to_string(),
+                None if key.starts_with("t_") => Self::method_spelling(&key),
+                None => continue,
             };
-            let inst = self.try_generic_instantiation(&name, std::slice::from_ref(&arg_tp));
+            let inst = self.instantiate_template(t, &name, std::slice::from_ref(&arg_tp));
             if inst != u32::MAX && inst != t {
                 remap.insert(t, inst);
             }
@@ -8973,7 +9329,7 @@ impl Parser {
                         | Type::Radix(_, _, _)
                         | Type::Trie(_, _, _)
                         | Type::Iterator(_, _)
-                        | Type::Function(_, _, _)
+                        | Type::Function(..)
                         | Type::Routine(_)
                         | Type::RefVar(_)
                         | Type::Tuple(_) => None,
@@ -9180,7 +9536,7 @@ impl Parser {
     /// every later `__work_N` (loft#662's class, the reason
     /// `collections::callback_call_ref` already mints this way).
     fn push_deferred_fnref_buffers(&mut self, v_nr: u16, args: &mut Vec<Value>) {
-        let Type::Function(params, ret, _) = self.vars.tp(v_nr).clone() else {
+        let Type::Function(params, ret, ..) = self.vars.tp(v_nr).clone() else {
             return;
         };
         if args.len() != params.len() {
@@ -9253,6 +9609,27 @@ impl Parser {
                     // is already an error, and the same reasoning loft#1016 uses.
                     Value::Block(bl)
                 }
+            }
+            // @FR-G-Mono — a builtin whose lowering is a function of the ELEMENT type, deferred
+            // by the template (`parse_insert`, `parse_reverse`).  `bl.result` came through type
+            // substitution, so it is the CONCRETE vector type by now, and the same parse
+            // function the concrete spelling uses lowers it — width, row and setter from one
+            // home.  A nested generic re-stamps through that call and stays deferred.
+            Value::Block(bl) if bl.name == Self::TV_INSERT || bl.name == Self::TV_REVERSE => {
+                let bl = *bl;
+                let list: Vec<Value> = bl
+                    .operators
+                    .into_iter()
+                    .map(|a| self.rewrite_generic_type_defaults(a, concrete))
+                    .collect();
+                let types = [bl.result.clone()];
+                let mut out = Value::Null;
+                if bl.name == Self::TV_INSERT {
+                    self.parse_insert(&mut out, &list, &types);
+                } else {
+                    self.parse_reverse(&mut out, &list, &types);
+                }
+                out
             }
             Value::Block(bl) if bl.name == Self::TV_DEFAULT_BLOCK => {
                 match self.monomorph_default(concrete) {
@@ -9367,7 +9744,7 @@ impl Parser {
                 | Type::Boolean
                 | Type::Character
                 | Type::Text(_)
-                | Type::Function(_, _, _)
+                | Type::Function(..)
                 | Type::Enum(_, false, _) // plain enum (struct-enums use OpCopyRecord)
         )
     }
@@ -9441,7 +9818,7 @@ impl Parser {
                 let d = data.def_nr("OpSetText");
                 Value::Call(d, vec![elm, pos, src_value])
             }
-            Type::Function(_, _, _) => {
+            Type::Function(..) => {
                 // Plan-06 phase 4d.A.2 — fn-ref vector elements store the
                 // 4-byte i32 d_nr.  Same shape as `vectors.rs:1597`.
                 let d = data.def_nr("OpSetInt4");
@@ -9978,7 +10355,7 @@ impl Parser {
             | Type::Trie(_, _, _)
             | Type::Hash(_, _, _)
             | Type::Iterator(_, _)
-            | Type::Function(_, _, _)
+            | Type::Function(..)
             | Type::Routine(_)
             | Type::RefVar(_) => return code,
             // A tuple element is read field by field by its consumer (`TupleGet`), so
@@ -10200,7 +10577,7 @@ impl Parser {
         // from `assigned_lambda_d_nr` directly — the flag is only
         // set when the assigning body parses, so a body parsed
         // earlier would wrongly see the legacy layout (#313).
-        if let Type::Function(_, _, _) = &tp
+        if let Type::Function(..) = &tp
             && f_nr != usize::MAX
         {
             // Remember WHICH attribute this read came from, for an assignment through it
@@ -10442,7 +10819,7 @@ impl Parser {
                     self.cl("OpGetDbRef", &[code, p])
                 }
             }
-            Type::Function(_, _, _) => {
+            Type::Function(..) => {
                 // P213: storage is two database fields per loft attribute
                 //   `<attr>`              — 4B i32 holding the lambda's d_nr
                 //   `<attr>__closure_rec` — 4B vector header at pos+4
@@ -10890,7 +11267,7 @@ impl Parser {
         // "Tuple struct field cannot contain element of type integer?".
         let single = match elem_tp.base() {
             Type::Integer(_) => self.cl("OpSetInt", &[ref_code.clone(), pos_v, value]),
-            Type::Function(_, _, _) => {
+            Type::Function(..) => {
                 // P196: storage holds the 4-byte i32 d_nr only.  Reduce
                 // `Value::FnRef` to its bare `Value::Int(d_nr)` so the
                 // OpSetInt4 template body sees an i64 the interpreter
@@ -10916,7 +11293,7 @@ impl Parser {
                 let d_nr_only = match value {
                     Value::FnRef(d_nr, _, _) => Value::Int(d_nr),
                     Value::Var(v)
-                        if matches!(self.vars.tp(v), Type::Function(_, _, _))
+                        if matches!(self.vars.tp(v), Type::Function(..))
                             && !self.closure_vars.contains_key(&v) =>
                     {
                         Value::FnRefDnr(v)
@@ -11480,7 +11857,7 @@ impl Parser {
         // DbRef, no copy) and is exempt.
         if emit_check
             && !self.first_pass
-            && !matches!(tp, Type::Function(_, _, _))
+            && !matches!(tp, Type::Function(..))
             && self.type_carries_closure(&tp)
         {
             diagnostic!(
@@ -11647,7 +12024,7 @@ impl Parser {
                 // in `objects.rs`.
                 self.cl("OpSetInt4", &[ref_code, pos_val, val_code])
             }
-            Type::Function(_, _, _) => {
+            Type::Function(..) => {
                 // P213: storage is now TWO database fields per loft
                 // attribute — `<attr>` (4B int holding the lambda's
                 // d_nr; database name matches the loft attribute name
@@ -12399,6 +12776,15 @@ impl Parser {
         // (a method / operator path) keeps the cursor caret and offers no quick-fix.
         name_pos: Option<&Position>,
     ) -> Type {
+        // `Disp-Exhaustive` (@PLN162): a call reaching @F20's synthesised dispatcher is a
+        // `match` on the enum, and a variant with no implementation is refused here — both
+        // call spellings, and every receiver spelling, arrive at this one site.
+        if !self.first_pass
+            && d_nr != u32::MAX
+            && self.data.def(d_nr).synthetic == Some("enum_dispatcher")
+        {
+            self.refuse_uncovered_variants(d_nr);
+        }
         // @PLN102 pre-freeze — `OpEqBool`/`OpNeBool` are BOOLEAN (in)equality; they must
         // not be the implicit truthiness fallback for mismatched types.  Without this,
         // `5 == "banana"` resolves as `OpEqBool(OpConvBoolFromInt(5),
@@ -12645,7 +13031,18 @@ impl Parser {
         // (`min`/`max`/`clamp`/`abs`/… — `is_null_transparent`) PROPAGATE null via a runtime guard
         // (`wrap_null_transparent`), so a nullable arg into their non-null param is intentional, not
         // an unsound store — exempt them (operators already dodge this path via the nullable-op swap).
-        let callee_name = self.data.def(d_nr).original_name();
+        // A specialisation of an overload set (`<name>__dyn_<spelling>`, `<name>__sel_…`,
+        // @PLN162) stands for the call the author wrote: it is named, and exempted, as the name
+        // it dispatches — never by the compiler's own spelling of it.
+        let original = self.data.def(d_nr).original_name().clone();
+        let callee_name = if self.data.def(d_nr).synthetic == Some("dynamic_dispatcher") {
+            original
+                .split_once("__dyn_")
+                .or_else(|| original.split_once("__sel_"))
+                .map_or_else(|| original.clone(), |(set, _)| set.to_string())
+        } else {
+            original
+        };
         let callarg_nstore =
             crate::keys::callarg_nstore_enabled() && !Self::is_null_transparent(&callee_name);
         for (nr, a_code) in list.iter().enumerate() {
@@ -12762,6 +13159,30 @@ impl Parser {
             if amp_rebind_arg != u16::MAX {
                 self.ensure_rebind_witness(amp_rebind_arg);
             }
+            // loft#1540, C124 — a value-const value reaches a `&` parameter never and a plain
+            // record or collection parameter only when it is `const`; the question and its
+            // wording live in `report_const_argument`, shared with a function reference's call
+            // and a builtin's callback.
+            // An OP is exempt: it is a primitive only the standard library's own bodies call,
+            // where `const` on a parameter means an immediate operand in the bytecode
+            // (`Data::add_op`), not a read-only borrow; the stdlib's `pub fn` wrapper around it
+            // carries the signature a program is judged by.
+            let callee_is_op = self.data.def(d_nr).is_operator();
+            if report && !self.first_pass && !callee_is_op {
+                let attr = self.data.def(d_nr).attributes().get(nr);
+                let param_const = attr.is_some_and(|a| a.value_const);
+                let param = attr.map(|a| a.name.clone());
+                self.report_const_argument(
+                    &actual_code,
+                    &tp,
+                    param_const,
+                    ConstHandOff::Declared {
+                        callee: &callee_name,
+                        nr,
+                        param: param.as_deref(),
+                    },
+                );
+            }
             // @FR-N-Store — the parameter is a slot when this binding is REPORTED and the callee
             // is not null-transparent; an overload TRIAL (`!report`) and a null-transparent
             // callee (`abs(x)` propagates the null through a runtime guard) only test the fit.
@@ -12804,7 +13225,7 @@ impl Parser {
                     // cannot be named HERE — it is reported at the bare-name site in
                     // `objects.rs` instead, where the name is still in hand, and both
                     // receivers now give the same message.
-                    let method_arg = if matches!(tp, Type::Function(_, _, _))
+                    let method_arg = if matches!(tp, Type::Function(..))
                         && matches!(actual_type, Type::Null | Type::Unknown(_))
                         && let Value::Var(v) = actual_code.unspan()
                     {
@@ -12827,7 +13248,7 @@ impl Parser {
                             "`{nm}` is a method on `{on}`, and a method is not a function VALUE \
                              — there is nothing to pass here. Wrap it: `|x| {{ x.{nm}(…) }}`, or \
                              declare the function with a plain first-parameter name (not \
-                             `self` / `both`), which makes it a free function and a usable fn-ref"
+                             `self`), which makes it a free function and a usable fn-ref"
                         );
                     } else {
                         self.validate_convert(&context, actual_type, &tp, &pos);
@@ -13020,7 +13441,7 @@ impl Parser {
     /// position: a caller local's fn-type was INFERRED at the bind, so a capturing lambda
     /// leaves the closure record in them and a non-capturing one leaves them empty.
     fn capturing_fnref_var(vars: &crate::variables::Function, v_nr: u16) -> Option<u16> {
-        matches!(vars.tp(v_nr).base(), Type::Function(_, _, d) if !d.is_empty()).then_some(v_nr)
+        matches!(vars.tp(v_nr).base(), Type::Function(_, _, d, ..) if !d.is_empty()).then_some(v_nr)
     }
 
     /// The return type a fn-ref VALUE publishes to whoever holds it — the deps a CALLER can
@@ -17078,7 +17499,7 @@ impl Parser {
             // store", then SIGSEGV).  It reached a value position through the fallback of a
             // non-total `match` over an enum whose arms yield lambdas, where nothing else
             // names the width.
-            Type::Function(_, _, _) => Value::FnRef(0, u16::MAX, Box::new(tp.base().clone())),
+            Type::Function(..) => Value::FnRef(0, u16::MAX, Box::new(tp.base().clone())),
             _ => Value::Null,
         }
     }
@@ -17175,7 +17596,7 @@ fn tests_base_dir(cur_dir: &str) -> &str {
 /// (a complete `FnRef`) or is not a literal at all (a `Var`, a `Call`, a nested branch
 /// its own join already widened). Widening any of those would overwrite a live value.
 pub(crate) fn widen_bare_fn_ref(v: &mut Value, tp: &Type) -> bool {
-    if !matches!(tp.base(), Type::Function(_, _, _)) {
+    if !matches!(tp.base(), Type::Function(..)) {
         return false;
     }
     let fn_tp = tp.base().clone();
@@ -17361,7 +17782,7 @@ fn emit_fn_ref_field_write(
                 false
             };
             let source_is_noncapturing =
-                matches!(p.vars.tp(v), Type::Function(_, _, _)) && !p.closure_vars.contains_key(&v);
+                matches!(p.vars.tp(v), Type::Function(..)) && !p.closure_vars.contains_key(&v);
             if target_is_4b && source_is_noncapturing {
                 return p.cl("OpSetInt4", &[ref_code, pos_val, Value::FnRefDnr(v)]);
             }

@@ -128,10 +128,10 @@
   b = <span class="fn-call">next</span>(gen);
   c = <span class="fn-call">next</span>(gen);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(a == <span class="nm">10</span> &amp;&amp; b == <span class="nm">11</span> &amp;&amp; c == <span class="nm">12</span>, <span class="st">"manual next: {a},{b},{c}"</span>);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call"><a href="stdlib-coroutines.html">exhausted</a></span>(gen), <span class="st">"not yet exhausted, though no values remain"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">exhausted</span>(gen), <span class="st">"not yet exhausted, though no values remain"</span>);
   past_end = <span class="fn-call">next</span>(gen);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(past_end == <span class="kw">null</span>, <span class="st">"next past the last value answers null"</span>);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-coroutines.html">exhausted</a></span>(gen), <span class="st">"and now it is exhausted"</span>);</code></pre>
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">exhausted</span>(gen), <span class="st">"and now it is exhausted"</span>);</code></pre>
 <h2 id="generators-with-parameters">Generators with parameters</h2>
 <p><code>len_twice</code> takes a text parameter and yields its length twice. The text value is preserved across the yield.</p>
 <pre><code>  lt_total = <span class="nm">0</span>;

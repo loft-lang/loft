@@ -7,9 +7,13 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**IN PROGRESS — phase 0 DONE and IMPL.md steps 1–6 DONE (2026-09-14): a name may carry several
-definitions keyed by parameter types, selected exactly; the enum lattice and dynamic selection
-are still to come.**  The design is
+**FINISHED 2026-09-15 — every IMPL.md step (1–14) DONE 2026-09-14; D-disp-1 CLOSED 2026-09-15 (a
+`self` set's enum-level member is the `_` arm, and a call through the enum missing a variant is
+refused as `match` without `_` is) and D-disp-2 CLOSED the same day (a nullable enum position
+dispatches on its variant, a null on the static selection); [RULES.md § Deviations](RULES.md#deviations)
+reads OPEN: 0.  Every DESIGN.md open question is answered — Q4 (a name's definitions may return
+different types; a runtime dispatch's must agree) and Q5 (the construct is @F122, `Disp-World` is
+recorded on @F78) included — § Decisions taken.**  The design is
 [DESIGN.md](DESIGN.md), carried verbatim as the owner wrote it.  Six open questions in it are
 the owner's to answer and at least one (question 6) changes the rules, so no phase below was to
 start until questions 1, 2 and 6 had answers.  **All three are answered** — 1 and 2 on
@@ -53,7 +57,7 @@ compile time to a direct call wherever the argument types are statically concret
 
 - **Effort:** H — six rules, a new selection pass, a lowering, three backends, two profiles.
 - **Design:** ~ (partial) — the rules are written; three open questions gate the first phase.
-- **Last touched:** 2026-09-14 (IMPL.md steps 1–14 done; every phase green; D-disp-1 open for `self` sets)
+- **Last touched:** 2026-09-15 (FINISHED: D-disp-1 and D-disp-2 closed, OPEN: 0; Q4 answered; Q5 done as @F122 + @F78)
 
 ## Composition matrix — Stage A
 
@@ -261,7 +265,7 @@ tier carrying the rules and the teaching tier carrying the four steps above.
 
 The first four (2026-09-11) follow one principle — *refusal is the only reversible direction*
 — stated in [RULES.md](RULES.md#the-principle-the-rules-keep-landing-on).  The fifth
-(2026-09-14) is a scope decision about the notation itself.
+(2026-09-14) is a scope decision about the notation itself; the sixth (2026-09-15) answers Q4.
 
 1. **No untyped parameters.**  The fallback is the most general TYPE.  (§ Decision below.)
 2. **Cross-kind specificity is incomparable, not ranked** — and **no tie is broken by
@@ -290,12 +294,32 @@ The first four (2026-09-11) follow one principle — *refusal is the only revers
    ([RULES.md](RULES.md) says why that last one is the property that matters).  One thing
    this decision hands to step 7 of [IMPL.md](IMPL.md): how a defaulted parameter and the
    arity component of `Disp-Key` meet.
+6. **A name's definitions may return different types** (2026-09-15, answers Q4).  Only a call
+   decided by the runtime variant is one synthesised function with one return type, so only
+   there must the definitions agree; such a call is refused when they do not.  The design's
+   proposal, refusing the name, was declined: the stdlib's own overload sets differ in return
+   type (`abs` on an `integer` returns `integer`, on a `single` returns `single`), and a static
+   call such as `width(3)` beside `width("x")` reaches one definition and has one type.
 
 **Decided in implementation, from the principle (not an owner decision — reversible):**
 IMPL.md step 3's hint circularity is closed by **`Disp-Hint`** in [RULES.md](RULES.md): a
 name with several definitions offers no parse hint, and an argument that needs one is refused
 naming the cure.  The permissive alternative (hint where every candidate agrees) is additive
 and can follow.
+
+**DESIGN.md's open questions 3–5, where each stands (2026-09-15):**
+- **Q3 (ambiguity in the open profile: refuse the add or the call?)** — answered as the design
+  proposes, from the principle: the ADD is refused and the running world is unchanged
+  ([RULES.md](RULES.md), `Disp-World`, implementation form).
+- **Q4 (must every definition of a name agree on its return type?)** — answered by the owner,
+  § Decisions taken item 6: no.  Only a call decided by the runtime variant needs the
+  definitions it chooses between to agree, and it is refused when they do not
+  ([RULES.md](RULES.md), *One return type per dispatch*).
+- **Q5 (reserve `@F` tags for the construct and for `Disp-World`)** — done 2026-09-15: the
+  construct is **@F122** (*Multiple dispatch — one name, a definition per combination of
+  parameter types*, with a runnable example the catalogue runs on both backends), and
+  `Disp-World` is a section of **@F78** (*Live-reload dispatch*), the mechanism it extends,
+  rather than a second tag for one mechanism.
 
 The gain from (4) is the one worth restating: closedness is not a cost accepted reluctantly,
 it is what lets the compiler enumerate every reachable variant pair and report **which reach

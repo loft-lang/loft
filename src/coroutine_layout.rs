@@ -177,7 +177,7 @@ pub fn tuple_kinds(tp: &Type) -> Option<Vec<YieldSlot>> {
 pub fn channel_tag(tp: &Type) -> i32 {
     if tuple_kinds(tp).is_some() {
         1
-    } else if matches!(tp, Type::Function(_, _, _)) {
+    } else if matches!(tp, Type::Function(..)) {
         2
     } else if matches!(tp, Type::Float) {
         3

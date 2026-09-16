@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1540's controls — what the read-only VIEW of a `const` value must not take away.  A view
+// is what the rules make an alias: a loop variable over the elements, an index or field
+// projection, a `&` link.  Everything else a `const` value is read into is the reader's own:
+//
+//   c1  a scalar copied out of an element and changed      `y = f.x; y += 1`
+//   c2  a text copied out of an element and appended to    `t = f.name; t += "!"`
+//   c3  a whole-value copy of the const vector, appended   `v2 = ps; v2 += [..]` (B-Copy)
+//   c4  a scalar loop variable reassigned                  `for x in v { x = x * 2 }`
+//   c5  the same loop writes over a NON-const parameter    — the caller's value changes
+//   c6  a view handed to a `const` parameter               `get1541(f)`
+//   c7  a const vector handed to a read-only plain call    `len_of1541(ps)`
+//
+// Every expected value is hand-computed, and each cell reads the caller's value afterwards, so
+// a copy that silently became an alias shows as a changed source.
+//
+// @falsified-at: none — a LOCK: every cell answers the same on the build before loft#1540,
+//   which is the point; the refusals it must not over-reach into are
+//   `a-view-of-a-const-value-is-read-only.loft`, falsified against 05eb047a4.
+
+struct P1541 { x: integer, name: text }
+
+fn scalar_copy(ps: const vector<P1541>) -> integer {
+  s = 0;
+  for f in ps { y = f.x; y += 1; s += y; }
+  s
+}
+
+fn text_copy(ps: const vector<P1541>) -> text {
+  r = "";
+  for f in ps { t = f.name; t += "!"; r += t; }
+  r
+}
+
+fn whole_copy(ps: const vector<P1541>) -> integer {
+  v2 = ps;
+  v2 += [P1541 { x: 5, name: "e" }];
+  len(v2)
+}
+
+fn scalar_loop(v: const vector<integer>) -> integer {
+  s = 0;
+  for x in v { x = x * 2; s += x; }
+  s
+}
+
+fn non_const(ps: vector<P1541>) { for f in ps { f.x = 50; } }
+
+fn get1541(p: const P1541) -> integer { p.x }
+
+fn hand_const(ps: const vector<P1541>) -> integer {
+  s = 0;
+  for f in ps { s += get1541(f); }
+  s
+}
+
+// C124 — a `const` value reaches only a `const` parameter, so the read-only helper says so.
+fn len_of1541(v: const vector<P1541>) -> integer { len(v) }
+
+fn hand_plain(ps: const vector<P1541>) -> integer { len_of1541(ps) }
+
+fn main() {
+  v = [P1541 { x: 1, name: "a" }, P1541 { x: 2, name: "b" }];
+  assert(scalar_copy(v) == 5, "c1 {scalar_copy(v)}");
+  assert(v[0].x == 1 && v[1].x == 2, "c1 source {v[0].x} {v[1].x}");
+  assert(text_copy(v) == "a!b!", "c2 {text_copy(v)}");
+  assert(v[0].name == "a" && v[1].name == "b", "c2 source {v[0].name} {v[1].name}");
+  assert(whole_copy(v) == 3, "c3 {whole_copy(v)}");
+  assert(len(v) == 2, "c3 source length {len(v)}");
+  nums = [3, 4];
+  assert(scalar_loop(nums) == 14, "c4 {scalar_loop(nums)}");
+  assert(nums[0] == 3 && nums[1] == 4, "c4 source {nums[0]} {nums[1]}");
+  w = [P1541 { x: 7, name: "w" }];
+  non_const(w);
+  assert(w[0].x == 50, "c5 {w[0].x}");
+  assert(hand_const(v) == 3, "c6 {hand_const(v)}");
+  assert(hand_plain(v) == 2, "c7 {hand_plain(v)}");
+  println("controls ok");
+}

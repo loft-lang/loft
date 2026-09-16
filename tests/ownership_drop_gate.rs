@@ -327,6 +327,21 @@ fn p_s5() { p_s5_b(false); }"#,
             r#"fn p_s8_b(k: integer) { x = mk(115); for i in 0..2 { x = match k { 0 => mk(116 + i), _ => mk(118 + i) }; println("R{x.id}"); } }
 fn p_s8() { p_s8_b(0); }"#,
         ),
+        // A variable rebound to its own value: `a = a` and `a = a ?? d` each WRITE a copy of the
+        // existing `a`, so both are refused (`formal/heap.md` H-Copy-Refuse; heap.md D-heap-10
+        // records how the second released twice while it compiled).
+        cell(
+            "p_i1",
+            r#"fn p_i1() { a = mk(120); a = a; println("R{a.id}"); }"#,
+        ),
+        cell(
+            "p_i2",
+            r#"fn p_i2() { a: H? = mk(121); a = a ?? mk(122); println("R{a.id}"); }"#,
+        ),
+        // A member read through a call result, further along the chain: the compiler copies the
+        // member only to read `.id` off it, and nothing outlives the expression, so the line
+        // writes no copy (`formal/heap.md` H-Move).  The liveness reading refused it.
+        cell("p_t1", r#"fn p_t1() { println("R{mk_s(130).h.id}"); }"#),
         // (H-Drop-Not): the language releases nothing for the X-marked id.
         cell(
             "p_n1",
@@ -759,14 +774,23 @@ fn cap_address_space(_cmd: &mut Command, _mode: &str) {}
 
 /// Runs every cell alone, `workers` at a time, and answers the verdicts in cell order.
 fn run_all(cells: &[Cell], mode: &str, timeout: &str, workers: usize) -> Vec<Verdict> {
-    let dir = std::env::temp_dir().join(format!(
-        "loft_drop_gate_{}_{}",
-        mode.trim_start_matches('-'),
-        std::process::id()
-    ));
+    for_each_cell(cells, mode.trim_start_matches('-'), workers, |dir, c| {
+        run_cell(dir, c, mode, timeout)
+    })
+}
+
+/// Answers `run(dir, cell)` for every cell, `workers` at a time, in cell order.  `dir` is a
+/// scratch directory of its own, named by `tag`, removed afterwards.
+fn for_each_cell<T: Send>(
+    cells: &[Cell],
+    tag: &str,
+    workers: usize,
+    run: impl Fn(&Path, &Cell) -> T + Sync,
+) -> Vec<T> {
+    let dir = std::env::temp_dir().join(format!("loft_drop_gate_{tag}_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create the gate's scratch directory");
     let next = AtomicUsize::new(0);
-    let results: Mutex<Vec<Option<Verdict>>> = Mutex::new(cells.iter().map(|_| None).collect());
+    let results: Mutex<Vec<Option<T>>> = Mutex::new(cells.iter().map(|_| None).collect());
     std::thread::scope(|s| {
         for _ in 0..workers.max(1) {
             s.spawn(|| {
@@ -775,7 +799,7 @@ fn run_all(cells: &[Cell], mode: &str, timeout: &str, workers: usize) -> Vec<Ver
                     if i >= cells.len() {
                         break;
                     }
-                    let v = run_cell(&dir, &cells[i], mode, timeout);
+                    let v = run(&dir, &cells[i]);
                     results.lock().unwrap()[i] = Some(v);
                 }
             });
@@ -926,6 +950,446 @@ fn every_cell_is_distinct_and_mints() {
             c.name
         );
     }
+}
+
+// ── the copy census (@PLN163 P0) ────────────────────────────────────────────────────────────
+
+/// The `LOFT_DROP_COPY_CENSUS` report for one cell compiled over `prelude`: the site lines of the
+/// cell's OWN functions (the prelude's helpers copy too, in every cell) without the scope pass's
+/// release snapshots, and the count line.  `None` when the census printed no count line, which
+/// means it never ran.
+fn census(dir: &Path, c: &Cell, prelude: &str) -> Option<(Vec<String>, String)> {
+    let path = dir.join(format!("{}.loft", c.name));
+    let text = program(c).replacen(PRELUDE, prelude, 1);
+    std::fs::write(&path, text).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
+    let out = Command::new(loft_bin())
+        .arg("--interpret")
+        .arg(&path)
+        .current_dir(dir)
+        .env("LOFT_TIMEOUT", "60")
+        .env("LOFT_DROP_COPY_CENSUS", "1")
+        .output()
+        .unwrap_or_else(|e| panic!("spawn loft for {}: {e}", c.name));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let count = stderr
+        .lines()
+        .find(|l| l.starts_with("drop-copy census: "))?
+        .to_string();
+    let own = [
+        format!("n_{}", c.name),
+        format!("n_{}_b", c.name),
+        format!("n_{}_m", c.name),
+    ];
+    let sites = stderr
+        .lines()
+        .filter(|l| l.starts_with("drop-copy fn=") && !l.contains(" kind=snapshot "))
+        .filter(|l| census_field(l, "fn").is_some_and(|f| own.iter().any(|o| o == f)))
+        .map(str::to_string)
+        .collect();
+    Some((sites, count))
+}
+
+/// The value of `key=` in a census line.
+fn census_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    line.split_whitespace()
+        .find_map(|t| t.strip_prefix(key)?.strip_prefix('='))
+}
+
+/// The variables a cell's copy must be reported FROM, derived by hand from its two axes.
+///
+/// A source that names a structure is reported from that structure's root when the destination
+/// COPIES it: a field, an enum payload, an element, a whole value bound to a variable
+/// (binding.md `(B-Copy)`).  A PROJECTION bound to a variable or placed in a tuple member is a
+/// VIEW of its root instead — `(B-View)`, `(B-View-Depth)`, `(B-View-Base)` — and so is a
+/// parameter or a `??` placed in a tuple member, so those copy nothing.  One tuple destination is
+/// measured to COPY where the rules predict a view: a tuple MEMBER placed in a tuple, `(tt.0, 1)`,
+/// copies while `(s.h, 1)` views (@PLN163 P1 reads that disagreement).  A fresh source (a call, a
+/// literal, a call result's field) is reported from no user variable.  `None` for a destination
+/// whose copy is not decided yet: a `return` may hand a local over without copying it.
+fn expected_roots(name: &str) -> Option<Vec<&'static str>> {
+    const VIEWING: &[&str] = &[
+        "local", "annot", "nullable", "arm", "arm0", "reassign", "tuplem",
+    ];
+    let parts: Vec<&str> = name.split('_').collect();
+    match parts.as_slice() {
+        [_, _, "ret"] | [_, _, _, _, "ret"] => None,
+        ["c", source, dest] => {
+            let views = VIEWING.contains(dest);
+            let tuplem = *dest == "tuplem";
+            Some(match *source {
+                "local" => vec!["a"],
+                "coalesce" | "param" if !tuplem => vec![if *source == "param" { "p" } else { "a" }],
+                "tuple" if !views || tuplem => vec!["tt"],
+                "field" if !views => vec!["s"],
+                "elem" if !views => vec!["vs"],
+                "pfield" if !views => vec!["p"],
+                _ => vec![],
+            })
+        }
+        ["q", _, _, _, "tuplem"] => Some(vec![]),
+        ["q", _, a, b, dest] => {
+            let mut roots = Vec::new();
+            if *a != "field" || !VIEWING.contains(dest) {
+                roots.push(if *a == "field" { "s" } else { "a" });
+            }
+            if *b == "var" {
+                roots.push("b");
+            }
+            Some(roots)
+        }
+        _ => None,
+    }
+}
+
+/// The census lists the copy each generated cell makes: a copy of a structure is reported from
+/// that structure's root, a fresh value is reported from no user variable, and a program whose
+/// resource type has no `OpDrop` reports no site at all.  The census is what @PLN163 P2 turns
+/// into the refusal report, so a copy it cannot see is a copy the refusal would let through.
+///
+/// It is also the oracle for both verdicts in `src/lease.rs` (@PLN163 P2r).  The `lease=` column —
+/// the rule read off the line — refuses a copy in exactly the cells [`lease_verdict`] refuses and
+/// in no other.  The `liveness=` column — whether the copied value is used afterwards, kept for
+/// `(H-Elide)` — refuses in exactly the cells [`liveness_verdict`] refuses, and never reports a copy
+/// its pass did not reach.  Both oracles are derived by hand from each cell's own lines, so neither
+/// column can agree with them by construction.  A tuple literal's `item` site is a placement the
+/// rule judges, not an emitted copy, so the expected roots below leave it out.
+#[test]
+fn the_census_names_the_copy_each_cell_makes() {
+    let cells = all_cells();
+    let reports = for_each_cell(&cells, "census", workers(16), |dir, c| {
+        census(dir, c, PRELUDE)
+    });
+    let mut wrong = Vec::new();
+    for (c, report) in cells.iter().zip(reports) {
+        let Some((sites, _)) = report else {
+            wrong.push(format!("{}: the census never ran", c.name));
+            continue;
+        };
+        // `from=a,b` lists one root per arm of a join; `-` names no variable.
+        let from: Vec<&str> = sites
+            .iter()
+            .filter(|l| census_field(l, "kind") != Some("item"))
+            .filter_map(|l| census_field(l, "from"))
+            .flat_map(|f| f.split(','))
+            .filter(|f| *f != "-")
+            .collect();
+        let refused_in = |column: &str| -> Vec<&str> {
+            sites
+                .iter()
+                .filter_map(|l| census_field(l, column))
+                .filter(|l| l.starts_with("refuse:"))
+                .collect()
+        };
+        let (refusals, liveness_refusals) = (refused_in("lease"), refused_in("liveness"));
+        if sites
+            .iter()
+            .any(|l| census_field(l, "liveness") == Some("unreached"))
+        {
+            wrong.push(format!(
+                "{}: a copy the liveness pass never reached in {sites:?}",
+                c.name
+            ));
+        }
+        match lease_verdict(&c.name) {
+            Lease::Refused if refusals.is_empty() => wrong.push(format!(
+                "{}: refused by the lease rules, but the census refuses nothing in {sites:?}",
+                c.name
+            )),
+            Lease::Once if !refusals.is_empty() => wrong.push(format!(
+                "{}: releases once by the lease rules, but the census refuses {refusals:?}",
+                c.name
+            )),
+            _ => {}
+        }
+        match liveness_verdict(&c.name) {
+            Some(Lease::Refused) if liveness_refusals.is_empty() => wrong.push(format!(
+                "{}: refused by the liveness reading, but `liveness=` refuses nothing in {sites:?}",
+                c.name
+            )),
+            Some(Lease::Once) if !liveness_refusals.is_empty() => wrong.push(format!(
+                "{}: releases once by the liveness reading, but `liveness=` refuses \
+                 {liveness_refusals:?}",
+                c.name
+            )),
+            _ => {}
+        }
+        let Some(roots) = expected_roots(&c.name) else {
+            if !c.name.starts_with("p_") {
+                eprintln!("  undecided {}: {sites:?}", c.name);
+            }
+            continue;
+        };
+        for root in &roots {
+            if !from.contains(root) {
+                wrong.push(format!("{}: no copy from `{root}` in {sites:?}", c.name));
+            }
+        }
+        for f in &from {
+            if !f.starts_with('_') && !roots.contains(f) {
+                wrong.push(format!(
+                    "{}: a copy from `{f}`, expected only {roots:?}",
+                    c.name
+                ));
+            }
+        }
+    }
+
+    // The negative half: the same copies of a type with no hook are nobody's to report.
+    let plain = PRELUDE.replacen("fn OpDrop(self: H) { println(\"D{self.id}\"); }\n", "", 1);
+    assert_ne!(plain, PRELUDE, "the prelude's hook line was not found");
+    let locals: Vec<Cell> = cross_cells()
+        .into_iter()
+        .filter(|c| c.name.starts_with("c_local_"))
+        .collect();
+    let plain_reports = for_each_cell(&locals, "census_plain", workers(16), |dir, c| {
+        census(dir, c, &plain)
+    });
+    for (c, report) in locals.iter().zip(plain_reports) {
+        match report {
+            Some((sites, count)) if sites.is_empty() && count == "drop-copy census: 0 sites" => {}
+            other => wrong.push(format!("{} without a hook: {other:?}", c.name)),
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "\ncopy census:\n  {}\n",
+        wrong.join("\n  ")
+    );
+}
+
+// ── the lease verdicts (@PLN163 P1) ─────────────────────────────────────────────────────────
+
+/// What `formal/heap.md`'s copy-lease rules require of a cell.  `H` declares `OpDrop` and no
+/// `OpCopy`, so every copy of it is refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lease {
+    /// Compiles and releases each resource once: every `H` the cell places is fresh, moved by a
+    /// written position (H-Move), or reached through a view, an argument or a `&`.
+    Once,
+    /// The cell writes a copy of an existing `H` (H-Copy-Refuse), so it must not compile.
+    /// `D-heap-8` until the refusal exists.
+    Refused,
+}
+
+/// The pilot cells that write no copy of an existing `H`, each classified by hand.
+const PILOT_ONCE: &[&str] = &[
+    "p_k4", // a block yields the variable it declares
+    "p_k5", "p_k6", "p_r1", "p_g2", "p_s8", // fresh values only
+    "p_n1", "p_n2", "p_n3", "p_n4", // fresh values written into places, and a removal
+    "p_t1", // a member read through a call result, which nothing outlives
+];
+
+/// The pilot cells that write a copy of an existing `H`, each classified by hand.
+const PILOT_REFUSED: &[&str] = &[
+    "p_k1", "p_k2", "p_k3", "p_h1", "p_i1", // `x = a` of a local
+    "p_k7", "p_h2", "p_h3", "p_h4", "p_h5", "p_h6", "p_h7", // `x = p` of a parameter
+    "p_o1", // `u = e` of a loop variable
+    "p_o2", // `u = t` of a tuple
+    "p_o3", "p_o4", // `return` of a view, of a member, of a parameter
+    "p_o5", "p_e1", "p_e2", // a member placed in a literal or appended
+    "p_l1", "p_l2", "p_i2", "p_s6", "p_s7", // a local as an operand of `??`
+    "p_j1", "p_j2", "p_j3", "p_j4", "p_s1", "p_s2", "p_s3", "p_s4",
+    "p_s5", // a local in a join
+    "p_g1", "p_g3", "p_g4", "p_g5", // a member of a call result
+];
+
+/// What the lease rules require of the cell `name`, read — as the rule is read — off the cell's
+/// own lines: by hand for a pilot, and from its two axes for a generated cell.
+///
+/// A fresh source (a call, a literal) is placed where it is produced.  A local, a parameter, a
+/// `??` over a local and a member of a call result are existing values, so every position copies
+/// them — except a `return` of a local, or of a `??` over locals, which (H-Move) moves.  A member
+/// of a variable (`s.h`, `vs[0]`, `tt.0`, `p.h`) bound to a variable or chosen by a join arm is a
+/// view; placed in a literal, appended or returned it is a copy.
+fn lease_verdict(name: &str) -> Lease {
+    const VIEWING: &[&str] = &["local", "annot", "nullable", "arm", "arm0", "reassign"];
+    let parts: Vec<&str> = name.split('_').collect();
+    match parts.as_slice() {
+        ["p", ..] if PILOT_ONCE.contains(&name) => Lease::Once,
+        ["p", ..] if PILOT_REFUSED.contains(&name) => Lease::Refused,
+        ["c", source, dest] => match *source {
+            "call" | "literal" => Lease::Once,
+            "local" | "coalesce" if *dest == "ret" => Lease::Once,
+            "field" | "elem" | "tuple" | "pfield" if VIEWING.contains(dest) => Lease::Once,
+            _ => Lease::Refused,
+        },
+        // `A ?? B`: a local A is copied except when returned; a parameter A always is; a member A
+        // is a view in a viewing position, where a local B is still copied.
+        ["q", _, "local", _, "ret"] => Lease::Once,
+        ["q", _, "field", b, dest] if VIEWING.contains(dest) && *b != "var" => Lease::Once,
+        ["q", ..] => Lease::Refused,
+        _ => panic!("{name} has no lease verdict: classify it under formal/heap.md § Drop"),
+    }
+}
+
+/// The verdicts of the SUPERSEDED reading of `(H-Move)`, under which a copy of a value not used
+/// afterwards was a move.  P2a's report (`src/lease.rs`) still implements that reading, so this
+/// stays as its oracle until @PLN163 P2 is reworked to the written-move rule.  `None` where that
+/// reading left a cell undecided.
+fn liveness_verdict(name: &str) -> Option<Lease> {
+    const VIEWING: &[&str] = &[
+        "local", "annot", "nullable", "arm", "arm0", "reassign", "tuplem",
+    ];
+    const REFUSED_PILOTS: &[&str] = &[
+        "p_k7", "p_o1", "p_o3", "p_o4", "p_o5", "p_l1", "p_l2", "p_h2", "p_h3", "p_h4", "p_h5",
+        "p_h6", "p_h7", "p_e1", "p_e2", "p_g1", "p_g3", "p_g4", "p_g5", "p_s4", "p_t1",
+    ];
+    let parts: Vec<&str> = name.split('_').collect();
+    match parts.as_slice() {
+        ["p", ..] if REFUSED_PILOTS.contains(&name) => Some(Lease::Refused),
+        ["p", ..] => Some(Lease::Once),
+        ["c", source, dest] => match *source {
+            "call" | "literal" | "local" | "coalesce" => Some(Lease::Once),
+            "param" | "tuple" if *dest == "tuplem" => None,
+            "param" | "callproj" => Some(Lease::Refused),
+            _ if VIEWING.contains(dest) => Some(Lease::Once),
+            _ => Some(Lease::Refused),
+        },
+        ["q", _, "param", _, "tuplem"] => None,
+        ["q", _, "param", _, _] => Some(Lease::Refused),
+        ["q", _, "field", _, dest] if !VIEWING.contains(dest) => Some(Lease::Refused),
+        ["q", ..] => Some(Lease::Once),
+        _ => None,
+    }
+}
+
+/// Each OPEN deviation in `formal/heap.md` that a cell with a `Once` verdict still measures, with
+/// those cells.  A refused cell compiles today and is `D-heap-8`'s, so it is not listed.
+const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[("D-heap-7", &["q_present_local_var_ret"])];
+
+/// Every cell has a lease verdict, and every cell the rules say must release once while a
+/// baseline says it does not is carried by exactly one OPEN deviation in `formal/heap.md`.  A fix
+/// that retires a baseline line fails here until its cell leaves the deviation's list, and so
+/// does a deviation closed in the register while a cell still measures it.
+#[test]
+fn every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation() {
+    let heap = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/doc/claude/formal/heap.md"
+    ))
+    .expect("read formal/heap.md");
+    let mut wrong = Vec::new();
+    for dev in LEASE_DEVIATIONS
+        .iter()
+        .map(|(d, _)| *d)
+        .chain(["D-heap-8", "D-heap-9", "D-heap-11"])
+    {
+        let header = format!("### {dev} — OPEN");
+        if !heap.lines().any(|l| l.starts_with(&header)) {
+            wrong.push(format!("{dev} is not OPEN in formal/heap.md"));
+        }
+    }
+    let cells = all_cells();
+    for (path, backend) in [(BASELINE, "interpreter"), (NATIVE_BASELINE, "native")] {
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let measured = parse_baseline(&text);
+        let mut refused = 0;
+        for c in &cells {
+            let listed: Vec<&str> = LEASE_DEVIATIONS
+                .iter()
+                .filter(|(_, names)| names.contains(&c.name.as_str()))
+                .map(|(d, _)| *d)
+                .collect();
+            let fails = measured.contains_key(&c.name);
+            match lease_verdict(&c.name) {
+                Lease::Once if fails && listed.len() != 1 => wrong.push(format!(
+                    "{backend} {}: releases wrongly under a Once verdict, listed under {listed:?}",
+                    c.name
+                )),
+                Lease::Once if !fails && !listed.is_empty() => wrong.push(format!(
+                    "{backend} {}: clean, and still listed under {listed:?} — retire it there",
+                    c.name
+                )),
+                Lease::Refused if !listed.is_empty() => wrong.push(format!(
+                    "{backend} {}: a Refused cell, and listed under {listed:?}",
+                    c.name
+                )),
+                Lease::Refused => refused += 1,
+                Lease::Once => {}
+            }
+        }
+        eprintln!(
+            "  {backend}: {refused} of {} cells are refused by the lease rules (D-heap-8)",
+            cells.len()
+        );
+    }
+    assert!(
+        wrong.is_empty(),
+        "\nlease verdicts:\n  {}\n",
+        wrong.join("\n  ")
+    );
+}
+
+/// Every copy a code generator EMITS for a droppable has a lease verdict from the census
+/// (@PLN163 P2b).  The census reads the IR after the scope pass, and a generator mints some
+/// copies only when it emits (`copy_manifest.rs`); a copy that reaches no verdict is a copy the
+/// refusal would let through.  Each cell is compiled with both instruments on through
+/// `--native-emit`, which runs the interpreter's code generation and then the native generator
+/// without compiling the result, and `copy_manifest::report` names — once per generator — every
+/// emitted copy of a droppable no verdict covers.
+#[test]
+fn every_emitted_copy_of_a_droppable_has_a_lease_verdict() {
+    let cells = all_cells();
+    let reports = for_each_cell(&cells, "lease_manifest", workers(16), |dir, c| {
+        let path = dir.join(format!("{}.loft", c.name));
+        std::fs::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
+        let out = Command::new(loft_bin())
+            .arg("--native-emit")
+            .arg(dir.join(format!("{}.rs", c.name)))
+            .arg(&path)
+            .current_dir(dir)
+            .env("LOFT_TIMEOUT", "60")
+            .env("LOFT_DROP_COPY_CENSUS", "1")
+            .env("LOFT_COPY_MANIFEST", "1")
+            .output()
+            .unwrap_or_else(|e| panic!("spawn loft for {}: {e}", c.name));
+        String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .filter(|l| {
+                l.starts_with("lease-manifest:") || l.trim_start().starts_with("lease-unjudged")
+            })
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    });
+    let mut wrong = Vec::new();
+    // Emitted copies per generator: the interpreter reports first, the native generator second.
+    let mut emitted = [0usize; 2];
+    for (c, lines) in cells.iter().zip(reports) {
+        let summaries: Vec<&String> = lines
+            .iter()
+            .filter(|l| l.starts_with("lease-manifest:"))
+            .collect();
+        if summaries.len() != 2 {
+            wrong.push(format!(
+                "{}: expected a manifest report from both generators, got {summaries:?}",
+                c.name
+            ));
+            continue;
+        }
+        for (count, summary) in emitted.iter_mut().zip(summaries) {
+            *count += summary
+                .split_whitespace()
+                .nth(1)
+                .and_then(|n| n.parse::<usize>().ok())
+                .unwrap_or(0);
+        }
+        for l in lines
+            .iter()
+            .filter(|l| l.trim_start().starts_with("lease-unjudged"))
+        {
+            wrong.push(format!("{}: {}", c.name, l.trim()));
+        }
+    }
+    assert!(
+        emitted.iter().all(|&n| n > 0),
+        "a generator emitted no copy of a droppable over all cells, so its half measured nothing: \
+         {emitted:?}"
+    );
+    assert!(
+        wrong.is_empty(),
+        "\nlease manifest ({emitted:?} emitted copies, interpreter and native):\n  {}\n",
+        wrong.join("\n  ")
+    );
 }
 
 /// The scorer can FAIL: each kind of finding is produced by the trace that should produce it,

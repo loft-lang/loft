@@ -65,6 +65,8 @@ command -v rustup >/dev/null || die "needs rustup to fetch the release's exact r
 command -v gh     >/dev/null || die "needs gh to download the release"
 command -v unzip  >/dev/null || die "needs unzip"
 if command -v sha256sum >/dev/null; then SHA="sha256sum"; else SHA="shasum -a 256"; fi
+# `repro_c_toolchain` — the platform C toolchain, asked exactly as make-release.sh records it.
+. "$(dirname "$0")/repro-toolchain.sh" 2>/dev/null || die "needs scripts/repro-toolchain.sh beside this script"
 
 # The target this runner natively builds — matched to release.yml's matrix, because a
 # cross-compiled binary is not expected to equal a natively built one.
@@ -188,4 +190,15 @@ fi
 sa=$(wc -c < "$rebuilt"); sb=$(wc -c < "$published")
 echo "DIFFERS — rebuilt $sa bytes, published $sb bytes"
 [ "$sa" = "$sb" ] && echo "  (same size: look for embedded absolute paths or timestamps)"
+# A difference is the SOURCE's only when the rebuild used the release's platform C
+# toolchain (scripts/repro-toolchain.sh): `ring`'s C code is compiled by it, and two
+# toolsets on one runner already produce different code.  Without that match the bytes
+# say nothing about the source — exit 3, the same "cannot verify" a release without a
+# compiler record gets.  Identical bytes above need no such record: they are the proof.
+here_c=$(repro_c_toolchain "$TARGET")
+recorded_c=$(sed -n 's/^c-toolchain = //p' "$info" | tr -d '\r')
+echo "   C toolchain: release ${recorded_c:-not recorded}; this runner $here_c"
+if [ "$recorded_c" != "$here_c" ]; then
+  die "v$VERSION/$TARGET differs, but it was built with a platform C toolchain this runner does not have (release: ${recorded_c:-not recorded — the bundle predates the field}; here: $here_c). ring's C code is compiled by it, so the bytes cannot be compared"
+fi
 exit 1

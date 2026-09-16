@@ -1023,6 +1023,121 @@ its assumptions are written as a rule and checkable by both.
 
 ## Where to resume
 
+**2026-09-15, afternoon — HAND-OFF after § V-ao.  START HERE.**
+
+*What shipped.*  § V-ao (`@FR-R-Invariant`, DESIGN.md § V-ao): an invariant integer chain
+is evaluated at its first use and answered from a memo after, declared at the innermost
+loop that spells it — the resample probe 97.6 → 92.7 ms/op (−5 %), hash 77de7581.  With it,
+**loft#1534** (silent-wrong on native, fixed in the same commit): the non-sentinel proof's
+escape collector read only a BARE `Var` argument while a by-reference argument is spelled
+`OpCreateStack(k)`, so a callee's overflow into a "proven" local answered a number where
+the interpreter answers null.  One collector serves the proof and the memo, and the memo's
+verify form is what found it.  Cells m1–m16, pins `tests/invariant_arith.rs`, guards
+`tests/scripts/157-invariant-arith.loft` and `1534-by-ref-arg-escapes-the-proof.loft`.
+
+*The table after it* (this box, `compare.py --skip-interp --repeat 3 --n-ref 500
+--n-native 500`, 14/14 hashes) — resize 5.57 → 5.01×, render_lock 5.46 → 5.18×, render_marks 7.96 → 7.41×, `parse` untouched at 7.56×, the ten judged rows where they were:
+
+| row | Rust ns/op | native ns/op | native / Rust | before |
+|---|---:|---:|---:|---:|
+| hash | 115 184 | 111 300 | 0.97 | 0.98 |
+| fill_circle | 53 672 | 61 584 | 1.15 | 1.15 |
+| fill_star | 19 212 | 23 698 | 1.23 | 1.26 |
+| hair | 14 036 | 27 994 | 1.99 | 1.96 |
+| composite | 100 924 | 202 008 | 2.00 | 2.00 |
+| lock | 1 546 460 | 3 152 228 | 2.04 | 2.00 |
+| wide_line | 5 854 | 13 638 | 2.33 | 2.34 |
+| lock_curved | 1 314 394 | 3 183 058 | 2.42 | 2.34 |
+| smooth | 330 | 1 158 | 3.51 | 3.82 |
+| fronds | 49 088 | 178 558 | 3.64 | 3.58 |
+| **resize** | 17 921 822 | 89 713 362 | **5.01** | 5.57 |
+| **render_lock** | 2 863 532 | 14 844 338 | **5.18** | 5.46 |
+| **render_marks** | 884 676 | 6 553 520 | **7.41** | 7.96 |
+| **parse** | 6 654 | 50 294 | **7.56** | 7.59 |
+
+
+*Next, by the queue:* item 2, **`R-BoundedNest`** — a bound over the nest's inputs taken
+once per nest, the plain vectorised loop under it, the checked loop as fallback; the unit
+that reaches the reference's cycles per tap.  What to read first: § V-ae's fill for the
+guard-and-fallback shape, § V-al for the emitter placement, and § V-ao's placement lesson
+(a memo one loop out lost its gain — the bounded nest's guard must sit where LLVM can see
+it is decided).  The vertical tap's chain (counter innermost) is the case R-InvariantArith
+cannot touch and R-BoundedNest must: inside a proven-bounded nest the plain form needs no
+memo at all.
+
+**2026-09-15, morning — HAND-OFF after § V-an and the rebase.**
+
+*Branch state.*  `157-native-4x` was rebased onto `main` and EQUALS it: PR #1533
+(squash 7c3f93b3) cherry-picked the four § V-an commits and re-measured QUALITY.md's two
+audit rows on the joined tree, so nothing of this branch was left to replay (`git cherry`
+matched none of the 44 commits by patch-id — a plain `git rebase origin/main` would have
+conflicted 44 times to reach the same tree; `git rebase --onto origin/main <last>` did it
+in one step).  On top of `main` the branch carries only b922d534, PERFORMANCE.md § *The
+clear case first*.  No PR is open; the owner calls the wrap.
+
+*The table on the rebased tree* (this quiet x86-64 box, `compare.py --skip-interp
+--repeat 3 --n-ref 500 --n-native 500`, the scratch clone's `bench/bench.rs` with
+`bench-reference-scene.rs` appended so every row is judged, 14/14 hashes agree):
+
+| row | Rust ns/op | native ns/op | native / Rust |
+|---|---:|---:|---:|
+| hash | 108 116 | 106 310 | 0.98 |
+| fill_circle | 53 660 | 61 700 | 1.15 |
+| fill_star | 18 934 | 23 940 | 1.26 |
+| hair | 14 040 | 27 456 | 1.96 |
+| lock | 1 530 382 | 3 056 902 | 2.00 |
+| composite | 101 050 | 202 306 | 2.00 |
+| lock_curved | 1 322 634 | 3 090 188 | 2.34 |
+| wide_line | 5 826 | 13 622 | 2.34 |
+| fronds | 49 360 | 176 796 | 3.58 |
+| smooth | 308 | 1 178 | 3.82 |
+| **render_lock** | 2 858 728 | 15 599 090 | **5.46** |
+| **resize** | 17 416 716 | 96 948 566 | **5.57** |
+| **parse** | 6 636 | 50 356 | **7.59** |
+| **render_marks** | 887 460 | 7 063 346 | **7.96** |
+
+Ten judged rows under the bar, the four late rows over it.  `parse` came from 10.5×
+(§ V-an); its ratio reads 7.6× here rather than the 6.6× in the § V-an paragraph because
+this run's reference lane was faster (6.6 µs against the recorded 7.2), the native side is
+within noise.
+
+*The next unit, by the owner's rule (PERFORMANCE.md § The clear case first: the case that
+shows in the statistics AND has a visible reason).*  The resample: ONE routine
+(`t_6Canvas_resample`, `graphics/src/graphics.loft`) is 82 / 70 / 57 % of `resize` /
+`render_marks` / `render_lock`, and the reason is read (DESIGN.md § V-aj "The tap in
+machine code": 109 instructions and 35 branches per tap against the reference's 17 and
+1.7 — re-tested hoisted flags, no vectorisation; the release-pass probe puts the checks at
+60 % of the row).  So the queue's items 1 and 2 are the work: `R-InvariantArith` (the
+invariant part of the tap's index arithmetic hoisted at loft level, sound by
+construction), then `R-BoundedNest` (a bound over the nest's inputs taken once, the plain
+vectorised loop under it, the checked loop as fallback — the unit that reaches the
+reference's cycles per tap and takes the three rows under the bar).  The probe is
+`rs_probe.loft` (the graphics `resample` lifted verbatim + the bench row; hash 77de7581;
+last read 95.4 ms/op), the falsifier `LOFT_HOIST_VERIFY=1`, the ceiling
+`LOFT_RELEASE_PASS_PROBE=1` (38.3 ms/op on the probe).
+
+`parse` WAITS, by the same rule — and its class now has its own plan, **@PLN164**
+(`plans/164-activation-arena/`: activation arenas, adopt-at-bind, build-in-place, with the
+edge-case matrix the owner reviews before a phase is cut): after § V-an its profile is flat (the byte scan at 9 % is
+the largest routine) and what remains is a CLASS — deep record copies, 18.5 % over four
+sites (DESIGN.md § V-an's table: the first bind of a record result copies, an indexed
+element overwrite from a literal, a field assigned from a local at its last use).  That
+class is a memory-model unit (adopt at the first bind, move at the last use) and comes
+after the resample.
+
+*Machine notes for the resample unit.*  A fresh session needs: `cargo build --release`
+(bin AND lib — the native tests link the rlib), a scratch clone of `loft-libs-graphics`
+at `drawing-lock` (250b2cd) — never the consumer's own tree — with the reference appended
+as its header says, and the resample probe rebuilt from `graphics/src/graphics.loft:807`
+(lift the function verbatim, add the bench row's call).  `scripts/emission_audit.py` on
+the emission before running it; `LOFT_TRACE_VALUEREC=1` names the value form's refusing
+test since § V-an.  This box (14 GiB) killed a local `find_problems.sh --subject codegen`
+for memory with nothing else running; the GitHub dispatch (`gh workflow run ci.yml --ref
+157-native-4x -f os=ubuntu-latest`) is the gate here, and after adding any IR-walking
+function run `scripts/ir_walker_audit.py optional` and `unspan`, update QUALITY.md's two
+rows and `make optional-ratchet` BEFORE dispatching — that was the one real red of the
+§ V-an gate.
+
 **2026-09-14, end of day — THE FOUR UNJUDGED ROWS, JUDGED.**  The bench's `parse`,
 `render_lock`, `render_marks` and `resize` rows had no Rust reference, so they were
 measured and never judged.  They have one now — `bench-reference-scene.rs` beside this
@@ -1150,10 +1265,14 @@ value is bounded) is the sound form of that one.
 "The tap in machine code": 109 instructions, 35 branches, 22 cycles per tap against the
 reference's 17 / 1.7 / 4.4).*  In this order:
 
-1. **Invariant index arithmetic hoisted at loft level** (`R-InvariantArith`) — the
-   invariant part of `(yy × iw + xmin) × 4 + ch` once per channel, `base + 4x` per tap.
-   Sound by construction (same values, fewer identical fault notes); ≈ 15 of the 109
-   instructions and the flag re-tests from the stack; applies to every indexed loop.
+1. **Invariant index arithmetic hoisted at loft level** (`R-InvariantArith`) — **§ V-ao
+   shipped 2026-09-15 as `@FR-R-Invariant`, the lazy first-use memo:** −5 % on the
+   resample probe (the horizontal tap's `yy × iw + xmin`; the vertical tap's chain has
+   the counter innermost, and `base + 4x` is NOT value-preserving under overflow — that
+   is R-Range's question).  Priced rustc-first (trip-guarded prelude −6 %, lazy memo
+   −7.6 %); the memo declared one loop out lost the gain (DESIGN.md § V-ao).  Found and
+   fixed loft#1534 on the way, a by-reference argument the non-sentinel proof could not
+   see.
 2. **The guarded plain nest** (`R-BoundedNest`) — a bound over the nest's inputs taken
    once per nest, the plain vectorised loop under it, the checked loop as fallback.  The
    unit that reaches the reference's 4.4 cycles per tap and takes the three resample rows

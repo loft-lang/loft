@@ -312,6 +312,17 @@ fn base_var(node: &Value, get_field: u32) -> Option<u16> {
     }
 }
 
+/// Does this call RELEASE its first argument: a free ([`OpSets::frees`]), or a drop hook or cascade
+/// ([`Data::is_drop_function`])?
+///
+/// A release is neither a read of the value nor a write into it.  The lints that count uses read
+/// the IR after `scopes::check`, which places a release for every value it owns; counted as a use,
+/// that release hides the very fact a lint asks about — a copy nothing reads, or a member two
+/// owners release.
+pub(crate) fn releases_first_arg(data: &Data, op: u32) -> bool {
+    data.op_sets().frees.contains(&op) || data.is_drop_function(op)
+}
+
 /// @PLN107 S1 — per-variable ACCESS classification for the dead-store lint. Returns, indexed
 /// by `var_nr`, `(reads, write_targets)`: how many times each local is READ (its value
 /// observed) versus used only as the WRITE-TARGET base of an element/field/keyed setter
@@ -324,15 +335,19 @@ fn base_var(node: &Value, get_field: u32) -> Option<u16> {
 /// it would misread an unused copy as a dead store. Projection handling mirrors
 /// [`projection_ops`]: `d.f[i]=x` → `OpSetInt(OpGetField(Var(d),f), i, v)` descends to the
 /// root var `d`, and the projection's INDEX args are ordinary reads.
-pub(crate) fn dead_store_accesses(body: &Value, n_vars: usize, data: &Data) -> Vec<(u16, u16)> {
+pub(crate) fn dead_store_accesses(body: &Value, func: &Function, data: &Data) -> Vec<(u16, u16)> {
     let ops = data.op_sets();
-    let mut acc = vec![(0u16, 0u16); n_vars];
+    let mut acc = vec![(0u16, 0u16); func.var_count()];
     let cx = AccessCx {
         data,
         projs: &ops.projections,
         writes: &ops.write_first_arg,
         lens: &ops.lengths,
         copy_record: data.def_nr("OpCopyRecord"),
+        database: data.def_nr("OpDatabase"),
+        value_struct_copies: (0..func.count())
+            .filter_map(|v| func.name(v).strip_prefix("__vs_src_")?.parse::<u16>().ok())
+            .collect(),
     };
     classify_access(body, &cx, &mut acc);
     acc
@@ -355,6 +370,14 @@ struct AccessCx<'a> {
     /// (`OpCopyRecord(source, dest, type)`).  `w[i] = Row{…}` lowers to it, so without
     /// this the whole-element assign was invisible to the dead-store lint (loft#670).
     copy_record: u32,
+    /// `OpDatabase` — see [`Self::value_struct_copies`].
+    database: u32,
+    /// The locals `scopes::value_struct_copy` rewrote into a copy of the view they were bound
+    /// from: it names its source temp `__vs_src_<N>` after the destination `N`, and allocates `N`
+    /// with `OpDatabase` before copying into it.  That allocation defines the copy, so it is not a
+    /// read.  Any other `OpDatabase` keeps its read: a record literal is built into its variable
+    /// the same way, and a fresh record is not a lost copy.
+    value_struct_copies: HashSet<u16>,
 }
 
 fn is_setter(op: u32, data: &Data) -> bool {
@@ -380,6 +403,16 @@ fn bump_write(acc: &mut [(u16, u16)], v: u16) {
 /// neither a read nor a copy-mutate write.
 fn classify_access(node: &Value, cx: &AccessCx, acc: &mut [(u16, u16)]) {
     match node.unspan() {
+        // A release observes nothing: see [`releases_first_arg`].
+        Value::Call(op, _) if releases_first_arg(cx.data, *op) => {}
+        Value::Call(op, args)
+            if *op == cx.database
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if cx.value_struct_copies.contains(v)) =>
+        {
+            for a in &args[1..] {
+                classify_access(a, cx, acc);
+            }
+        }
         Value::Var(v) | Value::TupleGet(v, _) | Value::FnRefDnr(v) => bump_read(acc, *v),
         Value::FnRef(_, clos, _) => bump_read(acc, *clos),
         Value::TuplePut(v, _, inner) => {
@@ -3599,6 +3632,73 @@ pub(crate) fn read_only_record_locals(body: &Value, n_vars: usize, data: &Data) 
     cx.ok
 }
 
+/// @PLN164 B1 — does the bind `v = value` ADOPT the record the callee minted?  True when
+/// `value` is a direct call to a loft-defined callee whose return names EXACTLY its own
+/// hidden return buffer (`fn mk() -> P { o = P { … }; …; o }` reports `["o"]`, the buffer
+/// attribute the parser renamed the local onto), and `v` is a PLAIN local: not a parameter
+/// (a local promoted onto a buffer is one), not a caller-side hidden buffer, and not handed
+/// to the call as that buffer.
+///
+/// The rule it keeps is `@FR-O-Move` — *a returned heap value's ownership transfers to the
+/// caller's binding* — where `@FR-O-Buffer`'s fresh leg says what the callee returned: the
+/// buffer the caller passed is the null sentinel for this callee shape, so the callee minted
+/// the store it hands back, and nothing else names it.  `Definition::return_adopts_fresh_store`
+/// declines such a return on purpose — adopting is unsound where the DESTINATION is itself a
+/// return buffer (`render(p) -> Canvas { cv = alloc_canvas(…); cv }`: the inner adoption would
+/// replace the caller's reused buffer, `143-plan51-cluster3-mixed-lit-call`), which is why the
+/// answer is per SITE and reads the destination.  A return that borrows a visible parameter
+/// (`returns_borrowed_view`), a closure returning a capture (the dep names `__closure`, not
+/// the buffer), a fn-ref call (`@FR-O-Opaque`: empty deps cannot license an adopt) and a
+/// nullable return (a synthetic enum with its own delivery, no buffer attribute) all decline.
+///
+/// ONE home for the three readers (the loft#810 discipline): `scopes::scan_set` pairs the
+/// local with the call's buffer so its free is guarded by store identity, and the two backends'
+/// bind arms deliver the call's result directly instead of minting a store and copying.
+#[must_use]
+pub fn adopts_minted_at_bind(
+    data: &Data,
+    function: &crate::variables::Function,
+    v: u16,
+    value: &Value,
+) -> bool {
+    if !crate::keys::adopt_first_bind_enabled() {
+        return false;
+    }
+    let Value::Call(fn_nr, args) = value.unspan() else {
+        return false;
+    };
+    if (*fn_nr as usize) >= data.definitions.len() {
+        return false;
+    }
+    let def = data.def(*fn_nr);
+    if !def.is_loft_defined() || def.return_adopts_fresh_store() || def.returns_borrowed_view() {
+        return false;
+    }
+    // `@FR-N-Shape` — read the nullability marker rather than fall through a missing arm: a
+    // `-> S?` return is loft#896's synthetic enum with its own delivery and no buffer attribute.
+    let (shape, nullable) = def.returned().peel_optional();
+    if nullable || !matches!(shape, Type::Reference(_, _) | Type::Enum(_, true, _)) {
+        return false;
+    }
+    let Some(buf) = def.hidden_return_buffer_attr() else {
+        return false;
+    };
+    let deps = def.returned().depend();
+    if deps.len() != 1 || usize::from(deps[0]) != buf {
+        return false;
+    }
+    if function.is_argument(v) || function.is_caller_hidden_buf(v) || function.is_skip_free(v) {
+        return false;
+    }
+    let name = function.name(v);
+    if name.starts_with("__ref_") || name.starts_with("__rref_") || name.starts_with("__retbuf") {
+        return false;
+    }
+    !args
+        .get(buf)
+        .is_some_and(|a| matches!(a.unspan(), Value::Var(w) if *w == v))
+}
+
 /// @PLN157 § V-g — the three facts about a function BODY that [`view_elision_bind`] reads,
 /// each computed once off the raw body before the scan (`scopes` holds them).
 #[derive(Clone, Copy)]
@@ -3946,7 +4046,7 @@ pub fn callref_captures(data: &Data, d_nr: u32, call: &Value) -> bool {
         return false;
     };
     let vars = data.def(d_nr).variables();
-    let Type::Function(_, _, deps) = vars.tp(*v_nr).base() else {
+    let Type::Function(_, _, deps, ..) = vars.tp(*v_nr).base() else {
         return false;
     };
     deps.iter().any(|&v| {
@@ -4596,6 +4696,556 @@ pub fn post_scope_lints(
     warn_linked_group_append(data, diags, fallback_file);
     // loft#1397 — a payload binding whose subject's place is overwritten with another variant.
     warn_variant_overwritten(data, diags, fallback_file);
+    // @PLN163 P0 — the census of copies of a record with a release (gated `LOFT_DROP_COPY_CENSUS`).
+    drop_copy_census(data);
+}
+
+/// Lists every place the program deep-copies a record that has a release to run — the copies the
+/// copy-lease rules decide about (@PLN163): a type without `OpCopy` refuses them, a type with one
+/// runs it on the new structure.
+///
+/// Two spellings are a copy here:
+///
+/// - an `OpCopyRecord` whose type has a cascade or a hook of its own, the test
+///   [`copied_record_releases`] makes;
+/// - a whole-value bind `v = src` between two variables whose type owns a droppable, which the
+///   generators turn into a copy when they emit it (`copy_manifest` records that side).
+///
+/// A call result bound to a variable is not listed: it duplicates nothing that a live structure
+/// still holds.  The walk runs after the scope pass, so the copies that pass placed (a branch arm's
+/// lift, a return buffer) are listed beside the ones the author wrote.
+///
+/// A whole-tuple bind `u = t`, which the parser lowers into one member copy per member, is one
+/// `bind` site from `t`.  A `return` of a parameter, or of a place reached through one, copies
+/// nothing in the callee and is a `return` site of its own.
+///
+/// One line per site on stderr — function, line, destination kind, copied type, the source's root
+/// variable (`-` when the source names none), the destination, the `(H-Move)` verdict
+/// (`src/lease.rs`), and `frees-source` when the op frees its source — then the count, which is
+/// printed even when it is zero.
+pub fn drop_copy_census(data: &Data) {
+    if !crate::keys::drop_copy_census_enabled() {
+        return;
+    }
+    crate::copy_manifest::clear_lease();
+    let mut sites = 0;
+    if data.any_drop_hook() {
+        let copy_d = data.def_nr("OpCopyRecord");
+        for d_nr in 0..data.definitions() {
+            let def = data.def(d_nr);
+            if !matches!(def.def_type, DefType::Function) {
+                continue;
+            }
+            let mut cx = Census {
+                data,
+                d_nr,
+                func: &def.variables,
+                frame: crate::lease::Frame::new(data, def),
+                fname: &def.name,
+                copy_d,
+                returned: data
+                    .type_owns_droppable_anywhere(def.returned.base())
+                    .then(|| data.type_name_str(&def.returned)),
+                whole_tuple: None,
+                rhs_of: None,
+                placement: crate::lease::Placement::Structure,
+                blocks: Vec::new(),
+                line: 0,
+                sites: 0,
+            };
+            cx.scan(&def.code);
+            // `x = x` leaves no IR (the parser erases it), but it places an existing droppable
+            // where it was without a copy — a line the rules judge like any other bind.
+            let func = cx.func;
+            for (var, line) in crate::copy_manifest::self_binds(d_nr) {
+                if !data.type_owns_droppable_anywhere(func.tp(var).base()) {
+                    continue;
+                }
+                cx.line = line;
+                let lease = lease_column(
+                    func,
+                    cx.frame
+                        .written_var_verdict(var, crate::lease::Placement::Structure),
+                );
+                let tp = data.type_name_str(func.tp(var));
+                cx.emit("bind", &tp, &[var], func.name(var), (&lease, "-"), false);
+            }
+            sites += cx.sites;
+        }
+    }
+    eprintln!(
+        "drop-copy census: {sites} site{}",
+        if sites == 1 { "" } else { "s" }
+    );
+}
+
+/// The walk behind [`drop_copy_census`] for one function.
+struct Census<'a> {
+    data: &'a Data,
+    d_nr: u32,
+    func: &'a Function,
+    /// The copy-lease verdicts for this function (`src/lease.rs`).
+    frame: crate::lease::Frame<'a>,
+    fname: &'a str,
+    copy_d: u32,
+    /// The function's result type name, when that type owns a droppable.
+    returned: Option<String>,
+    /// The tuple a whole-tuple bind being scanned copies: its member copies are that bind's.
+    whole_tuple: Option<u16>,
+    /// The right-hand side of the assignment being scanned, and the variable it assigns — so a
+    /// whole-tuple copy that IS that right-hand side is recorded against its destination.
+    rhs_of: Option<(*const Value, u16)>,
+    /// Where a value copied here goes: out of the function, out of a block, into a read through a
+    /// temporary, or — by default — into a new structure.
+    placement: crate::lease::Placement,
+    /// The blocks enclosing the node being scanned, innermost last.
+    blocks: Vec<*const Value>,
+    /// The nearest line seen before the node being visited.
+    line: u32,
+    sites: usize,
+}
+
+impl Census<'_> {
+    /// Record for the copy-manifest check (@PLN163 P2b) that the copy into `dest` has a lease
+    /// verdict — and, when `dest` is one of the function's return buffers, that its result does.
+    fn note_destination(&self, dest: &Value) {
+        let root = match dest.unspan() {
+            Value::Var(v) => Some(*v),
+            other => place_root(other, self.data),
+        };
+        if let Some(v) = root {
+            crate::copy_manifest::note_lease_site(self.d_nr, v);
+            if self.frame.is_buffer(v) {
+                crate::copy_manifest::note_lease_return(self.d_nr);
+            }
+        }
+    }
+
+    fn scan(&mut self, node: &Value) {
+        use crate::lease::{Lease, Placement, Refusal};
+        if let Some(p) = node.span_pos() {
+            self.line = p.line;
+        } else if let Value::Line(n) = node {
+            self.line = *n;
+        }
+        let node = node.unspan();
+        let mut whole = None;
+        let outer_placement = self.placement;
+        if let Value::Block(bl) = node {
+            match bl.name {
+                // A value leaving its block through a materialised copy: out of the function when
+                // the block returns, and otherwise out of the enclosing block as its result.
+                "materialized_view_return" | "materialized_view_return_armed" => {
+                    self.placement = if bl
+                        .operators
+                        .iter()
+                        .any(|o| o.any_node(&mut |n| matches!(n, Value::Return(_))))
+                    {
+                        Placement::Return
+                    } else {
+                        self.blocks
+                            .last()
+                            .map_or(Placement::Structure, |&b| Placement::BlockResult(b))
+                    };
+                }
+                // A returned tuple, written member by member into the return buffer through a
+                // hold of the tuple (`__ref_3 = t`): one whole-tuple copy of `t`.
+                "synthetic_tuple_return" => {
+                    self.placement = Placement::Return;
+                    if let Some(hold) = bl.operators.iter().find_map(|o| match o.unspan() {
+                        Value::Set(h, rhs)
+                            if matches!(rhs.unspan(), Value::Var(_))
+                                && matches!(self.func.tp(*h).base(), Type::Tuple(_)) =>
+                        {
+                            Some(*h)
+                        }
+                        _ => None,
+                    }) {
+                        let (root, through_member) = self.frame.resolve_view(hold);
+                        let (lease, liveness) = if through_member {
+                            let refused =
+                                lease_column(self.func, Lease::Refuse(Refusal::Container(root)));
+                            (refused.clone(), refused)
+                        } else {
+                            (
+                                lease_column(
+                                    self.func,
+                                    self.frame.written_var_verdict(root, Placement::Return),
+                                ),
+                                lease_column(
+                                    self.func,
+                                    self.frame.liveness_var_verdict(node, root),
+                                ),
+                            )
+                        };
+                        let tp = self.data.type_name_str(self.func.tp(hold));
+                        self.emit("tuple", &tp, &[root], "-", (&lease, &liveness), false);
+                        crate::copy_manifest::note_lease_return(self.d_nr);
+                        whole = Some(root);
+                    }
+                }
+                _ => {}
+            }
+        }
+        // A member read through a copy the compiler makes only to read it (`mk().h.id`): nothing
+        // outlives the expression, so the copy is not one the author wrote.
+        let read_through = matches!(node, Value::Call(op, args)
+            if self.data.def(*op).name().starts_with("OpGet")
+                && matches!(args.first().map(Value::unspan),
+                    Some(Value::Block(b)) if b.name == "inline ref copy"));
+        match node {
+            Value::Call(d, args)
+                if *d == self.copy_d
+                    && args.len() >= 3
+                    && copied_record_releases(self.data, &args[2])
+                    && !matches!(args[0].unspan(), Value::TupleGet(b, _)
+                        if self.whole_tuple == Some(self.frame.resolve_view(*b).0)) =>
+            {
+                let (kind, into) = match args[1].unspan() {
+                    Value::Var(v) => {
+                        let name = self.func.name(*v);
+                        // `__disp_N` is the scope pass's snapshot of a record a reassignment
+                        // displaces (`Scopes::displaced_drop`): a copy made so the hook can run
+                        // after the statement, not one the author's program asks for.
+                        let kind = if name.starts_with("__disp_") {
+                            "snapshot"
+                        } else if name.starts_with("__ref") {
+                            "buffer"
+                        } else if name.starts_with("_elm_") {
+                            "element"
+                        } else {
+                            "record"
+                        };
+                        (kind, name.to_string())
+                    }
+                    other => (
+                        "place",
+                        place_root(other, self.data)
+                            .map_or_else(|| "-".to_string(), |r| self.func.name(r).to_string()),
+                    ),
+                };
+                let frees = matches!(args[2].unspan(), Value::Int(tp) if tp & 0x8000 != 0);
+                let tp = copied_record_name(self.data, &args[2]);
+                let mut from = Vec::new();
+                copy_source_roots(&args[0], self.data, self.func, &mut from);
+                // Only a value copied straight into a variable leaves with the block or function it
+                // leaves; a copy into a place of a structure being built is a copy into that
+                // structure.
+                let placement = if self.placement == Placement::ReadThrough
+                    || matches!(args[1].unspan(), Value::Var(_))
+                {
+                    self.placement
+                } else {
+                    Placement::Structure
+                };
+                let (lease, liveness) = if kind == "snapshot" {
+                    ("-".to_string(), "-".to_string())
+                } else {
+                    self.note_destination(&args[1]);
+                    (
+                        lease_column(self.func, self.frame.written_verdict(&args[0], placement)),
+                        lease_column(self.func, self.frame.liveness_verdict(node, &args[0])),
+                    )
+                };
+                self.emit(kind, &tp, &from, &into, (&lease, &liveness), frees);
+            }
+            // A bind whose type depends on its own source is a VIEW of it — a destructure's
+            // `__ref_2 = u`, a nested copy's `_tuphold_1 = inner` — and copies nothing.  So is a
+            // hold of the whole tuple a returned tuple is written from.
+            Value::Set(v, rhs)
+                if matches!(rhs.unspan(), Value::Var(src)
+                    if src != v
+                        && !self.func.tp(*v).depend().contains(src)
+                        && self.whole_tuple != Some(*src))
+                    && self
+                        .data
+                        .type_owns_droppable_anywhere(self.func.tp(*v).base()) =>
+            {
+                let Value::Var(src) = rhs.unspan() else {
+                    unreachable!("matched above")
+                };
+                // @FR-O-Proxy asks oracle — only the census's label for the site; drives no emission
+                let kind = if self.func.tp(*v).depend().is_empty() {
+                    "bind"
+                } else {
+                    "bind-view"
+                };
+                let tp = self.data.type_name_str(self.func.tp(*v));
+                let into = self.func.name(*v).to_string();
+                let lease = lease_column(
+                    self.func,
+                    self.frame.written_var_verdict(*src, self.placement),
+                );
+                let liveness = lease_column(self.func, self.frame.liveness_var_verdict(node, *src));
+                crate::copy_manifest::note_lease_site(self.d_nr, *v);
+                self.emit(kind, &tp, &[*src], &into, (&lease, &liveness), false);
+            }
+            // A join whose arm is a variable as it is (`a = a ?? mk(122)`) places that variable
+            // without a copy; the rules judge the line all the same.  An arm that is a view — the
+            // destination's type depends on it, or on what the arm views (`x = s.h ?? mk()` binds
+            // the member's view temp) — places nothing.  The join a `return` lowers into a
+            // `__ret_N` temp places its arms out of the function.
+            Value::Set(v, rhs)
+                if matches!(rhs.unspan(), Value::If(..))
+                    && self
+                        .data
+                        .type_owns_droppable_anywhere(self.func.tp(*v).base()) =>
+            {
+                let mut arms = Vec::new();
+                join_var_arms(rhs, &mut arms);
+                let into = self.func.name(*v).to_string();
+                let tp = self.data.type_name_str(self.func.tp(*v));
+                let dest_deps = self.func.tp(*v).depend();
+                let placement = if into.starts_with("__ret_") {
+                    Placement::Return
+                } else {
+                    self.placement
+                };
+                for src in arms {
+                    if dest_deps.contains(&src)
+                        || self
+                            .func
+                            .tp(src)
+                            .depend()
+                            .iter()
+                            .any(|d| dest_deps.contains(d))
+                        || !self
+                            .data
+                            .type_owns_droppable_anywhere(self.func.tp(src).base())
+                    {
+                        continue;
+                    }
+                    let lease =
+                        lease_column(self.func, self.frame.written_var_verdict(src, placement));
+                    self.emit("bind", &tp, &[src], &into, (&lease, "-"), false);
+                }
+            }
+            // A tuple literal that reads every member of one tuple, in order, copies that tuple
+            // whole — `u = t`, or a nested member copied through a hold.  Listed once, and the
+            // member copies inside it are not listed again.
+            Value::Tuple(items) => {
+                if let Some(base) = crate::lease::whole_tuple_source(self.func, node) {
+                    let (root, through_member) = self.frame.resolve_view(base);
+                    if self.whole_tuple != Some(root)
+                        && self
+                            .data
+                            .type_owns_droppable_anywhere(self.func.tp(base).base())
+                    {
+                        let (lease, liveness) = if through_member {
+                            let refused =
+                                lease_column(self.func, Lease::Refuse(Refusal::Container(root)));
+                            (refused.clone(), refused)
+                        } else {
+                            (
+                                lease_column(
+                                    self.func,
+                                    self.frame.written_var_verdict(root, self.placement),
+                                ),
+                                lease_column(
+                                    self.func,
+                                    self.frame.liveness_var_verdict(node, root),
+                                ),
+                            )
+                        };
+                        let tp = self.data.type_name_str(self.func.tp(base));
+                        self.emit("tuple", &tp, &[root], "-", (&lease, &liveness), false);
+                    }
+                    if let Some((rhs, v)) = self.rhs_of
+                        && std::ptr::eq(rhs, node)
+                    {
+                        crate::copy_manifest::note_lease_site(self.d_nr, v);
+                    }
+                    whole = Some(root);
+                } else if let Some((rhs, v)) = self.rhs_of
+                    && std::ptr::eq(rhs, node)
+                {
+                    // An item that places an existing droppable in a tuple literal is written as a
+                    // copy whether the compiler copies it or views it (`(p, 1)`, `(s.h, 1)`): the
+                    // rule judges the line.  A member copy the parser built is judged at its own
+                    // `OpCopyRecord`.
+                    let func = self.func;
+                    if let Type::Tuple(elms) = func.tp(v).base() {
+                        for (item, elm) in items.iter().zip(elms) {
+                            if !self.data.type_owns_droppable_anywhere(elm)
+                                || matches!(item.unspan(),
+                                    Value::Block(b) if b.name == "tuple_member_copy")
+                            {
+                                continue;
+                            }
+                            let lease = lease_column(
+                                func,
+                                self.frame.written_verdict(item, self.placement),
+                            );
+                            let mut from = Vec::new();
+                            copy_source_roots(item, self.data, func, &mut from);
+                            let tp = self.data.type_name_str(elm);
+                            self.emit("item", &tp, &from, func.name(v), (&lease, "-"), false);
+                        }
+                    }
+                }
+            }
+            // Every `return` of a droppable is judged here: refused when it hands out a value the
+            // caller holds, and otherwise a move of what the function made — which is what a
+            // caller's copy of the result copies.
+            Value::Return(value) => {
+                if let Some(returned) = self.returned.clone() {
+                    crate::copy_manifest::note_lease_return(self.d_nr);
+                    if let Some(refusal) = self.frame.return_refusal(value) {
+                        let lease = format!("refuse:{}", refusal.describe(self.func));
+                        self.emit(
+                            "return",
+                            &returned,
+                            &[refusal.var()],
+                            "-",
+                            (&lease, &lease),
+                            false,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+        let outer = self.whole_tuple;
+        let outer_rhs = self.rhs_of;
+        if whole.is_some() {
+            self.whole_tuple = whole;
+        }
+        if let Value::Set(v, rhs) = node {
+            self.rhs_of = Some((std::ptr::from_ref(rhs.unspan()), *v));
+        }
+        if read_through {
+            self.placement = Placement::ReadThrough;
+        }
+        let is_block = matches!(node, Value::Block(_));
+        if is_block {
+            self.blocks.push(std::ptr::from_ref(node));
+        }
+        node.for_each_child(&mut |c| self.scan(c));
+        if is_block {
+            self.blocks.pop();
+        }
+        self.whole_tuple = outer;
+        self.rhs_of = outer_rhs;
+        self.placement = outer_placement;
+    }
+
+    /// `from` lists the root of every value the copy may take — one per arm of a join — joined
+    /// with commas, or `-` when no arm names a variable.  `verdicts` is the rule read off the line
+    /// and the liveness answer, as `lease=` and `liveness=`.
+    fn emit(
+        &mut self,
+        kind: &str,
+        tp: &str,
+        from: &[u16],
+        into: &str,
+        verdicts: (&str, &str),
+        frees: bool,
+    ) {
+        self.sites += 1;
+        let from = if from.is_empty() {
+            "-".to_string()
+        } else {
+            from.iter()
+                .map(|&v| self.func.name(v))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        eprintln!(
+            "drop-copy fn={} line={} kind={kind} type={tp} from={from} into={into} lease={} liveness={}{}",
+            self.fname,
+            self.line,
+            verdicts.0,
+            verdicts.1,
+            if frees { " frees-source" } else { "" }
+        );
+    }
+}
+
+/// The census's `lease=` spelling of an `(H-Move)` verdict.
+/// The arms of the join `value` that are a bare variable, through nested joins and block tails.  An
+/// arm of any other shape — a call, a copy block, a projection — is not collected: the census judges
+/// it at the copy it makes, or it makes a fresh value.
+fn join_var_arms(value: &Value, out: &mut Vec<u16>) {
+    match value.unspan() {
+        Value::Var(v) => out.push(*v),
+        Value::If(_, then, els) => {
+            join_var_arms(then, out);
+            join_var_arms(els, out);
+        }
+        Value::Block(bl) => {
+            if let Some(tail) = bl.operators.last() {
+                join_var_arms(tail, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn lease_column(func: &Function, verdict: crate::lease::Lease) -> String {
+    match verdict {
+        crate::lease::Lease::Move => "move".to_string(),
+        crate::lease::Lease::Refuse(r) => format!("refuse:{}", r.describe(func)),
+        crate::lease::Lease::Unreached => "unreached".to_string(),
+    }
+}
+
+/// The root variables of every value a copy source may produce: a variable or a projection's
+/// root, the tail of a block, and each arm of a join (`a ?? mk()` reaches a copy as an `if` whose
+/// arms are `a` and a block ending in the call's buffer).  A source that names no variable adds
+/// nothing.
+fn copy_source_roots(src: &Value, data: &Data, func: &Function, out: &mut Vec<u16>) {
+    match src.unspan() {
+        Value::If(_, then, els) => {
+            copy_source_roots(then, data, func, out);
+            copy_source_roots(els, data, func, out);
+        }
+        Value::Block(bl) => {
+            if let Some(tail) = bl.operators.last() {
+                copy_source_roots(tail, data, func, out);
+            }
+        }
+        Value::Insert(ops) => {
+            if let Some(tail) = ops.last() {
+                copy_source_roots(tail, data, func, out);
+            }
+        }
+        other => {
+            if let Some(root) = place_root(other, data) {
+                push_copy_root(root, func, out, &mut Vec::new());
+            }
+        }
+    }
+}
+
+/// Adds `v` to the roots, or — for a compiler-generated view temp — the variables it depends on.
+/// `s.h ?? d` holds the projection in a temp typed `ref(H)["s"]` before the join reads it, and the
+/// structure the copy duplicates is `s`'s member, not the temp.
+fn push_copy_root(v: u16, func: &Function, out: &mut Vec<u16>, seen: &mut Vec<u16>) {
+    if seen.contains(&v) {
+        return;
+    }
+    seen.push(v);
+    let deps = func.tp(v).depend();
+    if func.is_compiler_generated(v) && !deps.is_empty() {
+        for d in deps {
+            push_copy_root(d, func, out, seen);
+        }
+    } else if !out.contains(&v) {
+        out.push(v);
+    }
+}
+
+/// The name of the record type an `OpCopyRecord`'s type argument names, or `?` when it names none.
+fn copied_record_name(data: &Data, tp: &Value) -> String {
+    let Value::Int(tp) = tp.unspan() else {
+        return "?".to_string();
+    };
+    let Ok(known) = u16::try_from(*tp & i32::from(crate::keys::COPY_TP_MASK)) else {
+        return "?".to_string();
+    };
+    (0..data.definitions())
+        .find(|&d| data.def(d).known_type == known)
+        .map_or_else(|| "?".to_string(), |d| data.def(d).name.clone())
 }
 
 /// loft#1397 — a `match` / `is` PAYLOAD binding whose subject's PLACE is overwritten with a
@@ -5022,7 +5672,7 @@ pub fn warn_dead_stores(
         };
         let func = &def.variables;
         let n = func.var_count();
-        let acc = dead_store_accesses(&def.code, n, data);
+        let acc = dead_store_accesses(&def.code, func, data);
         for i in 0..n {
             let v = i as u16;
             let name = func.name(v);
@@ -5140,6 +5790,28 @@ struct DoubleMove<'a> {
     cur: Option<Position>,
     /// `(source var, first hand-off, second hand-off)`, one per var per sequence.
     found: Vec<(u16, Position, Position)>,
+    /// PROJECTION hand-offs still pending, by ROOT variable: a member of the root was copied into
+    /// a container at each position, and the root still owns that member.  One map for the whole
+    /// function, not one per arm: a copy made inside an arm or a loop body stays pending past that
+    /// subtree, because the root's release — its scope end, a rebind, a `return` — usually lies
+    /// outside it.  That is also why a subtree's writes retire a pending root before it is scanned.
+    proj: HashMap<u16, Vec<Position>>,
+    /// `(root var, copy position)` for every projection hand-off whose root's release became
+    /// certain while it was still pending.
+    proj_found: Vec<(u16, Position)>,
+    /// `(parameter, return position)` for every `return` of a parameter's MEMBER: the caller
+    /// still owns that member through the argument it passed, and the caller's copy of the
+    /// result is a second owner.
+    ret_found: Vec<(u16, Position)>,
+    /// Whether the function's result has a release to run — a returned member doubles a
+    /// release only when there is one.
+    ret_cascades: bool,
+    /// Every variable this function emits a drop of, by place root — see [`drop_targets`].
+    released: HashSet<u16>,
+    /// The function's hidden return-buffer ARGUMENTS: a local promoted to the caller's buffer is an
+    /// argument in the variable table, but the record it holds goes on to the caller, who releases
+    /// it — so it is a root like any local, unlike a parameter the caller already owns.
+    ret_bufs: HashSet<u16>,
 }
 
 impl DoubleMove<'_> {
@@ -5169,6 +5841,10 @@ impl DoubleMove<'_> {
                 self.scan(cond, st);
                 for arm in [then.as_ref(), els.as_ref()] {
                     kill_assigned(arm, st);
+                    // A member written on one path only is not certainly the member the
+                    // container copied, so a pending projection over it retires — silent is the
+                    // sound answer for a tier that gates.
+                    self.retire_written_roots(arm);
                     self.scan(arm, &mut Handoffs::new());
                 }
             }
@@ -5179,12 +5855,28 @@ impl DoubleMove<'_> {
             // that false negative is the documented boundary.
             Value::Loop(_) | Value::Iter(..) | Value::Parallel(_) => {
                 kill_assigned(node, st);
+                self.retire_written_roots(node);
                 self.scan_children_isolated(node);
             }
-            // Nothing after a terminator runs, so the pending set cannot pair across it.
+            // Nothing after a terminator runs, so the pending set cannot pair across it.  A
+            // pending projection is reported here: the root leaves the frame with its member
+            // still in it, whichever of the two goes back to the caller.
             Value::Return(v) => {
                 self.scan(v, st);
+                // heap.md D-heap-7 family 2 — a parameter's MEMBER returned.  The callee copies
+                // nothing: the caller copies the view it is handed (`(O-Move)`), while its
+                // argument still owns the member.  A WHOLE parameter returned is a plain value,
+                // which is a release to get right rather than to warn about (heap.md § Standalone
+                // right, encapsulated warned).
+                if self.ret_cascades
+                    && let Some(root) = projection_root(v, self.data)
+                    && self.is_caller_owned(root)
+                    && let Some(at) = self.cur.clone()
+                {
+                    self.ret_found.push((root, at));
+                }
                 st.clear();
+                self.report_all_projections();
             }
             Value::Break(_) | Value::Continue(_) => st.clear(),
             // A reassignment replaces the value, so what was handed off is no longer what
@@ -5195,6 +5887,25 @@ impl DoubleMove<'_> {
             // resource, `scopes::copy_moves_drop_from`), so `t = s; u = s` is the same
             // double release as two containers built from one droppable.
             Value::Set(v, rhs) => {
+                // A pending projection's root REBOUND: decided before the value is scanned, so
+                // nothing inside it can retire the copy first.  A rebind of a root that owns its
+                // record releases the record it displaces, member and all (loft#1362) — the double
+                // is certain, so report.  A self-assignment is a no-op and leaves the copy pending.
+                // A view root releases nothing, and a value that reads the root has its displaced
+                // release decided by identity at run time, so both retire: silent is sound here.
+                if self.proj.contains_key(v) && !matches!(rhs.unspan(), Value::Var(src) if src == v)
+                {
+                    // @FR-O-Proxy asks oracle — whether the rebind releases the record it
+                    // displaces; it decides a report and drives no emission.
+                    if self.func.proxy_says_owned(*v)
+                        && !self.func.is_skip_free(*v)
+                        && !rhs.reads_var(*v)
+                    {
+                        self.report_projection(*v);
+                    } else {
+                        self.proj.remove(v);
+                    }
+                }
                 self.scan(rhs, st);
                 if let Value::Var(src) = rhs.unspan()
                     && crate::scopes::copy_moves_drop_from(self.func, self.data, *v, *src, false)
@@ -5208,12 +5919,16 @@ impl DoubleMove<'_> {
                 for a in args {
                     self.scan(a, st);
                 }
+                self.projection_event(args);
                 self.record(args, st);
             }
             // Everything else — a `Block`/`Insert` statement sequence, an ordinary call, an
             // operand — runs straight through, so its children share the caller's set and
             // are visited in evaluation order.
-            _ => self.scan_children(node, st),
+            _ => {
+                self.retire_call_writes(node);
+                self.scan_children(node, st);
+            }
         }
     }
 
@@ -5228,9 +5943,143 @@ impl DoubleMove<'_> {
         node.for_each_child(&mut |c| self.scan(c, &mut Handoffs::new()));
     }
 
+    /// A copy that touches a pending projection's ROOT.  A copy INTO a place rooted at the root
+    /// overwrites a member, and an overwritten member is not released (`(H-Drop-Not)`), so the
+    /// root's pending copies retire.  A displaced snapshot of the root
+    /// (`OpCopyRecord(root, __disp_N)`), where one appears in the IR this walks, releases the
+    /// root's record, member and all, so its pending copies are reported.  The ordinary rebind is
+    /// not that snapshot here: measured with a trace, this pass sees a rebuild as `Set(root, …)`,
+    /// which the `Set` arm decides.
+    fn projection_event(&mut self, args: &[Value]) {
+        if self.proj.is_empty() {
+            return;
+        }
+        if let (Value::Var(src), Value::Var(dst)) = (args[0].unspan(), args[1].unspan())
+            && (*dst as usize) < self.func.count() as usize
+            && self.func.name(*dst).starts_with("__disp_")
+        {
+            self.report_projection(*src);
+            return;
+        }
+        if let Some(root) = place_root(&args[1], self.data) {
+            self.proj.remove(&root);
+        }
+    }
+
+    /// Report every pending copy of `root`: its release is certain now.
+    fn report_projection(&mut self, root: u16) {
+        if let Some(ats) = self.proj.remove(&root) {
+            for at in ats {
+                self.proj_found.push((root, at));
+            }
+        }
+    }
+
+    /// Report every pending projection hand-off — a `return`, or the end of the body.
+    fn report_all_projections(&mut self) {
+        for (root, ats) in std::mem::take(&mut self.proj) {
+            for at in ats {
+                self.proj_found.push((root, at));
+            }
+        }
+    }
+
+    /// A record the CALLER owns: a genuine PARAMETER, or a local that holds the caller's record on
+    /// every path (`Function::holds_caller_record`).  The hidden return-buffer argument is
+    /// not one — it is a local promoted to the caller's buffer, and its record goes on to the
+    /// caller — and neither is a capture, which is the closure's, or a compiler temp.
+    fn is_caller_owned(&self, v: u16) -> bool {
+        (v as usize) < self.func.count() as usize
+            && ((self.func.is_argument(v) && !self.ret_bufs.contains(&v))
+                || self.func.holds_caller_record(v))
+            && !self.func.is_captured(v)
+            && !self.func.name(v).starts_with('_')
+            && !self.func.name(v).contains('#')
+    }
+
+    /// Is a member of `root` released by something other than the container it is copied into?
+    ///
+    /// Only then does the copy double a release.  The CALLER releases what a caller-owned root
+    /// holds, and a root promoted to the return buffer goes on to the caller too.  Any other root
+    /// releases its members only where this function emits a drop of it: a copy off a parameter
+    /// stops its destination, so a local written through after that copy holds a resource nothing
+    /// but the container releases.  A view releases nothing itself; its members go wherever its
+    /// base's go.
+    fn member_released_elsewhere(&self, root: u16, depth: u8) -> bool {
+        if self.is_caller_owned(root)
+            || self.ret_bufs.contains(&root)
+            || self.released.contains(&root)
+        {
+            return true;
+        }
+        depth < 8
+            && (root as usize) < self.func.count() as usize
+            && self
+                .func
+                .tp(root)
+                .depend()
+                .into_iter()
+                .any(|base| base != root && self.member_released_elsewhere(base, depth + 1))
+    }
+
+    /// Retire the pending projections whose root a SUBTREE writes (a conditional arm, a loop
+    /// body): the member may not be the one the container copied by the time the root goes.
+    fn retire_written_roots(&mut self, node: &Value) {
+        if self.proj.is_empty() {
+            return;
+        }
+        let (data, copy_d) = (self.data, self.copy_d);
+        let mut written = HashSet::new();
+        node.walk(&mut |n| {
+            written_roots(n, copy_d, data, &mut written);
+            if let Value::Set(v, _) = n.unspan() {
+                written.insert(*v);
+            }
+        });
+        self.proj.retain(|r, _| !written.contains(r));
+    }
+
+    /// Retire the pending projections whose root THIS node writes (not its children).
+    fn retire_call_writes(&mut self, node: &Value) {
+        if self.proj.is_empty() {
+            return;
+        }
+        let mut written = HashSet::new();
+        written_roots(node, self.copy_d, self.data, &mut written);
+        self.proj.retain(|r, _| !written.contains(r));
+    }
+
     /// Record one `OpCopyRecord` that hands its source's ownership away, and report the
     /// SECOND such hand-off of the same variable.
     fn record(&mut self, args: &[Value], st: &mut Handoffs) {
+        // heap.md D-heap-7 family 4 — a MEMBER of a container the frame still holds, copied into
+        // another container: the source container keeps owning that member and its cascade
+        // releases it, while the destination releases its copy, so the FIRST copy is already the
+        // double.  Pending until the root's release is certain, or retired if the member is
+        // overwritten first.  A PARAMETER is the same double one frame out (family 2): the
+        // caller keeps owning what it passed, whether the copy takes a member of it or all of
+        // it.  A capture's member is the closure's, so it is not this frame's to report.  Only a
+        // copy that carries a release counts — a container that owns a droppable somewhere
+        // takes its plain members through the same copy.
+        let whole_parameter = match args[0].unspan() {
+            Value::Var(p) if self.is_caller_owned(*p) => Some(*p),
+            _ => None,
+        };
+        if let Some(root) = projection_root(&args[0], self.data).or(whole_parameter)
+            && (crate::scopes::copy_hands_off(&args[1], self.func, self.data)
+                || crate::scopes::appends_to_element(&args[1], self.func, self.data))
+            && (root as usize) < self.func.count() as usize
+            && !self.func.is_captured(root)
+            && !self.func.name(root).starts_with('_')
+            && !self.func.name(root).contains('#')
+            && copied_record_releases(self.data, &args[2])
+            && self.member_released_elsewhere(root, 0)
+        {
+            if let Some(at) = self.cur.clone() {
+                self.proj.entry(root).or_default().push(at);
+            }
+            return;
+        }
         // The exact predicate the drop suppression uses (`scopes::collect_drop_transferred`),
         // so the lint and the mechanism cannot drift: a hand-off is what makes the source
         // stop dropping, and this asks the same question of the same node.
@@ -5275,6 +6124,105 @@ impl DoubleMove<'_> {
         } else {
             st.insert(src, at);
         }
+    }
+}
+
+/// The root variable of a PROJECTION — a field, element or tuple-member read (`s.h`, `v[i].h`,
+/// `t.0`) at any depth — or `None` for a bare variable or anything else.
+pub(crate) fn projection_root(node: &Value, data: &Data) -> Option<u16> {
+    match node.unspan() {
+        Value::TupleGet(base, _) => Some(*base),
+        Value::Call(d, args) if data.def(*d).name().starts_with("OpGet") => {
+            place_root(args.first()?, data)
+        }
+        _ => None,
+    }
+}
+
+/// Every variable whose record this function RELEASES somewhere: the place root of each drop
+/// call's target (`t_1S_OpDropAll(s)`, `t_1H_OpDrop(tt.0)`).  The lint runs after the scope pass
+/// has placed every drop, so it reads that decision here instead of deciding it again.
+fn drop_targets(data: &Data, code: &Value) -> HashSet<u16> {
+    let mut out = HashSet::new();
+    code.walk(&mut |n| {
+        if let Value::Call(d, args) = n
+            && data.is_drop_function(*d)
+            && let Some(root) = args.first().and_then(|a| place_root(a, data))
+        {
+            out.insert(root);
+        }
+    });
+    out
+}
+
+/// Does an `OpCopyRecord` copy a record that has a release to run?
+///
+/// Its type argument names the copied record's type beside two flag bits, which
+/// [`crate::keys::COPY_TP_MASK`] strips.  A release exists exactly when that type has a cascade
+/// or a hook of its own ([`Data::drop_cascade_nr`]).  The destination is no proof of it: a
+/// container that owns a droppable in one field takes a plain record into another through the
+/// same copy.
+fn copied_record_releases(data: &Data, tp: &Value) -> bool {
+    let Value::Int(tp) = tp.unspan() else {
+        return false;
+    };
+    let Ok(known) = u16::try_from(*tp & i32::from(crate::keys::COPY_TP_MASK)) else {
+        return false;
+    };
+    known != u16::MAX
+        && (0..data.definitions())
+            .any(|d| data.def(d).known_type == known && data.drop_cascade_nr(d) != u32::MAX)
+}
+
+/// The root variable of a PLACE: the variable itself, or a projection's root.
+fn place_root(node: &Value, data: &Data) -> Option<u16> {
+    match node.unspan() {
+        Value::Var(v) => Some(*v),
+        _ => projection_root(node, data),
+    }
+}
+
+/// The roots ONE node writes: a copy's destination place, the target of a setter, append,
+/// insert, remove, clear or in-place build, and every bare variable handed to a user call,
+/// whose body may write through it.
+fn written_roots(node: &Value, copy_d: u32, data: &Data, out: &mut HashSet<u16>) {
+    match node.unspan() {
+        // A release writes nothing into its argument: see [`releases_first_arg`].
+        Value::Call(d, _) if releases_first_arg(data, *d) => {}
+        Value::Call(d, args) => {
+            let name = data.def(*d).name();
+            let place = if *d == copy_d {
+                args.get(1)
+            } else if name.starts_with("OpSet")
+                || name.starts_with("OpAppend")
+                || name.starts_with("OpInsert")
+                || name.starts_with("OpRemove")
+                || name.starts_with("OpClear")
+                || name == "OpDatabase"
+            {
+                args.first()
+            } else {
+                None
+            };
+            if let Some(root) = place.and_then(|p| place_root(p, data)) {
+                out.insert(root);
+            }
+            if !name.starts_with("Op") {
+                for a in args {
+                    if let Value::Var(x) = a.unspan() {
+                        out.insert(*x);
+                    }
+                }
+            }
+        }
+        Value::CallRef(_, args) => {
+            for a in args {
+                if let Value::Var(x) = a.unspan() {
+                    out.insert(*x);
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -5344,8 +6292,28 @@ pub fn warn_double_move(
             copy_d,
             cur: None,
             found: Vec::new(),
+            proj: HashMap::new(),
+            proj_found: Vec::new(),
+            ret_found: Vec::new(),
+            released: drop_targets(data, &def.code),
+            ret_cascades: def
+                .returned
+                .base()
+                .heap_def_nr()
+                .is_some_and(|t| data.drop_cascade_nr(t) != u32::MAX),
+            ret_bufs: (0..def.variables.count())
+                .filter(|&v| {
+                    def.variables.is_argument(v)
+                        && def
+                            .attributes
+                            .iter()
+                            .any(|a| a.hidden && a.name == def.variables.name(v))
+                })
+                .collect(),
         };
         cx.scan(&def.code, &mut Handoffs::new());
+        // Whatever is still pending at the end of the body is released by its root's scope exit.
+        cx.report_all_projections();
         for (src, first, at) in std::mem::take(&mut cx.found) {
             let name = def.variables.name(src);
             let ty = data.type_name_str(def.variables.tp(src));
@@ -5400,7 +6368,162 @@ pub fn warn_double_move(
                 concept_ref: "@F106",
             });
         }
+        // heap.md D-heap-7 family 4 — a member of a container copied into another container.
+        for (root, at) in std::mem::take(&mut cx.proj_found) {
+            let name = def.variables.name(root);
+            let file = if at.file.is_empty() {
+                def_file
+            } else {
+                at.file.as_str()
+            };
+            if cx.is_caller_owned(root) {
+                report_caller_owned_copy(diags, name, def.variables.is_argument(root), file, &at);
+                continue;
+            }
+            let msg = format!(
+                "a member of `{name}` is copied into a container here, and `{name}` still owns \
+                 that member and releases it when `{name}` goes — each owner releases what it \
+                 owns, so this value is released TWICE"
+            );
+            diags.add_at_coded(
+                crate::diagnostics::Level::Warning,
+                Some("double-move"),
+                &msg,
+                file,
+                at.line,
+                at.pos,
+            );
+            diags.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: format!("read the member from `{name}` instead of copying it"),
+                condition: Some(format!(
+                    "the container only needs to see the value `{name}` holds"
+                )),
+                edit: None,
+                concept: "move",
+                concept_ref: "@F106",
+            });
+            diags.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: format!("overwrite the member in `{name}` after the copy"),
+                condition: Some(format!(
+                    "`{name}` is done with the value — an overwritten member is not released, \
+                     so the container becomes its only owner"
+                )),
+                edit: None,
+                concept: "move",
+                concept_ref: "@F106",
+            });
+        }
+        // heap.md D-heap-7 family 2 — a parameter's member returned.
+        for (root, at) in std::mem::take(&mut cx.ret_found) {
+            let file = if at.file.is_empty() {
+                def_file
+            } else {
+                at.file.as_str()
+            };
+            report_returned_parameter_member(
+                diags,
+                def.variables.name(root),
+                def.variables.is_argument(root),
+                file,
+                &at,
+            );
+        }
     }
+}
+
+/// The report for a PARAMETER, or a member of one, copied into a container (heap.md D-heap-7
+/// family 2): the caller still owns what it passed, and the container owns a copy.
+fn report_caller_owned_copy(
+    diags: &mut crate::diagnostics::Diagnostics,
+    name: &str,
+    parameter: bool,
+    file: &str,
+    at: &Position,
+) {
+    let whose = if parameter {
+        format!("`{name}` is a parameter")
+    } else {
+        format!("`{name}` holds its caller's record, copied off a parameter")
+    };
+    let msg = format!(
+        "{whose}, so the caller still owns what `{name}` holds and releases it, and this \
+         container releases its copy too — each owner releases what it owns, so this value is \
+         released TWICE"
+    );
+    diags.add_at_coded(
+        crate::diagnostics::Level::Warning,
+        Some("double-move"),
+        &msg,
+        file,
+        at.line,
+        at.pos,
+    );
+    diags.fix_last(crate::diagnostics::Fix {
+        kind: crate::diagnostics::FixKind::Conditional,
+        title: "build a new value for the container".to_string(),
+        condition: Some("the container is meant to hold a resource of its own".to_string()),
+        edit: None,
+        concept: "move",
+        concept_ref: "@F106",
+    });
+    diags.fix_last(crate::diagnostics::Fix {
+        kind: crate::diagnostics::FixKind::Conditional,
+        title: "let the caller build the container from its own value".to_string(),
+        condition: Some(
+            "the caller is meant to hand its resource over — only its owner can give it away"
+                .to_string(),
+        ),
+        edit: None,
+        concept: "move",
+        concept_ref: "@F106",
+    });
+}
+
+/// The report for a `return` of a PARAMETER's member (heap.md D-heap-7 family 2): the caller
+/// still owns the member through its argument, and the caller's copy of the result owns it too.
+fn report_returned_parameter_member(
+    diags: &mut crate::diagnostics::Diagnostics,
+    name: &str,
+    parameter: bool,
+    file: &str,
+    at: &Position,
+) {
+    let whose = if parameter {
+        format!("the parameter `{name}`")
+    } else {
+        format!("`{name}`, which holds its caller's record,")
+    };
+    let msg = format!(
+        "a member of {whose} is returned here — the caller still owns that member through the \
+         argument it passed, and the caller's copy of the result releases it too, so this value \
+         is released TWICE"
+    );
+    diags.add_at_coded(
+        crate::diagnostics::Level::Warning,
+        Some("double-move"),
+        &msg,
+        file,
+        at.line,
+        at.pos,
+    );
+    diags.fix_last(crate::diagnostics::Fix {
+        kind: crate::diagnostics::FixKind::Conditional,
+        title: "return a new value".to_string(),
+        condition: Some("the result is meant to be a resource of its own".to_string()),
+        edit: None,
+        concept: "move",
+        concept_ref: "@F106",
+    });
+    diags.fix_last(crate::diagnostics::Fix {
+        kind: crate::diagnostics::FixKind::Conditional,
+        title: format!("let the caller read the member where it lives, in `{name}`'s argument"),
+        condition: Some("the caller only needs to see the value".to_string()),
+        edit: None,
+        concept: "move",
+        concept_ref: "@F106",
+    });
 }
 
 /// @PLN102 arc C step 4 — the FOLD lint (C5.2).  For every `#superseded "Y"` symbol X in loft's
@@ -5595,6 +6718,50 @@ fn copies_a_reachable_place(data: &Data, func: &Function, arg: &Value) -> bool {
     })
 }
 
+/// The call each `__lift_N` temporary holds, with the line of the statement that bound it.
+///
+/// `scopes::check` lifts an inline call argument into a `__lift_N` it binds to that call one
+/// statement before the call that uses it (`Scopes::new_lift_var`), and reserves the slot with a
+/// `Set(v, Null)` at function entry.  Only a binding to a user call counts; a temporary bound to
+/// more than one is left out, because which value reaches the call is then not one fact.
+fn lifted_call_results(
+    data: &Data,
+    code: &Value,
+    func: &Function,
+) -> HashMap<u16, (Value, Option<Position>)> {
+    // `Value::walk` is pre-order and passes through `Span`s, so a statement line reaches the
+    // visitor as the `Value::Line` just before the statement it marks.
+    let mut bound: HashMap<u16, Vec<(Value, Option<u32>)>> = HashMap::new();
+    let mut line: Option<u32> = None;
+    code.walk(&mut |n| {
+        if let Value::Line(l) = n {
+            line = Some(*l);
+        } else if let Value::Set(v, rhs) = n
+            && func.name(*v).starts_with("__lift_")
+            && let Value::Call(d, _) = rhs.unspan()
+            && !data.def(*d).name().starts_with("Op")
+        {
+            bound
+                .entry(*v)
+                .or_default()
+                .push((rhs.unspan().clone(), line));
+        }
+    });
+    bound
+        .into_iter()
+        .filter(|(_, calls)| calls.len() == 1)
+        .map(|(v, mut calls)| {
+            let (call, line) = calls.remove(0);
+            let at = line.map(|line| Position {
+                file: String::new(),
+                line,
+                pos: 0,
+            });
+            (v, (call, at))
+        })
+        .collect()
+}
+
 /// loft#894 — a write through a struct RETURNED from a function, which reaches nothing.
 ///
 /// `hurt(first(s), 10.0)` and `hurt(s.es[0] ?? E {}, 10.0)` are the same types, the same
@@ -5645,11 +6812,13 @@ pub fn warn_lost_temp_writes(
             def.position.file.as_str()
         };
         let mut found = Vec::new();
+        let lifted = lifted_call_results(data, &def.code, &def.variables);
         scan_lost_temp_writes(
             data,
             &def.variables,
             &def.code,
             &mut params,
+            &lifted,
             None,
             &mut found,
         );
@@ -5707,6 +6876,7 @@ fn scan_lost_temp_writes(
     func: &Function,
     node: &Value,
     params: &mut HashMap<u32, HashSet<u16>>,
+    lifted: &HashMap<u16, (Value, Option<Position>)>,
     at: Option<&Position>,
     out: &mut Vec<(u32, u16, Option<Position>)>,
 ) {
@@ -5724,15 +6894,28 @@ fn scan_lost_temp_writes(
                 .or_insert_with(|| write_through_params(data, *callee));
             if !written.is_empty() {
                 for (i, arg) in args.iter().enumerate() {
-                    if written.contains(&(i as u16)) && copies_a_reachable_place(data, func, arg) {
-                        out.push((*callee, i as u16, here.cloned()));
+                    // After `scopes::check` an inline call argument arrives as the `__lift_N`
+                    // bound to it one statement earlier: ask about that binding's value.
+                    let (asked, lift_at) = match arg.unspan() {
+                        Value::Var(v) => lifted
+                            .get(v)
+                            .map_or((arg, None), |(rhs, p)| (rhs, p.as_ref())),
+                        _ => (arg, None),
+                    };
+                    if written.contains(&(i as u16)) && copies_a_reachable_place(data, func, asked)
+                    {
+                        out.push((
+                            *callee,
+                            i as u16,
+                            node.span_pos().or(lift_at).or(at).cloned(),
+                        ));
                     }
                 }
             }
         }
     }
     node.for_each_child(&mut |child| {
-        scan_lost_temp_writes(data, func, child, params, here, out);
+        scan_lost_temp_writes(data, func, child, params, lifted, here, out);
     });
 }
 
@@ -5933,7 +7116,7 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
             let src_name = if r.source == u16::MAX {
                 String::new()
             } else {
-                format!(" `{}`", def.variables.name(r.source))
+                format!(" `{}`", def.variables.written_name(r.source))
             };
             let msg = if src_name.is_empty() {
                 // No named source, so no fix attaches below — this branch KEEPS its

@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1534 — a local handed to a `&integer` parameter ESCAPES the native non-sentinel
+// proof (@PLN157 P3c): the parser spells the argument `OpCreateStack(k)`, not a bare `k`,
+// and the proof's escape collector read only the bare spelling — so a local whose every
+// assignment is a literal stayed "provably non-sentinel" after a callee overflowed it to
+// null, and `k + 1` emitted as the checked non-null add answered a NUMBER
+// (-9223372036854775807) where the interpreter answers null.  The collector now reads a
+// by-reference argument through its `OpCreateStack` spelling, for the proof and for the
+// § V-ao invariant-chain memo alike.
+//
+// @falsified-at: hand-measured (2026-09-15) — on the collector before the fix (HEAD 79c57f0f's
+// `non_sentinel.rs`, rebuilt into the same tree) the first case answers
+// `r -9223372036854775807` on native, the VALUE channel, while the interpreter and
+// `LOFT_NO_NN_FAST=1` answer `r null` on that build; with the fix every case answers
+// its value on both backends.
+
+fn poison(n: &integer) { n = n * 4; }
+
+fn add_seven(n: &integer) { n = n + 7; }
+
+fn twice(n: integer) -> integer { n * 2 }
+
+fn main() {
+  // The reported shape: the callee overflows the local; the proven add must see the null.
+  k = 1;
+  k = 4611686018427387904;
+  poison(k);
+  r = k + 1;
+  assert(r == null, "1534 a proven local a callee overflowed reads null, got {r}");
+  println("1534a {r}");
+  // The same escape through a fn-ref call: the callee is unknown, so the local is
+  // never proven, and a by-VALUE argument can be written back by nobody.
+  f = twice;
+  v = 5;
+  w = f(v) + v;
+  assert(w == 15, "1534b {w}");
+  println("1534b {w}");
+  // The escape read inside a loop: the callee moves the local every iteration, so the
+  // chain over it takes no memo and the sum follows the writes.
+  m = 1;
+  s = 0;
+  for i in 0..3 { s += m * 100 + i; add_seven(m); }
+  // 100+0, 800+1, 1500+2
+  assert(s == 2403, "1534c {s}");
+  println("1534c {s}");
+}

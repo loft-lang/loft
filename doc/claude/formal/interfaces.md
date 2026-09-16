@@ -64,6 +64,14 @@ the functions visible *where the generic is used*, not where the interface was d
             fn f<T: I₁ + … + Iₖ>(…)           bounds T: only a type C with C ⊨ Iⱼ for every j may
                                               instantiate f, and inside f the body may call exactly
                                               the methods the bounds Iⱼ provide on a T value.
+            fn f<T>(h: hash<T[k]>)            REFUSED at the declaration, for every keyed former
+                                              (hash, sorted, index, spatial, trie) in a parameter
+                                              or the return: a key names a field, and T has none
+                                              until it is instantiated.
+            fn m<T>(self: vector<T>)          a method whose receiver is BUILT over T, keyed on the
+                                              receiver's former; `self: T` itself is REFUSED at the
+                                              declaration — a method is found on its receiver's
+                                              type, and T is not one.
 ```
 
 **In words.** `fn total<T: Sizable>(xs: vector<T>) -> integer` is generic over any element type
@@ -75,8 +83,10 @@ method it is allowed to call on a `T`. Multiple bounds combine with `+`.
 
 ```
   (G-Mono)   a call f(ā) with concrete argument types C̄ SPECIALISES f: the parser produces a
-             per-C̄ copy of f with [T ↦ C] applied throughout (attribute, return, and body types,
-             and every method call re-resolved to C's concrete function).  This happens ONCE, in
+             per-C̄ copy of f with [T ↦ C] applied throughout (attribute, return, and body types;
+             every CONSTANT derived from a type — a schema row, an element width, the op a
+             builtin lowers to; and every method call re-resolved to C's concrete function).
+             A method template `x.m()` specialises the same way.  This happens ONCE, in
              the parser, before backend selection — so the interpreter and `--native` receive the
              SAME specialised IR.  There is NO runtime interface value and NO dynamic dispatch.
 ```

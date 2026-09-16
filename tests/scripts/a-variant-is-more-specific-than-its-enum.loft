@@ -14,8 +14,10 @@
 //   ARMED: no instrument.
 //   WITNESS: `at(f, e)`: `any-any` there, `fire-any 8` here.  (Re-measured at step 13; the
 //   earlier receipt, at 41ce4eb62, pinned the static cells, which still hold on both trees.)
-//   HOLDS: the near-miss, the matrix with a fallback and the variant/enum/`τ?` cells answer
-//   the same on both trees; the leak channel is `none` on both.
+//   HOLDS: the near-miss, the matrix with a fallback and the variant/enum/`τ?` cells answered
+//   the same on both trees at that receipt; the leak channel is `none` on both.  (Since
+//   D-disp-2, 2026-09-15, the present `τ?` cell dispatches on its variant: an `IceWall` held
+//   at `Entity?` takes the dense `tag(e: Entity)`, which ranks above `tag(e: Entity?)`.)
 //
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
 
@@ -72,7 +74,7 @@ fn test_variant_enum_and_nullable() {
   z: Entity? = null;
   assert(tag(f) == "fire 1", "a variant takes its own definition: got {tag(f)}");
   assert(tag(w) == "any", "held at the enum, dense: got {tag(w)}");
-  assert(tag(o) == "opt-any", "held at the enum, present τ?: got {tag(o)}");
+  assert(tag(o) == "any", "held at the enum, present τ?: its variant decides, and the dense enum ranks above τ?: got {tag(o)}");
   assert(tag(z) == "opt-null", "held at the enum, null: got {tag(z)}");
 }
 

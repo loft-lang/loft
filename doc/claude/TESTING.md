@@ -1724,6 +1724,26 @@ cargo test --release --test ownership_drop_gate                            # bot
 LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate     # only after reading the diff
 ```
 
+**The lease verdicts.**  `formal/heap.md`'s copy-lease rules give every cell a verdict
+(`lease_verdict`): `Once` (every copy is a move, a view or a fresh value) or `Refused` (a copy
+whose value is still used; `D-heap-8` until the refusal exists), or `Open` naming the plan's
+question that decides it.  `every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation`
+reads both baselines and requires each `Once` cell that releases wrongly to be listed under
+exactly one OPEN deviation (`LEASE_DEVIATIONS`), and each listed cell to still fail — so a fix
+retires its cell from the list in the same commit, and a deviation closed in the register while a
+cell still measures it fails.  `the_census_names_the_copy_each_cell_makes` runs
+`LOFT_DROP_COPY_CENSUS` over every cell: a copied structure is reported from its root, a view
+reports nothing, a program with no hook reports `0 sites`, and each of the census's two verdict
+columns is held to its own hand-derived oracle.  `lease=` — the rule read off the line — refuses in
+exactly the cells `lease_verdict` refuses (201 of 276) and in no `Once` cell; `liveness=` — whether
+the copied value is used afterwards, kept for `(H-Elide)` — refuses in exactly the cells
+`liveness_verdict` refuses and never reports `unreached`.  An `item` site (a droppable placed in a
+tuple literal) is a placement the rule judges, not an emitted copy, so it is not held to a root.
+`every_emitted_copy_of_a_droppable_has_a_lease_verdict` compiles every cell with the census and
+`LOFT_COPY_MANIFEST` on, through the interpreter and the native generator, and requires every copy
+of a droppable a generator EMITS to carry a census verdict — the copies the IR never shows are
+where a refusal built on the IR alone would leak.
+
 **It can fail.**  `the_scorer_names_each_kind_of_wrong_release` feeds a hand-written trace for
 each kind, and `every_cell_is_distinct_and_mints` rejects a cell that could only ever be clean.
 Against the compiler: `LOFT_NO_FIELD_HANDOFF=1` switches one hand-off off, and the interpreter
@@ -2012,6 +2032,15 @@ or removed kept passing.  When that was measured, **56 of the 167 `@EXPECT_ERROR
 annotations in the tree were inert** (loft#929).  Both are now fatal, and the check runs
 even when the file produced NO diagnostics at all — the other way an expectation went
 unlooked-at.
+
+**An expectation claims only what it names.**  Under `loft test` / `--tests` — the path a
+library's CI takes, with `LOFT_DENY_WARNINGS=1` — an `@EXPECT_WARNING` quiets the warnings
+containing its text and nothing else: every OTHER warning in the file is printed and fails
+`--deny-warnings` exactly as in a file with no expectation.  Until C123 one expectation
+exempted the whole file from both, which is how `regex`'s test, pinning two
+`shadowed-by-method` warnings, hid the `both-receiver-deprecated` warning on its own source
+from its CI (`tests/post_scope_lints_under_tests.rs`,
+`an_expected_warning_does_not_exempt_the_other_warnings_in_its_file`).
 
 The rule is per ANNOTATION, not per file, and that distinction is the whole of it.  An
 annotation written above a `fn` binds to that function; only one written ahead of every

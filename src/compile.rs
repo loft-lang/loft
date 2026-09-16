@@ -709,7 +709,7 @@ pub fn show_captures_summary(writer: &mut dyn Write, data: &Data) -> Result<(), 
                     crate::data::Type::Single => "[4B inline Single]",
                     crate::data::Type::Boolean => "[1B inline Boolean]",
                     crate::data::Type::Character => "[4B inline Character]",
-                    crate::data::Type::Function(_, _, _) => {
+                    crate::data::Type::Function(..) => {
                         "[20B inline Function (16B fn-ref + 4B pad)]"
                     }
                     _ => "[? inline / other]",

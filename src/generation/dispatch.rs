@@ -459,7 +459,7 @@ impl Output<'_> {
                 // and a wrap around the whole `if` would leave both arms a bare `i64`.  A
                 // CAPTURING lambda already emits the pair and is not a bare `Int`, so it is
                 // untouched — which is why this hid behind the shape people write first.
-                let needs_fn_pair = matches!(inner_slot, Type::Function(_, _, _));
+                let needs_fn_pair = matches!(inner_slot, Type::Function(..));
                 if amp_owned_writeback {
                     write!(w, "{{ let _old_disp = *var_{name}; *var_{name} = ")?;
                 } else {
@@ -532,7 +532,7 @@ impl Output<'_> {
                     // `Optional` symptom the paragraph above records verbatim: no arm
                     // matched, the bind emitted no right-hand side (`let mut var_pd: … =
                     // as …;`) and rustc reported that instead of the missing case.
-                    | Type::Function(_, _, _)
+                    | Type::Function(..)
                     // A value enum is one storage byte, `u8` in the frame and in a store,
                     // so its link is a `*mut u8` like any other scalar's.  Left out, the bind
                     // emitted no right-hand side.
@@ -638,7 +638,7 @@ impl Output<'_> {
                 // while a bare fn name or a non-capturing lambda carries only the d_nr.
                 // Asked through `fn_ref_context` like the parameter write-back, so an
                 // if-VALUED source builds the pair inside each arm (loft#1454).
-                let fn_link = matches!(inner.base(), Type::Function(_, _, _));
+                let fn_link = matches!(inner.base(), Type::Function(..));
                 write!(w, "unsafe {{ *var_{name} = ")?;
                 if bool_link {
                     write!(w, "u8::from(")?;
@@ -857,6 +857,12 @@ impl Output<'_> {
             // tuple: nothing to adopt, copy, protect or displace, so its binding is the
             // plain assignment below, and the buffer argument is dropped there.
             && !self.value_records.fns.contains_key(&fn_nr)
+            // @PLN164 B1 (`@FR-O-Move`) — a plain local's FIRST bind from a callee that
+            // returns its promoted local adopts the minted store: the plain assignment
+            // below, the same emit a fresh-adopting callee's result takes.  A reassignment
+            // keeps this arm's in-place copy, as the interpreter's reassignment path does.
+            && (self.declared.contains(&var)
+                || !crate::use_analysis::adopts_minted_at_bind(self.data, variables, var, to))
         {
             let tp_nr = self.data.def(d_nr).known_type();
             let first_bind = !self.declared.contains(&var);
@@ -1602,7 +1608,7 @@ impl Output<'_> {
                 }
             } else {
                 // wrap plain Int or If-with-Int values assigned to Function vars.
-                let is_fn_ref_var = matches!(variables.tp(var), Type::Function(_, _, _));
+                let is_fn_ref_var = matches!(variables.tp(var), Type::Function(..));
                 let wrap_fn_ref = is_fn_ref_var && matches!(to, Value::Int(_));
                 if wrap_fn_ref {
                     write!(w, "(")?;

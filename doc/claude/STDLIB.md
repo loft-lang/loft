@@ -74,18 +74,17 @@ In the tables below, **N** = `integer | single | float` for general functions, a
 
 ### General (N = integer | single | float)
 
-These are **method-or-free** functions: the first parameter is the `both` dispatch marker, so
-each is callable as a method (`x.abs()`), free (`abs(x)`), or with the named form `abs(both: x)`
-(the named keyword is literally `both`, not `v`/`a` — see `exists(both:)` below).
+These are **method-or-free** functions: the first parameter is `self`, so each is callable as a
+method (`x.abs()`) or free (`abs(x)`) — the same function either way.
 
 | Function | Description |
 |----------|-------------|
-| `abs(both: N) -> N` | Absolute value. |
-| `min(both: N, b: N) -> N` | Smaller of two values. Returns null if either is null. |
-| `max(both: N, b: N) -> N` | Larger of two values. Returns null if either is null. |
-| `clamp(both: N, lo: N, hi: N) -> N` | Clamps to `[lo, hi]`. Returns null if any arg is null. |
-| `approx(both: F, b: F, eps: F) -> boolean` | True when `a`/`b` (F = single \| float) differ by ≤ `eps`. `==` on float/single is **exact IEEE** (@PLN102); use `approx` for tolerance. A null (NaN) operand → false. |
-| `floor_mod(both: integer, divisor: integer) -> integer?` | Floor modulo: the remainder that takes the sign of the **divisor**, so it lands in `[0, divisor)` for a positive `divisor`. `%` truncates and keeps the **dividend's** sign (`-1 % 3 == -1`); `floor_mod` wraps (`(-1).floor_mod(3) == 2`) — use it for circular indexing (`grid[(i - 1).floor_mod(w)]`). `floor_mod(x, 0)` is null (like `%`). Integer-only. |
+| `abs(self: N) -> N` | Absolute value. |
+| `min(self: N, b: N) -> N` | Smaller of two values. Returns null if either is null. |
+| `max(self: N, b: N) -> N` | Larger of two values. Returns null if either is null. |
+| `clamp(self: N, lo: N, hi: N) -> N` | Clamps to `[lo, hi]`. Returns null if any arg is null. |
+| `approx(self: F, b: F, eps: F) -> boolean` | True when `a`/`b` (F = single \| float) differ by ≤ `eps`. `==` on float/single is **exact IEEE** (@PLN102); use `approx` for tolerance. A null (NaN) operand → false. |
+| `floor_mod(self: integer, divisor: integer) -> integer?` | Floor modulo: the remainder that takes the sign of the **divisor**, so it lands in `[0, divisor)` for a positive `divisor`. `%` truncates and keeps the **dividend's** sign (`-1 % 3 == -1`); `floor_mod` wraps (`(-1).floor_mod(3) == 2`) — use it for circular indexing (`grid[(i - 1).floor_mod(w)]`). `floor_mod(x, 0)` is null (like `%`). Integer-only. |
 
 ### Rounding and roots (F = single | float)
 

@@ -508,6 +508,8 @@ impl Parser {
         if let Type::Iterator(inner, _) = is_type
             && !self.first_pass
         {
+            // A generator yields values, not positions: there is no `v[i]` for `x#index`.
+            self.positionless_loops.insert((self.context, iter_var));
             // A handle already in a variable is used in place.  Copying it into a `__gen`
             // temp would hand a second owner to one coroutine's state store, and the loop's
             // scope would free it out from under the variable the caller still holds.
@@ -597,7 +599,7 @@ impl Parser {
                         // `get_val(Tuple, …)` falls through the field-
                         // type dispatch and errors with "Field access
                         // not supported on type tuple([…])".
-                    } else if matches!(*vtp.clone(), Type::Function(_, _, _)) {
+                    } else if matches!(*vtp.clone(), Type::Function(..)) {
                         // @P343: vector-of-fn-ref element read.  Mirror the
                         // working index-apply path (parser/fields.rs:730-752)
                         // — vector elements store only the 4-byte d_nr, so
@@ -755,6 +757,9 @@ impl Parser {
                     // I13: custom iterator protocol — check for fn next(&T) -> Item?
                     let next_d_nr = self.data.find_fn(u16::MAX, "next", is_type);
                     if next_d_nr != u32::MAX {
+                        // A type's own `next()` yields values, not positions: there is no
+                        // `v[i]` for `x#index`.
+                        self.positionless_loops.insert((self.context, iter_var));
                         // Store the iterable in a variable so .next() has a stable target.
                         let iter_obj_var = self.create_unique("__iter_obj", is_type);
                         self.vars.defined(iter_obj_var);
@@ -1601,7 +1606,7 @@ impl Parser {
         //   * a vector element → `fn_ref_slot_dnr`, the same four-byte projection the
         //     vector literal writes, behind the same #247 capture refusal.
         if op == "="
-            && matches!(f_type.base(), Type::Function(_, _, _))
+            && matches!(f_type.base(), Type::Function(..))
             && let Some((host, pos, split)) = self.fn_ref_place(to)
         {
             // The host may be named directly (`Reference`) or through a `&` parameter
@@ -2032,7 +2037,25 @@ impl Parser {
 (it holds an internal record number, not a sequential counter); \
 use #count instead"
                 );
-                *t = Type::Unknown(0);
+                // An integer in its place, so the expression around it reports nothing more.
+                *code = Value::Int(0);
+                *t = I32.clone();
+            } else if self
+                .positionless_loops
+                .contains(&(self.context, self.vars.var(&format!("{base}#index"))))
+            {
+                // `x#index` is the position to give to `v[i]` to read the same element; a
+                // generator or a type's own `next()` yields values without one.  Refused here
+                // — the companion variable exists for every loop, so reading it compiled to an
+                // unset slot and the code generator stopped on it.
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "'{name}#index' is the position to use with v[i], and this loop walks values without positions (a generator, or a type's next()); use '{name}#count' to number them"
+                );
+                // An integer in its place, so the expression around it reports nothing more.
+                *code = Value::Int(0);
+                *t = I32.clone();
             } else {
                 let i_name = &format!("{base}#index");
                 if self.vars.name_exists(i_name) {
@@ -2105,6 +2128,30 @@ use #count instead"
                 );
                 *t = Type::Void;
                 return;
+            }
+            // loft#1540 — `#remove` deletes from the collection the loop walks, so over a
+            // value-const value it is a write through a read-only name, as `ps.remove(i)` is.
+            // Asked of the loop variable (a view the loop marked) and of the collection
+            // variable itself, because a loop over scalars marks no view.
+            if !self.first_pass {
+                let coll = self.vars.loop_coll_var(index_var);
+                let place = if let Some(p) = self.const_views.get(&(self.context, index_var)) {
+                    Some(p.clone())
+                } else if coll != u16::MAX && self.vars.exists(coll) {
+                    self.const_view_place(&Value::Var(coll), true)
+                } else {
+                    None
+                };
+                if let Some(place) = place {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot remove with '{name}#remove': the loop walks {place}, whose \
+                         value is read-only; remove 'const' there, or build a filtered copy"
+                    );
+                    *t = Type::Void;
+                    return;
+                }
             }
             // C60 Step 9: reject #remove on a SNAPSHOT walk.  The parser substitutes such
             // iteration with a scratch rec-nr vector (see parse_for, the
@@ -3279,6 +3326,8 @@ use #count instead"
             let errors_before_iterable = self.lexer.diagnostics().error_count();
             let (iter_var, pre_var, for_var, if_step, create_iter, iter_next) =
                 self.parse_for_iter_setup(&id, &src_id, &in_type, expr);
+            // loft#1540 — a loop variable over a value-const value's elements is a view of it.
+            self.mark_const_view(for_var, &orig_coll_expr, true);
             // loft#762 — `_` names THIS loop's binding while its body is parsed, and
             // the outer one again afterwards, so a later `_ = call()` keeps its own
             // slot instead of retyping the loop's.
@@ -3659,8 +3708,7 @@ use #count instead"
                     v_block(vec![Value::Break(0)], Type::Void, "break"),
                     Value::Null,
                 ));
-            } else if matches!(in_type, Type::Vector(_, _))
-                && matches!(&var_tp, Type::Function(_, _, _))
+            } else if matches!(in_type, Type::Vector(_, _)) && matches!(&var_tp, Type::Function(..))
             {
                 // @P343: a `vector<fn(...)>` loop terminates by testing the
                 // d_nr half of the loop's fn-ref (see the
@@ -4481,7 +4529,7 @@ use #count instead"
             // write the 20-byte fn-ref into per-worker output
             // slots; main thread copies bytes back via the
             // execute_at_raw_to path in run_parallel_direct.
-            let is_fn_ref = matches!(ret_type, Type::Function(_, _, _));
+            let is_fn_ref = matches!(ret_type, Type::Function(..));
             if !self.first_pass && fn_d_nr != u32::MAX && (sz == 0 || (sz > 8 && !is_fn_ref)) {
                 diagnostic!(
                     self.lexer,
@@ -4530,7 +4578,7 @@ use #count instead"
                 && let Some(n) = spec.vector_narrow_width(false)
             {
                 i32::from(n)
-            } else if matches!(elem_tp, Type::Function(_, _, _)) {
+            } else if matches!(elem_tp, Type::Function(..)) {
                 // Plan-06 phase 4d.A.2 — fn-ref vector storage is
                 // 4-byte i32 d_nr (matches `data::element_stack_size(Type::Function)`).
                 // The known_type / db_size lookup below would return
@@ -4669,7 +4717,7 @@ use #count instead"
             Type::Text(_)
                 | Type::Reference(_, _)
                 | Type::Enum(_, true, _)
-                | Type::Function(_, _, _)
+                | Type::Function(..)
                 | Type::Vector(_, _)
                 | Type::Unknown(_)
         );
@@ -4728,7 +4776,7 @@ use #count instead"
         // body substitution diverges below to emit
         // `Set(b_var, Call(buf_get_fn, [idx]))` per iteration
         // instead of inline-expanding b_var via replace_var_in_ir.
-        let early_route_fn_queue = matches!(ret_type, Type::Function(_, _, _))
+        let early_route_fn_queue = matches!(ret_type, Type::Function(..))
             && fn_d_nr != u32::MAX
             && queue_fn_d_nr != u32::MAX
             && buf_get_fn_d_nr != u32::MAX
@@ -4963,7 +5011,7 @@ use #count instead"
             Type::Text(_)
                 | Type::Reference(_, _)
                 | Type::Enum(_, true, _)
-                | Type::Function(_, _, _)
+                | Type::Function(..)
                 | Type::Vector(_, _)
                 | Type::Unknown(_)
         );
@@ -5100,7 +5148,7 @@ use #count instead"
             && queue_ref_d_nr != u32::MAX
             && buf_get_ref_d_nr != u32::MAX
             && buf_drop_ref_d_nr != u32::MAX;
-        let route_fn_queue = matches!(ret_type, Type::Function(_, _, _))
+        let route_fn_queue = matches!(ret_type, Type::Function(..))
             && fn_d_nr != u32::MAX
             && queue_fn_d_nr != u32::MAX
             && buf_get_fn_d_nr != u32::MAX
@@ -5578,7 +5626,7 @@ use #count instead"
             // `fn(T) -> U` answering `vector<U>`.  Both passes must agree on it or the
             // BINDING reports "Variable 'v' cannot change type from vector<T> to
             // vector<U>" — which is how a perfectly good `map(xs, label)` was refused.
-            if let Some(Type::Function(_, ret, _)) = types.get(1)
+            if let Some(Type::Function(_, ret, ..)) = types.get(1)
                 && !ret.is_unknown()
                 && !matches!(**ret, Type::Void)
             {
@@ -5623,7 +5671,7 @@ use #count instead"
                 // cannot change type"*).  loft#1453's other half is the same complaint about
                 // `for`, so answering it here with a fresh recovery error would be the defect it
                 // fixes.  The lambda types cleanly now, so its return is available.
-                if let Type::Function(_, ret, _) = &types[1]
+                if let Type::Function(_, ret, ..) = &types[1]
                     && !matches!(**ret, Type::Void)
                 {
                     return Type::Vector(ret.clone(), crate::data::Deps::none());
@@ -5637,7 +5685,7 @@ use #count instead"
             );
             return placeholder;
         };
-        let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, _) = &types[1] {
+        let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, ..) = &types[1] {
             (params.clone(), *ret.clone())
         } else {
             diagnostic!(
@@ -5681,6 +5729,24 @@ use #count instead"
                  the long form `fn(x: <type>) -> <ret> {{ … }}` which declares its types"
             );
             return placeholder;
+        }
+        // loft#1540 — the elements of a const collection reach the callback's parameter only when
+        // it is `const` (a short lambda over a const subject is hinted so; see `lambda_hint`'s
+        // callers).
+        if !self.first_pass
+            && let Some(consts) = types.get(1).and_then(Type::function_consts)
+            && let Some(elem_param) = fn_param_types.first()
+        {
+            let elem_param = elem_param.clone();
+            self.report_const_argument(
+                &list[0],
+                &elem_param,
+                consts.is(0),
+                crate::parser::ConstHandOff::Callback {
+                    builtin: "map",
+                    nr: 0,
+                },
+            );
         }
         // accept both static fn-refs (Value::Int) and fn-ref variables/lambdas.
         let fn_d_nr = if let Value::Int(d) = &list[1] {
@@ -5802,7 +5868,7 @@ use #count instead"
             }
             return Err(placeholder);
         };
-        let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, _) = &types[1] {
+        let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, ..) = &types[1] {
             (params.clone(), *ret.clone())
         } else {
             diagnostic!(
@@ -5827,6 +5893,24 @@ use #count instead"
                 "filter: predicate must return boolean"
             );
             return Err(placeholder);
+        }
+        // loft#1540 — the elements of a const collection reach the callback's parameter only when
+        // it is `const` (a short lambda over a const subject is hinted so; see `lambda_hint`'s
+        // callers).
+        if !self.first_pass
+            && let Some(consts) = types.get(1).and_then(Type::function_consts)
+            && let Some(elem_param) = fn_param_types.first()
+        {
+            let elem_param = elem_param.clone();
+            self.report_const_argument(
+                &list[0],
+                &elem_param,
+                consts.is(0),
+                crate::parser::ConstHandOff::Callback {
+                    builtin: "filter",
+                    nr: 0,
+                },
+            );
         }
         // accept both static fn-refs and fn-ref variables/lambdas.
         let fn_d_nr = if let Value::Int(d) = &list[1] {
@@ -6291,6 +6375,14 @@ use #count instead"
         }
     }
 
+    /// Is a collection's element type still a TYPE VARIABLE — a template's `T`, whose
+    /// placeholder is an attribute-less struct?  A builtin whose lowering is a function of the
+    /// element type ([`TV_INSERT`](Parser::TV_INSERT), [`TV_REVERSE`](Parser::TV_REVERSE))
+    /// defers itself to the monomorph there.
+    pub(crate) fn is_type_var_element(&self, elm: &Type) -> bool {
+        matches!(elm.base(), Type::Reference(d, _) if self.data.is_type_var_placeholder(*d))
+    }
+
     /// Compute the in-store byte size of a vector element type.
     pub(crate) fn element_store_size(&self, elm: &Type) -> i32 {
         let elm_td = self.data.type_elm(elm);
@@ -6413,6 +6505,14 @@ use #count instead"
             );
             return Type::Void;
         };
+        // @FR-G-Mono — the element's width, its row and its setter are all functions of the
+        // element type, and inside a template that type is still the type variable: lowered
+        // here, the monomorph kept the placeholder's width and a RECORD copy for an `integer`
+        // element (loft#1537).  Stamp the site; the monomorph lowers it through this function.
+        if self.is_type_var_element(&elm_tp) {
+            *val = v_block(list.to_vec(), types[0].clone(), Self::TV_INSERT);
+            return Type::Void;
+        }
         let elm_size = Value::Int(self.element_store_size(&elm_tp));
         let db_tp = self.type_info(&elm_tp);
         let ed_nr = self.data.type_def_nr(&elm_tp);
@@ -6517,6 +6617,11 @@ use #count instead"
             return Type::Void;
         }
         let elm_size = if let Type::Vector(elm, _) = types[0].peel_link() {
+            // The width walked is the element's: a type variable has none yet (@FR-G-Mono).
+            if self.is_type_var_element(elm) {
+                *val = v_block(list.to_vec(), types[0].clone(), Self::TV_REVERSE);
+                return Type::Void;
+            }
             self.element_store_size(elm)
         } else {
             diagnostic!(
@@ -6572,7 +6677,7 @@ use #count instead"
             }
             return None;
         };
-        if let Type::Function(params, ret, _) = &types[1] {
+        if let Type::Function(params, ret, ..) = &types[1] {
             if params.len() != 1 && !self.first_pass {
                 diagnostic!(
                     self.lexer,
@@ -6594,6 +6699,23 @@ use #count instead"
                 "{name}: second argument must be a function reference (use fn <name>)"
             );
             return None;
+        }
+        // loft#1540 — see the twin in `parse_map`.
+        if !self.first_pass
+            && let Some(fn_tp) = types.get(1)
+            && let Type::Function(params, _, _, consts) = fn_tp.base()
+            && let Some(elem_param) = params.first()
+        {
+            let (consts, elem_param) = (*consts, elem_param.clone());
+            self.report_const_argument(
+                &list[0],
+                &elem_param,
+                consts.is(0),
+                crate::parser::ConstHandOff::Callback {
+                    builtin: name,
+                    nr: 0,
+                },
+            );
         }
         // Accept both a static fn-ref (`Value::Int`) and a fn-ref VALUE (a capturing lambda
         // or a fn-ref variable); the caller picks `Call` or `CallRef` off this.

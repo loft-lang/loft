@@ -272,12 +272,49 @@ no-variant-matched tail and answered another variant's bytes on `--interpret` an
 five lines above it (loft#1427). One home answers it: `Data::receiver_def_nr`.
 
 *Anchors:* `Data::receiver_def_nr` (`src/data.rs`), its three readers in
-`src/parser/definitions.rs` (`enum_fn`, `enum_numbers`, `warn_missing_enum_variants`) and
+`src/parser/definitions.rs` (`enum_fn`, `enum_numbers`, `refuse_uncovered_variants`) and
 `one_implementation_per_variant`, which keeps a variant's DENSE overload where both are
 declared — the one a direct call takes; `tests/scripts/1427-a-nullable-receiver-implements-its-variant.loft`,
-`1427b-…`, and the warning half in `tests/parse_errors.rs`
+`1427b-…`, and the refusal half in `tests/parse_errors.rs`
 (`nullable_receiver_implements_its_variant`), which fails on the extra report a `.loft` guard
 cannot see.
+
+### One name, one body per receiver type
+
+```
+  (F-OneBody) a name has ONE body per receiver type across its two call spellings.  A `self`
+              or `both` method m(τ, …) and a plain-parameter function m(τ, …) — first
+              parameter of the same type τ, at any arity — are REFUSED at whichever is
+              declared second, in either order, within one source: `x.m(…)` would reach one
+              body and `m(x, …)` the other.  The one definition that answers both spellings
+              is the `self` method, `fn m(self: τ, …)`, in the stdlib, a library and a
+              program alike; `both` is a deprecated spelling of `self` (C123).  A plain
+              function whose first parameter has ANOTHER type (`m(q: Qt)` beside
+              `m(self: Pt)`) is an overload, kept live by its argument type.
+```
+
+**In words.** Two implementations under one name confuse any reader: when `p.doit()` and
+`doit(p)` can differ, knowing what a line does means knowing how loft resolves it (owner,
+2026-09-15).  So a program says it once.  Both spellings stay, for two programmers: `v.sin()`
+from muscle memory built in Rust, where the receiver's float width decides, and `sin(v)` for
+one who never learned that convention and should not be forced into it.  A `self` method answers
+both ((F-Recv)), and an import list reaches it by name; `both`, which once was the only spelling
+an import list could find, therefore names nothing more and is deprecated (C123).
+
+Before this was refused in both orders the free function simply went dead: `doit(p)` resolves
+the method key first, so `fn doit(self: Pt)` followed by `fn doit(p: Pt)` answered the method's
+value from both spellings with no diagnostic, and so did the opposite order.  Only a `both` method
+followed by the function was caught, because only `both` registers a bare-name dispatcher.
+
+Across SOURCES the rule is C97's: a library's plain function beside a STDLIB method of its name
+stays legal (the library is module-scoped, so the stdlib can grow) and is warned
+`shadowed-by-method`, because its bare name belongs to the stdlib; a program's function beside a
+stdlib method is this refusal (C95).  A generic template is keyed the same way, so
+`fn pick<T>(self: vector<T>)` beside `fn pick<T>(v: vector<T>)` is refused too.
+
+*Anchors:* `Data::add_fn` (`src/data.rs`, `shadowed_method` / `shadowed_free`);
+`tests/scripts/a-method-and-a-function-of-one-name-on-one-type-are-refused.loft`;
+DESIGN_DECISIONS.md C123.
 
 
 ---

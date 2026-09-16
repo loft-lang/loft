@@ -94,6 +94,24 @@ impl Parser {
     /// a value-returning fn mis-types as `fn(integer, S) -> S` and can't be used
     /// as a `fn` value.
     fn fn_ref_arg_types(&self, fn_d_nr: u32) -> Vec<Type> {
+        self.fn_ref_visible_args(fn_d_nr)
+            .into_iter()
+            .map(|a| self.data.attr_type(fn_d_nr, a))
+            .collect()
+    }
+
+    /// The `const` flags of [`Self::fn_ref_arg_types`]' parameters, in its order and under its
+    /// filter: a function value says which parameters are read-only because its signature does
+    /// (C124, formal/binding.md D-bind-45).
+    fn fn_ref_consts(&self, fn_d_nr: u32) -> crate::data::ConstParams {
+        crate::data::ConstParams::from_flags(
+            self.fn_ref_visible_args(fn_d_nr)
+                .into_iter()
+                .map(|a| self.data.def(fn_d_nr).attributes()[a].value_const),
+        )
+    }
+
+    fn fn_ref_visible_args(&self, fn_d_nr: u32) -> Vec<usize> {
         let n_args = self.data.attributes(fn_d_nr);
         // The fn-ref TYPE is the VISIBLE parameters only.  Synthetic
         // return-buffers (struct/vector `__retbuf`, the text work-buffer) are
@@ -106,7 +124,6 @@ impl Parser {
                 !self.data.def(fn_d_nr).attributes()[a].hidden
                     && !self.data.attr_name(fn_d_nr, a).starts_with("__")
             })
-            .map(|a| self.data.attr_type(fn_d_nr, a))
             .collect()
     }
 
@@ -414,12 +431,25 @@ impl Parser {
             return t;
         }
         if self.lexer.has_token("(") {
-            // @F45 — sizeof()
-            if name == "sizeof" {
+            // @F45 — sizeof() / type_name() / typedef(): the compiler's own reading of a TYPE.
+            // A program that declares a function of one of these names keeps the name: the
+            // call parses as an ordinary call, and `dispatch_call` lowers the special form only
+            // when none of the program's definitions takes the argument.  A type NAME as the
+            // argument stays the special form whatever is declared — no function takes a type.
+            let special = if matches!(name, "sizeof" | "type_name" | "typedef")
+                && (self.program_declares_fn(name)
+                    || (self.first_pass && self.file_has_pending_fn(name)))
+                && !self.next_is_type_name_argument()
+            {
+                ""
+            } else {
+                name
+            };
+            if special == "sizeof" {
                 t = self.parse_size(code);
-            } else if name == "type_name" {
+            } else if special == "type_name" {
                 t = self.parse_type_name(code);
-            } else if name == "typedef" {
+            } else if special == "typedef" {
                 let mut p = Value::Null;
                 let et = self.expression(&mut p);
                 self.lexer.token(")");
@@ -514,6 +544,7 @@ impl Parser {
                         arg_types,
                         Box::new(ret_type),
                         crate::data::Deps::none(),
+                        self.fn_ref_consts(fn_d_nr),
                     );
                 }
             }
@@ -683,6 +714,9 @@ impl Parser {
             if fnr == usize::MAX {
                 // First pass, no closure param, or field not found — placeholder variable.
                 let v_nr = self.create_var(name, &ctype);
+                if v_nr != u16::MAX && self.capture_const.contains(name) {
+                    self.vars.set_value_const(v_nr);
+                }
                 self.var_usages(v_nr, true);
                 t = ctype;
                 *code = Value::Var(v_nr);
@@ -808,8 +842,7 @@ impl Parser {
                             "`{name}` is a method on `{on}`, and a method is not a function \
                              VALUE — there is nothing to bind here. Wrap it: `|x| {{ x.{name}(…) \
                              }}`, or declare the function with a plain first-parameter name \
-                             (not `self` / `both`), which makes it a free function and a usable \
-                             fn-ref"
+                             (not `self`), which makes it a free function and a usable fn-ref"
                         );
                     } else if let Some(s) = suggestion {
                         diagnostic_at!(
@@ -835,10 +868,10 @@ impl Parser {
                     t = Type::Never;
                 }
             } else {
-                // loft#1008 — the OTHER half. A `both` receiver registers a dispatch entry
-                // under the PLAIN name (which is what makes the free-call spelling `f(x)`
-                // work), so unlike a `self` method the bare name is FOUND here — as a
-                // `Dynamic` def — and fell through to a silent null. `x = f` bound null with
+                // loft#1008 — the OTHER half. A `both` receiver (deprecated, C123) registers a
+                // dispatch entry under the PLAIN name (which is what makes the free-call
+                // spelling `f(x)` work), so unlike a `self` method the bare name is FOUND
+                // here — as a `Dynamic` def — and fell through to a silent null. `x = f` bound null with
                 // no diagnostic at all, and the error surfaced later as whatever used it
                 // ("Cannot format type null"); in a fn-ref argument it reached the call check
                 // as a bare `Value::Null` with no name attached, reported as *"expected
@@ -854,15 +887,24 @@ impl Parser {
                     if !receivers.is_empty() {
                         reported_method = true;
                         let on = receivers.join("`, `");
+                        // A fn-typed PARAMETER seeds `expected` for its argument (`parse_call`),
+                        // so there the name is being passed; anywhere else it is being bound.
+                        // A `self` method reaches this branch too since it registers its bare
+                        // name (C123), and the argument site's wording is the one it had.
+                        let verb = if matches!(self.expected.base(), Type::Function(..)) {
+                            "pass"
+                        } else {
+                            "bind"
+                        };
                         diagnostic_at!(
                             self.lexer,
                             name_pos,
                             Level::Error,
                             "`{name}` is a method on `{on}`, and a method is not a function \
-                             VALUE — there is nothing to bind here. Wrap it: `|x| {{ x.{name}(…) \
-                             }}`, or declare the function with a plain first-parameter name \
-                             (not `self` / `both`), which makes it a free function and a usable \
-                             fn-ref"
+                             VALUE — there is nothing to {verb} here. Wrap it: `|x| {{ \
+                             x.{name}(…) }}`, or declare the function with a plain \
+                             first-parameter name (not `self`), which makes it a free function \
+                             and a usable fn-ref"
                         );
                     }
                 }
@@ -967,7 +1009,12 @@ impl Parser {
                 self.record_sandbox_fn_ref(fn_d_nr); // @PLN86 L4
                 let arg_types = self.fn_ref_arg_types(fn_d_nr);
                 let ret_type = self.data.def(fn_d_nr).returned().clone();
-                t = Type::Function(arg_types, Box::new(ret_type), crate::data::Deps::none());
+                t = Type::Function(
+                    arg_types,
+                    Box::new(ret_type),
+                    crate::data::Deps::none(),
+                    self.fn_ref_consts(fn_d_nr),
+                );
             } else {
                 // @PLN22 Phase 1 — a bare name that is a VARIANT of some enum,
                 // used with no type context, is the "needs qualification" error.
@@ -1033,8 +1080,8 @@ impl Parser {
                                 "`{name}` is a method on `{on}`, and a method is not a function \
                                  VALUE — there is nothing to bind here. Wrap it: \
                                  `|x| {{ x.{name}(…) }}`, or declare the function with a plain \
-                                 first-parameter name (not `self` / `both`), which makes it a \
-                                 free function and a usable fn-ref"
+                                 first-parameter name (not `self`), which makes it a free \
+                                 function and a usable fn-ref"
                             );
                         }
                     }
@@ -4497,7 +4544,7 @@ impl Parser {
             // INLINE `Reference` (a dense embedded struct) is a different thing and stays in
             // scope: omitting one does hand back a silently zeroed record.
             if matches!(&tp, Type::Reference(_, deps) if deps.contains(&u16::MAX))
-                || matches!(tp, Type::Function(_, _, _))
+                || matches!(tp, Type::Function(..))
             {
                 continue;
             }
@@ -5168,13 +5215,23 @@ impl Parser {
                     // side last.  Old shape "Cannot write {field_type} on
                     // field {S}.{f}:{value_type}" used a colon that read
                     // as "field declared as <value_type>" — backwards.
+                    // A function type is rendered as the author spells it (`fn(const T)`), since
+                    // the `const` of a parameter can be the whole difference (loft#1540).
+                    let (got, want) = if matches!(exp_tp.base(), Type::Function(..))
+                        || matches!(td.base(), Type::Function(..))
+                    {
+                        (exp_tp.source_name(&self.data), td.source_name(&self.data))
+                    } else {
+                        (
+                            exp_tp.show(&self.data, &self.vars),
+                            td.show(&self.data, &self.vars),
+                        )
+                    };
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "Cannot assign {} to field {}.{field} of type {}",
-                        exp_tp.show(&self.data, &self.vars),
-                        self.data.def(td_nr).name(),
-                        td.show(&self.data, &self.vars)
+                        "Cannot assign {got} to field {}.{field} of type {want}",
+                        self.data.def(td_nr).name()
                     );
                 }
             }

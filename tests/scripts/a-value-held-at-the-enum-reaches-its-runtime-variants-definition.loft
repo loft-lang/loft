@@ -7,10 +7,11 @@
 // elements of a `vector<Entity>`; two dynamic positions over every ordered pair, the total
 // fallback for the pairs no definition names; a mixed site — one position held at the enum,
 // one at a variant, a struct parameter written through; a direct call on a local held at the
-// enum; and a nullable enum position, which stays static (its runtime variant is the next
-// cell).  A `self` set whose enum-level member the author wrote is D-disp-1's remainder and is
-// pinned as measured there.  Until this held, every enum-held call reached the enum-level
-// definition.
+// enum; and a nullable enum position, whose present value dispatches on its variant while a
+// null takes the static selection (D-disp-2, 2026-09-15 — the cell pinned it static until
+// then; `a-nullable-enum-argument-is-dispatched-on-its-variant.loft` is its guard).  A `self`
+// set with an enum-level member joins its enum's set (D-disp-1, closed).  Until this held,
+// every enum-held call reached the enum-level definition.
 // @falsified-at: 51395d496 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/a-value-held-at-the-enum-reaches-its-runtime-variants-definition.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 //   CHANNEL: assert — on the control (static selection only) the first dynamic cell answers
@@ -18,8 +19,9 @@
 //   ARMED: no instrument — a plain run on either backend reads it.
 //   WITNESS: on the control `tag(e)` over `[Fireball, IceWall, Crate]` answers
 //   `other 1;other 2;other 3;` where the file says `fire 1;wall 2;other 3;`.
-//   HOLDS: the nullable-position cell answers the same on both trees; the leak channel is
-//   `none` on both and does not move.
+//   HOLDS: the nullable-position cell answered the same on both trees at that receipt (it was
+//   static then; since D-disp-2 its present value answers `fire`, scored by that guard's own
+//   receipt); the leak channel is `none` on both and does not move.
 //
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
 
@@ -74,11 +76,11 @@ fn test_direct_call_on_a_local() {
   assert(tag(e) == "fire 4", "a local held at the enum: got {tag(e)}");
 }
 
-fn test_nullable_enum_position_stays_static() {
+fn test_nullable_enum_position_dispatches_on_its_variant() {
   p: Entity? = Fireball { n: 7 };
   z: Entity? = null;
-  assert(opt(p) == "opt-any", "a present Entity? takes the τ? definition: got {opt(p)}");
-  assert(opt(z) == "opt-null", "a null takes it too: got {opt(z)}");
+  assert(opt(p) == "fire", "a present Entity? takes its variant's definition: got {opt(p)}");
+  assert(opt(z) == "opt-null", "a null takes the τ? definition: got {opt(z)}");
 }
 
 fn main() {
@@ -86,5 +88,5 @@ fn main() {
   test_two_positions_over_every_pair();
   test_mixed_static_and_dynamic();
   test_direct_call_on_a_local();
-  test_nullable_enum_position_stays_static();
+  test_nullable_enum_position_dispatches_on_its_variant();
 }

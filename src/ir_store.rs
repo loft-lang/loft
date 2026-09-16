@@ -185,11 +185,12 @@ fn write_type(stores: &mut Stores, slot: &Record, ty: &Type) {
             name_list(stores, slot, ds::TYHASH_NAMES, names);
             dep_list(stores, slot, ds::TYHASH_DEP, dep);
         }
-        Type::Function(args, result, dep) => {
+        Type::Function(args, result, dep, consts) => {
             slot.set_discriminant(stores, ds::TY_FUNCTION);
             type_list(stores, slot, ds::TYFUNC_ARGS, args);
             type_child(stores, slot, ds::TYFUNC_RESULT, result);
             dep_list(stores, slot, ds::TYFUNC_DEP, dep);
+            slot.set_field_int(stores, ds::TYFUNC_CONSTS, i64::from(consts.bits()));
         }
         Type::Rewritten(inner) => {
             slot.set_discriminant(stores, ds::TY_REWRITTEN);
@@ -241,6 +242,7 @@ fn write_attribute(stores: &mut Stores, r: &Record, a: &Attribute) {
     r.set_field_bool(stores, ds::ATTR_PRIMARY, a.primary);
     r.set_field_bool(stores, ds::ATTR_HIDDEN, a.hidden);
     r.set_field_bool(stores, ds::ATTR_CONST_FIELD, a.const_field);
+    r.set_field_bool(stores, ds::ATTR_VALUE_CONST, a.value_const);
     node_child(stores, r, ds::ATTR_VALUE, &a.value);
     node_child(stores, r, ds::ATTR_CHECK, &a.check);
     node_child(stores, r, ds::ATTR_CHECK_MESSAGE, &a.check_message);
@@ -1383,6 +1385,7 @@ mod tests {
                 Deps::unknown(vec![3]),
             )),
             Deps::unknown(vec![7]),
+            crate::data::ConstParams::from_bits(0b1),
         );
 
         let root = root_type_vector(&mut stores);
@@ -1508,7 +1511,7 @@ mod tests {
             mutable: true,
             constant: false,
             const_field: true,
-            value_const: false,
+            value_const: true,
             init: false,
             nullable: true,
             primary: false,
@@ -1535,6 +1538,9 @@ mod tests {
         // @PLN40 — non-vacuous: the attr was built with const_field: true, so a broken
         // write/offset would read back false here.
         assert!(a.field_bool(&stores, ds::ATTR_CONST_FIELD));
+        // C124 — the same for value_const, built true: a function's `const` parameter must
+        // survive the store, or a cached callee refuses a legal call.
+        assert!(a.field_bool(&stores, ds::ATTR_VALUE_CONST));
         assert!(a.field_bool(&stores, ds::ATTR_NULLABLE));
         assert_eq!(a.field_int(&stores, ds::ATTR_ALIAS_D_NR), 3);
         assert_eq!(a.field_int(&stores, ds::ATTR_ASSIGNED_LAMBDA_D_NR), 99);

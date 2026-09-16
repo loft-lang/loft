@@ -314,7 +314,7 @@ impl Output<'_> {
             }
         } else if matches!(v.unspan(), Value::Null)
             && idx < def_fn.attributes().len()
-            && !matches!(def_fn.attributes()[idx].typedef, Type::Function(_, _, _))
+            && !matches!(def_fn.attributes()[idx].typedef, Type::Function(..))
         {
             // #307 — a `Value::Null` argument (a parser-filled default for
             // an omitted parameter, or an explicit `null`) renders as `()`
@@ -328,7 +328,7 @@ impl Output<'_> {
         } else {
             // wrap i32 literal into (u32, null_DbRef) for fn-ref params.
             let param_is_fnref = idx < def_fn.attributes().len()
-                && matches!(def_fn.attributes()[idx].typedef, Type::Function(_, _, _));
+                && matches!(def_fn.attributes()[idx].typedef, Type::Function(..));
             let param_is_routine = idx < def_fn.attributes().len()
                 && matches!(def_fn.attributes()[idx].typedef, Type::Routine(_));
             if param_is_fnref && matches!(v, Value::Int(_)) {
@@ -372,7 +372,7 @@ impl Output<'_> {
                                 // @PLN25 — `.base()` so a `text?` return derefs too.
                                 break matches!(
                                     self.data.def(self.def_nr).variables().tp(*vr),
-                                    Type::Function(_, ret, _) if matches!(ret.base(), Type::Text(_))
+                                    Type::Function(_, ret, ..) if matches!(ret.base(), Type::Text(_))
                                 );
                             }
                             Value::Block(b) => match b.operators.last() {
@@ -689,9 +689,7 @@ impl Output<'_> {
                 // Fn-ref parameters keep the generic path: their two-part
                 // `(d_nr, closure)` form is not a single sentinel, and the direct-call path
                 // excludes them for the same reason.
-                if matches!(vals[a_nr], Value::Null)
-                    && !matches!(a.typedef, Type::Function(_, _, _))
-                {
+                if matches!(vals[a_nr], Value::Null) && !matches!(a.typedef, Type::Function(..)) {
                     let mut buf: Vec<u8> = Vec::new();
                     Self::write_typed_null_in(&mut buf, &a.typedef, true)?;
                     let null_lit = String::from_utf8(buf).unwrap_or_else(|_| "()".to_string());
@@ -784,10 +782,9 @@ impl Output<'_> {
                     let val_is_fn_ref_tuple_elem = match vals[a_nr].unspan() {
                         Value::TupleGet(var, idx) => {
                             match self.data.def(self.def_nr).variables().tp(*var) {
-                                Type::Tuple(elems) => matches!(
-                                    elems.get(*idx as usize),
-                                    Some(Type::Function(_, _, _))
-                                ),
+                                Type::Tuple(elems) => {
+                                    matches!(elems.get(*idx as usize), Some(Type::Function(..)))
+                                }
                                 _ => false,
                             }
                         }

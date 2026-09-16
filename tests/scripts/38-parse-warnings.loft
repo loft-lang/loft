@@ -71,7 +71,7 @@ fn test_dead_assign_assert_reads() {
   assert(found, "assert counts as a read");
 }
 
-// --- Enum dispatch: missing-variant warning ---
+// --- Enum dispatch: a method only one variant has ---
 
 enum Priority {
   High { pts: integer },
@@ -81,9 +81,10 @@ enum Priority {
 fn mv_score(self: High) -> integer {
   self.pts
 }
-// (no mv_score for Low — synthesizer warns at end of first pass)
+// No `mv_score` for `Low`, and nothing calls it through `Priority`: a direct call on the
+// variant is complete as written.  A call through the enum would be refused as a `match`
+// missing `Low` (@PLN162 D-disp-1; `tests/parse_errors.rs` holds that refusal).
 
-// @EXPECT_WARNING: no implementation of 'mv_score' for variant 'Low'
 fn test_missing_variant_warning() {
   h = High { pts: 99 };
   assert(mv_score(h) == 99, "dispatch to High variant works");

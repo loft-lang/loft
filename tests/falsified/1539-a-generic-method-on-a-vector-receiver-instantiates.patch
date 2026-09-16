@@ -1,0 +1,598 @@
+diff --git b/src/data.rs a/src/data.rs
+index c26a6d655..0264824f5 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -7508,60 +7508,14 @@ impl Data {
+         // (`abs(integer)`/`abs(single)`/`abs(float)`; a same-type duplicate is caught by the mangled
+         // check below), nor when a free fn merely shares a name with a method on another receiver
+         // type (`scale(integer,…)` beside `scale(self: Vec,…)`) — arg-type dispatch keeps it live.
+-        // @FR-F-OneBody — one name has ONE body per receiver type, whichever spelling calls it:
+-        // `x.doit()` and `doit(x)` must not reach two different functions.  The method key a
+-        // first parameter of type `tp` gives this name:
+-        let receiver_key = |data: &Self, tp: &Type| -> Option<String> {
+-            let tn = data.type_def_nr(tp);
+-            (tn != u32::MAX).then(|| {
+-                Self::mangle_method(&Self::sig_type_name(&data.key_type_name(tn), tp), fn_name)
+-            })
+-        };
+-        // A plain function declared after a `self`/`both` method on its first parameter's type.
+-        // This used to be refused only when the name also had a bare-name definition — which a
+-        // `both` method registers and a `self` method does not — so `fn doit(self: Pt)` followed
+-        // by `fn doit(p: Pt)` compiled, and `doit(p)` silently ran the method.
+-        let shadowed_method = if is_both || is_self {
+-            None
+-        } else {
+-            arguments
+-                .first()
+-                .and_then(|a| receiver_key(self, &a.typedef))
+-                .map(|key| own(self, &key))
+-                .filter(|m| *m != u32::MAX)
+-        };
+-        let shadows_a_method = shadowed_method.is_some();
+-        // …and the other order: a `self`/`both` method declared after a plain function of its
+-        // name whose first parameter has the method's receiver type, as a single free
+-        // definition (`n_<name>`) or as a member of the name's overload set (`f_…`).  Nothing
+-        // asked this, so the later method took every call and the function went dead in silence.
+-        let shadowed_free = if is_both || is_self {
+-            arguments
+-                .first()
+-                .and_then(|a| receiver_key(self, &a.typedef))
+-                .and_then(|key| {
+-                    let mut candidates = vec![own(self, &format!("n_{fn_name}"))];
+-                    if o_nr != u32::MAX && self.def(o_nr).def_type == DefType::Dynamic {
+-                        candidates.extend(self.def(o_nr).attributes.iter().filter_map(|a| {
+-                            match a.typedef.base() {
+-                                Type::Routine(r) => Some(*r),
+-                                _ => None,
+-                            }
+-                        }));
+-                    }
+-                    candidates.into_iter().find(|&d| {
+-                        d != u32::MAX
+-                            && self.def(d).attributes.first().is_some_and(|p| {
+-                                p.name != "self"
+-                                    && p.name != "both"
+-                                    && receiver_key(self, &p.typedef).as_deref()
+-                                        == Some(key.as_str())
+-                            })
+-                    })
+-                })
+-        } else {
+-            None
+-        };
++        let shadows_a_method = !(is_both || is_self)
++            && arguments.first().is_some_and(|a| {
++                let tn = self.type_def_nr(&a.typedef);
++                tn != u32::MAX && {
++                    let sig = Self::sig_type_name(&self.key_type_name(tn), &a.typedef);
++                    own(self, &Self::mangle_method(&sig, fn_name)) != u32::MAX
++                }
++            });
+         // `Disp-Key` (@PLN162): the name's bare dispatcher — an overload set, from ANY source
+         // visible bare, a `use`d library's included — already carrying a definition with this
+         // FULL parameter spelling is the same collision `shadows_a_method` names for a method,
+@@ -7584,19 +7538,8 @@ impl Data {
+                             _ => false,
+                         })
+                 });
+-        if let Some(other) = shadowed_method.or(shadowed_free) {
+-            let bare = fn_name.strip_prefix("n_").unwrap_or(fn_name);
+-            diagnostic!(
+-                lexer,
+-                Level::Error,
+-                "Cannot redefine '{bare}' (already defined at {}) — a name has one body per \
+-                 receiver type, and `x.{bare}(…)` and `{bare}(x, …)` would reach different \
+-                 functions; declare it once with its first parameter named `both` to give that \
+-                 body both spellings, or rename one",
+-                self.def(other).position
+-            );
+-        } else if o_nr != u32::MAX
+-            && (self.def(o_nr).def_type != DefType::Dynamic || carried_spelling)
++        if o_nr != u32::MAX
++            && (self.def(o_nr).def_type != DefType::Dynamic || shadows_a_method || carried_spelling)
+         {
+             diagnostic!(
+                 lexer,
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index ef572fe58..5f2893212 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -6291,14 +6291,6 @@ use #count instead"
+         }
+     }
+ 
+-    /// Is a collection's element type still a TYPE VARIABLE — a template's `T`, whose
+-    /// placeholder is an attribute-less struct?  A builtin whose lowering is a function of the
+-    /// element type ([`TV_INSERT`](Parser::TV_INSERT), [`TV_REVERSE`](Parser::TV_REVERSE))
+-    /// defers itself to the monomorph there.
+-    pub(crate) fn is_type_var_element(&self, elm: &Type) -> bool {
+-        matches!(elm.base(), Type::Reference(d, _) if self.data.is_type_var_placeholder(*d))
+-    }
+-
+     /// Compute the in-store byte size of a vector element type.
+     pub(crate) fn element_store_size(&self, elm: &Type) -> i32 {
+         let elm_td = self.data.type_elm(elm);
+@@ -6421,14 +6413,6 @@ use #count instead"
+             );
+             return Type::Void;
+         };
+-        // @FR-G-Mono — the element's width, its row and its setter are all functions of the
+-        // element type, and inside a template that type is still the type variable: lowered
+-        // here, the monomorph kept the placeholder's width and a RECORD copy for an `integer`
+-        // element (loft#1537).  Stamp the site; the monomorph lowers it through this function.
+-        if self.is_type_var_element(&elm_tp) {
+-            *val = v_block(list.to_vec(), types[0].clone(), Self::TV_INSERT);
+-            return Type::Void;
+-        }
+         let elm_size = Value::Int(self.element_store_size(&elm_tp));
+         let db_tp = self.type_info(&elm_tp);
+         let ed_nr = self.data.type_def_nr(&elm_tp);
+@@ -6533,11 +6517,6 @@ use #count instead"
+             return Type::Void;
+         }
+         let elm_size = if let Type::Vector(elm, _) = types[0].peel_link() {
+-            // The width walked is the element's: a type variable has none yet (@FR-G-Mono).
+-            if self.is_type_var_element(elm) {
+-                *val = v_block(list.to_vec(), types[0].clone(), Self::TV_REVERSE);
+-                return Type::Void;
+-            }
+             self.element_store_size(elm)
+         } else {
+             diagnostic!(
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index f6659f542..13bde908d 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -18264,50 +18264,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// loft#1539 — a method call that selected a generic METHOD template (`fn head<T>(self:
+-    /// vector<T>)`, stored as `t_6vector_head`).  A template is not callable, so outside another
+-    /// template the call names its monomorph, exactly as a bare call to a free generic does in
+-    /// `parse_call`: the first pass predicts the return type so a receiving binding is typed
+-    /// (`Ok`), the second instantiates.  `Err` carries the definition to call — the monomorph,
+-    /// or the selection unchanged when it is not a template or cannot be instantiated, which
+-    /// `call_nr` then reports as before.
+-    fn generic_method_call(
+-        &mut self,
+-        val: &mut Value,
+-        md_nr: u32,
+-        types: &[Type],
+-    ) -> Result<Type, u32> {
+-        if md_nr == u32::MAX
+-            || self.data.def_type(md_nr) != DefType::Generic
+-            || self.callable_target(md_nr)
+-        {
+-            return Err(md_nr);
+-        }
+-        let name = Self::method_spelling(self.data.def(md_nr).name());
+-        if self.first_pass {
+-            let predicted = self.predict_template_return(md_nr, &name, types);
+-            if predicted.is_unknown() {
+-                return Err(md_nr);
+-            }
+-            *val = Value::Null;
+-            return Ok(predicted);
+-        }
+-        let inst = self.instantiate_template(md_nr, &name, types);
+-        Err(if inst == u32::MAX { md_nr } else { inst })
+-    }
+-
+-    /// The method a `t_<LEN><type>_<method>` key names — the spelling a call wrote.  A key of
+-    /// any other shape is answered whole.
+-    pub(crate) fn method_spelling(key: &str) -> String {
+-        key.strip_prefix("t_")
+-            .and_then(|rest| {
+-                let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+-                let len: usize = rest[..digits].parse().ok()?;
+-                rest.get(digits + len + 1..)
+-            })
+-            .map_or_else(|| key.to_string(), str::to_string)
+-    }
+-
+     /// Parse a method call's `(arg, …)` and emit it.  `hint_nr` steers how the arguments
+     /// PARSE — `Disp-Hint` (@PLN162): the one candidate the name has at this receiver, or the
+     /// attribute slot's routine — an expected collection or interpolation type, a named
+@@ -18339,11 +18295,7 @@ impl Parser {
+         let mut named_args: Vec<(String, Value, Type)> = Vec::new();
+         let mut in_named = false;
+         if self.lexer.has_token(")") {
+-            let selected = self.select_method_def(select, &types);
+-            let md_nr = match self.generic_method_call(val, selected, &types) {
+-                Ok(predicted) => return predicted,
+-                Err(md_nr) => md_nr,
+-            };
++            let md_nr = self.select_method_def(select, &types);
+             return self.call_nr(val, md_nr, &list, &types, true, &arg_pos, None);
+         }
+         loop {
+@@ -18412,11 +18364,7 @@ impl Parser {
+             }
+         }
+         self.lexer.token(")");
+-        let selected = self.select_method_def(select, &types);
+-        let md_nr = match self.generic_method_call(val, selected, &types) {
+-            Ok(predicted) => return predicted,
+-            Err(md_nr) => md_nr,
+-        };
++        let md_nr = self.select_method_def(select, &types);
+         if md_nr == u32::MAX {
+             // No callee to resolve names against — `call_with_named` would index a
+             // definition that is not there.  Hand it on unchanged; the missing method
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index e7fecb1bd..068681a4e 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -1743,63 +1743,6 @@ impl Parser {
+         } else {
+             Type::Void
+         };
+-        // @FR-G-Gen — a keyed collection over the type variable (`hash<T[key]>`) names a FIELD
+-        // of `T` as its key, and a type variable has no fields until it is instantiated, so no
+-        // monomorph can resolve it.  Refused here, where it is written: the definition used to
+-        // compile and drop out of every call's candidates, so each call reported the function
+-        // as unknown and nothing pointed at the declaration (loft#1538).
+-        if is_generic && !self.first_pass && self.cur_type_var != u32::MAX {
+-            let tv = self.cur_type_var;
+-            let keyed_over_tv = |t: &Type| {
+-                t.any_node(&mut |n| {
+-                    matches!(n.base(),
+-                        Type::Hash(d, _, _)
+-                        | Type::Sorted(d, _, _)
+-                        | Type::Index(d, _, _)
+-                        | Type::Radix(d, _, _)
+-                        | Type::Trie(d, _, _) if *d == tv)
+-                })
+-            };
+-            let at = arguments
+-                .iter()
+-                .find(|a| keyed_over_tv(&a.typedef))
+-                .map(|a| format!("parameter `{}`", a.name))
+-                .or_else(|| keyed_over_tv(&result).then(|| "the return type".to_string()));
+-            if let Some(at) = at {
+-                self.refused_templates.insert(self.context);
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "{at} is a keyed collection over the type variable {type_var_name}, and its \
+-                     key names a field that {type_var_name} does not have until it is \
+-                     instantiated — declare the collection over a concrete record type \
+-                     (`hash<Entry[key]>`)"
+-                );
+-            }
+-        }
+-        // loft#1539 — a method whose receiver IS the type variable (`fn show<T>(self: T)`) is
+-        // stored under the placeholder's key, `t_1T_show`, and a method call looks its method
+-        // up on the RECEIVER's type, so no call can ever reach it: each call reported an
+-        // unknown field of whatever it was called on.  Refused where it is written.  A
+-        // receiver built over the variable (`self: vector<T>`) is keyed on `vector` and works.
+-        let tv = self.cur_type_var;
+-        if is_generic
+-            && !self.first_pass
+-            && tv != u32::MAX
+-            && arguments.first().is_some_and(|a| {
+-                a.name == "self" && matches!(a.typedef.base(), Type::Reference(d, _) if *d == tv)
+-            })
+-        {
+-            self.refused_templates.insert(self.context);
+-            diagnostic!(
+-                self.lexer,
+-                Level::Error,
+-                "a method's receiver cannot be the type variable {type_var_name} itself — a \
+-                 method is found on the receiver's type, and {type_var_name} is not a type \
+-                 until it is instantiated; write `fn {fn_name}<{type_var_name}>(x: \
+-                 {type_var_name})` and call it as `{fn_name}(x)`"
+-            );
+-        }
+         // @PLN102 Phase 3 (N-Domain) — the domain-partial math fns are declared `-> τ?` in the
+         // stdlib (they yield the reserved null out of their real domain). When LOFT_NULLFLOW is
+         // OFF, strip the `?` so their return stays non-null and the default surface is byte-
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index a085c1398..e19cd1bdc 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -1071,9 +1071,6 @@ pub struct Parser {
+     /// loft#1023 — `(monomorph, template, bindings, concrete)` for each monomorph built
+     /// from a template whose pass-2 body had not been parsed yet.
+     pub(crate) stale_monomorphs: Vec<(u32, u32, Vec<(u32, Type)>, Type)>,
+-    /// Generic templates refused at their own declaration (loft#1538): a call to one is
+-    /// already an error the declaration names, so the call adds no second message.
+-    pub(crate) refused_templates: std::collections::HashSet<u32>,
+     /// @PLN99 Arc C — set by `convert` when it dispatches a struct/reference-returning
+     /// USER conversion (`x as T` via `fn OpConvTFromS`).  Such a conversion ALLOCATES a
+     /// fresh owned store, so its result must NOT inherit the source's deps (the reinterpret-
+@@ -1524,7 +1521,6 @@ impl Parser {
+             last_place_discharge: false,
+             pass2_bodies: std::collections::HashSet::new(),
+             stale_monomorphs: Vec::new(),
+-            refused_templates: std::collections::HashSet::new(),
+             conv_owned_result: None,
+             trace_types: false,
+             trace_types_lines: Vec::new(),
+@@ -3014,23 +3010,12 @@ impl Parser {
+     /// `n_<fn>` template exist as a `DefType::Generic`?  Only such defs are
+     /// legal pass-2-only appends of the Function kind — a source-declared
+     /// method parses in pass 1 and can never appear as a trailing pass-2 def.
+-    ///
+-    /// A METHOD template (`fn head<T>(self: vector<T>)`) is stored under its receiver's key,
+-    /// `t_6vector_head`, rather than as `n_head`, and instantiates on pass 2 the same way
+-    /// (loft#1539) — so a template of either spelling makes the name legal.
+     fn h5_names_a_generic_template(&self, name: &str) -> bool {
+         let Some((_, fn_name)) = Self::h5_split_mangled(name) else {
+             return false;
+         };
+         let g_nr = self.data.def_nr(&format!("n_{fn_name}"));
+-        if g_nr != u32::MAX && matches!(self.data.def_type(g_nr), DefType::Generic) {
+-            return true;
+-        }
+-        (0..self.data.definitions()).any(|d| {
+-            matches!(self.data.def_type(d), DefType::Generic)
+-                && Self::h5_split_mangled(self.data.def(d).name())
+-                    .is_some_and(|(_, method)| method == fn_name)
+-        })
++        g_nr != u32::MAX && matches!(self.data.def_type(g_nr), DefType::Generic)
+     }
+ 
+     /// Split `t_<LEN><Type>_<fn>` into its type name and function name.
+@@ -3864,20 +3849,12 @@ impl Parser {
+         // while a nested element registered level-COLLAPSED.  Now that
+         // `vector<vector<T>>` registers honestly, `vector_of` is the CONTAINER
+         // and passing it strode `vector_add` one level too deep.
+-        // An element with no row answers `u16::MAX`, the "no such type" sentinel, rather than
+-        // indexing the schema with it.  A template's type variable is one: `a + b` over a
+-        // `vector<T>` was an internal compiler error here while its concrete twin got the
+-        // refusal it earns.  A monomorph asks again with the concrete element.
+         i32::from(
+             self.data
+                 .vector_element_type(content, &mut self.database)
+                 .unwrap_or_else(|| {
+                     let vec_tp = self.vector_of(content);
+-                    if vec_tp == u16::MAX {
+-                        u16::MAX
+-                    } else {
+-                        self.database.content(vec_tp)
+-                    }
++                    self.database.content(vec_tp)
+                 }),
+         )
+     }
+@@ -6063,16 +6040,8 @@ impl Parser {
+             },
+             self.first_pass,
+         );
+-        // skip generic templates — they are not callable directly.  A METHOD template the
+-        // bare lookup found (`fn head<T>(self: vector<T>)` for `head(a)`) is kept aside and
+-        // instantiated: a bare call reaches a method template exactly as it reaches a concrete
+-        // `self` method ((F-Recv)), and a free template of that name on that receiver type
+-        // cannot also exist ((F-OneBody)) (loft#1539).
+-        let mut method_template = u32::MAX;
++        // skip generic templates — they are not callable directly.
+         if d_nr != u32::MAX && self.data.def(d_nr).def_type() == DefType::Generic {
+-            if self.data.def(d_nr).name().starts_with("t_") {
+-                method_template = d_nr;
+-            }
+             d_nr = u32::MAX;
+         }
+         // @PLN115 S5 — record a free-function CALL as a Global reference at its
+@@ -6120,30 +6089,13 @@ impl Parser {
+         // exactly as before).
+         if d_nr == u32::MAX {
+             if self.first_pass {
+-                let predicted = if method_template == u32::MAX {
+-                    self.predict_generic_return_type(name, types)
+-                } else {
+-                    self.predict_template_return(method_template, name, types)
+-                };
++                let predicted = self.predict_generic_return_type(name, types);
+                 if !predicted.is_unknown() {
+                     *code = Value::Null;
+                     return predicted;
+                 }
+             } else {
+-                d_nr = if method_template == u32::MAX {
+-                    self.try_generic_instantiation(name, types)
+-                } else {
+-                    self.instantiate_template(method_template, name, types)
+-                };
+-                // loft#1538 — a template refused at its declaration cannot instantiate, and
+-                // the declaration already says why; "Unknown function" here would point the
+-                // author at the call instead.  Answer the declared return, so the rest of the
+-                // expression types as written.
+-                let g_nr = self.data.def_nr(&format!("n_{name}"));
+-                if d_nr == u32::MAX && self.refused_templates.contains(&g_nr) {
+-                    *code = Value::Null;
+-                    return self.data.def(g_nr).returned().clone();
+-                }
++                d_nr = self.try_generic_instantiation(name, types);
+             }
+         }
+         // loft#824 — the receiver the type-directed builtins below dispatch on, read
+@@ -7033,13 +6985,6 @@ impl Parser {
+         if g_nr == u32::MAX || self.data.def(g_nr).def_type() != DefType::Generic {
+             return Type::Unknown(0);
+         }
+-        self.predict_template_return(g_nr, name, types)
+-    }
+-
+-    /// [`Self::predict_generic_return_type`] for the template `g_nr` itself: a free generic
+-    /// found by its `n_` name, or a METHOD template (`t_6vector_head`) that a method call
+-    /// selected (loft#1539).  `name` is the spelling the call wrote.
+-    fn predict_template_return(&mut self, g_nr: u32, name: &str, types: &[Type]) -> Type {
+         if types.is_empty() || types[0].is_unknown() {
+             return Type::Unknown(0);
+         }
+@@ -7135,14 +7080,6 @@ impl Parser {
+     /// the conversion once `T` is concrete.  The block's `result` is the target type,
+     /// which substitution rewrites to the concrete one.
+     pub(crate) const TV_NULL_BLOCK: &'static str = "tvnull";
+-    /// loft#1537 — an `insert(v, i, e)` whose element type is still a TYPE VARIABLE.  The
+-    /// width, the row and the setter are all functions of the element type, so the site is
+-    /// stamped with its three arguments and a `result` of the vector's type, and
+-    /// [`rewrite_generic_type_defaults`] lowers it through `parse_insert` once `T` is real.
+-    pub(crate) const TV_INSERT: &'static str = "tvinsert";
+-    /// A `reverse(v)` whose element type is still a TYPE VARIABLE: the width it walks is the
+-    /// element's, so it is lowered per monomorph like [`TV_INSERT`](Parser::TV_INSERT).
+-    pub(crate) const TV_REVERSE: &'static str = "tvreverse";
+ 
+     /// Specialise a generic `name` for the concrete argument types `types`, returning the
+     /// monomorph's def_nr (or `u32::MAX` when `name` names no generic).
+@@ -7161,14 +7098,6 @@ impl Parser {
+         if g_nr == u32::MAX || self.data.def(g_nr).def_type() != DefType::Generic {
+             return u32::MAX;
+         }
+-        self.instantiate_template(g_nr, name, types)
+-    }
+-
+-    /// [`Self::try_generic_instantiation`] for the template `g_nr` itself: a free generic
+-    /// found by its `n_` name, or a METHOD template (`t_6vector_head`) that a method call
+-    /// selected (loft#1539).  `name` is the spelling the call wrote, and the monomorph is
+-    /// named from it exactly as a free generic's is.
+-    fn instantiate_template(&mut self, g_nr: u32, name: &str, types: &[Type]) -> u32 {
+         if types.is_empty() || types[0].is_unknown() {
+             // First-pass argument types may be incomplete; defer the diagnostic
+             // to second pass when types are stable.  Returning MAX here is the
+@@ -7284,16 +7213,6 @@ impl Parser {
+             // 1:1 so the LEN prefix `original_name` / `find_method_receivers` parse back is
+             // still correct.
+             let safe = base.replace(['<', '>', ',', ' ', '(', ')'], "_");
+-            // loft#1539 — a METHOD template and a free template of one name on DIFFERENT
+-            // receivers (`f<T>(self: vector<T>)` beside `f<T>(x: (T, integer))`; one receiver
+-            // type is refused by (F-OneBody)) bound at the same `T` would otherwise mint ONE
+-            // name, and whichever instantiated first would answer both calls.  The marker is a
+-            // spelling no source identifier can take (`__` is the compiler's).
+-            let safe = if self.data.def(g_nr).name().starts_with("t_") {
+-                format!("__self_{safe}")
+-            } else {
+-                safe
+-            };
+             crate::data::Data::mangle_method(&safe, name)
+         };
+         // Return existing instantiation if already created.
+@@ -7576,7 +7495,7 @@ impl Parser {
+         // BEFORE the rows are retargeted: a scalar binding contributes no row mapping, so
+         // the copy left standing would keep the type variable's own row.
+         self.collapse_parametric_tuple_member_copies(d_nr);
+-        self.retarget_parametric_type_rows(d_nr, bindings, tmpl_vars);
++        self.retarget_parametric_type_rows(d_nr, bindings);
+         // loft#1040 — and lower any `par` clause the template could not: it needs the
+         // types this body now carries, so it runs after every substitution above.
+         self.expand_deferred_par(d_nr);
+@@ -8431,55 +8350,24 @@ impl Parser {
+     /// local is declared in source and re-derives its row from the substituted variable
+     /// table, whereas the compiler-built `materialized_view_return` block was constructed
+     /// once, at template parse, from the type the arm had THEN.
+-    ///
+-    /// The type variable's own row is not the only one.  A SCALAR or `text` binding has a row
+-    /// too — the element row an append or a removal carries is `integer`'s or `text`'s — and
+-    /// skipping those bindings left `OpAppendVector` and `OpRemoveVector` naming
+-    /// `__typevar_T`, whose width is zero: a divide by zero at `integer` and a slide of the
+-    /// wrong width at `text` (loft#1536).  And a type BUILT over the variable (`vector<T>`)
+-    /// was registered with a row of its own at template parse, which is just as stale.
+-    fn retarget_parametric_type_rows(
+-        &mut self,
+-        d_nr: u32,
+-        bindings: &[(u32, Type)],
+-        tmpl_vars: &Function,
+-    ) {
+-        fn note(rows: &mut Vec<(i32, i32)>, stale: i32, fresh: i32) {
+-            let none = i32::from(u16::MAX);
+-            if stale != fresh
+-                && stale != none
+-                && fresh != none
+-                && !rows.iter().any(|(s, _)| *s == stale)
+-            {
+-                rows.push((stale, fresh));
+-            }
+-        }
+-        // stale row -> fresh row: one entry per bound type variable, then one per type in the
+-        // template's variable table that is built over one.
++    fn retarget_parametric_type_rows(&mut self, d_nr: u32, bindings: &[(u32, Type)]) {
++        // stale row -> fresh row, one entry per bound type variable.
+         let mut rows: Vec<(i32, i32)> = Vec::new();
+         for (holder, bound_to) in bindings {
+             let stale = i32::from(self.data.def(*holder).known_type());
+-            // A record or enum keeps its RECORD row, which is also its element row; any other
+-            // binding answers the element row every append and removal of it is lowered with.
+             let fresh = match bound_to.base() {
+                 Type::Reference(d, _) | Type::Enum(d, _, _) => {
+                     i32::from(self.data.def(*d).known_type())
+                 }
+-                other => self.append_elem_tp(other),
++                _ => continue,
+             };
+-            note(&mut rows, stale, fresh);
+-        }
+-        for v in 0..tmpl_vars.count() {
+-            let tmpl_tp = tmpl_vars.tp(v).clone();
+-            let over_a_variable = bindings.iter().any(|(h, _)| tmpl_tp.contains_def(*h));
+-            let is_a_variable = matches!(tmpl_tp.base(),
+-                Type::Reference(d, _) if bindings.iter().any(|(h, _)| h == d));
+-            if !over_a_variable || is_a_variable {
+-                continue;
++            if stale != fresh
++                && stale != i32::from(u16::MAX)
++                && fresh != i32::from(u16::MAX)
++                && !rows.iter().any(|(s, _)| *s == stale)
++            {
++                rows.push((stale, fresh));
+             }
+-            let stale = i32::from(self.get_type(&tmpl_tp));
+-            let fresh = i32::from(self.get_type(&Self::substitute_all(tmpl_tp, bindings)));
+-            note(&mut rows, stale, fresh);
+         }
+         if rows.is_empty() {
+             return;
+@@ -8789,15 +8677,16 @@ impl Parser {
+         // ones, not this monomorph's.
+         let mut remap: HashMap<u32, u32> = HashMap::new();
+         for (t, arg_tp) in targets {
+-            // A free template is stored `n_<name>`; a METHOD template under its receiver's
+-            // key, `t_6vector_head` (loft#1539).  Both instantiate from the template itself.
+-            let key = self.data.def(t).name().to_string();
+-            let name = match key.strip_prefix("n_") {
+-                Some(free) => free.to_string(),
+-                None if key.starts_with("t_") => Self::method_spelling(&key),
+-                None => continue,
++            let Some(name) = self
++                .data
++                .def(t)
++                .name()
++                .strip_prefix("n_")
++                .map(str::to_string)
++            else {
++                continue;
+             };
+-            let inst = self.instantiate_template(t, &name, std::slice::from_ref(&arg_tp));
++            let inst = self.try_generic_instantiation(&name, std::slice::from_ref(&arg_tp));
+             if inst != u32::MAX && inst != t {
+                 remap.insert(t, inst);
+             }
+@@ -9365,27 +9254,6 @@ impl Parser {
+                     Value::Block(bl)
+                 }
+             }
+-            // @FR-G-Mono — a builtin whose lowering is a function of the ELEMENT type, deferred
+-            // by the template (`parse_insert`, `parse_reverse`).  `bl.result` came through type
+-            // substitution, so it is the CONCRETE vector type by now, and the same parse
+-            // function the concrete spelling uses lowers it — width, row and setter from one
+-            // home.  A nested generic re-stamps through that call and stays deferred.
+-            Value::Block(bl) if bl.name == Self::TV_INSERT || bl.name == Self::TV_REVERSE => {
+-                let bl = *bl;
+-                let list: Vec<Value> = bl
+-                    .operators
+-                    .into_iter()
+-                    .map(|a| self.rewrite_generic_type_defaults(a, concrete))
+-                    .collect();
+-                let types = [bl.result.clone()];
+-                let mut out = Value::Null;
+-                if bl.name == Self::TV_INSERT {
+-                    self.parse_insert(&mut out, &list, &types);
+-                } else {
+-                    self.parse_reverse(&mut out, &list, &types);
+-                }
+-                out
+-            }
+             Value::Block(bl) if bl.name == Self::TV_DEFAULT_BLOCK => {
+                 match self.monomorph_default(concrete) {
+                     Some((v, _)) => v,

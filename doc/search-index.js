@@ -239,7 +239,6 @@ const SEARCH_INDEX=[
 {name:"StackFrame",kind:"struct",url:"stdlib-stack-traces.html"},
 {name:"stack_trace",kind:"fn",url:"stdlib-stack-traces.html"},
 {name:"CoroutineStatus",kind:"enum",url:"stdlib-coroutines.html"},
-{name:"exhausted",kind:"fn",url:"stdlib-coroutines.html"},
 {name:"JsonValue",kind:"enum",url:"stdlib-json.html"},
 {name:"JsonField",kind:"struct",url:"stdlib-json.html"},
 {name:"json_parse",kind:"fn",url:"stdlib-json.html"},

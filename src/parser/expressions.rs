@@ -205,6 +205,16 @@ fn lhs_base_var(v: &Value, data: &crate::parser::Data) -> u16 {
     }
 }
 
+/// The right-hand side `code` binds to `dst`: the statement's own `Set(dst, rhs)`, found
+/// through the `Insert` a lowering may wrap it in (the last `Set` to `dst` is the bind).
+fn bound_rhs(code: &Value, dst: u16) -> Option<&Value> {
+    match code.unspan() {
+        Value::Set(v, rhs) if *v == dst => Some(rhs.as_ref()),
+        Value::Insert(ops) => ops.iter().rev().find_map(|o| bound_rhs(o, dst)),
+        _ => None,
+    }
+}
+
 /// The SUBJECT a NULL DISCHARGE was applied to — `e` in `e?`, `e ?? d`, `e ?? return` — when
 /// `v` is one, and `None` when it is not.
 ///
@@ -1319,7 +1329,7 @@ impl Parser {
                 // closures already arrive as a Block ending in
                 // `FnRef(d_nr, closure_var, _)`, so no rewrite needed.
                 if let Type::Iterator(elem_tp, _) = &r_type
-                    && matches!(**elem_tp, Type::Function(_, _, _))
+                    && matches!(**elem_tp, Type::Function(..))
                 {
                     let unspanned = v.unspan().clone();
                     if let Value::Int(d_nr) = unspanned {
@@ -2218,7 +2228,7 @@ use a separate collection or add after the loop"
         // LITERAL refuses `Holder { f: null }` outright.  Without naming the exception the
         // assignment wrote d_nr `0` and the next call through the field SIGSEGV'd
         // (loft#1072: the literal and the assignment must accept the same values).
-        if matches!(s_type, Type::Null) && !matches!(f_type.base(), Type::Function(_, _, _)) {
+        if matches!(s_type, Type::Null) && !matches!(f_type.base(), Type::Function(..)) {
             return false;
         }
         // A narrowing integer store has its OWN diagnostic further down; running
@@ -2821,6 +2831,15 @@ use a separate collection or add after the loop"
         let group_to = to.clone();
         let already = std::mem::replace(&mut self.rebind_lowered, u16::MAX);
         let tp = self.parse_assign_op_inner(code, op, f_type, to, parent_tp, var_nr, skip_validate);
+        // loft#1540 — a whole-variable bind that VIEWS a value-const value makes the variable
+        // read-only too (`mark_const_view`).
+        if op == "="
+            && let Value::Var(dst) = to.unspan()
+            && let Some(rhs) = bound_rhs(code, *dst)
+        {
+            let (dst, rhs) = (*dst, rhs.clone());
+            self.mark_const_view(dst, &rhs, false);
+        }
         self.rebind_local_heap_param(code, op, to, var_nr);
         self.rebind_lowered = already;
         self.group_reindex_after_vector_write(code, &group_to, &group_parent);
@@ -3000,6 +3019,10 @@ use a separate collection or add after the loop"
             let link = self.lexer.link();
             self.lexer.cont();
             if self.lexer.peek_token(";") {
+                // Nothing is left for the copy census to find, so tell it here (@PLN163).
+                if !self.first_pass {
+                    crate::copy_manifest::note_self_bind(self.context, *lhs, self.lexer.pos().line);
+                }
                 *code = Value::Insert(Vec::new());
                 return Type::Void;
             }
@@ -3464,7 +3487,7 @@ use a separate collection or add after the loop"
                             Type::Reference(..)
                                 | Type::Tuple(_)
                                 | Type::Text(_)
-                                | Type::Function(_, _, _)
+                                | Type::Function(..)
                         ) =>
                 {
                     Some(src)
@@ -3665,7 +3688,7 @@ use a separate collection or add after the loop"
         // path marks its `__fn_ref_tmp` the same way).
         if op == "="
             && var_nr != u16::MAX
-            && matches!(&s_type, Type::Function(_, _, _))
+            && matches!(&s_type, Type::Function(..))
             && matches!(code, Value::Block(b) if b.name == "fn_ref_field_read")
         {
             self.vars.set_skip_free(var_nr);
@@ -8375,6 +8398,88 @@ use a separate collection or add after the loop"
         true
     }
 
+    /// loft#1540 — mark `view` value-const when `source` READS it out of a value-const place,
+    /// and record what that place is, for the refusal.
+    ///
+    /// `Const-Value` makes a value read-only through its name, and plan 40's coherence rule 2
+    /// says how far that reaches: *"reading a field/element of a `const` value yields a `const`
+    /// view, so immutability can't be laundered by extracting a part"*.  A view is exactly a
+    /// bind the rules make an ALIAS: a projection (`p = ps[0]`, `q = w.p`, `(B-View)`), a `&`
+    /// link (`(B-Ref-Alias)`), and a loop variable over the value's elements
+    /// (`bare_var_views`).  A plain bind of a whole variable COPIES (`(B-Copy)`) and a call's
+    /// result is moved or copied into the local (`(O-Move)`), so neither is a view of anything:
+    /// `v2 = ps; v2 += […]` and `a = pick(ps, i); a.x = 1` stay legal.  Only a record or a
+    /// collection can be a view; a scalar or a `text` read out of one is its own copy.
+    ///
+    /// Marking the VIEW is what makes this one change rather than one per write route: every
+    /// guard that refuses a write through a value-const name (`validate_write`,
+    /// `const_write_blocked`, the closure capture, `#remove`) now refuses it through the view.
+    pub(crate) fn mark_const_view(&mut self, view: u16, source: &Value, bare_var_views: bool) {
+        if view == u16::MAX
+            || !self.vars.exists(view)
+            || !matches!(
+                self.vars.tp(view).peel_link().base(),
+                Type::Reference(_, _)
+                    | Type::Enum(_, true, _)
+                    | Type::Vector(_, _)
+                    | Type::Sorted(_, _, _)
+                    | Type::Index(_, _, _)
+                    | Type::Radix(_, _, _)
+                    | Type::Trie(_, _, _)
+                    | Type::Hash(_, _, _)
+            )
+        {
+            return;
+        }
+        let Some(place) = self.const_view_place(source, bare_var_views) else {
+            return;
+        };
+        self.vars.set_value_const(view);
+        self.const_views.insert((self.context, view), place);
+    }
+
+    /// The value-const place `source` reads out of, described for a refusal, or `None` when it
+    /// reads none — see [`Self::mark_const_view`] for which shapes count.
+    pub(crate) fn const_view_place(&self, source: &Value, bare_var_views: bool) -> Option<String> {
+        let mut node = source.unspan();
+        // The wrappers a right-hand side arrives in, and nothing else.
+        loop {
+            match node {
+                Value::Insert(ops) if ops.len() == 1 => node = ops[0].unspan(),
+                Value::Block(bl) if bl.operators.len() == 1 => node = bl.operators[0].unspan(),
+                _ => break,
+            }
+        }
+        let root = match node {
+            Value::Var(v) if bare_var_views => Some(*v),
+            Value::Call(d, args)
+                if matches!(self.data.def(*d).name(), "OpCreateStack" | "OpVarRef") =>
+            {
+                match args.first().map(Value::unspan) {
+                    Some(Value::Var(v)) => Some(*v),
+                    _ => None,
+                }
+            }
+            other => crate::use_analysis::view_source_place(&self.data, other).map(|(v, _)| v),
+        };
+        if let Some(root) = root
+            && self.vars.exists(root)
+            && self.vars.is_value_const(root)
+        {
+            if let Some(place) = self.const_views.get(&(self.context, root)) {
+                return Some(place.clone());
+            }
+            let report = self.vars.const_report_var(root);
+            return Some(format!(
+                "{} '{}'",
+                self.const_noun(report),
+                self.vars.written_name(report)
+            ));
+        }
+        self.frozen_through(node, true)
+            .map(|field| format!("value-const field '{field}'"))
+    }
+
     /// Reject a write that a `const` binding forbids, for a COMPONENT target.
     ///
     /// Enforces @FR-Const-Value where the mutation is *through* a name rather than *to*
@@ -8395,26 +8500,34 @@ use a separate collection or add after the loop"
         if !self.first_pass {
             let base = lhs_base_var(to, &self.data);
             if base != u16::MAX && self.vars.is_value_const(base) {
-                // `const_report_var` — see loft#1250.
-                let report = self.vars.const_report_var(base);
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Cannot modify {} '{}'; remove 'const' or use a local copy",
-                    self.const_noun(report),
-                    self.vars.name(report)
-                );
+                self.report_const_write(base);
             } else if let Some(frozen) = self.lhs_frozen_through(to) {
                 // @PLN40 Phase 2 — the write DEREFERENCES THROUGH a value-const field
                 // (`s.v[i]=`, `s.v.x=`, deeper): its value is read-only at every depth.
                 // A rebind/append of the field ITSELF (`s.v=` / `s.v+=`) is the outermost
                 // node — not flagged here — and is decided by the leaf-field block below.
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Cannot modify value-const field '{}'; its value is read-only",
-                    frozen
-                );
+                // loft#1540 — a closure reaches a capture through its record (`__closure_N.x`),
+                // and a capture of a read-only value is a value-const field of that record; the
+                // author wrote the captured NAME, so that is what the message names.
+                if let Some((_, captured)) = frozen
+                    .strip_prefix("__closure_")
+                    .and_then(|rest| rest.split_once('.'))
+                {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot modify '{captured}' from a closure: the value it captures is \
+                         read-only where '{captured}' is bound — change a local copy instead, or \
+                         drop the `const` that makes it read-only"
+                    );
+                } else {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot modify value-const field '{}'; its value is read-only",
+                        frozen
+                    );
+                }
             }
         }
         if let Value::Call(_, vars) = to.unspan()
@@ -8534,6 +8647,14 @@ use a separate collection or add after the loop"
     /// mirrors the leaf block's `parent_tp`→`known_type`→`Parts::Struct` field lookup,
     /// but applied at every node so an inner field's `value_const` is reachable.
     fn lhs_frozen_through(&self, to: &Value) -> Option<String> {
+        self.frozen_through(to, false)
+    }
+
+    /// [`Self::lhs_frozen_through`], with `include_leaf` also counting the OUTERMOST field.  A
+    /// READ of `w.ps` where the field `ps` is value-const hands out that field's value, so a
+    /// view bound from it is read-only (loft#1540); a WRITE to `w.ps` itself is the slot's own
+    /// rebind or append, which the leaf-field block in `validate_write` decides.
+    fn frozen_through(&self, to: &Value, include_leaf: bool) -> Option<String> {
         if self.first_pass {
             return None;
         }
@@ -8582,7 +8703,7 @@ use a separate collection or add after the loop"
                     };
                     let f_nr = fields.iter().position(|f| f.position == *pos as u16)?;
                     let attr = &self.data.def(d_nr).attributes()[f_nr];
-                    if !is_leaf && attr.value_const {
+                    if (include_leaf || !is_leaf) && attr.value_const {
                         return Some(format!("{}.{}", self.data.def(d_nr).name(), attr.name));
                     }
                     cur_type = attr.typedef.clone();

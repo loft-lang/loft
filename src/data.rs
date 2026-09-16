@@ -1348,7 +1348,7 @@ pub fn to_default(tp: &Type, data: &Data) -> Value {
         // null_DbRef)` natively — both shapes the downstream
         // `set_field_check::Type::Function` arm reduces to a 4-byte
         // d_nr=0 storage write.
-        Type::Function(_, _, _) => Value::FnRef(0, u16::MAX, Box::new(tp.clone())),
+        Type::Function(..) => Value::FnRef(0, u16::MAX, Box::new(tp.clone())),
         // Plan-06 phase 4d (P193): tuple struct fields default to
         // per-element defaults so `Pair {}` with `v: (text,
         // integer)` lands as `("", 0)`.  Recurses through nested
@@ -1449,6 +1449,93 @@ pub struct Deps {
     items: Vec<u16>,
     #[cfg(debug_assertions)]
     space: DepSpace,
+}
+
+/// Which parameters of a function TYPE are `const` (C124, formal/binding.md D-bind-45): bit `i`
+/// set means parameter `i` is value-const — a value-const argument may be handed to it, and a
+/// function standing behind the reference cannot write it.
+///
+/// Carried BESIDE the parameter types, not as a wrapper on them: plan 40 rules out a
+/// `Type::Const`, because `Type` is matched in hundreds of places that would each have to peel it.
+/// Like the dep list it is not part of a function type's SHAPE — [`Type::is_equal`] ignores it —
+/// and the one question it answers, whether a function may stand where another signature is
+/// expected, is asked in one direction by [`ConstParams::stands_for`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct ConstParams(u32);
+
+impl ConstParams {
+    /// No parameter is `const`.
+    pub const NONE: ConstParams = ConstParams(0);
+    /// A function type spells `const` on its first `LIMIT` parameters only.
+    pub const LIMIT: usize = 32;
+
+    /// The mask of a parameter list, one flag per parameter in order.  A flag past
+    /// [`Self::LIMIT`] is dropped, so such a parameter reads as plain.
+    #[must_use]
+    pub fn from_flags(flags: impl IntoIterator<Item = bool>) -> Self {
+        let mut bits = 0u32;
+        for (i, f) in flags.into_iter().enumerate() {
+            if f && i < Self::LIMIT {
+                bits |= 1 << i;
+            }
+        }
+        ConstParams(bits)
+    }
+
+    #[must_use]
+    pub fn from_bits(bits: u32) -> Self {
+        ConstParams(bits)
+    }
+
+    #[must_use]
+    pub fn bits(self) -> u32 {
+        self.0
+    }
+
+    /// Is parameter `i` declared `const`?
+    #[must_use]
+    pub fn is(self, i: usize) -> bool {
+        i < Self::LIMIT && self.0 & (1 << i) != 0
+    }
+
+    /// May a function whose parameters are `self` stand where `expected` is asked for?  Every
+    /// parameter the expected signature promises is `const` must be `const` here too, or a caller
+    /// trusting that promise hands a read-only value to a function that may write it.  The other
+    /// direction is free: a `const` parameter can take any value a plain one can.
+    #[must_use]
+    pub fn stands_for(self, expected: ConstParams) -> bool {
+        expected.0 & !self.0 == 0
+    }
+
+    /// The parameters `const` in BOTH masks: what a slot that may hold either function can
+    /// promise about a parameter.
+    #[must_use]
+    pub fn common(self, other: ConstParams) -> ConstParams {
+        ConstParams(self.0 & other.0)
+    }
+}
+
+impl Type {
+    /// loft#1540 — the `const` parameters of a function type, read through a nullable wrapper
+    /// (`@FR-N-Shape`: a `fn(…)?` is a function type too); `None` for any other type.
+    #[must_use]
+    pub fn function_consts(&self) -> Option<ConstParams> {
+        match self.base() {
+            Type::Function(.., consts) => Some(*consts),
+            _ => None,
+        }
+    }
+
+    /// This type with its function `const` parameters replaced — a nullable function stays
+    /// nullable — and any other type unchanged.  The one way a join sets the mask it decided.
+    #[must_use]
+    pub fn with_function_consts(&self, consts: ConstParams) -> Type {
+        match self {
+            Type::Optional(inner) => Type::optional(inner.with_function_consts(consts)),
+            Type::Function(p, r, d, _) => Type::Function(p.clone(), r.clone(), d.clone(), consts),
+            other => other.clone(),
+        }
+    }
 }
 
 impl PartialEq for Deps {
@@ -1844,7 +1931,7 @@ pub enum Type {
     Hash(u32, Vec<String>, Deps), // @F7 — hash<T[keys]> keyed collection
     /// A function reference allowing for closures. Argument types, result, and deps.
     /// The dep list tracks ownership of the closure record embedded in the fn-ref slot.
-    Function(Vec<Type>, Box<Type>, Deps),
+    Function(Vec<Type>, Box<Type>, Deps, ConstParams),
     /// A rewritten type into append statements (mostly Text or structures)
     Rewritten(Box<Type>),
     /// T1.1: stack-allocated fixed-arity compound type, e.g. `(integer, text)`.
@@ -1911,7 +1998,7 @@ impl Type {
             // was inert in practice (measured: it changed nothing across 1210 corpus
             // scripts) and became a fault the moment the text-return promotion started
             // tagging that list correctly.
-            Type::Function(_args, _ret, d) => {
+            Type::Function(_args, _ret, d, ..) => {
                 d.renumber_frame(from, to);
             }
             Type::RefVar(inner) | Type::Rewritten(inner) | Type::Optional(inner) => {
@@ -2138,7 +2225,7 @@ impl Type {
                 f(a);
                 f(b);
             }
-            Type::Function(args, ret, _) => {
+            Type::Function(args, ret, ..) => {
                 args.iter().for_each(&mut *f);
                 f(ret);
             }
@@ -2194,10 +2281,11 @@ impl Type {
             // PAIR to decide a generator's yield channel — a step rewritten without its
             // state leaves the accessor on the 12-byte DbRef channel for an 8-byte scalar.
             Type::Iterator(a, b) => Type::Iterator(Box::new(f(a)), Box::new(f(b))),
-            Type::Function(args, ret, deps) => Type::Function(
+            Type::Function(args, ret, deps, consts) => Type::Function(
                 args.iter().map(&mut *f).collect(),
                 Box::new(f(ret)),
                 deps.clone(),
+                *consts,
             ),
             Type::Tuple(ts) => Type::Tuple(ts.iter().map(&mut *f).collect()),
             // Leaves — def-nr heads carry no child `Type`.
@@ -2242,7 +2330,7 @@ impl Type {
             (Type::Iterator(a1, a2), Type::Iterator(b1, b2)) => {
                 Some(vec![(&**a1, &**b1), (&**a2, &**b2)])
             }
-            (Type::Function(a_args, a_ret, _), Type::Function(b_args, b_ret, _)) => {
+            (Type::Function(a_args, a_ret, ..), Type::Function(b_args, b_ret, ..)) => {
                 (a_args.len() == b_args.len()).then(|| {
                     a_args
                         .iter()
@@ -2355,7 +2443,7 @@ impl Type {
             // and correct when a caller does arrive, which is the only ordering that does not
             // require someone to debug the no-op first.  `dep_faces_agree` is the gate.
             Type::Text(to)
-            | Type::Function(_, _, to)
+            | Type::Function(_, _, to, ..)
             | Type::Reference(_, to)
             | Type::Enum(_, _, to)
             | Type::Vector(_, to)
@@ -2442,8 +2530,8 @@ impl Type {
             Type::Hash(t, keys, _) => Type::Hash(*t, keys.clone(), Deps::none()),
             Type::Sorted(t, keys, _) => Type::Sorted(*t, keys.clone(), Deps::none()),
             Type::Vector(t, _) => Type::Vector(Box::new(t.without_deps()), Deps::none()),
-            Type::Function(params, ret, _) => {
-                Type::Function(params.clone(), ret.clone(), Deps::none())
+            Type::Function(params, ret, _, consts) => {
+                Type::Function(params.clone(), ret.clone(), Deps::none(), *consts)
             }
             Type::RefVar(tp) => Type::RefVar(Box::new(tp.without_deps())),
             Type::Optional(tp) => Type::optional(tp.without_deps()),
@@ -2498,7 +2586,9 @@ impl Type {
             Type::Hash(t, keys, _) => Type::Hash(*t, keys.clone(), v),
             Type::Sorted(t, keys, _) => Type::Sorted(*t, keys.clone(), v),
             Type::Vector(t, _) => Type::Vector(t.clone(), v),
-            Type::Function(params, ret, _) => Type::Function(params.clone(), ret.clone(), v),
+            Type::Function(params, ret, _, consts) => {
+                Type::Function(params.clone(), ret.clone(), v, *consts)
+            }
             Type::RefVar(tp) => Type::RefVar(Box::new(tp.with_deps(deps))),
             Type::Optional(tp) => Type::optional(tp.with_deps(deps)),
             Type::Tuple(elems) => Type::Tuple(elems.iter().map(|e| e.with_deps(deps)).collect()),
@@ -2629,7 +2719,7 @@ impl Type {
             | Type::Sorted(_, _, dep)
             | Type::Enum(_, _, dep)
             | Type::Vector(_, dep)
-            | Type::Function(_, _, dep) => Some(dep),
+            | Type::Function(_, _, dep, ..) => Some(dep),
             // @PLN25 — `Optional` is dep-transparent (see `depending`).
             Type::RefVar(tp) | Type::Optional(tp) => tp.deps_ref(),
             _ => None,
@@ -2653,7 +2743,7 @@ impl Type {
             | Type::Sorted(_, _, dep)
             | Type::Enum(_, _, dep)
             | Type::Vector(_, dep)
-            | Type::Function(_, _, dep) => v.append(&mut dep.clone()),
+            | Type::Function(_, _, dep, ..) => v.append(&mut dep.clone()),
             // @PLN25 — `Optional` is dep-transparent (see `depending`).
             Type::RefVar(tp) | Type::Optional(tp) => return tp.depend(),
             // P197: a tuple's effective dependencies are the union of
@@ -2712,7 +2802,7 @@ impl Type {
         // wrongly reports two structurally-identical fn-refs as different
         // (e.g. the @P344 loop-var reuse check fired on `for f in a {…}` then
         // `for f in b {…}` even though both are `fn(integer)->integer`).
-        if let (Type::Function(sp, sr, _), Type::Function(op, or, _)) = (self, other) {
+        if let (Type::Function(sp, sr, ..), Type::Function(op, or, ..)) = (self, other) {
             return sp.len() == op.len()
                 && sp.iter().zip(op.iter()).all(|(a, b)| a.is_equal(b))
                 && sr.is_equal(or);
@@ -2761,7 +2851,7 @@ impl Type {
             (Type::Trie(r, rf, _), Type::Trie(o, of, _)) => return r == o && rf == of,
             (Type::Sorted(r, rf, _), Type::Sorted(o, of, _))
             | (Type::Index(r, rf, _), Type::Index(o, of, _)) => return r == o && rf == of,
-            (Type::Function(sp, sr, _), Type::Function(op, or, _)) => {
+            (Type::Function(sp, sr, ..), Type::Function(op, or, ..)) => {
                 return sp.len() == op.len()
                     && sp.iter().zip(op.iter()).all(|(a, b)| a.is_equal(b))
                     && sr.is_equal(or);
@@ -2967,10 +3057,18 @@ impl Type {
                     .join(", ");
                 format!("({inner})")
             }
-            Type::Function(params, ret, _) => {
+            Type::Function(params, ret, _, consts) => {
                 let p = params
                     .iter()
-                    .map(|t| t.render(data, source))
+                    .enumerate()
+                    .map(|(i, t)| {
+                        let r = t.render(data, source);
+                        if consts.is(i) {
+                            format!("const {r}")
+                        } else {
+                            r
+                        }
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
                 if matches!(ret.as_ref(), Type::Void) {
@@ -3168,7 +3266,7 @@ pub fn element_stack_align(t: &Type) -> u8 {
         // `OpVarFnRef`'s `[u8; 20]` read: 8 B d_nr (i64) + 12 B
         // closure DbRef.  The d_nr's i64 alignment dictates the
         // overall slot alignment.
-        Type::Function(_, _, _) => 8,
+        Type::Function(..) => 8,
         Type::Integer(_) | Type::Float => 8,
         Type::Text(_) => 4,
         Type::Reference(_, _)
@@ -3211,7 +3309,7 @@ pub fn element_stack_size(t: &Type) -> usize {
         // `OpVarFnRef`'s `[u8; 20]` read.  Pre-fix returned 4, which
         // truncated tuple-stored closures and produced garbage on
         // call.
-        Type::Function(_, _, _) => 20,
+        Type::Function(..) => 20,
         Type::Integer(_) | Type::Float => 8,
         Type::Text(_) => std::mem::size_of::<crate::keys::Str>(),
         Type::Reference(_, _)
@@ -3275,7 +3373,7 @@ pub fn element_storage_size(t: &Type) -> usize {
         // figure is the STACK slot (8B d_nr + 12B closure DbRef), which `get_val`
         // reconstructs from these two halves.  Reserving only 4 truncates the
         // closure half and the fn-ref reads back wrong.
-        Type::Function(_, _, _) => 8,
+        Type::Function(..) => 8,
         other => element_stack_size(other),
     }
 }
@@ -3374,7 +3472,7 @@ pub fn stored_tuple_offsets(
 #[must_use]
 pub fn tuple_carries_fn_ref(tp: &Type) -> bool {
     match tp.base() {
-        Type::Function(_, _, _) => true,
+        Type::Function(..) => true,
         Type::Tuple(inner) => inner.iter().any(tuple_carries_fn_ref),
         _ => false,
     }
@@ -3446,7 +3544,12 @@ mod dep_faces_agree {
             ("Trie", Type::Trie(1, String::new(), d())),
             (
                 "Function",
-                Type::Function(Vec::new(), Box::new(Type::Void), d()),
+                Type::Function(
+                    Vec::new(),
+                    Box::new(Type::Void),
+                    d(),
+                    crate::data::ConstParams::NONE,
+                ),
             ),
         ]
     }
@@ -3570,9 +3673,10 @@ mod renumber_frame_deps_tests {
             vec![text(vec![2])],
             Box::new(text(vec![2])),
             Deps::frame(vec![2]),
+            crate::data::ConstParams::NONE,
         );
         f.renumber_frame_deps(2, 99);
-        let Type::Function(args, ret, d) = &f else {
+        let Type::Function(args, ret, d, ..) = &f else {
             panic!()
         };
         assert_eq!(
@@ -4803,7 +4907,7 @@ impl Definition {
             match site.unspan() {
                 Value::CallRef(v_nr, _)
                     if vars.is_argument(*v_nr)
-                        && matches!(vars.tp(*v_nr).base(), Type::Function(_, _, _)) =>
+                        && matches!(vars.tp(*v_nr).base(), Type::Function(..)) =>
                 {
                     slots.push(*v_nr);
                 }
@@ -4879,7 +4983,7 @@ impl Definition {
         self.return_sites().iter().any(|site| {
             matches!(site.unspan(), Value::CallRef(v_nr, _)
                 if vars.is_argument(*v_nr)
-                    && matches!(vars.tp(*v_nr).base(), Type::Function(_, _, _)))
+                    && matches!(vars.tp(*v_nr).base(), Type::Function(..)))
         })
     }
 
@@ -5436,10 +5540,7 @@ pub fn ref_tuple_element_ok(tp: &Type) -> bool {
 /// nested tuple.  Those stay refused, and the refusal names them (tuples.md T-Ref-El).
 #[must_use]
 pub fn ref_tuple_record_element_ok(tp: &Type) -> bool {
-    !matches!(
-        tp,
-        Type::Optional(_) | Type::Function(_, _, _) | Type::Tuple(_)
-    )
+    !matches!(tp, Type::Optional(_) | Type::Function(..) | Type::Tuple(_))
 }
 
 /// `@FR-N-Opt`'s side condition: does τ have a value to spend on ABSENCE?
@@ -5468,7 +5569,7 @@ pub fn ref_tuple_record_element_ok(tp: &Type) -> bool {
 /// type nothing downstream expects.
 #[must_use]
 pub fn has_null(tp: &Type) -> bool {
-    !matches!(tp.base(), Type::Function(_, _, _) | Type::Tuple(_))
+    !matches!(tp.base(), Type::Function(..) | Type::Tuple(_))
 }
 
 /// Should a rule that CONSTRUCTS a `τ?` actually wrap this τ — the CODE's answer, which differs
@@ -5835,7 +5936,7 @@ impl Data {
         // `database.int(0, false)` (Parts::Int with `size = 4`)
         // makes `vector_append` step through the storage in 4-byte
         // increments, matching `OpSetInt4`'s narrow writes.
-        if matches!(content, Type::Function(_, _, _)) {
+        if matches!(content, Type::Function(..)) {
             return Some(database.int(0, false));
         }
         None
@@ -6975,7 +7076,7 @@ impl Data {
             | Type::Trie(_, _, _)
             | Type::Optional(_)
             | Type::Null
-            | Type::Function(_, _, _)
+            | Type::Function(..)
             | Type::Enum(_, _, _) => Ok(()),
             Type::Tuple(elems) => {
                 for e in elems {
@@ -7243,7 +7344,7 @@ impl Data {
     /// attribute labelled by its spelling.  A free incumbent is re-keyed from `n_<name>` to
     /// its full spelling, so the name offers no parse hint (`Disp-Hint`) and the sites that
     /// read `n_<name>` as THE definition find none, exactly as they do for a `both` name.
-    fn admit_overload_set(&mut self, lexer: &mut Lexer, fn_name: &str, incumbent: u32) {
+    pub(crate) fn admit_overload_set(&mut self, lexer: &mut Lexer, fn_name: &str, incumbent: u32) {
         let mut main = self.def_nr(fn_name);
         if main == u32::MAX {
             main = self.add_def(fn_name, lexer.pos(), DefType::Dynamic);
@@ -7278,6 +7379,28 @@ impl Data {
         let a_nr = self.add_attribute(lexer, main, &label, Type::Routine(incumbent));
         self.definitions[main as usize].attributes[a_nr].mutable = false;
         self.definitions[main as usize].attributes[a_nr].constant = true;
+    }
+
+    /// The refusal of a definition whose name `winner` already holds.  A program's function
+    /// under a standard-library FREE function's name (`n_…`) says so — that name is reserved for
+    /// the standard library, whatever the parameters — rather than reading as a duplicate of the
+    /// program's own.  Every other collision keeps naming where the first definition is
+    /// (loft#863), a standard-library METHOD set among them: C95 refuses a free function there
+    /// only for the method's own first-parameter type, so "reserved whatever the parameters"
+    /// would be false for it.
+    fn redefinition_text(&self, lexer: &Lexer, winner: u32, fn_name: &str) -> String {
+        let name = fn_name.strip_prefix("n_").unwrap_or(fn_name);
+        let at = &self.def(winner).position;
+        if self.def(winner).name.starts_with("n_")
+            && crate::portable_path::is_stdlib_source(&at.file)
+            && !crate::portable_path::is_stdlib_source(&lexer.pos().file)
+        {
+            format!(
+                "`{name}` is a standard-library function, and its name is reserved for it: a program cannot define its own `{name}` (the standard library's is at {at}); choose another name"
+            )
+        } else {
+            format!("Cannot redefine '{name}' (already defined at {at})")
+        }
     }
 
     /// One overload as a reader sees it, `name(τ₁, τ₂)` over its declared parameters — the
@@ -7508,14 +7631,60 @@ impl Data {
         // (`abs(integer)`/`abs(single)`/`abs(float)`; a same-type duplicate is caught by the mangled
         // check below), nor when a free fn merely shares a name with a method on another receiver
         // type (`scale(integer,…)` beside `scale(self: Vec,…)`) — arg-type dispatch keeps it live.
-        let shadows_a_method = !(is_both || is_self)
-            && arguments.first().is_some_and(|a| {
-                let tn = self.type_def_nr(&a.typedef);
-                tn != u32::MAX && {
-                    let sig = Self::sig_type_name(&self.key_type_name(tn), &a.typedef);
-                    own(self, &Self::mangle_method(&sig, fn_name)) != u32::MAX
-                }
-            });
+        // @FR-F-OneBody — one name has ONE body per receiver type, whichever spelling calls it:
+        // `x.doit()` and `doit(x)` must not reach two different functions.  The method key a
+        // first parameter of type `tp` gives this name:
+        let receiver_key = |data: &Self, tp: &Type| -> Option<String> {
+            let tn = data.type_def_nr(tp);
+            (tn != u32::MAX).then(|| {
+                Self::mangle_method(&Self::sig_type_name(&data.key_type_name(tn), tp), fn_name)
+            })
+        };
+        // A plain function declared after a `self`/`both` method on its first parameter's type.
+        // This used to be refused only when the name also had a bare-name definition — which a
+        // `both` method registers and a `self` method does not — so `fn doit(self: Pt)` followed
+        // by `fn doit(p: Pt)` compiled, and `doit(p)` silently ran the method.
+        let shadowed_method = if is_both || is_self {
+            None
+        } else {
+            arguments
+                .first()
+                .and_then(|a| receiver_key(self, &a.typedef))
+                .map(|key| own(self, &key))
+                .filter(|m| *m != u32::MAX)
+        };
+        let shadows_a_method = shadowed_method.is_some();
+        // …and the other order: a `self`/`both` method declared after a plain function of its
+        // name whose first parameter has the method's receiver type, as a single free
+        // definition (`n_<name>`) or as a member of the name's overload set (`f_…`).  Nothing
+        // asked this, so the later method took every call and the function went dead in silence.
+        let shadowed_free = if is_both || is_self {
+            arguments
+                .first()
+                .and_then(|a| receiver_key(self, &a.typedef))
+                .and_then(|key| {
+                    let mut candidates = vec![own(self, &format!("n_{fn_name}"))];
+                    if o_nr != u32::MAX && self.def(o_nr).def_type == DefType::Dynamic {
+                        candidates.extend(self.def(o_nr).attributes.iter().filter_map(|a| {
+                            match a.typedef.base() {
+                                Type::Routine(r) => Some(*r),
+                                _ => None,
+                            }
+                        }));
+                    }
+                    candidates.into_iter().find(|&d| {
+                        d != u32::MAX
+                            && self.def(d).attributes.first().is_some_and(|p| {
+                                p.name != "self"
+                                    && p.name != "both"
+                                    && receiver_key(self, &p.typedef).as_deref()
+                                        == Some(key.as_str())
+                            })
+                    })
+                })
+        } else {
+            None
+        };
         // `Disp-Key` (@PLN162): the name's bare dispatcher — an overload set, from ANY source
         // visible bare, a `use`d library's included — already carrying a definition with this
         // FULL parameter spelling is the same collision `shadows_a_method` names for a method,
@@ -7538,16 +7707,22 @@ impl Data {
                             _ => false,
                         })
                 });
-        if o_nr != u32::MAX
-            && (self.def(o_nr).def_type != DefType::Dynamic || shadows_a_method || carried_spelling)
-        {
+        if let Some(other) = shadowed_method.or(shadowed_free) {
+            let bare = fn_name.strip_prefix("n_").unwrap_or(fn_name);
             diagnostic!(
                 lexer,
                 Level::Error,
-                "Cannot redefine '{}' (already defined at {})",
-                fn_name.strip_prefix("n_").unwrap_or(fn_name),
-                self.def(o_nr).position
+                "Cannot redefine '{bare}' (already defined at {}) — a name has one body per \
+                 receiver type, and `x.{bare}(…)` and `{bare}(x, …)` would reach different \
+                 functions; declare it once as a `self` method, which takes both spellings, or \
+                 rename one",
+                self.def(other).position
             );
+        } else if o_nr != u32::MAX
+            && (self.def(o_nr).def_type != DefType::Dynamic || carried_spelling)
+        {
+            let text = self.redefinition_text(lexer, o_nr, fn_name);
+            diagnostic!(lexer, Level::Error, "{text}");
         }
         // loft#940 — the C97 residual on the FREE-function side, and the only silent corner of
         // the three. `find_fn` resolves the METHOD spelling `t_<sig>_<name>` before the free
@@ -7677,13 +7852,8 @@ impl Data {
             // Without it a stdlib collision read as a bare "Cannot redefine 'sum'", which
             // does not say that `sum` is the stdlib's rather than a duplicate of the
             // reader's own (loft#863).
-            diagnostic!(
-                lexer,
-                Level::Error,
-                "Cannot redefine '{}' (already defined at {})",
-                fn_name.strip_prefix("n_").unwrap_or(fn_name),
-                self.def(d_nr).position
-            );
+            let text = self.redefinition_text(lexer, d_nr, fn_name);
+            diagnostic!(lexer, Level::Error, "{text}");
             // Report and CONTINUE, under a name nothing can reach.  Answering `u32::MAX`
             // here made `parse_function` return `false` — "this was not a function" —
             // with the lexer parked between the parameter list and the `->`, so the
@@ -7706,6 +7876,11 @@ impl Data {
         for a in arguments {
             let a_nr = self.add_attribute(lexer, d_nr, &a.name, a.typedef.clone());
             self.set_attr_value(d_nr, a_nr, a.default.clone());
+            // C124 — the `const` of a parameter is also a fact about the SIGNATURE, read at every
+            // call: a value-const value reaches only a `const` parameter.  Carried on
+            // `value_const`, never on `mutable`/`constant` (the note below), because a native
+            // declaration has no variable table to carry it and the store serialises this one.
+            self.definitions[d_nr as usize].attributes[a_nr].value_const = a.constant;
             // Note: Argument.constant (the `const` keyword on a parameter) is enforced at the
             // parser level via Variable.const_param — NOT by setting Attribute.mutable = false
             // here. Setting mutable = false for a user-defined function parameter would cause
@@ -8908,6 +9083,22 @@ impl Data {
         self.def_nr(&key)
     }
 
+    /// Is `d_nr` a function a drop site calls: a type's own `OpDrop` hook, its `OpDropAll` cascade,
+    /// or the skip-capable `OpDropAllExcept`?  The reverse of [`Self::drop_hook_nr`],
+    /// [`Self::drop_cascade_nr`] and [`Self::drop_cascade_except_nr`], spelled with the same method
+    /// names they mangle.
+    #[must_use]
+    pub fn is_drop_function(&self, d_nr: u32) -> bool {
+        if d_nr == u32::MAX || d_nr as usize >= self.definitions.len() {
+            return false;
+        }
+        let def = self.def(d_nr);
+        def.def_type == DefType::Function
+            && ["_OpDrop", "_OpDropAll", "_OpDropAllExcept"]
+                .iter()
+                .any(|m| def.name.ends_with(m))
+    }
+
     /// Does this program declare ANY `OpDrop`?
     ///
     /// The cheap gate in front of the whole cascade: with no hook anywhere, no type can own
@@ -9648,8 +9839,31 @@ impl Data {
             .get(&(fn_key, lib_source))
             .copied()
             .filter(|&d| self.definitions[d as usize].pub_visible);
-        if found_plain.is_none() && found_fn.is_none() {
+        // C123 — a `self` method is filed under its receiver's key, `t_<LEN><Type>_<name>`,
+        // and has no bare-name definition for an import list to find.  Import every public
+        // method of that name the library declares, each under its own key — exactly what a
+        // wildcard `use lib::*` already brings in — so after `use lib::(twice)` both
+        // `twice(b)` and `b.twice()` resolve by the receiver, as they do after the wildcard.
+        // A method's name is part of its key, so it cannot be imported under an alias.
+        let methods: Vec<(String, u32)> = if bind == name {
+            self.def_names
+                .iter()
+                .filter(|((key, src), d)| {
+                    *src == lib_source
+                        && self.definitions[**d as usize].pub_visible
+                        && Self::method_name_of_key(key) == Some(name)
+                })
+                .map(|((key, _), &d)| (key.clone(), d))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if found_plain.is_none() && found_fn.is_none() && methods.is_empty() {
             return false;
+        }
+        for (key, def_nr) in methods {
+            self.note_ambiguity(&key, into_source, def_nr);
+            self.def_names.entry((key, into_source)).or_insert(def_nr);
         }
         if let Some(def_nr) = found_plain {
             self.note_ambiguity(bind, into_source, def_nr);
@@ -9664,6 +9878,15 @@ impl Data {
                 .or_insert(def_nr);
         }
         true
+    }
+
+    /// The method a `t_<LEN><Type>_<method>` key files, or `None` for a key of any other
+    /// shape — a free function, a type, a bound stub.
+    fn method_name_of_key(key: &str) -> Option<&str> {
+        let rest = key.strip_prefix("t_")?;
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        let len: usize = rest[..digits].parse().ok()?;
+        rest.get(digits + len..)?.strip_prefix('_')
     }
 
     /// Variant of [`import_all`] that **overwrites** forward-reference stubs
@@ -9831,7 +10054,7 @@ impl Data {
                     None
                 }
             }
-            Type::Function(args, ret, deps) => {
+            Type::Function(args, ret, deps, consts) => {
                 let mut changed = false;
                 let new_args: Vec<Type> = args
                     .iter()
@@ -9849,6 +10072,7 @@ impl Data {
                         new_args,
                         Box::new(new_ret_opt.unwrap_or_else(|| (**ret).clone())),
                         deps.clone(),
+                        *consts,
                     ))
                 } else {
                     None
@@ -10161,7 +10385,7 @@ impl Data {
             // a type alias for `integer size(4)` in `default/01_code.loft`)
             // so the vector storage path treats fn-ref vectors
             // identically to `vector<i32>`.
-            Type::Function(_, _, _) => self.def_nr("i32"),
+            Type::Function(..) => self.def_nr("i32"),
             _ => u32::MAX,
         }
     }
@@ -10230,7 +10454,7 @@ impl Data {
             // Plan-06 phase 4d.A.2 — fn-ref element types route to
             // `i32` (4-byte int alias) so vector storage is flat.
             // Same lookup as `type_def_nr`'s Function arm.
-            Type::Function(_, _, _) => self.def_nr("i32"),
+            Type::Function(..) => self.def_nr("i32"),
             _ => u32::MAX,
         }
     }
@@ -10259,7 +10483,7 @@ impl Data {
             Type::Index(d_nr, _, _) => format!("index<{}>", self.def(*d_nr).name),
             Type::Hash(d_nr, _, _) => format!("hash<{}>", self.def(*d_nr).name),
             Type::Routine(_) => "fn".to_string(),
-            Type::Function(args, ret, _) => {
+            Type::Function(args, ret, ..) => {
                 let args_s: Vec<String> = args.iter().map(|a| self.type_name_str(a)).collect();
                 format!("fn({}) -> {}", args_s.join(", "), self.type_name_str(ret))
             }
@@ -11057,8 +11281,26 @@ mod type_name_user_facing_tests {
     #[test]
     fn function_void_return_omits_arrow() {
         let d = Data::new();
-        let f = Type::Function(vec![Type::Boolean], Box::new(Type::Void), Deps::none());
+        let f = Type::Function(
+            vec![Type::Boolean],
+            Box::new(Type::Void),
+            Deps::none(),
+            crate::data::ConstParams::NONE,
+        );
         assert_eq!(f.name(&d), "fn(boolean)");
+    }
+
+    /// loft#1540 — a `const` parameter of a function type is part of what the author reads.
+    #[test]
+    fn function_const_parameter_renders_const() {
+        let d = Data::new();
+        let f = Type::Function(
+            vec![Type::Boolean, Type::Float],
+            Box::new(Type::Void),
+            Deps::none(),
+            crate::data::ConstParams::from_flags([false, true]),
+        );
+        assert_eq!(f.name(&d), "fn(boolean, const float)");
     }
 
     #[test]
@@ -11068,6 +11310,7 @@ mod type_name_user_facing_tests {
             vec![Type::Boolean, Type::Float],
             Box::new(Type::Text(Deps::none())),
             Deps::none(),
+            crate::data::ConstParams::NONE,
         );
         assert_eq!(f.name(&d), "fn(boolean, float) -> text");
     }
