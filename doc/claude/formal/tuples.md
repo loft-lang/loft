@@ -252,6 +252,16 @@ it, not a standing fact.
   and the ruling makes it an error; that guard is deleted and its one surviving control, the
   generic `-> T?` route, moved into the refusal guard.  Unmerged, so the cost was one commit.
 
+  That close left CODE behind, and it is recorded here rather than removed on the spot:
+  `Parser::boxed_tuple_members_modulo_null` answers *"do this boxed tuple's members differ from a
+  stack tuple's elements by nothing but each member's `?`"*, which was the gate widening that let
+  the boxed `??` through.  It is not DEAD — the `??` refusal reports and CONTINUES, so the default
+  still parses and the arm still runs — and neither clippy nor the gate flags it; what it no
+  longer has is a reason.  Removing it is a separate measured step, because the predicate is also
+  what keeps a coalesce result from being typed as the NON-null stack tuple, which `(N-Store)`
+  refuses, and nothing currently distinguishes those two callers.  Whoever takes it should score
+  the refusal cells AND `1477`'s partly-present cells, not the refusal alone.
+
   The record below is kept as it stood, because the measurements in it are what the ruling was
   made on.
 
