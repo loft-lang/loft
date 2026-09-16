@@ -695,6 +695,24 @@ and loses only the innermost frame NAME from the chain.  Switch
 `LOFT_NO_LEAF_PRELUDE`.  Site: `Output::is_elidable_leaf` and its use in
 `Output::output_function`.
 
+```
+  (R-LeafChain)  in the LEAN tier, a function whose whole call tree is FRAMELESS is
+                 emitted as a leaf is: every user function it reaches, transitively,
+                 has a loft body, none of them lies on a cycle, and none calls a
+                 fn-ref, runs `parallel` or yields.  A native user-level callee
+                 (no loft body) makes the tree opaque, so the caller keeps its frame.
+                 The named tiers keep every non-leaf frame.
+```
+
+**In words.** @PLN157 queue row 11.  Such a function cannot be re-entered while it runs, so
+the depth cap needs no entry for it: a recursion that passes through it is still counted at
+the recursive function's own frame, and the cap's report names that function — the nearest
+frame — where the interpreter names the innermost call.  Nothing beneath it can push a fn-ref
+buffer, so its buffer guard would always drop empty.  The lean frame carries no name, which is
+why the rule is lean-only: in a named tier the frame is also what `stack_trace()` and a
+panic's frame block read.  Switch `LOFT_NO_LEAF_CHAIN` (one step finer than
+`LOFT_NO_LEAF_PRELUDE`).  Site: `Output::is_frameless_chain`.
+
 ### A fast path inlines; its cold half is outlined
 
 ```

@@ -301,7 +301,8 @@ lifecycle phase changes.
 
 ### The queue after P0b
 
-1. **@PLN157's transitive-leaf prelude elision** (its row 11) — −11–14 %, measured.
+1. ~~**@PLN157's transitive-leaf prelude elision**~~ (its row 11) — SHIPPED 2026-09-17
+   (`@FR-R-LeafChain`): the row 38.8–41.7 k → 33.5–34.1 k ns/op, instructions −19.1 %.
 2. **A0 — the buffer minted at its first use** (§ A0, new) — −9–10 %, measured.
 3. **C6 — a nested record literal built inside the element** (`Op { paint: Paint { … } }`) —
    attributed at ≈ 4 % (`:704` and `:594`); hand-measure before cutting.

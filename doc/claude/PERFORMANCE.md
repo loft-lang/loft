@@ -2110,6 +2110,11 @@ purity-classifier extension.
 > `LOFT_NO_LEAF_PRELUDE=1` restores the push (the bisect switch).  Measured on the
 > drawing pass (probed by hand-editing the emitted Rust first, then reproduced by the
 > emitter): `hash` −36 % (0.81M ns/op named tier, ~2.3× Rust), `lock` −7 %.
+>
+> **Made transitive in the lean tier** (`@FR-R-LeafChain`, formal/rewrites.md): a function
+> whose whole call tree is frameless — every user callee loft-bodied, none on a cycle, no
+> fn-ref — drops its prelude too, which takes the scanner helpers (`at` fails the plain test
+> only because `size` is a loft-bodied wrapper).  `LOFT_NO_LEAF_CHAIN=1` is the bisect step.
 
 ### Background
 

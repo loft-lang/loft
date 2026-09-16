@@ -1,0 +1,85 @@
+// @PLN157 row 11 cells (`@FR-R-LeafChain`) — in the lean tier (`--native-release`), a
+// function whose whole call tree is frameless carries no prelude: every user function it
+// reaches has a loft body, none is on a cycle, and none calls a fn-ref.  The interpreter is
+// the oracle; the emission pins live in `tests/leaf_chain.rs`.  Expected values are written
+// beside each cell.
+
+// c1 — the scanner's `at`: its only callee is `size`, a loft-bodied stdlib wrapper, so N4
+// calls it a non-leaf and the chain rule elides it.  Expect `97 99 -1 -1`.
+fn at(s: text, i: integer) -> integer { if i < 0 || i >= size(s) { -1 } else { s.byte_at(i) } }
+fn c1() { println("c1 {at("abc", 0)} {at("abc", 2)} {at("abc", 3)} {at("abc", -1)}"); }
+
+// c2 — a chain: `count_word` → `matches_at` → `at` → `size`, with the true leaf
+// `lower_byte` beside it.  Matches at 0, 7 and 14; at 21 the word runs past the end.
+// Expect `3`.
+fn lower_byte(b: integer) -> integer { if b >= 65 && b <= 90 { b + 32 } else { b } }
+fn matches_at(s: text, i: integer, word: text) -> boolean {
+  ma_n = size(word);
+  if i + ma_n > size(s) { return false }
+  for k in 0..ma_n {
+    if lower_byte(at(s, i + k)) != word.byte_at(k) { return false }
+  }
+  true
+}
+fn count_word(s: text, word: text) -> integer {
+  cw_c = 0;
+  for i in 0..size(s) { if matches_at(s, i, word) { cw_c += 1; } }
+  cw_c
+}
+fn c2() { println("c2 {count_word("Circle circle CIRCLE circ", "circle")}"); }
+
+// c3 — direct recursion keeps its frame: the depth cap is its only guard.  Expect `3628800`.
+fn fact(n: integer) -> integer { if n <= 1 { 1 } else { n * fact(n - 1) } }
+fn c3() { println("c3 {fact(10)}"); }
+
+// c4 — mutual recursion keeps both frames.  Expect `true true false`.
+fn is_odd(n: integer) -> boolean { if n == 0 { false } else { is_even(n - 1) } }
+fn is_even(n: integer) -> boolean { if n == 0 { true } else { is_odd(n - 1) } }
+fn c4() { println("c4 {is_even(10)} {is_odd(7)} {is_even(3)}"); }
+
+// c5 — a caller of a recursive function keeps its frame (its tree is not frameless).
+// fact(5) = 120, `at("x", 0)` = 120.  Expect `240`.
+fn fact_plus(n: integer) -> integer { fact(n) + at("x", 0) }
+fn c5() { println("c5 {fact_plus(5)}"); }
+
+// c6 — a fn-ref call keeps the frame and its buffer guard, and so does its caller.
+// Expect `41`.
+fn dbl(x: integer) -> integer { x * 2 }
+fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }
+fn twice(x: integer) -> integer { apply(dbl, x) + 1 }
+fn c6() { println("c6 {twice(20)}"); }
+
+// c7 — a native user-level callee (`assert`) keeps the frame: what it reaches is not
+// visible to the rule.  Expect `5`.
+fn checked(x: integer) -> integer { assert(x > 0, "positive"); x + 1 }
+fn c7() { println("c7 {checked(4)}"); }
+
+// c8 — recursion THROUGH a frameless helper: the recursive function keeps its frame, the
+// helper is elided.  Bytes of "abcdef" at n % 6 for n = 12 … 1: two rounds of
+// 98+99+100+101+102+97 = 597.  Expect `1194`.
+fn depth_sum(n: integer) -> integer { if n == 0 { 0 } else { at("abcdef", n % 6) + depth_sum(n - 1) } }
+fn c8() { println("c8 {depth_sum(12)}"); }
+
+// c9 — a frameless function that returns a heap value: its fn-ref buffer guard goes with
+// the prelude, since nothing beneath it can push a buffer.  Run three times, so a leaked
+// store would show in the leak check.  Expect `3 104 121` three times.
+fn bytes_of(s: text) -> vector<integer> {
+  bo_r: vector<integer> = [];
+  for i in 0..size(s) { bo_r += [at(s, i)]; }
+  bo_r
+}
+fn c9() {
+  for _r in 0..3 {
+    c9_v = bytes_of("hey");
+    println("c9 {len(c9_v)} {c9_v[0] ?? 0} {c9_v[2] ?? 0}");
+  }
+}
+
+// c10 — a recursive METHOD (a loft-bodied `t_` function) makes its caller keep the frame,
+// although the method itself carries none.  down(3) = 5 + 3.  Expect `8`.
+struct Cnt { n: integer }
+fn down(self: Cnt, k: integer) -> integer { if k <= 0 { self.n } else { self.down(k - 1) + 1 } }
+fn use_down(c: Cnt) -> integer { c.down(3) }
+fn c10() { println("c10 {use_down(Cnt { n: 5 })}"); }
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); }
