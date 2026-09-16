@@ -3244,9 +3244,40 @@ pub fn view_source_place(data: &Data, value: &Value) -> Option<(u16, u32)> {
     projection_place_of(data, value, true)
 }
 
+/// [`view_source_place`] with the extra bit that says whether the read went INSIDE the place
+/// it names: did the chain cross an ELEMENT read (`v[i]`, `h[k]`), or does it stop at a field?
+///
+/// The two answer different questions about the same chain. `e = sc.els[i]?` and
+/// `d = &cv.data` both NAME `(sc, els)` — the place model carries one field offset, so the
+/// outermost field is as deep as it goes — but only the first names a place INSIDE the
+/// collection. The difference is what a growth does to each: it moves every element, so the
+/// first goes stale, while the second names the field SLOT the growth repoints and re-reads it
+/// (`157-view-header`'s `grown_between` reads `11` because of exactly this).
+///
+/// `true` means *the binding names something inside the container* and is the conservative
+/// answer for a reader deciding whether a disturbance reaches it.
+#[must_use]
+pub fn view_source_place_indexed(data: &Data, value: &Value) -> Option<((u16, u32), bool)> {
+    let mut indexed = false;
+    let place = projection_place_walk(data, value, true, &mut indexed)?;
+    Some((place, indexed))
+}
+
 /// The shared peel behind [`projection_container_place`] and [`view_source_place`]:
 /// `nullable_reads` says whether the two null-answering element reads count as projections.
 fn projection_place_of(data: &Data, value: &Value, nullable_reads: bool) -> Option<(u16, u32)> {
+    projection_place_walk(data, value, nullable_reads, &mut false)
+}
+
+/// The one walk behind all three readers, so *what is a projection* has a single answer.
+///
+/// `indexed` is set where the chain crosses an ELEMENT read rather than a field read.
+fn projection_place_walk(
+    data: &Data,
+    value: &Value,
+    nullable_reads: bool,
+    indexed: &mut bool,
+) -> Option<(u16, u32)> {
     let mut cur = value;
     let mut field = ANY_FIELD;
     loop {
@@ -3258,16 +3289,23 @@ fn projection_place_of(data: &Data, value: &Value, nullable_reads: bool) -> Opti
         let Value::Call(d, args) = cur.unspan() else {
             return None;
         };
+        let name = data.def(*d).name();
         let projects = is_projection_op(data, *d)
-            || (nullable_reads
-                && matches!(
-                    data.def(*d).name(),
-                    "OpGetVectorNullable" | "OpVectorRefNullable"
-                ));
+            || (nullable_reads && matches!(name, "OpGetVectorNullable" | "OpVectorRefNullable"));
         if !projects {
             return None;
         }
-        if data.def(*d).name() == "OpGetField"
+        if matches!(
+            name,
+            "OpGetVector"
+                | "OpVectorRef"
+                | "OpGetRecord"
+                | "OpGetVectorNullable"
+                | "OpVectorRefNullable"
+        ) {
+            *indexed = true;
+        }
+        if name == "OpGetField"
             && let Some(Value::Int(off)) = args.get(1).map(Value::unspan)
         {
             field = *off as u32;

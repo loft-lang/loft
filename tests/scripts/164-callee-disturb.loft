@@ -1,0 +1,289 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN164 C3 (`@FR-B-Disturb`, `@FR-B-View`) — A DISTURBANCE ONE FRAME DOWN IS A
+// DISTURBANCE: a container a CALLEE grows or removes from ends the place a caller's view
+// names, exactly as the same statement written inline does, so the view MATERIALISES and the
+// author is told.  `(B-Ref-Reshape)` states the reach outright — *"the disturbance may be in
+// this frame or in anything the frame CALLS … at any depth"* — and `(B-View)` keys its
+// materialise on the same four events, so it inherits it.
+//
+// Every cell is a PAIR: the callee form beside the same program written inline.  The inline
+// path has implemented `(B-Disturb)` since loft#1373, so the twin is the oracle and the guard
+// cannot pass vacuously — a mechanism that stopped materialising would take both halves of a
+// pair down together only if it broke the inline path too, which its own guards catch.  The
+// absolute values are hand-computed beside each cell as well, so a pair that agrees on the
+// WRONG number still fails.
+//
+// The controls are half the file and they are what keeps the rule from becoming
+// over-approximation: a callee that touches nothing, one that writes an unrelated field, one
+// that REBUILDS the field it was handed (`(B-Disturb)`: overwriting a place is not disturbing
+// it) and one that grows a container nobody views must all leave the view ALIASING, and the
+// cells prove it by writing through the view and reading the container back.
+//
+// `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and
+// `LOFT_NATIVE_LEAK_CHECK=1`: all fifteen pairs are clean under every one of them, on both
+// backends.
+//
+// @falsified-at: hand-measured (2026-09-16) — with `LOFT_NO_CALLEE_DISTURB=1`, which restores
+// the per-frame answer this unit replaces, SEVEN cells move and they are the same seven on
+// `--interpret` and on `--native`: c2, c3, c4, c11 and c12 read `4294967401` against the
+// inline `3` (the view still names the address its elements left when the container outgrew
+// its allocation), c5 reads `1` against `2` (a text handle read out of a moved record) and c6
+// reads `40` against `30` (the element that shifted in).  The ASSERT channel moves, with and
+// without the falsifiers.
+//
+// Every CONTROL is unmoved by the switch, which is what says the switch measures the
+// disturbance and not the materialise as a whole.  So are c1 and c7, and deliberately: c1's
+// two appends do not reallocate, so the stale read is accidentally right — one shape, two
+// answers, decided by an allocation the author cannot see, which is `(B-Disturb)`'s reason for
+// disturbing on ANY growth; and c7's removal is BELOW the viewed element, so nothing moves and
+// today's alias answers correctly there.  c7 is the cell probe 38 cell C1 objected with, and
+// it is the honest shape of the cost: the materialise it now takes is a behaviour CHANGE with
+// no wrong answer behind it, taken because `(B-Disturb)` ends the place a removal renumbers
+// whatever happened to sit where, and because the same program written inline has answered
+// that way since @PLN130 F2.  c15 is unmoved too — a write through a stale view lands in the
+// vacated slot, which reads the same as a write into the copy.
+
+struct El { nm: text = "", a: integer = 0, b: integer = 0 }
+struct Sc { els: vector<El>, other: vector<El>, tag: text = "" }
+
+fn mk() -> Sc {
+  Sc { els: [El { nm: "e0", a: 1, b: 2 }, El { nm: "e1", a: 3, b: 4 },
+             El { nm: "e2", a: 30, b: 0 }, El { nm: "e3", a: 40, b: 0 }],
+       other: [], tag: "t" }
+}
+
+// The callees.  Each one is the single statement its inline twin writes out.
+fn grow_field(sc: Sc, n: integer) { for _i in 0..n { sc.els += [El { nm: "g", a: 999, b: 999 }]; } }
+fn grow_vec(v: &vector<El>, n: integer) { for _i in 0..n { v += [El { nm: "g", a: 999, b: 999 }]; } }
+fn grow_deep(sc: Sc, n: integer) { grow_field(sc, n); }
+fn remove_first(sc: Sc) { sc.els.remove(0); }
+fn rebuild_field(sc: Sc) { sc.els = [El { nm: "r", a: 7, b: 7 }]; }
+fn write_other_field(sc: Sc) { sc.tag = "other"; }
+fn grow_sibling(sc: Sc, n: integer) { for _i in 0..n { sc.other += [El { nm: "s", a: 5, b: 5 }]; } }
+fn touch_nothing(sc: Sc, n: integer) -> integer { len(sc.els) + n }
+
+fn pair(nm: text, inline: integer, callee: integer, want: integer) {
+  assert(inline == want, "{nm}: inline {inline}, want {want}");
+  assert(callee == want, "{nm}: callee {callee}, want {want} — a disturbance one frame down");
+}
+
+// c1/c2 — a GROWTH of the viewed field.  The view is materialised at the bind, so it reads
+// element 0 as it stood there: 1 + 2 = 3.  n=2 does not reallocate and n=200 does, and the
+// answer is the same either way — `(B-Disturb)`: ANY growth disturbs, because whether it
+// reallocates is an allocator fact the author cannot see.
+fn c_grow_inline(n: integer) -> integer {
+  sc = mk(); e = sc.els[0]?;
+  for _i in 0..n { sc.els += [El { nm: "g", a: 999, b: 999 }]; }
+  e.a + e.b
+}
+fn c_grow_callee(n: integer) -> integer {
+  sc = mk(); e = sc.els[0]?;
+  grow_field(sc, n);
+  e.a + e.b
+}
+
+// c3 — the field handed to a `&vector` parameter.  The argument is a PROJECTION, so the
+// place the callee grows is the caller's `(sc, els)` and not a container of its own.
+fn c_vec_inline(n: integer) -> integer {
+  sc = mk(); e = sc.els[0]?;
+  for _i in 0..n { sc.els += [El { nm: "g", a: 999, b: 999 }]; }
+  e.a + e.b
+}
+fn c_vec_callee(n: integer) -> integer {
+  sc = mk(); e = sc.els[0]?;
+  grow_vec(sc.els, n);
+  e.a + e.b
+}
+
+// c4 — TWO frames down: the closure over the call graph is what carries it, and without it
+// extracting the append into a helper makes the materialise disappear.
+fn c_deep_callee(n: integer) -> integer {
+  sc = mk(); e = sc.els[0]?;
+  grow_deep(sc, n);
+  e.a + e.b
+}
+
+// c5 — a TEXT field read through the view: the handle, not just the scalars, must come from
+// the copy.  `len("e0")` is 2; read out of a moved record it is 0.
+fn c_text_inline(n: integer) -> integer {
+  sc = mk(); e = sc.els[0]?;
+  for _i in 0..n { sc.els += [El { nm: "g", a: 999, b: 999 }]; }
+  len(e.nm)
+}
+fn c_text_callee(n: integer) -> integer {
+  sc = mk(); e = sc.els[0]?;
+  grow_field(sc, n);
+  len(e.nm)
+}
+
+// c6 — a REMOVAL that MOVES the viewed element: the view names index 2 (a=30) and removing
+// index 0 shifts it to index 1, so a stale pin reads element 3's 40.
+fn c_rm_moves_inline() -> integer {
+  sc = mk(); e = sc.els[2]?;
+  sc.els.remove(0);
+  e.a
+}
+fn c_rm_moves_callee() -> integer {
+  sc = mk(); e = sc.els[2]?;
+  remove_first(sc);
+  e.a
+}
+
+// c7 — a REMOVAL of an element BELOW the view, so the viewed element does not move.  It
+// materialises anyway, which is the INLINE answer: `(B-Disturb)` ends the place a removal
+// renumbers whatever happened to sit where.  The pair is what says the two frames agree;
+// the number is the same on either reading, and that is the point of pinning it here.
+fn c_rm_below_inline() -> integer {
+  sc = mk(); e = sc.els[0]?;
+  sc.els.remove(3);
+  e.a + e.b
+}
+fn c_rm_below_callee() -> integer {
+  sc = mk(); e = sc.els[0]?;
+  remove_last(sc);
+  e.a + e.b
+}
+fn remove_last(sc: Sc) { sc.els.remove(3); }
+
+// c8 — CONTROL: the callee reads and returns, disturbing nothing.  The view must still
+// ALIAS, so the write through it reaches the container: 60, not the original 1.
+fn c_alias_inline() -> integer {
+  sc = mk(); e = sc.els[0]?;
+  k = len(sc.els);
+  e.a = 60;
+  (sc.els[0]?.a) + k - 4
+}
+fn c_alias_callee() -> integer {
+  sc = mk(); e = sc.els[0]?;
+  k = touch_nothing(sc, 0);
+  e.a = 60;
+  (sc.els[0]?.a) + k - 4
+}
+
+// c9 — CONTROL: the callee writes an UNRELATED field of the same struct.  A field write is
+// not one of `(B-Disturb)`'s events, so the view still aliases.
+fn c_other_inline() -> integer {
+  sc = mk(); e = sc.els[0]?;
+  sc.tag = "other";
+  e.a = 61;
+  sc.els[0]?.a
+}
+fn c_other_callee() -> integer {
+  sc = mk(); e = sc.els[0]?;
+  write_other_field(sc);
+  e.a = 61;
+  sc.els[0]?.a
+}
+
+// c10 — CONTROL: the callee REBUILDS the field it was handed.  `sc.els = [x]` lowers to a
+// clear and then the appends, and `(B-Disturb)` is explicit that overwriting a place is not
+// disturbing it — so the view survives and reads the NEW element 0: 7 + 7 = 14.  Inline and
+// callee must agree, and the cell exists because the growth this rewrite emits is exactly
+// what would make a careless reader of the appends call it a disturbance.
+fn c_rebuild_inline() -> integer {
+  sc = mk(); e = sc.els[0]?;
+  sc.els = [El { nm: "r", a: 7, b: 7 }];
+  e.a + e.b
+}
+fn c_rebuild_callee() -> integer {
+  sc = mk(); e = sc.els[0]?;
+  rebuild_field(sc);
+  e.a + e.b
+}
+
+// c11 — the view's base is a PARAMETER rather than a local, so the place is rooted one level
+// further out; the callee's growth must still reach it.
+fn c_param_inline(sc: Sc, n: integer) -> integer {
+  e = sc.els[0]?;
+  for _i in 0..n { sc.els += [El { nm: "g", a: 999, b: 999 }]; }
+  e.a + e.b
+}
+fn c_param_callee(sc: Sc, n: integer) -> integer {
+  e = sc.els[0]?;
+  grow_field(sc, n);
+  e.a + e.b
+}
+
+// c12 — a PLAIN (undischarged) nullable element bind, discharged only at the reads.  The
+// binding is a view by `(B-View-Depth)` whatever the element type, so it is at risk exactly
+// as the discharged one is.
+fn c_plain_inline(n: integer) -> integer {
+  sc = mk(); e = sc.els[0];
+  for _i in 0..n { sc.els += [El { nm: "g", a: 999, b: 999 }]; }
+  (e?.a) + (e?.b)
+}
+fn c_plain_callee(n: integer) -> integer {
+  sc = mk(); e = sc.els[0];
+  grow_field(sc, n);
+  (e?.a) + (e?.b)
+}
+
+// c13 — CONTROL: the callee grows a SIBLING field of the same struct.  A growth of one field
+// does not end the places inside another, so the view still aliases and the write lands.
+fn c_sibling_inline(n: integer) -> integer {
+  sc = mk(); e = sc.els[0]?;
+  for _i in 0..n { sc.other += [El { nm: "s", a: 5, b: 5 }]; }
+  e.a = 62;
+  (sc.els[0]?.a) + len(sc.other) - n
+}
+fn c_sibling_callee(n: integer) -> integer {
+  sc = mk(); e = sc.els[0]?;
+  grow_sibling(sc, n);
+  e.a = 62;
+  (sc.els[0]?.a) + len(sc.other) - n
+}
+
+// c14 — CONTROL: the callee grows a container the caller does NOT hold a view into.  Nothing
+// of this frame's is disturbed, so the write through the view lands.
+fn c_unrelated_inline(n: integer) -> integer {
+  sc = mk(); other = Sc { els: [], other: [], tag: "o" }; e = sc.els[0]?;
+  for _i in 0..n { other.els += [El { nm: "g", a: 999, b: 999 }]; }
+  e.a = 63;
+  (sc.els[0]?.a) + len(other.els) - n
+}
+fn c_unrelated_callee(n: integer) -> integer {
+  sc = mk(); other = Sc { els: [], other: [], tag: "o" }; e = sc.els[0]?;
+  grow_field(other, n);
+  e.a = 63;
+  (sc.els[0]?.a) + len(other.els) - n
+}
+
+// c15 — a WRITE through a materialised view stays in the copy: that is `(B-View)`'s decided
+// contract, so the container keeps element 0's own `1` and the view reads `50`.
+fn c_write_inline(n: integer) -> integer {
+  sc = mk(); e = sc.els[0]?;
+  for _i in 0..n { sc.els += [El { nm: "g", a: 999, b: 999 }]; }
+  e.a = 50;
+  (sc.els[0]?.a) * 100 + e.a
+}
+fn c_write_callee(n: integer) -> integer {
+  sc = mk(); e = sc.els[0]?;
+  grow_field(sc, n);
+  e.a = 50;
+  (sc.els[0]?.a) * 100 + e.a
+}
+
+fn main() {
+  // The disturbance cells: the view reads what it held AT THE BIND.
+  pair("c1 grow, no realloc", c_grow_inline(2), c_grow_callee(2), 3);
+  pair("c2 grow, realloc", c_grow_inline(200), c_grow_callee(200), 3);
+  pair("c3 grow via &vector", c_vec_inline(200), c_vec_callee(200), 3);
+  pair("c4 grow two frames down", c_grow_inline(200), c_deep_callee(200), 3);
+  pair("c5 text field read", c_text_inline(200), c_text_callee(200), 2);
+  pair("c6 remove, view moves", c_rm_moves_inline(), c_rm_moves_callee(), 30);
+  pair("c7 remove, view below", c_rm_below_inline(), c_rm_below_callee(), 3);
+  pair("c11 base is a parameter", c_param_inline(mk(), 200), c_param_callee(mk(), 200), 3);
+  pair("c12 plain nullable bind", c_plain_inline(200), c_plain_callee(200), 3);
+  pair("c15 write stays in copy", c_write_inline(200), c_write_callee(200), 150);
+
+  // The controls: nothing of this frame's is disturbed, so the view still ALIASES and every
+  // write through it reaches the container.
+  pair("c8 callee touches nothing", c_alias_inline(), c_alias_callee(), 60);
+  pair("c9 unrelated field written", c_other_inline(), c_other_callee(), 61);
+  pair("c10 field rebuilt", c_rebuild_inline(), c_rebuild_callee(), 14);
+  pair("c13 sibling field grown", c_sibling_inline(200), c_sibling_callee(200), 62);
+  pair("c14 container nobody views", c_unrelated_inline(200), c_unrelated_callee(200), 63);
+
+  println("164-callee-disturb: 15 pairs, inline and callee agree");
+}

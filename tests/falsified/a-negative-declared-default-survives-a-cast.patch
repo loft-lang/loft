@@ -1,0 +1,551 @@
+diff --git b/src/database/snapshot.rs a/src/database/snapshot.rs
+index 8a6f0c89..17e8128c 100644
+--- b/src/database/snapshot.rs
++++ a/src/database/snapshot.rs
+@@ -483,7 +483,6 @@ fn type_from(p: &Parsed) -> Result<Type, SchemaDecodeError> {
+         align: as_u8(field(p, "align")?)?,
+         field_groups,
+         facts: super::types::TypeFacts::default(),
+-        prefill: super::types::PrefillImage::default(),
+     })
+ }
+ 
+diff --git b/src/database/structures.rs a/src/database/structures.rs
+index 5d2c6b5c..14adeb22 100644
+--- b/src/database/structures.rs
++++ a/src/database/structures.rs
+@@ -35,29 +35,6 @@ pub enum Absent {
+     Final,
+ }
+ 
+-/// `LOFT_NO_PREFILL_IMAGE=1` restores the field-by-field default walk for every mint
+-/// (`@FR-R-Prefill`) — the bisect step for a wrong default or sentinel in a minted record
+-/// on either backend.  Read once: this runs on every record allocation.
+-fn prefill_image_enabled() -> bool {
+-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+-    *F.get_or_init(|| !std::env::var("LOFT_NO_PREFILL_IMAGE").is_ok_and(|v| v != "0"))
+-}
+-
+-/// `LOFT_PREFILL_VERIFY=1` runs the walk after every image write and panics where the two
+-/// disagree — the falsifier for "the image is what the walk writes".
+-fn prefill_verify_enabled() -> bool {
+-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+-    *F.get_or_init(|| std::env::var("LOFT_PREFILL_VERIFY").is_ok_and(|v| v != "0"))
+-}
+-
+-/// `LOFT_TRACE_PREFILL=1` names each image capture and each image use on stderr — what
+-/// says whether a run REACHES the image path at all (on `--native` a literal's mint is a
+-/// complete write that never prefills, so a cell can pass without exercising the image).
+-fn prefill_trace_enabled() -> bool {
+-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+-    *F.get_or_init(|| std::env::var("LOFT_TRACE_PREFILL").is_ok_and(|v| v != "0"))
+-}
+-
+ /// Walker-native diagnostic for `walk_parsed_into` failures.
+ ///
+ /// `at` is a byte offset into the original input; `path` is the
+@@ -1689,126 +1666,6 @@ impl Stores {
+         self.set_default_value_nullable(tp, true, Absent::Final, rec);
+     }
+ 
+-    /// The field-by-field default walk of a record type — what
+-    /// [`Self::set_default_value_nullable`] writes for a `Shape::Record`, and the ORACLE
+-    /// the prefill image is captured from (`@FR-R-Prefill`).
+-    fn prefill_walk(&mut self, tp: u16, n_fields: usize, why: Absent, rec: &DbRef) {
+-        for f_nr in 0..n_fields {
+-            let (position, content, nullable, is_type_tag) = {
+-                let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+-                    &self.types[tp as usize].parts
+-                else {
+-                    unreachable!()
+-                };
+-                let f = &fields[f_nr];
+-                (
+-                    f.position,
+-                    f.content,
+-                    f.nullable,
+-                    f.name == "type" && f.position == 0,
+-                )
+-            };
+-            if is_type_tag {
+-                self.store_mut(rec)
+-                    .set_short(rec.rec, rec.pos, 0, i32::from(tp));
+-                continue;
+-            }
+-            let slot = DbRef {
+-                store_nr: rec.store_nr,
+-                rec: rec.rec,
+-                pos: rec.pos + u32::from(position),
+-            };
+-            if why == Absent::Final && self.write_declared_default(tp, f_nr as u16, &slot) {
+-                continue;
+-            }
+-            self.set_default_value_nullable(content, nullable, why, &slot);
+-        }
+-    }
+-
+-    /// `@FR-R-Prefill` — prefill `rec` from the type's image, capturing the image from
+-    /// the walk's first run when there is none yet.  `false` leaves the walk to the
+-    /// caller: an image whose length no longer matches the layout, or a type with a
+-    /// field not laid out yet (`u16::MAX` content — the walk writes nothing for it now
+-    /// and its sentinel once it is laid out, so an image captured now would freeze the
+-    /// wrong bytes).
+-    ///
+-    /// The image is what the walk writes, by construction: it is READ BACK from the
+-    /// first record the walk filled over a zeroed span, never computed a second way.
+-    /// `LOFT_PREFILL_VERIFY=1` re-runs the walk after every image write and panics where
+-    /// the two disagree — the falsifier for that claim.
+-    fn prefill_from_image(&mut self, tp: u16, n_fields: usize, size: u16, rec: &DbRef) -> bool {
+-        let len = u32::from(size);
+-        if let Some(img) = self.types[tp as usize].prefill.get() {
+-            if img.len() != len as usize {
+-                return false;
+-            }
+-            // The image borrows `types`; the store is reached by field so the two
+-            // borrows are disjoint — `store_mut` would take the whole of `self`.  The
+-            // strict-store check it carries is not lost: the mint that reached here
+-            // claimed through `store_mut` a moment ago.
+-            self.allocations[rec.store_nr as usize].write_image(rec.rec, rec.pos, img);
+-            if prefill_trace_enabled() {
+-                eprintln!(
+-                    "[prefill] `{}`: image used ({len} bytes)",
+-                    self.types[tp as usize].name
+-                );
+-            }
+-            if prefill_verify_enabled() {
+-                self.prefill_walk(tp, n_fields, Absent::Prefill, rec);
+-                let after = self.store(rec).read_span(rec.rec, rec.pos, len);
+-                let img = self.types[tp as usize]
+-                    .prefill
+-                    .get()
+-                    .expect("captured above");
+-                assert!(
+-                    *after == *img,
+-                    "prefill image of `{}` disagrees with the walk: image {:?}, walk {:?}",
+-                    self.types[tp as usize].name,
+-                    img,
+-                    after
+-                );
+-            }
+-            return true;
+-        }
+-        if !self.layout_complete(tp, &mut Vec::new()) {
+-            return false;
+-        }
+-        self.store_mut(rec).zero_range(rec.rec, rec.pos, len);
+-        self.prefill_walk(tp, n_fields, Absent::Prefill, rec);
+-        let img = self.store(rec).read_span(rec.rec, rec.pos, len);
+-        self.types[tp as usize].prefill.set(img);
+-        if prefill_trace_enabled() {
+-            eprintln!(
+-                "[prefill] `{}`: image captured ({len} bytes)",
+-                self.types[tp as usize].name
+-            );
+-        }
+-        true
+-    }
+-
+-    /// Whether every field the prefill walk of `tp` reaches is laid out — no `u16::MAX`
+-    /// content and no `u16::MAX` size on the inline record tree.  A struct field is
+-    /// INLINE (the walk recurses into it at its position); a pointer field is a
+-    /// `ChildRec`/`DbRef` part and a collection field a handle, so neither recurses.
+-    fn layout_complete(&self, tp: u16, seen: &mut Vec<u16>) -> bool {
+-        let Some(row) = self.types.get(tp as usize) else {
+-            return false;
+-        };
+-        if seen.contains(&tp) {
+-            return true;
+-        }
+-        seen.push(tp);
+-        match &row.parts {
+-            Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
+-                row.size != u16::MAX
+-                    && fields
+-                        .iter()
+-                        .all(|f| f.content != u16::MAX && self.layout_complete(f.content, seen))
+-            }
+-            _ => true,
+-        }
+-    }
+-
+     /// The absent value of a struct FIELD, which is not the same question as the
+     /// absent value of its TYPE.
+     ///
+@@ -1974,23 +1831,44 @@ impl Stores {
+                 // A record whose default is all zero bytes — no nullable field, no
+                 // declared default, no text, no variant tag, recursively — is one
+                 // `zero_range` rather than a walk writing each field's zero.
+-                let size = self.types[tp as usize].size;
+-                if size != u16::MAX {
+-                    if self.heap_facts(tp).1 {
++                if self.heap_facts(tp).1 {
++                    let size = self.types[tp as usize].size;
++                    if size != u16::MAX {
+                         self.store_mut(rec)
+                             .zero_range(rec.rec, rec.pos, u32::from(size));
+                         return;
+                     }
+-                    // @FR-R-Prefill — every other prefill is one block write of the
+-                    // type's image, captured from the walk's first run.
+-                    if why == Absent::Prefill
+-                        && prefill_image_enabled()
+-                        && self.prefill_from_image(tp, n_fields, size, rec)
+-                    {
+-                        return;
++                }
++                for f_nr in 0..n_fields {
++                    let (position, content, nullable, is_type_tag) = {
++                        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
++                            &self.types[tp as usize].parts
++                        else {
++                            unreachable!()
++                        };
++                        let f = &fields[f_nr];
++                        (
++                            f.position,
++                            f.content,
++                            f.nullable,
++                            f.name == "type" && f.position == 0,
++                        )
++                    };
++                    if is_type_tag {
++                        self.store_mut(rec)
++                            .set_short(rec.rec, rec.pos, 0, i32::from(tp));
++                        continue;
++                    }
++                    let slot = DbRef {
++                        store_nr: rec.store_nr,
++                        rec: rec.rec,
++                        pos: rec.pos + u32::from(position),
++                    };
++                    if why == Absent::Final && self.write_declared_default(tp, f_nr as u16, &slot) {
++                        continue;
+                     }
++                    self.set_default_value_nullable(content, nullable, why, &slot);
+                 }
+-                self.prefill_walk(tp, n_fields, why, rec);
+             }
+             Shape::Other => {
+                 // Zero is the EMPTY collection, which is the right absent value for a
+diff --git b/src/database/types.rs a/src/database/types.rs
+index dd2ec955..0494d169 100644
+--- b/src/database/types.rs
++++ a/src/database/types.rs
+@@ -2241,9 +2241,8 @@ impl Stores {
+         self.types.truncate(keep as usize);
+         // A surviving row's facts were derived over rows that may now be gone
+         // (a forward reference into the batch being rolled back).
+-        for t in &mut self.types {
++        for t in &self.types {
+             t.facts.forget();
+-            t.prefill.forget();
+         }
+         self.names.retain(|_, &mut nr| nr < keep);
+     }
+@@ -3315,49 +3314,6 @@ impl std::fmt::Debug for TypeFacts {
+     }
+ }
+ 
+-/// The PREFILL IMAGE of a record of this type — the bytes the field-by-field default
+-/// walk writes for [`Absent::Prefill`](super::structures::Absent), captured from the walk's
+-/// first run over a zeroed span and written as ONE block for every later mint
+-/// (`@FR-R-Prefill`, [`Stores::set_default_value_nullable`](super::Stores::set_default_value_nullable)).
+-/// Derived, like [`TypeFacts`]: no part in equality or in the stored form, and a table
+-/// rollback forgets it.
+-#[derive(Default, Clone)]
+-pub struct PrefillImage(std::sync::OnceLock<Box<[u8]>>);
+-
+-impl PrefillImage {
+-    /// The image, once captured.
+-    #[inline]
+-    pub(super) fn get(&self) -> Option<&[u8]> {
+-        self.0.get().map(|b| &**b)
+-    }
+-
+-    /// Record the walk's bytes; a second capture of the same type changes nothing.
+-    pub(super) fn set(&self, img: Box<[u8]>) {
+-        let _ = self.0.set(img);
+-    }
+-
+-    pub(super) fn forget(&mut self) {
+-        self.0.take();
+-    }
+-}
+-
+-/// Derived from `parts`, so two rows with equal parts have equal images whether
+-/// or not either has captured one yet.
+-impl PartialEq for PrefillImage {
+-    fn eq(&self, _: &Self) -> bool {
+-        true
+-    }
+-}
+-
+-impl std::fmt::Debug for PrefillImage {
+-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+-        match self.get() {
+-            Some(img) => write!(f, "PrefillImage({} bytes)", img.len()),
+-            None => f.write_str("PrefillImage(?)"),
+-        }
+-    }
+-}
+-
+ #[derive(Debug, Clone, PartialEq)]
+ pub struct Type {
+     pub name: String,
+@@ -3376,7 +3332,6 @@ pub struct Type {
+     /// `Definition::field_groups` instead.
+     pub field_groups: Vec<crate::data::LinkedFieldGroup>,
+     pub(super) facts: TypeFacts,
+-    pub(super) prefill: PrefillImage,
+ }
+ 
+ impl Type {
+@@ -3428,7 +3383,6 @@ impl Type {
+             align,
+             field_groups,
+             facts: TypeFacts::default(),
+-            prefill: PrefillImage::default(),
+         }
+     }
+ 
+@@ -3450,7 +3404,6 @@ impl Type {
+             align: size as u8,
+             field_groups: Vec::new(),
+             facts: TypeFacts::default(),
+-            prefill: PrefillImage::default(),
+         }
+     }
+ 
+@@ -3466,7 +3419,6 @@ impl Type {
+             align: 4,
+             field_groups: Vec::new(),
+             facts: TypeFacts::default(),
+-            prefill: PrefillImage::default(),
+         }
+     }
+ 
+diff --git b/src/generation/mod.rs a/src/generation/mod.rs
+index e7390344..5cf181e0 100644
+--- b/src/generation/mod.rs
++++ a/src/generation/mod.rs
+@@ -5734,7 +5734,7 @@ extern crate loft;"
+         // type's zero on `--native` while the interpreter answers the default.  Folded
+         // by the same function the parse-time deposit uses, so the two backends cannot
+         // disagree about which defaults are constant.
+-        if let Some(c) = crate::typedef::fold_declared_default(self.data, declared_default) {
++        if let Some(c) = crate::typedef::fold_declared_default(declared_default) {
+             let lit = match c {
+                 crate::keys::Content::Long(n) => format!("loft::keys::Content::Long({n}_i64)"),
+                 // `{:?}` on a float round-trips exactly (`1.5` → `1.5`); a declared
+diff --git b/src/keys.rs a/src/keys.rs
+index 7d04ceac..8e04a949 100644
+--- b/src/keys.rs
++++ a/src/keys.rs
+@@ -1017,15 +1017,6 @@ pub fn value_return_enabled() -> bool {
+     *ON.get_or_init(|| !env_set("LOFT_NO_VALUE_RETURN"))
+ }
+ 
+-/// `LOFT_NO_LITERAL_EXIT_BUFFER=1` keeps a mid-body `return S { … }` building its record in
+-/// a store of its own (@PLN164 B2, `@FR-R-Place`'s callee clause: a callee that on some exit
+-/// answers a store other than the buffer it was handed cannot be placed) — the bisect step
+-/// for a wrong record out of a callee with more than one literal exit.
+-pub fn literal_exit_buffer_enabled() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_LITERAL_EXIT_BUFFER"))
+-}
+-
+ /// The two flag bits `OpCopyRecord` carries in its `tp` operand beside the type id, so
+ /// a type id is at most `0x3FFF` (16 383 types — `debug_assert`ed where the parser sets a
+ /// bit).  Every decoder masks with [`COPY_TP_MASK`]; a decoder that masks only one bit
+diff --git b/src/parallel.rs a/src/parallel.rs
+index 9df8e3d8..5d062d87 100644
+--- b/src/parallel.rs
++++ a/src/parallel.rs
+@@ -425,10 +425,10 @@ where
+ /// selected at parse / scope-analysis time and hardcoded into the
+ /// opcode stream.
+ ///
+-/// **Dead code** — no production caller: the dispatcher phase 3b landed
+-/// selects on `QueueStitch` (`src/native.rs`) instead, and `par_fold` is backed by
+-/// [`run_parallel_fold`] directly, not by `Stitch::Reduce`.  Kept only as
+-/// the named shape the Plan-06 phases were written against.
++/// **Currently dead code** — phase 3b lands the dispatcher that
++/// consumes this; until then no production caller exists.  The type
++/// is here so that downstream phases (3d codegen-embedding, 3e
++/// `Stitch::Reduce` runtime) have a stable shape.
+ #[allow(dead_code)]
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub enum Stitch {
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 03a7de1d..13bde908 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -2565,9 +2565,6 @@ impl Parser {
+                 // `formal/closures.md` D-clo-17).
+                 let delivery = self.classify_reference_delivery(&t.base().depend(), l, context);
+                 self.dispatch_reference_delivery(delivery, td, l);
+-                if context == "return from block" {
+-                    self.literal_exits_into_buffer(l);
+-                }
+             } else if crate::parser::vectors::is_keyed(t) {
+                 // Enforces @FR-O-Move's second clause for the keyed kinds — *if the return
+                 // borrows a parameter, the return type records it*.
+@@ -3183,85 +3180,6 @@ impl Parser {
+         self.vars.set_skip_free(work_ref);
+     }
+ 
+-    /// @PLN164 B2 (`@FR-R-Place`, the callee clause) — once the tail's delivery is
+-    /// decided: when the return buffer is still the unpromoted `__retbuf` and EVERY
+-    /// mid-body exit is a fresh literal of its type, each `return S { … }` builds into
+-    /// that buffer exactly as the tail literal does ([`Self::build_into_return_buffer`]),
+-    /// so the callee answers ONE store whichever exit it takes — the precondition
+-    /// `(R-Place)` states for handing a callee a record placed where its result will
+-    /// live.  Decided HERE and not at the `return`, because the tail's promotion is not
+-    /// known while a mid-body return is parsed: a promoted local (`o = P { … }; …; o`) IS
+-    /// the buffer, and a literal exit written into it beside that local handed the caller
+-    /// a stale ref to free (`164-adopt-first-bind` c3).  A function with any non-literal
+-    /// mid-body exit keeps every per-exit store; the decline is always available.
+-    fn literal_exits_into_buffer(&mut self, l: &mut [Value]) {
+-        if !crate::keys::value_return_enabled() || !crate::keys::literal_exit_buffer_enabled() {
+-            return;
+-        }
+-        let Some(buf_var) = self.unpromoted_return_buffer_var() else {
+-            return;
+-        };
+-        if !self.record_is_fully_written_by_a_literal(buf_var) {
+-            return;
+-        }
+-        let Some(td) = self.vars.tp(buf_var).base().heap_def_nr() else {
+-            return;
+-        };
+-        let mut work_refs: Vec<u16> = Vec::new();
+-        let mut all_literal = true;
+-        for op in l.iter() {
+-            op.walk(&mut |n| {
+-                if let Value::Return(inner) = n {
+-                    match Self::tail_fresh_object_workref(inner) {
+-                        Some(w) if w == buf_var => {}
+-                        Some(w)
+-                            if self.vars.is_compiler_generated(w)
+-                                && self.vars.tp(w).base().heap_def_nr() == Some(td) =>
+-                        {
+-                            work_refs.push(w);
+-                        }
+-                        _ => all_literal = false,
+-                    }
+-                }
+-            });
+-        }
+-        if !all_literal || work_refs.is_empty() {
+-            if crate::keys::trace_ret_promotion() && !work_refs.is_empty() {
+-                eprintln!(
+-                    "[retpromo] literal-exits fn={} DECLINED: an exit is not a fresh literal",
+-                    self.data.def(self.context).name()
+-                );
+-            }
+-            return;
+-        }
+-        for op in l.iter_mut() {
+-            Self::for_each_return_mut(op, &mut |ret| {
+-                if let Some(w) = Self::tail_fresh_object_workref(ret)
+-                    && work_refs.contains(&w)
+-                {
+-                    self.build_into_return_buffer(std::slice::from_mut(ret), w, buf_var);
+-                }
+-            });
+-        }
+-        if crate::keys::trace_ret_promotion() {
+-            eprintln!(
+-                "[retpromo] literal-exits fn={} {} mid-body exit(s) built into `__retbuf`",
+-                self.data.def(self.context).name(),
+-                work_refs.len()
+-            );
+-        }
+-    }
+-
+-    /// Every `Return` node under `v`, outermost first; a return's own body is not
+-    /// descended (a literal exit has no return inside it).
+-    fn for_each_return_mut<F: FnMut(&mut Value)>(v: &mut Value, f: &mut F) {
+-        if matches!(v.unspan(), Value::Return(_)) {
+-            f(v);
+-            return;
+-        }
+-        v.for_each_child_mut(&mut |c| Self::for_each_return_mut(c, f));
+-    }
+-
+     /// @PLN157 § V — in the tail's `"Object"` block, drop the work-ref's null init and put
+     /// its `OpDatabase` behind `guard` (true = the caller already supplied a record).
+     fn guard_literal_alloc(tail: &mut Value, work_ref: u16, guard: Value, db_nr: u32) {
+diff --git b/src/store.rs a/src/store.rs
+index 459645a7..7901105e 100644
+--- b/src/store.rs
++++ a/src/store.rs
+@@ -3574,21 +3574,6 @@ impl Store {
+         }
+     }
+ 
+-    /// Write a record's prefill IMAGE — `img.len()` bytes at byte offset `pos` of
+-    /// `rec` — as one block (`@FR-R-Prefill`).  The span is bounds-checked and, under the
+-    /// @PLN154 shadow, tagged written as a whole, exactly as [`Self::zero_range`] tags
+-    /// the all-zero image.
+-    #[inline]
+-    pub fn write_image(&mut self, rec: u32, pos: u32, img: &[u8]) {
+-        if img.is_empty() {
+-            return;
+-        }
+-        let ptr = self.addr_span_mut(rec, pos, img.len());
+-        // SAFETY: `addr_span_mut` bounds-checked `pos..pos+len` within the record's
+-        // claim, and `img` is `img.len()` bytes long.
+-        unsafe { std::ptr::copy_nonoverlapping(img.as_ptr(), ptr, img.len()) }
+-    }
+-
+     #[inline]
+     pub fn copy_block(
+         &mut self,
+diff --git b/src/typedef.rs a/src/typedef.rs
+index f6e5108e..dac3c6b7 100644
+--- b/src/typedef.rs
++++ a/src/typedef.rs
+@@ -48,7 +48,7 @@ use crate::lexer::Lexer;
+ /// this a real frame lets `.github/lsan_suppressions.txt` name exactly the one deliberate
+ /// leak and nothing else.
+ #[inline(never)]
+-pub(crate) fn fold_declared_default(data: &Data, value: &Value) -> Option<Content> {
++pub(crate) fn fold_declared_default(value: &Value) -> Option<Content> {
+     match value.unspan() {
+         Value::Int(i) => Some(Content::Long(i64::from(*i))),
+         Value::Long(i) => Some(Content::Long(*i)),
+@@ -65,24 +65,6 @@ pub(crate) fn fold_declared_default(data: &Data, value: &Value) -> Option<Conten
+         Value::Text(s) => Some(Content::Str(Str::new(Box::leak(
+             s.clone().into_boxed_str(),
+         )))),
+-        // `= -1` is a literal to the reader and a NEGATION of one to the parser
+-        // (`OpMinSingleInt(1)`), so a negative default folded to nothing and the cast
+-        // wrote the type's zero where the literal wrote `-1`.  A negated numeric literal
+-        // is a constant; a negation of anything else stays computed.
+-        Value::Call(d_nr, args)
+-            if args.len() == 1
+-                && matches!(
+-                    data.def(*d_nr).name.as_str(),
+-                    "OpMinSingleInt" | "OpMinSingleFloat" | "OpMinSingleSingle"
+-                ) =>
+-        {
+-            match fold_declared_default(data, &args[0])? {
+-                Content::Long(n) => n.checked_neg().map(Content::Long),
+-                Content::Float(f) => Some(Content::Float(-f)),
+-                Content::Single(f) => Some(Content::Single(-f)),
+-                Content::Str(_) => None,
+-            }
+-        }
+         _ => None,
+     }
+ }
+@@ -1431,7 +1413,7 @@ pub(crate) fn fill_database(data: &mut Data, database: &mut Stores, d_nr: u32) {
+             // loft#876 — the same "ONE parse-time site that knows" for the field's
+             // DECLARED default.  It lives here as an IR node and the store layer has no
+             // evaluator, so a cast could not consult it and wrote the type's zero.
+-            if let Some(c) = fold_declared_default(data, &data.def(d_nr).attributes[a_nr].value) {
++            if let Some(c) = fold_declared_default(&data.def(d_nr).attributes[a_nr].value) {
+                 database.set_field_default(s_type, &data.attr_name(d_nr, a_nr), c);
+             }
+         }
