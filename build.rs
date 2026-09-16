@@ -164,9 +164,17 @@ fn main() {
     // once also keeps the gate honest: it appeared in 25 `#[cfg]`s, and a
     // hand-written `any(...)` at each is how a call site drifts out of step with
     // its callee and breaks only the wasm compile gate.
+    // BOTH browser bundles qualify, and the distinction between them is the
+    // TRANSPORT, never the capability: `--html` reads ranges through the asyncify
+    // `fetch()` host import, and the wasm-bindgen gallery reads them through
+    // `loftHost.fs_*` — the same split `host_fs` below already names.  Excluding
+    // the wasm-bindgen build left `store_load_key_text` out of the gallery bundle
+    // while the stdlib still declared it, so `assets::prefetch` reached a panic
+    // stub: a library that resolves, compiles and then aborts mid-frame.
     println!("cargo:rustc-check-cfg=cfg(paged_store)");
     let browser_wasm = wasm_target && !target.contains("wasi") && !wasm_bindgen_build;
-    if std::env::var_os("CARGO_FEATURE_REMOTE_STORE").is_some() || browser_wasm {
+    let browser_bindgen = wasm_target && !target.contains("wasi") && wasm_bindgen_build;
+    if std::env::var_os("CARGO_FEATURE_REMOTE_STORE").is_some() || browser_wasm || browser_bindgen {
         println!("cargo:rustc-cfg=paged_store");
     }
 

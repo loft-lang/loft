@@ -696,8 +696,29 @@ gallery:
 		exit 1; \
 	}
 	@echo "  [4/8] checking required gallery files ..."
+	@# The sprite pack is a required gallery file like any other: `25-brick-buster`
+	@# reads its atlas out of it, and without it the example compiles, runs, and
+	@# draws an empty 1x1 atlas — a failure that looks like a working page.  The
+	@# packer writes into tools/brick-buster/assets (gitignored build output), so
+	@# refresh the served copies from there whenever they are present; the check
+	@# below is what refuses to ship a gallery missing them.
+	@#
+	@# ⚠ The served copies are COMMITTED, because the deployed gallery is this
+	@# directory — a pack that exists only on a build box is a pack the published
+	@# page does not have.  `pack_atlas.loft` does not write byte-identical output
+	@# twice, so re-running the packer (via `make game` / `make play`) shows these
+	@# as modified; that is the packer, not damage.  This target only COPIES, so
+	@# `make gallery` alone leaves them alone.
+	@if [ -f tools/brick-buster/assets/bb.blobs.store ]; then \
+		mkdir -p doc/assets; \
+		cp tools/brick-buster/assets/bb.meta.store \
+		   tools/brick-buster/assets/bb.blobs.store \
+		   tools/brick-buster/assets/bb.meta.store.dschema \
+		   tools/brick-buster/assets/bb.blobs.store.dschema doc/assets/ 2>/dev/null || true; \
+	fi
 	@missing=0; \
 	for f in doc/gallery.html doc/gallery-run.html doc/gallery-examples.js doc/loft-gl.js \
+	         doc/loft-rt.js doc/assets/bb.meta.store doc/assets/bb.blobs.store \
 	         doc/pkg/loft.js doc/pkg/loft_bg.wasm doc/pkg/loft.d.ts; do \
 		if [ ! -s "$$f" ]; then \
 			echo "    FAIL: $$f is missing or empty"; \

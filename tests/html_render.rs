@@ -240,6 +240,23 @@ fn brick_buster_browser_renders_without_console_errors() {
         // clearColor) has 1-2.
         .args(["--canvas", "#c"])
         .args(["--canvas-min-colors", "20"])
+        // Layer 3 — the program's OWN verdict, which the two layers above
+        // cannot reach.  `load_atlas` answers a 1x1 canvas when the sprite
+        // pack does not load and says so on stdout; the game then runs
+        // perfectly well and draws its procedural fallback, so Layer 1 sees
+        // no console error and Layer 2 counted 767 distinct colours on a page
+        // whose sprites were entirely missing.  A pack read through the host
+        // filesystem is exactly the half that had no host arm until
+        // `LocalFileProvider` grew one, and nothing here would have noticed.
+        //
+        // `#out` is where the page routes `println`, live, so the check is a
+        // plain substring: every one of `load_atlas`'s three failure lines
+        // contains "sprite pack" and no success path mentions it.
+        .args([
+            "--assert",
+            "!(document.getElementById('out')||{}).textContent\
+             ?.includes('sprite pack')",
+        ])
         // The page favicon 404 is benign; the harness filters generic
         // "Failed to load resource" automatically.  Swiftshader emits
         // a one-line GPU-stall performance warning at info level — we

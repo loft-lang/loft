@@ -833,6 +833,23 @@ const BUNDLED_LIB_FILES: &[(&str, &str)] = &[
         "web.loft",
         include_str!("../tests/fixtures/libs/web/src/web.loft"),
     ),
+    // The gallery showpiece reads its sprite atlas out of a content pack, so
+    // `assets` has to resolve here or `25-brick-buster` does not compile in the
+    // browser at all — which is how the gallery shipped loading cleanly and
+    // drawing nothing (loft#1545).  Sourced from the fixture clone of
+    // loft-libs-assets (see scripts/sync-fixtures.sh PINNED_REFS); its one
+    // dependency, `shapes`, is already bundled above.
+    //
+    // ⚠ Bundling a library makes `use <id>;` RESOLVE, which is worth only as much
+    // as the natives it then calls.  `assets` needs the paged loaders
+    // (`store_load_key_text`) and reads its pack through the host filesystem, so
+    // `paged_store` covers this build (build.rs) and `LocalFileProvider` has a
+    // host arm (src/paged_reader.rs).  Without both, this row would trade a loud
+    // "library not found" for a panic stub mid-frame.
+    (
+        "assets.loft",
+        include_str!("../tests/fixtures/libs/assets/src/assets.loft"),
+    ),
     // @PLN18 phase 07 — the browser kernel's loft surface: the SAME lib
     // source the native kernel uses (the script is the contract).
     (
@@ -1078,7 +1095,22 @@ pub fn resume_frame() -> String {
             session.state.rebind_data(&session.data);
             let still_running = session.state.resume();
             if still_running {
-                "{\"running\":true}".to_string()
+                // Carry whatever the program printed DURING this frame.  A running
+                // session used to answer the bare `{"running":true}`, so everything a
+                // long-lived program said reached the page only when it stopped — and a
+                // game does not stop.  A program reporting that it could not load its
+                // assets therefore said so into a buffer nobody read until never, which
+                // is the same silence as a missing host method one layer up.
+                //
+                // `output_take` CLEARS as it reads, so this is the only copy: the page
+                // appends it rather than replacing, or draining here would lose
+                // everything printed before the final frame.
+                let out = output_take();
+                if out.is_empty() {
+                    "{\"running\":true}".to_string()
+                } else {
+                    format!("{{\"running\":true,\"output\":{}}}", json_str(&out))
+                }
             } else {
                 let out = output_take();
                 *slot = None;

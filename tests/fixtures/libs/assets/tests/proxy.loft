@@ -1,0 +1,132 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN146 F7 — the collision proxy derived from a sprite's own alpha.
+//
+// The contract has two halves and they pull against each other: the proxy must
+// CONTAIN every opaque texel (so substituting it for the art can over-report a
+// hit but never miss one), and its OVERSHOOT must be bounded (or a screen-sized
+// box would satisfy containment perfectly and be useless).  Every test below is
+// one of those two.
+use assets;
+use shapes;
+
+// A blank RGBA page, `w * h` texels, every one fully transparent.
+fn blank_page(bw: integer, bh: integer) -> vector<u8> {
+  bp: vector<u8> = [];
+  // `0 as u8` and not `0 as u8?`: a checked cast is required only where the value
+  // could overflow the target width at run time, and a literal 0 cannot.  The
+  // nullable form would put an `u8?` into a `vector<u8>`, where it becomes null.
+  for _ in 0..(bw * bh * 4) { bp += [0 as u8]; }
+  bp
+}
+
+// Paint one texel opaque (or to a given alpha).
+fn put(pu_px: &vector<u8>, pu_stride: integer, pu_x: integer, pu_y: integer,
+       pu_a: integer) {
+  pu_i = (pu_y * pu_stride + pu_x) * 4;
+  pu_px[pu_i] = 200 as u8?;
+  pu_px[pu_i + 1] = 100 as u8?;
+  pu_px[pu_i + 2] = 50 as u8?;
+  pu_px[pu_i + 3] = pu_a as u8?;
+}
+
+fn a_cell(ac_w: integer, ac_h: integer) -> assets::Cell {
+  assets::Cell{ce_key: "c", ce_page: "p", ce_x: 0, ce_y: 0, ce_w: ac_w, ce_h: ac_h}
+}
+
+fn a_page(ap_w: integer, ap_h: integer) -> assets::PageInfo {
+  assets::PageInfo{pi_name: "p", pi_w: ap_w, pi_h: ap_h, pi_blob: "b"}
+}
+
+// Is (x, y) inside any box?  The containment check, written here rather than
+// reused, so the test does not depend on the predicate it is checking.
+fn covered(cv: const vector<shapes::Rect>, cx: integer, cy: integer) -> boolean {
+  for r in cv {
+    if (cx as float) >= r.rx && (cx as float) < r.rx + r.rw
+      && (cy as float) >= r.ry && (cy as float) < r.ry + r.rh { return true }
+  }
+  false
+}
+
+// CONTAINMENT is the half that makes substitution safe: a system validated
+// against the proxy stays valid when the art changes, because the proxy can only
+// ever be bigger than the art.  Checked texel by texel on a diagonal — the shape
+// a single box is worst at.
+fn test_every_opaque_texel_is_inside_the_proxy() {
+  px = blank_page(32, 32);
+  for i in 0..32 { put(px, 32, i, i, 255); }
+  page = a_page(32, 32);
+  cell = a_cell(32, 32);
+  boxes = assets::cell_proxy(cell, page, px);
+  assert(len(boxes) > 1, "a diagonal derives more than one band");
+  for i in 0..32 {
+    assert(covered(boxes, i, i), "texel ({i},{i}) is inside the proxy");
+  }
+}
+
+// And the BOUND is what stops containment being satisfied by a screen-sized box.
+// A 32x32 diagonal is 32 opaque texels; its single tight box is 1024, which is
+// +3100 %.  The banded proxy has to come in far under that, and under F7's +100 %.
+fn test_the_proxy_is_bounded_where_a_single_box_is_not() {
+  px = blank_page(32, 32);
+  for i in 0..32 { put(px, 32, i, i, 255); }
+  page = a_page(32, 32);
+  cell = a_cell(32, 32);
+  solid = assets::opaque_texels(px, page, cell);
+  assert(solid == 32, "32 opaque texels");
+
+  boxes = assets::cell_proxy(cell, page, px);
+  over = assets::proxy_overshoot(boxes, solid);
+  assert(over <= 1.0, "the derived proxy is inside F7's +100% bound, at {over}");
+
+  // The single box it replaces is not, by a wide margin — that is the gain.
+  one: vector<shapes::Rect> = [shapes::Rect{rx: 0.0, ry: 0.0, rw: 32.0, rh: 32.0}];
+  assert(assets::proxy_overshoot(one, solid) > 30.0, "one box is +3100%");
+}
+
+// A cell with nothing opaque derives NOTHING, and an empty proxy hits nothing.
+// A single box around an empty cell would collide with whatever stood there.
+fn test_a_transparent_cell_derives_an_empty_proxy() {
+  px = blank_page(16, 16);
+  page = a_page(16, 16);
+  cell = a_cell(16, 16);
+  assert(assets::opaque_texels(px, page, cell) == 0, "nothing opaque");
+  boxes = assets::cell_proxy(cell, page, px);
+  assert(len(boxes) == 0, "and nothing derived");
+  p = shapes::Proxy{boxes: boxes};
+  assert(!p.proxy_hits(shapes::Rect{rx: 0.0, ry: 0.0, rw: 16.0, rh: 16.0}),
+         "an empty proxy hits nothing");
+  assert(assets::proxy_overshoot(boxes, 0) == 0.0, "and no art to be a multiple of");
+}
+
+// The alpha threshold is a threshold, not `== 255`: antialiased art has a fringe
+// of partly-transparent texels that belong to the silhouette.  At or below
+// PROXY_ALPHA_ON a texel is not art.
+fn test_the_alpha_cutoff_decides_what_is_art() {
+  px = blank_page(8, 8);
+  put(px, 8, 1, 1, 255);   // solid
+  put(px, 8, 6, 6, 4);     // below the cutoff — a stray almost-clear texel
+  page = a_page(8, 8);
+  cell = a_cell(8, 8);
+  assert(assets::opaque_texels(px, page, cell) == 1, "only the solid one counts");
+  boxes = assets::cell_proxy(cell, page, px);
+  assert(covered(boxes, 1, 1), "the solid texel is in");
+  assert(!covered(boxes, 6, 6), "the near-transparent one is not");
+}
+
+// The axis is chosen PER SPRITE, not fixed.  A wide, short bar bands badly by row
+// (one band holds the whole bar) and well by column, so the derivation must run
+// both and keep the smaller — 17 of 36 corpus sprites are tighter by column.
+fn test_the_tighter_axis_is_chosen_per_sprite() {
+  // A horizontal staircase: wide, only a few rows tall, with big empty corners.
+  px = blank_page(32, 32);
+  for i in 0..32 { put(px, 32, i, 10 + (i / 8), 255); }
+  page = a_page(32, 32);
+  cell = a_cell(32, 32);
+  solid = assets::opaque_texels(px, page, cell);
+  boxes = assets::cell_proxy(cell, page, px);
+  for i in 0..32 { assert(covered(boxes, i, 10 + (i / 8)), "contains texel {i}"); }
+  assert(assets::proxy_overshoot(boxes, solid) <= 1.0,
+         "the chosen axis keeps it inside the bound");
+}

@@ -75,12 +75,50 @@ pub trait PageProvider {
     }
 }
 
-/// A local-file page provider — reads ranges from a store file on disk and
-/// **logs every `(off, len)` fetched**, so a test can assert the working-set
-/// load touched ≪ the whole file. This is the deterministic stand-in for the
-/// #517 HTTP `Range` provider (Phase 5); the traversal code is identical.
+/// The host filesystem's byte size for `path`, or `-1` where this build has none.
+///
+/// The two arms exist so every caller above them is free of `#[cfg]`, exactly as
+/// `store::host_image_bytes` does for the whole-image loader.
+#[cfg(host_fs)]
+fn host_file_size(path: &str) -> i64 {
+    crate::wasm::host_fs_file_size(path)
+}
+#[cfg(not(host_fs))]
+fn host_file_size(_path: &str) -> i64 {
+    -1
+}
+
+/// `len` bytes of `path` starting at `off`, through the host bridge.
+///
+/// The host addresses bytes by PATH and keeps its own cursor, so a positioned read is
+/// a seek then a read — the shape `loftHost.fs_seek`/`fs_read_bytes` and the raw
+/// `loft_io` twins both already serve.
+#[cfg(host_fs)]
+fn host_bytes_at(path: &str, off: u64, len: usize) -> Option<Vec<u8>> {
+    crate::wasm::host_fs_seek(path, i64::try_from(off).ok()?);
+    crate::wasm::host_fs_read_bytes(path, len)
+}
+#[cfg(not(host_fs))]
+fn host_bytes_at(_path: &str, _off: u64, _len: usize) -> Option<Vec<u8>> {
+    None
+}
+
+/// A local-file page provider — reads ranges from a store file and **logs every
+/// `(off, len)` fetched**, so a test can assert the working-set load touched ≪ the
+/// whole file. This is the deterministic stand-in for the #517 HTTP `Range`
+/// provider (Phase 5); the traversal code is identical.
+///
+/// "Local" names the SCHEME, not `std::fs`. A browser page has no filesystem, so
+/// the bytes come from the page's host bridge instead — the paged twin of the
+/// fallback `store::image_bytes` already has for a whole image. Without it a page
+/// could load an entire store and not one PAGE of one, and it failed the quiet way:
+/// a key that cannot be fetched is indistinguishable from a key the pack does not
+/// hold, so `assets::prefetch` answered zero and the caller drew a 1×1 atlas.
 pub struct LocalFileProvider {
-    file: std::fs::File,
+    /// `None` where `std::fs` cannot open the path — the host bridge answers instead.
+    file: Option<std::fs::File>,
+    /// Kept because the host arm addresses bytes by PATH, not by an open handle.
+    path: String,
     size: u64,
     /// Every `(off, len)` this provider was asked to fetch, in order.
     pub fetches: Vec<(u64, usize)>,
@@ -91,14 +129,19 @@ pub struct LocalFileProvider {
 }
 
 impl LocalFileProvider {
-    /// Open `path` read-only.
+    /// Open `path` read-only, on whichever filesystem this build has.
     ///
     /// # Errors
-    /// Returns the underlying `io::Error` if `path` can't be opened or its
-    /// metadata (length) can't be read.
+    /// The underlying `io::Error` when neither filesystem holds `path`, or
+    /// `InvalidData` when what is there does not begin with the store signature.
     pub fn open(path: &str) -> std::io::Result<Self> {
         use std::io::Read as _;
-        let mut file = std::fs::File::open(path)?;
+        let mut file = match std::fs::File::open(path) {
+            Ok(f) => f,
+            // `std::fs` failing is not "absent" on a browser target — it is the only
+            // answer that target can give, so the host filesystem is asked next.
+            Err(no_file) => return Self::open_host(path, &no_file),
+        };
         // Reading the METADATA is not reading the format.  A path that opens and is not
         // a store image — an empty file, a truncated download, a directory, an HTTP 200
         // serving an error page — used to get all the way past here and fail deep inside
@@ -117,7 +160,32 @@ impl LocalFileProvider {
         }
         let size = file.metadata()?.len();
         Ok(Self {
-            file,
+            file: Some(file),
+            path: path.to_string(),
+            size,
+            fetches: Vec::new(),
+            depth: 0,
+        })
+    }
+
+    /// The same open against the page's own filesystem, asked only after `std::fs`
+    /// declines. `no_file` is carried through so a path NEITHER filesystem holds
+    /// reports the real reason rather than a browser-shaped guess.
+    fn open_host(path: &str, no_file: &std::io::Error) -> std::io::Result<Self> {
+        let size = host_file_size(path);
+        let Ok(size) = u64::try_from(size) else {
+            return Err(std::io::Error::new(no_file.kind(), no_file.to_string()));
+        };
+        let head = host_bytes_at(path, 0, 4).unwrap_or_default();
+        if !crate::store::Store::has_signature(&head) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "not a loft store image (the file does not begin with the store signature)",
+            ));
+        }
+        Ok(Self {
+            file: None,
+            path: path.to_string(),
             size,
             fetches: Vec::new(),
             depth: 0,
@@ -144,8 +212,18 @@ impl PageProvider for LocalFileProvider {
         if off < self.size {
             // Read what actually exists; anything past EOF stays zero.
             let want = len.min((self.size - off) as usize);
-            if self.file.seek(SeekFrom::Start(off)).is_ok() {
-                let _ = self.file.read_exact(&mut buf[..want]);
+            match self.file.as_mut() {
+                Some(file) => {
+                    if file.seek(SeekFrom::Start(off)).is_ok() {
+                        let _ = file.read_exact(&mut buf[..want]);
+                    }
+                }
+                None => {
+                    if let Some(got) = host_bytes_at(&self.path, off, want) {
+                        let n = got.len().min(want);
+                        buf[..n].copy_from_slice(&got[..n]);
+                    }
+                }
             }
         }
         buf

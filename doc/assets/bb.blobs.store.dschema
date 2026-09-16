@@ -1,0 +1,10 @@
+LOFT-DSCHEMA v1
+hash=4626016099908172415
+--
+@endian	little
+Blob	size=9	struct{bl_key@0:text, bl_kind@8:BlobKind, bl_bytes@4:vector<byte>}
+BlobKind	size=1	enum{Bytes, Rgba, Png, Ogg, Wav, Ttf, Woff2}
+byte	size=1	byte(start=0,null=false)
+hash<Blob[bl_key]>	size=4	hash<Blob>(keys=[0],elem_size=9,placement=2)
+text	size=4	base
+vector<byte>	size=4	vector<byte>(elem_size=1)

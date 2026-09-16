@@ -88,12 +88,44 @@ done
 # finished, or it failed.  Waiting for one of these is what makes the assertion
 # an observation rather than a race against `Compiling...`.
 ready="['Running','Ok','Done','Failed','Error'].includes(document.getElementById('status').textContent)"
-assert="!['Failed','Error'].includes(document.getElementById('status').textContent)"
+
+# TWO questions, because the status alone answers only the first.
+#
+#   1. did the page refuse?  `Failed` / `Error` is `runExample` reporting a
+#      compile error, an asset that did not arrive, or a runtime fault.
+#   2. did the PROGRAM refuse?  A loft program that cannot load what it needs
+#      keeps running and draws a fallback — `25-brick-buster` answers a 1x1
+#      atlas and says so.  The page stays `Running`, the canvas fills with
+#      colour, and every outside check passes over a page missing its sprites.
+#      That is not hypothetical: the shipped `--html` build did exactly this,
+#      and a screenshot of it carried 767 distinct colours.
+#
+# So the program's own words are the second half, and they are only visible
+# because a running frame now carries them (`resume_frame` → `#output`).  The
+# match is deliberately narrow — the words a loft program uses when it gives up
+# — rather than a generic /error/i, which any legitimate output could trip.
+assert="(function(){
+  var s = document.getElementById('status').textContent;
+  var o = (document.getElementById('output') || {}).textContent || '';
+  var refused = /sprite pack|Asset load failed|could not load|not found/i.test(o);
+  return !['Failed','Error'].includes(s) && !refused;
+})()"
 
 failed=0
 for key in $keys; do
 	url="http://127.0.0.1:$port/gallery-run.html?example=$key&autorun=1"
-	out=$(node "$harness" "$url" --wait-ms 15000 --ready "$ready" --assert "$assert" 2>&1)
+	# THREE questions, and each catches what the others cannot.
+	#   --ready/--assert : did the page, or the program, report a refusal?
+	#   --canvas         : did anything actually get DRAWN?  A page can reach
+	#                      `Running` with a clean console over a canvas holding
+	#                      nothing but its clear colour.
+	# The canvas count alone is NOT sufficient and this is measured, not assumed:
+	# the shipped Brick Buster drew 767 distinct colours while every one of its
+	# sprites was missing, because the program falls back to procedural drawing
+	# and says so in words rather than in pixels.  Colours answer "did it draw",
+	# the assertion answers "did it draw what it meant to".
+	out=$(node "$harness" "$url" --wait-ms 15000 --ready "$ready" --assert "$assert" \
+		--canvas '#gl-canvas' --canvas-min-colors 20 2>&1)
 	rc=$?
 	if [ "$rc" = 2 ]; then
 		echo "    SKIP: $key — $(printf '%s' "$out" | head -1)"
