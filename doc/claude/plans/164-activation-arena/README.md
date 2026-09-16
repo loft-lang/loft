@@ -341,6 +341,18 @@ library's, not the corpus's — so the guard is the only coverage.
 The gate's one red, the browser kernel differential, was a pre-existing dangling `Data`
 pointer in `wasm::resume_frame` that the changed bytecode made visible (loft#1541, fixed in
 the same arc with `State::rebind_data`).
+A second red, the Debug-assertions nightly leg, was the pass's own: `placeable_bind` asked
+`returns_borrowed_view()` before its heap-return shape test, and that read is defined only
+for a heap return — a `Type::Function` return carries a `CALLEE_FRAME`-tagged note (a
+closure's own frame variable, never an attribute index) which the read's assert refuses.
+Every closure-factory file in the corpus tripped it, 22 of them on both backends, while the
+release build stayed green: out of range the read answers *conservatively borrowed*, and the
+shape test two lines on declines the callee anyway, so the ANSWER was never wrong — only the
+order in which it was reached.  The shape is asked first now, which makes the precondition
+structural instead of a second gate beside it (`scopes.rs`'s @P290 bracket is the other
+caller and states it explicitly).  `LOFT_NO_PLACE_RESULT=1` attributed it, and
+`scripts/introspect_diff.sh` reads IDENTICAL 1583/1583 across `tests/scripts`, `tests/docs`
+and `examples` — nothing emitted moved.
 
 *Measured.*  The parse row (`parse_only.loft --n 2000`, `--native-release`, hash `33f6d2b8`,
 this x86-64 box, 2026-09-16): `pp_paint` admitted (three moves, one held exit), and a WASH.

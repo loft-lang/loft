@@ -215,11 +215,22 @@ fn placeable_bind(data: &Data, function: &Function, v: u16, fn_nr: u32) -> bool 
         return false;
     }
     let def = data.def(fn_nr);
-    if !def.is_loft_defined() || def.returns_borrowed_view() {
+    if !def.is_loft_defined() {
         return false;
     }
+    // The return SHAPE is asked before the ownership question, because the ownership question
+    // is only defined for a heap return.  `returns_borrowed_view` reads the returned deps as
+    // attribute indices, and a `Type::Function` return carries a `CALLEE_FRAME`-tagged note
+    // instead — a closure's own frame variable, never an attribute index — which that read
+    // refuses.  A bare dense record is the only shape `@FR-R-Place` places, so asking the
+    // shape first makes that precondition structural rather than a second gate beside it.
     let (shape, nullable) = def.returned().peel_optional();
     if nullable || !matches!(shape, Type::Reference(_, _)) {
+        return false;
+    }
+    // `@FR-R-Place`'s callee clause: a callee that may hand back a store it did not mint
+    // licenses nothing (`@FR-O-Proxy`, the deps proxy).
+    if def.returns_borrowed_view() {
         return false;
     }
     if function.is_argument(v) || function.is_caller_hidden_buf(v) || function.is_skip_free(v) {
