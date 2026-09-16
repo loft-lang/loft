@@ -1147,6 +1147,236 @@ fn record_cause(map: &mut HashMap<u16, Disturbance>, view: u16, d: Disturbance) 
     }
 }
 
+/// A container place a definition disturbs through one of its PARAMETERS: the parameter's
+/// SLOT, and the field offset inside it (`ANY_FIELD` for the parameter itself).
+///
+/// The same `(var, field)` shape every other place in this file carries, read in the callee's
+/// own numbering — argument slots lead the variable numbering, so the slot indexes both the
+/// attribute list and the argument list at a call site.
+type ParamPlace = (u16, u32);
+
+/// @PLN164 C3 — every definition that GROWS or REMOVES FROM a container reached through one of
+/// its parameters, which places, and which cause, CLOSED OVER THE CALL GRAPH.
+///
+/// `(B-Disturb)`'s events end a place wherever they happen: `(B-Ref-Reshape)` states it
+/// outright — *"the disturbance may be in this frame or in anything the frame CALLS … at any
+/// depth"* — and `(B-View)` keys its materialise on the same four events, so it inherits the
+/// same reach. This is the fact the materialise was missing; see [`ViewWalk::disturb`].
+type DisturbedParams = HashMap<u32, HashMap<ParamPlace, ViewCause>>;
+
+/// Compose a place the CALLER handed down with a place the CALLEE disturbed inside it.
+///
+/// `base` is where the argument came from in the caller (`f(sc)` gives `(sc, ANY_FIELD)`,
+/// `f(sc.els)` gives `(sc, off_els)`); `inner` is the field offset the callee disturbed
+/// inside its parameter (`p.els += […]` gives `off_els`, `p += […]` on a `&vector` gives
+/// `ANY_FIELD`). One of the two must be the whole thing, because the place model carries ONE
+/// field offset and a projection of a projection needs two.
+///
+/// `None` is the lower bound and the safe direction: a missed disturbance costs a materialise,
+/// a spurious one costs a program its meaning (the measurement [`grown_containers`] records).
+/// Widening `f(o.inner)` + `p.els` to `(o, off_inner)` would shake every view rooted at
+/// `o.inner`, siblings of `els` included, which is exactly that mistake.
+fn compose_param_place(base: (u16, u32), inner: u32) -> Option<ParamPlace> {
+    match (base.1, inner) {
+        (_, ANY_FIELD) => Some(base),
+        (ANY_FIELD, off) => Some((base.0, off)),
+        _ => None,
+    }
+}
+
+/// The place a call ARGUMENT names in the frame that writes the call.
+///
+/// A bare variable names the whole of itself; a projection (`f(sc.els)`) names the field it
+/// reads, through the same [`base_container_place`] the VIEW side uses — so the two cannot
+/// disagree about what a place is. Anything else answers `None` and disturbs nothing, which is
+/// the lower bound every other producer in this file keeps.
+///
+/// A projection passed to a `&` parameter arrives WRAPPED: the argument is an `Insert` holding
+/// the temp's own `Set` and then `OpCreateStack(temp)`, so the place is one indirection away
+/// and the block carries the binding that resolves it. Read here rather than from walk state
+/// because the binding travels with the argument — there is no ordering to get wrong.
+fn call_arg_place(arg: &Value, data: &Data) -> Option<ParamPlace> {
+    if let Value::Insert(ops) = arg.unspan() {
+        let place = call_arg_place(ops.last()?, data)?;
+        if place.1 != ANY_FIELD {
+            return Some(place);
+        }
+        // The temp names a place only where this block is what bound it; otherwise the temp
+        // itself is the place, which is what a caller-local container passed down is.
+        for op in ops {
+            if let Value::Set(t, rhs) = op.unspan()
+                && *t == place.0
+            {
+                return base_container_place(rhs, data);
+            }
+        }
+        return Some(place);
+    }
+    match peel_stack_ref(arg, data) {
+        Value::Var(c) => Some((*c, ANY_FIELD)),
+        other => base_container_place(other, data),
+    }
+}
+
+/// The parameter places `d_nr`'s OWN body disturbs — the direct answer [`disturbed_params_map`]
+/// closes over the call graph.
+///
+/// Read through the same two producers the inline walk uses ([`grown_containers`],
+/// [`reshaped_containers`]), so a callee's growth and the caller's own growth cannot be
+/// answered by two different readers, and the `OpClearVector` subtraction comes with them: a
+/// callee that REBUILDS the field it was handed (`sc.els = [x]` lowers to a clear and then the
+/// appends) disturbs nothing, exactly as the same statement written inline disturbs nothing —
+/// `(B-Disturb)` is explicit that overwriting a place is not disturbing it, and the pair was
+/// measured to agree.
+///
+/// Only places rooted at a VISIBLE argument slot are kept. A container the callee minted itself
+/// dies with the callee and no caller can hold a view into it; and the callee's own hidden
+/// RETURN BUFFER is an argument slot too, so without that test every record-returning function
+/// that builds a vector field reports a disturbance — `fn mk() -> Sc { Sc { els: […] } }` grows
+/// `__retbuf.els`, which is the callee BUILDING its result, not a place the caller was already
+/// viewing (`(O-Buffer)`: the buffer is the caller's store, and the value only becomes the
+/// caller's at the bind).
+fn disturbed_param_places(
+    data: &Data,
+    d_nr: u32,
+    database: Option<&crate::database::Stores>,
+) -> HashMap<ParamPlace, ViewCause> {
+    let def = data.def(d_nr);
+    let mut out: HashMap<ParamPlace, ViewCause> = HashMap::new();
+    if def.attributes.is_empty() || matches!(def.code, Value::Null) {
+        return out;
+    }
+    let function = &def.variables;
+    // Accumulated over the WHOLE body, as the inline walk accumulates it, so a field cleared
+    // anywhere is subtracted everywhere: a missed disturbance costs a materialise.
+    let mut cleared: HashSet<ParamPlace> = HashSet::new();
+    def.code.walk(&mut |v| {
+        let Value::Call(d, args) = v else { return };
+        if data.def(*d).name() != "OpClearVector" {
+            return;
+        }
+        if let Some(place) = args.first().and_then(|a| base_container_place(a, data)) {
+            cleared.insert(place);
+        }
+    });
+    // A hidden attribute is COMPILER-GENERATED, which is the one test that covers the return
+    // buffer and every other `__`-named slot alike; a user parameter is never one.
+    let visible = |v: u16| function.is_argument(v) && !function.is_compiler_generated(v);
+    for place in grown_containers(&def.code, data, function, database, &cleared) {
+        if visible(place.0) {
+            out.insert(place, ViewCause::Grown);
+        }
+    }
+    // Recorded LAST and unconditionally, because a place reached by both reports the RESHAPE —
+    // the cause with something to act on at the container ([`record_cause`]).
+    for place in reshaped_containers(&def.code, data, function) {
+        if visible(place.0) {
+            out.insert(place, ViewCause::Reshaped);
+        }
+    }
+    out
+}
+
+/// [`DisturbedParams`] for the whole program.
+///
+/// Closed over the call graph by the same worklist [`removed_params_map`] uses, and for the
+/// same measured reason: without it the answer is one frame deep, and extracting the append
+/// into a helper makes the materialise disappear and the corrupt read come back.
+///
+/// The forward edge is wider than that one's, because the DISTURBANCE is: a caller forwards a
+/// place whenever the argument it passes is rooted at one of its OWN parameter slots, whether
+/// that parameter is spelled `&` or not. A plain heap parameter aliases the caller's container
+/// exactly as a `&` one does (`calls.md` F-ParamHeap, and probe 40 cell X9 measured it), so
+/// keying on the spelling would let an author lose the materialise by taking loft's own
+/// `warn_redundant_amp` advice.
+///
+/// A callee reached only through a runtime fn-ref has no static call edge and keeps today's
+/// behaviour — the lower bound, in the direction that costs a materialise rather than a
+/// program's meaning.
+fn disturbed_params_map(
+    data: &Data,
+    database: Option<&crate::database::Stores>,
+) -> DisturbedParams {
+    let mut out = DisturbedParams::new();
+    let trace = std::env::var_os("LOFT_TRACE_DISTURB").is_some();
+    let mut work: Vec<(u32, ParamPlace)> = Vec::new();
+    // (callee, its param slot) -> every (caller, the caller's own place) that feeds it.
+    let mut forwards: HashMap<(u32, u16), Vec<(u32, ParamPlace)>> = HashMap::new();
+    for d_nr in 0..data.definitions() {
+        let def = data.def(d_nr);
+        if !def.name.starts_with("n_") {
+            continue;
+        }
+        for (place, cause) in disturbed_param_places(data, d_nr, database) {
+            if trace {
+                let (slot, off) = place;
+                let field = if off == ANY_FIELD {
+                    "whole".to_string()
+                } else {
+                    format!("+{off}")
+                };
+                eprintln!(
+                    "[disturb] {} {cause:?} through parameter `{}` ({field})",
+                    def.name(),
+                    def.variables.name(slot)
+                );
+            }
+            if out.entry(d_nr).or_default().insert(place, cause).is_none() {
+                work.push((d_nr, place));
+            }
+        }
+        if def.attributes.is_empty() {
+            continue;
+        }
+        let function = &def.variables;
+        def.code.walk(&mut |v| {
+            let Value::Call(callee, args) = v else { return };
+            if !data.def(*callee).name.starts_with("n_") {
+                return;
+            }
+            for (i, arg) in args.iter().enumerate() {
+                let Ok(i) = u16::try_from(i) else { continue };
+                let Some(place) = call_arg_place(arg, data) else {
+                    continue;
+                };
+                // Only a place rooted at the caller's OWN parameter reaches ITS caller; a
+                // local container passed down is disturbed inside this frame, where the
+                // inline producers already see it.
+                if function.is_argument(place.0) {
+                    forwards
+                        .entry((*callee, i))
+                        .or_default()
+                        .push((d_nr, place));
+                }
+            }
+        });
+    }
+    while let Some((callee, (slot, inner))) = work.pop() {
+        let Some(ups) = forwards.get(&(callee, slot)) else {
+            continue;
+        };
+        let cause = out
+            .get(&callee)
+            .and_then(|m| m.get(&(slot, inner)))
+            .copied()
+            .unwrap_or(ViewCause::Grown);
+        for (caller, base) in ups.clone() {
+            let Some(place) = compose_param_place(base, inner) else {
+                continue;
+            };
+            if out
+                .entry(caller)
+                .or_default()
+                .insert(place, cause)
+                .is_none()
+            {
+                work.push((caller, place));
+            }
+        }
+    }
+    out
+}
+
 /// @PLN130 F2 + F8 — every VIEW binding that is live across a disturbance of its container.
 ///
 /// This is @FR-B-View's materialise clause: a struct-typed projection aliases without `&`, and
@@ -1227,8 +1457,9 @@ fn collect_views_to_materialise(
     function: &Function,
     data: &Data,
     database: &crate::database::Stores,
+    disturbed: Option<&DisturbedParams>,
 ) -> HashMap<u16, Disturbance> {
-    let out = ViewWalk::run(code, function, data, None, Some(database), 0);
+    let out = ViewWalk::run(code, function, data, None, disturbed, Some(database), 0);
     if !out.is_empty() && std::env::var_os("LOFT_DEBUG_F8").is_some() {
         let mut names: Vec<String> = out
             .iter()
@@ -1278,6 +1509,11 @@ struct ViewWalk<'a> {
     /// `None` stays inside this frame (F2's materialise). See [`reshaped_via_call`] for why the
     /// two questions do not share an answer.
     cross_frame: Option<&'a RemovedParams>,
+    /// @PLN164 C3 — the places each callee disturbs through its PARAMETERS, so `(B-Disturb)`
+    /// reaches across the frame boundary the way `(B-Ref-Reshape)` says it does.  `None` keeps
+    /// this frame's own answer, which is what the REFUSAL still reads: extending it would reject
+    /// programs that compile today, a separable change, and refusing less is its safe direction.
+    disturbed: Option<&'a DisturbedParams>,
     /// Every place this function REBUILDS in whole — `x.a = [9, 9]` emits an
     /// `OpClearVector` on the field and then exactly the `OpNewRecord`s an append emits, and
     /// the two are SEPARATE statements, so the pairing cannot be seen one statement at a time.
@@ -1313,6 +1549,7 @@ impl ViewWalk<'_> {
         function: &'a Function,
         data: &'a Data,
         cross_frame: Option<&'a RemovedParams>,
+        disturbed: Option<&'a DisturbedParams>,
         database: Option<&'a crate::database::Stores>,
         start_line: u32,
     ) -> HashMap<u16, Disturbance> {
@@ -1325,6 +1562,7 @@ impl ViewWalk<'_> {
             shaken: HashMap::new(),
             out: HashMap::new(),
             cross_frame,
+            disturbed,
             database,
             cleared: HashSet::new(),
             line: start_line,
@@ -1491,8 +1729,55 @@ impl ViewWalk<'_> {
                 );
             }
         }
+        self.disturb_via_calls(stmt);
         let established = established_stores(stmt, self.function, self.data);
         self.shake(&established, ViewCause::Reassigned, None);
+    }
+
+    /// @PLN164 C3 — shake for every container place a CALLEE `stmt` invokes disturbs through
+    /// the arguments it was handed.
+    ///
+    /// `(B-Disturb)`'s events end a place wherever they happen, and the producers above see
+    /// only this frame's ops, so a view survived a growth one frame down and kept reading the
+    /// address its elements had left: measured, `e = sc.els[0]?; grow(sc); e.a + e.b` answered
+    /// `4294967401` on BOTH backends where the same append written inline answers `3` and says
+    /// so, and a removal one frame down read the element that shifted in. One shape, two
+    /// meanings, decided by which side of a call the append sits on.
+    ///
+    /// The callee's fact is [`DisturbedParams`]; [`compose_param_place`] maps it onto the
+    /// argument this frame passed. The cause travels with it so the advice names the growth or
+    /// the removal, and `via` names the callee so the report points at the call rather than at
+    /// the container's own line.
+    fn disturb_via_calls(&mut self, stmt: &Value) {
+        let Some(disturbed) = self.disturbed else {
+            return;
+        };
+        let mut hits: Vec<(ParamPlace, ViewCause, u32)> = Vec::new();
+        let data = self.data;
+        stmt.walk(&mut |v| {
+            let Value::Call(d, args) = v else { return };
+            let Some(places) = disturbed.get(d) else {
+                return;
+            };
+            for (&(slot, inner), &cause) in places {
+                let Some(arg) = args.get(usize::from(slot)) else {
+                    continue;
+                };
+                let Some(base) = call_arg_place(arg, data) else {
+                    continue;
+                };
+                // A place this frame CLEARED is being rebuilt, not disturbed — the same
+                // subtraction the inline growth makes, applied to the callee's half.
+                if let Some(place) = compose_param_place(base, inner)
+                    && !self.cleared.contains(&place)
+                {
+                    hits.push((place, cause, *d));
+                }
+            }
+        });
+        for (place, cause, callee) in hits {
+            self.shake_places(&HashSet::from([place]), cause, Some(callee));
+        }
     }
 
     /// One statement, in the order its parts take effect: what it disturbs, then what it
@@ -1917,6 +2202,7 @@ fn def_reshape_refusals(data: &Data, d_nr: u32, removed: &RemovedParams) -> Vec<
         function,
         data,
         Some(removed),
+        None,
         None,
         def.position.line,
     ) {
@@ -3452,6 +3738,7 @@ fn run_scan_phase(
     orig_code: &Value,
     orig_vars: &Function,
     confined: &HashMap<u16, u16>,
+    disturbed: Option<&DisturbedParams>,
 ) -> Vec<(usize, u16)> {
     // @PLN85 `local_source` over-free fix (gated): the heap slots whose OWNED store
     // is displaced by a later borrow/join reassignment. Computed on the pre-scope
@@ -3464,7 +3751,8 @@ fn run_scan_phase(
     // Computed BEFORE the struct takes its `&mut` on the store: the walk reads the store to
     // convert a field NUMBER into the byte OFFSET a view carries, and the two borrows cannot
     // overlap inside one initialiser.
-    let views_to_materialise = collect_views_to_materialise(orig_code, orig_vars, data, database);
+    let views_to_materialise =
+        collect_views_to_materialise(orig_code, orig_vars, data, database, disturbed);
     let mut scopes = Scopes {
         database,
         d_nr,
@@ -6134,6 +6422,13 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // the corpus is evidence.  Differs from `LASTUSE_RECLAIM_OFF` (which also disables
     // the guard); correctness is preserved either way by the scope-exit `OpFreeRef`.
     let inject_unfreed = reclaim_guard && std::env::var("LOFT_STORE_GUARD_INJECT").is_ok();
+    // @PLN164 C3 — the callee half of `(B-Disturb)`, built ONCE over the whole world rather
+    // than re-derived at each call site: the question is asked once per CALL, and a callee body
+    // would otherwise be re-walked once per call to it.  Built BEFORE the loop, so every
+    // definition is read in the same pre-scope form the inline producers read `orig_code` in.
+    let disturbed =
+        crate::keys::callee_disturb_enabled().then(|| disturbed_params_map(data, Some(database)));
+    let disturbed = disturbed.as_ref();
     for d_nr in 0..data.definitions() {
         if !matches!(data.def(d_nr).def_type, DefType::Function) || data.def(d_nr).variables.done {
             continue;
@@ -6149,6 +6444,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
             &orig_code,
             &orig_vars,
             &HashMap::new(),
+            disturbed,
         );
         // A reassignment the scan wrote out per arm was seen in its VALUE form by every analysis
         // that ran before the scan.  Rewrite exactly those and scan again, so those analyses read
@@ -6163,6 +6459,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
                 &orig_code,
                 &orig_vars,
                 &HashMap::new(),
+                disturbed,
             );
         }
         // Plan-57 cluster I-a — two-phase scan.  If a vector store is block-confined,
@@ -6197,7 +6494,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
                     cmap.insert(local, b);
                 }
             }
-            run_scan_phase(data, database, d_nr, &orig_code, &orig_vars, &cmap);
+            run_scan_phase(
+                data, database, d_nr, &orig_code, &orig_vars, &cmap, disturbed,
+            );
             for (&vdb, &(_local, b)) in &confined {
                 relocate_null_init(&mut data.definitions[d_nr as usize].code, vdb, b);
             }
