@@ -480,7 +480,15 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 504 | 481 | **23** |
+| 514 | 491 | **23** |
+
+(2026-09-16, @PLN164 B2 + C3: 514 · 491 · 23 — measured as a delta against 504 · 481 · 23.  The two
+units add ten functions that discriminate on `Value` variants, and all ten peel: `place_result`'s
+walk of a callee's exits and of a binding's uses, and C3's `disturbed_param_places`,
+`call_arg_place` and `projection_place_walk`.  `call_arg_place` is the one worth naming — it sees
+through an `Insert` wrapper to the argument's tail and then through `OpCreateStack`, both with
+`unspan` first, because an argument is a projection wearing two lowerings.  The opaque column is
+unmoved, which is the ratchet.)
 
 (2026-09-15, loft#1540: 504 · 481 · 23 — measured as a delta against 502 · 479 · 23; the change adds
 two functions that discriminate on `Value` variants, and both peel: `Parser::const_view_place`,
@@ -2600,7 +2608,12 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 830 | 490 | 6 | **334** |
+| 834 | 494 | 6 | **334** |
+
+(2026-09-16, @PLN164 B2 + C3: 834 · 494 · 6 · 334 — measured as a delta against 830 · 490 · 6 · 334.
+Four functions added, all four seeing through the wrapper: C3's `disturbed_param_places` reads a
+parameter's kind through `Function::tp(...).base()` exactly as its inline twins do, and the rest
+ask shape questions.  The opaque column and the ratchet are unmoved.)
 
 (2026-09-15, THE JOINED TREE — this branch through loft#1540 and ../loft2's @PLN165 phase 0
 (bdb84abe8): 826 · 486 · 6 · 334, re-measured rather than carried; the ratchet reads its 334 / 1316

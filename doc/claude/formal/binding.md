@@ -165,10 +165,13 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   container (@PLN130 F2/F4/F8).  A plain bind already copies, so this
                   is consistent with what it meant; a `&` gets B-Ref-Reshape instead.
                   A `?`-DISCHARGED element read (`e = v[i]?`) is the same projection with
-                  its absence discharged and is a VIEW on the same terms — an absent
-                  element discharges to null, and there is nothing to view (@PLN164 C3;
-                  today the discharge materialises a copy, which the rule permits and
-                  the rewrite removes).
+                  its absence discharged and is a VIEW on the same terms: the PRESENT
+                  element is viewed, and an ABSENT one discharges to the type's DEFAULT
+                  RECORD, built in a per-site buffer of this frame's (LOFT.md § `?`,
+                  `points[i]?` ⇒ `Point{}`) — not to null, which is what this clause said
+                  until @PLN164 C3 measured every backend answering the default.  There is
+                  nothing of the container to view on that arm, so the buffer is what the
+                  binding names there, and no copy is taken on either.
                   A view of a member that owns a droppable without `OpCopy` never
                   materialises: disturbing its container while the view is used is an error
                   at the disturbance ([heap.md](heap.md) H-View-Drop).
@@ -207,6 +210,13 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   a rule that answered differently on either side of it would give one
                   program two meanings (measured — `d: S = v[0]` read `1` after two
                   appends and `4294967296` after two hundred, loft#1373).
+                  And an event disturbs WHEREVER IT HAPPENS — in this frame, or in
+                  anything the frame CALLS, at any depth.  B-Ref-Reshape states this for
+                  the refusal and B-View inherits it for the materialise: the same
+                  `e = sc.els[0]?; grow(sc); e.a` that answers `3` with the append written
+                  inline read `4294967401` with it one frame down, on both backends, until
+                  @PLN164 C3 gave the walk the callee's half of the question.  Which side
+                  of a call a statement sits on is not one of the four events.
   (B-Ref-Reshape) DISTURBING a container while a `&` reference into it is still LIVE is
                   a COMPILE-TIME ERROR.  These are the shapes where B-Ref-Alias could
                   not hold, and declining them is what makes B-Ref-Alias unconditional

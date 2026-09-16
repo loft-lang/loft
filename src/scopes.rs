@@ -544,25 +544,43 @@ fn block_tail_place<'a>(
 /// per-ARM lift materialises a branch- or discharge-valued one.  A reader cannot tell which
 /// route their binding took, and `(H-Materialise)`'s promise — "the author is told" — is about
 /// the copy, not about how it was arranged.
-fn report_materialised_view(cause: ViewCause, vname: &str, cname: &str, fname: &str) {
+/// `via` is the CALLEE that did it, where this frame's own statements did not (@PLN164 C3).
+/// It is the same principle the `Grown` arm's note below already states: a reader sent looking
+/// for a statement that is not in the function pays for the difference, and a disturbance one
+/// frame down is exactly that — nothing in `c_grow_callee` appends to `sc`.
+fn report_materialised_view(
+    cause: ViewCause,
+    vname: &str,
+    cname: &str,
+    fname: &str,
+    via: Option<&str>,
+) {
     match cause {
         ViewCause::Reshaped => {
-            crate::copy_manifest::note_materialised_view(vname, cname, fname);
+            crate::copy_manifest::note_materialised_view(vname, cname, fname, via);
         }
         // loft#1373 — the fourth invalidator: the container GREW, so the elements may
         // have moved to a larger record. Same materialise, different sentence: a
         // reader told "removing an element renumbers the others" goes looking for a
         // `remove` that is not in the function.
         ViewCause::Grown => {
-            crate::copy_manifest::note_grown_view(vname, cname, fname);
+            crate::copy_manifest::note_grown_view(vname, cname, fname, via);
         }
         // @PLN130 F8 — the third invalidator: the container VARIABLE is reassigned,
         // so the dep still names `bx` while the store it named is gone. Different
         // cause, different way out, so a distinct advice line.
         ViewCause::Reassigned => {
-            crate::copy_manifest::note_reassigned_view(vname, cname, fname);
+            crate::copy_manifest::note_reassigned_view(vname, cname, fname, via);
         }
     }
+}
+
+/// The user-facing name of the callee a disturbance travelled through, if it did.
+fn disturbance_via(data: &Data, cause: &Disturbance) -> Option<String> {
+    cause
+        .via
+        .filter(|d| *d != u32::MAX)
+        .map(|d| data.def(d).original_name().clone())
 }
 
 /// Is `v` the temp a null DISCHARGE hoists its SUBJECT into?
@@ -656,16 +674,17 @@ fn lift_view_deps(arg: &Value, data: &Data) -> Option<Vec<u16>> {
 /// Only a container named by a plain `Var` is collected; a reshape reached through some
 /// other expression is not recognised, so the answer is a lower bound and a missed case
 /// keeps today's behaviour rather than inventing a new one.
-/// **Deliberately NOT extended across a call.** A callee that removes from a `&vector`
-/// parameter reshapes the CALLER's container, and a view the caller holds then goes stale with
-/// no diagnostic — measured, the write is silently lost (@PLN130 probe 38 cell A1, both
-/// backends, and it reproduces on mainline). Propagating the reshape to the call site was tried
-/// and reverted: it did not fix A1 (the view's dep does not name a `&vector` PARAMETER, so the
-/// materialise arm never fires) and it broke cell C1, where the viewed element does not move
-/// and the write legitimately lands. It would also make a `&` argument silently become a copy
-/// whenever the callee removes from the container, which changes what `&` means (@PLN87) rather
-/// than fixing a bug. Filed as [loft#779](https://github.com/loft-lang/loft/issues/779); the
-/// decided answer is to REFUSE that program, not to copy behind the author's back.
+/// **This frame only.** What a CALLEE disturbs is [`disturbed_params_map`]'s answer, unioned in
+/// beside this one by [`ViewWalk::disturb_via_calls`] — kept apart because the two are read off
+/// different bodies, not because the events differ.
+///
+/// The half that is still deliberately absent is the `&` PARAMETER VIEW: a callee holding
+/// `target: &Box` while another parameter reshapes the container around it writes through a
+/// reference that no longer reaches its source, and the write is silently lost (@PLN130 probe
+/// 38 cell A1, [loft#779](https://github.com/loft-lang/loft/issues/779)). A parameter has no
+/// bind in the callee, so there is nothing to materialise AT, and copying behind the author's
+/// back is not what `&` asked for (@PLN87) — the decided answer there is to REFUSE the program,
+/// which is `reshape_refusals`' side of this file.
 fn reshaped_containers(code: &Value, data: &Data, function: &Function) -> HashSet<(u16, u32)> {
     let mut out = places_named_by(code, data, &|name| match name {
         "OpRemove" => Some(1),
@@ -1370,6 +1389,21 @@ fn disturbed_params_map(
                 .insert(place, cause)
                 .is_none()
             {
+                if trace {
+                    let def = data.def(caller);
+                    let (slot, off) = place;
+                    let field = if off == ANY_FIELD {
+                        "whole".to_string()
+                    } else {
+                        format!("+{off}")
+                    };
+                    eprintln!(
+                        "[disturb] {} {cause:?} through parameter `{}` ({field}), via {}",
+                        def.name(),
+                        def.variables.name(slot),
+                        data.def(callee).name()
+                    );
+                }
                 work.push((caller, place));
             }
         }
@@ -1514,6 +1548,13 @@ struct ViewWalk<'a> {
     /// this frame's own answer, which is what the REFUSAL still reads: extending it would reject
     /// programs that compile today, a separable change, and refusing less is its safe direction.
     disturbed: Option<&'a DisturbedParams>,
+    /// @PLN164 C3 — views that name a container WHOLE rather than a place inside it
+    /// (`d = &cv.data`, not `e = sc.els[i]?`).  Both NAME `(cv, data)`, because the place model
+    /// carries one field offset; what separates them is that a growth moves every ELEMENT while
+    /// the field SLOT it repoints is exactly what the first one re-reads.  Read off the binding
+    /// through `use_analysis::view_source_place_indexed`, the same walk that answers the place,
+    /// so the two cannot disagree about what the chain did.
+    whole_container: HashSet<u16>,
     /// Every place this function REBUILDS in whole — `x.a = [9, 9]` emits an
     /// `OpClearVector` on the field and then exactly the `OpNewRecord`s an append emits, and
     /// the two are SEPARATE statements, so the pairing cannot be seen one statement at a time.
@@ -1563,6 +1604,7 @@ impl ViewWalk<'_> {
             out: HashMap::new(),
             cross_frame,
             disturbed,
+            whole_container: HashSet::new(),
             database,
             cleared: HashSet::new(),
             line: start_line,
@@ -1776,7 +1818,54 @@ impl ViewWalk<'_> {
             }
         });
         for (place, cause, callee) in hits {
-            self.shake_places(&HashSet::from([place]), cause, Some(callee));
+            self.shake_plain_places(&HashSet::from([place]), cause, Some(callee));
+        }
+    }
+
+    /// [`Self::shake_places`] over PLAIN views only, leaving every `&` link alone.
+    ///
+    /// The rules split the two and give them different answers: `(B-View)` materialises a plain
+    /// bind, because a plain bind already meant value semantics and losing the alias is
+    /// consistent with what it meant, while `(B-Ref-Reshape)` REFUSES a `&` reference into a
+    /// disturbed container — *"loft will not quietly downgrade the reference to a copy"* — and
+    /// that refusal is `reshape_refusals`' half of this file, which reads this frame's answer.
+    /// So the callee's half has no `&` case to add: materialising one is the thing the rule
+    /// says not to do.
+    ///
+    /// Measured, and this is what the restriction is for: `d = &cv.data; grow(cv, 7);
+    /// grow(cv, 8); d[2]` is `157-view-header`'s `grown_between`, where the link names the
+    /// FIELD SLOT rather than a place inside the vector — a growth repoints that slot and the
+    /// link re-reads it, so the link must SEE the growth and the cell reads `11`.  Shaking it
+    /// gave `0`.  Its inline twin already reads `0` today, on `main` and under this unit's
+    /// switch alike, and that is a separate deviation from `(B-Ref-Reshape)` — a `&` link
+    /// silently downgraded to a copy — which is filed rather than widened into here.
+    fn shake_plain_places(
+        &mut self,
+        places: &HashSet<(u16, u32)>,
+        cause: ViewCause,
+        via: Option<u32>,
+    ) {
+        let links: Vec<(u16, u16, u32)> = self
+            .open
+            .iter()
+            .flatten()
+            .filter(|(view, _, _)| self.whole_container.contains(view))
+            .copied()
+            .collect();
+        let before: HashMap<u16, Option<Disturbance>> = links
+            .iter()
+            .map(|(v, _, _)| (*v, self.shaken.get(v).copied()))
+            .collect();
+        self.shake_places(places, cause, via);
+        for (view, prior) in before {
+            match prior {
+                Some(d) => {
+                    self.shaken.insert(view, d);
+                }
+                None => {
+                    self.shaken.remove(&view);
+                }
+            }
         }
     }
 
@@ -1895,6 +1984,14 @@ impl ViewWalk<'_> {
                     }
                     None => {
                         self.view_keys.remove(v);
+                    }
+                }
+                match crate::use_analysis::view_source_place_indexed(self.data, rhs) {
+                    Some((_, false)) => {
+                        self.whole_container.insert(*v);
+                    }
+                    _ => {
+                        self.whole_container.remove(v);
                     }
                 }
                 for (container, field) in value_view_places(rhs, self.data, self.function) {
@@ -9813,7 +9910,8 @@ impl Scopes<'_> {
             // strip needs and the sentence does not: for a binding that views two containers
             // they are different, and only one of them was reassigned.
             let cname = function.name(cause.container).to_string();
-            report_materialised_view(cause.cause, &vname, &cname, &fname);
+            let via = disturbance_via(data, &cause);
+            report_materialised_view(cause.cause, &vname, &cname, &fname, via.as_deref());
         }
         // Companion to the !adopts_fresh_store (deep-copy) branch above for the
         // var-to-var deep-copy path.  When `Set(v, Var(src))` and
@@ -9876,11 +9974,13 @@ impl Scopes<'_> {
             if self.lift_join_arm_tails(&mut rw, home, v, function, data)
                 && let Some(cause) = self.views_to_materialise.get(&v).copied()
             {
+                let via = disturbance_via(data, &cause);
                 report_materialised_view(
                     cause.cause,
                     function.name(v),
                     function.name(cause.container),
                     &data.def(self.d_nr).original_name(),
+                    via.as_deref(),
                 );
             }
             rewritten_arms = rw;
