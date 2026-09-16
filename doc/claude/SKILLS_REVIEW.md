@@ -66,17 +66,17 @@ row whose skill was deleted.
 
 | skill | reviewed through | commit |
 |---|---|---|
-| `design-protocol` | 2026-09-16 | `692ece3e1` |
-| `doc-quality` | 2026-09-16 | `e4e97aa9a` |
+| `design-protocol` | 2026-09-16 | `1a474a791` |
+| `doc-quality` | 2026-09-16 | `692ece3e1` |
 | `draw` | 2026-09-16 | `9720dfd06` |
 | `engineering-rigor` | 2026-09-16 | `e4e97aa9a` |
-| `formal-rules` | 2026-09-16 | `692ece3e1` |
-| `loft-codegen` | 2026-09-16 | `e4e97aa9a` |
+| `formal-rules` | 2026-09-16 | `44863b726` |
+| `loft-codegen` | 2026-09-16 | `692ece3e1` |
 | `loft-debug` | 2026-09-16 | `e4e97aa9a` |
 | `loft-plan-workflow` | 2026-09-16 | `44e7d48f6` |
 | `loft-ship` | 2026-09-16 | `8958ee842` |
 | `loft-test` | 2026-09-16 | `e4e97aa9a` |
-| `loft-write` | 2026-09-16 | `ad62fbac1` |
+| `loft-write` | 2026-09-16 | `18e92b67e` |
 
 ## Findings that outlive a single review
 
