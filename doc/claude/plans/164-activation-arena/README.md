@@ -10,7 +10,7 @@ Tracker: [@PLN164](https://github.com/loft-lang/plans/issues/164) · `status:act
 
 ## Status (REQUIRED)
 
-Active (the owner's go, 2026-09-15).  **P0 done**, **B1, C4, B2 and C3 shipped** (B2's caller side
+Active (the owner's go, 2026-09-15).  **P0 done**, **B1, C4, B2, C3 and C1 shipped** (B2's caller side
 2026-09-16: a wash on the parse row, structural gain only — § B2 *Measured*) — the
 measurements are under § P0 below and the mechanism under § B1.  What P0 changed in the
 plan: tier 1's ceiling is ~10 % of the parse row, not a fifth, and its store-identity cost
@@ -47,8 +47,8 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
 - **Effort:** M (tiers 1–2) · MH (tier 3)
 - **Design:** ~ — the invariants are named; the store-identity question (§ Edge cases E1)
   is open and decides tier 1's shape.
-- **Last touched:** 2026-09-16 (C1 step 1 shipped: the shipped in-place FIELD road staged no
-  initialiser, so a literal reading the place it overwrites answered wrong on both backends)
+- **Last touched:** 2026-09-16 (C1 shipped, both steps: the staging clause the FIELD road never
+  had, then the ELEMENT receiver — the `acc_pts` store census 3 → 2)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -514,14 +514,59 @@ projection arm — c1 and c8 go red on both backends and every other cell is unm
 what says the arm stages the initialisers that read the place rather than staging everything.
 Pins `tests/in_place_literal.rs` hold the IR shape.
 
-**Step 2 — the element destination written in place (OPEN).**  The two lowerings are the SAME
-sequence of field writes; only the receiver differs (`OpGetField(bx, …)` against a
-`__ref_p2_N` the copy then moves).  So step 2 is redirecting that receiver and dropping the
-store, the `OpCopyRecord` and the free — with step 1's staging already covering E13 and the
-literal's own lowering already covering E14.  What it still owes: the old element's owned heap
-released before its slot is reused (`H-ClearRelease`, per field), and the ABSENT element,
-which `(R-InPlaceLiteral)` says keeps the copy path.  It needs a `LOFT_NO_<unit>` switch, which
-step 1 does not: a correctness fix has no before-half worth keeping.
+**Step 2 — the element destination written in place (SHIPPED 2026-09-16).**  The gate was one
+op name.  `parse_object` builds into whatever `code` it is handed — the probe shows it receiving
+`Call(OpGetField)` for a field and `Call(OpGetVector)` for an element alike — and the arm that
+mints a work-ref instead asked `is_field(code)`, which is `Call(OpGetField)` and nothing else.
+`Parser::builds_into_element` admits the element place; switch `LOFT_NO_ELEMENT_IN_PLACE=1`.
+
+*Four declines, and every one was bought by a measurement rather than by the design.*  (1) The receiver is emitted ONCE PER FIELD
+WRITE, so the place must be re-derivable with no effect the program can see: a repeatable base
+and an index that is a LITERAL or a BARE VARIABLE.  `v[bump()]` would call `bump` once per
+field; `v[len(v) - 2]` would re-read a length the writes may have moved.  (2) The index is read
+from the END of the argument list — `OpGetVector(base, size, index)` and `OpVectorRef(base,
+index)` put it at different positions, and a fixed slot read the SIZE as the index and declined
+every `OpVectorRef` place by accident.  (3) A COLLECTION field declines the whole type, and this
+is the one that was MEASURED rather than reasoned: the staging clause binds a field expression
+to a temp, and what that bind MEANS depends on the type — `(B-Copy)` copies a text, so a
+literal reading the slot's own text is safe, while `(B-View-Base)` makes a collection projection
+a VIEW.  In place, `v[i] = S { c: e.c }` staged a view of the slot's own vector, the write
+released that vector before storing the handle back to it, and the field read `0` on BOTH
+backends.  Deciding it per FIELD needs the self-read answer, which is not known until the fields
+are parsed and the road is already taken; deciding it by TYPE is decidable up front.  Coarse,
+and the safe direction — and the shape this phase exists for keeps the road, because
+`acc_pts`'s `Elem` is text and scalars.
+
+(4) A member of a LINKED COLLECTION GROUP declines, and the CORPUS bought this one — the cells
+did not reach it.  `@FR-Col-Group` makes two collections over one element type two ROUTES to a
+single record set, so an element write owes them the unlink-and-relink that `group_elem_write`
+wraps the copy with; written straight into the slot the whole of it is skipped and `by_k` goes
+on holding the record under the hash of its OLD key, which is loft#900's defect by another road.
+`a-group-element-written-through-the-vector-member-reaches-every-member` is what caught it, and
+its own header had already written the sentence.  The predicate is new
+(`is_grouped_vector_elem`) rather than the existing `vector_group_elem_site`, because that one
+recognises `OpVectorRef` alone — the site it serves sees nothing else — while this admission also
+allows `OpGetVector`, so reusing it would have let the other spelling through.
+
+*The asymmetry between the two lists is deliberate:* the ADMISSION names two element ops, the
+DECLINE names four including both nullable spellings.  A miss in the admission costs the
+optimisation; a miss in the decline costs the group's agreement.
+
+*And `reads_place` grew a clause for it:* a read of a variable whose DEPS name the root counts
+as a read of the place.  `e = sc.els[i]?; sc.els[i] = El { a: e.b, … }` reads the very slot the
+literal overwrites, under another name — `acc_pts`'s own shape — so without it step 1's swap
+would have come back one spelling over, on the very road step 2 opens.
+
+*Measured:* the `acc_pts` shape's store census **3 → 2**, which is the `Elem` temp the
+evaluation table charged to the `?`-discharge and C3 showed belongs here.  The row's remaining
+copies are the POINTS, which are C2 and C5.
+
+*Receipts.*  The guard reaches 25 cells, clean on both backends under every falsifier; all four
+declines are cells, because a decline that silently stopped declining is the expensive
+direction.  Step 2's falsifier is STRUCTURAL and the pins carry it — with the switch every cell
+still passes, since the copy is correct, so what the switch costs is a store and a deep copy
+that no value can see.  The pin asserts BOTH element spellings, having first passed vacuously by
+asserting one.
 
 ## The rewrite list — the natural `parse_poly` to its optimal form
 
@@ -701,7 +746,7 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |
 | **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state) | § B1 | c6 under the pool without `minted_pairs` — the interpreter's rebind free must first match native's `_rb_w_` guard | Blocked on that divergence |
 | **B2** — the result's buffer claimed in its destination's store, the field taking it by relocation at the last use (`R-Place`, `R-MoveLast`) | § B2 | cells b1–b15 both backends under the falsifiers; the census 184 → 50; `parse_poly`'s `paint: pp_paint` emits `OpMoveRecord` and `read_paint`'s buffer is a record in the scene's store; the parse row a wash (`perf stat`) | Shipped 2026-09-16 |
-| **C1** — element overwrite from a literal in place (`R-InPlaceLiteral`) | § C1 | step 1 (the STAGING clause, a both-backend silent-wrong on the shipped FIELD road): 18 cells, falsified, pins.  Step 2 (the element receiver) open | Step 1 shipped 2026-09-16 |
+| **C1** — element overwrite from a literal in place (`R-InPlaceLiteral`) | § C1 | step 1 (the STAGING clause, a both-backend silent-wrong on the shipped FIELD road) and step 2 (the element receiver): 25 cells both backends under every falsifier, four declines pinned, the `acc_pts` census 3 → 2 | Shipped 2026-09-16 |
 | **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § The rewrite list | E15/E16 cells; `smooth_pts` writes `Op.pts` | After C3 (needs no arena: the destination is a record in the scene's store) |
 | **C3** — read-only `?`-discharge as a view (`B-View`'s discharge clause) | § C3 | the discharge ALREADY views (13 shapes measured, both backends), so the phase's content was its other half: `(B-Disturb)` across a CALL.  15 pairs both backends; 7 move under the switch | Shipped 2026-09-16 |
 | **C4** — per-type prefill image (`R-Prefill`) | § C4 | cells c1–c11 both backends under `LOFT_PREFILL_VERIFY`; the verify census over all 1432 corpus files; the image USED on both backends (`LOFT_TRACE_PREFILL`); parse row −11 % | Shipped 2026-09-15 |
@@ -718,12 +763,11 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
 2. B1, C4 and B2 — shipped.  B2 measured a wash on the parse row (the `Paint` it relocates
    carries no heap on the bench scene); the copy class the profile measured is the points,
    which C2 and C5 take.
-3. ~~**C3 then C1**~~ — C3 shipped, and it moved no copy: the discharge was already a view
-   and the `acc_pts` temporary the evaluation table charged to it is C1's, counted twice.
-   **C1 step 1 shipped** (the staging clause, a silent-wrong on the FIELD road that had to be
-   closed BEFORE the element road joins it, or elements inherit it).  **C1 step 2 is next** —
-   the element receiver, which is where the copy actually goes.
-4. **C2** — after C1: it needs a single-exit callee test; it does NOT need the arena.
+3. ~~**C3 then C1**~~ — both shipped.  C3 moved no copy (the discharge was already a view, and
+   the `acc_pts` temporary the evaluation table charged to it was C1's, counted twice); C1
+   closed the staging clause on the FIELD road first, because the element road inherits it, and
+   then opened the element road — census 3 → 2.
+4. **C2 is next** — it needs a single-exit callee test; it does NOT need the arena.
 5. **C5** last, as its own section: it extends a formal rule (`O-ViewField`) and the
    value-record gate, so the owner signs the rule off before the cells are written.
 6. **B1b** beside them whenever D-own-43 closes (the interpreter's rebind guard); then
