@@ -475,6 +475,15 @@ only the second kind can say the quiet was earned:
   that could earn the freeze, expected to move, and the walk continues past them. Crossing them
   is necessary and never sufficient, for the same reason the checklist minimum is: it measures
   the rules we have written, and a rule nobody has written yet is not counted by anything.
+  ⚠ **The distance overstates the WORK.** Many tail rules are simple enough that the existing
+  tests already validate them fully — so no new exception is waiting to be found, and closing
+  the gap is an annotation at a site that already holds, not verification to do. Evidence,
+  2026-09-17: five rules drawn from the untouched tail (`F-Escape`, `E-And`, `F-Args`, `M-Bool`,
+  `Col-Copy`, each with neither an annotation nor a guard) were probed on the interpreter and
+  every one behaved exactly as written. Read a shortfall as labelling debt until a probe says
+  otherwise. ⚠ Five rules took SIX probes: `Col-Copy`'s first tested a `vector` where the rule
+  is stated for KEYED collections, and passed — a probe landing beside a rule rather than on it
+  reads exactly like a verification, which is the light pass's dominant hazard.
 - **Open deviations as few as they can be made** — `python3 scripts/rule_tags.py registers`
   counts them; no figure is written here. A deviation is a *written rule the code does not
   obey*, so freezing on top of one promises the rule and ships the exception. "As few as
@@ -491,6 +500,10 @@ only the second kind can say the quiet was earned:
   wrong or unenforced**, producing suspicions to triage rather
   than citations to land. The walk is how a suspicion gets resolved; this pass is how the tail
   gets looked at ALL, before a freeze makes every unlooked-at path a permanent promise.
+  ⚠ **It runs immediately before the contract-1 decision, not continuously** (owner,
+  2026-09-17). Run early it reads a surface still moving and has to be run again; its whole
+  value is being the LAST look before the one-way door. So it is the final gate to clear, not
+  a task to start now — and nothing else on this list waits for it.
 
 ⚠ **A bug count cannot substitute for it, and reading one as the other is the specific mistake
 this axis exists to prevent.** `silent-wrong` ran at 33 % of everything filed in August while

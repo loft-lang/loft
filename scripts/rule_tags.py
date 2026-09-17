@@ -388,9 +388,11 @@ def main():
         # rather than left silent, because a metric that cannot reach its own floor reads
         # identically to one that simply has not yet.
         print("\n⚠ The share is over ALL defined rules, some of which warrant no guard at all, "
-              "so the\n  distance to the guard floor is an UPPER bound.  No exclusion set "
-              "exists yet; sizing it\n  is an owner decision and would move both the position "
-              "and what the floor means.")
+              "so the\n  distance to the guard floor is an UPPER bound — and it overstates the "
+              "WORK besides:\n  a tail rule the existing tests already validate closes with an "
+              "ANNOTATION, not with\n  verification.  No exclusion set exists, and one is not "
+              "being sized up front: the owner\n  judges it against the progress made and the "
+              "bugs actually met (2026-09-17).")
         return 0
 
     cites = citations()
