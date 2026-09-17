@@ -17,9 +17,15 @@ the gate that declines each library function measured per function (§ C5 *Built
 re-profile's verdict is CORRECTED (2026-09-16, § Re-profiled *The correction*): "the row is the
 scanner, the class is paid down" was read off operator COUNTS and INTERPRETED profiles, and `perf`
 on the release binary itself reads loft runtime 63 %, program 31 % — the class is still two thirds
-of the row.  What P0 priced (the store mint/free pair, 9 %) holds; the per-record churn around it
-(allocator, copies, appends, ≈ 30 %) was never priced, and attributing it to loft lines is the
-next step (P0b) before any phase is cut.**  The
+of the row.  **P0b is done (2026-09-17, § P0b):** charged to loft lines through the inline chain,
+the runtime is 72 % and the store mint/free family 20 % — half of it buffers minted at FUNCTION
+ENTRY on paths that never use them.  Moving those mints to their first use measured −9–10 % by
+hand, so **A0** (§ A0) is cut, after @PLN157's prelude elision (−11–14 %).  Both are BUILT
+(2026-09-17), and so is **C6** (§ C6): the parse row is 38.8–41.7 k → 29.8–29.9 k ns/op, every
+other row equal or faster.  The last-use vector field, measured next, is not a move; the
+release profile named three runtime fast paths instead, which took the row to 25.0–25.3 k
+(≈ 3.5× the Rust reference) and every other row equal or faster, and loft#1549 was fixed on the way (§ The runtime under the
+row).**  The
 measurements are under § P0 below and the mechanism under § B1.  What P0 changed in the
 plan: tier 1's ceiling is ~10 % of the parse row, not a fifth, and its store-identity cost
 (287 `store_nr !=` sites in one emission) is real, so A1/A2 stay behind B and C in the
@@ -55,8 +61,9 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
 - **Effort:** M (tiers 1–2) · MH (tier 3)
 - **Design:** ~ — the invariants are named; the store-identity question (§ Edge cases E1)
   is open and decides tier 1's shape.
-- **Last touched:** 2026-09-16 (the re-profile's verdict corrected by `perf` on the release binary,
-  the queue re-cut under it, and the frame-prelude lever priced — § Re-profiled *The correction*)
+- **Last touched:** 2026-09-17 (P0b, row 11, A0 and C6 built, loft#1548 and D-own-44 fixed on
+  the way; the 14-row table and the parse row re-measured — § Re-measured; the runtime fast
+  paths and loft#1549 — § The runtime under the row)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -224,6 +231,371 @@ plan's.
    under 2 % and the correction does not change that.
 4. Re-measure the 14-row `compare.py` table after each of these; the parse row's re-profile is
    re-taken with `perf` on the release binary, never with a count.
+
+*P0b answered item 1 — § P0b below.  It re-cut the queue a second time.*
+
+## P0b — the release row charged to loft lines (DONE 2026-09-17)
+
+**The instrument.**  `scripts/native_attrib.py` takes a `--native-release` binary built with
+frame pointers and line tables — the program AND the runtime rlib it links
+(`RUSTFLAGS=-Cforce-frame-pointers=yes cargo build --profile profiling --lib`; the rustc line
+is in the script's header) — plus the emission and a `perf record --call-graph fp`.  It
+expands each physical frame to its inline chain with `llvm-symbolizer`, charges the sample to
+the innermost frame of the emitted program, and reads the loft line off that frame's
+`// loft:` comment.  A runtime routine is reported under the ENTRY the program called, grouped
+into families.  Run: `taskset -c 2`, `--n 80000`, 16 835 samples, hash `33f6d2b8`, 42.2 k ns/op
+(frame pointers cost a few per cent; shares come from this build, times from the release one).
+
+**Two corrections to the earlier read.**  The runtime share is **72 %**, not 63 %: the self-time
+table counted a runtime helper inlined into a program function (`op_add_long`, `store_mut`,
+`offset_in_bounds`) as program.  And the store mint/free family is **20 %**, not 9 %: the 9 %
+was the store routines' own SELF time, while the entry-inclusive cost also carries the claim,
+the zero fill, `Store::init`'s free header and the release walk each mint pays.
+
+| family (by the entry the program called) | share | where it is charged |
+|---|---:|---|
+| store mint/free | **20.0 %** | `parse_poly` 5.6, `parse_circle` 3.9, `parse_fronds` 2.7, `read_paint` 2.4, `parse_scene_at` 1.6, `no_mark` 1.1 |
+| record mint/copy/move | 11.0 % | `parse_fronds` 4.7, `read_points` 1.6, `parse_poly` 1.1 |
+| store access | 9.6 % | `acc_pts` 2.4, `parse_fronds` 2.0 |
+| vector field copy (`vector_add`) | 9.2 % | `parse_fronds` 5.5, `parse_poly` 2.0, `parse_circle` 1.2 |
+| vector append/grow | 6.7 % | `read_points` 2.1, `fronds` 1.8 |
+| frame prelude | 6.4 % | `matches_at` 2.2, `word_boundary` 1.6, `at` 1.4 |
+| std (`dec2flt`, malloc, memcpy) | 5.0 % | |
+| text | 4.8 % | `t_4text_split` 2.4 |
+| checked arithmetic | 3.8 % | `matches_at` 2.1 |
+| libm | 1.3 % | `circle_pts` |
+| **the program's own code** | **21.2 %** | `matches_at` 5.2, `find_option` 2.8, `t_4text_split` 2.5 |
+
+**By line, two findings carry most of the plan's class.**
+
+1. **Half of the store family is minted at FUNCTION ENTRY, on every path.**  The function
+   prologues alone — before the first loft line runs — take `parse_poly` 4.0 %, `parse_circle`
+   3.1 %, `read_paint` 2.0 % (9.1 % together, their exit frees on top).  The preamble's
+   `__ref_N = null` lowers to a store mint on both backends, and it runs whether or not the
+   path that uses the buffer is taken.  `parse_circle` is called for 7 of the scene's lines and
+   matches ONE: on the other six it mints its two buffers (`Paint`, `vector<Pt>`) and frees them
+   unused.  `parse_poly` mints four, one per `smooth_pts` / `smooth_vals` site, and its three
+   exits take one or two of them.  P0 judged this pattern not worth a hand patch by arithmetic
+   (≈ 0.7 µs); measured, it is the largest single lever the row has.
+2. **`drawing.loft:704` — the `Op` literal appended in the frond loop — is 12.5 % of the row.**
+   `vector_add` 5.1 % (the `pts` and `widths` copies), `OpCopyRecord` 2.5 % + `OpDatabaseNP`
+   1.3 % (the nested `Paint { … }` literal is built in a store of its own and deep-copied into
+   the element's inline `paint` field — per frond), `OpNewRecord` 1.1 %.  The same nested
+   literal is at `:594` (`parse_line_cmd`).  Of the two vector copies, `widths: pf_wids` is the
+   variable's last use; `pts: pf_line` is not (line 707 reads it again), so that copy is the
+   two-destination copy tier 3 keeps.
+
+**The first finding, measured by hand** (`bytecode-comparisons/A0-lazy-mint-hand-patch.py`):
+all 16 entry mints in 7 functions moved to a null-guarded mint in front of the call that takes
+the buffer; the declaration holds the null sentinel; the exits' `OpFreeRef` already ignores a
+null store, so no free moved.
+
+| variant | ns/op (ABAB ×4, `--n 4000`, P-core) | `perf stat -r 5` instructions / cycles | hash |
+|---|---|---|---|
+| as emitted | 38.6–39.8 k | 2 499 M / 583 M | `33f6d2b8` |
+| entry mints lazy | **35.3–35.8 k** (−9 to −10 %) | **2 319 M / 536 M** (−7.2 % / −8.0 %) | `33f6d2b8` |
+
+Both variants run clean under `LOFT_STRICT_STORES=1 LOFT_NATIVE_LEAK_CHECK=1`, and the
+instrument can fail: the same emission with one exit's `OpFreeRef` deleted reports
+`1 stores not freed … main_vector<Pt>×20`.
+
+**Smaller items the attribution names.**  `strict_stores()` shows as 1.8 % of leaf time: the
+store accessors test the switch BEFORE the slot's `free` flag, so the common path pays an atomic
+load that `s.free && strict_stores()` would skip.  `offset_in_bounds` (6.4 % leaf) and
+`begin_write_inner` (4.9 %) are the per-access checks of the store family, which no
+lifecycle phase changes.
+
+### The queue after P0b
+
+1. ~~**@PLN157's transitive-leaf prelude elision**~~ (its row 11) — SHIPPED 2026-09-17
+   (`@FR-R-LeafChain`): the row 38.8–41.7 k → 33.5–34.1 k ns/op, instructions −19.1 %.
+2. ~~**A0 — the buffer minted at its first use**~~ (§ A0) — BUILT 2026-09-17: the row
+   33.5–34.1 k → 31.2–31.4 k ns/op on top of row 11.
+3. ~~**C6 — a nested record literal built inside the element**~~ (§ C6) — BUILT 2026-09-17:
+   hand-measured −8.5 %, built −6–7 %; loft#1548 fixed on the way.
+4. ~~**The last-use vector field**~~ — measured before it was cut, and it is not a move:
+   every copy it named crosses stores and reads a view or a reused buffer (§ The runtime
+   under the row).  What the profile named instead — three runtime fast paths — is BUILT
+   (2026-09-17, same section): the row 28.3–28.5 k → 25.0–25.3 k ns/op.
+5. **The `Mark` result path** — now the largest store class, 12 of the 30 stores a parse
+   mints (§ The runtime under the row, *The census*).
+6. **A1/A2** — re-priced: the store family is 13.7 % of the row now (`parse_poly` 3.8,
+   `parse_scene_at` 2.1, `parse_fronds` 1.6, `no_mark` 1.6, `parse_circle` 1.1).
+
+## A0 — the buffer minted at its first use (`@FR-O-Buffer`)
+
+*Invariant:* a hidden return buffer is minted at most once per activation, before the first
+statement that hands it to a callee on the path that runs; a path that never uses it never
+mints it.  `(O-Buffer)` says who owns a buffer and when it is freed; it does not require the
+mint to precede the path.  The free side already holds: every exit frees the buffer with a
+null-tolerant free (native `OpFreeRef` returns on the sentinel; the interpreter's `FreeRef`
+is asked the same question in the cells).
+
+*The shape:* the preamble's `__ref_N = null` becomes the non-allocating sentinel (the
+`OpInitRefSentinel` the interpreter already has for an inline ref, `DbRef::NULL` on native),
+and each statement that passes the buffer to a call is preceded by
+`if OpVectorIsNull(__ref_N) { __ref_N = null }` — the guarded-mint shape a vector `+=` already
+uses (`vectors.rs`, loft#1219), idempotent in a loop.
+
+*Cases to settle before the first cell is written:*
+
+| # | case | why it bites |
+|---|---|---|
+| A0-1 | the buffer used on one branch only, freed at every exit | the plain win; the exit free on the un-minting path must be a no-op on BOTH backends |
+| A0-2 | the buffer used inside a loop | the guard must mint once, not per iteration — a re-mint clears what the previous iteration's result local still reads |
+| A0-3 | a result local ADOPTS the buffer (`p = mk(s)`, deps `["__ref_1"]`) and is read after | the local IS the buffer; the witness compare at the exits (`p.store_nr != __ref_1.store_nr`) must still decline |
+| A0-4 | two call sites in exclusive arms sharing nothing but the exit | each arm mints its own; the exit frees both, one of them null |
+| A0-5 | a buffer the H7 loop rotation (`OpPutRef(__ref_1, __ref_2)`) swaps | the partner must be minted before the swap reads it — a use that is not a call argument |
+| A0-6 | a buffer promoted to `__retbuf` / an adopting `_rb_w_` witness | the promoted path is the caller's store, never minted here — excluded |
+| A0-7 | a generator body and a `par` arm | declined, as every hoist declines them |
+| A0-8 | the interpreter's slot allocator | the preamble `Set` is the buffer's first def (plan 51 cluster IV); the sentinel init must keep that role |
+
+Switch `LOFT_NO_LAZY_BUFFER=1`; falsifiers `LOFT_STRICT_STORES=1`, `LOFT_NATIVE_LEAK_CHECK=1`,
+`LOFT_POISON=1`; cells `bytecode-comparisons/A0-lazy-buffer-cells.loft` on both backends.
+
+### Built 2026-09-17 (`@FR-O-LazyBuffer`, default ON)
+
+*Where it lives.*  `scopes::lazy_buffer_mints`, after the scan, so every exit free is already
+in the body and can be told apart from a use (`names_outside_free`: `OpFreeRef`,
+`OpFreeRefIfDistinct`, `OpFreeRefOrHandUp`, the tag ops and `OpDistinctStore` are not uses).
+`insert_before_uses` puts `if OpRefIsNull(b) { b = null }` in front of the innermost statement
+that names the buffer — descending blocks, loops, inserts and `if` arms; a use in an `if`
+condition or a bare arm takes the guard in front of the whole `if`.  The record-buffer pool
+(`reuse_record_buffers`, § V's Route R) places its `OpDatabase` the same way unless its
+ungated control is armed.  Declined: a body that yields or runs `par`, a buffer with a second
+assignment, a null-init that is not a top-level statement (the one left in the parse bench,
+`parse_scene_at`'s `split` buffer, is used on every path anyway).
+
+*The fact both emitters read* is a new `Variable::lazy_buffer` (IR schema, store and JSON
+codecs, cache format 7): the vector null-init writes the sentinel (`OpInitRefSentinel` /
+`DbRef::NULL`) and the interpreter lowers the later `Set(b, Null)` to the owned-vector mint
+(`gen_owned_vector_store`, the same ops the entry init emitted); native's reassignment arm was
+already `OpDatabase`, which mints from the sentinel.  A record buffer needs no mark — its mint
+is an explicit `OpDatabase` in the IR.  The history's warning was the design constraint:
+`mark_inline_ref` would also have RELOCATED the null-init (formal/ownership-history.md, the
+`__vdb` entry), so the mark changes alloc-vs-sentinel and nothing else.
+
+*Verified.*  The 14 cells (13 functions rewritten, `a5`'s rotated pair guarded at the call and
+at the rotation, `f15` the record pool) hold on both backends in both switch states under
+`LOFT_STRICT_STORES`, `LOFT_POISON` and `LOFT_NATIVE_LEAK_CHECK`; with the switch off the
+native emission is byte-identical to the build before A0 and the interpreter's bytecode for
+`f1` is too.  Falsified: an unconditional mint (the null test replaced by `true`) turns `a5`
+into `0 0` on both backends — a re-mint clears the store the loop-carried result holds.  Pins
+`tests/lazy_buffer.rs`, subject `codegen`.
+
+*Measured* on the parse bench (release lean tier, after @PLN157 row 11): 15 of the 16 entry
+mints now guarded, the row 33.5–34.1 k → **31.2–31.4 k ns/op** (−7 %), `perf stat`
+instructions 2 023 M → 1 871 M (−7.5 %), cycles −6.8 %, hash `33f6d2b8`, clean under all three
+falsifiers.  The hand patch measured −9–10 % on the pre-row-11 emission; together the two
+levers take the row from 38.8–41.7 k to 31.2–31.4 k.
+
+## Re-measured after row 11, A0 and C6 (2026-09-17)
+
+*The 14-row table*, one binary, the four new switches on vs off (`LOFT_NO_LEAF_CHAIN`,
+`LOFT_NO_LAZY_BUFFER`, `LOFT_NO_NESTED_IN_PLACE`, `LOFT_NO_APPEND_STAGING`), `compare.py
+--skip-interp --repeat 3`, two passes each, 14/14 hashes, `LOFT_HOIST_VERIFY=1` clean over the
+whole bench:
+
+| row | on (ns/op) | off (ns/op) | change |
+|---|---:|---:|---:|
+| parse | 29.8–29.9 k | 39.3–40.0 k | **−25 %** |
+| smooth | 1.18–1.20 k | 1.28–1.36 k | −8 to −12 % |
+| hair | 26.7–27.3 k | 28.8–29.3 k | −7 % |
+| fill_star | 22.1–22.3 k | 23.9–24.1 k | −7 % |
+| wide_line | 12.8 k | 13.7 k | −7 % |
+| lock | 3.03 M | 3.18–3.19 M | −5 % |
+| lock_curved | 3.13 M | 3.22 M | −3 % |
+| fill_circle | 59.5 k | 61.0–61.2 k | −2.5 % |
+| render_lock | 15.06 M | 15.29–15.34 M | −1.7 % |
+| fronds | 175–177 k | 178 k | −1 to −2 % |
+| hash, composite, render_marks, resize | — | — | equal |
+
+Most of the rows other than `parse` move through row 11 (the lean frame).  Two costs the first
+build of A0 carried were found by this table and removed before it: a dead join buffer's
+guard in `lock_ribbons`' loop (`hoist::dead_buffers` now counts the witness of a free guarded
+for a value local), and a lazy mint counted as growth for `@FR-R-Base`, which took the
+element bases out of `lock_layer`'s loop (+3.9 % instructions on `lock_curved`, found by
+`perf stat` on a `lock_curved`-only bench).  The `render_*` and `resize` rows move ±3 % with
+code LAYOUT alone — measured: `resize`'s own functions are byte-identical under
+`LOFT_NO_LAZY_BUFFER` and its time still moved — so a ±3 % change on those rows is not
+evidence either way; read them with `perf stat` instructions.
+
+*The parse row, attributed again* (`scripts/native_attrib.py`, 14 742 samples):
+
+| family | § P0b | now |
+|---|---:|---:|
+| store mint/free | 20.0 % | **13.7 %** |
+| store access | 9.6 % | 13.3 % |
+| vector field copy | 9.2 % | 12.6 % |
+| record mint/copy/move | 11.0 % | 11.8 % |
+| vector append/grow | 6.7 % | 9.0 % |
+| frame prelude | 6.4 % | **gone** |
+
+(Shares of a row that is a quarter shorter, so a family that held still in time grew in share.)
+By line: `:704` is still first at 11.3 %, now almost all `vector_add` (6.9 %) — the `pts` and
+`widths` copies into the element.  Then `no_mark()` minting a `Mark` store per call (`:499`,
+1.9 %), the `Mark` results' `pts` copies at the parser exits (`:709`, `:545`, `:831`, `:836`,
+≈ 5 % together), and `:986` copying `parse_fronds`' `Mark` (1.2 %).
+
+## C6 — a nested record literal built inside the element (BUILT 2026-09-17, `@FR-R-InPlaceLiteral`)
+
+*The row.*  P0b charged `drawing.loft:704` with a `Paint { … }` built in a store of its own
+and deep-copied into the element's inline `paint` field, per frond; the same shape is at
+`:594` and in `parse_lock`/`parse_background`.  The hand patch
+(`bytecode-comparisons/C6-nested-literal-hand-patch.py`, the five sites written straight into
+the field) measured **31.2–32.0 k → 28.5–28.7 k ns/op** (−8.5 %), instructions −5.4 %, hash
+unchanged — twice what the attribution predicted, because the removed store churn also
+relieves the cache.
+
+*The shape built.*  `Parser::nested_literal_place` primes an EMBEDDED record field's value
+with the field's own place (`OpGetField(outer, pos, kt)`) when the value starts with the
+field type's name and `{`, so `parse_object` takes the field road it already has (the
+precedent is `parse_some_payload_object`) and writes the nested fields in place; omitted
+fields take their declared defaults through `object_init`.  Declined: a `reference<T>`
+field (a pointer), a nullable one (a tagged enum), and any destination the program can read
+(`x = S { … }`, `o.f = S { … }`, `v[i] = S { … }` — a nested field expression could read the
+old value after the outer literal has begun overwriting it).  A value that turns out to be
+more than the literal (a postfix) is parsed again the ordinary way, as loft#1304's retry is.
+
+*What the cells found first — loft#1548.*  Cell n4 (a nested field expression that appends
+to the SAME container) answered `0` for `1030` on both backends on the build BEFORE C6: the
+element road minted the element before its field expressions ran, against
+`(E-Asgn-Compound)`.  It was the whole class, not the nested case — `s.qs += [Q { a: i, b:
+g(s) }]` read 0 for 24.  Filed and fixed in this arc (`formal/operational-history.md`
+D-op-10): `Parser::stage_append_fields` evaluates every scalar or text field value, and runs
+every nested construction, ahead of the mint whenever a field value reads the container's
+root.  The parse bench's emission is byte-identical under it (no field there reads its own
+container).  Guard `tests/scripts/1548-an-appended-literal-reads-its-own-container.loft`.
+
+*Verified.*  Seven cells (fresh element, a vector in the nested record, a partial literal,
+the loft#1548 shape, two levels deep, a rebound local, a readable destination) hold on both
+backends in both switch states under `LOFT_STRICT_STORES`, `LOFT_POISON` and
+`LOFT_NATIVE_LEAK_CHECK`; with the switch off the parse bench's emission is byte-identical
+to the build before C6.  Pins `tests/nested_in_place.rs`, subject `codegen`.
+
+*Measured* on the parse bench: the emission reaches the hand patch's instruction count
+(1 870 M → **1 770 M**, −5.4 %), the row **31.2 k → 29.1–29.5 k ns/op** (−6 to −7 %), cycles
+−7.0 %, hash `33f6d2b8`, clean under all three falsifiers.  Together with row 11 and A0 the
+row has moved from 38.8–41.7 k to 29.1–29.5 k this session.
+
+## The runtime under the row (2026-09-17, later the same day)
+
+*Item 4 re-measured before it was cut — and it is not a move.*  At `:704` both copies read a
+VIEW or a reused BUFFER: `pf_line = f.fpts` and `pf_wids = f.fwid` view an element of
+`fronds`' result, and on the smoothed path they are `smooth_pts`/`smooth_vals`' buffers, which
+A0's guard mints once and every later iteration reuses.  Every copy lands in the scene's store,
+a different one.  Moving a vector across stores still copies its bytes, and moving a reused
+buffer's vector out would make its next call re-grow it — so there is no move to make.  The
+parsers' exit `Mark { pts: <local> }` copies are the same shape into a store of their own.
+The copied lengths say where the cost actually is (`LOFT_COPY_DUMP=1`, per parse): 29
+`vector_add`s, 22 of them two elements long.  The time is the destination's CLAIM, not the
+bytes.
+
+*What the release profile named instead* (`perf` by symbol, then the branch stack for callers):
+`begin_write_inner::<u32>` 7.5 % — the write check, out of line, and called mostly by the
+allocator's own metadata writes (`claim`, the free-tree inserts and rotations, `Store::init`);
+`Stores::store_mut` 3.4 % in two out-of-line copies; and `vector_add`'s per-element
+`copy_claims` walk for an element that owns no heap.  Three runtime changes stayed.  None
+changes the IR, and all three apply to both backends:
+
+| change (`perf stat -r 5`, one emission, one core) | instructions | cycles |
+|---|---:|---:|
+| `vector_add` skips the claims walk when the element owns no heap | −3.3 % | −3.3 % |
+| the write check inlined, the lock refusal outlined | −8.5 % | −7 % |
+| a fresh store initialised once (`null` then `clear` initialised it twice, on both backends and in B2's placement fallback); a retype moves no budget nothing reads | −1.1 % | −2 % |
+
+The row: **28.3–28.5 k → 25.0–25.3 k ns/op** (−12 %), instructions 1 742 M → 1 523 M, cycles
+429 M → 380 M, hash `33f6d2b8`, about 3.5× the Rust reference (≈ 7.2 k).  Same-moment A/B of
+all fourteen rows (the pre-session rlib against this one, one emission, best of three, 14/14
+hashes): every row equal or faster — `lock_curved` −21.5 %, `lock` −12 %, `render_marks`
+−12 %, `render_lock` −11 %, `fronds` −10 %, `parse` −8.5 %, `smooth` −5 %, `hair` −4 %,
+`resize` −3.5 %, the rest within ±3 %.  `LOFT_STRICT_STORES` still reports a read and a write
+of a freed store — a positive control by hand on the emission, since no test asserts that the
+report fires.
+
+*With every row judged.*  The drawing bench's own `bench.rs` carries no reference for the four
+late rows; @PLN157's `bench-reference-scene.rs` is that reference, written to be appended to
+it.  Appended (a scratch copy, `compare.py`'s own logic, `--skip-interp --repeat 3`, 14/14
+hashes agree, the four late hashes the recorded `33f6d2b8`, `432ddd47`, `fa8b1c64`,
+`77de7581`):
+
+| row | Rust ns/op | native ns/op | native / Rust | @PLN157's last full table |
+|---|---:|---:|---:|---:|
+| parse | 7 280 | 25 940 | **3.56** | 7.59 |
+| render_lock | 2 882 380 | 12 795 200 | 4.44 | 5.46 |
+| resize | 17 739 680 | 84 760 660 | 4.78 | 5.57 |
+| render_marks | 887 700 | 5 582 880 | 6.29 | 7.96 |
+
+The reference lane reads what it read then (render_marks 887 k both times, render_lock and
+resize within 2 %), so the ratios moved on the native side.  `parse` is under the 4× bar for
+the first time; the three rows still over it are the resample's (@PLN157), not this plan's.
+
+Three levers measured and dropped.  Testing the slot's `free` flag before the strict-mode switch
+in `store`/`store_mut` (with the report outlined) measured −2 % instructions on this row — and
+the fourteen-row A/B then read `smooth` +38 %, `fill_circle` +15 %, `fill_star` +7 %,
+`wide_line` +6 % with instructions flat: the pixel loops load the flag per access
+(`cmpb $0x0, 0x106(%rbx,%r15)`) and spill a loop variable, where the static switch test left
+them alone — which is what `store`'s own doc says the order is for.  Keeping the switch first
+and only outlining the report did not recover it, so the accessors are as they were.
+Reserving the whole copy before `vector_add` claims (+0.2 % instructions — an empty
+destination's first claim already has room for eleven elements), and the capacity test without
+its division (cycles unchanged; the `divl` samples were skid).  The lesson is the one § Re-measured
+already states: a runtime change reaches every row, so the fourteen-row A/B is owed before it
+stands, and a single-row `perf stat` that moves cycles without instructions is a code-shape
+effect to look at, not noise.
+
+*The census.*  A parse mints 30 stores: `Mark` 12, `vector<Pt>` 6, `vector<float>` 4,
+`PointList` 3, and one each of `vector<text>`, `vector<Frond>`, `Sketch`, `Paint` and
+`FrondSpec`.  So `Mark` is the largest class: `parse_circle`'s `no_mark()` on the five lines it
+does not match, and the literal exits of `parse_circle`, `parse_fronds` and `parse_line_cmd`.
+C5 armed removes three of the twelve (`parse_poly`'s) and still measures a wash (−2 %
+instructions, +1 % cycles).  It declines the other three functions, each for its own reason:
+a source whose copy lands in either arm of an `if`, a source with no place outside the frame
+(`pf_all`), and a body that names the container inside a loop.
+
+*`:986` is B1's shape behind a null-init.*  `ps_f = parse_fronds(…)` sits inside an `if`, and
+loft scopes `ps_f` to the loop body, so the scope pass puts `ps_f = null` in front of the `if`.
+On both backends the call bind is then the SECOND `Set`, which takes the rebind copy: the
+interpreter mints a store at the null-init (`OpInitRef`) and copies into it, and native mints
+in its copy arm.  Either way that is two mints and a deep copy where B1's adopt would do.
+Probe: `if n == 4 { f = try_a(n + 1); … }` against a top-level `m = try_a(n)`.  The rule it
+wants: the one call bind after the scope's null-init, with no loop between them, is a first
+bind — and the null-init is then a sentinel on the interpreter too.  Worth about 1 % of this
+row.
+
+*What reusing the `Mark` buffers first ran into — loft#1549.*  Pooling a buffer whose record
+owns heap (`(R-Reuse)`, shipped with #1465) leaked on both backends: the callee's literal
+overwrote the record's handles on every refill, and what the previous call left there stayed
+claimed in the buffer's store — about 100 bytes a turn for `S { n, v: [..] }`, 600 for a
+vector of heap-owning records, unbounded in the loop length, with right values and no gate
+that counts stores able to see it.  Fixed on the way (`formal/heap.md` D-heap-12, the record
+clause of `(H-ClearRelease)`): the pool's lazy guard releases on reuse,
+`if OpRefIsNull(b) { mint } else OpClear(b, T)`.  The first cut released in the callee's
+offered arm and measured +1 % instructions on this row — B2 offers a freshly placed `Paint` to
+every `read_paint`, where the walk finds nothing — so the release is the pool's, and the row's
+emission differs from before only in one arm that never runs (`parse_circle` returns after its
+one `read_paint`).  Twelve cells and the resident-memory guard
+(`tests/scripts/1549-a-pooled-buffer-releases-its-previous-occupant.loft`, falsified against
+04cc50b1 on both backends); pins `tests/pooled_buffer_release.rs`.  What it unblocks here:
+the pool is now sound for a `Mark`, which owns a vector.
+
+### The queue after the runtime pass
+
+1. **The `Mark` class** — twelve stores a parse.  Two separate questions: `no_mark()` behind
+   `parse_circle`'s tail (a constant, heap-free result handed up a buffer chain), and the
+   three literal exits C5 declines.  Pooling the callers' buffers is sound for a heap-owning
+   record since loft#1549; what still keeps them null is B1's exclusion (D-own-43) and the
+   null-init below.
+2. **B1 behind a null-init** (`:986`, above) — both backends, one home for the admission.
+3. **The free tree under a live store.**  Once a store has freed anything, `bump_tail` is off
+   for good, so every claim is a tree delete, a split and an insert.  In the scene's store
+   that is every element vector.  A tail block kept OUT of the tree (a wilderness) would give
+   the common claim `bump_tail`'s cost back — about 6 % of the row sits in `fl_*`,
+   `claim_block` and `set_free_header`.  It is an allocator change with `@FR-H-FreeFooter`
+   and store images in its blast radius, so it gets its own cells.
+4. **Text per character** — `split` calls `text_character` and `OpLengthCharacter` per
+   character, both out of line across the rlib (2 %).
+5. **A1/A2** — the store family, re-priced after items 1–2.
 
 ## The three tiers — the invariant each rests on
 
@@ -1188,7 +1560,11 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | Item | Source | Verify | Status |
 |---|---|---|---|
 | **P0** — probe first: count the store-identity sites; price tier 1; the hand patch judged not worth building by the arithmetic; the leak-gate extension (E19) deferred to A1's shape | § P0 | 287 identity sites in one emission; ~88 mints per parse at ≈ 60 ns a pair: tier 1's ceiling ≈ 10 % of the row | Done 2026-09-15 |
-| **P0b** — attribute the runtime's 63 % of the release row to loft lines: a frame-pointer rlib build, `perf` with call chains, an inclusive table per loft function with each family charged to a line | § Re-profiled *The correction* | the allocator, copy and append families each named with the line and the phase that owns it; the store-pair family confirmed at 9 % | **Open — next** (2026-09-16) |
+| **P0b** — attribute the runtime's share of the release row to loft lines: a frame-pointer rlib build, `perf` with call chains, each family charged to a line | § P0b | `scripts/native_attrib.py`; runtime 72 %, store mint/free 20 % (half at function entry), `:704` 12.5 %; A0's lever measured by hand −9–10 % | Done 2026-09-17 |
+| **A0** — the buffer minted at its first use on the path that runs, not at function entry | § A0 | 14 cells both backends, both switch states, under the falsifiers; switch-off byte-identical; the parse row −7 % after row 11 | Built 2026-09-17, default ON (`LOFT_NO_LAZY_BUFFER`) |
+| **C6** — a nested record literal built inside the element it is a field of (`Op { paint: Paint { … } }`) | § C6 | 7 cells both backends, both switch states, under the falsifiers; switch-off byte-identical; the parse row −6–7 %; loft#1548 found and fixed on the way | Built 2026-09-17, default ON (`LOFT_NO_NESTED_IN_PLACE`) |
+| **Runtime pass** — what the release profile named once item 4 proved not to be a move: the write check inlined, the no-heap claims walk skipped, a fresh store initialised once | § The runtime under the row | `perf stat` per change; the fourteen-row same-moment A/B (pre-session rlib vs this one, one emission): every row equal or faster, 14/14 hashes; an accessor reorder measured and dropped (pixel rows +15–38 %) | Shipped 2026-09-17 — the parse row 28.3–28.5 k → 25.0–25.3 k ns/op, 3.56× its reference |
+| **loft#1549** — a reused record buffer releases what it held (`(H-ClearRelease)`'s record clause, D-heap-12) | § The runtime under the row | 12 cells both backends under every falsifier and `LOFT_NO_LAZY_BUFFER`; resident memory flat over 1 000 000 refills; guard falsified against 04cc50b1 with a patch receipt; pins `tests/pooled_buffer_release.rs` | Fixed 2026-09-17 (`fixed-pending-merge`) |
 | **A1** — arena for one activation's own buffers (`__ref_N`, `__ref_p2_N`, literal temps), mark/release at every exit | § Tier 1 | `tests/scripts/164-arena-activation.loft` both backends; plan 51's ten graduated guards under the switch; `emission_audit.py` R-State per record | Blocked on P0b — the store-pair family is 9 % of the release row; whether the free-tree family (12 %) charges to activation temporaries is what decides the shape |
 | **A2** — the caller-threaded arena, reset per loop iteration | § Tier 1 | parse row −20 %; E2/E3/E4 cells | Blocked on A1 |
 | **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |
@@ -1222,13 +1598,11 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
    row's points class actually sits.
 5. ~~**C5 is next**~~ — steps 1 and 2 built opt-in; the row measured a wash and the `Mark`
    class under 2 %, so step 3 and the vector `place_result` are PARKED (§ C5 *Step 2*).
-6. **P0b** — the attribution on a frame-pointer rlib build (§ Re-profiled *The correction*):
-   the runtime is 63 % of the release row and no line has been charged with it yet.
-7. **Then A1/A2 or the remaining copy sites, whichever the attribution names** — A1 as a pooled
-   store or a release-to-mark arena if the store-pair (9 %) and free-tree (12 %) families charge
-   to activation temporaries; the copy sites if `copy_claims` / `remove_claims_mode` charge to a
-   bind or an assignment.  **B1b** beside them whenever D-own-43 closes (the interpreter's rebind
-   guard).
+6. ~~**P0b**~~ — done (§ P0b): the store family is 20 % of the release row, half of it minted
+   at function entry.
+7. **@PLN157 row 11 (the transitive-leaf prelude), then A0, then C6** — § P0b *The queue after
+   P0b*.  A1/A2 are re-priced after A0 against the body half of the store family.  **B1b**
+   beside them whenever D-own-43 closes (the interpreter's rebind guard).
 8. Re-measure the 14-row bench after each phase (`compare.py`, 14/14 hashes), and the parse
    row's profile with `perf` on the release binary — never with a count.
 

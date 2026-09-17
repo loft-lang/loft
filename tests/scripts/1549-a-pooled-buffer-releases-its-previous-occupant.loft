@@ -1,0 +1,227 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1549 (`@FR-H-ClearRelease`, the record clause; `@FR-R-Reuse`) — A POOLED RETURN BUFFER
+// RELEASES ITS PREVIOUS OCCUPANT: a record-returning call bound inside a loop gets ONE buffer
+// for the call site, and the callee's literal refills it every turn.  The literal overwrites
+// the record's handles, so what the previous turn left in them — a vector, a text, a nested
+// record's vector, a vector of heap-owning records, a struct-enum variant other than the one
+// being written — is released before each call after the first (the pool's lazy guard:
+// `if OpRefIsNull(b) { mint } else OpClear(b, T)`).  Values were right before the fix; the defect was the
+// store the buffer lives in growing by the previous occupant's heap on every call, unbounded
+// in the loop length and invisible to every store-count gate (the store itself dies on time).
+// So the guard measures the process's own resident memory across 300 000 turns of three
+// leaking shapes (Linux; elsewhere `rss_kb` answers -1 and the check is vacuous), and the
+// twelve value cells hold the refill to its hand-computed answers — c5 an omitted field that
+// must not keep the previous turn's vector, c12 a variant change.  Plan cells:
+// `doc/claude/plans/164-activation-arena/bytecode-comparisons/1549-pooled-buffer-release-cells.loft`.
+// `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1`
+// must answer identically.
+//
+// @falsified-at: 04cc50b1 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.
+// @falsified-by: tests/falsified/1549-a-pooled-buffer-releases-its-previous-occupant.patch
+//   — the same channels as the control above.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>`.  The failing assertion on the
+//   control is m1's resident-memory check (the ASSERTION channel carries a memory
+//   measurement; no store-count instrument sees this defect, so none needs arming).  The
+//   pre-fix growth per 1 000 000 refills, measured by hand on the interpreter: 112 MB,
+//   607 MB and 48 MB for the three shapes m1 runs.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees, and the
+//   twelve value cells pass on both — the defect never moved a value, so a patch that moves
+//   one reintroduces something else.
+
+struct V3 { n: integer, v: vector<integer> }
+struct T1 { n: integer, name: text }
+struct Inner { w: vector<integer> }
+struct Nest { k: integer, inner: Inner }
+struct Rows { rows: vector<V3> }
+struct Opt { n: integer, v: vector<integer> = [] }
+struct P { x: integer, y: integer }
+enum Shape { Dots { pts: vector<integer> }, Label { txt: text }, Empty }
+
+fn mk_v(i: integer) -> V3 { V3 { n: i, v: [i, i + 1, i + 2] } }
+fn mk_t(i: integer) -> T1 { T1 { n: i, name: "t{i}" } }
+fn mk_nest(i: integer) -> Nest { Nest { k: i, inner: Inner { w: [i * 10] } } }
+fn mk_rows(i: integer) -> Rows { Rows { rows: [V3 { n: i, v: [i] }, V3 { n: i + 1, v: [i, i] }] } }
+fn mk_opt(i: integer) -> Opt {
+  if i % 2 == 0 { return Opt { n: i, v: [i, i] } }
+  Opt { n: i }
+}
+fn mk_multi(i: integer) -> V3 {
+  if i < 0 { return V3 { n: 0, v: [] } }
+  if i % 3 == 0 { return V3 { n: i, v: [9] } }
+  V3 { n: i, v: [i, i] }
+}
+fn mk_chain(i: integer) -> V3 { mk_v(i + 100) }
+fn mk_p(i: integer) -> P { P { x: i, y: i * 2 } }
+fn mk_shape(i: integer) -> Shape {
+  if i % 3 == 0 { return Dots { pts: [i, i, i] } }
+  if i % 3 == 1 { return Label { txt: "L{i}" } }
+  Empty
+}
+
+// c1: 3000 + i + (i + 2) - i = 3002 + i  →  3002·50 + 1225 = 151325
+fn c1() -> integer {
+  t = 0;
+  for i in 0..50 { s = mk_v(i); t += len(s.v) * 1000 + s.v[0]? + s.v[2]? - s.n; }
+  t
+}
+
+// c2: len("t{i}") is 2 for i < 10, 3 for 10..49  →  20 + 120 = 140; every name matches → 50
+fn c2() -> text {
+  l = 0;
+  ok = 0;
+  for i in 0..50 { s = mk_t(i); l += len(s.name); if s.name == "t{i}" { ok += 1; } }
+  "{l} {ok}"
+}
+
+// c3: w = [10i]  →  10i + 1 per turn  →  12250 + 50 = 12300
+fn c3() -> integer {
+  t = 0;
+  for i in 0..50 { s = mk_nest(i); t += s.inner.w[0]? + len(s.inner.w); }
+  t
+}
+
+// c4: 2 rows + len([i, i]) + i + (i + 1)  =  5 + 2i  →  250 + 2450 = 2700
+fn c4() -> integer {
+  t = 0;
+  for i in 0..50 { s = mk_rows(i); t += len(s.rows) + len(s.rows[1].v) + s.rows[0].n + s.rows[1].n; }
+  t
+}
+
+// c5: an odd turn's `v` is the DECLARED default `[]`, never the previous even turn's
+// [i, i]: even 200 + i, odd 0 + i  →  25·200 + 1225 = 6225
+fn c5() -> integer {
+  t = 0;
+  for i in 0..50 { s = mk_opt(i); t += len(s.v) * 100 + s.n; }
+  t
+}
+
+// c6: i % 3 == 0 (17 turns, Σi = 408): 1000 + 9 + i  →  17153 + 408 = 17561;
+//     the other 33 (Σi = 817): 2000 + i + i            →  66000 + 1634 = 67634;
+//     total 85195
+fn c6() -> integer {
+  t = 0;
+  for i in 0..50 { s = mk_multi(i); t += len(s.v) * 1000 + s.v[0]? + s.n; }
+  t
+}
+
+// c7: a chain hands the buffer down: v = [i+100, i+101, i+102], n = i + 100
+//     →  3000 + (i + 102)  per turn  →  3102·50 + 1225 = 156325
+fn c7() -> integer {
+  t = 0;
+  for i in 0..50 { s = mk_chain(i); t += len(s.v) * 1000 + s.v[2]? ; }
+  t
+}
+
+// c8: a record that owns nothing (the control): 3i  →  3675
+fn c8() -> integer {
+  t = 0;
+  for i in 0..50 { s = mk_p(i); t += s.x + s.y; }
+  t
+}
+
+// c9: the result dropped on the odd turns: even i contribute v[1] = i + 1
+//     →  600 + 25 = 625
+fn c9() -> integer {
+  t = 0;
+  for i in 0..50 {
+    s = mk_v(i);
+    if i % 2 == 1 { continue }
+    t += s.v[1]?;
+  }
+  t
+}
+
+// c10: the result copied into a collection survives the next refill:
+//      50 kept, Σ v[2] = Σ (i + 2) = 1225 + 100 = 1325
+fn c10() -> text {
+  keep: vector<V3> = [];
+  for i in 0..50 { s = mk_v(i); keep += [s]; }
+  t = 0;
+  for k in keep { t += k.v[2]?; }
+  "{len(keep)} {t}"
+}
+
+// c11: two loops deep, the same 50 values as c1  →  151325
+fn c11() -> integer {
+  t = 0;
+  for a in 0..5 {
+    for b in 0..10 {
+      i = a * 10 + b;
+      s = mk_v(i);
+      t += len(s.v) * 1000 + s.v[0]? + s.v[2]? - s.n;
+    }
+  }
+  t
+}
+
+// c12: a struct-enum result whose VARIANT changes every turn — the release must walk the
+// variant the buffer held, not the one about to be written.
+//   i % 3 == 0 (17 turns, Σi = 408):  Dots  → 100 + 3·i  = 1700 + 1224 = 2924
+//   i % 3 == 1 (17 turns: 1..49, Σi = 425): Label → 10 + len("L{i}")
+//       len is 2 for i = 1, 4, 7 (3 turns), 3 for the other 14  →  170 + 6 + 42 = 218
+//   i % 3 == 2 (16 turns): Empty → 1  →  16
+//   total 2924 + 218 + 16 = 3158
+fn c12() -> integer {
+  t = 0;
+  for i in 0..50 {
+    s = mk_shape(i);
+    match s {
+      Dots { pts } => { t += 100 + pts[0]? + pts[1]? + pts[2]?; },
+      Label { txt } => { t += 10 + len(txt); },
+      Empty => { t += 1; }
+    }
+  }
+  t
+}
+
+
+fn rss_kb() -> integer {
+  st = file("/proc/self/status").content() ?? "";
+  for line in st.split('\n') {
+    if line.starts_with("VmRSS:") {
+      return (line[6..size(line)].trim().split(' ')[0]? as integer?) ?? -1
+    }
+  }
+  -1
+}
+
+// m1 — the resident memory across 300 000 turns of each leaking shape.  Before the release
+// the three grew by roughly a third of the figures in the header; after it, by well under
+// one megabyte.
+fn m1() {
+  t = 0;
+  for i in 0..1000 { a = mk_v(i); b = mk_rows(i); c = mk_shape(i); t += len(a.v) + len(b.rows); }
+  before = rss_kb();
+  for i in 0..300000 { a = mk_v(i); t += len(a.v); }
+  for i in 0..300000 { b = mk_rows(i); t += len(b.rows); }
+  for i in 0..300000 {
+    c = mk_shape(i);
+    match c {
+      Dots { pts } => { t += len(pts); },
+      Label { txt } => { t += len(txt); },
+      Empty => { t += 1; }
+    }
+  }
+  grown = rss_kb() - before;
+  assert(grown < 8000, "m1 resident memory grew {grown} KB over 900 000 refills");
+  println("m1 {t > 0}");
+}
+
+fn main() {
+  assert(c1() == 151325, "c1 {c1()}");
+  assert(c2() == "140 50", "c2 {c2()}");
+  assert(c3() == 12300, "c3 {c3()}");
+  assert(c4() == 2700, "c4 {c4()}");
+  assert(c5() == 6225, "c5 {c5()}");
+  assert(c6() == 85195, "c6 {c6()}");
+  assert(c7() == 156325, "c7 {c7()}");
+  assert(c8() == 3675, "c8 {c8()}");
+  assert(c9() == 625, "c9 {c9()}");
+  assert(c10() == "50 1325", "c10 {c10()}");
+  assert(c11() == 151325, "c11 {c11()}");
+  assert(c12() == 3158, "c12 {c12()}");
+  m1();
+  println("ok");
+}

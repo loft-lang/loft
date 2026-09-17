@@ -667,7 +667,9 @@ loop.  Sites: `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoiste
                  a plain local's first bind, @PLN164 B1) is paired for the guarded
                  free alone and NOT allocated here: handed non-null to a callee that
                  rebinds its promoted local from a call, it is freed by that rebind.
-                 Every other buffer keeps its per-call mint.
+                 Every other buffer keeps its per-call mint.  A reused record is
+                 REFILLED, so each reuse releases what the record held first
+                 (H-ClearRelease, its record clause).
 ```
 
 **In words.** @PLN157 § V and § V-af.  `scopes::reuse_record_buffers` inserts the
@@ -694,6 +696,24 @@ declines — which is how the condition is falsified rather than asserted.  Swit
 and loses only the innermost frame NAME from the chain.  Switch
 `LOFT_NO_LEAF_PRELUDE`.  Site: `Output::is_elidable_leaf` and its use in
 `Output::output_function`.
+
+```
+  (R-LeafChain)  in the LEAN tier, a function whose whole call tree is FRAMELESS is
+                 emitted as a leaf is: every user function it reaches, transitively,
+                 has a loft body, none of them lies on a cycle, and none calls a
+                 fn-ref, runs `parallel` or yields.  A native user-level callee
+                 (no loft body) makes the tree opaque, so the caller keeps its frame.
+                 The named tiers keep every non-leaf frame.
+```
+
+**In words.** @PLN157 queue row 11.  Such a function cannot be re-entered while it runs, so
+the depth cap needs no entry for it: a recursion that passes through it is still counted at
+the recursive function's own frame, and the cap's report names that function — the nearest
+frame — where the interpreter names the innermost call.  Nothing beneath it can push a fn-ref
+buffer, so its buffer guard would always drop empty.  The lean frame carries no name, which is
+why the rule is lean-only: in a named tier the frame is also what `stack_trace()` and a
+panic's frame block read.  Switch `LOFT_NO_LEAF_CHAIN` (one step finer than
+`LOFT_NO_LEAF_PRELUDE`).  Site: `Output::is_frameless_chain`.
 
 ### A fast path inlines; its cold half is outlined
 
@@ -888,7 +908,11 @@ symbol and self time is the candidate).  Sites: `vector::get_elem_hoisted_cold`,
                  (loft#914) — so the place holds exactly what the copy would have
                  left.  An absent element keeps the path the copy takes today; a
                  literal whose field reads the place through a call the walk cannot
-                 see declines.
+                 see declines.  A NESTED literal that initialises an embedded record
+                 field of a FRESH record — an appended element or a construction
+                 temporary, `sc.ops += [Op { paint: Paint { … } }]` — is written into
+                 that field the same way; nothing can read a fresh record while it
+                 is built, so it needs no staging of its own.
   (R-Prefill)    the default prefill of a minted record — the declared defaults, the
                  null sentinels and the variant tag a partial literal leaves to the
                  type — is ONE block write of a per-type IMAGE computed once from the
@@ -907,7 +931,8 @@ store, and `paint: pp_paint` at its last use is then (R-MoveLast)'s relocation
 instead of a deep copy; `pts: smooth_pts(…)` with the op already appended is the
 "buffer IS the place" clause.  (R-InPlaceLiteral) is C1 (`sc.elems[idx] = Elem {
 … }` in `acc_pts`, whose `ename: ap_e.ename` reads the very slot it overwrites —
-the staging clause), (R-Prefill) is C4.  What each needs from the IR is in the plan's
+the staging clause) and C6 (the nested clause, `Parser::nested_literal_place`, switch
+`LOFT_NO_NESTED_IN_PLACE`), (R-Prefill) is C4.  What each needs from the IR is in the plan's
 table: the def-use classes of a value (its owning destinations against its read-only
 uses), per-path liveness at a set (the `avoidable-copy` lint already computes it and
 codegen does not yet read it), the disturbance walk `B-Ref-Reshape` runs for `&`,

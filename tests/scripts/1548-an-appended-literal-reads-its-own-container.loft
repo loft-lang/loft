@@ -1,0 +1,100 @@
+// An appended record literal's field expressions run BEFORE the element joins the vector.
+//
+// `c += [S { … }]` reduces its right-hand side — every field expression of the literal —
+// before the append (`(E-Asgn-Compound)`, formal/operational.md).  A field expression may
+// therefore read or grow `c` itself and see `c` as it was: `s.qs += [Q { a: len(s.qs) }]`
+// stores the old length, and a call that appends to `s.qs` inside the literal leaves both
+// elements intact.  The values are staged in source order, so a field to the left still
+// runs first (g8).
+//
+// Each cell counts the elements as well as summing them, so a lost element and an
+// overwritten one both show.  g6 reads a DIFFERENT vector and is the control.
+//
+// @falsified-at: hand-measured (switch, 2026-09-17) — under LOFT_NO_APPEND_STAGING=1, which
+//   takes the pre-fix lowering, g1, g2, g3, g5, g7 and g8 fail on --interpret and --native
+//   (g1 reads 0 for 24; the element written first is overwritten by the one the call
+//   appended).  g4 and g6 hold either way.  With the staging, all eight hold on both
+//   backends under LOFT_STRICT_STORES=1 LOFT_POISON=1.
+
+struct G1Q { a: integer, b: integer }
+struct G1Qs { qs: vector<G1Q> }
+struct G1Pa { pk: integer, c1: integer }
+struct G1Op { kind: integer, paint: G1Pa, w: integer }
+struct G1Sc { ops: vector<G1Op> }
+struct G1T { name: text, a: integer }
+struct G1Ts { ts: vector<G1T> }
+struct G1Ctr { n: integer }
+
+fn g_bq(s: G1Qs) -> integer { s.qs += [G1Q { a: -100, b: -100 }]; 7 }
+fn g_bump(b: G1Sc) -> integer { b.ops += [G1Op { kind: 99, paint: G1Pa { pk: 0, c1: 0 }, w: 0 }]; 42 }
+fn g_tb(s: G1Ts) -> text { s.ts += [G1T { name: "x", a: -1 }]; "t" }
+fn g_next(c: G1Ctr) -> integer { c.n += 1; c.n }
+fn g_nb(s: G1Qs, c: G1Ctr) -> integer { s.qs += [G1Q { a: -100, b: -100 }]; c.n += 10; c.n }
+
+/// Sum of a + b over the elements whose a is not negative, and the element count.
+fn g_sum(s: const G1Qs) -> (integer, integer) {
+  gs_t = 0;
+  for q in s.qs { if q.a >= 0 { gs_t += q.a + q.b; } }
+  (gs_t, len(s.qs))
+}
+fn g_ops(s: const G1Sc) -> (integer, integer) {
+  go_t = 0;
+  for o in s.ops { if o.kind != 99 { go_t += o.kind + o.paint.c1 + o.w; } }
+  (go_t, len(s.ops))
+}
+
+fn main() {
+  // g1 — the report: the call appends to the vector being appended to.  0+7 + 1+7 + 2+7.
+  g1_s = G1Qs { qs: [] };
+  for i in 0..3 { g1_s.qs += [G1Q { a: i, b: g_bq(g1_s) }]; }
+  g1 = g_sum(g1_s);
+  assert(g1.0 == 24 && g1.1 == 6, "g1: {g1.0} {g1.1}");
+
+  // g2 — the call in an outer field of a record with a nested record.  3 * 42 + 0 + 1 + 2.
+  g2_s = G1Sc { ops: [] };
+  for i in 0..3 { g2_s.ops += [G1Op { kind: i, paint: G1Pa { pk: 1, c1: 0 }, w: g_bump(g2_s) }]; }
+  g2 = g_ops(g2_s);
+  assert(g2.0 == 129 && g2.1 == 6, "g2: {g2.0} {g2.1}");
+
+  // g3 — the call inside the NESTED literal.  3 * (42 + 3) + 0 + 1 + 2.
+  g3_s = G1Sc { ops: [] };
+  for i in 0..3 { g3_s.ops += [G1Op { kind: i, paint: G1Pa { pk: 1, c1: g_bump(g3_s) }, w: 3 }]; }
+  g3 = g_ops(g3_s);
+  assert(g3.0 == 138 && g3.1 == 6, "g3: {g3.0} {g3.1}");
+
+  // g4 — a READ of the container: each element stores the length before its own append.
+  g4_s = G1Qs { qs: [] };
+  for i in 0..4 { g4_s.qs += [G1Q { a: len(g4_s.qs), b: i }]; }
+  g4 = g_sum(g4_s);
+  assert(g4.0 == 12 && g4.1 == 4, "g4: {g4.0} {g4.1}");
+
+  // g5 — a TEXT field from a call that appends.  Three "t" and three "x" elements.
+  g5_s = G1Ts { ts: [] };
+  for i in 0..3 { g5_s.ts += [G1T { name: g_tb(g5_s), a: i }]; }
+  g5_t = 0;
+  g5_x = 0;
+  for t in g5_s.ts { if t.name == "t" && t.a >= 0 { g5_t += 1 + t.a; } else if t.name == "x" { g5_x += 1; } }
+  assert(g5_t == 6 && g5_x == 3 && len(g5_s.ts) == 6, "g5: {g5_t} {g5_x} {len(g5_s.ts)}");
+
+  // g6 — control: the call grows a DIFFERENT vector.  0+7 + 1+7 + 2+7, three elements here.
+  g6_s = G1Qs { qs: [] };
+  g6_o = G1Qs { qs: [] };
+  for i in 0..3 { g6_s.qs += [G1Q { a: i, b: g_bq(g6_o) }]; }
+  g6 = g_sum(g6_s);
+  assert(g6.0 == 24 && g6.1 == 3 && len(g6_o.qs) == 3, "g6: {g6.0} {g6.1} {len(g6_o.qs)}");
+
+  // g7 — one append, no loop.  42 + 0 + 5.
+  g7_s = G1Sc { ops: [] };
+  g7_s.ops += [G1Op { kind: 5, paint: G1Pa { pk: 1, c1: 0 }, w: g_bump(g7_s) }];
+  g7 = g_ops(g7_s);
+  assert(g7.0 == 47 && g7.1 == 2, "g7: {g7.0} {g7.1}");
+
+  // g8 — left to right: `a` runs before `b` on every pass.  (1, 11), (12, 22), (23, 33).
+  g8_s = G1Qs { qs: [] };
+  g8_c = G1Ctr { n: 0 };
+  for _i in 0..3 { g8_s.qs += [G1Q { a: g_next(g8_c), b: g_nb(g8_s, g8_c) }]; }
+  g8 = g_sum(g8_s);
+  assert(g8.0 == 102 && g8.1 == 6, "g8: {g8.0} {g8.1}");
+
+  println("1548 ok");
+}

@@ -391,7 +391,27 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 2.**
+**OPEN: 3.**
+
+* **D-bind-46** *(opened 2026-09-16, [loft#1543](https://github.com/loft-lang/loft/issues/1543))* —
+  `(B-Ref-Alias)` and `(B-Ref-Reshape)` for a `&` link that names a container WHOLE.  `d =
+  &cv.data; cv.data += [7]; cv.data += [8]; (d[2] ?? -1) + len(d)` reads **0** for **11** on both
+  backends: `d` is COPIED at the bind, so it still holds the one-element vector.  A link to the
+  container names the field SLOT, which a growth repoints and the link re-reads — nothing here
+  could not stay valid — and `(B-Ref-Reshape)` says outright that where a reference cannot be
+  honoured loft REFUSES rather than *"quietly downgrade the reference to a copy"*.  This is that
+  downgrade, for a shape that needed no refusal in the first place.
+  **Not silent:** the copy notice fires and is accurate about what happened, wrong about why.
+  **Where (measured).**  `d = &cv.data` and `e = cv.data[0]?` resolve to the SAME place `(cv,
+  data)` — the place model carries one field offset — so `ViewWalk`'s inline shake cannot tell a
+  binding that names the container from one that names an element inside it.
+  `use_analysis::view_source_place_indexed` answers exactly that (did the chain cross an ELEMENT
+  read), off the same walk; @PLN164 C3's callee half already asks it
+  (`ViewWalk::shake_plain_places`), which is why `157-view-header`'s `grown_between` still reads
+  `11` through a call.  The inline side does not ask it yet, and closing the deviation is making
+  it.
+  **Workarounds (verified, both backends):** take the link after the growth, grow THROUGH the link
+  (`grown_through_view` already does), or read through the container.
 
 * **D-bind-47** *(opened 2026-09-17, CLOSED 2026-09-17)* — `(B-Ref-Reshape)`'s refusal could not
   see a GROWTH of a container held in a FIELD, so the rule's answer depended on where the

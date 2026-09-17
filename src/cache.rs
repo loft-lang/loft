@@ -56,7 +56,10 @@ use sha2::{Digest, Sha256};
 /// 6 — `Variable` carries `view_elided`, the eleventh codegen-read field
 /// (stride 37 → 38): a warm load at the old stride emitted the copy the
 /// elision removes (@PLN157 § V-g).
-const CACHE_FORMAT_VERSION: u8 = 6;
+///
+/// 7 — `Variable` carries `lazy_buffer` (stride 38 → 39): a warm load at the old stride
+/// would mint a buffer at entry AND leave its guarded mint inert (@PLN164 A0).
+const CACHE_FORMAT_VERSION: u8 = 7;
 
 /// Loft crate version — a release bump invalidates every cache.
 const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -1907,6 +1907,13 @@ impl Output<'_> {
             write!(w, "DbRef::NULL")?;
             return Ok(());
         }
+        // `@FR-O-LazyBuffer` — a lazy buffer's entry null-init is the sentinel; its store is
+        // minted by the later, null-guarded `Set(v, Null)`, which takes the reassignment arm
+        // below (`OpDatabase` allocates fresh from the sentinel).
+        if first && variables.is_lazy_buffer(var) {
+            write!(w, "DbRef::NULL")?;
+            return Ok(());
+        }
         // Only a slot that OWNS its store gets a backing allocation here.  Reading
         // the one `owns_store` predicate rather than re-deriving ownership from the
         // dep list is what keeps this correct for the borrows the deps cannot see: a

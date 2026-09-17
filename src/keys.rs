@@ -1080,6 +1080,20 @@ pub fn retbuf_reuse_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_RETBUF_REUSE"))
 }
 
+/// `LOFT_NO_LAZY_BUFFER=1` — mint every hidden return buffer at function entry again.
+///
+/// **Default ON** (`@FR-O-LazyBuffer`, @PLN164 A0): a buffer's store is minted in front of
+/// the first statement that hands it to a callee on the path that runs, behind a null test,
+/// so a path that never makes the call never mints it — a scanner tried on every line and
+/// matching one paid two store mints and frees on each of the others.  Both backends read
+/// the same IR.  This switch is the A/B on one binary and the first bisect step for a leak,
+/// a double free or a wrong value at a call that takes a hidden buffer.
+#[must_use]
+pub fn lazy_buffer_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LAZY_BUFFER"))
+}
+
 /// `LOFT_NO_RETBUF_WITNESS_GATE=1` — the POSITIVE CONTROL for
 /// [`retbuf_reuse_enabled`]'s gate. **OPT-IN, DEFAULT OFF; never set in production.**
 ///
@@ -1659,6 +1673,30 @@ pub fn buffer_is_the_place_enabled() -> bool {
 pub fn element_in_place_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_ELEMENT_IN_PLACE"))
+}
+
+/// loft#1548 (`(E-Asgn-Compound)`) — an appended record literal whose field expression reads
+/// its own container has its field values evaluated BEFORE the element is minted —
+/// **DEFAULT ON**.  Opt OUT with `LOFT_NO_APPEND_STAGING` (read at PARSE time, BOTH
+/// backends): the values are evaluated between the mint and the finish again, and the first
+/// bisect step for a wrong or missing element out of `c += [S { f: g(c) }]`.
+#[must_use]
+pub fn append_staging_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_APPEND_STAGING"))
+}
+
+/// @PLN164 C6 (`@FR-R-InPlaceLiteral`) — a record literal that initialises an EMBEDDED record
+/// field of another literal (`Op { paint: Paint { … } }`) is written into that field instead
+/// of being built in a store of its own and deep-copied there — **DEFAULT ON**.  Opt OUT with
+/// `LOFT_NO_NESTED_IN_PLACE` (read at PARSE time, BOTH backends): the temp-and-copy again, and
+/// the first bisect step for a wrong field, a leak or a double free in a record built from a
+/// nested literal.  Admitted only where the outer record is FRESH — an appended element or a
+/// temporary — so nothing can read the place while the literal is written.
+#[must_use]
+pub fn nested_in_place_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_NESTED_IN_PLACE"))
 }
 
 /// @PLN164 C3 (`@FR-B-Disturb`, `@FR-B-View`) — a container GROWN or REMOVED FROM by a

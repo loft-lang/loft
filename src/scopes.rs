@@ -3819,7 +3819,7 @@ fn tail_calls(v: &Value) -> Vec<&Value> {
 
 fn reuse_record_buffers(
     code: &mut Value,
-    function: &Function,
+    function: &mut Function,
     data: &Data,
     witness_buffer: &HashMap<u16, Vec<u16>>,
     minted_pairs: &HashSet<u16>,
@@ -3846,8 +3846,10 @@ fn reuse_record_buffers(
         }
     }
     let db_nr = data.def_nr("OpDatabase");
+    let clear_nr = data.def_nr("OpClear");
     // Emitted in variable order so identical source compiles to identical IR.
-    let mut inserts: Vec<(usize, Value)> = Vec::new();
+    let mut eager: Vec<(u16, Value, Option<Value>)> = Vec::new();
+    let mut lazy: Vec<(u16, Value, Option<Value>)> = Vec::new();
     for av in guarded {
         // @FR-O-Proxy asks alloc — decides whether to ALLOCATE the buffer's store here; a
         // buffer carrying a dep is a view of something else and gets no store of its own.
@@ -3883,19 +3885,246 @@ fn reuse_record_buffers(
             // it displaces, which would be this buffer's.
             continue;
         }
-        let Some(at) = bl.operators.iter().position(
-            |op| matches!(op.unspan(), Value::Set(s, v) if *s == av && **v == Value::Null),
-        ) else {
+        if null_init_at(&bl.operators, av).is_none() {
+            continue;
+        }
+        let mint = Value::Call(db_nr, vec![Value::Var(av), Value::Int(i32::from(known))]);
+        // `@FR-H-ClearRelease`, the record clause — a reused buffer is REFILLED: the
+        // callee's literal overwrites every handle it writes, so what the previous call left
+        // in the record is released before each call after the first.
+        let release = releases_what_it_held(data, function.tp(av))
+            .then(|| Value::Call(clear_nr, vec![Value::Var(av), Value::Int(i32::from(known))]));
+        if !ungated && crate::keys::lazy_buffer_enabled() {
+            // `@FR-O-LazyBuffer` — once per activation still, but only on a path that
+            // reaches the call: the null test lets a later pass through a loop reuse it,
+            // and a reuse takes the release.
+            lazy.push((av, mint, release));
+        } else {
+            eager.push((av, mint, release));
+        }
+    }
+    let frees = free_ops(data);
+    // A buffer minted at entry is live at every call, and the first release finds the
+    // record the mint just prefilled: nothing to walk.  The releases go in before the mints
+    // do, because a mint names the buffer and would itself take one.
+    for (av, _, release) in &eager {
+        if let Some(release) = release {
+            insert_before_uses(&mut bl.operators, *av, release, &frees);
+        }
+    }
+    for (av, mint, _) in eager {
+        if let Some(at) = null_init_at(&bl.operators, av) {
+            bl.operators.insert(at + 1, mint);
+        }
+    }
+    let is_null = data.def_nr("OpRefIsNull");
+    for (av, mint, release) in lazy {
+        // The mark tells the native hoist gate that this `OpDatabase` only ever takes a
+        // fresh store from the sentinel (`hoist::lazy_buffer_mint`); a record buffer's
+        // null-init already writes the sentinel on both backends.
+        function.mark_lazy_buffer(av);
+        let guard = v_if(
+            Value::Call(is_null, vec![Value::Var(av)]),
+            Value::Insert(vec![mint]),
+            release.unwrap_or(Value::Null),
+        );
+        insert_before_uses(&mut bl.operators, av, &guard, &frees);
+    }
+}
+
+/// The top-level position of `av`'s null-init, where an eager mint goes right after it.
+fn null_init_at(ops: &[Value], av: u16) -> Option<usize> {
+    ops.iter()
+        .position(|op| matches!(op.unspan(), Value::Set(s, v) if *s == av && **v == Value::Null))
+}
+
+/// Can a record of this buffer type own heap — so a refill of it owes a release of what it
+/// held?  A struct with a field that is not a scalar can, and so can a struct-enum, whose
+/// variants this does not read.
+///
+/// Conservative on purpose, and the fallback says why: a record this answers `true` for
+/// that owns nothing pays one walk that returns at once, while a `false` for one that
+/// owns heap strands the previous occupant's heap on every call.  The release walks the
+/// buffer's own type — for a struct-enum the PARENT, whose walk follows the variant the
+/// buffer holds rather than the one the next call writes.
+fn releases_what_it_held(data: &Data, tp: &Type) -> bool {
+    // `.base()`: a buffer's record shape is the same behind a nullability marker
+    // (`@FR-N-Shape`).
+    match tp.base() {
+        Type::Reference(td, _) => !data
+            .def(*td)
+            .attributes()
+            .iter()
+            .all(|a| crate::data::is_scalar(&a.typedef)),
+        Type::Enum(_, true, _) => true,
+        _ => false,
+    }
+}
+
+/// The ops that name a store only to release it or to compare its identity: a buffer
+/// mentioned in nothing else is never read, so it needs no store.
+fn free_ops(data: &Data) -> Vec<u32> {
+    [
+        "OpFreeRef",
+        "OpFreeRefIfDistinct",
+        "OpFreeRefOrHandUp",
+        "OpFreeRefTag",
+        "OpStoreTag",
+        "OpDistinctStore",
+    ]
+    .iter()
+    .map(|n| data.def_nr(n))
+    .filter(|&d| d != u32::MAX)
+    .collect()
+}
+
+/// Does `v` name `av` anywhere but inside a free (`free_ops`)?  A `Set(av, Null)` — the
+/// buffer's own null-init or an already inserted mint — is not a use either.  Every other
+/// shape is walked, so a buffer reached through an expression the walker does not name is
+/// still found: the fallback over-reports, and an extra mint on a path that runs the call
+/// anyway is only the eager behaviour.
+fn names_outside_free(v: &Value, av: u16, frees: &[u32]) -> bool {
+    match v.unspan() {
+        Value::Var(x) => *x == av,
+        Value::Call(d, _) if frees.contains(d) => false,
+        Value::Set(x, val) if *x == av && matches!(val.unspan(), Value::Null) => false,
+        other => {
+            let mut hit = false;
+            other.for_each_child(&mut |c| {
+                if !hit && names_outside_free(c, av, frees) {
+                    hit = true;
+                }
+            });
+            hit
+        }
+    }
+}
+
+/// Put `guard` in front of every statement of `ops` that uses `av` (`names_outside_free`),
+/// descending into the statement lists of blocks, loops, inserts and `if` arms so the
+/// guard lands on the innermost list that holds the use.  An `if` whose CONDITION uses
+/// `av`, or whose arm is a bare expression that does, takes the guard in front of the
+/// whole `if`.
+fn insert_before_uses(ops: &mut Vec<Value>, av: u16, guard: &Value, frees: &[u32]) {
+    let mut i = 0;
+    while i < ops.len() {
+        let before = match ops[i].unspan_mut() {
+            Value::Block(bl) | Value::Loop(bl) => {
+                insert_before_uses(&mut bl.operators, av, guard, frees);
+                false
+            }
+            Value::Insert(ls) => {
+                insert_before_uses(ls, av, guard, frees);
+                false
+            }
+            Value::If(cond, a, b) => {
+                if names_outside_free(cond, av, frees) {
+                    true
+                } else {
+                    let mut bare = false;
+                    for arm in [a, b] {
+                        match arm.unspan_mut() {
+                            Value::Block(bl) => {
+                                insert_before_uses(&mut bl.operators, av, guard, frees)
+                            }
+                            Value::Insert(ls) => insert_before_uses(ls, av, guard, frees),
+                            other => bare |= names_outside_free(other, av, frees),
+                        }
+                    }
+                    bare
+                }
+            }
+            other => names_outside_free(other, av, frees),
+        };
+        if before {
+            ops.insert(i, guard.clone());
+            i += 1;
+        }
+        i += 1;
+    }
+}
+
+/// Is `av` the buffer of a call a `for` loop ITERATES (`for f in make(…) { … }`)?  Such a
+/// buffer is the native emitter's to place (@PLN157 § V-j, `hoist::move_appends`): it starts
+/// as the sentinel and is claimed in the destination's store at the loop, so a guarded mint
+/// in front of the loop would be a second owner of the same slot.
+fn iterates_a_call_into(ops: &[Value], av: u16) -> bool {
+    ops.iter().any(|op| {
+        op.any_node(&mut |n| {
+            let Value::Block(bl) = n else { return false };
+            bl.name == "For block"
+                && matches!(bl.operators.first().map(Value::unspan),
+                    Some(Value::Set(_, call)) if matches!(call.unspan(),
+                        Value::Call(_, args) if matches!(args.last().map(Value::unspan),
+                            Some(Value::Var(b)) if *b == av)))
+        })
+    })
+}
+
+/// @PLN164 A0 (`@FR-O-LazyBuffer`) — a hidden VECTOR return buffer is minted in front of
+/// the statements that hand it to a callee, behind `OpRefIsNull`, instead of at function
+/// entry: its null-init writes the sentinel (`Function::mark_lazy_buffer` tells both
+/// emitters), and the guarded `Set(av, Null)` is the mint.  A path that never makes the
+/// call never mints the store, and every exit's free already tolerates the sentinel
+/// (`@FR-H-FreeNull`).  Declined for a body that suspends or forks (a generator, `par`),
+/// and for a buffer with a second assignment, which this cannot order.  The type test is
+/// on the bare `vector<T>` on purpose: a `vector<T>?` buffer's entry init already writes
+/// the ABSENT sentinel and is minted by another route, so it is declined and keeps its
+/// entry-time behaviour, as does every buffer this does not name.
+fn lazy_buffer_mints(code: &mut Value, function: &mut Function, data: &Data) {
+    if !crate::keys::lazy_buffer_enabled() {
+        return;
+    }
+    if code.any_node(&mut |v| matches!(v, Value::Yield(..) | Value::Parallel(..))) {
+        return;
+    }
+    let Value::Block(bl) = code else { return };
+    let frees = free_ops(data);
+    let is_null = data.def_nr("OpRefIsNull");
+    for av in 0..function.count() {
+        if !function.is_caller_hidden_buf(av)
+            || function.is_argument(av)
+            || function.is_inline_ref(av)
+            || function.is_skip_free(av)
+            || !function.name(av).starts_with("__ref_")
+        {
+            continue;
+        }
+        // A `vector<T>?` buffer is minted by another route (see the doc above).
+        if matches!(function.tp(av), Type::Optional(_)) {
+            continue;
+        }
+        let Type::Vector(_, dep) = function.tp(av).base() else {
             continue;
         };
-        inserts.push((
-            at + 1,
-            Value::Call(db_nr, vec![Value::Var(av), Value::Int(i32::from(known))]),
-        ));
-    }
-    inserts.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
-    for (at, op) in inserts {
-        bl.operators.insert(at, op);
+        if !dep.is_empty() {
+            continue;
+        }
+        let top_inits = bl
+            .operators
+            .iter()
+            .filter(|op| matches!(op.unspan(), Value::Set(x, v) if *x == av && matches!(v.unspan(), Value::Null)))
+            .count();
+        let mut sets = 0;
+        for op in &bl.operators {
+            op.walk(&mut |v| {
+                if let Value::Set(x, _) = v
+                    && *x == av
+                {
+                    sets += 1;
+                }
+            });
+        }
+        if top_inits != 1 || sets != 1 || iterates_a_call_into(&bl.operators, av) {
+            continue;
+        }
+        function.mark_lazy_buffer(av);
+        let guard = v_if(
+            Value::Call(is_null, vec![Value::Var(av)]),
+            Value::Insert(vec![v_set(av, Value::Null)]),
+            Value::Null,
+        );
+        insert_before_uses(&mut bl.operators, av, &guard, &frees);
     }
 }
 
@@ -4255,6 +4484,18 @@ fn run_scan_phase(
             );
         }
     }
+    // @FR-O-Override — a temp whose value a consuming op takes over (`mark_lift_handoff`'s
+    // store hand-off: `OpReplaceKeyed` with its source-free bit) owns nothing at ANY later
+    // free, not only at scope exit.  The op either freed the store or declined because it
+    // was a protected borrow, and neither is the temp's to release.  Marked never-free, the
+    // rebind on the next pass through a loop emits no displaced-store free on either
+    // backend — that free released the slot the op had already freed, which by then was
+    // whatever the allocator had handed it to next.
+    let mut transferred: Vec<u16> = scopes.free_transferred.iter().copied().collect();
+    transferred.sort_unstable();
+    for v in transferred {
+        function.set_skip_free(v);
+    }
     // lift vars from `scan_args` are assigned inside conditional branches but
     // their `OpFreeRef` lives at function exit; prepend the null-inits so codegen
     // reserves their slot along every path (see the original comment in check).
@@ -4274,12 +4515,13 @@ fn run_scan_phase(
     }
     reuse_record_buffers(
         &mut code,
-        &function,
+        &mut function,
         data,
         &scopes.witness_buffer,
         &scopes.minted_pairs,
         &scopes.multi_assigned,
     );
+    lazy_buffer_mints(&mut code, &mut function, data);
     data.definitions[d_nr as usize].code = code;
     data.definitions[d_nr as usize].variables = function;
     #[cfg(debug_assertions)]

@@ -1,0 +1,102 @@
+// @PLN164 C6 cells — a record literal that initialises a FIELD of another literal's
+// record (`Op { paint: Pa { … } }`) is written into that field instead of being built in a
+// store of its own and copied.  The interpreter is the oracle; every value is written
+// beside its cell and must hold on --interpret and --native, with and without
+// LOFT_NO_NESTED_IN_PLACE=1, under LOFT_STRICT_STORES=1, LOFT_POISON=1 and
+// LOFT_NATIVE_LEAK_CHECK=1.
+struct Pa { pk: integer, c1: integer, c2: integer, spec: vector<float> }
+struct Op { kind: integer, paint: Pa, w: integer, pts: vector<integer> }
+struct Scene { ops: vector<Op> }
+struct Pd { a: integer = 5, b: integer = -1, c: integer }
+struct Op2 { tag: integer, pd: Pd }
+struct Inner { v: integer, name: text }
+struct Mid { m: integer, inner: Inner }
+struct Outer { o: integer, mid: Mid }
+
+fn spec10(p: const Pa) -> integer { t = 0.0; for f in p.spec { t += f; } (t * 10.0) as integer }
+
+// n1 — the frond-loop shape: an appended element whose `paint` is a literal, three times.
+// Per op kind + c1 + w + len(spec) + pk: (0+0+3+0+1) + (1+10+3+0+1) + (2+20+3+0+1) = 45.
+// Expect "3 45".
+fn n1() -> text {
+  n1_sc = Scene { ops: [] };
+  for i in 0..3 {
+    n1_sc.ops += [Op { kind: i, paint: Pa { pk: 1, c1: i * 10, c2: 0, spec: [] }, w: 3, pts: [i] }];
+  }
+  n1_s = 0;
+  for o in n1_sc.ops { n1_s += o.kind + o.paint.c1 + o.w + len(o.paint.spec) + o.paint.pk; }
+  "{len(n1_sc.ops)} {n1_s}"
+}
+
+// n2 — the nested literal carries a non-empty vector.  pk 2, c1 + c2 = 3, spec sums to 4.0,
+// two elements.  Expect "2 3 40 2".
+fn n2() -> text {
+  n2_sc = Scene { ops: [] };
+  n2_sc.ops += [Op { kind: 7, paint: Pa { pk: 2, c1: 1, c2: 2, spec: [1.5, 2.5] }, w: 1, pts: [] }];
+  n2_o = n2_sc.ops[0];
+  "{n2_o.paint.pk} {n2_o.paint.c1 + n2_o.paint.c2} {spec10(n2_o.paint)} {len(n2_o.paint.spec)}"
+}
+
+// n3 — a partial nested literal: the omitted fields take their DECLARED defaults.
+// Expect "8 5 -1 9".
+fn n3() -> text {
+  n3_x = Op2 { tag: 8, pd: Pd { c: 9 } };
+  "{n3_x.tag} {n3_x.pd.a} {n3_x.pd.b} {n3_x.pd.c}"
+}
+
+// n4 — a nested field expression appends to the SAME container while the element is being
+// built.  Each pass appends one `bump` op (kind 99) and one outer op; the outer op's c1 is
+// 42 and its c2 is the pass number.  Sum over outer ops of c1 + c2 = 20 * 42 + 190 = 1030,
+// and there are 20 bump ops.  Expect "40 20 1030".
+fn bump(b_sc: Scene) -> integer {
+  b_sc.ops += [Op { kind: 99, paint: Pa { pk: 0, c1: 0, c2: 0, spec: [] }, w: 0, pts: [] }];
+  42
+}
+fn n4() -> text {
+  n4_sc = Scene { ops: [] };
+  for i in 0..20 {
+    n4_sc.ops += [Op { kind: i, paint: Pa { pk: 1, c1: bump(n4_sc), c2: i, spec: [] }, w: 3, pts: [] }];
+  }
+  n4_b = 0;
+  n4_s = 0;
+  for o in n4_sc.ops {
+    if o.kind == 99 { n4_b += 1; } else { n4_s += o.paint.c1 + o.paint.c2; }
+  }
+  "{len(n4_sc.ops)} {n4_b} {n4_s}"
+}
+
+// n5 — two levels of nesting, with a text field in the innermost record.
+// Expect "1 2 3 deep".
+fn n5() -> text {
+  n5_x = Outer { o: 1, mid: Mid { m: 2, inner: Inner { v: 3, name: "deep" } } };
+  "{n5_x.o} {n5_x.mid.m} {n5_x.mid.inner.v} {n5_x.mid.inner.name}"
+}
+
+// n6 — a local whole-variable literal with a nested literal, rebound in a loop: the
+// previous record's text and vector are released, the new one reads right.  Last pass:
+// v = 4, name "n4", spec [4.0].  Expect "4 n4 40".
+fn n6() -> text {
+  n6_x = Op { kind: 0, paint: Pa { pk: 0, c1: 0, c2: 0, spec: [] }, w: 0, pts: [] };
+  n6_t = Outer { o: 0, mid: Mid { m: 0, inner: Inner { v: 0, name: "" } } };
+  for i in 0..5 {
+    n6_x = Op { kind: i, paint: Pa { pk: 1, c1: i, c2: 0, spec: [i as float] }, w: 0, pts: [] };
+    n6_t = Outer { o: i, mid: Mid { m: i, inner: Inner { v: i, name: "n{i}" } } };
+  }
+  "{n6_t.mid.inner.v} {n6_t.mid.inner.name} {spec10(n6_x.paint)}"
+}
+
+// n7 — the nested literal reads the destination's OLD value through the field road:
+// `o.mid = Mid { m: …, inner: Inner { v: o.mid.m, … } }` must see the value before the
+// write.  Old m is 2, so inner.v becomes 2 and m becomes 7.  Expect "7 2 old".
+fn n7() -> text {
+  n7_x = Outer { o: 1, mid: Mid { m: 2, inner: Inner { v: 3, name: "old" } } };
+  n7_x.mid = Mid { m: 7, inner: Inner { v: n7_x.mid.m, name: n7_x.mid.inner.name } };
+  "{n7_x.mid.m} {n7_x.mid.inner.v} {n7_x.mid.inner.name}"
+}
+
+fn main() {
+  for _r in 0..2 {
+    println("n1 {n1()} n2 {n2()} n3 {n3()} n4 {n4()}");
+    println("n5 {n5()} n6 {n6()} n7 {n7()}");
+  }
+}

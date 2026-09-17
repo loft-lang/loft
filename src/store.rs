@@ -2214,9 +2214,12 @@ impl Store {
             return;
         }
         if !self.borrowed && !self.is_file_backed() {
-            let bytes = self.size as usize * 8;
-            crate::store_budget::release(self.known_type, bytes, self.created_at);
-            crate::store_budget::add(kt, bytes, self.created_at);
+            crate::store_budget::retype(
+                self.known_type,
+                kt,
+                self.size as usize * 8,
+                self.created_at,
+            );
         }
         self.known_type = kt;
     }
@@ -3188,6 +3191,7 @@ impl Store {
     /// buffer nothing has written yet — `Fld 4 is outside of record 63 size 0`, on the first
     /// store any test builds.  Everything else a write owes is still owed and still happens
     /// here: the lock refusal, the bounds check and @PLN154's shadow hook.
+    #[inline]
     fn begin_write_block_meta<T: 'static>(&mut self, rec: u32, fld: u32) -> isize {
         self.begin_write_inner::<T>(rec, fld, false)
     }
@@ -3197,6 +3201,7 @@ impl Store {
     /// Its only reader is the record-size check, which is `debug_assertions`-only, so a release
     /// build sees the parameter unused.
     #[cfg_attr(not(debug_assertions), allow(unused_variables))]
+    #[inline]
     fn begin_write_inner<T: 'static>(&mut self, rec: u32, fld: u32, in_record: bool) -> isize {
         // Only hard `read_only` blocks writes.  Call-bracket
         // `free_protected` lets writes through (only frees are blocked).
@@ -3230,15 +3235,7 @@ impl Store {
             );
         }
         if self.read_only {
-            // The author's own `#lock` is a loft fault with the author's frames; an
-            // internal lock reaching here is a compiler defect and stays an assert.
-            if self.user_locked {
-                Self::refuse_user_locked_write(rec, fld, &self.lock_origin);
-            }
-            panic!(
-                "Write to read-only store at rec={rec} fld={fld} (locked by: {})",
-                self.lock_origin
-            );
+            self.refuse_locked_write(rec, fld);
         }
         // @PLN154 — the one write hook.  Phase 0 counted 33 sites that write the
         // interpreter stack and 32 of them arrive here, where `T` also names the width;
@@ -3252,6 +3249,22 @@ impl Store {
             );
         }
         at
+    }
+
+    /// The refusal of [`Self::begin_write_inner`]: a write reached a locked store.
+    /// Enforces `@FR-R-Cold`: the refusal is outlined so the write check inlines.
+    #[cold]
+    #[inline(never)]
+    fn refuse_locked_write(&self, rec: u32, fld: u32) -> ! {
+        // The author's own `#lock` is a loft fault with the author's frames; an
+        // internal lock reaching here is a compiler defect and stays an assert.
+        if self.user_locked {
+            Self::refuse_user_locked_write(rec, fld, &self.lock_origin);
+        }
+        panic!(
+            "Write to read-only store at rec={rec} fld={fld} (locked by: {})",
+            self.lock_origin
+        );
     }
 
     /// The address of ELEMENT 0 of the vector record `rec` — the record's word plus the

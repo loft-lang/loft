@@ -1,0 +1,167 @@
+diff --git b/default/01_code.loft a/default/01_code.loft
+index 51a32e72..0a4797a5 100644
+--- b/default/01_code.loft
++++ a/default/01_code.loft
+@@ -1452,14 +1452,7 @@ fn OpIterate(
+ ) -> integer;
+ fn OpStep(state_var: const u16, data: reference, on: const u8, arg: const u16) -> reference[data];
+ fn OpRemove(state_var: const u16, data: reference, on: const u8, tp: const u16);
+-// Release what the `tp` record at `data` owns — its vectors, texts and nested records —
+-// and leave the record itself in place with those fields empty.  A return buffer the
+-// caller offered is refilled by the callee's literal, and the literal overwrites every
+-// field it writes; this is what the previous occupant's heap is released by first
+-// (`@FR-H-ClearRelease`, the record clause).
+ fn OpClear(data: reference, tp: const u16);
+-#rust"stores.remove_claims(&@data, @tp);"
+-#impure(parent_write)
+ fn OpAppendCopy(data: reference, count: integer, tp: const u16);
+ fn OpCopyRecord(data: reference, to: reference, tp: const u16);
+ // @PLN164 B2 (`@FR-R-Place`) — claim a `tp` record inside `host`'s store, prefilled as
+diff --git b/src/fill.rs a/src/fill.rs
+index 511dce82..8f21f649 100644
+--- b/src/fill.rs
++++ a/src/fill.rs
+@@ -2425,9 +2425,7 @@ fn remove(s: &mut State) {
+ }
+ 
+ fn clear(s: &mut State) {
+-    let v_tp = s.code::<u16>();
+-    let v_data = s.get_stack::<DbRef>();
+-    s.database.remove_claims(&v_data, v_tp);
++    s.clear();
+ }
+ 
+ fn append_copy(s: &mut State) {
+diff --git b/src/scopes.rs a/src/scopes.rs
+index d29e5bd0..392df7fa 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -3756,10 +3756,9 @@ fn reuse_record_buffers(
+         }
+     }
+     let db_nr = data.def_nr("OpDatabase");
+-    let clear_nr = data.def_nr("OpClear");
+     // Emitted in variable order so identical source compiles to identical IR.
+-    let mut eager: Vec<(u16, Value, Option<Value>)> = Vec::new();
+-    let mut lazy: Vec<(u16, Value, Option<Value>)> = Vec::new();
++    let mut inserts: Vec<(usize, Value)> = Vec::new();
++    let mut lazy: Vec<(u16, Value)> = Vec::new();
+     for av in guarded {
+         // @FR-O-Proxy asks alloc — decides whether to ALLOCATE the buffer's store here; a
+         // buffer carrying a dep is a view of something else and gets no store of its own.
+@@ -3795,40 +3794,27 @@ fn reuse_record_buffers(
+             // it displaces, which would be this buffer's.
+             continue;
+         }
+-        if null_init_at(&bl.operators, av).is_none() {
++        let Some(at) = bl.operators.iter().position(
++            |op| matches!(op.unspan(), Value::Set(s, v) if *s == av && **v == Value::Null),
++        ) else {
+             continue;
+-        }
++        };
+         let mint = Value::Call(db_nr, vec![Value::Var(av), Value::Int(i32::from(known))]);
+-        // `@FR-H-ClearRelease`, the record clause — a reused buffer is REFILLED: the
+-        // callee's literal overwrites every handle it writes, so what the previous call left
+-        // in the record is released before each call after the first.
+-        let release = releases_what_it_held(data, function.tp(av))
+-            .then(|| Value::Call(clear_nr, vec![Value::Var(av), Value::Int(i32::from(known))]));
+         if !ungated && crate::keys::lazy_buffer_enabled() {
+             // `@FR-O-LazyBuffer` — once per activation still, but only on a path that
+-            // reaches the call: the null test lets a later pass through a loop reuse it,
+-            // and a reuse takes the release.
+-            lazy.push((av, mint, release));
++            // reaches the call: the null test lets a later pass through a loop reuse it.
++            lazy.push((av, mint));
+         } else {
+-            eager.push((av, mint, release));
++            inserts.push((at + 1, mint));
+         }
+     }
+-    let frees = free_ops(data);
+-    // A buffer minted at entry is live at every call, and the first release finds the
+-    // record the mint just prefilled: nothing to walk.  The releases go in before the mints
+-    // do, because a mint names the buffer and would itself take one.
+-    for (av, _, release) in &eager {
+-        if let Some(release) = release {
+-            insert_before_uses(&mut bl.operators, *av, release, &frees);
+-        }
+-    }
+-    for (av, mint, _) in eager {
+-        if let Some(at) = null_init_at(&bl.operators, av) {
+-            bl.operators.insert(at + 1, mint);
+-        }
++    inserts.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
++    for (at, op) in inserts {
++        bl.operators.insert(at, op);
+     }
+     let is_null = data.def_nr("OpRefIsNull");
+-    for (av, mint, release) in lazy {
++    let frees = free_ops(data);
++    for (av, mint) in lazy {
+         // The mark tells the native hoist gate that this `OpDatabase` only ever takes a
+         // fresh store from the sentinel (`hoist::lazy_buffer_mint`); a record buffer's
+         // null-init already writes the sentinel on both backends.
+@@ -3836,41 +3822,12 @@ fn reuse_record_buffers(
+         let guard = v_if(
+             Value::Call(is_null, vec![Value::Var(av)]),
+             Value::Insert(vec![mint]),
+-            release.unwrap_or(Value::Null),
++            Value::Null,
+         );
+         insert_before_uses(&mut bl.operators, av, &guard, &frees);
+     }
+ }
+ 
+-/// The top-level position of `av`'s null-init, where an eager mint goes right after it.
+-fn null_init_at(ops: &[Value], av: u16) -> Option<usize> {
+-    ops.iter()
+-        .position(|op| matches!(op.unspan(), Value::Set(s, v) if *s == av && **v == Value::Null))
+-}
+-
+-/// Can a record of this buffer type own heap — so a refill of it owes a release of what it
+-/// held?  A struct with a field that is not a scalar can, and so can a struct-enum, whose
+-/// variants this does not read.
+-///
+-/// Conservative on purpose, and the fallback says why: a record this answers `true` for
+-/// that owns nothing pays one walk that returns at once, while a `false` for one that
+-/// owns heap strands the previous occupant's heap on every call.  The release walks the
+-/// buffer's own type — for a struct-enum the PARENT, whose walk follows the variant the
+-/// buffer holds rather than the one the next call writes.
+-fn releases_what_it_held(data: &Data, tp: &Type) -> bool {
+-    // `.base()`: a buffer's record shape is the same behind a nullability marker
+-    // (`@FR-N-Shape`).
+-    match tp.base() {
+-        Type::Reference(td, _) => !data
+-            .def(*td)
+-            .attributes()
+-            .iter()
+-            .all(|a| crate::data::is_scalar(&a.typedef)),
+-        Type::Enum(_, true, _) => true,
+-        _ => false,
+-    }
+-}
+-
+ /// The ops that name a store only to release it or to compare its identity: a buffer
+ /// mentioned in nothing else is never read, so it needs no store.
+ fn free_ops(data: &Data) -> Vec<u32> {
+diff --git b/src/state/io.rs a/src/state/io.rs
+index 3f32c67b..a6db5167 100644
+--- b/src/state/io.rs
++++ a/src/state/io.rs
+@@ -1558,6 +1558,15 @@ impl State {
+         }
+     }
+ 
++    /**
++    Clear the given structure on the field
++    */
++    pub fn clear(&mut self) {
++        let tp = self.code::<u16>();
++        let data = self.get_stack::<DbRef>();
++        self.database.remove_claims(&data, tp);
++    }
++
+     pub fn append_copy(&mut self) {
+         let tp = self.code::<u16>();
+         let count = self.get_stack::<i64>();

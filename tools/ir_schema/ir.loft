@@ -186,6 +186,8 @@ struct Variable {
   caller_hidden_buf: boolean,
   // @PLN157 § V-g — the copy from a borrowing call is elided; a fact the emitters read
   view_elided: boolean,
+  // @FR-O-LazyBuffer — a hidden return buffer minted at its first use; read by both emitters
+  lazy_buffer: boolean,
   // @FR-O-Witness — the owner witness `__own_<name>` of a mixed-ownership local (u16::MAX = none);
   // read by both emitters, so it must survive the snapshot exactly as `skip_free` does
   owner_witness: integer,

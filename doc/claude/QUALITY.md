@@ -480,7 +480,12 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 525 | 502 | **23** |
+| 527 | 504 | **23** |
+
+(2026-09-17, ../loft2's three picks and the `origin/157-native-4x` MERGE, re-measured on THIS
+tree at the join's END: 527 · 504 · 23, against the 525 · 502 · 23 this branch read before it.
+Re-derived, not carried: the 157 line's notes below are deltas against ITS base, and this row is
+the only thing that knows which tree it stands on.  The opaque column is unmoved.)
 (2026-09-16, the 157 pick re-measured on THIS tree: 518 · 495 · 23.  The per-unit notes
 below are accurate about what each unit ADDS; the total is not transferable.  Each was a delta
 against its own branch's base, and this branch carries work that one does not, so accumulating
@@ -497,6 +502,28 @@ step.  The opaque column is unmoved.  ../loft2's branch reports the same two uni
 523 · 500 against ITS base, and both are right about what they add; the totals differ because the
 bases do, which is why this row is measured here and never accumulated.)
 
+
+(2026-09-17, loft#1549: one site fewer, and not a behaviour change — the null-init test moved
+out of `scopes::reuse_record_buffers` into the one-line `scopes::null_init_at`, after which
+neither function names two `Value` variants.  The opaque column is unmoved.)
+
+(2026-09-17, loft#1548: one function added, peeling — `Parser::stage_append_fields`, which
+reads each field write and each nested construction through `.unspan()`.  The opaque column is
+unmoved.)
+
+(2026-09-17, @PLN164 A0: two functions added, both peeling — `scopes::names_outside_free` and
+`scopes::insert_before_uses`, the lazy-buffer walk, which match on `.unspan()` /
+`.unspan_mut()` at every step.  The opaque column is unmoved.)
+
+(2026-09-16, @PLN164 C5 step 2: one more function that discriminates on `Value` variants and
+peels — `namings_avoid_place`, the per-naming disturbance walk, which matches on `.unspan()`
+at every step.  The opaque column is unmoved.)
+
+(2026-09-16, @PLN164 C5: six functions added that discriminate on `Value` variants, and all six
+peel — the view-leaf walk (`leaf_source`, `appends_into`, `leaf_root`, `buffer_uses_accounted`)
+and its site half (`view_field_reads`, `span_keeps_places`), each matching on `.unspan()` or
+inside an `any_node` closure, which peels `Span` before calling it.  The opaque column is
+unmoved.)
 
 (2026-09-16, @PLN164 C2: one function added that discriminates on `Value` variants, and it
 peels — `Parser::buffer_is_the_place`, whose tests run through `unspan` and inside an `any_node`
@@ -2684,7 +2711,15 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 841 | 501 | 6 | **334** |
+| 846 | 506 | 6 | **334** |
+
+(2026-09-17, ../loft2's three picks and the `origin/157-native-4x` MERGE, re-measured on THIS
+tree at the join's END: 846 · 506 · 6 · 334.  **Neither side's row was true of the join** — this
+branch read 841 · 501 and the 157 line 840 · 500, each correct against its own base — so the row
+is re-derived here rather than picked from a side, which is what a merge conflict over a DERIVED
+number always owes.  The notes below are kept from BOTH sides: each is accurate about what its
+own unit adds, and only the total is untransferable.  The opaque column is unmoved, which is the
+ratchet.)
 
 (2026-09-17, @PLN164 C5 on top of the tuple close, re-measured on THIS tree after the WHOLE join:
 841 · 501 · 6 · 334.  One function is added and it sees through the wrapper — `view_leaf_type`
@@ -2744,6 +2779,26 @@ members differ from a stack tuple's elements by nothing but each member's `?`, c
 again the attribution** — the predicate is a peeling site, and it widens nothing: it is consulted
 only where the coalesce chooses its RESULT type, so `unboxes_stored_tuple` and the store
 positions that share it are untouched.)
+
+(2026-09-17, loft#1549: one function added, seeing through the wrapper —
+`scopes::releases_what_it_held` reads a pooled buffer's type through `.base()` and names a
+struct and a struct-enum, the two record shapes a buffer holds.  The opaque column is
+unmoved.)
+
+(2026-09-17, @PLN164 C6 and loft#1548: two functions added, both seeing through the wrapper —
+`Parser::nested_literal_place` declines a `τ?` field and reads the record through `.base()`,
+and `Parser::stage_append_fields` asks the value's type through `.base()`.  The opaque column is
+unmoved.)
+
+(2026-09-17, @PLN164 A0: one function added, seeing through the wrapper —
+`scopes::lazy_buffer_mints` declines a `vector<T>?` buffer by name, because that buffer is
+minted by another route, and reads the rest through `.base()`; `State::set_var` asks the same
+two questions.  The opaque column is unmoved.)
+
+(2026-09-16, @PLN164 C5: one function added, seeing through the wrapper — `view_leaf_type` asks
+whether a record's heap field is a plain `vector<T>`, which a view leaf may deliver, and reads it
+through `.base()` because a `vector<T>?` is the same shape behind a nullability bit.  The opaque
+column and the ratchet are unmoved.)
 
 (2026-09-16, @PLN164 C1: one function added, seeing through the wrapper — `builds_into_element`
 reads a field's declared type through `.base()` to ask whether the record owns a COLLECTION,

@@ -630,6 +630,19 @@ fn mints_null_buffer(body: &Block, data: &Data, vars: &crate::variables::Functio
     })
 }
 
+/// `@FR-O-LazyBuffer` — the record-buffer pool's mint, which `scopes::reuse_record_buffers`
+/// places behind `OpRefIsNull` on the buffer itself: it only ever takes a FRESH store from
+/// the null sentinel, never clears one, so no header a loop holds can name the store it
+/// fills.  Nor is it a growth for `@FR-R-Base`: a new store is a new slot whose memory is
+/// its own allocation (`Store::ptr`), so no live store's memory moves, even when the slot
+/// table itself grows.  `LOFT_HOIST_VERIFY=1` re-checks every base at every use.
+fn lazy_buffer_mint(name: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
+    let Some(vars) = vars else { return false };
+    (name == "OpDatabase" || name == "OpDatabaseNP")
+        && matches!(args.first().map(Value::unspan), Some(Value::Var(b))
+            if *b < vars.count() && vars.is_lazy_buffer(*b))
+}
+
 /// The schema type of a variable that names a PLAIN struct record — a `Reference` to a
 /// `DefType::Struct`, reached through any `&` links but not through an `Optional`.  A
 /// struct-enum, a variant, a nullable and a synthetic `__nullable<S>` answer `None`: their
@@ -867,6 +880,18 @@ fn body_writes(
             } else if let Some(tp) = null_buffer_alloc(name, args, Some(vars), data) {
                 // § V-ad — the discharge buffer is re-initialised whole; only a scalar hoisted
                 // off ITS type could observe that, and the buffer's view is rebound per use.
+                set.whole.insert(tp);
+            } else if lazy_buffer_mint(name, args, Some(vars)) {
+                // `@FR-O-LazyBuffer` — a fresh store for the buffer from its sentinel; only a
+                // scalar hoisted off the buffer's own record type could observe it.
+                let minted = match args.first().map(Value::unspan) {
+                    Some(Value::Var(b)) => plain_record_type(data, vars.tp(*b)),
+                    _ => None,
+                };
+                let Some(tp) = minted else {
+                    ok = false;
+                    return true;
+                };
                 set.whole.insert(tp);
             } else if RECORD_FREE_OPS.contains(&name) {
                 let freed = match args.first().map(Value::unspan) {
@@ -2256,7 +2281,9 @@ fn blocks_header_hoist(
                 && frees_a_record(data.def(*d).name(), args, vars);
             // @PLN157 § V-ad — the null-discharge buffer's allocation moves nothing a header
             // describes; its field sets below are in-place and walk on their own.
-            let buffer_alloc = known && null_buffer_alloc(data.def(*d).name(), args, vars, data).is_some();
+            let buffer_alloc = known
+                && (null_buffer_alloc(data.def(*d).name(), args, vars, data).is_some()
+                    || lazy_buffer_mint(data.def(*d).name(), args, vars));
             // @PLN157 § V-q (`@FR-R-Push`) — a fusable push over a pure path is admitted
             // under its own tier: it grows one vector whose header the loop keeps current
             // through the push itself; `hoistable` decides the aliasing.  The value operand
@@ -6493,6 +6520,23 @@ pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16>
                     }
                     "OpFreeRef" | "OpFreeRefIfDistinct" => {
                         if let Some(w) = arg_var(0) {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                        // A free guarded FOR a value local is emitted as nothing
+                        // (`OpFreeRefIfDistinctEmitter`), and its witness goes with it.
+                        if callee.name() == "OpFreeRefIfDistinct"
+                            && arg_var(0).is_some_and(|o| locals.contains_key(&o))
+                            && let Some(w) = arg_var(1)
+                        {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    // `@FR-O-LazyBuffer` — the null test in front of a lazy buffer's mint
+                    // is the mint's own guard, and goes with it.
+                    "OpRefIsNull" => {
+                        if let Some(w) = arg_var(0)
+                            && vars.is_lazy_buffer(w)
+                        {
                             *dropped.entry(w).or_insert(0) += 1;
                         }
                     }

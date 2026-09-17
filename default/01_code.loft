@@ -1452,7 +1452,14 @@ fn OpIterate(
 ) -> integer;
 fn OpStep(state_var: const u16, data: reference, on: const u8, arg: const u16) -> reference[data];
 fn OpRemove(state_var: const u16, data: reference, on: const u8, tp: const u16);
+// Release what the `tp` record at `data` owns — its vectors, texts and nested records —
+// and leave the record itself in place with those fields empty.  A return buffer the
+// caller offered is refilled by the callee's literal, and the literal overwrites every
+// field it writes; this is what the previous occupant's heap is released by first
+// (`@FR-H-ClearRelease`, the record clause).
 fn OpClear(data: reference, tp: const u16);
+#rust"stores.remove_claims(&@data, @tp);"
+#impure(parent_write)
 fn OpAppendCopy(data: reference, count: integer, tp: const u16);
 fn OpCopyRecord(data: reference, to: reference, tp: const u16);
 // @PLN164 B2 (`@FR-R-Place`) — claim a `tp` record inside `host`'s store, prefilled as
