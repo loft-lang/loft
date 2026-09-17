@@ -63,7 +63,8 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
   is open and decides tier 1's shape.
 - **Last touched:** 2026-09-17 (P0b, row 11, A0 and C6 built, loft#1548 and D-own-44 fixed on
   the way; the 14-row table and the parse row re-measured — § Re-measured; the runtime fast
-  paths and loft#1549 — § The runtime under the row; B1b, D-own-43 and loft#1550 — § B1b)
+  paths and loft#1549 — § The runtime under the row; B1b, D-own-43 and loft#1550 — § B1b;
+  the chain-renamed literal exits — § B2 unit 1 over a chain)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -708,11 +709,65 @@ So the unit's time gain on its own row is small (−1.9 %, ≈ −4 % with the e
 arithmetic said a store-pair class would be; what it removes structurally is five `Mark` stores
 a parse and the three frees that could release a caller's store.
 
+### B2 unit 1 over a chain (BUILT 2026-09-17, `@FR-R-Place`'s callee clause)
+
+*The shape.*  `parse_circle` answers `no_mark()` on two exits and `Mark { … }` on one.  A
+chain exit hands the function's buffer to the callee and RENAMES it after the chain's work
+ref (`__retbuf` → `__ref_N`), so unit 1's `unpromoted_return_buffer_var` found nothing and
+the literal exit minted a store of its own on every matched line, while the chain exits
+wrote the caller's pooled buffer.  The same held for a literal exit before a chain TAIL
+(`outer2`, the scanners' `… scan_fail()`) and for a literal tail after chain exits
+(`read_uint`).
+
+*The rule.*  `Parser::chain_return_buffer_var` accepts a compiler-generated `__ref_N` buffer
+that nothing but a chain names — a `one_buffer_chain` block, or the tail call it is handed to
+(`tail_hands_on`) — and a chain exit counts as compatible in `literal_exits_into_buffer`; a
+literal tail beside chain exits takes the same buffer in `classify_reference_delivery`.  A
+chain always returns, so a literal exit never meets a value another statement put in the
+buffer.  A promoted NAMED local is never such a buffer (`pick`'s literal keeps its store —
+`164-adopt-first-bind` c3's reason).  Same switch: `LOFT_NO_LITERAL_EXIT_BUFFER=1`.
+
+*What it cost to get right.*  The first draft un-admitted every scanner on native (258 `Scan`
+mints in a two-parse run where there had been none): the chain's buffer is a PHANTOM value
+local, and once the literal wrote it, its mentions inside the converted `Object` were uses
+`local_uses_ok` did not account — so `scan_fail`'s site "consumed its record" and the
+admission fixpoint emptied.  Those mentions vanish with the block, as `retbuf_uses_ok`
+already said for a phantom that is no local; `local_uses_ok` now says it too, and the
+value-record verdicts on the bench are identical to the pre-unit build.  The value channel
+could not see this — only `tests/literal_exit_buffer.rs`'s signature pin did (confirmed by
+reverting the clause).  The chain cells also found row 6 of the B1b table.
+
+*Receipts.*  Cells `bytecode-comparisons/B2-chain-literal-exit-cells.loft` (c1–c17,
+hand-computed: the chain mid-body, at the tail, both, recursive, two levels deep; a vector
+field from a local also appended into a parameter; an omitted default; a loop local, a
+rebind, a bind inside an `if`, an append, a discarded call, a fn-ref, two live results; the
+value record in both shapes), clean on both backends under `LOFT_STRICT_STORES`,
+`LOFT_POISON`, `LOFT_POISON_CLAIM` and the leak gate, pooled and unpooled and under the
+switch; every other @PLN164 cell corpus and the @PLN157 § V-a value-record corpora likewise.
+Guard `tests/scripts/164-a-literal-exit-writes-its-chains-buffer.loft` (INERT at 49040d27 —
+an optimisation), pins in `tests/literal_exit_buffer.rs`; the B1b census pins moved with it
+(pooled 246 → 197 interpret, 204 → 174 native).  `wrap` and `native` green.
+
+*Measured* (the pre-unit generator against this one, both emissions compiled against ONE
+rlib, since the unit changes generation only; hash `33f6d2b8`):
+
+| | before | after | |
+|---|---:|---:|---:|
+| `Mark` mints, `--n 2` run (lean tier and `--native` alike) | 21 | 12 | −9 |
+| parse row, instructions (`perf stat -r 3`, `--n 5000`, whole process) | 1 875.3 M | 1 849.8 M | −1.4 % |
+| parse row, cycles | 461.4 M | 450.9 M | −2.3 % |
+| parse row, ns/op (`--n 5000`) | 24 066 | 23 471 | −2.5 % |
+
+The fourteen rows (`--n 50`, best of five and of seven interleaved rounds, one core): `parse`
+−3.3 % in both runs, every other row within noise — `lock` read +3.4 % in the first run and
+−0.8 % in the second, on function bodies that differ only in a source-path comment.
+
 ### The queue after B1b
 
-1. ~~**The `Mark` class** and **B1 behind a null-init**~~ — built above; 7 `Mark` stores a
-   parse remain, the literal exits of the parsers a chain renamed (`parse_circle`,
-   `parse_fronds`, `parse_line_cmd`: B2 unit 1 declines a renamed buffer) and `parse_poly`'s.
+1. ~~**The `Mark` class** and **B1 behind a null-init**~~ — built above, and the literal exits
+   of the chain-renamed parsers with it (§ B2 unit 1 over a chain).  The 12 `Mark` mints left
+   in a two-parse run are the pool's own: one per pooled call site per activation (five
+   parser buffers), which only the activation arena (A1/A2) removes.
 2. ~~**loft#1550** (r17)~~ — fixed above, at the call boundary.
 3. **The free tree under a live store** and **text per character** — as before.
 4. **A1/A2** — re-priced after item 1.
