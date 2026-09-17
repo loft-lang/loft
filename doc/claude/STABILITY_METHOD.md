@@ -300,13 +300,27 @@ duplication question askable at all rather than a matter of taste.
 position:
 
 ```
-257 defined rules · 78 cited · 203 citation sites
+353 defined rules · 218 cited · 1431 citation sites        # measured 2026-09-17
 ```
 
-**179 rules (70 %) have no code representation** — for those, *"where is this enforced?"* has
-no answer. And of the 78 that do, **23 are cited from two or more files**; the most scattered
+**135 rules (38 %) have no code representation** — for those, *"where is this enforced?"* has
+no answer. And of the 218 that do, **128 are cited from two or more files**; the most scattered
 is the most instructive. One rule is comfortably an afternoon. The queue is therefore measured
 in years, and the practice has to survive being picked up and put down.
+
+⚠ **The count is work LEFT, never readiness — because the queue is ordered.**  The walk takes
+the most-changed, most-used and most-error-prone rules first, so the 218 with a code
+representation are not a random 62 % of the language: they are the 62 % where the defects
+were.  What remains is the low-yield tail, and it is far less interesting than its size
+suggests.  A bare fraction cannot express that, in either direction — it prices every rule the
+same and quietly asserts that the remainder carries the same risk per rule as the part already
+done.  So quote the ordering beside the number, or do not quote the number.
+
+⚠ **And re-read the figures off the tool, never off this paragraph.**  `rule_tags.py check`
+reprints the line and `dups` the last one, so both are a command away — and this block carried
+**257 · 78 · 203 / 179 (70 %) / 23** for a year while the real position moved to the figures
+above.  All five were wrong, citation sites by **7×**.  A stale number does not read as stale:
+it reads as a measured queue.
 
 ### The loop
 
