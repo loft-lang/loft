@@ -45,6 +45,15 @@ const CODES: &[(&str, &str)] = &[
          fn main() { c = H { id: 1 }; a = S { h: c }; b = S { h: c }; \
          print(\"{a.h.id}{b.h.id}\"); }",
     ),
+    // @PLN163 P3 — `b = a` binds a whole droppable value, which `(H-Copy-Refuse)` makes an
+    // error: `H` owns a resource and declares no `OpCopy`, so the copy is a second structure
+    // that would release it again. Opt-in behind `LOFT_LEASE_REFUSE` while this repository's
+    // own corpus is converted, which `compact_output` and its two siblings arm.
+    (
+        "copy-of-droppable",
+        "struct H { id: integer }\nfn OpDrop(self: H) { print(\"{self.id}\"); }\n\
+         fn main() { a = H { id: 1 }; b = a; print(\"{b.id}\"); }",
+    ),
     // @PLN107 dead-store lint. `d = s.items` COPIES (C86), so writing `d` cannot reach
     // `s`, and `d` is never read afterwards — the write is lost.
     (
@@ -503,6 +512,11 @@ fn compact_output(prog: &str) -> String {
         // @PLN102 case-D's index lint is opt-in, and one pinned code needs it. Harmless
         // elsewhere: it only fires on a loop bounded by another vector's `len`.
         .env("LOFT_LINT_STRICT_INDEX", "1")
+        // @PLN163 P3's refusal is opt-in too, while this repository's corpus is converted.
+        // It reaches only a program that copies a value owning a droppable, so the one other
+        // trigger declaring `OpDrop` (`double-move`) is the one to watch: its warning is
+        // raised before this error, so both still render.
+        .env("LOFT_LEASE_REFUSE", "1")
         .env("LOFT_TIMEOUT", "60")
         .output()
         .expect("failed to invoke loft binary");
@@ -531,6 +545,7 @@ fn fix_output(prog: &str) -> String {
         .arg(&path)
         .env("LOFT_NO_CACHE", "1")
         .env("LOFT_LINT_STRICT_INDEX", "1")
+        .env("LOFT_LEASE_REFUSE", "1")
         .output()
         .expect("run loft fix");
     let _ = std::fs::remove_file(&path);
@@ -559,6 +574,7 @@ fn explain_output(prog: &str) -> String {
         .arg(&path)
         .env("LOFT_NO_CACHE", "1")
         .env("LOFT_LINT_STRICT_INDEX", "1")
+        .env("LOFT_LEASE_REFUSE", "1")
         .env("LOFT_TIMEOUT", "60")
         .output()
         .expect("failed to invoke loft binary");

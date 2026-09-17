@@ -74,6 +74,48 @@ impl Refusal {
             Self::Captured(v) => format!("captured:{}", func.name(*v)),
         }
     }
+
+    /// What `(H-Copy-Refuse)` says to the author about this copy: the act, why it is refused, and
+    /// what to write instead — *"use the value where it is, pass it, build it where it belongs,
+    /// or return the owner"*.
+    ///
+    /// `who` is the name the author wrote for the value, from [`Frame::author_name`], and is
+    /// `None` when the refusal reaches only a compiler temp — then the sentence describes the
+    /// value by its TYPE instead.  Naming `__lift_2` would describe the compiler's workings to
+    /// someone reading about their own program, which is the shape loft#1453 already paid for.
+    ///
+    /// It never names a LATER line, because no later line decides the verdict: the rule is read
+    /// off this one and the declared types alone.
+    #[must_use]
+    pub fn message(&self, who: Option<&str>, tp: &str) -> String {
+        let it = who.map_or_else(|| format!("a value of `{tp}`"), |name| format!("`{name}`"));
+        let twice = "so the copy releases it a second time";
+        match self {
+            // `Later` is the SUPERSEDED liveness reading, which P2r settled does not decide
+            // validity; the raise site skips it.  Phrased as a plain copy so this stays total.
+            Self::Copied(_) | Self::Later { .. } => format!(
+                "cannot copy {it} here — `{tp}` owns a resource, and a copy is a second \
+                 structure that releases it a second time. Use it where it is, pass it as an \
+                 argument, or build a new value here"
+            ),
+            Self::Container(_) => {
+                let owner = who.map_or_else(|| "the container".to_string(), |n| format!("`{n}`"));
+                format!(
+                    "cannot copy a member of {owner} here — {owner} still owns that member and \
+                     releases it when it goes, {twice}. Read it where it lives, or build a new \
+                     value here"
+                )
+            }
+            Self::Caller(_) => format!(
+                "cannot copy {it} here — the caller still owns what it passed and releases it, \
+                 {twice}. Read it where it lives, or return the owner"
+            ),
+            Self::Captured(_) => format!(
+                "cannot copy {it} here — the closure that captured it still owns it, {twice}. \
+                 Read it where it lives, or build a new value here"
+            ),
+        }
+    }
 }
 
 /// The verdict on one copy.
@@ -289,6 +331,26 @@ impl<'a> Frame<'a> {
     #[must_use]
     pub fn is_buffer(&self, var: u16) -> bool {
         self.buffers.contains(&var)
+    }
+
+    /// The name the AUTHOR wrote for the value a refusal names, or `None` when the refusal
+    /// reaches only a compiler temp.
+    ///
+    /// A refusal's variable is not always one a reader can see.  [`Self::member_owner`] answers
+    /// `Container(root)` with whatever root [`Self::member_container`] found, and for a lifted
+    /// join arm or a call-result projection that root is a `__lift_N` — measured on the corpus
+    /// 2026-09-17, four sites in `1506-a-call-result-projection-releases-once.loft` read
+    /// `refuse:container:__lift_2`.  [`Self::resolve_view`] walks the view temps back to what
+    /// they stand for; when the answer is still generated, the caller has no name to print and
+    /// says so instead of printing that one.
+    ///
+    /// A PARAMETER is an author name even though it is an argument, which is why the argument
+    /// test sits beside the generated one rather than inside it.
+    #[must_use]
+    pub fn author_name(&self, refusal: &Refusal) -> Option<&str> {
+        let var = self.resolve_view(refusal.var()).0;
+        (!self.func.is_compiler_generated(var) || self.func.is_argument(var))
+            .then(|| self.func.name(var))
     }
 
     /// The rule read off the line, for one value a copy may produce.

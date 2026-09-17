@@ -550,6 +550,24 @@ pub fn drop_copy_census_enabled() -> bool {
     *ON.get_or_init(|| env_set("LOFT_DROP_COPY_CENSUS"))
 }
 
+/// `LOFT_LEASE_REFUSE=1` — @PLN163 P3: a written copy of a droppable is a compile-time ERROR.
+///
+/// `(H-Copy-Refuse)` makes a copy of a type that owns a droppable without `OpCopy` an error on
+/// the line that writes it, because two structures on one resource release it twice.  The census
+/// (`LOFT_DROP_COPY_CENSUS`) has reported that verdict since P2r; this is the same verdict raised
+/// as the rule states it.
+///
+/// Opt-in while this repository's own corpus is converted — the rules refuse 227 lines across 29
+/// of the 38 files that declare `OpDrop`, and every one is a guard pinning the release machinery
+/// the refusal replaces.  The flip to default-on is P3's own step, after the conversion; no
+/// published library, consumer or registry package declares `OpDrop` (P0), so nothing outside
+/// this tree is waiting on it.
+#[must_use]
+pub fn lease_refuse_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_LEASE_REFUSE"))
+}
+
 /// `LOFT_COPY_MANIFEST=1` — @PLN130: the emission-manifest GUARD. Each generator records every
 /// deep copy it WRITES; this reports the ones the copy diagnostic produced no verdict for.
 ///
