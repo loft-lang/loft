@@ -22,7 +22,8 @@ const FORWARD: &str = "tests/scripts/164-forward-tuple.loft";
 fn loft() -> Command {
     let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.env("LOFT_TIMEOUT", "300")
-        .env_remove("LOFT_NO_VIEW_FIELD");
+        .env_remove("LOFT_NO_VIEW_FIELD")
+        .env_remove("LOFT_NO_FORWARD_TUPLE");
     cmd
 }
 
@@ -69,7 +70,8 @@ fn signature(src: &str, func: &str) -> String {
         .to_owned()
 }
 
-const ON: &[(&str, &str)] = &[("LOFT_VIEW_FIELD", "1")];
+/// Both units are on by default; the name says what the pins below assume.
+const ON: &[(&str, &str)] = &[];
 
 /// The admitted shape: two scalars and a REFERENCE, with the caller's buffer argument gone.
 #[test]
@@ -140,10 +142,7 @@ fn a_joined_append_views_the_last_element() {
 /// fall back to the record form, because the forward is a site that consumes their record.
 #[test]
 fn a_forward_writes_the_tuple_into_its_own_buffer() {
-    let both = emitted_from(
-        FORWARD,
-        &[("LOFT_VIEW_FIELD", "1"), ("LOFT_FORWARD_TUPLE", "1")],
-    );
+    let both = emitted_from(FORWARD, ON);
     for func in ["nm", "hit", "hit2", "sz"] {
         let sig = signature(&both, func);
         let params = &sig[..sig.find(") ->").unwrap_or(sig.len())];
@@ -170,7 +169,7 @@ fn a_forward_writes_the_tuple_into_its_own_buffer() {
             "the forward writes the tuple into the handed buffer: `{call}` is missing"
         );
     }
-    let views_only = emitted_from(FORWARD, ON);
+    let views_only = emitted_from(FORWARD, &[("LOFT_NO_FORWARD_TUPLE", "1")]);
     for func in ["nm", "hit", "hit2"] {
         let sig = signature(&views_only, func);
         assert!(
@@ -187,7 +186,7 @@ fn a_pooled_caller_mints_nothing_for_a_tuple() {
     // (`OpClear`) before every reuse.  With the callee answering a tuple the buffer is DEAD,
     // and both its mint and its release are emitted as nothing (@PLN164 E-1); the release
     // alone used to keep a heap-owning buffer alive.
-    let src = emitted(&[("LOFT_VIEW_FIELD", "1")]);
+    let src = emitted(ON);
     let start = src.find("fn n_main(").expect("main is emitted");
     let main = &src[start..];
     let main = &main[..main.find("  } /*block_1").unwrap_or(main.len())];
@@ -206,18 +205,18 @@ fn a_pooled_caller_mints_nothing_for_a_tuple() {
 }
 
 #[test]
-fn the_unit_is_off_by_default_and_the_switch_restores_the_record() {
-    for env in [
-        &[][..],
-        &[("LOFT_VIEW_FIELD", "1"), ("LOFT_NO_VIEW_FIELD", "1")][..],
-    ] {
-        let src = emitted(env);
-        let sig = signature(&src, "a1");
-        assert!(
-            sig.contains("var___retbuf: DbRef) -> DbRef"),
-            "without the unit a1 keeps its return buffer:\n{sig}"
-        );
-    }
+fn the_switch_restores_the_record() {
+    let src = emitted(&[("LOFT_NO_VIEW_FIELD", "1")]);
+    let sig = signature(&src, "a1");
+    assert!(
+        sig.contains("var___retbuf: DbRef) -> DbRef"),
+        "with the unit off a1 keeps its return buffer:\n{sig}"
+    );
+    let on = emitted(ON);
+    assert!(
+        signature(&on, "a1").contains("-> (bool, bool, DbRef)"),
+        "by default a1 answers the tuple"
+    );
 }
 
 /// Every decline, by the condition it stands for.  A decline that quietly stops declining is
@@ -299,10 +298,7 @@ fn the_cells_hold_on_both_backends_under_every_falsifier() {
         for backend in ["--interpret", "--native"] {
             let mut cmd = loft();
             cmd.arg(backend)
-                .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(file))
-                .env("LOFT_VIEW_FIELD", "1")
-                .env("LOFT_FORWARD_TUPLE", "1")
-                .env_remove("LOFT_NO_FORWARD_TUPLE");
+                .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(file));
             for (k, v) in strict {
                 cmd.env(k, v);
             }

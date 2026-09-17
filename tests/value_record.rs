@@ -41,8 +41,8 @@ const TAIL_EXPECTED: &[(&str, bool)] = &[
     ("n_half", true),       // t2: a forwarding tail
     ("n_mk_kept", true),    // t3: its record is appended — a copy FROM a value local materialises
     ("n_fwd_kept", true),   // t3: forwards an admitted callee
-    ("n_pt5", false),       // t5: forwarded by a body a mixed-arm branch declines
-    ("n_half5", false),     // t5: a mixed-arm branch needs the record
+    ("n_pt5", true),        // t5: forwarded by `half5`, itself admitted now (E-1)
+    ("n_half5", true),      // t5: the join local is its buffer — a forward (E-1)
     ("n_sel", true),        // t6: a selecting tail (a view of a `const` parameter)
     ("n_ctrl", true),       // t7: a selecting tail with an early return
     ("n_half_chord", true), // t8: selecting calls without their brackets, then a forward
@@ -198,12 +198,15 @@ fn each_tail_cell_returns_by_value_exactly_where_predicted() {
         !t4.contains("OpFreeRef(cell,var___ref"),
         "t4's join buffers are dead and must not be freed"
     );
-    // (A mixed-arm branch delivers its buffer lazily at the call, so its receipt is the
-    // buffer ARGUMENT the declined callee still takes and the free at scope exit.)
+    // (A mixed-arm branch's call arm hands its buffer to the call that fills it — a FORWARD,
+    // so the callee answers its tuple and the arm writes it into the buffer (@PLN164 E-1);
+    // the receipt is that write, and the free at scope exit.)
     let t5 = body_of("n_t5");
     assert!(
-        t5.contains("n_half5(cell, 2_f64, 6_f64, var___ref_1)"),
-        "t5's declined callee still takes its buffer"
+        t5.contains(
+            "var___ref_1 = { let __vt = n_half5(cell, 2_f64, 6_f64); let mut __vd = var___ref_1;"
+        ),
+        "t5's call arm writes the callee's tuple into its buffer"
     );
     assert!(
         t5.contains("OpFreeRef(cell,var___ref_1"),

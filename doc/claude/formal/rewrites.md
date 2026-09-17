@@ -803,7 +803,8 @@ panic's frame block read.  Switch `LOFT_NO_LEAF_CHAIN` (one step finer than
                  value, a return from a non-admitted function or a local that also
                  takes a record declines the callee — except a FORWARD: a call handed a
                  buffer `b` whose answer is bound back into `b` (the lowering of
-                 `return g(…)` in a function that keeps its record) writes the tuple
+                 `return g(…)` in a function that keeps its record, and of a call arm of
+                 a value branch whose join takes a record) writes the tuple
                  into `b` at the site exactly as `g`'s own exit would have — `b` minted
                  where it is absent, every scalar set, a view part's vector copied —
                  and evaluates to `b`, so `g` stays admitted everywhere else.  The record form's three guards

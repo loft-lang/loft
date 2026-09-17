@@ -78,7 +78,9 @@ fn t4() {
 }
 
 // t5 — a MIXED-arm branch: one arm an admitted call, the other a record variable.  The
-// local needs a record, so `half5` declines, and with it the `pt5` it forwards.
+// local needs a record, and `half5` fills it as its return buffer — the FORWARD shape, so
+// `half5` stays admitted and the site writes its tuple into the local; `half5` forwards `pt5`
+// the same way (@PLN164 E-1, `LOFT_NO_FORWARD_TUPLE`).
 fn pt5(px: float, py: float) -> Pt { Pt { ptx: px, pty: py } }
 fn half5(a: float, b: float) -> Pt { pt5(a * 0.5, b * 0.5) }
 fn t5() {

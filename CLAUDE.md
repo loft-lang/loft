@@ -914,8 +914,9 @@ assignment from a call.  Declined where an argument reaches the destination, whe
 MINTS into its buffer (a returned vector literal does), and for a struct-enum variant's field.
 Measured on the drawing bench's parse row: the consumer spells this nowhere — the emission is
 byte-identical under the switch — so the gain is structural.
-**`LOFT_VIEW_FIELD=1`** (@PLN164 C5, `@FR-O-ViewField`, `@FR-R-ValueRecord`, **opt-in**,
-generation time, `--native` only) returns a record of two scalars and a vector as a TUPLE
+**`LOFT_NO_VIEW_FIELD=1`** (@PLN164 C5 and E-1, `@FR-O-ViewField`, `@FR-R-ValueRecord`,
+**default-ON since 2026-09-17**, generation time, `--native` only) restores the record form —
+with it off, a function returns a record of two scalars and a vector as a TUPLE
 whose vector element is a REFERENCE to the place the value already lives in — so a
 `Mark { matched, bad, pts }` built from a local the function appended into a parameter's
 collection costs no buffer store and no deep copy, and an exit with an empty literal delivers
@@ -937,19 +938,22 @@ changed after it.  An append in each arm of an `if` views the container's LAST e
 append under a condition, or a local grown, rebound or written after its copy, declines
 (measured wrong under the per-exit test this replaced: 0 points for 3, and 3,9 for 4,109).  A
 naming that reaches a SIBLING field or claims a record in the store moves nothing in the one
-the leaf views.  The gate stores each exit's leaf and the emitter writes the stored one.
-`LOFT_NO_VIEW_FIELD=1` is the opt-out once it is armed, and `LOFT_TRACE_VALUEREC=1` names
-every admission and decline, with the reason and — for a site — the caller that consumed it.
-**`LOFT_FORWARD_TUPLE=1`** (@PLN164 E-1, `@FR-R-ValueRecord`, **opt-in** beside
-`LOFT_VIEW_FIELD`, generation time, `--native` only) lets a function that keeps its record
-FORWARD an admitted callee's answer — `return nm()`, which the parser lowers as the callee
-filling the forwarder's buffer — by writing the tuple into that buffer at the site: minted
+the leaf views.  The gate stores each exit's leaf and the emitter writes the stored one.  It
+is the first bisect step for a wrong or stale vector read out of a record-returning call on
+native, and `LOFT_TRACE_VALUEREC=1` names every admission and decline, with the reason and —
+for a site — the caller that consumed it.
+**`LOFT_NO_FORWARD_TUPLE=1`** (@PLN164 E-1, `@FR-R-ValueRecord`, **default-ON since
+2026-09-17**, generation time, `--native` only) makes a forward decline its callee again —
+with it off, a function that keeps its record FORWARDS an admitted callee's answer —
+`return nm()`, or the call arm of a value branch whose other arm is a record, both lowered as
+the callee filling a buffer bound back from the call — by writing the tuple into that buffer
+at the site: minted
 where it is absent, every scalar set, a view part's vector copied; the call evaluates to the
 buffer.  Without it such a forward is a site that consumes the record and declines the callee
 everywhere — which is what kept the drawing library's `parse_circle` and `parse_line_cmd` on
-buffers (their `no_mark()` tail was forwarded by `parse_fronds`).  `LOFT_NO_FORWARD_TUPLE=1`
-is the opt-out once it is on; the first bisect step for a wrong field, a leak or a null-store
-panic at a `return g(…)` of a record-returning function on native.
+buffers (their `no_mark()` tail was forwarded by `parse_fronds`).  It is the first bisect
+step for a wrong field, a leak or a null-store panic at a `return g(…)` of a record-returning
+function on native.
 **`LOFT_NO_CALLEE_DISTURB=1`** (@PLN164 C3, `@FR-B-Disturb`, `@FR-B-Ref-Reshape`, BOTH
 backends) makes the disturbance walk read THIS frame's ops only again — with it off, a
 container a CALLEE grows or removes from disturbs the caller's live view of it, so

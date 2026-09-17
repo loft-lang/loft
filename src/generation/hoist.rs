@@ -4765,15 +4765,12 @@ pub fn value_setter(rt: &str) -> &'static str {
 
 // ── @PLN164 E-1 (`@FR-R-ValueRecord`) — a FORWARD writes the tuple into its own buffer ──
 
-/// Default-OFF beside `LOFT_VIEW_FIELD`, and flipped with it once the corpus holds under
-/// both; `LOFT_FORWARD_TUPLE=1` arms it and `LOFT_NO_FORWARD_TUPLE=1` is the opt-out once it
-/// is on (read once, generation time, `--native` only).
+/// Default-ON since 2026-09-17, with the view leaf; `LOFT_NO_FORWARD_TUPLE=1` restores the
+/// decline — the first bisect step for a wrong field, a leak or a null-store panic at a
+/// `return g(…)` of a record-returning function (read once, generation time, `--native` only).
 fn forward_tuple_on() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| {
-        !std::env::var("LOFT_NO_FORWARD_TUPLE").is_ok_and(|v| v != "0")
-            && std::env::var("LOFT_FORWARD_TUPLE").is_ok_and(|v| v != "0")
-    })
+    *F.get_or_init(|| !std::env::var("LOFT_NO_FORWARD_TUPLE").is_ok_and(|v| v != "0"))
 }
 
 /// @PLN164 E-1 — is `target = rhs` a FORWARD: a call to an admitted function `g` that is
@@ -4855,16 +4852,14 @@ pub fn view_field_types(stores: &Stores, tp: u16, off: i64) -> Option<(u16, u16)
 
 // ── @PLN164 C5 (`@FR-O-ViewField`) — a returned record's heap field as a VIEW LEAF ──────
 
-/// Default-OFF while the gate is measured over the corpus; `LOFT_VIEW_FIELD=1` arms it and
-/// `LOFT_NO_VIEW_FIELD=1` is the opt-out once it is on (both read once, generation time,
-/// `--native` only — the interpreter keeps the record form and is the values oracle, as
-/// § V-aa's value record already does).
+/// Default-ON since 2026-09-17, once the native corpus held with it armed (1372 scripts, 69
+/// docs, 36 feature examples, no failure); `LOFT_NO_VIEW_FIELD=1` restores the record form —
+/// the first bisect step for a wrong or stale vector read out of a record-returning call (read
+/// once, generation time, `--native` only — the interpreter keeps the record form and is the
+/// values oracle, as § V-aa's value record already does).
 fn view_field_on() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| {
-        !std::env::var("LOFT_NO_VIEW_FIELD").is_ok_and(|v| v != "0")
-            && std::env::var("LOFT_VIEW_FIELD").is_ok_and(|v| v != "0")
-    })
+    *F.get_or_init(|| !std::env::var("LOFT_NO_VIEW_FIELD").is_ok_and(|v| v != "0"))
 }
 
 /// The tuple part a VIEW LEAF carries: the `DbRef` of the place the field views, where a

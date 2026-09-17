@@ -862,7 +862,8 @@ About 21 of 31, each with the deep copy it carries — which costs more than its
 from the census at P0's ≈ 60 ns a pair, not from a patch: **each unit is priced by hand patch
 before it is built**, and re-measured with `perf` on the release binary after.
 
-1. **E-1 — C5 on by default.**  It measured a wash alone (§ C5 *Step 2*), and it is parked for
+1. ~~**E-1 — C5 on by default.**~~ Done 2026-09-17 (§ E-1 below), with the forward unit it
+   turned out to need.  It measured a wash alone (§ C5 *Step 2*), and it is parked for
    that reason; what changed is its role — it is what makes every points local single-consumer.
    Owes C5's step 2 debts first (per-PATH mention counting, the wider source resolution) and
    the corpus under the switch on both backends.
@@ -984,7 +985,24 @@ backends and every store falsifier clean; pins in `tests/view_field.rs`.  Two sa
 measured: the mint guard removed stops the run at `q5` ("a NULL DbRef reached a store
 accessor"); the view copy removed moves five cells (`q6`: 513,509 for 1025,1021).
 
+### E-1, on by default (2026-09-17)
 
+Both units flipped to default-ON (`LOFT_NO_VIEW_FIELD`, `LOFT_NO_FORWARD_TUPLE` are the
+opt-outs) once the evidence the queue asked for was in: the native corpus with both armed —
+1372 scripts, 69 docs, 36 feature examples, no compile or run failure (the one skip,
+`75-native-stub`, refuses by design on the default build too).  The flip changes the emission
+of 15 of the 1594 corpus files against f547cf1c, every one a record-returning function, a
+forward or a chain; all 15 run clean on native under `LOFT_STRICT_STORES`, `LOFT_POISON`,
+`LOFT_POISON_CLAIM` and the leak check.  On the drawing bench only the seven parser functions
+change, and the parse row reads 22.4 k ns/op — 3.16× its Rust reference, from 3.39×.
+One of the 15 is a second spelling of the forward the unit was built for: the CALL arm of a
+value branch whose other arm is a record (`157-value-tail.loft` t5) hands the join's buffer to
+the call and binds it back, so `half5` — declined before, with the `pt5` it forwards — is
+admitted and the arm writes its tuple (the pins in `tests/value_record.rs` moved with it,
+values unchanged on both backends).  The full suite on this box reached 5070 of 5082 before
+the harness stopped it for memory, with that pin and `poison_claim`'s load-bound census as the
+only reds; the gate is run on GitHub instead (CI_BUDGET.md § When the local gate is
+unreliable).
 
 ## The three tiers — the invariant each rests on
 
