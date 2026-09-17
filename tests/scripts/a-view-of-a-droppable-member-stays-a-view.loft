@@ -1,0 +1,113 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// heap.md D-heap-11 / `(H-View-Drop)` — a view of a member that owns a droppable stays a view.
+//
+// `(B-View)` answers a disturbed view with a COPY and tells the author, which is the right answer
+// for every type whose copy is just another value.  For a type that owns a droppable it is not:
+// the copy is a second structure holding ONE resource, so the release runs twice.  Measured before
+// the fix, both backends byte-identical, on each of `(B-Disturb)`'s three reachable events — a
+// growth (`M1 M2 R1 D1 D1 D2`), a removal (`M1 M2 R2 D2 D2`) and a reassignment of the base
+// (`M1 D1 R1 D1`) — against controls with no disturbance, which release once (`M1 R1 D1`).
+//
+// So the disturbance is refused, which is the answer `(B-Ref-Reshape)` already gives a `&`
+// reference.  **The refusal cells are not in this file**: a cell that refuses takes the whole file
+// with it and every assertion behind it, so they live in `tests/parse_errors.rs::h_view_drop_*`.
+// What this file pins is the other half — the shapes that must KEEP compiling, because each one
+// rejects a cure one step too wide.
+//
+// @falsified-at: none — this file is CONTROLS ONLY, and controls cannot fail on an earlier build:
+//   every cell here compiles and releases once both before and after the fix, by construction.
+//   The cells that DO separate the two builds are refusals, and a refusal cannot live in a `.loft`
+//   guard without taking the file down — they are pinned in `parse_errors.rs::h_view_drop_*`.
+//   Those four SHAPES were measured on the pre-fix binary (`a3f62074d`) as standalone programs and
+//   compiled there, releasing one resource twice — a growth `M1 M2 R1 D1 D1 D2`, a removal
+//   `M1 M2 R2 D2 D2`, a reassigned base `M1 D1 R1 D1`, and the nested one `M1 M2 R1 D1 D1 D2` —
+//   and they refuse after it.  The `code!` strings themselves cannot be run against an older
+//   compiler, since that test binary embeds the current one; what was measured is the shape.
+//   CHANNEL: none on this file, deliberately — see above.  Its job is over-reach, not detection.
+//   ARMED: no instrument; the `D` lines are the oracle and an ordinary run prints them.
+//   WITNESS: measured on the pre-fix binary (`a3f62074d`) — all five cells answered exactly what
+//   they answer now, and the non-droppable cell printed the copy-out advice then as it does now.
+//   ⚠ Score the advice with `LOFT_NO_CACHE=1`.  A warm whole-program cache REPLAYS a stored
+//   diagnostic set (`diagnostics.rs::restore_from_cache`), and without that flag this file read
+//   ZERO advice on one binary and one on another for the same source — which reads as "the
+//   control is dead" or, worse, as "the fix changed the advice", and is neither.  With the cache
+//   off both binaries read exactly one, on this file and on the standalone cell alike.
+//   HOLDS: each cell must keep COMPILING and release every resource exactly once.  A cure gated on
+//   the type alone moves `a_droppable_tuple_member_still_compiles` (that view is never copied, so
+//   refusing it rejects a sound program); one that ignores the droppable question moves
+//   `a_non_droppable_view_still_materialises` (which must still materialise AND still say so); one
+//   that ignores liveness moves `a_view_dead_before_the_growth_still_compiles`; and one that reads
+//   variables instead of places moves `a_sibling_fields_growth_does_not_reach_the_view`.
+
+struct H { id: integer }
+fn OpDrop(self: H) { println("D{self.id}"); }
+fn mk(id: integer) -> H { println("M{id}"); return H { id: id }; }
+struct Bag { v: vector<H>, tag: integer }
+struct Two { a: vector<H>, b: vector<H> }
+struct TBag { v: vector<(H, integer)>, tag: integer }
+struct P { n: integer }
+struct PBag { v: vector<P>, tag: integer }
+
+// A view with NO disturbance keeps aliasing and releases once.
+fn a_view_with_no_disturbance_is_untouched() -> integer {
+  b = Bag { v: [], tag: 0 };
+  b.v += [mk(1)];
+  e = b.v[0];
+  e.id
+}
+
+// Liveness is the condition, exactly as `(B-Ref-Reshape)` has it: a view whose last use precedes
+// the growth is not at risk, so the growth still compiles.
+fn a_view_dead_before_the_growth_still_compiles() -> integer {
+  b = Bag { v: [], tag: 0 };
+  b.v += [mk(1)];
+  e = b.v[0];
+  n = e.id;
+  b.v += [mk(2)];
+  n + len(b.v)
+}
+
+// A SIBLING field's growth does not reach this view: the walk answers PLACES, not variables.
+fn a_sibling_fields_growth_does_not_reach_the_view() -> integer {
+  t = Two { a: [], b: [] };
+  t.a += [mk(1)];
+  e = t.a[0];
+  t.b += [mk(2)];
+  e.id
+}
+
+// A droppable TUPLE member is not a view the emitter ever copies — it releases once today, and a
+// cure gated on the TYPE alone rather than on the walk's own answer would refuse this
+// soundly-working program.  This is the cell that rejects that cure.
+fn a_droppable_tuple_member_still_compiles() -> integer {
+  b = TBag { v: [], tag: 0 };
+  b.v += [(mk(1), 7)];
+  e = b.v[0];
+  b.v += [(mk(2), 8)];
+  e.1
+}
+
+// The NON-droppable twin of the refused shape: it still materialises and still says so, which is
+// `(B-View)`'s own answer.  If this one starts refusing, the cure reached past droppables.
+fn a_non_droppable_view_still_materialises() -> integer {
+  b = PBag { v: [P { n: 1 }], tag: 0 };
+  e = b.v[0];
+  b.v += [P { n: 2 }];
+  e.n
+}
+
+fn main() {
+  assert(a_view_with_no_disturbance_is_untouched() == 1,
+         "an undisturbed view reads its element: {a_view_with_no_disturbance_is_untouched()}");
+  assert(a_view_dead_before_the_growth_still_compiles() == 3,
+         "a view dead at the growth still compiles: {a_view_dead_before_the_growth_still_compiles()}");
+  assert(a_sibling_fields_growth_does_not_reach_the_view() == 1,
+         "a sibling field's growth reaches nothing: {a_sibling_fields_growth_does_not_reach_the_view()}");
+  assert(a_droppable_tuple_member_still_compiles() == 7,
+         "a droppable tuple member still compiles: {a_droppable_tuple_member_still_compiles()}");
+  assert(a_non_droppable_view_still_materialises() == 1,
+         "a non-droppable view still materialises: {a_non_droppable_view_still_materialises()}");
+  println("view-drop controls ok");
+}

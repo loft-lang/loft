@@ -2438,7 +2438,23 @@ fn def_reshape_refusals(
         Some(database),
         def.position.line,
     ) {
-        if !function.is_amp_link(view) {
+        // @FR-H-View-Drop — two populations, one walk.  An `&` link asked for a reference and
+        // must get one or the program is refused.  A PLAIN view of a member that owns a
+        // droppable is refused for a different reason, and one the author cannot escape by
+        // dropping the `&`: `(B-View)` would hand it a COPY, and a copy of a droppable is a
+        // second structure holding one resource, which `(H-Lease)` does not allow.  Every other
+        // type keeps the materialise-and-tell answer `(B-View)` gives it.
+        //
+        // No further type test belongs here, because the walk's own answer is the rest of the
+        // gate: `record_target` admits a binding only when it is a view at all (`Reference |
+        // Enum | Vector`, and not an iteration source) and only when its right-hand side names
+        // a container.  So a TUPLE-element view — which the emitter never copies, and which
+        // releases once today — is not in this set to begin with, and refusing it would reject
+        // a sound program.  Measured over the cell matrix: the walk's answer and the copy-out
+        // advice agree on every cell.
+        let amp = function.is_amp_link(view);
+        let drops = data.type_owns_droppable_anywhere(function.tp(view));
+        if !amp && !drops {
             continue;
         }
         let view_name = function.name(view);
@@ -2495,16 +2511,44 @@ fn def_reshape_refusals(
                 ),
             ),
         };
+        // The REASON differs with the population, not only the way out.  The clause above
+        // explains a LOST WRITE through a `&` link — true for a reference, and beside the point
+        // for a plain view, which never wrote through to its container in the first place
+        // `(B-View)`.  What is wrong for this population is the COPY itself: `(H-View-Drop)`
+        // keeps a view of a droppable a view, because the copy `(B-View)` would otherwise hand
+        // it is a second structure holding one resource.  A reader given the other population's
+        // reason could check it and find it false, which is the `(Col-RemoveKeyed)` mistake
+        // loft#1458 already paid for once.
+        let why = if amp {
+            why
+        } else {
+            format!(
+                "`{view_name}` would be given its own copy of `{tp}`, and a copy of a value that \
+                 owns a resource is a second structure releasing that resource a second time",
+                tp = data.type_name_str(function.tp(view))
+            )
+        };
+        // The way out differs too, and the `&` one is WRONG here: "bind without `&` to work on a
+        // copy" names exactly the copy `(H-Copy-Refuse)` rejects, so offering it would send the
+        // author from a refused program to one that releases a resource twice.
+        let cure = if amp {
+            "or bind without `&` to work on a copy".to_string()
+        } else {
+            format!(
+                "or read `{tp}` where it lives",
+                tp = data.type_name_str(function.tp(view))
+            )
+        };
         let message = match d.via {
             Some(callee) => format!(
                 "cannot call `{callee_name}` while `{view_name}` references a place inside \
                  `{container}` — `{callee_name}` would {what}, and {why}. Move the call after \
-                 the last use of `{view_name}`, or bind without `&` to work on a copy",
+                 the last use of `{view_name}`, {cure}",
                 callee_name = data.def(callee).original_name()
             ),
             None => format!(
                 "cannot {what} while `{view_name}` references a place inside it — {why}. Move \
-                 it after the last use of `{view_name}`, or bind without `&` to work on a copy"
+                 it after the last use of `{view_name}`, {cure}"
             ),
         };
         out.push(ReshapeRefusal {

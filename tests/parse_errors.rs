@@ -3386,6 +3386,90 @@ fn b_ref_reshape_growth_of_a_field_container_under_amp_link_is_error() {
     );
 }
 
+/// H-View-Drop (a) — a PLAIN view of a droppable element, container GROWS.
+///
+/// `(B-View)` would hand `e` its own copy, and a copy of a value that owns a droppable is a second
+/// structure on one resource.  Measured before the fix on both backends as `M1 M2 R1 D1 D1 D2` —
+/// id 1 released TWICE, with only `advice` — so `(H-View-Drop)` refuses the disturbance instead.
+///
+/// The REASON differs from the `&` family above and is pinned here deliberately: a plain view never
+/// wrote through to its container, so "a write would no longer reach the element" is that
+/// population's sentence, not this one's.
+#[test]
+fn h_view_drop_growth_under_a_plain_droppable_view_is_error() {
+    code!(
+        "struct H { id: integer } \
+         fn OpDrop(self: H) { print(\"D{self.id}\"); } \
+         struct Bag { v: vector<H>, tag: integer } \
+         fn test() { b = Bag { v: [H { id: 1 }], tag: 0 }; \
+           e = b.v[0]; b.v += [H { id: 2 }]; print(\"{e.id}\\n\"); }"
+    )
+    .error(
+        "cannot grow `b` while `e` references a place inside it — `e` would be given its own copy \
+         of `H`, and a copy of a value that owns a resource is a second structure releasing that \
+         resource a second time. Move it after the last use of `e`, or read `H` where it lives at \
+         h_view_drop_growth_under_a_plain_droppable_view_is_error:1:1",
+    );
+}
+
+/// H-View-Drop (b) — the same view, container RESHAPED.  One sentence per event, one verdict.
+#[test]
+fn h_view_drop_removal_under_a_plain_droppable_view_is_error() {
+    code!(
+        "struct H { id: integer } \
+         fn OpDrop(self: H) { print(\"D{self.id}\"); } \
+         struct Bag { v: vector<H>, tag: integer } \
+         fn test() { b = Bag { v: [H { id: 1 }, H { id: 2 }], tag: 0 }; \
+           e = b.v[1]; b.v.remove(0); print(\"{e.id}\\n\"); }"
+    )
+    .error(
+        "cannot remove from `b` while `e` references a place inside it — `e` would be given its \
+         own copy of `H`, and a copy of a value that owns a resource is a second structure \
+         releasing that resource a second time. Move it after the last use of `e`, or read `H` \
+         where it lives at h_view_drop_removal_under_a_plain_droppable_view_is_error:1:1",
+    );
+}
+
+/// H-View-Drop (c) — the BASE is reassigned, `(B-Disturb)`'s fourth event.  Measured before the fix
+/// as `M1 D1 R1 D1`: released at the rebind, and again at scope end.
+#[test]
+fn h_view_drop_reassigned_base_under_a_plain_droppable_view_is_error() {
+    code!(
+        "struct H { id: integer } \
+         fn OpDrop(self: H) { print(\"D{self.id}\"); } \
+         struct Bag { v: vector<H>, tag: integer } \
+         fn test() { b = Bag { v: [H { id: 1 }], tag: 0 }; \
+           e = b.v[0]; b = Bag { v: [], tag: 9 }; print(\"{e.id}\\n\"); }"
+    )
+    .error(
+        "cannot give `b` a new value while `e` references a place inside it — `e` would be given \
+         its own copy of `H`, and a copy of a value that owns a resource is a second structure \
+         releasing that resource a second time. Move it after the last use of `e`, or read `H` \
+         where it lives at h_view_drop_reassigned_base_under_a_plain_droppable_view_is_error:1:1",
+    );
+}
+
+/// H-View-Drop (d) — the droppable is NESTED two deep, and the viewed element's own type owns
+/// nothing directly.  This is the cell that says the gate is `type_owns_droppable_anywhere`, which
+/// follows members at any depth, and not the element type spelled at the view.
+#[test]
+fn h_view_drop_growth_under_a_nested_droppable_view_is_error() {
+    code!(
+        "struct H { id: integer } \
+         fn OpDrop(self: H) { print(\"D{self.id}\"); } \
+         struct Inner { h: H } \
+         struct Holder { inners: vector<Inner>, tag: integer } \
+         fn test() { o = Holder { inners: [Inner { h: H { id: 1 } }], tag: 0 }; \
+           e = o.inners[0]; o.inners += [Inner { h: H { id: 2 } }]; print(\"{e.h.id}\\n\"); }"
+    )
+    .error(
+        "cannot grow `o` while `e` references a place inside it — `e` would be given its own copy \
+         of `Inner`, and a copy of a value that owns a resource is a second structure releasing \
+         that resource a second time. Move it after the last use of `e`, or read `Inner` where it \
+         lives at h_view_drop_growth_under_a_nested_droppable_view_is_error:1:1",
+    );
+}
+
 /// B-Ref-Reshape (g2) — the SAME refusal on every keyed kind, because the `&` marker that
 /// gates it is set from the SOURCE type and a keyed lookup now has two spellings.
 ///
