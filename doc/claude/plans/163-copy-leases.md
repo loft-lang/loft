@@ -156,6 +156,20 @@ what the function owns, a block yielding its own variable.
 3. **P2 and P2r before P3:** the refusal is proven complete as a report before it can fail a build —
    a whole-record bind and a call-return bind are minted at emission time (loft#774), so a refusal
    built on the IR alone would miss them.
+3a. **P3's conversion and its flip are ONE commit, and the conversion SPLITS rather than edits.**
+   Measured 2026-09-17, after the refusal was built.  A `@EXPECT_ERROR` cell FAILS while the
+   refusal is opt-in — *"expected parse error but file parsed cleanly"* — because the corpus
+   runner sets no environment, so no converted cell can land before the default flips.  And a
+   firing `@EXPECT_ERROR` stops its whole file (`run_test` returns at *"ok (errors consumed)"*,
+   `a_refusal_file_carries_no_runtime_assertions`), so a refused construct moves to a COMPANION
+   file on the corpus's existing convention (`102`/`102b`, `36`/`36b`) instead of being edited in
+   place: the 29 files keep the rest of their assertions, which are 14 to 46 apiece and pin the
+   release behaviour P5 is measured against.  The corpus's NATIVE leg skips a file carrying the
+   tag, so *"refusal cells on both backends"* is answered by
+   `tests/lease_refuse.rs::both_backends_refuse_the_same_lines`, not by the corpus.  The matching
+   is universal and was falsified rather than assumed: a substring no diagnostic contains fails
+   the cell (`unmatched_expect`, whose per-function site once settled it existentially —
+   loft#1261).
 4. **P4 after P3:** with refusal as the default, `OpCopy` is an opt-in the matrix can test type by
    type.
 5. **P5 and P6 last**, as removals and an optimisation measured against the finished rules.
