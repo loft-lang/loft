@@ -590,6 +590,121 @@ fn install_rejects_missing_package_in_index() {
     let _ = fs::remove_dir_all(&install_cwd);
 }
 
+/// Several processes resolving one `use <pkg>` at once — a server and its clients, or
+/// nextest's one process per test — each install the same package into one cache.  The
+/// scratch names they share (the tarball beside the cache, `loft.lock.tmp`) let one
+/// install delete or rename away the other's file, and an extraction over a directory
+/// another install is still filling could be read half-written.  Every install must
+/// succeed, and what lands must be whole.
+#[test]
+fn concurrent_installs_of_one_package_all_succeed() {
+    const THREADS: usize = 8;
+    const ROUNDS: usize = 6;
+    let tmp = tmpdir("concurrent_installs");
+    let pkg_dir = make_sample_package("race", "0.1.0", &tmp);
+    let pkg_out = loft::package::package_create(&pkg_dir, Some(&tmp)).expect("package_create");
+    let tarball_bytes = fs::read(&pkg_out.tarball).expect("read tarball");
+    let original_src = fs::read_to_string(pkg_dir.join("src").join("race.loft")).expect("src");
+
+    let mut files = HashMap::new();
+    files.insert("/placeholder".to_string(), b"placeholder".to_vec());
+    let server = FixtureServer::new(files);
+    let index_json = format!(
+        r#"{{
+            "schema_version": 1,
+            "updated": "2026-05-24T00:00:00Z",
+            "packages": {{
+                "race": {{
+                    "versions": {{
+                        "0.1.0": {{
+                            "url": "{}",
+                            "sha256": "{}",
+                            "size": {},
+                            "loft": ">=0.8",
+                            "published": "2026-05-24T00:00:00Z"
+                        }}
+                    }}
+                }}
+            }}
+        }}"#,
+        server.url_for("/race-0.1.0.tar.gz"),
+        pkg_out.sha256,
+        pkg_out.size
+    );
+    {
+        let mut map = server.files.lock().unwrap();
+        map.insert("/index.json".to_string(), index_json.into_bytes());
+        map.insert("/race-0.1.0.tar.gz".to_string(), tarball_bytes);
+    }
+    for round in 0..ROUNDS {
+        let home_dir = tmpdir(&format!("concurrent_installs_home_{round}"));
+        // Home first, then the URL: the order every test in this file takes the two locks.
+        let (_home, _lh) = HomeGuard::set(&home_dir);
+        let (_reg, _lr) = RegUrlGuard::set(&server.url_for("/index.json"));
+        let lock_path = home_dir.join("project").join("loft.lock");
+        fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(THREADS));
+        let workers: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let barrier = Arc::clone(&barrier);
+                let lock_path = lock_path.clone();
+                thread::spawn(move || {
+                    let opts = loft::install::InstallOptions {
+                        allow_unsigned: true,
+                        refresh: true,
+                        offline: false,
+                        allow_prerelease: false,
+                        skip_lockfile: false,
+                        lock_path: Some(lock_path),
+                    };
+                    barrier.wait();
+                    loft::install::install_one("race", None, &opts)
+                })
+            })
+            .collect();
+        let mut placed = 0;
+        for w in workers {
+            let report = w
+                .join()
+                .expect("install thread panicked")
+                .unwrap_or_else(|e| panic!("round {round}: a concurrent install failed: {e}"));
+            assert_eq!(
+                report.installed.len() + report.skipped_cached.len(),
+                1,
+                "round {round}: each install accounts for the one package"
+            );
+            placed += report.installed.len();
+        }
+        assert!(placed >= 1, "round {round}: nobody installed the package");
+        let extracted = home_dir.join(".loft/registry/race-0.1.0");
+        assert_eq!(
+            fs::read_to_string(extracted.join("src").join("race.loft")).expect("extracted src"),
+            original_src,
+            "round {round}: the extracted source is whole"
+        );
+        let lock = loft::lockfile::read_lockfile(&lock_path)
+            .expect("read lockfile")
+            .expect("a lockfile was written");
+        assert_eq!(lock.packages.len(), 1, "round {round}: one locked package");
+        assert_eq!(lock.packages[0].name, "race");
+        let strays: Vec<_> = fs::read_dir(home_dir.join(".loft/registry"))
+            .unwrap()
+            .chain(fs::read_dir(lock_path.parent().unwrap()).unwrap())
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".tmp") || n.ends_with(".tar.gz") || n.starts_with(".staging"))
+            .collect();
+        assert!(
+            strays.is_empty(),
+            "round {round}: scratch left behind: {strays:?}"
+        );
+        drop(_reg);
+        drop(_home);
+        let _ = fs::remove_dir_all(&home_dir);
+    }
+    let _ = fs::remove_dir_all(&tmp);
+}
+
 // ── Tarball extract roundtrip ─────────────────────────────────────
 
 /// `loft package` → `extract_tarball` → directory tree matches the
