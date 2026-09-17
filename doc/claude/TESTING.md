@@ -3495,6 +3495,27 @@ run it against one case whose answer you have, before trusting it over a thousan
 command, and both are the only things that caught these.  Sibling of the `--changed` selection
 trap (loft#1520): a suite that runs the wrong subjects also reports green.
 
+**⚠ A probe that can only CONFIRM is not a probe.**  Measured 2026-09-17 on
+`scripts/release-liveness.py`, whose census attributed each skip-list entry's issue citation to
+the whole list BODY — so an uncited entry inherited every issue cited anywhere in the list,
+including a comment about an entry already removed, and read as justified.  The fix is not the
+interesting half; the fixture is.  One entry under one citing comment passes whether the
+attribution is per-entry or per-body, because the only cell it has is positive.  The fixture
+that DECIDES puts two entries under one citing comment, so the second must come back with no
+citation at all.  Build the negative cell first — it is the whole experiment, and the positive
+one is decoration.
+
+**⚠ Replacing a SELECTOR is a set change, and "does it still work" cannot see it.**  The same
+commit swapped three hardcoded grep names for a shape pattern over declarations — the better
+design, and it silently stopped reaching `wrap.rs::ignored_scripts`, a FUNCTION the name list
+had covered.  Scope narrowed while a scope bug was being fixed, in the opposite direction, and
+nothing announced it.  So when you change how a tool CHOOSES what it looks at, print the
+selected set under both selectors and diff them: an item that leaves the set is a decision to
+state, never a side effect.  (Here the cure was matching `fn … () -> HashSet` on the RETURN
+TYPE, because a name pattern wide enough to catch `ignored_scripts` also sweeps in the fifteen
+ordinary test functions called `skip_*`.)  Same trap as the `--changed` one above, one level
+up — there the suite runs the wrong subjects, here the instrument reads the wrong population.
+
 **Several `@EXPECT_ERROR`s in one file report only if they come from the SAME compiler phase —
 and the annotation is not what stops.**  `test_runner` checks every annotation and fails on each
 unmatched one (`unmatched_expect` over the whole list, loft#929's own fix), so a file CAN hold
