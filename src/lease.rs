@@ -391,19 +391,21 @@ impl<'a> Frame<'a> {
         if self.func.is_captured(var) {
             return Lease::Refuse(Refusal::Captured(var));
         }
-        match placement {
-            Placement::Return => Lease::Move,
-            Placement::BlockResult(block) if self.declared_in(var, block) => Lease::Move,
-            _ => Lease::Refuse(Refusal::Copied(var)),
-        }
-    }
-
-    /// Is every assignment that gives `var` a value inside the block at `block`?  A declaration's
-    /// null initialiser, which the compiler hoists to the top of the function, gives no value.
-    fn declared_in(&self, var: u16, block: *const Value) -> bool {
-        let mut counts = (0, 0);
-        count_assignments(self.body, var, block, false, self.ops.database, &mut counts);
-        counts.0 > 0 && counts.1 == 0
+        // What reaches here is a value this function OWNS: a buffer, a compiler temp, a member,
+        // a parameter-held local and a captured variable have each been answered above.  `(H-Move)`
+        // moves it wherever it is placed — its lifetime ENDS in the new structure, which releases
+        // it, and the name is SPENT from the end of that statement `(H-Spent)`.
+        //
+        // The rule's `return` and block-result clauses need no test of their own any more: both
+        // name a value the function owns, so both are this answer.  That is why `declared_in` and
+        // the assignment count behind it went with the owner's 2026-09-17 ruling — a block yielding
+        // its own variable was only ever a narrower way of saying what this line now says.
+        //
+        // Placing it TWICE, and reading the name afterwards, are the two errors `(H-Spent)` asks
+        // for, and neither is built yet — `formal/heap.md` D-heap-8 carries them.  Until they are,
+        // this verdict is deliberately the SOUND subset: it never refuses a program the rules
+        // permit, and it is silent on two the rules forbid.
+        Lease::Move
     }
 
     fn whole_var(&self, site: &Value, var: u16) -> Lease {
@@ -504,35 +506,6 @@ impl<'a> Frame<'a> {
         pass.before(self.body, None);
         pass.found
     }
-}
-
-/// Count the assignments that give `var` a value, as `(inside the block at block, outside it)`.
-fn count_assignments(
-    node: &Value,
-    var: u16,
-    block: *const Value,
-    within: bool,
-    database: u32,
-    counts: &mut (usize, usize),
-) {
-    let node = node.unspan();
-    let within = within || std::ptr::eq(node, block);
-    let gives = match node {
-        Value::Set(v, rhs) => *v == var && !matches!(rhs.unspan(), Value::Null),
-        Value::Call(op, args) => {
-            *op == database
-                && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == var)
-        }
-        _ => false,
-    };
-    if gives {
-        if within {
-            counts.0 += 1;
-        } else {
-            counts.1 += 1;
-        }
-    }
-    node.for_each_child(&mut |c| count_assignments(c, var, block, within, database, counts));
 }
 
 /// The tuple variable a tuple literal copies WHOLE, or `None`.

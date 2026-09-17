@@ -1243,7 +1243,13 @@ enum Lease {
     Refused,
 }
 
-/// The pilot cells that write no copy of an existing `H`, each classified by hand.
+/// The pilot cells the rules MOVE or leave alone, each classified by hand.
+///
+/// Rewritten 2026-09-17 to the owner's ruling: a value the function OWNS moves into a new
+/// structure, its lifetime ending there `(H-Move)`.  So every cell whose source is a local the
+/// function made is a move, wherever it is placed — the bind `x = a`, the tuple `u = t`, the `??`
+/// operand, the join arm, and the whole-collection bind.  What stays a copy is what the function
+/// does NOT own, which is the list below this one.
 const PILOT_ONCE: &[&str] = &[
     "p_k4", // a block yields the variable it declares
     "p_k5", "p_k6", "p_r1", "p_g2", "p_s8", // fresh values only
@@ -1254,35 +1260,40 @@ const PILOT_ONCE: &[&str] = &[
     // moves: the local owns it and owes exactly one release.  `p_v5`–`p_v7` do not run it
     // (D-heap-13); `p_v8` and `p_v9` do, and are the controls that bound the defect.
     "p_v5", "p_v6", "p_v7", "p_v8", "p_v9",
-];
-
-/// The pilot cells that write a copy of an existing `H`, each classified by hand.
-const PILOT_REFUSED: &[&str] = &[
+    // A local the function OWNS, placed — each a MOVE since the 2026-09-17 ruling.
     "p_k1", "p_k2", "p_k3", "p_h1", "p_i1", // `x = a` of a local
-    "p_k7", "p_h2", "p_h3", "p_h4", "p_h5", "p_h6", "p_h7", // `x = p` of a parameter
-    "p_o1", // `u = e` of a loop variable
-    "p_o2", // `u = t` of a tuple
-    "p_o3", "p_o4", // `return` of a view, of a member, of a parameter
-    "p_o5", "p_e1", "p_e2", // a member placed in a literal or appended
+    "p_o2", // `u = t` of a tuple the function built
     "p_l1", "p_l2", "p_i2", "p_s6", "p_s7", // a local as an operand of `??`
     "p_j1", "p_j2", "p_j3", "p_j4", "p_s1", "p_s2", "p_s3", "p_s4",
     "p_s5", // a local in a join
+    // `d = v` of a droppable COLLECTION the function owns.  ⚠ These two are MOVES by the rules
+    // and still release TWICE today (`M1 L1 D1 D1`, measured both backends) — `formal/heap.md`
+    // D-heap-15 carries that, and `LEASE_DEVIATIONS` names them so the gate stays honest about it.
+    "p_v1", "p_v2",
+];
+
+/// The pilot cells that place a value the function does NOT own — the copies `(H-Copy-Refuse)`
+/// still refuses after the 2026-09-17 ruling, each measured releasing twice.
+const PILOT_REFUSED: &[&str] = &[
+    "p_k7", "p_h2", "p_h3", "p_h4", "p_h5", "p_h6", "p_h7", // `x = p` of a parameter
+    "p_o1", // `u = e` of a loop variable — a member of the container it iterates
+    "p_o3", "p_o4", // `return` of a view, of a member, of a parameter
+    "p_o5", "p_e1", "p_e2", // a member placed in a literal or appended
     "p_g1", "p_g3", "p_g4", "p_g5", // a member of a call result
-    // `d = v` and `d = b.v` of a droppable COLLECTION.  Both mint their own owning `__vdb_N`
-    // backing — the variable table reads `d … deps=[__vdb_N]` beside an OWNING record, where a
-    // genuine view of the container reads `deps=[b]` — so each is a written copy and not the
-    // member view `(H-Copy-Refuse)` permits.
-    "p_v1", "p_v2", "p_v3",
+    // `d = b.v` of a droppable COLLECTION held in a FIELD: the container still owns it.
+    "p_v3",
 ];
 
 /// What the lease rules require of the cell `name`, read — as the rule is read — off the cell's
 /// own lines: by hand for a pilot, and from its two axes for a generated cell.
 ///
-/// A fresh source (a call, a literal) is placed where it is produced.  A local, a parameter, a
-/// `??` over a local and a member of a call result are existing values, so every position copies
-/// them — except a `return` of a local, or of a `??` over locals, which (H-Move) moves.  A member
-/// of a variable (`s.h`, `vs[0]`, `tt.0`, `p.h`) bound to a variable or chosen by a join arm is a
-/// view; placed in a literal, appended or returned it is a copy.
+/// A fresh source (a call, a literal) is placed where it is produced, and so is a value the
+/// function OWNS — a local, or a `??` over locals — since the 2026-09-17 ruling: `(H-Move)` moves
+/// it wherever it goes, the new structure releases it, and the name is SPENT `(H-Spent)`.  What
+/// the function does NOT own is still a copy: a parameter, a member of one, a member of a call
+/// result.  A member of a variable (`s.h`, `vs[0]`, `tt.0`, `p.h`) bound to a variable or chosen
+/// by a join arm is a VIEW, which makes no structure at all; placed in a literal, appended or
+/// returned it is a copy of what its container still owns.
 fn lease_verdict(name: &str) -> Lease {
     const VIEWING: &[&str] = &["local", "annot", "nullable", "arm", "arm0", "reassign"];
     let parts: Vec<&str> = name.split('_').collect();
@@ -1290,15 +1301,16 @@ fn lease_verdict(name: &str) -> Lease {
         ["p", ..] if PILOT_ONCE.contains(&name) => Lease::Once,
         ["p", ..] if PILOT_REFUSED.contains(&name) => Lease::Refused,
         ["c", source, dest] => match *source {
-            "call" | "literal" => Lease::Once,
-            "local" | "coalesce" if *dest == "ret" => Lease::Once,
+            // Fresh, or the function's own — both move, in every destination.
+            "call" | "literal" | "local" | "coalesce" => Lease::Once,
             "field" | "elem" | "tuple" | "pfield" if VIEWING.contains(dest) => Lease::Once,
             _ => Lease::Refused,
         },
-        // `A ?? B`: a local A is copied except when returned; a parameter A always is; a member A
-        // is a view in a viewing position, where a local B is still copied.
-        ["q", _, "local", _, "ret"] => Lease::Once,
-        ["q", _, "field", b, dest] if VIEWING.contains(dest) && *b != "var" => Lease::Once,
+        // `A ?? B`: a local A moves wherever it goes, and so does a local B — the `*b != "var"`
+        // exclusion that used to sit on the member arm went with the ruling, because the local
+        // DEFAULT it excluded is no longer a copy either.  A parameter A is still the caller's.
+        ["q", _, "local", ..] => Lease::Once,
+        ["q", _, "field", _, dest] if VIEWING.contains(dest) => Lease::Once,
         ["q", ..] => Lease::Refused,
         _ => panic!("{name} has no lease verdict: classify it under formal/heap.md § Drop"),
     }
@@ -1364,7 +1376,44 @@ const CENSUS_BLIND: &[&str] = &[];
 /// run none, so each fails its baseline under a `Once` verdict and is carried here until the
 /// entry closes.  The controls `p_v8` and `p_v9` are deliberately absent: they are clean, and a
 /// clean cell listed under a deviation is itself a failure (*"retire it there"*).
-const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[("D-heap-13", &["p_v5", "p_v6", "p_v7"])];
+///
+/// `D-heap-15` and `D-heap-16` were EXPOSED by the 2026-09-17 ruling rather than introduced by
+/// it.  Every cell below was verdict `Refused` before it, and a refused cell's releases are
+/// asked nothing — so widening what the rules refuse had been hiding 23 cells whose releases
+/// disagree with them.  They are split by CHANNEL because they are different defects: the
+/// `D-heap-15` cells release TWICE (`p_o2` and `p_i2` also on the scorer's EARLY channel, so
+/// twice AND before a read), while the `D-heap-16` cells release NONE — the fresh value of a
+/// `??` default arm, which has no source to hand over and so is not `D-heap-14`'s family.
+const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[
+    ("D-heap-13", &["p_v5", "p_v6", "p_v7"]),
+    (
+        "D-heap-15",
+        &[
+            "p_v1",
+            "p_v2",
+            "p_o2",
+            "p_i2",
+            "p_j3",
+            "p_j4",
+            "c_coalesce_field",
+            "c_coalesce_enum",
+            "c_coalesce_push",
+            "c_coalesce_veclit",
+            "q_present_local_call_field",
+            "q_present_local_call_push",
+            "q_present_local_var_field",
+            "q_present_local_var_push",
+            "q_present_local_literal_field",
+            "q_present_local_literal_push",
+            "q_default_local_call_field",
+            "q_default_local_var_field",
+            "q_default_local_var_push",
+            "q_default_local_literal_field",
+            "q_default_local_literal_push",
+        ],
+    ),
+    ("D-heap-16", &["p_l2", "q_default_local_call_local"]),
+];
 
 /// Every cell has a lease verdict, and every cell the rules say must release once while a
 /// baseline says it does not is carried by exactly one OPEN deviation in `formal/heap.md`.  A fix

@@ -571,14 +571,18 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-13` and `D-heap-14`.  The first two are the copy-lease
-rules `(H-Copy-Refuse)` and `(H-Copy-Lease)`, written 2026-09-15 before their implementation
-(@PLN163); `D-heap-8` was NARROWED 2026-09-17 when the owner ruled that a value the function owns
-MOVES, which makes 156 of its 227 measured sites legal and leaves the 71 that are not the
-function's.  `D-heap-13` and `D-heap-14` are separate and were both found while measuring that
-population — a collection a CALL answers, bound to a local, never releases its elements
-(loft#1551), and a hand-over written under a BRANCH leaks the source on the path that does not
-run, for every destination except a bind to a local.  The third of the copy-lease
+OPEN: **6** — `D-heap-8`, `D-heap-9`, `D-heap-13`, `D-heap-14`, `D-heap-15` and `D-heap-16`.  The
+first two are the copy-lease rules `(H-Copy-Refuse)` and `(H-Copy-Lease)`, written 2026-09-15
+before their implementation (@PLN163); `D-heap-8` was NARROWED 2026-09-17 when the owner ruled that
+a value the function owns MOVES, which makes 156 of its 227 measured sites legal and leaves the 71
+that are not the function's.  `D-heap-13` and `D-heap-14` are separate and were both found while
+measuring that population — a collection a CALL answers, bound to a local, never releases its
+elements (loft#1551), and a hand-over written under a BRANCH leaks the source on the path that does
+not run, for every destination except a bind to a local.  `D-heap-15` and `D-heap-16` were EXPOSED
+by the ruling rather than found beside it: narrowing the verdict to what the rules move turned 23
+gate cells from `Refused`, which asks nothing of a release, into `Once`, which asks for exactly
+one — 21 of them run two and 2 run none.  A cell the rules refuse is a cell whose releases nothing
+measures, so a register that refuses widely hides what it has not yet judged.  The third of the copy-lease
 set, `D-heap-11` for `(H-View-Drop)`, CLOSED 2026-09-17: a view of a droppable member is no longer
 turned into a copy — the disturbance is refused, which is what the rule asked for.  The rules were revised the same day to judge a copy by its own line (§ Drop, *Why the
 verdict is read off the line*), which reclassified the older entries: every shape of `D-heap-1` and
@@ -796,6 +800,56 @@ freed without its hook) opened and CLOSED 2026-09-10, below.
   to a local.  `(H-Spent)` makes that a rule rather than an implementation detail: a name spent on
   one path is live on the other, and the release must run on exactly the paths that did not move
   it.
+
+### D-heap-15 — OPEN (2026-09-17): a value the rules MOVE is still copied, and both structures release it
+
+- **Violates:** (H-Move), and through it (H-Lease).
+- **Where:** not established.  What is measured is the population, below; the shapes share that
+  the value reaches its destination through a LIFT or a backing rather than a direct bind, but
+  that is an observation about the cells and not a site, and naming a site without probing one is
+  the error this chapter has already paid for twice.
+- **Effect:** the owner's 2026-09-17 ruling makes a value the function OWNS a MOVE wherever it is
+  placed, so each of these owes exactly ONE release.  21 of the drop gate's 285 cells run two,
+  identically on both backends: `p_v1` and `p_v2` (a whole-collection bind), `p_j3` and `p_j4` (a
+  join arm placed into a container), `c_coalesce_field`, `c_coalesce_enum`, `c_coalesce_push`,
+  `c_coalesce_veclit`, and every `q_*_local_*_field` / `q_*_local_*_push`.  Measured directly:
+  `a: H? = mk(1); v += [a ?? mk(9)]` traces `M1 L1 D1 D1` and
+  `a: H? = mk(2); c = Hold { h: a ?? mk(9) }` traces `M2 F2 D2 D2` — the present arm's local is
+  copied into the destination and both copies release.  `p_o2` (a tuple) and `p_i2` (a self-bind)
+  add the scorer's EARLY channel on top, so those two release twice AND release before a read,
+  which is a use-after-release as well as a double one.
+  ⚠ **The plain bind is CLEAN and that is the boundary**: `a = open(1); v: vector<H> = [a]`
+  traces `L1 D1`, one release, and `c_local_field` / `c_local_push` / `c_local_veclit` /
+  `c_local_enum` are all absent from this set.  So this is not "an owned local placed into a
+  container" in general — it is the shapes that reach the destination some other way.
+- **Status:** OPEN — exposed 2026-09-17 by narrowing the refusal to the rules.  Before the
+  ruling every one of these was verdict `Refused`, so the gate asked nothing of their releases
+  and the disagreement could not show.
+- **Removal:** the copy that makes the second structure, removed wherever the rules move the
+  value; `scopes::copy_moves_drop_from` and the hand-off flags beside it are @PLN163 P5's
+  subject and this entry is the measurement P5 is verified against.
+
+### D-heap-16 — OPEN (2026-09-17): the fresh value of a `??` DEFAULT arm is never released
+
+- **Violates:** (H-Drop).
+- **Where:** not established.
+- **Effect:** the value the default arm builds owes one release and runs none.  Measured on both
+  backends: `a: H? = null; x = a ?? mk(7)` traces `M7 R7` — minted, read, never released — and
+  the loop form `for i in 0..2 { x = a ?? mk(27 + i) }` leaks once per iteration
+  (`M27 R27 M28 R28`).  The PRESENT twin is correct and is the control: `a: H? = mk(5);
+  x = a ?? mk(7)` traces `M5 R5 D5`, one release, with `mk(7)` never evaluated at all.  Two gate
+  cells carry it, `p_l2` and `q_default_local_call_local`, scored `LOST`.
+  ⚠ **Not the same as D-heap-14** despite both involving a branch.  There is no hand-over here:
+  nothing suppresses a source's release, because the default arm's value has no source — it is
+  minted in the arm.  The per-path `__hoff_` flag is absent from these cells and would not apply.
+  That distinction was measured rather than read off the shape.
+  The neighbouring record is `closures-history.md`'s `??`-default STORE leak
+  (`g = fn(q: P?) -> P { q ?? P{} }`, argument witness closed by loft#1248, capture witness
+  tracked there).  That is a lambda leaking a store per call; this is a plain function leaving a
+  HOOK unrun.  Whether one cure reaches both is not established.
+- **Status:** OPEN — exposed 2026-09-17 by narrowing the refusal, the same way as `D-heap-15`.
+- **Removal:** the default arm's value released at the scope end of whatever binds it, on both
+  backends, with the present-arm control held at one release.
 
 ### D-heap-11 — OPENED 2026-09-15, CLOSED 2026-09-17: a view of a droppable member is turned into a copy when its container is disturbed
 
