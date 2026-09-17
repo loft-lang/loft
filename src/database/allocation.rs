@@ -1620,16 +1620,31 @@ impl Stores {
     #[inline]
     pub fn store(&self, r: &DbRef) -> &Store {
         let s = &self.allocations[r.store_nr as usize];
-        // @PLN130 F8 — under LOFT_STRICT_STORES the slot is never recycled, so a freed
-        // store here is an unambiguous use-after-free rather than a maybe-reused slot.
-        // Available in release builds too: the debug-only print below never ran in the
-        // release binary the probes use, which is why a live UAF read as ordinary data.
-        if crate::keys::strict_stores() && s.free {
+        if s.free {
+            self.freed_store_access(r, false);
+        }
+        s
+    }
+
+    /// An access through `r` reached a FREED store: report it, and carry on.
+    ///
+    /// @PLN130 F8 — under `LOFT_STRICT_STORES` the slot is never recycled, so a freed
+    /// store here is an unambiguous use-after-free rather than a maybe-reused slot.
+    /// Available in release builds too: a debug-only print never runs in the release
+    /// binary the probes use, which is how a live UAF once read as ordinary data.  A
+    /// write (`write`) is the worse half: with slot reuse it lands in whatever now owns
+    /// the memory.
+    /// Enforces `@FR-R-Cold`: the report is outlined so the accessors keep one flag test.
+    #[cold]
+    #[inline(never)]
+    fn freed_store_access(&self, r: &DbRef, write: bool) {
+        let s = &self.allocations[r.store_nr as usize];
+        if crate::keys::strict_stores() {
             crate::keys::strict_store_violation(
                 r.store_nr,
                 r.rec,
                 r.pos,
-                "read",
+                if write { "write" } else { "read" },
                 self.types
                     .get(s.known_type as usize)
                     .map_or("?", |t| t.name.as_str()),
@@ -1637,9 +1652,17 @@ impl Stores {
                 s.last_op_at,
                 self.alloc_pc,
             );
+            return;
         }
         #[cfg(debug_assertions)]
-        if s.free && !crate::keys::strict_stores() {
+        if write {
+            crate::loft_eprintln!(
+                "[store] WRITE TO FREED store #{} rec={} pos={} — corruption",
+                r.store_nr,
+                r.rec,
+                r.pos
+            );
+        } else {
             crate::loft_eprintln!(
                 "[store] ACCESS FREED store #{} rec={} pos={} — data will be garbage",
                 r.store_nr,
@@ -1647,7 +1670,6 @@ impl Stores {
                 r.pos
             );
         }
-        s
     }
 
     /// C60 Step 3 (path 2c, piece 1): build a fresh vector of u32
@@ -2010,31 +2032,8 @@ impl Stores {
 
     #[inline]
     pub fn store_mut(&mut self, r: &DbRef) -> &mut Store {
-        // @PLN130 F8 — see `store`. A write through a dead reference is the worse half:
-        // with slot reuse it lands in whatever now owns the memory.
-        if crate::keys::strict_stores() && self.allocations[r.store_nr as usize].free {
-            let s = &self.allocations[r.store_nr as usize];
-            crate::keys::strict_store_violation(
-                r.store_nr,
-                r.rec,
-                r.pos,
-                "write",
-                self.types
-                    .get(s.known_type as usize)
-                    .map_or("?", |t| t.name.as_str()),
-                s.created_at,
-                s.last_op_at,
-                self.alloc_pc,
-            );
-        }
-        #[cfg(debug_assertions)]
-        if self.allocations[r.store_nr as usize].free && !crate::keys::strict_stores() {
-            crate::loft_eprintln!(
-                "[store] WRITE TO FREED store #{} rec={} pos={} — corruption",
-                r.store_nr,
-                r.rec,
-                r.pos
-            );
+        if self.allocations[r.store_nr as usize].free {
+            self.freed_store_access(r, true);
         }
         &mut self.allocations[r.store_nr as usize]
     }
