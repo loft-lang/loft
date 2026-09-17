@@ -332,6 +332,19 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  for exactly that case.  Footers live in FREE space only — a persisted
                  image is unchanged, and an image written before footers existed is
                  re-footed by the open walk.
+  (H-Wilderness) inside one store, the free block that ENDS the store (the wilderness)
+                 is held beside the free tree rather than in it, and every tree
+                 operation treats it as the node it would have been: a block of at
+                 least the tree's minimum size that ends the store is recorded as the
+                 wilderness instead of inserted, removing it clears the record, and a
+                 best-fit take weighs it against the smallest fitting node by the
+                 tree's own (size, position) order — the wilderness has the highest
+                 position of any free block, so a node of equal size precedes it.
+                 The block every claim takes, and so the store's layout, is therefore
+                 the one the tree alone would give; what changes is that a claim from
+                 the tail and a delete into it cost no tree delete, insert or
+                 rebalance.  At most one wilderness exists, it never overlaps a claim,
+                 and the open walk (and every re-tiling) re-derives it.
 ```
 
 **`H-RootExtent` is what makes `H-ClearRelease`'s release affordable.** The release has to

@@ -353,6 +353,7 @@ fn write_var_snapshot(stores: &mut Stores, r: &Record, v: &VarSnapshot) {
     r.set_field_bool(stores, ds::VAR_CALLER_HIDDEN_BUF, v.caller_hidden_buf);
     r.set_field_bool(stores, ds::VAR_VIEW_ELIDED, v.view_elided);
     r.set_field_bool(stores, ds::VAR_LAZY_BUFFER, v.lazy_buffer);
+    r.set_field_bool(stores, ds::VAR_DEFERRED_FIRST_BIND, v.deferred_first_bind);
     r.set_field_int(stores, ds::VAR_OWNER_WITNESS, i64::from(v.owner_witness));
 }
 

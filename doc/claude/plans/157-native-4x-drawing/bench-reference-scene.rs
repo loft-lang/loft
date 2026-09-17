@@ -3,9 +3,10 @@
 //
 // The pure-Rust reference for the FOUR rows of the drawing package's bench that were
 // measured without one — `parse`, `render_lock`, `render_marks`, `resize` — written in
-// the loft repo (@PLN157 § V-ah, 2026-09-14) and offered to the drawing package: append
-// this file to `drawing/bench/bench.rs` and add the four `print_row` lines to its `main`
-// (after `bench_wide_line`):
+// the loft repo (@PLN157 § V-ah, 2026-09-14).  Appended to the package's
+// `drawing/bench/bench.rs` on 2026-09-17 (loft-libs-graphics `drawing-lock`, 47947ec), which
+// is now the copy to keep current; this one is the record.  It was appended with the four
+// `print_row` lines added to that file's `main` (after `bench_wide_line`):
 //
 //     print_row(&bench_parse(n));
 //     print_row(&bench_render(n, "render_lock", lock_scene()));

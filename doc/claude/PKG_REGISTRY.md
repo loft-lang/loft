@@ -772,11 +772,17 @@ writes a minimal one first, so the lock it writes has a root that governs it —
    3.1 Parallel fetch tarballs (small pool, 4 at a time)
    3.2 For each: hash, compare to registry's sha256, fail loudly
        on mismatch
-   3.3 Extract to ~/.loft/registry/<name>-<version>/
+   3.3 Extract into a staging directory of this install's own, then rename
+       it to ~/.loft/registry/<name>-<version>/ — the directory appears
+       whole or not at all, so several processes installing one package
+       at once (a server and its clients) never read one half-filled; a
+       rename that finds the directory already placed counts the package
+       as cached
 
 4. Write loft.lock (and, in a directory with no loft.toml, the manifest that
    makes it govern)
-   4.1 Atomic rename: write loft.lock.tmp, rename to loft.lock
+   4.1 Atomic rename: write a scratch file named for the process
+       (loft.lock.tmp<pid>-<n>), rename it to loft.lock
    4.2 Includes resolved versions, urls, sha256s, transitive deps
 
 5. Print summary

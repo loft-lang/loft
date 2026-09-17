@@ -185,6 +185,7 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     free_ref_tag,
     free_ref_if_distinct,
     free_ref_or_hand_up,
+    free_ref_unless_entry,
     free_scratch,
     sizeof_ref,
     var_ref,
@@ -1469,6 +1470,15 @@ fn free_ref_or_hand_up(s: &mut State) {
         s.hand_up_returned(v_witness);
     } else {
         s.database.free(&v_placeholder);
+    }
+}
+
+fn free_ref_unless_entry(s: &mut State) {
+    let v_entry = s.get_stack::<DbRef>();
+    let v_witness = s.get_stack::<DbRef>();
+    let v_placeholder = s.get_stack::<DbRef>();
+    if v_placeholder.store_nr != v_entry.store_nr {
+        s.database.free_displaced(&v_placeholder, &v_witness);
     }
 }
 

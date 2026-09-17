@@ -2961,10 +2961,15 @@ impl Parser {
                 // already wrote `__retbuf`; a literal writes a work-ref of its own, so
                 // the buffer the caller allocated stays empty and the record handed
                 // back is a store minted per call.  Build into the buffer instead.
+                // A buffer only chain exits renamed is the caller's too (@PLN164 B2).
                 if crate::keys::value_return_enabled()
                     && let Some(work_ref) = Self::tail_fresh_object_workref(last)
                     && self.workref_is_only_the_tail(l, work_ref)
-                    && let Some(buf_var) = self.unpromoted_return_buffer_var()
+                    && let Some(buf_var) = self.unpromoted_return_buffer_var().or_else(|| {
+                        crate::keys::literal_exit_buffer_enabled()
+                            .then(|| self.chain_return_buffer_var(l))
+                            .flatten()
+                    })
                     && self.record_is_fully_written_by_a_literal(buf_var)
                 {
                     return RefDelivery::BuildIntoBuffer { work_ref, buf_var };
@@ -3215,21 +3220,25 @@ impl Parser {
     }
 
     /// @PLN164 B2 (`@FR-R-Place`, the callee clause) — once the tail's delivery is
-    /// decided: when the return buffer is still the unpromoted `__retbuf` and EVERY
-    /// mid-body exit is a fresh literal of its type, each `return S { … }` builds into
+    /// decided: when the return buffer is still the unpromoted `__retbuf` — or a buffer only
+    /// chains rename ([`Self::chain_return_buffer_var`]) — and EVERY mid-body exit is a fresh
+    /// literal of its type or a chain over that buffer, each `return S { … }` builds into
     /// that buffer exactly as the tail literal does ([`Self::build_into_return_buffer`]),
     /// so the callee answers ONE store whichever exit it takes — the precondition
     /// `(R-Place)` states for handing a callee a record placed where its result will
     /// live.  Decided HERE and not at the `return`, because the tail's promotion is not
     /// known while a mid-body return is parsed: a promoted local (`o = P { … }; …; o`) IS
     /// the buffer, and a literal exit written into it beside that local handed the caller
-    /// a stale ref to free (`164-adopt-first-bind` c3).  A function with any non-literal
-    /// mid-body exit keeps every per-exit store; the decline is always available.
+    /// a stale ref to free (`164-adopt-first-bind` c3).  A function with any other mid-body
+    /// exit keeps every per-exit store; the decline is always available.
     fn literal_exits_into_buffer(&mut self, l: &mut [Value]) {
         if !crate::keys::value_return_enabled() || !crate::keys::literal_exit_buffer_enabled() {
             return;
         }
-        let Some(buf_var) = self.unpromoted_return_buffer_var() else {
+        let Some(buf_var) = self
+            .unpromoted_return_buffer_var()
+            .or_else(|| self.chain_return_buffer_var(l))
+        else {
             return;
         };
         if !self.record_is_fully_written_by_a_literal(buf_var) {
@@ -3251,6 +3260,8 @@ impl Parser {
                         {
                             work_refs.push(w);
                         }
+                        // A chain exit answers what its callee wrote into this same buffer.
+                        _ if Self::returns_through_chain(inner, buf_var) => {}
                         _ => all_literal = false,
                     }
                 }
@@ -3276,10 +3287,102 @@ impl Parser {
         }
         if crate::keys::trace_ret_promotion() {
             eprintln!(
-                "[retpromo] literal-exits fn={} {} mid-body exit(s) built into `__retbuf`",
+                "[retpromo] literal-exits fn={} {} mid-body exit(s) built into `{}`",
                 self.data.def(self.context).name(),
-                work_refs.len()
+                work_refs.len(),
+                self.vars.name(buf_var)
             );
+        }
+    }
+
+    /// @PLN164 B2 unit 1 over a CHAIN (`@FR-R-Place`'s callee clause) — the buffer a chain
+    /// exit renamed.
+    ///
+    /// `return no_mk()` hands this function's buffer to `no_mk` and renames it after the
+    /// chain's work ref (`__ref_N`), so [`Self::unpromoted_return_buffer_var`] finds no
+    /// `__retbuf`; the variable is still the buffer the caller handed, and every chain exit
+    /// answers what its callee wrote into it.  Accepted only when nothing but a chain block
+    /// names the variable: a chain always returns, so a literal exit writing the buffer never
+    /// follows a chain on any path and meets exactly what the caller handed.  A promoted
+    /// named local is not compiler-generated and never reaches here, and an inline container
+    /// (`__ref_p2_N`) is not a return buffer.
+    fn chain_return_buffer_var(&self, l: &[Value]) -> Option<u16> {
+        if self.data.def_type(self.context) != DefType::Function
+            || self.data.def(self.context).name().contains("__lambda")
+        {
+            return None;
+        }
+        let def = self.data.def(self.context);
+        let a_idx = def.hidden_return_buffer_attr()?;
+        let name = def.attributes()[a_idx].name.as_str();
+        if !name.starts_with("__ref_") || name.starts_with("__ref_p2_") {
+            return None;
+        }
+        let buf_def = def.attributes()[a_idx].typedef.heap_def_nr()?;
+        if def.returned().base().heap_def_nr() != Some(buf_def) {
+            return None;
+        }
+        let v = self.vars.var(name);
+        let (tail, body) = l.split_last()?;
+        (v != u16::MAX
+            && self.vars.is_argument(v)
+            && self.vars.is_compiler_generated(v)
+            && !body.iter().any(|op| Self::names_outside_a_chain(op, v))
+            && (!Self::names_outside_a_chain(tail, v) || Self::tail_hands_on(tail, v)))
+        .then_some(v)
+    }
+
+    /// Is the body's TAIL a call handed `v` as its buffer — the chain a tail keeps in its
+    /// bare NRVO form (`fn outer2(…) -> Mk { if … { return Mk { … } } outer(…) }`), behind
+    /// any argument lifts?  `v` is compiler-generated, so a bare `Var(v)` argument can only
+    /// be the hidden buffer; every other argument must not name it.
+    fn tail_hands_on(tail: &Value, v: u16) -> bool {
+        match tail.unspan() {
+            Value::Insert(ops) => ops.split_last().is_some_and(|(last, lifts)| {
+                !lifts.iter().any(|o| Self::names_outside_a_chain(o, v))
+                    && Self::tail_hands_on(last, v)
+            }),
+            Value::Call(_, args) => {
+                let is_v = |a: &Value| matches!(a.unspan(), Value::Var(x) if *x == v);
+                args.iter().any(is_v)
+                    && args
+                        .iter()
+                        .all(|a| is_v(a) || !Self::names_outside_a_chain(a, v))
+            }
+            _ => false,
+        }
+    }
+
+    /// Does `op` name `v` anywhere but inside a `one_buffer_chain` block?  Every variant that
+    /// carries a variable NUMBER outside a `Var` node is asked by name — a missed one would
+    /// answer "no" for a buffer something else writes — and the rest descend.
+    fn names_outside_a_chain(op: &Value, v: u16) -> bool {
+        match op {
+            Value::Span(b) => Self::names_outside_a_chain(&b.1, v),
+            Value::Block(bl) if bl.name == "one_buffer_chain" => false,
+            Value::Var(x) | Value::TupleGet(x, _) | Value::CallRef(x, _) if *x == v => true,
+            Value::Set(x, _) | Value::TuplePut(x, _, _) | Value::Iter(x, _, _, _) if *x == v => {
+                true
+            }
+            _ => {
+                let mut found = false;
+                op.for_each_child(&mut |c| found = found || Self::names_outside_a_chain(c, v));
+                found
+            }
+        }
+    }
+
+    /// Does this return hand back `v` through a chain — a `one_buffer_chain` block over it,
+    /// possibly behind an `Insert` of argument lifts?
+    fn returns_through_chain(inner: &Value, v: u16) -> bool {
+        match inner.unspan() {
+            Value::Block(bl) if bl.name == "one_buffer_chain" => {
+                matches!(bl.operators.last().map(Value::unspan), Some(Value::Var(x)) if *x == v)
+            }
+            Value::Insert(ops) => ops
+                .last()
+                .is_some_and(|o| Self::returns_through_chain(o, v)),
+            _ => false,
         }
     }
 

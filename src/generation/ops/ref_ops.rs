@@ -424,28 +424,14 @@ impl OpEmitter for OpCopyRecordEmitter {
             // without a call, a buffer or a whole-record copy.
             if let Value::Var(v) = src.unspan()
                 && let Some(d) = ctx.output.value_record_locals.get(v).copied()
-                && let Some(fields) = ctx.output.value_records.fields.get(&d).cloned()
+                && ctx.output.value_records.fields.contains_key(&d)
             {
                 let name = super::super::sanitize(
                     ctx.output.data.def(ctx.output.def_nr).variables().name(*v),
                 );
                 write!(ctx.w, "{{ ")?;
-                for (i, (off, rt)) in fields.iter().enumerate() {
-                    let setter = ctx
-                        .output
-                        .data
-                        .def_nr(super::super::hoist::value_setter(rt));
-                    let call = Value::Call(
-                        setter,
-                        vec![
-                            dst.clone(),
-                            Value::Int(*off as i32),
-                            Value::RawExpr(format!("var_{name}.{i}")),
-                        ],
-                    );
-                    ctx.emit(&call)?;
-                    write!(ctx.w, "; ")?;
-                }
+                ctx.output
+                    .write_tuple_fields(ctx.w, d, dst, &format!("var_{name}"))?;
                 return write!(ctx.w, "}}");
             }
             // @PLN157 § V-j (`@FR-R-MoveAppend`) — the paired append's copy: when the
@@ -556,6 +542,42 @@ impl OpEmitter for OpSizeofRefEmitter {
             write!(ctx.w, ")")?;
         }
         Ok(())
+    }
+}
+
+/// `OpRefAlias` — a reference as a value, with the @PLN157 § V-ah arm: a value local (or an
+/// admitted function's phantom buffer parameter) is in NO store, so its alias is the null
+/// reference — which is what a promoted buffer's entry witness must hold there, because
+/// every test against it (`OpDistinctStoreEmitter`) answers "distinct" anyway.
+pub struct OpRefAliasEmitter;
+
+impl OpEmitter for OpRefAliasEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        if let Some(Value::Var(v)) = args.first().map(Value::unspan)
+            && (ctx.output.value_record_locals.contains_key(v)
+                || ctx.output.value_phantom == Some(*v))
+        {
+            return write!(ctx.w, "DbRef::NULL");
+        }
+        super::default::DefaultEmitter.emit(ctx, args)
+    }
+}
+
+/// `OpClear` — the pool's release of a REUSED record buffer (loft#1549), with the @PLN157
+/// § V-ah arm: a DEAD BUFFER (`hoist::dead_buffers`) is never minted, so it holds nothing to
+/// release.  Without it a heap-owning buffer could never be dead — the release was a mention
+/// the value form did not drop — and a caller kept minting and clearing a `Mark` buffer for a
+/// callee that answers a tuple (@PLN164 E-1).
+pub struct OpClearEmitter;
+
+impl OpEmitter for OpClearEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        if let Some(Value::Var(v)) = args.first().map(Value::unspan)
+            && ctx.output.dead_buffers.contains(v)
+        {
+            return write!(ctx.w, "()");
+        }
+        super::default::DefaultEmitter.emit(ctx, args)
     }
 }
 

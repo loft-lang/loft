@@ -123,9 +123,29 @@ fn resolve_bindable_port(base: u16) -> u16 {
     if reap_our_leaked_holders(canonical) {
         return canonical;
     }
-    let pivot = pivot_port(canonical.min(ephemeral_floor() - 8000)).unwrap_or(canonical);
+    let pivot = pivot_port(pivot_anchor(canonical)).unwrap_or(canonical);
     eprintln!("[port] {canonical} unavailable and not ours to kill — pivoting to {pivot}");
     pivot
+}
+
+/// Where a busy canonical port's pivot ladder starts: the canonical port itself when it sits
+/// low enough for the whole ladder to stay below the ephemeral floor, and otherwise a point in
+/// the 2000 ports under that band chosen BY the canonical port.
+///
+/// The anchor has to keep distinct canonical ports distinct, because two tests of one run can
+/// pivot at the same moment, and each takes the first free rung it sees before either child
+/// binds.  Clamping every high canonical port to one value (`canonical.min(floor - 8000)`)
+/// sent `engine_host_kernel`'s `s1` (30094) and its debugger test (31312) both to 24869 while
+/// a leaked server held their own ports: the file failed in parallel and passed serially.
+/// Canonical ports within one run differ by less than 2000, so their residues differ too.
+#[allow(dead_code)]
+fn pivot_anchor(canonical: u16) -> u16 {
+    let band = ephemeral_floor().saturating_sub(8000);
+    if canonical < band {
+        canonical
+    } else {
+        band.saturating_sub(2000) + canonical % 2000
+    }
 }
 
 /// Kill this checkout's own leaked holders of `port`, and answer whether the port came

@@ -885,8 +885,10 @@ write that never prefills and a callee's buffer is minted once per caller activa
 time, BOTH backends) makes a mid-body `return S { … }` build its record in a store of its
 own again — with it off, every literal exit of a record function writes the `__retbuf`
 the caller handed, through the same null-guarded mint the TAIL literal has used since
-@PLN157 § V, so a callee with several literal exits answers ONE store — and is the first
-bisect step for a wrong record out of a callee with more than one literal exit.
+@PLN157 § V, so a callee with several literal exits answers ONE store; that includes a
+buffer a CHAIN renamed (`return no_mk()` beside `return Mk { … }`, `parse_circle`'s
+shape), and a literal tail beside chain exits — and is the first bisect step for a wrong
+record out of a callee with more than one exit.
 **`LOFT_NO_PLACE_RESULT=1`** (@PLN164 B2 units 2–3, `@FR-R-Place` + `@FR-R-MoveLast`, decided
 after the scope pass, BOTH backends) keeps a call result minting its own store and deep-copying
 into its destination again — with it off, a plain local bound from a callee whose every exit
@@ -924,8 +926,9 @@ assignment from a call.  Declined where an argument reaches the destination, whe
 MINTS into its buffer (a returned vector literal does), and for a struct-enum variant's field.
 Measured on the drawing bench's parse row: the consumer spells this nowhere — the emission is
 byte-identical under the switch — so the gain is structural.
-**`LOFT_VIEW_FIELD=1`** (@PLN164 C5, `@FR-O-ViewField`, `@FR-R-ValueRecord`, **opt-in**,
-generation time, `--native` only) returns a record of two scalars and a vector as a TUPLE
+**`LOFT_NO_VIEW_FIELD=1`** (@PLN164 C5 and E-1, `@FR-O-ViewField`, `@FR-R-ValueRecord`,
+**default-ON since 2026-09-17**, generation time, `--native` only) restores the record form —
+with it off, a function returns a record of two scalars and a vector as a TUPLE
 whose vector element is a REFERENCE to the place the value already lives in — so a
 `Mark { matched, bad, pts }` built from a local the function appended into a parameter's
 collection costs no buffer store and no deep copy, and an exit with an empty literal delivers
@@ -940,10 +943,29 @@ function declines whole (`(R-Escape)`).  The exit's own answer is a PROOF rather
 fallback: every mention of the return buffer must be one the tuple accounts for, because a
 field filled without an append — a returned vector literal, a record literal's vector field —
 read as "empty" delivered a null view for a vector of eight (`723-ncc-loop-element-bind`).  The
-container question is asked per PATH and per NAMING: a parser appends and returns once per
-branch, and a naming that reaches a SIBLING field or claims a record in the store moves nothing
-in the one the leaf views.  `LOFT_NO_VIEW_FIELD=1` is the opt-out once it is armed,
-and `LOFT_TRACE_VALUEREC=1` names every admission and decline.
+callee's half is a per-PATH PROOF (`hoist::fresh_leaf`, a forward walk that joins `if` arms
+and runs loops to a fixpoint): on every path to the exit the last change to the container was
+the append of the local's copy, and neither the local, a store it views, nor that element
+changed after it.  An append in each arm of an `if` views the container's LAST element; an
+append under a condition, or a local grown, rebound or written after its copy, declines
+(measured wrong under the per-exit test this replaced: 0 points for 3, and 3,9 for 4,109).  A
+naming that reaches a SIBLING field or claims a record in the store moves nothing in the one
+the leaf views.  The gate stores each exit's leaf and the emitter writes the stored one.  It
+is the first bisect step for a wrong or stale vector read out of a record-returning call on
+native, and `LOFT_TRACE_VALUEREC=1` names every admission and decline, with the reason and —
+for a site — the caller that consumed it.
+**`LOFT_NO_FORWARD_TUPLE=1`** (@PLN164 E-1, `@FR-R-ValueRecord`, **default-ON since
+2026-09-17**, generation time, `--native` only) makes a forward decline its callee again —
+with it off, a function that keeps its record FORWARDS an admitted callee's answer —
+`return nm()`, or the call arm of a value branch whose other arm is a record, both lowered as
+the callee filling a buffer bound back from the call — by writing the tuple into that buffer
+at the site: minted
+where it is absent, every scalar set, a view part's vector copied; the call evaluates to the
+buffer.  Without it such a forward is a site that consumes the record and declines the callee
+everywhere — which is what kept the drawing library's `parse_circle` and `parse_line_cmd` on
+buffers (their `no_mark()` tail was forwarded by `parse_fronds`).  It is the first bisect
+step for a wrong field, a leak or a null-store panic at a `return g(…)` of a record-returning
+function on native.
 **`LOFT_NO_CALLEE_DISTURB=1`** (@PLN164 C3, `@FR-B-Disturb`, `@FR-B-Ref-Reshape`, BOTH
 backends) makes the disturbance walk read THIS frame's ops only again — with it off, a
 container a CALLEE grows or removes from disturbs the caller's live view of it, so
@@ -1028,6 +1050,15 @@ delete-heavy run.  Measured: `fronds` −7.7 % (the § V-u arena's churn), and t
 retires is the `coalesce_free` cliff PERFORMANCE.md § V-j P2 first measured at 29.5 % of
 a shared-arena row.
 
+**The tail free block is a wilderness (@PLN164, default-ON, both backends,
+`@FR-H-Wilderness`):** the free block that ends a store is held beside the free tree, and the
+tree's insert, remove and best-fit take treat it as the node it would have been — so every
+claim takes the block it always took (a seeded side-by-side unit test pins the layout), and a
+claim from the tail or a delete into it costs no tree delete, insert or rebalance (64 % of the
+parse row's tree claims took the tail; the row −6 % in cycles).  **`LOFT_NO_WILDERNESS=1`**
+keeps the tail in the tree again (read per store at construction) and is the first bisect step
+for a store-layout fault or a claim that hands out a live block.
+
 **Owner witness for a mixed-ownership local (loft#1336, default-ON, both backends):** a
 heap-record local that OWNS after one assignment (a copy, a minting call) and VIEWS after
 another carries a hidden `__own_<name>` naming the store it minted while it still holds it;
@@ -1059,6 +1090,18 @@ rebind of the promoted local (plan 51 cluster 3's shape; native guards that free
 `_rb_w_`), which is the plan's B1b.  **`LOFT_NO_ADOPT_FIRST_BIND=1`** restores the copy and
 is the first bisect step for a leak, a double free or a wrong field out of a local bound
 from such a callee; `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` are the falsifiers.
+
+**Reuse the adopting call's buffer (@PLN164 B1b, `@FR-O-Buffer`, default-ON, both backends,
+scopes pass):** the record-buffer pool now takes those buffers too, so such a callee is handed
+the CALLER's store after the first call and fills it — one store per call site per activation
+instead of one per call (the parse row's `Mark` class).  A callee's promoted buffer local then
+holds either the caller's store or one it minted, so the scope pass snapshots the store handed
+in (`__rbw_<buf> = OpRefAlias(buf)`) and every free of that local declines on it; and a local
+first bound inside an `if` (whose pre-init makes the bind a rebind) adopts at that bind
+(`Variable::deferred_first_bind`).  **`LOFT_NO_ADOPT_BUFFER_REUSE=1`** keeps those buffers
+null again and mints no snapshot — the first bisect step for a use-after-free or a wrong
+field out of a callee that rebinds or returns past a local it promoted onto its buffer.
+`LOFT_TRACE_POOL=1` names the gate that keeps each witnessed buffer out of the pool.
 
 **Mint at first use (@PLN164 A0, `@FR-O-LazyBuffer`, default-ON, both backends, scopes
 pass):** a hidden return buffer (`__ref_N`) is minted in front of the statement that hands it

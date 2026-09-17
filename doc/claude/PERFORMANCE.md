@@ -546,6 +546,33 @@ Wall-clock milliseconds, **best of 3 warm runs**, single core, Linux x86-64, **r
 > integer-key insert 933 → 505 ms (350 ms with `reserve`) and lookup ~95 → ~75 ms — see
 > [plans/135-hash-performance/README.md](plans/135-hash-performance/README.md).
 
+**Re-measured 2026-09-17** (`bench/run_bench.sh --skip-python --skip-wasm --warmup`, this
+x86-64 box, one run; the Rust column is `rustc -O`).  These are ENGINE measurements: synthetic
+programs, read beside `(Perf-Weight)`'s bar (3× per routine, a median of 2×) but not part of
+its population, which is the routines loft and its libraries ship (@PLN158):
+
+| # | Benchmark | interp ms | native ms | Rust ms | native/Rust |
+|---|-----------|----------:|----------:|--------:|------------:|
+| 01 | fibonacci (recursive)  | 10 220 | 401 |  86 | **4.7×** |
+| 02 | sum loop               |     46 |   4 |   3 | 1.3× ‡ |
+| 03 | prime sieve            |     25 |   2 |   3 | 0.7× ‡ |
+| 04 | Collatz lengths        |  1 655 | 283 | 147 | 1.9× |
+| 05 | Mandelbrot             |     16 |  10 |  12 | 0.8× ‡ |
+| 06 | Newton sqrt            |    651 | 347 | 140 | 2.5× |
+| 07 | string build           |     82 |  49 |  20 | 2.5× |
+| 08 | word frequency         |    139 |  42 |  16 | 2.6× |
+| 09 | matrix mul (float)     |     56 |  12 |   3 | **4.0×** ‡ |
+| 10 | insertion sort         |     55 |   4 |   6 | 0.7× ‡ |
+| 11 | parallel-for           |     28 |   9 |   8 | 1.1× ‡ |
+| 12 | drawing (bench subset) |    230 |  21 |  13 | 1.6× |
+
+‡ a run of a few milliseconds, so the ratio is only as fine as the timer's millisecond: 09
+reads anywhere from 3× to 5×.  What the engine rows say: `fibonacci` still pays the per-call
+frame (@PLN157's leaf rules elide it only for a function off every call cycle, and a recursive
+one is on one; N2/N4 below are the designs), and `matrix mul` is the element-access class N1
+names.  Both matter where a real routine is recursive or matrix-shaped — which is where the
+library routines of @PLN158 should show it first.
+
 **What changed since the old table (and what it means):**
 - **The interpreter now beats CPython on 8 of 11** (interp/Py 0.09–1.22, median ~0.6) — the
   old table had it 1.4–8.85× *slower*. A large, previously-unrecorded interpreter improvement.

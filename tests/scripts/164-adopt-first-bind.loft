@@ -2,11 +2,11 @@
 // return names only the callee's own hidden return buffer (`fn mk() -> P { o = P { … }; …;
 // o }`, deps `["o"]`) ADOPTS the store the callee minted instead of minting a second one and
 // deep-copying it.  The local is paired with the call's buffer for an identity-guarded free
-// exactly as a literal-returning callee's result already is, and the buffer is NOT enrolled
-// in the entry-time buffer pool: handed such a callee non-null, the buffer is written by the
-// promoted local's literal and then FREED by the interpreter's rebind of that local from a
-// call (c6, plan 51 cluster 3's shape — the free native guards with its `_rb_w_` witness),
-// after which the caller's next turn reads a recycled store.  Every cell hand-computes its
+// exactly as a literal-returning callee's result already is.  B1b then enrolls the buffer in
+// the entry-time buffer pool, which hands such a callee a live store: c6 (plan 51 cluster 3's
+// shape) is the cell where the interpreter's rebind of the promoted local once FREED it —
+// the free is guarded by the callee's entry witness since (D-own-43,
+// `tests/scripts/164-adopt-buffer-reuse.loft`).  Every cell hand-computes its
 // value; the shapes beside the adopting one (a literal-returning callee, a `??` join, a value
 // branch, a returned local, a rebind) pin the routes the change must leave alone.
 // `LOFT_NO_ADOPT_FIRST_BIND=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1`

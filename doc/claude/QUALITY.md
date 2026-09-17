@@ -491,6 +491,13 @@ than they were read: every refactor that added a walker reddened the gate, and t
 own base and neither against the join.  A count that must not GROW is a control worth gating; a
 count that merely describes the tree is the tool's to print.
 
+(2026-09-17, the SECOND join — ../loft2's seventeen picks through `310bccd87` and a fresh
+`origin/157-native-4x` merge — re-measured at THIS join's end: **532 · 509 · 23**, against the
+527 · 504 · 23 the first join recorded below.  The ratchet is unmoved, which is the whole claim
+the row makes; the two descriptive totals moved because both sides added walkers.  The note
+below is kept rather than corrected: it is an accurate record of a DIFFERENT join, and the file's
+own rule is that a derived row is true of a tree at a moment.)
+
 (2026-09-17, ../loft2's three picks and the `origin/157-native-4x` MERGE, re-measured on THIS
 tree at the join's END: 527 · 504 · 23, against the 525 · 502 · 23 this branch read before it.
 Re-derived, not carried: the 157 line's notes below are deltas against ITS base, and this row is
@@ -510,7 +517,6 @@ a seventh, `namings_avoid_place`, the per-naming disturbance walk, matching on `
 step.  The opaque column is unmoved.  ../loft2's branch reports the same two units as 522 · 499 and
 523 · 500 against ITS base, and both are right about what they add; the totals differ because the
 bases do, which is why this row is measured here and never accumulated.)
-
 
 (2026-09-17, loft#1549: one site fewer, and not a behaviour change — the null-init test moved
 out of `scopes::reuse_record_buffers` into the one-line `scopes::null_init_at`, after which
@@ -1660,12 +1666,26 @@ The census this came from — how many functions resolve a projection by op name
 see only the call spelling — is `python3 scripts/ir_walker_audit.py spellings`, which prints the
 LIST rather than a total, and the list is what tells you where to work.
 
+(2026-09-17, the SECOND join, re-measured at its end: **73 · 14 · 59**.  The ratchet — functions
+ALSO handling `TupleGet` — is unmoved at 14, which is what this row gates; the two descriptive
+columns each gained two, from walkers both sides added.  The note below is the first join's and
+is kept as its own record.)
+
 (2026-09-17, re-measured on THIS tree with `ir_walker_audit.py spellings`: 71 · 14 · 57, which is
 what the joined branch reports too.  The two agreeing is CONVERGENCE, not a number carried across
 a tree boundary — the C5 functions are the same on both trees, and the @PLN164 C1/C2 work this
 tree carries beyond theirs resolves no projection by op name, so this table takes no offset where
 the `unspan` and `optional` rows above and below both do.  The row it replaces, 66 · 14 · 52,
 predates C5 entirely and carried no note.)
+
+(2026-09-17, @PLN164 E-1: one more on the call-only side — `hoist::fresh_leaf` reads the
+destination of every copy of a view leaf's local as `OpGetField(<element temp>, …)`.  CHECKED
+rather than bumped: a `TupleGet` destination is a member of a stack tuple, which the frame owns,
+and the function's fallback for any destination it does not recognise is exactly that — a copy
+into a frame-owned place, a READ of the local that the view never names.  And one more the
+same day — `Output::write_tuple_fields` names `OpGetField` to BUILD the field place of the
+record a tuple is written into.  CHECKED: that destination is a record by construction (a
+return buffer or a copy's destination), never a tuple member.)
 
 (2026-09-16, @PLN164 C5 step 2: one more on the call-only side — `namings_avoid_place` resolves
 what a naming of a container REACHES by op name, and `TupleGet` names a stack tuple member,
@@ -2731,6 +2751,11 @@ the wrapper, how many descend via the keystone — and the opaque QUEUE itself, 
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
 
+(2026-09-17, the SECOND join, re-measured at its end: **847 · 507 · 6 · 334**, and
+`--check-ratchet` reports *at baseline* — opaque 334, opaque tests 1314.  The opaque column is
+unmoved, which is the ratchet; one function was added on each of the first two columns.  The
+note below belongs to the first join and is kept as its own record.)
+
 (2026-09-17, ../loft2's three picks and the `origin/157-native-4x` MERGE, re-measured on THIS
 tree at the join's END: 846 · 506 · 6 · 334.  **Neither side's row was true of the join** — this
 branch read 841 · 501 and the 157 line 840 · 500, each correct against its own base — so the row
@@ -2797,6 +2822,11 @@ members differ from a stack tuple's elements by nothing but each member's `?`, c
 again the attribution** — the predicate is a peeling site, and it widens nothing: it is consulted
 only where the coalesce chooses its RESULT type, so `unboxes_stored_tuple` and the store
 positions that share it are untouched.)
+
+(2026-09-17, @PLN164 E-1: one function added, seeing through the wrapper —
+`FreshWalk::read_position` asks whether a `const` argument's callee answers a scalar, void or
+text through `is_scalar` and `.base()`, since a `τ?` result is the same value behind a
+nullability bit.  The opaque column is unmoved.)
 
 (2026-09-17, loft#1549: one function added, seeing through the wrapper —
 `scopes::releases_what_it_held` reads a pooled buffer's type through `.base()` and names a

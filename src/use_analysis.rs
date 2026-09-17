@@ -2503,6 +2503,15 @@ impl<'a> Ownership<'a> {
             Own::Unknown => return Own::Unknown,
             Own::Borrowed { base } | Own::Join { base } => base,
         };
+        // @FR-O-Oracle — loft#1550: a return that may hand back ANY of several arguments has
+        // no single witness among them.  The callee's own summary names one base (its lattice
+        // joins two borrows into a `Join` of the first), and a runtime guard against that one
+        // argument adopts the other as the binding's own store.  Read from the caller's side
+        // it is a `Join` with no nameable base, which every reader copies, bracketing the
+        // arguments.
+        if returns_one_of_several_args(self.data, callee_d) {
+            return Own::Join { base: u16::MAX };
+        }
         let base = self.caller_arg_base(callee_d, callee_base, caller_args, func, defs);
         match callee_own {
             Own::Join { .. } => Own::Join { base },
@@ -3389,6 +3398,23 @@ pub fn call_return_frees_source(data: &Data, d_nr: u32, call: &Value) -> bool {
     !data.def(fn_nr).returns_borrowed_view() || protectable_ref_args(data, d_nr, call).1
 }
 
+/// loft#1550 — does `callee`'s return name MORE THAN ONE of its visible parameters?  Then a
+/// borrow it hands back may be any of them, and no single caller argument witnesses it.
+#[must_use]
+pub fn returns_one_of_several_args(data: &Data, callee: u32) -> bool {
+    if callee as usize >= data.definitions.len() {
+        return false;
+    }
+    let def = data.def(callee);
+    let attrs = def.attributes();
+    def.returned()
+        .depend()
+        .iter()
+        .filter(|&&d| attrs.get(d as usize).is_some_and(|a| !a.hidden))
+        .count()
+        > 1
+}
+
 /// loft#1106 — does a FIRST bind of a NULLABLE heap local from this call have to go
 /// through the runtime join guard, the way its non-null twin already does?
 ///
@@ -3409,6 +3435,11 @@ pub fn call_return_frees_source(data: &Data, d_nr: u32, call: &Value) -> bool {
 /// the two backends emit the guard that makes that free correct.  A site that decided
 /// this differently would either free a store the caller still names, or strip the
 /// deps off a bind that stays a plain alias.
+///
+/// A base of `u16::MAX` answers a borrow of one of SEVERAL arguments (loft#1550): no run is
+/// owned and no single witness exists, so the bind copies on every run — the interpreter
+/// through its plain call copy, native through its copy-or-adopt split, which adopts only a
+/// null answer.
 ///
 /// A JOIN or a pure BORROW with a nameable witness — `(F-Ret)` says the value a call
 /// answers is FRESH whichever arm produced it, so a callee that always hands its argument
@@ -3442,6 +3473,11 @@ pub fn nullable_join_first_bind(
     let callee = data.def(*fn_nr);
     if !callee.is_loft_defined() || !callee.returns_borrowed_view() {
         return None;
+    }
+    // loft#1550 — a borrow of ONE OF SEVERAL arguments has no witness, and the bind copies on
+    // every run; `u16::MAX` is the base each site reads as "copy always".
+    if returns_one_of_several_args(data, *fn_nr) {
+        return Some((*rec, u16::MAX));
     }
     let base = match ownership_of(data, d_nr, value) {
         Own::Join { base } => base,
@@ -3730,8 +3766,14 @@ pub fn adopts_minted_at_bind(
     if function.is_argument(v) || function.is_caller_hidden_buf(v) || function.is_skip_free(v) {
         return false;
     }
+    // The compiler's BUFFER names.  An inline container's `__ref_p2_N` shares the prefix and
+    // is not one: it is the plain owner of the call's result (`Parser::bind_inline_container`),
+    // and declined here it kept no pairing, so nothing released the store it adopted.
     let name = function.name(v);
-    if name.starts_with("__ref_") || name.starts_with("__rref_") || name.starts_with("__retbuf") {
+    let buffer_name = (name.starts_with("__ref_") && !name.starts_with("__ref_p2_"))
+        || name.starts_with("__rref_")
+        || name.starts_with("__retbuf");
+    if buffer_name {
         return false;
     }
     !args

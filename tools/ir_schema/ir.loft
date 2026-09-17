@@ -188,6 +188,8 @@ struct Variable {
   view_elided: boolean,
   // @FR-O-LazyBuffer — a hidden return buffer minted at its first use; read by both emitters
   lazy_buffer: boolean,
+  // @FR-O-Move — the one bind after an `if`'s pre-init is a first bind; read by both emitters
+  deferred_first_bind: boolean,
   // @FR-O-Witness — the owner witness `__own_<name>` of a mixed-ownership local (u16::MAX = none);
   // read by both emitters, so it must survive the snapshot exactly as `skip_free` does
   owner_witness: integer,

@@ -1,0 +1,21 @@
+diff --git a/src/scopes.rs b/src/scopes.rs
+--- a/src/scopes.rs
++++ b/src/scopes.rs
+@@ -4257,7 +4257,7 @@
+     // function mints" stops being true on every run, and the snapshot is what tells the two
+     // apart.  Minted for every promoted record buffer, because every such body can free it
+     // (the exit legs of `free_vars` and the interpreter's rebind).
+-    if crate::keys::adopt_buffer_reuse_enabled()
++    if false
+         && let Some(buf) = hidden_return_buffer_var(d_nr, &function, data)
+         && function.name(buf) != "__retbuf"
+         && let Some(record) = match function.tp(buf) {
+@@ -11071,7 +11071,7 @@
+         // bind in this `if` into a REBIND, and a rebind copies where a first bind adopts.
+         // When that bind is the local's only assignment it follows the pre-init on every
+         // path that reaches it, so the local holds the sentinel there: it is a first bind.
+-        if crate::keys::adopt_first_bind_enabled() {
++        if false {
+             for &v in &pre_inits {
+                 if !self.multi_assigned.contains(&v)
+                     && let Some(value) = only_bind_in_arms(t_val, f_val, v)

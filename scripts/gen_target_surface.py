@@ -60,6 +60,13 @@ def extract() -> dict[str, list[str]]:
     """Map each builtin to the runtime methods its `#rust` body calls."""
     out: dict[str, list[str]] = {}
     for path in sorted((ROOT / "default").glob("*.loft")):
+        # `.loft/` is a cache DIRECTORY and this glob matches it: `pathlib.glob` has no
+        # leading-dot exclusion, so `default/.loft` (gitignored, created by any run in that
+        # directory) arrives here and `read_text` raises IsADirectoryError.  The same guard
+        # with the same reason already sits in `scripts/falsify-review.py` — one question,
+        # two decoders, and only one of them had been taught.
+        if not path.is_file():
+            continue
         last_fn: str | None = None
         for line in path.read_text().splitlines():
             decl = DECL_RE.match(line)
@@ -102,6 +109,14 @@ def missing_methods(methods: list[str], target: dict[str, str]) -> set[str]:
                 "--crate-type", "rlib",
                 "--extern", f"loft={rlib}",
                 "-L", f"dependency={rlib_dir / 'deps'}",
+                # The HOST deps too, and not as belt-and-braces: `loft` depends on
+                # `wasm_bindgen_macro`, which is a PROC-MACRO — it is compiled for the host
+                # and can never appear in a wasm deps directory.  Without this path rustc
+                # stops at `E0463: can't find crate for wasm_bindgen_macro` before it type-
+                # checks a single probe fn, so NO per-method verdict is emitted and `absent`
+                # comes back empty — which is exactly what "nothing is unavailable" looks
+                # like.  The self-test below is what catches that, and it caught it here.
+                "-L", f"dependency={ROOT / 'target/release/deps'}",
                 "--error-format=json",
                 "-o", str(Path(td) / "out.rlib"),
                 str(probe),

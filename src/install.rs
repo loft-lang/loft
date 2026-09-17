@@ -26,7 +26,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::lockfile::{self, LockFile, LockedPackage, SCHEMA_VERSION};
-use crate::registry_index::{self, RegistryIndex, Version, extract_tarball};
+use crate::registry_index::{self, RegistryIndex, Version};
 use crate::registry_signing::{self, VerifyResult};
 
 /// Knobs the CLI surface passes through.  Mirrors the flags in
@@ -194,8 +194,6 @@ pub fn install_one(
                 .push((r.name.clone(), r.version.semver.clone()));
             continue;
         }
-        let tarball_path =
-            registry_index::cache_dir().join(format!("{}-{}.tar.gz", r.name, r.version.semver));
         let bytes = if opts.offline {
             return Err(format!(
                 "package `{}-{}` not cached; offline mode refuses to fetch",
@@ -210,13 +208,18 @@ pub fn install_one(
             // its absence).  Downloading a tarball is worth a line; finding it already
             // extracted is not.
             eprintln!("[registry] downloading {} {}", r.name, r.version.semver);
-            registry_index::download_tarball(&r.version.url, &tarball_path)?
+            registry_index::fetch_bytes(&r.version.url)?
         };
         crate::integrity::verify_sha256(&bytes, &r.version.sha256)?;
-        extract_tarball(&tarball_path, &registry_index::cache_dir())?;
-        // Tarball is consumed — remove it to save space.  The
-        // extracted dir is the canonical install.
-        let _ = std::fs::remove_file(&tarball_path);
+        // The extracted dir is the canonical install, and it appears in one step: another
+        // process installing the same package may have placed it first, and then the
+        // package is cached for this one too (`place_package`).
+        if !registry_index::place_package(&bytes, &r.name, &r.version.semver)? {
+            report
+                .skipped_cached
+                .push((r.name.clone(), r.version.semver.clone()));
+            continue;
+        }
         // @PLN21 Phase 4 — best-effort: grab a host-matching prebuilt cdylib so
         // first use needs no toolchain (silently no-ops when none applies).
         let got_prebuilt = fetch_prebuilt(r, opts);

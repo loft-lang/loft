@@ -57,6 +57,14 @@ fn free_footer_enabled() -> bool {
     static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *FLAG.get_or_init(|| !std::env::var("LOFT_NO_FREE_FOOTER").is_ok_and(|v| v != "0"))
 }
+/// `LOFT_NO_WILDERNESS=1` keeps the store's TAIL free block inside the free tree again, as it
+/// was before @PLN164 (`@FR-H-Wilderness`); the bisect step for a store-layout fault or a
+/// claim that hands out a live block.  Read once; each store copies it at construction, so a
+/// unit test can build one of each in a process.
+fn wilderness_enabled() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| !std::env::var("LOFT_NO_WILDERNESS").is_ok_and(|v| v != "0"))
+}
 /// Byte offset of a record's PAYLOAD — past the 8-byte size header at word 0.
 ///
 /// A field's `position` in a struct type is an offset from HERE, so any `DbRef`
@@ -364,6 +372,17 @@ pub struct Store {
     /// Populated lazily: `open()` calls `fl_rebuild()`; `new()` starts empty
     /// and the tree fills as blocks are freed.
     free_root: u32,
+    /// @PLN164 (`@FR-H-Wilderness`) — the WILDERNESS: the free block that ends at the store's
+    /// end, held here instead of in the tree (0 = none, or a tail too small to track).  The
+    /// tree's three entry points divert it — `fl_insert` of a block ending at `size` lands
+    /// here, `fl_remove` of it clears this, and `fl_take_ge` weighs it against the best tree
+    /// fit by the tree's own `(size, position)` order — so every caller keeps its code and the
+    /// block chosen, and with it the layout, is the one the tree would have chosen.  What it
+    /// saves is the delete, split-insert and rebalance of the one node most claims and many
+    /// deletes touch.
+    wild: u32,
+    /// Whether this store keeps a wilderness (`LOFT_NO_WILDERNESS`), read at construction.
+    wilderness: bool,
     /// P6: set by `delete` whenever a free block is produced; cleared by
     /// `coalesce_free`.  `claim` runs the lazy coalescing sweep only when
     /// this is set (something was freed since the last sweep), so an
@@ -843,6 +862,8 @@ impl Store {
         // claimed it. Leave it alone rather than forging a live header.
         if claimed > 0 && (claimed as u32) < span {
             self.write::<i32>(PRIMARY, 0, span as i32);
+            // Record 1 now spans whatever free tail followed it.
+            self.wild = 0;
         }
     }
 
@@ -880,6 +901,8 @@ impl Store {
             created_at: 0,
             last_op_at: 0,
             free_root: 0,
+            wild: 0,
+            wilderness: wilderness_enabled(),
             needs_coalesce: false,
             released_bytes: 0,
             claimed_end: 0,
@@ -997,6 +1020,8 @@ impl Store {
             user_locked: false,
             free_protect_depth: 0,
             free_root: 0,
+            wild: 0,
+            wilderness: wilderness_enabled(),
             needs_coalesce: false,
             released_bytes: 0,
             claimed_end: 0,
@@ -1081,6 +1106,8 @@ impl Store {
             created_at: 0,
             last_op_at: 0,
             free_root: 0,
+            wild: 0,
+            wilderness: wilderness_enabled(),
             needs_coalesce: false,
             released_bytes: 0,
             claimed_end: 0,
@@ -1180,6 +1207,8 @@ impl Store {
             created_at: 0,
             last_op_at: 0,
             free_root: 0,
+            wild: 0,
+            wilderness: wilderness_enabled(),
             needs_coalesce: false,
             released_bytes: 0,
             claimed_end: 0,
@@ -1220,8 +1249,14 @@ impl Store {
         // from old split blocks at positions other than 1, breaking the rec=1 invariant
         // relied upon by database-level code.
         self.free_root = 0;
+        self.wild = 0;
         self.claims.clear();
         self.claims.insert(PRIMARY);
+        // The whole store is one free block ending at its end: the wilderness, so the first
+        // claim takes position 1 without the chain walk (`claim_scan` took the same block).
+        if self.wilderness {
+            self.fl_insert(PRIMARY);
+        }
     }
 
     /// @P317 debug — `LOFT_LOG=zero_claim` (or `LOFT_ZERO_CLAIM=1`) zeroes
@@ -1293,7 +1328,9 @@ impl Store {
         self.fl_validate();
         // Faster path: the store has freed nothing yet, so its one free block is the
         // tail and the claim is two header writes (`bump_tail`).
-        if let Some(pos) = self.bump_tail(size) {
+        if !self.wilderness
+            && let Some(pos) = self.bump_tail(size)
+        {
             #[cfg(debug_assertions)]
             self.fl_validate();
             return self.finish_claim(pos);
@@ -1456,6 +1493,11 @@ impl Store {
             pos = self.claim_grow(size, last, claim);
             #[cfg(debug_assertions)]
             self.validate(0);
+        }
+        // The walk may stop on the wilderness only when `fl_take_ge` declined it, which it does
+        // not for a block that fits; claimed here, it must not stay the wilderness.
+        if pos == self.wild {
+            self.wild = 0;
         }
         self.claim_block(pos, size)
     }
@@ -2267,6 +2309,8 @@ impl Store {
             user_locked: false,
             free_protect_depth: 0,
             free_root: 0, // workers never claim/delete; no free tree needed
+            wild: 0,
+            wilderness: self.wilderness,
             needs_coalesce: false,
             released_bytes: 0,
             claimed_end: 0,
@@ -2317,6 +2361,8 @@ impl Store {
             created_at: self.created_at,
             last_op_at: self.last_op_at,
             free_root: self.free_root,
+            wild: self.wild,
+            wilderness: self.wilderness,
             needs_coalesce: self.needs_coalesce,
             released_bytes: 0,
             claimed_end: 0,
@@ -2354,6 +2400,8 @@ impl Store {
             user_locked: false,
             free_protect_depth: 0,
             free_root: self.free_root,
+            wild: self.wild,
+            wilderness: self.wilderness,
             needs_coalesce: false,
             released_bytes: 0,
             claimed_end: 0,
@@ -2507,6 +2555,15 @@ impl Store {
         if self.fl_size(rec) < MIN_FREE_TREE {
             return;
         }
+        if self.wilderness && rec + self.fl_size(rec) as u32 == self.size {
+            debug_assert!(
+                self.wild == 0 || self.wild == rec,
+                "a second wilderness at {rec} beside {}",
+                self.wild
+            );
+            self.wild = rec;
+            return;
+        }
         let root = self.free_root;
         self.free_root = self.fl_insert_node(root, rec);
         self.fl_set_red(self.free_root, false);
@@ -2627,10 +2684,19 @@ impl Store {
 
     /// Remove and return the smallest free block with size >= `min_size`.
     fn fl_take_ge(&mut self, min_size: i32) -> Option<u32> {
-        if self.free_root == 0 {
-            return None;
+        // The wilderness is a candidate like any node, ordered by the tree's key: it has the
+        // highest position of any free block, so a tree fit of equal size precedes it.
+        let wild = self.wild;
+        let wild_fits = wild != 0 && self.fl_size(wild) >= min_size;
+        let found = if self.free_root == 0 {
+            0
+        } else {
+            self.fl_find_ge(self.free_root, min_size)
+        };
+        if wild_fits && (found == 0 || self.fl_size(wild) < self.fl_size(found)) {
+            self.wild = 0;
+            return Some(wild);
         }
-        let found = self.fl_find_ge(self.free_root, min_size);
         if found == 0 {
             return None;
         }
@@ -2644,6 +2710,10 @@ impl Store {
 
     /// Remove `rec` from the free tree if it is currently tracked.
     fn fl_remove(&mut self, rec: u32) {
+        if rec == self.wild && rec != 0 {
+            self.wild = 0;
+            return;
+        }
         if self.free_root == 0 || self.fl_size(rec) < MIN_FREE_TREE {
             return;
         }
@@ -2664,7 +2734,7 @@ impl Store {
     /// confirmation `free_predecessor` needs (a footer can be spelled by claimed data;
     /// tree membership cannot).  O(log n) by key, not a full walk.
     fn fl_tree_contains(&self, target: u32) -> bool {
-        self.fl_contains_node(self.free_root, target)
+        (target != 0 && target == self.wild) || self.fl_contains_node(self.free_root, target)
     }
 
     /// Return `true` if `target` is reachable from the free-tree root.
@@ -2688,6 +2758,7 @@ impl Store {
     /// Called once after `open()` to populate the tree from persisted data.
     pub fn fl_rebuild(&mut self) {
         self.free_root = 0;
+        self.wild = 0;
         let mut pos = PRIMARY;
         while pos < self.size {
             let header = self.read::<i32>(pos, 0);
@@ -2995,6 +3066,25 @@ impl Store {
     #[cfg(debug_assertions)]
     pub fn fl_validate(&self) {
         self.fl_validate_node(self.free_root);
+        if self.wild != 0 {
+            let w = self.wild;
+            let header: i32 = self.read(w, 0);
+            debug_assert!(header < 0, "fl_validate: the wilderness at {w} is claimed");
+            debug_assert!(
+                w + (-header) as u32 == self.size,
+                "fl_validate: the wilderness at {w} ({} words) does not end the store ({})",
+                -header,
+                self.size
+            );
+            debug_assert!(
+                !self.claims.contains(w),
+                "fl_validate: the wilderness is in claims"
+            );
+            debug_assert!(
+                !self.fl_contains_node(self.free_root, w),
+                "fl_validate: the wilderness at {w} is also a tree node"
+            );
+        }
     }
 
     #[cfg(debug_assertions)]
@@ -5268,55 +5358,171 @@ mod tests {
     /// (smaller) store, and the free tree no longer indexes the words that were
     /// cut.  Shrinking to the mark EXACTLY is the boundary case — no free block
     /// is left at all.
+    /// A store with the given allocator form, fresh.
+    fn store_with(wilderness: bool) -> Store {
+        let mut store = Store::new(64);
+        store.wilderness = wilderness;
+        store.init();
+        store.free = false;
+        store
+    }
+
     /// `bump_tail` is a layout twin of the tree path: a fresh store claims from its tail,
     /// each record's header is its size, the remainder is the one free block and the root,
     /// and the moment the tail is too small to split by `claim_block`'s rule the claim
     /// takes the tree path and the whole block — the same store the tree path alone builds.
+    /// With a wilderness (`@FR-H-Wilderness`) the remainder is the wilderness instead of the
+    /// root, and the layout is the same.
     #[test]
     fn bump_tail_claims_are_the_tree_paths_layout() {
-        let mut store = Store::new(64);
-        store.init();
-        let a = store.claim(3);
-        let b = store.claim(5);
-        let c = store.claim(7);
-        assert_eq!(
-            (a, b, c),
-            (1, 4, 9),
-            "claims take the front of the tail in order"
-        );
-        for (pos, size) in [(a, 3), (b, 5), (c, 7)] {
+        for wilderness in [false, true] {
+            let mut store = store_with(wilderness);
+            let a = store.claim(3);
+            let b = store.claim(5);
+            let c = store.claim(7);
             assert_eq!(
-                store.read::<i32>(pos, 0),
-                size,
-                "record {pos} keeps its size header"
+                (a, b, c),
+                (1, 4, 9),
+                "claims take the front of the tail in order"
             );
-            assert!(store.claims.contains(pos), "record {pos} is claimed");
+            for (pos, size) in [(a, 3), (b, 5), (c, 7)] {
+                assert_eq!(
+                    store.read::<i32>(pos, 0),
+                    size,
+                    "record {pos} keeps its size header"
+                );
+                assert!(store.claims.contains(pos), "record {pos} is claimed");
+            }
+            let tail = c + 7;
+            if wilderness {
+                assert_eq!(store.wild, tail, "the remainder is the wilderness");
+                assert_eq!(store.free_root, 0, "and the tree holds nothing");
+            } else {
+                assert_eq!(
+                    store.free_root, tail,
+                    "the remainder is the free tree's only node"
+                );
+                assert_eq!(store.fl_left(tail), 0);
+                assert_eq!(store.fl_right(tail), 0);
+            }
+            assert_eq!(
+                -(store.read::<i32>(tail, 0)) as u32,
+                store.size - tail,
+                "the remainder's header spans exactly the rest of the store"
+            );
+            // A remainder the tree would not track declines the bump: the claim takes the
+            // tree path and the block whole, leaving no free root — as it always did.
+            let left = store.size - tail;
+            let d = store.claim(left - 1);
+            assert_eq!(d, tail);
+            assert_eq!(
+                store.read::<i32>(d, 0) as u32,
+                left,
+                "a block not much larger than the request is claimed whole"
+            );
+            assert_eq!(store.free_root, 0, "nothing is left to track");
+            assert_eq!(store.wild, 0, "nor to hold as the wilderness");
         }
-        let tail = c + 7;
-        assert_eq!(
-            store.free_root, tail,
-            "the remainder is the free tree's only node"
-        );
-        assert_eq!(store.fl_left(tail), 0);
-        assert_eq!(store.fl_right(tail), 0);
-        assert_eq!(
-            -(store.read::<i32>(tail, 0)) as u32,
-            store.size - tail,
-            "the remainder's header spans exactly the rest of the store"
-        );
-        #[cfg(debug_assertions)]
-        store.fl_validate();
-        // A remainder the tree would not track declines the bump: the claim takes the
-        // tree path and the block whole, leaving no free root — as it always did.
-        let left = store.size - tail;
-        let d = store.claim(left - 1);
-        assert_eq!(d, tail);
-        assert_eq!(
-            store.read::<i32>(d, 0) as u32,
-            left,
-            "a block not much larger than the request is claimed whole"
-        );
-        assert_eq!(store.free_root, 0, "nothing is left to track");
+    }
+
+    /// The block chain: every block's position and signed header, in order.
+    fn chain(store: &Store) -> Vec<(u32, i32)> {
+        let mut out = Vec::new();
+        let mut pos = super::PRIMARY;
+        while pos < store.size {
+            let h = store.read::<i32>(pos, 0);
+            assert_ne!(h, 0, "a zero-size block at {pos}");
+            out.push((pos, h));
+            pos += h.unsigned_abs();
+        }
+        assert_eq!(pos, store.size, "the chain tiles the store");
+        out
+    }
+
+    /// `@FR-H-Wilderness`, independent of debug assertions (this crate's test profile turns
+    /// them off): the wilderness is a free block ending the store and no tree node, and every
+    /// tree node is a free block.
+    fn check_wilderness(store: &Store) {
+        let w = store.wild;
+        if w != 0 {
+            let h = store.read::<i32>(w, 0);
+            assert!(h < 0, "the wilderness at {w} is claimed");
+            assert_eq!(
+                w + h.unsigned_abs(),
+                store.size,
+                "the wilderness ends the store"
+            );
+            assert!(
+                !store.fl_contains_node(store.free_root, w),
+                "and is no tree node"
+            );
+            assert!(!store.claims.contains(w));
+        }
+        fn nodes(store: &Store, h: u32) {
+            if h == 0 {
+                return;
+            }
+            assert!(store.read::<i32>(h, 0) < 0, "tree node {h} is claimed");
+            nodes(store, store.fl_left(h));
+            nodes(store, store.fl_right(h));
+        }
+        nodes(store, store.free_root);
+    }
+
+    /// `@FR-H-Wilderness` — the wilderness changes WHICH structure holds the tail, never
+    /// which block a claim takes: the same seeded sequence of claims, deletes and in-place
+    /// resizes on a store with one and a store without answers the same position every time
+    /// and leaves the same block chain and claims after every step, through growth, the lazy
+    /// sweep, backward merges and deletes into the tail.
+    #[test]
+    fn the_wilderness_takes_the_blocks_the_tree_takes() {
+        for seed in 1..=24u64 {
+            let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+            let mut next = move |n: u64| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state % n
+            };
+            let mut plain = store_with(false);
+            let mut wild = store_with(true);
+            let mut live: Vec<u32> = Vec::new();
+            for step in 0..600 {
+                let op = next(10);
+                if op < 5 || live.is_empty() {
+                    let bound = if next(4) == 0 { 60 } else { 12 };
+                    let size = 1 + next(bound) as u32;
+                    let a = plain.claim(size);
+                    let b = wild.claim(size);
+                    assert_eq!(a, b, "seed {seed} step {step}: claim({size})");
+                    live.push(a);
+                } else if op < 8 {
+                    let i = next(live.len() as u64) as usize;
+                    let rec = live.swap_remove(i);
+                    plain.delete(rec);
+                    wild.delete(rec);
+                } else {
+                    let i = next(live.len() as u64) as usize;
+                    let rec = live[i];
+                    let grow = plain.read::<i32>(rec, 0) as u32 + 1 + next(8) as u32;
+                    let a = plain.resize(rec, grow);
+                    let b = wild.resize(rec, grow);
+                    assert_eq!(a, b, "seed {seed} step {step}: resize({rec}, {grow})");
+                    live[i] = a;
+                }
+                assert_eq!(plain.size, wild.size, "seed {seed} step {step}: store size");
+                assert_eq!(
+                    chain(&plain),
+                    chain(&wild),
+                    "seed {seed} step {step}: block chain"
+                );
+                for rec in &live {
+                    assert!(wild.claims.contains(*rec), "seed {seed} step {step}: {rec}");
+                }
+                check_wilderness(&wild);
+            }
+            assert!(wild.size > 64, "seed {seed}: the sequence grew the store");
+        }
     }
 
     #[test]

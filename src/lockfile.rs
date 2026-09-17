@@ -281,8 +281,8 @@ fn parse_string_array(s: &str) -> Vec<String> {
         .collect()
 }
 
-/// Atomic write: serialise `lock` to `<path>.tmp`, then rename to
-/// `path`.  Avoids leaving a half-written lockfile if the process
+/// Atomic write: serialise `lock` to a scratch file beside `path`, then
+/// rename it to `path`.  Avoids leaving a half-written lockfile if the process
 /// dies mid-write (which would brick subsequent `loft` invocations
 /// against this project).
 ///
@@ -291,10 +291,17 @@ fn parse_string_array(s: &str) -> Vec<String> {
 /// IO errors propagate.  Mismatched parent permissions surface as
 /// `PermissionDenied`; missing parent dir as `NotFound`.
 pub fn write_lockfile(path: &Path, lock: &LockFile) -> io::Result<()> {
+    // The scratch name carries the pid and a counter: two installs writing one lockfile at
+    // once shared `loft.lock.tmp`, and the first rename took the second writer's file away
+    // (`registry_index::replace_atomically` is the same idiom, loft#1045).
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let serialised = serialise(lock);
-    let tmp_path = path.with_extension("lock.tmp");
+    let tmp_path = path.with_extension(format!("lock.tmp{}-{n}", std::process::id()));
     fs::write(&tmp_path, serialised.as_bytes())?;
-    fs::rename(&tmp_path, path)
+    fs::rename(&tmp_path, path).inspect_err(|_| {
+        let _ = fs::remove_file(&tmp_path);
+    })
 }
 
 /// Render the lockfile as a TOML string.  Output is deterministic:

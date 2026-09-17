@@ -801,16 +801,24 @@ panic's frame block read.  Switch `LOFT_NO_LEAF_CHAIN` (one step finer than
                  whose every use is a field read, a free, a store-identity test, a copy
                  FROM it, or a `return`), or a dropped statement; an argument, a field
                  value, a return from a non-admitted function or a local that also
-                 takes a record declines the callee.  The record form's three guards
+                 takes a record declines the callee — except a FORWARD: a call handed a
+                 buffer `b` whose answer is bound back into `b` (the lowering of
+                 `return g(…)` in a function that keeps its record, and of a call arm of
+                 a value branch whose join takes a record) writes the tuple
+                 into `b` at the site exactly as `g`'s own exit would have — `b` minted
+                 where it is absent, every scalar set, a view part's vector copied —
+                 and evaluates to `b`, so `g` stays admitted everywhere else.  The record form's three guards
                  then read as the tuple says: a free of a value local is nothing, a
                  store-identity test against one is always distinct (so the free it
                  guards is unconditional — the ownership change a selecting tail
                  carries: the record form declined that free exactly when the buffer
                  was the result), and a copy FROM one MATERIALISES the tuple into the
-                 destination with one typed write per field, which is how a builder
+                 destination with one typed write per field (a view part: the field
+                 emptied, then the deep copy of what it views), which is how a builder
                  delivered into a push slot lands without a call or a buffer; and a
                  buffer local whose every mention is one of those drops — a dropped
-                 argument, a free, a test against a value local — is DEAD, and its
+                 argument, a free, the pool's release before a reuse, a test against a
+                 value local — is DEAD, and its
                  mint and its frees emit as nothing.  An OWNED
                  record at a tail declines: the value form would have to mint per call
                  what the buffer form reuses.  Every function a fn-ref dispatch can
@@ -875,14 +883,23 @@ symbol and self time is the candidate).  Sites: `vector::get_elem_hoisted_cold`,
                  the destination is a relocation within S (R-MoveLast).  When the
                  destination place EXISTS at the call and no argument of the call
                  reaches it, the buffer IS the place and nothing moves.  Declines: a
-                 path that reads the result after the store (the destination owns it
-                 then, and B-Copy would show); an argument that reaches the
-                 destination's store (source and destination alias); a callee that
-                 may hand back a store it did not mint (O-Opaque: empty deps license
-                 nothing); a callee that on some exit answers a store other than the
-                 buffer it was handed (the destination would hold the writes of the
-                 exit not taken); a `?`/`??` discharge on the result.  Every other
-                 call keeps its own buffer.
+                 path that reads the result after a RELOCATING store (the destination
+                 owns it then, and B-Copy would show — where the buffer IS the place, a
+                 read of the result reads what was written and needs nothing); an
+                 argument that reaches the destination's store (source and destination
+                 alias); a callee that may hand back a store it did not mint (O-Opaque:
+                 empty deps license nothing), and, where the buffer IS the place, a
+                 callee that MINTS into its buffer on some exit (a returned vector
+                 literal does), which would mint over the place it was handed; a callee
+                 that on some exit answers a store other than the buffer it was handed
+                 (the destination would hold the writes of the exit not taken); a
+                 `?`/`??` discharge on the result; a destination that does not
+                 unconditionally EXIST at the call — a field of a struct-enum VARIANT
+                 exists only while the value holds that variant.  A member of a linked
+                 collection group is NOT a decline: the group's maintenance brackets
+                 the fill (Col-Group), and a fill that arrives through the buffer
+                 instead of an append is one it must see.  Every other call keeps its
+                 own buffer.
   (R-MoveLast)   a record-literal field or a field/element assignment whose source is
                  a LOCAL the ownership oracle marks OWNED (O-Owner: never a parameter,
                  a view, a `&` link or a witnessed local) and DEAD on every path after
@@ -908,7 +925,18 @@ symbol and self time is the candidate).  Sites: `vector::get_elem_hoisted_cold`,
                  (loft#914) — so the place holds exactly what the copy would have
                  left.  An absent element keeps the path the copy takes today; a
                  literal whose field reads the place through a call the walk cannot
-                 see declines.  A NESTED literal that initialises an embedded record
+                 see declines.  The place is written once per FIELD, so the ELEMENT
+                 clause holds only where re-deriving the receiver for each write is
+                 the same place with no effect the program can see — a repeatable base
+                 and an index that is a literal or a bare variable (`v[bump()]` would
+                 call `bump` per field; `v[len(v) - 2]` re-reads a length the writes
+                 may move).  An element whose type owns a COLLECTION field declines:
+                 staging a field read of the slot's own collection binds a VIEW
+                 (B-View-Base), and the write releases what that view names before the
+                 value is stored back.  A member of a linked collection group declines:
+                 its unlink and relink bracket a whole-record write (Col-Group), and a
+                 write straight into the slot leaves the keyed member holding the
+                 record under its old key.  A NESTED literal that initialises an embedded record
                  field of a FRESH record — an appended element or a construction
                  temporary, `sc.ops += [Op { paint: Paint { … } }]` — is written into
                  that field the same way; nothing can read a fresh record while it
@@ -939,19 +967,28 @@ codegen does not yet read it), the disturbance walk `B-Ref-Reshape` runs for `&`
 and `R-Callee`'s writer summary.  (R-Place)'s callee clause — *a callee that on some
 exit answers a store other than the buffer it was handed* declines — is what
 `Parser::literal_exits_into_buffer` makes true for every callee whose exits are ALL
-literals: once the tail's delivery is decided and the buffer is still the unpromoted
-`__retbuf`, each mid-body `return S { … }` builds into it as the tail literal does
-(switch `LOFT_NO_LITERAL_EXIT_BUFFER=1`), where before it minted a store per exit and the
-caller adopted whichever came back; a callee with a promoted local beside a literal exit
-keeps its per-exit stores.  (R-Prefill) is built (C4): its ONE site is
+literals or CHAINS: once the tail's delivery is decided and the buffer is still the
+unpromoted `__retbuf` — or a buffer only chains name (`return no_mk()`, a tail `no_mk()`,
+which rename it after the chain's work ref; `Parser::chain_return_buffer_var`) — each
+mid-body `return S { … }` builds into it as the tail literal does, and so does a literal
+TAIL beside chain exits (switch `LOFT_NO_LITERAL_EXIT_BUFFER=1`), where before it minted a
+store per exit and the caller adopted whichever came back.  A chain exit answers what its
+callee wrote into the same buffer, and a chain always returns, so no literal exit meets a
+value another statement put there.  A callee with a promoted named local beside a literal
+exit keeps its per-exit stores.  (R-Prefill) is built (C4): its ONE site is
 `Stores::prefill_from_image` in `src/database/structures.rs`, the image is READ BACK
 from the walk's first run over a zeroed span rather than computed a second way, the
 switch is `LOFT_NO_PREFILL_IMAGE=1` and the falsifier `LOFT_PREFILL_VERIFY=1` (the walk
-re-run after every image write, a panic where they disagree).  The other three have no
-switch, site or cell yet: each lands with its phase in the @PLN157 shape (a
-`LOFT_NO_<unit>` switch, cells with hand-computed values on both backends under
-`LOFT_STRICT_STORES`, `LOFT_POISON` and the leak gate, a guard with its
-`@falsified-at:` receipt), and until then the copy each rule replaces is what runs.
+re-run after every image write, a panic where they disagree).  (R-Place), (R-MoveLast) and (R-InPlaceLiteral) are built too, each
+in the @PLN157 shape with its own switch and cells: the callee clause above
+(`LOFT_NO_LITERAL_EXIT_BUFFER`), the relocation of a call's result into an appended element
+(`LOFT_NO_PLACE_RESULT`, `OpPlaceRecord`/`OpMoveRecord`), the buffer that IS the place
+(`LOFT_NO_BUFFER_IS_PLACE`), the element written in place (`LOFT_NO_ELEMENT_IN_PLACE`) and
+the nested literal (`LOFT_NO_NESTED_IN_PLACE`).  Each implementation admits less than its
+rule — the B2 relocation only a destination in an element appended to a PARAMETER's
+collection, outside a loop, with no second destination or host — and a narrower admission
+costs the rewrite and never a value.  The declines written into the rules above are the
+ones a MEASUREMENT bought (@PLN164's README § C1, § C2 *The restrictions, re-derived*).
 The rules are written BEFORE the phases so that a question met while building one is
 answered here rather than decided in the code.
 

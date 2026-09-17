@@ -138,6 +138,8 @@ pub(crate) struct VarSnapshot<'a> {
     pub view_elided: bool,
     /// A hidden return buffer minted at its first use (`@FR-O-LazyBuffer`); read by both emitters.
     pub lazy_buffer: bool,
+    /// The one bind after an `if`'s pre-init is a first bind (`@FR-O-Move`); read by both emitters.
+    pub deferred_first_bind: bool,
     /// The owner witness of a mixed-ownership local (`@FR-O-Witness`), `u16::MAX` for none.
     pub owner_witness: u16,
 }
@@ -157,6 +159,7 @@ pub(crate) struct RestoredVar {
     pub caller_hidden_buf: bool,
     pub view_elided: bool,
     pub lazy_buffer: bool,
+    pub deferred_first_bind: bool,
     pub owner_witness: u16,
 }
 
@@ -196,6 +199,13 @@ pub struct Variable {
     /// `OpDatabase`, which the native hoist gate reads this to admit.  Set by
     /// `scopes::lazy_buffer_mints` and `scopes::reuse_record_buffers`.
     lazy_buffer: bool,
+    /// @PLN164 B1 behind a null-init (`@FR-O-Move`) — a local first bound inside an `if`
+    /// gets a null pre-init in front of it (`scopes::scan_if`), which turns its bind into a
+    /// REBIND on both backends; when that bind is its only one and adopts the callee's
+    /// minted record (`use_analysis::adopts_minted_at_bind`), the local holds the sentinel
+    /// there on every path and the bind is its first.  Set by `scan_if`, read by both
+    /// backends' bind arms.
+    deferred_first_bind: bool,
     /// @PLN130 F9 — this binding was spelled with `&` at a STRUCT-typed projection
     /// (`c = &v[0]`, `c = &o.inner`).  Such a projection is already a VIEW under B-View,
     /// so both spellings lower to byte-identical IR and the `&` used to be dropped as
@@ -671,6 +681,7 @@ impl Function {
             caller_hidden_buf: v.caller_hidden_buf,
             view_elided: v.view_elided,
             lazy_buffer: v.lazy_buffer,
+            deferred_first_bind: v.deferred_first_bind,
             owner_witness: self.owner_witness(i as u16).unwrap_or(u16::MAX),
         }
     }
@@ -731,6 +742,7 @@ impl Function {
                 caller_hidden_buf: r.caller_hidden_buf,
                 view_elided: r.view_elided,
                 lazy_buffer: r.lazy_buffer,
+                deferred_first_bind: r.deferred_first_bind,
                 // codegen-irrelevant post-parse defaults (not stored):
                 source: (0, 0),
                 scope: u16::MAX,
@@ -1380,6 +1392,14 @@ impl Function {
     #[allow(dead_code)] // used from integration tests (tests/testing.rs)
     pub fn last_use(&self, var_nr: u16) -> u32 {
         self.variables[var_nr as usize].last_use
+    }
+
+    /// Keep `var_nr` live at least as long as `other`: for a variable an emitter reads at
+    /// `other`'s sites without the IR naming it there (a promoted buffer's entry witness).
+    pub fn extend_last_use_to(&mut self, var_nr: u16, other: u16) {
+        let until = self.variables[other as usize].last_use;
+        let v = &mut self.variables[var_nr as usize];
+        v.last_use = v.last_use.max(until);
     }
 
     pub fn scope(&self, var_nr: u16) -> u16 {
@@ -2236,6 +2256,7 @@ impl Function {
             value_const: false,
             view_elided: false,
             lazy_buffer: false,
+            deferred_first_bind: false,
             amp_link: false,
             amp_container_link: false,
             iteration_source: false,
@@ -2271,6 +2292,7 @@ impl Function {
             value_const: self.variables[var as usize].value_const,
             view_elided: false,
             lazy_buffer: false,
+            deferred_first_bind: false,
             amp_link: self.variables[var as usize].amp_link,
             amp_container_link: self.variables[var as usize].amp_container_link,
             iteration_source: self.variables[var as usize].iteration_source,
@@ -2309,6 +2331,7 @@ impl Function {
             value_const: false,
             view_elided: false,
             lazy_buffer: false,
+            deferred_first_bind: false,
             amp_link: false,
             amp_container_link: false,
             iteration_source: false,
@@ -2344,6 +2367,7 @@ impl Function {
             value_const: false,
             view_elided: false,
             lazy_buffer: false,
+            deferred_first_bind: false,
             amp_link: false,
             amp_container_link: false,
             iteration_source: false,
@@ -3045,6 +3069,20 @@ impl Function {
         self.variables[var_nr as usize].lazy_buffer = true;
     }
 
+    /// Mark `var_nr`'s one bind after its `if` pre-init as its first — see the field's own
+    /// doc (`@FR-O-Move`).
+    pub fn mark_deferred_first_bind(&mut self, var_nr: u16) {
+        self.variables[var_nr as usize].deferred_first_bind = true;
+    }
+
+    /// Whether `var_nr`'s bind after its `if` pre-init is its first — see
+    /// [`Self::mark_deferred_first_bind`].
+    #[must_use]
+    pub fn is_deferred_first_bind(&self, var_nr: u16) -> bool {
+        (var_nr as usize) < self.variables.len()
+            && self.variables[var_nr as usize].deferred_first_bind
+    }
+
     /// Whether `var_nr`'s entry null-init is the sentinel and its store is minted at its
     /// first use — see [`Self::mark_lazy_buffer`].
     #[must_use]
@@ -3223,6 +3261,31 @@ impl Function {
     #[must_use]
     pub fn owner_witness(&self, v: u16) -> Option<u16> {
         self.owner_witness.get(&v).copied()
+    }
+
+    /// The name of the ENTRY WITNESS of a promoted return buffer `buf` — see
+    /// [`Self::entry_witness`].  One spelling, read by the scope pass that mints it and by
+    /// every emitter that asks for it, so the name is the fact and survives the IR cache.
+    #[must_use]
+    pub fn entry_witness_name(buf: &str) -> String {
+        format!("__rbw_{buf}")
+    }
+
+    /// `@FR-O-Buffer` — the variable holding the store the CALLER handed as `v`'s return
+    /// buffer, snapshotted at function entry, or `None` when the scope pass minted none.
+    ///
+    /// A local promoted onto the hidden return buffer IS that parameter, so it holds either
+    /// the caller's store (never this frame's to free) or one this frame minted when the
+    /// caller handed the null sentinel.  No static bit tells the two apart; the snapshot
+    /// does, per run, which is what native's `_rb_w_<buf>` prologue has always compared.
+    /// Every free of `v` this frame emits declines when `v` still names the snapshot's store.
+    #[must_use]
+    pub fn entry_witness(&self, v: u16) -> Option<u16> {
+        if (v as usize) >= self.variables.len() {
+            return None;
+        }
+        let w = self.var(&Self::entry_witness_name(self.name(v)));
+        (w != u16::MAX).then_some(w)
     }
 
     pub fn is_caller_hidden_buf(&self, var_nr: u16) -> bool {

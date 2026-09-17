@@ -4099,3 +4099,48 @@ population is measured in the commit that closed it.
 
 A consumer's read-only helper cannot be declared `const` because a type or generic spelling does
 not accept it — that is a gap in `const`'s syntax to close, not a reason to read the body.
+
+## C125 — The store model stays simple: performance work removes objects, it does not add a second kind of object
+
+**Catalogue:** @PLN164 (Open design question E1, tier 1 / A1–A2) · reads C122 · `formal/ownership.md` `(O-Buffer)`
+
+**Asked (2026-09-17, @PLN164 E1):** the plan's tier 1 put every hidden buffer of an activation
+into ONE store, released to a mark at exit, to save the store mint and free each temporary
+pays.  That breaks the fact every free guard and witness rests on — *one store is one object,
+so the same `store_nr` means the same object* (287 such tests in one parse emission) — so the
+plan asked the owner to pick between widening identity to `(store_nr, rec)` everywhere and a
+pooled cheap store per buffer.
+
+**Decision (owner, 2026-09-17): neither — the question is the wrong one.**  *"The optimized
+version can eliminate the object and thus make this whole question moot."*  *"If we make our
+model more complex it will be hard to reason about and thus impossible to solve.  When
+individual objects can just be removed."*
+
+**What it settles.**  The memory model a rule, a guard or a reader reasons over stays the
+one it is: a store is one object, identity is the store, a free releases a store.  An
+optimisation may not add a second kind of object (a record-in-an-arena whose identity is a
+pair, whose free is partial, whose leak a store-count gate cannot see) to make temporaries
+cheaper.  It removes the temporary instead — the value travels in registers
+(`(R-ValueRecord)`), is a view of where it already lives (`(O-ViewField)`), or is built
+inside the one place that consumes it (`(R-Place)`, `(R-InPlaceLiteral)`, `(R-ElemFirst)`).
+Every one of those removes the object's store, its copies AND every identity test about it;
+an arena keeps all three and changes the object's address.  Where a temporary lives inside
+its owner's store (B2), which free stands on which path is a compile-time fact written into
+the IR, never a wider runtime identity (the B2 ruling on runtime stand-ins).
+
+**What the measurement said.**  The parse row's store census when this was asked (per
+parse): 6 `Mark`, 9 `vector<Pt>`, 6 `vector<float>`, 4.5 `PointList`, 2 `Sketch`, 3 others.
+About 21 of 31 are removable by the three mechanisms above, each with the deep copy it
+carries; the irreducible temporaries (`PointList`, a scratch record of dynamically sized
+vectors) are served by REUSING a store per call site, which needs no identity change.  The
+arena's residual domain was ≈ 1.5 % of the row against the widest change in the plan.
+
+**What it does not change.**  A result that may be the caller's argument or a fresh record
+(`Own::Join`) keeps today's runtime identity test — that is the existing model, not a new
+one.  A published library API keeps the record form (C122, `(R-Escape)`).  The interpreter
+keeps the record form; it is the values oracle, not the performance lane.
+
+### Revisit when
+
+A row shows a class of temporaries that cannot be removed or reused and costs more than a few
+percent — measured on the release binary with `perf`, not from a count.

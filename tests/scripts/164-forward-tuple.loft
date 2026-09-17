@@ -1,0 +1,159 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN164 E-1 (`@FR-R-ValueRecord`, `@FR-O-ViewField`) — A FORWARD WRITES THE TUPLE INTO ITS
+// OWN BUFFER.  A function that keeps its record (`fr` below: its points live only in its own
+// frame, and a site stores its result) returns an admitted callee's answer with
+// `return nm()` / `return hit(…)`.  The parser writes that as the callee filling the buffer the
+// forwarder was handed; in the value form the callee answers a tuple, and the forwarding site
+// writes it into that buffer itself — minted where it is absent, every scalar set, a view
+// part's vector copied — so the callee stays admitted everywhere else.
+//
+// Every value is the record form's, hand-computed from the declarations: `--interpret` keeps
+// the record form always and measures the oracle.  `mkpts(n)`: px = i, py = 2i, so `len` n and
+// `totp` 3n(n-1)/2 — 2 → 3, 3 → 9, 4 → 18.
+//
+// @falsified-at: hand-measured (2026-09-17).  The forward is a new emission, so the receipt is
+// the emission's own failure, measured with both switches armed: with the site's
+// allocate-or-reuse guard removed, `q5` (a buffer handed in ABSENT, which only an adopting first
+// bind does) stopped the run with "a NULL DbRef reached a store accessor" after `q1`–`q4` held;
+// with the view part's copy removed, five cells moved — `q2` read 0,0 for 2,3, `q3` 0,0 for 3,9,
+// `q5` 0,0 for 3,9, `q6` 513,509 for 1025,1021 and `q7` 2,0,0 for 232,3,9.  The admissions
+// themselves are pinned in `tests/view_field.rs`.
+
+struct Pt { px: integer = 0, py: integer = 0 }
+struct Op { opts: vector<Pt>, ow: integer = 0 }
+struct Sc { ops: vector<Op>, seen: integer = 0 }
+struct Mark { matched: boolean = false, bad: boolean = false, mpts: vector<Pt> }
+struct Sz { za: integer = 0, zb: float = 0.0, zc: boolean = false }
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+fn totp(v: const vector<Pt>) -> integer { t = 0; for p in v { t += p.px + p.py; } t }
+fn mkpts(n: integer) -> vector<Pt> {
+  o: vector<Pt> = [];
+  for i in 0..n { o += [Pt { px: i, py: i * 2 }]; }
+  o
+}
+
+/// Admitted: every exit a view or a null view.
+fn nm() -> Mark { Mark { matched: false, bad: false, mpts: [] } }
+fn hit(sc: Sc, n: integer) -> Mark {
+  if n < 0 { return nm() }
+  h_p = mkpts(n);
+  sc.ops += [Op { opts: h_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: h_p }
+}
+/// Admitted with a JOINED leaf: the arms append through different element temps.
+fn hit2(sc: Sc, n: integer, c: boolean) -> Mark {
+  h2_p = mkpts(n);
+  if c { sc.ops += [Op { opts: h2_p, ow: 1 }]; } else { sc.ops += [Op { opts: h2_p, ow: 2 }]; }
+  Mark { matched: true, bad: false, mpts: h2_p }
+}
+/// Admitted, scalars only.
+fn sz(n: integer) -> Sz { Sz { za: n, zb: 1.5, zc: true } }
+
+/// q1..q3, q6 — keeps its record: its own points live only in its frame.  Forwards `nm`
+/// (a null view), `hit` (a view) and `hit2` (a joined view).
+fn fr(sc: Sc, n: integer) -> Mark {
+  if n < 0 { return nm() }
+  if n == 0 { return hit(sc, 2) }
+  if n == 1 { return hit2(sc, 3, false) }
+  f_all: vector<Pt> = [];
+  for i in 0..n { f_all += [Pt { px: i, py: 1 }]; }
+  Mark { matched: true, bad: false, mpts: f_all }
+}
+/// q4 — keeps its record (a site stores it); forwards a scalar-only admitted callee.
+fn fz(n: integer) -> Sz {
+  if n < 0 { return sz(0 - n) }
+  Sz { za: n * 2, zb: 2.5, zc: false }
+}
+/// q5 — returns the local it promoted onto its buffer, so a first bind ADOPTS its store and
+/// hands the buffer in absent; its forward must mint it.
+fn fp(sc: Sc, n: integer) -> Mark {
+  if n < 0 { return hit(sc, 0 - n) }
+  fp_o = Mark { matched: true, bad: true, mpts: [] };
+  fp_o.mpts += [Pt { px: n, py: 0 }];
+  fp_o
+}
+/// q7 — a record-form function forwarding a record-form function: the inner forwards write
+/// the outer's buffer.
+fn fr_outer(sc: Sc, n: integer) -> Mark {
+  if n > 10 { return Mark { matched: false, bad: true, mpts: [] } }
+  fr(sc, n)
+}
+
+fn main() {
+  // q1 — a null view forwarded: matched false, no points.
+  s1 = Sc { ops: [], seen: 0 };
+  keep1: vector<Mark> = [];
+  keep1 += [fr(s1, -1)];
+  ok("q1 null view    ", "{keep1[0]?.matched},{len(keep1[0]?.mpts)},{len(s1.ops)}", "false,0,0");
+
+  // q2 — a view forwarded: `hit(sc, 2)` appends two points and the record holds them.
+  s2 = Sc { ops: [], seen: 0 };
+  keep2: vector<Mark> = [];
+  keep2 += [fr(s2, 0)];
+  ok("q2 view         ", "{keep2[0]?.matched},{len(keep2[0]?.mpts)},{totp(keep2[0]?.mpts)}", "true,2,3");
+  // … and it is a COPY: growing the container and writing the element leave it alone.
+  s2.ops += [Op { opts: [], ow: 9 }];
+  s2.ops[0]?.ow = 77;
+  keep2[0]?.mpts += [Pt { px: 100, py: 0 }];
+  ok("q2 a copy       ", "{totp(keep2[0]?.mpts)},{totp(s2.ops[0]?.opts)},{len(s2.ops)}", "103,3,2");
+
+  // q3 — a joined view forwarded: `hit2(sc, 3, false)` appends three points in its else arm.
+  s3 = Sc { ops: [Op { opts: [], ow: 5 }], seen: 0 };
+  keep3: vector<Mark> = [];
+  keep3 += [fr(s3, 1)];
+  ok("q3 joined view  ", "{len(keep3[0]?.mpts)},{totp(keep3[0]?.mpts)},{s3.ops[1]?.ow}", "3,9,2");
+
+  // q4 — scalars forwarded: sz(3) is 3, 1.5, true; the own exit for 4 is 8, 2.5, false.
+  keep4: vector<Sz> = [];
+  keep4 += [fz(-3)];
+  keep4 += [fz(4)];
+  ok("q4 scalars      ", "{keep4[0]?.za},{keep4[0]?.zb},{keep4[0]?.zc},{keep4[1]?.za},{keep4[1]?.zb},{keep4[1]?.zc}", "3,1.5,true,8,2.5,false");
+
+  // q5 — the buffer handed in absent: the first bind adopts, the forward mints.
+  s5 = Sc { ops: [], seen: 0 };
+  m5 = fp(s5, -3);
+  ok("q5 minted       ", "{m5.matched},{m5.bad},{len(m5.mpts)},{totp(m5.mpts)}", "true,false,3,9");
+  m5b = fp(s5, 7);
+  ok("q5 own exit     ", "{m5b.bad},{len(m5b.mpts)},{totp(m5b.mpts)}", "true,1,7");
+
+  // q6 — the forwarder in a LOOP, its buffer reused with each exit in turn: -1 (null view),
+  // 0 (view of 2 points), 1 (joined view of 3), 2 and 3 (own points: px 0..n-1, py 1 each).
+  // len*100 + totp per call: 0, 203, 309, 203 (2 points: 0+1, 1+1), 306 (0+1, 1+1, 2+1).
+  // Plus matched: 0 + 1 + 1 + 1 + 1.  1021 + 4 = 1025; and keep6 re-reads every one.
+  s6 = Sc { ops: [], seen: 0 };
+  t6 = 0;
+  keep6: vector<Mark> = [];
+  for k in -1..4 {
+    keep6 += [fr(s6, k)];
+    m6 = keep6[len(keep6) - 1]?;
+    t6 += len(m6.mpts) * 100 + totp(m6.mpts) + (if m6.matched { 1 } else { 0 });
+  }
+  r6 = 0;
+  for m in keep6 { r6 += len(m.mpts) * 100 + totp(m.mpts); }
+  ok("q6 in a loop    ", "{t6},{r6},{len(s6.ops)}", "1025,1021,2");
+
+  // q7 — two levels: the outer's own exit, then each inner exit through the outer.
+  s7 = Sc { ops: [], seen: 0 };
+  keep7: vector<Mark> = [];
+  keep7 += [fr_outer(s7, 11)];
+  keep7 += [fr_outer(s7, -1)];
+  keep7 += [fr_outer(s7, 0)];
+  keep7 += [fr_outer(s7, 1)];
+  keep7 += [fr_outer(s7, 2)];
+  t7 = 0;
+  for m in keep7 { t7 = t7 * 10 + len(m.mpts); }
+  ok("q7 two levels   ", "{keep7[0]?.bad},{t7},{totp(keep7[2]?.mpts)},{totp(keep7[3]?.mpts)},{len(s7.ops)}", "true,232,3,9,2");
+
+  // q8 — the admitted callees called directly still answer the same.
+  s8 = Sc { ops: [], seen: 0 };
+  m8 = hit(s8, 4);
+  ok("q8 direct       ", "{m8.matched},{len(m8.mpts)},{totp(m8.mpts)}", "true,4,18");
+  z8 = sz(6);
+  ok("q8 scalar direct", "{z8.za},{z8.zb},{z8.zc}", "6,1.5,true");
+
+  println("164-forward-tuple: every cell holds");
+}

@@ -2368,21 +2368,57 @@ impl Output<'_> {
                 // @PLN164 C5 — a VIEW LEAF's element is the PLACE the field views, and a
                 // null reference where the exit writes the field not at all: the empty
                 // literal, whose value in the record form is the prefill's own zero.
+                // The leaf is the one the gate PROVED for this exit (`ViewPlan::leaves`); an
+                // exit the plan does not name is a view field the gate never admitted, which
+                // is a generator defect and not a null.
                 let Some(val) = val else {
                     let src = offs.get(i).and_then(|off| {
-                        super::hoist::leaf_source(
-                            self.data,
-                            self.stores,
-                            self.def_nr,
-                            self.data.def(self.def_nr).code(),
-                            bl,
-                            *off,
-                        )
+                        self.value_records
+                            .views
+                            .get(&self.def_nr)
+                            .and_then(|p| p.leaves.get(&(std::ptr::from_ref(bl) as usize, *off)))
                     });
-                    if let Some(super::hoist::LeafSource::Place(e)) = src {
-                        self.output_code_inner(w, e)?;
-                    } else {
-                        write!(w, "DbRef::NULL")?;
+                    match src {
+                        Some(super::hoist::LeafSource::Null) => write!(w, "DbRef::NULL")?,
+                        Some(super::hoist::LeafSource::Elem { elem, off, .. }) => {
+                            let (elem, off) = (*elem, *off);
+                            write!(w, "{{ let _vl = ")?;
+                            self.output_code_inner(w, &Value::Var(elem))?;
+                            write!(
+                                w,
+                                "; DbRef {{ store_nr: _vl.store_nr, rec: _vl.rec, pos: _vl.pos + {off}u32 }} }}"
+                            )?;
+                        }
+                        Some(super::hoist::LeafSource::Last {
+                            root,
+                            parent_tp,
+                            fld,
+                            off,
+                        }) => {
+                            let (root, off) = (*root, *off);
+                            let stride =
+                                super::hoist::element_stride(self.stores, *parent_tp, *fld);
+                            write!(w, "{{ let _vr = ")?;
+                            self.output_code_inner(w, &Value::Var(root.0))?;
+                            if root.1 == crate::use_analysis::ANY_FIELD {
+                                write!(w, "; let _vc = _vr")?;
+                            } else {
+                                write!(
+                                    w,
+                                    "; let _vc = DbRef {{ store_nr: _vr.store_nr, rec: _vr.rec, pos: _vr.pos + {}u32 }}",
+                                    root.1
+                                )?;
+                            }
+                            write!(
+                                w,
+                                "; let _ve = vector::get_vector(&_vc, {stride}u32, -1, &stores.allocations); DbRef {{ store_nr: _ve.store_nr, rec: _ve.rec, pos: _ve.pos + {off}u32 }} }}"
+                            )?;
+                        }
+                        None => panic!(
+                            "view leaf of {} at +{:?} has no proven source",
+                            self.data.def(self.def_nr).name(),
+                            offs.get(i)
+                        ),
                     }
                     continue;
                 };
