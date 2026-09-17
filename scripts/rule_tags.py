@@ -30,10 +30,11 @@
 #   dups           rules cited from 2+ sites — the duplication question, asked by MEANING
 #                  rather than by code shape (which is what rule_predicate_audit.py does)
 #   coverage       what share of the rules carry a code ANNOTATION and what share carry an
-#                  active GUARD, against the standing goal — the command a doc links to
+#                  active GUARD, against the contract-1 FLOORS — the command a doc links to
 #                  INSTEAD of writing a position down.  A measured position is stale the
-#                  moment it is committed; the goal is not, so the goal is the only number
-#                  worth putting in prose.  A REPORT: always exit 0.
+#                  moment it is committed; a floor is not, so the floor is the only number
+#                  worth putting in prose.  Floors are MINIMUMS for the freeze, not targets
+#                  to stop at.  A REPORT: always exit 0.
 
 import collections
 import glob
@@ -50,13 +51,15 @@ SRC = os.path.join(ROOT, "src")
 CITE_DIRS = os.environ.get("CITE_DIRS", "").split(":") if os.environ.get("CITE_DIRS") else [SRC]
 CITE_EXTS = os.environ.get("CITE_EXTS", ".rs").split(",")
 
-# `coverage`'s second tier and the standing GOAL it reports against.  The goal is the only
-# figure worth committing to prose: a position measured today is stale tomorrow, so a doc
+# `coverage`'s second tier and the contract-1 MINIMUM THRESHOLDS it reports against.  These
+# are floors, not targets: the owner's informed estimate of the least coverage that could earn
+# the `CONTRACT_VERSION` 0 -> 1 freeze, and the work goes on past them.  They are the only
+# figures worth committing to prose — a position measured today is stale tomorrow, so a doc
 # links to this command rather than restating a number that then rots in several homes at
 # once.  Both are env-overridable, and GUARD_DIRS mirrors CITE_DIRS so a vendoring project
 # points them at its own layout.  Guards cite from `.loft` as well as `.rs`.
-GOAL_ANNOTATED = int(os.environ.get("RULE_GOAL_ANNOTATED", "70"))
-GOAL_GUARDED = int(os.environ.get("RULE_GOAL_GUARDED", "40"))
+MIN_ANNOTATED = int(os.environ.get("RULE_MIN_ANNOTATED", "70"))
+MIN_GUARDED = int(os.environ.get("RULE_MIN_GUARDED", "40"))
 TESTS = os.path.join(ROOT, "tests")
 GUARD_DIRS = (os.environ["GUARD_DIRS"].split(":")
               if os.environ.get("GUARD_DIRS") else [TESTS])
@@ -362,18 +365,22 @@ def main():
         total = len(rules)
         pct = (lambda k: 100.0 * k / total if total else 0.0)
         print(f"{total} defined rules\n")
-        for label, got, goal in (("code annotation", ann, GOAL_ANNOTATED),
-                                 ("active guard", grd, GOAL_GUARDED)):
+        for label, got, floor in (("code annotation", ann, MIN_ANNOTATED),
+                                  ("active guard", grd, MIN_GUARDED)):
             have = pct(len(got))
-            short = max(0, int(goal * total / 100 + 0.999) - len(got))
-            mark = "goal met" if have >= goal else f"{short} rule(s) short of {goal} %"
-            print(f"  {label:<16} {len(got):>4} / {total}   {have:5.1f} %   goal {goal} %  ({mark})")
+            short = max(0, int(floor * total / 100 + 0.999) - len(got))
+            mark = "floor met" if have >= floor else f"{short} rule(s) short of {floor} %"
+            print(f"  {label:<16} {len(got):>4} / {total}   {have:5.1f} %   "
+                  f"contract-1 floor {floor} %  ({mark})")
         print(f"\n  both tiers       {len(ann & grd):>4} / {total}   {pct(len(ann & grd)):5.1f} %")
         print(f"  neither          {len(rules.keys() - ann - grd):>4} / {total}   "
               f"{pct(len(rules.keys() - ann - grd)):5.1f} %")
         print("\nA guard tier counts a rule NAMED by a test, which is not the same as a test "
-              "that\nwould fail without it — read it as the weaker claim.  Goals move with "
-              "RULE_GOAL_ANNOTATED\nand RULE_GOAL_GUARDED.  A report, never a gate.")
+              "that\nwould fail without it — read it as the weaker claim.  The floors are "
+              "contract-1 MINIMUMS,\nnot targets to stop at, and are informed estimates the "
+              "owner may move (RULE_MIN_ANNOTATED,\nRULE_MIN_GUARDED).  Crossing them is "
+              "necessary for the freeze, never sufficient —\nCOMPATIBILITY.md § The road to "
+              "contract 1.  A report, never a gate.")
         return 0
 
     cites = citations()

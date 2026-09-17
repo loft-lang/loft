@@ -258,7 +258,7 @@ needed it: a reader at `variables.tp(var)` has nothing to grep, because the thin
 about to get wrong is an absence. That is the case for the citation direction — **a site
 enforcing a rule names it, so "which sites ask this?" is a grep instead of a memory** — and it
 is why the rules with no code representation are the backlog rather than a statistic
-(`make rule-coverage` counts them; the goal is 70 % annotated, 40 % guarded).
+(`make rule-coverage` counts them; the contract-1 floors are 70 % annotated, 40 % guarded).
 Better prose in the register could not have closed any of the six.
 
 **Why this is the quality lever, and not just tidiness.** Fixing a bug has no intrinsic test
@@ -275,8 +275,9 @@ worth failing on from the first day; *every rule has at least one citation* tigh
 grows. Any rule→site index is **generated** from the citations, never maintained beside
 them — a second copy of where the rules live is the defect this convention exists to remove.
 
-**Coverage: `make rule-coverage`.** The goal is **70 % of rules carrying a code annotation and
-40 % an active guard**, and the command says how many rules short of each the tree is. No share
+**Coverage: `make rule-coverage`.** The contract-1 floors are **70 % of rules carrying a code
+annotation and 40 % an active guard** — minimums for the freeze rather than targets to stop at —
+and the command says how many rules short of each the tree is. No share
 is written here on purpose — this line read `76 of 255 cited, across 163 sites` for long enough
 to go stale, in company with three other homes that carried the same figure and rotted together.
 A stale share does not read as stale; it reads as a measured position. ⚠ **An

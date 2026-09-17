@@ -2614,11 +2614,13 @@ linkcheck-external:
 #   make falsify-review ARGS=--all          # every under-documented receipt
 #   make falsify-review ARGS="--since <ref>"  # + how many controls went unreachable since
 # What share of the formal rules carry a code ANNOTATION, and what share an active GUARD,
-# against the standing goal.  Docs link to this instead of restating the position: a measured
-# share is stale the moment it is committed, and this one had rotted in four homes at once
-# (CLAUDE.md, STABILITY_METHOD.md, COMPATIBILITY.md, formal/README.md) before anybody noticed.
-# The GOAL is the only figure worth writing into prose, and it lives in `rule_tags.py` alone —
-# move it with RULE_GOAL_ANNOTATED / RULE_GOAL_GUARDED.  A REPORT, never a gate.
+# against the contract-1 FLOORS.  Docs link to this instead of restating the position: a
+# measured share is stale the moment it is committed, and this one had rotted across five files
+# and seven passages at once (CLAUDE.md, STABILITY_METHOD.md, COMPATIBILITY.md, formal/README.md
+# three times over, formal/IMPLEMENTATIONS.md) before anybody noticed.
+# The contract-1 FLOORS are the only figures worth writing into prose, and they live in
+# `rule_tags.py` alone — move them with RULE_MIN_ANNOTATED / RULE_MIN_GUARDED.  They are
+# minimums for the freeze, not targets to stop at.  A REPORT, never a gate.
 .PHONY: rule-coverage
 rule-coverage:  ## What share of the formal rules carry a code annotation, and an active guard
 	@python3 scripts/rule_tags.py coverage

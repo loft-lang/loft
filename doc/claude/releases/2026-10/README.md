@@ -151,7 +151,10 @@ documentation recommendations were false before the guard (`len(secs) < 2` canno
   their figures on purpose — `BUG_REVIEW.md`'s per-cycle rows, `QUALITY.md`'s phase narratives,
   the plan files, IMPLEMENTATIONS' counting progression and the changelog are evidence of what
   was measured then, and refreshing them would falsify the record.  What
-  IS written down is the GOAL, which does not rot: **70 % of rules carrying a code annotation,
+  IS written down is the contract-1 FLOOR, which does not rot — a MINIMUM for the freeze rather
+  than a target to stop at, recorded in `COMPATIBILITY.md` § The road to contract 1 beside
+  `silent-wrong` → 0, `contract:strained` → 0, "open deviations as few as they can be made" and a
+  LIGHT detection pass over every rule (named there, and not yet built): **70 % of rules carrying a code annotation,
   40 % an active guard**, stated once in `rule_tags.py` and overridable by env.
 - **`M-docs-review` is four-fifths done and deliberately untickled.**  RELEASE.md steps 1, 2, 3 and
   8 are complete: PROBLEMS.md is uniformly closed (its `@P1`–`@P6` rows are a 3-column legacy shape,

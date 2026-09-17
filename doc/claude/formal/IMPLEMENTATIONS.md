@@ -36,13 +36,13 @@ answer. `scripts/rule_tags.py` is that tool — `list` · `check` · `sites <tag
 | defined rules (fenced `(Name)` blocks + deviation entries) | `rule_tags.py check` |
 | prefix pairs (`@FR-B-View` ⊂ `@FR-B-View-Base`) | `rule_tags.py check` |
 | family prefixes used in prose, NOT rules | `B-Ref`, `D-op`, `D-own`, `D-cap`, `D-op-null` |
-| coverage against the goal (70 % annotated, 40 % guarded) | `make rule-coverage` |
+| coverage vs the contract-1 floors (70 % annotated, 40 % guarded) | `make rule-coverage` |
 
 ⚠ **The counts are commands, not figures, and this table is why.** It stated `285` defined,
 `21` prefix pairs and *"cited from code today: 5 rules, 7 sites"* — the last of those predates
 almost the whole citation effort and was wrong by more than two orders of magnitude, while
 reading as a current census because the row says *today*. A measured share is stale the moment
-it is committed; the goal is not. The progression below keeps its numbers because it is a
+it is committed; a contract-1 floor is not. The progression below keeps its numbers because it is a
 RECORD of how the instrument learned to count, not a claim about the tree now.
 
 **Two things the check found before a single citation was written, and neither was reachable by

@@ -275,12 +275,12 @@ And **bound the blast radius with a property, not with confidence**.  The fix ab
 move.  A one-line invariant of that kind is worth more to a reviewer than a green suite,
 because it says what the change *cannot* do rather than what happened not to break.
 
-## The rule-led walk — the standing practice, measured in years
+## The rule-led walk — the standing practice
 
 The three passes above start from a **condition thicket**: you notice a structure has decayed
 and you go clean it. That works, and it needs someone to notice. The rule-led walk starts from
 the **formal rules** instead, which makes it a queue rather than an observation — and a queue
-long enough to work from for years.
+deep enough that finding the next piece of work is never the bottleneck.
 
 **Which is it — a walk or a campaign?** `make campaign-review` answers that on four measured
 gates rather than by feel (@PLN155 arc A, and [BUG_REVIEW.md](BUG_REVIEW.md) § The pass): a
@@ -303,17 +303,30 @@ position:
 make rule-coverage        # or: python3 scripts/rule_tags.py coverage
 ```
 
-It reports two tiers against a standing **goal — 70 % of rules carrying a code annotation,
-40 % an active guard** — and, more usefully than a percentage, how many rules short of each
-the tree is. One rule is comfortably an afternoon; the queue is measured in years, and the
-practice has to survive being picked up and put down.
+It reports two tiers against the **contract-1 floors — 70 % of rules carrying a code
+annotation, 40 % an active guard** — and, more usefully than a percentage, how many rules short
+of each the tree is. Those are the owner's informed MINIMUMS for the `CONTRACT_VERSION` 0 → 1
+freeze, not targets to stop at, and the work goes on past them
+([COMPATIBILITY.md § The road to contract 1](COMPATIBILITY.md)). The practice has to survive
+being picked up and put down — which is why the freeze list also carries a LIGHTER pass that
+reads each remaining rule once for suspicion rather than walking it.
+
+⚠ **"A queue measured in years" was this doc's own projection, and it was wrong.** Measured
+2026-09-17 off `git grep "@FR-" <rev> -- src`: citation went from none to most of the corpus
+inside about five weeks, running several times the afternoon-per-rule estimate. Two things keep
+that from being a victory lap. The rate is **bursty and decelerating** — campaigns land in
+lumps, and the daily gain has been falling as the high-value rules were taken first, which is
+the ordering working as intended. And **citing is not converting**: BUG_REVIEW.md's own
+`2026-08` row records a walk that raised the citation count and moved no bug class, so
+rules-per-day measures reach and never verification. Re-measure the rate rather than quoting a
+horizon from this paragraph — that is what the last one cost.
 
 ⚠ **No position figure is written here, on purpose.** This block carried
 `257 · 78 · 203 / 179 (70 %) / 23` for a year while every one of the five had moved — citation
 sites by **7×** — and the same stale figure was restated in three other homes, all wrong
 together. A measured share is stale the moment it is committed, and it does not read as stale:
-it reads as a measured queue. **The goal does not rot; the position does, so the position lives
-in the tool and only the goal lives in prose.**
+it reads as a measured queue. **The floor does not rot; the position does, so the position lives
+in the tool and only the floor lives in prose.**
 
 ⚠ **And read it as work LEFT, never readiness — because the queue is ordered.** The walk takes
 the most-changed, most-used and most-error-prone rules first, so the rules that already carry a

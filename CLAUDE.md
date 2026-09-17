@@ -463,10 +463,11 @@ control — the SEE/SAY test, and the count that must not grow ·
 rule-led walk**, the STANDING practice: pick a `@FR-` rule (not a site), split it into the
 questions its sites actually ask, find each question's ONE home, then verify the RELATED cases
 against it — the defects are in the disagreements, and the citation is the receipt, never the
-task.  `make rule-coverage` reports the position against the goal — 70 % of rules carrying a
-code annotation, 40 % an active guard — and how many rules short it is.  No position figure is
-written here: it rots, the goal does not.  Read it as work LEFT and never readiness, since the
-walk takes the most-changed and most-error-prone rules FIRST and the tail is the low-yield half /
+task.  `make rule-coverage` reports the position against the contract-1 FLOORS — 70 % of rules
+carrying a code annotation, 40 % an active guard — and how many rules short it is.  Those are
+MINIMUMS for the freeze, not targets to stop at; no position figure is written here, because it
+rots and the floor does not.  Read it as work LEFT and never readiness, since the walk takes the
+most-changed and most-error-prone rules FIRST and the tail is the low-yield half /
 [_SWEEP](doc/claude/STABILITY_SWEEP.md) / [_HOTSPOTS](doc/claude/STABILITY_HOTSPOTS.md) /
 [_REDFLAGS](doc/claude/STABILITY_REDFLAGS.md) · [BRITTLE.md](doc/claude/BRITTLE.md) (the
 survey of routines most likely to answer silently wrong, each with its hardening path) · [DEPS_INVENTORY.md](doc/claude/DEPS_INVENTORY.md) ·

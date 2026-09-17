@@ -457,6 +457,30 @@ from the one below it:
 - **`contract:strained` → 0, SUSTAINED over a window long enough to be evidence**, is the
   convergence gate — the standard has stopped moving. Only this one can say the blockers are
   truly gone rather than currently absent.
+- **Rule coverage at or above its contract-1 floors** — `make rule-coverage`, currently
+  **70 % of `@FR-` rules carrying a code annotation and 40 % an active guard** — is the
+  *coverage* gate: enough of the written standard has been checked against the implementation
+  that the unwalked surface has been looked at deliberately rather than left to chance. The
+  two above ask whether what we FOUND is settled; this one asks how much we LOOKED. ⚠ These
+  are **minimum thresholds, not targets** — informed owner estimates (2026-09-17) of the least
+  that could earn the freeze, expected to move, and the walk continues past them. Crossing them
+  is necessary and never sufficient, for the same reason the checklist minimum is: it measures
+  the rules we have written, and a rule nobody has written yet is not counted by anything.
+- **Open deviations as few as they can be made** — `python3 scripts/rule_tags.py registers`
+  counts them; no figure is written here. A deviation is a *written rule the code does not
+  obey*, so freezing on top of one promises the rule and ships the exception. "As few as
+  possible" rather than zero on purpose: some will be closed by an owner ruling that the rule
+  was wrong, and a few may be knowingly carried with their reason recorded — what must not
+  happen is carrying one nobody decided about.
+- **A light detection pass over every rule** — ⚠ **this instrument does not exist yet**, and
+  naming it here is the point. It is deliberately *lighter* than
+  [STABILITY_METHOD.md § The rule-led walk](STABILITY_METHOD.md): the walk splits one rule into
+  the questions its sites ask, finds each question's one home and verifies the related cases —
+  deep work per rule, and it took the most-changed and most-error-prone rules FIRST. That ordering is why the remainder is the low-yield tail, and
+  why the tail wants a different instrument: **read each remaining rule once and ask only
+  whether it looks semantically wrong or unenforced**, producing suspicions to triage rather
+  than citations to land. The walk is how a suspicion gets resolved; this pass is how the tail
+  gets looked at ALL, before a freeze makes every unlooked-at path a permanent promise.
 
 ⚠ **A bug count cannot substitute for it, and reading one as the other is the specific mistake
 this axis exists to prevent.** `silent-wrong` ran at 33 % of everything filed in August while
@@ -516,9 +540,9 @@ domain* rather than over the programs we happen to own: the formal rules. A corp
 cover what somebody already wrote; a rule covers every case it quantifies over, so walking one
 reaches cells no program in the tree does. That is the practice in
 [STABILITY_METHOD.md § The rule-led walk](STABILITY_METHOD.md), and the position marker to read
-against this section is a command rather than a figure: **`make rule-coverage`**, whose standing
-goal is **70 % of rules carrying a code annotation and 40 % an active guard**, and which says how
-many rules short of each the tree is today.
+against this section is a command rather than a figure: **`make rule-coverage`**, whose contract-1
+floors are **70 % of rules carrying a code annotation and 40 % an active guard** — minimums for
+the freeze, not targets — and which says how many rules short of each the tree is today.
 
 ⚠ **No position figure is quoted here, and that is the point.** This sentence carried
 **179 of 255** for a year — overstating the uncovered share at nearly double — and read as a
