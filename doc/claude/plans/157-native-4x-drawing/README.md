@@ -1111,6 +1111,27 @@ patches on one emission, hash `2a3aa61` throughout):
   evening).  Sites: `src/codegen_runtime.rs` `OpAppendCopy`,
   `src/state/io.rs` `append_copy`, `src/parser/vectors.rs:3411` (the comprehension loop) and
   `:5389` (the `[x; n]` lowering), `hoist::fill_loop`.
+* **`composite` (3.0×) analysed and PRICED 2026-09-17**, the same instruments, hash `cf852074` on
+  every run.  The sample is 100 % compiled code — no store runtime at all — and the census is
+  ~80 loft operators per pixel: 44 in `composite_layer`, 10 in `get_pixel`, 10 in `set_pixel`,
+  7.5 in `rgba`.  Two things that LOOK expensive measured as nothing (five rounds each): the
+  accessors' four range compares plus a length test, twice per pixel, and the three
+  `?? 0`-discharged divisions with their fault notes — LLVM predicts them away.  What is left is
+  two structural costs, independent and additive: (1) the accessor twins take a HEADER and no
+  BASE, so every element read and write inside them is `get_elem_hoisted`/`vec_set_hoisted`, a
+  store resolution per access where Rust's `cv.data[di]` is one load off a register — a base
+  handed into the twin beside its header, **115 → 84–85 µs (−27 %)**; (2) the checked
+  arithmetic, `LOFT_RELEASE_PASS_PROBE=1`, **115 → 83 µs (−28 %)**; both together **115 →
+  50.7–54.5 µs = 1.32×** the reference's 38.3.  Unit (1) is a straight extension of § V-p and
+  § V-ak: `CalleeInputs.headers` gains a base per header, the twin's signature `__ib_k: *const
+  u8` beside `__ih_k`, its body a `vec_bases` frame so the fused read/write take
+  `get_elem_at`/`vec_set_at`; a caller passes its held base, or derives one from the header at
+  the call when its loop is not growth-free — sound either way, because a twin is store-free or
+  in-place-only, so nothing reallocates for the call's duration.  Unit (2) is C120's next range
+  proof: `x & K` bounds `x` to `[0, K]`, so a chain of `+ - *` over masked leaves and literals
+  whose interval fits emits plain — `rgba`, `color_*`, the alpha-over arithmetic and
+  `lock_layer`'s `chan()` are all of that shape; it needs a per-function result interval for the
+  small colour helpers, and a design note before it is cut.
 * **After those, ~2.2× and diffuse:** five `st.*` scalar reads per resolved pixel still go
   through `store_mut` (unhoisted record scalars of a `const` parameter in the resolve loop),
   `brush_sample`/`chan`/`ramp` per pixel, the two `??`-discharged divisions per raster pixel
