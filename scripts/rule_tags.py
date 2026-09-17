@@ -381,6 +381,16 @@ def main():
               "owner may move (RULE_MIN_ANNOTATED,\nRULE_MIN_GUARDED).  Crossing them is "
               "necessary for the freeze, never sufficient —\nCOMPATIBILITY.md § The road to "
               "contract 1.  A report, never a gate.")
+        # The denominator is EVERY defined rule, which quietly asserts that every rule could
+        # carry a guard — and not all warrant one (`performance.md`, `capabilities.md` and
+        # `concurrency.md` state how to MEASURE or what a capability IS, not what a program
+        # does).  So the shortfall above is an upper bound on the real distance.  Said here
+        # rather than left silent, because a metric that cannot reach its own floor reads
+        # identically to one that simply has not yet.
+        print("\n⚠ The share is over ALL defined rules, some of which warrant no guard at all, "
+              "so the\n  distance to the guard floor is an UPPER bound.  No exclusion set "
+              "exists yet; sizing it\n  is an owner decision and would move both the position "
+              "and what the floor means.")
         return 0
 
     cites = citations()
