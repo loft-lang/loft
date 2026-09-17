@@ -463,9 +463,10 @@ control — the SEE/SAY test, and the count that must not grow ·
 rule-led walk**, the STANDING practice: pick a `@FR-` rule (not a site), split it into the
 questions its sites actually ask, find each question's ONE home, then verify the RELATED cases
 against it — the defects are in the disagreements, and the citation is the receipt, never the
-task.  135 of 353 rules have no code representation (2026-09-17) — but the walk takes the
-most-changed and most-error-prone rules FIRST, so that tail is the low-yield half: the count
-is work left, never readiness /
+task.  `make rule-coverage` reports the position against the goal — 70 % of rules carrying a
+code annotation, 40 % an active guard — and how many rules short it is.  No position figure is
+written here: it rots, the goal does not.  Read it as work LEFT and never readiness, since the
+walk takes the most-changed and most-error-prone rules FIRST and the tail is the low-yield half /
 [_SWEEP](doc/claude/STABILITY_SWEEP.md) / [_HOTSPOTS](doc/claude/STABILITY_HOTSPOTS.md) /
 [_REDFLAGS](doc/claude/STABILITY_REDFLAGS.md) · [BRITTLE.md](doc/claude/BRITTLE.md) (the
 survey of routines most likely to answer silently wrong, each with its hardening path) · [DEPS_INVENTORY.md](doc/claude/DEPS_INVENTORY.md) ·

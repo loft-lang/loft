@@ -231,12 +231,16 @@ What that buys, and none of it is available from a rule NAME alone:
 
 **Two constraints the measurement forced** (numbers in [IMPLEMENTATIONS.md](IMPLEMENTATIONS.md)):
 
-1. **Match with an explicit boundary.** 21 of the 285 defined rules are a prefix of another —
-   `@FR-B-View` / `@FR-B-View-Base`, `@FR-T-Ref` / `@FR-T-Ref-El`. A plain
-   `grep @FR-B-View` sweeps in its own sub-rules, and `\b` does not help because `-` is already a
-   word boundary. So a citation matches `@Name` only when the next character is not
-   `[-A-Za-z0-9]`. **Renaming those 23 is deliberately NOT the fix** — the sub-rule names are
-   meaningful, and a matcher that is right by construction beats 23 renames plus the churn.
+1. **Match with an explicit boundary.** A substantial share of the defined rules are a prefix of
+   another — `@FR-B-View` / `@FR-B-View-Base`, `@FR-T-Ref` / `@FR-T-Ref-El` — and
+   `rule_tags.py check` reports how many. A plain `grep @FR-B-View` sweeps in its own sub-rules,
+   and `\b` does not help because `-` is already a word boundary. So a citation matches `@Name`
+   only when the next character is not `[-A-Za-z0-9]`. **Renaming them is deliberately NOT the
+   fix** — the sub-rule names are meaningful, and a matcher that is right by construction beats
+   the renames plus the churn. ⚠ This paragraph used to carry the count, and managed to say
+   **21** in its first sentence and **23** in its last — disagreeing with itself before either
+   figure also went stale. The number belongs in the tool, where it is recomputed rather than
+   remembered.
 2. **Only a DEFINED rule is a citation target.** `B-Ref`, `D-op`, `D-own`, `D-cap` and
    `D-op-null` read like rules and are family PREFIXES used in prose — no definition line
    exists for them. A citation naming one is an error, which is exactly what the resolve check
@@ -253,7 +257,8 @@ The entry did not fail to describe the class. It failed to be reachable from the
 needed it: a reader at `variables.tp(var)` has nothing to grep, because the thing they are
 about to get wrong is an absence. That is the case for the citation direction — **a site
 enforcing a rule names it, so "which sites ask this?" is a grep instead of a memory** — and it
-is why 179 of 257 rules having no code representation is the backlog rather than a statistic.
+is why the rules with no code representation are the backlog rather than a statistic
+(`make rule-coverage` counts them; the goal is 70 % annotated, 40 % guarded).
 Better prose in the register could not have closed any of the six.
 
 **Why this is the quality lever, and not just tidiness.** Fixing a bug has no intrinsic test
@@ -270,13 +275,16 @@ worth failing on from the first day; *every rule has at least one citation* tigh
 grows. Any rule→site index is **generated** from the citations, never maintained beside
 them — a second copy of where the rules live is the defect this convention exists to remove.
 
-**Coverage, measured (2026-08-28): 76 of 255 rules cited, across 163 sites — 179 uncited.**
-Re-measure rather than reading that off this page (`scripts/rule_tags.py check`). ⚠ **An
+**Coverage: `make rule-coverage`.** The goal is **70 % of rules carrying a code annotation and
+40 % an active guard**, and the command says how many rules short of each the tree is. No share
+is written here on purpose — this line read `76 of 255 cited, across 163 sites` for long enough
+to go stale, in company with three other homes that carried the same figure and rotted together.
+A stale share does not read as stale; it reads as a measured position. ⚠ **An
 uncited rule is not merely undocumented — it is one where the coverage question cannot be
 ASKED**, because the query returns nothing and the absence looks identical to "no sites needed".
-By area the gap tracks where the bugs still are: `types.md` 38 uncited of 49 and `tuples.md` 7
-of 8, whose classes are both RISING in `make bug-review`; `ownership.md` 11 of 11 CITED and
-`layout.md` 8 of 9, whose classes are falling or paid off. ⚠ Read that correlation the right
+By area the gap tracks where the bugs still are: the chapters whose classes are RISING in
+`make bug-review` hold most of the uncited rules, while `ownership.md` is fully cited and
+`layout.md` all but one, their classes falling or paid off. ⚠ Read that correlation the right
 way round: `ownership.md` is fully cited BECAUSE it was hammered, so coverage is a lagging
 record of attention, not a leading indicator of safety. What it does say is where the next
 coverage question cannot yet be asked at all.

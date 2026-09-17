@@ -515,9 +515,17 @@ user down — and the instrument for that is the one thing we have that is state
 domain* rather than over the programs we happen to own: the formal rules. A corpus can only
 cover what somebody already wrote; a rule covers every case it quantifies over, so walking one
 reaches cells no program in the tree does. That is the practice in
-[STABILITY_METHOD.md § The rule-led walk](STABILITY_METHOD.md), and its position marker is the
-one to read against this section: **179 of 255 rules currently have no representation in the
-code at all.**
+[STABILITY_METHOD.md § The rule-led walk](STABILITY_METHOD.md), and the position marker to read
+against this section is a command rather than a figure: **`make rule-coverage`**, whose standing
+goal is **70 % of rules carrying a code annotation and 40 % an active guard**, and which says how
+many rules short of each the tree is today.
+
+⚠ **No position figure is quoted here, and that is the point.** This sentence carried
+**179 of 255** for a year — overstating the uncovered share at nearly double — and read as a
+measured position rather than as stale, in the one section where being pessimistic about
+readiness costs the most. ⚠ And read the command's answer as work LEFT, never readiness: the
+walk takes the most-changed and most-error-prone rules first, so what remains is the low-yield
+tail, and a bare fraction cannot express that in either direction.
 
 This does not add a checklist item to the two phases above; it says what the phases are *for*.
 The checklist minimum stays necessary-not-sufficient, and the judgement it is not sufficient for

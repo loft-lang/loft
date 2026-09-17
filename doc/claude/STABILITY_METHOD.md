@@ -299,28 +299,32 @@ duplication question askable at all rather than a matter of taste.
 **The size of the queue, so nobody plans it as a sprint.** `scripts/rule_tags.py` reports the
 position:
 
+```bash
+make rule-coverage        # or: python3 scripts/rule_tags.py coverage
 ```
-353 defined rules · 218 cited · 1431 citation sites        # measured 2026-09-17
-```
 
-**135 rules (38 %) have no code representation** — for those, *"where is this enforced?"* has
-no answer. And of the 218 that do, **128 are cited from two or more files**; the most scattered
-is the most instructive. One rule is comfortably an afternoon. The queue is therefore measured
-in years, and the practice has to survive being picked up and put down.
+It reports two tiers against a standing **goal — 70 % of rules carrying a code annotation,
+40 % an active guard** — and, more usefully than a percentage, how many rules short of each
+the tree is. One rule is comfortably an afternoon; the queue is measured in years, and the
+practice has to survive being picked up and put down.
 
-⚠ **The count is work LEFT, never readiness — because the queue is ordered.**  The walk takes
-the most-changed, most-used and most-error-prone rules first, so the 218 with a code
-representation are not a random 62 % of the language: they are the 62 % where the defects
-were.  What remains is the low-yield tail, and it is far less interesting than its size
-suggests.  A bare fraction cannot express that, in either direction — it prices every rule the
-same and quietly asserts that the remainder carries the same risk per rule as the part already
-done.  So quote the ordering beside the number, or do not quote the number.
+⚠ **No position figure is written here, on purpose.** This block carried
+`257 · 78 · 203 / 179 (70 %) / 23` for a year while every one of the five had moved — citation
+sites by **7×** — and the same stale figure was restated in three other homes, all wrong
+together. A measured share is stale the moment it is committed, and it does not read as stale:
+it reads as a measured queue. **The goal does not rot; the position does, so the position lives
+in the tool and only the goal lives in prose.**
 
-⚠ **And re-read the figures off the tool, never off this paragraph.**  `rule_tags.py check`
-reprints the line and `dups` the last one, so both are a command away — and this block carried
-**257 · 78 · 203 / 179 (70 %) / 23** for a year while the real position moved to the figures
-above.  All five were wrong, citation sites by **7×**.  A stale number does not read as stale:
-it reads as a measured queue.
+⚠ **And read it as work LEFT, never readiness — because the queue is ordered.** The walk takes
+the most-changed, most-used and most-error-prone rules first, so the rules that already carry a
+representation are not a random share of the language: they are the share where the defects
+were, and what remains is the low-yield tail. A bare fraction prices every rule the same and so
+quietly asserts the remainder carries equal risk per rule. Quote the ordering beside any
+figure, or do not quote the figure.
+
+⚠ **The guard tier is a proxy and says so.** It counts a rule NAMED by a test, which is weaker
+than a test that would FAIL without it. Treat a rule's move from annotated to guarded as
+evidence someone looked, not as proof the rule is defended.
 
 ### The loop
 
