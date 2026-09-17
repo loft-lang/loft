@@ -970,6 +970,14 @@ work:  ## The open issues that are PICK-UP work (minus fixed-pending-merge and s
 bug-review:  ## Monthly bug-review aid: which mechanism classes are still producing bugs
 	@python3 scripts/bug-review.py $(ARGS)
 
+# An operator is cheap to add and invisible to retire: nothing asked whether a program
+# still reaches one.  This asks the COMPILER, over every .loft file in the tree — a grep
+# cannot answer it, because the parser names most operators by computing the name from
+# the token and the operand types.  A REPORT, never a gate (RELEASE.md § The operator
+# census); `ARGS=--verbose` for every operator with its emission count.
+ops-census:  ## Which bytecode operators does anything still emit? (report, never a gate)
+	@python3 scripts/op_census.py $(ARGS)
+
 # @PLN155 arc A — the four gates that pick a campaign, joined into one report:
 #   make campaign-review                       # which class earns a campaign next
 #   make campaign-review ARGS=--verbose        # + the evidence behind each gate

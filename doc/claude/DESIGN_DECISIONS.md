@@ -298,8 +298,11 @@ backends with byte-identical output and no panics — confirming
 move semantics is correct in practice.
 
 The "copy + null" alternative would require a new opcode at a
-time when the opcode space is near-saturation (254/256 used per
-CHANGELOG_TECHNICAL.md), would add a per-destructure runtime
+time when the opcode space was thought near-saturation (254/256
+used per CHANGELOG_TECHNICAL.md).  That premise has since gone —
+the escape prefix makes the space 511 (INTERMEDIATE.md § Opcode
+budget) — and the decision does not rest on it: copy + null also
+would add a per-destructure runtime
 write the move path doesn't need, and produces no observable
 difference to user code — only the runtime cleanup ordering
 changes.  No concrete program shape exists that move-semantics

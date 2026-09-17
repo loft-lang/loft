@@ -112,6 +112,36 @@ class — per [STABILITY_ROADMAP.md](STABILITY_ROADMAP.md)'s standing rule the
 deliverable is the collapsed structure, and the cases that matter most have no ticket
 to file.
 
+### The operator census (by hand) — which operators anything still emits
+
+Also each cycle, before tagging, read the **operator census**:
+
+```bash
+make ops-census                    # live / unexercised / orphan, and the table's occupancy
+make ops-census ARGS=--verbose     # every operator with its emission count
+```
+
+An operator is cheap to add and invisible to retire. A `fn Op…` in `default/*.loft`
+becomes an entry in the generated `fill::OPERATORS`, a `#rust` template the
+interpreter runs, and a template the native generator rewrites — and nothing ever
+asked whether a program still reaches one. Same **report, never a blocker** status as
+the passes above.
+
+It asks the compiler rather than the text, because a grep cannot answer it: the parser
+names most operators by *computing* the name (`format!("Op{}", rename(op))`, then
+overload resolution on the operand types), so `OpEqText` is emitted by every `a == b`
+on text while the string `"OpEqText"` appears nowhere in `src/`. Three verdicts, and
+only the third is a deletion candidate:
+
+- **live** — something emits it.
+- **unexercised** — a site in `src/` emits it, no program in the tree does. A *test
+  gap*, and usually the more actionable finding: live emitter, zero coverage.
+- **orphan** — never emitted and nothing in `src/` names it.
+
+An orphan is a candidate, not a verdict — confirm one before acting on it (the census
+reads this tree, not a consumer's). What it is *not* for is freeing slots: the table
+holds 511 opcodes and is nowhere near full (INTERMEDIATE.md § Opcode budget).
+
 ### What forces a release — keep the list bounded
 
 *Producing* a release is cheap — CI builds every target binary automatically — but every **category of

@@ -1106,6 +1106,22 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             cadence="mid pre",
         ),
         Item(
+            "M-ops-census",
+            "Operator census — does anything still emit each bytecode operator?",
+            "make ops-census",
+            "an operator is cheap to add and invisible to retire: each one is an entry "
+            "in the generated `fill::OPERATORS`, a `#rust` template the interpreter "
+            "runs, and a template the native generator rewrites.  Read the two "
+            "non-live verdicts.  UNEXERCISED (a site in `src/` emits it, no program in "
+            "the tree does) is a test gap and usually the more actionable half — live "
+            "emitter, zero coverage.  ORPHAN (never emitted, nothing in `src/` names "
+            "it) is a retirement CANDIDATE, never a verdict: confirm before acting, "
+            "since the census reads this tree and not a consumer's.  Not a way to free "
+            "slots — the table holds 511 and is nowhere near full "
+            "(RELEASE.md § The operator census)",
+            cadence="mid pre",
+        ),
+        Item(
             "M-perf-pass",
             "Performance pass — loft AND its libraries, routines pull their weight",
             "make speed; per library: python3 bench/compare.py   # the drawing library's "

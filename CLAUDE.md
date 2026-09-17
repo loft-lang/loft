@@ -83,6 +83,14 @@ make falsify GUARD=<guard.loft> REF=<commit>   # does this guard FAIL on the bui
                                          #   Every new tests/scripts file records its answer
                                          #   (`@falsified-at:`, gated) — TESTING.md
 make speed                               # what got slower/faster — a REPORT, never a gate
+make ops-census                          # which bytecode operators anything still EMITS:
+                                         #   live / unexercised (a site emits it, no program
+                                         #   does — a test gap) / orphan (nothing emits it and
+                                         #   nothing in src/ names it — a retirement CANDIDATE,
+                                         #   never a verdict).  A grep cannot answer this: the
+                                         #   parser COMPUTES most operator names, so `OpEqText`
+                                         #   is emitted by every text `==` and appears nowhere
+                                         #   in src/.  A REPORT, read per release — RELEASE.md
 make profile ARGS="--interpret p.loft"   # which loft FN/LINE/PATH burns the time; PROFILE_FLAGS=
                                          #   "--mem" heap by loft line at the PEAK, "--paths" the
                                          #   paths that reached each allocation, "--engine" perf

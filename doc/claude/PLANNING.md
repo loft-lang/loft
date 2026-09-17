@@ -449,8 +449,9 @@ left at the last successful checkpoint.
   each destination variable as the source element's `Type::Reference`
   (via `change_var_type(v_nr, &rhs_elems[i])`), so each `q1`/`q2`
   gets ordinary scope-exit cleanup.  The "copy + null" alternative
-  was rejected (would need a new opcode at near-saturation 254/256
-  and is not observably different from move semantics).  6 cross-
+  was rejected (it adds an opcode — not the scarce resource this
+  once assumed, INTERMEDIATE.md § Opcode budget — and is not
+  observably different from move semantics).  6 cross-
   mode E5 cells lock the canonical shapes (swap, arg, return,
   mixed Ref+int, mixed Ref+text); the loop-iteration aliasing
   shape is parked behind @P250 as a separate dep-tracking bug.
@@ -2263,11 +2264,11 @@ at the end prevents cleanup, compounding the issue.
 ---
 
 ### O1  Superinstruction merging
-**Status: deferred indefinitely — opcode table is full (254/256 used)**
+**Status: no longer blocked — the prerequisite it waited on exists**
 **Sources:** PERFORMANCE.md § P1
-**Description:** Peephole pass in `src/compile.rs` merges common 4-opcode sequences (var/var/op/put) into single opcodes.  Originally targeted the 16 "free" slots above opcode 240, but those slots are now taken (T1.8b `OpPutText` + prior additions).  With 254/256 opcodes used, no slots remain for superinstructions without a redesign of the opcode space (e.g. a two-byte opcode escape or a dedicated superinstruction table).
-**Expected gain:** 2–4× on tight integer loops — the gain remains attractive but the prerequisite work (opcode-space redesign) is High effort and blocks everything else.
-**Effort:** Medium for the peephole pass itself; High to first free up opcode slots.
+**Description:** Peephole pass in `src/compile.rs` merges common 4-opcode sequences (var/var/op/put) into single opcodes.  This was deferred on "no slots remain without a redesign of the opcode space (e.g. a two-byte opcode escape)" — **that escape exists**: byte 255 escapes to `OPERATORS[255 + ext]`, so the space is 511 opcodes and a superinstruction lands in the escape range as a two-byte opcode (INTERMEDIATE.md § Opcode budget; `make ops-census` for the current occupancy).  The extra byte-fetch is negligible against replacing ~4 one-byte ops.
+**Expected gain:** 2–4× on tight integer loops.
+**Effort:** Medium — the peephole pass itself; the opcode-space work it was waiting for is done.
 **Target:** 1.1+
 
 ---

@@ -1092,7 +1092,9 @@ The 2× gaps on data structures and strings are design-level issues addressed by
 was nearly full (254/256, "2 slots left") and deferred P1 *"until opcode space is freed,
 e.g. by a two-byte escape prefix."* **That escape prefix now exists** — byte 255 escapes
 to `OPERATORS[255 + ext]` (see [How the interpreter executes](#how-the-interpreter-executes)),
-the table is at **269/511 with ~242 free slots**, and 14 escape-range ops already use it.
+the table sits well inside **511 slots**, and the escape range is already in use.
+(No occupancy figure is quoted here any more: it was hand-copied into five documents and
+every copy drifted, this one included.  `make ops-census` derives it.)
 So P1 can proceed: its superinstructions land in the escape range, i.e. as **two-byte
 opcodes** (`255` prefix + `ext`). The one extra byte-fetch is negligible against the win
 — a superinstruction replaces ~4 one-byte ops (4 fetches + 4 indirect calls + the
