@@ -762,6 +762,57 @@ The fourteen rows (`--n 50`, best of five and of seven interleaved rounds, one c
 −3.3 % in both runs, every other row within noise — `lock` read +3.4 % in the first run and
 −0.8 % in the second, on function bodies that differ only in a source-path comment.
 
+### The wilderness (BUILT 2026-09-17, `@FR-H-Wilderness`, default ON)
+
+*Re-measured first.*  After the units above, the parse row's profile (lean tier, `perf record`
+at 9 999 Hz over `--n 60000`, 14 452 samples) put the allocator at ≈ 12 % — `claim` 3.2 %,
+`fl_insert_node` 1.5 %, `set_free_header` 1.4 %, `claim_block` 1.4 %, `fl_delete_node` 1.4 %,
+`finish_claim` 1.2 %, `fl_insert` and `fl_balance` 0.7 % each — twice the 6 % this item was
+priced at.  The single largest function, `find_option` at 12 %, is the library's per-option
+scan of the whole line, already fully inlined with only byte compares and checked adds left:
+not a compiler lever.  An env-gated counter over the claim paths (removed after) said where
+the tree work comes from, per 2^20 deletes: 9.9 M bump claims, 4.2 M tree claims of which
+**2.7 M took the TAIL block** (a delete, a split and a re-insert to move one number), 3.9 M
+first claims of a fresh store (`init` left its one block untracked, so each took the chain
+walk — one block long), and 0.45 M of the 1.05 M deletes merged INTO the tail and re-inserted it.
+
+*The rule.*  The free block that ends a store is held beside the tree (`Store::wild`), and the
+tree's three entry points treat it as the node it would have been: `fl_insert` of a block
+ending the store records it, `fl_remove` clears it, and `fl_take_ge` weighs it against the
+smallest fitting node by the tree's own `(size, position)` order — the tail has the highest
+position, so a node of equal size precedes it.  Every caller keeps its code, and the block a
+claim takes is the one the tree alone would take; a block below the tree's minimum stays
+untracked as before.  `init` records the whole fresh store as the wilderness, so a first claim
+no longer walks.  `bump_tail` is the no-wilderness path only.  Switch
+`LOFT_NO_WILDERNESS=1`, read per store at construction.
+
+*Receipts.*  `store::tests::the_wilderness_takes_the_blocks_the_tree_takes`: 24 seeds × 600
+claims, deletes and in-place resizes on a store with a wilderness and one without, the same
+position from every claim and resize and the same block chain after every step, through
+growth, backward merges and deletes into the tail, with the wilderness invariant checked on
+its own (this crate's test profile has no debug assertions).  Falsified by a wilderness-FIRST
+take (the plausible wrong policy): seed 1, step 15.  `bump_tail`'s layout test runs both forms.
+
+*Measured* (one binary, the switch per run, `perf stat -r 3` × 3 interleaved, `--n 5000`,
+hash `33f6d2b8`):
+
+| | tail in the tree | wilderness | |
+|---|---:|---:|---:|
+| instructions (whole process) | 1 877.1 M | 1 775.3 M | −5.4 % |
+| cycles | 461.2 M | 432.0 M | −6.3 % |
+| parse row, ns/op | 24 108 | 22 658 | −6.0 % |
+
+The fourteen rows, one binary with the switch per arm (`--n 50`, best of five interleaved
+rounds, one core, 14/14 hashes agree): `parse` −6.3 %, `fronds` −2.6 %, `hash`, `lock` and
+`hair` −1.0 to −1.3 %, `smooth` −1.6 %; `composite`, `wide_line`, `lock_curved` and
+`render_marks` read +0.1 to +0.4 %, inside this box's run-to-run spread; the rest equal.
+One lib probe moved with it: `journal::freelist_repurposes_a_freed_blocks_body` showed a
+freed record's body overwritten by tree links, and a lone record freed into the tail now
+keeps its bytes until reclaimed — the probe frees an interior record, which is still a node,
+and its comment says which is which (neither is a window to rely on).  `wrap`, `native`, the
+`store` subject (321 tests), the lib tests on both forms and every @PLN164 cell corpus under
+the store falsifiers are green.
+
 ### The queue after B1b
 
 1. ~~**The `Mark` class** and **B1 behind a null-init**~~ — built above, and the literal exits
@@ -769,7 +820,8 @@ The fourteen rows (`--n 50`, best of five and of seven interleaved rounds, one c
    in a two-parse run are the pool's own: one per pooled call site per activation (five
    parser buffers), which only the activation arena (A1/A2) removes.
 2. ~~**loft#1550** (r17)~~ — fixed above, at the call boundary.
-3. **The free tree under a live store** and **text per character** — as before.
+3. ~~**The free tree under a live store**~~ — the wilderness, above.  **Text per character** —
+   as before.
 4. **A1/A2** — re-priced after item 1.
 
 ## The three tiers — the invariant each rests on

@@ -616,11 +616,15 @@ mod tests {
     /// half's deferred free must mean **stay-claimed**, not "free but remember the
     /// bytes": there is no window in which a freed record's old contents are readable.
     /// (This falsified the first draft of the design, which assumed a freed record's
-    /// bytes survived for undo.)
+    /// bytes survived for undo.)  The record freed here is INTERIOR — a live record follows
+    /// it — so it becomes a tree node; one freed into the store's tail joins the wilderness
+    /// (`@FR-H-Wilderness`), which writes only its header and footer, and its old bytes
+    /// survive until the next claim takes them.  Neither is a window anyone may rely on.
     #[test]
     fn freelist_repurposes_a_freed_blocks_body() {
         let mut s = Store::new_in_use(64);
         let rec = s.claim(4);
+        let _after = s.claim(4);
         s.set_u32_raw(rec, 4, 0xDEAD_BEEF); // where a vector's length lives
         s.set_u32_raw(rec, 8, 0x0BAD_F00D); // where element 0 lives
         s.delete(rec);
