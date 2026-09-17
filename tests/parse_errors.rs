@@ -3358,6 +3358,34 @@ fn b_ref_reshape_callee_removal_under_local_amp_link_is_error() {
     );
 }
 
+/// B-Ref-Reshape (f2) — the container is held in a FIELD, and it GROWS.
+///
+/// `c = &b.v[0]` references a place inside `b.v`, and the append moves every element of it, so
+/// this is the same refusal `c = &v[0]; v += [x]` gets on a plain local.  It COMPILED until
+/// 2026-09-17, while a `remove` from that same field was refused — the rule's answer depended on
+/// where the container happened to be stored, which is not a distinction `(B-Ref-Reshape)` draws.
+///
+/// The cause was not the rule but the walk's reach: a growth names its container by field NUMBER
+/// (`OpNewRecord(b, tp, 1)`) and a view carries a byte OFFSET, `Stores::field_position` is what
+/// converts between them, and the refusal walk ran with no store — so `grown_containers` left
+/// every field-qualified growth uncollected.  The materialise walk always had the store, which is
+/// why that side copied the link and told the author while this side said nothing.
+#[test]
+fn b_ref_reshape_growth_of_a_field_container_under_amp_link_is_error() {
+    code!(
+        "struct Box { n: integer } \
+         struct Bag { v: vector<Box>, tag: integer } \
+         fn test() { b = Bag { v: [Box { n: 11 }, Box { n: 22 }], tag: 0 }; \
+           c = &b.v[0]; b.v += [Box { n: 33 }]; c.n = 99; print(\"{b.v[0].n}\\n\"); }"
+    )
+    .error(
+        "cannot grow `b` while `c` references a place inside it — a container that outgrows its \
+         allocation moves every element, so a write through `c` would no longer reach the \
+         element it names. Move it after the last use of `c`, or bind without `&` to work on a \
+         copy at b_ref_reshape_growth_of_a_field_container_under_amp_link_is_error:1:1",
+    );
+}
+
 /// B-Ref-Reshape (g2) — the SAME refusal on every keyed kind, because the `&` marker that
 /// gates it is set from the SOURCE type and a keyed lookup now has two spellings.
 ///

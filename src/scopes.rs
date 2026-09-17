@@ -1625,8 +1625,16 @@ struct ViewWalk<'a> {
     /// where the other direction costs a program its meaning.
     cleared: HashSet<(u16, u32)>,
     /// The store, where the caller has one.  Only the field-NUMBER to byte-OFFSET conversion
-    /// needs it (`grown_containers`); the refusal path runs without and keeps the conservative
-    /// answer, which for a REFUSAL is the safe direction — refusing less, never more.
+    /// needs it (`grown_containers`): a growth names its container by field number and a view
+    /// carries a byte offset, so a walk without the store cannot see a growth of a container
+    /// held in a FIELD at all.
+    ///
+    /// Both callers now pass one.  The refusal path ran without it until 2026-09-17 — the
+    /// conservative answer, chosen when no store was at hand there — and the cost was that
+    /// `(B-Ref-Reshape)` depended on where the container was STORED: `c = &b.v[0]; b.v += [x]`
+    /// was not refused while the same growth of a plain local was, and a removal from that same
+    /// field was.  A missed disturbance is still the safe direction for a refusal; it was not a
+    /// reason to leave one class of disturbance invisible.
     database: Option<&'a crate::database::Stores>,
     /// The source line of the statement being walked, tracked from the `Value::Line` markers
     /// a block interleaves with its operators — the only line information the IR carries.
@@ -2385,16 +2393,21 @@ pub struct ReshapeRefusal {
 /// filter silently made the check a no-op there while it still fired on a file. A pass over
 /// definitions that cannot possibly trip it is the cheaper mistake.
 #[must_use]
-pub fn reshape_refusals(data: &Data) -> Vec<ReshapeRefusal> {
+pub fn reshape_refusals(data: &Data, database: &crate::database::Stores) -> Vec<ReshapeRefusal> {
     let removed = removed_params_map(data);
     let mut out: Vec<ReshapeRefusal> = Vec::new();
     for d_nr in 0..data.definitions() {
-        out.extend(def_reshape_refusals(data, d_nr, &removed));
+        out.extend(def_reshape_refusals(data, d_nr, &removed, database));
     }
     out
 }
 
-fn def_reshape_refusals(data: &Data, d_nr: u32, removed: &RemovedParams) -> Vec<ReshapeRefusal> {
+fn def_reshape_refusals(
+    data: &Data,
+    d_nr: u32,
+    removed: &RemovedParams,
+    database: &crate::database::Stores,
+) -> Vec<ReshapeRefusal> {
     let def = data.def(d_nr);
     if !matches!(def.def_type, DefType::Function) || matches!(def.code, Value::Null) {
         return Vec::new();
@@ -2407,13 +2420,22 @@ fn def_reshape_refusals(data: &Data, d_nr: u32, removed: &RemovedParams) -> Vec<
     // reference that cannot reach its source is not what `&` asked for.  That includes the
     // GROWTH the walk learned in loft#1373 — `c = &v[0]; v += [x]; c.n` names an element the
     // growth may have moved, which is the same reason the other three are refused.
+    //
+    // @FR-B-Ref-Reshape — the walk is handed the STORE, because a growth names its container
+    // by field NUMBER (`OpNewRecord(b, tp, 1)`) while a view carries a byte OFFSET, and
+    // `Stores::field_position` is the only thing that converts between them.  Without it
+    // `grown_containers` leaves every field-qualified growth UNCOLLECTED, so
+    // `c = &b.v[0]; b.v += [x]` was not refused at all while the same growth of a plain LOCAL
+    // was, and a removal from the same field was: the rule's answer depended on where the
+    // container was stored.  The materialise walk has always had the store, which is why that
+    // side copied the link (and told the author) where this side said nothing.
     for (view, d) in ViewWalk::run(
         &def.code,
         function,
         data,
         Some(removed),
         None,
-        None,
+        Some(database),
         def.position.line,
     ) {
         if !function.is_amp_link(view) {

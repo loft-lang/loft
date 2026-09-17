@@ -9715,8 +9715,14 @@ impl Parser {
     ///
     /// The analysis is [`crate::scopes::reshape_refusals`]; this only turns its findings into
     /// diagnostics, because the collector lives on the lexer and the analysis does not.
+    ///
+    /// It is handed the STORE as well as the definitions: a growth names its container by field
+    /// NUMBER and a view carries a byte OFFSET, so without `Stores::field_position` the walk
+    /// cannot see a growth of a container held in a FIELD at all.  The layouts it reads are
+    /// registered when each struct is declared, well before this post-pass-2 point, and
+    /// `field_position` answers `u16::MAX` — *cannot say* — for anything it does not know.
     pub(crate) fn check_reshape_under_reference(&mut self) {
-        for r in crate::scopes::reshape_refusals(&self.data) {
+        for r in crate::scopes::reshape_refusals(&self.data, &self.database) {
             let pos = crate::lexer::Position {
                 file: r.file,
                 line: r.line,
