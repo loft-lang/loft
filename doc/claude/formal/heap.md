@@ -304,6 +304,19 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  length zero — instead of deleting each element's owned blocks
                  into the free tree.  The cleared vector must stay PRESENT, since
                  an absent heap value is falsy where an empty one is true.
+                 A RECORD the ABI refills is the same case: a hidden return
+                 buffer REUSED across calls (R-Reuse hands one record to every
+                 call of a site) is written by the callee's literal field by
+                 field, and the literal overwrites every handle it writes, so
+                 what the previous occupant owned is released before each call
+                 after the first.  The release is the reuse's, at the call site
+                 that reuses: a buffer offered once (a placed record, a return
+                 arena) holds nothing yet and pays nothing.  A record buffer is
+                 not a store root, so the release is the walk of its fields, not
+                 a reset; it walks the record's own type, or a struct-enum's
+                 PARENT type, so it follows the variant the buffer HOLDS rather
+                 than the one about to be written.  A record of scalars has
+                 nothing to release and emits nothing.
 
   (H-FreeFooter) inside one store, a FREE block of n words carries −n at BOTH ends: its
                  header word and the HIGH half of its LAST word (the tree node's color
@@ -583,7 +596,33 @@ first (`D-own-41`); the entry carries the cure that landed and the one that was 
 been re-cut twice as it was measured — a shape closed, a shape that turned out to be the
 opposite fault, and a shape found by widening one cell — so the three named there are what is
 open TODAY and not the original filing.  `D-heap-4` (a mixed own/view local's owned record
-freed without its hook) opened and CLOSED 2026-09-10, below.
+freed without its hook) opened and CLOSED 2026-09-10, below.  `D-heap-12` (a refilled record
+buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.
+
+### D-heap-12 — OPENED AND CLOSED (2026-09-17): a refilled record buffer stranded its previous occupant's heap (loft#1549)
+
+- **Violates:** (H-ClearRelease) — its record clause, which this entry added: the rule named the
+  vector a buffer ABI reuses and said nothing of the record (R-Reuse) reuses.
+- **Where:** `scopes::reuse_record_buffers` handed the same record to every call of a site,
+  and the callee's literal — behind the "caller offered a record" guard
+  `Parser::build_into_return_buffer` puts around its `OpDatabase` — overwrote the record's
+  vector, text and nested-record handles with nothing releasing what they named.
+- **Effect:** a loop binding a call whose record owns heap (`s = mk(i)`, `mk` returning
+  `S { n: i, v: [i, i + 1, i + 2] }`) kept every previous turn's heap claimed in the buffer's
+  store: about 100 bytes a turn for that shape, 600 for a vector of heap-owning records, on both
+  backends, unbounded in the loop length.  Values were right, and the store itself is freed on
+  time, so no store-count gate saw it.
+- **Closed by:** the pool's lazy guard releases on reuse —
+  `if OpRefIsNull(b) { OpDatabase(b, T) } else OpClear(b, T)`, `OpClear` being `remove_claims`
+  (the eager form releases in front of each use) — emitted only when a field is not a scalar
+  (`scopes::releases_what_it_held`), with a struct-enum released through its parent type.
+  The first cut released in the CALLEE's offered arm instead: equally correct, and measured
+  +1 % instructions on the drawing parse row, because B2 offers a freshly placed `Paint` on
+  every `read_paint` and the walk there finds nothing.  Only the pool ever re-offers a record,
+  so the release is the pool's.  Guard
+  `tests/scripts/1549-a-pooled-buffer-releases-its-previous-occupant.loft` (resident memory
+  across 900 000 refills, and twelve value cells); plan cells
+  `plans/164-activation-arena/bytecode-comparisons/1549-pooled-buffer-release-cells.loft`.
 
 ### D-heap-8 — OPEN (2026-09-15): nothing refuses a copy — a written copy of a droppable without `OpCopy` compiles
 

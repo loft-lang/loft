@@ -2425,7 +2425,9 @@ fn remove(s: &mut State) {
 }
 
 fn clear(s: &mut State) {
-    s.clear();
+    let v_tp = s.code::<u16>();
+    let v_data = s.get_stack::<DbRef>();
+    s.database.remove_claims(&v_data, v_tp);
 }
 
 fn append_copy(s: &mut State) {

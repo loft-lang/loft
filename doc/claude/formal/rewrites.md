@@ -667,7 +667,9 @@ loop.  Sites: `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoiste
                  a plain local's first bind, @PLN164 B1) is paired for the guarded
                  free alone and NOT allocated here: handed non-null to a callee that
                  rebinds its promoted local from a call, it is freed by that rebind.
-                 Every other buffer keeps its per-call mint.
+                 Every other buffer keeps its per-call mint.  A reused record is
+                 REFILLED, so each reuse releases what the record held first
+                 (H-ClearRelease, its record clause).
 ```
 
 **In words.** @PLN157 § V and § V-af.  `scopes::reuse_record_buffers` inserts the

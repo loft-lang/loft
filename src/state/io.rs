@@ -1558,15 +1558,6 @@ impl State {
         }
     }
 
-    /**
-    Clear the given structure on the field
-    */
-    pub fn clear(&mut self) {
-        let tp = self.code::<u16>();
-        let data = self.get_stack::<DbRef>();
-        self.database.remove_claims(&data, tp);
-    }
-
     pub fn append_copy(&mut self) {
         let tp = self.code::<u16>();
         let count = self.get_stack::<i64>();

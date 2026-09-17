@@ -1,18 +1,34 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1549 (`@FR-H-ClearRelease`, the record clause; `@FR-R-Reuse`) — A POOLED RETURN BUFFER
+// RELEASES ITS PREVIOUS OCCUPANT: a record-returning call bound inside a loop gets ONE buffer
+// for the call site, and the callee's literal refills it every turn.  The literal overwrites
+// the record's handles, so what the previous turn left in them — a vector, a text, a nested
+// record's vector, a vector of heap-owning records, a struct-enum variant other than the one
+// being written — is released before each call after the first (the pool's lazy guard:
+// `if OpRefIsNull(b) { mint } else OpClear(b, T)`).  Values were right before the fix; the defect was the
+// store the buffer lives in growing by the previous occupant's heap on every call, unbounded
+// in the loop length and invisible to every store-count gate (the store itself dies on time).
+// So the guard measures the process's own resident memory across 300 000 turns of three
+// leaking shapes (Linux; elsewhere `rss_kb` answers -1 and the check is vacuous), and the
+// twelve value cells hold the refill to its hand-computed answers — c5 an omitted field that
+// must not keep the previous turn's vector, c12 a variant change.  Plan cells:
+// `doc/claude/plans/164-activation-arena/bytecode-comparisons/1549-pooled-buffer-release-cells.loft`.
+// `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1`
+// must answer identically.
 //
-// loft#1549 — a pooled return buffer (`(R-Reuse)`) handed to a callee whose record OWNS
-// heap.  Each cell binds a record-returning call inside a loop, so the call site's buffer
-// is allocated once and refilled every turn; the fill must release what the previous turn
-// left in it.  Every value is hand-computed below; N = 50 turns, i = 0..49
-// (Σi = 1225, Σ even i = 600, 25 even turns).
-//
-// Run on both backends, and under LOFT_POISON=1, LOFT_POISON_CLAIM=1, LOFT_STRICT_STORES=1
-// and LOFT_NATIVE_LEAK_CHECK=1.  The leak itself is a growth INSIDE one store, which no
-// store-count gate sees: the guard
-// `tests/scripts/1549-a-pooled-buffer-releases-its-previous-occupant.loft` reads the
-// process's resident memory across 900 000 refills, and `tests/pooled_buffer_release.rs`
-// pins which exits release and by which type.
+// @falsified-at: 04cc50b1 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.
+// @falsified-by: tests/falsified/1549-a-pooled-buffer-releases-its-previous-occupant.patch
+//   — the same channels as the control above.  Score it with
+//   `scripts/falsify.sh <this file> --patch <that patch>`.  The failing assertion on the
+//   control is m1's resident-memory check (the ASSERTION channel carries a memory
+//   measurement; no store-count instrument sees this defect, so none needs arming).  The
+//   pre-fix growth per 1 000 000 refills, measured by hand on the interpreter: 112 MB,
+//   607 MB and 48 MB for the three shapes m1 runs.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees, and the
+//   twelve value cells pass on both — the defect never moved a value, so a patch that moves
+//   one reintroduces something else.
 
 struct V3 { n: integer, v: vector<integer> }
 struct T1 { n: integer, name: text }
@@ -160,17 +176,52 @@ fn c12() -> integer {
   t
 }
 
+
+fn rss_kb() -> integer {
+  st = file("/proc/self/status").content() ?? "";
+  for line in st.split('\n') {
+    if line.starts_with("VmRSS:") {
+      return (line[6..size(line)].trim().split(' ')[0]? as integer?) ?? -1
+    }
+  }
+  -1
+}
+
+// m1 — the resident memory across 300 000 turns of each leaking shape.  Before the release
+// the three grew by roughly a third of the figures in the header; after it, by well under
+// one megabyte.
+fn m1() {
+  t = 0;
+  for i in 0..1000 { a = mk_v(i); b = mk_rows(i); c = mk_shape(i); t += len(a.v) + len(b.rows); }
+  before = rss_kb();
+  for i in 0..300000 { a = mk_v(i); t += len(a.v); }
+  for i in 0..300000 { b = mk_rows(i); t += len(b.rows); }
+  for i in 0..300000 {
+    c = mk_shape(i);
+    match c {
+      Dots { pts } => { t += len(pts); },
+      Label { txt } => { t += len(txt); },
+      Empty => { t += 1; }
+    }
+  }
+  grown = rss_kb() - before;
+  assert(grown < 8000, "m1 resident memory grew {grown} KB over 900 000 refills");
+  println("m1 {t > 0}");
+}
+
 fn main() {
-  println("c1 {c1()}");
-  println("c2 {c2()}");
-  println("c3 {c3()}");
-  println("c4 {c4()}");
-  println("c5 {c5()}");
-  println("c6 {c6()}");
-  println("c7 {c7()}");
-  println("c8 {c8()}");
-  println("c9 {c9()}");
-  println("c10 {c10()}");
-  println("c11 {c11()}");
-  println("c12 {c12()}");
+  assert(c1() == 151325, "c1 {c1()}");
+  assert(c2() == "140 50", "c2 {c2()}");
+  assert(c3() == 12300, "c3 {c3()}");
+  assert(c4() == 2700, "c4 {c4()}");
+  assert(c5() == 6225, "c5 {c5()}");
+  assert(c6() == 85195, "c6 {c6()}");
+  assert(c7() == 156325, "c7 {c7()}");
+  assert(c8() == 3675, "c8 {c8()}");
+  assert(c9() == 625, "c9 {c9()}");
+  assert(c10() == "50 1325", "c10 {c10()}");
+  assert(c11() == 151325, "c11 {c11()}");
+  assert(c12() == 3158, "c12 {c12()}");
+  m1();
+  println("ok");
 }

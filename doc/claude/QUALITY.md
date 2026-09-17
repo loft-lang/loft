@@ -480,7 +480,11 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 526 | 503 | **23** |
+| 525 | 502 | **23** |
+
+(2026-09-17, loft#1549: one site fewer, and not a behaviour change — the null-init test moved
+out of `scopes::reuse_record_buffers` into the one-line `scopes::null_init_at`, after which
+neither function names two `Value` variants.  The opaque column is unmoved.)
 
 (2026-09-17, loft#1548: one function added, peeling — `Parser::stage_append_fields`, which
 reads each field write and each nested construction through `.unspan()`.  The opaque column is
@@ -2668,7 +2672,12 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 839 | 499 | 6 | **334** |
+| 840 | 500 | 6 | **334** |
+
+(2026-09-17, loft#1549: one function added, seeing through the wrapper —
+`scopes::releases_what_it_held` reads a pooled buffer's type through `.base()` and names a
+struct and a struct-enum, the two record shapes a buffer holds.  The opaque column is
+unmoved.)
 
 (2026-09-17, @PLN164 C6 and loft#1548: two functions added, both seeing through the wrapper —
 `Parser::nested_literal_place` declines a `τ?` field and reads the record through `.base()`,
