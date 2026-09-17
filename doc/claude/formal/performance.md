@@ -40,6 +40,8 @@ A lane that "wins" by computing less has measured nothing.
                  measured per release on a fixed workload, keeps its native
                  time within the stated bar of a reference implementation in
                  an industry-standard language (pure Rust; C# admissible).
+                 The `--native` bar is 3× the reference for each routine, and
+                 the MEDIAN over every judged routine is held at 2×.
                  Drift against a previous loft release satisfies nothing here.
 ```
 
@@ -49,6 +51,18 @@ itself — a distribution can hold that line forever while being unusable next t
 reader would otherwise use. The bar is stated per routine class (a tree-walking
 interpreter is not held to compiled-Rust time; `--native` is), and the measured table with
 its bar lives with the bench, re-measured each release (`M-perf-pass`).
+
+**The numbers** (owner, 2026-09-17).  The ceiling was 4× — the drawing bench's
+`compare.py --bar` default, and @PLN157's end state — and is 3× now, with a median of 2×
+as the end goal.  The population is the ROUTINES loft ships — stdlib functions and library
+`pub fn`s, each on a workload a real program would run — and grows library by library
+through @PLN158's census; the median is taken over that population, never over one
+library's table.  A synthetic benchmark program (`bench/01`–`11`) measures the ENGINE and
+is read as that — informational, outside the median — because nobody's program is a
+recursive Fibonacci.  The drawing library is the first library measured: on that day its
+fourteen routines read a median of 2.01×, with six at or over 3×.  A per-routine bar in
+`bench/ratio_oracle.tsv` is a ratchet DOWN toward 3×, recorded where a routine starts above
+it, and never a licence to stay there.
 
 ### A reference twin is created where it matters, not everywhere
 
@@ -95,8 +109,11 @@ library's source does not change.
 OPEN: **1**
 
 - **D-perf-1 (OPEN, loft#1426)** — violates (Perf-Weight): the drawing library's routines
-  run 10–50× behind their pure-Rust twins on `--native-release` (hash-validated lanes, so
-  the comparison is admissible under (Perf-Like)). Profiler attribution shows the loft
-  side's hot loop matches the reference's, placing the cost in the value model
-  (`codegen_runtime` / `DbRef` indirection — PERFORMANCE.md's N1 class), not the library.
-  A fix stream is on it; this entry closes when the bench's rows meet the bar.
+  ran 10–50× behind their pure-Rust twins on `--native-release` when it was filed
+  (hash-validated lanes, so the comparison is admissible under (Perf-Like)). Profiler
+  attribution showed the loft side's hot loop matching the reference's, placing the cost in
+  the value model (`codegen_runtime` / `DbRef` indirection — PERFORMANCE.md's N1 class), not
+  the library.  @PLN157 and @PLN164 are the fix streams.  Measured 2026-09-17 against the
+  3× bar (`compare.py --skip-interp`, best of four runs, 14/14 hashes): eight rows under 2.1×,
+  and six at or over 3× — `smooth` 3.00, `fronds` 3.12, `parse` 3.39, `render_lock` 4.43,
+  `resize` 4.51, `render_marks` 6.25.  The entry closes when every row meets the bar.
