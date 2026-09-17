@@ -3885,6 +3885,9 @@ pub struct ElemFirst {
     /// is the vector itself — the mint's own third argument.
     pub out_fld: i32,
     pub elm: u16,
+    /// @PLN164 E-2b — the element temps of the other arms of an `if` whose arms each append:
+    /// their mint becomes an alias of `elm`, the element minted at the declaration.
+    pub aliases: Vec<u16>,
     pub prealloc_size: i32,
     pub binds: Vec<ElemBind>,
 }
@@ -3998,6 +4001,95 @@ fn jumps_out(v: &Value) -> bool {
         }
     }
     walk(v, 0)
+}
+
+/// The variables that may VIEW an element of `out`'s collection, which a statement between an
+/// early mint and its append must not read (`@FR-B-Disturb`, loft#1553).
+///
+/// The early mint GROWS the destination at the declaration, and a growth moves every element
+/// once the collection outgrows its allocation.  The scope pass placed its view copies against
+/// the growth where the IR has it — at the append — so a view read in between would read an
+/// element that already moved: `e = sc.ops[0]; p = mk(n); x = e.ow; sc.ops += [Op { opts: p }]`
+/// answered `0` for `100` on the eleventh element.  Two shapes can hold such a view: a local
+/// whose deps close over a store `out` lives in, and, where one of those stores is a CALLER's,
+/// any heap-typed parameter (and the locals that view one) — a caller may hand an element in
+/// beside its container, and nothing in this frame can tell.
+///
+/// An upper bound on purpose, because a miss reads freed bytes.  One refinement, for a
+/// destination FIELD at byte `dest`: a local that depends on `out` alone and whose every
+/// binding views another field of it (`sc.brushes[i]?` beside `sc.ops`, `parse_lock`'s shape)
+/// names a collection the growth does not move, and is spared — read with the scope pass's own
+/// place model ([`crate::scopes::value_view_places`]), which follows a `?` discharge's block
+/// and both of its arms.  A record the frame placed in
+/// `out`'s store owns its block (its deps are empty) and is not named either, which is what
+/// keeps `parse_circle`'s paint, read in the window, admitted.  A parameter that views an
+/// unrelated store still declines.
+fn destination_views(
+    data: &Data,
+    body: &Value,
+    vars: &crate::variables::Function,
+    out: u16,
+    dest: Option<u32>,
+) -> HashSet<u16> {
+    let closure = |start: u16| -> HashSet<u16> {
+        let mut seen: HashSet<u16> = HashSet::new();
+        let mut stack = vec![start];
+        while let Some(v) = stack.pop() {
+            for d in vars.tp(v).depend() {
+                if d < vars.count() && seen.insert(d) {
+                    stack.push(d);
+                }
+            }
+        }
+        seen
+    };
+    let mut roots = closure(out);
+    roots.insert(out);
+    let from_caller = roots.iter().any(|r| vars.is_argument(*r));
+    let foreign: HashSet<u16> = if from_caller {
+        (0..vars.count())
+            .filter(|w| *w != out && vars.is_argument(*w) && vars.tp(*w).heap_dep().is_some())
+            .collect()
+    } else {
+        HashSet::new()
+    };
+    let sibling = |w: u16| -> bool {
+        let Some(dest) = dest else { return false };
+        if vars.is_argument(w) || vars.tp(w).depend() != [out] {
+            return false;
+        }
+        let mut bound = false;
+        let mut other = true;
+        body.any_node(&mut |n| {
+            if let Value::Set(x, rhs) = n
+                && *x == w
+            {
+                match rhs.unspan() {
+                    Value::Null => {}
+                    rhs => {
+                        bound = true;
+                        let places = crate::scopes::value_view_places(rhs, data, vars);
+                        other &= !places.is_empty()
+                            && places.iter().all(|&(r, off)| {
+                                r == out && off != crate::use_analysis::ANY_FIELD && off != dest
+                            });
+                    }
+                }
+            }
+            false
+        });
+        bound && other
+    };
+    (0..vars.count())
+        .filter(|&w| w != out)
+        .filter(|&w| {
+            foreign.contains(&w)
+                || closure(w)
+                    .iter()
+                    .any(|d| roots.contains(d) || foreign.contains(d))
+        })
+        .filter(|&w| !sibling(w))
+        .collect()
 }
 
 /// @PLN157 § V-z (`@FR-R-ElemFirst`) — pair the temps with their one consuming append.
@@ -4152,59 +4244,94 @@ pub fn element_first(
         if decls.is_empty() {
             return false;
         }
-        // Append groups: (reservation +) mint + field writes + finish.
-        for (k, &j) in code_idx.iter().enumerate() {
+        // Does `v` name the destination in a way that could reach its collection?  For a local
+        // vector, any naming does.  For a record's collection field, a naming that reaches
+        // only ANOTHER field — `sc.sw` handed to the call that fills the points, a sibling
+        // collection grown — moves nothing in this one (`namings_avoid_place`, the view
+        // leaf's own test), and the early element stays where it was minted.
+        let names_out = |v: &Value, out: u16, out_fld: i32, out_tp: i32| -> bool {
+            if !v.reads_var(out) {
+                return false;
+            }
+            if out_fld == 65535 {
+                return true;
+            }
+            let (Ok(ptp), Ok(fld)) = (u16::try_from(out_tp), u16::try_from(out_fld)) else {
+                return true;
+            };
+            let pos = stores.field_position(ptp, fld);
+            pos == u16::MAX
+                || !namings_avoid_place(data, stores, def_nr, v, (out, u32::from(pos)), None)
+        };
+        // Does `v` read a view of the destination's elements — which the early mint may already
+        // have moved (`destination_views`)?
+        let dest_pos = |out_fld: i32, out_tp: i32| -> Option<u32> {
+            let (Ok(ptp), Ok(fld)) = (u16::try_from(out_tp), u16::try_from(out_fld)) else {
+                return None;
+            };
+            if fld == u16::MAX {
+                return None;
+            }
+            let pos = stores.field_position(ptp, fld);
+            (pos != u16::MAX).then(|| u32::from(pos))
+        };
+        let moved_by = |g: &AppendGroup| -> HashSet<u16> {
+            destination_views(data, body, vars, g.out, dest_pos(g.out_fld, g.out_tp))
+        };
+        let reads_view = |v: &Value, moved: &HashSet<u16>, elms: &[u16]| -> bool {
+            moved.iter().any(|w| !elms.contains(w) && v.reads_var(*w))
+        };
+        // One append group — (reservation +) mint + field writes + finish — starting at `k`
+        // of `list`: the destination, its mint arguments, the element, and the paired copies.
+        let group_at = |list: &[Value], idx: &[usize], k: usize| -> Option<AppendGroup> {
+            let j = idx[k];
             // The mint, with the reservation that precedes it for a local vector.
             let (mint_k, out, out_fld, size) =
-                if let Some(pa) = call_named(&ops[j], data, "OpPreAllocVector") {
+                if let Some(pa) = call_named(&list[j], data, "OpPreAllocVector") {
                     let (Some(out), Some(size)) = (as_var(pa.first()), as_int(pa.get(2))) else {
-                        continue;
+                        return None;
                     };
-                    if as_int(pa.get(1)) != Some(1) || k + 1 >= code_idx.len() {
-                        continue;
+                    if as_int(pa.get(1)) != Some(1) || k + 1 >= idx.len() {
+                        return None;
                     }
                     (k + 1, out, 65535, size)
                 } else if place_on
-                    && let Value::Set(_, m) = ops[j].unspan()
+                    && let Value::Set(_, m) = list[j].unspan()
                     && let Some(margs) = call_named(m, data, "OpNewRecord")
                     && let (Some(out), Some(fld)) = (as_var(margs.first()), as_int(margs.get(2)))
                     && fld != 65535
                 {
                     (k, out, fld, 0)
                 } else {
-                    continue;
+                    return None;
                 };
-            let Value::Set(elm, mint) = ops[code_idx[mint_k]].unspan() else {
-                continue;
+            let Value::Set(elm, mint) = list[idx[mint_k]].unspan() else {
+                return None;
             };
-            let Some(margs) = call_named(mint, data, "OpNewRecord") else {
-                continue;
-            };
+            let margs = call_named(mint, data, "OpNewRecord")?;
             if as_var(margs.first()) != Some(out) || as_int(margs.get(2)) != Some(out_fld) {
-                continue;
+                return None;
             }
-            let Some(out_tp) = as_int(margs.get(1)) else {
-                continue;
-            };
+            let out_tp = as_int(margs.get(1))?;
             if set_counts.contains_key(&out) {
-                continue;
+                return None;
             }
             if out_fld == 65535 {
                 // `out`: a plain vector whose element is a plain struct.
                 if !matches!(vars.tp(out).peel_link(), Type::Vector(e, _)
                     if plain_record_type(data, e).is_some())
                 {
-                    continue;
+                    return None;
                 }
             } else {
                 // `out`: a record variable whose collection field stores plain structs INLINE.
                 let (Ok(ptp), Ok(fld)) = (u16::try_from(out_tp), u16::try_from(out_fld)) else {
-                    continue;
+                    return None;
                 };
                 if plain_record_type(data, vars.tp(out)).is_none()
                     || (ptp as usize) >= stores.types.len()
                 {
-                    continue;
+                    return None;
                 }
                 let coll = stores.field_type(ptp, fld);
                 if coll == u16::MAX
@@ -4213,7 +4340,7 @@ pub fn element_first(
                         Some(crate::database::Parts::Vector(_))
                     )
                 {
-                    continue;
+                    return None;
                 }
                 let content = stores.content(coll);
                 if content == u16::MAX
@@ -4223,7 +4350,7 @@ pub fn element_first(
                         Some(crate::database::Parts::Struct(_))
                     )
                 {
-                    continue;
+                    return None;
                 }
             }
             // Scan the group: paired appends, and the finish that closes it.  Under E-2 a
@@ -4232,9 +4359,9 @@ pub fn element_first(
             // writes run where they ran, after the mint.
             let mut appended: Vec<(u16, i32)> = Vec::new();
             let mut others: Vec<usize> = Vec::new();
-            let mut fin = None;
-            for &j2 in code_idx.iter().skip(mint_k + 1) {
-                let stmt = &ops[j2];
+            let mut fin = false;
+            for &j2 in idx.iter().skip(mint_k + 1) {
+                let stmt = &list[j2];
                 if let Some(a) = call_named(stmt, data, "OpSetInt4")
                     && as_var(a.first()) == Some(*elm)
                 {
@@ -4261,23 +4388,23 @@ pub fn element_first(
                     && as_var(a.first()) == Some(out)
                     && as_var(a.get(1)) == Some(*elm)
                 {
-                    fin = Some(j2);
+                    fin = true;
                     break;
                 }
-                if place_on && !stmt.reads_var(out) && !jumps_out(stmt) {
+                if place_on && !names_out(stmt, out, out_fld, out_tp) && !jumps_out(stmt) {
                     others.push(j2);
                     continue;
                 }
                 break;
             }
-            if fin.is_none() || appended.is_empty() {
-                continue;
+            if !fin || appended.is_empty() {
+                return None;
             }
             // Nothing else in the group reaches a paired field: the only writes to it are the
             // suppressed zero and the paired copy.
             let paired: HashSet<i32> = appended.iter().map(|(_, o)| *o).collect();
             if others.iter().any(|&j2| {
-                ops[j2].any_node(&mut |m| {
+                list[j2].any_node(&mut |m| {
                     matches!(m, Value::Call(d, a)
                         if (*d as usize) < data.definitions.len()
                             && data.def(*d).name() == "OpGetField"
@@ -4291,13 +4418,91 @@ pub fn element_first(
                         def.name()
                     );
                 }
+                return None;
+            }
+            Some(AppendGroup {
+                out,
+                out_fld,
+                out_tp,
+                size,
+                elm: *elm,
+                appended,
+            })
+        };
+        // The group of one arm of an `if`: its list holds a group, and nothing before it
+        // names the destination or jumps out.
+        let arm_group = |arm: &Value, out_of: Option<u16>| -> Option<AppendGroup> {
+            let list: &[Value] = match arm.unspan() {
+                Value::Block(bl) => &bl.operators,
+                Value::Insert(ops) => ops,
+                _ => return None,
+            };
+            let idx: Vec<usize> = (0..list.len())
+                .filter(|x| !matches!(list[*x].unspan(), Value::Line(_)))
+                .collect();
+            for ak in 0..idx.len() {
+                if let Some(g) = group_at(list, &idx, ak) {
+                    if out_of.is_some_and(|o| o != g.out) {
+                        return None;
+                    }
+                    let moved = moved_by(&g);
+                    let clean = idx[..ak]
+                        .iter()
+                        .all(|&x| {
+                            !names_out(&list[x], g.out, g.out_fld, g.out_tp)
+                                && !jumps_out(&list[x])
+                                && !reads_view(&list[x], &moved, &[g.elm])
+                        });
+                    return clean.then_some(g);
+                }
+            }
+            None
+        };
+        for (k, &j) in code_idx.iter().enumerate() {
+            // A group in this list, or (@PLN164 E-2b) one in each arm of an `if` this list
+            // holds — the parser shape `if c { out += [A { v: p }] } else { out += [B { v: p }] }`.
+            // One early element serves both arms: the second arm's mint becomes an alias of
+            // the first's, and each arm keeps its own writes and its finish.
+            let mut groups: Vec<AppendGroup> = Vec::new();
+            if let Some(g) = group_at(ops, &code_idx, k) {
+                groups.push(g);
+            } else if place_on
+                && let Value::If(cond, then_v, else_v) = ops[j].unspan()
+                && let Some(gt) = arm_group(then_v, None)
+                && let Some(ge) = arm_group(else_v, Some(gt.out))
+                && !names_out(cond, gt.out, gt.out_fld, gt.out_tp)
+                && !jumps_out(cond)
+                && !reads_view(cond, &moved_by(&gt), &[gt.elm, ge.elm])
+                && gt.elm != ge.elm
+                && (gt.out_fld, gt.out_tp, gt.size) == (ge.out_fld, ge.out_tp, ge.size)
+                && {
+                    let mut a = gt.appended.clone();
+                    let mut b = ge.appended.clone();
+                    a.sort_unstable();
+                    b.sort_unstable();
+                    a == b
+                }
+            {
+                groups.push(gt);
+                groups.push(ge);
+            } else {
                 continue;
             }
+            let AppendGroup {
+                out,
+                out_fld,
+                out_tp,
+                size,
+                elm,
+                ref appended,
+            } = groups[0];
+            let elm = &elm;
+            let arms = u32::try_from(groups.len()).unwrap_or(u32::MAX);
             // Pair each appended temp with a declaration EARLIER in this list.
             let mut binds: Vec<ElemBind> = Vec::new();
             let mut first_decl = usize::MAX;
             let mut sound = true;
-            for (tmp, off) in &appended {
+            for (tmp, off) in appended {
                 let Some((key, dk, dend, call)) = decls.get(tmp).copied() else {
                     // Under E-2 a value this list does not declare keeps its copy at the
                     // append, into the early element; before it, it declined the group.
@@ -4314,7 +4519,7 @@ pub fn element_first(
                 }
                 // A call's other arguments may not name the destination.
                 if let Some(cargs) = call
-                    && cargs.iter().any(|a| a.reads_var(out))
+                    && cargs.iter().any(|a| names_out(a, out, out_fld, out_tp))
                 {
                     sound = false;
                     break;
@@ -4351,7 +4556,27 @@ pub fn element_first(
                 continue;
             }
             // Between the first declaration and the group: no naming of `out` outside the
-            // declarations themselves, and no jump out of the list.
+            // declarations themselves, no jump out of the list, and no read of a view the
+            // early mint may have moved — the declarations' own arguments included.
+            // The group's own elements are named there only by the parser's null pre-inits,
+            // which the emitter drops for an early element.
+            let own: Vec<u16> = groups.iter().map(|g| g.elm).collect();
+            let moved = moved_by(&groups[0]);
+            if let Some(w) = code_idx[first_decl..k].iter().find_map(|&j2| {
+                moved
+                    .iter()
+                    .find(|w| !own.contains(w) && ops[j2].reads_var(**w))
+            })
+            {
+                if trace {
+                    eprintln!(
+                        "[elemfirst] {}: `{}` may view the destination and is read before the append",
+                        def.name(),
+                        vars.name(*w)
+                    );
+                }
+                continue;
+            }
             for &j2 in &code_idx[first_decl..k] {
                 let is_call_decl = binds.iter().any(|b| {
                     b.from_call
@@ -4359,7 +4584,9 @@ pub fn element_first(
                             code_idx[*dk] == j2 || code_idx[*dend] == j2
                         })
                 });
-                if (!is_call_decl && ops[j2].reads_var(out)) || jumps_out(&ops[j2]) {
+                if (!is_call_decl && names_out(&ops[j2], out, out_fld, out_tp))
+                    || jumps_out(&ops[j2])
+                {
                     sound = false;
                 }
             }
@@ -4394,7 +4621,7 @@ pub fn element_first(
                     continue;
                 }
                 let total = uses(b.tmp);
-                let mut allowed = 1u32; // the one OpAppendVector
+                let mut allowed = arms; // one OpAppendVector per arm
                 let (_, dk, _, _) = decls[&b.tmp];
                 for &j2 in &code_idx[dk + 1..k] {
                     ops[j2].any_node(&mut |m| {
@@ -4455,11 +4682,17 @@ pub fn element_first(
             }
             out_map.elms.insert(*elm);
             out_map.by_elm.insert(*elm, idx);
+            let aliases: Vec<u16> = groups[1..].iter().map(|g| g.elm).collect();
+            for a in &aliases {
+                out_map.elms.insert(*a);
+                out_map.by_elm.insert(*a, idx);
+            }
             out_map.pairs.push(ElemFirst {
                 out,
                 out_tp,
                 out_fld,
                 elm: *elm,
+                aliases,
                 prealloc_size: size,
                 binds,
             });
@@ -5349,6 +5582,19 @@ fn elem_mint(
     };
     let place = leaf_root(data, stores, def_nr, rhs, 0)?;
     Some((place, *ptp, *fld))
+}
+
+/// One append group [`element_first`] can pair: the destination (a local vector, or a record
+/// variable's collection field `out_fld`), the mint's type argument, the reservation size of a
+/// local vector, the element temp, and the `(temp, field offset)` copies into it.
+#[derive(Clone)]
+struct AppendGroup {
+    out: u16,
+    out_fld: i32,
+    out_tp: i32,
+    size: i32,
+    elm: u16,
+    appended: Vec<(u16, i32)>,
 }
 
 /// The inputs of one [`fresh_leaf`] question.

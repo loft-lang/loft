@@ -2755,11 +2755,32 @@ impl Output<'_> {
                             handled = true;
                         }
                     }
-                    // The append site's mint.
+                    // An element's null pre-init (the parser writes one per arm in front of an
+                    // `if` whose arms each append): the element is bound by its early mint, and
+                    // the pre-init would otherwise reset it between the mint and the arms.
+                    Value::Set(e2, x)
+                        if self.elem_first.elms.contains(e2)
+                            && matches!(x.unspan(), Value::Null) =>
+                    {
+                        handled = true;
+                    }
+                    // The append site's mint — or, in another arm of a joined append
+                    // (@PLN164 E-2b), the alias of the element minted at the declaration.
                     Value::Set(e2, m2)
                         if self.elem_first.by_elm.contains_key(e2)
                             && matches!(m2.unspan(), Value::Call(md, _) if named(md, "OpNewRecord")) =>
                     {
+                        let pi = self.elem_first.by_elm[e2];
+                        let first = self.elem_first.pairs[pi].elm;
+                        if first != *e2 {
+                            let aliasn = sanitize(dvars.name(*e2));
+                            let firstn = sanitize(dvars.name(first));
+                            self.indent(w)?;
+                            writeln!(
+                                w,
+                                "var_{aliasn} = var_{firstn}; //@PLN164 E-2b the arm's element is the one minted at the declaration"
+                            )?;
+                        }
                         handled = true;
                     }
                     // Paired handle-zeros and paired copies on the element.

@@ -106,7 +106,7 @@ const PLACE_EXPECTED: &[(&str, usize)] = &[
     ("n_g1", 1),  // a call result appended once, viewed by the result
     ("n_g2", 1),  // a literal-built local and a second local into one element
     ("n_g3", 0),  // a `return` between the call and the append
-    ("n_g4", 0),  // the container named in between
+    ("n_g4", 1),  // the container's length read in between: the element is invisible
     ("n_g5", 0),  // the callee mints into its buffer
     ("n_g6", 0),  // an argument reads the destination
     ("n_g7", 0),  // the local read after the append
@@ -116,6 +116,18 @@ const PLACE_EXPECTED: &[(&str, usize)] = &[
     ("n_g11", 1), // a local record's collection
     ("n_g13", 0), // the local rebound under a condition (loft#1552)
     ("n_g14", 0), // a `continue` between the call and the append
+    ("n_g16", 1), // the `parse_circle` shape: an append in either arm, one early element
+    ("n_g17", 0), // only one arm appends
+    ("n_g18", 0), // the arms append different locals
+    ("n_g19", 1), // an arm reads the container's length before its append
+    ("n_g20", 1), // the joined append inside a scanning loop
+    ("n_g21", 0), // the arms append into different containers
+    ("n_g22", 0), // an arm returns before its append
+    ("n_g23", 0), // the same collection grown in between
+    ("n_g24", 0), // an element removed in between
+    ("n_g25", 0), // a view of the destination's element read in between (loft#1553)
+    ("n_g26", 1), // a view of a SIBLING collection's element read in between
+    ("n_g27", 0), // an element parameter that may alias the destination read in between
 ];
 
 fn place_counts(rust: &str) -> HashMap<String, usize> {
@@ -146,6 +158,11 @@ fn a_parameter_collection_and_a_call_take_the_element_first_build() {
             .unwrap_or_else(|| panic!("{name} was not emitted"));
         assert_eq!(g, *mints, "{name}: elements minted at a declaration site");
     }
+    // The joined arms: the else-arm's element is the one minted at the declaration.
+    assert!(
+        rust.contains("var__elm_2 = var__elm_1; //@PLN164 E-2b"),
+        "g16's second arm aliases the early element"
+    );
     // The call is handed the element's field as its buffer.
     assert!(
         rust.contains("= n_mkpts(cell, var_n, DbRef { store_nr: var__elm_1.store_nr, rec: var__elm_1.rec, pos: var__elm_1.pos + 20 });"),

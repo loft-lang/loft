@@ -82,7 +82,8 @@ fn g3(sc: Sc, n: integer) -> Mark {
   sc.ops += [Op { opts: g3_p, ow: n }];
   Mark { matched: true, bad: false, mpts: g3_p }
 }
-/// g4 — the container named between the call and the append.  DECLINE.
+/// g4 — the container's LENGTH read between the call and the append.  ADMIT: the early element
+/// is invisible until its finish, so the read answers what the record form answers.
 fn g4(sc: Sc, n: integer) -> Mark {
   g4_p = mkpts(n);
   sc.seen = len(sc.ops);
@@ -157,6 +158,125 @@ fn g14(sc: Sc, n: integer) -> integer {
   }
   g14_c
 }
+/// g16 — the `parse_circle` shape: one call result appended in EITHER arm of an `if`.  ADMIT —
+/// one element minted at the declaration serves both arms.
+fn g16(sc: Sc, n: integer, c: boolean) -> Mark {
+  g16_p = mkpts(n);
+  if c {
+    sc.ops += [Op { opts: g16_p, ow: 1, pn: Pn { pk: 1, spec: [] } }];
+  } else {
+    sc.ops += [Op { opts: g16_p, ow: 2 }];
+  }
+  Mark { matched: true, bad: false, mpts: g16_p }
+}
+/// g17 — only one arm appends.  DECLINE.
+fn g17(sc: Sc, n: integer, c: boolean) -> integer {
+  g17_p = mkpts(n);
+  if c { sc.ops += [Op { opts: g17_p, ow: 1 }]; } else { sc.seen += 1; }
+  sc.seen
+}
+/// g18 — the arms append different locals.  DECLINE.
+fn g18(sc: Sc, n: integer, c: boolean) -> integer {
+  g18_p = mkpts(n);
+  g18_q = mkpts(n + 1);
+  if c { sc.ops += [Op { opts: g18_p, ow: 1 }]; } else { sc.ops += [Op { opts: g18_q, ow: 2 }]; }
+  len(sc.ops)
+}
+/// g19 — an arm reads the container's length before its append.  ADMIT, as g4.
+fn g19(sc: Sc, n: integer, c: boolean) -> integer {
+  g19_p = mkpts(n);
+  if c {
+    sc.seen = len(sc.ops);
+    sc.ops += [Op { opts: g19_p, ow: 1 }];
+  } else {
+    sc.ops += [Op { opts: g19_p, ow: 2 }];
+  }
+  sc.seen
+}
+/// g20 — the joined append inside a scanning loop, after a `continue`.  ADMIT.
+fn g20(sc: Sc, n: integer, c: boolean) -> Mark {
+  g20_k = 0;
+  while true {
+    g20_k += 1;
+    if g20_k < 2 { continue }
+    g20_p = mkpts(n + g20_k);
+    if c { sc.ops += [Op { opts: g20_p, ow: g20_k }]; } else { sc.ops += [Op { opts: g20_p, ow: 0 }]; }
+    return Mark { matched: true, bad: false, mpts: g20_p }
+  }
+  Mark { matched: false, bad: false, mpts: [] }
+}
+/// g21 — the arms append into different containers.  DECLINE.
+fn g21(sc: Sc, sc2: Sc, n: integer, c: boolean) -> integer {
+  g21_p = mkpts(n);
+  if c { sc.ops += [Op { opts: g21_p, ow: 1 }]; } else { sc2.ops += [Op { opts: g21_p, ow: 2 }]; }
+  len(sc.ops) * 10 + len(sc2.ops)
+}
+/// g22 — an arm returns before its append.  DECLINE.
+fn g22(sc: Sc, n: integer, c: boolean) -> integer {
+  g22_p = mkpts(n);
+  if c {
+    if n > 5 { return -1 }
+    sc.ops += [Op { opts: g22_p, ow: 1 }];
+  } else {
+    sc.ops += [Op { opts: g22_p, ow: 2 }];
+  }
+  len(sc.ops)
+}
+
+/// g23 — the same collection grown between the call and the append: a second mint into it
+/// would claim the early element's slot.  DECLINE.
+fn g23(sc: Sc, n: integer) -> Mark {
+  g23_p = mkpts(n);
+  sc.ops += [Op { opts: [], ow: 99 }];
+  sc.ops += [Op { opts: g23_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: g23_p }
+}
+/// g24 — an element removed between the call and the append.  DECLINE.
+fn g24(sc: Sc, n: integer) -> Mark {
+  g24_p = mkpts(n);
+  sc.ops.remove(0);
+  sc.ops += [Op { opts: g24_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: g24_p }
+}
+
+/// The next three cells run against `Sk`, whose `ops` vector is FULL (eleven elements, the
+/// minimum allocation) with records allocated after it, so the append relocates the vector:
+/// a view of an element read between the declaration and the append would read freed bytes
+/// if the early mint had moved it (loft#1553).
+struct Sk { ops: vector<Op>, marks: vector<Pt>, seen: integer = 0 }
+fn sk11() -> Sk {
+  k = Sk { ops: [], marks: [Pt { px: 41, py: 5 }], seen: 0 };
+  for j in 0..11 { k.ops += [Op { opts: [Pt { px: j, py: 1 }], ow: 100 + j }]; }
+  k
+}
+/// g25 — a view of the destination's element, bound before the declaration, read in between.
+/// DECLINE (loft#1553).
+fn g25(sc: Sk, n: integer) -> integer {
+  g25_e = sc.ops[0];
+  g25_p = mkpts(n);
+  sc.seen = g25_e.ow;
+  sc.ops += [Op { opts: g25_p, ow: n }];
+  sc.seen
+}
+/// g26 — a view of a SIBLING collection's element, `?`-discharged, read in between
+/// (`parse_lock`'s `sc.brushes[i]?.period`).  ADMIT: the growth moves nothing in `marks`.
+fn g26(sc: Sk, n: integer) -> integer {
+  g26_e = sc.marks[0]?;
+  g26_p = mkpts(n);
+  sc.seen = g26_e.px + sc.marks[0]?.py;
+  sc.ops += [Op { opts: g26_p, ow: n }];
+  sc.seen
+}
+/// g27 — the destination is a parameter, so another record parameter may be the caller's view
+/// of one of its elements (`g27(k, k.ops[0], n)`).  DECLINE (loft#1553).  If loft#1554's
+/// refusal comes to cover growth through a field, this call is one it names.
+fn g27(sc: Sk, e: Op, n: integer) -> integer {
+  g27_p = mkpts(n);
+  sc.seen = e.ow;
+  sc.ops += [Op { opts: g27_p, ow: n }];
+  sc.seen
+}
+
 /// g15's driver: `g3`'s early return, `n` times over one container.  Both censuses are taken
 /// after it returns, so the same stores are alive at each.
 fn g15_runs(sc: Sc, n: integer) -> integer {
@@ -269,6 +389,67 @@ fn main() {
   g15_t += g15_runs(s15, 100);
   c15b = census_records();
   ok("g15 no growth", "{c15b - c15a},{g15_t},{len(s15.ops)}", "0,0,0");
+
+  // g16: both arms.  mkpts(3) → 9, mkpts(4) → 18; the then-arm's element carries pn.pk 1.
+  s16 = Sc { ops: [], seen: 0 };
+  m16 = g16(s16, 3, true);
+  ok("g16 then    ", "{len(m16.mpts)},{totp(m16.mpts)}", "3,9");
+  m16b = g16(s16, 4, false);
+  ok("g16 else    ", "{len(m16b.mpts)},{totp(m16b.mpts)}", "4,18");
+  ok("g16 elements", "{len(s16.ops)},{s16.ops[0]?.ow},{s16.ops[0]?.pn.pk},{totp(s16.ops[0]?.opts)},{s16.ops[1]?.ow},{totp(s16.ops[1]?.opts)}", "2,1,1,9,2,18");
+
+  // g17: the else arm appends nothing.
+  s17 = Sc { ops: [], seen: 0 };
+  ok("g17         ", "{g17(s17, 3, false)},{g17(s17, 3, true)},{len(s17.ops)},{totp(s17.ops[0]?.opts)}", "1,1,1,9");
+
+  // g18: p = 3 points (9), q = 4 points (18).
+  s18 = Sc { ops: [], seen: 0 };
+  ok("g18         ", "{g18(s18, 3, false)},{g18(s18, 3, true)},{totp(s18.ops[0]?.opts)},{totp(s18.ops[1]?.opts)}", "1,2,18,9");
+
+  // g19: `seen` read in the then-arm before its append.
+  s19 = Sc { ops: [Op { ow: 5 }], seen: 0 };
+  ok("g19         ", "{g19(s19, 3, true)},{g19(s19, 2, false)},{len(s19.ops)},{totp(s19.ops[1]?.opts)},{totp(s19.ops[2]?.opts)}", "1,1,3,9,3");
+
+  // g20: k = 2 on the first pass that gets past the continue: mkpts(n + 2).
+  s20 = Sc { ops: [], seen: 0 };
+  m20 = g20(s20, 1, true);
+  ok("g20 then    ", "{len(m20.mpts)},{totp(m20.mpts)}", "3,9");
+  m20b = g20(s20, 2, false);
+  ok("g20 else    ", "{len(m20b.mpts)},{totp(m20b.mpts)}", "4,18");
+  ok("g20 elements", "{len(s20.ops)},{s20.ops[0]?.ow},{s20.ops[1]?.ow}", "2,2,0");
+
+  // g21: the then-arm into sc, the else-arm into sc2.
+  s21 = Sc { ops: [], seen: 0 };
+  s21b = Sc { ops: [], seen: 0 };
+  ok("g21         ", "{g21(s21, s21b, 3, true)},{g21(s21, s21b, 3, false)},{totp(s21.ops[0]?.opts)},{totp(s21b.ops[0]?.opts)}", "10,11,9,9");
+
+  // g22: n = 7 in the then-arm returns before appending.
+  s22 = Sc { ops: [], seen: 0 };
+  ok("g22         ", "{g22(s22, 7, true)},{g22(s22, 3, true)},{g22(s22, 2, false)},{totp(s22.ops[0]?.opts)},{totp(s22.ops[1]?.opts)}", "-1,1,2,9,3");
+
+  // g23: the 99-op first, then the three points.
+  s23 = Sc { ops: [], seen: 0 };
+  m23 = g23(s23, 3);
+  ok("g23         ", "{len(m23.mpts)},{totp(m23.mpts)}", "3,9");
+  ok("g23 elements", "{len(s23.ops)},{s23.ops[0]?.ow},{len(s23.ops[0]?.opts)},{s23.ops[1]?.ow},{totp(s23.ops[1]?.opts)}", "2,99,0,3,9");
+
+  // g24: the first of two ops removed, then the new one appended.
+  s24 = Sc { ops: [Op { ow: 5 }, Op { ow: 6 }], seen: 0 };
+  m24 = g24(s24, 4);
+  ok("g24         ", "{len(m24.mpts)},{totp(m24.mpts)}", "4,18");
+  ok("g24 elements", "{len(s24.ops)},{s24.ops[0]?.ow},{s24.ops[1]?.ow},{totp(s24.ops[1]?.opts)}", "2,6,4,18");
+
+  // g25–g27: the eleventh-element growth.  The element-0 view reads 100; the new element holds
+  // mkpts(3) (totp 9); element 0 is untouched.
+  k25 = sk11();
+  ok("g25         ", "{g25(k25, 3)}", "100");
+  ok("g25 elements", "{len(k25.ops)},{k25.ops[0]?.ow},{totp(k25.ops[0]?.opts)},{k25.ops[11]?.ow},{totp(k25.ops[11]?.opts)}", "12,100,1,3,9");
+  k26 = sk11();
+  ok("g26         ", "{g26(k26, 3)}", "46");
+  ok("g26 elements", "{len(k26.ops)},{k26.ops[0]?.ow},{k26.ops[11]?.ow},{totp(k26.ops[11]?.opts)},{len(k26.marks)}", "12,100,3,9,1");
+  k27 = sk11();
+  ok("g27         ", "{g27(k27, k27.ops[0], 3)}", "100");
+  ok("g27 elements", "{len(k27.ops)},{k27.ops[0]?.ow},{k27.ops[11]?.ow},{totp(k27.ops[11]?.opts)}", "12,100,3,9");
 
   println("164-element-place: every cell holds");
 }

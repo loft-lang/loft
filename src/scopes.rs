@@ -442,7 +442,7 @@ pub fn same_place(view: (u16, u32), disturbed: (u16, u32)) -> bool {
 /// ownership oracle and both emitters read: peeling an arbitrary `if` there would claim `a?` on
 /// a nullable parameter, whose lowering is an `if` with a `Var` arm, and answer `Borrowed` for
 /// a value the callee minted.
-fn value_view_places(value: &Value, data: &Data, function: &Function) -> Vec<(u16, u32)> {
+pub(crate) fn value_view_places(value: &Value, data: &Data, function: &Function) -> Vec<(u16, u32)> {
     let mut out = Vec::new();
     view_place_in(value, data, function, &[], 0, &mut out);
     out
