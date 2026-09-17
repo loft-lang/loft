@@ -625,8 +625,7 @@ fn mints_null_buffer(body: &Block, data: &Data, vars: &crate::variables::Functio
         op.any_node(&mut |n| {
             matches!(n, Value::Call(d, args)
                 if (*d as usize) < data.definitions.len()
-                    && (null_buffer_alloc(data.def(*d).name(), args, Some(vars), data).is_some()
-                        || lazy_buffer_mint(data.def(*d).name(), args, Some(vars))))
+                    && null_buffer_alloc(data.def(*d).name(), args, Some(vars), data).is_some())
         })
     })
 }
@@ -634,7 +633,9 @@ fn mints_null_buffer(body: &Block, data: &Data, vars: &crate::variables::Functio
 /// `@FR-O-LazyBuffer` — the record-buffer pool's mint, which `scopes::reuse_record_buffers`
 /// places behind `OpRefIsNull` on the buffer itself: it only ever takes a FRESH store from
 /// the null sentinel, never clears one, so no header a loop holds can name the store it
-/// fills.  It is still a growth, and `mints_null_buffer` counts it as one for `@FR-R-Base`.
+/// fills.  Nor is it a growth for `@FR-R-Base`: a new store is a new slot whose memory is
+/// its own allocation (`Store::ptr`), so no live store's memory moves, even when the slot
+/// table itself grows.  `LOFT_HOIST_VERIFY=1` re-checks every base at every use.
 fn lazy_buffer_mint(name: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
     let Some(vars) = vars else { return false };
     (name == "OpDatabase" || name == "OpDatabaseNP")
@@ -6519,6 +6520,14 @@ pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16>
                     }
                     "OpFreeRef" | "OpFreeRefIfDistinct" => {
                         if let Some(w) = arg_var(0) {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                        // A free guarded FOR a value local is emitted as nothing
+                        // (`OpFreeRefIfDistinctEmitter`), and its witness goes with it.
+                        if callee.name() == "OpFreeRefIfDistinct"
+                            && arg_var(0).is_some_and(|o| locals.contains_key(&o))
+                            && let Some(w) = arg_var(1)
+                        {
                             *dropped.entry(w).or_insert(0) += 1;
                         }
                     }
