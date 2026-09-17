@@ -659,6 +659,45 @@ own census moved 108 → 98 / 106 → 101 with the deferred bind and the wrapped
 `wrap` and `native` corpora are green.  On the parse bench the `Mark` mints are 24 → 14 per two
 parses, hash `33f6d2b8`, clean under `LOFT_STRICT_STORES`, `LOFT_POISON` and the leak gate.
 
+*Measured — and the first measurement said no.*  With the pool on, the parse row was SLOWER:
++1.5 % instructions, +1.1 % cycles (`perf stat -r 5`, one emission per state, hash
+`33f6d2b8`).  The store mints it removes were paid back by the release the pool owes each
+reuse (`OpClear` → `remove_claims`, loft#1549): `owned_walk` builds its child list for every
+heap-OWNING type, also when the record holds nothing — and a `Mark` refilled after `no_mark()`
+holds nothing on most lines.  `Stores::holds_no_heap` (a runtime change, both backends) reads
+the heap-owning slots first and skips the walk when all are empty, conservatively for every
+kind it does not read.  After it, pool on against pool off on one rlib: **1 499.6 M against
+1 506.8 M instructions, 373.5 M against 377.5 M cycles** — and the exit alone moved the pool-off
+build from 1 515 M to 1 507 M.
+
+The fourteen rows (`--n 50`, best of five interleaved rounds, one core, 14/14 hashes agree).
+The runtime change first, one emission against the rlib before and after it: every row equal
+or faster, `smooth` −6.7 %, `parse` −3.2 %, `fill_circle` −2.6 %; `fill_star` and `composite`
+read +2.6 % / +1.2 % at `--n 50` and −0.7 % / −0.1 % instructions at `--n 500` (their function
+bodies are byte-identical; the short run carries loader noise on this hybrid CPU).  Then the
+pool, one rlib:
+
+| row | pool on | pool off | on / off | pool off, before the exit |
+|---|---:|---:|---:|---:|
+| hash | 108 440 | 110 080 | 0.985 | 107 700 |
+| hair | 26 440 | 27 520 | 0.961 | 26 820 |
+| smooth | 1 160 | 1 180 | 0.983 | 1 140 |
+| fronds | 153 660 | 154 500 | 0.995 | 155 520 |
+| lock | 2 659 300 | 2 755 320 | 0.965 | 2 722 340 |
+| lock_curved | 2 458 040 | 2 493 980 | 0.986 | 2 514 640 |
+| composite | 196 700 | 196 240 | 1.002 | 195 600 |
+| fill_circle | 56 860 | 58 020 | 0.980 | 59 320 |
+| fill_star | 21 480 | 21 240 | 1.011 | 21 900 |
+| wide_line | 12 280 | 12 240 | 1.003 | 12 280 |
+| **parse** | **25 360** | 25 840 | **0.981** | 26 500 |
+| render_lock | 12 973 180 | 13 068 060 | 0.993 | 12 821 880 |
+| render_marks | 5 665 660 | 5 762 140 | 0.983 | 5 612 900 |
+| resize | 85 537 320 | 86 836 960 | 0.985 | 84 812 480 |
+
+So the unit's time gain on its own row is small (−1.9 %, ≈ −4 % with the exit), as P0's
+arithmetic said a store-pair class would be; what it removes structurally is five `Mark` stores
+a parse and the three frees that could release a caller's store.
+
 ### The queue after B1b
 
 1. ~~**The `Mark` class** and **B1 behind a null-init**~~ — built above; 7 `Mark` stores a
