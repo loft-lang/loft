@@ -1,12 +1,25 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1550 (`@FR-O-Oracle`, `@FR-B-Copy`) — A VIEW OF ONE OF SEVERAL ARGUMENTS IS COPIED.  A
+// callee whose return may hand back any of two or more arguments (`if first { a } else
+// { h.c }`) has no single argument that witnesses what it answered.  The callee's own summary
+// named the first (`Join(a)`), the caller's runtime guard then adopted `h`'s store as the
+// binding's own whenever the callee answered `h.c`, and the binding's scope-exit free
+// released the caller's record — `h` read back another record's bytes, with nothing said.
+// At the call the value is now a `Join` with no nameable base: every bind copies it, the
+// arguments bracketed so the copy's source-free releases only a store the callee minted.
+// Each cell binds such a value, writes the bases, and reads the binding and the bases back;
+// j9 and j10 are the controls (one base, and an owned arm beside one borrow).  Plan cells:
+// `doc/claude/plans/164-activation-arena/bytecode-comparisons/1550-two-borrow-join-cells.loft`.
+// `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1`
+// must answer identically.
 //
-// loft#1550 — a value whose arms BORROW from two different bases.  `formal/ownership.md`
-// defines `γ(Join(b)) = γ(Owned) ∪ γ(Borrowed(b))`, so `Borrowed(a) ⊔ Borrowed(h)` is not
-// `Join(a)`: no arm is owned, and every bind of such a value is a copy that frees nothing
-// of either base.  Each cell binds such a value, then writes the bases, reads the binding
-// and reads the bases back — hand-computed.  Run on both backends under
-// `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and `LOFT_NATIVE_LEAK_CHECK=1`.
+// @falsified-at: 91796b9d — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1550-a-view-of-one-of-several-arguments-is-copied.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   ARMED: none — the value channel carries it.
+//   CHANNEL: assert on both backends (the first failing cell ends the run).
+//   WITNESS: `j1 154618823343` where 1024 is right — `h` read back another record's bytes.
+//   HOLDS: leak, panic and refusals are equal on both trees; j9 and j10 pass on both.
 
 struct Canvas { data: vector<integer>, w: integer }
 struct H { c: Canvas, n: integer }
@@ -227,20 +240,7 @@ fn j12() {
   println("j12 {s}");
 }
 
-fn run(c: text) {
-  if c == "j1" { j1() } else if c == "j2" { j2() } else if c == "j3" { j3() }
-  else if c == "j4" { j4() } else if c == "j5" { j5() } else if c == "j6" { j6() }
-  else if c == "j7" { j7() } else if c == "j8" { j8() } else if c == "j9" { j9() }
-  else if c == "j10" { j10() } else if c == "j11" { j11() } else if c == "j12" { j12() }
-}
-
-/// With no argument every cell runs; `-- j3` runs one.
 fn main() {
-  args = arguments();
-  if len(args) == 0 {
-    j1(); j2(); j3(); j4(); j5(); j6(); j7(); j8(); j9(); j10(); j11(); j12();
-    println("1550 cells PASSED");
-  } else {
-    for a in args { run(a); }
-  }
+  j1(); j2(); j3(); j4(); j5(); j6(); j7(); j8(); j9(); j10(); j11(); j12();
+  println("1550 cells PASSED");
 }

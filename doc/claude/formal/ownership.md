@@ -447,7 +447,9 @@ implication that reading `deps` is *sufficient*.
 
 **OPEN: 0.**  `D-own-43` (the interpreter's rebind of a promoted buffer local frees the
 buffer the caller handed it — masked while such callees receive the null sentinel) opened
-2026-09-15 and CLOSED 2026-09-17 with @PLN164 B1b, below.  `D-own-42` (a plain local's first bind
+2026-09-15 and CLOSED 2026-09-17 with @PLN164 B1b, below; `D-own-45` (a return that may hand
+back one of several arguments guarded against the first, loft#1550) opened and CLOSED
+2026-09-17, below.  `D-own-42` (a plain local's first bind
 from a callee returning its promoted local COPIED where `(O-Move)` transfers) opened and
 CLOSED 2026-09-15, below; `D-own-44` (a consumed lift temp freed again at its rebind) opened
 and CLOSED 2026-09-17, below; `D-own-40`
@@ -474,6 +476,31 @@ the entry records why the obvious widening is not taken: it answers wrong on `--
 > a struct's has, `tests/scripts/a-struct-enum-whole-value-bind-copies-like-a-struct.loft`);
 > and the `--native` release of a displaced store on a fn-ref re-bind of a USER local, which
 > is loft#1328 and which the `??` hoist sidesteps by releasing in the IR.
+
+### D-own-45 — OPENED AND CLOSED (2026-09-17): a return that may hand back one of several arguments was guarded against the first
+
+`(O-Oracle)` — the fact is derived, never upgraded on a base that cannot be trusted — and
+`(B-Copy)`.  `fn either(a: Canvas, h: H, c: boolean) -> Canvas { if c { a } else { h.c } }`
+summarised its return as `Join(a)`: the lattice joined two borrows with different bases into a
+`Join` of the first, which the Galois connection above does not cover.  Every `Join` reader
+assumes one arm is OWNED, so the caller's guard compared the answer with `a` alone, adopted
+`h`'s store as the binding's own whenever the callee answered `h.c`, and the binding's
+scope-exit free released the caller's record: `pick = either(cv, h, false); pick` read `h` back
+as another record's bytes on both backends (`55 51539607552` for `101 42`), with no diagnostic
+(loft#1550, `silent-wrong`).  The rebind spelling (`cv = either(cv, h, c)`) aliased on native
+and freed on the interpreter; the nullable return aliased once the guard was gone.
+
+Closed at the call boundary: a callee whose return deps name more than one visible parameter
+answers `Join(∅)` there (above), which every reader copies — native's copy-or-adopt split, the
+interpreter's first-bind call copy, the nullable first bind (`nullable_join_first_bind`'s
+"copy always" base), and the interpreter's rebind through a FRESH store, whose protect
+bracket no longer names the local (it named the new store after the copy and left the old
+one protected, one leaked store per call).  Changing the lattice itself was measured and
+reverted: `q ?? [7, 8]` joins a parameter with the function's own literal backing, and
+`Join(q)` is the right answer there (`1257-…`, `1318-…` and `1323-…` went red).  Twelve files'
+emission moved over the 1 590-file corpus before that correction and three after it — the
+three that ARE this shape.  Guard
+`tests/scripts/1550-a-view-of-one-of-several-arguments-is-copied.loft`.
 
 ### D-own-44 — OPENED AND CLOSED (2026-09-17): a lift temp whose value a consuming op had freed was freed again at its rebind
 
@@ -829,6 +856,15 @@ where concretely `owns(v) ≠ v`.
 where `v` aliases `b`'s store, `owns(v)=owns(b)≠v` } (**O-Borrow**); `γ(Join(b)) = γ(Owned) ∪
 γ(Borrowed(b))` (runtime-dependent); `γ(⊥) = ∅`. `α` is the pointwise best abstraction. Obligation:
 `γ` is monotone w.r.t. `refines` and `⊔` is its sound join — *straightforward from (1); to write.*
+The join of two borrows with DIFFERENT bases is not `Join` of either — `Borrowed(a) ⊔
+Borrowed(b)` is covered by no `Join(b)` — so the domain carries a base-less top below `⊤`:
+`γ(Join(∅)) = γ(Owned) ∪ ⋃ₓ γ(Borrowed(x))`, spelled `Join { base: u16::MAX }`.  A reader of
+it has no witness to compare against, so it decides per run by COPYING, the arguments
+bracketed (@P290) so the copy's source-free releases only a store the callee minted.  The
+implementation takes it at the CALL boundary (`use_analysis::returns_one_of_several_args`):
+inside a body a second "base" may be the function's own literal backing (`q ?? [7, 8]`),
+which the lattice cannot tell from a parameter, while a callee's return deps name exactly the
+parameters a caller must witness (loft#1550, `D-own-45`).
 
 **(4) Local soundness of the transfer — DISCHARGED for the over-free property (given the O-\* rules).**
 The property the over-free check needs is **no false `Owned`**: wherever the fixpoint reports

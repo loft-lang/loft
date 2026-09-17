@@ -2255,14 +2255,19 @@ impl State {
             // (measured: `w`, `d`, `target` in `1184-a-view-assigned-back-onto-its-own-source`,
             // all with empty dep lists), and that population needs the in-place destination
             // precisely because it is assigning a view back onto its own source.
-            let rhs_may_alias_v =
-                match crate::use_analysis::ownership_of(stack.data, stack.def_nr, value) {
-                    crate::use_analysis::Own::Borrowed { base }
-                    | crate::use_analysis::Own::Join { base } => {
-                        base == v || stack.function.tp(base).depend().contains(&v)
-                    }
-                    _ => false,
-                };
+            let rhs_base = match crate::use_analysis::ownership_of(stack.data, stack.def_nr, value)
+            {
+                crate::use_analysis::Own::Borrowed { base }
+                | crate::use_analysis::Own::Join { base } => Some(base),
+                _ => None,
+            };
+            // A base of `u16::MAX` names no variable — a borrow of one of several arguments
+            // (loft#1550) — so it may be `v` exactly when the value reads `v`.
+            let rhs_may_alias_v = match rhs_base {
+                Some(u16::MAX) => rhs_reads_v,
+                Some(base) => base == v || stack.function.tp(base).depend().contains(&v),
+                None => false,
+            };
             // loft#615 — an OWNED heap variable that is re-assigned must free the
             // store it is dropping, and `Vector` was missing from this list while
             // `Reference` / `Enum` had it.  A `??` materialises its subject into a
@@ -2577,7 +2582,15 @@ impl State {
                     // temp is declared nullable and assigned in the arm) aliased the
                     // callee's argument field on this backend alone — `--native` copies
                     // through its own arm (loft#1346, @FR-O-NoDiverge).
-                    && !(rhs_reads_v && stack.data.def(fn_nr).returns_borrowed_view())
+                    //
+                    // loft#1550 — except a view of one of SEVERAL arguments, which the plain
+                    // pointer pass-through would keep as an alias of whichever argument the
+                    // callee answered (`cv = either(cv, h, c)` then wrote into `h`).  It takes
+                    // the copy through a FRESH store, which `rhs_may_alias_v` arms below, so
+                    // the answer being `v`'s own store is copied before the old one is freed.
+                    && !(rhs_reads_v
+                        && stack.data.def(fn_nr).returns_borrowed_view()
+                        && !(rhs_base == Some(u16::MAX) && stash_old_for_post_free))
                     // @PLN157 § V-g — the copy is elided: the plain `PutRef` below binds
                     // the view, and `scopes` registered the identity free for the
                     // minted arm.
@@ -2674,9 +2687,22 @@ impl State {
                     // loft#981/#982 — ONE derivation, shared with the source-free gate
                     // above (which asks whether these cover every ref argument) and with
                     // the native backend.  Two lists of the same arguments drift.
+                    //
+                    // The FRESH-store path below (the value may alias `v`) leaves `v` out of
+                    // the bracket: `v` names a different store once the copy has landed, so
+                    // an unprotect read through it releases the wrong one and `v`'s old store
+                    // stays protected — which the stashed free then declines, one store per
+                    // call (loft#1550's `cv = either(cv, h, c)`).  The old store is the one
+                    // being displaced, so the copy's source-free may release it; the stashed
+                    // free after it is then a no-op.
+                    let fresh_path =
+                        (witnessed && rhs_reads_v) || (stash_old_for_post_free && rhs_may_alias_v);
                     let ref_args: Vec<u16> =
                         crate::use_analysis::protectable_ref_args(stack.data, stack.def_nr, value)
-                            .0;
+                            .0
+                            .into_iter()
+                            .filter(|&a| !(fresh_path && a == v))
+                            .collect();
                     // @PLAN51 Cluster II Step 2 — collect caller-hidden-buf
                     // work-ref args.  After the OpCopyRecord wrap frees
                     // the source store (via 0x8000), the caller's slot
@@ -2725,7 +2751,7 @@ impl State {
                     // on the eval stack (its slot offset is taken there);
                     // OpCopyRefOrNull's slot offset is taken after it pops src.
                     self.generate(value, stack, false);
-                    if (witnessed && rhs_reads_v) || (stash_old_for_post_free && rhs_may_alias_v) {
+                    if fresh_path {
                         // The call is done with the old store; take a FRESH one.  Two reasons,
                         // each from its own rule, which is why this is not `witnessed` alone: a
                         // WITNESSED local may be holding a view, so an in-place `OpDatabase`
@@ -3194,7 +3220,12 @@ impl State {
             // witness's and adopts when it is not, so the scope-exit free is right on
             // both arms.  It is also what makes a `null` answer safe — a null `src` has
             // no store to alias, so the guard adopts it and the local stays null.
-            self.gen_set_first_ref_join(stack, v, value, join_d_nr, base);
+            if base == u16::MAX {
+                // loft#1550 — a borrow of one of several arguments: copied on every run.
+                self.gen_set_first_ref_call_copy(stack, v, value, join_d_nr);
+            } else {
+                self.gen_set_first_ref_join(stack, v, value, join_d_nr, base);
+            }
         } else if let Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) =
             stack.function.tp(v).clone()
             // loft#1245 — BOTH spellings of a call, because a `CallRef` reaching a
