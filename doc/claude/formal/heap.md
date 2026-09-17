@@ -442,37 +442,56 @@ installed, which the frame does own.
              compaction — is not a copy.
   (H-Move)   a MOVE is WRITTEN, never inferred: whether a position moves is read off the
              line and the declared types alone, whatever the program does after that line.
-             Three positions move a value:
+             Four positions move a value:
                - a FRESH value — a call result, a constructor, a literal — placed where it
                  is produced: bound, written into a field, element or tuple member,
                  appended, or returned;
+               - a value this function OWNS — a local it bound to a fresh value, and never a
+                 parameter, a member of a container, or a captured variable — placed into a
+                 new structure: bound, written into a field, element or tuple member,
+                 appended, or returned.  Its lifetime ENDS there: the new structure releases
+                 it, and the name is SPENT (H-Spent);
                - a `return` whose every possible value is a variable this function OWNS
                  (not a parameter, not a view) or a fresh value — `return a`,
                  `return a ?? mk()` — since the function's own variables end with it;
                - a block whose value is a variable declared in that block
                  (`if c { a = mk(); a } else { … }`).
-             Every other position that places an EXISTING value into a new structure is a
+             Every other position that places an existing value into a new structure is a
              COPY.
+  (H-Spent)  a name whose value has MOVED to a new owner is SPENT from the END of the
+             statement that moved it: reading it is a compile-time error, and the error names
+             where the value went.  Reads inside that same statement are not late — the
+             members of `Named { h: c, label: c.tag }` are read before the structure is
+             built, so both are reads of a value the name still holds.  A reassignment
+             REFILLS the name, which is spent again only if it moves again.  On a path where
+             the move did not run the name is NOT spent and still owes its release, so a move
+             written under a branch is decided PER PATH — one name may be spent on one path
+             and live on another, and the release must run on exactly the paths that did not
+             move it.
   (H-Copy-Lease) a copy of a type that declares `fn OpCopy(self: τ)` copies the bytes and
              then runs `OpCopy` on the NEW structure, which takes its own lease there.  A
              struct holding such a member gets a synthesized copy cascade, the mirror of the
              drop cascade: its own `OpCopy` first, then its members'.
   (H-Copy-Refuse) a COPY of a type that owns a droppable without `OpCopy` — the type itself,
              or a member at any depth — is a COMPILE-TIME ERROR on the line that writes it,
-             whatever the program does after that line.  A copy places an EXISTING value —
-             a variable, a parameter, a loop variable, a `match` binding, a member (`s.h`,
-             `v[i]`, `t.0`), a member of a call result (`mk().h`) — into a new structure:
-               - bound to a variable as a whole value (binding.md B-Copy: `x = a`, `x = p`);
+             whatever the program does after that line.  A copy places a value the function
+             does NOT own — a parameter, or a local holding the caller's record, since the
+             caller releases it; a member of a container (`s.h`, `v[i]`, `t.0`, `mk().h`),
+             since the container releases it; a loop variable or a `match` binding over one;
+             a captured variable — or a name already SPENT (H-Spent), into a new structure:
+               - bound to a variable as a whole value (binding.md B-Copy: `x = p`);
                - written into a field, enum payload, element or tuple member of a literal,
-                 or appended (`S { h: a }`, `v += [a]`, `(a, 1)`);
+                 or appended (`S { h: p }`, `v += [s.h]`, `(p, 1)`);
                - returned where (H-Move) does not allow it (`return p`, `return s.h`);
                - as an operand of `??` or an arm of a join in any of those positions
-                 (`x = a ?? mk()`, `x = if c { a } else { mk() }`).
-             Legal, because no second structure is made: a fresh value anywhere, passing a
-             value as an argument (calls.md F-ParamHeap binds without copying), a `&` bind
+                 (`x = p ?? mk()`, `x = if c { s.h } else { mk() }`).
+             Legal, because no second structure is made: a fresh value anywhere, a value the
+             function OWNS placed ONCE (H-Move — its lifetime ends there), passing a value as
+             an argument (calls.md F-ParamHeap binds without copying), a `&` bind
              (binding.md B-Ref-Alias), and a view of a member of a variable (B-View,
              `x = s.h`).  The error names the copy and what to write instead: use the value
-             where it is, pass it, build it where it belongs, or return the owner.
+             where it is, pass it, build it where it belongs, or return the owner — and for a
+             spent name, read it through the owner it moved to.
   (H-View-Drop) a VIEW of a member that owns a droppable without `OpCopy` stays a view: the
              compiler never turns it into a copy.  Disturbing its container while the view
              is still used (binding.md B-Disturb) is a COMPILE-TIME ERROR reported at the
@@ -565,10 +584,14 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **3** — `D-heap-8`, `D-heap-9` and `D-heap-13`.  The first two are the copy-lease rules
-`(H-Copy-Refuse)` and `(H-Copy-Lease)`, written 2026-09-15 before their implementation (@PLN163);
-`D-heap-13` is separate and was found while measuring `D-heap-8`'s population — a collection a CALL
-answers, bound to a local, never releases its elements (loft#1551).  The third of the copy-lease
+OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-13` and `D-heap-14`.  The first two are the copy-lease
+rules `(H-Copy-Refuse)` and `(H-Copy-Lease)`, written 2026-09-15 before their implementation
+(@PLN163); `D-heap-8` was NARROWED 2026-09-17 when the owner ruled that a value the function owns
+MOVES, which makes 156 of its 227 measured sites legal and leaves the 71 that are not the
+function's.  `D-heap-13` and `D-heap-14` are separate and were both found while measuring that
+population — a collection a CALL answers, bound to a local, never releases its elements
+(loft#1551), and a hand-over written under a BRANCH leaks the source on the path that does not
+run, for every destination except a bind to a local.  The third of the copy-lease
 set, `D-heap-11` for `(H-View-Drop)`, CLOSED 2026-09-17: a view of a droppable member is no longer
 turned into a copy — the disturbance is refused, which is what the rule asked for.  The rules were revised the same day to judge a copy by its own line (§ Drop, *Why the
 verdict is read off the line*), which reclassified the older entries: every shape of `D-heap-1` and
@@ -631,6 +654,19 @@ buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17,
 ### D-heap-8 — OPEN (2026-09-15): nothing refuses a copy — a written copy of a droppable without `OpCopy` compiles
 
 - **Violates:** (H-Copy-Refuse).
+- ⚠ **NARROWED 2026-09-17, when the owner ruled on the copy rules.**  `(H-Move)` now moves a value
+  the function OWNS, so most of what this entry covered is not a copy at all.  Measured over the
+  227 refused lines in the corpus: **156 are a local the function owns, and every one already
+  releases exactly once on both backends** — they were never unsound, and the rules now say so.
+  What stays open here is the 71 that are NOT the function's — a parameter (45) and a member of a
+  container (26) — each of which really does release twice (`L1 D2 A2 D2` and `L1 D3 D3`,
+  measured, both backends).  A SECOND half is open with no implementation at all: `(H-Spent)`'s
+  error for reading a name after its value moved.  Today that is silent — `c = open(1);
+  if c { v += [c]; } … c.id` reads a value whose hook has already run, and no store instrument can
+  see it because the memory is intact and only the resource is gone.  ⚠ The refusal built behind
+  `LOFT_LEASE_REFUSE` still implements the PRE-ruling population, so it is now WIDER than the
+  rules: it refuses the 156 owned-local placements the rules permit.  Narrowing it to the
+  not-yours cases, and adding the spent-name error, is what closes this entry.
 - **Where:** no site refuses a copy.  The copy sites are the ones `LOFT_DROP_COPY_CENSUS` lists,
   and that enumeration is now the whole population — it was not until 2026-09-17.  The bind arm
   matches `Value::Set(v, Var(src))`, a node the parser never produces for a whole COLLECTION:
@@ -770,6 +806,35 @@ buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17,
 - **Removal:** the scope exit of a local bound from a call runs the element cascade, whatever
   backs it — established at the site that decides today, once that site is measured rather than
   guessed; the pinning cells below then go clean and leave this entry's list.
+
+### D-heap-14 — OPEN (2026-09-17): a hand-over written under a branch leaks the source on the path that does not run
+
+- **Violates:** (H-Drop), and (H-Spent)'s per-path clause.
+- **Where:** `Scopes::mint_handoff_flag` arms a per-path `__hoff_` flag only for a conditional bind
+  to a LOCAL — loft#1515's shape, and its own doc says so (*"a copy off a PARAMETER written in a
+  branch arm"*).  Every other destination a hand-over can have suppresses the source's scope-end
+  release STATICALLY, with nothing to restore it on the path that did not run.
+- **Effect:** the source is never released.  Measured 2026-09-17 with the branch never taken,
+  both backends byte-identical, no diagnostic:
+  `if c { x = cc }` (a bind to a local) traces `V9 D9 D1` — correct, and it is the only form that
+  mints a flag (2 of them); `if c { s = S { h: cc } }` traces `E` — nothing released;
+  `if c { s.h = cc }` traces `F2 D2` — the source leaked; `if c { v += [cc] }` traces `L0` —
+  nothing released.  The control with the same append and the branch TAKEN traces `L1 D1`, so the
+  hand-over itself is correct; what is missing is the other path.  The variable tables of the
+  taken and not-taken forms are byte-identical and neither carries a `__hoff_` variable, so the
+  decision is static — measured, not read off the source.
+  ⚠ **No leak instrument can see this.**  `LOFT_POISON`, `LOFT_POISON_CLAIM`, `LOFT_STRICT_STORES`
+  and `LOFT_NATIVE_LEAK_CHECK` report nothing on the leaking cell — and nothing on the clean
+  control either, so their silence is not a verdict.  What is skipped is the HOOK while the
+  record's memory is still freed, which is the blindness `D-heap-13` already records.  The hook
+  trace is the only channel that shows it.
+- **Status:** OPEN — found while measuring `D-heap-8`'s population.  No corpus guard exercises the
+  shape: the only conditional appends among the 38 hook-declaring files are
+  `bytes += [c as u8 ?? 0]` in the trace helper, which appends bytes rather than a droppable.
+- **Removal:** the per-path flag armed for every destination a hand-over can have, not only a bind
+  to a local.  `(H-Spent)` makes that a rule rather than an implementation detail: a name spent on
+  one path is live on the other, and the release must run on exactly the paths that did not move
+  it.
 
 ### D-heap-11 — OPENED 2026-09-15, CLOSED 2026-09-17: a view of a droppable member is turned into a copy when its container is disturbed
 
