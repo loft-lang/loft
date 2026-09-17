@@ -3957,7 +3957,11 @@ fn lazy_buffer_mints(code: &mut Value, function: &mut Function, data: &Data) {
         {
             continue;
         }
-        let Type::Vector(_, dep) = function.tp(av) else {
+        // A `vector<T>?` buffer is minted by another route (see the doc above).
+        if matches!(function.tp(av), Type::Optional(_)) {
+            continue;
+        }
+        let Type::Vector(_, dep) = function.tp(av).base() else {
             continue;
         };
         if !dep.is_empty() {

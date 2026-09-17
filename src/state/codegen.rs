@@ -4936,9 +4936,11 @@ impl State {
     pub(super) fn set_var(&mut self, stack: &mut Stack, var: u16, value: &Value) {
         // `@FR-O-LazyBuffer` — a lazy buffer's later `Set(v, Null)` is its MINT (the scopes
         // pass places it behind `OpRefIsNull(v)`); its entry null-init wrote the sentinel.
+        // A lazy buffer is never `vector<T>?` (`lazy_buffer_mints` declines those).
         if matches!(value.unspan(), Value::Null)
             && stack.function.is_lazy_buffer(var)
-            && let Type::Vector(elm_tp, dep) = stack.function.tp(var).clone()
+            && !matches!(stack.function.tp(var), Type::Optional(_))
+            && let Type::Vector(elm_tp, dep) = stack.function.tp(var).base().clone()
             && dep.is_empty()
         {
             self.gen_owned_vector_store(stack, var, &elm_tp);
