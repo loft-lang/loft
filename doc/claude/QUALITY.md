@@ -2668,16 +2668,17 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 839 | 498 | 7 | **334** |
+| 839 | 499 | 6 | **334** |
 
 (2026-09-17, @PLN164 C6 and loft#1548: two functions added, both seeing through the wrapper —
 `Parser::nested_literal_place` declines a `τ?` field and reads the record through `.base()`,
 and `Parser::stage_append_fields` asks the value's type through `.base()`.  The opaque column is
 unmoved.)
 
-(2026-09-17, @PLN164 A0: one function added, descending — `scopes::lazy_buffer_mints` names
-a bare `vector<T>` on purpose, because a `vector<T>?` buffer is minted by another route and is
-declined; its doc says so.  The opaque column is unmoved.)
+(2026-09-17, @PLN164 A0: one function added, seeing through the wrapper —
+`scopes::lazy_buffer_mints` declines a `vector<T>?` buffer by name, because that buffer is
+minted by another route, and reads the rest through `.base()`; `State::set_var` asks the same
+two questions.  The opaque column is unmoved.)
 
 (2026-09-16, @PLN164 C5: one function added, seeing through the wrapper — `view_leaf_type` asks
 whether a record's heap field is a plain `vector<T>`, which a view leaf may deliver, and reads it
