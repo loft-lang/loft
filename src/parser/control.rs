@@ -3352,6 +3352,7 @@ impl Parser {
     /// answer "no" for a buffer something else writes — and the rest descend.
     fn names_outside_a_chain(op: &Value, v: u16) -> bool {
         match op {
+            Value::Span(b) => Self::names_outside_a_chain(&b.1, v),
             Value::Block(bl) if bl.name == "one_buffer_chain" => false,
             Value::Var(x) | Value::TupleGet(x, _) | Value::CallRef(x, _) if *x == v => true,
             Value::Set(x, _) | Value::TuplePut(x, _, _) | Value::Iter(x, _, _, _) if *x == v => {
