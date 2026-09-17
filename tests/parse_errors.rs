@@ -3470,6 +3470,150 @@ fn h_view_drop_growth_under_a_nested_droppable_view_is_error() {
     );
 }
 
+/// D-bind-48 (a) — `(B-Ref-Reshape)`'s CALLEE clause for a GROWTH, the purest shape: every part
+/// spelled `&`, and the callee disturbing the very parameter it was handed.  Measured before the
+/// fix as `M1 M2 R1 D1 D1 D2` on both backends — it compiled, and released one resource twice.
+///
+/// The rule states this case in as many words: *"The disturbance may be in this frame or in
+/// anything the frame CALLS."*  Only the REMOVAL half reached it, and only for a parameter named
+/// directly (`removed_ref_params`); a growth had no callee producer on the refusal side at all.
+#[test]
+fn b_ref_reshape_callee_growth_under_an_amp_link_is_error() {
+    code!(
+        "struct H { id: integer } \
+         fn OpDrop(self: H) { print(\"D{self.id}\"); } \
+         fn vgrow(v: &vector<H>, n: integer) { v += [H { id: n }]; } \
+         fn test() { v: vector<H> = [H { id: 1 }]; \
+           e = &v[0]; vgrow(v, 2); print(\"{e.id}\\n\"); }"
+    )
+    .error(
+        "cannot call `vgrow` while `e` references a place inside `v` — `vgrow` would grow `v`, \
+         and a container that outgrows its allocation moves every element, so a write through `e` \
+         would no longer reach the element it names. Move the call after the last use of `e`, or \
+         bind without `&` to work on a copy at \
+         b_ref_reshape_callee_growth_under_an_amp_link_is_error:1:1",
+    );
+}
+
+/// D-bind-48 (b) — the same growth one frame down, under a PLAIN view of a droppable.  This is
+/// `(H-View-Drop)`'s population reached through the same walk, and it gets its own reason: the
+/// copy itself is the fault, not a lost write.
+#[test]
+fn b_ref_reshape_callee_growth_under_a_droppable_view_is_error() {
+    code!(
+        "struct H { id: integer } \
+         fn OpDrop(self: H) { print(\"D{self.id}\"); } \
+         struct Bag { v: vector<H>, tag: integer } \
+         fn grow(b: Bag, n: integer) { b.v += [H { id: n }]; } \
+         fn test() { b = Bag { v: [H { id: 1 }], tag: 0 }; \
+           e = b.v[0]; grow(b, 2); print(\"{e.id}\\n\"); }"
+    )
+    .error(
+        "cannot call `grow` while `e` references a place inside `b` — `grow` would grow `b`, so \
+         `e` would be given its own copy of `H`, and a copy of a value that owns a resource is a \
+         second structure releasing that resource a second time. Move the call after the last use \
+         of `e`, or read `H` where it lives at \
+         b_ref_reshape_callee_growth_under_a_droppable_view_is_error:1:1",
+    );
+}
+
+/// D-bind-48 (c) — the growth TWO frames down.  `disturbed_params_map` closes over the call
+/// graph, so depth must not change the answer: without the closure, extracting the append into
+/// one more helper makes the refusal disappear.  The message names the callee the frame CALLS
+/// (`outer`), not the one that does the growing.
+#[test]
+fn b_ref_reshape_callee_growth_two_frames_down_is_error() {
+    code!(
+        "struct H { id: integer } \
+         fn OpDrop(self: H) { print(\"D{self.id}\"); } \
+         struct Bag { v: vector<H>, tag: integer } \
+         fn inner(b: Bag, n: integer) { b.v += [H { id: n }]; } \
+         fn outer(b: Bag, n: integer) { inner(b, n); } \
+         fn test() { b = Bag { v: [H { id: 1 }], tag: 0 }; \
+           e = b.v[0]; outer(b, 2); print(\"{e.id}\\n\"); }"
+    )
+    .error(
+        "cannot call `outer` while `e` references a place inside `b` — `outer` would grow `b`, so \
+         `e` would be given its own copy of `H`, and a copy of a value that owns a resource is a \
+         second structure releasing that resource a second time. Move the call after the last use \
+         of `e`, or read `H` where it lives at \
+         b_ref_reshape_callee_growth_two_frames_down_is_error:1:1",
+    );
+}
+
+/// D-bind-48 (d) — a callee's REMOVAL from a FIELD of its parameter.  The removal half was
+/// already meant to reach across a frame, and this is the shape it missed: `removed_ref_params`
+/// keys on `OpRemoveVector(arg0)` / `OpRemove(arg1)` over a bare `Var` typed `RefVar`, so
+/// `b.v.remove(0)` — a removal from a field of `b` — was collected by nothing.
+///
+/// It is the cell that corrects `heap.md` D-heap-11's Boundary paragraph, which claimed a
+/// callee's removal already refused while only its growth did not.  Neither did.
+#[test]
+fn b_ref_reshape_callee_removal_from_a_field_is_error() {
+    code!(
+        "struct H { id: integer } \
+         fn OpDrop(self: H) { print(\"D{self.id}\"); } \
+         struct Bag { v: vector<H>, tag: integer } \
+         fn shrink(b: Bag) { b.v.remove(0); } \
+         fn test() { b = Bag { v: [H { id: 1 }, H { id: 2 }], tag: 0 }; \
+           e = b.v[0]; shrink(b); print(\"{e.id}\\n\"); }"
+    )
+    .error(
+        "cannot call `shrink` while `e` references a place inside `b` — `shrink` would remove \
+         from `b`, so `e` would be given its own copy of `H`, and a copy of a value that owns a \
+         resource is a second structure releasing that resource a second time. Move the call \
+         after the last use of `e`, or read `H` where it lives at \
+         b_ref_reshape_callee_removal_from_a_field_is_error:1:1",
+    );
+}
+
+/// D-bind-48 (e) — the view is bound and used inside a LOOP, disturbed by a callee on every
+/// pass.  `matrix_axes` named `loop` as an axis the control guard did not reach, and a bind
+/// re-made each iteration is a different lowering from one made once, so the verdict is worth
+/// pinning rather than assuming from the straight-line cell.
+#[test]
+fn b_ref_reshape_callee_growth_in_a_loop_is_error() {
+    code!(
+        "struct H { id: integer } \
+         fn OpDrop(self: H) { print(\"D{self.id}\"); } \
+         struct Bag { v: vector<H>, tag: integer } \
+         fn grow(b: Bag, n: integer) { b.v += [H { id: n }]; } \
+         fn test() { b = Bag { v: [H { id: 1 }], tag: 0 }; \
+           for i in 0..2 { e = b.v[0]; grow(b, i + 2); print(\"{e.id}\\n\"); } }"
+    )
+    .error(
+        "cannot call `grow` while `e` references a place inside `b` — `grow` would grow `b`, so \
+         `e` would be given its own copy of `H`, and a copy of a value that owns a resource is a \
+         second structure releasing that resource a second time. Move the call after the last use \
+         of `e`, or read `H` where it lives at b_ref_reshape_callee_growth_in_a_loop_is_error:1:1",
+    );
+}
+
+/// D-bind-48 (f) — the container is KEYED.  `(B-Disturb)` names "a keyed add" as a growth
+/// alongside an append, so the callee reach has to cover it; this was the one cell whose verdict
+/// was genuinely uncertain before it was run.
+///
+/// The type in the message is `H?`, not `H`: `@FR-Col-Lookup` gives a keyed point lookup its `?`
+/// (loft#1450), so the view's own type carries it.  That is the lookup's nullability surfacing,
+/// not a second type.
+#[test]
+fn b_ref_reshape_callee_keyed_growth_is_error() {
+    code!(
+        "struct H { id: integer, k: integer } \
+         fn OpDrop(self: H) { print(\"D{self.id}\"); } \
+         struct HBag { h: hash<H[k]>, tag: integer } \
+         fn hgrow(b: HBag, n: integer) { b.h += [H { id: n, k: n }]; } \
+         fn test() { b = HBag { h: [H { id: 1, k: 1 }], tag: 0 }; \
+           e = b.h[1]; hgrow(b, 2); print(\"{e.id}\\n\"); }"
+    )
+    .error(
+        "cannot call `hgrow` while `e` references a place inside `b` — `hgrow` would grow `b`, so \
+         `e` would be given its own copy of `H?`, and a copy of a value that owns a resource is a \
+         second structure releasing that resource a second time. Move the call after the last use \
+         of `e`, or read `H?` where it lives at b_ref_reshape_callee_keyed_growth_is_error:1:1",
+    );
+}
+
 /// B-Ref-Reshape (g2) — the SAME refusal on every keyed kind, because the `&` marker that
 /// gates it is set from the SOURCE type and a keyed lookup now has two spellings.
 ///

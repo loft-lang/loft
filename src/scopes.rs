@@ -2395,9 +2395,38 @@ pub struct ReshapeRefusal {
 #[must_use]
 pub fn reshape_refusals(data: &Data, database: &crate::database::Stores) -> Vec<ReshapeRefusal> {
     let removed = removed_params_map(data);
+    // @FR-B-Ref-Reshape — *"The disturbance may be in this frame or in anything the frame
+    // CALLS"*, and `(B-Disturb)` states the same for all four events: *"an event disturbs
+    // WHEREVER IT HAPPENS — in this frame, or in anything the frame CALLS, at any depth."*
+    //
+    // `removed` alone gave that reach only to a REMOVAL, and only one spelled against the `&`
+    // parameter itself (`removed_ref_params` keys on `OpRemoveVector`/`OpRemove` over a bare
+    // `Var` typed `RefVar`).  So a callee's GROWTH was invisible to the refusal entirely, and a
+    // removal from a FIELD of a parameter was too, while the MATERIALISE walk has had the whole
+    // answer since @PLN164 C3.  Measured, both backends byte-identical:
+    // `fn vgrow(v: &vector<H>, n) { v += [mk(n)] }` with `e = &v[0]` live across the call
+    // compiled and released one resource TWICE — every part spelled `&`, the callee disturbing
+    // the very parameter it was handed, which is the case the rule states in as many words.
+    //
+    // Built here rather than per definition because the question is asked once per CALL and a
+    // callee body would otherwise be re-walked once per call to it — the same reason
+    // `removed_params_map` is built here, and the same construction the scope pass uses.
+    //
+    // Gated on the SAME `callee_disturb_enabled` switch as the scope pass, deliberately: the
+    // switch names the callee half of `(B-Disturb)`, and that half is ONE rule's reach with two
+    // consumers, not two behaviours that happen to share a cause.  The consequence is worth
+    // stating, because it costs something: `LOFT_NO_CALLEE_DISTURB=1` now restores the pre-C3
+    // blindness on BOTH sides at once, so it is no longer a clean A/B for the materialise alone.
+    // That is the honest meaning of the flag rather than a limitation of it — and the two halves
+    // stay distinguishable at the symptom, since a refusal is loud where a materialise is quiet.
+    let disturbed =
+        crate::keys::callee_disturb_enabled().then(|| disturbed_params_map(data, Some(database)));
+    let disturbed = disturbed.as_ref();
     let mut out: Vec<ReshapeRefusal> = Vec::new();
     for d_nr in 0..data.definitions() {
-        out.extend(def_reshape_refusals(data, d_nr, &removed, database));
+        out.extend(def_reshape_refusals(
+            data, d_nr, &removed, disturbed, database,
+        ));
     }
     out
 }
@@ -2406,6 +2435,7 @@ fn def_reshape_refusals(
     data: &Data,
     d_nr: u32,
     removed: &RemovedParams,
+    disturbed: Option<&DisturbedParams>,
     database: &crate::database::Stores,
 ) -> Vec<ReshapeRefusal> {
     let def = data.def(d_nr);
@@ -2429,12 +2459,20 @@ fn def_reshape_refusals(
     // was, and a removal from the same field was: the rule's answer depended on where the
     // container was stored.  The materialise walk has always had the store, which is why that
     // side copied the link (and told the author) where this side said nothing.
+    // The callee's half (`disturbed`) is handed to the REFUSAL as well as the materialise.  It
+    // needs no `&` case of its own: `shake_places_keyed` spares a view only when the keyed
+    // filter proves a different record or when `names_container_itself` says the binding names
+    // the CONTAINER rather than a place inside it — never because it is spelled `&`.  So a link
+    // INTO a disturbed container is already shaken here, and what was missing was a consumer
+    // reading it.  A link TO one (`d = &cv.data`) stays spared, which is what keeps
+    // `157-view-header`'s `grown_between` reading 11 — `(B-Ref-Alias)`'s in-versus-to
+    // distinction, closed as D-bind-46.
     for (view, d) in ViewWalk::run(
         &def.code,
         function,
         data,
         Some(removed),
-        None,
+        disturbed,
         Some(database),
         def.position.line,
     ) {
@@ -2539,11 +2577,22 @@ fn def_reshape_refusals(
                 tp = data.type_name_str(function.tp(view))
             )
         };
+        // The CALLEE form names the callee's act before the reason, and the JOINER between them
+        // differs with the population because the two clauses stand in different relations.  For
+        // a `&` link they are parallel facts about the container — *"would grow `v`, AND a
+        // container that outgrows its allocation moves every element"*.  For a plain droppable
+        // view the growth CAUSES the copy — *"would grow `b`, SO `e` would be given its own copy
+        // of `H`"*.  With one joiner for both, that population read *"would grow `b`, and `e`
+        // would be given its own copy of `H`, and a copy of a value…"*: two `and`s in one
+        // sentence, because this `why` opens with a clause of its own where the `&` one opens
+        // with a continuation.  The inline form needs no joiner — it reaches `why` straight off
+        // the dash — which is why the run-on appears only once the disturbance is a call.
+        let joiner = if amp { "and" } else { "so" };
         let message = match d.via {
             Some(callee) => format!(
                 "cannot call `{callee_name}` while `{view_name}` references a place inside \
-                 `{container}` — `{callee_name}` would {what}, and {why}. Move the call after \
-                 the last use of `{view_name}`, {cure}",
+                 `{container}` — `{callee_name}` would {what}, {joiner} {why}. Move the call \
+                 after the last use of `{view_name}`, {cure}",
                 callee_name = data.def(callee).original_name()
             ),
             None => format!(
