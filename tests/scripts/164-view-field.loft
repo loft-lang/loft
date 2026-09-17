@@ -226,6 +226,17 @@ fn main() {
   ok("a1 natural form       ", "{m1.matched},{m1.bad},{len(m1.mpts)},{totp(m1.mpts)}", "true,false,3,9");
   ok("a1 the container too  ", "{len(s1.ops)},{totp(s1.ops[0]?.opts)}", "1,9");
 
+  // e1 — the parser's caller: an admitted callee called in a LOOP, so its buffer is pooled
+  // and released before each reuse; in the value form that buffer is never minted, and
+  // neither is its release.  n = 1..4: len*100 + 3n(n-1)/2 = 100, 203, 309, 418.
+  se1 = Sc { ops: [], seen: 0 };
+  e1t = 0;
+  for k in 0..4 {
+    me1 = a1(se1, k + 1);
+    e1t += len(me1.mpts) * 100 + totp(me1.mpts);
+  }
+  ok("e1 pooled caller      ", "{e1t},{len(se1.ops)}", "1030,4");
+
   // a2 — both exits of one function: the empty literal and the view.
   s2 = Sc { ops: [], seen: 0 };
   m2a = a2(s2, -1);

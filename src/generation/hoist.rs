@@ -6525,9 +6525,9 @@ fn site_walk(node: &Value, pos: Pos, ctx: &ShapeCtx, declined: &mut HashSet<u32>
 
 /// The DEAD BUFFERS of `def_nr` (@PLN157 § V-ah, `@FR-R-ValueRecord`): a local minted by
 /// `OpDatabase` whose every mention the value form drops — the buffer argument of an
-/// admitted callee (dropped from the call), the subject of a free, or an operand of a
-/// store-identity test whose other operand is a value local (answered `true` without a
-/// read).  Such a local was a § V-af join buffer for a branch that now binds a tuple: the
+/// admitted callee (dropped from the call), the subject of a free or of the pool's
+/// release-on-reuse (`OpClear`), or an operand of a store-identity test whose other operand
+/// is a value local (answered `true` without a read).  Such a local was a § V-af join buffer for a branch that now binds a tuple: the
 /// store it minted per activation served nothing, so the mint and the frees are emitted
 /// as nothing.  A buffer with any other mention — a witness read against a RECORD local,
 /// an argument to a callee that keeps its buffer — is minted as before.
@@ -6557,6 +6557,13 @@ pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16>
                     "OpDatabase" | "OpDatabaseNP" => {
                         if let Some(w) = arg_var(0) {
                             minted.insert(w);
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    // The pool's release of a reused buffer (loft#1549): a buffer never
+                    // minted holds nothing to release (`OpClearEmitter`).
+                    "OpClear" => {
+                        if let Some(w) = arg_var(0) {
                             *dropped.entry(w).or_insert(0) += 1;
                         }
                     }

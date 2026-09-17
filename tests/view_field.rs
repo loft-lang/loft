@@ -98,6 +98,30 @@ fn a_site_reads_the_leaf_off_the_tuple() {
 
 /// The switch restores the record form whole — the unit's own control.
 #[test]
+fn a_pooled_caller_mints_nothing_for_a_tuple() {
+    // e1: `a1` called in a loop, so its hidden buffer is pooled — minted once and released
+    // (`OpClear`) before every reuse.  With the callee answering a tuple the buffer is DEAD,
+    // and both its mint and its release are emitted as nothing (@PLN164 E-1); the release
+    // alone used to keep a heap-owning buffer alive.
+    let src = emitted(&[("LOFT_VIEW_FIELD", "1")]);
+    let start = src.find("fn n_main(").expect("main is emitted");
+    let main = &src[start..];
+    let main = &main[..main.find("  } /*block_1").unwrap_or(main.len())];
+    assert!(
+        main.contains("let mut var_me1: (bool, bool, DbRef) = n_a1(cell, var_se1,"),
+        "e1 binds the tuple:\n{main}"
+    );
+    assert!(
+        !main.contains("remove_claims"),
+        "no release of a buffer nobody minted:\n{main}"
+    );
+    assert!(
+        !main.contains("OpDatabase(cell,var___ref"),
+        "no hidden buffer is minted in main:\n{main}"
+    );
+}
+
+#[test]
 fn the_unit_is_off_by_default_and_the_switch_restores_the_record() {
     for env in [
         &[][..],

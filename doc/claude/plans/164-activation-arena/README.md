@@ -873,6 +873,33 @@ before it is built**, and re-measured with `perf` on the release binary after.
 E1 returns only if a row shows a class of temporaries that can be neither removed nor reused
 and costs more than a few percent, measured with `perf`.
 
+### E-1, first measurement (2026-09-17)
+
+*Priced by switch, not by patch* — C5 exists, so the price is `LOFT_VIEW_FIELD=1` on the same
+library.  **The first read moved nothing:** the census was identical with the unit armed,
+although `parse_poly` and `parse_lock` were admitted as tuples.  The caller still minted their
+`Mark` buffers, because a dead buffer is one whose every mention the value form drops, and the
+pool's release-on-reuse (`OpClear`, loft#1549) was not in that list — so a HEAP-OWNING buffer
+could never be dead.  Fixed: `hoist::dead_buffers` counts `OpClear` as dropped and
+`OpClearEmitter` emits it as nothing, as the mint already was.  The default emission is
+byte-identical (pinned by comparing the bench's emission before and after); cell e1 of
+`tests/scripts/164-view-field.loft` (an admitted callee called in a loop, hand-computed 1030)
+and `view_field::a_pooled_caller_mints_nothing_for_a_tuple` pin it, and the pin fails with the
+clause removed.
+
+*Then:* `Mark` 12 → 9 in a two-parse run, the parse row −1.9 % instructions (1 771.5 M →
+1 738.0 M, three interleaved `perf stat -r 3` pairs at `--n 5000`), cycles flat within this
+box's current spread (the same binary read 433–451 M).  The three parsers still declined, and
+each decline is now a named shape:
+
+| parser | decline | what it wants |
+|---|---|---|
+| `parse_circle` | `+0 has no resolvable source` | the points local is appended on TWO paths (`if Stroked { sc.ops += [Op { pts: pc_pts, … }] } else { … same … }`); the view is "the element just appended" on either path, which `leaf_source` does not express (C5's per-path debt) |
+| `parse_line_cmd` | `the body disturbs the place it views` | the append stands inside the `while` loop with its `return` right after it; the disturbance walk reads the loop, not the path |
+| `parse_fronds` | `+0 has no resolvable source` | correct: `pf_all` gathers the points of eight ops and lives nowhere else — this one is E-2's (build it inside the returned record) |
+
+Per parse the bench runs each of these once, beside three `Poly`s that are already views.
+
 ## The three tiers — the invariant each rests on
 
 Each tier is a situation the compiler PROVES (C120: no rewrite may change a value after a
@@ -1839,7 +1866,7 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | **B2 unit 1 over a chain** — a literal exit writes the buffer a chain renamed (`parse_circle`'s shape) | § B2 unit 1 over a chain | cells c1–c17 both backends, pooled and unpooled, under every falsifier; the value-record verdicts unchanged; pins `tests/literal_exit_buffer.rs`; a native chain-of-chains use-after-free found and fixed on the way | Built 2026-09-17 (`LOFT_NO_LITERAL_EXIT_BUFFER`) — `Mark` mints 21 → 12, the parse row −2.5 % |
 | **The wilderness** — the store's tail free block held beside the free tree (`@FR-H-Wilderness`) | § The wilderness | a seeded side-by-side store test (same positions, same chain); the store subject (321), wrap, native, lib tests on both forms; the fourteen-row same-binary A/B | Built 2026-09-17, default ON (`LOFT_NO_WILDERNESS`) — the parse row −6.3 %, `fronds` −2.6 % |
 | **Text per character** — `#[inline]` on the two per-character runtime calls | § The queue after B1b | `perf stat`, three interleaved pairs | Measured and DROPPED 2026-09-17 (−1.0 % instructions, +1.1 % cycles) |
-| **E-1** — C5 on by default: `Mark` as a tuple with a view | § The elimination queue | C5's step 2 debts; the corpus under the switch, both backends; a hand patch first | Next |
+| **E-1** — C5 on by default: `Mark` as a tuple with a view | § The elimination queue | C5's step 2 debts; the corpus under the switch, both backends; a hand patch first | In progress — the dead-buffer release fixed (`Mark` 12 → 9 armed, −1.9 % instructions); the per-path source and the loop-contained append are next (§ E-1, first measurement) |
 | **E-2** — a single-consumer vector built in its destination (element-first; the vector `place_result`) | § The elimination queue | cells in the @PLN157 shape; a hand patch first | After E-1 |
 | **E-3** — `PointList` reused per call site | § The elimination queue | `LOFT_TRACE_POOL=1` names the gate | After E-1 |
 | **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |

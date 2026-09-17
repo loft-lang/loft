@@ -577,6 +577,24 @@ impl OpEmitter for OpRefAliasEmitter {
     }
 }
 
+/// `OpClear` — the pool's release of a REUSED record buffer (loft#1549), with the @PLN157
+/// § V-ah arm: a DEAD BUFFER (`hoist::dead_buffers`) is never minted, so it holds nothing to
+/// release.  Without it a heap-owning buffer could never be dead — the release was a mention
+/// the value form did not drop — and a caller kept minting and clearing a `Mark` buffer for a
+/// callee that answers a tuple (@PLN164 E-1).
+pub struct OpClearEmitter;
+
+impl OpEmitter for OpClearEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        if let Some(Value::Var(v)) = args.first().map(Value::unspan)
+            && ctx.output.dead_buffers.contains(v)
+        {
+            return write!(ctx.w, "()");
+        }
+        super::default::DefaultEmitter.emit(ctx, args)
+    }
+}
+
 /// `OpDistinctStore` — the store-identity test, with the @PLN157 § V-ah arm: a value
 /// local (or an admitted function's phantom buffer parameter) is in NO store, so it is
 /// distinct from everything, and the guard it feeds — a displaced free, a delivery copy —
