@@ -1613,7 +1613,16 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 71 | **14** | 57 |
+| 73 | **14** | 59 |
+
+(2026-09-17, @PLN164 E-1: one more on the call-only side — `hoist::fresh_leaf` reads the
+destination of every copy of a view leaf's local as `OpGetField(<element temp>, …)`.  CHECKED
+rather than bumped: a `TupleGet` destination is a member of a stack tuple, which the frame owns,
+and the function's fallback for any destination it does not recognise is exactly that — a copy
+into a frame-owned place, a READ of the local that the view never names.  And one more the
+same day — `Output::write_tuple_fields` names `OpGetField` to BUILD the field place of the
+record a tuple is written into.  CHECKED: that destination is a record by construction (a
+return buffer or a copy's destination), never a tuple member.)
 
 (2026-09-16, @PLN164 C5 step 2: one more on the call-only side — `namings_avoid_place` resolves
 what a naming of a container REACHES by op name, and `TupleGet` names a stack tuple member,
@@ -2672,7 +2681,12 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 840 | 500 | 6 | **334** |
+| 841 | 501 | 6 | **334** |
+
+(2026-09-17, @PLN164 E-1: one function added, seeing through the wrapper —
+`FreshWalk::read_position` asks whether a `const` argument's callee answers a scalar, void or
+text through `is_scalar` and `.base()`, since a `τ?` result is the same value behind a
+nullability bit.  The opaque column is unmoved.)
 
 (2026-09-17, loft#1549: one function added, seeing through the wrapper —
 `scopes::releases_what_it_held` reads a pooled buffer's type through `.base()` and names a

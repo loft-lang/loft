@@ -930,10 +930,26 @@ function declines whole (`(R-Escape)`).  The exit's own answer is a PROOF rather
 fallback: every mention of the return buffer must be one the tuple accounts for, because a
 field filled without an append — a returned vector literal, a record literal's vector field —
 read as "empty" delivered a null view for a vector of eight (`723-ncc-loop-element-bind`).  The
-container question is asked per PATH and per NAMING: a parser appends and returns once per
-branch, and a naming that reaches a SIBLING field or claims a record in the store moves nothing
-in the one the leaf views.  `LOFT_NO_VIEW_FIELD=1` is the opt-out once it is armed,
-and `LOFT_TRACE_VALUEREC=1` names every admission and decline.
+callee's half is a per-PATH PROOF (`hoist::fresh_leaf`, a forward walk that joins `if` arms
+and runs loops to a fixpoint): on every path to the exit the last change to the container was
+the append of the local's copy, and neither the local, a store it views, nor that element
+changed after it.  An append in each arm of an `if` views the container's LAST element; an
+append under a condition, or a local grown, rebound or written after its copy, declines
+(measured wrong under the per-exit test this replaced: 0 points for 3, and 3,9 for 4,109).  A
+naming that reaches a SIBLING field or claims a record in the store moves nothing in the one
+the leaf views.  The gate stores each exit's leaf and the emitter writes the stored one.
+`LOFT_NO_VIEW_FIELD=1` is the opt-out once it is armed, and `LOFT_TRACE_VALUEREC=1` names
+every admission and decline, with the reason and — for a site — the caller that consumed it.
+**`LOFT_FORWARD_TUPLE=1`** (@PLN164 E-1, `@FR-R-ValueRecord`, **opt-in** beside
+`LOFT_VIEW_FIELD`, generation time, `--native` only) lets a function that keeps its record
+FORWARD an admitted callee's answer — `return nm()`, which the parser lowers as the callee
+filling the forwarder's buffer — by writing the tuple into that buffer at the site: minted
+where it is absent, every scalar set, a view part's vector copied; the call evaluates to the
+buffer.  Without it such a forward is a site that consumes the record and declines the callee
+everywhere — which is what kept the drawing library's `parse_circle` and `parse_line_cmd` on
+buffers (their `no_mark()` tail was forwarded by `parse_fronds`).  `LOFT_NO_FORWARD_TUPLE=1`
+is the opt-out once it is on; the first bisect step for a wrong field, a leak or a null-store
+panic at a `return g(…)` of a record-returning function on native.
 **`LOFT_NO_CALLEE_DISTURB=1`** (@PLN164 C3, `@FR-B-Disturb`, `@FR-B-Ref-Reshape`, BOTH
 backends) makes the disturbance walk read THIS frame's ops only again — with it off, a
 container a CALLEE grows or removes from disturbs the caller's live view of it, so

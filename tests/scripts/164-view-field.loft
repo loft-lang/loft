@@ -37,6 +37,14 @@
 //     a row — so they stand on the rule rather than on a wrong answer of their own.
 //   * `d2` (a `?`-discharged source, whose ownership is a JOIN) — the absent arm mints its
 //     record in the frame's own store, so the view dangles wherever the element was absent.
+//   * `p4`, `p7`, `p7c`, `p7d` (2026-09-17) — MEASURED on f547cf1c with the unit armed, whose
+//     callee test asked "is the element built earlier in the exit's statement list" rather than
+//     "on every path": `p4` read 0,0 where the copy holds 3,9, `p7` 3,9 for 4,109, `p7c` 3,9 for
+//     5,30 and `p7d` 3,9 for 3,109 — an append under a condition, and the local changed after
+//     its copy, all four silent.
+//   * `p17` — MEASURED with the finish rule made to ignore whether the element's field still
+//     held the local's value: 3,9 for 4,109.  And `p1` with the joined leaf reading the
+//     container's FIRST element instead of its last: 3,9 for 4,18.
 // The admissions' receipt is STRUCTURAL and pinned in `tests/view_field.rs`: the tuple
 // signature, the dropped buffer argument, and every decline still declining.
 
@@ -45,6 +53,7 @@ struct Op { opts: vector<Pt>, ow: integer = 0 }
 struct Sc { ops: vector<Op>, seen: integer = 0 }
 struct Mark { matched: boolean = false, bad: boolean = false, mpts: vector<Pt> }
 struct Named { nm: text = "", npts: vector<Pt> }
+struct Sa { ops: vector<Op>, alt: vector<Op>, seen: integer = 0 }
 
 fn ok(nm: text, got: text, want: text) {
   assert(got == want, "{nm}: {got}, want {want}");
@@ -216,6 +225,192 @@ fn c2f(sc: Sc, n: integer) -> Mark {
   Mark { matched: true, bad: false, mpts: c2_p }
 }
 
+// ── PER-PATH CELLS (@PLN164 E-1) ────────────────────────────────────────────────────
+//
+// The leaf is right only if, on EVERY path to the exit, the last change to the container was
+// the append of an element holding the local's copy, and neither the local nor that element
+// changed after it.  `p*` admissions are the parser shapes that fact covers — an append in
+// each arm of an `if` (the view is then the container's LAST element, since no single temp
+// names the place on both paths), an append and its `return` inside a loop — and the
+// declines are the paths it fails on, each with a value that MOVES if the decline stops:
+// `p4`, `p7`, `p7c` and `p7d` are the four that read wrong under the per-exit test this
+// replaced.
+
+fn no_mark_p() -> Mark { Mark { matched: false, bad: false, mpts: [] } }
+
+/// p1 — two arms append the SAME local; the exit after the `if`.  ADMIT (the last element).
+fn p1(sc: Sc, n: integer, c: boolean) -> Mark {
+  p1_p = mkpts(n);
+  if c { sc.ops += [Op { opts: p1_p, ow: 1 }]; } else { sc.ops += [Op { opts: p1_p, ow: 2 }]; }
+  Mark { matched: true, bad: false, mpts: p1_p }
+}
+/// p2 — the append and its return inside a `while`, after a `continue`.  ADMIT.
+fn p2(sc: Sc, n: integer) -> Mark {
+  p2_k = 0;
+  while true {
+    p2_k += 1;
+    if p2_k < 3 { continue }
+    p2_p = mkpts(n + p2_k);
+    sc.ops += [Op { opts: p2_p, ow: p2_k }];
+    return Mark { matched: true, bad: false, mpts: p2_p }
+  }
+  no_mark_p()
+}
+/// p3 — the append under a loop, the exit after it: zero iterations leave no element.  DECLINE.
+fn p3(sc: Sc, n: integer, m: integer) -> Mark {
+  p3_p = mkpts(n);
+  for i in 0..m { sc.ops += [Op { opts: p3_p, ow: i }]; }
+  Mark { matched: true, bad: false, mpts: p3_p }
+}
+/// p4 — only one arm appends.  DECLINE.
+fn p4(sc: Sc, n: integer, c: boolean) -> Mark {
+  p4_p = mkpts(n);
+  if c { sc.ops += [Op { opts: p4_p, ow: 1 }]; }
+  Mark { matched: true, bad: false, mpts: p4_p }
+}
+/// p5 — both arms append, then an unviewed append before the exit.  DECLINE.
+fn p5(sc: Sc, n: integer, c: boolean) -> Mark {
+  p5_p = mkpts(n);
+  if c { sc.ops += [Op { opts: p5_p, ow: 1 }]; } else { sc.ops += [Op { opts: p5_p, ow: 2 }]; }
+  sc.ops += [Op { opts: [], ow: 99 }];
+  Mark { matched: true, bad: false, mpts: p5_p }
+}
+/// p6 — both arms append, then the first element is removed.  DECLINE.
+fn p6(sc: Sc, n: integer, c: boolean) -> Mark {
+  p6_p = mkpts(n);
+  if c { sc.ops += [Op { opts: p6_p, ow: 1 }]; } else { sc.ops += [Op { opts: p6_p, ow: 2 }]; }
+  sc.ops.remove(0);
+  Mark { matched: true, bad: false, mpts: p6_p }
+}
+/// p7 — ONE append, then the local grows: the record holds 4 points, the element 3.  DECLINE.
+fn p7(sc: Sc, n: integer) -> Mark {
+  p7_p = mkpts(n);
+  sc.ops += [Op { opts: p7_p, ow: 1 }];
+  p7_p += [Pt { px: 100, py: 0 }];
+  Mark { matched: true, bad: false, mpts: p7_p }
+}
+/// p7b — the same after a two-arm append.  DECLINE.
+fn p7b(sc: Sc, n: integer, c: boolean) -> Mark {
+  p7b_p = mkpts(n);
+  if c { sc.ops += [Op { opts: p7b_p, ow: 1 }]; } else { sc.ops += [Op { opts: p7b_p, ow: 2 }]; }
+  p7b_p += [Pt { px: 100, py: 0 }];
+  Mark { matched: true, bad: false, mpts: p7b_p }
+}
+/// p7c — the local is REASSIGNED after the append.  DECLINE.
+fn p7c(sc: Sc, n: integer) -> Mark {
+  p7c_p = mkpts(n);
+  sc.ops += [Op { opts: p7c_p, ow: 1 }];
+  p7c_p = mkpts(n + 2);
+  Mark { matched: true, bad: false, mpts: p7c_p }
+}
+/// p7d — an element of the local written after the append.  DECLINE.
+fn p7d(sc: Sc, n: integer) -> Mark {
+  p7d_p = mkpts(n);
+  sc.ops += [Op { opts: p7d_p, ow: 1 }];
+  p7d_p[0]?.px = 100;
+  Mark { matched: true, bad: false, mpts: p7d_p }
+}
+/// p8 — earlier iterations append and continue; the last one returns.  ADMIT.
+fn p8(sc: Sc) -> Mark {
+  p8_k = 0;
+  while true {
+    p8_k += 1;
+    p8_p = mkpts(p8_k);
+    sc.ops += [Op { opts: p8_p, ow: p8_k }];
+    if p8_k < 3 { continue }
+    return Mark { matched: true, bad: false, mpts: p8_p }
+  }
+  no_mark_p()
+}
+/// p9 — the arms append DIFFERENT locals; the exit views one of them.  DECLINE — admitted, the
+/// `else` path would read `q`'s points.
+fn p9(sc: Sc, n: integer, c: boolean) -> Mark {
+  p9_p = mkpts(n);
+  p9_q = mkpts(n + 1);
+  if c { sc.ops += [Op { opts: p9_p, ow: 1 }]; } else { sc.ops += [Op { opts: p9_q, ow: 2 }]; }
+  Mark { matched: true, bad: false, mpts: p9_p }
+}
+/// p10 — the arms append into DIFFERENT containers: no one place is last on both paths.  DECLINE.
+fn p10(sc: Sa, n: integer, c: boolean) -> Mark {
+  p10_p = mkpts(n);
+  if c { sc.ops += [Op { opts: p10_p, ow: 1 }]; } else { sc.alt += [Op { opts: p10_p, ow: 2 }]; }
+  Mark { matched: true, bad: false, mpts: p10_p }
+}
+/// p11 — `parse_circle`: a scanning loop, two arms, the return in the loop.  ADMIT.
+fn p11(sc: Sc, n: integer, c: boolean) -> Mark {
+  p11_from = 0;
+  while true {
+    p11_from += 1;
+    if p11_from > 5 { return no_mark_p() }
+    if p11_from < n { continue }
+    p11_p = mkpts(p11_from);
+    if c {
+      sc.ops += [Op { opts: p11_p, ow: 1 }];
+    } else {
+      sc.ops += [Op { opts: p11_p, ow: 2 }];
+    }
+    return Mark { matched: true, bad: false, mpts: p11_p }
+  }
+  no_mark_p()
+}
+/// p12 — nested arms, every leaf appends.  ADMIT (the last element).
+fn p12(sc: Sc, n: integer, c: boolean, d: boolean) -> Mark {
+  p12_p = mkpts(n);
+  if c {
+    if d { sc.ops += [Op { opts: p12_p, ow: 1 }]; } else { sc.ops += [Op { opts: p12_p, ow: 2 }]; }
+  } else {
+    sc.ops += [Op { opts: p12_p, ow: 3 }];
+  }
+  Mark { matched: true, bad: false, mpts: p12_p }
+}
+/// p13 — one arm appends, the other returns an empty mark: the exit after the `if` is reached
+/// only through the append.  ADMIT (the element, beside a null view).
+fn p13(sc: Sc, n: integer, c: boolean) -> Mark {
+  p13_p = mkpts(n);
+  if c { sc.ops += [Op { opts: p13_p, ow: 1 }]; } else { return Mark { matched: true, bad: true, mpts: [] } }
+  Mark { matched: true, bad: false, mpts: p13_p }
+}
+/// p14 — a sibling-field write after the two-arm append.  ADMIT.
+fn p14(sc: Sc, n: integer, c: boolean) -> Mark {
+  p14_p = mkpts(n);
+  if c { sc.ops += [Op { opts: p14_p, ow: 1 }]; } else { sc.ops += [Op { opts: p14_p, ow: 2 }]; }
+  sc.seen = sc.seen + 1;
+  Mark { matched: true, bad: false, mpts: p14_p }
+}
+/// p15 — the arms append, and a SECOND unviewed append stands inside one arm.  DECLINE.
+fn p15(sc: Sc, n: integer, c: boolean) -> Mark {
+  p15_p = mkpts(n);
+  if c {
+    sc.ops += [Op { opts: p15_p, ow: 1 }];
+    sc.ops += [Op { opts: [], ow: 98 }];
+  } else {
+    sc.ops += [Op { opts: p15_p, ow: 2 }];
+  }
+  Mark { matched: true, bad: false, mpts: p15_p }
+}
+/// p16 — the loop body appends and returns only under a condition; otherwise it appends and
+/// goes round.  The return's element is the one this iteration appended.  ADMIT.
+fn p16(sc: Sc) -> Mark {
+  p16_k = 0;
+  while true {
+    p16_k += 1;
+    p16_p = mkpts(p16_k);
+    sc.ops += [Op { opts: p16_p, ow: p16_k }];
+    if p16_k >= 3 { return Mark { matched: true, bad: false, mpts: p16_p } }
+  }
+  no_mark_p()
+}
+
+/// p17 — the local grows INSIDE the literal, after its copy into the element and before the
+/// element is finished: the record holds 4 points, the element 3.  DECLINE — the finish makes
+/// the element last, but its field is no longer the local's value.
+fn bump_pts(v: vector<Pt>) -> integer { v += [Pt { px: 100, py: 0 }]; 1 }
+fn p17(sc: Sc, n: integer) -> Mark {
+  p17_p = mkpts(n);
+  sc.ops += [Op { opts: p17_p, ow: bump_pts(p17_p) }];
+  Mark { matched: true, bad: false, mpts: p17_p }
+}
+
 /// Grows the container it is handed — what `b3`'s site calls between the bind and the read.
 fn grow_ops(sc: Sc) { sc.ops += [Op { opts: [], ow: 7 }]; }
 
@@ -378,6 +573,102 @@ fn main() {
     c2_sum += len(mc2.mpts) * 100 + totp(mc2.mpts);
   }
   ok("c2 bind dominates     ", "{c2_sum},{len(sc2.ops)}", "612,3");
+
+  // p* — the per-path cells.  mkpts(n): len n, totp 3n(n-1)/2, so 3 → 9, 4 → 18, 5 → 30.
+
+  sp = Sc { ops: [], seen: 0 };
+  rp1 = p1(sp, 3, true);
+  ok("p1 then ", "{rp1.matched},{rp1.bad},{len(rp1.mpts)},{totp(rp1.mpts)}", "true,false,3,9");
+  rp2 = p1(sp, 4, false);
+  ok("p1 else ", "{rp2.matched},{rp2.bad},{len(rp2.mpts)},{totp(rp2.mpts)}", "true,false,4,18");
+  ok("p1 ops  ", "{len(sp.ops)},{sp.ops[1]?.ow},{totp(sp.ops[1]?.opts)}", "2,2,18");
+  sp = Sc { ops: [], seen: 0 };
+  rp3 = p2(sp, 1);
+  ok("p2      ", "{rp3.matched},{rp3.bad},{len(rp3.mpts)},{totp(rp3.mpts)}", "true,false,4,18");
+  ok("p2 ops  ", "{len(sp.ops)},{sp.ops[0]?.ow}", "1,3");
+  sp = Sc { ops: [], seen: 0 };
+  rp4 = p3(sp, 3, 0);
+  ok("p3 m=0  ", "{rp4.matched},{rp4.bad},{len(rp4.mpts)},{totp(rp4.mpts)}", "true,false,3,9");
+  rp5 = p3(sp, 4, 2);
+  ok("p3 m=2  ", "{rp5.matched},{rp5.bad},{len(rp5.mpts)},{totp(rp5.mpts)}", "true,false,4,18");
+  ok("p3 ops  ", "{len(sp.ops)}", "2");
+  sp = Sc { ops: [], seen: 0 };
+  rp6 = p4(sp, 3, false);
+  ok("p4 no   ", "{rp6.matched},{rp6.bad},{len(rp6.mpts)},{totp(rp6.mpts)}", "true,false,3,9");
+  rp7 = p4(sp, 4, true);
+  ok("p4 yes  ", "{rp7.matched},{rp7.bad},{len(rp7.mpts)},{totp(rp7.mpts)}", "true,false,4,18");
+  sp = Sc { ops: [], seen: 0 };
+  rp8 = p5(sp, 3, true);
+  ok("p5      ", "{rp8.matched},{rp8.bad},{len(rp8.mpts)},{totp(rp8.mpts)}", "true,false,3,9");
+  ok("p5 ops  ", "{len(sp.ops)},{sp.ops[1]?.ow}", "2,99");
+  sp = Sc { ops: [Op { opts: [], ow: 7 }], seen: 0 };
+  rp9 = p6(sp, 3, false);
+  ok("p6      ", "{rp9.matched},{rp9.bad},{len(rp9.mpts)},{totp(rp9.mpts)}", "true,false,3,9");
+  ok("p6 ops  ", "{len(sp.ops)},{sp.ops[0]?.ow}", "1,2");
+  sp = Sc { ops: [], seen: 0 };
+  rp10 = p7(sp, 3);
+  ok("p7      ", "{rp10.matched},{rp10.bad},{len(rp10.mpts)},{totp(rp10.mpts)}", "true,false,4,109");
+  ok("p7 ops  ", "{totp(sp.ops[0]?.opts)}", "9");
+  rp11 = p7b(sp, 3, false);
+  ok("p7b     ", "{rp11.matched},{rp11.bad},{len(rp11.mpts)},{totp(rp11.mpts)}", "true,false,4,109");
+  rp12 = p7c(sp, 3);
+  ok("p7c     ", "{rp12.matched},{rp12.bad},{len(rp12.mpts)},{totp(rp12.mpts)}", "true,false,5,30");
+  rp13 = p7d(sp, 3);
+  ok("p7d     ", "{rp13.matched},{rp13.bad},{len(rp13.mpts)},{totp(rp13.mpts)}", "true,false,3,109");
+  ok("p7 all  ", "{len(sp.ops)},{totp(sp.ops[0]?.opts)},{totp(sp.ops[1]?.opts)},{totp(sp.ops[2]?.opts)},{totp(sp.ops[3]?.opts)}", "4,9,9,9,9");
+  sp = Sc { ops: [], seen: 0 };
+  rp14 = p8(sp);
+  ok("p8      ", "{rp14.matched},{rp14.bad},{len(rp14.mpts)},{totp(rp14.mpts)}", "true,false,3,9");
+  ok("p8 ops  ", "{len(sp.ops)}", "3");
+  sp = Sc { ops: [], seen: 0 };
+  rp15 = p9(sp, 3, false);
+  ok("p9 else ", "{rp15.matched},{rp15.bad},{len(rp15.mpts)},{totp(rp15.mpts)}", "true,false,3,9");
+  rp16 = p9(sp, 3, true);
+  ok("p9 then ", "{rp16.matched},{rp16.bad},{len(rp16.mpts)},{totp(rp16.mpts)}", "true,false,3,9");
+  ok("p9 ops  ", "{totp(sp.ops[0]?.opts)},{totp(sp.ops[1]?.opts)}", "18,9");
+  sa = Sa { ops: [Op { opts: [], ow: 7 }], alt: [], seen: 0 };
+  rp17 = p10(sa, 3, false);
+  ok("p10 else", "{rp17.matched},{rp17.bad},{len(rp17.mpts)},{totp(rp17.mpts)}", "true,false,3,9");
+  rp18 = p10(sa, 4, true);
+  ok("p10 then", "{rp18.matched},{rp18.bad},{len(rp18.mpts)},{totp(rp18.mpts)}", "true,false,4,18");
+  ok("p10 ops ", "{len(sa.ops)},{len(sa.alt)}", "2,1");
+  sp = Sc { ops: [], seen: 0 };
+  rp19 = p11(sp, 3, false);
+  ok("p11 hit ", "{rp19.matched},{rp19.bad},{len(rp19.mpts)},{totp(rp19.mpts)}", "true,false,3,9");
+  rp20 = p11(sp, 4, true);
+  ok("p11 hit2", "{rp20.matched},{rp20.bad},{len(rp20.mpts)},{totp(rp20.mpts)}", "true,false,4,18");
+  rp21 = p11(sp, 9, true);
+  ok("p11 miss", "{rp21.matched},{rp21.bad},{len(rp21.mpts)},{totp(rp21.mpts)}", "false,false,0,0");
+  ok("p11 ops ", "{len(sp.ops)},{sp.ops[0]?.ow},{sp.ops[1]?.ow}", "2,2,1");
+  sp = Sc { ops: [], seen: 0 };
+  rp22 = p12(sp, 3, true, true);
+  ok("p12 tt  ", "{rp22.matched},{rp22.bad},{len(rp22.mpts)},{totp(rp22.mpts)}", "true,false,3,9");
+  rp23 = p12(sp, 4, true, false);
+  ok("p12 tf  ", "{rp23.matched},{rp23.bad},{len(rp23.mpts)},{totp(rp23.mpts)}", "true,false,4,18");
+  rp24 = p12(sp, 5, false, true);
+  ok("p12 f   ", "{rp24.matched},{rp24.bad},{len(rp24.mpts)},{totp(rp24.mpts)}", "true,false,5,30");
+  sp = Sc { ops: [], seen: 0 };
+  rp25 = p13(sp, 3, false);
+  ok("p13 no  ", "{rp25.matched},{rp25.bad},{len(rp25.mpts)},{totp(rp25.mpts)}", "true,true,0,0");
+  rp26 = p13(sp, 3, true);
+  ok("p13 yes ", "{rp26.matched},{rp26.bad},{len(rp26.mpts)},{totp(rp26.mpts)}", "true,false,3,9");
+  sp = Sc { ops: [], seen: 0 };
+  rp27 = p14(sp, 3, false);
+  ok("p14     ", "{rp27.matched},{rp27.bad},{len(rp27.mpts)},{totp(rp27.mpts)}", "true,false,3,9");
+  ok("p14 seen", "{sp.seen}", "1");
+  sp = Sc { ops: [], seen: 0 };
+  rp28 = p15(sp, 3, true);
+  ok("p15 then", "{rp28.matched},{rp28.bad},{len(rp28.mpts)},{totp(rp28.mpts)}", "true,false,3,9");
+  rp29 = p15(sp, 4, false);
+  ok("p15 else", "{rp29.matched},{rp29.bad},{len(rp29.mpts)},{totp(rp29.mpts)}", "true,false,4,18");
+  sp = Sc { ops: [], seen: 0 };
+  rp30 = p16(sp);
+  ok("p16     ", "{rp30.matched},{rp30.bad},{len(rp30.mpts)},{totp(rp30.mpts)}", "true,false,3,9");
+  ok("p16 ops ", "{len(sp.ops)}", "3");
+  sp = Sc { ops: [], seen: 0 };
+  rp40 = p17(sp, 3);
+  ok("p17     ", "{rp40.matched},{rp40.bad},{len(rp40.mpts)},{totp(rp40.mpts)}", "true,false,4,109");
+  ok("p17 ops ", "{len(sp.ops)},{totp(sp.ops[0]?.opts)}", "1,9");
 
   println("164-view-field: every cell holds");
 }

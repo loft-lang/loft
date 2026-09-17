@@ -70,7 +70,8 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
   the way; the 14-row table and the parse row re-measured — § Re-measured; the runtime fast
   paths and loft#1549 — § The runtime under the row; B1b, D-own-43 and loft#1550 — § B1b;
   the chain-renamed literal exits — § B2 unit 1 over a chain; the wilderness; the re-scope to
-  § The elimination queue under C125)
+  § The elimination queue under C125; E-1's per-path proof, D-own-46 and the forward unit —
+  § E-1, the per-path proof and § E-1, the forward)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -899,6 +900,91 @@ each decline is now a named shape:
 | `parse_fronds` | `+0 has no resolvable source` | correct: `pf_all` gathers the points of eight ops and lives nowhere else — this one is E-2's (build it inside the returned record) |
 
 Per parse the bench runs each of these once, beside three `Poly`s that are already views.
+
+### E-1, the per-path proof (2026-09-17)
+
+*The matrix came first, and it found the unit wrong while opt-in.*  Nineteen shapes, each with
+the record form's value hand-computed (`tests/scripts/164-view-field.loft` § per-path cells),
+run armed on the commit above: **four answered wrong with nothing to say so.**  `p4`
+(`if c { sc.ops += [Op { opts: p }] }; Mark { mpts: p }`) read 0 points for 3 on the path that
+did not append, and `p7`/`p7c`/`p7d` read the element's copy where the local had grown, been
+rebound or been written after it.  The per-exit test asked "is the element built EARLIER in the
+exit's statement list", and a statement holding the append under an `if` counts as a build; it
+never asked about the local after its copy at all.  None of this reached a consumer — the unit
+is opt-in — but it is exactly the class the gate exists to exclude.
+
+*The rule, stated once.*  The view answers the element's field; the record form answers the
+local at the exit.  They agree exactly when, on EVERY path to the exit, the last change to the
+container was the append of an element whose field took the local's copy, and neither the
+local (nor any store it views, nor any view of it), nor that field, nor the container changed
+after the copy.  `hoist::fresh_leaf` proves it with a forward must-walk over the structured IR
+(`FreshWalk`: an `if` joins its arms, a loop runs to its fixpoint, `break`/`continue`/`return`
+carry their state to their targets).  It replaces `body_keeps_places` and the per-exit list
+test whole; the other callee spelling (a source that is itself a parameter's place) is gone
+with it, since no shape of it was ever admitted.  The gate stores the answer per exit
+(`ViewPlan::leaves`) and the emitter writes what is stored — before, the emitter re-derived it
+without the disturbance map the gate had used.
+
+*The join.*  Where the arms append through different element temps (`parse_circle`'s shape) no
+temp names the place on both paths, and the container's LAST element does: the leaf is
+`get_vector(<container>, <stride>, -1)` plus the field offset, the stride derived from the
+mint's own `(parent_tp, fld)` as the runtime derives it.
+
+*Measured on the matrix:* eight admissions (the two-arm append, the nested arms, the append and
+`return` inside a loop, earlier iterations appending and continuing, an arm that returns an
+empty mark) and eleven declines, clean on both backends and under `LOFT_STRICT_STORES`,
+`LOFT_POISON`, `LOFT_POISON_CLAIM` and the leak gate.  Two sabotages are caught: the join reading
+the first element (`p1`: 3,9 for 4,18) and the finish ignoring whether the copy still holds
+(`p17`, a local grown inside the literal: 3,9 for 4,109).  The default emission is unchanged.
+
+*Measured on the library:* `parse_circle` now proves a joined leaf and `parse_line_cmd` an
+element leaf — and both still decline, one step later: their tail `no_mark()` is not a value
+leaf, because `no_mark` is declined, because `parse_fronds` — whose `pf_all` lives nowhere but
+the record (E-2's shape) — forwards `no_mark()`'s record through its own buffer.  So the next
+question is the forwarding site, not the leaf: a record-form function that returns an admitted
+callee's result.
+
+### E-1, the forward (2026-09-17)
+
+*Priced by source patch first.*  In the scratch bench clone, `parse_fronds`' two `no_mark()`
+calls were replaced by the literal they return — the same program — which admitted `no_mark`,
+`parse_circle` and `parse_line_cmd` under `LOFT_VIEW_FIELD=1`.  Three binaries from one rlib,
+hash `33f6d2b8` on all three, `perf stat -r 5` at `--n 5000`, three interleaved rounds:
+
+| variant | instructions | cycles |
+|---|---:|---:|
+| default | 1 767.1 M | 428.8–431.1 M |
+| `LOFT_VIEW_FIELD=1` (`parse_poly`, `parse_lock`) | 1 731.1 M (−2.0 %) | 416.4–416.9 M (−3.0 %) |
+| the same, `parse_fronds` patched (+ `parse_circle`, `parse_line_cmd`, `no_mark`) | 1 693.8 M (−4.1 %) | 410.0–411.2 M (−4.5 %) |
+
+`parse_circle` runs on almost every line and misses on most, so its pooled `Mark` buffer was
+written and released per LINE, not per parse — which is where the step comes from.
+
+*The mechanism* (`@FR-R-ValueRecord`'s new FORWARD clause, `LOFT_FORWARD_TUPLE`, opt-in beside
+`LOFT_VIEW_FIELD`).  `return g(…)` in a function that keeps its record lowers to
+`b = g(…, b)` inside a `one_buffer_chain`: the callee fills the buffer it is handed.
+`hoist::forward_site` recognises that shape — an admitted `g`, its buffer argument the very
+variable the answer is bound to, the same record type — and it is the one record-consuming
+position the site gate now admits.  The emitter wraps the call:
+`{ let __vt = n_g(cell, …); let mut __vd = b; <mint b if absent>; <write every field>; __vd }`,
+the mint being the callee's own allocate-or-reuse guard and the field writes the ones its exit
+makes — so the chain's copy-or-adopt split around the call sees exactly the store it saw
+before.  The writes have ONE home, `Output::write_tuple_fields`, which the copy FROM a value
+local now uses too; it gained the view part (the field emptied, then `vector_add` from the
+view), which the copy had no spelling for.  `dead_buffers` reads the same site list, since a
+forward's buffer argument is a use: counted as dropped, its mint and frees would vanish and the
+store the site mints would leak.
+
+*The cells* (`tests/scripts/164-forward-tuple.loft`, eight, hand-computed): a null view, a
+view (and that the record is a COPY — the container grown and written afterwards), a joined
+view, a scalar-only callee, a buffer handed in ABSENT (only an adopting first bind does that,
+and it is the mint branch's only reach), the forwarder in a loop cycling every exit over one
+reused buffer, two levels of forwarding, and the admitted callees called directly.  Both
+backends and every store falsifier clean; pins in `tests/view_field.rs`.  Two sabotages,
+measured: the mint guard removed stops the run at `q5` ("a NULL DbRef reached a store
+accessor"); the view copy removed moves five cells (`q6`: 513,509 for 1025,1021).
+
+
 
 ## The three tiers — the invariant each rests on
 

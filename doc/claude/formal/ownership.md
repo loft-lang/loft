@@ -8,7 +8,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 **Catalogue:** @F21 (references `&T`), @I60 (deps / lifetime tracker) — Goal E. Roadmap: @PLN85, @PLN87.
 
 > **Rules then deviations** (see [README](README.md)). The rules below are loft's
-> ownership model.  The register stands at **`OPEN: 0`** — `D-own-43`, a masked backend
+> ownership model.  The register stands at **`OPEN: 0`** — `D-own-46`, a view leaf the opt-in
+> unit admitted off the per-path clause, opened and CLOSED 2026-09-17; `D-own-43`, a masked backend
 > divergence opened 2026-09-15, was CLOSED by @PLN164 B1b on 2026-09-17; `D-own-40` and
 > `D-own-41` both opened and CLOSED 2026-09-11, below.  It read `OPEN: 0` from 2026-07-04
 > until 2026-09-11, and what
@@ -123,18 +124,46 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 or one handed up to the caller — so that the place outlives the frame,
                 the field may be delivered as a VIEW of that place instead of a copy of
                 its own, and the return type records the borrow on the field as it
-                records a whole-value borrow (O-Move).  The licence is decided over
-                EVERY call site of the function at once: each site binds the result to
-                a local that only READS the field (a field read, a `const` argument, a
-                length) and reaches its last read with no disturbance (B-Disturb) of
-                the container the view names between the call and that read, in the
-                caller or through what it calls; one site that stores, appends to,
-                rebinds, returns or hands the field to a by-value parameter declines the
-                function whole, and every site keeps the owning copy.  "Every call site"
-                means every site the compiler sees whole (R-Escape): a result that
-                escapes the unit — a library's exported function — is materialised at
-                the boundary as the value tuple already is, so an unseen caller never
-                receives a view.  A declined view is a copy, never a stale read.
+                records a whole-value borrow (O-Move).
+                THE CALLEE'S HALF is a fact at each EXIT, on EVERY path to it (O-Complete):
+                the last change to that container was the append of an element whose
+                field took a copy of the value, and after that copy neither the value —
+                nor a store it views, nor a view of it — nor that field, nor the
+                container changed.  The view is that element's field; where the paths
+                appended DIFFERENT elements it is the field of the container's LAST
+                element, which is the appended one on each of them.  The value views
+                only stores the FRAME owns — a parameter's store can arrive under a
+                second name the frame cannot watch — and has exactly ONE destination
+                outside the frame, or the place is undecided.  A `?`-discharged element
+                is not such a value: its absent arm is a record of the frame's own
+                (B-View), so a view of the container would dangle there.  An exit that
+                writes the field NOT AT ALL delivers a null view, which reads as the
+                empty vector it replaces; "not at all" is PROVEN by accounting every
+                write the exit makes to its record, never assumed from the absence of
+                one spelling — a vector literal fills by element pushes and a record
+                literal's vector field by element appends.  A leaf is a plain
+                `vector<T>`: a `text` is read through its own getters and a keyed
+                collection through its keys, neither through the field slot.
+                THE SITES' HALF is decided over EVERY call site of the function at once:
+                each site binds the result to a local whose bind DOMINATES its reads and
+                that only READS the field — a use that answers a VALUE: a length, a null
+                test, a `const` argument.  An ELEMENT read answers a PLACE and is not a
+                read, however read-only the op that answers it, because the site may
+                write through what it answered.  The local reaches its last read with no
+                disturbance (B-Disturb — a removal renumbers, a growth relocates) of the
+                container the view names between the call and that read, in the caller
+                or through what it calls, and that span is judged as an UPPER bound: a
+                naming of the container is a disturbance unless what it reaches is shown
+                to move nothing (a sibling field, a claim in the store, a fixed-width
+                field write, a read of the watched field itself, a call whose own
+                disturbance summary does not reach it).  One site that stores, appends
+                to, iterates, rebinds, returns or hands the field to a by-value parameter
+                declines the function whole, and every site keeps the owning copy.
+                "Every call site" means every site the compiler sees whole (R-Escape): a
+                result that escapes the unit — a library's exported function — never
+                carries a view.  It keeps its record, since the boundary that
+                materialises a tuple writes FIELDS and a reference is not one.  A
+                declined view is a copy, never a stale read.
 ```
 
 **`(O-ViewField)` in words** (@PLN164 C5, written before the phase is cut).  The natural
@@ -151,6 +180,24 @@ Every part declines to the copy the code emits today, which is the direction
 `(O-Move)` already points.  Admitted by the owner on 2026-09-15 (C122): the contract is
 semantics, not representation, so a returned view needs only its conditions; the library
 API is the boundary, and a construction that does not escape it may be rewritten freely.
+
+**What the build measured** (@PLN164 C5, 2026-09-16, and E-1, 2026-09-17 — the conditions
+above that are not in the rule as first written, each with the cell that bought it in
+`tests/scripts/164-view-field.loft`).  The per-PATH clause: a test that asked "is the
+element built earlier in this exit's statement list" admitted an append under an `if`
+(`p4` read 0 points for 3) and never asked about the value after its copy (`p7`, `p7c`,
+`p7d`, `p17`: 3,9 where the record holds 4,109, 5,30, 3,109, 4,109) — D-own-46.  The
+discharge: a `?`-discharged source is a `Join`, and the hand-proven rung that viewed one was
+sound only because its element was always present (`d2`).  The accounted empty exit: read as
+"no append names the field", a returned vector literal delivered a null view for a vector of
+eight (`723-ncc-loop-element-bind`, and `d6`).  The element read: `m.mpts[0]?.px = 100`
+wrote into the container, which read 109 where the copy holds 9 (`b7`).  The removal:
+`s.ops.remove(0)` between the bind and the read made the first result read the SECOND
+element's points (`b8`, 5,30 for 2,3).  The upper bound: the scope pass's own
+`grown_containers` is a documented LOWER bound, and reusing it admitted `b2` and `b3`.  The
+LAST-element clause is what admits the shape a parser writes most — an append in each arm of
+an `if` (`p1`, `p11`, `p12`, `p14`); sabotaged to read the FIRST element, `p1` read 3,9 for
+4,18.
 
 **In words.** One thing owns each piece of heap, and it's the only thing that frees it.
 When you return a heap value you *give it away* (the function stops owning it); if you
@@ -445,7 +492,9 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 0.**  `D-own-43` (the interpreter's rebind of a promoted buffer local frees the
+**OPEN: 0.**  `D-own-46` (a view leaf admitted where the element was not the value's copy on
+every path — the opt-in `LOFT_VIEW_FIELD` unit only) opened and CLOSED 2026-09-17, below.
+`D-own-43` (the interpreter's rebind of a promoted buffer local frees the
 buffer the caller handed it — masked while such callees receive the null sentinel) opened
 2026-09-15 and CLOSED 2026-09-17 with @PLN164 B1b, below; `D-own-45` (a return that may hand
 back one of several arguments guarded against the first, loft#1550) opened and CLOSED
@@ -476,6 +525,30 @@ the entry records why the obvious widening is not taken: it answers wrong on `--
 > a struct's has, `tests/scripts/a-struct-enum-whole-value-bind-copies-like-a-struct.loft`);
 > and the `--native` release of a displaced store on a fn-ref re-bind of a USER local, which
 > is loft#1328 and which the `??` hoist sidesteps by releasing in the IR.
+
+### D-own-46 — OPENED AND CLOSED (2026-09-17): a view leaf was admitted where the element was not the value's copy on every path
+
+`(O-ViewField)`'s callee half, `(O-Complete)`.  The opt-in view-leaf unit (`LOFT_VIEW_FIELD`)
+asked its question per EXIT and by statement position: "is the element this exit views built
+earlier in the exit's own statement list, with no other build in between".  A statement that
+holds the append under an `if` counts as that build, and nothing asked about the value after its
+copy.  Four shapes answered wrong on `--native`, with nothing to say so, on every build that
+armed the unit: `if c { sc.ops += [Op { opts: p }] }; Mark { mpts: p }` read 0 points for 3 on
+the path that did not append; and the value grown (`p += [x]`), rebound (`p = mkpts(n + 2)`) or
+written (`p[0]?.px = 100`) after its copy read the element's 3,9 where the record holds 4,109,
+5,30 and 3,109.  No default program was affected — the unit was opt-in — which is why it was
+found by the matrix written before a default flip rather than by a consumer.
+
+Closed by making the rule's per-path clause the test itself: `hoist::fresh_leaf` walks the
+structured IR forward (an `if` joins its arms, a loop runs to its fixpoint, a `break`,
+`continue` or `return` carries its state to its target) and admits an exit only where the fact
+holds on every path.  It also admits what the old test declined and the rule allows — an append
+in each arm, viewed as the container's last element, and an append with its `return` inside a
+loop — and it declines a value changed inside the literal between its copy and the element's
+finish (`p17`), which neither test had a cell for until the finish rule was sabotaged.  The gate
+stores each exit's leaf and the emitter writes the stored one; before, the emitter re-derived it
+without the disturbance summary the gate had used.  Guard `tests/scripts/164-view-field.loft`
+(`p1`–`p17`), pins `tests/view_field.rs`.
 
 ### D-own-45 — OPENED AND CLOSED (2026-09-17): a return that may hand back one of several arguments was guarded against the first
 

@@ -424,28 +424,14 @@ impl OpEmitter for OpCopyRecordEmitter {
             // without a call, a buffer or a whole-record copy.
             if let Value::Var(v) = src.unspan()
                 && let Some(d) = ctx.output.value_record_locals.get(v).copied()
-                && let Some(fields) = ctx.output.value_records.fields.get(&d).cloned()
+                && ctx.output.value_records.fields.contains_key(&d)
             {
                 let name = super::super::sanitize(
                     ctx.output.data.def(ctx.output.def_nr).variables().name(*v),
                 );
                 write!(ctx.w, "{{ ")?;
-                for (i, (off, rt)) in fields.iter().enumerate() {
-                    let setter = ctx
-                        .output
-                        .data
-                        .def_nr(super::super::hoist::value_setter(rt));
-                    let call = Value::Call(
-                        setter,
-                        vec![
-                            dst.clone(),
-                            Value::Int(*off as i32),
-                            Value::RawExpr(format!("var_{name}.{i}")),
-                        ],
-                    );
-                    ctx.emit(&call)?;
-                    write!(ctx.w, "; ")?;
-                }
+                ctx.output
+                    .write_tuple_fields(ctx.w, d, dst, &format!("var_{name}"))?;
                 return write!(ctx.w, "}}");
             }
             // @PLN157 § V-j (`@FR-R-MoveAppend`) — the paired append's copy: when the

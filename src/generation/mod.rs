@@ -779,6 +779,9 @@ pub struct Output<'a> {
     /// join buffer every use of which the value form drops, so its mint and its frees
     /// emit as nothing.
     pub dead_buffers: HashSet<u16>,
+    /// @PLN164 E-1 — the current function's FORWARDS (`hoist::forward_sites`): the address
+    /// of an admitted call's argument list → the buffer the site writes the tuple into.
+    pub forward_sites: HashMap<usize, u16>,
     /// @PLN157 § V-z (`@FR-R-ElemFirst`) — the element-first pairings of the current
     /// function ([`hoist::element_first`]): each paired temp is BUILT inside the
     /// appended element instead of its own store.
@@ -1792,6 +1795,7 @@ impl<'a> Output<'a> {
             value_leaves: hoist::ValueLeaves::default(),
             value_phantom: None,
             dead_buffers: HashSet::new(),
+            forward_sites: HashMap::new(),
             elem_first: hoist::ElemFirstMap::default(),
             element_first_disabled: std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"),
             loop_buffers: HashSet::new(),
@@ -2057,11 +2061,14 @@ impl Output<'_> {
         self.value_leaves = hoist::ValueLeaves::default();
         self.value_phantom = None;
         self.dead_buffers.clear();
+        self.forward_sites.clear();
         if !self.value_records.fns.is_empty() {
             self.dead_buffers = hoist::dead_buffers(self.data, def_nr, &self.value_records);
             let admitted: HashSet<u32> = self.value_records.fns.keys().copied().collect();
             self.value_record_locals =
                 hoist::value_locals_in(self.data, def_nr, &admitted, &self.value_records.view_offs);
+            self.forward_sites =
+                hoist::forward_sites(self.data, def_nr, &admitted, &self.value_record_locals);
             self.value_leaves = hoist::value_leaves(self.data, def_nr, &self.value_records);
             if admitted.contains(&def_nr) {
                 let def = self.data.def(def_nr);
@@ -2821,6 +2828,62 @@ impl Output<'_> {
             .collect();
         let tail = if parts.len() == 1 { "," } else { "" };
         format!("({}{tail})", parts.join(", "))
+    }
+
+    /// @PLN164 E-1 (`@FR-R-ValueRecord`) — write the tuple `tuple` of admitted function
+    /// `d` into the record `dst`, one field at a time, as the record form's own exit writes it:
+    /// a scalar through its setter, a view part as an empty vector followed by the deep copy
+    /// of what the view names (a null view copies nothing, which is the empty literal's
+    /// value).  Each write is followed by `"; "`.  ONE home for materialising a tuple: a copy
+    /// from a value local and a forward both write through it.
+    pub(crate) fn write_tuple_fields(
+        &mut self,
+        w: &mut dyn Write,
+        d: u32,
+        dst: &Value,
+        tuple: &str,
+    ) -> std::io::Result<()> {
+        let Some(fields) = self.value_records.fields.get(&d).cloned() else {
+            return Ok(());
+        };
+        let tp = self.value_records.fns.get(&d).copied();
+        for (i, (off, rt)) in fields.iter().enumerate() {
+            let part = Value::RawExpr(format!("{tuple}.{i}"));
+            let off_v = Value::Int(i32::try_from(*off).unwrap_or(i32::MAX));
+            if hoist::is_view_part(rt) {
+                let (vec_tp, elem_tp) = tp
+                    .and_then(|t| hoist::view_field_types(self.stores, t, *off))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "the view part at +{off} of {} has no vector type",
+                            self.data.def(d).name()
+                        )
+                    });
+                let clear = Value::Call(
+                    self.data.def_nr("OpSetInt4"),
+                    vec![dst.clone(), off_v.clone(), Value::Int(0)],
+                );
+                self.output_code_inner(w, &clear)?;
+                write!(w, "; ")?;
+                let field = Value::Call(
+                    self.data.def_nr("OpGetField"),
+                    vec![dst.clone(), off_v, Value::Int(i32::from(vec_tp))],
+                );
+                let copy = Value::Call(
+                    self.data.def_nr("OpAppendVector"),
+                    vec![field, part, Value::Int(i32::from(elem_tp))],
+                );
+                self.output_code_inner(w, &copy)?;
+            } else {
+                let setter = Value::Call(
+                    self.data.def_nr(hoist::value_setter(rt)),
+                    vec![dst.clone(), off_v, part],
+                );
+                self.output_code_inner(w, &setter)?;
+            }
+            write!(w, "; ")?;
+        }
+        Ok(())
     }
 
     /// @PLN157 § V-aa (`@FR-R-ValueRecord`) — the per-field VALUES an `Object` block
