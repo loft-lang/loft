@@ -1,0 +1,211 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1550 — a value whose arms BORROW from two different bases.  `formal/ownership.md`
+// defines `γ(Join(b)) = γ(Owned) ∪ γ(Borrowed(b))`, so `Borrowed(a) ⊔ Borrowed(h)` is not
+// `Join(a)`: no arm is owned, and every bind of such a value is a copy that frees nothing
+// of either base.  Each cell binds such a value, then writes the bases, reads the binding
+// and reads the bases back — hand-computed.  Run on both backends under
+// `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and `LOFT_NATIVE_LEAK_CHECK=1`.
+
+struct Canvas { data: vector<integer>, w: integer }
+struct H { c: Canvas, n: integer }
+
+fn either(a: Canvas, h: H, first: boolean) -> Canvas { if first { a } else { h.c } }
+fn either2(a: Canvas, b: Canvas, first: boolean) -> Canvas { if first { a } else { b } }
+fn fields(h1: H, h2: H, first: boolean) -> Canvas { if first { h1.c } else { h2.c } }
+fn three(a: Canvas, h: H, k: integer) -> Canvas {
+  if k == 0 { a } else if k == 1 { h.c } else { Canvas { data: [k], w: k } }
+}
+fn by_match(a: Canvas, b: Canvas, k: integer) -> Canvas {
+  match k { 0 => a, _ => b }
+}
+fn nullable(a: Canvas, h: H, first: boolean) -> Canvas? { if first { a } else { h.c } }
+fn pickv(a: vector<integer>, b: vector<integer>, first: boolean) -> vector<integer> {
+  if first { a } else { b }
+}
+fn same_base(h: H, first: boolean) -> Canvas { if first { h.c } else { h.c } }
+fn owned_or_view(a: Canvas, first: boolean) -> Canvas {
+  if first { a } else { Canvas { data: [9], w: 9 } }
+}
+
+fn mk_h(w: integer, n: integer) -> H { H { c: Canvas { data: [w, w + 1], w: w }, n: n } }
+
+// j1 — the issue: a first bind returned from the function.
+fn pick_one(h: H, t: integer, first: boolean) -> Canvas {
+  cv = Canvas { data: [t * 10], w: t * 10 };
+  pick = either(cv, h, first);
+  pick
+}
+fn j1() {
+  s = 0;
+  for t in 0..4 {
+    h = mk_h(100 + t, 40 + t);
+    m = pick_one(h, t, t % 2 == 0);
+    junk = Canvas { data: [99, 99, 99], w: 55 };
+    s += m.w + h.c.w + h.n + len(h.c.data) + junk.w;
+  }
+  // t even: m.w = 10t; t odd: m.w = 100 + t.  h.c.w = 100 + t, h.n = 40 + t, len 2, junk 55.
+  // t=0: 0+100+40+2+55; t=1: 101+101+41+2+55; t=2: 20+102+42+2+55; t=3: 103+103+43+2+55
+  assert(s == 197 + 300 + 221 + 306, "j1 {s}");
+  println("j1 {s}");
+}
+
+// j2 — the rebind read inside the function.
+fn rebind(h: H, t: integer, first: boolean) -> integer {
+  cv = Canvas { data: [t], w: t };
+  cv = either(cv, h, first);
+  cv.w += 1000;
+  cv.w + len(cv.data)
+}
+fn j2() {
+  s = 0;
+  for t in 0..4 {
+    h = mk_h(200 + t, t);
+    s += rebind(h, t, t % 2 == 0) + h.c.w;
+  }
+  // even: t + 1000 + 1 + (200 + t); odd: 200 + t + 1000 + 2 + (200 + t)
+  // t=0: 1001+200; t=1: 1203+201; t=2: 1003+202; t=3: 1205+203
+  assert(s == 1201 + 1404 + 1205 + 1408, "j2 {s}");
+  println("j2 {s}");
+}
+
+// j3 — two parameters, the copy independent of both.
+fn j3() {
+  s = 0;
+  for t in 0..4 {
+    p = Canvas { data: [1, 2, 3], w: 10 + t };
+    q = Canvas { data: [4], w: 20 + t };
+    x = either2(p, q, t % 2 == 0);
+    p.w = 0;
+    q.w = 0;
+    s += x.w * 10 + len(x.data) + p.w + q.w + len(p.data) + len(q.data);
+  }
+  // even: (10+t)*10 + 3 + 4; odd: (20+t)*10 + 1 + 4
+  // t=0: 107; t=1: 215; t=2: 127; t=3: 235
+  assert(s == 107 + 215 + 127 + 235, "j3 {s}");
+  println("j3 {s}");
+}
+
+// j4 — two parameter FIELDS.
+fn j4() {
+  s = 0;
+  for t in 0..4 {
+    h1 = mk_h(300, 1);
+    h2 = mk_h(400, 2);
+    y = fields(h1, h2, t % 2 == 1);
+    h1.c.w = 7;
+    h2.c.w = 8;
+    s += y.w + h1.c.w + h2.c.w + h1.n + h2.n;
+  }
+  // even: 400; odd: 300; plus 7 + 8 + 1 + 2 each
+  assert(s == 2 * 418 + 2 * 318, "j4 {s}");
+  println("j4 {s}");
+}
+
+// j5 — two borrows and an owned arm.
+fn j5() {
+  s = 0;
+  for k in 0..6 {
+    a = Canvas { data: [1], w: 11 };
+    h = mk_h(22, 5);
+    z = three(a, h, k % 3);
+    a.w = 0;
+    h.c.w = 0;
+    s += z.w + h.n + len(h.c.data);
+  }
+  // k%3 = 0: 11; 1: 22; 2: 2 — twice each; plus 5 + 2 each
+  assert(s == 2 * (11 + 22 + 2) + 6 * 7, "j5 {s}");
+  println("j5 {s}");
+}
+
+// j6 — a `match` with two borrowed arms.
+fn j6() {
+  s = 0;
+  for k in 0..4 {
+    a = Canvas { data: [1, 1], w: 31 };
+    b = Canvas { data: [2], w: 32 };
+    m = by_match(a, b, k % 2);
+    a.data += [5];
+    b.data += [6];
+    s += m.w * 10 + len(m.data) + len(a.data) + len(b.data);
+  }
+  // even: 312 + 3 + 2; odd: 321 + 3 + 2
+  assert(s == 2 * 317 + 2 * 326, "j6 {s}");
+  println("j6 {s}");
+}
+
+// j7 — a nullable return with two borrowed arms.
+fn j7() {
+  s = 0;
+  for t in 0..4 {
+    a = Canvas { data: [3], w: 41 };
+    h = mk_h(42, 6);
+    r = nullable(a, h, t % 2 == 0);
+    a.w = 0;
+    h.c.w = 0;
+    s += (r?).w + h.n;
+  }
+  assert(s == 2 * 41 + 2 * 42 + 4 * 6, "j7 {s}");
+  println("j7 {s}");
+}
+
+// j8 — a vector result with two borrowed arms.
+fn j8() {
+  s = 0;
+  for t in 0..4 {
+    a: vector<integer> = [1, 2];
+    b: vector<integer> = [3, 4, 5];
+    v = pickv(a, b, t % 2 == 0);
+    a += [9];
+    b += [9];
+    s += len(v) * 10 + v[0]? + len(a) + len(b);
+  }
+  // even: 20 + 1 + 7; odd: 30 + 3 + 7
+  assert(s == 2 * 28 + 2 * 40, "j8 {s}");
+  println("j8 {s}");
+}
+
+// j9 — CONTROL: the same base on both arms stays one borrow.
+fn j9() {
+  s = 0;
+  for t in 0..3 {
+    h = mk_h(50 + t, 1);
+    c = same_base(h, t == 1);
+    h.c.w = 0;
+    s += c.w + h.n;
+  }
+  assert(s == 50 + 51 + 52 + 3, "j9 {s}");
+  println("j9 {s}");
+}
+
+// j10 — CONTROL: an owned arm beside one borrow keeps its runtime join.
+fn j10() {
+  s = 0;
+  for t in 0..4 {
+    a = Canvas { data: [1, 2], w: 60 };
+    o = owned_or_view(a, t % 2 == 0);
+    a.w = 0;
+    s += o.w + len(a.data);
+  }
+  assert(s == 2 * 62 + 2 * 11, "j10 {s}");
+  println("j10 {s}");
+}
+
+fn run(c: text) {
+  if c == "j1" { j1() } else if c == "j2" { j2() } else if c == "j3" { j3() }
+  else if c == "j4" { j4() } else if c == "j5" { j5() } else if c == "j6" { j6() }
+  else if c == "j7" { j7() } else if c == "j8" { j8() } else if c == "j9" { j9() }
+  else if c == "j10" { j10() }
+}
+
+/// With no argument every cell runs; `-- j3` runs one.
+fn main() {
+  args = arguments();
+  if len(args) == 0 {
+    j1(); j2(); j3(); j4(); j5(); j6(); j7(); j8(); j9(); j10();
+    println("1550 cells PASSED");
+  } else {
+    for a in args { run(a); }
+  }
+}
