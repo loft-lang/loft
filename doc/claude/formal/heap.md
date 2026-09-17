@@ -629,6 +629,16 @@ freed without its hook) opened and CLOSED 2026-09-10, below.
 - **Effect:** for a type that owns a droppable without `OpCopy`, the materialised copy is a second
   structure on one resource, made by the compiler on a line the author did not write as a copy,
   with only the advice that writes no longer reach the container.  No gate cell covers it yet.
+  **Measured 2026-09-17**, both backends byte-identical, one resource released TWICE on each of
+  `(B-Disturb)`'s three reachable events — a growth (`M1 M2 R1 D1 D1 D2`), a removal
+  (`M1 M2 R2 D2 D2`, the removed element correctly released by nobody per `(H-Drop-Not)`), and a
+  reassignment of the base (`M1 D1 R1 D1`, the second release after the read) — against controls
+  with no disturbance, which release once (`M1 R1 D1`).
+- **Narrowed 2026-09-17 to the view the author did NOT spell `&`.**  The `&`-spelled half was
+  measured releasing twice the same way, and is now refused rather than copied: `binding.md`
+  D-bind-47 gave `(B-Ref-Reshape)`'s refusal the store it needs to see a growth of a container
+  held in a FIELD, which is the answer this entry's **Removal** already points at.  What is left
+  open here is the plain view, which `(B-View)` materialises on purpose for every other type.
 - **Status:** OPEN — @PLN163 P3.
 - **Removal:** no materialisation for such a view: the disturbance is a compile-time error naming
   the view, the answer `(B-Ref-Reshape)` already gives a `&` reference.

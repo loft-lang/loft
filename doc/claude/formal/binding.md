@@ -393,6 +393,35 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 **OPEN: 2.**
 
+* **D-bind-47** *(opened 2026-09-17, CLOSED 2026-09-17)* — `(B-Ref-Reshape)`'s refusal could not
+  see a GROWTH of a container held in a FIELD, so the rule's answer depended on where the
+  container was stored.  Measured on both backends, four cells varying only the container's home
+  and the disturbance: `v = [...]; c = &v[0]; v.remove(1)` refused, `v += [x]` refused,
+  `b.v.remove(1)` refused — and `c = &b.v[0]; b.v += [x]` **compiled**, materialising the link
+  into a copy with the copy-out advice.  So a `&` was silently downgraded exactly where this rule
+  says REFUSE: a write through the link is lost, and where the element owns a droppable the
+  resource is released TWICE (`M1 M2 R1 D1 D1 D2`, both backends).  `is_amp_link` is not the axis
+  — the identical binding refuses under `remove`.
+  **Where (measured).**  A growth names its container by field NUMBER (`OpNewRecord(b, tp, 1)`)
+  while a view carries a byte OFFSET; `Stores::field_position` is the only converter, and
+  `grown_containers` returns early without a store, leaving every field-qualified growth
+  UNCOLLECTED.  `def_reshape_refusals` ran `ViewWalk::run` with `database: None`, which
+  `binding-history.md` records as deliberate — *"the `&`-refusal path has no store to convert with
+  and keeps the conservative answer, which for a REFUSAL is the safe direction"*.  That is an
+  AVAILABILITY premise, and it no longer holds: the parser owns `pub database: Stores` at
+  `check_reshape_under_reference`, the layouts are registered when each struct is declared, and
+  `field_position` answers `u16::MAX` — *cannot say* — for anything it does not know.  A missed
+  disturbance is still the safe direction; it was not a reason to leave one whole class invisible.
+  **Cure:** the refusal walk is handed the same store the materialise walk has always had.  The
+  callee reach (`disturbed`) stays `None` deliberately — that is @PLN164 C3's separable widening.
+  **Blast radius (measured, not predicted):** one corpus file, this rule's own guard
+  `a-link-to-a-whole-container-survives-that-containers-growth.loft`, whose control cell
+  `a_link_into_the_container_is_unchanged` asserted the unrefused answer in so many words
+  (*"keeps today's answer"*).  It pinned the compiler, not the rule, and is now
+  `parse_errors::b_ref_reshape_growth_of_a_field_container_under_amp_link_is_error` — a cell that
+  refuses belongs in the refusal harness, because it takes a whole `.loft` file with it.
+  Found while measuring `heap.md` D-heap-11, whose cure reuses this gate.
+
 * **D-bind-46** *(opened 2026-09-16, CLOSED 2026-09-16)* — `(B-Ref-Alias)`'s in-versus-to
   distinction at a container held in a FIELD.  `d = &cv.data; cv.data += [7]; cv.data += [8];
   (d[2] ?? -1) + len(d)` read **0** where 11 is right, on both backends, with the copy-out advice
