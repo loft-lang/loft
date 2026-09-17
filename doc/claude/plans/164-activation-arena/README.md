@@ -309,12 +309,12 @@ lifecycle phase changes.
    33.5–34.1 k → 31.2–31.4 k ns/op on top of row 11.
 3. ~~**C6 — a nested record literal built inside the element**~~ (§ C6) — BUILT 2026-09-17:
    hand-measured −8.5 %, built −6–7 %; loft#1548 fixed on the way.
-4. **The last-use vector field** — now the largest class the row shows: `:704`'s `widths:
-   pf_wids` and the parsers' exit `Mark { …, pts: <local> }` copies, where the local is dead
-   after the literal (≈ 5–8 % together, § Re-measured).  C5's parked vector `place_result` is
-   the same question.  `:704`'s `pts: pf_line` is the two-destination copy tier 3 keeps.
-5. **The `Mark` result path** — `no_mark()` mints a store per call (1.9 %) and `:986` copies
-   `parse_fronds`' result (1.2 %).
+4. ~~**The last-use vector field**~~ — measured before it was cut, and it is not a move:
+   every copy it named crosses stores and reads a view or a reused buffer (§ The runtime
+   under the row).  What the profile named instead — four runtime fast paths — is BUILT
+   (2026-09-17, same section): the row 28.4–28.9 k → 24.3–24.8 k ns/op.
+5. **The `Mark` result path** — now the largest store class, 12 of the 30 stores a parse
+   mints (§ The runtime under the row, *The census*).
 6. **A1/A2** — re-priced: the store family is 13.7 % of the row now (`parse_poly` 3.8,
    `parse_scene_at` 2.1, `parse_fronds` 1.6, `no_mark` 1.6, `parse_circle` 1.1).
 
@@ -473,6 +473,77 @@ to the build before C6.  Pins `tests/nested_in_place.rs`, subject `codegen`.
 (1 870 M → **1 770 M**, −5.4 %), the row **31.2 k → 29.1–29.5 k ns/op** (−6 to −7 %), cycles
 −7.0 %, hash `33f6d2b8`, clean under all three falsifiers.  Together with row 11 and A0 the
 row has moved from 38.8–41.7 k to 29.1–29.5 k this session.
+
+## The runtime under the row (2026-09-17, later the same day)
+
+*Item 4 re-measured before it was cut — and it is not a move.*  At `:704` both copies read a
+VIEW or a reused BUFFER: `pf_line = f.fpts` and `pf_wids = f.fwid` view an element of
+`fronds`' result, and on the smoothed path they are `smooth_pts`/`smooth_vals`' buffers, which
+A0's guard mints once and every later iteration reuses.  Every copy lands in the scene's store,
+a different one.  Moving a vector across stores still copies its bytes, and moving a reused
+buffer's vector out would make its next call re-grow it — so there is no move to make.  The
+parsers' exit `Mark { pts: <local> }` copies are the same shape into a store of their own.
+The copied lengths say where the cost actually is (`LOFT_COPY_DUMP=1`, per parse): 29
+`vector_add`s, 22 of them two elements long.  The time is the destination's CLAIM, not the
+bytes.
+
+*What the release profile named instead* (`perf` by symbol, then the branch stack for callers):
+`begin_write_inner::<u32>` 7.5 % — the write check, out of line, and called mostly by the
+allocator's own metadata writes (`claim`, the free-tree inserts and rotations, `Store::init`);
+`Stores::store_mut` 3.4 % in two out-of-line copies — its strict-mode test ran before the
+slot's `free` flag; and `vector_add`'s per-element `copy_claims` walk for an element that owns
+no heap.  Four runtime changes followed.  None changes the IR, and all four apply to both
+backends:
+
+| change (`perf stat -r 5`, one emission, one core) | instructions | cycles |
+|---|---:|---:|
+| `vector_add` skips the claims walk when the element owns no heap | −3.3 % | −3.3 % |
+| the write check inlined, the lock refusal outlined | −8.5 % | −7 % |
+| `store`/`store_mut` test `free` first, the strict report outlined | −2 % | −3 % |
+| a fresh store initialised once (`null` then `clear` initialised it twice, on both backends and in B2's placement fallback); a retype moves no budget nothing reads | −1.1 % | −2 % |
+
+The row: **28.4–28.9 k → 24.3–24.8 k ns/op**, instructions 1 742 M → 1 493 M (−14 %), cycles
+435 M → 369 M (−15 %), hash `33f6d2b8`, about 3.4× the Rust reference (≈ 7.2 k).
+`LOFT_STRICT_STORES` still reports a read and a write of a freed store — a positive control by
+hand on the emission, since no test asserts that the report fires.  Two levers measured and
+dropped: reserving the whole copy before `vector_add` claims (+0.2 % instructions — an empty
+destination's first claim already has room for eleven elements), and the capacity test without
+its division (cycles unchanged; the `divl` samples were skid).
+
+*The census.*  A parse mints 30 stores: `Mark` 12, `vector<Pt>` 6, `vector<float>` 4,
+`PointList` 3, and one each of `vector<text>`, `vector<Frond>`, `Sketch`, `Paint` and
+`FrondSpec`.  So `Mark` is the largest class: `parse_circle`'s `no_mark()` on the five lines it
+does not match, and the literal exits of `parse_circle`, `parse_fronds` and `parse_line_cmd`.
+C5 armed removes three of the twelve (`parse_poly`'s) and still measures a wash (−2 %
+instructions, +1 % cycles).  It declines the other three functions, each for its own reason:
+a source whose copy lands in either arm of an `if`, a source with no place outside the frame
+(`pf_all`), and a body that names the container inside a loop.
+
+*`:986` is B1's shape behind a null-init.*  `ps_f = parse_fronds(…)` sits inside an `if`, and
+loft scopes `ps_f` to the loop body, so the scope pass puts `ps_f = null` in front of the `if`.
+On both backends the call bind is then the SECOND `Set`, which takes the rebind copy: the
+interpreter mints a store at the null-init (`OpInitRef`) and copies into it, and native mints
+in its copy arm.  Either way that is two mints and a deep copy where B1's adopt would do.
+Probe: `if n == 4 { f = try_a(n + 1); … }` against a top-level `m = try_a(n)`.  The rule it
+wants: the one call bind after the scope's null-init, with no loop between them, is a first
+bind — and the null-init is then a sentinel on the interpreter too.  Worth about 1 % of this
+row.
+
+### The queue after the runtime pass
+
+1. **The `Mark` class** — twelve stores a parse.  Two separate questions: `no_mark()` behind
+   `parse_circle`'s tail (a constant, heap-free result handed up a buffer chain), and the
+   three literal exits C5 declines.
+2. **B1 behind a null-init** (`:986`, above) — both backends, one home for the admission.
+3. **The free tree under a live store.**  Once a store has freed anything, `bump_tail` is off
+   for good, so every claim is a tree delete, a split and an insert.  In the scene's store
+   that is every element vector.  A tail block kept OUT of the tree (a wilderness) would give
+   the common claim `bump_tail`'s cost back — about 6 % of the row sits in `fl_*`,
+   `claim_block` and `set_free_header`.  It is an allocator change with `@FR-H-FreeFooter`
+   and store images in its blast radius, so it gets its own cells.
+4. **Text per character** — `split` calls `text_character` and `OpLengthCharacter` per
+   character, both out of line across the rlib (2 %).
+5. **A1/A2** — the store family, re-priced after items 1–2.
 
 ## The three tiers — the invariant each rests on
 
