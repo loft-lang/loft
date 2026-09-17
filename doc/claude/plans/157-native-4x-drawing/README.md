@@ -37,7 +37,10 @@ elements, read the source through a freed block — one block copy now, both bac
 in the counter the guard also proves both range ends in `[0, len)` and the arm reads RAW through
 the held base with no null select — the vectorisable multiply-accumulate: `render_marks`
 1 740 → **1 125 µs/op (−35 %), 1.75× its reference**; the branchless `abs_bound_i64` −4 % beside
-it.  Switches `LOFT_NO_BOUNDED_NEST`, `LOFT_NO_NEST_RAW_READS`, `LOFT_NO_SELF_APPEND_BLOCK`;
+it.  The full lane after step 2 (arm64, `compare.py --repeat 3`, two interleaved rounds against the
+step-1 arm, 14/14 hashes): `render_marks` 2.79–2.86× → **1.54–1.74×**, `render_lock` 2.68× →
+**2.01×**, `resize` 2.34× → **1.35–1.37×**, every other row within noise; **median 2.02×**, the
+(Perf-Weight) median bar met on this lane, `lock_curved` (3.85×) the one row still over 3×.  Switches `LOFT_NO_BOUNDED_NEST`, `LOFT_NO_NEST_RAW_READS`, `LOFT_NO_SELF_APPEND_BLOCK`;
 falsifier `LOFT_HOIST_VERIFY=1` (`ops::nest_verify`, and the raw read compared with the checked
 one); pins `tests/bounded_nest.rs`; cells `tests/scripts/157-bounded-nest.loft` n1–n23.
 **§ V-ab SHIPPED 2026-09-13** (DESIGN.md § V-ab): a counted `for` whose start is not a

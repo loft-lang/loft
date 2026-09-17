@@ -32,7 +32,9 @@ raw read.
 
 Measured on the drawing bench, interleaved, hash `4203420772`: `render_marks` 1 721–1 760 →
 **1 112–1 140 µs/op** (against the reference's 636 µs, **1.75×**, from 2.75×); the hand patch
-that priced the step read 1 042–1 067.  Cells n18–n23 (`157-bounded-nest.loft`), pins
+that priced the step read 1 042–1 067.  The full lane, two interleaved rounds against the step-1 arm,
+14/14 hashes: `render_marks` 2.83× → 1.54–1.74×, `render_lock` 2.68× → 2.01×, `resize` 2.34× →
+1.36×, every other row within noise, median 2.02×.  Cells n18–n23 (`157-bounded-nest.loft`), pins
 `tests/bounded_nest.rs`.
 
 ### A nest whose arithmetic cannot fault runs plain — `render_marks` −54 % (2026-09-17)
