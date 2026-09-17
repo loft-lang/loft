@@ -682,11 +682,19 @@ buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17,
   cascades over one resource.  ⚠ `OpDropAll` is a generated per-type METHOD rather than an
   operator, so the operator census cannot see it: `OpFreeRef` being among the most emitted ops in
   the tree says nothing about how well that cascade is covered, and no instrument here measures it.
-- **Status:** OPEN — @PLN163 P2 (the refusal as a report, reworked to this rule), then P3 (the
-  error).
-- **Removal:** the refusal on every line that writes a copy, naming the copy and what to write
-  instead; the refused cells become refusal cells, and the corpus programs that write such a copy
-  are rewritten.
+- **Status:** OPEN — @PLN163 P2 (the refusal as a report, reworked to this rule) is done, and P3's
+  refusal is BUILT behind `LOFT_LEASE_REFUSE` (opt-in, 2026-09-17).  With the switch on, every
+  verdict above is raised as `error[copy-of-droppable]` naming the copy and what to write instead,
+  identically on both backends — it is decided after the scope pass, before either generates, so
+  the two cannot disagree.  The entry stays OPEN because the default is off: what the rules refuse
+  still compiles on an ordinary build.  The switch is opt-in while this repository's own corpus is
+  converted, which is 227 lines across 29 of the 38 files that declare `OpDrop`, plus 8 sites in
+  the `registry` sqldb fixture; no published library, consumer or registry package declares one
+  (P0), so nothing outside this tree waits on it.  Measured with the switch OFF: the census is
+  byte-identical over all 38 files, so an ordinary build is unchanged.
+- **Removal:** the corpus and the fixtures converted — the refused cells become refusal cells —
+  and then the refusal on by default, with the switch left as the bisect step for a program the
+  rules refuse.
 
 ### D-heap-9 — OPEN (2026-09-15): `OpCopy` is not a hook
 
