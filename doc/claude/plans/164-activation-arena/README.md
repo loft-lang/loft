@@ -10,7 +10,12 @@ Tracker: [@PLN164](https://github.com/loft-lang/plans/issues/164) · `status:act
 
 ## Status (REQUIRED)
 
-Active (the owner's go, 2026-09-15).  **P0 done**, **B1, C4, B2, C3, C1 and C2 shipped**, **C5
+Active (the owner's go, 2026-09-15).  **RE-SCOPED 2026-09-17 (owner, C125): tier 1 — the
+activation arena, A1/A2 — is SUPERSEDED and its store-identity question E1 is withdrawn.  The
+store model stays as it is (one store is one object) and the plan's remaining work REMOVES the
+temporaries instead: § The elimination queue.**  Built since the paragraph below was written:
+B1b, loft#1550, B2 unit 1 over a chain, the wilderness — the parse row is 24.0–24.1 k ns/op,
+3.38× its Rust reference (25.98 k and 3.65× at the start of that day).  **P0 done**, **B1, C4, B2, C3, C1 and C2 shipped**, **C5
 step 1 built OPT-IN** (`LOFT_VIEW_FIELD=1`) — B2's caller side and C2 are both a wash on the parse
 row, structural gain only (§ B2 and § C2 *Measured*), and C5 does not reach the consumer yet, with
 the gate that declines each library function measured per function (§ C5 *Built*).  **The
@@ -59,12 +64,13 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
 ## Effort + design
 
 - **Effort:** M (tiers 1–2) · MH (tier 3)
-- **Design:** ~ — the invariants are named; the store-identity question (§ Edge cases E1)
-  is open and decides tier 1's shape.
+- **Design:** ~ — the invariants are named.  The store-identity question (§ Edge cases E1) is
+  withdrawn with tier 1 (C125); what remains is elimination, unit by unit.
 - **Last touched:** 2026-09-17 (P0b, row 11, A0 and C6 built, loft#1548 and D-own-44 fixed on
   the way; the 14-row table and the parse row re-measured — § Re-measured; the runtime fast
   paths and loft#1549 — § The runtime under the row; B1b, D-own-43 and loft#1550 — § B1b;
-  the chain-renamed literal exits — § B2 unit 1 over a chain)
+  the chain-renamed literal exits — § B2 unit 1 over a chain; the wilderness; the re-scope to
+  § The elimination queue under C125)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -820,9 +826,52 @@ the store falsifiers are green.
    in a two-parse run are the pool's own: one per pooled call site per activation (five
    parser buffers), which only the activation arena (A1/A2) removes.
 2. ~~**loft#1550** (r17)~~ — fixed above, at the call boundary.
-3. ~~**The free tree under a live store**~~ — the wilderness, above.  **Text per character** —
-   as before.
-4. **A1/A2** — re-priced after item 1.
+3. ~~**The free tree under a live store**~~ — the wilderness, above.
+4. ~~**Text per character**~~ — measured and dropped (2026-09-17): `#[inline]` on
+   `ops::text_character` and `OpLengthCharacter`, the two calls `split` makes per character,
+   read −1.0 % instructions and +1.1 % cycles on the parse row (three interleaved
+   `perf stat -r 3` pairs, `--n 5000`) and mixed on the other rows.  Not a gain.
+5. ~~**A1/A2**~~ — superseded, below.
+
+## The elimination queue (2026-09-17, owner ruling C125)
+
+*The ruling.*  Tier 1 kept every temporary and moved it into a shared store, which is what
+raised E1: once two buffers share a `store_nr`, the 287 store-identity tests in a parse
+emission stop meaning "same object".  The owner's answer was that this is the wrong question:
+*"the optimized version can eliminate the object and thus make this whole question moot"*, and
+*"if we make our model more complex it will be hard to reason about and thus impossible to
+solve, when individual objects can just be removed"* (`DESIGN_DECISIONS.md` C125).  The plan's
+own record agrees: every unit that paid — the value record, C4, C6, B2's placement, the chain
+unit — removed an object or its copy, and B2 already showed that a temporary inside its owner's
+store needs a compile-time path fact, not a wider identity.
+
+*What is left to remove* (stores minted per parse on HEAD, `LOFT_TRACE_DB=1`, halved from a
+two-parse run):
+
+| stores | what | how it goes |
+|---:|---|---|
+| 6 | `Mark` buffers (one per pooled call site per activation) | **E-1** — C5's tuple with a view of `sc.ops[last].pts`, on by default |
+| 9 | `vector<Pt>` locals (`pc_pts`, `pp_pts`, `pl_pts`, …), each deep-copied into `Op.pts` AND `Mark.pts` | **E-2** — with `Mark.pts` a view the local has ONE consumer: element-first for a literal, the vector `place_result` for a call result (`smooth_pts`) |
+| 6 | `vector<float>` widths, one consumer (`Op.widths`) | **E-2**, the same units |
+| 4.5 | `PointList` from `read_points` — scratch of four dynamically sized vectors, only read | **E-3** — a REUSED store per call site (the pool); find the gate that declines it today |
+| 2 | `Sketch` | real data |
+| 3 + 1 | `Paint`, `FrondSpec`, `vector<integer>`, `Row` | not classified; small |
+
+About 21 of 31, each with the deep copy it carries — which costs more than its store.  Priced
+from the census at P0's ≈ 60 ns a pair, not from a patch: **each unit is priced by hand patch
+before it is built**, and re-measured with `perf` on the release binary after.
+
+1. **E-1 — C5 on by default.**  It measured a wash alone (§ C5 *Step 2*), and it is parked for
+   that reason; what changed is its role — it is what makes every points local single-consumer.
+   Owes C5's step 2 debts first (per-PATH mention counting, the wider source resolution) and
+   the corpus under the switch on both backends.
+2. **E-2 — the single-consumer vector built in its destination.**  Element-first (@PLN157
+   § V-z) already does this for a local consumed by one append; un-park the vector
+   `place_result` for a call result.
+3. **E-3 — `PointList` reused.**  `LOFT_TRACE_POOL=1` names the declining gate.
+
+E1 returns only if a row shows a class of temporaries that can be neither removed nor reused
+and costs more than a few percent, measured with `perf`.
 
 ## The three tiers — the invariant each rests on
 
@@ -831,7 +880,8 @@ fault; only situations we know), switchable and falsifiable in the @PLN157 style
 lands on BOTH backends where it changes the IR (the interpreter is the values oracle, and
 `O-NoDiverge` says the two translate the same `deps` facts).
 
-**Tier 1 — the activation arena.**  *Invariant:* a hidden return buffer (`__ref_N`, a
+**Tier 1 — the activation arena.  SUPERSEDED 2026-09-17 (C125, § The elimination queue); kept
+as the record of what was considered.**  *Invariant:* a hidden return buffer (`__ref_N`, a
 `__ref_p2_N` discharge buffer, a literal's temp) never outlives the activation that minted
 it (`O-Buffer`: the buffer is the caller's store, freed at frame exit; a result that must
 survive is adopted, copied or moved OUT of it).  So every buffer of an activation may be a
@@ -1733,6 +1783,9 @@ mark cannot be re-drawn).
 
 ## Edge cases to inspect before a phase is cut
 
+**E1–E6, E18 and E19 are the arena's own cases and lapse with tier 1 (C125, 2026-09-17); E7–E17
+and E20 stand — they are about adopting, moving and building in place.**
+
 Numbered for the review.  **Verdict** is the proposal; the owner confirms or moves it.
 Every row is first judged on NATURALNESS: `natural` means a programmer writes it without
 knowing the store model and the mechanism owes it the efficient code; `contrived` means
@@ -1780,8 +1833,15 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | **C6** — a nested record literal built inside the element it is a field of (`Op { paint: Paint { … } }`) | § C6 | 7 cells both backends, both switch states, under the falsifiers; switch-off byte-identical; the parse row −6–7 %; loft#1548 found and fixed on the way | Built 2026-09-17, default ON (`LOFT_NO_NESTED_IN_PLACE`) |
 | **Runtime pass** — what the release profile named once item 4 proved not to be a move: the write check inlined, the no-heap claims walk skipped, a fresh store initialised once | § The runtime under the row | `perf stat` per change; the fourteen-row same-moment A/B (pre-session rlib vs this one, one emission): every row equal or faster, 14/14 hashes; an accessor reorder measured and dropped (pixel rows +15–38 %) | Shipped 2026-09-17 — the parse row 28.3–28.5 k → 25.0–25.3 k ns/op, 3.56× its reference |
 | **loft#1549** — a reused record buffer releases what it held (`(H-ClearRelease)`'s record clause, D-heap-12) | § The runtime under the row | 12 cells both backends under every falsifier and `LOFT_NO_LAZY_BUFFER`; resident memory flat over 1 000 000 refills; guard falsified against 04cc50b1 with a patch receipt; pins `tests/pooled_buffer_release.rs` | Fixed 2026-09-17 (`fixed-pending-merge`) |
-| **A1** — arena for one activation's own buffers (`__ref_N`, `__ref_p2_N`, literal temps), mark/release at every exit | § Tier 1 | `tests/scripts/164-arena-activation.loft` both backends; plan 51's ten graduated guards under the switch; `emission_audit.py` R-State per record | Blocked on P0b — the store-pair family is 9 % of the release row; whether the free-tree family (12 %) charges to activation temporaries is what decides the shape |
-| **A2** — the caller-threaded arena, reset per loop iteration | § Tier 1 | parse row −20 %; E2/E3/E4 cells | Blocked on A1 |
+| **A1** — arena for one activation's own buffers (`__ref_N`, `__ref_p2_N`, literal temps), mark/release at every exit | § Tier 1 | — | **Superseded 2026-09-17 (C125)** — the temporaries are removed instead (§ The elimination queue); the free-tree family it waited on is the wilderness |
+| **A2** — the caller-threaded arena, reset per loop iteration | § Tier 1 | — | **Superseded 2026-09-17 (C125)** |
+| **loft#1550** — a return that may hand back one of several arguments is copied at every bind (D-own-45) | § B1b | cells j1–j12 both backends (five red before); guard with a patch receipt; pins `tests/one_of_several_args.rs` | Fixed 2026-09-17 (`fixed-pending-merge`) |
+| **B2 unit 1 over a chain** — a literal exit writes the buffer a chain renamed (`parse_circle`'s shape) | § B2 unit 1 over a chain | cells c1–c17 both backends, pooled and unpooled, under every falsifier; the value-record verdicts unchanged; pins `tests/literal_exit_buffer.rs`; a native chain-of-chains use-after-free found and fixed on the way | Built 2026-09-17 (`LOFT_NO_LITERAL_EXIT_BUFFER`) — `Mark` mints 21 → 12, the parse row −2.5 % |
+| **The wilderness** — the store's tail free block held beside the free tree (`@FR-H-Wilderness`) | § The wilderness | a seeded side-by-side store test (same positions, same chain); the store subject (321), wrap, native, lib tests on both forms; the fourteen-row same-binary A/B | Built 2026-09-17, default ON (`LOFT_NO_WILDERNESS`) — the parse row −6.3 %, `fronds` −2.6 % |
+| **Text per character** — `#[inline]` on the two per-character runtime calls | § The queue after B1b | `perf stat`, three interleaved pairs | Measured and DROPPED 2026-09-17 (−1.0 % instructions, +1.1 % cycles) |
+| **E-1** — C5 on by default: `Mark` as a tuple with a view | § The elimination queue | C5's step 2 debts; the corpus under the switch, both backends; a hand patch first | Next |
+| **E-2** — a single-consumer vector built in its destination (element-first; the vector `place_result`) | § The elimination queue | cells in the @PLN157 shape; a hand patch first | After E-1 |
+| **E-3** — `PointList` reused per call site | § The elimination queue | `LOFT_TRACE_POOL=1` names the gate | After E-1 |
 | **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |
 | **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state), and B1 behind an `if` pre-init | § B1b | 23 cells both backends, both switch states, under every falsifier; the entry witness closes D-own-43 and the two other frees that held its belief; the body behind a hoisted result reached; `wrap` + `native` green; parse bench `Mark` mints 24 → 14 per two parses | Built 2026-09-17, default ON (`LOFT_NO_ADOPT_BUFFER_REUSE`) |
 | **B2** — the result's buffer claimed in its destination's store, the field taking it by relocation at the last use (`R-Place`, `R-MoveLast`) | § B2 | cells b1–b15 both backends under the falsifiers; the census 184 → 50; `parse_poly`'s `paint: pp_paint` emits `OpMoveRecord` and `read_paint`'s buffer is a record in the scene's store; the parse row a wash (`perf stat`) | Shipped 2026-09-16 |
@@ -1818,17 +1878,21 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
 7. **@PLN157 row 11 (the transitive-leaf prelude), then A0, then C6** — § P0b *The queue after
    P0b*.  A1/A2 are re-priced after A0 against the body half of the store family.  **B1b**
    beside them whenever D-own-43 closes (the interpreter's rebind guard).
-8. Re-measure the 14-row bench after each phase (`compare.py`, 14/14 hashes), and the parse
+8. ~~A1/A2~~ — superseded by the owner's ruling C125 (2026-09-17): § The elimination queue is
+   the plan's remaining order (E-1, E-2, E-3).
+9. Re-measure the 14-row bench after each phase (`compare.py`, 14/14 hashes), and the parse
    row's profile with `perf` on the release binary — never with a count.
 
 ## Open design questions
 
-1. **E1 — what is an object's identity once buffers share a store?**  `(store_nr, rec)`
+1. **E1 — WITHDRAWN (owner, 2026-09-17, C125).**  The question exists only if temporaries are
+   kept and co-located; the plan removes them instead, and the store model stays *one store is
+   one object*.  As asked: *what is an object's identity once buffers share a store?*  `(store_nr, rec)`
    is the proposal; it touches `free_displaced`, `OpDistinctStore`, the § V-af witness
    and the audit.  Or: keep one store per buffer and make the STORE cheap (a pooled
    `Store` with no file handle, no budget row) — a smaller change that keeps identity as
    it is and takes less of the fifth.  The owner picks; P0 measures both.
-2. **Is the arena a parse-time IR fact (both backends) or an emission fact?**  The
+2. **(Moot with E1.)  Is the arena a parse-time IR fact (both backends) or an emission fact?**  The
    buffers are IR (`OpDatabase(__ref_N)`), so tier 1 is IR-level unless the interpreter
    keeps stores and only native pools them — which `O-NoDiverge` allows for a lifecycle
    detail with no value, but the leak gate must then read both.
