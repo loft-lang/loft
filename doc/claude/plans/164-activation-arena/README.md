@@ -1080,11 +1080,14 @@ list, AFTER the early mint, so the emitter drops those `Set(elm, null)` for an e
   scope pass's own place model (`scopes::value_view_places`).  `parse_circle`'s paint, a record
   B2 placed in the same store, owns its block and is not named.
 
-*Side-finding, filed (loft#1554, `formal/binding.md` D-bind-47).*  The same matrix's
+*Side-finding, fixed (loft#1554, `formal/binding.md` D-bind-47).*  The same matrix's
 aliased-parameter cell (`p(s, s.ops[0], n)`, the callee appending to `sc.ops` and reading its
 element parameter AFTER) read `0` in the ORDINARY form on both backends: `(B-Ref-Reshape)`'s
-call-site refusal covers only a removal through a `&vector` parameter.  Not this plan's
-mechanism; its fix widens a compile-time refusal and is measured over the consumers first.
+call-site refusal covered only a removal through a `&vector` parameter, missed a format string's
+nullable element read, and its frame half ran without the store or the callee's disturbance.
+Both halves now read @PLN164 C3's `disturbed_params_map`; measured first over the corpus and
+the consumer sources, the wider refusal names only `g27`, which now calls through a fn-ref — the
+one edge the refusal cannot follow, and the one the element-first parameter gate still covers.
 
 *Measured on the library* (release tier, `perf stat -r 5` × 3 interleaved, `--n 5000`; stores
 counted with callgrind as the n = 20 minus n = 10 difference): `parse_circle`, `parse_lock`,

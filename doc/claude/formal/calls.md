@@ -194,12 +194,15 @@ for appending.
 
 **`F-ParamHeap` has a static consequence at the CALL SITE.** Because a heap parameter aliases the
 caller's argument, handing a callee both a container and a reference INTO that container
-(`f(v[i], v)`) gives it two names for the same store — and if `f` removes from the container
-parameter, the write through the other one is lost. That call does not compile
-([binding.md](binding.md) `B-Ref-Reshape`, @PLN130 F9 / loft#779). Note it is `F-ParamHeap`, not
-the `&` spelling, that makes this a hazard: a PLAIN struct parameter aliases the caller's element
-exactly as a `&` one does, so both spellings are refused. This is the only static rejection at a
-call site besides `F-Arity`.
+(`f(v[i], v)`) gives it two names for the same store — and if `f` DISTURBS the container
+parameter (removes from it or grows it, at any depth), the reference names an element that moved
+and a write through it is lost. That call does not compile ([binding.md](binding.md)
+`B-Ref-Reshape`, @PLN130 F9 / loft#779, loft#1554). Note it is `F-ParamHeap`, not the `&`
+spelling, that makes this a hazard — on BOTH sides: a PLAIN struct parameter aliases the caller's
+element exactly as a `&` one does, and a plain `vector` or struct CONTAINER parameter is the
+caller's container exactly as a `&vector` one is, so the container may also be a field inside one
+(`shift(b.items[2], b)`). A growth of a SIBLING field (`b.spare`) moves nothing the element names
+and compiles. This is the only static rejection at a call site besides `F-Arity`.
 
 ### The return value is independent
 

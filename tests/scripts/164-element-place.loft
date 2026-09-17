@@ -268,8 +268,9 @@ fn g26(sc: Sk, n: integer) -> integer {
   sc.seen
 }
 /// g27 — the destination is a parameter, so another record parameter may be the caller's view
-/// of one of its elements (`g27(k, k.ops[0], n)`).  DECLINE (loft#1553).  If loft#1554's
-/// refusal comes to cover growth through a field, this call is one it names.
+/// of one of its elements.  DECLINE (loft#1553).  A DIRECT call handing both is refused at
+/// compile time (`(B-Ref-Reshape)`, loft#1554); a call through a fn-ref has no static edge for
+/// the refusal to follow, so the driver calls through one and this gate is what keeps it right.
 fn g27(sc: Sk, e: Op, n: integer) -> integer {
   g27_p = mkpts(n);
   sc.seen = e.ow;
@@ -448,7 +449,8 @@ fn main() {
   ok("g26         ", "{g26(k26, 3)}", "46");
   ok("g26 elements", "{len(k26.ops)},{k26.ops[0]?.ow},{k26.ops[11]?.ow},{totp(k26.ops[11]?.opts)},{len(k26.marks)}", "12,100,3,9,1");
   k27 = sk11();
-  ok("g27         ", "{g27(k27, k27.ops[0], 3)}", "100");
+  g27_f = g27;
+  ok("g27         ", "{g27_f(k27, k27.ops[0], 3)}", "100");
   ok("g27 elements", "{len(k27.ops)},{k27.ops[0]?.ow},{k27.ops[11]?.ow},{totp(k27.ops[11]?.opts)}", "12,100,3,9");
 
   println("164-element-place: every cell holds");
