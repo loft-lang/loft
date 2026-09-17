@@ -565,8 +565,10 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **2** — `D-heap-8` and `D-heap-9`, below, are the copy-lease rules `(H-Copy-Refuse)` and
-`(H-Copy-Lease)`, written 2026-09-15 before their implementation (@PLN163).  The third of that
+OPEN: **3** — `D-heap-8`, `D-heap-9` and `D-heap-13`.  The first two are the copy-lease rules
+`(H-Copy-Refuse)` and `(H-Copy-Lease)`, written 2026-09-15 before their implementation (@PLN163);
+`D-heap-13` is separate and was found while measuring `D-heap-8`'s population — a collection a CALL
+answers, bound to a local, never releases its elements (loft#1551).  The third of the copy-lease
 set, `D-heap-11` for `(H-View-Drop)`, CLOSED 2026-09-17: a view of a droppable member is no longer
 turned into a copy — the disturbance is refused, which is what the rule asked for.  The rules were revised the same day to judge a copy by its own line (§ Drop, *Why the
 verdict is read off the line*), which reclassified the older entries: every shape of `D-heap-1` and
@@ -699,6 +701,49 @@ buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17,
 - **Status:** OPEN — @PLN163 P4; P5 then removes the release-moving machinery the lease replaces.
 - **Removal:** the signature check, the synthesized copy cascade, and a call at every copy site
   on both backends; the moved release removed wherever a copy leases.
+
+### D-heap-13 — OPEN (2026-09-17): a collection returned from a call and bound to a local never releases its elements
+
+- **Violates:** (H-Drop), and through it (H-Move) and (H-Lease).
+- **Where:** the release a local's scope end runs is the cascade of the WRAPPER RECORD its backing
+  names.  A vector built locally is backed by a `main_vector<τ>` record — the variable table reads
+  `v … deps=[__vdb_1]` with `__vdb_1` typed `ref(723)` — and that type has a generated
+  `OpDropAll`, which the scope exit calls.  A vector a CALL answers is backed by the callee's
+  return buffer instead, typed as the bare collection (`d … deps=[__ref_1]`, `__ref_1` typed
+  `vec<ref(718)>`), and the scope exit emits `OpFreeRef(__ref_1)` with **no cascade call at all**.
+  The cascade itself is correct wherever it runs — read on both backends, it walks the elements
+  and calls the hook.  ⚠ **Which site decides to omit it is NOT established**: the candidates all
+  read `Data::drop_cascade_nr` (`scopes.rs` 3761 / 10787 / 16992 / 21240), and naming one without
+  measuring it is how the boundary sentence of `D-heap-11` came to be written wrongly.
+- **Effect:** the resource stays open for the life of the process, with no diagnostic.  `(H-Move)`
+  makes `d = mkv()` a MOVE — a fresh call result placed where it is produced — so `d` is the owner,
+  `(H-Lease)` gives that owner its own lease, and `(H-Drop)` releases it at the owner's scope end.
+  Measured 2026-09-17, both backends byte-identical, markers around each cell:
+  `d = mkv(); d[0].id` prints `Cstart M75 R75 Cend` — minted, READ BACK, never released.
+  Leaks too: grown after the bind (`d += [mk()]`, both ids), passed on to another function, a
+  nested `vector<vector<H>>`, and a callee that fills by push rather than by literal.
+  **Four neighbours are clean and bound it to the bare collection crossing a return**: a STRUCT
+  from a call (`M60 R60 D60`), a struct CONTAINING a vector from a call (`M61 R1 D61`), the same
+  call assigned into a FIELD (`b.v = mkv()`, `M63 R1 D63` — @PLN164 C2's buffer-is-the-place path),
+  and a plain local vector (`M64 R1 D64`).
+- ⚠ **`d = mkv(); e = d` releases exactly once (`M34 R1 D34`), and that is two defects cancelling,
+  not a clean shape.**  The whole-collection bind mints a second structure whose backing IS a
+  wrapper record, so `D-heap-8`'s extra copy supplies the release this entry lost.  It is therefore
+  not a control, and curing either entry alone changes its answer — `D-heap-13` alone makes it
+  release twice, `D-heap-8`'s refusal alone makes it an error.
+- **Why nothing reported it.**  Every free-side instrument is structurally blind here: the MEMORY
+  is freed correctly and only the hook is skipped, so `LOFT_STRICT_STORES=1` and `LOFT_POISON=1`
+  are both silent.  `tests/ownership_drop_gate.rs`'s CROSS family has no collection SOURCE and no
+  collection DESTINATION — its `push` and `veclit` destinations put a droppable INTO a collection
+  and never bind one — so no generated cell produces the shape, and none of the 37 corpus files
+  that declare `OpDrop` writes it.  Found only by probing the axis by hand while measuring
+  `D-heap-8`'s census population.
+- **Status:** OPEN — loft#1551.  Recorded rather than cured on purpose: `(H-Drop)`'s own ⚠ clause
+  says a drop has no safe direction, so the cure has to be right on every path before it lands,
+  and a change that turns this lost hook into a doubled one is not progress.
+- **Removal:** the scope exit of a local bound from a call runs the element cascade, whatever
+  backs it — established at the site that decides today, once that site is measured rather than
+  guessed; the pinning cells below then go clean and leave this entry's list.
 
 ### D-heap-11 — OPENED 2026-09-15, CLOSED 2026-09-17: a view of a droppable member is turned into a copy when its container is disturbed
 

@@ -44,6 +44,9 @@ p_o5 DOUBLE,EARLY
 p_v1 DOUBLE
 p_v2 DOUBLE
 p_v3 DOUBLE
+p_v5 LOST
+p_v6 LOST
+p_v7 LOST
 q_default_field_call_field DOUBLE
 q_default_field_call_push DOUBLE
 q_default_field_call_ret DOUBLE,EARLY
