@@ -1629,12 +1629,12 @@ struct ViewWalk<'a> {
     /// carries a byte offset, so a walk without the store cannot see a growth of a container
     /// held in a FIELD at all.
     ///
-    /// Both callers now pass one.  The refusal path ran without it until 2026-09-17 — the
-    /// conservative answer, chosen when no store was at hand there — and the cost was that
-    /// `(B-Ref-Reshape)` depended on where the container was STORED: `c = &b.v[0]; b.v += [x]`
-    /// was not refused while the same growth of a plain local was, and a removal from that same
-    /// field was.  A missed disturbance is still the safe direction for a refusal; it was not a
-    /// reason to leave one class of disturbance invisible.
+    /// Both callers pass one.  Without it `grown_containers` leaves every field-qualified
+    /// growth UNCOLLECTED, so `(B-Ref-Reshape)`'s answer would depend on where the container is
+    /// STORED — `c = &b.v[0]; b.v += [x]` unrefused while the same growth of a plain local is
+    /// refused, and a removal from that same field is.  A missed disturbance is the safe
+    /// direction for a refusal, but it is not a reason to leave one class of disturbance
+    /// invisible.  (`binding.md` D-bind-47)
     database: Option<&'a crate::database::Stores>,
     /// The source line of the statement being walked, tracked from the `Value::Line` markers
     /// a block interleaves with its operators — the only line information the IR carries.
@@ -1885,23 +1885,32 @@ impl ViewWalk<'_> {
         }
     }
 
-    /// [`Self::shake_places`] over PLAIN views only, leaving every `&` link alone.
+    /// [`Self::shake_places`], with the prior state restored afterwards for every binding in
+    /// [`Self::whole_container`].  The callee path's shake — [`Self::disturb_via_calls`] is the
+    /// only caller.
     ///
-    /// The rules split the two and give them different answers: @FR-B-View materialises a plain
-    /// bind, because a plain bind already meant value semantics and losing the alias is
-    /// consistent with what it meant, while @FR-B-Ref-Reshape REFUSES a `&` reference into a
-    /// disturbed container — *"loft will not quietly downgrade the reference to a copy"* — and
-    /// that refusal is `reshape_refusals`' half of this file, which reads this frame's answer.
-    /// So the callee's half has no `&` case to add: materialising one is the thing the rule
-    /// says not to do.
+    /// What it spares is `(B-Ref-Alias)`'s in-versus-to distinction, NOT a `&`-versus-plain one.
+    /// Entry into that map needs BOTH `is_amp_container_link` and a chain that read no element,
+    /// so it holds exactly the `&` links naming a container WHOLE (`d = &cv.data`).  A `&` link
+    /// INTO a container (`e = &v[0]`) is shaken here like any other view, deliberately: a growth
+    /// moves the element that link names, where it only repoints the field SLOT the
+    /// whole-container link re-reads.
     ///
-    /// Measured, and this is what the restriction is for: `d = &cv.data; grow(cv, 7);
-    /// grow(cv, 8); d[2]` is `157-view-header`'s `grown_between`, where the link names the
-    /// FIELD SLOT rather than a place inside the vector — a growth repoints that slot and the
-    /// link re-reads it, so the link must SEE the growth and the cell reads `11`.  Shaking it
-    /// gave `0`.  Its inline twin already reads `0` today, on `main` and under this unit's
-    /// switch alike, and that is a separate deviation from `(B-Ref-Reshape)` — a `&` link
-    /// silently downgraded to a copy — which is filed rather than widened into here.
+    /// The restore is keyed by VIEW, where [`Self::names_container_itself`] matches the place
+    /// EXACTLY — so a whole-container link is spared from every place one call disturbs,
+    /// including a disturbance of the whole variable, which [`compose_param_place`] answers as
+    /// `ANY_FIELD` and [`same_place`] matches by wildcard.
+    ///
+    /// What the sparing is for: `d = &cv.data; grow(cv, 7); grow(cv, 8); d[2]` is
+    /// `157-view-header`'s `grown_between`, which must read `11`.  Shaking the link gives `0`.
+    ///
+    /// TWO consumers read this one answer and want opposite things from the `&` links it does
+    /// shake.  @FR-B-View materialises a plain bind, because a plain bind already meant value
+    /// semantics and losing the alias is consistent with what it meant.  @FR-B-Ref-Reshape
+    /// REFUSES a `&` reference into a disturbed container — *"loft will not quietly downgrade
+    /// the reference to a copy"* — and `reshape_refusals` reads this walk's answer for the
+    /// callee's half too (`binding.md` D-bind-48), which is why this function may not start
+    /// sparing `&` links INTO a container.
     fn shake_plain_places(
         &mut self,
         places: &HashSet<(u16, u32)>,
@@ -2399,14 +2408,14 @@ pub fn reshape_refusals(data: &Data, database: &crate::database::Stores) -> Vec<
     // CALLS"*, and `(B-Disturb)` states the same for all four events: *"an event disturbs
     // WHEREVER IT HAPPENS — in this frame, or in anything the frame CALLS, at any depth."*
     //
-    // `removed` alone gave that reach only to a REMOVAL, and only one spelled against the `&`
-    // parameter itself (`removed_ref_params` keys on `OpRemoveVector`/`OpRemove` over a bare
-    // `Var` typed `RefVar`).  So a callee's GROWTH was invisible to the refusal entirely, and a
-    // removal from a FIELD of a parameter was too, while the MATERIALISE walk has had the whole
-    // answer since @PLN164 C3.  Measured, both backends byte-identical:
-    // `fn vgrow(v: &vector<H>, n) { v += [mk(n)] }` with `e = &v[0]` live across the call
-    // compiled and released one resource TWICE — every part spelled `&`, the callee disturbing
-    // the very parameter it was handed, which is the case the rule states in as many words.
+    // `removed` carries only a REMOVAL, and only one spelled against the `&` parameter itself
+    // (`removed_ref_params` keys on `OpRemoveVector`/`OpRemove` over a bare `Var` typed
+    // `RefVar`).  `disturbed` carries the rest of that reach — a callee's GROWTH, and a removal
+    // from a FIELD of a parameter — so the refusal answers the question the MATERIALISE walk
+    // answers.  The case the rule states in as many words has every part spelled `&`, with the
+    // callee disturbing the very parameter it was handed: `fn vgrow(v: &vector<H>, n) { v +=
+    // [mk(n)] }` under a live `e = &v[0]`, which without both halves compiles and releases one
+    // resource TWICE on both backends.
     //
     // Built here rather than per definition because the question is asked once per CALL and a
     // callee body would otherwise be re-walked once per call to it — the same reason
@@ -2415,10 +2424,10 @@ pub fn reshape_refusals(data: &Data, database: &crate::database::Stores) -> Vec<
     // Gated on the SAME `callee_disturb_enabled` switch as the scope pass, deliberately: the
     // switch names the callee half of `(B-Disturb)`, and that half is ONE rule's reach with two
     // consumers, not two behaviours that happen to share a cause.  The consequence is worth
-    // stating, because it costs something: `LOFT_NO_CALLEE_DISTURB=1` now restores the pre-C3
-    // blindness on BOTH sides at once, so it is no longer a clean A/B for the materialise alone.
-    // That is the honest meaning of the flag rather than a limitation of it — and the two halves
-    // stay distinguishable at the symptom, since a refusal is loud where a materialise is quiet.
+    // stating, because it costs something: `LOFT_NO_CALLEE_DISTURB=1` withholds the callee half
+    // from BOTH consumers at once, so it is not an A/B for the materialise alone.  That is the
+    // honest meaning of the flag rather than a limitation of it — and the two halves stay
+    // distinguishable at the symptom, since a refusal is loud where a materialise is quiet.
     let disturbed =
         crate::keys::callee_disturb_enabled().then(|| disturbed_params_map(data, Some(database)));
     let disturbed = disturbed.as_ref();
@@ -2455,16 +2464,16 @@ fn def_reshape_refusals(
     // by field NUMBER (`OpNewRecord(b, tp, 1)`) while a view carries a byte OFFSET, and
     // `Stores::field_position` is the only thing that converts between them.  Without it
     // `grown_containers` leaves every field-qualified growth UNCOLLECTED, so
-    // `c = &b.v[0]; b.v += [x]` was not refused at all while the same growth of a plain LOCAL
-    // was, and a removal from the same field was: the rule's answer depended on where the
-    // container was stored.  The materialise walk has always had the store, which is why that
-    // side copied the link (and told the author) where this side said nothing.
+    // `c = &b.v[0]; b.v += [x]` goes unrefused while the same growth of a plain LOCAL is
+    // refused, and a removal from the same field is: the rule's answer would depend on where
+    // the container is stored.  The materialise walk has the store on every path, which is why
+    // that side copies the link (and tells the author) wherever this side would say nothing.
     // The callee's half (`disturbed`) is handed to the REFUSAL as well as the materialise.  It
     // needs no `&` case of its own: `shake_places_keyed` spares a view only when the keyed
     // filter proves a different record or when `names_container_itself` says the binding names
     // the CONTAINER rather than a place inside it — never because it is spelled `&`.  So a link
-    // INTO a disturbed container is already shaken here, and what was missing was a consumer
-    // reading it.  A link TO one (`d = &cv.data`) stays spared, which is what keeps
+    // INTO a disturbed container is shaken here whatever it is spelled, and this walk's answer
+    // is what the refusal consumes.  A link TO one (`d = &cv.data`) stays spared, which keeps
     // `157-view-header`'s `grown_between` reading 11 — `(B-Ref-Alias)`'s in-versus-to
     // distinction, closed as D-bind-46.
     for (view, d) in ViewWalk::run(
