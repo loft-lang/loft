@@ -707,6 +707,18 @@ BOTH directions: one clone held three controls the other had lost (it had fetche
 the other held two the first had lost (local gc, no other explanation).  Neither clone is the
 authority, and nothing in the guard file tells a reader which one they are in.
 
+**What that costs is a RELEASE number, not a guard.**  The same ref state moves the census's
+own totals: measured 2026-09-17 on two checkouts of this repo, 490 receipts read 247 controls
+reachable with the PR refs and 69 without (public commit set 10 365 against 1 186), and 8× on
+the second box — so the count swings by 178 where the branch pruning below moves it by single
+digits.  `M-falsify-receipts` records its run as ESTABLISHING the baseline the next cycle
+subtracts from to get the inflow rate, and that subtraction is not available: two totals taken
+on differently-fetched checkouts measure the fetch, and two taken on trees that are not
+ancestors of one another also carry different guard populations (584 against 594 receipt-bearing
+files, measured the same day).  Until the census states the basis it counted under, a
+cycle-over-cycle delta of these totals is noise — say which tree and which ref state a number
+came from, or do not subtract it.
+
 The rot is invisible because the gate does not check what it appears to — `doc_hygiene.rs` is
 `src.contains("@falsified-at:")`, the presence of the STRING, never the resolvability of the
 ref — so a receipt degrades from re-runnable proof to an assertion that someone once watched it
