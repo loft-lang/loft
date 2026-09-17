@@ -6074,7 +6074,8 @@ pub fn value_locals_in(
         loop {
             let with = joined(&locals, &cands);
             let shapes = shapes_given(&with);
-            let mut served = collect_leaves(body, &with, own.is_some()).reads;
+            let leaves = collect_leaves(body, &with, own.is_some());
+            let mut served = leaves.reads;
             served.extend(dropped.iter().copied());
             let kept: HashMap<u16, u32> = cands
                 .keys()
@@ -6082,7 +6083,8 @@ pub fn value_locals_in(
                     let d = shapes.get(v).copied().flatten()?;
                     let empty = HashSet::new();
                     let offs = view_offs.get(&d).unwrap_or(&empty);
-                    local_uses_ok(body, *v, data, &served, admitted, offs, Some(*v) == rb)
+                    let phantom = (Some(*v) == rb).then_some(&leaves.objects);
+                    local_uses_ok(body, *v, data, &served, admitted, offs, phantom)
                         .then_some((*v, d))
                 })
                 .collect();
@@ -6154,9 +6156,12 @@ fn dropped_reads(body: &Value) -> HashSet<usize> {
 /// reaches the callee of a `return f(…)` chain), and a whole-value read the tuple SERVES
 /// (`served`: one at a VALUE POSITION — a return tail of an admitted body, the right of a
 /// value local, the tail of a branch arm either stands at — consumed as the tuple; or one
-/// whose value is dropped, [`dropped_reads`]).  Any other use — an argument, an append, a
-/// copy INTO it, a whole-value read anywhere else — needs the record, so the local keeps
-/// its buffer.
+/// whose value is dropped, [`dropped_reads`]).  For the PHANTOM return buffer (`phantom`
+/// carries the body's converted `Object` leaves), every mention inside such a leaf is
+/// dropped with the block: a literal exit built into a buffer a chain also binds
+/// (@PLN164 B2) writes it there, exactly as [`retbuf_uses_ok`] accounts for a phantom that
+/// is no local.  Any other use — an argument, an append, a copy INTO it, a whole-value
+/// read anywhere else — needs the record, so the local keeps its buffer.
 fn local_uses_ok(
     body: &Value,
     v: u16,
@@ -6164,21 +6169,40 @@ fn local_uses_ok(
     served: &HashSet<usize>,
     admitted: &HashSet<u32>,
     view_offs: &HashSet<i64>,
-    phantom: bool,
+    phantom: Option<&HashSet<usize>>,
 ) -> bool {
+    let no_objects = HashSet::new();
+    let objects = phantom.unwrap_or(&no_objects);
     // @PLN164 C5 — the view-field reads this local's uses may be accounted against, read
     // once: which of them stand where the field can only be READ.
     let view_reads = view_field_reads(body, v, data, view_offs);
+    // Every node inside a converted `Object`, by address — the walk below is transparent
+    // to `Span`, and so is this one.
+    let mut in_object: HashSet<usize> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n
+            && objects.contains(&(std::ptr::from_ref(&**bl) as usize))
+        {
+            n.any_node(&mut |m| {
+                in_object.insert(std::ptr::from_ref(m) as usize);
+                false
+            });
+        }
+        false
+    });
     let mut mentions = 0u32;
     let mut accounted = 0u32;
     body.any_node(&mut |n| {
+        let inside = in_object.contains(&(std::ptr::from_ref(n) as usize));
         match n {
             Value::Var(w) if *w == v => {
                 mentions += 1;
-                if served.contains(&(std::ptr::from_ref(n) as usize)) {
+                if inside || served.contains(&(std::ptr::from_ref(n) as usize)) {
                     accounted += 1;
                 }
             }
+            // Its `Var` operands are accounted above; no rule below may count them twice.
+            Value::Call(..) if inside => {}
             Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
                 let name = data.def(*d).name();
                 let arg_is_v = |i: usize| {
@@ -6225,7 +6249,7 @@ fn local_uses_ok(
                 }
                 // `@FR-O-Buffer` — the phantom buffer's entry witness snapshots it; a phantom
                 // is in no store, so the snapshot is the null reference (`OpRefAliasEmitter`).
-                if phantom && arg_is_v(0) && name == "OpRefAlias" {
+                if phantom.is_some() && arg_is_v(0) && name == "OpRefAlias" {
                     accounted += 1;
                 }
             }

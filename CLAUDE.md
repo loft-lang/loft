@@ -873,8 +873,10 @@ write that never prefills and a callee's buffer is minted once per caller activa
 time, BOTH backends) makes a mid-body `return S { … }` build its record in a store of its
 own again — with it off, every literal exit of a record function writes the `__retbuf`
 the caller handed, through the same null-guarded mint the TAIL literal has used since
-@PLN157 § V, so a callee with several literal exits answers ONE store — and is the first
-bisect step for a wrong record out of a callee with more than one literal exit.
+@PLN157 § V, so a callee with several literal exits answers ONE store; that includes a
+buffer a CHAIN renamed (`return no_mk()` beside `return Mk { … }`, `parse_circle`'s
+shape), and a literal tail beside chain exits — and is the first bisect step for a wrong
+record out of a callee with more than one exit.
 **`LOFT_NO_PLACE_RESULT=1`** (@PLN164 B2 units 2–3, `@FR-R-Place` + `@FR-R-MoveLast`, decided
 after the scope pass, BOTH backends) keeps a call result minting its own store and deep-copying
 into its destination again — with it off, a plain local bound from a callee whose every exit

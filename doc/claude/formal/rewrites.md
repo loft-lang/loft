@@ -939,11 +939,15 @@ codegen does not yet read it), the disturbance walk `B-Ref-Reshape` runs for `&`
 and `R-Callee`'s writer summary.  (R-Place)'s callee clause — *a callee that on some
 exit answers a store other than the buffer it was handed* declines — is what
 `Parser::literal_exits_into_buffer` makes true for every callee whose exits are ALL
-literals: once the tail's delivery is decided and the buffer is still the unpromoted
-`__retbuf`, each mid-body `return S { … }` builds into it as the tail literal does
-(switch `LOFT_NO_LITERAL_EXIT_BUFFER=1`), where before it minted a store per exit and the
-caller adopted whichever came back; a callee with a promoted local beside a literal exit
-keeps its per-exit stores.  (R-Prefill) is built (C4): its ONE site is
+literals or CHAINS: once the tail's delivery is decided and the buffer is still the
+unpromoted `__retbuf` — or a buffer only chains name (`return no_mk()`, a tail `no_mk()`,
+which rename it after the chain's work ref; `Parser::chain_return_buffer_var`) — each
+mid-body `return S { … }` builds into it as the tail literal does, and so does a literal
+TAIL beside chain exits (switch `LOFT_NO_LITERAL_EXIT_BUFFER=1`), where before it minted a
+store per exit and the caller adopted whichever came back.  A chain exit answers what its
+callee wrote into the same buffer, and a chain always returns, so no literal exit meets a
+value another statement put there.  A callee with a promoted named local beside a literal
+exit keeps its per-exit stores.  (R-Prefill) is built (C4): its ONE site is
 `Stores::prefill_from_image` in `src/database/structures.rs`, the image is READ BACK
 from the walk's first run over a zeroed span rather than computed a second way, the
 switch is `LOFT_NO_PREFILL_IMAGE=1` and the falsifier `LOFT_PREFILL_VERIFY=1` (the walk

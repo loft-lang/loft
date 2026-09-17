@@ -104,10 +104,18 @@ fn the_entry_witness_guards_the_promoted_buffer() {
         free < call,
         "render_lit_then_call: the guarded free precedes the call"
     );
-    // A literal exit beside a chain: the buffer's exit free declines on the entry store.
+    // A literal exit beside a chain writes the buffer the chain renamed (B2 unit 1 over a
+    // chain), so it answers the caller's store and frees nothing ...
     let scan = section(&ir, "n_scan_mk");
     assert!(
-        scan.contains(
+        scan.contains("return {#Object(8):ref(Mk)[\"__ref_1\"]"),
+        "scan_mk: the literal exit builds into the chain's buffer"
+    );
+    // ... and where it builds a store of its own, the buffer's exit free declines on the
+    // entry store.
+    let own = introspect(&[("LOFT_NO_LITERAL_EXIT_BUFFER", "1")]);
+    assert!(
+        section(&own, "n_scan_mk").contains(
             "if OpDistinctStore(__ref_1(0), __rbw___ref_1(0)) OpFreeRefIfDistinct(__ref_1(0), __ret_1("
         ),
         "scan_mk: the literal exit's free is guarded by the entry witness"
@@ -245,6 +253,9 @@ fn a_chain_of_chains_adopts_its_callees_answer() {
 #[test]
 fn the_store_census_drops() {
     // Hand-checked 2026-09-17 on the cells as written; a cell edit re-measures both pairs.
+    // The pooled counts fell again (246 → 197, 204 → 174) when a literal exit beside a chain
+    // began writing the pooled buffer; the unpooled ones are the same, since there the
+    // literal mints into the null buffer where it minted a store of its own.
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -257,7 +268,7 @@ fn the_store_census_drops() {
     assert!(n_on < n_off, "native: {n_on} mints pooled, {n_off} without");
     assert_eq!(
         (i_on, i_off, n_on, n_off),
-        (246, 303, 204, 270),
+        (197, 303, 174, 270),
         "mints (interpret on, off, native on, off)"
     );
 }

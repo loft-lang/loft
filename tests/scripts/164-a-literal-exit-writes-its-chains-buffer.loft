@@ -1,15 +1,31 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN164 B2 (`@FR-R-Place`'s callee clause, `@FR-O-Buffer`) — A LITERAL EXIT WRITES THE
+// BUFFER A CHAIN RENAMED: a record function that hands its buffer to another record function
+// on some exit (`return no_mk()`, a tail `no_mk()`) has that buffer renamed after the chain's
+// work ref, and every literal exit beside such a chain now builds into it — as a literal exit
+// beside an unrenamed `__retbuf` already did — so the function answers the caller's store on
+// every exit.  With the caller's record-buffer pool that is one store per call site per
+// activation where each matched literal exit minted its own (`parse_circle`, `parse_fronds`,
+// `parse_line_cmd`).  The cells vary where the chain stands (a mid-body exit, the tail, both,
+// a recursion, a chain of chains), what the literal writes (a vector field from a local also
+// appended into a parameter, an omitted field's default, an empty vector), how the caller
+// binds the result (a loop local, a rebind, a bind inside an `if`, an append, a discarded
+// call, a fn-ref, two live results) and the value record native returns in registers (c17).
+// Every value is hand-computed and each cell runs in a loop so a pooled buffer is refilled.
+// `LOFT_NO_LITERAL_EXIT_BUFFER=1`, `LOFT_NO_ADOPT_BUFFER_REUSE=1`, `LOFT_POISON=1`,
+// `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1` must answer
+// identically.  Plan cells:
+// `doc/claude/plans/164-activation-arena/bytecode-comparisons/B2-chain-literal-exit-cells.loft`.
 //
-// @PLN164 B2 unit 1 over a CHAIN-RENAMED buffer — `parse_circle`'s shape.
-//
-// A record function whose tail (or any exit) hands its buffer to another record function
-// (`return no_mk()`, a tail `no_mk()`) has that buffer renamed from `__retbuf` to the chain's
-// `__ref_N`, and unit 1 declined every such function: its literal exits minted a store of
-// their own per taken exit while the chain exits wrote the caller's.  Every cell binds such a
-// result, in a loop so a pooled buffer is refilled, and reads it back — hand-computed.  Run
-// on both backends under `LOFT_STRICT_STORES=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and
-// `LOFT_NATIVE_LEAK_CHECK=1`, and again under `LOFT_NO_LITERAL_EXIT_BUFFER=1`.
+// @falsified-at: none — an optimisation, and every cell answered the same before it: measured
+//   against 49040d27 with `LOFT_STRICT_STORES=1 scripts/falsify.sh`, INERT on both backends.
+//   What the unit changes is WHERE a literal exit builds its record, and that is pinned by
+//   `tests/literal_exit_buffer.rs` (the literal writes the chain's buffer in `scan`, `outer2`
+//   and `tail_lit`, not in `pick`; the scanners of c17 stay value records).  These cells hold
+//   the values — pooled and unpooled, on both backends, under the store falsifiers — while it
+//   does; the first draft of the unit un-admitted every scanner of c17's shapes on native,
+//   which the pin caught and no value did.
 
 struct Pt { x: integer, y: integer }
 struct Mk { matched: boolean = false, bad: boolean = false, pts: vector<Pt> }
@@ -399,23 +415,8 @@ fn c17() {
   println("c17 {t}");
 }
 
-fn run(c: text) {
-  if c == "c1" { c1() } else if c == "c2" { c2() } else if c == "c3" { c3() }
-  else if c == "c4" { c4() } else if c == "c5" { c5() } else if c == "c6" { c6() }
-  else if c == "c7" { c7() } else if c == "c8" { c8() } else if c == "c9" { c9() }
-  else if c == "c10" { c10() } else if c == "c11" { c11() } else if c == "c12" { c12() }
-  else if c == "c13" { c13() } else if c == "c14" { c14() } else if c == "c15" { c15() }
-  else if c == "c16" { c16() } else if c == "c17" { c17() }
-}
-
-/// With no argument every cell runs; `-- c3` runs one.
 fn main() {
-  args = arguments();
-  if len(args) == 0 {
-    c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14();
-    c15(); c16(); c17();
-    println("B2 chain cells PASSED");
-  } else {
-    for a in args { run(a); }
-  }
+  c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14();
+  c15(); c16(); c17();
+  println("chain literal-exit cells PASSED");
 }
