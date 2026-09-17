@@ -1331,10 +1331,19 @@ fn every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation() {
     for dev in LEASE_DEVIATIONS
         .iter()
         .map(|(d, _)| *d)
-        .chain(["D-heap-8", "D-heap-9", "D-heap-11"])
+        .chain(["D-heap-8", "D-heap-9"])
     {
         let header = format!("### {dev} — OPEN");
-        if !heap.lines().any(|l| l.starts_with(&header)) {
+        // A closed entry's header — `— OPENED 2026-09-15, CLOSED 2026-09-17` — has the open
+        // spelling as a PREFIX, so `starts_with` alone answers "it is open" about an entry that
+        // says CLOSED three words later.  The half of this test that exists to catch *a deviation
+        // closed in the register while a cell still measures it* was green on exactly that:
+        // `D-heap-11` closed on 2026-09-17 and stayed chained here, satisfying its own check.
+        // A closed entry always says so on that line, so require CLOSED to be absent from it.
+        if !heap
+            .lines()
+            .any(|l| l.starts_with(&header) && !l.contains("CLOSED"))
+        {
             wrong.push(format!("{dev} is not OPEN in formal/heap.md"));
         }
     }
