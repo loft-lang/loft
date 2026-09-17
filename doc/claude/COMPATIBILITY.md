@@ -490,6 +490,17 @@ only the second kind can say the quiet was earned:
   possible" rather than zero on purpose: some will be closed by an owner ruling that the rule
   was wrong, and a few may be knowingly carried with their reason recorded — what must not
   happen is carrying one nobody decided about.
+  ⚠ **The count cannot tell a deviation FOUND from one CREATED, and it moves the same way for
+  both.** Measured 2026-09-17, when the register went 10 → 12 in a day: one entry was a plain
+  new defect record, found by probing and independent of any rule change; two were *exposed* by
+  narrowing a verdict — the defects predated it, and what moved was 23 cells going from
+  `Refused`, which asks nothing of a release, to `Once`, which asks for exactly one; and a
+  fourth entry SHRANK the same day, 156 of its 227 measured sites becoming legal, which the
+  count does not show at all. The register got more accurate in **both** directions and the
+  number rose for all of it. So read the reason beside each entry, never the delta: a rising
+  count can mean the code got worse, or that something finally started measuring it, and those
+  want opposite responses. Cell counts mislead the same way — 23 cells there were two defect
+  CLASSES, split by channel rather than by count.
 - **A light detection pass over every rule** — ⚠ **this instrument does not exist yet**, and
   naming it here is the point. It is deliberately *lighter* than
   [STABILITY_METHOD.md § The rule-led walk](STABILITY_METHOD.md): the walk splits one rule into
