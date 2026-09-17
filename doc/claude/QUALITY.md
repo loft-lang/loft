@@ -540,6 +540,18 @@ and its site half (`view_field_reads`, `span_keeps_places`), each matching on `.
 inside an `any_node` closure, which peels `Span` before calling it.  The opaque column is
 unmoved.)
 
+(2026-09-17, @PLN163 P3's narrowing, re-measured on THIS tree after the pick: **531 · 508 · 23**,
+one site fewer in each of the two descriptive columns than the 532 · 509 · 23 recorded for the
+second join above, and the opaque column unmoved.  The owner's ruling made a value the function
+owns a MOVE, which subsumed `(H-Move)`'s block-result clause, so `lease.rs`'s `declared_in` and
+the `count_assignments` walk behind it were deleted — the walk discriminated on `Value::Set` and
+`Value::Call` and peeled `Span` at every step, so it left BOTH the discriminating and the peeling
+column by one.  **A deletion moves this row exactly as an addition does, which is the reason it is
+re-derived rather than reasoned about** — ../loft2 states this same unit as 524 · 501 · 23 against
+ITS base, and both are right about what the unit does; only the totals are untransferable.)
+
+
+
 (2026-09-16, @PLN164 C2: one function added that discriminates on `Value` variants, and it
 peels — `Parser::buffer_is_the_place`, whose tests run through `unspan` and inside an `any_node`
 closure, which peels `Span` before calling it.  The opaque column is unmoved.)
