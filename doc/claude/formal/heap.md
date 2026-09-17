@@ -590,13 +590,31 @@ freed without its hook) opened and CLOSED 2026-09-10, below.
 ### D-heap-8 — OPEN (2026-09-15): nothing refuses a copy — a written copy of a droppable without `OpCopy` compiles
 
 - **Violates:** (H-Copy-Refuse).
-- **Where:** no site refuses a copy.  The copy sites are the ones `LOFT_DROP_COPY_CENSUS` lists —
-  and that enumeration is NOT the whole population.  Its bind arm matches `Value::Set(v, Var(src))`,
-  a node the parser never produces for a whole-COLLECTION bind: `d = v` mints a fresh `__vdb_N`
-  and fills it, so `d` reads `OpGetField(__vdb_N, 0, …)` and the variable table shows
-  `d … deps=[__vdb_N]` beside an OWNING backing.  A refusal built from the census alone therefore
-  skips that spelling, though `type_owns_droppable_anywhere` answers true for `vector<H>` and
-  `(H-Copy-Refuse)` names `x = a` as a copy.
+- **Where:** no site refuses a copy.  The copy sites are the ones `LOFT_DROP_COPY_CENSUS` lists,
+  and that enumeration is now the whole population — it was not until 2026-09-17.  The bind arm
+  matches `Value::Set(v, Var(src))`, a node the parser never produces for a whole COLLECTION:
+  `d = v` mints a fresh `__vdb_N`, reads `d = OpGetField(__vdb_N, 0, …)` out of it, and fills it
+  with **`OpAppendVector(d, v)`** — `vectors.rs` calls that fill a *"deep-COPY of a's elements into
+  v's own store"* in its own comment.  So the census saw only the backing's `snapshot` rows, judged
+  neither (`lease=-`), and an absent row was indistinguishable from a clean one.
+  **The spelling is not one shape but four, and three of them are not binds at all**, which is why
+  an arm keyed on the bind would still have missed them (measured 2026-09-17, both backends):
+  `d = v` and `d = b.v`, the concat `v += w` (`M70 M71 R2 D70 D71 D71`), the self-append `v += v`
+  (`M52 R2 D52 D52`), and `d = a + b`, which copies BOTH operands and doubles both
+  (`D42 D43 D42 D43`).  The census now judges the append and answers `refuse:copy:<var>` for a
+  local source and `refuse:container:<root>` for a member one.
+  **The bound is measured, not asserted:** a concat whose right-hand side is FRESH (`v += mkv()`,
+  `d = mkv() + mkv()`) is outside the population and answers `lease=move`, because the arm judges
+  the source EXPRESSION rather than the op — one parts loop (`parser/vectors.rs`) emits this node
+  for a copy and for a fresh literal alike, and `lease::leaves` reads a call as `Leaf::Fresh`.  An
+  append into a FIELD (`b.v += w`, `OpAppendVector(OpGetField(rec, fld), src)`) is a different
+  site, recorded by `Uses::construct_copy`, and releases once today.
+  A refusal built from the census now covers the spelling; `type_owns_droppable_anywhere` answers
+  true for `vector<H>` and `(H-Copy-Refuse)` names `x = a` a copy, so the rule always did.
+  ⚠ **No program in the tree writes any of these shapes** — the census over all 37 corpus files
+  that declare `OpDrop` reports 1299 rows before the arm and 1299 after, none of them an append.
+  So the corpus cannot validate this arm, and could never have caught the defect; only the gate's
+  `p_v1`/`p_v2`/`p_v3` cells and the probes they were cut from measure it.
   In place of a refusal, `scopes::copy_moves_drop_from`, `scopes::copy_hands_off`,
   `scopes::appends_to_element` and the per-path hand-off flags move the release to ONE of the two
   structures, and `use_analysis::warn_double_move` warns on some of the shapes inside a structure.

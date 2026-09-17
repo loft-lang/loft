@@ -1271,6 +1271,12 @@ fn liveness_verdict(name: &str) -> Option<Lease> {
     const REFUSED_PILOTS: &[&str] = &[
         "p_k7", "p_o1", "p_o3", "p_o4", "p_o5", "p_l1", "p_l2", "p_h2", "p_h3", "p_h4", "p_h5",
         "p_h6", "p_h7", "p_e1", "p_e2", "p_g1", "p_g3", "p_g4", "p_g5", "p_s4", "p_t1",
+        // The collection binds, under the superseded reading too: `p_v2` grows `v` after the copy,
+        // so the source is used again (`refuse:later`), and `p_v3` copies a member `b` still
+        // holds (`refuse:container`).  `p_v1` is deliberately absent — its `v` is dead after the
+        // bind, which is the one thing the liveness reading and the written rule disagree about
+        // for this family, and the cell that shows the two oracles are not one oracle twice.
+        "p_v2", "p_v3",
     ];
     let parts: Vec<&str> = name.split('_').collect();
     match parts.as_slice() {
@@ -1292,15 +1298,19 @@ fn liveness_verdict(name: &str) -> Option<Lease> {
 }
 
 /// The cells the rules REFUSE and the census names no copy for, because its site enumeration does
-/// not reach their spelling — `heap.md` D-heap-8's collection clause.  A whole-collection bind
-/// mints a `__vdb_N` backing and fills it, so the `Value::Set(v, Var(src))` node the census's bind
-/// arm matches never exists, and an absent row is indistinguishable from a clean one.
+/// not reach their spelling.  An absent row is indistinguishable from a clean one, so a cell is
+/// listed here rather than reclassified: the verdict stays what the rules say, and the silence is
+/// recorded as the defect it is.
 ///
-/// Listed rather than reclassified: the verdict is what the rules say, and the silence is the
-/// defect.  The list empties when the enumeration grows this spelling, which
-/// [`the_census_names_the_copy_each_cell_makes`] enforces from both sides — a cell here that the
-/// census DOES refuse fails until it is removed.
-const CENSUS_BLIND: &[&str] = &["p_v1", "p_v2", "p_v3"];
+/// EMPTY since 2026-09-17, and it emptied itself.  It held `p_v1`, `p_v2` and `p_v3` — a
+/// whole-collection bind mints a `__vdb_N` backing and fills it with an APPEND, so the
+/// `Value::Set(v, Var(src))` node the census's bind arm matched never existed for them.  The
+/// census now judges that append, [`the_census_names_the_copy_each_cell_makes`] reported all three
+/// with *"its enumeration reaches this spelling now"*, and they left.  That is the list working in
+/// the direction that retires it: it enforces from BOTH sides, so a cell here whose copy the
+/// census DOES refuse fails until it is removed, and a merely tolerant list would have gone green
+/// on the cure and stayed forever.
+const CENSUS_BLIND: &[&str] = &[];
 
 /// Each OPEN deviation in `formal/heap.md` that a cell with a `Once` verdict still measures, with
 /// those cells.  A refused cell compiles today and is `D-heap-8`'s, so it is not listed.
