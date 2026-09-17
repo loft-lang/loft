@@ -92,30 +92,110 @@ def issue_states(numbers: set[str], network: bool) -> dict[str, str]:
     return states
 
 
+# A skip source is a `const`/`static` list whose NAME carries SKIP or ALLOW, or a function
+# answering a set.  The second shape is matched on its RETURN TYPE rather than its name
+# (`wrap.rs::ignored_scripts` is the only one) because `tests/` holds some fifteen ordinary
+# test functions called `skip_*` — `skip_constant_index`, `skip_null_safe_arg` — and a name
+# pattern wide enough to catch the real one sweeps all of those in with it.
+DECL = re.compile(
+    r"^\s*(?:const|static)\s+([A-Za-z_]*(?:SKIP|ALLOW)[A-Za-z_]*)\b"
+    r"|^\s*fn\s+([a-z_]+)\s*\(\)\s*->\s*HashSet\b"
+)
+
+
+def skip_lists() -> list[tuple[str, str, list[str]]]:
+    """Every suite skip/allow list under `tests/`, as (where, entry, issues) per entry.
+
+    Found by SHAPE rather than by name.  A roster of the constants spelled out here would
+    be a fourth copy of the one in TESTING.md § Every skip says why — beside the lists
+    themselves and `loft-test/SKILL.md` — and the copies drift: the census would then go
+    quiet on the list nobody remembered to add to it, which is the silence this whole
+    function exists to break.  Deriving it also crosses the CLASSES without either
+    registry having to know about the other: the twelve suite skip lists are documented
+    together, while `wrap.rs::SCRIPTS_LEAK_ALLOW` is a leak allow-list documented in its
+    own section — both suppress a failure, so both are this census's business.
+
+    Each list is read to its own closing token rather than one line deep: the entries of a
+    populated list start several lines below its declaration, so a one-line window sees the
+    declaration and none of what it holds.  A `];` closes a list and a `}` closes a fn —
+    read to the wrong one, a fn runs past its end and adopts the next list's entries.
+    """
+    out: list[tuple[str, str, list[str]]] = []
+    for path in sorted(glob.glob(os.path.join(ROOT, "tests", "*.rs"))):
+        try:
+            lines = open(path, encoding="utf-8").read().split("\n")
+        except OSError:
+            continue
+        for i, line in enumerate(lines):
+            m = DECL.match(line)
+            if not m:
+                continue
+            closer = "];" if m.group(1) else "}"
+            body, j = [], i
+            while j < len(lines) and j < i + 400:
+                body.append(lines[j])
+                if closer in lines[j] and (j > i or closer == "];"):
+                    break
+                j += 1
+            where = f"{os.path.basename(path)}::{m.group(1) or m.group(2)}"
+            # An entry's citation is its OWN line plus the comment block directly above it —
+            # never the whole body.  Read over the body an entry inherits every issue anyone
+            # cited anywhere in the list, including a comment about a DIFFERENT entry or about
+            # one already removed, and an uncited entry then reads as a justified one.  That is
+            # the failure this census exists to report, committed by the census itself.
+            comment: list[str] = []
+            for b in body:
+                entry = re.match(r'^\s*"([^"]+)"', b)
+                if entry:
+                    out.append((where, entry.group(1),
+                                cited_issues("\n".join(comment + [b]))))
+                    comment = []
+                elif b.strip().startswith("//"):
+                    comment.append(b)
+                else:
+                    comment = []
+    return out
+
+
 def census_rationales(network: bool) -> None:
     print("== rationales: suppressions justified by an issue — is it still open? ==")
     rows: list[tuple[str, str, list[str]]] = []  # (where, rationale, issues)
+    seen = uncited = 0
     baseline = os.path.join(ROOT, "tests", "ignored_tests.baseline")
     if os.path.isfile(baseline):
         for line in open(baseline, encoding="utf-8"):
             if not line.strip() or line.startswith("#"):
                 continue
             name, _, why = line.rstrip("\n").partition("\t")
+            seen += 1
             issues = cited_issues(why)
             if issues:
                 rows.append((name, why.strip(), issues))
-    # Skip-list entries with issue citations, wherever tests spell them.
-    code, out = sh(
-        "grep", "-rn", "-E", "(SCRIPTS_NATIVE_SKIP|NATIVE_SKIP|ignored_scripts)",
-        "tests", "--include=*.rs", "-A", "1",
-    )
-    if code == 0:
-        for line in out.splitlines():
-            issues = cited_issues(line)
-            if issues and ("#" in line):
-                rows.append((line.split(":")[0], line.strip()[:100], issues))
+            else:
+                uncited += 1
+    entries = skip_lists()
+    for where, entry, issues in entries:
+        seen += 1
+        if issues:
+            rows.append((where, entry, issues))
+        else:
+            uncited += 1
+    # The scope this census actually covered, stated whether or not it found anything.  Its
+    # question is only asked of a suppression that CITES an issue, so with none to ask it the
+    # old report printed "no issue-cited suppressions found" and returned — a line that reads
+    # as a clean bill and cannot be told apart from three different worlds: nothing is
+    # suppressed, nothing cites an issue, or the search matched nothing because a list was
+    # renamed out from under it.  Counting the uncited ones does NOT bless them; whether each
+    # is still acceptable is `M-ignores`, the owner's sign-off, and no script can do that half.
+    print(f"  scanned: {seen} suppression(s) — {seen - uncited} cite an issue, {uncited} do not")
+    print(f"           ({len(entries)} skip-list entr(ies) found by shape; the rest are "
+          f"`#[ignore]` rows)")
+    if uncited and not rows:
+        print("  none of them cites an issue, so this census asks nothing of any of them —")
+        print("  their rationales are `A-ignores`' question, and their acceptability M-ignores'")
+        return
     if not rows:
-        print("  no issue-cited suppressions found")
+        print("  no suppressions found at all")
         return
     states = issue_states({n for _, _, ns in rows for n in ns}, network)
     if not states:
