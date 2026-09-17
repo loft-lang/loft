@@ -10,6 +10,25 @@ Tracker: [@PLN164](https://github.com/loft-lang/plans/issues/164) · `status:act
 
 ## Status (REQUIRED)
 
+**Where to resume (handoff, 2026-09-17 evening, branch `157-native-4x`).**  The elimination
+queue is worked through: **E-1** (view leaf + forward, default ON), **E-2a/E-2b** (a parser's
+points and widths locals built in the element they are appended into, the joined arms
+included) built, **E-3** priced a wash and dropped, and E-2's value branch (≈ −0.5 %) and E-2c
+(−0.57 %) parked on the same bar.  Three silent-wrong bugs were found and fixed on the way
+(loft#1552 rebind, loft#1553 moved view, loft#1554 the `(B-Ref-Reshape)` refusal's gaps), each
+with its guard.  The parse row is **20 740 ns against Rust's 6 675 — 3.11×**, 13 stores per
+parse, hash `33f6d2b8`; the owner's bar is 3× per routine (`formal/performance.md`
+(Perf-Weight)).  **Next:** § E-2b *Where the row stands* — about 1.2 of the 2.1 units over Rust
+are the per-RECORD and per-PUSH store work every kept object pays (claim/free, `vector_append`,
+`append_f64`, the append path's `heap_facts`/`nullable_field_parent` checks, `store_mut`).  That
+is a runtime lever on both backends, not another elimination unit, and it wants its own
+pricing (a hand patch in the runtime, measured on all fourteen rows) before a unit is cut.
+Tooling for it: the release-tier emission (`loft --native-release --native-emit`), the
+session scripts' `build.sh`/`pstat.sh`/`run.sh` shape (rustc against `target/release`, `perf
+stat -r 5` × 3 interleaved, `taskset`), stores counted exactly with callgrind (n = 20 minus
+n = 10 calls of `database_named`, parsed from the raw out file).  Before a PR: CI on the head,
+the joined tree current on `origin/main`, derived rows re-measured.
+
 Active (the owner's go, 2026-09-15).  **RE-SCOPED 2026-09-17 (owner, C125): tier 1 — the
 activation arena, A1/A2 — is SUPERSEDED and its store-identity question E1 is withdrawn.  The
 store model stays as it is (one store is one object) and the plan's remaining work REMOVES the
@@ -868,10 +887,11 @@ before it is built**, and re-measured with `perf` on the release binary after.
    Owes C5's step 2 debts first (per-PATH mention counting, the wider source resolution) and
    the corpus under the switch on both backends.
 2. **E-2 — the single-consumer vector built in its destination.** — E-2a and E-2b (the joined
-   arms) built 2026-09-17 (§ E-2 below).  Remaining: the VALUE BRANCH (`parse_poly`'s widths,
-   `if … { smooth_vals(…) } else { copy }`, about −0.5 %: the hand patch's −4.0 % less E-2a and E-2b) and
-   E-2c (`parse_fronds`' `pf_all` built in the returned record) — priced by hand patch at
-   −0.57 % instructions, which is below what a unit of its size is worth now; parked.
+   arms) built 2026-09-17 (§ E-2 below).  Parked, both on the same bar: the VALUE BRANCH
+   (`parse_poly`'s widths, `if … { smooth_vals(…) } else { copy }`, about −0.5 %: the hand
+   patch's −4.0 % less E-2a and E-2b — a new temp shape, a call arm and a copy arm) and E-2c
+   (`parse_fronds`' `pf_all` built in the returned record, −0.57 % by hand patch).  Neither is
+   a clear case (`PERFORMANCE.md` § The clear case first) beside what § E-2b's profile names.
 3. ~~**E-3 — `PointList` reused.**~~ Priced by hand patch 2026-09-17 (the list's store cleared
    and reused instead of minted per call): a wash within noise.  Dropped — the `PointList`
    mint is not where the row's time goes once E-2 removed the copies around it.
@@ -1099,6 +1119,23 @@ under the leak check, `LOFT_STRICT_STORES` and `LOFT_POISON`; the two halves of 
 sabotaged in turn (`g25` read `0` for `100` without it, `g27` read `0` for `100` without its
 parameter half).  Guard `an-element-view-read-before-an-element-first-append-is-not-moved.loft`,
 falsified against f547cf1c (native exit 1 → 0).
+
+*Where the row stands after E-2b* (`perf record` on the release binary, self time, grouped by
+the runtime function's own name; Rust's row = 1.00, loft's = 3.11):
+
+| group | share of loft's row | in Rust units | Rust's own |
+|---|---|---|---|
+| emitted loft code (`find_option` 13 %, `parse_scene_at` 7 %, `acc_pts` 4 %, `fronds` 3 %) | 41 % | 1.26 | ≈ 0.80 (its parser functions) |
+| store claim/free (`claim_block`, `claim`, `set_free_header`, `record_new`/`finish`) | 18 % | 0.56 | ≈ 0.09 (`malloc`/`free`/`memmove`) |
+| vector and field ops (`vector_append`, `append_f64`, `get_vector`, `vector_add`) | 14 % | 0.44 | inlined |
+| store helpers in the append path (`heap_facts`, `nullable_field_parent`, `vector_set_size`, …) | ≈ 10 % | ≈ 0.3 | — |
+| text and number (`text_character`, `OpGetTextSub`, float parse) | 7 % | 0.22 | in its functions |
+| store lookup (`store_mut`) | 4 % | 0.12 | — |
+
+The elimination queue removed what it could: what is left of the store family is not
+temporaries but the per-RECORD and per-PUSH work every kept object pays — about 1.2 of the
+2.1 units the row is over Rust.  That is the next lever for the 3× bar, and it is a runtime
+one (both backends), not an emission one.
 
 ## The three tiers — the invariant each rests on
 
@@ -2079,7 +2116,7 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | **The wilderness** — the store's tail free block held beside the free tree (`@FR-H-Wilderness`) | § The wilderness | a seeded side-by-side store test (same positions, same chain); the store subject (321), wrap, native, lib tests on both forms; the fourteen-row same-binary A/B | Built 2026-09-17, default ON (`LOFT_NO_WILDERNESS`) — the parse row −6.3 %, `fronds` −2.6 % |
 | **Text per character** — `#[inline]` on the two per-character runtime calls | § The queue after B1b | `perf stat`, three interleaved pairs | Measured and DROPPED 2026-09-17 (−1.0 % instructions, +1.1 % cycles) |
 | **E-1** — C5 on by default: `Mark` as a tuple with a view | § The elimination queue | C5's step 2 debts; the corpus under the switch, both backends; a hand patch first | Built 2026-09-17, default ON (`LOFT_NO_VIEW_FIELD`, `LOFT_NO_FORWARD_TUPLE`) — § E-1 |
-| **E-2** — a single-consumer vector built in its destination (element-first; the vector `place_result`) | § The elimination queue | cells in the @PLN157 shape; a hand patch first | E-2a and E-2b built 2026-09-17, default ON (`LOFT_NO_ELEMENT_PLACE`) — 19 → 13 stores per parse; loft#1552 and loft#1553 fixed on the way; the value branch and E-2c (`pf_all`, −0.57 %) remain |
+| **E-2** — a single-consumer vector built in its destination (element-first; the vector `place_result`) | § The elimination queue | cells in the @PLN157 shape; a hand patch first | E-2a and E-2b built 2026-09-17, default ON (`LOFT_NO_ELEMENT_PLACE`) — 19 → 13 stores per parse; loft#1552, loft#1553 and loft#1554 fixed on the way; the value branch (≈ −0.5 %) and E-2c (−0.57 %) parked |
 | **E-3** — `PointList` reused per call site | § The elimination queue | `LOFT_TRACE_POOL=1` names the gate | Priced and DROPPED 2026-09-17 — a wash |
 | **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |
 | **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state), and B1 behind an `if` pre-init | § B1b | 23 cells both backends, both switch states, under every falsifier; the entry witness closes D-own-43 and the two other frees that held its belief; the body behind a hoisted result reached; `wrap` + `native` green; parse bench `Mark` mints 24 → 14 per two parses | Built 2026-09-17, default ON (`LOFT_NO_ADOPT_BUFFER_REUSE`) |

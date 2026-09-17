@@ -28,7 +28,11 @@
 //   * the single-binding test — `g13` read 0,0 for 2,3 (loft#1552, which this cell found);
 //   * the jump test — `g15`'s census grew by 100 records for 0: each early return stranded
 //     the call's vector inside the container's store, where the store-level leak check sees
-//     nothing, which is why the cell counts records instead.
+//     nothing, which is why the cell counts records instead;
+//   * the moved-view test (loft#1553) — `g25` read 0 for 100 without it: the view named the
+//     vector record the early mint relocated;
+//   * its parameter half — `g27` read 0 for 100 without it, called through a fn-ref, the one
+//     edge `(B-Ref-Reshape)`'s call-site refusal (loft#1554) cannot follow.
 
 struct Pt { px: integer = 0, py: integer = 0 }
 struct Pn { pk: integer = 0, spec: vector<integer> }
