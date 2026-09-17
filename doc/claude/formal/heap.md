@@ -673,9 +673,27 @@ freed without its hook) opened and CLOSED 2026-09-10, below.
   return buffer instead, typed as the bare collection (`d … deps=[__ref_1]`, `__ref_1` typed
   `vec<ref(718)>`), and the scope exit emits `OpFreeRef(__ref_1)` with **no cascade call at all**.
   The cascade itself is correct wherever it runs — read on both backends, it walks the elements
-  and calls the hook.  ⚠ **Which site decides to omit it is NOT established**: the candidates all
-  read `Data::drop_cascade_nr` (`scopes.rs` 3761 / 10787 / 16992 / 21240), and naming one without
-  measuring it is how the boundary sentence of `D-heap-11` came to be written wrongly.
+  and calls the hook.
+  **The site is `scopes::drop_hook`, and it was MEASURED rather than read.**  The buffer IS
+  offered to the scope-exit drop gate — twice — and the gate's own type pattern
+  `Type::Reference(d, _) | Type::Enum(d, true, _)` turns it away, so it answers `None` and no
+  cascade is emitted.  An env-gated probe printing BEFORE that pattern gives, for the leaking
+  program, exactly `2 × var=__ref_1 kind=Vector` and, for the clean one, ZERO Vector lines; the
+  full multiset of variables reaching the gate differs between the two programs by three lines,
+  and that is the only new one.  ⚠ Reading alone had got this wrong twice in one sitting — first
+  by naming the guard without testing it, then by concluding from a TRUNCATED frequency list
+  (`sort -rn | head -12`, which hides a line seen twice) that no collection reached the gate at
+  all.  The probe is what settled it.
+  ⚠ **The cure is not to widen that pattern where it stands.**  `Type::heap_def_nr` carries the
+  identical pattern and has 44 call sites across 11 files, and the `Reference | Enum` spelling of
+  *"this is a heap owner"* is written out 148 times across 12 files (`scopes.rs` 44,
+  `parser/control.rs` 20, `state/codegen.rs` 14).  Widening the shared predicate moves the parser,
+  the scope pass, both backends and the hoist at once.  What the drop sites need is a narrow
+  question of their own.  The cascade to run belongs to the WRAPPER record `main_vector<T>`, which
+  is derivable from the element type (`compile.rs`, `native_lib.rs`, `data.rs` all build that
+  name) — but not by naive name lookup: `data.rs`'s own regression
+  `vector_wrapper_is_per_element_def_not_per_spelling` records a collision where the second asker
+  got the first's wrapper.
 - **Effect:** the resource stays open for the life of the process, with no diagnostic.  `(H-Move)`
   makes `d = mkv()` a MOVE — a fresh call result placed where it is produced — so `d` is the owner,
   `(H-Lease)` gives that owner its own lease, and `(H-Drop)` releases it at the owner's scope end.
