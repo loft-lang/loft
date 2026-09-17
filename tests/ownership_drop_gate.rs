@@ -1390,6 +1390,14 @@ fn every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation() {
         // closed in the register while a cell still measures it* was green on exactly that:
         // `D-heap-11` closed on 2026-09-17 and stayed chained here, satisfying its own check.
         // A closed entry always says so on that line, so require CLOSED to be absent from it.
+        //
+        // This is one of only TWO decoders of deviation STATE in the tree, and the other cannot
+        // have this bug: `scripts/rule_tags.py` finds its chapters with `glob` rather than a
+        // maintained list, and each of its three status decisions asks CLOSED FIRST
+        // (`"CLOSED" if "closed" in head.lower() else "OPEN"`) after stripping the chapter's
+        // `OPEN: n` COUNT, which is a count and never a status.  A THIRD decoder should copy
+        // that shape and not this one — deciding CLOSED first needs no guard at all, whereas
+        // matching OPEN first needs the guard above and will be written without it.
         if !heap
             .lines()
             .any(|l| l.starts_with(&header) && !l.contains("CLOSED"))
