@@ -190,9 +190,11 @@ pub struct Variable {
     /// Set by `scopes::scan_set`, read by both backends' copy arms (`is_view_elided`).
     view_elided: bool,
     /// A hidden return buffer whose store is minted at its first use on the path that runs
-    /// (`@FR-O-LazyBuffer`): its entry null-init writes the null sentinel, and a later
-    /// `Set(v, Null)` — always behind `OpRefIsNull(v)` — mints the store.  Set by
-    /// `scopes::lazy_buffer_mints`, read by both backends' null-init arms.
+    /// (`@FR-O-LazyBuffer`), always behind `OpRefIsNull(v)`.  For a VECTOR buffer the entry
+    /// null-init writes the null sentinel and the later `Set(v, Null)` is the mint (both
+    /// backends' null-init arms read this); for a RECORD buffer the mint is an explicit
+    /// `OpDatabase`, which the native hoist gate reads this to admit.  Set by
+    /// `scopes::lazy_buffer_mints` and `scopes::reuse_record_buffers`.
     lazy_buffer: bool,
     /// @PLN130 F9 — this binding was spelled with `&` at a STRUCT-typed projection
     /// (`c = &v[0]`, `c = &o.inner`).  Such a projection is already a VIEW under B-View,

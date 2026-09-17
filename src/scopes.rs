@@ -3729,7 +3729,7 @@ fn tail_calls(v: &Value) -> Vec<&Value> {
 
 fn reuse_record_buffers(
     code: &mut Value,
-    function: &Function,
+    function: &mut Function,
     data: &Data,
     witness_buffer: &HashMap<u16, Vec<u16>>,
     minted_pairs: &HashSet<u16>,
@@ -3815,6 +3815,10 @@ fn reuse_record_buffers(
     let is_null = data.def_nr("OpRefIsNull");
     let frees = free_ops(data);
     for (av, mint) in lazy {
+        // The mark tells the native hoist gate that this `OpDatabase` only ever takes a
+        // fresh store from the sentinel (`hoist::lazy_buffer_mint`); a record buffer's
+        // null-init already writes the sentinel on both backends.
+        function.mark_lazy_buffer(av);
         let guard = v_if(
             Value::Call(is_null, vec![Value::Var(av)]),
             Value::Insert(vec![mint]),
@@ -3907,6 +3911,23 @@ fn insert_before_uses(ops: &mut Vec<Value>, av: u16, guard: &Value, frees: &[u32
     }
 }
 
+/// Is `av` the buffer of a call a `for` loop ITERATES (`for f in make(…) { … }`)?  Such a
+/// buffer is the native emitter's to place (@PLN157 § V-j, `hoist::move_appends`): it starts
+/// as the sentinel and is claimed in the destination's store at the loop, so a guarded mint
+/// in front of the loop would be a second owner of the same slot.
+fn iterates_a_call_into(ops: &[Value], av: u16) -> bool {
+    ops.iter().any(|op| {
+        op.any_node(&mut |n| {
+            let Value::Block(bl) = n else { return false };
+            bl.name == "For block"
+                && matches!(bl.operators.first().map(Value::unspan),
+                    Some(Value::Set(_, call)) if matches!(call.unspan(),
+                        Value::Call(_, args) if matches!(args.last().map(Value::unspan),
+                            Some(Value::Var(b)) if *b == av)))
+        })
+    })
+}
+
 /// @PLN164 A0 (`@FR-O-LazyBuffer`) — a hidden VECTOR return buffer is minted in front of
 /// the statements that hand it to a callee, behind `OpRefIsNull`, instead of at function
 /// entry: its null-init writes the sentinel (`Function::mark_lazy_buffer` tells both
@@ -3957,7 +3978,7 @@ fn lazy_buffer_mints(code: &mut Value, function: &mut Function, data: &Data) {
                 }
             });
         }
-        if top_inits != 1 || sets != 1 {
+        if top_inits != 1 || sets != 1 || iterates_a_call_into(&bl.operators, av) {
             continue;
         }
         function.mark_lazy_buffer(av);
@@ -4357,7 +4378,7 @@ fn run_scan_phase(
     }
     reuse_record_buffers(
         &mut code,
-        &function,
+        &mut function,
         data,
         &scopes.witness_buffer,
         &scopes.minted_pairs,

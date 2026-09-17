@@ -625,9 +625,21 @@ fn mints_null_buffer(body: &Block, data: &Data, vars: &crate::variables::Functio
         op.any_node(&mut |n| {
             matches!(n, Value::Call(d, args)
                 if (*d as usize) < data.definitions.len()
-                    && null_buffer_alloc(data.def(*d).name(), args, Some(vars), data).is_some())
+                    && (null_buffer_alloc(data.def(*d).name(), args, Some(vars), data).is_some()
+                        || lazy_buffer_mint(data.def(*d).name(), args, Some(vars))))
         })
     })
+}
+
+/// `@FR-O-LazyBuffer` — the record-buffer pool's mint, which `scopes::reuse_record_buffers`
+/// places behind `OpRefIsNull` on the buffer itself: it only ever takes a FRESH store from
+/// the null sentinel, never clears one, so no header a loop holds can name the store it
+/// fills.  It is still a growth, and `mints_null_buffer` counts it as one for `@FR-R-Base`.
+fn lazy_buffer_mint(name: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
+    let Some(vars) = vars else { return false };
+    (name == "OpDatabase" || name == "OpDatabaseNP")
+        && matches!(args.first().map(Value::unspan), Some(Value::Var(b))
+            if *b < vars.count() && vars.is_lazy_buffer(*b))
 }
 
 /// The schema type of a variable that names a PLAIN struct record — a `Reference` to a
@@ -867,6 +879,18 @@ fn body_writes(
             } else if let Some(tp) = null_buffer_alloc(name, args, Some(vars), data) {
                 // § V-ad — the discharge buffer is re-initialised whole; only a scalar hoisted
                 // off ITS type could observe that, and the buffer's view is rebound per use.
+                set.whole.insert(tp);
+            } else if lazy_buffer_mint(name, args, Some(vars)) {
+                // `@FR-O-LazyBuffer` — a fresh store for the buffer from its sentinel; only a
+                // scalar hoisted off the buffer's own record type could observe it.
+                let minted = match args.first().map(Value::unspan) {
+                    Some(Value::Var(b)) => plain_record_type(data, vars.tp(*b)),
+                    _ => None,
+                };
+                let Some(tp) = minted else {
+                    ok = false;
+                    return true;
+                };
                 set.whole.insert(tp);
             } else if RECORD_FREE_OPS.contains(&name) {
                 let freed = match args.first().map(Value::unspan) {
@@ -2256,7 +2280,9 @@ fn blocks_header_hoist(
                 && frees_a_record(data.def(*d).name(), args, vars);
             // @PLN157 § V-ad — the null-discharge buffer's allocation moves nothing a header
             // describes; its field sets below are in-place and walk on their own.
-            let buffer_alloc = known && null_buffer_alloc(data.def(*d).name(), args, vars, data).is_some();
+            let buffer_alloc = known
+                && (null_buffer_alloc(data.def(*d).name(), args, vars, data).is_some()
+                    || lazy_buffer_mint(data.def(*d).name(), args, vars));
             // @PLN157 § V-q (`@FR-R-Push`) — a fusable push over a pure path is admitted
             // under its own tier: it grows one vector whose header the loop keeps current
             // through the push itself; `hoistable` decides the aliasing.  The value operand
@@ -6493,6 +6519,15 @@ pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16>
                     }
                     "OpFreeRef" | "OpFreeRefIfDistinct" => {
                         if let Some(w) = arg_var(0) {
+                            *dropped.entry(w).or_insert(0) += 1;
+                        }
+                    }
+                    // `@FR-O-LazyBuffer` — the null test in front of a lazy buffer's mint
+                    // is the mint's own guard, and goes with it.
+                    "OpRefIsNull" => {
+                        if let Some(w) = arg_var(0)
+                            && vars.is_lazy_buffer(w)
+                        {
                             *dropped.entry(w).or_insert(0) += 1;
                         }
                     }

@@ -480,7 +480,11 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 525 | 502 | **23** |
+| 526 | 503 | **23** |
+
+(2026-09-17, loft#1548: one function added, peeling — `Parser::stage_append_fields`, which
+reads each field write and each nested construction through `.unspan()`.  The opaque column is
+unmoved.)
 
 (2026-09-17, @PLN164 A0: two functions added, both peeling — `scopes::names_outside_free` and
 `scopes::insert_before_uses`, the lazy-buffer walk, which match on `.unspan()` /
@@ -2664,7 +2668,12 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 837 | 496 | 7 | **334** |
+| 839 | 498 | 7 | **334** |
+
+(2026-09-17, @PLN164 C6 and loft#1548: two functions added, both seeing through the wrapper —
+`Parser::nested_literal_place` declines a `τ?` field and reads the record through `.base()`,
+and `Parser::stage_append_fields` asks the value's type through `.base()`.  The opaque column is
+unmoved.)
 
 (2026-09-17, @PLN164 A0: one function added, descending — `scopes::lazy_buffer_mints` names
 a bare `vector<T>` on purpose, because a `vector<T>?` buffer is minted by another route and is

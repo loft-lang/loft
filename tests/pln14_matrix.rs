@@ -296,13 +296,13 @@ fn faulting_bind_records_a_fault_not_a_value() {
     );
 }
 
-/// Store-span reading (the finding that shapes arc B): a nested `struct` puts
-/// each `Reference` field in its OWN store, so a value is generally a
-/// MULTI-store graph.  A per-binding materialize therefore needs a reachability
-/// walk + store-number rebase, not a single `Store::snapshot_copy`.  Pinned as a
-/// test so the assumption cannot drift silently.
+/// Store-span reading: an EMBEDDED struct field is its host's own bytes, so a literal that
+/// nests records builds inside the host's store and needs no more stores than a flat one
+/// (`@FR-R-InPlaceLiteral`'s nested clause).  A value spans several stores only through a
+/// POINTER field (`reference<T>`), which is why the per-binding materialize (arc B) is a
+/// reachability walk with a store-number rebase rather than a single `snapshot_copy`.
 #[test]
-fn a_nested_struct_spans_several_stores() {
+fn a_nested_struct_builds_in_its_hosts_store() {
     let flat = build(&[STRUCTS], "P", "P { x: 7, y: 9 }")
         .1
         .database
@@ -318,8 +318,8 @@ fn a_nested_struct_spans_several_stores() {
     .allocations
     .len();
     assert!(
-        nested > flat,
-        "expected a nested struct to span more stores than a flat one \
+        nested <= flat,
+        "a nested literal must not take stores of its own \
          (flat={flat}, nested={nested})"
     );
 }

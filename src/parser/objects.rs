@@ -3735,7 +3735,12 @@ impl Parser {
         {
             return None;
         }
-        let Type::Reference(inner, deps) = td else {
+        // A `τ?` field is declined whatever it wraps: a nullable record is a tagged
+        // `__nullable<S>` enum, whose payload this road does not write.
+        if matches!(td, Type::Optional(_)) {
+            return None;
+        }
+        let Type::Reference(inner, deps) = td.base() else {
             return None;
         };
         if deps.is_pointer_marker() || self.data.def_type(*inner) != DefType::Struct {
