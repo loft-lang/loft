@@ -2340,6 +2340,10 @@ impl State {
             // measured: `LOFT_POISON=1` answers identically to `LOFT_POISON=0`.
             let owned_ref =
                 stack.function.owns_displaced_store(v, value, stack.data) && !is_hidden_buf_arg;
+            // `@FR-O-Buffer` — a promoted return buffer may hold the store the CALLER handed,
+            // which no free below may release: every one of them is guarded by the entry
+            // witness the scope pass minted (native compares `_rb_w_<name>` at its rebind).
+            let entry_w = stack.function.entry_witness(v);
             // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
             // container's backing store (a vector element / nested field), so
             // the new value can land in the SAME store as v's old value —
@@ -2410,13 +2414,17 @@ impl State {
                 } else {
                     None
                 };
-                if let Some(container) = witness {
-                    let c_pos = stack.var_pos(container);
-                    stack.add_op("OpVarRef", self);
-                    self.code_add(c_pos);
-                    stack.add_op("OpFreeRefIfDistinct", self);
-                } else {
-                    stack.add_op("OpFreeRef", self);
+                match (witness, entry_w) {
+                    (Some(container), Some(entry)) => {
+                        self.push_var_ref(stack, container);
+                        self.push_var_ref(stack, entry);
+                        stack.add_op("OpFreeRefUnlessEntry", self);
+                    }
+                    (Some(keep), None) | (None, Some(keep)) => {
+                        self.push_var_ref(stack, keep);
+                        stack.add_op("OpFreeRefIfDistinct", self);
+                    }
+                    (None, None) => stack.add_op("OpFreeRef", self),
                 }
                 // @PLN118 — this var takes an unconditional pre-build free; its
                 // block-exit free must reset it to the sentinel so a loop re-entry's
@@ -2465,7 +2473,12 @@ impl State {
                 let old_pos = stack.var_pos(v);
                 stack.add_op("OpVarRef", self);
                 self.code_add(old_pos);
-                stack.add_op("OpFreeRef", self);
+                if let Some(entry) = entry_w {
+                    self.push_var_ref(stack, entry);
+                    stack.add_op("OpFreeRefIfDistinct", self);
+                } else {
+                    stack.add_op("OpFreeRef", self);
+                }
                 // The call result (`src`) FIRST, then the witness on top — so the
                 // witness's frame-relative `var_pos` accounts for `src` already on the
                 // eval stack. `OpBindOrCopy` pops witness (top) then src.
@@ -2778,10 +2791,7 @@ impl State {
                         // #330 epilogue: free the stashed old store unless
                         // the assignment kept it (witness = v's NEW DbRef;
                         // same store → no-op).
-                        let free_pos = stack.var_pos(v);
-                        stack.add_op("OpVarRef", self);
-                        self.code_add(free_pos);
-                        stack.add_op("OpFreeRefIfDistinct", self);
+                        self.free_stashed(stack, v, entry_w);
                     }
                     // @PLN130 — REASSIGNMENT from a call.  A lift temp inside an expression
                     // (`__lift_N = file(path)`) is compiled here, not through any first-bind
@@ -2868,10 +2878,7 @@ impl State {
                         // #330 epilogue: free the stashed old store unless
                         // the assignment kept it (witness = v's NEW DbRef;
                         // same store → no-op).
-                        let free_pos = stack.var_pos(v);
-                        stack.add_op("OpVarRef", self);
-                        self.code_add(free_pos);
-                        stack.add_op("OpFreeRefIfDistinct", self);
+                        self.free_stashed(stack, v, entry_w);
                     }
                     return;
                 }
@@ -2902,10 +2909,7 @@ impl State {
             self.set_var(stack, v, value);
             if stash_old_for_post_free {
                 // #330 epilogue (fall-through path): see above.
-                let free_pos = stack.var_pos(v);
-                stack.add_op("OpVarRef", self);
-                self.code_add(free_pos);
-                stack.add_op("OpFreeRefIfDistinct", self);
+                self.free_stashed(stack, v, entry_w);
             }
         } else {
             // First allocation — slot pre-assigned by assign_slots.
@@ -3007,6 +3011,27 @@ impl State {
                 other => panic!("emit_tuple_put_ops: unsupported elem {other:?}"),
             }
             self.code_add(pos);
+        }
+    }
+
+    /// Push a reference variable's value, taking its position before the push as every
+    /// `OpVarRef` must.
+    fn push_var_ref(&mut self, stack: &mut Stack, var: u16) {
+        let pos = stack.var_pos(var);
+        stack.add_op("OpVarRef", self);
+        self.code_add(pos);
+    }
+
+    /// Free the store `v` held before its assignment, stashed on the stack, unless `v` now
+    /// holds that same store — and, for a promoted return buffer, unless it is the store the
+    /// caller handed in (`entry`, `@FR-O-Buffer`).
+    fn free_stashed(&mut self, stack: &mut Stack, v: u16, entry: Option<u16>) {
+        self.push_var_ref(stack, v);
+        if let Some(entry) = entry {
+            self.push_var_ref(stack, entry);
+            stack.add_op("OpFreeRefUnlessEntry", self);
+        } else {
+            stack.add_op("OpFreeRefIfDistinct", self);
         }
     }
 

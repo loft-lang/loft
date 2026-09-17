@@ -298,12 +298,152 @@ fn r14() {
   println("r14 {s}");
 }
 
+// r15 — the rebind from a callee whose every exit is a LITERAL (it adopts a fresh store).
+fn lit_canvas(t: integer) -> Canvas { Canvas { data: [t, t + 1], w: t } }
+fn r15f(t: integer) -> Canvas {
+  cv = Canvas { data: [9, 9, 9], w: 9 };
+  cv = lit_canvas(t);
+  cv
+}
+fn r15() {
+  s = 0;
+  for t in 0..4 {
+    m = r15f(t);
+    assert(m.w == t && len(m.data) == 2 && m.data[1]? == t + 1, "r15 {t} {m.w} {len(m.data)}");
+    s += m.data[1]?;
+  }
+  assert(s == 10, "r15 {s}");
+  println("r15 {s}");
+}
+
+// r16 — the rebind from a FIELD of a parameter: a copy, independent of the parameter.
+fn r16f(h: H) -> Canvas {
+  cv = Canvas { data: [], w: 0 };
+  cv = h.c;
+  cv
+}
+fn r16() {
+  s = 0;
+  for t in 0..3 {
+    h = H { c: Canvas { data: [t, t + 2], w: t + 1 }, n: 0 };
+    m = r16f(h);
+    h.c.w = 55;
+    assert(m.w == t + 1 && len(m.data) == 2 && m.data[1]? == t + 2 && h.c.w == 55, "r16 {t} {m.w}");
+    s += m.data[1]?;
+  }
+  assert(s == 9, "r16 {s}");
+  println("r16 {s}");
+}
+
+// r17 — the value READS the buffer and the callee answers a view of one of its arguments.
+fn either(a: Canvas, h: H, first: boolean) -> Canvas { if first { a } else { h.c } }
+fn r17f(h: H, t: integer) -> Canvas {
+  cv = Canvas { data: [t * 10], w: t * 10 };
+  cv = either(cv, h, md(t, 2) == 0);
+  cv
+}
+fn r17() {
+  s = 0;
+  for t in 0..4 {
+    h = H { c: Canvas { data: [t, t, t], w: t + 100 }, n: 0 };
+    m = r17f(h, t);
+    h.c.w = 7;
+    s += m.w + len(m.data);
+  }
+  // t=0: w 0 len 1; t=1: w 101 len 3; t=2: w 20 len 1; t=3: w 103 len 3.
+  assert(s == 232, "r17 {s}");
+  println("r17 {s}");
+}
+
+// r18 — the rebind through a fn-ref.
+fn r18f(f: fn(integer) -> Canvas, t: integer) -> Canvas {
+  cv = Canvas { data: [], w: 0 };
+  cv = f(t);
+  cv
+}
+fn r18() {
+  s = 0;
+  for t in 0..3 {
+    m = r18f(lit_canvas, t + 4);
+    assert(m.w == t + 4 && len(m.data) == 2 && m.data[1]? == t + 5, "r18 {t} {m.w}");
+    s += m.w;
+  }
+  assert(s == 15, "r18 {s}");
+  println("r18 {s}");
+}
+
+// r19 — a struct-enum buffer.
+enum Shape { Dot { x: integer }, Line { lpts: vector<integer> } }
+fn mk_line(t: integer) -> Shape {
+  lv: vector<integer> = [t];
+  lv += [t + 1];
+  sh: Shape = Line { lpts: lv };
+  sh
+}
+fn shape_lit_then_call(t: integer) -> Shape {
+  sh: Shape = Dot { x: 1 };
+  sh = mk_line(t);
+  sh
+}
+fn r19() {
+  s = 0;
+  for t in 0..4 {
+    k = shape_lit_then_call(t);
+    s += match k { Line { lpts } => lpts[1]? + len(lpts) * 100, Dot { x } => x * 1000 };
+  }
+  // lpts = [t, t+1]: 1+2+3+4 + 4*200
+  assert(s == 810, "r19 {s}");
+  println("r19 {s}");
+}
+
+// r20 — an exit that returns ANOTHER local while the promoted buffer holds a record.
+fn pick_other(t: integer) -> Canvas {
+  cv = Canvas { data: [1], w: 1 };
+  if md(t, 2) == 0 {
+    o = alloc_canvas(9, 1, t);
+    return o;
+  }
+  cv
+}
+fn r20() {
+  s = 0;
+  for t in 0..4 {
+    m = pick_other(t);
+    s += m.w * 10 + m.data[0]?;
+  }
+  // t=0: 90+0; t=1: 10+1; t=2: 90+2; t=3: 10+1
+  assert(s == 204, "r20 {s}");
+  println("r20 {s}");
+}
+
+// r21 — a chain (`return f()` on the buffer) after the buffer was rebound from a call.
+fn loopy(t: integer) -> Canvas {
+  cv = Canvas { data: [], w: 0 };
+  for k in 0..3 {
+    if k == t { return alloc_canvas(k + 50, 1, k) }
+    cv = alloc_canvas(k, 2, k);
+  }
+  cv
+}
+fn r21() {
+  s = 0;
+  for t in 0..4 {
+    m = loopy(t);
+    s += m.w + len(m.data);
+  }
+  // t=0: 50+1; t=1: 51+1; t=2: 52+1; t=3: w 2 len 2
+  assert(s == 160, "r21 {s}");
+  println("r21 {s}");
+}
+
 fn run(c: text) {
   if c == "r1" { r1() } else if c == "r2" { r2() } else if c == "r3" { r3() }
   else if c == "r4" { r4() } else if c == "r5" { r5() } else if c == "r6" { r6() }
   else if c == "r7" { r7() } else if c == "r8" { r8() } else if c == "r9" { r9() }
   else if c == "r10" { r10() } else if c == "r11" { r11() } else if c == "r12" { r12() }
-  else if c == "r13" { r13() } else if c == "r14" { r14() }
+  else if c == "r13" { r13() } else if c == "r14" { r14() } else if c == "r15" { r15() }
+  else if c == "r16" { r16() } else if c == "r17" { r17() } else if c == "r18" { r18() }
+  else if c == "r19" { r19() } else if c == "r20" { r20() } else if c == "r21" { r21() }
 }
 
 /// With no argument every cell runs; `-- r9` runs one.
@@ -311,6 +451,7 @@ fn main() {
   args = arguments();
   if len(args) == 0 {
     r1(); r2(); r3(); r4(); r5(); r6(); r7(); r8(); r9(); r10(); r11(); r12(); r13(); r14();
+    r15(); r16(); r17(); r18(); r19(); r20(); r21();
     println("B1b cells PASSED");
   } else {
     for a in args { run(a); }

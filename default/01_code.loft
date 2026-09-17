@@ -906,6 +906,12 @@ fn OpFreeRefIfDistinct(placeholder: reference, witness: reference);
 // the store itself.  See `formal/closures.md` D-clo-13 and @PLN150.
 fn OpFreeRefOrHandUp(placeholder: reference, witness: reference);
 #rust"if @placeholder.store_nr == @witness.store_nr {{ s.hand_up_returned(@witness); }} else {{ s.database.free(&@placeholder); }}"
+// `OpFreeRefIfDistinct` for a promoted return buffer (@FR-O-Buffer): the displaced store is
+// also kept when it is `entry`, the store the CALLER handed in, which this frame never frees.
+// Emitted by the interpreter's rebind of the buffer, where the displaced value is already on
+// the stack and the entry witness is the one variable that remembers the caller's store.
+fn OpFreeRefUnlessEntry(placeholder: reference, witness: reference, entry: reference);
+#rust"if @placeholder.store_nr != @entry.store_nr {{ s.database.free_displaced(&@placeholder, &@witness); }}"
 // Release an on=4 iteration scratch at loop exit.  A read-only/exposed source's
 // scratch lives in a store of its own and goes back whole; a CO-LOCATED one (writable
 // source) goes back as the two records it claimed inside that source store — leaving

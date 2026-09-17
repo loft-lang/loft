@@ -191,6 +191,11 @@ struct Scopes<'s> {
     /// `None` unless the body actually reaches a displacing site (`displaces_return_buffer`),
     /// so a function that cannot leak pays no slot.
     rbuf_witness: Option<(u16, u16)>,
+    /// @PLN164 B1b / `@FR-O-Buffer` — `(promoted buffer var, its ENTRY WITNESS)`: the store
+    /// the caller handed, snapshotted before the body runs (`Function::entry_witness`).  A
+    /// promoted buffer holds the caller's store or one this frame minted, and only the run
+    /// can say which; every free of the buffer this pass emits is guarded by it.
+    entry_witness: Option<(u16, u16)>,
     /// loft#1200 — the per-LOCAL ownership witness: a nullable heap-record local that is
     /// reassigned from a minting call, mapped to the boolean that records whether the store
     /// it currently holds is this frame's SOLE property.  The static answer is not available
@@ -4159,6 +4164,7 @@ fn run_scan_phase(
         witness_buffer: HashMap::new(),
         owned_refs: HashMap::new(),
         rbuf_witness: None,
+        entry_witness: None,
         local_owns: HashMap::new(),
         owner_witness: HashMap::new(),
         displaced_owned,
@@ -4198,6 +4204,28 @@ fn run_scan_phase(
         scopes.var_scope.insert(flag, 0);
         scopes.var_order.push(flag);
         scopes.rbuf_witness = Some((buf, flag));
+    }
+    // @PLN164 B1b / `@FR-O-Buffer` — the promoted buffer's ENTRY WITNESS.  Once the caller's
+    // record-buffer pool hands such a callee a live store, "a promoted buffer is a local this
+    // function mints" stops being true on every run, and the snapshot is what tells the two
+    // apart.  Minted for every promoted record buffer, because every such body can free it
+    // (the exit legs of `free_vars` and the interpreter's rebind).
+    if crate::keys::adopt_buffer_reuse_enabled()
+        && let Some(buf) = hidden_return_buffer_var(d_nr, &function, data)
+        && function.name(buf) != "__retbuf"
+        && let Some(record) = match function.tp(buf) {
+            Type::Reference(_, _) | Type::Enum(_, true, _) => function.tp(buf).heap_def_nr(),
+            _ => None,
+        }
+    {
+        let name = Function::entry_witness_name(function.name(buf));
+        let w = function.add_temp_var(&name, &Type::Reference(record, Deps::none()));
+        // A self-dep: not a borrow, and not the empty list @FR-O-Proxy reads as "owner", so no
+        // site frees the snapshot on its own (the owner witness's construction).
+        function.depend(w, w);
+        scopes.var_scope.insert(w, 0);
+        scopes.var_order.push(w);
+        scopes.entry_witness = Some((buf, w));
     }
     // loft#1200 — the same construction one scope in: a boolean per nullable heap-record LOCAL
     // that a minting call reassigns, recording whether the store it holds is this frame's sole
@@ -4350,6 +4378,18 @@ fn run_scan_phase(
         && let Value::Block(bl) = &mut code
     {
         bl.operators.insert(0, v_set(flag, Value::Boolean(false)));
+    }
+    // The entry witness names what the buffer holds BEFORE any statement can rebind it.
+    if let Some((buf, w)) = scopes.entry_witness
+        && let Value::Block(bl) = &mut code
+    {
+        bl.operators.insert(
+            0,
+            v_set(
+                w,
+                Value::Call(data.def_nr("OpRefAlias"), vec![Value::Var(buf)]),
+            ),
+        );
     }
     // Every per-local witness starts FALSE for the same reason: before the local's first
     // assignment there is no store of its own to release, and an uninitialised boolean slot
@@ -6986,6 +7026,20 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
             &mut seq,
             0,
         );
+        // `@FR-O-Buffer` — the interpreter reads a promoted buffer's entry witness at every
+        // rebind of the buffer, outside the IR, so the witness lives as long as the buffer: a
+        // slot handed on after the snapshot's own initialisation would answer another
+        // variable's store.
+        let witnessed = {
+            let vars = &data.definitions[d_nr as usize].variables;
+            hidden_return_buffer_var(d_nr, vars, data)
+                .and_then(|buf| vars.entry_witness(buf).map(|w| (buf, w)))
+        };
+        if let Some((buf, w)) = witnessed {
+            data.definitions[d_nr as usize]
+                .variables
+                .extend_last_use_to(w, buf);
+        }
         // Plan-57 last-use freeing, Phase 1: definition-point liveness diagnostic
         // (read-only).  Reports each function-scoped owning store held past its
         // last use while later allocations run — the I-b / III-straight-line
@@ -11977,7 +12031,20 @@ impl Scopes<'_> {
             let mut result = Vec::with_capacity(ls.len() + null_arm_record_sources.len() + 2);
             result.push(v_set(tmp, expr.clone()));
             for &src in &null_arm_record_sources {
-                result.push(Value::Call(free_if, vec![Value::Var(src), Value::Var(tmp)]));
+                let free = Value::Call(free_if, vec![Value::Var(src), Value::Var(tmp)]);
+                // `@FR-O-Buffer` — the promoted buffer may still hold the store the CALLER
+                // handed, which this frame never frees; the entry witness says so per run.
+                result.push(match self.entry_witness {
+                    Some((buf, w)) if buf == src => v_if(
+                        Value::Call(
+                            data.def_nr("OpDistinctStore"),
+                            vec![Value::Var(src), Value::Var(w)],
+                        ),
+                        free,
+                        Value::Null,
+                    ),
+                    _ => free,
+                });
             }
             result.append(&mut ls);
             result.push(Value::Return(Box::new(Value::Var(tmp))));

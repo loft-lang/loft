@@ -1373,6 +1373,14 @@ impl Function {
         self.variables[var_nr as usize].last_use
     }
 
+    /// Keep `var_nr` live at least as long as `other`: for a variable an emitter reads at
+    /// `other`'s sites without the IR naming it there (a promoted buffer's entry witness).
+    pub fn extend_last_use_to(&mut self, var_nr: u16, other: u16) {
+        let until = self.variables[other as usize].last_use;
+        let v = &mut self.variables[var_nr as usize];
+        v.last_use = v.last_use.max(until);
+    }
+
     pub fn scope(&self, var_nr: u16) -> u16 {
         if var_nr as usize >= self.variables.len() {
             return u16::MAX;
@@ -3130,6 +3138,31 @@ impl Function {
     #[must_use]
     pub fn owner_witness(&self, v: u16) -> Option<u16> {
         self.owner_witness.get(&v).copied()
+    }
+
+    /// The name of the ENTRY WITNESS of a promoted return buffer `buf` — see
+    /// [`Self::entry_witness`].  One spelling, read by the scope pass that mints it and by
+    /// every emitter that asks for it, so the name is the fact and survives the IR cache.
+    #[must_use]
+    pub fn entry_witness_name(buf: &str) -> String {
+        format!("__rbw_{buf}")
+    }
+
+    /// `@FR-O-Buffer` — the variable holding the store the CALLER handed as `v`'s return
+    /// buffer, snapshotted at function entry, or `None` when the scope pass minted none.
+    ///
+    /// A local promoted onto the hidden return buffer IS that parameter, so it holds either
+    /// the caller's store (never this frame's to free) or one this frame minted when the
+    /// caller handed the null sentinel.  No static bit tells the two apart; the snapshot
+    /// does, per run, which is what native's `_rb_w_<buf>` prologue has always compared.
+    /// Every free of `v` this frame emits declines when `v` still names the snapshot's store.
+    #[must_use]
+    pub fn entry_witness(&self, v: u16) -> Option<u16> {
+        if (v as usize) >= self.variables.len() {
+            return None;
+        }
+        let w = self.var(&Self::entry_witness_name(self.name(v)));
+        (w != u16::MAX).then_some(w)
     }
 
     pub fn is_caller_hidden_buf(&self, var_nr: u16) -> bool {

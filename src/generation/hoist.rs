@@ -5927,6 +5927,12 @@ fn retbuf_uses_ok(v: &Value, rb: u16, c: &ShapeCtx, objects: &HashSet<usize>) ->
             // emitter answers the test `true` and makes the guarded free unconditional
             // (`OpFreeRefIfDistinctEmitter`, `OpDistinctStoreEmitter`).
             let witnessed = matches!(callee.name(), "OpFreeRefIfDistinct" | "OpDistinctStore");
+            // `@FR-O-Buffer` — the promoted buffer's ENTRY WITNESS snapshots it
+            // (`OpRefAlias`) and every free of it is guarded by `OpDistinctStore(buffer,
+            // witness)`.  A phantom has no store to snapshot: the alias emits the null
+            // reference and the test answers `true` (`OpRefAliasEmitter`,
+            // `OpDistinctStoreEmitter`), so both are accounted for.
+            let snapshot = matches!(callee.name(), "OpRefAlias" | "OpDistinctStore");
             let dropped = if c.admitted.contains(d) {
                 ret_buffer_attr(callee)
             } else {
@@ -5934,7 +5940,10 @@ fn retbuf_uses_ok(v: &Value, rb: u16, c: &ShapeCtx, objects: &HashSet<usize>) ->
             };
             args.iter().enumerate().all(|(i, a)| {
                 if matches!(a.unspan(), Value::Var(w) if *w == rb) {
-                    (is_free && i == 0) || (witnessed && i == 1) || dropped == Some(i)
+                    (is_free && i == 0)
+                        || (witnessed && i == 1)
+                        || (snapshot && i == 0)
+                        || dropped == Some(i)
                 } else {
                     retbuf_uses_ok(a, rb, c, objects)
                 }

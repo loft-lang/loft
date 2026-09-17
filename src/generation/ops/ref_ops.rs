@@ -559,6 +559,24 @@ impl OpEmitter for OpSizeofRefEmitter {
     }
 }
 
+/// `OpRefAlias` — a reference as a value, with the @PLN157 § V-ah arm: a value local (or an
+/// admitted function's phantom buffer parameter) is in NO store, so its alias is the null
+/// reference — which is what a promoted buffer's entry witness must hold there, because
+/// every test against it (`OpDistinctStoreEmitter`) answers "distinct" anyway.
+pub struct OpRefAliasEmitter;
+
+impl OpEmitter for OpRefAliasEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        if let Some(Value::Var(v)) = args.first().map(Value::unspan)
+            && (ctx.output.value_record_locals.contains_key(v)
+                || ctx.output.value_phantom == Some(*v))
+        {
+            return write!(ctx.w, "DbRef::NULL");
+        }
+        super::default::DefaultEmitter.emit(ctx, args)
+    }
+}
+
 /// `OpDistinctStore` — the store-identity test, with the @PLN157 § V-ah arm: a value
 /// local (or an admitted function's phantom buffer parameter) is in NO store, so it is
 /// distinct from everything, and the guard it feeds — a displaced free, a delivery copy —
