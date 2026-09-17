@@ -76,28 +76,79 @@ fn program(body: &str) -> String {
     format!("{PRELUDE}{body}")
 }
 
-/// The plainest copy there is: `(B-Copy)` binds a whole value, and `H` owns a resource.
+/// The plainest copy LEFT after the 2026-09-17 ruling: a value the function does not own.
+///
+/// ⚠ This cell used to be `a = mk(1); b = a`, and that is no longer a copy at all — `(H-Move)`
+/// moves a value the function OWNS.  The refusal's population is now what the function does NOT
+/// own, and a parameter is the clearest member of it: the caller still holds what it passed.
 #[test]
-fn a_whole_value_bind_of_a_droppable_is_refused() {
+fn a_copy_of_what_the_caller_owns_is_refused() {
     let (out, code) = check(
-        "bind",
-        &program("fn main() { a = mk(1); b = a; print(\"{b.id}\"); }"),
+        "param",
+        &program(
+            "fn wrap(c: H) -> S { return S { h: c }; }\n\
+             fn main() { s = wrap(mk(1)); print(\"{s.h.id}\"); }",
+        ),
         "--interpret",
         ON,
     );
     assert!(
         out.contains("[copy-of-droppable]"),
-        "a whole-value bind of a droppable is the copy `(H-Copy-Refuse)` names first\n{out}"
+        "placing what the caller owns is the copy `(H-Copy-Refuse)` still names\n{out}"
     );
     assert!(
-        out.contains("cannot copy `a` here"),
+        out.contains("cannot copy `c` here"),
         "the error names the copy — the value the author wrote, not the destination\n{out}"
     );
     assert!(
-        out.contains("pass it as an argument"),
+        out.contains("the caller still owns what it passed"),
+        "and WHY, in this population's own words: the reason is the caller's ownership, not a \
+         second structure in general\n{out}"
+    );
+    assert!(
+        out.contains("return the owner"),
         "and what to write instead: the rule requires the rewrite, not just the refusal\n{out}"
     );
     assert_ne!(code, Some(0), "a refused program must not compile\n{out}");
+}
+
+/// A value the function OWNS is a MOVE, wherever it is placed — the ruling's whole point, and
+/// the half that would go unnoticed if only the refusals were pinned.
+///
+/// Each of these was REFUSED before 2026-09-17 and had no legal spelling: a function could not
+/// accept a resource and store it, and naming one in order to validate it forfeited placing it.
+#[test]
+fn a_value_the_function_owns_moves_wherever_it_is_placed() {
+    for (name, body) in [
+        (
+            "name_then_wrap",
+            "fn lower(id: integer) -> H { return mk(id); }\n\
+             fn upper(id: integer) -> S { c = lower(id); return S { h: c }; }\n\
+             fn main() { print(\"{upper(1).h.id}\"); }",
+        ),
+        (
+            "validate_then_store",
+            "fn f(id: integer) -> S { c = mk(id); if c.id > 0 { return S { h: c }; } \
+             return S { h: mk(0) }; }\n\
+             fn main() { print(\"{f(1).h.id}\"); }",
+        ),
+        (
+            "open_several_then_collect",
+            "fn main() { a = mk(1); b = mk(2); v: vector<H> = [a, b]; print(\"{len(v)}\"); }",
+        ),
+        (
+            "use_then_store",
+            "fn main() { c = mk(1); n = c.id; v: vector<H> = [c]; print(\"{n}{len(v)}\"); }",
+        ),
+    ] {
+        let (out, code) = check(name, &program(body), "--interpret", ON);
+        assert!(
+            !out.contains("copy-of-droppable"),
+            "`{name}` places a value the function owns, which `(H-Move)` moves — refusing it \
+             would reject the construction the ruling exists to allow\n{out}"
+        );
+        assert_eq!(code, Some(0), "`{name}` must compile\n{out}");
+    }
 }
 
 /// The SWITCH is part of the contract until the corpus is converted, so it is pinned from both
@@ -106,7 +157,10 @@ fn a_whole_value_bind_of_a_droppable_is_refused() {
 fn with_the_switch_off_the_copy_still_compiles() {
     let (out, code) = check(
         "off",
-        &program("fn main() { a = mk(1); b = a; print(\"{b.id}\"); }"),
+        &program(
+            "fn wrap(c: H) -> S { return S { h: c }; }\n\
+             fn main() { s = wrap(mk(1)); print(\"{s.h.id}\"); }",
+        ),
         "--interpret",
         &[],
     );
@@ -163,7 +217,11 @@ fn the_shapes_the_rule_calls_legal_stay_legal() {
 /// only would make a program's legality depend on how it is run.
 #[test]
 fn both_backends_refuse_the_same_lines() {
-    let src = program("fn main() { a = mk(1); b = a; t = (a, 5); print(\"{b.id}{t.0.id}\"); }");
+    let src = program(
+        "fn wrap(c: H) -> S { return S { h: c }; }\n\
+         fn rewrap(s: S) -> S { return S { h: s.h }; }\n\
+         fn main() { a = wrap(mk(1)); b = rewrap(a); print(\"{b.h.id}\"); }",
+    );
     let lines = |out: &str| -> Vec<String> {
         let mut v: Vec<String> = out
             .lines()

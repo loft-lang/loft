@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 525 | 502 | **23** |
+| 524 | 501 | **23** |
 (2026-09-16, the 157 pick re-measured on THIS tree: 518 · 495 · 23.  The per-unit notes
 below are accurate about what each unit ADDS; the total is not transferable.  Each was a delta
 against its own branch's base, and this branch carries work that one does not, so accumulating
@@ -496,6 +496,14 @@ a seventh, `namings_avoid_place`, the per-naming disturbance walk, matching on `
 step.  The opaque column is unmoved.  ../loft2's branch reports the same two units as 522 · 499 and
 523 · 500 against ITS base, and both are right about what they add; the totals differ because the
 bases do, which is why this row is measured here and never accumulated.)
+
+(2026-09-17, @PLN163 P3's narrowing: 524 · 501 · 23, one site FEWER than the 525 · 502 · 23 above,
+and the opaque column unmoved.  The owner's ruling made a value the function owns a MOVE, which
+subsumed `(H-Move)`'s block-result clause, so `lease.rs`'s `declared_in` and the
+`count_assignments` walk behind it were deleted — the walk discriminated on `Value::Set` and
+`Value::Call` and peeled `Span` at every step, so it left BOTH the discriminating and the peeling
+column by one.  A deletion moves this row exactly as an addition does, which is the reason it is
+re-derived rather than reasoned about.)
 
 
 (2026-09-16, @PLN164 C2: one function added that discriminates on `Value` variants, and it

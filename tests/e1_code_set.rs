@@ -45,14 +45,21 @@ const CODES: &[(&str, &str)] = &[
          fn main() { c = H { id: 1 }; a = S { h: c }; b = S { h: c }; \
          print(\"{a.h.id}{b.h.id}\"); }",
     ),
-    // @PLN163 P3 — `b = a` binds a whole droppable value, which `(H-Copy-Refuse)` makes an
-    // error: `H` owns a resource and declares no `OpCopy`, so the copy is a second structure
-    // that would release it again. Opt-in behind `LOFT_LEASE_REFUSE` while this repository's
-    // own corpus is converted, which `compact_output` and its two siblings arm.
+    // @PLN163 P3 — placing a value the function does NOT own. `c` is a parameter, so the caller
+    // still owns what it passed and releases it, and the wrapper would release it again.
+    // Opt-in behind `LOFT_LEASE_REFUSE` while this repository's own corpus is converted, which
+    // `compact_output` and its two siblings arm.
+    //
+    // ⚠ The trigger was `a = H { id: 1 }; b = a` until the owner's 2026-09-17 ruling, and that
+    // shape no longer fires: a value the function OWNS now MOVES `(H-Move)`. A pinned trigger is
+    // a program whose diagnostic is the contract, so a ruling that narrows the diagnostic
+    // retires the trigger with it — this one went silent, and three teeth caught it at once (the
+    // slug, the fix and the door). Pick a trigger from the population the rule KEEPS.
     (
         "copy-of-droppable",
         "struct H { id: integer }\nfn OpDrop(self: H) { print(\"{self.id}\"); }\n\
-         fn main() { a = H { id: 1 }; b = a; print(\"{b.id}\"); }",
+         struct S { h: H }\nfn wrap(c: H) -> S { return S { h: c }; }\n\
+         fn main() { s = wrap(H { id: 1 }); print(\"{s.h.id}\"); }",
     ),
     // @PLN107 dead-store lint. `d = s.items` COPIES (C86), so writing `d` cannot reach
     // `s`, and `d` is never read afterwards — the write is lost.

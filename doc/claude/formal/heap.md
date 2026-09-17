@@ -825,6 +825,14 @@ freed without its hook) opened and CLOSED 2026-09-10, below.
 - **Status:** OPEN — exposed 2026-09-17 by narrowing the refusal to the rules.  Before the
   ruling every one of these was verdict `Refused`, so the gate asked nothing of their releases
   and the disagreement could not show.
+  ⚠ **That is worth stating as a property and not as an anecdote: a `Refused` verdict is an
+  ABSENT MEASUREMENT wearing a verdict's clothes.**  A refused cell is never asked how many times
+  it releases, so a register that refuses too widely does not merely forbid correct programs — it
+  HIDES the cells nobody has judged, and it hides them behind something that reads like an
+  answer.  This is the same failure as an instrument that answers a narrower question than the one
+  it appears to, where silence reads as a pass; it is worse only because a verdict does not even
+  look like silence.  The 23 cells here and in `D-heap-16` were the measure of it: they appeared
+  the moment the verdict narrowed, having been there all along.
 - **Removal:** the copy that makes the second structure, removed wherever the rules move the
   value; `scopes::copy_moves_drop_from` and the hand-off flags beside it are @PLN163 P5's
   subject and this entry is the measurement P5 is verified against.
