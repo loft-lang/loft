@@ -1,0 +1,169 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The pack round-trip: what is written comes back, byte for byte, and a key can be
+// read out of the bulk half without reading the rest of it.
+use assets;
+
+/// A deterministic byte pattern.  A run of zeroes would pass a loader that returned
+/// nothing, so every fixture byte depends on its own index.
+fn pattern(n: integer, salt: integer) -> vector<u8> {
+  out: vector<u8> = [];
+  for i in 0..n { out += [((i * 37 + salt * 11 + i / 251) % 251) as u8 ?? 0]; }
+  out
+}
+
+fn same_bytes(a: const vector<u8>, b: const vector<u8>) -> boolean {
+  if len(a) != len(b) { return false }
+  for i in 0..len(a) { if a[i] != b[i] { return false } }
+  true
+}
+
+/// A pack with both halves populated: two texture pages, a sprite cut out of each,
+/// and an audio blob that is not a page at all.
+fn fixture(p: Pack, b: &hash<Blob[bl_key]>) {
+  p.pages += [PageInfo { pi_name: "mobs", pi_w: 64, pi_h: 32, pi_blob: "page/mobs" }];
+  p.pages += [PageInfo { pi_name: "items", pi_w: 32, pi_h: 32, pi_blob: "page/items" }];
+  p.cells += [Cell { ce_key: "goblin", ce_page: "mobs", ce_x: 0, ce_y: 0,
+                     ce_w: 16, ce_h: 16, ce_ox: 8.0, ce_oy: 16.0 }];
+  p.cells += [Cell { ce_key: "potion", ce_page: "items", ce_x: 0, ce_y: 0,
+                     ce_w: 16, ce_h: 16 }];
+  blob_put(b, "page/mobs", Rgba, pattern(64 * 32 * 4, 1));
+  blob_put(b, "page/items", Rgba, pattern(32 * 32 * 4, 2));
+  blob_put(b, "hit.ogg", Ogg, pattern(2048, 3));
+}
+
+/// A base path nothing else in this suite writes to.
+fn base_for(name: text) -> text {
+  d = temp_dir() ?? ".";
+  "{d}/loft_assets_test_{name}"
+}
+
+fn clean(base: text) {
+  for f in [meta_path(base), blobs_path(base),
+            "{meta_path(base)}.dschema", "{blobs_path(base)}.dschema"] {
+    if file(f).exists() { _ = delete(f); }
+  }
+}
+
+fn test_a_written_pack_reads_back_identical() {
+  base = base_for("roundtrip");
+  clean(base);
+  p = new_pack();
+  b: hash<Blob[bl_key]> = [];
+  fixture(p, b);
+  assert(pack_write(p, b, base), "both halves written");
+
+  q = new_pack();
+  assert(pack_read(q, base), "metadata read back");
+  page = q.pages["mobs"];
+  assert(page != null, "page mobs present");
+  assert(page.pi_w == 64 && page.pi_h == 32, "page shape");
+  cell = q.cells["goblin"];
+  assert(cell != null, "cell goblin present");
+  assert(cell.ce_oy == 16.0, "the origin came back, not its default");
+
+  qb: hash<Blob[bl_key]> = [];
+  assert(store_load(qb, blobs_path(base)), "bulk half read back");
+  out = qb["page/mobs"];
+  src = b["page/mobs"];
+  assert(out != null and src != null, "page pixels present");
+  // A keyed read answers `Blob?`, so the bytes are `vector<u8>?`.  Every `?? []` in
+  // this file sits behind a non-null assert on the line above it: the default is what
+  // an already-failed test would have read, never a comparison of two empty vectors.
+  assert(same_bytes(out.bl_bytes ?? [], src.bl_bytes ?? []), "pixels byte-identical");
+  assert(out.bl_kind is Rgba, "the kind came back too");
+  // Length alone cannot witness the bytes: two blobs of the same size differ here.
+  items = qb["page/items"];
+  clip = qb["hit.ogg"];
+  assert(items != null and clip != null, "both fixture blobs are resident");
+  assert(!same_bytes(items.bl_bytes ?? [], clip.bl_bytes ?? []),
+         "the fixture's blobs are distinguishable at all");
+  clean(base);
+}
+
+fn test_one_key_reads_without_the_rest_of_the_pack() {
+  base = base_for("paged");
+  clean(base);
+  p = new_pack();
+  b: hash<Blob[bl_key]> = [];
+  fixture(p, b);
+  assert(pack_write(p, b, base), "written");
+
+  // The whole point of the bulk half: a reader starts EMPTY and ends holding only
+  // what it asked for.  A loader that pulled the file would pass a value check and
+  // fail this one.
+  res: hash<Blob[bl_key]> = [];
+  got = prefetch(res, blobs_path(base), ["hit.ogg"]);
+  assert(got == 1, "the fetch cost one round trip");
+  clip = res["hit.ogg"];
+  assert(clip != null && len(clip.bl_bytes ?? []) == 2048, "the clip arrived whole");
+  n = 0;
+  for _r in res { n += 1; }
+  assert(n == 1, "only the requested key is resident, not the two pages");
+
+  // Asking again costs nothing — which is what lets a frame assert zero.
+  assert(prefetch(res, blobs_path(base), ["hit.ogg"]) == 0, "a resident key is free");
+  clean(base);
+}
+
+fn test_a_key_the_pack_does_not_have_answers_false() {
+  base = base_for("absent");
+  clean(base);
+  p = new_pack();
+  b: hash<Blob[bl_key]> = [];
+  fixture(p, b);
+  assert(pack_write(p, b, base), "written");
+
+  // A paged reader that cannot say "absent" is one a caller has to guess about.
+  res: hash<Blob[bl_key]> = [];
+  assert(prefetch(res, blobs_path(base), ["no-such-blob"]) == 0, "nothing was fetched");
+  assert(res["no-such-blob"] == null, "and no empty record was invented");
+  clean(base);
+}
+
+fn test_one_base_drives_both_halves_as_a_url() {
+  base = base_for("url");
+  clean(base);
+  p = new_pack();
+  b: hash<Blob[bl_key]> = [];
+  fixture(p, b);
+  assert(pack_write(p, b, base), "written");
+
+  // The plan's whole premise: develop against a file, ship against a CDN, with ONE
+  // string changed.  `file://` is the scheme this suite can drive without a server,
+  // and it takes the same branch an `http(s)://` base does.
+  //
+  // ⚠ The two halves do NOT accept the same spellings underneath: the metadata half
+  // reads a `file://` URL and the paged half REFUSES it (a path or an http URL, and
+  // nothing else).  A test that only read the metadata would pass while a game's
+  // art silently loaded nothing.
+  url = "file://{base}";
+  q = new_pack();
+  assert(pack_read(q, url), "the metadata half read through a URL");
+  assert(q.pages["mobs"] != null, "and carries the same pages");
+
+  res: hash<Blob[bl_key]> = [];
+  got = prefetch(res, blobs_path(url), ["hit.ogg"]);
+  assert(got == 1, "the bulk half fetched through the SAME base, got {got}");
+  clip = res["hit.ogg"];
+  fix = b["hit.ogg"];
+  assert(clip != null and fix != null, "a record, not a refusal");
+  assert(same_bytes(clip.bl_bytes ?? [], fix.bl_bytes ?? []), "the same bytes as the path read");
+  clean(base);
+}
+
+fn test_the_two_halves_are_separate_files() {
+  base = base_for("split");
+  clean(base);
+  p = new_pack();
+  b: hash<Blob[bl_key]> = [];
+  fixture(p, b);
+  assert(pack_write(p, b, base), "written");
+  // The split is the design, and it is observable: the metadata a boot load pays
+  // for is a different file from the art, so it can stay small beside it.
+  assert(file(meta_path(base)).exists(), "metadata half on disk");
+  assert(file(blobs_path(base)).exists(), "bulk half on disk");
+  assert(meta_path(base) != blobs_path(base), "two names, not one");
+  clean(base);
+}

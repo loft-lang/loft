@@ -77,7 +77,6 @@ q_present_local_literal_field DOUBLE
 q_present_local_literal_push DOUBLE
 q_present_local_var_field DOUBLE
 q_present_local_var_push DOUBLE
-q_present_local_var_ret LOST
 q_present_param_call_field DOUBLE
 q_present_param_call_push DOUBLE
 q_present_param_call_ret DOUBLE
@@ -86,4 +85,4 @@ q_present_param_literal_push DOUBLE
 q_present_param_literal_ret DOUBLE
 q_present_param_var_field DOUBLE
 q_present_param_var_push DOUBLE
-q_present_param_var_ret DOUBLE,LOST
+q_present_param_var_ret DOUBLE

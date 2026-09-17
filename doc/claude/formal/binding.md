@@ -165,10 +165,13 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   container (@PLN130 F2/F4/F8).  A plain bind already copies, so this
                   is consistent with what it meant; a `&` gets B-Ref-Reshape instead.
                   A `?`-DISCHARGED element read (`e = v[i]?`) is the same projection with
-                  its absence discharged and is a VIEW on the same terms — an absent
-                  element discharges to null, and there is nothing to view (@PLN164 C3;
-                  today the discharge materialises a copy, which the rule permits and
-                  the rewrite removes).
+                  its absence discharged and is a VIEW on the same terms: the PRESENT
+                  element is viewed, and an ABSENT one discharges to the type's DEFAULT
+                  RECORD, built in a per-site buffer of this frame's (LOFT.md § `?`,
+                  `points[i]?` ⇒ `Point{}`) — not to null, which is what this clause said
+                  until @PLN164 C3 measured every backend answering the default.  There is
+                  nothing of the container to view on that arm, so the buffer is what the
+                  binding names there, and no copy is taken on either.
                   A view of a member that owns a droppable without `OpCopy` never
                   materialises: disturbing its container while the view is used is an error
                   at the disturbance ([heap.md](heap.md) H-View-Drop).
@@ -207,6 +210,13 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   a rule that answered differently on either side of it would give one
                   program two meanings (measured — `d: S = v[0]` read `1` after two
                   appends and `4294967296` after two hundred, loft#1373).
+                  And an event disturbs WHEREVER IT HAPPENS — in this frame, or in
+                  anything the frame CALLS, at any depth.  B-Ref-Reshape states this for
+                  the refusal and B-View inherits it for the materialise: the same
+                  `e = sc.els[0]?; grow(sc); e.a` that answers `3` with the append written
+                  inline read `4294967401` with it one frame down, on both backends, until
+                  @PLN164 C3 gave the walk the callee's half of the question.  Which side
+                  of a call a statement sits on is not one of the four events.
   (B-Ref-Reshape) DISTURBING a container while a `&` reference into it is still LIVE is
                   a COMPILE-TIME ERROR.  These are the shapes where B-Ref-Alias could
                   not hold, and declining them is what makes B-Ref-Alias unconditional
@@ -383,6 +393,55 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 **OPEN: 2.**
 
+* **D-bind-46** *(opened 2026-09-16, CLOSED 2026-09-16)* — `(B-Ref-Alias)`'s in-versus-to
+  distinction at a container held in a FIELD.  `d = &cv.data; cv.data += [7]; cv.data += [8];
+  (d[2] ?? -1) + len(d)` read **0** where 11 is right, on both backends, with the copy-out advice
+  rather than silence.  The SAME body with the two appends moved into a CALLEE read 11 — and that
+  half is pinned by `157-view-header`'s `grown_between` — so one program had two meanings
+  depending on which side of a call the append sat on.  A `remove` under the live link behaved
+  the same way, and a write through the link after a growth was lost (`d[0] = 99` left `cv.data[0]`
+  at 1).  **Where (measured).**  `record_target` already draws the distinction the rule needs —
+  *"`pe = &e` names no container while `pw = &w[0]` names `w`"* — but through `base_container_var`,
+  which reaches only a whole VARIABLE.  A link to a container held in a field IS a projection, so
+  it named `(cv, off_data)`: the same place `cv.data[0]` names, the place model carrying one
+  variable and one field OFFSET.  `(B-Disturb)`'s growth ends only the second of those — it moves
+  every ELEMENT, while it merely repoints the field SLOT that a reference TO the container
+  re-reads.  **Closed** by reporting, off the walk that already answers the place
+  (`projection_place_of`, exposed as `use_analysis::view_source_place_indexed`), whether the chain
+  read an element; `ViewWalk` records the place such a binding names DIRECTLY and
+  `names_container_itself` spares it from `Grown` and `Reshaped`.  `Reassigned` still shakes it —
+  that is the one event which leaves the slot itself with nothing to point at, and sparing it
+  would hand out a link to a store the reassignment released.  The DIRECT place is matched, never
+  `resolve_view_root`'s: a binding whose own container is a view resolves to the OUTER container,
+  and growing THAT does move the record holding this binding's slot.
+  Measured on both backends, byte-identical across a 19-cell matrix, clean under `LOFT_POISON`,
+  the interpreter leak gate and the native leak check, and identical under `LOFT_HOIST_VERIFY=1`
+  and `LOFT_NO_VIEW_HOIST=1` — the native header hoist being the one place the cure could have
+  gone wrong on a single backend.
+  ⚠ **The `&` has to be asked for, and the first cut did not ask.**  A plain whole-collection bind
+  copies at PARSE time into its own `__vdb_N` backing — identically off an owned base and off a
+  borrowed PARAMETER — which read as licence to key the mark on the collection TYPE alone.  Off a
+  LOOP VARIABLE it does not copy: `for b in bv { c = b.vecf; b.vecf += [9] }` aliases and
+  materialises today, and `(B-View)` says it must keep doing so, because a plain bind already meant
+  value semantics.  Hence `amp_container_link`, set where `amp_collection_bind` is decided, and NOT
+  a widening of `is_amp_link`, whose readers are struct-shaped (the whole-record write route gates
+  on `Reference`/`Enum`; the re-key refusal and `(B-Ref-Reshape)`'s refusal would decline different
+  programs).
+  Guard `tests/scripts/a-link-to-a-whole-container-survives-that-containers-growth.loft`.
+  ⚠ Two of its cells passed BEFORE the fix and are controls rather than coverage, which matters
+  before either is cited as evidence: a keyed `a = &s.h` across an add, and a nested
+  `d = &o.inner.data` across a growth.  The nested one passes only because `grown_containers`
+  cannot name a nested place at all (its `OpGetField` arm requires the container to be a bare
+  `Var`), so it is a MISSED disturbance rather than a considered answer — it would pass the same
+  way with the cure reverted.
+  **Left open, and it is the same rule's other half:** a collection link is still quietly
+  downgraded where the rules say REFUSE.  `c = &s.h; s = Host{…}` materialises in silence, which
+  `(B-Ref-Reshape)` calls a compile-time error, because that refusal reads `is_amp_link` and a
+  collection bind is not in its population.  Closing it widens which programs the refusal declines
+  and needs its own measurement over the corpus and the published libraries.
+  Found via @PLN164 C3's matrix (loft#1543).  ⚠ That issue's body names
+  `ViewWalk::shake_plain_places` and `use_analysis::view_source_place_indexed` as code C3 landed;
+  neither existed anywhere — C3 is Open, not shipped, and the two names are its design sketch.
 * **D-bind-45** *(opened 2026-09-15, CLOSED 2026-09-15)* — `(Const-Value)` for a
   value-const value handed to a PLAIN heap parameter.  A plain struct or vector parameter names the
   caller's record (`calls.md` F-ParamHeap), so `fn bump(a: Account) { a.balance = 999 }` called as

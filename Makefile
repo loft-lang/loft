@@ -681,23 +681,44 @@ gallery-mt:
 #
 # After a successful run, `make serve` will work for local browsing.
 gallery:
-	@echo "  [1/7] cleaning doc/pkg ..."
+	@echo "  [1/8] cleaning doc/pkg ..."
 	@rm -rf doc/pkg
-	@echo "  [2/7] checking wasm-pack ..."
+	@echo "  [2/8] checking wasm-pack ..."
 	@if [ ! -x "$$HOME/.cargo/bin/wasm-pack" ] && ! command -v wasm-pack >/dev/null 2>&1; then \
 		echo "    FAIL: wasm-pack not installed."; \
 		echo "    install with: cargo install wasm-pack"; \
 		exit 1; \
 	fi
-	@echo "  [3/7] building wasm bundle ..."
+	@echo "  [3/8] building wasm bundle ..."
 	@$(MAKE) wasm >/tmp/loft_gallery_wasm.log 2>&1 || { \
 		echo "    FAIL: wasm-pack build failed — see /tmp/loft_gallery_wasm.log"; \
 		tail -20 /tmp/loft_gallery_wasm.log; \
 		exit 1; \
 	}
-	@echo "  [4/7] checking required gallery files ..."
+	@echo "  [4/8] checking required gallery files ..."
+	@# The sprite pack is a required gallery file like any other: `25-brick-buster`
+	@# reads its atlas out of it, and without it the example compiles, runs, and
+	@# draws an empty 1x1 atlas — a failure that looks like a working page.  The
+	@# packer writes into tools/brick-buster/assets (gitignored build output), so
+	@# refresh the served copies from there whenever they are present; the check
+	@# below is what refuses to ship a gallery missing them.
+	@#
+	@# ⚠ The served copies are COMMITTED, because the deployed gallery is this
+	@# directory — a pack that exists only on a build box is a pack the published
+	@# page does not have.  `pack_atlas.loft` does not write byte-identical output
+	@# twice, so re-running the packer (via `make game` / `make play`) shows these
+	@# as modified; that is the packer, not damage.  This target only COPIES, so
+	@# `make gallery` alone leaves them alone.
+	@if [ -f tools/brick-buster/assets/bb.blobs.store ]; then \
+		mkdir -p doc/assets; \
+		cp tools/brick-buster/assets/bb.meta.store \
+		   tools/brick-buster/assets/bb.blobs.store \
+		   tools/brick-buster/assets/bb.meta.store.dschema \
+		   tools/brick-buster/assets/bb.blobs.store.dschema doc/assets/ 2>/dev/null || true; \
+	fi
 	@missing=0; \
 	for f in doc/gallery.html doc/gallery-run.html doc/gallery-examples.js doc/loft-gl.js \
+	         doc/loft-rt.js doc/assets/bb.meta.store doc/assets/bb.blobs.store \
 	         doc/pkg/loft.js doc/pkg/loft_bg.wasm doc/pkg/loft.d.ts; do \
 		if [ ! -s "$$f" ]; then \
 			echo "    FAIL: $$f is missing or empty"; \
@@ -705,7 +726,7 @@ gallery:
 		fi; \
 	done; \
 	if [ $$missing -gt 0 ]; then exit 1; fi
-	@echo "  [5/7] checking wasm/js glue are from the same build ..."
+	@echo "  [5/8] checking wasm/js glue are from the same build ..."
 	@js_mtime=$$(stat -c %Y doc/pkg/loft.js); \
 	wasm_mtime=$$(stat -c %Y doc/pkg/loft_bg.wasm); \
 	delta=$$((wasm_mtime - js_mtime)); \
@@ -715,7 +736,7 @@ gallery:
 		echo "    One or both is stale — rerun 'make gallery'."; \
 		exit 1; \
 	fi
-	@echo "  [6/7] starting transient http.server and probing assets ..."
+	@echo "  [6/8] starting transient http.server and probing assets ..."
 	@port=18765; \
 	cd doc && python3 -m http.server $$port --bind 127.0.0.1 \
 	  >/tmp/loft_gallery_server.log 2>&1 & \
@@ -742,7 +763,9 @@ gallery:
 	@# reference so post-deploy browsers fetch fresh.  See
 	@# scripts/cache_bust_html.py for rationale.
 	@python3 scripts/cache_bust_html.py >/dev/null
-	@echo "  [7/7] gallery ready — run 'make serve' and open http://localhost:8000/gallery.html"
+	@echo "  [7/8] rendering every example in a real browser ..."
+	@scripts/gallery_render_check.sh
+	@echo "  [8/8] gallery ready — run 'make serve' and open http://localhost:8000/gallery.html"
 
 # @PLN117 — COOP/COEP so a threaded gallery bundle (`make gallery-mt`) gets
 # crossOriginIsolated === true and par() runs on Web Workers.  Harmless for the
@@ -907,7 +930,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate reference-review skills-review clippy-review
+.PHONY: work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate file-sizes reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -995,6 +1018,15 @@ nullable-road:  ## @PLN160: where does the nullable lowering leave its dense twi
 # render as a broken target.  A report says what it found; it does not stop the build.
 release-checklist:  ## Per-release checklist: what CI proved, and what is left for a human
 	@python3 scripts/release-checklist.py $(ARGS) || true
+
+# Both halves of "does this file hold ONE subject, at a length someone can use?":
+# how long files are and whether their sections are comparable subjects (file-sizes),
+# and whether a contract doc has absorbed its own history instead of splitting it into
+# an `-history.md` companion (doc_history_report).  A REPORT, never a gate.
+file-sizes:  ## Are doc/source files too long to use, and do they hold one subject?
+	@python3 scripts/file-sizes.py $(ARGS) || true
+	@echo
+	@python3 scripts/doc_history_report.py --top 15 || true
 
 # The liveness census (@PLN156): are the gates themselves still live?  Suppressions
 # justified by CLOSED issues, gate workflows that quietly stopped firing, checklist
@@ -1137,10 +1169,30 @@ view: view-refresh
 # `run` in tools/brick-buster/loft.toml's `[[build.asset]]`, and
 # `doc_hygiene::brick_buster_pack_step_matches_its_manifest` pins the
 # two together so they cannot drift apart silently.
+#
+# `LOFT_HASH_SEED` is what makes the pack BYTE-REPRODUCIBLE (loft#710).  A hash
+# draws a random seed per table, stores it in its bucket record, and that seed
+# decides bucket ORDER — so the same art packed twice came out different in ten
+# bytes: the seed word itself, plus two entries that landed in swapped slots.
+# The pack is a COMMITTED artefact, so every rebuild showed as a modification
+# and "the art changed" was indistinguishable from "it was rebuilt again".
+#
+# Pinning it here and nowhere else is deliberate: the randomness is the P253
+# hash-DoS defence, which a running program still wants.  A build that publishes
+# an artefact does not.  The value matches the one the rest of the tree pins
+# (`tests/paged_browser.rs`, `tests/store_persist_loft.rs`).
+#
+# ⚠ Only this spelling is covered.  `[[build.asset]]` accepts `name` / `run` /
+# `lifetime` / `inputs` / `outputs` / `targets` and has no `env` key, and
+# `build_phase::run_asset_command` inherits the ambient environment — so a pack
+# built through `loft build` is reproducible only if the caller exports the seed
+# themselves.  Closing that properly means an `env` key on the asset, which is a
+# change to the manifest surface rather than to this recipe.
 .PHONY: brick-buster-pack
 brick-buster-pack:
 	@echo "  drawing Brick Buster's sprite pack ..."
-	@./target/release/loft --interpret tools/brick-buster/pack_atlas.loft \
+	@LOFT_HASH_SEED=0x0123456789abcdef \
+	    ./target/release/loft --interpret tools/brick-buster/pack_atlas.loft \
 	    >/tmp/loft_bb_pack.log 2>&1 || { \
 	    echo "    FAIL: sprite pack — see /tmp/loft_bb_pack.log"; \
 	    tail -20 /tmp/loft_bb_pack.log; exit 1; }

@@ -8950,6 +8950,8 @@ fn main() {
     // The scope pass runs first, as it does under `loft test`: the lints read the ownership
     // verdicts, the materialised copies and the drops it places.  A program with an error
     // stops at the check below and is never compiled, so it needs neither.
+    // A lint that needs what the scope pass decided asks the deciding pass rather than
+    // re-deriving it — the copy notice asks `place_result` (@PLN164 B2 units 2-3).
     if p.diagnostics.level() < Level::Error {
         scopes::check(&mut p.data, &mut p.database);
         loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);

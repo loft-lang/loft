@@ -15,6 +15,7 @@ cycle follows is [RELEASE.md](../RELEASE.md); this tree is what each cycle did w
 | [`2026-07`](2026-07/README.md) | candidate release blockers — stability, the registry, library hardening |
 | [`2026-08`](2026-08/README.md) | release state (prep 2026-08-01): the heap-correctness body of work |
 | [`2026-09`](2026-09/README.md) | release state (prep 2026-09-04): both streams joined; valgrind red put to the owner |
+| [`2026-10`](2026-10/README.md) | release state (opened mid-cycle 2026-09-16): the halfway audit — what the mid rows report and what the cycle owes |
 
 ## What a cycle's directory holds
 

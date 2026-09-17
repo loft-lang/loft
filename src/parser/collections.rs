@@ -1116,6 +1116,39 @@ impl Parser {
     /// type, so a group one level down (`outer.inner.by_k`) resolves as well as a
     /// bare `x.by_k` — stopping at the bare form is what left loft#898's nested case
     /// on the unsafe path until its guard row a7 caught it.
+    /// @PLN164 C1 step 2 — is `to` an element of a VECTOR MEMBER of a linked collection group?
+    ///
+    /// A literal written straight into such a slot would skip the group maintenance an element
+    /// write owes: `@FR-Col-Group` says a record leaves every keyed sibling before it is
+    /// replaced and is indexed again under the key it now carries, which is what
+    /// [`Self::group_elem_write`] wraps the copy with.  Measured — the in-place write left
+    /// `by_k` holding the record under the hash of its OLD key (`by_k[11]` null with
+    /// `len(by_k)` still 2), which is loft#900's defect returning by another road and is what
+    /// `a-group-element-written-through-the-vector-member-reaches-every-member` catches.
+    ///
+    /// Asked over BOTH element spellings, unlike [`Self::vector_group_elem_site`], which serves
+    /// a site that only ever sees `OpVectorRef`: an admission test that recognised one spelling
+    /// would let the other through, and here that costs the group's agreement rather than an
+    /// optimisation.
+    pub(crate) fn is_grouped_vector_elem(&self, to: &Value) -> bool {
+        let Value::Call(nr, args) = to.unspan() else {
+            return false;
+        };
+        if !matches!(
+            self.data.def(*nr).name(),
+            "OpVectorRef" | "OpVectorRefNullable" | "OpGetVector" | "OpGetVectorNullable"
+        ) {
+            return false;
+        }
+        let Some(coll) = args.first().map(|a| a.unspan().clone()) else {
+            return false;
+        };
+        let Some((struct_tp, byte_off)) = self.keyed_field_site(&coll) else {
+            return false;
+        };
+        self.database.keyed_group_members(struct_tp, byte_off).len() >= 2
+    }
+
     fn keyed_field_site(&self, coll: &Value) -> Option<(u16, u16)> {
         let Value::Call(gf_nr, gf_args) =
             crate::use_analysis::through_null_arm(&self.data, coll).unspan()

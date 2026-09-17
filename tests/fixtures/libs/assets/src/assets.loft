@@ -1,0 +1,498 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// assets — a game's content pack, which IS a loft store.
+//
+// There is no codec here, and no parse step: the struct definitions below ARE the
+// file layout. That is what lets a pack sit on any dumb file server and be read by
+// HTTP range, with no server-side code — a browser fetches the pages one lookup
+// touches and nothing else.
+//
+// A pack is TWO stores, split by how each half is READ:
+//
+//   * `Pack` — the metadata. Small, read whole at boot, and a wrapper struct
+//     holding seven keyed collections, so one file carries all of them.
+//   * `hash<Blob[bl_key]>` — the bulk bytes: pixels, audio, fonts. Rooted on the
+//     hash itself, never reached through a field, because a collection reached
+//     through one records the WRAPPER as the store's type and the paged loaders
+//     refuse such a store.
+//
+// Mixing the two would make the boot load pay for the art.
+
+// --- What a pack holds ---
+
+use shapes;
+
+/// What a blob's bytes are, so a loader knows what to do with them without
+/// sniffing the content. `Rgba` is a texture page's own pixels — premultiplied,
+/// row-major, four bytes per texel — already decoded by the packer, so the runtime
+/// never learns how the art was made.
+pub enum BlobKind { Bytes, Rgba, Png, Ogg, Wav, Ttf, Woff2 }
+
+/// Whether a definition draws or lights. A light is a placed instance like any
+/// other, and this is what says which.
+pub enum DefKind { Sprite, Light }
+
+/// Raw bytes under a key — a texture page's pixels, audio, a font, a source PNG.
+///
+/// One blob is the **paging unit**: `store_load_key_text` fetches the pages this
+/// record touches and nothing else. So size a blob like an atlas page rather than
+/// like one sprite — a store's minimum image is 8 KiB, and a finer key fetches a
+/// page's worth either way.
+pub struct Blob {
+  bl_key: text,
+  bl_kind: BlobKind = Bytes,
+  bl_bytes: vector<u8>,
+}
+
+/// A texture page's SHAPE, and the blob key its pixels live under.
+///
+/// The dimensions are metadata and the pixels are bulk, so they live in different
+/// stores. A loader that needs to know a page is 64x32 — to build UVs, to size a GL
+/// texture, to decide what to prefetch — gets that from the boot load without
+/// fetching a single texel.
+pub struct PageInfo {
+  pi_name: text,
+  pi_w: integer,
+  pi_h: integer,
+  pi_blob: text,          // the `Rgba` blob holding this page's pixels
+}
+
+/// One sprite's rect within a page, plus the origin a stage places it by.
+///
+/// `ce_proxy` is the collision proxy DERIVED from this cell's own alpha at pack
+/// time (see `cell_proxy`), in cell-local coordinates. It is empty when nothing
+/// derived one — a pack built before proxies, or a cell with no opaque texels —
+/// and an empty proxy hits nothing, so a consumer that finds one absent falls back
+/// to the cell rect rather than colliding with everything.
+pub struct Cell {
+  ce_key: text,
+  ce_page: text,
+  ce_x: integer,
+  ce_y: integer,
+  ce_w: integer,
+  ce_h: integer,
+  ce_ox: float = 0.0,
+  ce_oy: float = 0.0,
+  ce_proxy: vector<shapes::Rect>,
+}
+
+/// An animation: a run of cells laid out in one page's grid. Mirrors `stage`'s
+/// `Sequence`, so a loader hands it straight over.
+pub struct Seq {
+  sq_key: text,
+  sq_page: text,
+  sq_first: integer,
+  sq_count: integer,
+  sq_fps: float = 12.0,
+  sq_mode: integer = 0,
+  sq_cols: integer = 1,
+  sq_rows: integer = 1,
+}
+
+/// An object definition — GameMaker's *object*, the thing a room places.
+///
+/// A walk cycle is asset data and not code, so the animation table hangs off the
+/// definition (see `anim_of`) rather than living in a game's source. A light
+/// carries its radius, colour and power here and is placed exactly like a sprite.
+pub struct Def {
+  df_name: text,
+  df_kind: DefKind = Sprite,
+  df_cell: text = "",          // the still sprite, when it has no sequence
+  df_w: float = 0.0,
+  df_h: float = 0.0,
+  df_ox: float = 0.0,
+  df_oy: float = 0.0,
+  df_layer: integer = 0,
+  df_radius: float = 0.0,      // light only: reach is 0 at exactly this distance
+  df_colour: integer = 0,
+  df_power: float = 0.0,
+}
+
+/// One row of a definition's animation table: `(action, facing) -> sequence`.
+/// Build `an_key` as `"{def}/{action}/{facing}"`, which is what `anim_of` looks up.
+pub struct Anim {
+  an_key: text,
+  an_def: text,
+  an_action: text,
+  an_facing: integer,
+  an_seq: text,
+}
+
+/// A room: a named space that placed instances live in.
+pub struct Scene {
+  sc_name: text,
+  sc_w: integer,
+  sc_h: integer,
+}
+
+/// A placed instance — GameMaker's *room instance*.
+///
+/// Definitions plus these are what a scene IS; a flat node dump cannot say that two
+/// goblins are the same goblin. The fields mirror `stage::Place`, so loading a scene
+/// is a copy rather than a translation.
+pub struct Placed {
+  pd_scene: text,
+  pd_order: integer,
+  pd_def: text,
+  pd_x: float = 0.0,
+  pd_y: float = 0.0,
+  pd_depth: float = 0.0,
+  pd_layer: integer = 0,
+  pd_rot: float = 0.0,
+  pd_sx: float = 1.0,
+  pd_sy: float = 1.0,
+  pd_alpha: float = 1.0,
+  pd_colour: integer = 0,
+  pd_visible: boolean = true,
+}
+
+/// A pack's METADATA half — every collection a game reads at boot.
+///
+/// Binding through this container is what puts all seven collections in one file: a
+/// keyed field shares its container's store, so one persist call writes one file and
+/// a reader that declares the same type gets all of it. Read it WHOLE; it is small,
+/// every part is needed from the first frame, and being a wrapper struct it cannot be
+/// paged anyway. The bytes are the other store's job.
+pub struct Pack {
+  pages: hash<PageInfo[pi_name]>,
+  cells: hash<Cell[ce_key]>,
+  seqs: hash<Seq[sq_key]>,
+  defs: hash<Def[df_name]>,
+  anims: hash<Anim[an_key]>,
+  scenes: hash<Scene[sc_name]>,
+  placed: index<Placed[pd_scene, pd_order]>,
+}
+
+// --- Writing a pack, and reading one back ---
+
+/// An empty pack — every collection present and none of them holding anything.
+///
+/// Both a packer and a loader start here: a loader declares the pack it is about to
+/// fill, then hands it to `pack_read`.
+pub fn new_pack() -> Pack {
+  Pack { pages: [], cells: [], seqs: [], defs: [], anims: [], scenes: [],
+         placed: [] }
+}
+
+/// Where a pack's metadata half lives, given the name the pack is known by.
+///
+/// `base` is a local path or an `http(s)://` URL — the two halves are named the same
+/// way either side of the wire, which is what lets a game develop against a file and
+/// ship against a CDN with only the base changed.
+pub fn meta_path(base: text) -> text { "{base}.meta.store" }
+
+/// Where a pack's bulk half lives. Pass this to `prefetch` to page a blob out of it.
+pub fn blobs_path(base: text) -> text { "{base}.blobs.store" }
+
+/// Is this base a URL rather than a path on this machine?
+fn is_url(base: text) -> boolean {
+  base.starts_with("http://") || base.starts_with("https://")
+    || base.starts_with("file://")
+}
+
+/// Put a blob under its key, ready to be written.
+///
+/// Use this rather than appending: `+=` on a `&hash` parameter retypes it to a
+/// `vector<Blob>` and the program stops compiling.
+pub fn blob_put(b: &hash<Blob[bl_key]>, key: text, kind: BlobKind,
+                bytes: const vector<u8>) {
+  b[key] = Blob { bl_key: key, bl_kind: kind, bl_bytes: bytes };
+}
+
+/// Write both halves of a pack, answering whether both landed.
+///
+/// A pack is final by the time it ships, so this copies rather than binds: a copied
+/// image lays each collection out in its own order, which is what makes one keyed
+/// lookup one RUN of pages instead of a scatter — the difference between a range
+/// read that pays for a page and one that pays for the file. Writing needs a
+/// desktop; a browser reads packs and does not build them.
+pub fn pack_write(p: const Pack, blobs: const hash<Blob[bl_key]>,
+                  base: text) -> boolean {
+  if !store_persist_copy(p, meta_path(base)) { return false }
+  store_persist_copy(blobs, blobs_path(base))
+}
+
+/// Read a pack's metadata half in full, answering whether it arrived.
+///
+/// Give it a pack from `new_pack`. `base` is a local path or an `http(s)://` /
+/// `file://` URL, and that is the only thing that changes between developing against
+/// a file and shipping against a CDN. The bytes are NOT read here — ask for those by
+/// key, through `prefetch`, at a load or level boundary.
+///
+/// A URL is fetched from a source you TRUST: the image is structurally validated, so
+/// a corrupt file is refused rather than adopted, but its contents are not
+/// authenticated. Serve packs from your own origin, or verify the download yourself
+/// with `store_load_url` before reading it.
+pub fn pack_read(p: Pack, base: text) -> boolean {
+  if is_url(base) { return store_load_url_trusted(p, meta_path(base)) }
+  store_load(p, meta_path(base))
+}
+
+// --- Asking a pack what a scene needs ---
+
+/// The sequence an action and a facing map to, or `""` when the definition has none.
+///
+/// This is the animation table's whole point: `anim_of(pack, "goblin", "walk", 2)`
+/// answers `"goblin_walk_n"` with nothing in a game's source holding the mapping, and
+/// an action the definition does not have answers empty rather than a plausible wrong
+/// sequence.
+pub fn anim_of(p: const Pack, def: text, action: text, facing: integer) -> text {
+  row = p.anims["{def}/{action}/{facing}"];
+  if row == null { return "" }
+  row.an_seq
+}
+
+/// Every blob key a scene's instances draw from within `radius` of `(cx, cy)`.
+///
+/// Ask for this at a load or a level boundary, never inside a frame: a range read is
+/// a round trip and a frame is 16 ms, so a frame that DISCOVERS it needs an asset
+/// stutters visibly. A negative `radius` means the whole scene — what a small room
+/// and a loading screen both want. Duplicates are dropped, because a page shared by
+/// forty instances is still one fetch.
+pub fn keys_near(p: const Pack, scene: text, cx: float, cy: float,
+                 radius: float) -> vector<text> {
+  out: vector<text> = [];
+  for i in p.placed {
+    if i.pd_scene != scene { continue }
+    if radius >= 0.0 {
+      dx = i.pd_x - cx;
+      dy = i.pd_y - cy;
+      if dx * dx + dy * dy > radius * radius { continue }
+    }
+    d = p.defs[i.pd_def];
+    if d == null { continue }
+    if d.df_cell == "" { continue }        // a light draws nothing
+    c = p.cells[d.df_cell];
+    if c == null { continue }
+    page = p.pages[c.ce_page];
+    if page == null { continue }
+    seen = false;
+    for k in out { if k == page.pi_blob { seen = true } }
+    if !seen { out += [page.pi_blob]; }
+  }
+  out
+}
+
+/// Pull `keys` into `into`, and answer how many actually COST something.
+///
+/// `source` is `blobs_path(base)`. A key already resident is skipped, so the answer is
+/// the number of round trips this call paid for: what a level boundary wants to log,
+/// and what a frame must be able to assert is zero. A key the pack does not hold is
+/// skipped too — an absent asset costs a lookup, not a record.
+pub fn prefetch(into: hash<Blob[bl_key]>, source: text,
+                keys: const vector<text>) -> integer {
+  // A `file://` base names a file on this machine, and the paged loader takes the
+  // path — it refuses the URL spelling outright.  Dropping the scheme here is what
+  // lets ONE base drive both halves of a pack; the metadata half reads a `file://`
+  // URL directly, so without this the same string would work for one and not the
+  // other.
+  src = source;
+  // Byte offsets, because a slice is bytes: `len` counts CHARACTERS and a path
+  // outside ASCII would be cut short by it.
+  if src.starts_with("file://") { src = src[7..size(src)]; }
+  n = 0;
+  for k in keys {
+    if into[k] != null { continue }
+    if store_load_key_text(into, src, k) { n += 1 }
+  }
+  n
+}
+
+// --- Deriving a collision proxy from the art ---
+
+/// A texel at or below this alpha is not part of the silhouette.
+///
+/// Not 128. Antialiased art has a fringe of low-alpha texels that visibly belong
+/// to the sprite, and a proxy that excludes them stops short of the outline a
+/// player sees. 8 is the value @PLN146 F7a measured the corpus with.
+pub const PROXY_ALPHA_ON = 8;
+
+/// How many bands a derived proxy is cut into.
+///
+/// Measured over 36 sprites (@PLN146 F7a): one tight box overshoots the art by
+/// +150.6 % on average, a convex hull by +54.9 %, 8 bands by +52.2 % and 16 by
+/// +36.7 % — and 16 beats the hull on mean, median AND worst case while needing no
+/// shape kind `shapes` does not have. 32 buys another 10 points for twice the
+/// boxes; 16 is where the curve flattens.
+pub const PROXY_BANDS = 16;
+
+/// The alpha of one texel of an `Rgba`/`Bytes` page, or 0 when it is off the page.
+///
+/// Off-page reads 0 — TRANSPARENT — rather than null, because the only caller is a
+/// containment scan and a texel that is not there cannot be part of a silhouette.
+fn texel_alpha(ta_px: const vector<u8>, ta_stride: integer, ta_x: integer,
+               ta_y: integer) -> integer {
+  ta_i = (ta_y * ta_stride + ta_x) * 4 + 3;
+  if ta_i < 0 || ta_i >= len(ta_px) { return 0 }
+  ta_px[ta_i]?
+}
+
+/// The along-axis extent of a cell's opaque mask: `(lo, hi)`, or `(-1, -1)` when
+/// nothing in the cell is opaque.
+///
+/// `swap` reads the mask transposed, which is how one routine serves both axes.
+fn opaque_extent(oe_px: const vector<u8>, oe_page: const PageInfo,
+                 oe_c: const Cell, oe_swap: boolean) -> (integer, integer) {
+  oe_lo = -1;
+  oe_hi = -1;
+  oe_vn = if oe_swap { oe_c.ce_w } else { oe_c.ce_h };
+  oe_un = if oe_swap { oe_c.ce_h } else { oe_c.ce_w };
+  for v in 0..oe_vn {
+    for u in 0..oe_un {
+      oe_ax = oe_c.ce_x + (if oe_swap { v } else { u });
+      oe_ay = oe_c.ce_y + (if oe_swap { u } else { v });
+      if texel_alpha(oe_px, oe_page.pi_w, oe_ax, oe_ay) > PROXY_ALPHA_ON {
+        if oe_lo < 0 { oe_lo = v; }
+        oe_hi = v;
+        break;
+      }
+    }
+  }
+  (oe_lo, oe_hi)
+}
+
+/// Band the opaque texels along ONE axis and take each band's tight box.
+///
+/// `swap` runs the identical decomposition on the other axis by reading the mask
+/// transposed and un-transposing the boxes, which is how one routine answers both
+/// without a second copy of the arithmetic. Boxes come back in CELL-LOCAL
+/// coordinates.
+fn band_boxes(bb_px: const vector<u8>, bb_page: const PageInfo, bb_c: const Cell,
+              bb_k: integer, bb_swap: boolean) -> vector<shapes::Rect> {
+  bb_out: vector<shapes::Rect> = [];
+  (bb_lo, bb_hi) = opaque_extent(bb_px, bb_page, bb_c, bb_swap);
+  if bb_lo < 0 { return bb_out }
+  bb_span = bb_hi - bb_lo + 1;
+  bb_un = if bb_swap { bb_c.ce_h } else { bb_c.ce_w };
+
+  // One accumulator per band.  Parallel vectors rather than a keyed collection:
+  // the index IS the key, and a hash here would allocate a record per band for a
+  // number the loop already has.
+  bmin_u: vector<integer> = [];
+  bmax_u: vector<integer> = [];
+  bmin_v: vector<integer> = [];
+  bmax_v: vector<integer> = [];
+  for _ in 0..bb_k {
+    bmin_u += [-1]; bmax_u += [-1]; bmin_v += [-1]; bmax_v += [-1];
+  }
+  for v in bb_lo..=bb_hi {
+    // `/` types nullable (a zero divisor answers null); `bb_span` is `bb_hi - bb_lo + 1`
+    // behind the `bb_lo < 0` return above, so it is at least 1 and `?? 0` is unreachable.
+    bb_band = ((v - bb_lo) * bb_k) / bb_span ?? 0;
+    if bb_band > bb_k - 1 { bb_band = bb_k - 1; }
+    for u in 0..bb_un {
+      bb_ax = bb_c.ce_x + (if bb_swap { v } else { u });
+      bb_ay = bb_c.ce_y + (if bb_swap { u } else { v });
+      if texel_alpha(bb_px, bb_page.pi_w, bb_ax, bb_ay) <= PROXY_ALPHA_ON { continue }
+      if bmin_u[bb_band]? < 0 || u < bmin_u[bb_band]? { bmin_u[bb_band] = u; }
+      if u > bmax_u[bb_band]? { bmax_u[bb_band] = u; }
+      if bmin_v[bb_band]? < 0 || v < bmin_v[bb_band]? { bmin_v[bb_band] = v; }
+      if v > bmax_v[bb_band]? { bmax_v[bb_band] = v; }
+    }
+  }
+  for b in 0..bb_k {
+    if bmin_u[b]? < 0 { continue }
+    bb_uu = bmin_u[b]? as float;
+    bb_vv = bmin_v[b]? as float;
+    bb_uw = (bmax_u[b]? - bmin_u[b]? + 1) as float;
+    bb_vh = (bmax_v[b]? - bmin_v[b]? + 1) as float;
+    if bb_swap {
+      bb_out += [shapes::Rect{rx: bb_vv, ry: bb_uu, rw: bb_vh, rh: bb_uw}];
+    } else {
+      bb_out += [shapes::Rect{rx: bb_uu, ry: bb_vv, rw: bb_uw, rh: bb_vh}];
+    }
+  }
+  bb_out
+}
+
+/// Total area of a box set — the numerator of the overshoot the packer gates on.
+fn boxes_area(ba: const vector<shapes::Rect>) -> float {
+  ba_t = 0.0;
+  for r in ba { ba_t += r.rw * r.rh; }
+  ba_t
+}
+
+/// How many texels of this cell are opaque — the thing a proxy stands for, and the
+/// denominator of `proxy_overshoot`.
+pub fn opaque_texels(ot_px: const vector<u8>, ot_page: const PageInfo,
+                     ot_c: const Cell) -> integer {
+  ot_n = 0;
+  for y in 0..ot_c.ce_h {
+    for x in 0..ot_c.ce_w {
+      if texel_alpha(ot_px, ot_page.pi_w, ot_c.ce_x + x, ot_c.ce_y + y) > PROXY_ALPHA_ON {
+        ot_n += 1;
+      }
+    }
+  }
+  ot_n
+}
+
+/// Derive `c`'s collision proxy from the page's own alpha, in cell-local
+/// coordinates.
+///
+/// Banded on the TIGHTER axis: the derivation runs both ways and keeps the smaller
+/// total area. 17 of the 36 corpus sprites band better by column than by row, so
+/// choosing per sprite rather than fixing an axis takes the median overshoot from
+/// +29.2 % to +22.8 % — for the cost of running a pass twice at pack time, which
+/// is a cost nothing at runtime pays.
+///
+/// A cell with no opaque texels derives an EMPTY proxy, and an empty proxy hits
+/// nothing. That is the answer a fully transparent cell should give; a single box
+/// around it would collide with whatever stood there.
+pub fn cell_proxy(c: const Cell, page: const PageInfo, px: const vector<u8>,
+                  bands: integer = PROXY_BANDS) -> vector<shapes::Rect> {
+  rows = band_boxes(px, page, c, bands, false);
+  cols = band_boxes(px, page, c, bands, true);
+  if len(cols) > 0 && boxes_area(cols) < boxes_area(rows) { return cols }
+  rows
+}
+
+/// How much bigger a derived proxy is than the art it stands for.
+///
+/// The number F7 gates on: `<= 1.0` is at most twice the art. Reported per sprite
+/// rather than asserted in aggregate, because one adversarial shape — three thin
+/// diagonal arrows — misses the bound at every band count, and a bound nothing can
+/// violate is not a bound.
+pub fn proxy_overshoot(po_boxes: const vector<shapes::Rect>, po_solid: integer) -> float {
+  if po_solid <= 0 { return 0.0 }
+  ((boxes_area(po_boxes) - (po_solid as float)) / (po_solid as float))?
+}
+
+// --- Checking the layout before anything reads a pack ---
+
+/// The pack's own types, field by field, as the store records them.
+///
+/// Read this when the fingerprints below disagree: it names the type and the field
+/// whose position moved, which the single number cannot. Derived by reflection from
+/// the schema itself, so it cannot drift from it.
+pub fn layout_descriptor() -> text {
+  d = "";
+  for n in ["Blob", "PageInfo", "Cell", "Seq", "Def", "Anim", "Scene", "Placed", "Pack"] {
+    t = type_named(n);
+    if t == null { d += "{n} MISSING\n"; continue }
+    d += "{t.name} size={t.size}\n";
+    for f in t.fields {
+      d += "  {f.name} {f.type_name} @{f.position} {f.kind} null={f.nullable}\n";
+    }
+  }
+  d
+}
+
+/// One number naming this build's pack layout — compare it across targets before a
+/// pack is read.
+///
+/// The struct definition IS the file layout, so a field that sits four bytes further
+/// along on one target reads a NEIGHBOUR's value on the other, silently, and the file
+/// looks corrupt rather than the layout looking wrong. A game that reads packs built
+/// elsewhere should compare this once at boot and refuse rather than draw garbage.
+/// (A 32-bit FNV-1a over `layout_descriptor`, masked at every step because an
+/// unbounded multiply would reach loft's null.)
+pub fn layout_fingerprint() -> integer {
+  h = 2166136261;
+  for c in layout_descriptor() {
+    h = (h ^ (c as integer)) & 4294967295;
+    h = (h * 16777619) & 4294967295;
+  }
+  h
+}

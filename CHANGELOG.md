@@ -24,6 +24,25 @@ parameter is a warning for now: declare that parameter `const` if the function o
 (`fn(const T)` for a function type), or pass a copy.  The standard library's readers — `len`,
 `sum`, `join`, the `JsonValue` accessors and more — already declare theirs.
 
+**A tuple read that can miss now fits the type you declare for it.**  Reading `v[i]` from a
+`vector<(integer, text)>` with a variable index can miss, so the value is "a tuple whose members
+are all absent" — which you write as `(integer?, text?)`.  Three things refused that type:
+storing the read in it, returning it from a function declared with it, and reading the members of
+a generic `T?` at a tuple. All three work now. Returning such a read from a function declared
+`-> (integer, text)` works too, and says per member that an absent one becomes null there.
+
+**A function that returns one of its locals releases the others.**  A type with an `OpDrop`
+hook (a file, a socket, a transaction) could miss its release, or get it twice, when a function
+returned one local out of several.  Three shapes did this, silently and on both backends:
+- `return a ?? b`, `return if c { a } else { b }` and the `match` form never released the local
+  they did not return;
+- a later `return b`, after an earlier `return a`, released `b` twice;
+- reassigning the returned local before the `return` (`a = open(x); a = open(y); return a`)
+  never released the first value.
+
+Each resource is now released exactly once: the returned one by the caller, every other one when
+the function returns.
+
 **`self` is the one way to write a method, and `both` is deprecated.**  A function whose first
 parameter is `self` was already callable both as `x.f()` and as `f(x)`; now it can also be
 imported by name, `use lib::(f)`, which was the one thing only a `both` function could do.  So

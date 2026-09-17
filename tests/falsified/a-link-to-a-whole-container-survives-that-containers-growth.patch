@@ -1,0 +1,338 @@
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 31e6fb72a..9b811c4dd 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -3380,21 +3380,6 @@ use a separate collection or add after the loop"
+         // `amp_vector_locals`).  A keyed whole-value write already replaces contents rather
+         // than minting, so it needs no such registration.
+         let amp_vector_bind = amp_collection_bind && matches!(amp_source, Type::Vector(_, _));
+-        // @FR-B-Ref-Alias — record on the VARIABLE that the `&` was written at a COLLECTION
+-        // bind.  The IR does not carry it: `d = &cv.data` and `d = cv.data` off a BORROWED
+-        // base emit the same ops and BOTH alias, so nothing downstream can tell the live link
+-        // from the plain view that `(B-View)` may quietly copy.  The view-materialise walk
+-        // needs exactly that distinction to spare a link naming a whole container from its
+-        // own container's growth (loft#1543).
+-        //
+-        // A fact of its own rather than `set_amp_link`: that flag is scoped to a struct-typed
+-        // projection and its readers are shaped that way, so widening it would change which
+-        // programs the whole-record write route and the two refusals decline.  Whether a
+-        // collection link should ALSO reach `(B-Ref-Reshape)` — `c = &s.h; s = Host{…}` is a
+-        // silent downgrade the rules say to refuse — is that separate question, left open.
+-        if amp_collection_bind && var_nr != u16::MAX {
+-            self.vars.set_amp_container_link(var_nr);
+-        }
+         // loft#1371 — the share aliases element writes and appends, but a WHOLE-VALUE write
+         // (`pe = [2, 2]`) would mint a fresh store and re-point `pe` at it, leaving the
+         // source untouched with nothing said.  Name the local here so `create_vector` clears
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 4b5890fde..79be2fa3c 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -1269,23 +1269,6 @@ struct ViewWalk<'a> {
+     /// which every reader must treat as *could be any key*: loft#1460's filter may only ever
+     /// SPARE a view it can prove names a different record.
+     view_keys: HashMap<u16, Vec<Value>>,
+-    /// The bindings that name a whole CONTAINER rather than a position inside one, each with
+-    /// the place it names DIRECTLY — the `d = &cv.data` half of `(B-Ref-Alias)`'s
+-    /// in-versus-to distinction, read off the same walk that answers the place
+-    /// ([`crate::use_analysis::view_source_place_indexed`]).
+-    ///
+-    /// Growing or reshaping that container does not end the place such a binding names: both
+-    /// move the ELEMENTS, and this one names the field SLOT that holds them, which the growth
+-    /// repoints and the link re-reads.  Only `(B-Disturb)`'s fourth event does — reassigning
+-    /// the base leaves the slot itself with nothing to point at — so `shake_places_keyed`
+-    /// spares these for the other causes and never for that one (loft#1543).
+-    ///
+-    /// The DIRECT place is what is stored, not [`Self::resolve_view_root`]'s answer, and the
+-    /// sparing matches on it.  A binding whose own container is itself a view resolves to the
+-    /// OUTER container, and growing that one moves the record holding this binding's slot —
+-    /// which does end its place.  Keyed on the resolved root, such a binding would be spared
+-    /// from the one disturbance that genuinely reaches it.
+-    whole_container: HashMap<u16, (u16, u32)>,
+     /// Views whose container has been disturbed since the bind, and by what. Being shaken is
+     /// not yet a verdict — it becomes one at the next use.
+     shaken: HashMap<u16, Disturbance>,
+@@ -1339,7 +1322,6 @@ impl ViewWalk<'_> {
+             open: vec![Vec::new()],
+             bound_at: HashMap::new(),
+             view_keys: HashMap::new(),
+-            whole_container: HashMap::new(),
+             shaken: HashMap::new(),
+             out: HashMap::new(),
+             cross_frame,
+@@ -1537,9 +1519,6 @@ impl ViewWalk<'_> {
+             for frame in &mut self.open {
+                 frame.retain(|(view, _, _)| view != v);
+             }
+-            // Re-read per bind, exactly as `view_keys` is: a slot rebound from an element
+-            // read must not keep an earlier bind's whole-container answer (loft#1543).
+-            self.whole_container.remove(v);
+             // Through `base()`: a nullable `S?` view is the same storage behind a
+             // nullability marker (@FR-L-Null), so it is at risk exactly as its dense twin is.
+             //
+@@ -1549,18 +1528,11 @@ impl ViewWalk<'_> {
+             // the BIND copy, which for a collection is decided at PARSE time and cannot hear
+             // a scope-pass strip, so the copy is emitted here instead.
+             //
+-            // A bare `&` link to a whole VARIABLE is not recorded either, and that is
++            // A bare `&` link to a whole container is not recorded either, and that is
+             // `base_container_var`'s doing rather than this list's: it answers `None` unless
+             // the right-hand side is a PROJECTION, so `pe = &e` names no container while
+             // `pw = &w[0]` names `w`.  That is the in-versus-to distinction `(B-Ref-Alias)`
+             // needs, and it lives in one place.
+-            //
+-            // ⚠ That answer does not reach a link to a whole container held in a FIELD:
+-            // `pd = &w.data` IS a projection, so it names `(w, off_data)` — the same place
+-            // `w.data[0]` names — and the distinction has to be drawn one level finer.  It is
+-            // drawn below, on `Self::whole_container`, and spent at the shake rather than here:
+-            // such a link must still be shaken by a REASSIGNMENT of `w`, which is the one
+-            // disturbance that leaves its slot with nothing to point at (loft#1543).
+             // ⚠ THESE TWO TESTS ANSWER DIFFERENT QUESTIONS, AND BOTH ARE LOAD-BEARING.  The
+             // type list says WHICH BINDINGS CAN BE VIEWS AT ALL; `value_view_place` says
+             // WHICH PLACE a value views.  They were widened for different defects, on
+@@ -1640,28 +1612,6 @@ impl ViewWalk<'_> {
+                         self.view_keys.remove(v);
+                     }
+                 }
+-                // `(B-Ref-Alias)`'s in-versus-to distinction, one level finer than the
+-                // `pe = &e` case the comment above describes: `d = &cv.data` is a reference
+-                // TO the container, where `e = &cv.data[0]` is one INTO it.  Both name the
+-                // place `(cv, off_data)` — a place is one variable and one field offset — and
+-                // `(B-Disturb)`'s growth tells them apart: it moves every ELEMENT, ending the
+-                // second, while it only repoints the field SLOT the first re-reads.
+-                //
+-                // The `&` is what qualifies, and asking for it is not belt-and-braces: a PLAIN
+-                // whole-collection bind reaches this walk too.  Off an owned base and off a
+-                // borrowed PARAMETER it copies at parse time into its own `__vdb_N` backing,
+-                // whose container is compiler-generated and already unnamed — but off a LOOP
+-                // VARIABLE it aliases, and `for b in bv { c = b.vecf; b.vecf += [9] }`
+-                // materialises `c` today.  `(B-View)` says it must keep doing so: a plain bind
+-                // already meant value semantics, so losing write-through is consistent with
+-                // what it asked for, and only a `&` is the ownership decision loft may not
+-                // quietly downgrade.  Measured before this was written.
+-                if self.function.is_amp_container_link(*v)
+-                    && let Some((place, false)) =
+-                        crate::use_analysis::view_source_place_indexed(self.data, rhs)
+-                {
+-                    self.whole_container.insert(*v, place);
+-                }
+                 for (container, field) in value_view_places(rhs, self.data, self.function) {
+                     let (container, field) = self.resolve_view_root(container, field);
+                     if !self.open[idx].contains(&(*v, container, field)) {
+@@ -1738,23 +1688,6 @@ impl ViewWalk<'_> {
+         self.shake_places_keyed(places, cause, via, &HashMap::new());
+     }
+ 
+-    /// Does `view` name the CONTAINER at `place` itself, so that `cause` does not end it?
+-    ///
+-    /// Three of `(B-Disturb)`'s four events — a removal, a growth, a re-key — move the
+-    /// ELEMENTS of a container.  A reference INTO it names one of those positions, so they end
+-    /// it; a reference TO it names the field SLOT the container lives in, which a growth
+-    /// repoints and the link re-reads, so they do not.  The fourth event does end it:
+-    /// reassigning the base gives that slot a new value and leaves nothing to re-read, which
+-    /// is why `Reassigned` is excluded here rather than handled by the caller (loft#1543).
+-    ///
+-    /// Matched EXACTLY against the place the binding names directly — not through
+-    /// [`same_place`], whose wildcard would let a disturbance of the whole variable spare a
+-    /// binding that names one field of it.  Sparing less is the safe direction: it costs a
+-    /// materialise, where the other costs a program its meaning.
+-    fn names_container_itself(&self, view: u16, place: (u16, u32), cause: ViewCause) -> bool {
+-        cause != ViewCause::Reassigned && self.whole_container.get(&view) == Some(&place)
+-    }
+-
+     /// [`Self::shake_places`] with the keys a keyed REMOVAL named, so a view of a DIFFERENT
+     /// record is spared (loft#1460).
+     ///
+@@ -1785,11 +1718,9 @@ impl ViewWalk<'_> {
+             .iter()
+             .flatten()
+             .filter(|(view, container, field)| {
+-                places.iter().any(|&p| {
+-                    same_place((*container, *field), p)
+-                        && !spared(*view, p)
+-                        && !self.names_container_itself(*view, p, cause)
+-                })
++                places
++                    .iter()
++                    .any(|&p| same_place((*container, *field), p) && !spared(*view, p))
+             })
+             .copied()
+             .collect();
+diff --git b/src/use_analysis.rs a/src/use_analysis.rs
+index dd6b5ad53..4dce5acce 100644
+--- b/src/use_analysis.rs
++++ a/src/use_analysis.rs
+@@ -3212,7 +3212,7 @@ pub const ANY_FIELD: u32 = u32::MAX;
+ /// steps are a lower bound, as everything in this walk is.
+ #[must_use]
+ pub fn projection_container_place(data: &Data, value: &Value) -> Option<(u16, u32)> {
+-    projection_place_of(data, value, false).map(|(c, f, _)| (c, f))
++    projection_place_of(data, value, false)
+ }
+ 
+ /// [`projection_container_place`], counting the two NULLABLE element reads as the projections
+@@ -3237,45 +3237,19 @@ pub fn projection_container_place(data: &Data, value: &Value) -> Option<(u16, u3
+ /// statement about today's readers, not about the language.
+ #[must_use]
+ pub fn view_source_place(data: &Data, value: &Value) -> Option<(u16, u32)> {
+-    projection_place_of(data, value, true).map(|(c, f, _)| (c, f))
+-}
+-
+-/// [`view_source_place`] with the fact that tells a reference **TO** a container from one
+-/// **INTO** it: `true` when the chain read an ELEMENT out of the place, `false` when the
+-/// binding names the place itself.
+-///
+-/// `(B-Ref-Alias)`'s in-versus-to distinction needs this and the PLACE cannot carry it: a place
+-/// is one variable and one field OFFSET, so `d = &cv.data` and `e = cv.data[0]?` both answer
+-/// `(cv, off_data)`.  What separates them is `(B-Disturb)`'s growth — it moves every ELEMENT,
+-/// ending the second, while it only repoints the field SLOT the first re-reads (loft#1543).
+-///
+-/// It is a second fact rather than a reading of `nullable_reads`, which the same walk already
+-/// carries: that flag says WHICH OPS COUNT as projections at all (the two null-answering
+-/// element reads, kept off `is_projection_op` for the deps proxy's sake), and both of its
+-/// settings admit element reads and field reads alike.  The two axes cross rather than nest.
+-#[must_use]
+-pub fn view_source_place_indexed(data: &Data, value: &Value) -> Option<((u16, u32), bool)> {
+-    projection_place_of(data, value, true).map(|(c, f, indexed)| ((c, f), indexed))
++    projection_place_of(data, value, true)
+ }
+ 
+ /// The shared peel behind [`projection_container_place`] and [`view_source_place`]:
+ /// `nullable_reads` says whether the two null-answering element reads count as projections.
+-fn projection_place_of(
+-    data: &Data,
+-    value: &Value,
+-    nullable_reads: bool,
+-) -> Option<(u16, u32, bool)> {
++fn projection_place_of(data: &Data, value: &Value, nullable_reads: bool) -> Option<(u16, u32)> {
+     let mut cur = value;
+     let mut field = ANY_FIELD;
+-    // Did the chain read an ELEMENT out of the place, or does it name the place itself?  Set
+-    // by the element-reading ops below and never cleared: one element read anywhere in the
+-    // chain means the value lives at a position the container can move.
+-    let mut indexed = false;
+     loop {
+         if let Value::If(_, t, e) = cur.unspan()
+             && let Some(v) = variant_check_subject(data, t, e)
+         {
+-            return Some((v, field, indexed));
++            return Some((v, field));
+         }
+         let Value::Call(d, args) = cur.unspan() else {
+             return None;
+@@ -3289,20 +3263,13 @@ fn projection_place_of(
+         if !projects {
+             return None;
+         }
+-        // Everything that projects and is not the FIELD read reads an element: `v[i]` in its
+-        // four spellings and a keyed point lookup.  Listed as the complement of `OpGetField`
+-        // rather than as its own set, so an op added to `is_projection_op` (or to the nullable
+-        // pair above) counts as an element read by default — the conservative direction, since
+-        // a place read as indexed keeps today's answer.
+-        if data.def(*d).name() == "OpGetField" {
+-            if let Some(Value::Int(off)) = args.get(1).map(Value::unspan) {
+-                field = *off as u32;
+-            }
+-        } else {
+-            indexed = true;
++        if data.def(*d).name() == "OpGetField"
++            && let Some(Value::Int(off)) = args.get(1).map(Value::unspan)
++        {
++            field = *off as u32;
+         }
+         match args.first().map(Value::unspan) {
+-            Some(Value::Var(c)) => return Some((*c, field, indexed)),
++            Some(Value::Var(c)) => return Some((*c, field)),
+             Some(inner) => cur = inner,
+             None => return None,
+         }
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index 85eb99776..c9c46e946 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -196,14 +196,6 @@ pub struct Variable {
+     /// indirection parameters use, slowing every access to carry a compile-time fact.
+     /// See loft#779 / `formal/binding.md` D-bind-8.
+     amp_link: bool,
+-    /// Was this bound with an explicit `&` at a COLLECTION — `d = &cv.data`, `a = &s.h`?
+-    ///
+-    /// The collection sibling of `amp_link`, kept apart from it because their READERS are
+-    /// different shapes — `is_amp_container_link` says why.  `(B-Ref-Alias)` makes such a bind
+-    /// a live link to the container, and the view-materialise walk has to know: a plain
+-    /// collection bind off a borrowed base aliases identically, and `(B-View)` says THAT one
+-    /// must still be copied when its container is disturbed (loft#1543).
+-    amp_container_link: bool,
+     /// Is this the temp a `for` loop holds its iteration SOURCE in?
+     ///
+     /// A vector-valued `for … in <expr>` binds the source to a temp and iterates THAT
+@@ -728,7 +720,6 @@ impl Function {
+                 const_binding: false,
+                 value_const: false,
+                 amp_link: false,
+-                amp_container_link: false,
+                 iteration_source: false,
+                 first_def: u32::MAX,
+                 last_use: 0,
+@@ -2224,7 +2215,6 @@ impl Function {
+             value_const: false,
+             view_elided: false,
+             amp_link: false,
+-            amp_container_link: false,
+             iteration_source: false,
+             stack_allocated: false,
+             skip_free: false,
+@@ -2258,7 +2248,6 @@ impl Function {
+             value_const: self.variables[var as usize].value_const,
+             view_elided: false,
+             amp_link: self.variables[var as usize].amp_link,
+-            amp_container_link: self.variables[var as usize].amp_container_link,
+             iteration_source: self.variables[var as usize].iteration_source,
+             stack_allocated: false,
+             skip_free: false,
+@@ -2295,7 +2284,6 @@ impl Function {
+             value_const: false,
+             view_elided: false,
+             amp_link: false,
+-            amp_container_link: false,
+             iteration_source: false,
+             stack_allocated: false,
+             skip_free: false,
+@@ -2329,7 +2317,6 @@ impl Function {
+             value_const: false,
+             view_elided: false,
+             amp_link: false,
+-            amp_container_link: false,
+             iteration_source: false,
+             stack_allocated: false,
+             skip_free: false,
+@@ -3053,30 +3040,6 @@ impl Function {
+         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].amp_link
+     }
+ 
+-    /// Mark `var_nr` as bound with an explicit `&` at a COLLECTION — `d = &cv.data`,
+-    /// `a = &s.h` — which `(B-Ref-Alias)` makes a live link to the container.
+-    pub fn set_amp_container_link(&mut self, var_nr: u16) {
+-        self.variables[var_nr as usize].amp_container_link = true;
+-    }
+-
+-    /// Whether `var_nr` was spelled `&` at a COLLECTION bind.
+-    ///
+-    /// The sibling of [`Self::is_amp_link`] and deliberately NOT the same flag, because the
+-    /// two have different readers: that one is scoped to a struct-typed projection, and the
+-    /// routes reading it — the whole-record write in `parser/collections.rs`, the re-key
+-    /// refusal, `(B-Ref-Reshape)`'s refusal — would decline different programs if a
+-    /// collection bind joined its population.
+-    ///
+-    /// The `&` is as invisible here as it is there, and for a sharper reason: `d = &cv.data`
+-    /// and `d = cv.data` off a BORROWED base emit identical ops AND both alias, so no reader
+-    /// downstream can tell the live link from the plain view `(B-View)` may quietly copy.
+-    /// Measured — a plain `c = b.vecf` over a loop variable materialises today, and must keep
+-    /// doing so, while the `&` link beside it must not (loft#1543).
+-    pub fn is_amp_container_link(&self, var_nr: u16) -> bool {
+-        (var_nr as usize) < self.variables.len()
+-            && self.variables[var_nr as usize].amp_container_link
+-    }
+-
+     /// Whether `var_nr` carries EITHER const axis — used by the guards that apply to
+     /// any const binding (`d#lock` unlock, text-arg auto-promotion, dead-store and
+     /// UPPER_CASE lints) regardless of which immutability it is.

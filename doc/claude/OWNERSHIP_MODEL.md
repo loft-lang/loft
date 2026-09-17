@@ -262,6 +262,23 @@ reassigns its `&` parameter frees the caller's store (@PLN87 P2.2), so the calle
 materialise too. A **plain** (non-`&`) parameter reassignment is local to the callee (P2.1) and
 leaves the caller's views alone.
 
+**And GROWTH or REMOVAL through a parameter reaches across it too (@PLN164 C3,
+[formal/binding.md](formal/binding.md) B-Disturb).** `e = sc.els[0]?; grow(sc, 200); e.a + e.b`
+reads through a view after a callee appended to `sc`, and an append can move the store's
+records — so the reach of a disturbance is the CALL GRAPH, not the frame. `disturbed_params_map`
+(`src/scopes.rs`) records per definition which places are grown or removed through a visible
+parameter, closed over the call graph, and each call site unions that in; the live plain view
+then materialises and the copy notice names the callee, since nothing at the call site says
+which one reshapes what. A hidden `__retbuf` is an argument slot and is excluded by name — every
+record-returning function that fills a vector field would otherwise report a disturbance at each
+of its call sites. A binding that names a container WHOLE (`d = &cv.data`) resolves to the same
+place as one naming an element inside it, and only the first re-read after a growth repoints the
+field slot, so the walk asks whether the chain crossed an element read
+(`use_analysis::view_source_place_indexed`). `LOFT_NO_CALLEE_DISTURB=1` restores the frame-only
+walk and `LOFT_TRACE_DISTURB=1` names each disturbed place; the receipts are
+`tests/scripts/164-callee-disturb.loft` (15 pairs, each callee cell beside the inline twin that
+is its conformant oracle) and `tests/callee_disturb.rs`.
+
 Pinned by `tests/scripts/774-view-outlives-reassigned-container.loft` (the reassignment
 boundary, with the write-through cells as controls), `tests/scripts/145-view-materialised-on-reshape.loft`
 and `tests/scripts/201-bind-copies-projection-views.loft` (the C86 copy/view boundary).

@@ -174,16 +174,57 @@ select {
 import init, { compile_and_start, resume_frame } from './pkg/loft.js?v=ec8343fdbebc';
 import { initLoftGL } from './loft-gl.js?v=6925fdf3267a';
 import { GALLERY_EXAMPLES, GALLERY_LIST } from './gallery-examples.js?v=22370b4f0b1f';
+import { createHost } from './loft-rt.js?v=6e9d35fa9f8f';
+
+// ── The page's own filesystem and host ───────────────────────────────────────
+//
+// The wasm module reaches files through `globalThis.loftHost.fs_*`, and this page
+// used to define none of them.  A method the host lacks is NOT an error: `host_call`
+// resolves it with `Reflect::get`, gets `undefined`, and answers `undefined`, so
+// every file operation became a silent no-op and a program reading a pack drew
+// nothing while every check passed (loft#1545).
+//
+// It is created HERE, at module top level, because it must exist before anything
+// can call into it, and because `loft-gl.js` MERGES its `gl_*` methods onto
+// whatever `window.loftHost` already is (`= window.loftHost || {}`, then
+// `Object.assign`) — so the full host first, its WebGL half over the top, and the
+// gl methods still win where both define a name.
+const { host: pageHost, fs: pageFS } = createHost();
+window.loftHost = pageHost;
 
 // ── WebGL bridge from library ────────────────────────────────────────────────
 const canvas = document.getElementById('gl-canvas');
 let loftGL = null;
 
 // Asset map: example key → list of { name, type } to pre-load.
-// type: 'image' = decode as HTMLImageElement, 'binary' = store as base64.
+// type: 'image' = decode as HTMLImageElement, 'binary' = store as base64,
+//       'store'  = a loft store image, written into the page's own filesystem.
+//
+// The three types differ in WHO reads the bytes.  An image and a binary are handed
+// to the WebGL shim through `loftGL.assets`; a store is read by the loft program
+// itself, through `store_load` and the paged loaders, so it has to land in the
+// host filesystem under exactly the path the program passes.  `path` is that
+// string: `assets::pack_read(pk, "assets/bb")` reads `assets/bb.meta.store`, and
+// the pack's bulk half is paged out of `assets/bb.blobs.store` a key at a time.
 const ASSET_MAP = {
   '04-textures': [{ name: 'wall.jpg', type: 'image' }],
   '20-textured-cube': [{ name: 'DejaVuSans-Bold.ttf', type: 'binary' }],
+  '25-brick-buster': [
+    { name: 'bb.meta.store', type: 'store', path: 'assets/bb.meta.store' },
+    { name: 'bb.blobs.store', type: 'store', path: 'assets/bb.blobs.store' },
+    // The layout sidecars beside each half.  A store whose recorded layout differs
+    // from the one this program reads it with is refused rather than read at the
+    // wrong stride, and an ABSENT sidecar reads as "no layout recorded" — which
+    // passes.  Carrying them is what makes that gate a real check here.
+    //
+    // `text`, not `store`, and the distinction is load-bearing: the page's
+    // filesystem types every file it holds, and `fs_read_text` answers NULL for a
+    // node written as binary.  A sidecar written the wrong way is not a smaller
+    // check — it is no check, because an unreadable sidecar is indistinguishable
+    // from an absent one and both let the load proceed.
+    { name: 'bb.meta.store.dschema', type: 'text', path: 'assets/bb.meta.store.dschema' },
+    { name: 'bb.blobs.store.dschema', type: 'text', path: 'assets/bb.blobs.store.dschema' },
+  ],
 };
 const ASSET_BASE = './assets/';
 // Font search: example 20 tries system paths; map them to our served file.
@@ -203,7 +244,14 @@ async function preloadAssets(exampleKey) {
   if (!entries) return;
   for (const entry of entries) {
     const cacheKey = entry.name;
-    if (assetCache[cacheKey]) {
+    // A filesystem entry is deliberately NOT cached.  The cache holds what
+    // `loftGL.assets` needs, and these contribute nothing to it — so the cached
+    // value is an empty object, which is truthy, and a second run would
+    // short-circuit here and never write the file into the filesystem at all.  It
+    // survives today only because the page's FS outlives the run, which is luck
+    // rather than a design.
+    const intoFS = entry.type === 'store' || entry.type === 'text';
+    if (!intoFS && assetCache[cacheKey]) {
       Object.assign(loftGL.assets, assetCache[cacheKey]);
       continue;
     }
@@ -231,8 +279,33 @@ async function preloadAssets(exampleKey) {
       } catch (e) {
         console.warn('Failed to load binary asset:', entry.name, e);
       }
+    } else if (entry.type === 'store') {
+      // Into the page's FILESYSTEM, not into `loftGL.assets`: the reader is the
+      // loft program, which asks the host for this path by name.  A failure here
+      // is reported rather than swallowed — a pack that does not arrive makes the
+      // example draw an empty atlas, which is precisely the failure that is
+      // invisible from the outside.
+      const url = ASSET_BASE + entry.name;
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        throw new Error(`asset ${url} → HTTP ${resp.status}`);
+      }
+      const bytes = new Uint8Array(await resp.arrayBuffer());
+      pageFS.writeBinary(entry.path, bytes);
+    } else if (entry.type === 'text') {
+      // Same journey as a store, one type over.  The page's filesystem keeps text
+      // and binary as different node kinds and `fs_read_text` refuses the wrong
+      // one, so what a file is WRITTEN as decides whether the reader can see it.
+      const url = ASSET_BASE + entry.name;
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        throw new Error(`asset ${url} → HTTP ${resp.status}`);
+      }
+      pageFS.writeText(entry.path, await resp.text());
     }
-    assetCache[cacheKey] = registered;
+    if (!intoFS) {
+      assetCache[cacheKey] = registered;
+    }
     Object.assign(loftGL.assets, registered);
   }
 }
@@ -340,9 +413,19 @@ window.runExample = async function() {
   timingEl.textContent = '';
   frameCount = 0;
 
-  // Pre-load assets for this example
+  // Pre-load assets for this example.  A pack that does not arrive is reported
+  // HERE, where the reason is still known.  Left to run, the program reads an
+  // empty pack, draws a 1x1 atlas and finishes cleanly — a page that looks like
+  // it worked, which is the failure this whole path exists to stop being silent.
   const selectedKey = currentKey;
-  await preloadAssets(selectedKey);
+  try {
+    await preloadAssets(selectedKey);
+  } catch (e) {
+    outputEl.textContent = 'Asset load failed: ' + ((e && e.message) || e);
+    statusEl.textContent = 'Failed';
+    statusEl.className = 'err';
+    return;
+  }
 
   statusEl.textContent = 'Compiling...';
   const files = JSON.stringify([{ name: 'main.loft', content: currentSource }]);
@@ -385,6 +468,15 @@ window.runExample = async function() {
       statusEl.className = 'err';
       animFrame = 0;
       return;
+    }
+    // A running frame may carry what the program printed during it.  The wasm
+    // side CLEARS its buffer as it hands the text over, so this is the only
+    // copy — append it, never replace, or the last frame would be the only
+    // thing a reader ever saw.  This is what makes a long-lived program's own
+    // report visible at all: a game never "finishes", so anything it said used
+    // to arrive only at a moment that does not come.
+    if (r.output) {
+      outputEl.textContent += r.output;
     }
     if (r.running && !loftGL.shouldClose) {
       timingEl.textContent = `frame ${frameCount}`;

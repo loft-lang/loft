@@ -480,12 +480,55 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 504 | 481 | **23** |
+| 525 | 502 | **23** |
+(2026-09-16, the 157 pick re-measured on THIS tree: 518 · 495 · 23.  The per-unit notes
+below are accurate about what each unit ADDS; the total is not transferable.  Each was a delta
+against its own branch's base, and this branch carries work that one does not, so accumulating
+their steps lands on 516 where the audit reads 518.  Re-derived with `ir_walker_audit.py unspan`,
+which is the only thing that knows which tree it is standing on.)
+
+(2026-09-17, @PLN164 C5 and its step 2, re-measured on THIS tree after the join: 525 · 502 · 23,
+against the 518 · 495 · 23 above.  C5 adds six functions that discriminate on `Value` variants and
+all six peel — the view-leaf walk (`leaf_source`, `appends_into`, `leaf_root`,
+`buffer_uses_accounted`) and its site half (`view_field_reads`, `span_keeps_places`), each matching
+on `.unspan()` or inside an `any_node` closure, which peels `Span` before calling it.  Step 2 adds
+a seventh, `namings_avoid_place`, the per-naming disturbance walk, matching on `.unspan()` at every
+step.  The opaque column is unmoved.  ../loft2's branch reports the same two units as 522 · 499 and
+523 · 500 against ITS base, and both are right about what they add; the totals differ because the
+bases do, which is why this row is measured here and never accumulated.)
+
+
+(2026-09-16, @PLN164 C2: one function added that discriminates on `Value` variants, and it
+peels — `Parser::buffer_is_the_place`, whose tests run through `unspan` and inside an `any_node`
+closure, which peels `Span` before calling it.  The opaque column is unmoved.)
+
+(2026-09-16, @PLN164 C1: one function added over the two steps that discriminates on `Value`
+variants, and it peels — `Parser::reads_place`, whose discriminators run inside a `Value::walk`
+closure, which peels `Span` before calling it.  The opaque column is unmoved.)
+
+
+(2026-09-16, @PLN164 B2 + C3: 514 · 491 · 23 — measured as a delta against 504 · 481 · 23.  The two
+units add ten functions that discriminate on `Value` variants, and all ten peel: `place_result`'s
+walk of a callee's exits and of a binding's uses, and C3's `disturbed_param_places`,
+`call_arg_place` and `projection_place_walk`.  `call_arg_place` is the one worth naming — it sees
+through an `Insert` wrapper to the argument's tail and then through `OpCreateStack`, both with
+`unspan` first, because an argument is a projection wearing two lowerings.  The opaque column is
+unmoved, which is the ratchet.)
 
 (2026-09-15, loft#1540: 504 · 481 · 23 — measured as a delta against 502 · 479 · 23; the change adds
 two functions that discriminate on `Value` variants, and both peel: `Parser::const_view_place`,
 which reads a bind's right-hand side through its `Span` and its one-operator `Insert` / `Block`
 wrapper, and `expressions::bound_rhs`, which finds a statement's `Set` through an `Insert`.)
+
+(2026-09-15, D-heap-7's close: 503 · 480 · 23 — `return_copies_whole_local` and
+`scopes::return_tail` discriminate on a return's shape and both peel.)
+
+(2026-09-16, the join of three trees: this branch through loft#1540 and the nullable-iterator slot
+fix, ../loft2 through D-heap-7, and @PLN164 through B2 units 2-3.  Each measured its own delta
+against a different base — 504 · 481 · 23 here, 503 · 480 · 23 there, 500 · 476 · 24 on @PLN164 —
+so no pin is right on the union.  Re-measured on it: **515 · 492 · 23**, the peeling sites of all
+three walks over one tree; the opaque column does not move.  A clean textual merge would have kept
+one branch's number over three branches' code.)
 
 (2026-09-15, @PLN163's copy-lease census and verdicts: 501 · 478 · 23, measured commit by commit.
 The census in `use_analysis::drop_copy_census` added two peeling sites; `src/lease.rs` six, five
@@ -1575,7 +1618,48 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
 |---:|---:|---:|
-| 63 | **13** | 50 |
+| 71 | **14** | 57 |
+
+(2026-09-17, re-measured on THIS tree with `ir_walker_audit.py spellings`: 71 · 14 · 57, which is
+what the joined branch reports too.  The two agreeing is CONVERGENCE, not a number carried across
+a tree boundary — the C5 functions are the same on both trees, and the @PLN164 C1/C2 work this
+tree carries beyond theirs resolves no projection by op name, so this table takes no offset where
+the `unspan` and `optional` rows above and below both do.  The row it replaces, 66 · 14 · 52,
+predates C5 entirely and carried no note.)
+
+(2026-09-16, @PLN164 C5 step 2: one more on the call-only side — `namings_avoid_place` resolves
+what a naming of a container REACHES by op name, and `TupleGet` names a stack tuple member,
+which is not a container at all.)
+
+(2026-09-16, @PLN164 C5: four functions added, all on the call-only side — `leaf_source` and
+`appends_into` read the append into a record's collection FIELD, `leaf_root` resolves that
+field's place to a parameter, and `view_field_reads` recognises a read of it at a call site.
+CHECKED rather than bumped: `TupleGet` reads a stack tuple MEMBER, which is not a spelling of a
+record's collection field, so none of the four has a hole where it would belong.  What this unit
+DID find is the dual in the other direction — the same notion reaching the IR as
+`OpNewRecord(buf, <record>, <field nr>)` and as an element push — and the cure was to account
+every mention of the buffer rather than to match another spelling (`formal/IMPLEMENTATIONS.md`
+§ *One notion, how many SPELLINGS?*).)
+
+(2026-09-16, @PLN164 C1 step 2: `Parser::builds_into_element` asks whether a destination is a
+vector ELEMENT place a literal may be written into, and `Parser::is_grouped_vector_elem` whether
+that place is a member of a linked collection group — 64 → 66, both on the call-only side.
+CHECKED rather than bumped, because the column's last move was a real hole: `TupleGet` reads a
+stack tuple member and is not a spelling of a COLLECTION element read, so neither function has a
+second spelling to miss.  What they do have is a deliberate ASYMMETRY, and it is the thing to
+preserve — the admission lists two element ops and the decline lists four, including both
+nullable spellings.  A miss in the admission costs the optimisation; a miss in the decline costs
+the group's agreement, which is loft#900's defect.)
+
+(2026-09-16, @PLN164 C1 step 1: `Parser::reads_place` asks whether a literal's initialiser reads
+the PLACE it is about to overwrite, so it resolves a projection by op name — 63 → 64.  It arrives
+on the both-spellings side (13 → 14) and the call-only column is UNMOVED, and that is the screen
+earning its keep rather than a coincidence: the function's first cut counted only `Value::Var`
+nodes, which is the call spelling alone, and a `TupleGet` names its variable with no `Var` child.
+The count is what licenses the spare — *this read is provably not the destination* — so a naming
+it could not see would have spared a read it never examined, in the one direction that costs the
+value.  The screen moved the column, the column asked why, and the answer was a hole.  It now
+counts every arm `Value::reads_var` counts.)
 
 (2026-09-15, loft#1532: `Parser::tuple_member_owned_copy` already copied a `TupleGet` member and
 now also copies a record PROJECTION, asked through `is_projection_op`, so it arrives on the
@@ -2600,7 +2684,86 @@ and who does not.
 
 | functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
 |---:|---:|---:|---:|
-| 830 | 490 | 6 | **334** |
+| 841 | 501 | 6 | **334** |
+
+(2026-09-17, @PLN164 C5 on top of the tuple close, re-measured on THIS tree after the WHOLE join:
+841 · 501 · 6 · 334.  One function is added and it sees through the wrapper — `view_leaf_type`
+asks whether a record's heap field is a plain `vector<T>`, which a view leaf may deliver, and reads
+it through `.base()` because a `vector<T>?` is the same shape behind a nullability bit.  The opaque
+column and the ratchet are unmoved (`--check-ratchet`: at baseline, 334 / 1314).  ../loft2 reports
+this unit as 835 · 495 → 836 · 496 against ITS base; the totals differ because the bases do.
+⚠ The 840 · 500 this row read until now was measured BETWEEN the join's two halves — after the
+tuple picks and before C5's code landed — so it was already stale when it was written down.  A
+derived row is true of a tree at a MOMENT, and the only moment that survives the join is its end.
+Measuring one mid-join produces a number that reads as measured and describes a tree that no
+longer exists.)
+
+(2026-09-16, the ../loft2 join re-measured on THIS tree: 839 · 499 · 6 · 334.  The tuple
+commits report +1 · +1 against their own branch and are right about what they add; this tree
+reads +4 · +4, because the @PLN164 C1/C2 functions picked from 157 discriminate on `Type`
+variants too and their base did not carry them.  Re-derived with `ir_walker_audit.py optional`.
+The opaque column is unmoved on both sides, which is the ratchet.)
+
+(2026-09-16, the ratchet re-pinned 334 / 1316 -> 334 / 1314 after the join.  The opaque
+FUNCTIONS column is unmoved, which the note above says; the opaque TESTS count FELL by two, and
+that is not the harmless direction it looks.  The ratchet fails only on GROWTH, so a pin left at
+1316 over a tree measuring 1314 would have let two shape tests go blind to `t?` without a word —
+a gate quietly two wider than the tree it guards.  Re-pinned with `ir_walker_audit.py optional
+--write-ratchet`, which is what `--check-ratchet` itself instructs when the count falls.
+../loft2's tree measures 1314 as well, so the two pins agreeing is the join having CONVERGED,
+not a number carried across a tree boundary.)
+
+(2026-09-16, **D-tup-10 CLOSED** — the owner's tuple-absence ruling.  This tree re-measures
+840 · 500 · 6 · 334 after the pick, against the 839 · 499 · 6 · 334 it read before it; ../loft2
+reports the same +1 · +1 as 835 · 495 against their own 834 · 494, the offset being the @PLN164
+C1/C2 functions this tree carries and their base does not.  One function is
+added, `Parser::is_absent_tuple`, and it SEES THROUGH — its body carries an `Optional` ARM
+(`matches!(t, Type::Optional(_))`) and calls `is_tuple_shape`, which peels with `base()`; either
+qualifies under this former's rule, and the arm is the honest half, because this predicate exists
+to ask ABOUT the wrapper rather than past it.  It answers *"can this tuple be absent?"*, which is
+the one question the `?`/`??` refusal, the null test and the tuple comparison now all ask instead
+of each deciding for itself.  **The OPAQUE column did not move — the third time on this entry —
+and that is again the attribution:** the predicate replaces no opaque site, it ADDS a distinction
+the code did not previously draw at all, between the in-flight `(τ₁, …, τₙ)?` and a tuple a
+program writes down.
+⚠ Attributed by MEASUREMENT, not by reading the diff.  On ../loft2's tree, neutralising that
+single `Type` match drops the row to exactly 834 · 494 and restoring it returns 835 · 495, which
+is what says this function and no other moved it — that A/B is THEIRS, quoted here rather than
+re-run.  What corroborates it on THIS tree is the row moving 839 → 840 with this predicate as the
+only `Type`-discriminating function the pick adds, and `--check-ratchet` reporting both opaque
+columns still AT baseline (334 / 1314).  The audit is a static scan, so that A/B costs no build —
+worth knowing, because the report prints counts and an opaque QUEUE, and a function that sees
+through never appears in the queue.  Grepping the report for the new name finds nothing and
+proves nothing.)
+
+(2026-09-16, D-tup-10's DISCHARGE close — `??` over the boxed spelling: 834 · 494 · 6 · 334,
+re-measured against the 833 · 493 · 6 · 334 the same day's earlier close left.  One function is
+added, `Parser::boxed_tuple_members_modulo_null`, and it peels: it asks whether a boxed tuple's
+members differ from a stack tuple's elements by nothing but each member's `?`, comparing through
+`base()` on both sides.  **The OPAQUE column did not move for the second time today, and that is
+again the attribution** — the predicate is a peeling site, and it widens nothing: it is consulted
+only where the coalesce chooses its RESULT type, so `unboxes_stored_tuple` and the store
+positions that share it are untouched.)
+
+(2026-09-16, @PLN164 C1: one function added, seeing through the wrapper — `builds_into_element`
+reads a field's declared type through `.base()` to ask whether the record owns a COLLECTION,
+which is a shape question and alike for `τ` and `τ?`.  The opaque column and the ratchet are
+unmoved.)
+
+(2026-09-16, @PLN164 B2 + C3: 834 · 494 · 6 · 334 — measured as a delta against 830 · 490 · 6 · 334.
+Four functions added, all four seeing through the wrapper: C3's `disturbed_param_places` reads a
+parameter's kind through `Function::tp(...).base()` exactly as its inline twins do, and the rest
+ask shape questions.  The opaque column and the ratchet are unmoved.)
+(2026-09-16, D-tup-10's null-QUESTION close: 833 · 493 · 6 · 334, measured as a delta against
+832 · 492 · 6 · 334 — the audit was run immediately before the change and again after it, rather
+than the new row being carried from the failing gate's message.  One function is added,
+`Parser::is_tuple_shape`, and it peels: it answers *"is this a tuple in ANY of its homes?"*
+through `base()`, which is what lets the `== null` classification and `null_test`'s own gate ask
+ONE question instead of each naming `Type::Tuple` for itself.  **The OPAQUE column did not move,
+and that is the attribution:** the predicate is a peeling site and the two gates it replaced
+peeled already — what changed is that they now also see the `__tuple<…>` record spelling, which
+is the blindness D-tup-10's remaining half was.  A tuple in the boxed home answered the null
+question by the RECORD's presence, so a return buffer holding two nulls read as present.)
 
 (2026-09-15, THE JOINED TREE — this branch through loft#1540 and ../loft2's @PLN165 phase 0
 (bdb84abe8): 826 · 486 · 6 · 334, re-measured rather than carried; the ratchet reads its 334 / 1316
@@ -2672,6 +2835,11 @@ stays at 491 · 467 · 24.  Those are the @PLN157 branch's numbers; re-measured 
 tree `tuxedo-work-2026-09-15` the rows read 826 · 486 · 6 · 334 and 504 · 481 · 23 with the
 ratchet at 334 / 1316, the same as before this unit was picked.)
 
+(2026-09-16, the same join, optional: **834 · 494 · 6 · 334**, re-measured rather than carried —
+@PLN164 B2 units 2-3 read 821 · 479 · 6 · 336 against its own base and this branch 830 · 490 · 6 ·
+334.  `place_result.rs`'s placement questions and D-heap-7's return-shape reads all peel, so the
+opaque column and the ratchet keep their 334 / 1316 pin.)
+
 (2026-09-15, loft#1540's function-reference half: `Type::function_consts` and
 `Type::with_function_consts` are new — the one way a join reads and sets a function type's `const`
 parameters, the first through `.base()` and the second with an `Optional` arm — and
@@ -2681,6 +2849,14 @@ sibling-arm conversions, `parse_item`, `change_var_type`, the callback builtins)
 helpers, and `Parser::names_callers_value` is the one shape question a parameter and a closure's
 capture share, so the peeling column grows by four: 826 · 486 → 830 · 490, the opaque column and
 the ratchet (334 / 1316) unmoved.  Asked bare first, they grew the ratchet to 336 / 1328.)
+
+(2026-09-16, @PLN164 B2 units 2–3: `place_result` is new — `placeable_bind`, `admit` and
+`note_element` read the nullability off `peel_optional` and `scalar_like` off `.base()`, so all
+four land in the wrapper-aware column: 821 · 479 · 6 · 336, the opaque column and the ratchet's
+pin unmoved.  Its two first cuts of `admit` and `note_element` matched `Type::Reference` bare
+and moved the opaque column to 338 — the audit is what turned them into peeled asks.  The
+`Value` walkers (`names_var`, `collect_vars`, `apply`) peel `Span` or carry a `Span` arm:
+the unspan row reads 500 · 476 · 24.)
 
 (2026-09-15, loft#1530: `Parser::ref_tuple_subject` is new and asks the subject's `Type::RefVar`
 and `Type::Tuple` off a `.base()`, and `vector_element_cursor_deps` gained the same peeled ask, so
@@ -2838,9 +3014,14 @@ arise (`(N-Idem)`).
 Two rather than one is the shape of the change and worth the line: the predicate was spelled
 inline at ONE construction site and absent at two others, so giving it a home replaced a
 discriminating site rather than adding three — and the second function exists because the tuple's
-answer is not the rule's yet.  `constructs_optional` is written to be DELETED: the gap between it
-and `has_null` is `tuples.md D-tup-10`, so this row goes back down by one when that closes.  The
+answer is not the rule's yet.  The
 opaque column did not move.
+
+⚠ **This row said `constructs_optional` "is written to be DELETED" and that the row "goes back
+down by one" when `D-tup-10` closes.  Both are wrong since the 2026-09-16 option-2 ruling** —
+the in-flight `Optional(Tuple)` STAYS, so the predicate is the mechanism `(T-Absent)` prescribes
+rather than debt, and this row does not come back down.  Corrected 2026-09-16 beside the same
+claim in `data::constructs_optional`'s own doc and in `types.md (N-Opt)`.
 
 **2026-09-08, loft#1450's `is` half: `750 · 403 · 6 · 341` → `751 · 404 · 6 · 341`.**  One
 function joined the classifier and it SEES THROUGH — `parser::control::parse_is_variant`, which

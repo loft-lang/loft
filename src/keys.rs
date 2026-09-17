@@ -1163,6 +1163,29 @@ pub fn adopt_first_bind_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_ADOPT_FIRST_BIND"))
 }
 
+/// @PLN164 B2 (`@FR-R-Place`, `@FR-R-MoveLast`): a call result whose ONE owning destination
+/// on every path that keeps it is a record-literal field inside an element appended to a
+/// PARAMETER's collection gets its return buffer CLAIMED IN that parameter's store, and the
+/// field takes it by RELOCATION at its last use — **DEFAULT ON**, both backends (an IR
+/// rewrite in `place_result`, decided after the scope pass).  Opt OUT with
+/// `LOFT_NO_PLACE_RESULT` (read at PARSE time): the before-half of the A/B on one binary —
+/// a store minted per call and a deep copy into the field — and the first bisect step for a
+/// wrong field, a leak or a double free out of a record built by a call and stored in an
+/// appended element.  `LOFT_STRICT_STORES=1`, `LOFT_POISON=1`, `LOFT_HOIST_VERIFY=1` and
+/// `LOFT_NATIVE_LEAK_CHECK=1` are the falsifiers; `LOFT_TRACE_PLACE=1` names each admission
+/// and each decline.
+pub fn place_result_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PLACE_RESULT"))
+}
+
+/// `LOFT_TRACE_PLACE=1` — one line per bind `place_result` examined: the admission with
+/// its host and destination count, or the decline with the reason.
+pub fn trace_place() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_PLACE"))
+}
+
 /// @PLN157 § V-ag: clearing a store-ROOT vector RESETS its store in one step instead of
 /// walking every element and returning each owned block to the free tree — **DEFAULT ON**,
 /// both backends (a runtime fact).  Opt OUT with `LOFT_NO_STORE_RESET_CLEAR`: the
@@ -1602,6 +1625,54 @@ pub fn lift_join_witness_enabled() -> bool {
 pub fn view_elision_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_VIEW_ELISION"))
+}
+
+/// @PLN164 C2 (`@FR-R-Place`'s "the buffer IS the place") — a call whose vector result goes
+/// into a destination place that already EXISTS, and which no argument of the call reaches, is
+/// handed that place as its return buffer, so the result is built where it will live and
+/// nothing is copied — **DEFAULT ON**.  Opt OUT with `LOFT_NO_BUFFER_IS_PLACE` (read at PARSE
+/// time, BOTH backends): the buffer store, the element-by-element `OpAppendVector` and the free
+/// again, and the first bisect step for a wrong, empty or stale vector field after an
+/// assignment from a call.
+///
+/// The buffer stays the VARIABLE the call site mints — only what it holds changes — so the
+/// result's deps, B1's adopt and the scope pass's free sweep are untouched.  `(O-Buffer)` says
+/// what such a buffer is: not a store of the caller's, never freed, and needing no identity
+/// guard, because the result names the destination.
+#[must_use]
+pub fn buffer_is_the_place_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BUFFER_IS_PLACE"))
+}
+
+/// @PLN164 C1 step 2 (`@FR-R-InPlaceLiteral`) — a record literal assigned to a vector ELEMENT
+/// is written INTO the slot, as the same literal assigned to a FIELD already is, instead of
+/// being built in a temporary store and deep-copied there — **DEFAULT ON**.  Opt OUT with
+/// `LOFT_NO_ELEMENT_IN_PLACE` (read at PARSE time, BOTH backends): the temp-and-copy again, and
+/// the first bisect step for a wrong element, a leak or a double free at `v[i] = S { … }`.
+///
+/// Admitted only where the place can be re-derived for each field write with no effect the
+/// program can see: a repeatable base and an index that is a literal or a bare variable.  A
+/// computed index (`v[bump()]`, `v[len(v) - 2]`) keeps the copy, because the receiver is
+/// emitted once per field and re-running the index would run its effects once per field too.
+#[must_use]
+pub fn element_in_place_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_ELEMENT_IN_PLACE"))
+}
+
+/// @PLN164 C3 (`@FR-B-Disturb`, `@FR-B-View`) — a container GROWN or REMOVED FROM by a
+/// CALLEE, through a parameter the caller handed it, disturbs the caller's place exactly as
+/// the same statement written inline does, so a view live across the call materialises and the
+/// author is told — **DEFAULT ON**.  Opt OUT with `LOFT_NO_CALLEE_DISTURB` (read at PARSE time,
+/// BOTH backends): the per-frame answer again, and the first bisect step for a wrong value read
+/// through a view whose container a callee changes.  What it restores is the defect — measured,
+/// `e = sc.els[0]?; grow(sc); e.a + e.b` answered `4294967401` where the inline append answers
+/// `3`, and a callee's `remove` read the element that shifted in.
+#[must_use]
+pub fn callee_disturb_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_CALLEE_DISTURB"))
 }
 
 /// @PLN155 phase 2b — which readers DECLINE on `Own::Unknown` instead of keeping the answer

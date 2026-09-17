@@ -1,0 +1,27 @@
+LOFT-DSCHEMA v1
+hash=590094027820372951
+--
+@endian	little
+Anim	size=24	struct{an_key@8:text, an_def@12:text, an_action@16:text, an_facing@0:integer, an_seq@20:text}
+Cell	size=60	struct{ce_key@48:text, ce_page@52:text, ce_x@0:integer, ce_y@8:integer, ce_w@16:integer, ce_h@24:integer, ce_ox@32:float, ce_oy@40:float, ce_proxy@56:vector<Rect>}
+Def	size=73	struct{df_name@64:text, df_kind@72:DefKind, df_cell@68:text, df_w@0:float, df_h@8:float, df_ox@16:float, df_oy@24:float, df_layer@32:integer, df_radius@40:float, df_colour@48:integer, df_power@56:float}
+DefKind	size=1	enum{Sprite, Light}
+Pack	size=28	struct{pages@0:hash<PageInfo[pi_name]>, cells@4:hash<Cell[ce_key]>, seqs@8:hash<Seq[sq_key]>, defs@12:hash<Def[df_name]>, anims@16:hash<Anim[an_key]>, scenes@20:hash<assets::Scene[sc_name]>, placed@24:index<Placed[pd_scene,pd_order]>}
+PageInfo	size=24	struct{pi_name@16:text, pi_w@0:integer, pi_h@8:integer, pi_blob@20:text}
+Placed	size=98	struct{pd_scene@80:text, pd_order@0:integer, pd_def@84:text, pd_x@8:float, pd_y@16:float, pd_depth@24:float, pd_layer@32:integer, pd_rot@40:float, pd_sx@48:float, pd_sy@56:float, pd_alpha@64:float, pd_colour@72:integer, pd_visible@97:boolean, #left_1@88:int<0,false>, #right_1@92:int<0,false>, #color_1@96:boolean}
+Rect	size=32	struct{rx@0:float, ry@8:float, rw@16:float, rh@24:float}
+Seq	size=56	struct{sq_key@48:text, sq_page@52:text, sq_first@0:integer, sq_count@8:integer, sq_fps@16:float, sq_mode@24:integer, sq_cols@32:integer, sq_rows@40:integer}
+assets::Scene	size=20	struct{sc_name@16:text, sc_w@0:integer, sc_h@8:integer}
+boolean	size=1	base
+float	size=8	base
+hash<Anim[an_key]>	size=4	hash<Anim>(keys=[0],elem_size=24,placement=2)
+hash<Cell[ce_key]>	size=4	hash<Cell>(keys=[0],elem_size=60,placement=2)
+hash<Def[df_name]>	size=4	hash<Def>(keys=[0],elem_size=73,placement=2)
+hash<PageInfo[pi_name]>	size=4	hash<PageInfo>(keys=[0],elem_size=24,placement=2)
+hash<Seq[sq_key]>	size=4	hash<Seq>(keys=[0],elem_size=56,placement=2)
+hash<assets::Scene[sc_name]>	size=4	hash<assets::Scene>(keys=[0],elem_size=20,placement=2)
+index<Placed[pd_scene,pd_order]>	size=4	index<Placed>(keys=[(0, true), (1, true)],left=13,elem_size=98)
+int<0,false>	size=4	int4(start=0,null=false)
+integer	size=8	base
+text	size=4	base
+vector<Rect>	size=4	vector<Rect>(elem_size=32)

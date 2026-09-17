@@ -1,0 +1,372 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN164 C5 (`@FR-O-ViewField`, `@FR-R-ValueRecord`) — A RETURNED RECORD'S HEAP FIELD AS A
+// VIEW LEAF: a function whose result is two scalars and a vector returns the vector as a
+// REFERENCE to the place it already lives in, so the record — its store, and the deep copy
+// into it — is gone.
+//
+// Every value below is what the program answers WITHOUT the rewrite, hand-computed from the
+// declarations: the record form is the oracle and the view leaf may not move it.  The
+// interpreter keeps the record form always, so this file on `--interpret` measures the
+// oracle itself.
+//
+// The shape that is ADMITTED is the one a program actually writes: a local filled by a call,
+// appended into a collection the caller owns, and returned in the record beside it.  The
+// leaf hands over the append's own destination, because that is where the same value already
+// lives in a store the frame does not own.
+//
+// The DECLINE cells are the rule's conditions, one each, and three would be SILENT if the
+// decline stopped firing — a write landing in the caller's container, and a read through an
+// element that moved.  That is why each asserts a VALUE and not only a length.
+//
+// @falsified-at: hand-measured (2026-09-16).  The admissions' own channel cannot move (the
+// copy the switch restores is correct, which is the point), so the falsification is of the
+// DECLINES, by removing each and re-running:
+//   * `b7` (a site reads an ELEMENT of the leaf and writes through it) — MEASURED, on the
+//     emission the gate produced before the read context was narrowed: the write landed in
+//     `sb7.ops[0].opts`, which read 109 where the oracle says 9, with nothing to say so.
+//     That measurement is what cut `VIEW_LEAF_READ_OPS` down to the ops that answer a VALUE.
+//   * `b1` (a site appends to the field) — the append's own spelling is
+//     `OpNewRecord(m, <Mark>, <field>)`, which no read context admits, so the decline is the
+//     allow-list's default rather than a rule of its own.
+//   * `b8` (a REMOVAL between the bind and the last read) — MEASURED with the span test
+//     disabled: the first result read `5,30`, the SECOND element's points, where its own copy
+//     holds `2,3`.  That is `(B-Disturb)`'s renumbering, and it is what the span test is for.
+//     The APPEND cells (`b2`, `b3`) do not move under the same sabotage — an append leaves
+//     the earlier elements where they are in every shape measured, including fifty growths in
+//     a row — so they stand on the rule rather than on a wrong answer of their own.
+//   * `d2` (a `?`-discharged source, whose ownership is a JOIN) — the absent arm mints its
+//     record in the frame's own store, so the view dangles wherever the element was absent.
+// The admissions' receipt is STRUCTURAL and pinned in `tests/view_field.rs`: the tuple
+// signature, the dropped buffer argument, and every decline still declining.
+
+struct Pt { px: integer = 0, py: integer = 0 }
+struct Op { opts: vector<Pt>, ow: integer = 0 }
+struct Sc { ops: vector<Op>, seen: integer = 0 }
+struct Mark { matched: boolean = false, bad: boolean = false, mpts: vector<Pt> }
+struct Named { nm: text = "", npts: vector<Pt> }
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+fn totp(v: const vector<Pt>) -> integer { t = 0; for p in v { t += p.px + p.py; } t }
+fn mkpts(n: integer) -> vector<Pt> {
+  o: vector<Pt> = [];
+  for i in 0..n { o += [Pt { px: i, py: i * 2 }]; }
+  o
+}
+
+// ── ADMISSIONS ─────────────────────────────────────────────────────────────────────
+
+/// a1 — the natural form: one local, copied into the appended element, returned beside it.
+fn a1(sc: Sc, n: integer) -> Mark {
+  a1_p = mkpts(n);
+  sc.ops += [Op { opts: a1_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: a1_p }
+}
+
+/// a2 — an exit with NO place to view (an empty literal) beside a viewing exit.
+fn a2(sc: Sc, n: integer) -> Mark {
+  if n < 0 { return Mark { matched: true, bad: true, mpts: [] } }
+  a2_p = mkpts(n);
+  sc.ops += [Op { opts: a2_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: a2_p }
+}
+
+/// a3 — the same natural shape with the local declared `[]` and filled in place, so it is
+/// bound to a field of the frame's own `__vdb` backing record rather than to a call's result.
+/// Admitted since step 2: what the leaf names is the APPEND's destination either way, and the
+/// binding the local came from does not change where the value ended up.
+fn a3(sc: Sc, n: integer) -> Mark {
+  a3_p: vector<Pt> = [];
+  for i in 0..n { a3_p += [Pt { px: i + 1, py: i }]; }
+  sc.ops += [Op { opts: a3_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: a3_p }
+}
+
+/// a4 — several EXITS, each appending its own element and returning a `Mark` that views it:
+/// the shape every parser writes, and the one a per-BODY mention count declined.  The
+/// question is per PATH — on the path that returns, exactly one append ran.
+fn a4(sc: Sc, n: integer) -> Mark {
+  if n < 0 { return Mark { matched: true, bad: true, mpts: [] } }
+  if n == 0 {
+    a4_z = mkpts(1);
+    sc.ops += [Op { opts: a4_z, ow: 0 }];
+    return Mark { matched: true, bad: false, mpts: a4_z }
+  }
+  a4_p = mkpts(n);
+  sc.ops += [Op { opts: a4_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: a4_p }
+}
+
+/// a5 — a SIBLING field of the same parameter is disturbed between the bind and the read, and
+/// that cannot move the element the leaf names: a vector's growth re-claims its own array and
+/// leaves every other field where it is.  Declining it declined every parser that records a
+/// diagnostic beside its parse.
+fn a5(sc: Sc, n: integer) -> Mark {
+  a5_p = mkpts(n);
+  sc.ops += [Op { opts: a5_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: a5_p }
+}
+
+// ── CALLEE-SIDE DECLINES ───────────────────────────────────────────────────────────
+
+/// d1 — the source's owner is the FRAME: nothing appended it anywhere the caller can reach,
+/// so a view would name a store freed at the return.
+fn d1(n: integer) -> Mark {
+  d1_p = mkpts(n);
+  Mark { matched: true, bad: false, mpts: d1_p }
+}
+
+/// d2 — the source is a `?`-DISCHARGED element, whose ownership is a JOIN: the absent arm
+/// mints its record in the frame's own store.  This is the spelling a programmer who knows
+/// the store model writes, and it is exactly the one the rule cannot admit.
+fn d2(sc: Sc, n: integer) -> Mark {
+  sc.ops += [Op { opts: [], ow: n }];
+  d2_o = sc.ops[len(sc.ops) - 1]?;
+  for i in 0..n { d2_o.opts += [Pt { px: i, py: i * 2 }]; }
+  Mark { matched: true, bad: false, mpts: d2_o.opts }
+}
+
+/// d3 — the source has TWO owning destinations outside the frame, so which place the view
+/// names is not decided.
+fn d3(sc: Sc, sc2: Sc, n: integer) -> Mark {
+  d3_p = mkpts(n);
+  sc.ops += [Op { opts: d3_p, ow: n }];
+  sc2.ops += [Op { opts: d3_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: d3_p }
+}
+
+/// d4 — the callee GROWS the viewed container again after the append, which moves the
+/// element the view would name.
+fn d4(sc: Sc, n: integer) -> Mark {
+  d4_p = mkpts(n);
+  sc.ops += [Op { opts: d4_p, ow: n }];
+  sc.ops += [Op { opts: [], ow: 99 }];
+  Mark { matched: true, bad: false, mpts: d4_p }
+}
+
+/// d6 — the field is filled by a vector LITERAL, which the buffer form pushes element by
+/// element (`OpPushInt(OpGetField(buf, off, _), …)`) rather than appending a vector into it.
+/// Reading that as "nothing wrote the field" would deliver a NULL view for a vector of eight —
+/// which is what it did, until `723-ncc-loop-element-bind` said so on the corpus.  The count of
+/// NAMINGS of the field is what makes the empty answer positive.
+fn d6(n: integer) -> Mark {
+  Mark { matched: true, bad: false, mpts: [Pt { px: n, py: n * 2 }, Pt { px: n + 1, py: n }] }
+}
+
+/// d5 — a `text` field is not a leaf type: text is read through its own getters, never
+/// through the field slot.
+fn d5(sc: Sc, n: integer) -> Named {
+  d5_p = mkpts(n);
+  sc.ops += [Op { opts: d5_p, ow: n }];
+  Named { nm: "five", npts: d5_p }
+}
+
+// ── SITE-SIDE DECLINES, each with its own callee (a site declines the function whole) ──
+
+fn b1f(sc: Sc, n: integer) -> Mark {
+  b1_p = mkpts(n);
+  sc.ops += [Op { opts: b1_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: b1_p }
+}
+fn b2f(sc: Sc, n: integer) -> Mark {
+  b2_p = mkpts(n);
+  sc.ops += [Op { opts: b2_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: b2_p }
+}
+fn b3f(sc: Sc, n: integer) -> Mark {
+  b3_p = mkpts(n);
+  sc.ops += [Op { opts: b3_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: b3_p }
+}
+fn b4f(sc: Sc, n: integer) -> Mark {
+  b4_p = mkpts(n);
+  sc.ops += [Op { opts: b4_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: b4_p }
+}
+fn b5f(sc: Sc, n: integer) -> Mark {
+  b5_p = mkpts(n);
+  sc.ops += [Op { opts: b5_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: b5_p }
+}
+fn b6f(sc: Sc, n: integer) -> Mark {
+  b6_p = mkpts(n);
+  sc.ops += [Op { opts: b6_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: b6_p }
+}
+fn b7f(sc: Sc, n: integer) -> Mark {
+  b7_p = mkpts(n);
+  sc.ops += [Op { opts: b7_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: b7_p }
+}
+fn b8f(sc: Sc, n: integer) -> Mark {
+  b8_p = mkpts(n);
+  sc.ops += [Op { opts: b8_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: b8_p }
+}
+fn c1f(sc: Sc, n: integer) -> Mark {
+  c1_p = mkpts(n);
+  sc.ops += [Op { opts: c1_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: c1_p }
+}
+fn c2f(sc: Sc, n: integer) -> Mark {
+  c2_p = mkpts(n);
+  sc.ops += [Op { opts: c2_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: c2_p }
+}
+
+/// Grows the container it is handed — what `b3`'s site calls between the bind and the read.
+fn grow_ops(sc: Sc) { sc.ops += [Op { opts: [], ow: 7 }]; }
+
+fn main() {
+  // a1 — the admitted form, read as a length and through a `const` argument.
+  s1 = Sc { ops: [], seen: 0 };
+  m1 = a1(s1, 3);
+  ok("a1 natural form       ", "{m1.matched},{m1.bad},{len(m1.mpts)},{totp(m1.mpts)}", "true,false,3,9");
+  ok("a1 the container too  ", "{len(s1.ops)},{totp(s1.ops[0]?.opts)}", "1,9");
+
+  // a2 — both exits of one function: the empty literal and the view.
+  s2 = Sc { ops: [], seen: 0 };
+  m2a = a2(s2, -1);
+  ok("a2 empty exit         ", "{m2a.matched},{m2a.bad},{len(m2a.mpts)},{totp(m2a.mpts)}", "true,true,0,0");
+  s2b = Sc { ops: [], seen: 0 };
+  m2b = a2(s2b, 4);
+  ok("a2 viewing exit       ", "{m2b.matched},{m2b.bad},{len(m2b.mpts)},{totp(m2b.mpts)}", "true,false,4,18");
+
+  // a3 — a local declared `[]` and filled in place.
+  s3 = Sc { ops: [], seen: 0 };
+  m3 = a3(s3, 3);
+  ok("a3 filled in place    ", "{len(m3.mpts)},{totp(m3.mpts)}", "3,9");
+
+  // a4 — three exits, each with its own append: the parser shape.
+  s4 = Sc { ops: [], seen: 0 };
+  m4a = a4(s4, -1);
+  ok("a4 empty exit         ", "{m4a.bad},{len(m4a.mpts)}", "true,0");
+  m4b = a4(s4, 0);
+  ok("a4 second exit        ", "{len(m4b.mpts)},{totp(m4b.mpts)}", "1,0");
+  s4c = Sc { ops: [], seen: 0 };
+  m4c = a4(s4c, 3);
+  ok("a4 third exit         ", "{len(m4c.mpts)},{totp(m4c.mpts)},{len(s4c.ops)}", "3,9,1");
+
+  // a5 — a sibling field grows between the bind and the read.
+  s5 = Sc { ops: [], seen: 0 };
+  m5 = a5(s5, 3);
+  s5.seen = s5.seen + 1;
+  ok("a5 sibling disturbed  ", "{len(m5.mpts)},{totp(m5.mpts)},{s5.seen}", "3,9,1");
+
+  // d1 — a frame-owned source keeps the copy, and the values are the copy's.
+  d1m = d1(3);
+  ok("d1 frame-owned source ", "{d1m.matched},{len(d1m.mpts)},{totp(d1m.mpts)}", "true,3,9");
+
+  // d2 — the `?`-discharged source.
+  sd2 = Sc { ops: [], seen: 0 };
+  md2 = d2(sd2, 3);
+  ok("d2 discharged source  ", "{len(md2.mpts)},{totp(md2.mpts)},{totp(sd2.ops[0]?.opts)}", "3,9,9");
+
+  // d3 — two destinations.
+  sd3 = Sc { ops: [], seen: 0 };
+  sd3b = Sc { ops: [], seen: 0 };
+  md3 = d3(sd3, sd3b, 3);
+  ok("d3 two destinations   ", "{len(md3.mpts)},{totp(md3.mpts)},{totp(sd3.ops[0]?.opts)},{totp(sd3b.ops[0]?.opts)}", "3,9,9,9");
+
+  // d4 — the callee grows the viewed container again.
+  sd4 = Sc { ops: [], seen: 0 };
+  md4 = d4(sd4, 3);
+  ok("d4 grown after append ", "{len(md4.mpts)},{totp(md4.mpts)},{len(sd4.ops)}", "3,9,2");
+
+  // d5 — a text field beside the vector.
+  sd5 = Sc { ops: [], seen: 0 };
+  md5 = d5(sd5, 2);
+  ok("d5 a text field       ", "{md5.nm},{len(md5.npts)},{totp(md5.npts)}", "five,2,3");
+
+  // d6 — a field filled by a literal, whose pushes name the field eight times over.
+  md6 = d6(4);
+  ok("d6 filled by a literal", "{len(md6.mpts)},{totp(md6.mpts)}", "2,21");
+
+  // b1 — a site that WRITES through the field: the write reaches the caller's own copy and
+  // NOT the container, which is what the record form promises.
+  sb1 = Sc { ops: [], seen: 0 };
+  mb1 = b1f(sb1, 3);
+  mb1.mpts += [Pt { px: 100, py: 0 }];
+  ok("b1 write through leaf ", "{len(mb1.mpts)},{totp(mb1.mpts)},{len(sb1.ops[0]?.opts)},{totp(sb1.ops[0]?.opts)}", "4,109,3,9");
+
+  // b2 — a disturbance between the bind and the last read: the read must answer what the
+  // copy held, not what the moved element holds.
+  sb2 = Sc { ops: [], seen: 0 };
+  mb2 = b2f(sb2, 3);
+  sb2.ops += [Op { opts: [], ow: 5 }];
+  ok("b2 disturbed between  ", "{len(mb2.mpts)},{totp(mb2.mpts)},{len(sb2.ops)}", "3,9,2");
+
+  // b3 — the same disturbance through a CALL.
+  sb3 = Sc { ops: [], seen: 0 };
+  mb3 = b3f(sb3, 3);
+  grow_ops(sb3);
+  ok("b3 disturbed via call ", "{len(mb3.mpts)},{totp(mb3.mpts)},{len(sb3.ops)}", "3,9,2");
+
+  // b4 — a site that KEEPS the record: stored in a collection, so the tuple cannot serve it.
+  sb4 = Sc { ops: [], seen: 0 };
+  mb4 = b4f(sb4, 3);
+  keep: vector<Mark> = [];
+  keep += [mb4];
+  ok("b4 the record kept    ", "{len(keep)},{len(keep[0]?.mpts)},{totp(keep[0]?.mpts)}", "1,3,9");
+
+  // b5 — a read that stands BEFORE the bind in a loop body: the bind does not dominate it,
+  // so a view would be the previous iteration's.  23 on the first pass (two points,
+  // 2*10 + 3) and 39 on the second (three points, 30 + 9).
+  sb5 = Sc { ops: [], seen: 0 };
+  mb5 = b5f(sb5, 2);
+  b5_sum = 0;
+  for k in 0..2 {
+    b5_sum += len(mb5.mpts) * 10 + totp(mb5.mpts);
+    mb5 = b5f(sb5, 3);
+  }
+  ok("b5 read before bind   ", "{b5_sum},{len(mb5.mpts)},{len(sb5.ops)}", "62,3,3");
+
+  // b6 — a site that ITERATES the leaf: the `for` lowering BINDS a temp from the field,
+  // which is a second binding of the view rather than a read of it, so the record form
+  // stands.  1*10+0, 2*10+2, 3*10+4 over `mkpts`' own points.
+  sb6 = Sc { ops: [], seen: 0 };
+  mb6 = b6f(sb6, 3);
+  b6_sum = 0;
+  for p in mb6.mpts { b6_sum += p.px * 10 + p.py; }
+  ok("b6 iterated at a site ", "{b6_sum},{len(mb6.mpts)}", "36,3");
+
+  // b7 — a site that reads an ELEMENT of the leaf, and then WRITES through it.  An element
+  // read answers a PLACE, so the read-only-ness of the op that answers it says nothing: this
+  // is the cell that measured 3,109 in the container where the copy holds 3,9.
+  sb7 = Sc { ops: [], seen: 0 };
+  mb7 = b7f(sb7, 3);
+  mb7.mpts[0]?.px = 100;
+  ok("b7 element written    ", "{len(mb7.mpts)},{totp(mb7.mpts)},{totp(sb7.ops[0]?.opts)}", "3,109,9");
+
+  // b8 — a REMOVAL between the bind and the last read, which is `(B-Disturb)`'s renumbering:
+  // this is the cell that MEASURED the silence.  With the span test disabled the first
+  // result read 5,30 — the second element's points — where its own copy holds 2,3.
+  sb8 = Sc { ops: [], seen: 0 };
+  mb8a = b8f(sb8, 2);
+  mb8b = b8f(sb8, 5);
+  sb8.ops.remove(0);
+  ok("b8 removed between    ", "{len(mb8a.mpts)},{totp(mb8a.mpts)}", "2,3");
+  ok("b8 the later one too  ", "{len(mb8b.mpts)},{totp(mb8b.mpts)}", "5,30");
+
+  // c1 — the POSITIVE control for b2: the disturbance comes AFTER the last read, so the
+  // view is admitted and answers the same.
+  sc1 = Sc { ops: [], seen: 0 };
+  mc1 = c1f(sc1, 3);
+  c1_n = len(mc1.mpts) + totp(mc1.mpts);
+  sc1.ops += [Op { opts: [], ow: 5 }];
+  ok("c1 disturbed after    ", "{c1_n},{len(sc1.ops)}", "12,2");
+
+  // c2 — the POSITIVE control for b5: in a loop where the bind DOMINATES every read, the
+  // view is admitted.  1 point (100+0), 2 (200+3), 3 (300+9).
+  sc2 = Sc { ops: [], seen: 0 };
+  c2_sum = 0;
+  for k in 1..4 {
+    mc2 = c2f(sc2, k);
+    c2_sum += len(mc2.mpts) * 100 + totp(mc2.mpts);
+  }
+  ok("c2 bind dominates     ", "{c2_sum},{len(sc2.ops)}", "612,3");
+
+  println("164-view-field: every cell holds");
+}

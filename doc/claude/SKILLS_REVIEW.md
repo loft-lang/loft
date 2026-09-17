@@ -52,6 +52,19 @@ make skills-review ARGS=--verbose           # + the commits behind each MOVED sk
 make skills-review ARGS="--done loft-test"  # record one as validated
 ```
 
+⚠ **Record a skill AFTER committing the fix its read produced, never in the same step.**
+`--done` stamps the watermark at the CURRENT head, so a skill fixed and recorded together reads
+as moved by its own fix and returns to the list immediately. It is one instance of a general
+rule worth knowing by name: *a derived marker recorded in the same commit as the change it
+measures always describes the wrong tree* — equally true of an `@falsified-at:` receipt, the
+browser bundle's `doc/pkg-src.stamp`, and the walker-audit rows. Measured 2026-09-16: eleven
+skills were recorded and the tool then read 6/11, with each of the five that came back moved by
+one of the recording commits; the single skill recorded without touching anything it cites
+stayed put, which is the control that names the ORDER rather than the reads. So commit the fix,
+then `--done`, then commit the watermark on its own — and re-run the tool before quoting its
+count in a commit message, because the number you expect and the number it reports are exactly
+what diverge here.
+
 `A-skills-review` reports the count on the release checklist. Sources are derived from
 each skill's own text (docs, scripts, make targets it cites), so a skill added or
 rewritten tomorrow is tracked without anyone maintaining a second list. Cited `src/`
@@ -66,17 +79,17 @@ row whose skill was deleted.
 
 | skill | reviewed through | commit |
 |---|---|---|
-| `design-protocol` | 2026-09-07 | `ae0c79d2` |
-| `doc-quality` | 2026-09-07 | `b1dc3f1b` |
-| `draw` | 2026-09-07 | `04c08d10` |
-| `engineering-rigor` | 2026-09-07 | `b1dc3f1b` |
-| `formal-rules` | 2026-09-07 | `ae0c79d2` |
-| `loft-codegen` | 2026-09-07 | `ae0c79d2` |
-| `loft-debug` | 2026-09-07 | `ae0c79d2` |
-| `loft-plan-workflow` | 2026-09-07 | `a9743ea6` |
-| `loft-ship` | 2026-09-07 | `ae0c79d2` |
-| `loft-test` | 2026-09-07 | `04c08d10` |
-| `loft-write` | 2026-09-07 | `ae0c79d2` |
+| `design-protocol` | 2026-09-16 | `1a474a791` |
+| `doc-quality` | 2026-09-16 | `692ece3e1` |
+| `draw` | 2026-09-16 | `9720dfd06` |
+| `engineering-rigor` | 2026-09-16 | `e4e97aa9a` |
+| `formal-rules` | 2026-09-16 | `44863b726` |
+| `loft-codegen` | 2026-09-16 | `692ece3e1` |
+| `loft-debug` | 2026-09-16 | `e4e97aa9a` |
+| `loft-plan-workflow` | 2026-09-16 | `44e7d48f6` |
+| `loft-ship` | 2026-09-16 | `8958ee842` |
+| `loft-test` | 2026-09-16 | `e4e97aa9a` |
+| `loft-write` | 2026-09-16 | `18e92b67e` |
 
 ## Findings that outlive a single review
 

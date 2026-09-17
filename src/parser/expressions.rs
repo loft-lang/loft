@@ -2545,9 +2545,20 @@ use a separate collection or add after the loop"
             matches!(v.unspan(), Value::Call(d, args)
                 if *d == append_nr && args.len() == 3 && *args[0].unspan() == *to.unspan())
         };
+        // @PLN164 C2 — the second way a statement fills this field: it handed the place to a
+        // call as its RETURN BUFFER, so the elements arrive through the callee and no
+        // `OpAppendVector` names the field here at all.  The shape is exact and is only ever
+        // this rewrite's — a `Set` of the destination into a variable the call site minted as a
+        // hidden buffer.  Without it the fill went in and the group was never re-indexed:
+        // `len(g.es)` read 3 while `g.by_x` read 0, which is the silence `(Col-Group)` exists
+        // to prevent and is what the C2 cells caught.
+        let fills_via_buffer = |p: &Self, v: &Value| {
+            matches!(v.unspan(), Value::Set(w, rhs)
+                if p.vars.is_caller_hidden_buf(*w) && *rhs.unspan() == *to.unspan())
+        };
         let (wrote, already_reset) = match &*code {
             Value::Insert(ls) => (
-                ls.iter().any(writes_field),
+                ls.iter().any(writes_field) || ls.iter().any(|o| fills_via_buffer(self, o)),
                 ls.iter()
                     .any(|o| matches!(o.unspan(), Value::Call(d, _) if *d == clear_keyed_nr)),
             ),
@@ -2582,6 +2593,99 @@ use a separate collection or add after the loop"
     /// Every arm of the vector-field replace goes through here, so a group whose
     /// primary is a `vector` cannot be emptied by one arm and left with live views
     /// by another.
+    /// @PLN164 C2 (@FR-R-Place) — hand a call the destination place as its return buffer, so
+    /// its vector result is built where it will live.
+    ///
+    /// `h.v = mkints(n)` mints a buffer store, fills it, clears `h.v` and copies every element
+    /// in, then frees the buffer.  The destination already exists, so the copy buys nothing:
+    /// the rule says that when the place EXISTS at the call and no argument reaches it, the
+    /// buffer IS the place and nothing moves.
+    ///
+    /// The buffer stays the VARIABLE the call site minted — only what it HOLDS changes, from a
+    /// store of its own to the destination's `DbRef`.  That is what keeps this a pure-IR
+    /// rewrite: the call's result type still carries `Deps::frame1(vr)`, so B1's adopt, the
+    /// delivery arms and the free sweep all read what they already read.  The variable is
+    /// re-pointed the way `group_elem_write` re-points its own borrowed temp — `inline_ref`
+    /// plus `skip_free`, because the place is not ours to free (@FR-O-Buffer's clause for a
+    /// buffer that IS a place: not a store of the caller's, never freed, no identity guard).
+    ///
+    /// The caller's clear stays.  The callee's first op clears its buffer too, so the
+    /// `OpClearVector` is redundant — but `clear_vector_field` also emits the KEYED SIBLING
+    /// RESETS a grouped destination needs, and those are not.  The re-index on the other side
+    /// is added by `keyed_sibling_view_fills`, which wraps the finished statement.
+    ///
+    /// Admission is POSITIVE and narrow: a direct call to a loft-defined callee whose LAST
+    /// argument is the hidden buffer this site minted.  The one decline is any other argument
+    /// that reaches the destination's base, and it is true by construction rather than by
+    /// measurement: the callee clears its buffer BEFORE reading its arguments, so
+    /// `h.v = grow(h.v)` would read an emptied vector.
+    fn buffer_is_the_place(
+        &mut self,
+        to: &Value,
+        rhs: &Value,
+        parent_tp: &Type,
+    ) -> Option<Vec<Value>> {
+        if !crate::keys::buffer_is_the_place_enabled() || self.first_pass {
+            return None;
+        }
+        let Value::Call(d_nr, args) = rhs.unspan() else {
+            return None;
+        };
+        if !self.data.def(*d_nr).name.starts_with("n_") || args.is_empty() {
+            return None;
+        }
+        let Some(Value::Var(vr)) = args.last().map(Value::unspan) else {
+            return None;
+        };
+        let vr = *vr;
+        if !self.vars.is_caller_hidden_buf(vr) {
+            return None;
+        }
+        // The callee must FILL the buffer it is handed, never MINT into it.  `(R-Place)` says
+        // so — *"a callee that may hand back a store it did not mint"* — and it is not the
+        // vacuous clause three sampled callees suggested: one that returns a vector LITERAL
+        // lowers to `OpDatabase(__vdb_1)` INTO its buffer parameter, replacing whatever DbRef
+        // the caller put there.  Handed the destination, it mints over it, and the write lands
+        // in a record the destination does not name: measured, `payload_bytes` refused with
+        // *"record N claims size 0 … freed or never written"* (loft#810's guard catching this
+        // unit).  So the admission READS THE CALLEE and declines a body that mints into any
+        // argument slot — the positive form of the rule's decline, as B2 unit 1 is for records.
+        let callee = self.data.def(*d_nr);
+        let mint = self.data.def_nr("OpDatabase");
+        let mint_np = self.data.def_nr("OpDatabaseNP");
+        let cvars = &callee.variables;
+        if callee.code.any_node(&mut |n| {
+            matches!(n, Value::Call(d, a) if (*d == mint || *d == mint_np)
+                && matches!(a.first().map(Value::unspan), Some(Value::Var(w)) if cvars.is_argument(*w)))
+        }) {
+            return None;
+        }
+        // The place must EXIST at the call, unconditionally.  A field of a struct-ENUM VARIANT
+        // does not: it lowers through a variant check — `OpGetField(if <tag == V> { subj } else
+        // { OpNullRefSentinel() }, …)` — so on any other variant the base is the sentinel and
+        // the "place" is a record that was never written.  Handing that to a callee as its
+        // buffer makes the callee write into it: measured, `payload_bytes` refused with
+        // *"record N claims size 0 … it has been freed or was never written"*, which is
+        // loft#810's guard catching this unit rather than a value going quietly wrong.
+        // `projection_container_place` sees THROUGH the variant check by design (it answers
+        // which container a view came out of), so the sentinel is what this has to look for.
+        let sentinel = self.data.def_nr("OpNullRefSentinel");
+        if to.any_node(&mut |n| matches!(n, Value::Call(d, a) if *d == sentinel && a.is_empty())) {
+            return None;
+        }
+        let (base, _) = crate::use_analysis::projection_container_place(&self.data, to)?;
+        let rest: Vec<Value> = args[..args.len() - 1].to_vec();
+        if rest.iter().any(|a| a.reads_var(base)) {
+            return None;
+        }
+        let mut ops = self.clear_vector_field(to, parent_tp);
+        self.vars.mark_inline_ref(vr);
+        self.vars.set_skip_free(vr);
+        ops.push(v_set(vr, to.clone()));
+        ops.push(rhs.clone());
+        Some(ops)
+    }
+
     fn clear_vector_field(&mut self, to: &Value, parent_tp: &Type) -> Vec<Value> {
         let mut ops = self.keyed_sibling_view_resets(to, parent_tp);
         ops.push(self.cl("OpClearVector", std::slice::from_ref(to)));
@@ -3380,6 +3484,21 @@ use a separate collection or add after the loop"
         // `amp_vector_locals`).  A keyed whole-value write already replaces contents rather
         // than minting, so it needs no such registration.
         let amp_vector_bind = amp_collection_bind && matches!(amp_source, Type::Vector(_, _));
+        // @FR-B-Ref-Alias — record on the VARIABLE that the `&` was written at a COLLECTION
+        // bind.  The IR does not carry it: `d = &cv.data` and `d = cv.data` off a BORROWED
+        // base emit the same ops and BOTH alias, so nothing downstream can tell the live link
+        // from the plain view that `(B-View)` may quietly copy.  The view-materialise walk
+        // needs exactly that distinction to spare a link naming a whole container from its
+        // own container's growth (loft#1543).
+        //
+        // A fact of its own rather than `set_amp_link`: that flag is scoped to a struct-typed
+        // projection and its readers are shaped that way, so widening it would change which
+        // programs the whole-record write route and the two refusals decline.  Whether a
+        // collection link should ALSO reach `(B-Ref-Reshape)` — `c = &s.h; s = Host{…}` is a
+        // silent downgrade the rules say to refuse — is that separate question, left open.
+        if amp_collection_bind && var_nr != u16::MAX {
+            self.vars.set_amp_container_link(var_nr);
+        }
         // loft#1371 — the share aliases element writes and appends, but a WHOLE-VALUE write
         // (`pe = [2, 2]`) would mint a fresh store and re-point `pe` at it, leaving the
         // source untouched with nothing said.  Name the local here so `create_vector` clears
@@ -5126,6 +5245,10 @@ use a separate collection or add after the loop"
                     let mut ops = vec![init_tmp, fill_tmp];
                     ops.extend(clear);
                     ops.push(append);
+                    *code = Value::Insert(ops);
+                } else if let Some(ops) =
+                    self.buffer_is_the_place(to, &code.clone(), &lhs_parent_tp)
+                {
                     *code = Value::Insert(ops);
                 } else {
                     let rhs_saved = code.clone();

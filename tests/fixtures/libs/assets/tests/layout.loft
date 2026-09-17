@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The pack's layout IS its file format, so this suite is the format's regression
+// test: the struct definitions decide where every byte of a written pack lands, and
+// a field that moves reads a neighbour's value out of packs already in the wild.
+use assets;
+
+/// What the layout of `assets` 0.2.0 hashes to.
+///
+/// A CHANGE HERE IS A FORMAT CHANGE.  Packs written by an earlier release are read at
+/// the offsets this number stands for, so if this test fails, one of two things
+/// happened and each has its own answer:
+///
+///   * the schema was edited — every existing pack now reads garbage at some field,
+///     so `data_compatible_with` in `loft.toml` moves to this release and the
+///     CHANGELOG says so;
+///   * loft's own layout rules moved under us — the same breakage, arriving without
+///     an edit, which is exactly why this is pinned rather than merely computed.
+///
+/// 0.1.0 hashed to 21440911.  It moved at 0.2.0 because `Cell` gained `ce_proxy`
+/// (@PLN146 F7) — the FIRST answer above, an edit we made, so `data_compatible_with`
+/// moved with it.  The old number stays written down here: a pin nobody can compare
+/// against does not say a format changed, only that one is different.
+///
+/// Measured identical on the interpreter and `--native`.
+LAYOUT_0_2_0 = 2433656147;
+
+fn test_the_layout_of_this_release_is_the_one_it_promises() {
+  assert(layout_fingerprint() == LAYOUT_0_2_0,
+         "the pack layout changed: {layout_fingerprint()} (was {LAYOUT_0_2_0}) — read the note on LAYOUT_0_2_0, and layout_descriptor() for the field that moved");
+}
+
+fn test_the_fingerprint_is_taken_over_real_content() {
+  // A hash of nothing is a stable number too, so the pin above would survive a
+  // descriptor that had gone empty.  2166136261 is FNV-1a's offset basis: the answer
+  // for empty input, and what this must not be.
+  assert(layout_fingerprint() != 2166136261, "the fingerprint consumed something");
+  assert(size(layout_descriptor()) > 1000, "the descriptor is a description");
+}
+
+fn test_every_pack_type_resolves() {
+  d = layout_descriptor();
+  // Reflection answering MISSING means a type was renamed out from under the
+  // descriptor's own list — the fingerprint would change, but not say why.
+  assert(!d.contains("MISSING"), "every pack type resolved:\n{d}");
+  for t in ["Blob", "PageInfo", "Cell", "Seq", "Def", "Anim", "Scene", "Placed", "Pack"] {
+    assert(d.contains("{t} size="), "{t} is described");
+  }
+}
+
+fn test_the_descriptor_carries_positions_not_declaration_order() {
+  // The load-bearing property: a field's POSITION is what a stored pack is read at,
+  // and it is not the order the field was written in.  `ce_key` is declared first
+  // and sits at 48, after the six integers and two floats — so a descriptor that
+  // reported declaration order (or all zeroes) would hash to a stable number and
+  // gate nothing.
+  assert(layout_descriptor().contains("ce_key text @48"),
+         "a text field placed after the fixed-width ones:\n{layout_descriptor()}");
+}

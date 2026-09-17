@@ -2466,8 +2466,111 @@ impl Stores {
         {
             return;
         }
+        // @PLN164 B2 (`@FR-R-Place`) — a record at 1@8 is a store's ROOT, the shape
+        // `OpDatabase` mints and the one a placed buffer never is (the host's own root
+        // holds it).  It arrives here from `OpFreeRecordIn` when the placing host was
+        // absent at the call and the buffer took a store of its own instead; releasing
+        // the block alone would strand that store, so the whole store goes.
+        if db.rec == 1 && db.pos == 8 {
+            self.free(db);
+            return;
+        }
         self.remove_claims(db, db_tp);
         self.allocations[db.store_nr as usize].delete(db.rec);
+    }
+
+    /// @PLN164 B2 (`@FR-R-Place`) — claim a `db_tp` RECORD inside `host`'s store as the
+    /// return buffer of a call whose result will live in a field of a record in that
+    /// store, prefilled exactly as `OpDatabase` prefills a fresh-store buffer (the type
+    /// tag, a zeroed span, the declared defaults through the `@FR-R-Prefill` image).  The
+    /// callee then writes its literal into it through the "caller offered a record" guard
+    /// and the later store into the destination is a relocation within one store
+    /// (`move_record_out`).  Answers a fresh-STORE buffer when the host is absent: the
+    /// placement is an optimisation of where the record lives, never of whether the call
+    /// gets a buffer, and `free_record_in` releases that shape whole.
+    #[must_use]
+    pub fn place_record_prefilled(
+        &mut self,
+        host: &crate::keys::DbRef,
+        db_tp: u16,
+    ) -> crate::keys::DbRef {
+        let size = self.enum_parent_size(db_tp);
+        let words = 1 + u32::from(size).div_ceil(8);
+        let r = if host.store_nr == u16::MAX
+            || host.rec == 0
+            || (host.store_nr as usize) >= self.allocations.len()
+        {
+            let fresh = self.null();
+            self.clear(&fresh);
+            let r = self.claim(&fresh, words);
+            self.allocations[r.store_nr as usize].set_known_type(db_tp);
+            self.store_mut(&r).zero_fill(r.rec);
+            r
+        } else {
+            let r = self.claim(host, words);
+            self.store_mut(&r).zero_range(r.rec, 8, u32::from(size));
+            r
+        };
+        self.store_mut(&r).set_u32_raw(r.rec, 4, u32::from(db_tp));
+        self.set_default_value(db_tp, &r);
+        if crate::keys::trace_db() {
+            eprintln!(
+                "[db] OpPlaceRecord host=#{}@{} db_tp={db_tp} placed=#{}@{},{} size={size}",
+                host.store_nr, host.rec, r.store_nr, r.rec, r.pos
+            );
+        }
+        r
+    }
+
+    /// @PLN164 B2 (`@FR-R-MoveLast`) — the last-use store of an OWNED record local into a
+    /// field, CONSUMING the source: when source and destination share a store the record's
+    /// bytes RELOCATE — its heap handles keep their claims because a handle never names a
+    /// store — and the source's block is released on the spot, one O(1) delete; nothing is
+    /// zeroed, because the IR sets the local to null right after this op and its exit free
+    /// is null-guarded, so no later walk ever reads the block.  Across stores it is
+    /// `OpCopyRecord`'s deep copy, which is what the rule says a cross-store move already
+    /// costs, and the source is then released whole (it is a store-root buffer: the only
+    /// cross-store source the placement produces is the fresh store a null host fell back
+    /// to).  A null place on either side is nothing to do, as it is for the copy
+    /// (`@FR-L-Null`).
+    ///
+    /// # Panics
+    ///
+    /// Under `LOFT_HOIST_VERIFY=1`, when a PLACED source and its destination do NOT share
+    /// a store — the placement's whole claim, so the verifying build says so.
+    pub fn move_record_out(&mut self, src: &crate::keys::DbRef, dst: &crate::keys::DbRef, tp: u16) {
+        if src.store_nr == u16::MAX
+            || src.rec == 0
+            || dst.store_nr == u16::MAX
+            || dst.rec == 0
+            || (src.store_nr as usize) >= self.allocations.len()
+            || (dst.store_nr as usize) >= self.allocations.len()
+        {
+            return;
+        }
+        let size = u32::from(self.size(tp));
+        if src.store_nr != dst.store_nr {
+            fn verify_enabled() -> bool {
+                static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+                *F.get_or_init(|| std::env::var("LOFT_HOIST_VERIFY").is_ok_and(|v| v != "0"))
+            }
+            assert!(
+                !verify_enabled() || src.rec == 1,
+                "OpMoveRecord across stores: a placed buffer #{}@{} moved into #{}@{}",
+                src.store_nr,
+                src.rec,
+                dst.store_nr,
+                dst.rec
+            );
+            self.remove_claims(dst, tp);
+            self.copy_block(src, dst, size);
+            self.copy_claims(src, dst, tp);
+            self.free_record_in(src, tp);
+            return;
+        }
+        self.remove_claims(dst, tp);
+        self.copy_block(src, dst, size);
+        self.allocations[src.store_nr as usize].delete(src.rec);
     }
 
     /// Plan-07 phase 4c — Stores-side counterpart of

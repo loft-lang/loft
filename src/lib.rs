@@ -302,15 +302,16 @@ pub mod html_fonts;
 /// @PLN119 — where a library RUNS (in-process or a worker process).  Distinct
 /// from [`placement`], which is where a keyed collection puts an entry on disk.
 pub mod lib_placement;
-#[cfg(any(
-    feature = "registry",
-    feature = "remote-store",
-    all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
-))]
+// Compiled on EVERY target.  A build with no HTTP transport gets the module's
+// "unavailable" arm, which its header has always promised — that answer used to be
+// spelled by not compiling the module at all, and the difference is not academic:
+// `paged_reader` names `crate::net` unconditionally, so a build that has the paged
+// loaders but no transport could not compile rather than simply refusing a URL.
 pub(crate) mod net;
 pub mod ownership_cfg;
 #[cfg(paged_store)]
 pub mod paged_reader;
+pub mod place_result;
 pub mod placement;
 pub mod portable_path;
 pub mod resolution;

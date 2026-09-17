@@ -1,0 +1,283 @@
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index c040e7c38..4e05b031b 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -5221,25 +5221,7 @@ impl Parser {
+                         std::panic::Location::caller()
+                     );
+                 }
+-                // `@FR-T-Absent` — an in-flight `(τ₁, …, τₙ)?` landing in a slot whose members are
+-                // EACH nullable is the sanctioned store (owner ruling 2026-09-16, `tuples.md`
+-                // D-tup-10): the nulls land, and the slot then holds a tuple that exists.  Asked
+-                // here, the whole-type report named `(integer?, text?)` as "the non-null type" —
+-                // a type whose members are exactly what the value carries.
+-                //
+-                // The conversion itself was never wrong: this arm peels and recurses into the
+-                // element-wise tuple arm below, which converts each member.  Only the REPORT is,
+-                // so only the report is skipped — and only for this shape.  A destination with a
+-                // NON-null member keeps it, which is the half `(N-Store)` exists for: peeled, a
+-                // `(integer, text)` destination is identical to the source and reports nothing
+-                // at all, so dropping the report for every tuple pair would lose that warning.
+-                let sanctioned_tuple = self
+-                    .tuple_elements(inner)
+-                    .zip(self.tuple_elements(should))
+-                    .is_some_and(|(v, t)| {
+-                        v.len() == t.len() && t.iter().all(|m| matches!(m, Type::Optional(_)))
+-                    });
+-                if self.admit_unwrap == 0 && !self.in_explicit_cast && !sanctioned_tuple {
++                if self.admit_unwrap == 0 && !self.in_explicit_cast {
+                     let (what, at, lenient) = self.store_slot();
+                     if self.nstore_unwrap_report(inner, should, &what, at.as_ref(), lenient) {
+                         return true;
+@@ -5263,27 +5245,7 @@ impl Parser {
+         // synthetic-struct path gets from its per-field assignment.  Elements
+         // are converted through a temporary so a failing element leaves `code`
+         // untouched for the caller's fallback arms.
+-        // `@FR-T-Absent` — an in-flight `(τ₁, …, τₙ)?` reaching a member-nullable slot is the
+-        // SANCTIONED store: the nulls land, and the slot then holds a tuple that exists (owner
+-        // ruling 2026-09-16, `tuples.md` D-tup-10).  Read BARE, the `Optional` wrapper made this
+-        // arm decline, the value fell through to the `τ? ⤳ τ` report one level down, and a field
+-        // declared `(integer?, text?)` was told that a nullable `(integer, text)?` "is stored
+-        // into the field of the non-null type `(integer?, text?)`" — naming a type whose members
+-        // are exactly what the value carries.  `n_store_violation`'s own walk already peels this
+-        // way; one question with two decoders is what let them disagree.
+-        let tuple_convert_elems = |tp: &Type| -> Option<Vec<Type>> {
+-            let (base, absent) = tp.peel_optional();
+-            let Type::Tuple(elems) = base else {
+-                return None;
+-            };
+-            Some(if absent {
+-                elems.iter().cloned().map(Type::optional).collect()
+-            } else {
+-                elems.clone()
+-            })
+-        };
+-        if let (Some(src_elems), Some(dst_elems)) =
+-            (tuple_convert_elems(is_type), tuple_convert_elems(should))
++        if let (Type::Tuple(src_elems), Type::Tuple(dst_elems)) = (is_type, should)
+             && src_elems.len() == dst_elems.len()
+         {
+             let mut items = match code.unspan_mut() {
+@@ -12403,50 +12365,7 @@ impl Parser {
+             self.bind_tuple_operand(&list[0], &types[0], &left_elems, "__cmp_l", &mut prelude);
+         let right =
+             self.bind_tuple_operand(&list[1], &types[1], &right_elems, "__cmp_r", &mut prelude);
+-        let mut cmp = self.lex_compare(op, 0, left, right, &left_elems, &right_elems);
+-        // `@FR-T-Absent` — `==` compares tuples that EXIST.  The one tuple that does not is an
+-        // out-of-range read, and its representation is all-null members, which the element-wise
+-        // chain above compares EQUAL to another absent tuple: two separate misses answered
+-        // `true`.  Owner ruling 2026-09-16 (`tuples.md` D-tup-10): a side that is not there
+-        // makes `==` false and `!=` true, so the chain is consulted only once BOTH sides exist.
+-        //
+-        // Guarded per side, and only for a side whose TYPE can be absent — a tuple a program
+-        // wrote down always exists, so guarding it would emit a test that is constantly true.
+-        // Ordering (`<`, `<=`, `>`, `>=`) is deliberately untouched: the ruling is about the
+-        // null question, and lexicographic order over an absent operand is its own design call.
+-        if matches!(op, "==" | "!=") {
+-            // The operand's OWN type, not the one operator resolution handed us: a `τ?` operand
+-            // resolves against the `τ` operator, so `types` arrives PEELED here and an in-flight
+-            // tuple is indistinguishable from a written one by the time this runs (measured —
+-            // both sides read `(integer, text)` for two out-of-range reads).  `(T-Absent)` puts
+-            // the in-flight type in a LOCAL and nowhere else, so the variable's declared type is
+-            // where the `?` survives.  Guarding unconditionally instead would be wrong, not just
+-            // wasteful: `coalesce_not_null` reports an all-null WRITTEN tuple absent, and those
+-            // must still compare equal to each other.
+-            let operand_absent = |s: &Self, v: &Value, t: &Type| -> bool {
+-                let tp = match v.unspan() {
+-                    Value::Var(n) => s.vars.tp(*n).clone(),
+-                    _ => t.clone(),
+-                };
+-                Self::is_absent_tuple(&s.data, &tp)
+-            };
+-            let l_absent = operand_absent(self, &list[0], &types[0]);
+-            let r_absent = operand_absent(self, &list[1], &types[1]);
+-            if l_absent || r_absent {
+-                // The answer when a side is missing: `==` is false, `!=` is its negation.
+-                let missing = Value::Boolean(op == "!=");
+-                if r_absent {
+-                    let exists = self
+-                        .coalesce_not_null(&Value::Var(right), &Type::Tuple(right_elems.clone()));
+-                    cmp = v_if(exists, cmp, missing.clone());
+-                }
+-                if l_absent {
+-                    let exists =
+-                        self.coalesce_not_null(&Value::Var(left), &Type::Tuple(left_elems.clone()));
+-                    cmp = v_if(exists, cmp, missing);
+-                }
+-            }
+-        }
++        let cmp = self.lex_compare(op, 0, left, right, &left_elems, &right_elems);
+         *code = if prelude.is_empty() {
+             cmp
+         } else {
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index ec4b477b5..f5de8c21c 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -760,29 +760,17 @@ impl Parser {
+             } else {
+                 self.cl("OpNot", &[valid])
+             });
+-        } else if Self::is_existing_tuple(&self.data, tp) {
+-            // `@FR-T-Absent` — a tuple a program writes down EXISTS, whatever its members
+-            // hold: `(null, null)` is a tuple that is THERE, holding two nulls.  So `t == null`
+-            // is constantly false for it, and `!=` is the tail's negation of that answer.
+-            // Only an out-of-range read makes a tuple that is not there, and that one takes
+-            // the arm below (owner ruling 2026-09-16, `tuples.md` D-tup-10).
++        } else if Self::is_tuple_shape(&self.data, tp) {
++            // @FR-T-Absent — a tuple's absence is "every member null", and the rule names
++            // `t == null` and `t ?? d` as ONE question.  So this asks the coalesce's own
++            // answer and negates it, rather than restating the fold: two spellings of one
++            // question that each carried their own member walk would be exactly the drift
++            // `(T-Absent)` says must not exist, and the members' sentinels are already
++            // `coalesce_not_null`'s to know.
+             //
+-            // This arm did not exist before that ruling: both spellings folded the MEMBERS, so
+-            // an all-null written tuple reported itself ABSENT.  That was the "absent iff every
+-            // member null" convention, which the ruling demotes from the DEFINITION of absence
+-            // to how the in-flight value happens to be represented.
+-            Value::Boolean(false)
+-        } else if Self::is_absent_tuple(&self.data, tp) {
+-            // `@FR-T-Absent` — the in-flight `(τ₁, …, τₙ)?` an out-of-range read produces is
+-            // the one tuple that can be absent, and all-null members is how it is REPRESENTED.
+-            // So this asks the coalesce's own answer and negates it, rather than restating the
+-            // fold: two spellings of one question that each carried their own member walk would
+-            // be exactly the drift `(T-Absent)` says must not exist, and the members' sentinels
+-            // are already `coalesce_not_null`'s to know.
+-            //
+-            // Reached for BOTH homes — a stack `(τ, τ)?` and the boxed `ref(__tuple<…>)?` a
+-            // generic `-> T?` at a tuple delivers — and this arm deliberately precedes the
+-            // `Optional(Reference)` arm below: a boxed tuple matches that one too, and
++            // Asked through `is_tuple_shape` so BOTH homes arrive here.  The rule is stated
++            // on the TYPE, not on where the value lives, and this arm deliberately precedes
++            // the `Optional(Reference)` arm below: a boxed tuple matches that one too, and
+             // answering it there would test the RECORD's presence instead of the members.
+             //
+             // `coalesce_not_null` addresses members through `Value::TupleGet(var, i)`, so it
+@@ -2090,55 +2078,6 @@ impl Parser {
+         matches!(t.base(), Type::Tuple(_)) || Self::record_tuple_def(data, t.base()).is_some()
+     }
+ 
+-    /// Can this tuple be ABSENT — is it the in-flight `(τ₁, …, τₙ)?` that an out-of-range read
+-    /// produces, as opposed to a tuple that exists?
+-    ///
+-    /// `@FR-T-Absent` — absence belongs to the `?`, never to the members.  `v[121134133]` on a
+-    /// `vector<(τ, τ)>` yields `(τ, τ)?`, a type no author may SPELL (`1423` refuses it by name)
+-    /// and the index produces anyway; it lives in a LOCAL and nowhere else.  Everything a
+-    /// program can write down is a tuple that EXISTS whatever its members hold — a written
+-    /// `(τ₁?, …, τₙ?)`, a declared member-nullable return, a field read.  `(null, null)` is such
+-    /// a tuple: it is there, holding two nulls.
+-    ///
+-    /// This is therefore the gate on the three operators that ask about absence — `?` and `??`
+-    /// discharge one, and `t == null` tests for one — and the distinction is STATIC, decided by
+-    /// the type on the line, even though both spellings hold the same all-null bytes at run
+-    /// time.  Both homes qualify: a stack `(τ, τ)?` and the boxed `ref(__tuple<…>)?` that a
+-    /// generic `-> T?` instantiated at a tuple delivers.
+-    ///
+-    /// One home beside [`is_tuple_shape`](Parser::is_tuple_shape), which answers the different
+-    /// question *"is this a tuple at all"* — the two are asked together and must not drift.
+-    pub(crate) fn is_absent_tuple(data: &crate::data::Data, t: &Type) -> bool {
+-        matches!(t, Type::Optional(_)) && Self::is_tuple_shape(data, t)
+-    }
+-
+-    /// Does this type carry a tuple that EXISTS — the receiver `?` and `??` have nothing to
+-    /// discharge from?  The complement of [`is_absent_tuple`](Parser::is_absent_tuple) within
+-    /// the tuples.
+-    pub(crate) fn is_existing_tuple(data: &crate::data::Data, t: &Type) -> bool {
+-        Self::is_tuple_shape(data, t) && !Self::is_absent_tuple(data, t)
+-    }
+-
+-    /// Does this `?` / `??` subject name a tuple the program HOLDS — a local, a field read, a
+-    /// literal — rather than an ELEMENT READ, whose value may not be there?
+-    ///
+-    /// The type alone cannot separate the two, and that is measured rather than assumed:
+-    /// `(N-Index)` trusts a CONSTANT index by contract, so `v[0]` is typed `(τ₁, …, τₙ)` with no
+-    /// `?` even though the read can still miss at run time — `823-element-bind-ownership.loft`
+-    /// asserts exactly that ("an out-of-range tuple element is absent"), and nine shipped
+-    /// scripts discharge such a read.  Only a VARIABLE index carries the `?` that
+-    /// [`is_absent_tuple`](Parser::is_absent_tuple) reads.
+-    ///
+-    /// So the subject's own spelling decides: a tuple the program holds arrives as its variable
+-    /// or as a built tuple value (a field read lowers to a tuple of member reads), while an
+-    /// element read arrives as the block that unboxes it.  Keeping the refusal to the held
+-    /// spellings is what makes it the owner's 2026-09-16 ruling — `?`/`??` mean nothing on a
+-    /// tuple that is there — without withdrawing `v[i] ?? d`, which is the idiom the ruling
+-    /// names as the one that must keep working.
+-    fn tuple_subject_is_held(code: &Value) -> bool {
+-        matches!(code.unspan(), Value::Var(_) | Value::Tuple(_))
+-    }
+-
+     /// The members of a BOXED tuple whose only difference from `stack`'s elements is each
+     /// member's `?`, or `None` when the two types are not that pair.
+     ///
+@@ -2633,15 +2572,9 @@ impl Parser {
+         // loft#1003 — `(diagnostic index, line, column)` of a `redundant-coalesce` notice
+         // whose deletion span is still open, or `None` when none fired.
+         let mut redundant_at: Option<(usize, u32, u32)> = None;
+-        // `@FR-T-Absent` — a tuple that EXISTS earns the refusal below, and this lint would put
+-        // a contradictory line above it: it says the default "is never used" while the coalesce
+-        // it describes is about to be rejected outright.  Measured before the refusal existed,
+-        // the pair was worse than contradictory — `s.t ?? (9, "d")` on a field holding
+-        // `(null, null)` warned "never used" and then USED the default, answering `9 d`.
+         if self.expr_not_null
+             && !self.first_pass
+             && !matches!(ctp, Type::Optional(_))
+-            && !Self::is_existing_tuple(&self.data, ctp)
+             && !self.call_declares_nullable(code)
+         {
+             diagnostic!(
+@@ -2703,24 +2636,6 @@ impl Parser {
+         // default is a mismatch, and `p ?? 0` inside a `&integer?` parameter was reported as
+         // the author's error.  That refusal is half of why @FR-B-Ref-Intro's `&τ` for every
+         // τ had to be declined (D-bind-17).
+-        // `@FR-T-Absent` — the `?` half's rule, for the same reason: `??` discharges an
+-        // absence, a tuple a program writes down EXISTS, and `(null, null)` is such a tuple
+-        // rather than an absent one.  Reported and then ALLOWED TO PROCEED, unlike `?`: the
+-        // right operand still has to be parsed, and returning here would leave `?? <default>`
+-        // unconsumed and cascade a second error about the default (owner ruling 2026-09-16,
+-        // `tuples.md` D-tup-10).
+-        if !self.first_pass
+-            && Self::is_existing_tuple(&self.data, ctp)
+-            && Self::tuple_subject_is_held(code)
+-        {
+-            diagnostic!(
+-                self.lexer,
+-                Level::Error,
+-                "`??` has nothing to discharge — `{}` is a tuple that EXISTS, and only a tuple \
+-                 read out of range is absent.  Discharge the member you mean (`t.0 ?? d`)",
+-                ctp.source_name(&self.data)
+-            );
+-        }
+         *ctp = match &*ctp {
+             Type::RefVar(inner) => inner.base().clone(),
+             other => other.base().clone(),
+@@ -3747,29 +3662,6 @@ impl Parser {
+         if !self.first_pass {
+             Self::rewrite_outer_arith_to_nullable(code, &self.data);
+         }
+-        // `@FR-T-Absent` — `?` discharges an ABSENCE, and only the in-flight `(τ₁, …, τₙ)?` an
+-        // out-of-range read produces has one.  Every tuple a program writes down EXISTS, so
+-        // there is nothing to discharge and no defensible answer to pick: on a member-nullable
+-        // tuple `?` could mean the tuple's own default or each member's, and the two disagree
+-        // on a PARTLY PRESENT one, where `??` keeps the present member and a whole-value
+-        // default would drop it.  Refusing is the owner's 2026-09-16 ruling (`tuples.md`
+-        // D-tup-10) — the alternative was to pick a meaning the rules do not settle.
+-        if Self::is_existing_tuple(&self.data, ctp) && Self::tuple_subject_is_held(code) {
+-            if !self.first_pass {
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "`?` has nothing to discharge — `{}` is a tuple that EXISTS, and only a \
+-                     tuple read out of range is absent.  Read the member you mean (`t.0`), or \
+-                     discharge that member with `?`",
+-                    ctp.source_name(&self.data)
+-                );
+-            }
+-            self.expr_not_null = false;
+-            let base = ctp.base().clone();
+-            *ctp = base;
+-            return;
+-        }
+         let base = ctp.base().clone();
+         // The single well-definedness check (the home `S{}` shares): a bare reference,
+         // or a record with an un-defaulted non-null field or a bare enum field with no

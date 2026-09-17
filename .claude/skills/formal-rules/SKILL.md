@@ -39,7 +39,7 @@ deliberating a fix that has a choice in it.
 
 ## The instrument
 
-`rule_tags.py` (~210 lines, stdlib-only Python) implements the whole mechanism:
+`rule_tags.py` (stdlib-only Python, no dependencies) implements the whole mechanism:
 
 ```bash
 python3 scripts/rule_tags.py list          # every defined rule + its doc

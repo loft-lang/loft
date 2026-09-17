@@ -779,7 +779,7 @@ loft-level existence check.
 |----------|-------------|
 | `ok(self: FileResult) -> boolean` | Returns `true` if `Ok`. |
 | `exists(path: text) -> boolean` | Returns `true` if the path exists. |
-| `exists(both: File) -> boolean` | Method form: `f.exists()` or `exists(f)`. Uses `both` parameter. |
+| `exists(self: const File) -> boolean` | Method form: `f.exists()` or `exists(f)`. |
 | `delete(path: text) -> FileResult` | Removes a file. |
 | `move(from: text, to: text) -> FileResult` | Renames or relocates a file. |
 | `mkdir(path: text) -> FileResult` | Creates a single directory level. |

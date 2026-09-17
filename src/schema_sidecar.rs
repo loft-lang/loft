@@ -313,9 +313,30 @@ pub fn check_file(path: &Path, current: &LayoutIdentity) -> std::io::Result<Sche
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(SchemaVerdict::Fresh),
-        Err(e) => return Err(e),
+        // On a browser target `std::fs` is the TARGET declining, not the file being
+        // unreadable — every path fails here.  Without the host arm this gate could
+        // not run in a page at all: the caller turns an error into `Fresh` and
+        // proceeds, so a store written with a different layout would be read at the
+        // wrong stride by exactly the build least able to notice.
+        Err(e) => match host_sidecar_text(path) {
+            Some(t) => t,
+            None => return Err(e),
+        },
     };
     Ok(verdict_for_sidecar_text(&text, current))
+}
+
+/// The sidecar's text from the page's own filesystem, where this build has one.
+///
+/// Two arms so `check_file` above reads as one path — the shape
+/// `store::host_image_bytes` and `paged_reader::host_bytes_at` already use.
+#[cfg(host_fs)]
+fn host_sidecar_text(path: &Path) -> Option<String> {
+    crate::wasm::host_fs_read_text(path.to_str()?)
+}
+#[cfg(not(host_fs))]
+fn host_sidecar_text(_path: &Path) -> Option<String> {
+    None
 }
 
 /// Read the `.dschema` sidecar beside `store_path` and compare it with the

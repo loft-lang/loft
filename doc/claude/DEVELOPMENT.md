@@ -287,6 +287,26 @@ own new names is the only real test.  Run it as a table over the whole source br
 the commits you already carry are usually a contiguous PREFIX, which turns three joins
 into three ranges instead of seventy-six decisions.
 
+**Against a PRE-SQUASH ref, the first two rungs do not merely lose precision — they invent
+work.**  `git cherry HEAD <pre-squash-tip>` reported **57** '+' commits, every one a constituent
+of the squash that carried them, whose single patch-id matches none of its 57 inputs.  Read at
+face value, *"57 commits missing"* is exactly the number that triggers a destructive recovery.
+What survives a squash is FILE CONTENT, so the test is whether the change's effect is in the
+TREE.  For a whole branch that is `git merge-tree --write-tree origin/main <branch>` compared
+against `origin/main^{tree}` — an identical tree means the branch is a no-op however many
+commits it is "ahead" — and where that conflicts, classify
+`git diff origin/main...<branch> --name-only` and score on the files MISSING from `main`,
+especially under `tests/`.  Naming a file one '+' commit ADDED and looking for it is the cheap
+spot-check beside that: it confirms presence, where the tree test also enumerates absence
+(2026-09-16).
+
+**And a fetch reporting `(forced update)` on a SIBLING's branch is often your own stale ref.**
+After this checkout rebased onto a squash-merged `main`, its remote-tracking refs still sat on
+the pre-squash chain, so a peer's ORDINARY `git push` arrived as `+ <old>...<new> (forced
+update)` — their history does not contain the ref being tracked.  Establish whose ref is stale
+before raising it: the alternative reading is that someone overwrote work, and a bare
+`git push` cannot force anyway, being refused on a non-fast-forward.
+
 **A source branch's own REVERT makes a sequence NET-ZERO — skip it whole.**  A branch that
 tried a mechanism, measured a peer's as sufficient and withdrew its own leaves a
 self-cancelling run in its log.  Picking it is worse than wasteful: the revert was written

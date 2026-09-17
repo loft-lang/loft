@@ -1,0 +1,187 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1543 — `(B-Ref-Alias)`'s in-versus-to distinction, one level finer than a whole
+// VARIABLE.  `d = &cv.data` is a reference TO the container; `e = &cv.data[0]` is one INTO it.
+// Both name the place `(cv, off_data)` — a place is one variable and one field offset — and
+// `(B-Disturb)` tells them apart: GROWING the container moves every ELEMENT, ending the
+// second, while it only repoints the field SLOT the first re-reads.  The link was copied
+// instead, on both backends, with advice that was accurate about what happened and wrong about
+// why it had to be.
+//
+// The boundary this pins, from both sides:
+//   - a growth, a removal and a write-through under a live whole-container link keep aliasing;
+//   - a REASSIGNMENT of the base still materialises: that is the one `(B-Disturb)` event which
+//     leaves the slot itself with nothing to point at, and sparing it would hand out a link to
+//     a store the reassignment released;
+//   - a link INTO the container, and a PLAIN bind off a loop variable, are unchanged — the
+//     second is `(B-View)`'s own answer, and it is the cell a cure that skipped the `&` fact
+//     would break.
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+// @falsified-at: 6eece5cdd — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-link-to-a-whole-container-survives-that-containers-growth.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: exit and assertions, on BOTH backends.  The control fails the first cell — `a
+//   growth beside the link: 8+3, the link re-reads the repointed slot: 0` — and reaches no
+//   later one, which is why one assertion failure is the whole score rather than three.
+//   ARMED: nothing.  There is no `@EXPECT_*` annotation here, so falsify's expect column reads
+//   `-` on both trees and means nothing for this file; the leak column reads `none` on both
+//   because these cells leak NOTHING either way, so neither column is evidence here.
+//   WITNESS: measured cell by cell on the control before this file was written — the growth
+//   read 0 where 11 is right, the removal 13 where 22 is, the write-through lost its write
+//   (`1 99 2`), and the nine control cells answered exactly what they answer now.
+//   HOLDS: the nine control cells must not move on either tree — the reassigned base still
+//   materialises (`1 2`), a link INTO the container and an element view still answer `1`, the
+//   plain loop-variable bind still copies (`2`), the sibling field stays `1 1`, and the keyed
+//   and nested links stay `2 two` and `2 7`.  Advice must fire on exactly four cells and on
+//   none of the three fixed ones.  Leak, panic and free-refusal are equal on both trees.
+//   Those cells are what reject the two neighbouring cures: one that spares every
+//   `(B-Disturb)` cause moves the reassigned base, and one that skips the `&` fact moves the
+//   plain loop-variable bind.
+
+struct Cv { w: integer, data: vector<integer> }
+struct Two { a: vector<integer>, b: vector<integer> }
+struct P { n: integer }
+struct Pv { w: integer, items: vector<P> }
+struct Inner { data: vector<integer> }
+struct Outer { inner: Inner }
+struct Row { id: integer, tag: text }
+struct Host { h: hash<Row[id]>, v: vector<integer> }
+struct Hold { vecf: vector<integer> }
+
+fn grow(cv: Cv, v: integer) { cv.data += [v]; }
+
+// ── the defect: a growth through the container's own name ────────────────────────────
+fn a_growth_beside_the_link_keeps_it_aliasing() -> integer {
+  cv = Cv { w: 0, data: [1] };
+  d = &cv.data;
+  cv.data += [7];
+  cv.data += [8];
+  (d[2] ?? -1) + len(d)
+}
+
+// The same shape with the growth in a CALLEE, which the per-function walk never saw and so
+// always answered correctly.  It is `157-view-header`'s `grown_between`, kept here because it
+// is what says the two frames agree at the RIGHT value rather than merely agreeing.
+fn a_growth_in_a_callee_keeps_it_aliasing() -> integer {
+  cv = Cv { w: 0, data: [1] };
+  d = &cv.data;
+  grow(cv, 7);
+  grow(cv, 8);
+  (d[2] ?? -1) + len(d)
+}
+
+// A link is a link in both directions: the write has to reach the source after the growth.
+// The value cells above pass on a copy that happens to read the right numbers; this one cannot.
+fn a_write_through_the_link_reaches_the_source_after_a_growth() -> text {
+  cv = Cv { w: 0, data: [1] };
+  d = &cv.data;
+  cv.data += [7];
+  d[0] = 99;
+  "{(cv.data[0] ?? -1)} {(d[0] ?? -1)} {len(cv.data)}"
+}
+
+// A removal renumbers the ELEMENTS; the container is still the container, so the link reads
+// the renumbered contents exactly as reading `cv.data` would.
+fn a_removal_beside_the_link_keeps_it_aliasing() -> text {
+  cv = Cv { w: 0, data: [1, 2, 3] };
+  d = &cv.data;
+  cv.data.remove(0);
+  "{(d[0] ?? -1)} {len(d)}"
+}
+
+// Overwriting a place is NOT disturbing it (`(B-Disturb)`), and this already held.
+fn a_whole_value_write_to_the_field_keeps_the_link() -> text {
+  cv = Cv { w: 0, data: [1, 2] };
+  d = &cv.data;
+  cv.data = [9, 9, 9];
+  "{(d[0] ?? -1)} {len(d)}"
+}
+
+// ── the control that must NOT move: reassigning the base ─────────────────────────────
+// `(B-Disturb)`'s fourth event. The slot the link names is inside `cv`'s record, and giving
+// `cv` a new value leaves nothing to re-read — so this one still materialises, and a cure that
+// spared all four causes would read `5 3` here.
+fn a_reassignment_of_the_base_still_materialises() -> text {
+  cv = Cv { w: 0, data: [1, 2] };
+  d = &cv.data;
+  cv = Cv { w: 9, data: [5, 6, 7] };
+  "{(d[0] ?? -1)} {len(d)}"
+}
+
+// ── the controls for a reference INTO the container ──────────────────────────────────
+fn a_link_into_the_container_is_unchanged() -> integer {
+  pv = Pv { w: 0, items: [P{n: 1}] };
+  d = &pv.items[0];
+  pv.items += [P{n: 7}];
+  d.n
+}
+
+fn an_element_view_is_unchanged() -> integer {
+  v: vector<P> = [P{n: 1}];
+  c = v[0]?;
+  v += [P{n: 9}];
+  c.n
+}
+
+// A PLAIN bind off a loop variable aliases and is materialised by `(B-View)` — a plain bind
+// already meant value semantics, so losing write-through is consistent with what it asked for.
+// This is the cell that says the `&` fact is load-bearing: without it the cure changes this.
+fn a_plain_bind_off_a_loop_variable_still_materialises() -> integer {
+  bv: vector<Hold> = [Hold{vecf: [1, 2]}];
+  s = 0;
+  for b in bv { c = b.vecf; b.vecf += [9]; s += len(c); }
+  s
+}
+
+// ── neighbours ───────────────────────────────────────────────────────────────────────
+fn a_growth_of_a_sibling_field_does_not_reach_the_link() -> text {
+  t = Two { a: [1], b: [5] };
+  d = &t.a;
+  t.b += [7];
+  "{(d[0] ?? -1)} {len(d)}"
+}
+
+fn a_keyed_container_link_keeps_aliasing_across_an_add() -> text {
+  s = Host { h: [], v: [] };
+  s.h += [Row{id: 1, tag: "one"}];
+  a = &s.h;
+  s.h += [Row{id: 2, tag: "two"}];
+  "{len(a)} {a[2].tag}"
+}
+
+fn a_nested_container_link_keeps_aliasing_across_a_growth() -> text {
+  o = Outer { inner: Inner { data: [1] } };
+  d = &o.inner.data;
+  o.inner.data += [7];
+  "{len(d)} {(d[1] ?? -1)}"
+}
+
+fn main() {
+  assert(a_growth_beside_the_link_keeps_it_aliasing() == 11,
+         "a growth beside the link: 8+3, the link re-reads the repointed slot: {a_growth_beside_the_link_keeps_it_aliasing()}");
+  assert(a_growth_in_a_callee_keeps_it_aliasing() == 11,
+         "the callee twin answers the same: {a_growth_in_a_callee_keeps_it_aliasing()}");
+  assert(a_write_through_the_link_reaches_the_source_after_a_growth() == "99 99 2",
+         "the write reaches cv after the growth: {a_write_through_the_link_reaches_the_source_after_a_growth()}");
+  assert(a_removal_beside_the_link_keeps_it_aliasing() == "2 2",
+         "the link reads the renumbered container: {a_removal_beside_the_link_keeps_it_aliasing()}");
+  assert(a_whole_value_write_to_the_field_keeps_the_link() == "9 3",
+         "an overwrite is not a disturbance: {a_whole_value_write_to_the_field_keeps_the_link()}");
+
+  assert(a_reassignment_of_the_base_still_materialises() == "1 2",
+         "a reassigned base still materialises: {a_reassignment_of_the_base_still_materialises()}");
+  assert(a_link_into_the_container_is_unchanged() == 1,
+         "a link INTO the container keeps today's answer: {a_link_into_the_container_is_unchanged()}");
+  assert(an_element_view_is_unchanged() == 1,
+         "an element view keeps today's answer: {an_element_view_is_unchanged()}");
+  assert(a_plain_bind_off_a_loop_variable_still_materialises() == 2,
+         "a plain bind off a loop variable still copies: {a_plain_bind_off_a_loop_variable_still_materialises()}");
+
+  assert(a_growth_of_a_sibling_field_does_not_reach_the_link() == "1 1",
+         "a sibling field's growth reaches nothing: {a_growth_of_a_sibling_field_does_not_reach_the_link()}");
+  assert(a_keyed_container_link_keeps_aliasing_across_an_add() == "2 two",
+         "a keyed container link is unchanged: {a_keyed_container_link_keeps_aliasing_across_an_add()}");
+  assert(a_nested_container_link_keeps_aliasing_across_a_growth() == "2 7",
+         "a nested container link is unchanged: {a_nested_container_link_keeps_aliasing_across_a_growth()}");
+
+  println("whole-container link ok");
+}

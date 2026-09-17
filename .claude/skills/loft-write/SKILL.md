@@ -452,7 +452,7 @@ v[i];                // index read
 
 **`v[i]` with a possibly-negative index does NOT null-guard.** Scalar indexing counts from the end for negative `i`, exactly like slices: `v[-1]` is the LAST element, `v[-len]` the first — NOT `null`.  Only `i >= len` (and `i < -len`) yield `null`.  So `if v[i] { … }` and `v[i] ?? d` catch an over-range index but NOT a negative one — a `-1` "not-found" sentinel or a `a - b` underflow silently reads a real element from the end.  When `i` can go negative, test `if i >= 0` FIRST (that `>= 0` check is not redundant with a later null-guard).
 
-**Never swap `vector<STRUCT>` elements in-place via a temp (#338).** `tmp = v[j]` is a VIEW of slot j (not a copy), but `v[j] = v[k]` COPIES into the slot — so `tmp = v[j]; v[j] = v[k]; v[k] = tmp;` silently loses j's record and duplicates k's. Swap scalar fields one by one, or build a fresh vector (selection instead of in-place insertion sort).
+**Never swap `vector<STRUCT>` elements in-place via a temp (loft#338).** `tmp = v[j]` is a VIEW of slot j (not a copy), but `v[j] = v[k]` COPIES into the slot — so `tmp = v[j]; v[j] = v[k]; v[k] = tmp;` silently loses j's record and duplicates k's. Swap scalar fields one by one, or build a fresh vector (selection instead of in-place insertion sort).
 
 ---
 
@@ -495,16 +495,21 @@ No `impl` block needed. Built-in types satisfy `Ordered`, `Equatable`, `Addable`
 
 ---
 
-## The `both` parameter name
+## `self` — one name, both call spellings
 
-Name the first parameter `both` instead of `self` to register a function as
-both a method and a free function:
+Name the first parameter `self` and the function is callable as a method AND as a
+free function:
 
 ```loft
-pub fn exists(both: File) -> boolean { both.format != Format.NotExists }
+pub fn exists(self: const File) -> boolean { self.format != Format.NotExists }
 // f.exists()  — method
 // exists(f)   — free function
 ```
+
+**`both` is the retired spelling for this — do not write it.** It still resolves, and
+still gives both spellings, but it emits `both-receiver-deprecated`, which is a
+`warning`; a library's CI runs with `LOFT_DENY_WARNINGS=1`, so writing `both` turns a
+package's own gate red (C123, [COMPATIBILITY.md](../../../doc/claude/COMPATIBILITY.md)).
 
 ---
 

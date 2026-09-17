@@ -4,9 +4,18 @@
 //
 // @PLAN37 phase 07 — loft-native tracker-index scanner.
 //
-// Single-shot mode: walks a fixed set of source roots, finds
-// every `@P<n>` and `@PLAN<n>(-<seg>)*` reference in indexable
-// files, and prints one JSON-Lines record per match to stdout.
+// Single-shot mode: walks the files git carries (@PLN119 arc F —
+// the hard-coded root list is gone), finds every tracker-tag
+// reference in indexable files, and prints one JSON-Lines record
+// per match to stdout.  The families are `@P<n>`,
+// `@PLAN<n>(-<seg>)*`, `@PLN<n>` (the CANONICAL plan tag),
+// `@GH<n>`, `@FR-<Rule>`, `@F<n>` / `@I<n>` and `@AAA-###`.
+//
+// Keeping that list right is load-bearing rather than tidy: this
+// sentence claimed `@P` and `@PLAN` alone while `@PLN` had become
+// the canonical plan tag, and the scanner matched what the
+// sentence said — so `idx tag:@PLN157` answered `[]` at exit 0
+// for a tag with hundreds of references (loft#1544).
 // Each line is a self-contained object:
 //
 //   {"tag":"@P259","file":"a.md","line":42,"context":"..."}
@@ -450,6 +459,54 @@ fn scan_line(file_path: text, line_no: integer, line: text, out: vector<RawRef>)
             }
             // Trailing boundary failed; skip past `@PLAN` and resume.
             i = i + 5;
+            continue;
+        }
+        // @PLN<digits> — a `loft-lang/plans` issue, and CLAUDE.md § Tracker tags
+        // makes it the CANONICAL plan tag ("plan id = issue number"), with
+        // `@PLAN<n>` marked legacy and migrating to it.  Without this arm the
+        // family was migrated and the scanner was not, so `idx tag:@PLN157`
+        // answered `[]` at exit 0 — indistinguishable from "referenced nowhere",
+        // for a tag with 976 references (loft#1544).
+        //
+        // Unambiguous with both neighbours, which is why the order here is not
+        // load-bearing: `@PLAN` needs `A` at i+3 where this has `N`, and the
+        // `@P<digits>` fallback below needs a DIGIT at i+2 where this has `L` —
+        // so `@PLN` never entered that arm at all, not even its failure path.
+        //
+        // NO `-<segment>` loop, deliberately, and this is the one design choice
+        // in the arm.  `@PLAN` consumes segments (`@PLAN22-04-iii.a`), but the
+        // hyphenated `@PLN` forms in the tree are 26 against 12226 plain, and
+        // most of them are ENGLISH — `@PLN85-style`, `@PLN99-specific`,
+        // `@PLN25-adjacent`.  Consuming the hyphen would mint `@PLN85-style` as a
+        // tag of its own and, worse, split the handful of real sub-refs
+        // (`@PLN25-F2`, `@PLN54-S3`) away from their parent plan, so `tag:@PLN25`
+        // would silently miss them — the same empty-answer failure this arm
+        // exists to close.  Stopping at the digits makes every hyphenated mention
+        // resolve to the plan: `-` is not in `is_word_char_b`, so the trailing
+        // boundary is already satisfied where the digits end.
+        //
+        // Not validated, like `@GH<n>` and `@F<n>`/`@I<n>`: the id lives in a
+        // SEPARATE tracker, so validating it would put the network into
+        // `make index`, which today needs none.  `tag_is_valid` and
+        // `tag_is_broken` both fall through to "valid"/"not broken" for it
+        // already — their `@P` arms require a digit after `@P` and stop at the
+        // `L` — so the dangling-tag guarantee is exactly as strong as before:
+        // it never covered remote families.
+        if i + 5 <= n && line.byte_at(i + 1) == BYTE_P_UPPER
+            && line.byte_at(i + 2) == BYTE_L
+            && line.byte_at(i + 3) == BYTE_N
+            && is_digit_b(line.byte_at(i + 4)) {
+            j = i + 4;
+            while j < n && is_digit_b(line.byte_at(j)) { j = j + 1; }
+            if j == n || !is_word_char_b(line.byte_at(j)) {
+                tag = line[i..j];
+                if !ctx_escaped { ctx_esc = json_escape(line); ctx_escaped = true; }
+                out += [RawRef{tag: tag, file: file_path, line: line_no, ctx_escaped: ctx_esc}];
+                i = j;
+                continue;
+            }
+            // Trailing boundary failed (`@PLN157x`); skip past `@PLN` and resume.
+            i = i + 4;
             continue;
         }
         // Fall back to @P<digits>[a-z]?

@@ -1673,6 +1673,17 @@ libraries, which `make ci` says nothing about — caught the second on a real co
 full green gate. **Run both before believing a semantic change**: a green `make ci` is not
 evidence about the language's users.
 
+**And an A/B against a published library must resolve its source by the release TAG.**
+`scripts/revalidate_libs_local.sh` does that by construction — it reads each package's tag from
+the registry matrix and `git archive`s that tree — so prefer it, or copy that resolution. A
+hand-rolled check picks a clone by PATH instead, and a sibling `…-main` beside the tagged one
+can already carry the rename the diagnostic fires on: measured, a check of `regex` extracted
+from `loft-libs-core-main`, which carries no `regex-v0.3.1` tag, so neither binary warned and
+the result read as *"old and new agree, so it is not mine"* — from a tree where the construct
+under test no longer existed. Grep the extracted source for that construct BEFORE running
+either binary. An absence is evidence only once the instrument is shown able to produce the
+presence, which is what the `*_INJECT` levers do for a detector.
+
 **When you write a predicate over a type, read that type's own doc-comment for the shapes it
 says it takes.** `target_holds_null` asks whether a store's target is a nullable slot, keyed on
 what the place is read OUT of, and it handled a variable, a field and an element correctly on

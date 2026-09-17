@@ -1024,7 +1024,7 @@ impl Value {
     /// Every traversal derives from this — the match is exhaustive on
     /// purpose (no wildcard), so a new `Value` variant forces a decision
     /// here and every walker inherits the edge.
-    pub fn for_each_child(&self, f: &mut impl FnMut(&Value)) {
+    pub fn for_each_child<'a>(&'a self, f: &mut impl FnMut(&'a Value)) {
         match self {
             Value::Span(b) => f(&b.1),
             Value::Call(_, items)
@@ -1072,7 +1072,7 @@ impl Value {
     /// Pre-order search: does `pred` hold on this node or any descendant?
     /// `Span` wrappers are transparent — `pred` never sees them, so node
     /// predicates match on the bare variants.
-    pub fn any_node(&self, pred: &mut impl FnMut(&Value) -> bool) -> bool {
+    pub fn any_node<'a>(&'a self, pred: &mut impl FnMut(&'a Value) -> bool) -> bool {
         if let Value::Span(b) = self {
             return b.1.any_node(pred);
         }
@@ -1148,7 +1148,7 @@ impl Value {
 
     /// Pre-order visitor: calls `f` on this node and every descendant.
     /// `Span` wrappers are transparent, matching [`Value::any_node`].
-    pub fn walk(&self, f: &mut impl FnMut(&Value)) {
+    pub fn walk<'a>(&'a self, f: &mut impl FnMut(&'a Value)) {
         if let Value::Span(b) = self {
             return b.1.walk(f);
         }
@@ -1165,7 +1165,20 @@ impl Value {
     /// too-wide answer (a suppressed free), never on a too-narrow one (a
     /// premature free of a store the RHS still reads).
     pub fn reads_var(&self, v: u16) -> bool {
-        self.any_node(&mut |n| match n {
+        self.any_node(&mut |n| n.names_var_here(v))
+    }
+
+    /// Does THIS node name variable `v` — the node itself, not its subtree?
+    ///
+    /// The arm list is the one [`Value::reads_var`] asks over the whole subtree, and it lives
+    /// here so the two cannot drift: a walk that needs to know WHERE a naming stands (under a
+    /// loop, inside a particular call position) cannot use the recursive form, and writing
+    /// the arms a second time is how a spelling gets missed — a `Set` names its target with
+    /// no `Var` child, and so do `TupleGet`, `TuplePut`, `CallRef`, `Iter` and the two
+    /// fn-ref forms.
+    #[must_use]
+    pub fn names_var_here(&self, v: u16) -> bool {
+        match self {
             Value::Var(x)
             | Value::Set(x, _)
             | Value::TupleGet(x, _)
@@ -1175,7 +1188,7 @@ impl Value {
             | Value::Iter(x, _, _, _) => *x == v,
             Value::FnRef(_, w, _) => *w == v,
             _ => false,
-        })
+        }
     }
 
     /// The TAIL expression of this value: descends `Span` wrappers and the
@@ -5591,7 +5604,13 @@ pub fn has_null(tp: &Type) -> bool {
 /// nullable fn-ref — so `has_null` is complete for it, and the two answers coincide everywhere
 /// except the tuple.
 ///
-/// The gap between the two IS `D-tup-10`, and it closes by deleting this function.
+/// ⚠ **Not a temporary carve-out.**  This line read *"the gap between the two IS `D-tup-10`, and
+/// it closes by deleting this function"* until 2026-09-16, when the owner's option-2 ruling on
+/// that entry made the in-flight spelling permanent: `(T-Absent)` refuses `(τ₁, …, τₙ)?` at
+/// every DECLARATION and has the compiler carry an absence that ARRIVES with the `?` on the
+/// OUTSIDE.  So the two predicates answer two different questions and both stay — `has_null`
+/// whether a `τ?` may be DECLARED for this τ, this one whether absence may be MARKED for it in
+/// flight.  What `D-tup-10` still carries is the `?` discharge on a member-nullable tuple.
 #[must_use]
 pub fn constructs_optional(tp: &Type) -> bool {
     has_null(tp) || matches!(tp.base(), Type::Tuple(_))

@@ -12,10 +12,34 @@
 // directly so those events become a hard fail.
 //
 // Usage:
-//   node tools/html_render_check.mjs <url> [--wait-ms N] [--screenshot path]
-//                                          [--port N]   [--allow SUBSTRING]
+//   node tools/html_render_check.mjs <url> [--wait-ms N] [--ready EXPR]
+//                                          [--screenshot PATH] [--port N]
+//                                          [--allow SUBSTRING]
 //                                          [--canvas SELECTOR]
 //                                          [--canvas-min-colors N]
+//                                          [--device-scale-factor N]
+//                                          [--assert EXPR]
+//
+// `--ready EXPR` and `--assert EXPR` are the page-state pair, and they do NOT
+// coerce alike.  `--ready` evaluates `!!(EXPR)` and POLLS every 50 ms until it
+// is true or `--wait-ms` runs out; `--assert` evaluates `JSON.stringify(EXPR)`
+// ONCE after the wait and fails unless the result is the literal `'true'`.  So
+// a truthy-but-not-`true` expression — an element, a non-empty string, a
+// number — satisfies `--ready` and FAILS `--assert`.  The difference presents
+// as a flaky gate rather than as a contract, which is why it is stated here.
+//
+// Write `--assert` as a boolean:
+//
+//   --assert "!['Failed','Error'].includes(document.getElementById('s').textContent)"
+//
+// never as the bare `….textContent`, which stringifies to `"\"Running\""` on a
+// WORKING page and so fails everywhere — a gate that passes nothing and
+// catches a real defect only by coincidence.
+//
+// Their division of labour, stated where the check is made: `ready` means the
+// page did not get there, `assert` means it did and the claim is false.
+// Without `--ready` the wait is a flat sleep, so a slow load yields a
+// pass-shaped absence.
 //
 // `--allow SUBSTRING` suppresses a console error / exception when its
 // text contains the given substring (repeatable).  Plain substring
@@ -43,9 +67,10 @@ import fs from 'node:fs';
 import process from 'node:process';
 
 // ── CLI ────────────────────────────────────────────────────────────
-// `--device-scale-factor N` runs Chrome at that ratio; `--assert EXPR`
-// evaluates EXPR in the page after the wait and fails unless it is true.
-// Together they gate DPI behaviour, which no pixel check can see.
+// `--device-scale-factor N` runs Chrome at that ratio; paired with an
+// `--assert` about the result, the two gate DPI behaviour, which no pixel
+// check can see.  The flag list and the `--ready`/`--assert` coercion
+// difference live in the header — this note is only why these two pair up.
 const args = process.argv.slice(2);
 if (args.length < 1) {
   console.error('usage: html_render_check.mjs <url> [--wait-ms N] [--ready EXPR] [--screenshot PATH] [--port N] [--allow SUBSTRING] [--canvas SELECTOR] [--canvas-min-colors N] [--device-scale-factor N] [--assert EXPR]');

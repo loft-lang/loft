@@ -4180,6 +4180,13 @@ pub struct ValueRecords {
     /// tuple carries, and what the live-reload arm must read back out of the record the
     /// interpreter answers with.
     pub fields: HashMap<u32, Vec<(i64, &'static str)>>,
+    /// @PLN164 C5 — per admitted function with a VIEW LEAF, the places its exits deliver a
+    /// view of, which is what a call site must keep undisturbed ([`ViewPlan`]).  A function
+    /// whose record owns no heap has no entry.
+    pub views: HashMap<u32, ViewPlan>,
+    /// @PLN164 C5 — per admitted function, the byte offsets of its view-leaf fields
+    /// ([`ViewOffsets`]): what a call site may read off the tuple's reference.
+    pub view_offs: ViewOffsets,
 }
 
 /// Default-ON since 2026-09-14 (@PLN157 § V-ah stage 1); `LOFT_NO_VALUE_RECORD=1` restores
@@ -4254,7 +4261,12 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
             }
             continue;
         };
-        if stores.owns_heap(tp) {
+        // @PLN164 C5 (`@FR-O-ViewField`) — a record that OWNS heap is a candidate only
+        // through the view leaf: each heap field must be one a reference can deliver
+        // ([`view_leaf_type`]) and the body gate must find the place it views.  With the
+        // unit off, owning heap declines the record as it did before.
+        let views_ok = view_field_on();
+        if stores.owns_heap(tp) && !views_ok {
             continue;
         }
         let (crate::database::Parts::Struct(fields) | crate::database::Parts::EnumValue(_, fields)) =
@@ -4299,6 +4311,9 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
             if let Some(rt) = value_field_type(&ftp) {
                 parts.push(rt);
                 order.push((i64::from(f.position), rt));
+            } else if views_ok && view_leaf_type(&ftp) {
+                parts.push(VIEW_LEAF_PART);
+                order.push((i64::from(f.position), VIEW_LEAF_PART));
             } else {
                 ok = false;
                 break;
@@ -4394,6 +4409,30 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
         }
         keep
     });
+    // The view-leaf plans, rebuilt each round beside the body gate that decides them (the
+    // admitted set they read changes with it) and kept for the round that ends the fixpoint.
+    let mut views: HashMap<u32, ViewPlan> = HashMap::new();
+    // @PLN164 C5 — the callee half of `(B-Disturb)`, built ONCE over the whole program as
+    // the scope pass builds it: a site asks whether a call between its bind and its last
+    // read can grow the container its leaf views, and that is a fact about the callee.
+    let disturbed =
+        view_field_on().then(|| crate::scopes::disturbed_params_map(data, Some(stores)));
+
+    // The view-leaf OFFSETS are fixed by the record's type, so they are read once: every
+    // reader of a value local needs them to account a field read the tuple serves.
+    let view_offs: ViewOffsets = out
+        .fields
+        .iter()
+        .map(|(d, fs)| {
+            (
+                *d,
+                fs.iter()
+                    .filter(|(_, rt)| is_view_part(rt))
+                    .map(|(off, _)| *off)
+                    .collect(),
+            )
+        })
+        .collect();
     // Admission is a FIXPOINT.  A body's tail may FORWARD another candidate's result and a
     // site may bind a BRANCH of candidate calls, so declining one function can decline
     // another; every round only removes, so it ends.  The body gate and the site gate read
@@ -4402,8 +4441,41 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
     loop {
         let before = cand.len();
         let admitted: HashSet<u32> = cand.keys().copied().collect();
-        cand.retain(|d_nr, _| {
-            let why = value_body(data, *d_nr, &admitted);
+        cand.retain(|d_nr, record| {
+            let mut why = value_body(data, *d_nr, &admitted, &view_offs);
+            // @PLN164 C5 — and, for a record with a heap field, the body must deliver a
+            // view of a place that outlives the frame for every one of its exits.
+            if why.is_none()
+                && let Some(fields) = out.fields.get(d_nr)
+                && fields.iter().any(|(_, rt)| is_view_part(rt))
+            {
+                // @PLN164 C5 / `(R-Escape)` — a `pub` function's result can leave the
+                // unit the compiler sees whole: a library's cdylib bridge materialises a
+                // tuple field by field into the record its ABI promises, and a reference
+                // is not a field it can write.  So the record form stands for every `pub`
+                // function, which costs the rewrite there and never a value; the internal
+                // functions a `pub` one calls are where the row is.
+                if data.def(*d_nr).pub_visible {
+                    why = Some("a view leaf would cross a library API (R-Escape)");
+                } else {
+                    let locals = value_locals_in(data, *d_nr, &admitted, &view_offs);
+                    let leaves = collect_leaves(data.def(*d_nr).code(), &locals, true);
+                    match view_leaf_plan(
+                        data,
+                        stores,
+                        *d_nr,
+                        fields,
+                        &leaves,
+                        *record,
+                        disturbed.as_ref(),
+                    ) {
+                        Some(plan) => {
+                            views.insert(*d_nr, plan);
+                        }
+                        None => why = Some("a heap field is not a view leaf"),
+                    }
+                }
+            }
             if let Some(why) = why
                 && trace
             {
@@ -4418,7 +4490,7 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
             if matches!(cdef.code(), Value::Null) {
                 continue;
             }
-            let locals = value_locals_in(data, caller, &admitted);
+            let locals = value_locals_in(data, caller, &admitted, &view_offs);
             let own = admitted.contains(&caller).then_some(caller);
             let c = ShapeCtx {
                 data,
@@ -4433,6 +4505,19 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                 Pos::Operand
             };
             site_walk(cdef.code(), top, &c, &mut declined);
+            // @PLN164 C5 — and the view leaf's own site condition: the bind dominates the
+            // reads and nothing between them disturbs the place the leaf views.
+            if !views.is_empty() {
+                declined.extend(view_sites_declined(
+                    data,
+                    stores,
+                    caller,
+                    &views,
+                    &locals,
+                    &view_offs,
+                    disturbed.as_ref(),
+                ));
+            }
         }
         if trace {
             for d in &declined {
@@ -4450,6 +4535,11 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
     out.fns = cand;
     out.tuple.retain(|d, _| out.fns.contains_key(d));
     out.fields.retain(|d, _| out.fns.contains_key(d));
+    views.retain(|d, _| out.fns.contains_key(d));
+    out.views = views;
+    out.view_offs = view_offs;
+    out.view_offs
+        .retain(|d, offs| out.fns.contains_key(d) && !offs.is_empty());
     out
 }
 
@@ -4642,6 +4732,889 @@ pub fn value_setter(rt: &str) -> &'static str {
         "bool" => "OpSetBoolean",
         _ => "OpSetInt",
     }
+}
+
+// ── @PLN164 C5 (`@FR-O-ViewField`) — a returned record's heap field as a VIEW LEAF ──────
+
+/// Default-OFF while the gate is measured over the corpus; `LOFT_VIEW_FIELD=1` arms it and
+/// `LOFT_NO_VIEW_FIELD=1` is the opt-out once it is on (both read once, generation time,
+/// `--native` only — the interpreter keeps the record form and is the values oracle, as
+/// § V-aa's value record already does).
+fn view_field_on() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| {
+        !std::env::var("LOFT_NO_VIEW_FIELD").is_ok_and(|v| v != "0")
+            && std::env::var("LOFT_VIEW_FIELD").is_ok_and(|v| v != "0")
+    })
+}
+
+/// The tuple part a VIEW LEAF carries: the `DbRef` of the place the field views, where a
+/// scalar field carries its own value.  It is the same reference the record form's
+/// `OpGetField` hands a reader, which is why every READ at a call site is unchanged and
+/// only a write or a stale place could tell the difference (`@FR-O-ViewField`).
+pub const VIEW_LEAF_PART: &str = "DbRef";
+
+/// Is this field one a view leaf may deliver?  A plain `vector<T>` only: its value IS the
+/// field slot's reference, so a reader that takes the slot's address reads the container's
+/// own vector.  `text` and the keyed kinds are left out — a `text` field is read through
+/// its own getters into a `String` and a keyed collection's reads go through the key
+/// machinery, so neither is served by handing over the slot — and a nested record field is
+/// not a leaf at all.  Leaving a kind out costs the rewrite, never a value.
+fn view_leaf_type(ftp: &Type) -> bool {
+    matches!(ftp.base(), Type::Vector(_, _))
+}
+
+/// Does `rt` name the view-leaf part?
+#[must_use]
+pub fn is_view_part(rt: &str) -> bool {
+    rt == VIEW_LEAF_PART
+}
+
+/// The ops a view leaf may stand under as an OPERAND: each answers a VALUE — a length, a
+/// null test — rather than a place inside the vector, so nothing the site does with the
+/// result can reach the container.  An op that answers a PLACE (an element read) is not one,
+/// however read-only it is itself.
+const VIEW_LEAF_READ_OPS: [&str; 3] = ["OpLengthVector", "OpRefIsNull", "OpConvBoolFromRef"];
+
+/// What one exit of an admitted body delivers for a view-leaf field.
+pub enum LeafSource<'a> {
+    /// The exit does not NAME the field at all — an empty literal, whose value in the
+    /// record form is the prefill's own zero — so the leaf is a null reference, which every
+    /// read answers exactly as the empty vector it replaces (measured: `len` 0, an iteration
+    /// of nothing, an element read null, a `const` argument the same).  A null view can never
+    /// go stale, so it needs no place and no disturbance test.
+    Null,
+    /// The exit copies a vector INTO the field; the leaf hands over this PLACE instead.
+    Place(&'a Value),
+}
+
+/// @PLN164 C5 — the source a view-leaf field is delivered from at ONE `Object` exit, and
+/// the whole of what the gate and the emitter may know about it.  ONE home: the gate
+/// decides admission by what this answers and the emitter writes exactly the expression it
+/// names, so the two cannot drift.
+///
+/// The record form writes such a field with `OpAppendVector(OpGetField(buffer, off, _),
+/// src, _)` — the deep copy the leaf removes.  Two sources are resolvable:
+///
+/// * `src` is itself a place rooted at a PARAMETER (`Mark { mpts: o.opts }` where `o` is an
+///   element of `sc.ops`): the leaf hands over that place.
+/// * `src` is a LOCAL whose own copy landed in a parameter-rooted place — the natural form,
+///   `p = mk_pts(n); sc.ops += [Op { opts: p }]; Mark { …, mpts: p }`: the leaf hands over
+///   the APPEND's destination, because that is where the same value already lives in a
+///   store the frame does not own.  Exactly one such destination, or the choice is not
+///   decided and the record form stands.
+///
+/// `None` declines the function.  It is the answer for every shape not named here: a source
+/// whose place cannot be resolved, a local with two destinations, a field written by
+/// something other than one append.
+pub fn leaf_source<'a>(
+    data: &Data,
+    stores: &Stores,
+    def_nr: u32,
+    body: &'a Value,
+    bl: &'a Block,
+    off: i64,
+) -> Option<LeafSource<'a>> {
+    let buf = *bl.result.depend().first()?;
+    // The append and its source: the append NODE is what the value form drops whole (its
+    // destination names the buffer's field, which is the place the leaf takes), and the
+    // source is what the leaf is resolved from.
+    let mut found: Option<(&'a Value, &'a Value)> = None;
+    for op in &bl.operators {
+        for pair in appends_into(data, op, buf, off) {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(pair);
+        }
+    }
+    // Every mention of the BUFFER in this exit must be one the value form accounts for, and
+    // that is what makes both answers positive rather than a fallback: the value form drops
+    // the whole block, so a mention it does not account for is work the tuple would LOSE.
+    // Accounted: the allocate-or-reuse guard, a scalar `OpSet*`, the one recognised append
+    // into the leaf's field, and the block's own yield of the buffer.
+    //
+    // The two spellings this test exists for both FILL the field without an append: a vector
+    // LITERAL returned through the buffer pushes element by element
+    // (`OpPushInt(OpGetField(buf, off, _), …)`), and a record literal's vector field appends
+    // ELEMENTS through the record (`OpNewRecord(buf, <record>, <field nr>)`).  Read as
+    // "nothing wrote the field", each delivered a NULL view for a vector the program had
+    // filled — the first measured on the corpus (`723-ncc-loop-element-bind`, `len` 0 for 8),
+    // the second on this unit's own `d6` cell.
+    if !buffer_uses_accounted(data, bl, buf, found.map(|(node, _)| node)) {
+        return None;
+    }
+    let Some((_, src)) = found else {
+        return Some(LeafSource::Null);
+    };
+    if leaf_root(data, stores, def_nr, src, 0).is_some() {
+        return Some(LeafSource::Place(src));
+    }
+    // The natural form: the source is a local, and its copy landed somewhere the frame does
+    // not own.  The append INTO the record being built is not that destination, so it is
+    // skipped by identity.
+    let Value::Var(local) = src.unspan() else {
+        return None;
+    };
+    let mut dest: Option<&'a Value> = None;
+    body.any_node(&mut |n| {
+        if let Value::Call(d, args) = n
+            && (*d as usize) < data.definitions.len()
+            && data.def(*d).name() == "OpAppendVector"
+            && let [dst, s, ..] = &args[..]
+            && matches!(s.unspan(), Value::Var(w) if w == local)
+            && !std::ptr::eq(
+                std::ptr::from_ref(s.unspan()),
+                std::ptr::from_ref(src.unspan()),
+            )
+            && leaf_root(data, stores, def_nr, dst, 0).is_some()
+        {
+            if dest.is_some() {
+                dest = None;
+                return true;
+            }
+            dest = Some(dst);
+        }
+        false
+    });
+    dest.map(LeafSource::Place)
+}
+
+/// Is every mention of `buffer` in this exit one the VALUE form accounts for?
+///
+/// The value form emits the tuple and drops the block, so the question is not what the block
+/// does but what the tuple would lose: the allocate-or-reuse guard and the scalar `OpSet*`
+/// writes become tuple elements, the one recognised append (`leaf`) becomes the leaf's place,
+/// the trailing yield becomes the tuple itself, and the frees the exit owes keep running — a
+/// free OF the buffer is nothing once there is no store, and a store-identity test against it
+/// is always distinct, which is what makes the free it guards unconditional
+/// (`@FR-R-ValueRecord`).  A mention outside those — an element pushed into a field, a record
+/// appended through the buffer, a call handed it — is a fill or an effect the tuple cannot
+/// carry, so the function keeps its record.
+///
+/// This is the INSIDE of an `Object` exit; [`retbuf_uses_ok`] asks the same question over the
+/// rest of the body and exempts these blocks wholesale.  The two carry the same list of
+/// accounted positions on purpose: they are one question over two scopes, and a position
+/// added to one belongs in the other.
+///
+/// The fallback is `false`, and it is a claim worth stating: an unrecognised mention of the
+/// buffer is assumed to WRITE something the tuple would not, which costs the rewrite where the
+/// mention was harmless and never a value.
+fn buffer_uses_accounted(data: &Data, bl: &Block, buffer: u16, leaf: Option<&Value>) -> bool {
+    /// Is this node one the value form accounts for, whose OPERANDS still have to be read?
+    fn accounted_head(data: &Data, n: &Value, buffer: u16) -> bool {
+        let Value::Call(d, args) = n else {
+            return false;
+        };
+        if (*d as usize) >= data.definitions.len() {
+            return false;
+        }
+        if !matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == buffer) {
+            return false;
+        }
+        let name = data.def(*d).name();
+        name.starts_with("OpSet")
+            || matches!(
+                name,
+                "OpDatabase"
+                    | "OpDatabaseNP"
+                    | "OpRefIsNull"
+                    | "OpConvBoolFromRef"
+                    | "OpFreeRef"
+                    | "OpFreeRefIfDistinct"
+                    | "OpFreeRefTag"
+            )
+    }
+
+    /// The buffer as the WITNESS of a store-identity test (argument 1): the tuple is in no
+    /// store, so the test answers `true` and the free it guards runs unconditionally.
+    fn accounted_witness(data: &Data, n: &Value, buffer: u16) -> bool {
+        let Value::Call(d, args) = n else {
+            return false;
+        };
+        (*d as usize) < data.definitions.len()
+            && matches!(
+                data.def(*d).name(),
+                "OpFreeRefIfDistinct" | "OpDistinctStore"
+            )
+            && matches!(args.get(1).map(Value::unspan), Some(Value::Var(w)) if *w == buffer)
+    }
+
+    fn walk(data: &Data, n: &Value, buffer: u16, leaf_addr: Option<usize>, ok: &mut bool) {
+        let node = n.unspan();
+        if Some(std::ptr::from_ref(node) as usize) == leaf_addr {
+            return;
+        }
+        if matches!(node, Value::Var(w) if *w == buffer) {
+            *ok = false;
+            return;
+        }
+        if accounted_head(data, node, buffer) {
+            if let Value::Call(_, args) = node {
+                for a in args.iter().skip(1) {
+                    walk(data, a, buffer, leaf_addr, ok);
+                }
+            }
+            return;
+        }
+        if accounted_witness(data, node, buffer) {
+            if let Value::Call(_, args) = node {
+                for (i, a) in args.iter().enumerate() {
+                    if i != 1 {
+                        walk(data, a, buffer, leaf_addr, ok);
+                    }
+                }
+            }
+            return;
+        }
+        node.for_each_child(&mut |c| walk(data, c, buffer, leaf_addr, ok));
+    }
+
+    let leaf_addr = leaf.map(|v| std::ptr::from_ref(v.unspan()) as usize);
+    let mut ok = true;
+    for (i, op) in bl.operators.iter().enumerate() {
+        // The block's last statement yields the buffer, and an explicit `return buf` is the
+        // same yield: the tuple replaces both.
+        let yields = matches!(op.unspan(), Value::Var(w) if *w == buffer)
+            || matches!(op.unspan(), Value::Return(x) if matches!(x.unspan(), Value::Var(w) if *w == buffer));
+        if yields && i + 1 == bl.operators.len() {
+            continue;
+        }
+        walk(data, op, buffer, leaf_addr, &mut ok);
+        if !ok {
+            return false;
+        }
+    }
+    ok
+}
+
+/// Every `src` an `OpAppendVector` in `op` copies into `buffer`'s field at `off` — the
+/// record form's deep copy of a heap field, which is what a view leaf replaces.
+fn appends_into<'a>(
+    data: &Data,
+    op: &'a Value,
+    buffer: u16,
+    off: i64,
+) -> Vec<(&'a Value, &'a Value)> {
+    let mut out = Vec::new();
+    op.any_node(&mut |n| {
+        if let Value::Call(d, args) = n
+            && (*d as usize) < data.definitions.len()
+            && data.def(*d).name() == "OpAppendVector"
+            && let [dst, src, ..] = &args[..]
+            && let Value::Call(g, gargs) = dst.unspan()
+            && (*g as usize) < data.definitions.len()
+            && data.def(*g).name() == "OpGetField"
+            && matches!(gargs.first().map(Value::unspan), Some(Value::Var(w)) if *w == buffer)
+            && matches!(gargs.get(1).map(Value::unspan), Some(Value::Int(o)) if i64::from(*o) == off)
+        {
+            out.push((n, src));
+        }
+        false
+    });
+    out
+}
+
+/// The variable a leaf's place expression is READ OUT OF — the element temp of
+/// `OpGetField(Var(_elm_1), off, _)`.  `None` for any other shape, which then licenses no
+/// statement: the conservative direction, since a statement that is not recognised as the
+/// leaf's own append counts as a mention.
+fn place_base_var(e: &Value) -> Option<u16> {
+    let Value::Call(_, args) = e.unspan() else {
+        return None;
+    };
+    match args.first().map(Value::unspan) {
+        Some(Value::Var(v)) => Some(*v),
+        _ => None,
+    }
+}
+
+/// The PARAMETER PLACE a leaf expression roots in — the container whose growth or removal
+/// would move the record the leaf's field slot sits in, named as
+/// [`crate::scopes::ParamPlace`] so the site gate can ask the disturbance producers about
+/// it directly.
+///
+/// The chain it resolves is one step of indirection: a parameter's vector field, an element
+/// of it, and a field of that element.  A local on the way is followed through its single
+/// assignment — an element read (`sc.ops[i]?`) or a mint into the container
+/// (`OpNewRecord(sc, tp, off)`, the element an append is building).
+///
+/// `None` is the decline, and it is the answer for everything else: a deeper chain, a local
+/// with more than one assignment, a place rooted in a store the frame owns.  A frame-owned
+/// root is the case that MUST decline — the view would name a store freed at the return —
+/// and it is also the common one, which is why the resolution is positive: a place is a
+/// leaf root only when the walk reaches a parameter.
+fn leaf_root(
+    data: &Data,
+    stores: &Stores,
+    def_nr: u32,
+    e: &Value,
+    depth: u8,
+) -> Option<crate::scopes::ParamPlace> {
+    // A bound, not a shape rule: the chain a real discharge spells is already five steps
+    // (`o.opts` → `o` → its `ncc` block → the block's `if` → the element read), and the
+    // bound is what keeps a local whose assignment mentions itself from recursing forever.
+    if depth > 12 {
+        return None;
+    }
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    match e.unspan() {
+        Value::Var(v) => {
+            if vars.is_argument(*v) {
+                return Some((*v, crate::use_analysis::ANY_FIELD));
+            }
+            // A local that OWNS what it holds is not a route to a parameter's place, even
+            // where its assignment names one: a materialised view (`(B-View)`'s copy, which
+            // is what a container grown under the binding produces) holds a COPY of the
+            // element, and a leaf naming the container would answer the container's own
+            // element instead of the copy the record form answers.  The ownership oracle
+            // (`@FR-O-Oracle`) is the one home for that question.
+            // A local whose ownership is a JOIN owns what it holds on at least one path,
+            // and that path is the frame's: a `?`-DISCHARGE of an element mints the absent
+            // arm's record in a store the frame frees at the return, so a leaf naming the
+            // container would be a view of that store wherever the element was absent.
+            // The oracle (`@FR-O-Oracle`) is the one home for the question; the rest of the
+            // chain is decided by SHAPE below, which is what keeps a mint of the frame's
+            // own store out: no arm of this walk resolves an `OpDatabase`.
+            if matches!(
+                crate::use_analysis::ownership_of(data, def_nr, e),
+                crate::use_analysis::Own::Join { .. }
+            ) {
+                return None;
+            }
+            let mut assigned: Option<&Value> = None;
+            let mut many = false;
+            def.code().any_node(&mut |n| {
+                if let Value::Set(w, rhs) = n
+                    && w == v
+                    && !matches!(rhs.unspan(), Value::Null)
+                {
+                    if assigned.is_some() {
+                        many = true;
+                        return true;
+                    }
+                    assigned = Some(rhs);
+                }
+                false
+            });
+            if many {
+                return None;
+            }
+            leaf_root(data, stores, def_nr, assigned?, depth + 1)
+        }
+        Value::Block(bl) => leaf_root(data, stores, def_nr, bl.operators.last()?, depth + 1),
+        Value::If(_, then_v, _) => leaf_root(data, stores, def_nr, then_v, depth + 1),
+        Value::Insert(ops) => leaf_root(data, stores, def_nr, ops.last()?, depth + 1),
+        Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+            let name = data.def(*d).name();
+            match name {
+                // A field of a parameter, or a field of something rooted at one: the FIELD
+                // is the place when its base is the parameter itself, and the base's place
+                // otherwise (a field of an element does not name a container of its own).
+                "OpGetField" | "OpGetDbRef" => {
+                    let base = args.first()?;
+                    if let Value::Var(v) = base.unspan()
+                        && vars.is_argument(*v)
+                        && let Some(Value::Int(off)) = args.get(1).map(Value::unspan)
+                        && let Ok(o) = u32::try_from(*off)
+                    {
+                        return Some((*v, o));
+                    }
+                    leaf_root(data, stores, def_nr, base, depth + 1)
+                }
+                // An element read: the place is the CONTAINER it reads from.
+                "OpGetVector" | "OpGetVectorNullable" | "OpVectorRef" => {
+                    leaf_root(data, stores, def_nr, args.first()?, depth + 1)
+                }
+                // The element an append is building, minted in the container the last
+                // argument names by field NUMBER — which a place carries as a byte OFFSET, so
+                // the schema makes the conversion (`Stores::field_position`, the same one
+                // `scopes::grown_containers` makes for the same reason).  Read as an offset,
+                // the place named field 0's number where the field sits at byte 8, and a
+                // removal from the very container the leaf views compared as a different
+                // place: the `b8` cell measured it, reading the NEXT element's points.
+                "OpNewRecord" | "OpNewRecordNP" => {
+                    let Value::Var(v) = args.first()?.unspan() else {
+                        return None;
+                    };
+                    if !vars.is_argument(*v) {
+                        return None;
+                    }
+                    let Some(Value::Int(fld)) = args.get(2).map(Value::unspan) else {
+                        return None;
+                    };
+                    if *fld == i32::from(u16::MAX) {
+                        return Some((*v, crate::use_analysis::ANY_FIELD));
+                    }
+                    let parent = data.type_def_nr(vars.tp(*v).base());
+                    if parent == u32::MAX {
+                        return None;
+                    }
+                    let off = stores
+                        .field_position(data.def(parent).known_type(), u16::try_from(*fld).ok()?);
+                    (off != u16::MAX).then(|| (*v, u32::from(off)))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// @PLN164 C5 — the view-leaf PLAN of one admitted body: per heap field, the parameter
+/// places its exits deliver a view of.  A field an exit writes not at all contributes no
+/// place (a null view can never be stale); a field two exits view through different places
+/// contributes both, and a site must keep every one of them undisturbed.
+///
+/// `None` declines the function, and it is the answer whenever an exit's source cannot be
+/// resolved ([`leaf_source`]), or the body DISTURBS the place it hands up: more than one
+/// growth of it, a growth under a loop, or a growth whose own place cannot be told apart
+/// from the leaf's.  The last is the conservative half that matters — a growth reached
+/// through an alias the resolution cannot follow would move the element the leaf names and
+/// nothing would say so, so an unresolvable growth declines rather than being assumed
+/// distinct.
+pub struct ViewPlan {
+    /// Field byte offset → the places its exits view.  Empty set: every exit is a null view.
+    pub roots: HashMap<i64, HashSet<crate::scopes::ParamPlace>>,
+}
+
+fn view_leaf_plan(
+    data: &Data,
+    stores: &Stores,
+    d_nr: u32,
+    fields: &[(i64, &'static str)],
+    leaves: &ValueLeaves,
+    record: u16,
+    disturbed: Option<&crate::scopes::DisturbedParams>,
+) -> Option<ViewPlan> {
+    let mut roots: HashMap<i64, HashSet<crate::scopes::ParamPlace>> = HashMap::new();
+    // Per EXIT, the element temp its leaf names — the append that built it is the one growth
+    // that exit's view lives with, and the pairing is what makes the question per PATH.
+    let mut exits: Vec<(usize, u16)> = Vec::new();
+    let views: Vec<i64> = fields
+        .iter()
+        .filter(|(_, rt)| is_view_part(rt))
+        .map(|(off, _)| *off)
+        .collect();
+    if views.is_empty() {
+        return Some(ViewPlan { roots });
+    }
+    let def = data.def(d_nr);
+    let body = def.code();
+    let trace = std::env::var("LOFT_TRACE_VALUEREC").is_ok();
+    let mut ok = true;
+    let mut seen = 0u32;
+    body.any_node(&mut |n| {
+        let Value::Block(bl) = n else { return false };
+        if bl.name != "Object"
+            || !leaves
+                .objects
+                .contains(&(std::ptr::from_ref(&**bl) as usize))
+            || plain_record_type(data, &bl.result) != Some(record)
+        {
+            if trace && bl.name == "Object" {
+                eprintln!(
+                    "[viewleaf] {}: an Object skipped (leaf={}, tp={:?} want {record})",
+                    def.name(),
+                    leaves
+                        .objects
+                        .contains(&(std::ptr::from_ref(&**bl) as usize)),
+                    plain_record_type(data, &bl.result)
+                );
+            }
+            return false;
+        }
+        seen += 1;
+        for off in &views {
+            match leaf_source(data, stores, d_nr, body, bl, *off) {
+                Some(LeafSource::Null) => {
+                    roots.entry(*off).or_default();
+                }
+                Some(LeafSource::Place(e)) => {
+                    if let Some(elm) = place_base_var(e) {
+                        exits.push((std::ptr::from_ref(&**bl) as usize, elm));
+                    }
+                    let Some(place) = leaf_root(data, stores, d_nr, e, 0) else {
+                        if trace {
+                            eprintln!(
+                                "[viewleaf] {}: the source of +{off} has no parameter root",
+                                def.name()
+                            );
+                        }
+                        ok = false;
+                        return true;
+                    };
+                    roots.entry(*off).or_default().insert(place);
+                }
+                None => {
+                    if trace {
+                        eprintln!("[viewleaf] {}: +{off} has no resolvable source", def.name());
+                    }
+                    ok = false;
+                    return true;
+                }
+            }
+        }
+        false
+    });
+    if !ok || roots.len() != views.len() {
+        if trace {
+            eprintln!(
+                "[viewleaf] {}: {seen} exit(s), {} of {} view field(s) resolved",
+                def.name(),
+                roots.len(),
+                views.len()
+            );
+        }
+        return None;
+    }
+    let mine: HashSet<crate::scopes::ParamPlace> = roots.values().flatten().copied().collect();
+    if !mine.is_empty() && !body_keeps_places(data, stores, d_nr, &mine, &exits, disturbed) {
+        if trace {
+            eprintln!(
+                "[viewleaf] {}: the body disturbs the place it views ({mine:?})",
+                def.name()
+            );
+        }
+        return None;
+    }
+    Some(ViewPlan { roots })
+}
+
+/// Does every naming of `root` in this statement leave the watched place alone?  The question
+/// a mention rule cannot answer on its own, asked per naming SITE.
+///
+/// Four shapes name a container, and each says what it reaches:
+///
+/// * `OpPlaceRecord(root, tp)` — a record claimed in the store, which moves nothing: a
+///   `DbRef` is logical, so growing the store's arena leaves every record where it is.  This
+///   is the naming @PLN164 B2 puts in every function that places a call's result.
+/// * `OpNewRecord(root, tp, fld)` and its `OpFinishRecord(root, elem, tp, fld)` half — an
+///   element append, naming its field by NUMBER, which the schema turns into the byte offset a
+///   place carries (the same conversion `scopes::grown_containers` makes, and for the same
+///   reason).  A sibling field is harmless: claiming a new array for `sc.unparsed` moves
+///   nothing in `sc.ops`.
+/// * `OpGetField(root, off, _)` — a projection, whose offset IS the place.
+/// * an ARGUMENT of a user call, licensed when the call's own disturbance summary
+///   (`disturbed`, closed over the call graph) does not reach the watched place.
+///
+/// Anything else that names the root — a bare `Var` somewhere else, a `Set`, a hand-off this
+/// walk was not told about — answers `false`.  That is the rule's direction: a naming whose
+/// reach cannot be resolved is treated as reaching the watched place, because a missed
+/// disturbance here is a read through an element that moved.
+fn namings_avoid_place(
+    data: &Data,
+    stores: &Stores,
+    def_nr: u32,
+    stmt: &Value,
+    watch: crate::scopes::ParamPlace,
+    disturbed: Option<&crate::scopes::DisturbedParams>,
+) -> bool {
+    let (root, watch_off) = watch;
+    let vars = data.def(def_nr).variables();
+    let parent = data.type_def_nr(vars.tp(root).base());
+    let field_off = |fld: i32| -> Option<u32> {
+        if fld == i32::from(u16::MAX) {
+            return None;
+        }
+        let fld = u16::try_from(fld).ok()?;
+        if parent == u32::MAX {
+            return None;
+        }
+        let off = stores.field_position(data.def(parent).known_type(), fld);
+        (off != u16::MAX).then(|| u32::from(off))
+    };
+    struct Cx<'a> {
+        data: &'a Data,
+        root: u16,
+        watch: crate::scopes::ParamPlace,
+        disturbed: Option<&'a crate::scopes::DisturbedParams>,
+        ok: bool,
+    }
+    fn walk(cx: &mut Cx, n: &Value, field_off: &dyn Fn(i32) -> Option<u32>) {
+        let node = n.unspan();
+        if let Value::Call(d, args) = node
+            && (*d as usize) < cx.data.definitions.len()
+        {
+            let def = cx.data.def(*d);
+            let name = def.name();
+            let first_is_root =
+                matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == cx.root);
+            // A user call: every argument that names the root is licensed when the callee's
+            // own summary does not reach the watched place.
+            if name.starts_with("n_") && !matches!(def.code(), Value::Null) {
+                let places = cx.disturbed.and_then(|m| m.get(d));
+                for (i, a) in args.iter().enumerate() {
+                    if matches!(a.unspan(), Value::Var(w) if *w == cx.root) {
+                        let reaches = places.is_some_and(|p| {
+                            p.keys().any(|&(slot, inner)| {
+                                usize::from(slot) == i
+                                    && crate::scopes::same_place(cx.watch, (cx.root, inner))
+                            })
+                        });
+                        if reaches || cx.disturbed.is_none() {
+                            cx.ok = false;
+                            return;
+                        }
+                    } else {
+                        walk(cx, a, field_off);
+                    }
+                }
+                return;
+            }
+            // An argument that PROJECTS the watched field is harmless where the call can only
+            // read it: `len(sc.ops)` between a bind and its read moves nothing, and declining
+            // it declined every cell that checks the container beside the result.
+            let mut read_args: HashSet<usize> = HashSet::new();
+            for (i, a) in args.iter().enumerate() {
+                if read_context(cx.data, *d, i)
+                    && let Value::Call(g, gargs) = a.unspan()
+                    && (*g as usize) < cx.data.definitions.len()
+                    && matches!(cx.data.def(*g).name(), "OpGetField" | "OpGetDbRef")
+                    && matches!(gargs.first().map(Value::unspan), Some(Value::Var(w)) if *w == cx.root)
+                {
+                    read_args.insert(i);
+                }
+            }
+            if !read_args.is_empty() {
+                for (i, a) in args.iter().enumerate() {
+                    if !read_args.contains(&i) {
+                        walk(cx, a, field_off);
+                    }
+                }
+                return;
+            }
+            if first_is_root {
+                let reach = match name {
+                    "OpPlaceRecord" => Some(None),
+                    // The append's two halves name the container the same way and differ
+                    // only in WHERE the field number sits: the mint takes it third, the
+                    // finish fourth (after the element it publishes).
+                    "OpNewRecord" | "OpNewRecordNP" => match args.get(2).map(Value::unspan) {
+                        Some(Value::Int(fld)) => Some(Some(field_off(*fld).unwrap_or(u32::MAX))),
+                        _ => None,
+                    },
+                    "OpFinishRecord" => match args.get(3).map(Value::unspan) {
+                        Some(Value::Int(fld)) => Some(Some(field_off(*fld).unwrap_or(u32::MAX))),
+                        _ => None,
+                    },
+                    "OpGetField" | "OpGetDbRef" => match args.get(1).map(Value::unspan) {
+                        Some(Value::Int(off)) => {
+                            Some(Some(u32::try_from(*off).unwrap_or(u32::MAX)))
+                        }
+                        _ => None,
+                    },
+                    // A fixed-width scalar read or write through an address it is GIVEN:
+                    // `IN_PLACE_SET_OPS` and `SCALAR_GETTERS` are the two lists that already
+                    // carry that property (`@FR-R-InPlace`), each documented as moving
+                    // nothing, so a naming through one reaches its own field and no other.
+                    // `s.seen = s.seen + 1` beside a view of `s.ops` is the shape.
+                    n if IN_PLACE_SET_OPS.contains(&n) || SCALAR_GETTERS.contains(&n) => {
+                        match args.get(1).map(Value::unspan) {
+                            Some(Value::Int(off)) => {
+                                Some(Some(u32::try_from(*off).unwrap_or(u32::MAX)))
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                match reach {
+                    Some(None) => {}
+                    Some(Some(off))
+                        if off != cx.watch.1
+                            && off != u32::MAX
+                            && cx.watch.1 != crate::use_analysis::ANY_FIELD => {}
+                    _ => {
+                        cx.ok = false;
+                        return;
+                    }
+                }
+                for a in args.iter().skip(1) {
+                    walk(cx, a, field_off);
+                }
+                return;
+            }
+        }
+        if node.names_var_here(cx.root) {
+            cx.ok = false;
+            return;
+        }
+        node.for_each_child(&mut |c| walk(cx, c, field_off));
+    }
+    let mut cx = Cx {
+        data,
+        root,
+        watch: (root, watch_off),
+        disturbed,
+        ok: true,
+    };
+    walk(&mut cx, stmt, &field_off);
+    cx.ok
+}
+
+/// Does this body leave the places its leaves view where a view of them stays good until the
+/// return?  The question is per PATH, and the path is what the statement LIST gives: each exit
+/// owns the append that built the element its leaf names, and nothing between that append and
+/// the exit may name the container.
+///
+/// Three things are checked, and the first two are why a function with several exits — the
+/// shape a parser writes, one append and one `return` per branch — is admitted where a
+/// per-BODY count declined it:
+///
+/// * every statement naming the container must BUILD one of the exits' elements, so a second
+///   append nobody views declines;
+/// * each exit's own element must be built in the SAME statement list, before it, with no
+///   other element built in between — an interleaved build would have grown the container
+///   after the first element was made;
+/// * no build may stand under a loop, where the element a later iteration appends moves the
+///   one an earlier iteration's view named.
+///
+/// The mention test is deliberately blunter than the scope pass's producers, and in the
+/// opposite direction.  [`crate::scopes::grown_containers`] is a documented LOWER bound (a
+/// missed disturbance costs a materialise there); a view leaf needs an UPPER bound, because a
+/// missed disturbance here costs the program its meaning — a read through an element that
+/// moved.  Every way to grow a container names the variable that reaches it, so counting
+/// mentions cannot miss one, while it does decline a body that merely READS the container a
+/// second time.  That costs the rewrite and nothing else.
+fn body_keeps_places(
+    data: &Data,
+    stores: &Stores,
+    d_nr: u32,
+    places: &HashSet<crate::scopes::ParamPlace>,
+    exits: &[(usize, u16)],
+    disturbed: Option<&crate::scopes::DisturbedParams>,
+) -> bool {
+    let def = data.def(d_nr);
+    let roots: HashSet<u16> = places.iter().map(|(v, _)| *v).collect();
+    let elems: HashSet<u16> = exits.iter().map(|(_, e)| *e).collect();
+    let trace = std::env::var("LOFT_TRACE_VALUEREC").is_ok();
+    let mut ok = true;
+
+    /// What one statement names: the container, which elements it builds, and which exits it
+    /// carries.
+    ///
+    /// Naming is [`Value::reads_var`], the canonical predicate, and not a walk for `Var`
+    /// nodes: a `Set` names its target with no `Var` child, and the element an append builds
+    /// is named exactly there (`_elm_1 = OpNewRecord(sc, …)`).  Read the narrow way, every
+    /// build looked like a bare naming of the container and every admission declined.
+    fn scan(
+        stmt: &Value,
+        roots: &HashSet<u16>,
+        elems: &HashSet<u16>,
+        exits: &[(usize, u16)],
+    ) -> (bool, bool, HashSet<u16>, HashSet<usize>) {
+        let names_root = roots.iter().any(|r| stmt.reads_var(*r));
+        let builds: HashSet<u16> = elems
+            .iter()
+            .filter(|e| stmt.reads_var(**e))
+            .copied()
+            .collect();
+        // Under a LOOP is asked of the NAMING, not of the statement: an arm that runs a loop
+        // beside its append names the container outside that loop, and charging the whole
+        // statement declined every parser written that way.  A naming that IS under a loop
+        // declines, because the element a later iteration appends moves the one an earlier
+        // iteration's view named.
+        let mut under_loop = false;
+        walk_loops(stmt, false, &mut |n, loop_here| {
+            if loop_here && roots.iter().any(|r| n.names_var_here(*r)) {
+                under_loop = true;
+            }
+        });
+        let mut carries: HashSet<usize> = HashSet::new();
+        stmt.any_node(&mut |n| {
+            if let Value::Block(bl) = n {
+                let addr = std::ptr::from_ref(&**bl) as usize;
+                if exits.iter().any(|(a, _)| *a == addr) {
+                    carries.insert(addr);
+                }
+            }
+            false
+        });
+        (names_root, under_loop, builds, carries)
+    }
+
+    fn lists<'a>(v: &'a Value, out: &mut Vec<&'a Vec<Value>>) {
+        match v.unspan() {
+            Value::Block(bl) | Value::Loop(bl) => {
+                out.push(&bl.operators);
+                for op in &bl.operators {
+                    lists(op, out);
+                }
+            }
+            other => other.for_each_child(&mut |c| lists(c, out)),
+        }
+    }
+
+    let mut all: Vec<&Vec<Value>> = Vec::new();
+    lists(def.code(), &mut all);
+    // Every naming of the container is an element build, and no build stands under a loop.
+    for list in &all {
+        for stmt in *list {
+            let (names_root, under_loop, builds, _) = scan(stmt, &roots, &elems, exits);
+            if !names_root {
+                continue;
+            }
+            let avoids = places
+                .iter()
+                .all(|w| namings_avoid_place(data, stores, d_nr, stmt, *w, disturbed));
+            if (builds.is_empty() && !avoids) || under_loop {
+                if trace {
+                    eprintln!(
+                        "[viewleaf] {}: a statement names the container without building a \
+                         viewed element (loop={under_loop})",
+                        def.name()
+                    );
+                }
+                ok = false;
+            }
+        }
+    }
+    if !ok {
+        return false;
+    }
+    // Per exit: its own element is built in the same list, earlier, with no OTHER element
+    // built in between — an interleaved build grows the container after the first element.
+    for (addr, elm) in exits {
+        let mut found_list = false;
+        for list in &all {
+            let mut build_at: Option<usize> = None;
+            let mut exit_at: Option<usize> = None;
+            let mut other_between = false;
+            for (i, stmt) in list.iter().enumerate() {
+                let (_, _, builds, carries) = scan(stmt, &roots, &elems, exits);
+                if builds.contains(elm) {
+                    if exit_at.is_none() {
+                        build_at = Some(i);
+                        other_between = false;
+                    }
+                } else if build_at.is_some() && exit_at.is_none() && !builds.is_empty() {
+                    other_between = true;
+                }
+                if carries.contains(addr) && exit_at.is_none() {
+                    exit_at = Some(i);
+                }
+            }
+            if let (Some(b), Some(e)) = (build_at, exit_at)
+                && b < e
+                && !other_between
+            {
+                found_list = true;
+                break;
+            }
+        }
+        if !found_list {
+            if trace {
+                eprintln!(
+                    "[viewleaf] {}: an exit's element is not built in its own statement list",
+                    def.name()
+                );
+            }
+            return false;
+        }
+    }
+    true
 }
 
 /// What a walk over one function knows while it classifies value shapes.
@@ -4847,9 +5820,14 @@ fn collect_leaves(body: &Value, locals: &HashMap<u16, u32>, own: bool) -> ValueL
 /// name it only inside a converted `Object` block, as the buffer argument of a call that
 /// drops it, or as the subject of a free.  `None` admits; `Some` names the refusing test
 /// for the `LOFT_TRACE_VALUEREC` line.
-fn value_body(data: &Data, d_nr: u32, admitted: &HashSet<u32>) -> Option<&'static str> {
+fn value_body(
+    data: &Data,
+    d_nr: u32,
+    admitted: &HashSet<u32>,
+    view_offs: &ViewOffsets,
+) -> Option<&'static str> {
     let def = data.def(d_nr);
-    let locals = value_locals_in(data, d_nr, admitted);
+    let locals = value_locals_in(data, d_nr, admitted, view_offs);
     let c = ShapeCtx {
         data,
         def_nr: d_nr,
@@ -4962,7 +5940,12 @@ fn retbuf_uses_ok(v: &Value, rb: u16, c: &ShapeCtx, objects: &HashSet<usize>) ->
 /// and a lift read as a VIEW leaf instead leaks the store that copy mints (t15).  A
 /// fixpoint, because a leaf may name another value local.
 #[must_use]
-pub fn value_locals_in(data: &Data, def_nr: u32, admitted: &HashSet<u32>) -> HashMap<u16, u32> {
+pub fn value_locals_in(
+    data: &Data,
+    def_nr: u32,
+    admitted: &HashSet<u32>,
+    view_offs: &ViewOffsets,
+) -> HashMap<u16, u32> {
     let def = data.def(def_nr);
     let vars = def.variables();
     let body = def.code();
@@ -5059,7 +6042,9 @@ pub fn value_locals_in(data: &Data, def_nr: u32, admitted: &HashSet<u32>) -> Has
                 .keys()
                 .filter_map(|v| {
                     let d = shapes.get(v).copied().flatten()?;
-                    local_uses_ok(body, *v, data, &served, admitted).then_some((*v, d))
+                    let empty = HashSet::new();
+                    let offs = view_offs.get(&d).unwrap_or(&empty);
+                    local_uses_ok(body, *v, data, &served, admitted, offs).then_some((*v, d))
                 })
                 .collect();
             let stable = kept.len() == cands.len();
@@ -5139,7 +6124,11 @@ fn local_uses_ok(
     data: &Data,
     served: &HashSet<usize>,
     admitted: &HashSet<u32>,
+    view_offs: &HashSet<i64>,
 ) -> bool {
+    // @PLN164 C5 — the view-field reads this local's uses may be accounted against, read
+    // once: which of them stand where the field can only be READ.
+    let view_reads = view_field_reads(body, v, data, view_offs);
     let mut mentions = 0u32;
     let mut accounted = 0u32;
     body.any_node(&mut |n| {
@@ -5170,7 +6159,25 @@ fn local_uses_ok(
                 {
                     accounted += 1;
                 }
-                if arg_is_v(0) && matches!(name, "OpFreeRef" | "OpFreeRefIfDistinct" | "OpCopyRecord" | "OpDistinctStore") {
+                // @PLN164 C5 — a VIEW-LEAF field read that stands in a read-only context
+                // ([`view_field_reads`]): the tuple hands over the same reference the
+                // record's field slot would, so the read is served.
+                if name == "OpGetField" && arg_is_v(0) && view_reads.contains(&(std::ptr::from_ref(n) as usize)) {
+                    accounted += 1;
+                }
+                // A copy FROM the local MATERIALISES the tuple into the destination, one
+                // typed write per field — which a VIEW LEAF has no write for: its element
+                // is a reference, and materialising it would be a vector copy the value
+                // path does not emit.  So a view-leaf record declines a copy site
+                // (@PLN164 C5); the record form stands there.
+                let copies = name == "OpCopyRecord" && !view_offs.is_empty();
+                if arg_is_v(0)
+                    && !copies
+                    && matches!(
+                        name,
+                        "OpFreeRef" | "OpFreeRefIfDistinct" | "OpCopyRecord" | "OpDistinctStore"
+                    )
+                {
                     accounted += 1;
                 }
                 if arg_is_v(1) && matches!(name, "OpFreeRefIfDistinct" | "OpDistinctStore") {
@@ -5182,6 +6189,174 @@ fn local_uses_ok(
         false
     });
     mentions == accounted
+}
+
+/// @PLN164 C5 — the SITE condition of a view leaf, per `(O-ViewField)`: the functions
+/// `caller` declines because the place their leaf views cannot be shown to survive to the
+/// last read of it.
+///
+/// Three things must hold at a site, and each has a cell:
+///
+/// * every read of the leaf field is a READ ([`view_field_reads`] has already accounted
+///   that, or the local would not be a value local at all);
+/// * every read stands in the statement list that carries the BIND, at or after it — so
+///   the bind dominates the reads and a stale value from a previous loop iteration is
+///   never read (a read before the bind in a loop body would be exactly that);
+/// * no statement from the bind to the last read DISTURBS the place, in this frame or
+///   through anything it calls ([`crate::scopes::places_disturbed_by`]).
+///
+/// A place the call's argument does not resolve to declines the function: the site cannot
+/// then say what it must keep undisturbed.  A null-view leaf (an exit that writes the field
+/// not at all) contributes no place and asks nothing of the site.
+fn view_sites_declined(
+    data: &Data,
+    stores: &Stores,
+    caller: u32,
+    views: &HashMap<u32, ViewPlan>,
+    locals: &HashMap<u16, u32>,
+    view_offs: &ViewOffsets,
+    disturbed: Option<&crate::scopes::DisturbedParams>,
+) -> HashSet<u32> {
+    let mut out = HashSet::new();
+    let def = data.def(caller);
+    let body = def.code();
+    let mut lists: Vec<&Vec<Value>> = Vec::new();
+    collect_lists(body, &mut lists);
+    for list in lists {
+        for (i, stmt) in list.iter().enumerate() {
+            let Value::Set(v, rhs) = stmt.unspan() else {
+                continue;
+            };
+            let Value::Call(d, args) = rhs.unspan() else {
+                continue;
+            };
+            let Some(plan) = views.get(d) else { continue };
+            if locals.get(v) != Some(d) {
+                continue;
+            }
+            let Some(offs) = view_offs.get(d) else {
+                continue;
+            };
+            let reads = view_field_reads(body, *v, data, offs);
+            let trace = std::env::var("LOFT_TRACE_VALUEREC").is_ok();
+            // Every read inside a statement of THIS list, at or after the bind.  A read the
+            // walk cannot place declines the function rather than being assumed later.
+            let mut last = i;
+            let mut placed: HashSet<usize> = HashSet::new();
+            for (j, other) in list.iter().enumerate() {
+                let mut hits = 0usize;
+                other.any_node(&mut |n| {
+                    let a = std::ptr::from_ref(n) as usize;
+                    if reads.contains(&a) {
+                        placed.insert(a);
+                        hits += 1;
+                    }
+                    false
+                });
+                if hits == 0 {
+                    continue;
+                }
+                if j < i {
+                    if trace {
+                        eprintln!(
+                            "[viewleaf] {}: a read of `{}` stands before its bind",
+                            data.def(caller).name(),
+                            def.variables().name(*v)
+                        );
+                    }
+                    out.insert(*d);
+                }
+                last = last.max(j);
+            }
+            if placed.len() < reads.len() {
+                if trace {
+                    eprintln!(
+                        "[viewleaf] {}: {} of {} read(s) of `{}` are outside the bind's list",
+                        data.def(caller).name(),
+                        reads.len() - placed.len(),
+                        reads.len(),
+                        def.variables().name(*v)
+                    );
+                }
+                out.insert(*d);
+            }
+            // The places the leaf views, mapped onto the arguments this site passed.
+            let mut watch: Vec<crate::scopes::ParamPlace> = Vec::new();
+            for place in plan.roots.values().flatten() {
+                let Some(arg) = args.get(usize::from(place.0)) else {
+                    out.insert(*d);
+                    continue;
+                };
+                if let Some(mapped) = crate::scopes::call_arg_place(arg, data)
+                    .and_then(|base| crate::scopes::compose_param_place(base, place.1))
+                {
+                    watch.push(mapped);
+                } else {
+                    if trace {
+                        eprintln!(
+                            "[viewleaf] {}: the argument at slot {} names no place",
+                            data.def(caller).name(),
+                            place.0
+                        );
+                    }
+                    out.insert(*d);
+                }
+            }
+            if trace {
+                eprintln!(
+                    "[viewleaf] {}: site of `{}` at {i}, last read {last}, {} read(s), watch {watch:?}",
+                    data.def(caller).name(),
+                    def.variables().name(*v),
+                    reads.len()
+                );
+            }
+            if watch.is_empty() {
+                continue;
+            }
+            // The BIND statement is excluded, and that is the whole reason the span is a
+            // span: the call itself grows the container — the append that makes the element
+            // the leaf names — and the callee's own half of that question is
+            // [`body_keeps_places`].  Anything else in the bind statement runs BEFORE the
+            // call, since a call's arguments are evaluated first, so no disturbance in it
+            // can reach the view.
+            for stmt in list.iter().take(last + 1).skip(i + 1) {
+                if !watch
+                    .iter()
+                    .all(|w| namings_avoid_place(data, stores, caller, stmt, *w, disturbed))
+                {
+                    if trace {
+                        eprintln!(
+                            "[viewleaf] {}: the place `{}` views can be disturbed before its last read",
+                            data.def(caller).name(),
+                            def.variables().name(*v)
+                        );
+                    }
+                    out.insert(*d);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Every STATEMENT LIST of a body — what an ordering question is asked over, because a
+/// statement's position only means something inside the list that carries it.
+fn collect_lists<'a>(v: &'a Value, out: &mut Vec<&'a Vec<Value>>) {
+    match v.unspan() {
+        Value::Block(bl) | Value::Loop(bl) => {
+            out.push(&bl.operators);
+            for op in &bl.operators {
+                collect_lists(op, out);
+            }
+        }
+        Value::Insert(ops) => {
+            out.push(ops);
+            for op in ops {
+                collect_lists(op, out);
+            }
+        }
+        other => other.for_each_child(&mut |c| collect_lists(c, out)),
+    }
 }
 
 /// Where a node stands, for the site gate: an admitted call is consumed as a TUPLE at a
@@ -5294,7 +6469,7 @@ pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16>
         return out;
     }
     let admitted: HashSet<u32> = vr.fns.keys().copied().collect();
-    let locals = value_locals_in(data, def_nr, &admitted);
+    let locals = value_locals_in(data, def_nr, &admitted, &vr.view_offs);
     let def = data.def(def_nr);
     let vars = def.variables();
     let mut minted: HashSet<u16> = HashSet::new();
@@ -5363,8 +6538,97 @@ pub fn value_leaves(data: &Data, def_nr: u32, vr: &ValueRecords) -> ValueLeaves 
         return ValueLeaves::default();
     }
     let admitted: HashSet<u32> = vr.fns.keys().copied().collect();
-    let locals = value_locals_in(data, def_nr, &admitted);
+    let locals = value_locals_in(data, def_nr, &admitted, &vr.view_offs);
     collect_leaves(data.def(def_nr).code(), &locals, true)
+}
+
+/// @PLN164 C5 — per admitted function, the byte offsets of its VIEW-LEAF fields.  A call
+/// site reads such a field off the tuple's own reference, so the read is accounted where a
+/// record's collection-field read would decline the local.
+pub type ViewOffsets = HashMap<u32, HashSet<i64>>;
+
+/// Is argument `i` of a call to `def` a pure READ of the collection it is given — a value the
+/// callee cannot write through?
+///
+/// Two contexts qualify, and they are the ones a reader actually writes: an argument at a
+/// `const` parameter (`len(v)`, `totp(v)` — `value_const` is the signature fact C124 carries,
+/// and the `const` of a stdlib `len(self: const vector)` is the same fact), and the operand of
+/// an op in [`VIEW_LEAF_READ_OPS`], which answers a VALUE rather than a place.  ONE home: the
+/// site gate asks it of a leaf read and the disturbance walk asks it of a naming that reaches
+/// the watched field, and the two must agree about what a read is.
+fn read_context(data: &Data, d: u32, i: usize) -> bool {
+    if (d as usize) >= data.definitions.len() {
+        return false;
+    }
+    let def = data.def(d);
+    if VIEW_LEAF_READ_OPS.contains(&def.name()) {
+        return i == 0;
+    }
+    def.attributes().get(i).is_some_and(|a| a.value_const)
+}
+
+/// The view-field READS of local `v` in `body`, by node address — every
+/// `OpGetField(v, off, _)` at one of `offs` that stands where the value can only be READ.
+///
+/// It is an ALLOW-list, and that direction is the point (`@FR-O-ViewField`'s site
+/// condition): a read hands over the container's own vector, so anything that could WRITE
+/// through it — an append, a clear, a keyed write, a by-value parameter the callee writes
+/// into — must decline the function, and a use this walk does not recognise is not
+/// admitted.  A missed read costs the rewrite; a missed WRITE would cost the program its
+/// meaning, because the write would land in a container the caller never named.
+///
+/// The two recognised contexts are the ones a reader actually writes: an argument at a
+/// `const` parameter (`len(m.pts)`, `totp(m.pts)` — `value_const` is the signature fact C124
+/// carries, and the `const` of a stdlib `len(self: const vector)` is the same fact), and the
+/// operand of an op in [`VIEW_LEAF_READ_OPS`], which answers a VALUE and not a place.
+///
+/// An ELEMENT read is deliberately not one of them, and that is the measurement this list is
+/// cut from: `m.pts[0]?.px = 100` reads the leaf with `OpGetVectorNullable` — an op that
+/// only reads its container — and then WRITES through the element it answered.  An op being
+/// read-only says nothing about what its RESULT is used for, so admitting one that answers a
+/// place admits the write with it (measured: the site wrote 100 into the caller's own copy in
+/// the record form and into `s.ops[0].opts` through the leaf).
+fn view_field_reads(body: &Value, v: u16, data: &Data, offs: &HashSet<i64>) -> HashSet<usize> {
+    let mut out = HashSet::new();
+    if offs.is_empty() {
+        return out;
+    }
+    let field_of = |arg: &Value| -> Option<i64> {
+        let Value::Call(g, gargs) = arg.unspan() else {
+            return None;
+        };
+        if (*g as usize) >= data.definitions.len() || data.def(*g).name() != "OpGetField" {
+            return None;
+        }
+        if !matches!(gargs.first().map(Value::unspan), Some(Value::Var(w)) if *w == v) {
+            return None;
+        }
+        match gargs.get(1).map(Value::unspan) {
+            Some(Value::Int(off)) if offs.contains(&i64::from(*off)) => Some(i64::from(*off)),
+            _ => None,
+        }
+    };
+    body.any_node(&mut |n| {
+        let Value::Call(d, args) = n else {
+            return false;
+        };
+        if (*d as usize) >= data.definitions.len() {
+            return false;
+        }
+        for (i, arg) in args.iter().enumerate() {
+            if field_of(arg).is_none() {
+                continue;
+            }
+            if read_context(data, *d, i) {
+                // The UNSPANNED address only: every IR walk here visits a spanned node's
+                // content, so that is the identity a use is recognised by, and one address
+                // per node is what makes the site gate able to COUNT them.
+                out.insert(std::ptr::from_ref(arg.unspan()) as usize);
+            }
+        }
+        false
+    });
+    out
 }
 
 pub const VALUE_RECORD_GETTERS: [&str; 6] = [

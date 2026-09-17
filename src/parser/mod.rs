@@ -4575,17 +4575,29 @@ impl Parser {
         // (nested tuples included); each element rides the same DN3/DN1 checks below.
         // Arity mismatches are left to the regular type checker.
         fn tuple_elems(data: &crate::data::Data, tp: &Type) -> Option<Vec<Type>> {
-            match tp {
-                Type::Tuple(elems) => Some(elems.clone()),
-                Type::Reference(d, _) if data.def(*d).name().starts_with("__tuple<") => Some(
-                    data.def(*d)
-                        .attributes
-                        .iter()
-                        .map(|a| a.typedef.clone())
-                        .collect(),
-                ),
-                _ => None,
-            }
+            // `@FR-T-Absent` — a tuple that ARRIVES absent is read as the member-nullable one,
+            // `optional((τ₁, …, τₙ)) ≡ (τ₁?, …, τₙ?)`, so the element-wise comparison below sees
+            // `τᵢ?` on the value side and answers per member.  Read BARE, the whole `(τ…)?` was
+            // compared against the declared record instead and reported a store into "the
+            // non-null type `__tuple<integer?,text?>`" — a type whose members are exactly what
+            // the value carries.  The honest half stays: against a non-null `__tuple<τ…>` each
+            // `τᵢ?` still earns its own report (`D-tup-10`).
+            let (base, absent) = tp.peel_optional();
+            let elems: Vec<Type> = match base {
+                Type::Tuple(elems) => elems.clone(),
+                Type::Reference(d, _) if data.def(*d).name().starts_with("__tuple<") => data
+                    .def(*d)
+                    .attributes
+                    .iter()
+                    .map(|a| a.typedef.clone())
+                    .collect(),
+                _ => return None,
+            };
+            Some(if absent {
+                elems.into_iter().map(Type::optional).collect()
+            } else {
+                elems
+            })
         }
         if let (Some(v_elems), Some(t_elems)) = (
             tuple_elems(&self.data, value_tp),
@@ -5209,7 +5221,25 @@ impl Parser {
                         std::panic::Location::caller()
                     );
                 }
-                if self.admit_unwrap == 0 && !self.in_explicit_cast {
+                // `@FR-T-Absent` — an in-flight `(τ₁, …, τₙ)?` landing in a slot whose members are
+                // EACH nullable is the sanctioned store (owner ruling 2026-09-16, `tuples.md`
+                // D-tup-10): the nulls land, and the slot then holds a tuple that exists.  Asked
+                // here, the whole-type report named `(integer?, text?)` as "the non-null type" —
+                // a type whose members are exactly what the value carries.
+                //
+                // The conversion itself was never wrong: this arm peels and recurses into the
+                // element-wise tuple arm below, which converts each member.  Only the REPORT is,
+                // so only the report is skipped — and only for this shape.  A destination with a
+                // NON-null member keeps it, which is the half `(N-Store)` exists for: peeled, a
+                // `(integer, text)` destination is identical to the source and reports nothing
+                // at all, so dropping the report for every tuple pair would lose that warning.
+                let sanctioned_tuple = self
+                    .tuple_elements(inner)
+                    .zip(self.tuple_elements(should))
+                    .is_some_and(|(v, t)| {
+                        v.len() == t.len() && t.iter().all(|m| matches!(m, Type::Optional(_)))
+                    });
+                if self.admit_unwrap == 0 && !self.in_explicit_cast && !sanctioned_tuple {
                     let (what, at, lenient) = self.store_slot();
                     if self.nstore_unwrap_report(inner, should, &what, at.as_ref(), lenient) {
                         return true;
@@ -5233,7 +5263,27 @@ impl Parser {
         // synthetic-struct path gets from its per-field assignment.  Elements
         // are converted through a temporary so a failing element leaves `code`
         // untouched for the caller's fallback arms.
-        if let (Type::Tuple(src_elems), Type::Tuple(dst_elems)) = (is_type, should)
+        // `@FR-T-Absent` — an in-flight `(τ₁, …, τₙ)?` reaching a member-nullable slot is the
+        // SANCTIONED store: the nulls land, and the slot then holds a tuple that exists (owner
+        // ruling 2026-09-16, `tuples.md` D-tup-10).  Read BARE, the `Optional` wrapper made this
+        // arm decline, the value fell through to the `τ? ⤳ τ` report one level down, and a field
+        // declared `(integer?, text?)` was told that a nullable `(integer, text)?` "is stored
+        // into the field of the non-null type `(integer?, text?)`" — naming a type whose members
+        // are exactly what the value carries.  `n_store_violation`'s own walk already peels this
+        // way; one question with two decoders is what let them disagree.
+        let tuple_convert_elems = |tp: &Type| -> Option<Vec<Type>> {
+            let (base, absent) = tp.peel_optional();
+            let Type::Tuple(elems) = base else {
+                return None;
+            };
+            Some(if absent {
+                elems.iter().cloned().map(Type::optional).collect()
+            } else {
+                elems.clone()
+            })
+        };
+        if let (Some(src_elems), Some(dst_elems)) =
+            (tuple_convert_elems(is_type), tuple_convert_elems(should))
             && src_elems.len() == dst_elems.len()
         {
             let mut items = match code.unspan_mut() {
@@ -12353,7 +12403,50 @@ impl Parser {
             self.bind_tuple_operand(&list[0], &types[0], &left_elems, "__cmp_l", &mut prelude);
         let right =
             self.bind_tuple_operand(&list[1], &types[1], &right_elems, "__cmp_r", &mut prelude);
-        let cmp = self.lex_compare(op, 0, left, right, &left_elems, &right_elems);
+        let mut cmp = self.lex_compare(op, 0, left, right, &left_elems, &right_elems);
+        // `@FR-T-Absent` — `==` compares tuples that EXIST.  The one tuple that does not is an
+        // out-of-range read, and its representation is all-null members, which the element-wise
+        // chain above compares EQUAL to another absent tuple: two separate misses answered
+        // `true`.  Owner ruling 2026-09-16 (`tuples.md` D-tup-10): a side that is not there
+        // makes `==` false and `!=` true, so the chain is consulted only once BOTH sides exist.
+        //
+        // Guarded per side, and only for a side whose TYPE can be absent — a tuple a program
+        // wrote down always exists, so guarding it would emit a test that is constantly true.
+        // Ordering (`<`, `<=`, `>`, `>=`) is deliberately untouched: the ruling is about the
+        // null question, and lexicographic order over an absent operand is its own design call.
+        if matches!(op, "==" | "!=") {
+            // The operand's OWN type, not the one operator resolution handed us: a `τ?` operand
+            // resolves against the `τ` operator, so `types` arrives PEELED here and an in-flight
+            // tuple is indistinguishable from a written one by the time this runs (measured —
+            // both sides read `(integer, text)` for two out-of-range reads).  `(T-Absent)` puts
+            // the in-flight type in a LOCAL and nowhere else, so the variable's declared type is
+            // where the `?` survives.  Guarding unconditionally instead would be wrong, not just
+            // wasteful: `coalesce_not_null` reports an all-null WRITTEN tuple absent, and those
+            // must still compare equal to each other.
+            let operand_absent = |s: &Self, v: &Value, t: &Type| -> bool {
+                let tp = match v.unspan() {
+                    Value::Var(n) => s.vars.tp(*n).clone(),
+                    _ => t.clone(),
+                };
+                Self::is_absent_tuple(&s.data, &tp)
+            };
+            let l_absent = operand_absent(self, &list[0], &types[0]);
+            let r_absent = operand_absent(self, &list[1], &types[1]);
+            if l_absent || r_absent {
+                // The answer when a side is missing: `==` is false, `!=` is its negation.
+                let missing = Value::Boolean(op == "!=");
+                if r_absent {
+                    let exists = self
+                        .coalesce_not_null(&Value::Var(right), &Type::Tuple(right_elems.clone()));
+                    cmp = v_if(exists, cmp, missing.clone());
+                }
+                if l_absent {
+                    let exists =
+                        self.coalesce_not_null(&Value::Var(left), &Type::Tuple(left_elems.clone()));
+                    cmp = v_if(exists, cmp, missing);
+                }
+            }
+        }
         *code = if prelude.is_empty() {
             cmp
         } else {

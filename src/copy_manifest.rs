@@ -138,8 +138,33 @@ fn note(key: (String, String, String)) {
 /// The author asked for an alias and is getting a copy, so this is not an internal detail —
 /// a write through `var` no longer reaches the container. Reported unconditionally: a silent
 /// copy is the one thing the model does not allow.
-pub fn note_materialised_view(var: &str, container: &str, function: &str) {
-    note((var.to_string(), container.to_string(), function.to_string()));
+pub fn note_materialised_view(var: &str, container: &str, function: &str, via: Option<&str>) {
+    note((
+        with_via(var, via),
+        container.to_string(),
+        function.to_string(),
+    ));
+}
+
+/// Append the CALLEE a disturbance travelled through to a row's first field (@PLN164 C3).
+///
+/// Encoded into the row rather than carried as a fourth column because the three sentences
+/// already discriminate on suffixes of that field, so one reader peels all of it — and the
+/// clause a `Some` earns is the same words in every sentence, which is the point: the reader is
+/// told which frame to look in, not a different story per cause.
+fn with_via(var: &str, via: Option<&str>) -> String {
+    match via {
+        Some(callee) => format!("{var}\u{1}{callee}"),
+        None => var.to_string(),
+    }
+}
+
+/// Split a row's first field back into the name and the callee clause the sentence appends.
+fn peel_via(var: &str) -> (&str, String) {
+    match var.split_once('\u{1}') {
+        Some((name, callee)) => (name, format!(" inside the call to `{callee}`")),
+        None => (var, String::new()),
+    }
 }
 
 /// Note that `var` was copied out of keyed collection `coll` because a write to its KEY field
@@ -169,17 +194,17 @@ pub fn note_rekeyed_view(var: &str, coll: &str, field: &str, function: &str) {
 /// Separate message from [`note_materialised_view`] for the reason that rule split the event
 /// in two: a removal renumbers the elements after the one removed, a growth can move all of
 /// them at once, and a reader sent looking for the wrong statement pays for the difference.
-pub fn note_grown_view(var: &str, container: &str, function: &str) {
+pub fn note_grown_view(var: &str, container: &str, function: &str, via: Option<&str>) {
     note((
-        format!("{var}\u{0}grow"),
+        format!("{}\u{0}grow", with_via(var, via)),
         container.to_string(),
         function.to_string(),
     ));
 }
 
-pub fn note_reassigned_view(var: &str, owner: &str, function: &str) {
+pub fn note_reassigned_view(var: &str, owner: &str, function: &str, via: Option<&str>) {
     note((
-        format!("{var}\u{0}reassign"),
+        format!("{}\u{0}reassign", with_via(var, via)),
         owner.to_string(),
         function.to_string(),
     ));
@@ -194,17 +219,20 @@ pub fn report_materialised_views() {
         MATERIALISED.with(|m| std::mem::take(&mut *m.borrow_mut()));
     for (var, container, function) in rows {
         if let Some(name) = var.strip_suffix("\u{0}reassign") {
+            let (name, via) = peel_via(name);
             eprintln!(
                 "advice: in `{function}`, `{name}` was copied out of `{container}` because \
-                 `{container}` is reassigned while `{name}` is in use — a view names a place \
-                 inside `{container}`, and giving `{container}` a new value leaves nothing for \
-                 it to point at. Writes through `{name}` no longer reach `{container}`."
+                 `{container}` is reassigned{via} while `{name}` is in use — a view names a \
+                 place inside `{container}`, and giving `{container}` a new value leaves \
+                 nothing for it to point at. Writes through `{name}` no longer reach \
+                 `{container}`."
             );
         } else if let Some(name) = var.strip_suffix("\u{0}grow") {
+            let (name, via) = peel_via(name);
             eprintln!(
                 "advice: in `{function}`, `{name}` was copied out of `{container}` because \
-                 `{container}` grows while `{name}` is in use — a container that outgrows its \
-                 allocation moves every element, so the view could not stay valid. Writes \
+                 `{container}` grows{via} while `{name}` is in use — a container that outgrows \
+                 its allocation moves every element, so the view could not stay valid. Writes \
                  through `{name}` no longer reach `{container}`."
             );
         } else if let Some((name, field)) = var.split_once("\u{0}rekey\u{0}") {
@@ -216,9 +244,10 @@ pub fn report_materialised_views() {
                  `{container}[key] = value`."
             );
         } else {
+            let (var, via) = peel_via(&var);
             eprintln!(
                 "advice: in `{function}`, `{var}` was copied out of `{container}` because \
-                 `{container}` is modified while `{var}` is in use — removing an element \
+                 `{container}` is modified{via} while `{var}` is in use — removing an element \
                  renumbers the others, so the view could not stay valid. Writes through \
                  `{var}` no longer reach `{container}`."
             );

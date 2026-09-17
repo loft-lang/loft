@@ -327,6 +327,9 @@ def main():
     cites = citations()
 
     if cmd == "sites":
+        if len(sys.argv) < 3:
+            print("usage: rule_tags.py sites <@FR-Tag>", file=sys.stderr)
+            return 2
         tag = sys.argv[2].removeprefix("@FR-").lstrip("@")
         if tag in devs:
             files, status = devs[tag]

@@ -1,21 +1,21 @@
 
 # Stack Slot Assignment — Design and Implementation
 
-This document describes how `assign_slots` assigns stack positions to local
+This document describes how `assign_slots_v2` assigns stack positions to local
 variables and the invariants codegen enforces.
 
 ---
 
 ## Overview
 
-`assign_slots` (`src/variables/slots.rs`) runs after `compute_intervals` and
+`assign_slots_v2` (`src/variables/slots_v2.rs`) runs after `compute_intervals` and
 before codegen.  It assigns `stack_pos` to every local variable.  Codegen
 (`src/state/codegen.rs::generate_set`) reads the pre-assigned position and
 asserts it matches the runtime stack pointer (TOS).
 
-**Key invariant:** `assign_slots` is the single authority for slot positions.
+**Key invariant:** `assign_slots_v2` is the single authority for slot positions.
 Codegen never moves variables.  If a variable's slot doesn't match TOS at
-first assignment, that's a bug in `assign_slots` — not something codegen
+first assignment, that's a bug in `assign_slots_v2` — not something codegen
 should silently fix.
 
 ---
@@ -41,7 +41,7 @@ variables.  Per-block `OpReserveFrame(block.var_size)` is gone; slot-move
 a positional init (`OpInitText(pos)` / `OpInitRef(pos)` /
 `OpInitRefSentinel(pos)` / `OpInitCreateStack(pos, dep_pos)`).
 
-**Blocks** use both zones.  Slots are assigned by `assign_slots`;
+**Blocks** use both zones.  Slots are assigned by `assign_slots_v2`;
 codegen writes directly to each variable's pre-assigned position via the
 positional init ops.  No per-block reserve, no per-block free: the whole
 frame is owned by the function and released on return.
@@ -100,7 +100,7 @@ the allocator and codegen agree on absolute positions.
 debug_assert!(pre_assigned_pos == u16::MAX || pre_assigned_pos == pos || argument);
 ```
 
-Codegen never moves a variable after `assign_slots` has placed it.
+Codegen never moves a variable after `assign_slots_v2` has placed it.
 
 ### `gen_loop` — no per-loop OpReserveFrame
 
@@ -141,12 +141,14 @@ if a future slot-reuse aliasing regression surfaces.
 ## Plan-04 / @PLAN05 status (closed)
 
 - **Plan-04** (`doc/claude/plans/finished/04-slot-assignment-redesign/`)
-  aimed to replace this two-zone allocator with a single-pass,
+  aimed to replace the two-zone V1 allocator with a single-pass,
   scope-blind algorithm.  The retirement attempts
-  (codegen-is-allocator and V2-drive) both failed on variables
-  declared at outer scope but first-Set in inner scope.  V1 remains
-  the production allocator.  V2 (`src/variables/slots_v2.rs`) stays
-  as a shadow validator invoked via `LOFT_SLOT_V2=validate`.  What
+  (codegen-is-allocator and V2-drive) both failed AT THE TIME on variables
+  declared at outer scope but first-Set in inner scope.  **V2 is now the
+  production allocator**: `ac961e9b6` (2026-05-31, @PLAN53 / #236) deleted
+  `src/variables/slots.rs`, and `scopes.rs` reaches the allocator through
+  `crate::variables::assign_slots_v2`.  `LOFT_SLOT_V2=validate|drive`
+  remains as the per-function shadow mode.  What
   did land: positional init primitives, function-entry frame reserve,
   `OpText` deletion, and invariant I7.
 - **Plan-05** (`doc/claude/plans/finished/05-orphan-placer-elimination/`)
@@ -157,11 +159,6 @@ if a future slot-reuse aliasing regression surfaces.
 ---
 
 ## Diagnostic Tools
-
-### `LOFT_ASSIGN_LOG=<name>`
-
-Set to a function name (or `*` for all) to trace `assign_slots` placement
-decisions.  Only active in debug builds (`#[cfg(debug_assertions)]`).
 
 ### `validate_slots` (debug only)
 
@@ -187,9 +184,10 @@ Two fixture catalogues use this harness:
   runs as a structural regression guard against V1's output and a
   correctness gate for V2's shadow validator.
 
-Unit tests in `src/variables/slots.rs` also verify slot assignments for
-specific IR shapes without running codegen, by constructing synthetic
-`Function` / `Value` structures directly.
+Unit tests in `src/variables/mod.rs` and `src/variables/validate.rs` also
+verify slot assignments for specific IR shapes without running codegen, by
+constructing synthetic `Function` / `Value` structures directly.
+(`slots_v2.rs` itself carries no test module.)
 
 ---
 
@@ -259,7 +257,7 @@ to keep locals from overlapping the argument + return-address region.
 
 | File | Role |
 |------|------|
-| `src/variables/slots.rs` | `assign_slots`, `process_scope`, `place_large_and_recurse` |
+| `src/variables/slots_v2.rs` | `assign_slots_v2`, `apply_v2_result`, `slot_kind` |
 | `src/state/codegen.rs` | `generate_set`, `gen_set_first_at_tos`, `gen_loop`, `generate_block` |
 | `src/variables/mod.rs` | `set_stack_pos` assertion, `Function` struct |
 | `src/scopes.rs` | `scan_set` (Insert flattening), `inline_struct_return` (P122 lift) |

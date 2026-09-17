@@ -1,0 +1,153 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(T-Absent)` — `?` and `??` discharge an ABSENCE, and only one tuple has one.
+//
+// An out-of-range read is the only thing that makes a tuple that is not there.  Every tuple a
+// program writes down EXISTS whatever its members hold — `(null, null)` is a tuple that is
+// THERE, holding two nulls — so discharging one has nothing to discharge and no defensible
+// answer to pick: on a member-nullable tuple `?` could mean the tuple's own default or each
+// member's, and those two disagree on a PARTLY PRESENT tuple, where `??` keeps the present
+// member and a whole-value default would drop it.  Owner ruling 2026-09-16: refuse rather than
+// pick one silently.
+//
+// ⚠ The refusal is on the SUBJECT, not on the type, and that is measured rather than chosen.
+// `(N-Index)` trusts a CONSTANT index by contract, so `v[0]` is typed `(τ₁, …, τₙ)` with no `?`
+// even though the read can still miss at run time — `823-element-bind-ownership.loft` asserts
+// exactly that, and nine shipped scripts discharge such a read.  So the type cannot separate an
+// element read from a tuple the program holds, and the subject's own spelling does: a held tuple
+// arrives as its variable or as a built tuple value, an element read as the block that unboxes
+// it.  The `v[0]` controls below are what keep that distinction honest — a gate written on the
+// type alone passes every refusal cell here and breaks all nine of those scripts.
+//
+// Axes this file MOVES:  the operator (`?` · `??`), and WHERE the tuple that exists came from —
+//                        a written member-nullable local, a written NON-null local, a local
+//                        annotated from an index read, a declared member-nullable return, and a
+//                        struct field.  The member kinds carry a `text` where they can, since
+//                        the coercions only a non-`Copy` member needs are where this rule's
+//                        spellings have hidden before (loft#1478).
+// Axes it HOLDS FIXED:   the answers themselves are `1477`'s (`??`) and `1477b`'s (`== null`);
+//                        this file is only about which subjects are admitted at all.
+//
+// Every cell is a compile error, which is why they live here and not beside an assertion: a cell
+// that can refuse the file silences every cell behind it (measured — holding one such cell in an
+// assertion guard left that guard with an exit-only receipt).
+//
+// @falsified-at: ce24cd697 — interpret exit 1 -> 0, interpret expectations FAIL/7 -> 7/7 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/7 -> 7/7 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-tuple-that-exists-has-nothing-to-discharge.patch — interpret exit 1 -> 0, interpret expectations FAIL/7 -> 7/7 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/7 -> 7/7 (the suite's verdict, not a count of matches)
+//   On that parent NONE of these expectations is emitted: `??` over a tuple that exists answers
+//   a value there, and `?` reports the older "cannot build a default" instead — so every
+//   `@EXPECT_ERROR` below fails to match, while the CONTROLS compile the same way on both trees.
+//   That split is the point: the expectations move and the controls do not.
+//   CHANNEL: the expectations + exit channels, on BOTH backends.
+//   HOLDS: leak, panic and free-refusal are equal on both trees — falsify prints only the
+//   channels that MOVE and requires HERE to be clean.
+//   The neighbouring cure these cells reject: gating on the TYPE rather than the subject, which
+//   emits every expectation here and additionally refuses the `v[0]` controls below — so a cure
+//   scored on the expectations alone would look identical and break nine shipped scripts.
+
+struct FieldHolder { t: (integer?, text?) }
+
+fn declared_return(v: vector<(integer, text)>, i: integer) -> (integer?, text?) { return v[i]; }
+
+// A written member-nullable local — the spelling an author reaches for, and the one where `?`
+// could plausibly mean two different things.
+// @EXPECT_ERROR: `?` has nothing to discharge
+fn written_member_nullable_q() -> integer? {
+  t: (integer?, text?) = (null, null);
+  w = t?;
+  w.0 ?? -1
+}
+
+// @EXPECT_ERROR: `??` has nothing to discharge
+fn written_member_nullable_coalesce() -> integer? {
+  t: (integer?, text?) = (null, null);
+  w = t ?? (9, "d");
+  w.0
+}
+
+// A wholly NON-null tuple has no absence either, and the same refusal names it.  Nothing in the
+// corpus discharges one, so the rule is stated uniformly rather than carved out.
+// @EXPECT_ERROR: `?` has nothing to discharge
+fn written_dense_q() -> integer? {
+  t: (integer, text) = (1, "a");
+  w = t?;
+  w.0
+}
+
+// @EXPECT_ERROR: `??` has nothing to discharge
+fn written_dense_coalesce() -> integer? {
+  t: (integer, text) = (1, "a");
+  w = t ?? (9, "d");
+  w.0
+}
+
+// The ANNOTATION is what makes this one a tuple that exists: the same read bound without it is
+// in-flight and discharges (the control below).  One expression, two answers, decided by the
+// type the author wrote.
+// @EXPECT_ERROR: `??` has nothing to discharge
+fn annotated_from_an_index_read(v: vector<(integer, text)>, i: integer) -> integer? {
+  u: (integer?, text?) = v[i];
+  w = u ?? (9, "d");
+  w.0
+}
+
+// A declared member-nullable RETURN is the only spelling a function has for handing an absent
+// read to its caller — and what the caller receives is a tuple that exists.
+// @EXPECT_ERROR: `??` has nothing to discharge
+fn from_a_declared_return(v: vector<(integer, text)>) -> integer? {
+  q = declared_return(v, 5);
+  w = q ?? (9, "d");
+  w.0
+}
+
+// A FIELD holds a tuple, so reading one gives a tuple that is there.
+// @EXPECT_ERROR: `??` has nothing to discharge
+fn from_a_field() -> integer? {
+  s = FieldHolder { t: (null, null) };
+  w = s.t ?? (9, "d");
+  w.0
+}
+
+// CONTROLS — every one of these must keep compiling.  The first four are the idiom the ruling
+// names as the one that must keep working, across BOTH index kinds: a variable index carries the
+// `?` that marks the value in-flight, and a constant index does not, yet both are element reads
+// and both can miss.
+fn control_variable_index(v: vector<(integer, text)>, i: integer) -> integer {
+  a = v[i] ?? (9, "d");
+  b = v[i]?;
+  a.0 + b.0
+}
+
+fn control_constant_index(v: vector<(integer, text)>) -> integer {
+  a = v[0] ?? (9, "d");
+  b = v[0]?;
+  a.0 + b.0
+}
+
+// A local BOUND from an index read keeps the in-flight type by inference, which is the exception
+// the ruling names: `x = v[i]; return x?`.
+fn control_bound_in_flight(v: vector<(integer, text)>, i: integer) -> integer {
+  x = v[i];
+  a = x?;
+  b = x ?? (9, "d");
+  a.0 + b.0
+}
+
+// A generic `-> T?` at a tuple boxes `__tuple<…>` with NON-null members and keeps its `?`, so it
+// is in-flight too and discharges.
+fn control_generic<T>(v: vector<T>) -> T? { if len(v) > 0 { return v[0]; } return null; }
+
+fn control_generic_route() -> integer {
+  e: vector<(integer, text)> = [];
+  f = control_generic(e);
+  x = f ?? (7, "d");
+  x.0
+}
+
+// A member is an ordinary nullable value and discharges as one — this is the cure the refusals
+// above name, so it must work.
+fn control_member_discharge() -> integer {
+  t: (integer?, text?) = (null, null);
+  (t.0 ?? -1)
+}

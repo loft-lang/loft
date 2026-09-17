@@ -121,10 +121,20 @@ fn locate_fresh_brick_buster(root: &Path) -> Option<PathBuf> {
     // < bundle there.
     let stale_vs = [
         root.join("tools/brick-buster/25-brick-buster.loft"),
-        // The atlas is DRAWN by this script into a pack the page carries via
-        // `[[embed]]` (@PLN146 F4), so an edit to it changes the page's pixels
-        // without touching the game source.  Left out, the bundle would look
-        // fresh while showing the previous build's art.
+        // The atlas is DRAWN by this script into a pack, so an edit to it changes
+        // the page's pixels without touching the game source.  Left out, the bundle
+        // would look fresh while showing the previous build's art.
+        //
+        // The pack takes THREE hops and they are worth keeping apart, because naming
+        // only the middle one reads as though the bytes are consumed the way they are
+        // carried: `[[build.asset]]` GENERATES it, `[[embed]]` CARRIES it into the
+        // page's own filesystem (@PLN146 F4), and the game READS it through
+        // `assets::prefetch` / `blobs_path` — the PAGED loaders, not the whole-image
+        // `store_load` that `[[embed]]` is usually paired with.  That third hop is the
+        // one that had no host arm: `LocalFileProvider` held a `std::fs::File` on a
+        // target with no filesystem, so every paged read answered "key absent" — a
+        // legitimate answer — and this gate watched the page draw its procedural
+        // fallback at 767 distinct colours and called it green.
         root.join("tools/brick-buster/pack_atlas.loft"),
         root.join("tools/brick-buster/assets/bb.blobs.store"),
         root.join("target/wasm32-unknown-unknown/release/libloft.rlib"),
@@ -240,6 +250,23 @@ fn brick_buster_browser_renders_without_console_errors() {
         // clearColor) has 1-2.
         .args(["--canvas", "#c"])
         .args(["--canvas-min-colors", "20"])
+        // Layer 3 — the program's OWN verdict, which the two layers above
+        // cannot reach.  `load_atlas` answers a 1x1 canvas when the sprite
+        // pack does not load and says so on stdout; the game then runs
+        // perfectly well and draws its procedural fallback, so Layer 1 sees
+        // no console error and Layer 2 counted 767 distinct colours on a page
+        // whose sprites were entirely missing.  A pack read through the host
+        // filesystem is exactly the half that had no host arm until
+        // `LocalFileProvider` grew one, and nothing here would have noticed.
+        //
+        // `#out` is where the page routes `println`, live, so the check is a
+        // plain substring: every one of `load_atlas`'s three failure lines
+        // contains "sprite pack" and no success path mentions it.
+        .args([
+            "--assert",
+            "!(document.getElementById('out')||{}).textContent\
+             ?.includes('sprite pack')",
+        ])
         // The page favicon 404 is benign; the harness filters generic
         // "Failed to load resource" automatically.  Swiftshader emits
         // a one-line GPU-stall performance warning at info level — we

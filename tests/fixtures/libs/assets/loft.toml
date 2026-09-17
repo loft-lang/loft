@@ -1,0 +1,18 @@
+[package]
+name    = "assets"
+version = "0.2.1"
+loft    = ">=0.8"
+description = "A game's content pack that IS a loft store — art, audio and the scenes that place them, range-read off a static file server.  No codec, no parse step, no server-side code."
+categories  = ["game", "asset-format"]
+
+api_compatible_with  = "0.2.0"   # DECLARED BREAK: `Cell` gained `ce_proxy`, so the
+                                 # type and the pack layout both moved.  A pack is a
+                                 # STORE — the struct definitions are the file
+                                 # layout — so a 0.1.0 pack is not readable here.
+data_compatible_with = "0.2.0"   # same reason, and the one that actually bites
+
+[library]
+entry = "src/assets.loft"
+
+[dependencies]
+shapes = ">=0.5.0"

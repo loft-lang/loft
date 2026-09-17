@@ -1,0 +1,192 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `(H-Move)`: a function's own variables end with it, so a RETURN of a local is a move — the
+// caller releases what was returned, once — and every droppable local the return does NOT
+// hand out is released at that return, once.  One hook per resource, on both backends
+// (`@FR-H-Drop`, D-heap-7).
+//
+// Three mechanisms lost or doubled a release here, silently:
+// - a JOIN over locals (`return a ?? b`, `return if c { a } else { b }`, a `match`, a nested
+//   `if`, an arm that is a call) freed the local it did not return at run time
+//   (`OpFreeRefIfDistinct`) and ran no hook: j1 j3 j4 j5 j6 j7 j17;
+// - a later `return b` COPIES `b` onto the return buffer an earlier `return a` took, and `b`
+//   kept its own release as well as giving one to the copy: j8 j9 j12;
+// - the local promoted onto the return buffer is an argument by slot, so its reassignment
+//   and a sibling return's re-mint displaced its record with no release: j8 j9 j10 j11 j13.
+//
+// Controls that were right before the fix and must stay right: j2 (the absent `??` path),
+// j14 (nullable locals, which are not promoted), j15 (a path that never assigns the promoted
+// local, called repeatedly into a reused caller buffer — a release there would be the caller's
+// record a second time).  j6 scores ORDER: the local a call arm reads is released after that
+// call, where its life ends, not before it.
+//
+// The trace file is this guard's own.
+//
+// @falsified-at: 7fa2217b5 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.  The run stops at its first failed
+//   assertion, j1; every other cell was measured wrong on that build, on both backends, in the
+//   probe matrix the guard was cut from, and the controls j2, j14 and j15 were right there.
+// @falsified-by: tests/falsified/a-return-that-hands-out-one-local-releases-the-others-once.patch
+//   — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1
+//   assertion failures -> 0.
+// HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
+//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
+//   both, on both backends.
+
+fn trace_path() -> text { return "loft_return_hands_out_one_local_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct JrH { id: integer }
+fn OpDrop(self: JrH) { note("{self.id}"); }
+fn jr_mk(id: integer) -> JrH { return JrH { id: id }; }
+fn jr_mk_noted(id: integer) -> JrH { note("m{id}"); return JrH { id: id }; }
+
+struct JrT { id: integer, name: text }
+fn OpDrop(self: JrT) { note("{self.id}"); }
+fn jr_mkt(id: integer) -> JrT { return JrT { id: id, name: "n{id}" }; }
+
+fn j1_m() -> JrH { a: JrH? = jr_mk(11); b = jr_mk(12); return a ?? b; }
+fn j1() { x = j1_m(); note("r{x.id}"); }
+
+fn j2_m() -> JrH { a: JrH? = null; b = jr_mk(22); return a ?? b; }
+fn j2() { x = j2_m(); note("r{x.id}"); }
+
+fn j3_m(k: integer) -> JrH { a = jr_mk(31); b = jr_mk(32); return if k > 0 { a } else { b }; }
+fn j3(k: integer) { x = j3_m(k); note("r{x.id}"); }
+
+fn j4_m(k: integer) -> JrH { a = jr_mk(41); b = jr_mk(42); return match k { 1 => a, _ => b }; }
+fn j4(k: integer) { x = j4_m(k); note("r{x.id}"); }
+
+fn j5_m(k: integer) -> JrH { a = jr_mk(51); return if k > 0 { a } else { jr_mk(53) }; }
+fn j5(k: integer) { x = j5_m(k); note("r{x.id}"); }
+
+fn j6_m(k: integer) -> JrH { a = jr_mk(61); return if k > 0 { a } else { jr_mk_noted(a.id + 2) }; }
+fn j6(k: integer) { x = j6_m(k); note("r{x.id}"); }
+
+fn j7_m(k: integer) -> JrH {
+  a = jr_mk(71);
+  b = jr_mk(72);
+  c = jr_mk(73);
+  return if k > 1 { a } else if k > 0 { b } else { c };
+}
+fn j7(k: integer) { x = j7_m(k); note("r{x.id}"); }
+
+fn j8_m(k: integer) -> JrH { a = jr_mk(81); b = jr_mk(82); if k > 0 { return a; } return b; }
+fn j8(k: integer) { x = j8_m(k); note("r{x.id}"); }
+
+fn j9_m(k: integer) -> JrH {
+  a = jr_mk(91);
+  b = jr_mk(92);
+  c = jr_mk(93);
+  if k > 1 { return a; }
+  if k > 0 { return b; }
+  return c;
+}
+fn j9(k: integer) { x = j9_m(k); note("r{x.id}"); }
+
+fn j10_m() -> JrH { a = jr_mk(101); n = a.id; a = jr_mk(n + 4); return a; }
+fn j10() { x = j10_m(); note("r{x.id}"); }
+
+fn j11_m(k: integer) -> JrH { a = jr_mk(111); if k > 0 { a = jr_mk(115); } return a; }
+fn j11(k: integer) { x = j11_m(k); note("r{x.id}"); }
+
+fn j12_m(k: integer) -> JrH { b = jr_mk(122); if k > 1 { a = jr_mk(121); return a; } return b; }
+fn j12(k: integer) { x = j12_m(k); note("r{x.id}"); }
+
+fn j13_m() -> JrH { a = jr_mk(131); for i in 132..134 { a = jr_mk(i); } return a; }
+fn j13() { x = j13_m(); note("r{x.id}"); }
+
+fn j14_m(k: integer) -> JrH? { a: JrH? = jr_mk(141); b: JrH? = jr_mk(142); if k > 0 { return a; } return b; }
+fn j14(k: integer) { x = j14_m(k); note("r{x.id}"); }
+
+fn j15_m(k: integer) -> JrH { b = jr_mk(152); if k > 1 { a = jr_mk(151); return a; } return b; }
+fn j15() {
+  y = j15_m(2);
+  note("r{y.id}");
+  y = j15_m(0);
+  note("r{y.id}");
+  for i in 0..2 {
+    z = j15_m(i * 2);
+    note("r{z.id}");
+  }
+}
+
+fn j17_m() -> JrT { a: JrT? = jr_mkt(171); b = jr_mkt(172); return a ?? b; }
+fn j17() { x = j17_m(); note("r{x.id} {x.name}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  j1(); got = drain();
+  assert(got == "12,r11,11", "j1 `return a ?? b`, a present: b released at the return: {got}");
+  j2(); got = drain();
+  assert(got == "r22,22", "j2 `return a ?? b`, a absent (control): {got}");
+  j3(1); got = drain();
+  assert(got == "32,r31,31", "j3 if-join returns a: b released: {got}");
+  j3(0); got = drain();
+  assert(got == "31,r32,32", "j3 if-join returns b: a released: {got}");
+  j4(1); got = drain();
+  assert(got == "42,r41,41", "j4 match-join returns a: {got}");
+  j4(0); got = drain();
+  assert(got == "41,r42,42", "j4 match-join returns b: {got}");
+  j5(1); got = drain();
+  assert(got == "r51,51", "j5 call arm not taken: {got}");
+  j5(0); got = drain();
+  assert(got == "51,r53,53", "j5 call arm taken: the local released: {got}");
+  j6(0); got = drain();
+  assert(got == "m63,61,r63,63", "j6 the local a call arm reads is released AFTER the call: {got}");
+  j7(2); got = drain();
+  assert(got == "72,73,r71,71", "j7 nested join returns a: {got}");
+  j7(1); got = drain();
+  assert(got == "71,73,r72,72", "j7 nested join returns b: {got}");
+  j7(0); got = drain();
+  assert(got == "71,72,r73,73", "j7 nested join returns c: {got}");
+  j8(1); got = drain();
+  assert(got == "82,r81,81", "j8 early return of a: {got}");
+  j8(0); got = drain();
+  assert(got == "81,r82,82", "j8 tail return of b after an early return of a: {got}");
+  j9(2); got = drain();
+  assert(got == "93,92,r91,91", "j9 first of three returns: {got}");
+  j9(1); got = drain();
+  assert(got == "91,93,r92,92", "j9 second of three returns: {got}");
+  j9(0); got = drain();
+  assert(got == "91,92,r93,93", "j9 tail of three returns: {got}");
+  j10(); got = drain();
+  assert(got == "101,r105,105", "j10 the returned local reassigned: {got}");
+  j11(1); got = drain();
+  assert(got == "111,r115,115", "j11 the returned local reassigned in a branch: {got}");
+  j11(0); got = drain();
+  assert(got == "r111,111", "j11 the branch not taken: {got}");
+  j12(2); got = drain();
+  assert(got == "122,r121,121", "j12 early return of a branch local: {got}");
+  j12(0); got = drain();
+  assert(got == "r122,122", "j12 tail return, the branch local never assigned: {got}");
+  j13(); got = drain();
+  assert(got == "131,132,r133,133", "j13 the returned local reassigned in a loop: {got}");
+  j14(1); got = drain();
+  assert(got == "142,r141,141", "j14 nullable locals, early return (control): {got}");
+  j14(0); got = drain();
+  assert(got == "141,r142,142", "j14 nullable locals, tail return (control): {got}");
+  j15(); got = drain();
+  assert(got == "152,r151,151,r152,r152,152,152,r151,151,152", "j15 a reused caller buffer (control): {got}");
+  j17(); got = drain();
+  assert(got == "172,r171 n171,171", "j17 `??` over records with a text member: {got}");
+}

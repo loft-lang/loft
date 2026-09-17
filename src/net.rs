@@ -21,8 +21,16 @@
 //!   `await fetch(url)`, then rewinds with the bytes — the same async→sync bridge
 //!   `loft_web.ws_yield` proves. So the call returns synchronously and the page
 //!   never freezes.
-//! - **any other build** (native without `registry`): a clear "unavailable" error,
-//!   never a silent wrong answer.
+//! - **any other build** (native without `registry`, or the wasm-bindgen gallery
+//!   bundle): a clear "unavailable" error, never a silent wrong answer.
+//!
+//! That last arm is REAL code rather than an absent module.  It used to be spelled by
+//! not compiling this file at all, which reads the same from a caller that only ever
+//! fetches — and differently from one that merely NAMES the fetcher.  `paged_reader`
+//! is the second kind: its HTTP provider refers to `crate::net` whatever the byte
+//! source, so a build with the paged loaders and no transport could not compile
+//! instead of simply refusing a URL at run time.  A capability this build lacks is
+//! an answer, not a missing symbol.
 
 /// The browser-wasm target (`--html`): `wasm32-unknown-unknown`, not WASI, and not
 /// the in-process `wasm` host feature. HTTP there goes through the asyncify host
@@ -187,4 +195,71 @@ fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(30))
         .build()
+}
+
+// ---------------------------------------------------------------------------
+// The "no transport" arm — the module header's third case, written out.
+//
+// It is reached by the wasm-bindgen gallery bundle (`wasm32`, the in-process
+// `wasm` host feature, no `ureq`) and by a lean native build without `registry`.
+// Both can read a store the page CARRIES; neither can reach one over HTTP.  Each
+// function answers that in the shape its callers already handle — an `Err` the
+// loader turns into a refusal naming the URL, or `None` for the optional sidecar
+// — so a URL is refused with a reason rather than fetched wrongly or silently.
+// ---------------------------------------------------------------------------
+
+/// No whole-image HTTP transport in this build.
+///
+/// # Errors
+/// Always — the message names the capability, because a caller that reached here
+/// asked for something this binary cannot do.
+#[cfg(all(
+    not(feature = "registry"),
+    not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
+))]
+#[allow(dead_code)] // reachable only where the URL loaders are themselves absent
+pub(crate) fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
+    Err(format!(
+        "this build has no HTTP transport, so it cannot fetch {url} — a store it \
+         carries reads with `store_load`, which needs no network"
+    ))
+}
+
+/// No ranged HTTP transport in this build.
+///
+/// # Errors
+/// Always; see [`fetch_bytes`]'s twin for why this is an answer and not a panic.
+#[cfg(all(
+    not(any(feature = "remote-store", feature = "registry")),
+    not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
+))]
+pub(crate) fn fetch_range(url: &str, _off: u64, _len: usize) -> Result<Vec<u8>, String> {
+    Err(format!(
+        "this build has no HTTP transport, so it cannot range-read {url} — a store \
+         it carries pages through the host filesystem instead"
+    ))
+}
+
+/// No ranged HTTP transport, so no remote size probe either.
+///
+/// # Errors
+/// Always — refusing at the size probe is what stops a paged open before it starts.
+#[cfg(all(
+    not(any(feature = "remote-store", feature = "registry")),
+    not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
+))]
+pub(crate) fn fetch_size(url: &str) -> Result<u64, String> {
+    Err(format!(
+        "this build has no HTTP transport, so it cannot size {url}"
+    ))
+}
+
+/// No transport, so no remote sidecar — `None`, which the layout gate already
+/// treats as "no sidecar" rather than as a failure.
+#[cfg(all(
+    not(any(feature = "remote-store", feature = "registry")),
+    not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
+))]
+pub(crate) fn fetch_text(_url: &str) -> Option<String> {
+    None
 }

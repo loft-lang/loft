@@ -9,6 +9,69 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The browser kernel's fn-ref calls read a moved-from `Data` after the first frame (loft#1541, 2026-09-16)
+
+`execute_log_impl` installs two raw pointers to the `Data` it is handed — `State::data_ptr`,
+which a fn-ref call reads to size its callee's hidden buffers, and the parallel context's
+copy.  The browser kernel (`wasm::compile_and_start`) runs the first frame with the
+parser's `Data`, then moves that `Data` into its `GameSession` and the session into the
+thread-local slot, so from the second frame on every fn-ref call read `definitions` through
+a pointer to a moved-from table: `index out of bounds: the len is 0 but the index is 825`
+in `browser_kernel_one_script_differential` and `s6_browser_swap_under_living_page`, the
+number varying with what the stale bytes held (827 on a retry).  `State::rebind_data` now
+re-points both at the session's `Data` before every `resume_frame`; the two browser tests
+are the guard (red before, green after, on this box and in CI's `rest-b` shard).  Found by
+the @PLN164 B2 gate: the placement changed the client program's bytecode enough to change
+what the stale read answered.
+
+### A call result is built where it will live and stored there by relocation (2026-09-16)
+
+@PLN164 B2 units 2–3, `@FR-R-Place` + `@FR-R-MoveLast`, both backends, default ON
+(`LOFT_NO_PLACE_RESULT=1` keeps the copy).  `place_result::rewrite` runs inside
+`scopes::check` after the scan phases and, for a plain local `v` bound once from a
+loft-defined callee whose every exit is a fresh literal into its `__retbuf` (unit 1's
+contract, read in all THREE of its IR spellings — `return { Object …; __retbuf }`,
+`{ Object …; return __retbuf }`, and the parser's bare tail `{ Object …; __retbuf }` the
+scope pass has not yet wrapped) and whose one owning destination on every path is a
+record-literal field of an element appended to a PARAMETER's collection, rewrites three
+sites: the buffer's `__ref_N = null` becomes `OpPlaceRecord(X, tp)` (a record claimed in the
+parameter's store, prefilled through the `@FR-R-Prefill` image), the field's `OpCopyRecord`
+becomes `OpMoveRecord` (the bytes relocate, the heap handles keep their claims, the source's
+block is released), and the exit pair — `OpFreeRef(v)` or its record-function spelling
+`OpFreeRefIfDistinct(v, __retbuf)`, beside `OpFreeRefIfDistinct(__ref_N, v)` — becomes one
+`OpFreeRecordIn(v, tp)` on a path that still holds the record and nothing on a path that
+stored it.  The three ops are `#rust` templates in `default/01_code.loft` (one body for the
+interpreter and native); `Stores::place_record_prefilled`, `move_record_out` and the
+store-root arm of `free_record_in` are the runtime.
+
+What the matrix decided.  A first cut zeroed the source at the move and let a generic
+record free run at every exit; the owner asked why a source needs zeroing once zero-on-claim
+is gone, and the falsification measurement answered: the zero was a runtime stand-in for the
+path state (without it the exit free released the destination's vector — `b1 o0 3 21` on
+both backends).  A `v = null` after the move is no better: the interpreter lowers a rebind of
+an owned record local as a store-level free of what it held (native as a plain null), so it
+would free the HOST.  The pass now records the state at every exit and writes the free that is
+right there; a path that stored the record rejoining one that holds it declines.  The
+receipt: the pass made to free on every exit dies on both backends with `Store access out of
+bounds … the reference is corrupt` (`tests/scripts/164-place-result.loft`).  Two other
+spellings the first cut missed: the record-function exit free (the library's `parse_poly`
+answers a `Mark`), and `Value::Span` around every node.  The copy lint (`avoidable-copy`)
+reads the parser's IR on the program path (before the scope pass; `loft test` reads it
+after — a pre-existing difference the dead-store lint's tests pin, so it was not moved), and
+asks the pass for its verdict in preview (`place_result::admits`) so a relocated field
+raises no "could not be moved" notice; `OpFreeRecordIn` is an unconditional free to it.
+
+Measured.  Cells `B2-place-move-cells.loft` b1–b15: every value exact on both backends under
+`LOFT_POISON`, `LOFT_POISON_CLAIM`, `LOFT_STRICT_STORES`, `LOFT_HOIST_VERIFY` and the leak
+gate; the store census 184 → 50 (one fewer per admitted call: `add_poly` ×64, `add_px` ×30,
+`add_card` ×40).  The drawing bench's parse row (`parse_only.loft --n 2000`,
+`--native-release`, hash `33f6d2b8`): `parse_poly`'s `pp_paint` admitted (three moves, one
+held exit), and a WASH — `perf stat -r 5`: 8.39 G vs 8.39 G user instructions, 3.18 G vs
+3.23 G cycles, 6.09 M vs 6.11 M cache misses — because the `Paint` relocated on that scene
+carries no gradient data, so the copy it replaces was ~30 bytes and the store it removes is
+matched by a claim and a delete in the host.  The corpus (`tests/scripts` + `tests/docs`)
+has no admitted bind at all; the guard is the only coverage.  Pins `tests/place_result.rs`.
+
 ### Every literal exit of a record function writes the buffer it was handed (2026-09-15)
 
 A function with several `return S { … }` exits built each mid-body literal into a work-ref

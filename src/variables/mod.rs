@@ -196,6 +196,14 @@ pub struct Variable {
     /// indirection parameters use, slowing every access to carry a compile-time fact.
     /// See loft#779 / `formal/binding.md` D-bind-8.
     amp_link: bool,
+    /// Was this bound with an explicit `&` at a COLLECTION — `d = &cv.data`, `a = &s.h`?
+    ///
+    /// The collection sibling of `amp_link`, kept apart from it because their READERS are
+    /// different shapes — `is_amp_container_link` says why.  `(B-Ref-Alias)` makes such a bind
+    /// a live link to the container, and the view-materialise walk has to know: a plain
+    /// collection bind off a borrowed base aliases identically, and `(B-View)` says THAT one
+    /// must still be copied when its container is disturbed (loft#1543).
+    amp_container_link: bool,
     /// Is this the temp a `for` loop holds its iteration SOURCE in?
     ///
     /// A vector-valued `for … in <expr>` binds the source to a temp and iterates THAT
@@ -720,6 +728,7 @@ impl Function {
                 const_binding: false,
                 value_const: false,
                 amp_link: false,
+                amp_container_link: false,
                 iteration_source: false,
                 first_def: u32::MAX,
                 last_use: 0,
@@ -2215,6 +2224,7 @@ impl Function {
             value_const: false,
             view_elided: false,
             amp_link: false,
+            amp_container_link: false,
             iteration_source: false,
             stack_allocated: false,
             skip_free: false,
@@ -2248,6 +2258,7 @@ impl Function {
             value_const: self.variables[var as usize].value_const,
             view_elided: false,
             amp_link: self.variables[var as usize].amp_link,
+            amp_container_link: self.variables[var as usize].amp_container_link,
             iteration_source: self.variables[var as usize].iteration_source,
             stack_allocated: false,
             skip_free: false,
@@ -2284,6 +2295,7 @@ impl Function {
             value_const: false,
             view_elided: false,
             amp_link: false,
+            amp_container_link: false,
             iteration_source: false,
             stack_allocated: false,
             skip_free: false,
@@ -2317,6 +2329,7 @@ impl Function {
             value_const: false,
             view_elided: false,
             amp_link: false,
+            amp_container_link: false,
             iteration_source: false,
             stack_allocated: false,
             skip_free: false,
@@ -2519,6 +2532,25 @@ impl Function {
                 .iter()
                 .zip(got.iter())
                 .all(|(w, g)| Self::decl_accepts(w, g))
+        {
+            self.depend_all(var_nr, type_def);
+            return self.is_new(var_nr);
+        }
+        // `@FR-T-Absent` — the same declaration meeting the value's IN-FLIGHT spelling.  A tuple
+        // that ARRIVES absent (`v[i]` by a variable index, a keyed miss, a generic `T?`) is
+        // `Optional` around either tuple home — the stack tuple, or the `__tuple<…>` record a
+        // heap-carrying one is boxed into — and the type an author DECLARES for that value is the
+        // member-nullable tuple the rule names, `optional((τ₁, …, τₙ)) ≡ (τ₁?, …, τₙ?)`.  Refusing
+        // it told the author their own declaration could not hold the read the compiler had just
+        // typed for them.  Admitted when every declared member admits its own `τᵢ?`, so a member
+        // declared non-null still earns `(N-Store)`'s refusal (`D-tup-10`).
+        if let (Type::Tuple(want), Type::Optional(_)) = (var_tp, type_def)
+            && let Some(got) = Self::absent_tuple_elems(type_def, data)
+            && want.len() == got.len()
+            && want
+                .iter()
+                .zip(got.iter())
+                .all(|(w, g)| Self::decl_accepts(w, &Type::optional(g.clone())))
         {
             self.depend_all(var_nr, type_def);
             return self.is_new(var_nr);
@@ -2753,7 +2785,28 @@ impl Function {
     ///
     /// Deliberately asymmetric: it widens `τ → τ?` and never the reverse, so the
     /// `(N-Store)` direction — a non-null slot fed something nullable — keeps rejecting.
-    fn decl_accepts(want: &Type, got: &Type) -> bool {
+    /// The element types of a tuple in either home — the stack tuple, or the synthetic
+    /// `__tuple<…>` record a heap-carrying one is boxed into — read through any `?` it arrived
+    /// with.  `None` for a type that is no tuple.
+    ///
+    /// `@FR-T-Absent` — an absent tuple is spelled `Optional` around whichever home the value
+    /// lives in, and a site that resolved only one of them refused the other for a reason that
+    /// has nothing to do with the question it was asking (`D-tup-10`).
+    fn absent_tuple_elems(t: &Type, data: &Data) -> Option<Vec<Type>> {
+        match t.base() {
+            Type::Tuple(elems) => Some(elems.clone()),
+            Type::Reference(d, _) if data.def(*d).name().starts_with("__tuple<") => Some(
+                data.def(*d)
+                    .attributes()
+                    .iter()
+                    .map(|a| a.typedef.clone())
+                    .collect(),
+            ),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn decl_accepts(want: &Type, got: &Type) -> bool {
         if want.is_equal(got) {
             return true;
         }
@@ -2764,6 +2817,22 @@ impl Function {
                         .zip(g.iter())
                         .all(|(a, b)| Self::decl_accepts(a, b))
             }
+            // `@FR-T-Absent` — the two spellings of one notion meeting: a tuple that ARRIVES
+            // absent (`v[i]` by a variable index) carries the in-flight `Optional(Tuple)`, and
+            // the DECLARED form of that same value is the member-nullable tuple the rule names,
+            // `optional((τ₁, …, τₙ)) ≡ (τ₁?, …, τₙ?)`.  So the slot admits it exactly when every
+            // member admits its own `τᵢ?` — which keeps `(N-Store)` rejecting a member declared
+            // non-null, element by element, and is why this asks `decl_accepts` again rather
+            // than testing the shapes here (`D-tup-10`).
+            (Type::Tuple(w), Type::Optional(inner)) => match inner.as_ref() {
+                Type::Tuple(g) => {
+                    w.len() == g.len()
+                        && w.iter()
+                            .zip(g.iter())
+                            .all(|(a, b)| Self::decl_accepts(a, &Type::optional(b.clone())))
+                }
+                _ => false,
+            },
             // The scalar rule, unchanged: a `τ?` slot takes a non-null `τ` or a bare null.
             (Type::Optional(inner), _) => inner.is_equal(got.base()) || matches!(got, Type::Null),
             _ => false,
@@ -2982,6 +3051,30 @@ impl Function {
     /// otherwise invisible after parsing: `c = &v[0]` and `c = v[0]` emit the same IR.
     pub fn is_amp_link(&self, var_nr: u16) -> bool {
         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].amp_link
+    }
+
+    /// Mark `var_nr` as bound with an explicit `&` at a COLLECTION — `d = &cv.data`,
+    /// `a = &s.h` — which `(B-Ref-Alias)` makes a live link to the container.
+    pub fn set_amp_container_link(&mut self, var_nr: u16) {
+        self.variables[var_nr as usize].amp_container_link = true;
+    }
+
+    /// Whether `var_nr` was spelled `&` at a COLLECTION bind.
+    ///
+    /// The sibling of [`Self::is_amp_link`] and deliberately NOT the same flag, because the
+    /// two have different readers: that one is scoped to a struct-typed projection, and the
+    /// routes reading it — the whole-record write in `parser/collections.rs`, the re-key
+    /// refusal, `(B-Ref-Reshape)`'s refusal — would decline different programs if a
+    /// collection bind joined its population.
+    ///
+    /// The `&` is as invisible here as it is there, and for a sharper reason: `d = &cv.data`
+    /// and `d = cv.data` off a BORROWED base emit identical ops AND both alias, so no reader
+    /// downstream can tell the live link from the plain view `(B-View)` may quietly copy.
+    /// Measured — a plain `c = b.vecf` over a loop variable materialises today, and must keep
+    /// doing so, while the `&` link beside it must not (loft#1543).
+    pub fn is_amp_container_link(&self, var_nr: u16) -> bool {
+        (var_nr as usize) < self.variables.len()
+            && self.variables[var_nr as usize].amp_container_link
     }
 
     /// Whether `var_nr` carries EITHER const axis — used by the guards that apply to

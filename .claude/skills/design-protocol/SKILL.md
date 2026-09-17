@@ -477,7 +477,7 @@ tells you to reach for:
   `make libcatalogue` + `loft install` — read the generated `doc/claude/LIBRARIES.md`,
   never a clone or installed copy.
 - The named-rule register is `doc/claude/formal/` (`@FR-` tags); `scripts/rule_tags.py`
-  is the citation instrument (`list` · `check` · `sites <tag>` · `dups`), and
+  is the citation instrument (`list` · `check` · `sites <tag>` · `dups` · `registers`), and
   `formal/README.md` says how a rule is written and cited.
 - A construct's use cases are measured as one program per shape, run on `--interpret` and
   `--native` (a batch lets one wrong release corrupt the next cell). The full treatment —

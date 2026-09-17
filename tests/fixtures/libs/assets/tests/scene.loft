@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// What a pack can be ASKED: which sequence an action maps to, and which blobs a
+// scene is about to draw from.
+use assets;
+
+/// A room with two goblins drawn from one page, a potion from another, and a light
+/// that draws nothing — so every clause of `keys_near` has something to act on.
+fn fixture(p: Pack) {
+  p.pages += [PageInfo { pi_name: "mobs", pi_w: 64, pi_h: 32, pi_blob: "page/mobs" }];
+  p.pages += [PageInfo { pi_name: "items", pi_w: 32, pi_h: 32, pi_blob: "page/items" }];
+  p.cells += [Cell { ce_key: "goblin_0", ce_page: "mobs", ce_x: 0, ce_y: 0,
+                     ce_w: 16, ce_h: 16 }];
+  p.cells += [Cell { ce_key: "potion", ce_page: "items", ce_x: 0, ce_y: 0,
+                     ce_w: 16, ce_h: 16 }];
+  p.seqs += [Seq { sq_key: "goblin_walk_s", sq_page: "mobs", sq_first: 0,
+                   sq_count: 4, sq_fps: 8.0, sq_cols: 4, sq_rows: 2 }];
+  p.defs += [Def { df_name: "goblin", df_kind: Sprite, df_cell: "goblin_0",
+                   df_w: 16.0, df_h: 16.0, df_layer: 1 }];
+  p.defs += [Def { df_name: "potion", df_kind: Sprite, df_cell: "potion",
+                   df_w: 16.0, df_h: 16.0, df_layer: 1 }];
+  p.defs += [Def { df_name: "torch", df_kind: Light, df_radius: 96.0,
+                   df_colour: 16755200, df_power: 1.25 }];
+  p.anims += [Anim { an_key: "goblin/walk/0", an_def: "goblin", an_action: "walk",
+                     an_facing: 0, an_seq: "goblin_walk_s" }];
+  p.anims += [Anim { an_key: "goblin/walk/2", an_def: "goblin", an_action: "walk",
+                     an_facing: 2, an_seq: "goblin_walk_n" }];
+  p.scenes += [Scene { sc_name: "cave", sc_w: 640, sc_h: 360 }];
+  p.placed += [Placed { pd_scene: "cave", pd_order: 0, pd_def: "goblin",
+                        pd_x: 0.0, pd_y: 0.0 }];
+  p.placed += [Placed { pd_scene: "cave", pd_order: 1, pd_def: "goblin",
+                        pd_x: 10.0, pd_y: 0.0 }];
+  p.placed += [Placed { pd_scene: "cave", pd_order: 2, pd_def: "potion",
+                        pd_x: 500.0, pd_y: 0.0 }];
+  p.placed += [Placed { pd_scene: "cave", pd_order: 3, pd_def: "torch",
+                        pd_x: 5.0, pd_y: 0.0 }];
+  p.scenes += [Scene { sc_name: "hall", sc_w: 320, sc_h: 200 }];
+  p.placed += [Placed { pd_scene: "hall", pd_order: 0, pd_def: "potion",
+                        pd_x: 0.0, pd_y: 0.0 }];
+}
+
+fn test_an_action_and_a_facing_name_a_sequence() {
+  p = new_pack();
+  fixture(p);
+  assert(anim_of(p, "goblin", "walk", 0) == "goblin_walk_s", "facing 0");
+  assert(anim_of(p, "goblin", "walk", 2) == "goblin_walk_n", "facing 2");
+  // Absent answers EMPTY, not a plausible wrong sequence — a game that draws the
+  // south walk for a swim it does not have looks correct and is not.
+  assert(anim_of(p, "goblin", "swim", 0) == "", "an action it does not have");
+  assert(anim_of(p, "goblin", "walk", 3) == "", "a facing it does not have");
+  assert(anim_of(p, "nobody", "walk", 0) == "", "a definition it does not have");
+}
+
+fn test_a_scene_names_the_blobs_it_draws_from() {
+  p = new_pack();
+  fixture(p);
+  all = keys_near(p, "cave", 0.0, 0.0, -1.0);
+  // Two pages, not four instances: a page shared by two goblins is one fetch, and
+  // the light draws nothing at all.
+  assert(len(all) == 2, "the whole scene is two pages, got {len(all)}");
+  assert(all[0] == "page/mobs" && all[1] == "page/items", "in placement order");
+
+  // A radius takes only what is within it.  The potion is 500 away.
+  near = keys_near(p, "cave", 0.0, 0.0, 100.0);
+  assert(len(near) == 1 && near[0] == "page/mobs", "only the near page");
+
+  // A scene nobody placed anything in wants nothing, and an unknown scene is not
+  // an error — it is a scene with no instances.
+  assert(len(keys_near(p, "hall", 0.0, 0.0, -1.0)) == 1, "the other room");
+  assert(len(keys_near(p, "nowhere", 0.0, 0.0, -1.0)) == 0, "an unknown scene");
+}
+
+fn test_a_light_is_placed_but_never_fetched() {
+  p = new_pack();
+  fixture(p);
+  // Centred ON the light, with a radius that also reaches both goblins (they stand
+  // 5 away): the light is the NEAREST instance in the answer's window, so its
+  // absence is about what it IS and not about where it is.
+  torch = p.defs["torch"];
+  assert(torch != null && torch.df_kind is Light, "the fixture placed a light");
+  assert(torch.df_radius == 96.0, "with its own reach");
+  keys = keys_near(p, "cave", 5.0, 0.0, 6.0);
+  assert(len(keys) == 1, "the light contributed no blob, got {len(keys)}");
+  assert(keys[0] == "page/mobs", "and the goblins beside it still did");
+}

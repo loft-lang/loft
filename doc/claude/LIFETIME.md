@@ -306,6 +306,52 @@ which native guards with its `_rb_w_` witness and the interpreter does not (the 
 A rebind keeps the in-place copy on both backends.  `LOFT_NO_ADOPT_FIRST_BIND=1` restores the
 copy; `tests/scripts/164-adopt-first-bind.loft` and `tests/adopt_first_bind.rs` are the receipts.
 
+**A call result with ONE owning destination is built where it will live and stored there by
+relocation (@PLN164 B2, `@FR-R-Place`, `@FR-R-MoveLast`).**  `pp = read_paint(s); …;
+sc.ops += [Op { paint: pp, … }]` in a function where `sc` is a parameter: `place_result`
+(one IR pass, after the scan) hands the callee a record CLAIMED IN `sc`'s store
+(`OpPlaceRecord`), the field takes it by relocation (`OpMoveRecord`: bytes move, heap
+handles keep their claims, the source's block is released), and the exit frees the record
+alone on the one path that still holds it (`OpFreeRecordIn`) and nothing after a move — the
+path state is written into the IR, never zeroed or nulled at runtime.  Admitted only where
+the callee writes its `__retbuf` on every exit (`literal_exits_into_buffer`), the local is
+read only as the receiver of native reads before the store, and the destination is an
+appended element of a parameter's collection; a read after the store, a hand-off, a second
+destination, a local host or a rejoin of a stored and a held path keeps the copy.
+`LOFT_NO_PLACE_RESULT=1` is the switch, `LOFT_TRACE_PLACE=1` the trace.
+
+**A record literal assigned to a vector ELEMENT is written into the slot (@PLN164 C1,
+`@FR-R-InPlaceLiteral`).**  `sc.elems[i] = Elem { … }` writes the slot's fields, as the FIELD
+destination `o.f = R { … }` has always done, instead of building a temp store and deep-copying
+it in; an omitted field takes its declared default there exactly as it does in a fresh record.
+Every field EXPRESSION is evaluated into a temp first, because the language evaluates a
+literal's fields before the assignment stores and `El { a: o.f.b, b: o.f.a }` reads the very
+place it is about to overwrite.  Admitted for a repeatable receiver — a literal or bare-variable
+index — since the place is re-derived per field write and a computed index (`v[bump()]`,
+`v[len(v) - 2]`) would run its effects once per field.  Declined for a COLLECTION-typed field,
+where staging binds a temp and `(B-View-Base)` makes a collection a view, so the write would
+release the slot's vector and store the handle back; and for a member of a linked collection
+group, whose keyed view would keep the record under its old key.  `LOFT_NO_ELEMENT_IN_PLACE=1`
+restores the temp and the copy; `tests/scripts/164-in-place-literal.loft` and
+`tests/in_place_literal.rs` are the receipts.
+
+**A call's vector result is built in the destination place (@PLN164 C2, `@FR-R-Place`'s "the
+buffer IS the place", `@FR-O-Buffer`).**  `h.v = mkints(n)` hands the call the destination as its
+return buffer, where it used to mint a buffer store, fill it, clear `h.v` and copy every element
+in.  The buffer stays the VARIABLE the call site mints — only what it holds changes, from a store
+of its own to the destination's `DbRef` (`inline_ref` plus `skip_free`, the way
+`group_elem_write` re-points its own temp) — so the result's deps, the adopt at first bind and
+the scope pass's free sweep are untouched.  `(O-Buffer)` carries the clause for such a buffer:
+it is not a store of the caller's, it is never freed, and it needs no identity guard, because
+the result names the destination.  Admitted for a direct call to a loft-defined callee that
+FILLS the buffer it is handed on every exit.  Declined where an argument of the call reaches the
+destination — the callee clears its buffer before reading its arguments, so `h.v = grow(h.v)`
+would read an emptied vector — where the callee MINTS into a buffer parameter, which a returned
+vector literal does, and for a field of a struct-enum VARIANT, which exists only while the enum
+holds that variant.  A grouped destination is admitted: the group maintenance brackets the fill.
+`LOFT_NO_BUFFER_IS_PLACE=1` restores the copy; `tests/scripts/164-buffer-is-the-place.loft` and
+`tests/buffer_is_place.rs` are the receipts.
+
 **A branch join carries what EITHER arm borrows (loft#978).**  `it = if fresh { Item {
 … } } else { b.items["one"]? }` delivers a fresh record on one path and a view into `b`
 on the other, and which one ran is a run-time fact — so the local's type has to admit it

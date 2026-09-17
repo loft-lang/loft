@@ -10,7 +10,16 @@ Tracker: [@PLN164](https://github.com/loft-lang/plans/issues/164) · `status:act
 
 ## Status (REQUIRED)
 
-Active (the owner's go, 2026-09-15).  **P0 done**, **B1 and C4 shipped** the same day — the
+Active (the owner's go, 2026-09-15).  **P0 done**, **B1, C4, B2, C3, C1 and C2 shipped**, **C5
+step 1 built OPT-IN** (`LOFT_VIEW_FIELD=1`) — B2's caller side and C2 are both a wash on the parse
+row, structural gain only (§ B2 and § C2 *Measured*), and C5 does not reach the consumer yet, with
+the gate that declines each library function measured per function (§ C5 *Built*).  **The
+re-profile's verdict is CORRECTED (2026-09-16, § Re-profiled *The correction*): "the row is the
+scanner, the class is paid down" was read off operator COUNTS and INTERPRETED profiles, and `perf`
+on the release binary itself reads loft runtime 63 %, program 31 % — the class is still two thirds
+of the row.  What P0 priced (the store mint/free pair, 9 %) holds; the per-record churn around it
+(allocator, copies, appends, ≈ 30 %) was never priced, and attributing it to loft lines is the
+next step (P0b) before any phase is cut.**  The
 measurements are under § P0 below and the mechanism under § B1.  What P0 changed in the
 plan: tier 1's ceiling is ~10 % of the parse row, not a fifth, and its store-identity cost
 (287 `store_nr !=` sites in one emission) is real, so A1/A2 stay behind B and C in the
@@ -46,7 +55,8 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
 - **Effort:** M (tiers 1–2) · MH (tier 3)
 - **Design:** ~ — the invariants are named; the store-identity question (§ Edge cases E1)
   is open and decides tier 1's shape.
-- **Last touched:** 2026-09-15 (P0 measured, B1 shipped)
+- **Last touched:** 2026-09-16 (the re-profile's verdict corrected by `perf` on the release binary,
+  the queue re-cut under it, and the frame-prelude lever priced — § Re-profiled *The correction*)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -84,6 +94,136 @@ The profile agrees (program samples only, 20 000 calls, this box):
 | record and vector lifecycle | ≈ 57 % | `copy_claims` 8, `set_default_value_nullable` 7, `begin_write_inner` 4, `remove_claims_mode` 3.5, `store_mut` 4.7, `free_named` 3, `claim` 2.7, `Store::init` 1.8, `store_budget` 1.8, `close_file_handle` 1.2, `owned_walk` 1.4 … |
 | the library's byte scan | ≈ 19 % | `matches_at`, `find_option` (rescans the line per key) — the library's own |
 | the parse logic | ≈ 8 % | `parse_scene_at`, `acc_pts`, `fronds`, the trig |
+
+## Re-profiled after the copy phases (2026-09-16) — first read as the SCANNER, corrected the same day
+
+**Read § *The correction* below before the four instruments: their numbers stand, the conclusion
+drawn from them does not.**  The evaluation table above is what this plan was cut from, and four
+phases later it is stale in the way a measurement makes a plan stale rather than wrong.
+Re-measured on the same bench, by four instruments, each answering a different question:
+
+**1. Which operators run (`LOFT_NATIVE_CHECKPOINTS=count`, `--native-release`, 300 parses —
+1585 sites, 16.99 M executions, ≈ 56.6 k operators per parse).**  Counts are this instrument's
+trustworthy column:
+
+| function | share of operator executions |
+|---|---:|
+| `at` | 17.8 % |
+| `matches_at` | 12.9 % |
+| `is_word_byte` | 11.8 % |
+| `find_option` | 9.9 % |
+| `t_4text_size` | 9.7 % |
+| `word_boundary` | 9.5 % |
+| `t_4text_split` | 6.7 % |
+| `lower_byte` | 2.4 % |
+| **the byte scanner, together** | **≈ 80 %** |
+| the parse logic (`acc_pts`, `smooth_pts`, `fronds`, `circle_pts`, `read_points`, `parse_fronds`) | ≈ 10 % |
+
+**2. Where the loft-level time goes (`LOFT_PROFILE=1 --interpret`, loft's own sampler).**  A
+different instrument on a different backend, and it agrees: `at` 16.3 %, `is_word_byte` 15.2 %,
+`matches_at` 14.0 %, `find_option` 12.8 %, `word_boundary` 8.0 %, `t_4text_size` 6.3 %,
+`t_4text_split` 4.6 %, `lower_byte` 3.4 % — **the same ≈ 80 %**.
+
+**3. Which of loft's own routines burn cycles (perf over the engine, interpreted).**
+`State::execute_argv` 22 % (the interpreter's dispatch, which the native lane does not pay),
+`store_mut` 4.0 %, malloc/free ≈ 4.5 %, `copy_block` 1.0 %, `begin_write_inner` 1.0 %.  **The
+two routines that headed P0's lifecycle table — `copy_claims` at 8 % and
+`set_default_value_nullable` at 7 % — are no longer in the top eighteen.**
+
+**4. What the program still mints (`LOFT_TRACE_DB=1`, `--native-release`, per parse).**  69
+stores: `vector<Pt>` 18, `vector<float>` 16, `Paint` 15, `Mark` 12, `PointList` 3, `Sketch` 1.
+At the ≈ 60 ns a mint/free pair costs (§ P0) that is **≈ 4 µs of a 40 µs row — 10 %, which is
+P0's own tier-1 ceiling and is now the ceiling for ALL remaining store-lifecycle work in this
+row.**  With C5 armed the census reads 9 `Mark`s instead of 12 — three of the scene's lines lose
+their buffer, 0.45 % of the row, which is the wash § C5 measured.
+
+### The correction (2026-09-16, later the same day) — none of the four instruments measures native cycles
+
+The verdict first drawn from them — *the row is the scanner, the plan's class is paid down* —
+was an instrument artefact, and the way it was reached is the lesson: instrument 1 counts operator
+EXECUTIONS (and its own doc says a count is not time), instrument 2 samples the INTERPRETED run,
+instrument 3 is `perf` over the interpreter (whose dispatch is 22 % of it and whose costs are not
+the native lane's), and instrument 4 is a store census that prices only the store mint/free pair.
+A scanner executes many cheap operators, so it dominates every COUNT; on the release binary those
+operators are a few instructions each, and the time is where the out-of-line runtime calls are.
+
+**`perf` on the `--native-release` binary itself** (the parse bench's release emission compiled
+with loft's own rustc line — `-C opt-level=3 -C codegen-units=1`, 3.3 s — `perf record -F 5000`,
+main core 3K samples, the E-core section's 55 samples discarded; hash `33f6d2b8`, the row at
+39.8–42.4 k ns/op).  Self time by home:
+
+| where the cycles go | share |
+|---|---:|
+| loft runtime | **63 %** |
+| the program (scanner + parse logic, the leaves inlined into their callers) | 31 % |
+| std/libc (`dec2flt` for `as float?`, `memcpy`) | 5 % |
+
+And the runtime's share by family:
+
+| family | routines | share |
+|---|---|---:|
+| store allocator | `claim`, `claim_block`, `finish_claim`, `fl_insert_node` / `fl_take_ge` / `fl_delete_node` (the free tree) | 12 % |
+| store access | `begin_write_inner` 7 %, `store_mut`, `get_elem` | 12 % |
+| record mint / copy / free-walk | `record_new`, `OpFinishRecord`, `link_siblings`, **`copy_claims` 3 %**, **`remove_claims_mode` 2 %** | 10.5 % |
+| store mint / free | `op_database_inner`, `free_named`, `close_file_handle`, `store_budget`, `Store::init` | 9 % |
+| vector append | `vector_add`, `vector_append`, `append_byte` | 8 % |
+| other | `OpFreeRef`, `enum_parent_size`, `record_finish`, text ops | 11 % |
+
+Top self symbols: `n_find_option` 8.5 %, `begin_write_inner` 7.2 %, `n_parse_scene_at` 7.0 %,
+`n_acc_pts` 3.5 %, `claim` 3.1 %, `copy_claims` 3.0 %, `vector_append` 2.7 %, `vector_add`
+2.4 %, `n_fronds` 2.2 %, `remove_claims_mode` 2.1 %.
+
+*What this settles.*  P0's arithmetic holds exactly for what it priced: the store mint/free pair
+is 9 % of the row, which is tier 1's whole ceiling.  What P0 never priced is the per-RECORD churn
+inside and around those stores — every claim through the allocator, the free tree that a release
+inside a live store feeds, the copies the engine profile had lost sight of (`copy_claims` and
+`remove_claims_mode` are still here), the append path — and that is ≈ 30 % of the row.  The plan's
+class is not paid down; it is two thirds of the row, and only the store-pair tenth of it has a
+priced phase.
+
+*What it does not settle: WHICH loft lines drive that churn.*  Both call-graph modes broke at the
+runtime boundary (`--call-graph dwarf` on a `-Cdebuginfo=1 -Cforce-frame-pointers=yes` program
+resolved no chain into the rlib; `lbr` attributed 84 % to an `(inlined)` pseudo-frame), so every
+inclusive column read equal to self.  Attribution needs the rlib built with frame pointers
+(`RUSTFLAGS=-Cforce-frame-pointers=yes cargo build --release --lib` into a separate
+`--target-dir`), and it is the P0-style step before any phase is cut — it decides between the
+arena's release-to-mark (which takes the free-tree half of the temporaries' churn) and the copy
+sites the profile still shows.
+
+**The lever outside the plan, measured on the same emission.**  Every `at(s, i)` call pays the
+frame prelude — `cr_call_push_lean`, `CallGuard`, `FnRefBufGuard` — because `at` calls the
+stdlib's `size`, a loft-bodied `t_` function, and so fails § N4's leaf test; `matches_at`,
+`word_boundary`, `skip_space`, `find_option` and the readers fail it the same way.  The prelude
+hand-removed from those functions in the release emission (`bytecode-comparisons/` carries no
+cell for it; the edit is the deletion of the three prelude lines):
+
+| variant | ns/op (ABAB ×5, `--n 4000`) | hash |
+|---|---|---|
+| as emitted | 39.8–42.4 k | `33f6d2b8` |
+| prelude removed from the scanner's non-recursive functions | **34.5–40.0 k** (−11 to −14 %) | `33f6d2b8` |
+
+That is N4 made TRANSITIVE — a function whose callees are all leaves cannot recurse, so it needs
+no depth entry either — and in the lean tier it loses nothing observable but the depth cap's
+exactness on an acyclic chain.  It is @PLN157's item (its queue carries it as row 11), S-sized.
+The other candidate did nothing: the rlib's `text_byte_at_native` hand-inlined into the crate
+moved the row by noise — LLVM already inlines it across the rlib — so *"LTO into the rlib"* is not
+this row's lever.  After the prelude lever the row reads ≈ 5.4× the Rust reference: the
+program's own 31 % is the floor the consumer's algorithm sets, and the runtime's 63 % is this
+plan's.
+
+### What that means for the queue
+
+1. **P0b — attribute the runtime's 63 % to loft lines** on a frame-pointer rlib build (above).
+   A phase cut before this is a phase cut on a hypothesis, which is how the last four went.
+2. **@PLN157's transitive-leaf prelude elision** (its queue row 11) — measured −11–14 %, S,
+   independent of this plan and worth landing first.
+3. **Then, by the attribution:** A1/A2 as a pooled store or a release-to-mark arena if the
+   free-tree and store-pair families charge to activation temporaries; the remaining copy sites
+   (`copy_claims`, `remove_claims_mode`) if they charge to a bind or a field assignment the B/C
+   phases missed.  C5 step 3 and the vector `place_result` stay parked: their class measured
+   under 2 % and the correction does not change that.
+4. Re-measure the 14-row `compare.py` table after each of these; the parse row's re-profile is
+   re-taken with `perf` on the release binary, never with a count.
 
 ## The three tiers — the invariant each rests on
 
@@ -263,7 +403,7 @@ five pins pass; fmt and both clippy legs are green.  The negative-default guard'
 and the control build needs more; point `LOFT_FALSIFY_CACHE` at a disk path) — its receipt
 stays the hand measurement recorded in the file.
 
-## B2 — the result built where it will live (IN PROGRESS 2026-09-15, `@FR-R-Place`, `@FR-R-MoveLast`)
+## B2 — the result built where it will live (SHIPPED 2026-09-16, `@FR-R-Place`, `@FR-R-MoveLast`)
 
 *What the instrument found first.*  `loft introspect` on the B2 cells' `read_paint` (four
 literal exits, the library's shape) showed the callee answering a DIFFERENT store per
@@ -289,43 +429,591 @@ the switch restores 1 + 3, the promoted-local shape declined, the cells on both 
 No value moves and, under B1's null buffer, no store count moves: the unit changes the
 callee's CONTRACT, which is what units 2–3 consume.
 
-*Units 2–3 — the design (written before the code).*  The caller side, parse time, one IR
-for both backends (E18):
+*Units 2–3 — the caller side (SHIPPED 2026-09-16).*  `src/place_result.rs`, one IR pass
+for both backends, run inside `scopes::check` after the scan phases have settled the
+function's frees (E18).  For a plain local `v` bound once from a loft-defined callee whose
+every exit is a fresh literal into its `__retbuf` (unit 1's contract), read only as the
+receiver of native operations while it holds the record, and stored ONCE per path into a
+record-literal field of an `_elm_` element `OpNewRecord` appended to a PARAMETER's
+collection, three sites move: `__ref_N = null` → `OpPlaceRecord(X, tp)` (a record claimed in
+`X`'s store, prefilled through the C4 image), `OpCopyRecord(v, dst, tp)` → `OpMoveRecord(v,
+dst, tp)` (the bytes relocate, the heap handles keep their claims, the source's block is
+released on the spot), and the exit pair → one `OpFreeRecordIn(v, tp)` on a path that still
+holds the record and NOTHING on a path that stored it.  The ops are `#rust` templates
+(`default/01_code.loft`); the runtime is `Stores::place_record_prefilled`, `move_record_out`
+and `free_record_in` (with a store-root arm for the null-host fallback, which answers a
+fresh-store buffer).  Switch `LOFT_NO_PLACE_RESULT=1`; `LOFT_TRACE_PLACE=1` names every
+admission and decline.
 
-- **Admission** (`R-Place`), decided in the scope pass beside B1's `adopts_minted_at_bind`
-  for a plain local `v` first-bound from such a call: every use of `v` after the bind is
-  either a READ before any store on that path, or ONE owning destination — a record-literal
-  field `Lit { f: v }` inside an element appended to `X.field += [Lit { … }]` where `X` is a
-  PARAMETER (its store exists at the call and outlives the frame) — after which `v` is dead
-  on that path (`O-Complete`: no read, no rebind, no hand-off, no `?`/`??`); every keeping
-  path names the same `X`; no argument of the call reaches `X`; the callee's return deps
-  name exactly its buffer (B1's gate) and, after unit 1, every exit writes it.  First cut
-  admits the LITERAL-FIELD destination only (the parse row's shape); `X.f = v` and
-  `X.v[i].f = v` (an old value to release first, `H-ClearRelease` per field) and a LOCAL
-  host (its store can die before the buffer is released — the free order question) stay
-  copies and are the unit's named follow-ups.
-- **The IR change**, three sites: the buffer's init `__ref_N = null` becomes
-  `__ref_N = OpPlaceRecord(X, tp)` (a record claimed in `X`'s store, prefilled through the
-  C4 image); the literal group's `OpCopyRecord(v, OpGetField(elm, off, tp), tp)` becomes
-  `OpMoveRecord(v, dst, tp)` (`move_record_shallow` + the source block released, its heap
-  handles kept — `R-MoveAppend`'s mechanics for one record) followed by `v = null`; and
-  the exit frees `OpFreeRef(v)` / `OpFreeRefIfDistinct(__ref_N, v)` become ONE
-  null-guarded `OpFreeRecordIn(v, tp)` (`Stores::free_record_in`: the record's owned heap,
-  then its block — never the host store).  E1 does not bite here: the only owned thing
-  sharing `X`'s store is the placed buffer itself, and its frees are record-level by
-  construction.
-- **Native** follows the ops (`place_record_in`, `move_record_shallow`, `free_record_in`
-  already exist for § V-j); the emitter's own scope-end backstop for a `__ref_` attr must
-  see the placed set (a store-level free of a placed buffer frees the HOST).
-- **Falsifiers:** `LOFT_POISON=1` (the moved-from local's free must find nothing),
-  `LOFT_STRICT_STORES=1` (a record freed twice, a store freed under a placed record), the
-  leak gate on both backends, `LOFT_HOIST_VERIFY=1` for the same-store assertion of the
-  move; cells `B2-place-move-cells.loft` b1–b15 (every decline keeps the copy: b2 E9,
-  b3 E10, b5 the `??`, b6 the aliasing argument, b7 the opaque callee, b10 the rebind,
-  b11 two destinations, b12 two stores; b13 no-heap, b14 text-owning); the store census
-  (`LOFT_TRACE_DB`) must DROP by one per admitted call.  Switch `LOFT_NO_PLACE_RESULT=1`.
-- **New ops renumber** `index/target_surface.json` — `make surface-gen` after rebuilding
-  the wasm rlib.
+*What the matrix found — four things the design did not say.*  (1) The candidate gate is
+not B1's: `adopts_minted_at_bind` admits the promoted-local callee shape; an all-literal
+callee (`read_paint`) takes the older fresh-adopting pairing, so the pass gates on its own
+`placeable_bind` and asks the callee's exits directly.  (2) An exit has THREE spellings —
+`return { Object …; __retbuf }`, `{ Object …; return __retbuf }` (a function with text
+work-refs frees them between the writes and the return), and the parser's bare tail
+`{ Object …; __retbuf }` before the scope pass wraps it (what the copy notice's preview
+sees) — and the local's exit free has two
+as well: `OpFreeRef(v)`, or in a record-returning caller `OpFreeRefIfDistinct(v, __retbuf)`
+(the library's `parse_poly` answers a `Mark`; the first cut declined it).  (3) The design's
+"`v = null` after the move" is unsound: the interpreter lowers a rebind of an owned record
+local as a store-level free of what it held — it would free the HOST — where native emits a
+plain null; and the first cut's zeroing of the source was a runtime stand-in for the path
+state (the owner's question: why zero a source once zero-on-claim is gone?).  So the pass
+records the state at every exit and writes the free that is right there, and a path that
+stored the record rejoining one that holds it declines; `(R-MoveLast)`'s mechanics clause
+now says so.  (4) The copy notice reads the parser's IR on the program path (the lint family
+runs before the scope check there and after it under `loft test` — a pre-existing difference
+the dead-store lint's tests pin, so it stays), and reported a relocated field as a copy that
+"could not be moved"; it now asks the pass for its verdict in preview
+(`place_result::admits`, the same walk on the parser's IR, tolerant of the null init the
+scope pass has not yet prepended).
+
+*Receipts.*  Cells b1–b15 exact on both backends under `LOFT_POISON`, `LOFT_POISON_CLAIM`,
+`LOFT_STRICT_STORES`, `LOFT_HOIST_VERIFY` and `LOFT_NATIVE_LEAK_CHECK`; every intended decline
+fires for its own reason (`LOFT_TRACE_PLACE`); the census 184 → 50 mints, one fewer per
+admitted call (`add_poly` ×64, `add_px` ×30 no-heap, `add_card` ×40 text-owning).  Guard
+`tests/scripts/164-place-result.loft`, `@falsified-at:` the pass made to free on every exit
+(both backends die with `Store access out of bounds … the reference is corrupt`).  Pins
+`tests/place_result.rs`: the IR shape of `add_poly`, the switch, the silent copy notice, the
+census.  The corpus (`tests/scripts` + `tests/docs`) has NO admitted bind — the shape is the
+library's, not the corpus's — so the guard is the only coverage.
+The gate's one red, the browser kernel differential, was a pre-existing dangling `Data`
+pointer in `wasm::resume_frame` that the changed bytecode made visible (loft#1541, fixed in
+the same arc with `State::rebind_data`).
+A second red, the Debug-assertions nightly leg, was the pass's own: `placeable_bind` asked
+`returns_borrowed_view()` before its heap-return shape test, and that read is defined only
+for a heap return — a `Type::Function` return carries a `CALLEE_FRAME`-tagged note (a
+closure's own frame variable, never an attribute index) which the read's assert refuses.
+Every closure-factory file in the corpus tripped it, 22 of them on both backends, while the
+release build stayed green: out of range the read answers *conservatively borrowed*, and the
+shape test two lines on declines the callee anyway, so the ANSWER was never wrong — only the
+order in which it was reached.  The shape is asked first now, which makes the precondition
+structural instead of a second gate beside it (`scopes.rs`'s @P290 bracket is the other
+caller and states it explicitly).  `LOFT_NO_PLACE_RESULT=1` attributed it, and
+`scripts/introspect_diff.sh` reads IDENTICAL 1583/1583 across `tests/scripts`, `tests/docs`
+and `examples` — nothing emitted moved.
+
+*Measured.*  The parse row (`parse_only.loft --n 2000`, `--native-release`, hash `33f6d2b8`,
+this x86-64 box, 2026-09-16): `pp_paint` admitted (three moves, one held exit), and a WASH.
+Wall time on this box now spreads ±10 % between runs of one binary, so the receipt is
+`perf stat -r 5` on the cached binaries: user instructions 8.39 G against 8.39 G, cycles
+3.18 G against 3.23 G, cache misses 6.09 M against 6.11 M (placement / switch off), every
+difference inside its own run-to-run spread.  The reason is the scene: no gradient is used,
+so the `Paint` relocated carries no `spec` data — the copy it replaces was ~30 bytes and the
+store it removes is matched by a claim and a delete in the host store.  What B2 buys on this
+row is structural (no per-call store, no per-call copy), not time; the copy class the
+profile measured at 18.5 % is the points (`pts: smooth_pts(…)`, `Mark.pts`), which are C2
+and C5.  A leak-probe build (the placed block leaked instead of deleted) measured the same,
+so the host store's free-tree churn is not a cost either on this row.
+
+## C3 — the read-only `?`-discharge (SHIPPED 2026-09-16, `@FR-B-Disturb`, `@FR-B-View`)
+
+*The premise did not survive the matrix, and that is the result.*  C3 was cut to make
+`ap_e = sc.elems[idx]?` a VIEW instead of a copy.  It already is one, on both backends:
+the bind carries the base's dep (`ap_e(1):ref(Elem)["sc"]`), no copy op is emitted, and
+the `__ref_p2_N` store is minted only on the ABSENT arm — which `acc_pts` never takes,
+because `elem_index` appends the element before `acc_pts` is called.  A store census of
+the shape (`LOFT_TRACE_DB=1`, the library's `acc_pts` reproduced against the same `Elem`)
+mints exactly THREE stores: the `Sketch`, the points vector, and the `Elem` temp of
+`sc.elems[idx] = Elem { … }`.  Thirteen discharge shapes were measured — off a parameter,
+off a local, a hash lookup, a nullable field, an all-scalar element, an element with a
+vector field, a struct-enum element, a `&`-based base, a `const` bind, a nested field, a
+rebind in a loop, an explicit `?? default`, a plain undischarged bind — and every one is
+already a view.  The only copies the sweep found are the two that are RIGHT: a
+materialise under `(B-Disturb)`, and the return of a view as a value.
+
+So the evaluation table's row *"a store per `?`-discharged record element + a copy of the
+`Elem`"* is the SAME store and copy as its own next row, *"a store for `Elem {…}` + a copy
+into `sc.elems[idx]`"*, counted twice.  That row is C1's, and C1 is where the `acc_pts`
+temporary actually is.
+
+*What C3 turned out to be.*  Its own condition, as the rewrite list states it: *"`sc.elems`
+not disturbed between bind and last read, **in this frame or any callee**"*.  The view
+existed; the condition was only half-checked.  `ViewWalk::disturb` asserted `(B-Disturb)`
+at one site but computed its input from THIS frame's ops alone, so a view live across a
+call kept reading an address its elements had left:
+
+| shape | inline | through a callee |
+|---|---:|---:|
+| `e = sc.els[0]?; grow(sc, 200); e.a + e.b` | 3 | **4294967401** |
+| the same with two appends (no reallocation) | 3 | 3 |
+| `len(e.nm)` after the growth | 2 | **1** |
+| `e = sc.els[2]?; remove_first(sc); e.a` | 30 | **40** |
+
+Both backends, identical — the divergence is IR-level.  One shape with two meanings,
+decided by which side of a call the append sits on, and by an allocation the author cannot
+see.  `(B-Ref-Reshape)` already states the reach — *"the disturbance may be in this frame
+or in anything the frame CALLS … at any depth"* — and `(B-View)` keys its materialise on
+the same four events, so the rules settled it and only the implementation was short.
+
+*The mechanism.*  `disturbed_params_map`: the container places each definition GROWS or
+REMOVES FROM through a visible parameter, closed over the call graph by the same worklist
+`removed_params_map` uses, unioned into `ViewWalk::disturb` at every call site.  Read
+through the same two producers the inline walk uses, so the `OpClearVector` subtraction
+comes with them and a callee that REBUILDS the field it was handed disturbs nothing,
+exactly as that statement written inline does.  The forward edge does not ask whether the
+parameter is spelled `&`: a plain heap parameter aliases the caller's container identically
+(`calls.md` F-ParamHeap, probe 40 cell X9), so keying on the spelling would let an author
+lose the materialise by taking loft's own `warn_redundant_amp` advice.  Switch
+`LOFT_NO_CALLEE_DISTURB=1`, trace `LOFT_TRACE_DISTURB=1`.
+
+*What the matrix found that the design did not say.*  (1) A binding that names a container
+WHOLE (`d = &cv.data`) resolves to the same place as one that names an element inside it
+(`e = sc.els[i]?`), because the place model carries one field offset — but a growth moves
+every ELEMENT while it merely repoints the field SLOT the first one re-reads.  Shaking it
+broke `157-view-header`'s `grown_between` (11 → 0).  `view_source_place_indexed` answers,
+off the same walk that answers the place, whether the chain crossed an element read.
+(2) The notice had to name the CALLEE: nothing in `c_grow_callee` appends to `sc`, and a
+reader given only *"`sc` grows"* goes looking for a statement that is not in the function —
+the same failure the `Grown` sentence was split off from `Reshaped` to avoid.
+(3) A hidden RETURN BUFFER is an argument slot, so without excluding it every
+record-returning function that fills a vector field reports a disturbance at each of its
+call sites.
+
+*Receipts.*  `tests/scripts/164-callee-disturb.loft`, fifteen PAIRS — each callee cell
+beside the same program written inline, because the inline path has implemented
+`(B-Disturb)` since loft#1373 and is therefore the file's own oracle — with hand-computed
+absolute values beside them, clean on both backends under `LOFT_POISON`,
+`LOFT_POISON_CLAIM`, `LOFT_STRICT_STORES` and `LOFT_NATIVE_LEAK_CHECK`.  Five cells are
+CONTROLS that must keep aliasing and prove it by writing through the view and reading the
+container back.  `@falsified-at:` is measured, not claimed: under the switch seven cells
+move, the same seven on both backends.  Pins `tests/callee_disturb.rs`.
+
+*The two honest costs.*  c7 — a removal BELOW the viewed element — now materialises where
+today's alias answers correctly, because `(B-Disturb)` ends the place a removal renumbers
+whatever happened to sit where, and because the same program written inline has answered
+that way since @PLN130 F2.  That is probe 38 cell C1's objection, and it is a behaviour
+change with no wrong answer behind it.  And the `&`-link twin `link_inline` reads `0` where
+`11` is due — a `&` link silently downgraded to a copy, which `(B-Ref-Reshape)` says loft
+will not do.  It is pre-existing (it reads `0` on `main` and under this unit's switch
+alike), it is a `&` question rather than a plain-view one, and it is FILED rather than
+widened into here.
+
+*Measured on the parse row:* nothing.  C3 removes no copy, because there was none to
+remove — what it removes is a silent wrong answer.  The row's copies are C1, C2 and C5.
+
+*The cost it does have is COMPILE time, and it was worth checking.*  `disturbed_params_map`
+walks every definition once, and `scopes::check` runs per FILE LOAD, so a program with several
+`use`d libraries runs it again over an ever-larger definition table — the shape that would be
+quadratic.  A/B on one binary (`LOFT_NO_CALLEE_DISTURB`, three runs each): a stdlib-only script
+72 ms against 70, `07-control-flow` 57 against 57, and the two library-heavy corpus files
+145 ms against 145 and 144 against 142 — inside the run-to-run spread at the size where it would
+have shown.  The whole-program map is built once per `check` rather than re-derived per call
+site, which is what keeps it there.
+
+## C1 — the element overwritten from a literal (step 1 SHIPPED 2026-09-16, `@FR-R-InPlaceLiteral`)
+
+*Re-measured first, per C3's lesson, and the row is real this time.*  `sc.elems[idx] = Elem {
+… }` mints a `__ref_p2_N` store, builds the literal in it and `OpCopyRecord`s it into the
+slot — confirmed on the `acc_pts` shape and on four element shapes (full literal, partial
+literal, all-scalar element, element with a vector field).  The store census of the library
+shape mints exactly three stores and this is the third.
+
+*And the re-measurement found the phase is half built already.*  `(R-InPlaceLiteral)` names
+two destinations, an element `v[i] = R { … }` and a field `o.f = R { … }`, and the FIELD one
+has taken the in-place road since long before this plan: its writes take the place as their
+receiver, it mints no store, and it already writes the declared default of every omitted
+field.  Only the ELEMENT destination copies.  So C1's optimisation is narrower than the rule
+reads.
+
+**Step 1 — the staging clause, which was broken (SHIPPED).**  That shipped in-place road
+staged nothing, so an initialiser read storage an earlier field's write had already replaced:
+
+| shape | got | want |
+|---|---:|---:|
+| `o.f = El { a: o.f.b, b: o.f.a }` over `{a:1, b:2}` | **2,2** | 2,1 |
+| the same with the second field read through a call | **2,2** | 2,1 |
+
+Both backends, in silence.  The ELEMENT twin answers correctly — because it copies — which is
+what makes it the oracle and what makes this the prerequisite: redirecting elements to the
+place FIRST would have propagated the defect to them.
+
+#330's hoist is exactly the cure and already existed; it only ever armed for a WHOLE-VARIABLE
+rebind (`v = S { … }`), because `in_place_var` doubles as the retry path's target and that is
+meaningful only for a variable.  `parse_object` now takes a separate hoist root from a
+PROJECTION destination too, read through `projection_container_place`.  The root carries the
+destination's field OFFSET and `Parser::reads_place` spares a read of that variable at a
+DIFFERENT field, so `tw.a = El { a: tw.b.a }` takes no temp; the spare is taken only on proof,
+because sparing wrongly costs the value and staging wrongly costs a stack temp.
+
+*The one conservatism, stated because it is a choice.*  Only `OpGetField` proves disjointness.
+A field read also arrives through the typed accessors (`bx.tag` is `OpGetText(bx, 28)`), whose
+second argument is an offset for some ops and a SIZE for others, so separating them needs a
+list of ops that reads offsets — and such a list drifts silently against a new op, which is
+PERFORMANCE.md § Design P8's measured failure mode for the five mutation deny-lists.  So a
+sibling read spelled with a typed accessor stages a temp it does not need.  It is bounded by
+the literal's own field count, it is pinned either way so a later narrowing is deliberate, and
+closing it wants the field's declared SPAN rather than another list.
+
+*Receipts.*  `tests/scripts/164-in-place-literal.loft`, eighteen cells hand-computed from the
+declarations, clean on both backends under `LOFT_POISON`, `LOFT_POISON_CLAIM`,
+`LOFT_STRICT_STORES` and `LOFT_NATIVE_LEAK_CHECK`; `@falsified-at:` measured by disabling the
+projection arm — c1 and c8 go red on both backends and every other cell is unmoved, which is
+what says the arm stages the initialisers that read the place rather than staging everything.
+Pins `tests/in_place_literal.rs` hold the IR shape.
+
+**Step 2 — the element destination written in place (SHIPPED 2026-09-16).**  The gate was one
+op name.  `parse_object` builds into whatever `code` it is handed — the probe shows it receiving
+`Call(OpGetField)` for a field and `Call(OpGetVector)` for an element alike — and the arm that
+mints a work-ref instead asked `is_field(code)`, which is `Call(OpGetField)` and nothing else.
+`Parser::builds_into_element` admits the element place; switch `LOFT_NO_ELEMENT_IN_PLACE=1`.
+
+*Four declines, and every one was bought by a measurement rather than by the design.*  (1) The receiver is emitted ONCE PER FIELD
+WRITE, so the place must be re-derivable with no effect the program can see: a repeatable base
+and an index that is a LITERAL or a BARE VARIABLE.  `v[bump()]` would call `bump` once per
+field; `v[len(v) - 2]` would re-read a length the writes may have moved.  (2) The index is read
+from the END of the argument list — `OpGetVector(base, size, index)` and `OpVectorRef(base,
+index)` put it at different positions, and a fixed slot read the SIZE as the index and declined
+every `OpVectorRef` place by accident.  (3) A COLLECTION field declines the whole type, and this
+is the one that was MEASURED rather than reasoned: the staging clause binds a field expression
+to a temp, and what that bind MEANS depends on the type — `(B-Copy)` copies a text, so a
+literal reading the slot's own text is safe, while `(B-View-Base)` makes a collection projection
+a VIEW.  In place, `v[i] = S { c: e.c }` staged a view of the slot's own vector, the write
+released that vector before storing the handle back to it, and the field read `0` on BOTH
+backends.  Deciding it per FIELD needs the self-read answer, which is not known until the fields
+are parsed and the road is already taken; deciding it by TYPE is decidable up front.  Coarse,
+and the safe direction — and the shape this phase exists for keeps the road, because
+`acc_pts`'s `Elem` is text and scalars.
+
+(4) A member of a LINKED COLLECTION GROUP declines, and the CORPUS bought this one — the cells
+did not reach it.  `@FR-Col-Group` makes two collections over one element type two ROUTES to a
+single record set, so an element write owes them the unlink-and-relink that `group_elem_write`
+wraps the copy with; written straight into the slot the whole of it is skipped and `by_k` goes
+on holding the record under the hash of its OLD key, which is loft#900's defect by another road.
+`a-group-element-written-through-the-vector-member-reaches-every-member` is what caught it, and
+its own header had already written the sentence.  The predicate is new
+(`is_grouped_vector_elem`) rather than the existing `vector_group_elem_site`, because that one
+recognises `OpVectorRef` alone — the site it serves sees nothing else — while this admission also
+allows `OpGetVector`, so reusing it would have let the other spelling through.
+
+*The asymmetry between the two lists is deliberate:* the ADMISSION names two element ops, the
+DECLINE names four including both nullable spellings.  A miss in the admission costs the
+optimisation; a miss in the decline costs the group's agreement.
+
+*And `reads_place` grew a clause for it:* a read of a variable whose DEPS name the root counts
+as a read of the place.  `e = sc.els[i]?; sc.els[i] = El { a: e.b, … }` reads the very slot the
+literal overwrites, under another name — `acc_pts`'s own shape — so without it step 1's swap
+would have come back one spelling over, on the very road step 2 opens.
+
+*Measured:* the `acc_pts` shape's store census **3 → 2**, which is the `Elem` temp the
+evaluation table charged to the `?`-discharge and C3 showed belongs here.  The row's remaining
+copies are the POINTS, which are C2 and C5.
+
+*Receipts.*  The guard reaches 25 cells, clean on both backends under every falsifier; all four
+declines are cells, because a decline that silently stopped declining is the expensive
+direction.  Step 2's falsifier is STRUCTURAL and the pins carry it — with the switch every cell
+still passes, since the copy is correct, so what the switch costs is a store and a deep copy
+that no value can see.  The pin asserts BOTH element spellings, having first passed vacuously by
+asserting one.
+
+## C2 — the destination as return buffer (SHIPPED 2026-09-16, `@FR-R-Place`, `@FR-O-Buffer`)
+
+*Re-measured first, and this row IS real* — unlike C3's.  `h.v = mkints(n)` on an EXISTING
+field place emits, per assignment:
+
+```
+__ref_1(1):vector<integer> = null;                        // the callee's buffer, a store of its own
+__p154_rhs_1(1) = n_mkints(n(0), __ref_1(1));             // the callee fills it
+OpClearVector(OpGetField(h(0), 8i32, 24i32));             // the destination is emptied
+OpAppendVector(OpGetField(h(0), 8i32, 24i32), __p154_rhs_1(1), 0i32);   // every element copied in
+OpFreeRef(__ref_1(1));                                    // the buffer freed
+```
+
+and what it should emit is
+
+```
+__ref_1(1):vector<integer>["h"] = OpGetField(h(0), 8i32, 24i32);   // skip_free, inline_ref
+n_mkints(n(0), __ref_1(1));
+```
+
+— a store, an element-by-element copy, a free and a temp gone per assignment.  The caller's
+clear is subsumed: the callee's own FIRST op is `OpClearVector(o)`.
+
+**It is a pure-IR rewrite, and a first reading of this section said otherwise.**  That reading
+assumed the buffer must become a place-valued ARGUMENT, which would break the dep model — the
+call site mints the buffer as `Value::Var(vr)` and gives the result `Deps::frame1(vr)`, and B1's
+adopt, the delivery arms and the scope pass's free sweep all key on that variable.  The buffer
+does not have to stop being a variable.  Only what it HOLDS changes: the destination's DbRef
+instead of a store of its own.  Every downstream reader is untouched, and the one real edit is
+re-pointing the variable's deps from `Deps::none()` (owned) to the destination's base, plus
+`skip_free` / `inline_ref` — the pattern `group_elem_write` already uses for its `found` temp.
+
+What licenses it is the CALLEE's side: `n_mkints(n, o)` only ever does `OpClearVector(o)`,
+`OpPreAllocVector(o, …)`, `OpPushInt(o, …)`, `return o` — it never mints a store for `o`, and
+the caller already emits those same ops against a field DbRef today, so a field place is a valid
+buffer.
+
+⚠ **But that is a property of SOME callees, not of the lowering, and a first cut read it as the
+lowering.**  Three callees were sampled and all three filled the buffer they were handed, which
+made `(R-Place)`'s *"a callee that may hand back a store it did not mint"* look vacuous.  It is
+not: a callee returning a vector LITERAL lowers to `OpDatabase(__vdb_1)` on its buffer
+PARAMETER — it MINTS into the buffer — so handed the destination it mints over the place, and
+the write lands in a record the destination does not name.  The corpus found it
+(`1152-a-vector-value-into-a-group-reaches-every-member`, a refusal from loft#810's guard:
+*"record N claims size 0 … freed or never written"*).  The admission therefore READS THE CALLEE
+and declines a body that mints into any argument slot — the positive form of the rule's decline,
+as B2 unit 1 is for records.  Generalising from three samples is the error, and the rule had
+already written the answer down.
+
+### The restrictions, re-derived against the measurements
+
+`(R-Place)` lists five declines.  Measured against what the vector lowering actually emits, they
+do not all survive as written, and saying which is the point of this section:
+
+| the rule's decline | verdict, measured |
+|---|---|
+| an ARGUMENT reaches the destination's store | **essential, and true by construction** — `grow`'s first op is `OpClearVector(o)`, before any read of `v`, so `h.v = grow(h.v)` would read an emptied vector |
+| a path READS the result after the store | **not needed for this clause.**  It belongs to the other `(R-Place)` clause — a buffer claimed in S and then relocated, where the source is moved-from.  Here the result NAMES the destination, so a read of it reads exactly what was written |
+| a callee that may hand back a store it did NOT mint (`O-Opaque`) | **survives, and the first reading of this row was wrong.**  `passthrough` copies its parameter INTO the buffer and answers the buffer, which made the decline look vacuous across three sampled callees — but a callee returning a vector LITERAL mints into its buffer parameter (`OpDatabase(__vdb_1)`) and would mint over the destination.  Implemented as a positive admission that READS the callee's body |
+| a callee that on some exit answers a store OTHER than the buffer | **already true for every callee measured** — `two_exits`' early `return [99]` still clears and appends into `o` and answers `o`.  This is the contract B2 unit 1 had to CREATE for records; the vector lowering establishes it already.  Kept as a cheap ASSERTED check, never re-derived |
+| a `?` / `??` discharge on the result | **structurally excluded** — the right-hand side is an `ncc` BLOCK, not a `Call`, so the admission never sees it |
+
+And two the rule does not list.  A destination that is a member of a LINKED COLLECTION GROUP is
+**not** a decline here, where it was in C1: the maintenance is `OpClearKeyed(g.by_x)` …
+`OpIndexGroup(g.es, g.by_x)` BRACKETING the fill, and a call sits inside that bracket, which
+C1's in-place literal had nowhere to hang.  It needed
+`group_reindex_after_vector_write` to learn the shape — it keyed on an `OpAppendVector` naming
+the field, and this rewrite emits none, so the vector filled and the keyed view stayed empty
+(`3,0,0` for `3,3,4`).  And a field of a struct-ENUM VARIANT **is** a decline: it lowers through
+a variant check whose other arm is the null sentinel, so the place exists only if the enum holds
+that variant and does not unconditionally EXIST as `(R-Place)` requires.
+
+### Where the rules are short — `(O-Buffer)`
+
+`(O-Buffer)` says a hidden return buffer IS THE CALLER'S STORE, freed at frame exit, with the
+result's free guarded by store identity against it *"which, no static bit can say
+(`O-Opaque`)"*.  A buffer that IS the destination place is not a store, is not the caller's to
+free, and outlives the frame.  The two rules describe different objects.
+
+This is **not** an open design call.  `(R-Place)` is the newer rule, written for this plan, and
+it already decides it — *"the buffer IS the place and nothing moves"*; `(O-Buffer)` predates it
+and is simply short.  So `(O-Buffer)` gains the clause rather than `(R-Place)` giving way, and it
+is recorded as a change to a SHIPPED rule's text, which is the kind that gets said out loud.
+
+### What it needs
+
+A `LOFT_NO_BUFFER_IS_PLACE` switch, one aliasing test, a positive admission (direct call,
+loft-defined, hidden vector buffer, every exit answers it), the group bracketing preserved, and
+the 11-cell oracle in `bytecode-comparisons/C2-buffer-is-the-place-cells.loft` — whose values are
+TODAY's answers and which C2 may not move.
+
+### Shipped — and what the bench then measured
+
+*Mechanism.*  `Parser::buffer_is_the_place` (`src/parser/expressions.rs`) re-points the buffer
+VARIABLE at the destination — `inline_ref` plus `skip_free`, the way `group_elem_write` re-points
+its own temp — where the right-hand side is a direct call to a loft-defined callee with a hidden
+vector buffer, the destination place exists, no argument of the call reaches it, every exit
+answers the buffer and no exit MINTS into it; `group_reindex_after_vector_write` keeps a grouped
+destination's maintenance around the fill.  Switch `LOFT_NO_BUFFER_IS_PLACE=1` (parse time, both
+backends).  Guard `tests/scripts/164-buffer-is-the-place.loft` (11 cells, the two corpus-bought
+declines among them), structural pins `tests/buffer_is_place.rs`, registered under the `scopes`
+subject.
+
+*Measured, and the measurement is a FINDING rather than a confirmation.*  The row is real where
+it is spelled: on `h.v = mkints(n)` the rewrite removes a store, an element-by-element copy, a
+free and a temp per assignment.  **The parse bench spells it nowhere.**  `--native-emit` of
+`bench/parse_only.loft` is byte-identical with the switch on and off (25 686 lines either way,
+under `LOFT_NO_CACHE=1` too, with `parse_poly` and `smooth_pts` in the emission), and the row is
+where B1 left it: 41.8–44.8 k ns/op, hash `33f6d2b8`.  The naturalness question — § How a verdict
+is reached, question 2, which this cut asked of a probe of its own construction instead of the
+corpus — answers the same way: the 15 library files of `loft-libs-graphics` carry **13**
+`place = call(…)` sites and not one of them has a VECTOR result (twelve scalar, one `text`).
+
+*So the row the rewrite list credits to C2 is a different DESTINATION.*  `pts: smooth_pts(…)` is
+a record-LITERAL field of an element being appended, reached through a local
+(`pp_pts = smooth_pts(…)`) — B2's `place_result` shape with a vector instead of a record — and it
+declines today because `pp_pts` has TWO owning destinations, `Op.pts` and the returned `Mark.pts`.
+C5 removes the second one; only then is there ONE destination to place into.  C2 therefore ships
+with its row credited honestly: **the rewrite for the spelling it admits, structural, zero sites
+in the consumer measured so far** — and the parse row's points class stays with C5 and the
+vector `place_result` that follows it.
+
+## C5 — a returned record's heap field as a view leaf (`@FR-O-ViewField`, `@FR-R-ValueRecord`)
+
+*The row, re-measured before the phase is cut* (the lesson C3 and C2 each cost).  A parse of the
+bench scene mints **~68 stores** (`LOFT_TRACE_DB=1`, three parses divided out): `vector<Pt>` 18,
+`vector<float>` 16, `Paint` 15, **`Mark` 12**, `PointList` 3, `Sketch` 1.  The `Mark` row is one
+store per parsed line — the hidden buffer for a record of two booleans and a vector — and beside
+it one deep copy of the points into that record.  `Mark` is `(R-ValueRecord)`'s shape in
+everything but the vector: two scalars and one heap field.
+
+*The three rungs, PROVEN as emitted Rust before a line of the compiler changed* (the codegen
+gate: the target hand-written from the real emission, compiled against the release rlib, run
+beside the record form).  Probes `bytecode-comparisons/C5-*.loft`; each target answers exactly
+what the record form answers and is clean under `LOFT_NATIVE_LEAK_CHECK`, `LOFT_POISON`,
+`LOFT_POISON_CLAIM`, `LOFT_STRICT_STORES` and `LOFT_STORES=warn` — and the leak instrument was
+shown able to FAIL on the same binary (dropping one `OpFreeRef` reports `1 stores not freed at
+program exit: kt=88 Sc×1`).
+
+| rung | the loft shape | the leaf the tuple carries |
+|---|---|---|
+| **R1** (⚠ NOT admitted — see § *Built* below: the discharge's ownership is a JOIN) | `sc.ops += [Op { opts: [] }]; o = sc.ops[len(sc.ops) - 1]?; …; Mark { …, mpts: o.opts }` — the field's source IS a view of a parameter-rooted place | the source expression itself: `DbRef { …var_o…, pos: pos + 0 }` |
+| **R2** | `p = mk_pts(n); sc.ops += [Op { opts: p }]; Mark { …, mpts: p }` — the NATURAL form: the source is a local whose COPY landed in a parameter-rooted place | the append's own destination, the element temp: `DbRef { …var__elm_1…, pos: pos + 0 }` |
+| **R3** | `if n < 0 { return Mark { matched: true, bad: true, mpts: [] } }` — an exit with NO place to view | `DbRef::NULL`.  A null view reads as the empty vector the record form built: `len` 0, an iteration of nothing, `v[0]?.px` 0, a `const` argument 0 — measured equal on every read the oracle makes |
+
+**R3 is what decides whether C5 reaches the consumer at all**, and it was the phase's real
+question: the library's own `parse_poly` carries `return Mark { matched: true, bad: true, pts: [] }`
+and `no_mark()` is that literal whole, so an implementation that declined a place-less exit would
+decline the function the row belongs to.  The empty literal writes NOTHING in the record form —
+it is the prefill's own zero — so the value form owes exactly a reference that reads empty, and
+`DbRef::NULL` is that reference.
+
+**R2 is what the consumer spells**, and it is the rung that also unlocks the vector
+`place_result` C2 could not reach: once the returned field views the element's copy, `pp_pts` has
+ONE owning destination and the call that fills it can build there.
+
+### The cases, written down before the first is worked
+
+Admissions R1–R3 above.  The declines are the falsifier list, one cell each:
+
+| # | case | why it declines |
+|---|---|---|
+| D1 | the source's owning destination is in the FRAME (`p = mk_pts(n); Mark { mpts: p }`, no append into a parameter) | the view would dangle at the return — `(O-ViewField)`'s first condition |
+| D2 | a site WRITES through the field (`m.mpts += [Pt { … }]`) | the rule's site condition: a write through a view is a write into the container the caller never named |
+| D3 | a DISTURBANCE between the call and the last read (`m = add(sc, 3); sc.ops += [Op { … }]; len(m.mpts)`) | growing `sc.ops` relocates the element the view names — `(B-Disturb)`.  Both directions: a disturbance AFTER the last read still admits |
+| D4 | the disturbance is through a CALL (`m = add(sc, 3); grow(sc); len(m.mpts)`) | C3's `disturbed_params_map` is the reach; the argument the leaf roots in is what must stay undisturbed |
+| D5 | a site stores, returns or hands the whole record to a by-value parameter | the existing site gate already declines it; kept as a cell so a gate change cannot quietly admit it |
+| D6 | the function is a library's exported `pub fn` | `(R-Escape)`: an unseen caller never receives a view, so the boundary materialises |
+| D7 | the source local has TWO owning destinations outside the frame | which place the view names is not decided; declining costs the optimisation only |
+| D8 | the callee grows the viewed container after establishing the view (appends a SECOND element, views the first) | the same relocation as D3, inside the frame |
+| D9 | a `text` field, a keyed-collection field, a nullable result | outside step 1's leaf types; the record form stands |
+
+Each decline is also a cell that must keep answering the record form's value, and D2/D3/D4 are the
+three that would be SILENT — the class `silent-wrong` names — so each gets a cell whose value
+MOVES when the decline is removed, not merely a structural pin.
+
+### What it needs
+
+`LOFT_VIEW_FIELD=1` (generation time, native only — the interpreter keeps the record form and is
+the values oracle, as § V-aa's value record already does), the leaf analysis with ONE home read by
+the gate and the emitter, the site gate extended with the read-only and disturbance conditions,
+the live-reload arm reading the field's reference out of the returned record, and the cells in
+`tests/scripts/164-view-field.loft` with structural pins in `tests/view_field.rs`.
+
+### Built 2026-09-16, opt-in — and what the build corrected
+
+*Mechanism.*  `hoist::value_records` admits a record that owns heap when every heap field is a
+plain `vector<T>` the body can deliver as a view: `leaf_source` reads the exit's own
+`OpAppendVector` into the buffer — the deep copy the leaf removes — and answers either the PLACE
+to view or `Null` for an exit that writes the field not at all.  `leaf_root` resolves that place
+to a `(parameter, field)` pair by SHAPE, following a local through its single assignment; the
+tuple part is `DbRef`, the site's `OpGetField` read becomes a tuple index
+(`ViewFieldReadEmitter`), the live-reload arm reads the field slot out of the record the
+interpreter answers, and a value local's declaration binds `DbRef::NULL` for the leaf because
+`Default` has no null for a reference.
+
+*R1 is NOT admitted, and the reason corrects the rung proven by hand.*  The hand-written form
+`o = sc.ops[len(sc.ops) - 1]?; … Mark { mpts: o.opts }` reads a `?`-DISCHARGE, whose ownership is
+a JOIN: the absent arm mints its record in the frame's own store, so a leaf naming the container
+would be a view of a store freed at the return — wherever the element was absent.  The
+hand-written proof was sound only because that probe's element is always present, which is
+exactly what a compiler may not assume.  So the ONE admitted callee shape is R2, the natural one,
+and R3's null view rides with it.
+
+*The site conditions, and the measurement that cut them.*  A leaf read is admitted in two
+contexts — an argument at a `const` parameter, and an operand of an op that answers a VALUE
+(`OpLengthVector`, the null tests).  An ELEMENT READ is not one, and that is measured rather than
+argued: `m.pts[0]?.px = 100` reads the leaf with `OpGetVectorNullable` — an op that only reads its
+container — and then WRITES through the element it answered.  On the emission the gate produced
+before the list was narrowed, that write landed in `s.ops[0].opts`, which read 109 where the
+oracle says 9.  The other measured decline is the REMOVAL: with the span test disabled,
+`a = mk(s, 2); b = mk(s, 5); s.ops.remove(0); len(a.mpts)` read `5,30` — the second element's
+points — where `a`'s own copy holds `2,3`.  An APPEND does not move the value in any shape
+measured (fifty growths in a row included), so `b2`/`b3` stand on `(B-Disturb)` rather than on a
+wrong answer of their own, and that is recorded in the guard rather than smoothed over.
+
+*The span test is an UPPER bound, and it had to be written as one.*  `scopes::grown_containers`
+is a documented LOWER bound — a missed disturbance costs a materialise there — and reusing it
+admitted `b2` and `b3`, because an `OpNewRecord` naming its container as `(var, field)` is
+uncollected without the store and because the op's own argument looked like a licensed call
+argument.  The rule the site gate uses instead is on MENTIONS: between the bind and the last read
+the container's root variable may be named ONLY as an argument of a user call whose disturbance
+summary does not reach the place.  Every way to grow a container names the variable that reaches
+it, so a mention cannot be evaded; what it costs is a statement that merely READS the container
+in that span, which declines.
+
+*What declines today, each costing the rewrite and never a value:* a body that names the
+container in more than one statement (so `parse_poly`'s per-path appends decline — the per-PATH
+version is step 2), a site that reads the container between the bind and the last read, an
+element read or an iteration at the site, a `pub` function (`(R-Escape)`: the cdylib bridge
+materialises a tuple field by field, and a reference is not a field it can write), and a `text`
+or keyed field.
+
+*Two declines the CORPUS bought, and both are one mistake: an answer that was a FALLBACK where
+it had to be a proof.*  `leaf_source` read "no `OpAppendVector` into the buffer's field" as "the
+exit leaves the field empty", and a field can be filled without an append — a returned vector
+LITERAL pushes element by element (`OpPushInt(OpGetField(buf, off, _), …)`) and a record
+literal's vector field appends ELEMENTS through the record (`OpNewRecord(buf, <record>, <field
+nr>)`).  Read as empty, each delivered a NULL view for a vector the program had filled:
+`723-ncc-loop-element-bind` measured `len` 0 where its program built eight, on the corpus, with
+nothing else to say so.  The empty answer is now positive — every mention of the buffer in the
+exit must be one the value form ACCOUNTS for (the allocate-or-reuse guard, a scalar `OpSet*`, the
+one recognised append, the block's own yield), and anything else declines — because the value
+form drops the whole block, so an unaccounted mention is work the tuple would lose.  Cells `d6`
+and `d7` are the two shapes, pinned.
+
+*Receipts.*  `tests/scripts/164-view-field.loft` — 2 admissions, 2 positive controls and 15
+declines, hand-computed against the record form, green on both backends and under
+`LOFT_POISON`, `LOFT_POISON_CLAIM`, `LOFT_STRICT_STORES` and the leak gate; structural pins in
+`tests/view_field.rs` (the tuple signature, the dropped buffer, the site's tuple read, and every
+decline still declining); registered under the `codegen` subject.  The native corpus runs clean
+with the unit armed (1364 scripts, 0 compile failures), and the curated local set is green for
+the default path: four of its reds were derived rows this unit owed (the three walker audits and
+the emitter registry's cap, re-measured rather than picked) and four were the box under load —
+`loft_suite` 133 s, `poison_claim` 195 s, `html_asyncify` 41 s and the two server tests each pass
+alone.
+
+### Step 2 — the gate reaches the consumer, and the row does not move (2026-09-16)
+
+Step 1's two decline classes are closed, and each was a different kind of blindness:
+
+* **Per BODY became per PATH.**  A parser appends and returns once per branch, so a body-wide
+  mention count declined every one of them.  The question is asked per exit now: each exit's
+  own element must be built in the SAME statement list, before it, with no other exit's element
+  built in between, and no build may stand under a loop.
+* **A naming is not a disturbance.**  The mention rule could not tell `sc.unparsed += […]` from
+  `sc.ops += […]`, and B2 puts an `OpPlaceRecord(sc, …)` in every function that places a call's
+  result.  `namings_avoid_place` asks what each naming REACHES: a claim in the store moves
+  nothing, an append names its field by NUMBER (converted through the schema, as
+  `grown_containers` does) and its `OpFinishRecord` half the same way one argument further
+  along, a projection carries the offset, a fixed-width scalar read or write reaches its own
+  field (`IN_PLACE_SET_OPS` and `SCALAR_GETTERS`, the two lists that already carry "moves
+  nothing"), a READ of the watched field itself is a read (`len(sc.ops)` between a bind and its
+  own read moves nothing — `read_context` is the one home the site gate and this walk share),
+  and an argument of a user call is licensed by the call's own disturbance summary.  Everything
+  else still declines.
+
+Two spellings cost a cycle each, and both are the same lesson as step 1's: `OpNewRecord` names
+its field by NUMBER where a place carries a byte OFFSET — read as an offset, a REMOVAL from the
+very container the leaf views compared as a different place, and the `b8` cell measured the
+silence (`5,30` where the copy holds `2,3`) — and `OpFinishRecord`, the append's other half,
+names the container the same way with the field one argument further along.
+
+*Measured on the library:* `parse_poly` and `parse_lock` are now admitted; `parse_circle`,
+`parse_fronds` and `parse_line_cmd` still decline, all three on a source whose copy lands in a
+BRANCH — `sc.ops += [Op { … pts: pc_pts … }]` in each arm of an `if`, with the exit outside it,
+so the leaf's place is the element one of two appends made and no single expression names it.
+
+**And the parse row does not move: 38.4–40.0 k ns/op with the unit armed against 38.4–42.4
+without it, hash `33f6d2b8` both ways — a wash.**  That is the honest answer to the phase's own
+premise.  The evaluation table charged this row a `Mark` store and a points copy per line; the
+store is ~60 ns and there are twelve per parse, so the whole class is ~1.7 % of a 40 µs row
+even when every function is admitted.  What C5 removes is real and what it was expected to be
+worth was not: the parse row's remaining cost is not the `Mark` record.
+
+*Measured on the consumer, and it does not reach it yet.*  With the unit armed, every `Mark`-
+returning function of the drawing library still declines, and the trace says exactly why —
+which is the point of measuring rather than assuming:
+
+| function | the gate that declined it | what step 2 owes |
+|---|---|---|
+| `parse_poly`, `parse_lock` | *a statement names the leaf's root* — the body appends to `sc.ops` on THREE paths, and the mention count is per BODY | the count has to be per PATH: one append per path is one growth, which is what the leaf lives with |
+| `parse_circle`, `parse_fronds` | *no resolvable source* — the points reach the appended element through a chain `leaf_root` does not follow | the resolution has to reach the shapes a parser actually writes, measured one at a time |
+| `parse_line_cmd` | *the tail is not a value leaf* | § V-aa's own gate, unrelated to the view leaf |
+
+So C5 ships as the RULE's machinery with its conditions measured, and the row it was cut for
+waits on step 2.  It is opt-in for exactly that reason: armed it changes nothing in the
+consumer, and a unit that pays nothing must not also carry risk by default.
 
 ## The rewrite list — the natural `parse_poly` to its optimal form
 
@@ -368,9 +1056,9 @@ is the whole point of Goal F.
 |---|---|---|---|---|
 | bind `pp_raw`, `pp_paint` without a copy | the callee's return deps name exactly its own buffer; the destination a plain local | `O-Move`, `O-Buffer` | shipped | B1 |
 | `pp_paint`'s buffer claimed in the scene's store; `paint: pp_paint` a relocation, not a deep copy | the result's ONE owning destination is a field of a record in store S on every path that keeps it; `pp_paint` owned and dead on every path after the literal | `R-Place`, `R-MoveLast`, `O-Complete` | the liveness exists as the `avoidable-copy` lint's *"still used after this point"*; codegen does not read it; a buffer claimed in another store is new | B2 |
-| `pts: smooth_pts(…)` fills `Op.pts` directly, no buffer | as above, with the destination place existing at the call and no argument reaching it; the callee writes only its buffer and answers it at every exit | `R-Place` ("the buffer IS the place"), `R-Callee`, E15, E16 | `retbuf_only_writer`; `R-ElemFirst` already builds a vector inside an appended element; the redirection of a call's buffer into a field is missing | C2 |
-| `sc.elems[idx] = Elem{…}` written into the slot | the slot exists; every field expression evaluated before the first write (`ename: ap_e.ename` reads the slot); omitted fields defaulted | `R-InPlaceLiteral`, E13, E14 | complete-write knows the literal's field set | C1 |
-| `ap_e = sc.elems[idx]?` as a view | `ap_e` only read; `sc.elems` not disturbed between bind and last read, in this frame or any callee | `B-View` (the discharge clause), `B-Disturb` | `view_elision_bind` does it for call results; the interprocedural disturbance walk exists for `&` | C3 |
+| `pts: smooth_pts(…)` fills `Op.pts` directly, no buffer | as above, with the destination place existing at the call and no argument reaching it; the callee writes only its buffer and answers it at every exit | `R-Place` ("the buffer IS the place"), `R-Callee`, E15, E16 | `retbuf_only_writer`; `R-ElemFirst` already builds a vector inside an appended element; C2 shipped the EXISTING-place road, which this is not — this destination is a literal field reached through a local, so it is a vector `place_result` and it declines on `pp_pts`'s second destination | C5, then a vector `place_result` |
+| `sc.elems[idx] = Elem{…}` written into the slot | the slot exists; every field expression evaluated before the first write (`ename: ap_e.ename` reads the slot); omitted fields defaulted | `R-InPlaceLiteral`, E13, E14 | the FIELD destination already writes in place and defaults the omitted fields; E13's staging shipped as C1 step 1; the ELEMENT receiver is what is left | C1 step 2 |
+| `ap_e = sc.elems[idx]?` as a view | `ap_e` only read; `sc.elems` not disturbed between bind and last read, in this frame or any callee | `B-View` (the discharge clause), `B-Disturb` | the VIEW already; the disturbance walk was this frame only, which is what C3 closed | shipped C3 |
 | `Op { kind: Stroke, … }` prefilled by one block write | the literal's field set against the type's defaults | `R-Prefill` | complete-write has the set; the per-type image is missing | C4 |
 | the four `smooth_pts` buffers not minted at entry | one path runs one call | trivial | goes away with C2 | with C2 |
 | the `PointList` scratch reused across lines | the callee's literal rewrites every field when handed a live buffer; the buffer-holder's rebind never frees it | `R-Reuse`, § V-y | D-own-43 (the interpreter's rebind free) must close first | B1b, A2 |
@@ -500,16 +1188,17 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | Item | Source | Verify | Status |
 |---|---|---|---|
 | **P0** — probe first: count the store-identity sites; price tier 1; the hand patch judged not worth building by the arithmetic; the leak-gate extension (E19) deferred to A1's shape | § P0 | 287 identity sites in one emission; ~88 mints per parse at ≈ 60 ns a pair: tier 1's ceiling ≈ 10 % of the row | Done 2026-09-15 |
-| **A1** — arena for one activation's own buffers (`__ref_N`, `__ref_p2_N`, literal temps), mark/release at every exit | § Tier 1 | `tests/scripts/164-arena-activation.loft` both backends; plan 51's ten graduated guards under the switch; `emission_audit.py` R-State per record | Blocked on P0 |
+| **P0b** — attribute the runtime's 63 % of the release row to loft lines: a frame-pointer rlib build, `perf` with call chains, an inclusive table per loft function with each family charged to a line | § Re-profiled *The correction* | the allocator, copy and append families each named with the line and the phase that owns it; the store-pair family confirmed at 9 % | **Open — next** (2026-09-16) |
+| **A1** — arena for one activation's own buffers (`__ref_N`, `__ref_p2_N`, literal temps), mark/release at every exit | § Tier 1 | `tests/scripts/164-arena-activation.loft` both backends; plan 51's ten graduated guards under the switch; `emission_audit.py` R-State per record | Blocked on P0b — the store-pair family is 9 % of the release row; whether the free-tree family (12 %) charges to activation temporaries is what decides the shape |
 | **A2** — the caller-threaded arena, reset per loop iteration | § Tier 1 | parse row −20 %; E2/E3/E4 cells | Blocked on A1 |
 | **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |
 | **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state) | § B1 | c6 under the pool without `minted_pairs` — the interpreter's rebind free must first match native's `_rb_w_` guard | Blocked on that divergence |
-| **B2** — the result's buffer claimed in its destination's store, the field taking it by relocation at the last use (`R-Place`, `R-MoveLast`) | § The rewrite list | E9–E12 cells under `LOFT_POISON`; the `paint: pp_paint` site emits no `OpCopyRecord` and `read_paint`'s buffer is a record in the scene's store | Open — next |
-| **C1** — element overwrite from a literal in place (`R-InPlaceLiteral`) | § The rewrite list | E13/E14 cells; `acc_pts` emits no temp store | Open |
-| **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § The rewrite list | E15/E16 cells; `smooth_pts` writes `Op.pts` | After C3 (needs no arena: the destination is a record in the scene's store) |
-| **C3** — read-only `?`-discharge as a view (`B-View`'s discharge clause) | § The rewrite list | E17 cells; `acc_pts` copies nothing | Open |
+| **B2** — the result's buffer claimed in its destination's store, the field taking it by relocation at the last use (`R-Place`, `R-MoveLast`) | § B2 | cells b1–b15 both backends under the falsifiers; the census 184 → 50; `parse_poly`'s `paint: pp_paint` emits `OpMoveRecord` and `read_paint`'s buffer is a record in the scene's store; the parse row a wash (`perf stat`) | Shipped 2026-09-16 |
+| **C1** — element overwrite from a literal in place (`R-InPlaceLiteral`) | § C1 | step 1 (the STAGING clause, a both-backend silent-wrong on the shipped FIELD road) and step 2 (the element receiver): 25 cells both backends under every falsifier, four declines pinned, the `acc_pts` census 3 → 2 | Shipped 2026-09-16 |
+| **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § C2 | the 11-cell oracle (today's answers, which C2 may not move); the aliasing decline; `(O-Buffer)`'s new clause | Shipped 2026-09-16 — a pure-IR rewrite, the buffer variable re-pointed at the destination; ZERO admitted sites in the parse bench (the emission is byte-identical under the switch) and none in the 15-file consumer corpus, so the gain is structural |
+| **C3** — read-only `?`-discharge as a view (`B-View`'s discharge clause) | § C3 | the discharge ALREADY views (13 shapes measured, both backends), so the phase's content was its other half: `(B-Disturb)` across a CALL.  15 pairs both backends; 7 move under the switch | Shipped 2026-09-16 |
 | **C4** — per-type prefill image (`R-Prefill`) | § C4 | cells c1–c11 both backends under `LOFT_PREFILL_VERIFY`; the verify census over all 1432 corpus files; the image USED on both backends (`LOFT_TRACE_PREFILL`); parse row −11 % | Shipped 2026-09-15 |
-| **C5** — a returned record's heap field as a view leaf (`O-ViewField`, `R-ValueRecord`, `R-Escape`) | § The rewrite list | the points written once per line: `Mark.pts` names `Op.pts`; an E17 site that appends between the call and the read must read the copy; an escaping `pub fn` result reads the copy at the bridge | Open — last; rule admitted (C122) |
+| **C5** — a returned record's heap field as a view leaf (`O-ViewField`, `R-ValueRecord`, `R-Escape`) | § C5 | 2 admissions, 2 positive controls and 15 declines both backends under every falsifier; the native corpus clean with the unit armed; three conditions measured rather than argued (an element read at a site, the disturbance span as an UPPER bound, the exit's empty answer as a proof) | **Step 1 built 2026-09-16, opt-in** (`LOFT_VIEW_FIELD=1`).  The `?`-discharged source is NOT admissible — its ownership is a join — so the admitted shape is the natural one; step 2 owes per-PATH mention counting and a wider source resolution, and the library's own declines are measured per function in § C5 |
 
 Every phase: a switch (`LOFT_NO_<unit>=1`), a falsifier, cells in
 `bytecode-comparisons/`, a guard in `tests/scripts/` with its `@falsified-at:` receipt,
@@ -519,16 +1208,29 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
 
 1. P0 — done: tier 1 priced at ≈ 10 % of the row, E1's site count measured; the owner's
    pick between `(store_nr, rec)` identity and a pooled store stays open until A1 is cut.
-2. B1 and C4 — shipped.  Then **B2**,
-   a day, local, feeding the profile's largest remaining class (the copies).
-3. **C3 then C1** — the `acc_pts` pair, one mechanism each.
-4. **C2** — after C3: it needs the destination C3 makes visible and a single-exit callee
-   test; it does NOT need the arena.
-5. **C5** last, as its own section: it extends a formal rule (`O-ViewField`) and the
-   value-record gate, so the owner signs the rule off before the cells are written.
-6. **B1b** beside them whenever D-own-43 closes (the interpreter's rebind guard); then
-   A1 → A2, whose remaining share is re-measured after the copy phases have moved the mix.
-7. Re-measure the 14-row bench after each phase (`compare.py`, 14/14 hashes).
+2. B1, C4 and B2 — shipped.  B2 measured a wash on the parse row (the `Paint` it relocates
+   carries no heap on the bench scene); the copy class the profile measured is the points,
+   which C2 and C5 take.
+3. ~~**C3 then C1**~~ — both shipped.  C3 moved no copy (the discharge was already a view, and
+   the `acc_pts` temporary the evaluation table charged to it was C1's, counted twice); C1
+   closed the staging clause on the FIELD road first, because the element road inherits it, and
+   then opened the element road — census 3 → 2.
+4. ~~**C2**~~ — shipped, and the bench then said the spelling it admits (`h.v = mkints(n)`,
+   a call result into an EXISTING vector place) has no site in the consumer: the emission is
+   byte-identical under the switch and the corpus's 13 `place = call(…)` sites are all scalar
+   or `text`.  The gain is structural; § C2 *Shipped* records it and names where the parse
+   row's points class actually sits.
+5. ~~**C5 is next**~~ — steps 1 and 2 built opt-in; the row measured a wash and the `Mark`
+   class under 2 %, so step 3 and the vector `place_result` are PARKED (§ C5 *Step 2*).
+6. **P0b** — the attribution on a frame-pointer rlib build (§ Re-profiled *The correction*):
+   the runtime is 63 % of the release row and no line has been charged with it yet.
+7. **Then A1/A2 or the remaining copy sites, whichever the attribution names** — A1 as a pooled
+   store or a release-to-mark arena if the store-pair (9 %) and free-tree (12 %) families charge
+   to activation temporaries; the copy sites if `copy_claims` / `remove_claims_mode` charge to a
+   bind or an assignment.  **B1b** beside them whenever D-own-43 closes (the interpreter's rebind
+   guard).
+8. Re-measure the 14-row bench after each phase (`compare.py`, 14/14 hashes), and the parse
+   row's profile with `perf` on the release binary — never with a count.
 
 ## Open design questions
 

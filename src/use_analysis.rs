@@ -268,7 +268,11 @@ impl OpSets {
                 .filter(|&d| d != u32::MAX)
                 .collect()
         };
-        let unconditional_ref_frees = nrs(&["OpFreeRef", "OpFreeRefTag"]);
+        // `OpFreeRecordIn` is @PLN164 B2's exit free of a PLACED result (`place_result`): the
+        // local's record is released, unconditionally, exactly as `OpFreeRef` releases a
+        // store — read as one here so the copy lint sees the local die at the exit rather
+        // than survive its move.
+        let unconditional_ref_frees = nrs(&["OpFreeRef", "OpFreeRefTag", "OpFreeRecordIn"]);
         let conditional_ref_frees = nrs(&["OpFreeRefIfDistinct", "OpFreeRefOrHandUp"]);
         let text_free = data.def_nr("OpFreeText");
         let mut frees: HashSet<u32> = unconditional_ref_frees
@@ -3212,7 +3216,7 @@ pub const ANY_FIELD: u32 = u32::MAX;
 /// steps are a lower bound, as everything in this walk is.
 #[must_use]
 pub fn projection_container_place(data: &Data, value: &Value) -> Option<(u16, u32)> {
-    projection_place_of(data, value, false)
+    projection_place_of(data, value, false).map(|(c, f, _)| (c, f))
 }
 
 /// [`projection_container_place`], counting the two NULLABLE element reads as the projections
@@ -3237,39 +3241,75 @@ pub fn projection_container_place(data: &Data, value: &Value) -> Option<(u16, u3
 /// statement about today's readers, not about the language.
 #[must_use]
 pub fn view_source_place(data: &Data, value: &Value) -> Option<(u16, u32)> {
-    projection_place_of(data, value, true)
+    projection_place_of(data, value, true).map(|(c, f, _)| (c, f))
 }
 
-/// The shared peel behind [`projection_container_place`] and [`view_source_place`]:
+/// [`view_source_place`] with the fact that tells a reference **TO** a container from one
+/// **INTO** it: `true` when the chain read an ELEMENT out of the place, `false` when the
+/// binding names the place itself.
+///
+/// `(B-Ref-Alias)`'s in-versus-to distinction needs this and the PLACE cannot carry it: a place
+/// is one variable and one field OFFSET, so `d = &cv.data` and `e = cv.data[0]?` both answer
+/// `(cv, off_data)`.  What separates them is `(B-Disturb)`'s growth — it moves every ELEMENT,
+/// ending the second, while it only repoints the field SLOT the first re-reads (loft#1543).
+///
+/// It is a second fact rather than a reading of `nullable_reads`, which the same walk already
+/// carries: that flag says WHICH OPS COUNT as projections at all (the two null-answering
+/// element reads, kept off `is_projection_op` for the deps proxy's sake), and both of its
+/// settings admit element reads and field reads alike.  The two axes cross rather than nest.
+#[must_use]
+pub fn view_source_place_indexed(data: &Data, value: &Value) -> Option<((u16, u32), bool)> {
+    projection_place_of(data, value, true).map(|(c, f, indexed)| ((c, f), indexed))
+}
+
+/// The one walk behind all three readers, so *what is a projection* has a single answer.
+///
 /// `nullable_reads` says whether the two null-answering element reads count as projections.
-fn projection_place_of(data: &Data, value: &Value, nullable_reads: bool) -> Option<(u16, u32)> {
+/// The third element of the answer is set where the chain crosses an ELEMENT read rather than
+/// a field read — carried in the return rather than through an out-parameter, because every
+/// caller wants it or discards it explicitly, and two spellings of one walk is how this
+/// function came to exist twice (loft#1543).
+fn projection_place_of(
+    data: &Data,
+    value: &Value,
+    nullable_reads: bool,
+) -> Option<(u16, u32, bool)> {
     let mut cur = value;
     let mut field = ANY_FIELD;
+    // Did the chain read an ELEMENT out of the place, or does it name the place itself?  Set
+    // by the element-reading ops below and never cleared: one element read anywhere in the
+    // chain means the value lives at a position the container can move.
+    let mut indexed = false;
     loop {
         if let Value::If(_, t, e) = cur.unspan()
             && let Some(v) = variant_check_subject(data, t, e)
         {
-            return Some((v, field));
+            return Some((v, field, indexed));
         }
         let Value::Call(d, args) = cur.unspan() else {
             return None;
         };
+        let name = data.def(*d).name();
         let projects = is_projection_op(data, *d)
-            || (nullable_reads
-                && matches!(
-                    data.def(*d).name(),
-                    "OpGetVectorNullable" | "OpVectorRefNullable"
-                ));
+            || (nullable_reads && matches!(name, "OpGetVectorNullable" | "OpVectorRefNullable"));
         if !projects {
             return None;
         }
-        if data.def(*d).name() == "OpGetField"
-            && let Some(Value::Int(off)) = args.get(1).map(Value::unspan)
-        {
-            field = *off as u32;
+        // Everything that projects and is not the FIELD read reads an element: `v[i]` in its
+        // four spellings and a keyed point lookup.  Written as the complement of `OpGetField`
+        // rather than as its own list, so an op added to `is_projection_op` counts as an
+        // element read by DEFAULT — the conservative direction, because a place read as
+        // indexed keeps today's answer, while one missed from an explicit list would be
+        // treated as naming the container whole and spared a disturbance that reaches it.
+        if name == "OpGetField" {
+            if let Some(Value::Int(off)) = args.get(1).map(Value::unspan) {
+                field = *off as u32;
+            }
+        } else {
+            indexed = true;
         }
         match args.first().map(Value::unspan) {
-            Some(Value::Var(c)) => return Some((*c, field)),
+            Some(Value::Var(c)) => return Some((*c, field, indexed)),
             Some(inner) => cur = inner,
             None => return None,
         }
@@ -7069,6 +7109,12 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
             // Only survival-split (source-duplicating) copies are user-facing, and only the
             // Avoidable class is the actionable worklist — mirror `report_copies`'s filter.
             if !r.survival || !matches!(r.class, CopyClass::Avoidable) {
+                continue;
+            }
+            // @PLN164 B2 — a copy `place_result` will turn into a relocation is no copy to
+            // report: on the program path this lint reads the parser's IR, before the scope
+            // pass decides, so it asks the deciding pass for its verdict in preview.
+            if r.source != u16::MAX && crate::place_result::admits(data, d_nr, r.source) {
                 continue;
             }
             let ty = if r.source == u16::MAX {

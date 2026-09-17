@@ -23,44 +23,44 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>gridmesh source</h1>
 <article>
-<p><a href="lib-gridmesh.html">← gridmesh</a> · <a href="lib-gridmesh-api.html">API reference</a> · version 0.2.1</p>
-<p class="lib-legend">6 file(s), 979 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-gridmesh.html">← gridmesh</a> · <a href="lib-gridmesh-api.html">API reference</a> · version 0.2.2</p>
+<p class="lib-legend">6 file(s), 988 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>CellRef</code> <span class="search-kind">struct</span></td><td><a href="#src-gridmesh-loft-L23">23</a></td><td>—</td><td><a href="#src-gridmesh-loft-L36">36</a> <a href="#src-gridmesh-loft-L37">37</a> <a href="#src-gridmesh-loft-L39">39</a> <a href="#src-gridmesh-loft-L73">73</a> <a href="#src-gridmesh-loft-L80">80</a> <a href="#src-gridmesh-loft-L196">196</a> … (7 total)</td></tr>
-<tr><td><code>enc_coord</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L27">27</a></td><td>—</td><td><a href="#src-gridmesh-loft-L39">39</a> <a href="#src-gridmesh-loft-L74">74</a> <a href="#src-gridmesh-loft-L178">178</a> <a href="#src-gridmesh-loft-L246">246</a> <a href="#src-gridmesh-loft-L258">258</a> <a href="#src-gridmesh-loft-L289">289</a> … (11 total)</td></tr>
-<tr><td><code>build_index</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L36">36</a></td><td>—</td><td><a href="#src-gridmesh-loft-L214">214</a></td></tr>
-<tr><td><code>axial_dq</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L46">46</a></td><td>—</td><td><a href="#src-gridmesh-loft-L60">60</a></td></tr>
-<tr><td><code>axial_dr</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L50">50</a></td><td>—</td><td><a href="#src-gridmesh-loft-L61">61</a> <a href="#src-gridmesh-loft-L66">66</a></td></tr>
-<tr><td><code>step_x</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L58">58</a></td><td><a href="#tests-worked-examples-loft-L138">GRM-005</a></td><td><a href="#src-gridmesh-loft-L83">83</a> <a href="#src-gridmesh-loft-L352">352</a> <a href="#tests-worked-examples-loft-L151">151</a></td></tr>
-<tr><td><code>step_y</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L65">65</a></td><td>—</td><td><a href="#src-gridmesh-loft-L83">83</a> <a href="#src-gridmesh-loft-L352">352</a> <a href="#tests-worked-examples-loft-L152">152</a></td></tr>
-<tr><td><code>idx_at</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L73">73</a></td><td><a href="#tests-worked-examples-loft-L138">GRM-005</a></td><td><a href="#src-gridmesh-loft-L83">83</a> <a href="#src-gridmesh-loft-L352">352</a> <a href="#tests-chunkfield-loft-L30">30</a> <a href="#tests-chunkfield-loft-L31">31</a> <a href="#tests-chunkfield-loft-L32">32</a> <a href="#tests-chunkfield-loft-L75">75</a> … (19 total)</td></tr>
-<tr><td><code>nbr_count_idx</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L80">80</a></td><td>—</td><td><a href="#tests-worked-examples-loft-L159">159</a> <a href="#tests-worked-examples-loft-L160">160</a></td></tr>
-<tr><td><code>SegMesh</code> <span class="search-kind">struct</span></td><td><a href="#src-gridmesh-loft-L98">98</a></td><td>—</td><td><a href="#src-gridmesh-loft-L106">106</a> <a href="#src-gridmesh-loft-L107">107</a> <a href="#src-gridmesh-loft-L113">113</a> <a href="#src-gridmesh-loft-L125">125</a> <a href="#src-gridmesh-loft-L131">131</a></td></tr>
-<tr><td><code>seg_mesh_new</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L106">106</a></td><td>—</td><td><a href="#tests-segmesh-loft-L14">14</a> <a href="#tests-segmesh-loft-L26">26</a> <a href="#tests-segmesh-loft-L41">41</a> <a href="#tests-segmesh-loft-L65">65</a></td></tr>
-<tr><td><code>emit_segment</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L113">113</a></td><td>—</td><td><a href="#tests-segmesh-loft-L27">27</a> <a href="#tests-segmesh-loft-L44">44</a> <a href="#tests-segmesh-loft-L66">66</a></td></tr>
-<tr><td><code>seg_len</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L125">125</a></td><td>—</td><td><a href="#tests-segmesh-loft-L15">15</a> <a href="#tests-segmesh-loft-L28">28</a> <a href="#tests-segmesh-loft-L47">47</a></td></tr>
-<tr><td><code>seg_mesh_append</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L131">131</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>ChunkKey</code> <span class="search-kind">struct</span></td><td><a href="#src-gridmesh-loft-L155">155</a></td><td>—</td><td><a href="#src-gridmesh-loft-L174">174</a> <a href="#src-gridmesh-loft-L178">178</a> <a href="#src-gridmesh-loft-L199">199</a> <a href="#src-gridmesh-loft-L246">246</a> <a href="#src-gridmesh-loft-L329">329</a> <a href="#src-gridmesh-loft-L374">374</a> … (7 total)</td></tr>
-<tr><td><code>chunk_of</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L174">174</a></td><td>—</td><td><a href="#src-gridmesh-loft-L220">220</a> <a href="#src-gridmesh-loft-L259">259</a> <a href="#src-gridmesh-loft-L293">293</a> <a href="#src-gridmesh-loft-L315">315</a> <a href="#src-gridmesh-loft-L354">354</a> <a href="#tests-chunkfield-loft-L14">14</a> … (12 total)</td></tr>
-<tr><td><code>ChunkField</code> <span class="search-kind">struct</span></td><td><a href="#src-gridmesh-loft-L192">192</a></td><td>—</td><td><a href="#src-gridmesh-loft-L211">211</a> <a href="#src-gridmesh-loft-L212">212</a> <a href="#src-gridmesh-loft-L234">234</a> <a href="#src-gridmesh-loft-L255">255</a> <a href="#src-gridmesh-loft-L272">272</a> <a href="#src-gridmesh-loft-L288">288</a> … (16 total)</td></tr>
-<tr><td><code>field_new</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L210">210</a></td><td>—</td><td><a href="#tests-chunkfield-loft-L27">27</a> <a href="#tests-chunkfield-loft-L41">41</a> <a href="#tests-chunkfield-loft-L56">56</a> <a href="#tests-chunkfield-loft-L70">70</a> <a href="#tests-chunkfield-loft-L93">93</a> <a href="#tests-chunkfield-loft-L114">114</a> … (14 total)</td></tr>
-<tr><td><code>field_add_cell</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L255">255</a></td><td>—</td><td><a href="#src-gridmesh-loft-L300">300</a> <a href="#tests-chunkfield-loft-L72">72</a> <a href="#tests-chunkfield-loft-L117">117</a> <a href="#tests-worked-examples-loft-L44">44</a> <a href="#tests-worked-examples-loft-L110">110</a></td></tr>
-<tr><td><code>field_mark_dirty</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L272">272</a></td><td>—</td><td><a href="#tests-chunkfield-loft-L42">42</a> <a href="#tests-chunkfield-loft-L44">44</a> <a href="#tests-chunkfield-loft-L46">46</a> <a href="#tests-chunkfield-loft-L57">57</a> <a href="#tests-chunkfield-loft-L62">62</a> <a href="#tests-chunkinput-loft-L66">66</a> … (8 total)</td></tr>
-<tr><td><code>field_remove_cell</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L288">288</a></td><td><a href="#tests-worked-examples-loft-L90">GRM-003</a></td><td><a href="#tests-chunkfield-loft-L95">95</a> <a href="#tests-chunkfield-loft-L106">106</a> <a href="#tests-chunkfield-loft-L115">115</a> <a href="#tests-worked-examples-loft-L104">104</a></td></tr>
-<tr><td><code>clear_dirty</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L306">306</a></td><td><a href="#tests-worked-examples-loft-L30">GRM-001</a></td><td><a href="#tests-chunkfield-loft-L59">59</a> <a href="#tests-chunkfield-loft-L71">71</a> <a href="#tests-chunkfield-loft-L94">94</a> <a href="#tests-chunkinput-loft-L74">74</a> <a href="#tests-worked-examples-loft-L57">57</a></td></tr>
-<tr><td><code>dirty_count</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L311">311</a></td><td>—</td><td><a href="#tests-chunkfield-loft-L33">33</a> <a href="#tests-chunkfield-loft-L43">43</a> <a href="#tests-chunkfield-loft-L45">45</a> <a href="#tests-chunkfield-loft-L47">47</a> <a href="#tests-chunkfield-loft-L58">58</a> <a href="#tests-chunkfield-loft-L60">60</a> … (13 total)</td></tr>
-<tr><td><code>chunk_is_dirty</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L314">314</a></td><td>—</td><td><a href="#tests-chunkfield-loft-L48">48</a> <a href="#tests-chunkfield-loft-L49">49</a> <a href="#tests-chunkfield-loft-L61">61</a> <a href="#tests-worked-examples-loft-L46">46</a> <a href="#tests-worked-examples-loft-L127">127</a></td></tr>
-<tr><td><code>ChunkInput</code> <span class="search-kind">struct</span></td><td><a href="#src-gridmesh-loft-L328">328</a></td><td>—</td><td><a href="#src-gridmesh-loft-L370">370</a> <a href="#src-gridmesh-loft-L371">371</a> <a href="#src-gridmesh-loft-L374">374</a> <a href="#src-gridmesh-loft-L386">386</a> <a href="#src-gridmesh-loft-L387">387</a> <a href="#src-gridmesh-loft-L392">392</a> … (7 total)</td></tr>
-<tr><td><code>all_inputs</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L370">370</a></td><td><a href="#tests-worked-examples-loft-L62">GRM-002</a></td><td><a href="#tests-chunkinput-loft-L24">24</a> <a href="#tests-chunkinput-loft-L38">38</a> <a href="#tests-chunkinput-loft-L57">57</a> <a href="#tests-worked-examples-loft-L72">72</a></td></tr>
-<tr><td><code>collect_dirty_inputs</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L386">386</a></td><td><a href="#tests-worked-examples-loft-L30">GRM-001</a></td><td><a href="#tests-chunkinput-loft-L67">67</a> <a href="#tests-chunkinput-loft-L75">75</a> <a href="#tests-worked-examples-loft-L49">49</a> <a href="#tests-worked-examples-loft-L59">59</a></td></tr>
-<tr><td><code>GroupKey</code> <span class="search-kind">struct</span></td><td><a href="#src-gridmesh-loft-L409">409</a></td><td>—</td><td><a href="#src-gridmesh-loft-L413">413</a> <a href="#src-gridmesh-loft-L420">420</a> <a href="#src-gridmesh-loft-L423">423</a> <a href="#src-gridmesh-loft-L438">438</a> <a href="#src-gridmesh-loft-L455">455</a></td></tr>
-<tr><td><code>GroupInput</code> <span class="search-kind">struct</span></td><td><a href="#src-gridmesh-loft-L413">413</a></td><td>—</td><td><a href="#src-gridmesh-loft-L428">428</a> <a href="#src-gridmesh-loft-L436">436</a> <a href="#src-gridmesh-loft-L438">438</a> <a href="#src-gridmesh-loft-L454">454</a> <a href="#src-gridmesh-loft-L459">459</a> <a href="#src-gridmesh-loft-L470">470</a></td></tr>
-<tr><td><code>group_of</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L420">420</a></td><td>—</td><td><a href="#src-gridmesh-loft-L431">431</a> <a href="#src-gridmesh-loft-L457">457</a> <a href="#tests-rendergroup-loft-L29">29</a> <a href="#tests-rendergroup-loft-L30">30</a> <a href="#tests-rendergroup-loft-L31">31</a> <a href="#tests-rendergroup-loft-L32">32</a> … (7 total)</td></tr>
-<tr><td><code>all_groups</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L428">428</a></td><td>—</td><td><a href="#tests-rendergroup-loft-L39">39</a> <a href="#tests-rendergroup-loft-L52">52</a> <a href="#tests-rendergroup-loft-L60">60</a></td></tr>
-<tr><td><code>collect_dirty_groups</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L454">454</a></td><td><a href="#tests-worked-examples-loft-L114">GRM-004</a></td><td><a href="#tests-rendergroup-loft-L72">72</a> <a href="#tests-worked-examples-loft-L129">129</a></td></tr>
+<tr><td><code>CellRef</code> <span class="search-kind">struct</span></td><td><a href="#src-gridmesh-loft-L23">23</a></td><td>—</td><td><a href="#src-gridmesh-loft-L36">36</a> <a href="#src-gridmesh-loft-L37">37</a> <a href="#src-gridmesh-loft-L39">39</a> <a href="#src-gridmesh-loft-L77">77</a> <a href="#src-gridmesh-loft-L84">84</a> <a href="#src-gridmesh-loft-L203">203</a> … (7 total)</td></tr>
+<tr><td><code>enc_coord</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L27">27</a></td><td>—</td><td><a href="#src-gridmesh-loft-L39">39</a> <a href="#src-gridmesh-loft-L78">78</a> <a href="#src-gridmesh-loft-L185">185</a> <a href="#src-gridmesh-loft-L253">253</a> <a href="#src-gridmesh-loft-L265">265</a> <a href="#src-gridmesh-loft-L296">296</a> … (11 total)</td></tr>
+<tr><td><code>build_index</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L36">36</a></td><td>—</td><td><a href="#src-gridmesh-loft-L221">221</a></td></tr>
+<tr><td><code>axial_dq</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L46">46</a></td><td>—</td><td><a href="#src-gridmesh-loft-L62">62</a></td></tr>
+<tr><td><code>axial_dr</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L52">52</a></td><td>—</td><td><a href="#src-gridmesh-loft-L63">63</a> <a href="#src-gridmesh-loft-L70">70</a></td></tr>
+<tr><td><code>step_x</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L60">60</a></td><td><a href="#tests-worked-examples-loft-L138">GRM-005</a></td><td><a href="#src-gridmesh-loft-L87">87</a> <a href="#src-gridmesh-loft-L359">359</a> <a href="#tests-worked-examples-loft-L151">151</a></td></tr>
+<tr><td><code>step_y</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L69">69</a></td><td>—</td><td><a href="#src-gridmesh-loft-L87">87</a> <a href="#src-gridmesh-loft-L359">359</a> <a href="#tests-worked-examples-loft-L152">152</a></td></tr>
+<tr><td><code>idx_at</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L77">77</a></td><td><a href="#tests-worked-examples-loft-L138">GRM-005</a></td><td><a href="#src-gridmesh-loft-L87">87</a> <a href="#src-gridmesh-loft-L359">359</a> <a href="#tests-chunkfield-loft-L30">30</a> <a href="#tests-chunkfield-loft-L31">31</a> <a href="#tests-chunkfield-loft-L32">32</a> <a href="#tests-chunkfield-loft-L75">75</a> … (19 total)</td></tr>
+<tr><td><code>nbr_count_idx</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L84">84</a></td><td>—</td><td><a href="#tests-worked-examples-loft-L159">159</a> <a href="#tests-worked-examples-loft-L160">160</a></td></tr>
+<tr><td><code>SegMesh</code> <span class="search-kind">struct</span></td><td><a href="#src-gridmesh-loft-L102">102</a></td><td>—</td><td><a href="#src-gridmesh-loft-L113">113</a> <a href="#src-gridmesh-loft-L114">114</a> <a href="#src-gridmesh-loft-L120">120</a> <a href="#src-gridmesh-loft-L132">132</a> <a href="#src-gridmesh-loft-L138">138</a></td></tr>
+<tr><td><code>seg_mesh_new</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L113">113</a></td><td>—</td><td><a href="#tests-segmesh-loft-L14">14</a> <a href="#tests-segmesh-loft-L26">26</a> <a href="#tests-segmesh-loft-L41">41</a> <a href="#tests-segmesh-loft-L65">65</a></td></tr>
+<tr><td><code>emit_segment</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L120">120</a></td><td>—</td><td><a href="#tests-segmesh-loft-L27">27</a> <a href="#tests-segmesh-loft-L44">44</a> <a href="#tests-segmesh-loft-L66">66</a></td></tr>
+<tr><td><code>seg_len</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L132">132</a></td><td>—</td><td><a href="#tests-segmesh-loft-L15">15</a> <a href="#tests-segmesh-loft-L28">28</a> <a href="#tests-segmesh-loft-L47">47</a></td></tr>
+<tr><td><code>seg_mesh_append</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L138">138</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>ChunkKey</code> <span class="search-kind">struct</span></td><td><a href="#src-gridmesh-loft-L162">162</a></td><td>—</td><td><a href="#src-gridmesh-loft-L181">181</a> <a href="#src-gridmesh-loft-L185">185</a> <a href="#src-gridmesh-loft-L206">206</a> <a href="#src-gridmesh-loft-L253">253</a> <a href="#src-gridmesh-loft-L336">336</a> <a href="#src-gridmesh-loft-L381">381</a> … (7 total)</td></tr>
+<tr><td><code>chunk_of</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L181">181</a></td><td>—</td><td><a href="#src-gridmesh-loft-L227">227</a> <a href="#src-gridmesh-loft-L266">266</a> <a href="#src-gridmesh-loft-L300">300</a> <a href="#src-gridmesh-loft-L322">322</a> <a href="#src-gridmesh-loft-L361">361</a> <a href="#tests-chunkfield-loft-L14">14</a> … (12 total)</td></tr>
+<tr><td><code>ChunkField</code> <span class="search-kind">struct</span></td><td><a href="#src-gridmesh-loft-L199">199</a></td><td>—</td><td><a href="#src-gridmesh-loft-L218">218</a> <a href="#src-gridmesh-loft-L219">219</a> <a href="#src-gridmesh-loft-L241">241</a> <a href="#src-gridmesh-loft-L262">262</a> <a href="#src-gridmesh-loft-L279">279</a> <a href="#src-gridmesh-loft-L295">295</a> … (16 total)</td></tr>
+<tr><td><code>field_new</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L217">217</a></td><td>—</td><td><a href="#tests-chunkfield-loft-L27">27</a> <a href="#tests-chunkfield-loft-L41">41</a> <a href="#tests-chunkfield-loft-L56">56</a> <a href="#tests-chunkfield-loft-L70">70</a> <a href="#tests-chunkfield-loft-L93">93</a> <a href="#tests-chunkfield-loft-L116">116</a> … (14 total)</td></tr>
+<tr><td><code>field_add_cell</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L262">262</a></td><td>—</td><td><a href="#src-gridmesh-loft-L307">307</a> <a href="#tests-chunkfield-loft-L72">72</a> <a href="#tests-chunkfield-loft-L119">119</a> <a href="#tests-worked-examples-loft-L44">44</a> <a href="#tests-worked-examples-loft-L110">110</a></td></tr>
+<tr><td><code>field_mark_dirty</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L279">279</a></td><td>—</td><td><a href="#tests-chunkfield-loft-L42">42</a> <a href="#tests-chunkfield-loft-L44">44</a> <a href="#tests-chunkfield-loft-L46">46</a> <a href="#tests-chunkfield-loft-L57">57</a> <a href="#tests-chunkfield-loft-L62">62</a> <a href="#tests-chunkinput-loft-L66">66</a> … (8 total)</td></tr>
+<tr><td><code>field_remove_cell</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L295">295</a></td><td><a href="#tests-worked-examples-loft-L90">GRM-003</a></td><td><a href="#tests-chunkfield-loft-L95">95</a> <a href="#tests-chunkfield-loft-L108">108</a> <a href="#tests-chunkfield-loft-L117">117</a> <a href="#tests-worked-examples-loft-L104">104</a></td></tr>
+<tr><td><code>clear_dirty</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L313">313</a></td><td><a href="#tests-worked-examples-loft-L30">GRM-001</a></td><td><a href="#tests-chunkfield-loft-L59">59</a> <a href="#tests-chunkfield-loft-L71">71</a> <a href="#tests-chunkfield-loft-L94">94</a> <a href="#tests-chunkinput-loft-L74">74</a> <a href="#tests-worked-examples-loft-L57">57</a></td></tr>
+<tr><td><code>dirty_count</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L318">318</a></td><td>—</td><td><a href="#tests-chunkfield-loft-L33">33</a> <a href="#tests-chunkfield-loft-L43">43</a> <a href="#tests-chunkfield-loft-L45">45</a> <a href="#tests-chunkfield-loft-L47">47</a> <a href="#tests-chunkfield-loft-L58">58</a> <a href="#tests-chunkfield-loft-L60">60</a> … (13 total)</td></tr>
+<tr><td><code>chunk_is_dirty</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L321">321</a></td><td>—</td><td><a href="#tests-chunkfield-loft-L48">48</a> <a href="#tests-chunkfield-loft-L49">49</a> <a href="#tests-chunkfield-loft-L61">61</a> <a href="#tests-worked-examples-loft-L46">46</a> <a href="#tests-worked-examples-loft-L127">127</a></td></tr>
+<tr><td><code>ChunkInput</code> <span class="search-kind">struct</span></td><td><a href="#src-gridmesh-loft-L335">335</a></td><td>—</td><td><a href="#src-gridmesh-loft-L377">377</a> <a href="#src-gridmesh-loft-L378">378</a> <a href="#src-gridmesh-loft-L381">381</a> <a href="#src-gridmesh-loft-L393">393</a> <a href="#src-gridmesh-loft-L394">394</a> <a href="#src-gridmesh-loft-L399">399</a> … (7 total)</td></tr>
+<tr><td><code>all_inputs</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L377">377</a></td><td><a href="#tests-worked-examples-loft-L62">GRM-002</a></td><td><a href="#tests-chunkinput-loft-L24">24</a> <a href="#tests-chunkinput-loft-L38">38</a> <a href="#tests-chunkinput-loft-L57">57</a> <a href="#tests-worked-examples-loft-L72">72</a></td></tr>
+<tr><td><code>collect_dirty_inputs</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L393">393</a></td><td><a href="#tests-worked-examples-loft-L30">GRM-001</a></td><td><a href="#tests-chunkinput-loft-L67">67</a> <a href="#tests-chunkinput-loft-L75">75</a> <a href="#tests-worked-examples-loft-L49">49</a> <a href="#tests-worked-examples-loft-L59">59</a></td></tr>
+<tr><td><code>GroupKey</code> <span class="search-kind">struct</span></td><td><a href="#src-gridmesh-loft-L416">416</a></td><td>—</td><td><a href="#src-gridmesh-loft-L420">420</a> <a href="#src-gridmesh-loft-L427">427</a> <a href="#src-gridmesh-loft-L430">430</a> <a href="#src-gridmesh-loft-L445">445</a> <a href="#src-gridmesh-loft-L462">462</a></td></tr>
+<tr><td><code>GroupInput</code> <span class="search-kind">struct</span></td><td><a href="#src-gridmesh-loft-L420">420</a></td><td>—</td><td><a href="#src-gridmesh-loft-L435">435</a> <a href="#src-gridmesh-loft-L443">443</a> <a href="#src-gridmesh-loft-L445">445</a> <a href="#src-gridmesh-loft-L461">461</a> <a href="#src-gridmesh-loft-L466">466</a> <a href="#src-gridmesh-loft-L477">477</a></td></tr>
+<tr><td><code>group_of</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L427">427</a></td><td>—</td><td><a href="#src-gridmesh-loft-L438">438</a> <a href="#src-gridmesh-loft-L464">464</a> <a href="#tests-rendergroup-loft-L29">29</a> <a href="#tests-rendergroup-loft-L30">30</a> <a href="#tests-rendergroup-loft-L31">31</a> <a href="#tests-rendergroup-loft-L32">32</a> … (7 total)</td></tr>
+<tr><td><code>all_groups</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L435">435</a></td><td>—</td><td><a href="#tests-rendergroup-loft-L39">39</a> <a href="#tests-rendergroup-loft-L52">52</a> <a href="#tests-rendergroup-loft-L60">60</a></td></tr>
+<tr><td><code>collect_dirty_groups</code> <span class="search-kind">fn</span></td><td><a href="#src-gridmesh-loft-L461">461</a></td><td><a href="#tests-worked-examples-loft-L114">GRM-004</a></td><td><a href="#tests-rendergroup-loft-L72">72</a> <a href="#tests-worked-examples-loft-L129">129</a></td></tr>
 </table>
 <h2 id="src-gridmesh-loft">src/gridmesh.loft</h2>
 <pre class="src"><code><span id="src-gridmesh-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -112,430 +112,437 @@
 <span id="src-gridmesh-loft-L47">  <span class="kw">if</span> d == <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">1</span>; } <span class="kw">if</span> d == <span class="nm">1</span> { <span class="kw">return</span> <span class="nm">0</span>; } <span class="kw">if</span> d == <span class="nm">2</span> { <span class="kw">return</span> <span class="nm">0</span> - <span class="nm">1</span>; }</span>
 <span id="src-gridmesh-loft-L48">  <span class="kw">if</span> d == <span class="nm">3</span> { <span class="kw">return</span> <span class="nm">0</span> - <span class="nm">1</span>; } <span class="kw">if</span> d == <span class="nm">4</span> { <span class="kw">return</span> <span class="nm">0</span>; } <span class="nm">1</span></span>
 <span id="src-gridmesh-loft-L49">}</span>
-<span id="src-gridmesh-loft-L50"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">axial_dr</span>(d: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-gridmesh-loft-L51">  <span class="kw">if</span> d == <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0</span>; } <span class="kw">if</span> d == <span class="nm">1</span> { <span class="kw">return</span> <span class="nm">1</span>; } <span class="kw">if</span> d == <span class="nm">2</span> { <span class="kw">return</span> <span class="nm">1</span>; }</span>
-<span id="src-gridmesh-loft-L52">  <span class="kw">if</span> d == <span class="nm">3</span> { <span class="kw">return</span> <span class="nm">0</span>; } <span class="kw">if</span> d == <span class="nm">4</span> { <span class="kw">return</span> <span class="nm">0</span> - <span class="nm">1</span>; } <span class="nm">0</span> - <span class="nm">1</span></span>
-<span id="src-gridmesh-loft-L53">}</span>
-<span id="src-gridmesh-loft-L54"></span>
-<span id="src-gridmesh-loft-L55"><span class="cm">// Offset coord `k` steps from (x, y) along hex axis `d`.</span></span>
-<span id="src-gridmesh-loft-L56"><span class="cm">// Example: @GRM-005 — step_x/step_y are a PAIR on the same (x, y); row parity is</span></span>
-<span id="src-gridmesh-loft-L57"><span class="cm">// why step_x needs the y argument.</span></span>
-<span id="src-gridmesh-loft-L58"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">step_x</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, d: <span class="ty"><a href="stdlib-types.html">integer</a></span>, k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-gridmesh-loft-L59">  par = y - (y / <span class="nm">2</span>) * <span class="nm">2</span>; <span class="kw">if</span> par &lt; <span class="nm">0</span> { par = par + <span class="nm">2</span>; }</span>
-<span id="src-gridmesh-loft-L60">  q2 = (x - (y - par) / <span class="nm">2</span>) + k * <span class="fn-call">axial_dq</span>(d);</span>
-<span id="src-gridmesh-loft-L61">  r2 = y + k * <span class="fn-call">axial_dr</span>(d);</span>
-<span id="src-gridmesh-loft-L62">  p2 = r2 - (r2 / <span class="nm">2</span>) * <span class="nm">2</span>; <span class="kw">if</span> p2 &lt; <span class="nm">0</span> { p2 = p2 + <span class="nm">2</span>; }</span>
-<span id="src-gridmesh-loft-L63">  q2 + (r2 - p2) / <span class="nm">2</span></span>
-<span id="src-gridmesh-loft-L64">}</span>
-<span id="src-gridmesh-loft-L65"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">step_y</span>(_x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, d: <span class="ty"><a href="stdlib-types.html">integer</a></span>, k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-gridmesh-loft-L66">  y + k * <span class="fn-call">axial_dr</span>(d)</span>
-<span id="src-gridmesh-loft-L67">}</span>
-<span id="src-gridmesh-loft-L68"></span>
-<span id="src-gridmesh-loft-L69"><span class="cm">// snap index of the cell at (x, y), or -1 if none.  (`cidx` not `index`</span></span>
-<span id="src-gridmesh-loft-L70"><span class="cm">// — `index` is a reserved keyed-collection-type keyword in loft.)</span></span>
-<span id="src-gridmesh-loft-L71"><span class="cm">// Example: @GRM-005 — a miss is the -1 sentinel, so guard with `&gt;= 0`, not a</span></span>
-<span id="src-gridmesh-loft-L72"><span class="cm">// null test.</span></span>
-<span id="src-gridmesh-loft-L73"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">idx_at</span>(cidx: <span class="ty">hash</span>&lt;<span class="en">CellRef</span>[ck]&gt;, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-gridmesh-loft-L74">  r = cidx[<span class="fn-call">enc_coord</span>(x, y)];</span>
-<span id="src-gridmesh-loft-L75">  <span class="kw">if</span> r == <span class="kw">null</span> { <span class="kw">return</span> <span class="nm">0</span> - <span class="nm">1</span>; }</span>
-<span id="src-gridmesh-loft-L76">  r.ix</span>
-<span id="src-gridmesh-loft-L77">}</span>
-<span id="src-gridmesh-loft-L78"></span>
-<span id="src-gridmesh-loft-L79"><span class="cm">// Index-backed filled-neighbour count (distance 1) — the 6 axis-1 cells.</span></span>
-<span id="src-gridmesh-loft-L80"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">nbr_count_idx</span>(cidx: <span class="ty">hash</span>&lt;<span class="en">CellRef</span>[ck]&gt;, cx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cy: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-gridmesh-loft-L81">  c = <span class="nm">0</span>;</span>
-<span id="src-gridmesh-loft-L82">  <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
-<span id="src-gridmesh-loft-L83">    <span class="kw">if</span> <span class="fn-call">idx_at</span>(cidx, <span class="fn-call">step_x</span>(cx, cy, d, <span class="nm">1</span>), <span class="fn-call">step_y</span>(cx, cy, d, <span class="nm">1</span>)) &gt;= <span class="nm">0</span> { c = c + <span class="nm">1</span>; }</span>
-<span id="src-gridmesh-loft-L84">  }</span>
-<span id="src-gridmesh-loft-L85">  c</span>
-<span id="src-gridmesh-loft-L86">}</span>
-<span id="src-gridmesh-loft-L87"></span>
-<span id="src-gridmesh-loft-L88"><span class="cm">// ── B1: SegMesh accumulator ──────────────────────────────────────────</span></span>
-<span id="src-gridmesh-loft-L89"><span class="cm">//</span></span>
-<span id="src-gridmesh-loft-L90"><span class="cm">// Struct-of-arrays line-segment mesh for segment/ribbon consumers (the</span></span>
-<span id="src-gridmesh-loft-L91"><span class="cm">// crystal rule).  Each segment is a 3D line (x0,y0,z0)→(x1,y1,z1) with a</span></span>
-<span id="src-gridmesh-loft-L92"><span class="cm">// kind, a colour, and the OWNING cell index (`cell_ix`) — the latter lets</span></span>
-<span id="src-gridmesh-loft-L93"><span class="cm">// a consumer attribute a segment back to its cell (e.g. GPU bloom-from-</span></span>
-<span id="src-gridmesh-loft-L94"><span class="cm">// centre keyed by cell age) and lets the dirty-rebuild find-and-replace a</span></span>
-<span id="src-gridmesh-loft-L95"><span class="cm">// cell's segments.  Coordinates are `single` (f32 — the GPU VBO format,</span></span>
-<span id="src-gridmesh-loft-L96"><span class="cm">// no precision loss vs what is rendered) and kind/colour are `u8`</span></span>
-<span id="src-gridmesh-loft-L97"><span class="cm">// (M1 narrowing: ~60 % less memory than the i64/f64 prototype).</span></span>
-<span id="src-gridmesh-loft-L98"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">SegMesh</span> {</span>
-<span id="src-gridmesh-loft-L99">  kinds:   <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;,</span>
-<span id="src-gridmesh-loft-L100">  x0s:     <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, y0s: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, z0s: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;,</span>
-<span id="src-gridmesh-loft-L101">  x1s:     <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, y1s: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, z1s: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;,</span>
-<span id="src-gridmesh-loft-L102">  colors:  <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;,</span>
-<span id="src-gridmesh-loft-L103">  cell_ix: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
-<span id="src-gridmesh-loft-L104">}</span>
-<span id="src-gridmesh-loft-L105"></span>
-<span id="src-gridmesh-loft-L106"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_mesh_new</span>() -&gt; <span class="en">SegMesh</span> {</span>
-<span id="src-gridmesh-loft-L107">  <span class="en">SegMesh</span>{ kinds: [], x0s: [], y0s: [], z0s: [], x1s: [], y1s: [], z1s: [],</span>
-<span id="src-gridmesh-loft-L108">           colors: [], cell_ix: [] }</span>
-<span id="src-gridmesh-loft-L109">}</span>
-<span id="src-gridmesh-loft-L110"></span>
-<span id="src-gridmesh-loft-L111"><span class="cm">// Append one segment owned by cell `owner`.  Callers pass `float` coords</span></span>
-<span id="src-gridmesh-loft-L112"><span class="cm">// and `integer` kind/colour; they are narrowed to the storage width here.</span></span>
-<span id="src-gridmesh-loft-L113"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">emit_segment</span>(m: <span class="en">SegMesh</span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-gridmesh-loft-L114">                    x0: <span class="ty"><a href="stdlib-types.html">float</a></span>, y0: <span class="ty"><a href="stdlib-types.html">float</a></span>, z0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-gridmesh-loft-L115">                    x1: <span class="ty"><a href="stdlib-types.html">float</a></span>, y1: <span class="ty"><a href="stdlib-types.html">float</a></span>, z1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-gridmesh-loft-L116">                    color: <span class="ty"><a href="stdlib-types.html">integer</a></span>, owner: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-gridmesh-loft-L117">  m.kinds   += [(kind &amp; <span class="nm">255</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>];</span>
-<span id="src-gridmesh-loft-L118">  m.x0s += [x0 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>]; m.y0s += [y0 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>]; m.z0s += [z0 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>];</span>
-<span id="src-gridmesh-loft-L119">  m.x1s += [x1 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>]; m.y1s += [y1 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>]; m.z1s += [z1 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>];</span>
-<span id="src-gridmesh-loft-L120">  m.colors  += [(color &amp; <span class="nm">255</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>];</span>
-<span id="src-gridmesh-loft-L121">  m.cell_ix += [owner];</span>
-<span id="src-gridmesh-loft-L122">}</span>
-<span id="src-gridmesh-loft-L123"></span>
-<span id="src-gridmesh-loft-L124"><span class="cm">// Number of segments in the mesh.</span></span>
-<span id="src-gridmesh-loft-L125"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_len</span>(m: <span class="en">SegMesh</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { <span class="bi"><a href="stdlib-text.html">len</a></span>(m.kinds) }</span>
-<span id="src-gridmesh-loft-L126"></span>
-<span id="src-gridmesh-loft-L127"><span class="cm">// Append all of `src`'s segments onto `dst` (concatenate the nine parallel</span></span>
-<span id="src-gridmesh-loft-L128"><span class="cm">// arrays).  Used to assemble a render-group mesh from its chunks' CACHED</span></span>
-<span id="src-gridmesh-loft-L129"><span class="cm">// meshes and to concatenate chunk meshes into a full build — order-preserving,</span></span>
-<span id="src-gridmesh-loft-L130"><span class="cm">// so the consumer can rely on a stable per-group draw order.</span></span>
-<span id="src-gridmesh-loft-L131"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_mesh_append</span>(dst: <span class="en">SegMesh</span>, src: <span class="en">SegMesh</span>) {</span>
-<span id="src-gridmesh-loft-L132">  dst.kinds += src.kinds;</span>
-<span id="src-gridmesh-loft-L133">  dst.x0s += src.x0s; dst.y0s += src.y0s; dst.z0s += src.z0s;</span>
-<span id="src-gridmesh-loft-L134">  dst.x1s += src.x1s; dst.y1s += src.y1s; dst.z1s += src.z1s;</span>
-<span id="src-gridmesh-loft-L135">  dst.colors += src.colors;</span>
-<span id="src-gridmesh-loft-L136">  dst.cell_ix += src.cell_ix;</span>
-<span id="src-gridmesh-loft-L137">}</span>
-<span id="src-gridmesh-loft-L138"></span>
-<span id="src-gridmesh-loft-L139"><span class="cm">// ── B2: ChunkField + chunk partition + wired-in dirty index ───────────</span></span>
-<span id="src-gridmesh-loft-L140"><span class="cm">//</span></span>
-<span id="src-gridmesh-loft-L141"><span class="cm">// The FIELD tracks WHERE cells are: placement-ordered coords (index 0 =</span></span>
-<span id="src-gridmesh-loft-L142"><span class="cm">// oldest), the Phase-A spatial index, the chunk partition, and — wired in</span></span>
-<span id="src-gridmesh-loft-L143"><span class="cm">// as a first-class member — the dirty-chunk INDEX, a keyed SET deduped by</span></span>
-<span id="src-gridmesh-loft-L144"><span class="cm">// construction (`hash&lt;ChunkKey[ck]&gt;`).  It is payload- and mesh-agnostic:</span></span>
-<span id="src-gridmesh-loft-L145"><span class="cm">// the consumer keeps its own colours/heights/meshes and indexes them by</span></span>
-<span id="src-gridmesh-loft-L146"><span class="cm">// the cell indices the field hands out.  `halo_k` lives on the field so an</span></span>
-<span id="src-gridmesh-loft-L147"><span class="cm">// edit can mark the adjacent chunk(s) dirty when the edited cell is within</span></span>
-<span id="src-gridmesh-loft-L148"><span class="cm">// the halo radius of a chunk border (those chunks' meshes read it through</span></span>
-<span id="src-gridmesh-loft-L149"><span class="cm">// the halo).  The keyed-set ops it relies on all landed in plan-44:</span></span>
-<span id="src-gridmesh-loft-L150"><span class="cm">// `+=` dedup-insert (@P306), `if f.dirty[ck]` membership, `f.dirty = []`</span></span>
-<span id="src-gridmesh-loft-L151"><span class="cm">// clear (@P307 OpClearKeyed).</span></span>
-<span id="src-gridmesh-loft-L152"></span>
-<span id="src-gridmesh-loft-L153"><span class="cm">// A chunk-space coordinate.  `ck = enc_coord(cx, cy)` is its identity for</span></span>
-<span id="src-gridmesh-loft-L154"><span class="cm">// dedup in the dirty index.</span></span>
-<span id="src-gridmesh-loft-L155"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">ChunkKey</span> { ck: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cy: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</span>
-<span id="src-gridmesh-loft-L156"></span>
-<span id="src-gridmesh-loft-L157"><span class="cm">// floor(v / cs) for cs &gt; 0, correct for negative coords (truncating `/`</span></span>
-<span id="src-gridmesh-loft-L158"><span class="cm">// would map cells across the origin to the wrong chunk).  Mirrors moros's</span></span>
-<span id="src-gridmesh-loft-L159"><span class="cm">// chunk_idx_32, generalized to an arbitrary chunk size.</span></span>
-<span id="src-gridmesh-loft-L160"><span class="kw">fn</span> <span class="fn-call">chunk_div</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cs: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-gridmesh-loft-L161">  vr = (v % cs) ?? <span class="nm">0</span>;</span>
-<span id="src-gridmesh-loft-L162">  <span class="cm">// `?? 0` only to satisfy the divide-by-zero lint — `cs = 1 &lt;&lt; shift` is</span></span>
-<span id="src-gridmesh-loft-L163">  <span class="cm">// always ≥ 1, so the division never actually divides by zero.</span></span>
-<span id="src-gridmesh-loft-L164">  <span class="kw">if</span> vr &lt; <span class="nm">0</span> { (v - vr - cs) / cs ?? <span class="nm">0</span> } <span class="kw">else</span> { (v - vr) / cs ?? <span class="nm">0</span> }</span>
-<span id="src-gridmesh-loft-L165">}</span>
-<span id="src-gridmesh-loft-L166"><span class="cm">// Position of `v` within its chunk, in [0, cs).</span></span>
-<span id="src-gridmesh-loft-L167"><span class="kw">fn</span> <span class="fn-call">chunk_loc</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cs: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gridmesh-loft-L50"><span class="cm">// The r half of that same direction.  Read as a PAIR with `axial_dq` — one</span></span>
+<span id="src-gridmesh-loft-L51"><span class="cm">// direction, two components, and neither is meaningful alone.</span></span>
+<span id="src-gridmesh-loft-L52"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">axial_dr</span>(d: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gridmesh-loft-L53">  <span class="kw">if</span> d == <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0</span>; } <span class="kw">if</span> d == <span class="nm">1</span> { <span class="kw">return</span> <span class="nm">1</span>; } <span class="kw">if</span> d == <span class="nm">2</span> { <span class="kw">return</span> <span class="nm">1</span>; }</span>
+<span id="src-gridmesh-loft-L54">  <span class="kw">if</span> d == <span class="nm">3</span> { <span class="kw">return</span> <span class="nm">0</span>; } <span class="kw">if</span> d == <span class="nm">4</span> { <span class="kw">return</span> <span class="nm">0</span> - <span class="nm">1</span>; } <span class="nm">0</span> - <span class="nm">1</span></span>
+<span id="src-gridmesh-loft-L55">}</span>
+<span id="src-gridmesh-loft-L56"></span>
+<span id="src-gridmesh-loft-L57"><span class="cm">// Offset coord `k` steps from (x, y) along hex axis `d`.</span></span>
+<span id="src-gridmesh-loft-L58"><span class="cm">// Example: @GRM-005 — step_x/step_y are a PAIR on the same (x, y); row parity is</span></span>
+<span id="src-gridmesh-loft-L59"><span class="cm">// why step_x needs the y argument.</span></span>
+<span id="src-gridmesh-loft-L60"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">step_x</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, d: <span class="ty"><a href="stdlib-types.html">integer</a></span>, k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gridmesh-loft-L61">  par = y - (y / <span class="nm">2</span>) * <span class="nm">2</span>; <span class="kw">if</span> par &lt; <span class="nm">0</span> { par = par + <span class="nm">2</span>; }</span>
+<span id="src-gridmesh-loft-L62">  q2 = (x - (y - par) / <span class="nm">2</span>) + k * <span class="fn-call">axial_dq</span>(d);</span>
+<span id="src-gridmesh-loft-L63">  r2 = y + k * <span class="fn-call">axial_dr</span>(d);</span>
+<span id="src-gridmesh-loft-L64">  p2 = r2 - (r2 / <span class="nm">2</span>) * <span class="nm">2</span>; <span class="kw">if</span> p2 &lt; <span class="nm">0</span> { p2 = p2 + <span class="nm">2</span>; }</span>
+<span id="src-gridmesh-loft-L65">  q2 + (r2 - p2) / <span class="nm">2</span></span>
+<span id="src-gridmesh-loft-L66">}</span>
+<span id="src-gridmesh-loft-L67"><span class="cm">// The y half of the pair.  Row parity does not reach it — a step along an axis</span></span>
+<span id="src-gridmesh-loft-L68"><span class="cm">// moves whole rows — which is why this ignores x where `step_x` cannot.</span></span>
+<span id="src-gridmesh-loft-L69"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">step_y</span>(_x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, d: <span class="ty"><a href="stdlib-types.html">integer</a></span>, k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gridmesh-loft-L70">  y + k * <span class="fn-call">axial_dr</span>(d)</span>
+<span id="src-gridmesh-loft-L71">}</span>
+<span id="src-gridmesh-loft-L72"></span>
+<span id="src-gridmesh-loft-L73"><span class="cm">// snap index of the cell at (x, y), or -1 if none.  (`cidx` not `index`</span></span>
+<span id="src-gridmesh-loft-L74"><span class="cm">// — `index` is a reserved keyed-collection-type keyword in loft.)</span></span>
+<span id="src-gridmesh-loft-L75"><span class="cm">// Example: @GRM-005 — a miss is the -1 sentinel, so guard with `&gt;= 0`, not a</span></span>
+<span id="src-gridmesh-loft-L76"><span class="cm">// null test.</span></span>
+<span id="src-gridmesh-loft-L77"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">idx_at</span>(cidx: <span class="ty">hash</span>&lt;<span class="en">CellRef</span>[ck]&gt;, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gridmesh-loft-L78">  r = cidx[<span class="fn-call">enc_coord</span>(x, y)];</span>
+<span id="src-gridmesh-loft-L79">  <span class="kw">if</span> r == <span class="kw">null</span> { <span class="kw">return</span> <span class="nm">0</span> - <span class="nm">1</span>; }</span>
+<span id="src-gridmesh-loft-L80">  r.ix</span>
+<span id="src-gridmesh-loft-L81">}</span>
+<span id="src-gridmesh-loft-L82"></span>
+<span id="src-gridmesh-loft-L83"><span class="cm">// Index-backed filled-neighbour count (distance 1) — the 6 axis-1 cells.</span></span>
+<span id="src-gridmesh-loft-L84"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">nbr_count_idx</span>(cidx: <span class="ty">hash</span>&lt;<span class="en">CellRef</span>[ck]&gt;, cx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cy: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gridmesh-loft-L85">  c = <span class="nm">0</span>;</span>
+<span id="src-gridmesh-loft-L86">  <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-gridmesh-loft-L87">    <span class="kw">if</span> <span class="fn-call">idx_at</span>(cidx, <span class="fn-call">step_x</span>(cx, cy, d, <span class="nm">1</span>), <span class="fn-call">step_y</span>(cx, cy, d, <span class="nm">1</span>)) &gt;= <span class="nm">0</span> { c = c + <span class="nm">1</span>; }</span>
+<span id="src-gridmesh-loft-L88">  }</span>
+<span id="src-gridmesh-loft-L89">  c</span>
+<span id="src-gridmesh-loft-L90">}</span>
+<span id="src-gridmesh-loft-L91"></span>
+<span id="src-gridmesh-loft-L92"><span class="cm">// ── B1: SegMesh accumulator ──────────────────────────────────────────</span></span>
+<span id="src-gridmesh-loft-L93"><span class="cm">//</span></span>
+<span id="src-gridmesh-loft-L94"><span class="cm">// Struct-of-arrays line-segment mesh for segment/ribbon consumers (the</span></span>
+<span id="src-gridmesh-loft-L95"><span class="cm">// crystal rule).  Each segment is a 3D line (x0,y0,z0)→(x1,y1,z1) with a</span></span>
+<span id="src-gridmesh-loft-L96"><span class="cm">// kind, a colour, and the OWNING cell index (`cell_ix`) — the latter lets</span></span>
+<span id="src-gridmesh-loft-L97"><span class="cm">// a consumer attribute a segment back to its cell (e.g. GPU bloom-from-</span></span>
+<span id="src-gridmesh-loft-L98"><span class="cm">// centre keyed by cell age) and lets the dirty-rebuild find-and-replace a</span></span>
+<span id="src-gridmesh-loft-L99"><span class="cm">// cell's segments.  Coordinates are `single` (f32 — the GPU VBO format,</span></span>
+<span id="src-gridmesh-loft-L100"><span class="cm">// no precision loss vs what is rendered) and kind/colour are `u8`</span></span>
+<span id="src-gridmesh-loft-L101"><span class="cm">// (M1 narrowing: ~60 % less memory than the i64/f64 prototype).</span></span>
+<span id="src-gridmesh-loft-L102"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">SegMesh</span> {</span>
+<span id="src-gridmesh-loft-L103">  kinds:   <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;,</span>
+<span id="src-gridmesh-loft-L104">  x0s:     <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, y0s: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, z0s: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;,</span>
+<span id="src-gridmesh-loft-L105">  x1s:     <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, y1s: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, z1s: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;,</span>
+<span id="src-gridmesh-loft-L106">  colors:  <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;,</span>
+<span id="src-gridmesh-loft-L107">  cell_ix: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-gridmesh-loft-L108">}</span>
+<span id="src-gridmesh-loft-L109"></span>
+<span id="src-gridmesh-loft-L110"><span class="cm">// An empty segment mesh: the nine parallel arrays `emit_segment` appends into.</span></span>
+<span id="src-gridmesh-loft-L111"><span class="cm">// Flat and parallel rather than a vector of records, so a chunk rebuild</span></span>
+<span id="src-gridmesh-loft-L112"><span class="cm">// concatenates (`seg_mesh_append`) instead of walking a structure.</span></span>
+<span id="src-gridmesh-loft-L113"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_mesh_new</span>() -&gt; <span class="en">SegMesh</span> {</span>
+<span id="src-gridmesh-loft-L114">  <span class="en">SegMesh</span>{ kinds: [], x0s: [], y0s: [], z0s: [], x1s: [], y1s: [], z1s: [],</span>
+<span id="src-gridmesh-loft-L115">           colors: [], cell_ix: [] }</span>
+<span id="src-gridmesh-loft-L116">}</span>
+<span id="src-gridmesh-loft-L117"></span>
+<span id="src-gridmesh-loft-L118"><span class="cm">// Append one segment owned by cell `owner`.  Callers pass `float` coords</span></span>
+<span id="src-gridmesh-loft-L119"><span class="cm">// and `integer` kind/colour; they are narrowed to the storage width here.</span></span>
+<span id="src-gridmesh-loft-L120"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">emit_segment</span>(m: <span class="en">SegMesh</span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gridmesh-loft-L121">                    x0: <span class="ty"><a href="stdlib-types.html">float</a></span>, y0: <span class="ty"><a href="stdlib-types.html">float</a></span>, z0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-gridmesh-loft-L122">                    x1: <span class="ty"><a href="stdlib-types.html">float</a></span>, y1: <span class="ty"><a href="stdlib-types.html">float</a></span>, z1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-gridmesh-loft-L123">                    color: <span class="ty"><a href="stdlib-types.html">integer</a></span>, owner: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-gridmesh-loft-L124">  m.kinds   += [(kind &amp; <span class="nm">255</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>];</span>
+<span id="src-gridmesh-loft-L125">  m.x0s += [x0 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>]; m.y0s += [y0 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>]; m.z0s += [z0 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>];</span>
+<span id="src-gridmesh-loft-L126">  m.x1s += [x1 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>]; m.y1s += [y1 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>]; m.z1s += [z1 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">single</a></span>];</span>
+<span id="src-gridmesh-loft-L127">  m.colors  += [(color &amp; <span class="nm">255</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>];</span>
+<span id="src-gridmesh-loft-L128">  m.cell_ix += [owner];</span>
+<span id="src-gridmesh-loft-L129">}</span>
+<span id="src-gridmesh-loft-L130"></span>
+<span id="src-gridmesh-loft-L131"><span class="cm">// Number of segments in the mesh.</span></span>
+<span id="src-gridmesh-loft-L132"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_len</span>(m: <span class="en">SegMesh</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { <span class="bi"><a href="stdlib-text.html">len</a></span>(m.kinds) }</span>
+<span id="src-gridmesh-loft-L133"></span>
+<span id="src-gridmesh-loft-L134"><span class="cm">// Append all of `src`'s segments onto `dst` (concatenate the nine parallel</span></span>
+<span id="src-gridmesh-loft-L135"><span class="cm">// arrays).  Used to assemble a render-group mesh from its chunks' CACHED</span></span>
+<span id="src-gridmesh-loft-L136"><span class="cm">// meshes and to concatenate chunk meshes into a full build — order-preserving,</span></span>
+<span id="src-gridmesh-loft-L137"><span class="cm">// so the consumer can rely on a stable per-group draw order.</span></span>
+<span id="src-gridmesh-loft-L138"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seg_mesh_append</span>(dst: <span class="en">SegMesh</span>, src: <span class="en">SegMesh</span>) {</span>
+<span id="src-gridmesh-loft-L139">  dst.kinds += src.kinds;</span>
+<span id="src-gridmesh-loft-L140">  dst.x0s += src.x0s; dst.y0s += src.y0s; dst.z0s += src.z0s;</span>
+<span id="src-gridmesh-loft-L141">  dst.x1s += src.x1s; dst.y1s += src.y1s; dst.z1s += src.z1s;</span>
+<span id="src-gridmesh-loft-L142">  dst.colors += src.colors;</span>
+<span id="src-gridmesh-loft-L143">  dst.cell_ix += src.cell_ix;</span>
+<span id="src-gridmesh-loft-L144">}</span>
+<span id="src-gridmesh-loft-L145"></span>
+<span id="src-gridmesh-loft-L146"><span class="cm">// ── B2: ChunkField + chunk partition + wired-in dirty index ───────────</span></span>
+<span id="src-gridmesh-loft-L147"><span class="cm">//</span></span>
+<span id="src-gridmesh-loft-L148"><span class="cm">// The FIELD tracks WHERE cells are: placement-ordered coords (index 0 =</span></span>
+<span id="src-gridmesh-loft-L149"><span class="cm">// oldest), the Phase-A spatial index, the chunk partition, and — wired in</span></span>
+<span id="src-gridmesh-loft-L150"><span class="cm">// as a first-class member — the dirty-chunk INDEX, a keyed SET deduped by</span></span>
+<span id="src-gridmesh-loft-L151"><span class="cm">// construction (`hash&lt;ChunkKey[ck]&gt;`).  It is payload- and mesh-agnostic:</span></span>
+<span id="src-gridmesh-loft-L152"><span class="cm">// the consumer keeps its own colours/heights/meshes and indexes them by</span></span>
+<span id="src-gridmesh-loft-L153"><span class="cm">// the cell indices the field hands out.  `halo_k` lives on the field so an</span></span>
+<span id="src-gridmesh-loft-L154"><span class="cm">// edit can mark the adjacent chunk(s) dirty when the edited cell is within</span></span>
+<span id="src-gridmesh-loft-L155"><span class="cm">// the halo radius of a chunk border (those chunks' meshes read it through</span></span>
+<span id="src-gridmesh-loft-L156"><span class="cm">// the halo).  The keyed-set ops it relies on all landed in plan-44:</span></span>
+<span id="src-gridmesh-loft-L157"><span class="cm">// `+=` dedup-insert (@P306), `if f.dirty[ck]` membership, `f.dirty = []`</span></span>
+<span id="src-gridmesh-loft-L158"><span class="cm">// clear (@P307 OpClearKeyed).</span></span>
+<span id="src-gridmesh-loft-L159"></span>
+<span id="src-gridmesh-loft-L160"><span class="cm">// A chunk-space coordinate.  `ck = enc_coord(cx, cy)` is its identity for</span></span>
+<span id="src-gridmesh-loft-L161"><span class="cm">// dedup in the dirty index.</span></span>
+<span id="src-gridmesh-loft-L162"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">ChunkKey</span> { ck: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cy: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</span>
+<span id="src-gridmesh-loft-L163"></span>
+<span id="src-gridmesh-loft-L164"><span class="cm">// floor(v / cs) for cs &gt; 0, correct for negative coords (truncating `/`</span></span>
+<span id="src-gridmesh-loft-L165"><span class="cm">// would map cells across the origin to the wrong chunk).  Mirrors moros's</span></span>
+<span id="src-gridmesh-loft-L166"><span class="cm">// chunk_idx_32, generalized to an arbitrary chunk size.</span></span>
+<span id="src-gridmesh-loft-L167"><span class="kw">fn</span> <span class="fn-call">chunk_div</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cs: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
 <span id="src-gridmesh-loft-L168">  vr = (v % cs) ?? <span class="nm">0</span>;</span>
-<span id="src-gridmesh-loft-L169">  <span class="kw">if</span> vr &lt; <span class="nm">0</span> { vr + cs } <span class="kw">else</span> { vr }</span>
-<span id="src-gridmesh-loft-L170">}</span>
-<span id="src-gridmesh-loft-L171"></span>
-<span id="src-gridmesh-loft-L172"><span class="cm">// The chunk owning offset coord (x, y) for a field with `shift`</span></span>
-<span id="src-gridmesh-loft-L173"><span class="cm">// (chunk = 1&lt;&lt;shift cells per axis; shift 5 = the moros 32×32 chunk).</span></span>
-<span id="src-gridmesh-loft-L174"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">chunk_of</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, shift: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">ChunkKey</span> {</span>
-<span id="src-gridmesh-loft-L175">  cs = <span class="nm">1</span> &lt;&lt; shift;</span>
-<span id="src-gridmesh-loft-L176">  cx = <span class="fn-call">chunk_div</span>(x, cs);</span>
-<span id="src-gridmesh-loft-L177">  cy = <span class="fn-call">chunk_div</span>(y, cs);</span>
-<span id="src-gridmesh-loft-L178">  <span class="en">ChunkKey</span>{ck: <span class="fn-call">enc_coord</span>(cx, cy), cx: cx, cy: cy}</span>
-<span id="src-gridmesh-loft-L179">}</span>
-<span id="src-gridmesh-loft-L180"></span>
-<span id="src-gridmesh-loft-L181"><span class="cm">// A ck-keyed bucket of the cell indices a chunk owns — a wired-in member of</span></span>
-<span id="src-gridmesh-loft-L182"><span class="cm">// ChunkField, maintained incrementally by field_new / field_add_cell.</span></span>
-<span id="src-gridmesh-loft-L183"><span class="cm">// Defined before ChunkField so the `buckets` keyed field type resolves</span></span>
-<span id="src-gridmesh-loft-L184"><span class="cm">// (a forward reference leaves its known_type unset → parse OOB).</span></span>
-<span id="src-gridmesh-loft-L185"><span class="kw">struct</span> <span class="en">ChunkBucket</span> {</span>
-<span id="src-gridmesh-loft-L186">  ck:       <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-gridmesh-loft-L187">  cx:       <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-gridmesh-loft-L188">  cy:       <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-gridmesh-loft-L189">  cell_ixs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
-<span id="src-gridmesh-loft-L190">}</span>
-<span id="src-gridmesh-loft-L191"></span>
-<span id="src-gridmesh-loft-L192"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">ChunkField</span> {</span>
-<span id="src-gridmesh-loft-L193">  layout:      <span class="ty"><a href="stdlib-types.html">integer</a></span>,                <span class="cm">// HexLayout tag (Phase A: OffsetPointy = 0)</span></span>
-<span id="src-gridmesh-loft-L194">  xs:          <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,        <span class="cm">// cell coords (index 0 = oldest)</span></span>
-<span id="src-gridmesh-loft-L195">  ys:          <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
-<span id="src-gridmesh-loft-L196">  cidx:        <span class="ty">hash</span>&lt;<span class="en">CellRef</span>[ck]&gt;,      <span class="cm">// coord -&gt; cell index (Phase A)</span></span>
-<span id="src-gridmesh-loft-L197">  chunk_shift: <span class="ty"><a href="stdlib-types.html">integer</a></span>,                <span class="cm">// chunk = coord &gt;&gt; chunk_shift (5 = 32×32)</span></span>
-<span id="src-gridmesh-loft-L198">  halo_k:      <span class="ty"><a href="stdlib-types.html">integer</a></span>,                <span class="cm">// halo radius (border-dirty propagation)</span></span>
-<span id="src-gridmesh-loft-L199">  dirty:       <span class="ty">hash</span>&lt;<span class="en">ChunkKey</span>[ck]&gt;,     <span class="cm">// WIRED-IN dirty-chunk index (keyed set; dedup)</span></span>
-<span id="src-gridmesh-loft-L200">  buckets:     <span class="ty">hash</span>&lt;<span class="en">ChunkBucket</span>[ck]&gt;,</span>
-<span id="src-gridmesh-loft-L201">                                       <span class="cm">// WIRED-IN chunk -&gt; owned cell indices,</span></span>
-<span id="src-gridmesh-loft-L202">                                       <span class="cm">// maintained incrementally so dirty-chunk</span></span>
-<span id="src-gridmesh-loft-L203">                                       <span class="cm">// extraction is O(dirty), not a re-scan.</span></span>
-<span id="src-gridmesh-loft-L204">}</span>
-<span id="src-gridmesh-loft-L205"></span>
-<span id="src-gridmesh-loft-L206"><span class="cm">// Build a field from placement-ordered coords.  The dirty index starts</span></span>
-<span id="src-gridmesh-loft-L207"><span class="cm">// empty; the spatial index (cidx) and the chunk-&gt;cell partition (buckets)</span></span>
-<span id="src-gridmesh-loft-L208"><span class="cm">// are built once (O(N)) and maintained incrementally thereafter</span></span>
-<span id="src-gridmesh-loft-L209"><span class="cm">// (field_add_cell), so a later collect_dirty_inputs is O(dirty), not O(N).</span></span>
-<span id="src-gridmesh-loft-L210"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">field_new</span>(layout: <span class="ty"><a href="stdlib-types.html">integer</a></span>, xs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, ys: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
-<span id="src-gridmesh-loft-L211">                 chunk_shift: <span class="ty"><a href="stdlib-types.html">integer</a></span>, halo_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">ChunkField</span> {</span>
-<span id="src-gridmesh-loft-L212">  f = <span class="en">ChunkField</span>{</span>
-<span id="src-gridmesh-loft-L213">    layout: layout, xs: xs, ys: ys,</span>
-<span id="src-gridmesh-loft-L214">    cidx: <span class="fn-call">build_index</span>(xs, ys),</span>
-<span id="src-gridmesh-loft-L215">    chunk_shift: chunk_shift, halo_k: halo_k,</span>
-<span id="src-gridmesh-loft-L216">    dirty: [],</span>
-<span id="src-gridmesh-loft-L217">    buckets: [],</span>
-<span id="src-gridmesh-loft-L218">  };</span>
-<span id="src-gridmesh-loft-L219">  <span class="kw">for</span> fn_i <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(xs) {</span>
-<span id="src-gridmesh-loft-L220">    k = <span class="fn-call">chunk_of</span>(xs[fn_i] ?? <span class="nm">0</span>, ys[fn_i] ?? <span class="nm">0</span>, chunk_shift);</span>
-<span id="src-gridmesh-loft-L221">    <span class="kw">if</span> !f.buckets[k.ck] {</span>
-<span id="src-gridmesh-loft-L222">      f.buckets += [<span class="en">ChunkBucket</span>{ck: k.ck, cx: k.cx, cy: k.cy, cell_ixs: []}];</span>
-<span id="src-gridmesh-loft-L223">    }</span>
-<span id="src-gridmesh-loft-L224">    b = f.buckets[k.ck];</span>
-<span id="src-gridmesh-loft-L225">    b.cell_ixs += [fn_i];</span>
-<span id="src-gridmesh-loft-L226">  }</span>
-<span id="src-gridmesh-loft-L227">  f</span>
-<span id="src-gridmesh-loft-L228">}</span>
-<span id="src-gridmesh-loft-L229"></span>
-<span id="src-gridmesh-loft-L230"><span class="cm">// Insert (x, y)'s chunk into the dirty index, plus any adjacent chunk whose</span></span>
-<span id="src-gridmesh-loft-L231"><span class="cm">// mesh reads (x, y) through its halo (i.e. (x, y) is within halo_k of that</span></span>
-<span id="src-gridmesh-loft-L232"><span class="cm">// border).  `+=` dedups by key (@P306), so many edits in one chunk and the</span></span>
-<span id="src-gridmesh-loft-L233"><span class="cm">// overlapping border marks all coalesce to one entry per chunk.</span></span>
-<span id="src-gridmesh-loft-L234"><span class="kw">fn</span> <span class="fn-call">mark_borders</span>(f: <span class="en">ChunkField</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-gridmesh-loft-L235">  cs = <span class="nm">1</span> &lt;&lt; f.chunk_shift;</span>
-<span id="src-gridmesh-loft-L236">  cx = <span class="fn-call">chunk_div</span>(x, cs); cy = <span class="fn-call">chunk_div</span>(y, cs);</span>
-<span id="src-gridmesh-loft-L237">  lx = <span class="fn-call">chunk_loc</span>(x, cs); ly = <span class="fn-call">chunk_loc</span>(y, cs);</span>
-<span id="src-gridmesh-loft-L238">  k = f.halo_k;</span>
-<span id="src-gridmesh-loft-L239">  dxlo = <span class="nm">0</span>; <span class="kw">if</span> lx &lt; k { dxlo = <span class="nm">0</span> - <span class="nm">1</span>; }</span>
-<span id="src-gridmesh-loft-L240">  dxhi = <span class="nm">0</span>; <span class="kw">if</span> lx &gt;= cs - k { dxhi = <span class="nm">1</span>; }</span>
-<span id="src-gridmesh-loft-L241">  dylo = <span class="nm">0</span>; <span class="kw">if</span> ly &lt; k { dylo = <span class="nm">0</span> - <span class="nm">1</span>; }</span>
-<span id="src-gridmesh-loft-L242">  dyhi = <span class="nm">0</span>; <span class="kw">if</span> ly &gt;= cs - k { dyhi = <span class="nm">1</span>; }</span>
-<span id="src-gridmesh-loft-L243">  <span class="kw">for</span> ddx <span class="kw">in</span> dxlo..(dxhi + <span class="nm">1</span>) {</span>
-<span id="src-gridmesh-loft-L244">    <span class="kw">for</span> ddy <span class="kw">in</span> dylo..(dyhi + <span class="nm">1</span>) {</span>
-<span id="src-gridmesh-loft-L245">      ncx = cx + ddx; ncy = cy + ddy;</span>
-<span id="src-gridmesh-loft-L246">      f.dirty += [<span class="en">ChunkKey</span>{ck: <span class="fn-call">enc_coord</span>(ncx, ncy), cx: ncx, cy: ncy}];</span>
-<span id="src-gridmesh-loft-L247">    }</span>
-<span id="src-gridmesh-loft-L248">  }</span>
-<span id="src-gridmesh-loft-L249">}</span>
-<span id="src-gridmesh-loft-L250"></span>
-<span id="src-gridmesh-loft-L251"><span class="cm">// Edit — append a new cell (its index = old len(xs)), add it to its chunk's</span></span>
-<span id="src-gridmesh-loft-L252"><span class="cm">// bucket (O(1) amortised), and mark its chunk (+ halo-border neighbours)</span></span>
-<span id="src-gridmesh-loft-L253"><span class="cm">// dirty.  Keeping the bucket current here is what makes collect_dirty_inputs</span></span>
-<span id="src-gridmesh-loft-L254"><span class="cm">// O(dirty) rather than a full re-partition.</span></span>
-<span id="src-gridmesh-loft-L255"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">field_add_cell</span>(f: <span class="en">ChunkField</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-gridmesh-loft-L256">  ix = <span class="bi"><a href="stdlib-text.html">len</a></span>(f.xs);</span>
-<span id="src-gridmesh-loft-L257">  f.xs += [x]; f.ys += [y];</span>
-<span id="src-gridmesh-loft-L258">  f.cidx += [<span class="en">CellRef</span>{ck: <span class="fn-call">enc_coord</span>(x, y), ix: ix}];</span>
-<span id="src-gridmesh-loft-L259">  k = <span class="fn-call">chunk_of</span>(x, y, f.chunk_shift);</span>
-<span id="src-gridmesh-loft-L260">  <span class="kw">if</span> !f.buckets[k.ck] {</span>
-<span id="src-gridmesh-loft-L261">    f.buckets += [<span class="en">ChunkBucket</span>{ck: k.ck, cx: k.cx, cy: k.cy, cell_ixs: []}];</span>
-<span id="src-gridmesh-loft-L262">  }</span>
-<span id="src-gridmesh-loft-L263">  b = f.buckets[k.ck];</span>
-<span id="src-gridmesh-loft-L264">  b.cell_ixs += [ix];</span>
-<span id="src-gridmesh-loft-L265">  <span class="fn-call">mark_borders</span>(f, x, y);</span>
-<span id="src-gridmesh-loft-L266">}</span>
-<span id="src-gridmesh-loft-L267"></span>
-<span id="src-gridmesh-loft-L268"><span class="cm">// Edit — RECOLOUR an existing cell: mark its chunk (+ halo border) dirty</span></span>
-<span id="src-gridmesh-loft-L269"><span class="cm">// without touching the coord arrays or index (the cell stays; only its</span></span>
-<span id="src-gridmesh-loft-L270"><span class="cm">// consumer-side payload — colour/height — changed).  Erase uses</span></span>
-<span id="src-gridmesh-loft-L271"><span class="cm">// field_remove_cell instead (it must also drop the cell from the index).</span></span>
-<span id="src-gridmesh-loft-L272"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">field_mark_dirty</span>(f: <span class="en">ChunkField</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-gridmesh-loft-L273">  <span class="fn-call">mark_borders</span>(f, x, y);</span>
-<span id="src-gridmesh-loft-L274">}</span>
-<span id="src-gridmesh-loft-L275"></span>
-<span id="src-gridmesh-loft-L276"><span class="cm">// Edit — REMOVE an existing cell: drop it from the spatial index (cidx) and</span></span>
-<span id="src-gridmesh-loft-L277"><span class="cm">// its chunk bucket, then mark its chunk (+ halo border) dirty.  The MIRROR of</span></span>
-<span id="src-gridmesh-loft-L278"><span class="cm">// field_add_cell, sharing mark_borders so a removal flows through the IDENTICAL</span></span>
-<span id="src-gridmesh-loft-L279"><span class="cm">// incremental rebuild path as a paint.  The coord slot in xs/ys is deliberately</span></span>
-<span id="src-gridmesh-loft-L280"><span class="cm">// LEFT in place (not compacted): cell indices the field already handed out stay</span></span>
-<span id="src-gridmesh-loft-L281"><span class="cm">// stable, so a consumer's parallel per-cell arrays (e.g. the projector's bloom</span></span>
-<span id="src-gridmesh-loft-L282"><span class="cm">// births, indexed by cell index) are not invalidated.  The orphaned slot is</span></span>
-<span id="src-gridmesh-loft-L283"><span class="cm">// never read again — its index is in no bucket and no longer in cidx — and</span></span>
-<span id="src-gridmesh-loft-L284"><span class="cm">// re-painting the same coord allocates a FRESH index (field_add_cell appends),</span></span>
-<span id="src-gridmesh-loft-L285"><span class="cm">// so identity is never reused.</span></span>
-<span id="src-gridmesh-loft-L286"><span class="cm">// Example: @GRM-003 — the indices a consumer already holds stay valid across a</span></span>
-<span id="src-gridmesh-loft-L287"><span class="cm">// removal; a repaint is a new one.</span></span>
-<span id="src-gridmesh-loft-L288"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">field_remove_cell</span>(f: <span class="en">ChunkField</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-gridmesh-loft-L289">  cr = f.cidx[<span class="fn-call">enc_coord</span>(x, y)];</span>
-<span id="src-gridmesh-loft-L290">  <span class="kw">if</span> cr == <span class="kw">null</span> { <span class="kw">return</span>; }          <span class="cm">// not present — nothing to remove</span></span>
-<span id="src-gridmesh-loft-L291">  ix = cr.ix;</span>
-<span id="src-gridmesh-loft-L292">  f.cidx[<span class="fn-call">enc_coord</span>(x, y)] = <span class="kw">null</span>;    <span class="cm">// drop from the spatial index</span></span>
-<span id="src-gridmesh-loft-L293">  k = <span class="fn-call">chunk_of</span>(x, y, f.chunk_shift);</span>
-<span id="src-gridmesh-loft-L294">  b = f.buckets[k.ck];</span>
-<span id="src-gridmesh-loft-L295">  <span class="kw">if</span> b != <span class="kw">null</span> {</span>
-<span id="src-gridmesh-loft-L296">    keep: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-gridmesh-loft-L297">    <span class="kw">for</span> frc_cix <span class="kw">in</span> b.cell_ixs { <span class="kw">if</span> frc_cix != ix { keep += [frc_cix]; } }</span>
-<span id="src-gridmesh-loft-L298">    b.cell_ixs = keep;</span>
-<span id="src-gridmesh-loft-L299">  }</span>
-<span id="src-gridmesh-loft-L300">  <span class="fn-call">mark_borders</span>(f, x, y);             <span class="cm">// SAME dirty-marking as field_add_cell</span></span>
-<span id="src-gridmesh-loft-L301">}</span>
-<span id="src-gridmesh-loft-L302"></span>
-<span id="src-gridmesh-loft-L303"><span class="cm">// Clear the dirty index after a rebuild (@P307 OpClearKeyed: in-place free).</span></span>
-<span id="src-gridmesh-loft-L304"><span class="cm">// Example: @GRM-001 — where `clear_dirty` sits in the edit → collect → rebuild</span></span>
-<span id="src-gridmesh-loft-L305"><span class="cm">// cycle, and what skipping it costs.</span></span>
-<span id="src-gridmesh-loft-L306"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">clear_dirty</span>(f: <span class="en">ChunkField</span>) {</span>
-<span id="src-gridmesh-loft-L307">  f.dirty = [];</span>
+<span id="src-gridmesh-loft-L169">  <span class="cm">// `?? 0` only to satisfy the divide-by-zero lint — `cs = 1 &lt;&lt; shift` is</span></span>
+<span id="src-gridmesh-loft-L170">  <span class="cm">// always ≥ 1, so the division never actually divides by zero.</span></span>
+<span id="src-gridmesh-loft-L171">  <span class="kw">if</span> vr &lt; <span class="nm">0</span> { (v - vr - cs) / cs ?? <span class="nm">0</span> } <span class="kw">else</span> { (v - vr) / cs ?? <span class="nm">0</span> }</span>
+<span id="src-gridmesh-loft-L172">}</span>
+<span id="src-gridmesh-loft-L173"><span class="cm">// Position of `v` within its chunk, in [0, cs).</span></span>
+<span id="src-gridmesh-loft-L174"><span class="kw">fn</span> <span class="fn-call">chunk_loc</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cs: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gridmesh-loft-L175">  vr = (v % cs) ?? <span class="nm">0</span>;</span>
+<span id="src-gridmesh-loft-L176">  <span class="kw">if</span> vr &lt; <span class="nm">0</span> { vr + cs } <span class="kw">else</span> { vr }</span>
+<span id="src-gridmesh-loft-L177">}</span>
+<span id="src-gridmesh-loft-L178"></span>
+<span id="src-gridmesh-loft-L179"><span class="cm">// The chunk owning offset coord (x, y) for a field with `shift`</span></span>
+<span id="src-gridmesh-loft-L180"><span class="cm">// (chunk = 1&lt;&lt;shift cells per axis; shift 5 = the moros 32×32 chunk).</span></span>
+<span id="src-gridmesh-loft-L181"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">chunk_of</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, shift: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">ChunkKey</span> {</span>
+<span id="src-gridmesh-loft-L182">  cs = <span class="nm">1</span> &lt;&lt; shift;</span>
+<span id="src-gridmesh-loft-L183">  cx = <span class="fn-call">chunk_div</span>(x, cs);</span>
+<span id="src-gridmesh-loft-L184">  cy = <span class="fn-call">chunk_div</span>(y, cs);</span>
+<span id="src-gridmesh-loft-L185">  <span class="en">ChunkKey</span>{ck: <span class="fn-call">enc_coord</span>(cx, cy), cx: cx, cy: cy}</span>
+<span id="src-gridmesh-loft-L186">}</span>
+<span id="src-gridmesh-loft-L187"></span>
+<span id="src-gridmesh-loft-L188"><span class="cm">// A ck-keyed bucket of the cell indices a chunk owns — a wired-in member of</span></span>
+<span id="src-gridmesh-loft-L189"><span class="cm">// ChunkField, maintained incrementally by field_new / field_add_cell.</span></span>
+<span id="src-gridmesh-loft-L190"><span class="cm">// Defined before ChunkField so the `buckets` keyed field type resolves</span></span>
+<span id="src-gridmesh-loft-L191"><span class="cm">// (a forward reference leaves its known_type unset → parse OOB).</span></span>
+<span id="src-gridmesh-loft-L192"><span class="kw">struct</span> <span class="en">ChunkBucket</span> {</span>
+<span id="src-gridmesh-loft-L193">  ck:       <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gridmesh-loft-L194">  cx:       <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gridmesh-loft-L195">  cy:       <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gridmesh-loft-L196">  cell_ixs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-gridmesh-loft-L197">}</span>
+<span id="src-gridmesh-loft-L198"></span>
+<span id="src-gridmesh-loft-L199"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">ChunkField</span> {</span>
+<span id="src-gridmesh-loft-L200">  layout:      <span class="ty"><a href="stdlib-types.html">integer</a></span>,                <span class="cm">// HexLayout tag (Phase A: OffsetPointy = 0)</span></span>
+<span id="src-gridmesh-loft-L201">  xs:          <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,        <span class="cm">// cell coords (index 0 = oldest)</span></span>
+<span id="src-gridmesh-loft-L202">  ys:          <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-gridmesh-loft-L203">  cidx:        <span class="ty">hash</span>&lt;<span class="en">CellRef</span>[ck]&gt;,      <span class="cm">// coord -&gt; cell index (Phase A)</span></span>
+<span id="src-gridmesh-loft-L204">  chunk_shift: <span class="ty"><a href="stdlib-types.html">integer</a></span>,                <span class="cm">// chunk = coord &gt;&gt; chunk_shift (5 = 32×32)</span></span>
+<span id="src-gridmesh-loft-L205">  halo_k:      <span class="ty"><a href="stdlib-types.html">integer</a></span>,                <span class="cm">// halo radius (border-dirty propagation)</span></span>
+<span id="src-gridmesh-loft-L206">  dirty:       <span class="ty">hash</span>&lt;<span class="en">ChunkKey</span>[ck]&gt;,     <span class="cm">// WIRED-IN dirty-chunk index (keyed set; dedup)</span></span>
+<span id="src-gridmesh-loft-L207">  buckets:     <span class="ty">hash</span>&lt;<span class="en">ChunkBucket</span>[ck]&gt;,</span>
+<span id="src-gridmesh-loft-L208">                                       <span class="cm">// WIRED-IN chunk -&gt; owned cell indices,</span></span>
+<span id="src-gridmesh-loft-L209">                                       <span class="cm">// maintained incrementally so dirty-chunk</span></span>
+<span id="src-gridmesh-loft-L210">                                       <span class="cm">// extraction is O(dirty), not a re-scan.</span></span>
+<span id="src-gridmesh-loft-L211">}</span>
+<span id="src-gridmesh-loft-L212"></span>
+<span id="src-gridmesh-loft-L213"><span class="cm">// Build a field from placement-ordered coords.  The dirty index starts</span></span>
+<span id="src-gridmesh-loft-L214"><span class="cm">// empty; the spatial index (cidx) and the chunk-&gt;cell partition (buckets)</span></span>
+<span id="src-gridmesh-loft-L215"><span class="cm">// are built once (O(N)) and maintained incrementally thereafter</span></span>
+<span id="src-gridmesh-loft-L216"><span class="cm">// (field_add_cell), so a later collect_dirty_inputs is O(dirty), not O(N).</span></span>
+<span id="src-gridmesh-loft-L217"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">field_new</span>(layout: <span class="ty"><a href="stdlib-types.html">integer</a></span>, xs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, ys: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-gridmesh-loft-L218">                 chunk_shift: <span class="ty"><a href="stdlib-types.html">integer</a></span>, halo_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">ChunkField</span> {</span>
+<span id="src-gridmesh-loft-L219">  f = <span class="en">ChunkField</span>{</span>
+<span id="src-gridmesh-loft-L220">    layout: layout, xs: xs, ys: ys,</span>
+<span id="src-gridmesh-loft-L221">    cidx: <span class="fn-call">build_index</span>(xs, ys),</span>
+<span id="src-gridmesh-loft-L222">    chunk_shift: chunk_shift, halo_k: halo_k,</span>
+<span id="src-gridmesh-loft-L223">    dirty: [],</span>
+<span id="src-gridmesh-loft-L224">    buckets: [],</span>
+<span id="src-gridmesh-loft-L225">  };</span>
+<span id="src-gridmesh-loft-L226">  <span class="kw">for</span> fn_i <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(xs) {</span>
+<span id="src-gridmesh-loft-L227">    k = <span class="fn-call">chunk_of</span>(xs[fn_i] ?? <span class="nm">0</span>, ys[fn_i] ?? <span class="nm">0</span>, chunk_shift);</span>
+<span id="src-gridmesh-loft-L228">    <span class="kw">if</span> !f.buckets[k.ck] {</span>
+<span id="src-gridmesh-loft-L229">      f.buckets += [<span class="en">ChunkBucket</span>{ck: k.ck, cx: k.cx, cy: k.cy, cell_ixs: []}];</span>
+<span id="src-gridmesh-loft-L230">    }</span>
+<span id="src-gridmesh-loft-L231">    b = f.buckets[k.ck];</span>
+<span id="src-gridmesh-loft-L232">    b.cell_ixs += [fn_i];</span>
+<span id="src-gridmesh-loft-L233">  }</span>
+<span id="src-gridmesh-loft-L234">  f</span>
+<span id="src-gridmesh-loft-L235">}</span>
+<span id="src-gridmesh-loft-L236"></span>
+<span id="src-gridmesh-loft-L237"><span class="cm">// Insert (x, y)'s chunk into the dirty index, plus any adjacent chunk whose</span></span>
+<span id="src-gridmesh-loft-L238"><span class="cm">// mesh reads (x, y) through its halo (i.e. (x, y) is within halo_k of that</span></span>
+<span id="src-gridmesh-loft-L239"><span class="cm">// border).  `+=` dedups by key (@P306), so many edits in one chunk and the</span></span>
+<span id="src-gridmesh-loft-L240"><span class="cm">// overlapping border marks all coalesce to one entry per chunk.</span></span>
+<span id="src-gridmesh-loft-L241"><span class="kw">fn</span> <span class="fn-call">mark_borders</span>(f: <span class="en">ChunkField</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-gridmesh-loft-L242">  cs = <span class="nm">1</span> &lt;&lt; f.chunk_shift;</span>
+<span id="src-gridmesh-loft-L243">  cx = <span class="fn-call">chunk_div</span>(x, cs); cy = <span class="fn-call">chunk_div</span>(y, cs);</span>
+<span id="src-gridmesh-loft-L244">  lx = <span class="fn-call">chunk_loc</span>(x, cs); ly = <span class="fn-call">chunk_loc</span>(y, cs);</span>
+<span id="src-gridmesh-loft-L245">  k = f.halo_k;</span>
+<span id="src-gridmesh-loft-L246">  dxlo = <span class="nm">0</span>; <span class="kw">if</span> lx &lt; k { dxlo = <span class="nm">0</span> - <span class="nm">1</span>; }</span>
+<span id="src-gridmesh-loft-L247">  dxhi = <span class="nm">0</span>; <span class="kw">if</span> lx &gt;= cs - k { dxhi = <span class="nm">1</span>; }</span>
+<span id="src-gridmesh-loft-L248">  dylo = <span class="nm">0</span>; <span class="kw">if</span> ly &lt; k { dylo = <span class="nm">0</span> - <span class="nm">1</span>; }</span>
+<span id="src-gridmesh-loft-L249">  dyhi = <span class="nm">0</span>; <span class="kw">if</span> ly &gt;= cs - k { dyhi = <span class="nm">1</span>; }</span>
+<span id="src-gridmesh-loft-L250">  <span class="kw">for</span> ddx <span class="kw">in</span> dxlo..(dxhi + <span class="nm">1</span>) {</span>
+<span id="src-gridmesh-loft-L251">    <span class="kw">for</span> ddy <span class="kw">in</span> dylo..(dyhi + <span class="nm">1</span>) {</span>
+<span id="src-gridmesh-loft-L252">      ncx = cx + ddx; ncy = cy + ddy;</span>
+<span id="src-gridmesh-loft-L253">      f.dirty += [<span class="en">ChunkKey</span>{ck: <span class="fn-call">enc_coord</span>(ncx, ncy), cx: ncx, cy: ncy}];</span>
+<span id="src-gridmesh-loft-L254">    }</span>
+<span id="src-gridmesh-loft-L255">  }</span>
+<span id="src-gridmesh-loft-L256">}</span>
+<span id="src-gridmesh-loft-L257"></span>
+<span id="src-gridmesh-loft-L258"><span class="cm">// Edit — append a new cell (its index = old len(xs)), add it to its chunk's</span></span>
+<span id="src-gridmesh-loft-L259"><span class="cm">// bucket (O(1) amortised), and mark its chunk (+ halo-border neighbours)</span></span>
+<span id="src-gridmesh-loft-L260"><span class="cm">// dirty.  Keeping the bucket current here is what makes collect_dirty_inputs</span></span>
+<span id="src-gridmesh-loft-L261"><span class="cm">// O(dirty) rather than a full re-partition.</span></span>
+<span id="src-gridmesh-loft-L262"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">field_add_cell</span>(f: <span class="en">ChunkField</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-gridmesh-loft-L263">  ix = <span class="bi"><a href="stdlib-text.html">len</a></span>(f.xs);</span>
+<span id="src-gridmesh-loft-L264">  f.xs += [x]; f.ys += [y];</span>
+<span id="src-gridmesh-loft-L265">  f.cidx += [<span class="en">CellRef</span>{ck: <span class="fn-call">enc_coord</span>(x, y), ix: ix}];</span>
+<span id="src-gridmesh-loft-L266">  k = <span class="fn-call">chunk_of</span>(x, y, f.chunk_shift);</span>
+<span id="src-gridmesh-loft-L267">  <span class="kw">if</span> !f.buckets[k.ck] {</span>
+<span id="src-gridmesh-loft-L268">    f.buckets += [<span class="en">ChunkBucket</span>{ck: k.ck, cx: k.cx, cy: k.cy, cell_ixs: []}];</span>
+<span id="src-gridmesh-loft-L269">  }</span>
+<span id="src-gridmesh-loft-L270">  b = f.buckets[k.ck];</span>
+<span id="src-gridmesh-loft-L271">  b.cell_ixs += [ix];</span>
+<span id="src-gridmesh-loft-L272">  <span class="fn-call">mark_borders</span>(f, x, y);</span>
+<span id="src-gridmesh-loft-L273">}</span>
+<span id="src-gridmesh-loft-L274"></span>
+<span id="src-gridmesh-loft-L275"><span class="cm">// Edit — RECOLOUR an existing cell: mark its chunk (+ halo border) dirty</span></span>
+<span id="src-gridmesh-loft-L276"><span class="cm">// without touching the coord arrays or index (the cell stays; only its</span></span>
+<span id="src-gridmesh-loft-L277"><span class="cm">// consumer-side payload — colour/height — changed).  Erase uses</span></span>
+<span id="src-gridmesh-loft-L278"><span class="cm">// field_remove_cell instead (it must also drop the cell from the index).</span></span>
+<span id="src-gridmesh-loft-L279"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">field_mark_dirty</span>(f: <span class="en">ChunkField</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-gridmesh-loft-L280">  <span class="fn-call">mark_borders</span>(f, x, y);</span>
+<span id="src-gridmesh-loft-L281">}</span>
+<span id="src-gridmesh-loft-L282"></span>
+<span id="src-gridmesh-loft-L283"><span class="cm">// Edit — REMOVE an existing cell: drop it from the spatial index (cidx) and</span></span>
+<span id="src-gridmesh-loft-L284"><span class="cm">// its chunk bucket, then mark its chunk (+ halo border) dirty.  The MIRROR of</span></span>
+<span id="src-gridmesh-loft-L285"><span class="cm">// field_add_cell, sharing mark_borders so a removal flows through the IDENTICAL</span></span>
+<span id="src-gridmesh-loft-L286"><span class="cm">// incremental rebuild path as a paint.  The coord slot in xs/ys is deliberately</span></span>
+<span id="src-gridmesh-loft-L287"><span class="cm">// LEFT in place (not compacted): cell indices the field already handed out stay</span></span>
+<span id="src-gridmesh-loft-L288"><span class="cm">// stable, so a consumer's parallel per-cell arrays (e.g. the projector's bloom</span></span>
+<span id="src-gridmesh-loft-L289"><span class="cm">// births, indexed by cell index) are not invalidated.  The orphaned slot is</span></span>
+<span id="src-gridmesh-loft-L290"><span class="cm">// never read again — its index is in no bucket and no longer in cidx — and</span></span>
+<span id="src-gridmesh-loft-L291"><span class="cm">// re-painting the same coord allocates a FRESH index (field_add_cell appends),</span></span>
+<span id="src-gridmesh-loft-L292"><span class="cm">// so identity is never reused.</span></span>
+<span id="src-gridmesh-loft-L293"><span class="cm">// Example: @GRM-003 — the indices a consumer already holds stay valid across a</span></span>
+<span id="src-gridmesh-loft-L294"><span class="cm">// removal; a repaint is a new one.</span></span>
+<span id="src-gridmesh-loft-L295"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">field_remove_cell</span>(f: <span class="en">ChunkField</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-gridmesh-loft-L296">  cr = f.cidx[<span class="fn-call">enc_coord</span>(x, y)];</span>
+<span id="src-gridmesh-loft-L297">  <span class="kw">if</span> cr == <span class="kw">null</span> { <span class="kw">return</span>; }          <span class="cm">// not present — nothing to remove</span></span>
+<span id="src-gridmesh-loft-L298">  ix = cr.ix;</span>
+<span id="src-gridmesh-loft-L299">  f.cidx[<span class="fn-call">enc_coord</span>(x, y)] = <span class="kw">null</span>;    <span class="cm">// drop from the spatial index</span></span>
+<span id="src-gridmesh-loft-L300">  k = <span class="fn-call">chunk_of</span>(x, y, f.chunk_shift);</span>
+<span id="src-gridmesh-loft-L301">  b = f.buckets[k.ck];</span>
+<span id="src-gridmesh-loft-L302">  <span class="kw">if</span> b != <span class="kw">null</span> {</span>
+<span id="src-gridmesh-loft-L303">    keep: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-gridmesh-loft-L304">    <span class="kw">for</span> frc_cix <span class="kw">in</span> b.cell_ixs { <span class="kw">if</span> frc_cix != ix { keep += [frc_cix]; } }</span>
+<span id="src-gridmesh-loft-L305">    b.cell_ixs = keep;</span>
+<span id="src-gridmesh-loft-L306">  }</span>
+<span id="src-gridmesh-loft-L307">  <span class="fn-call">mark_borders</span>(f, x, y);             <span class="cm">// SAME dirty-marking as field_add_cell</span></span>
 <span id="src-gridmesh-loft-L308">}</span>
 <span id="src-gridmesh-loft-L309"></span>
-<span id="src-gridmesh-loft-L310"><span class="cm">// Number of chunks currently dirty (verification / O(dirty) sizing).</span></span>
-<span id="src-gridmesh-loft-L311"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">dirty_count</span>(f: <span class="en">ChunkField</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { <span class="bi"><a href="stdlib-text.html">len</a></span>(f.dirty) }</span>
-<span id="src-gridmesh-loft-L312"></span>
-<span id="src-gridmesh-loft-L313"><span class="cm">// Is the chunk owning (x, y) currently marked dirty?</span></span>
-<span id="src-gridmesh-loft-L314"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">chunk_is_dirty</span>(f: <span class="en">ChunkField</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-gridmesh-loft-L315">  k = <span class="fn-call">chunk_of</span>(x, y, f.chunk_shift);</span>
-<span id="src-gridmesh-loft-L316">  <span class="kw">if</span> f.dirty[k.ck] { <span class="kw">true</span> } <span class="kw">else</span> { <span class="kw">false</span> }</span>
-<span id="src-gridmesh-loft-L317">}</span>
-<span id="src-gridmesh-loft-L318"></span>
-<span id="src-gridmesh-loft-L319"><span class="cm">// ── B3: ChunkInput + per-chunk gather ─────────────────────────────────</span></span>
-<span id="src-gridmesh-loft-L320"><span class="cm">//</span></span>
-<span id="src-gridmesh-loft-L321"><span class="cm">// What a per-cell RULE needs for ONE chunk: the indices of the cells it</span></span>
-<span id="src-gridmesh-loft-L322"><span class="cm">// OWNS (emit geometry for these) + the ≤halo_k border-neighbour cells in</span></span>
-<span id="src-gridmesh-loft-L323"><span class="cm">// OTHER chunks it may READ as context.  COMPACT — no payload, and NO copy</span></span>
-<span id="src-gridmesh-loft-L324"><span class="cm">// of the shared spatial index (`cidx`).  The rule receives `cidx`</span></span>
-<span id="src-gridmesh-loft-L325"><span class="cm">// SEPARATELY as a read-only ref (keyed params don't deep-copy) and `par`</span></span>
-<span id="src-gridmesh-loft-L326"><span class="cm">// forwards it as a context arg, so the per-chunk working set stays small</span></span>
-<span id="src-gridmesh-loft-L327"><span class="cm">// and cache-resident (copying the whole index per chunk would be O(N)).</span></span>
-<span id="src-gridmesh-loft-L328"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">ChunkInput</span> {</span>
-<span id="src-gridmesh-loft-L329">  key:      <span class="en">ChunkKey</span>,</span>
-<span id="src-gridmesh-loft-L330">  cell_ixs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,   <span class="cm">// cells owned by this chunk (emit for these)</span></span>
-<span id="src-gridmesh-loft-L331">  halo_ixs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,   <span class="cm">// ≤halo_k border-neighbour cells (read-only context)</span></span>
-<span id="src-gridmesh-loft-L332">}</span>
-<span id="src-gridmesh-loft-L333"></span>
-<span id="src-gridmesh-loft-L334"><span class="cm">// Internal: a cell-index set for halo dedup.</span></span>
-<span id="src-gridmesh-loft-L335"><span class="kw">struct</span> <span class="en">SeenIx</span> { ix: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</span>
-<span id="src-gridmesh-loft-L336"></span>
-<span id="src-gridmesh-loft-L337"><span class="cm">// Gather the ≤halo_k border-neighbour cells (in OTHER chunks) of a chunk's</span></span>
-<span id="src-gridmesh-loft-L338"><span class="cm">// owned cells.  Walks the 6 hex axes up to halo_k steps (the axis-neighbour</span></span>
-<span id="src-gridmesh-loft-L339"><span class="cm">// pattern of `nbr_count_idx` / the crystal rule); deduped by cell index.</span></span>
-<span id="src-gridmesh-loft-L340"><span class="cm">// (A full k-ring halo for surface rules is a Phase-C extension.)</span></span>
-<span id="src-gridmesh-loft-L341"><span class="kw">fn</span> <span class="fn-call">gather_halo</span>(f: <span class="en">ChunkField</span>, cell_ixs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, this_ck: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-gridmesh-loft-L342">               halo_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
-<span id="src-gridmesh-loft-L343">  halo: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-gridmesh-loft-L344">  seen: <span class="ty">hash</span>&lt;<span class="en">SeenIx</span>[ix]&gt; = [];</span>
-<span id="src-gridmesh-loft-L345">  <span class="kw">for</span> gh_j <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(cell_ixs) {</span>
-<span id="src-gridmesh-loft-L346">    <span class="cm">// `?? 0` only to satisfy the OOB lint — every index here is provably</span></span>
-<span id="src-gridmesh-loft-L347">    <span class="cm">// in bounds (`gh_j` loop-bounded; `ci`/`nb` are valid cell indices).</span></span>
-<span id="src-gridmesh-loft-L348">    ci = cell_ixs[gh_j] ?? <span class="nm">0</span>;</span>
-<span id="src-gridmesh-loft-L349">    cx = f.xs[ci] ?? <span class="nm">0</span>; cy = f.ys[ci] ?? <span class="nm">0</span>;</span>
-<span id="src-gridmesh-loft-L350">    <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
-<span id="src-gridmesh-loft-L351">      <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">1..</span>(halo_k + <span class="nm">1</span>) {</span>
-<span id="src-gridmesh-loft-L352">        nb = <span class="fn-call">idx_at</span>(f.cidx, <span class="fn-call">step_x</span>(cx, cy, d, k), <span class="fn-call">step_y</span>(cx, cy, d, k));</span>
-<span id="src-gridmesh-loft-L353">        <span class="kw">if</span> nb &gt;= <span class="nm">0</span> &amp;&amp; !seen[nb] {</span>
-<span id="src-gridmesh-loft-L354">          nk = <span class="fn-call">chunk_of</span>(f.xs[nb] ?? <span class="nm">0</span>, f.ys[nb] ?? <span class="nm">0</span>, f.chunk_shift);</span>
-<span id="src-gridmesh-loft-L355">          <span class="kw">if</span> nk.ck != this_ck {</span>
-<span id="src-gridmesh-loft-L356">            seen += [<span class="en">SeenIx</span>{ix: nb}];</span>
-<span id="src-gridmesh-loft-L357">            halo += [nb];</span>
-<span id="src-gridmesh-loft-L358">          }</span>
-<span id="src-gridmesh-loft-L359">        }</span>
-<span id="src-gridmesh-loft-L360">      }</span>
-<span id="src-gridmesh-loft-L361">    }</span>
-<span id="src-gridmesh-loft-L362">  }</span>
-<span id="src-gridmesh-loft-L363">  halo</span>
-<span id="src-gridmesh-loft-L364">}</span>
-<span id="src-gridmesh-loft-L365"></span>
-<span id="src-gridmesh-loft-L366"><span class="cm">// One ChunkInput per chunk that holds cells (the full-build work-list).</span></span>
-<span id="src-gridmesh-loft-L367"><span class="cm">// Reads the wired-in `f.buckets` (no re-partition).</span></span>
-<span id="src-gridmesh-loft-L368"><span class="cm">// Example: @GRM-002 — emit for `cell_ixs`, only READ `halo_ixs`; the partition that</span></span>
-<span id="src-gridmesh-loft-L369"><span class="cm">// makes border geometry appear exactly once.</span></span>
-<span id="src-gridmesh-loft-L370"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">all_inputs</span>(f: <span class="en">ChunkField</span>, halo_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">ChunkInput</span>&gt; {</span>
-<span id="src-gridmesh-loft-L371">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">ChunkInput</span>&gt; = [];</span>
-<span id="src-gridmesh-loft-L372">  <span class="kw">for</span> b <span class="kw">in</span> f.buckets {</span>
-<span id="src-gridmesh-loft-L373">    halo = <span class="fn-call">gather_halo</span>(f, b.cell_ixs, b.ck, halo_k);</span>
-<span id="src-gridmesh-loft-L374">    out += [<span class="en">ChunkInput</span>{key: <span class="en">ChunkKey</span>{ck: b.ck, cx: b.cx, cy: b.cy},</span>
-<span id="src-gridmesh-loft-L375">                       cell_ixs: b.cell_ixs, halo_ixs: halo}];</span>
-<span id="src-gridmesh-loft-L376">  }</span>
-<span id="src-gridmesh-loft-L377">  out</span>
-<span id="src-gridmesh-loft-L378">}</span>
-<span id="src-gridmesh-loft-L379"></span>
-<span id="src-gridmesh-loft-L380"><span class="cm">// One ChunkInput per DIRTY chunk (the incremental-rebuild work-list).</span></span>
-<span id="src-gridmesh-loft-L381"><span class="cm">// Iterates ONLY the dirty set and looks up each dirty chunk's bucket — so</span></span>
-<span id="src-gridmesh-loft-L382"><span class="cm">// the cost is O(dirty chunks × their cells), independent of total N.  A</span></span>
-<span id="src-gridmesh-loft-L383"><span class="cm">// dirty chunk with no owned cells (a halo-marked empty neighbour) is</span></span>
-<span id="src-gridmesh-loft-L384"><span class="cm">// skipped.  Clear the dirty index after rebuilding.</span></span>
-<span id="src-gridmesh-loft-L385"><span class="cm">// Example: @GRM-001 — the edit → collect → rebuild → clear cycle end to end.</span></span>
-<span id="src-gridmesh-loft-L386"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">collect_dirty_inputs</span>(f: <span class="en">ChunkField</span>, halo_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">ChunkInput</span>&gt; {</span>
-<span id="src-gridmesh-loft-L387">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">ChunkInput</span>&gt; = [];</span>
-<span id="src-gridmesh-loft-L388">  <span class="kw">for</span> dk <span class="kw">in</span> f.dirty {</span>
-<span id="src-gridmesh-loft-L389">    b = f.buckets[dk.ck];</span>
-<span id="src-gridmesh-loft-L390">    <span class="kw">if</span> b {</span>
-<span id="src-gridmesh-loft-L391">      halo = <span class="fn-call">gather_halo</span>(f, b.cell_ixs, b.ck, halo_k);</span>
-<span id="src-gridmesh-loft-L392">      out += [<span class="en">ChunkInput</span>{key: <span class="en">ChunkKey</span>{ck: b.ck, cx: b.cx, cy: b.cy},</span>
-<span id="src-gridmesh-loft-L393">                         cell_ixs: b.cell_ixs, halo_ixs: halo}];</span>
-<span id="src-gridmesh-loft-L394">    }</span>
-<span id="src-gridmesh-loft-L395">  }</span>
-<span id="src-gridmesh-loft-L396">  out</span>
-<span id="src-gridmesh-loft-L397">}</span>
-<span id="src-gridmesh-loft-L398"></span>
-<span id="src-gridmesh-loft-L399"><span class="cm">// ── G2: render-group (tile) layer ─────────────────────────────────────</span></span>
-<span id="src-gridmesh-loft-L400"><span class="cm">//</span></span>
-<span id="src-gridmesh-loft-L401"><span class="cm">// A render GROUP is a `group_dim × group_dim` block of chunks — the unit of</span></span>
-<span id="src-gridmesh-loft-L402"><span class="cm">// VBO upload + draw + frustum cull, decoupled from the chunk (the unit of</span></span>
-<span id="src-gridmesh-loft-L403"><span class="cm">// dirty-tracking + per-chunk mesh reuse).  `group_dim` is a TUNABLE knob:</span></span>
-<span id="src-gridmesh-loft-L404"><span class="cm">// G=1 → one VBO per chunk (max incremental granularity, max draw calls);</span></span>
-<span id="src-gridmesh-loft-L405"><span class="cm">// G large → ~one big VBO (min draws, wholesale re-upload).  The consumer</span></span>
-<span id="src-gridmesh-loft-L406"><span class="cm">// caches a mesh per chunk and assembles a group's VBO from its chunks'</span></span>
-<span id="src-gridmesh-loft-L407"><span class="cm">// cached meshes, re-uploading only groups that contain a dirty chunk.</span></span>
-<span id="src-gridmesh-loft-L408"></span>
-<span id="src-gridmesh-loft-L409"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">GroupKey</span> { gk: <span class="ty"><a href="stdlib-types.html">integer</a></span>, gx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, gy: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</span>
-<span id="src-gridmesh-loft-L410"></span>
-<span id="src-gridmesh-loft-L411"><span class="cm">// The chunk ck's a group contains that actually hold cells (the assemble</span></span>
-<span id="src-gridmesh-loft-L412"><span class="cm">// work-list).  No mesh here — gridmesh partitions; the consumer owns meshes.</span></span>
-<span id="src-gridmesh-loft-L413"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">GroupInput</span> { key: <span class="en">GroupKey</span>, chunk_cks: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; }</span>
-<span id="src-gridmesh-loft-L414"></span>
-<span id="src-gridmesh-loft-L415"><span class="cm">// Internal accumulator for all_groups (keyed so chunks dedup into their group).</span></span>
-<span id="src-gridmesh-loft-L416"><span class="kw">struct</span> <span class="en">GroupAcc</span> { gk: <span class="ty"><a href="stdlib-types.html">integer</a></span>, gx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, gy: <span class="ty"><a href="stdlib-types.html">integer</a></span>, chunk_cks: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; }</span>
+<span id="src-gridmesh-loft-L310"><span class="cm">// Clear the dirty index after a rebuild (@P307 OpClearKeyed: in-place free).</span></span>
+<span id="src-gridmesh-loft-L311"><span class="cm">// Example: @GRM-001 — where `clear_dirty` sits in the edit → collect → rebuild</span></span>
+<span id="src-gridmesh-loft-L312"><span class="cm">// cycle, and what skipping it costs.</span></span>
+<span id="src-gridmesh-loft-L313"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">clear_dirty</span>(f: <span class="en">ChunkField</span>) {</span>
+<span id="src-gridmesh-loft-L314">  f.dirty = [];</span>
+<span id="src-gridmesh-loft-L315">}</span>
+<span id="src-gridmesh-loft-L316"></span>
+<span id="src-gridmesh-loft-L317"><span class="cm">// Number of chunks currently dirty (verification / O(dirty) sizing).</span></span>
+<span id="src-gridmesh-loft-L318"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">dirty_count</span>(f: <span class="en">ChunkField</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { <span class="bi"><a href="stdlib-text.html">len</a></span>(f.dirty) }</span>
+<span id="src-gridmesh-loft-L319"></span>
+<span id="src-gridmesh-loft-L320"><span class="cm">// Is the chunk owning (x, y) currently marked dirty?</span></span>
+<span id="src-gridmesh-loft-L321"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">chunk_is_dirty</span>(f: <span class="en">ChunkField</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-gridmesh-loft-L322">  k = <span class="fn-call">chunk_of</span>(x, y, f.chunk_shift);</span>
+<span id="src-gridmesh-loft-L323">  <span class="kw">if</span> f.dirty[k.ck] { <span class="kw">true</span> } <span class="kw">else</span> { <span class="kw">false</span> }</span>
+<span id="src-gridmesh-loft-L324">}</span>
+<span id="src-gridmesh-loft-L325"></span>
+<span id="src-gridmesh-loft-L326"><span class="cm">// ── B3: ChunkInput + per-chunk gather ─────────────────────────────────</span></span>
+<span id="src-gridmesh-loft-L327"><span class="cm">//</span></span>
+<span id="src-gridmesh-loft-L328"><span class="cm">// What a per-cell RULE needs for ONE chunk: the indices of the cells it</span></span>
+<span id="src-gridmesh-loft-L329"><span class="cm">// OWNS (emit geometry for these) + the ≤halo_k border-neighbour cells in</span></span>
+<span id="src-gridmesh-loft-L330"><span class="cm">// OTHER chunks it may READ as context.  COMPACT — no payload, and NO copy</span></span>
+<span id="src-gridmesh-loft-L331"><span class="cm">// of the shared spatial index (`cidx`).  The rule receives `cidx`</span></span>
+<span id="src-gridmesh-loft-L332"><span class="cm">// SEPARATELY as a read-only ref (keyed params don't deep-copy) and `par`</span></span>
+<span id="src-gridmesh-loft-L333"><span class="cm">// forwards it as a context arg, so the per-chunk working set stays small</span></span>
+<span id="src-gridmesh-loft-L334"><span class="cm">// and cache-resident (copying the whole index per chunk would be O(N)).</span></span>
+<span id="src-gridmesh-loft-L335"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">ChunkInput</span> {</span>
+<span id="src-gridmesh-loft-L336">  key:      <span class="en">ChunkKey</span>,</span>
+<span id="src-gridmesh-loft-L337">  cell_ixs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,   <span class="cm">// cells owned by this chunk (emit for these)</span></span>
+<span id="src-gridmesh-loft-L338">  halo_ixs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,   <span class="cm">// ≤halo_k border-neighbour cells (read-only context)</span></span>
+<span id="src-gridmesh-loft-L339">}</span>
+<span id="src-gridmesh-loft-L340"></span>
+<span id="src-gridmesh-loft-L341"><span class="cm">// Internal: a cell-index set for halo dedup.</span></span>
+<span id="src-gridmesh-loft-L342"><span class="kw">struct</span> <span class="en">SeenIx</span> { ix: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</span>
+<span id="src-gridmesh-loft-L343"></span>
+<span id="src-gridmesh-loft-L344"><span class="cm">// Gather the ≤halo_k border-neighbour cells (in OTHER chunks) of a chunk's</span></span>
+<span id="src-gridmesh-loft-L345"><span class="cm">// owned cells.  Walks the 6 hex axes up to halo_k steps (the axis-neighbour</span></span>
+<span id="src-gridmesh-loft-L346"><span class="cm">// pattern of `nbr_count_idx` / the crystal rule); deduped by cell index.</span></span>
+<span id="src-gridmesh-loft-L347"><span class="cm">// (A full k-ring halo for surface rules is a Phase-C extension.)</span></span>
+<span id="src-gridmesh-loft-L348"><span class="kw">fn</span> <span class="fn-call">gather_halo</span>(f: <span class="en">ChunkField</span>, cell_ixs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, this_ck: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-gridmesh-loft-L349">               halo_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; {</span>
+<span id="src-gridmesh-loft-L350">  halo: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-gridmesh-loft-L351">  seen: <span class="ty">hash</span>&lt;<span class="en">SeenIx</span>[ix]&gt; = [];</span>
+<span id="src-gridmesh-loft-L352">  <span class="kw">for</span> gh_j <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(cell_ixs) {</span>
+<span id="src-gridmesh-loft-L353">    <span class="cm">// `?? 0` only to satisfy the OOB lint — every index here is provably</span></span>
+<span id="src-gridmesh-loft-L354">    <span class="cm">// in bounds (`gh_j` loop-bounded; `ci`/`nb` are valid cell indices).</span></span>
+<span id="src-gridmesh-loft-L355">    ci = cell_ixs[gh_j] ?? <span class="nm">0</span>;</span>
+<span id="src-gridmesh-loft-L356">    cx = f.xs[ci] ?? <span class="nm">0</span>; cy = f.ys[ci] ?? <span class="nm">0</span>;</span>
+<span id="src-gridmesh-loft-L357">    <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-gridmesh-loft-L358">      <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">1..</span>(halo_k + <span class="nm">1</span>) {</span>
+<span id="src-gridmesh-loft-L359">        nb = <span class="fn-call">idx_at</span>(f.cidx, <span class="fn-call">step_x</span>(cx, cy, d, k), <span class="fn-call">step_y</span>(cx, cy, d, k));</span>
+<span id="src-gridmesh-loft-L360">        <span class="kw">if</span> nb &gt;= <span class="nm">0</span> &amp;&amp; !seen[nb] {</span>
+<span id="src-gridmesh-loft-L361">          nk = <span class="fn-call">chunk_of</span>(f.xs[nb] ?? <span class="nm">0</span>, f.ys[nb] ?? <span class="nm">0</span>, f.chunk_shift);</span>
+<span id="src-gridmesh-loft-L362">          <span class="kw">if</span> nk.ck != this_ck {</span>
+<span id="src-gridmesh-loft-L363">            seen += [<span class="en">SeenIx</span>{ix: nb}];</span>
+<span id="src-gridmesh-loft-L364">            halo += [nb];</span>
+<span id="src-gridmesh-loft-L365">          }</span>
+<span id="src-gridmesh-loft-L366">        }</span>
+<span id="src-gridmesh-loft-L367">      }</span>
+<span id="src-gridmesh-loft-L368">    }</span>
+<span id="src-gridmesh-loft-L369">  }</span>
+<span id="src-gridmesh-loft-L370">  halo</span>
+<span id="src-gridmesh-loft-L371">}</span>
+<span id="src-gridmesh-loft-L372"></span>
+<span id="src-gridmesh-loft-L373"><span class="cm">// One ChunkInput per chunk that holds cells (the full-build work-list).</span></span>
+<span id="src-gridmesh-loft-L374"><span class="cm">// Reads the wired-in `f.buckets` (no re-partition).</span></span>
+<span id="src-gridmesh-loft-L375"><span class="cm">// Example: @GRM-002 — emit for `cell_ixs`, only READ `halo_ixs`; the partition that</span></span>
+<span id="src-gridmesh-loft-L376"><span class="cm">// makes border geometry appear exactly once.</span></span>
+<span id="src-gridmesh-loft-L377"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">all_inputs</span>(f: <span class="en">ChunkField</span>, halo_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">ChunkInput</span>&gt; {</span>
+<span id="src-gridmesh-loft-L378">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">ChunkInput</span>&gt; = [];</span>
+<span id="src-gridmesh-loft-L379">  <span class="kw">for</span> b <span class="kw">in</span> f.buckets {</span>
+<span id="src-gridmesh-loft-L380">    halo = <span class="fn-call">gather_halo</span>(f, b.cell_ixs, b.ck, halo_k);</span>
+<span id="src-gridmesh-loft-L381">    out += [<span class="en">ChunkInput</span>{key: <span class="en">ChunkKey</span>{ck: b.ck, cx: b.cx, cy: b.cy},</span>
+<span id="src-gridmesh-loft-L382">                       cell_ixs: b.cell_ixs, halo_ixs: halo}];</span>
+<span id="src-gridmesh-loft-L383">  }</span>
+<span id="src-gridmesh-loft-L384">  out</span>
+<span id="src-gridmesh-loft-L385">}</span>
+<span id="src-gridmesh-loft-L386"></span>
+<span id="src-gridmesh-loft-L387"><span class="cm">// One ChunkInput per DIRTY chunk (the incremental-rebuild work-list).</span></span>
+<span id="src-gridmesh-loft-L388"><span class="cm">// Iterates ONLY the dirty set and looks up each dirty chunk's bucket — so</span></span>
+<span id="src-gridmesh-loft-L389"><span class="cm">// the cost is O(dirty chunks × their cells), independent of total N.  A</span></span>
+<span id="src-gridmesh-loft-L390"><span class="cm">// dirty chunk with no owned cells (a halo-marked empty neighbour) is</span></span>
+<span id="src-gridmesh-loft-L391"><span class="cm">// skipped.  Clear the dirty index after rebuilding.</span></span>
+<span id="src-gridmesh-loft-L392"><span class="cm">// Example: @GRM-001 — the edit → collect → rebuild → clear cycle end to end.</span></span>
+<span id="src-gridmesh-loft-L393"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">collect_dirty_inputs</span>(f: <span class="en">ChunkField</span>, halo_k: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">ChunkInput</span>&gt; {</span>
+<span id="src-gridmesh-loft-L394">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">ChunkInput</span>&gt; = [];</span>
+<span id="src-gridmesh-loft-L395">  <span class="kw">for</span> dk <span class="kw">in</span> f.dirty {</span>
+<span id="src-gridmesh-loft-L396">    b = f.buckets[dk.ck];</span>
+<span id="src-gridmesh-loft-L397">    <span class="kw">if</span> b {</span>
+<span id="src-gridmesh-loft-L398">      halo = <span class="fn-call">gather_halo</span>(f, b.cell_ixs, b.ck, halo_k);</span>
+<span id="src-gridmesh-loft-L399">      out += [<span class="en">ChunkInput</span>{key: <span class="en">ChunkKey</span>{ck: b.ck, cx: b.cx, cy: b.cy},</span>
+<span id="src-gridmesh-loft-L400">                         cell_ixs: b.cell_ixs, halo_ixs: halo}];</span>
+<span id="src-gridmesh-loft-L401">    }</span>
+<span id="src-gridmesh-loft-L402">  }</span>
+<span id="src-gridmesh-loft-L403">  out</span>
+<span id="src-gridmesh-loft-L404">}</span>
+<span id="src-gridmesh-loft-L405"></span>
+<span id="src-gridmesh-loft-L406"><span class="cm">// ── G2: render-group (tile) layer ─────────────────────────────────────</span></span>
+<span id="src-gridmesh-loft-L407"><span class="cm">//</span></span>
+<span id="src-gridmesh-loft-L408"><span class="cm">// A render GROUP is a `group_dim × group_dim` block of chunks — the unit of</span></span>
+<span id="src-gridmesh-loft-L409"><span class="cm">// VBO upload + draw + frustum cull, decoupled from the chunk (the unit of</span></span>
+<span id="src-gridmesh-loft-L410"><span class="cm">// dirty-tracking + per-chunk mesh reuse).  `group_dim` is a TUNABLE knob:</span></span>
+<span id="src-gridmesh-loft-L411"><span class="cm">// G=1 → one VBO per chunk (max incremental granularity, max draw calls);</span></span>
+<span id="src-gridmesh-loft-L412"><span class="cm">// G large → ~one big VBO (min draws, wholesale re-upload).  The consumer</span></span>
+<span id="src-gridmesh-loft-L413"><span class="cm">// caches a mesh per chunk and assembles a group's VBO from its chunks'</span></span>
+<span id="src-gridmesh-loft-L414"><span class="cm">// cached meshes, re-uploading only groups that contain a dirty chunk.</span></span>
+<span id="src-gridmesh-loft-L415"></span>
+<span id="src-gridmesh-loft-L416"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">GroupKey</span> { gk: <span class="ty"><a href="stdlib-types.html">integer</a></span>, gx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, gy: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</span>
 <span id="src-gridmesh-loft-L417"></span>
-<span id="src-gridmesh-loft-L418"><span class="cm">// The group owning CHUNK coord (cx, cy): chunk-space divided by group_dim.</span></span>
-<span id="src-gridmesh-loft-L419"><span class="cm">// Uses chunk_div so any group_dim works (not just powers of two) — a free dial.</span></span>
-<span id="src-gridmesh-loft-L420"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">group_of</span>(cx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cy: <span class="ty"><a href="stdlib-types.html">integer</a></span>, group_dim: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">GroupKey</span> {</span>
-<span id="src-gridmesh-loft-L421">  gx = <span class="fn-call">chunk_div</span>(cx, group_dim);</span>
-<span id="src-gridmesh-loft-L422">  gy = <span class="fn-call">chunk_div</span>(cy, group_dim);</span>
-<span id="src-gridmesh-loft-L423">  <span class="en">GroupKey</span>{gk: <span class="fn-call">enc_coord</span>(gx, gy), gx: gx, gy: gy}</span>
-<span id="src-gridmesh-loft-L424">}</span>
-<span id="src-gridmesh-loft-L425"></span>
-<span id="src-gridmesh-loft-L426"><span class="cm">// One GroupInput per group that holds cells (the full-build work-list).</span></span>
-<span id="src-gridmesh-loft-L427"><span class="cm">// O(chunks): each non-empty chunk dedups into its group's chunk list.</span></span>
-<span id="src-gridmesh-loft-L428"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">all_groups</span>(f: <span class="en">ChunkField</span>, group_dim: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroupInput</span>&gt; {</span>
-<span id="src-gridmesh-loft-L429">  acc: <span class="ty">hash</span>&lt;<span class="en">GroupAcc</span>[gk]&gt; = [];</span>
-<span id="src-gridmesh-loft-L430">  <span class="kw">for</span> b <span class="kw">in</span> f.buckets {</span>
-<span id="src-gridmesh-loft-L431">    g = <span class="fn-call">group_of</span>(b.cx, b.cy, group_dim);</span>
-<span id="src-gridmesh-loft-L432">    <span class="kw">if</span> !acc[g.gk] { acc += [<span class="en">GroupAcc</span>{gk: g.gk, gx: g.gx, gy: g.gy, chunk_cks: []}]; }</span>
-<span id="src-gridmesh-loft-L433">    a = acc[g.gk];</span>
-<span id="src-gridmesh-loft-L434">    a.chunk_cks += [b.ck];</span>
-<span id="src-gridmesh-loft-L435">  }</span>
-<span id="src-gridmesh-loft-L436">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroupInput</span>&gt; = [];</span>
-<span id="src-gridmesh-loft-L437">  <span class="kw">for</span> ga <span class="kw">in</span> acc {</span>
-<span id="src-gridmesh-loft-L438">    out += [<span class="en">GroupInput</span>{key: <span class="en">GroupKey</span>{gk: ga.gk, gx: ga.gx, gy: ga.gy}, chunk_cks: ga.chunk_cks}];</span>
-<span id="src-gridmesh-loft-L439">  }</span>
-<span id="src-gridmesh-loft-L440">  out</span>
-<span id="src-gridmesh-loft-L441">}</span>
-<span id="src-gridmesh-loft-L442"></span>
-<span id="src-gridmesh-loft-L443"><span class="cm">// One GroupInput per DIRTY group (the incremental re-upload work-list).</span></span>
-<span id="src-gridmesh-loft-L444"><span class="cm">// A group is dirty if any of its chunks is dirty; its chunk_cks lists ALL its</span></span>
-<span id="src-gridmesh-loft-L445"><span class="cm">// member chunks that hold cells (so the consumer reassembles the group's VBO</span></span>
-<span id="src-gridmesh-loft-L446"><span class="cm">// from those chunks' CACHED meshes — unchanged chunks copied, not rebuilt).</span></span>
-<span id="src-gridmesh-loft-L447"><span class="cm">//</span></span>
-<span id="src-gridmesh-loft-L448"><span class="cm">// FLAT COST: derives the dirty groups from f.dirty (O(dirty)), then for each</span></span>
-<span id="src-gridmesh-loft-L449"><span class="cm">// enumerates its group_dim × group_dim member chunk coords analytically and</span></span>
-<span id="src-gridmesh-loft-L450"><span class="cm">// probes f.buckets — O(dirty groups × group_dim²), independent of total N.</span></span>
-<span id="src-gridmesh-loft-L451"><span class="cm">// (Never scans all chunks, which would make per-edit cost grow with N.)</span></span>
-<span id="src-gridmesh-loft-L452"><span class="cm">// Example: @GRM-004 — `chunk_cks` lists the group's CLEAN chunks too (copy their</span></span>
-<span id="src-gridmesh-loft-L453"><span class="cm">// cached meshes); reading it as "chunks to rebuild" rebuilds the whole group.</span></span>
-<span id="src-gridmesh-loft-L454"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">collect_dirty_groups</span>(f: <span class="en">ChunkField</span>, group_dim: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroupInput</span>&gt; {</span>
-<span id="src-gridmesh-loft-L455">  dirty_groups: <span class="ty">hash</span>&lt;<span class="en">GroupKey</span>[gk]&gt; = [];</span>
-<span id="src-gridmesh-loft-L456">  <span class="kw">for</span> dk <span class="kw">in</span> f.dirty {</span>
-<span id="src-gridmesh-loft-L457">    dirty_groups += [<span class="fn-call">group_of</span>(dk.cx, dk.cy, group_dim)];   <span class="cm">// dedup by gk</span></span>
-<span id="src-gridmesh-loft-L458">  }</span>
-<span id="src-gridmesh-loft-L459">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroupInput</span>&gt; = [];</span>
-<span id="src-gridmesh-loft-L460">  <span class="kw">for</span> g <span class="kw">in</span> dirty_groups {</span>
-<span id="src-gridmesh-loft-L461">    cks: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
-<span id="src-gridmesh-loft-L462">    base_cx = g.gx * group_dim;</span>
-<span id="src-gridmesh-loft-L463">    base_cy = g.gy * group_dim;</span>
-<span id="src-gridmesh-loft-L464">    <span class="kw">for</span> ix <span class="kw">in</span> <span class="nm">0..</span>group_dim {</span>
-<span id="src-gridmesh-loft-L465">      <span class="kw">for</span> iy <span class="kw">in</span> <span class="nm">0..</span>group_dim {</span>
-<span id="src-gridmesh-loft-L466">        ck = <span class="fn-call">enc_coord</span>(base_cx + ix, base_cy + iy);</span>
-<span id="src-gridmesh-loft-L467">        <span class="kw">if</span> f.buckets[ck] { cks += [ck]; }</span>
-<span id="src-gridmesh-loft-L468">      }</span>
-<span id="src-gridmesh-loft-L469">    }</span>
-<span id="src-gridmesh-loft-L470">    out += [<span class="en">GroupInput</span>{key: g, chunk_cks: cks}];</span>
-<span id="src-gridmesh-loft-L471">  }</span>
-<span id="src-gridmesh-loft-L472">  out</span>
-<span id="src-gridmesh-loft-L473">}</span>
+<span id="src-gridmesh-loft-L418"><span class="cm">// The chunk ck's a group contains that actually hold cells (the assemble</span></span>
+<span id="src-gridmesh-loft-L419"><span class="cm">// work-list).  No mesh here — gridmesh partitions; the consumer owns meshes.</span></span>
+<span id="src-gridmesh-loft-L420"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">GroupInput</span> { key: <span class="en">GroupKey</span>, chunk_cks: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; }</span>
+<span id="src-gridmesh-loft-L421"></span>
+<span id="src-gridmesh-loft-L422"><span class="cm">// Internal accumulator for all_groups (keyed so chunks dedup into their group).</span></span>
+<span id="src-gridmesh-loft-L423"><span class="kw">struct</span> <span class="en">GroupAcc</span> { gk: <span class="ty"><a href="stdlib-types.html">integer</a></span>, gx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, gy: <span class="ty"><a href="stdlib-types.html">integer</a></span>, chunk_cks: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; }</span>
+<span id="src-gridmesh-loft-L424"></span>
+<span id="src-gridmesh-loft-L425"><span class="cm">// The group owning CHUNK coord (cx, cy): chunk-space divided by group_dim.</span></span>
+<span id="src-gridmesh-loft-L426"><span class="cm">// Uses chunk_div so any group_dim works (not just powers of two) — a free dial.</span></span>
+<span id="src-gridmesh-loft-L427"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">group_of</span>(cx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cy: <span class="ty"><a href="stdlib-types.html">integer</a></span>, group_dim: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">GroupKey</span> {</span>
+<span id="src-gridmesh-loft-L428">  gx = <span class="fn-call">chunk_div</span>(cx, group_dim);</span>
+<span id="src-gridmesh-loft-L429">  gy = <span class="fn-call">chunk_div</span>(cy, group_dim);</span>
+<span id="src-gridmesh-loft-L430">  <span class="en">GroupKey</span>{gk: <span class="fn-call">enc_coord</span>(gx, gy), gx: gx, gy: gy}</span>
+<span id="src-gridmesh-loft-L431">}</span>
+<span id="src-gridmesh-loft-L432"></span>
+<span id="src-gridmesh-loft-L433"><span class="cm">// One GroupInput per group that holds cells (the full-build work-list).</span></span>
+<span id="src-gridmesh-loft-L434"><span class="cm">// O(chunks): each non-empty chunk dedups into its group's chunk list.</span></span>
+<span id="src-gridmesh-loft-L435"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">all_groups</span>(f: <span class="en">ChunkField</span>, group_dim: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroupInput</span>&gt; {</span>
+<span id="src-gridmesh-loft-L436">  acc: <span class="ty">hash</span>&lt;<span class="en">GroupAcc</span>[gk]&gt; = [];</span>
+<span id="src-gridmesh-loft-L437">  <span class="kw">for</span> b <span class="kw">in</span> f.buckets {</span>
+<span id="src-gridmesh-loft-L438">    g = <span class="fn-call">group_of</span>(b.cx, b.cy, group_dim);</span>
+<span id="src-gridmesh-loft-L439">    <span class="kw">if</span> !acc[g.gk] { acc += [<span class="en">GroupAcc</span>{gk: g.gk, gx: g.gx, gy: g.gy, chunk_cks: []}]; }</span>
+<span id="src-gridmesh-loft-L440">    a = acc[g.gk];</span>
+<span id="src-gridmesh-loft-L441">    a.chunk_cks += [b.ck];</span>
+<span id="src-gridmesh-loft-L442">  }</span>
+<span id="src-gridmesh-loft-L443">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroupInput</span>&gt; = [];</span>
+<span id="src-gridmesh-loft-L444">  <span class="kw">for</span> ga <span class="kw">in</span> acc {</span>
+<span id="src-gridmesh-loft-L445">    out += [<span class="en">GroupInput</span>{key: <span class="en">GroupKey</span>{gk: ga.gk, gx: ga.gx, gy: ga.gy}, chunk_cks: ga.chunk_cks}];</span>
+<span id="src-gridmesh-loft-L446">  }</span>
+<span id="src-gridmesh-loft-L447">  out</span>
+<span id="src-gridmesh-loft-L448">}</span>
+<span id="src-gridmesh-loft-L449"></span>
+<span id="src-gridmesh-loft-L450"><span class="cm">// One GroupInput per DIRTY group (the incremental re-upload work-list).</span></span>
+<span id="src-gridmesh-loft-L451"><span class="cm">// A group is dirty if any of its chunks is dirty; its chunk_cks lists ALL its</span></span>
+<span id="src-gridmesh-loft-L452"><span class="cm">// member chunks that hold cells (so the consumer reassembles the group's VBO</span></span>
+<span id="src-gridmesh-loft-L453"><span class="cm">// from those chunks' CACHED meshes — unchanged chunks copied, not rebuilt).</span></span>
+<span id="src-gridmesh-loft-L454"><span class="cm">//</span></span>
+<span id="src-gridmesh-loft-L455"><span class="cm">// FLAT COST: derives the dirty groups from f.dirty (O(dirty)), then for each</span></span>
+<span id="src-gridmesh-loft-L456"><span class="cm">// enumerates its group_dim × group_dim member chunk coords analytically and</span></span>
+<span id="src-gridmesh-loft-L457"><span class="cm">// probes f.buckets — O(dirty groups × group_dim²), independent of total N.</span></span>
+<span id="src-gridmesh-loft-L458"><span class="cm">// (Never scans all chunks, which would make per-edit cost grow with N.)</span></span>
+<span id="src-gridmesh-loft-L459"><span class="cm">// Example: @GRM-004 — `chunk_cks` lists the group's CLEAN chunks too (copy their</span></span>
+<span id="src-gridmesh-loft-L460"><span class="cm">// cached meshes); reading it as "chunks to rebuild" rebuilds the whole group.</span></span>
+<span id="src-gridmesh-loft-L461"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">collect_dirty_groups</span>(f: <span class="en">ChunkField</span>, group_dim: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroupInput</span>&gt; {</span>
+<span id="src-gridmesh-loft-L462">  dirty_groups: <span class="ty">hash</span>&lt;<span class="en">GroupKey</span>[gk]&gt; = [];</span>
+<span id="src-gridmesh-loft-L463">  <span class="kw">for</span> dk <span class="kw">in</span> f.dirty {</span>
+<span id="src-gridmesh-loft-L464">    dirty_groups += [<span class="fn-call">group_of</span>(dk.cx, dk.cy, group_dim)];   <span class="cm">// dedup by gk</span></span>
+<span id="src-gridmesh-loft-L465">  }</span>
+<span id="src-gridmesh-loft-L466">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroupInput</span>&gt; = [];</span>
+<span id="src-gridmesh-loft-L467">  <span class="kw">for</span> g <span class="kw">in</span> dirty_groups {</span>
+<span id="src-gridmesh-loft-L468">    cks: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="src-gridmesh-loft-L469">    base_cx = g.gx * group_dim;</span>
+<span id="src-gridmesh-loft-L470">    base_cy = g.gy * group_dim;</span>
+<span id="src-gridmesh-loft-L471">    <span class="kw">for</span> ix <span class="kw">in</span> <span class="nm">0..</span>group_dim {</span>
+<span id="src-gridmesh-loft-L472">      <span class="kw">for</span> iy <span class="kw">in</span> <span class="nm">0..</span>group_dim {</span>
+<span id="src-gridmesh-loft-L473">        ck = <span class="fn-call">enc_coord</span>(base_cx + ix, base_cy + iy);</span>
+<span id="src-gridmesh-loft-L474">        <span class="kw">if</span> f.buckets[ck] { cks += [ck]; }</span>
+<span id="src-gridmesh-loft-L475">      }</span>
+<span id="src-gridmesh-loft-L476">    }</span>
+<span id="src-gridmesh-loft-L477">    out += [<span class="en">GroupInput</span>{key: g, chunk_cks: cks}];</span>
+<span id="src-gridmesh-loft-L478">  }</span>
+<span id="src-gridmesh-loft-L479">  out</span>
+<span id="src-gridmesh-loft-L480">}</span>
 </code></pre>
 <h2 id="tests-chunkfield-loft">tests/chunkfield.loft</h2>
 <pre class="src"><code><span id="tests-chunkfield-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -641,23 +648,25 @@
 <span id="tests-chunkfield-loft-L101">  <span class="cm">// the removed index is gone from its chunk bucket → a rebuild won't emit it.</span></span>
 <span id="tests-chunkfield-loft-L102">  b1 = f.buckets[<span class="fn-call">chunk_of</span>(<span class="nm">8</span>, <span class="nm">0</span>, <span class="nm">3</span>).ck];</span>
 <span id="tests-chunkfield-loft-L103">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(b1 != <span class="kw">null</span>, <span class="st">"removed cell's chunk bucket still exists"</span>);</span>
-<span id="tests-chunkfield-loft-L104">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">frc_has</span>(b1.cell_ixs, <span class="nm">1</span>), <span class="st">"bucket no longer lists the removed index 1"</span>);</span>
-<span id="tests-chunkfield-loft-L105">  <span class="cm">// removing a coord with no cell is a harmless no-op.</span></span>
-<span id="tests-chunkfield-loft-L106">  <span class="fn-call">field_remove_cell</span>(f, <span class="nm">99</span>, <span class="nm">99</span>);</span>
-<span id="tests-chunkfield-loft-L107">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">idx_at</span>(f.cidx, <span class="nm">0</span>, <span class="nm">0</span>) == <span class="nm">0</span>, <span class="st">"remove-miss is a no-op"</span>);</span>
-<span id="tests-chunkfield-loft-L108">}</span>
-<span id="tests-chunkfield-loft-L109"></span>
-<span id="tests-chunkfield-loft-L110"><span class="cm">// A removed coord can be re-painted; it gets a FRESH index (identity not reused).</span></span>
-<span id="tests-chunkfield-loft-L111"><span class="kw">fn</span> <span class="fn-call">test_remove_then_readd</span>() {</span>
-<span id="tests-chunkfield-loft-L112">  xs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [<span class="nm">0</span>, <span class="nm">8</span>];</span>
-<span id="tests-chunkfield-loft-L113">  ys: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [<span class="nm">0</span>, <span class="nm">0</span>];</span>
-<span id="tests-chunkfield-loft-L114">  f = <span class="fn-call">field_new</span>(<span class="nm">0</span>, xs, ys, <span class="nm">3</span>, <span class="nm">2</span>);</span>
-<span id="tests-chunkfield-loft-L115">  <span class="fn-call">field_remove_cell</span>(f, <span class="nm">8</span>, <span class="nm">0</span>);                 <span class="cm">// ix 1 orphaned</span></span>
-<span id="tests-chunkfield-loft-L116">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">idx_at</span>(f.cidx, <span class="nm">8</span>, <span class="nm">0</span>) == <span class="nm">0</span> - <span class="nm">1</span>, <span class="st">"removed"</span>);</span>
-<span id="tests-chunkfield-loft-L117">  <span class="fn-call">field_add_cell</span>(f, <span class="nm">8</span>, <span class="nm">0</span>);                    <span class="cm">// re-paint same coord</span></span>
-<span id="tests-chunkfield-loft-L118">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">idx_at</span>(f.cidx, <span class="nm">8</span>, <span class="nm">0</span>) == <span class="nm">2</span>, <span class="st">"re-add gets a fresh index (2), not the orphaned 1"</span>);</span>
-<span id="tests-chunkfield-loft-L119">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(f.xs) == <span class="nm">3</span>, <span class="st">"re-add appended a new slot"</span>);</span>
-<span id="tests-chunkfield-loft-L120">}</span>
+<span id="tests-chunkfield-loft-L104">  <span class="cm">// `?? []` cannot mask a missing bucket — the assert above has already failed if</span></span>
+<span id="tests-chunkfield-loft-L105">  <span class="cm">// there is none, so the default is unreachable rather than a weaker check.</span></span>
+<span id="tests-chunkfield-loft-L106">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">frc_has</span>(b1.cell_ixs ?? [], <span class="nm">1</span>), <span class="st">"bucket no longer lists the removed index 1"</span>);</span>
+<span id="tests-chunkfield-loft-L107">  <span class="cm">// removing a coord with no cell is a harmless no-op.</span></span>
+<span id="tests-chunkfield-loft-L108">  <span class="fn-call">field_remove_cell</span>(f, <span class="nm">99</span>, <span class="nm">99</span>);</span>
+<span id="tests-chunkfield-loft-L109">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">idx_at</span>(f.cidx, <span class="nm">0</span>, <span class="nm">0</span>) == <span class="nm">0</span>, <span class="st">"remove-miss is a no-op"</span>);</span>
+<span id="tests-chunkfield-loft-L110">}</span>
+<span id="tests-chunkfield-loft-L111"></span>
+<span id="tests-chunkfield-loft-L112"><span class="cm">// A removed coord can be re-painted; it gets a FRESH index (identity not reused).</span></span>
+<span id="tests-chunkfield-loft-L113"><span class="kw">fn</span> <span class="fn-call">test_remove_then_readd</span>() {</span>
+<span id="tests-chunkfield-loft-L114">  xs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [<span class="nm">0</span>, <span class="nm">8</span>];</span>
+<span id="tests-chunkfield-loft-L115">  ys: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [<span class="nm">0</span>, <span class="nm">0</span>];</span>
+<span id="tests-chunkfield-loft-L116">  f = <span class="fn-call">field_new</span>(<span class="nm">0</span>, xs, ys, <span class="nm">3</span>, <span class="nm">2</span>);</span>
+<span id="tests-chunkfield-loft-L117">  <span class="fn-call">field_remove_cell</span>(f, <span class="nm">8</span>, <span class="nm">0</span>);                 <span class="cm">// ix 1 orphaned</span></span>
+<span id="tests-chunkfield-loft-L118">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">idx_at</span>(f.cidx, <span class="nm">8</span>, <span class="nm">0</span>) == <span class="nm">0</span> - <span class="nm">1</span>, <span class="st">"removed"</span>);</span>
+<span id="tests-chunkfield-loft-L119">  <span class="fn-call">field_add_cell</span>(f, <span class="nm">8</span>, <span class="nm">0</span>);                    <span class="cm">// re-paint same coord</span></span>
+<span id="tests-chunkfield-loft-L120">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">idx_at</span>(f.cidx, <span class="nm">8</span>, <span class="nm">0</span>) == <span class="nm">2</span>, <span class="st">"re-add gets a fresh index (2), not the orphaned 1"</span>);</span>
+<span id="tests-chunkfield-loft-L121">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(f.xs) == <span class="nm">3</span>, <span class="st">"re-add appended a new slot"</span>);</span>
+<span id="tests-chunkfield-loft-L122">}</span>
 </code></pre>
 <h2 id="tests-chunkinput-loft">tests/chunkinput.loft</h2>
 <pre class="src"><code><span id="tests-chunkinput-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
