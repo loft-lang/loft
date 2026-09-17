@@ -1177,6 +1177,21 @@ pub fn adopt_first_bind_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_ADOPT_FIRST_BIND"))
 }
 
+/// @PLN164 B1b (`@FR-O-Buffer`, `@FR-R-Reuse`): the buffer of a call whose result a local
+/// adopts at its first bind is POOLED — minted once per activation and handed to every call,
+/// so a callee that promotes a local onto its buffer fills the caller's store instead of
+/// minting one per call — **DEFAULT ON**, both backends (an IR fact).  Opt OUT with
+/// `LOFT_NO_ADOPT_BUFFER_REUSE` (read at PARSE time): such a buffer stays null and the
+/// callee mints per call again — the before-half of the A/B on one binary and the first
+/// bisect step for a use-after-free or a wrong field out of a callee that rebinds a local
+/// it promoted onto its buffer.  `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
+/// `LOFT_NATIVE_LEAK_CHECK=1` are the falsifiers.
+pub fn adopt_buffer_reuse_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    // WIP: opt-in (`LOFT_ADOPT_BUFFER_REUSE=1`) until D-own-43 and the exit free are closed.
+    *ON.get_or_init(|| env_set("LOFT_ADOPT_BUFFER_REUSE") && !env_set("LOFT_NO_ADOPT_BUFFER_REUSE"))
+}
+
 /// @PLN164 B2 (`@FR-R-Place`, `@FR-R-MoveLast`): a call result whose ONE owning destination
 /// on every path that keeps it is a record-literal field inside an element appended to a
 /// PARAMETER's collection gets its return buffer CLAIMED IN that parameter's store, and the

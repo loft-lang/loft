@@ -3771,7 +3771,7 @@ fn reuse_record_buffers(
         // @PLN164 B1 — a buffer whose callee mints the store its result adopts is paired
         // for the guarded free only; pre-minting it hands the callee a store its own rebind
         // frees on the interpreter (`Scopes::minted_pairs`).
-        if !ungated && minted_pairs.contains(&av) {
+        if !ungated && !crate::keys::adopt_buffer_reuse_enabled() && minted_pairs.contains(&av) {
             continue;
         }
         let Some(td) = function.tp(av).base().heap_def_nr() else {

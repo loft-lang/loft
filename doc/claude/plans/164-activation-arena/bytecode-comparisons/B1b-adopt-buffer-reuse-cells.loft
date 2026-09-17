@@ -1,0 +1,318 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN164 B1b — a callee that promotes a local onto its return buffer, handed a LIVE buffer.
+//
+// B1 kept these buffers null (`Scopes::minted_pairs`) because the interpreter's rebind of the
+// promoted local freed the store the caller handed (formal/ownership.md D-own-43).  Every
+// cell below is run with the pool admitting them (the default once B1b lands) and with
+// `LOFT_NO_ADOPT_BUFFER_REUSE=1`, on both backends, under `LOFT_STRICT_STORES=1`,
+// `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and `LOFT_NATIVE_LEAK_CHECK=1`.  Every value is
+// hand-computed from the source; each cell runs in a loop so a reused buffer is refilled.
+
+struct Q { tag: integer }
+struct Canvas { data: vector<integer>, w: integer }
+
+fn md(a: integer, b: integer) -> integer { (a % b) ?? 0 }
+
+/// The promoted-local callee: `cv` IS the hidden buffer.
+fn alloc_canvas(w: integer, h: integer, fill: integer) -> Canvas {
+  cv = Canvas { data: [], w: w };
+  for _i in 0..h { cv.data += [fill]; }
+  cv
+}
+
+// r1 — plan 51 cluster 3 (D-own-43's own cell): a literal, then a rebind from a call.
+fn render_lit_then_call(p: Q) -> Canvas {
+  cv = Canvas { data: [], w: 1 };
+  cv = alloc_canvas(4, 5, p.tag);
+  cv
+}
+fn r1() {
+  s = 0;
+  for i in 0..6 {
+    p = Q { tag: i };
+    cv_c = render_lit_then_call(p);
+    assert(cv_c.w == 4 && len(cv_c.data) == 5 && cv_c.data[0]? == i, "r1 {i} {cv_c.w} {len(cv_c.data)}");
+    s += cv_c.data[4]?;
+  }
+  assert(s == 15, "r1 {s}");
+  println("r1 {s}");
+}
+
+// r2 — a rebind from a call, then a write through the local.
+fn r2f(t: integer) -> Canvas {
+  cv = Canvas { data: [], w: 9 };
+  cv = alloc_canvas(t + 1, 2, t * 3);
+  cv.w += 10;
+  cv
+}
+fn r2() {
+  s = 0;
+  for t in 0..5 {
+    m = r2f(t);
+    assert(m.w == t + 11 && len(m.data) == 2 && m.data[1]? == t * 3, "r2 {t} {m.w} {len(m.data)}");
+    s += m.w;
+  }
+  assert(s == 65, "r2 {s}");
+  println("r2 {s}");
+}
+
+// r3 — two rebinds: the intermediate store is the callee's own and must be released.
+fn r3f(t: integer) -> Canvas {
+  cv = Canvas { data: [7], w: 1 };
+  cv = alloc_canvas(2, 3, t);
+  cv = alloc_canvas(5, t + 1, t + 100);
+  cv
+}
+fn r3() {
+  s = 0;
+  for t in 0..4 {
+    m = r3f(t);
+    assert(m.w == 5 && len(m.data) == t + 1 && m.data[t]? == t + 100, "r3 {t} {m.w} {len(m.data)}");
+    s += len(m.data);
+  }
+  assert(s == 10, "r3 {s}");
+  println("r3 {s}");
+}
+
+// r4 — the call READS the local it rebinds.
+fn grow_c(c: const Canvas, extra: integer) -> Canvas {
+  g = Canvas { data: [], w: c.w + 1 };
+  for x in c.data { g.data += [x]; }
+  for _k in 0..extra { g.data += [c.w]; }
+  g
+}
+fn r4f(t: integer) -> Canvas {
+  cv = Canvas { data: [t, t], w: t + 3 };
+  cv = grow_c(cv, 2);
+  cv
+}
+fn r4() {
+  s = 0;
+  for t in 0..4 {
+    m = r4f(t);
+    assert(m.w == t + 4 && len(m.data) == 4 && m.data[0]? == t && m.data[3]? == t + 3,
+           "r4 {t} {m.w} {len(m.data)}");
+    s += m.data[3]?;
+  }
+  assert(s == 18, "r4 {s}");
+  println("r4 {s}");
+}
+
+// r5 — a rebind from another LOCAL: a copy (B-Copy), independent of the local after.
+fn r5f(t: integer) -> Canvas {
+  cv = Canvas { data: [1], w: 1 };
+  o = alloc_canvas(t + 20, 3, t);
+  cv = o;
+  o.w = 99;
+  cv
+}
+fn r5() {
+  s = 0;
+  for t in 0..3 {
+    m = r5f(t);
+    assert(m.w == t + 20 && len(m.data) == 3 && m.data[2]? == t, "r5 {t} {m.w} {len(m.data)}");
+    s += m.w;
+  }
+  assert(s == 63, "r5 {s}");
+  println("r5 {s}");
+}
+
+// r6 — the rebind inside a loop of the callee.
+fn r6f(t: integer) -> Canvas {
+  cv = Canvas { data: [], w: 0 };
+  for k in 0..3 { cv = alloc_canvas(k + t, k + 1, k * 10 + t); }
+  cv
+}
+fn r6() {
+  s = 0;
+  for t in 0..4 {
+    m = r6f(t);
+    assert(m.w == t + 2 && len(m.data) == 3 && m.data[2]? == 20 + t, "r6 {t} {m.w} {len(m.data)}");
+    s += m.data[2]?;
+  }
+  assert(s == 86, "r6 {s}");
+  println("r6 {s}");
+}
+
+// r7 — the rebind from a value branch of calls.
+fn r7f(t: integer) -> Canvas {
+  cv = Canvas { data: [], w: 0 };
+  cv = if md(t, 2) == 0 { alloc_canvas(1, 1, t) } else { alloc_canvas(2, 2, t * 5) };
+  cv
+}
+fn r7() {
+  s = 0;
+  w = 0;
+  for t in 0..4 {
+    m = r7f(t);
+    s += m.data[len(m.data) - 1]?;
+    w += m.w;
+  }
+  assert(s == 22 && w == 6, "r7 {s} {w}");
+  println("r7 {s} {w}");
+}
+
+// r8 — the rebind from a call that answers a VIEW of its argument.
+struct H { c: Canvas, n: integer }
+fn pick(h: H) -> Canvas { h.c }
+fn r8f(h: H) -> Canvas {
+  cv = Canvas { data: [], w: 0 };
+  cv = pick(h);
+  cv
+}
+fn r8() {
+  s = 0;
+  for t in 0..3 {
+    h = H { c: Canvas { data: [t, t + 1], w: t }, n: 0 };
+    m = r8f(h);
+    h.c.w = 77;
+    assert(m.w == t && len(m.data) == 2 && m.data[1]? == t + 1 && h.c.w == 77, "r8 {t} {m.w}");
+    s += m.data[1]?;
+  }
+  assert(s == 6, "r8 {s}");
+  println("r8 {s}");
+}
+
+// r9 — the parser shape: a `return no_mk()` chain inside the callee's loop, and a literal
+// exit; a refill after a match must read an EMPTY vector.
+struct Mk { matched: boolean = false, bad: boolean = false, pts: vector<integer> }
+fn no_mk() -> Mk { Mk { matched: false, bad: false, pts: [] } }
+fn scan_mk(n: integer, hit: integer) -> Mk {
+  k = 0;
+  while true {
+    if k >= n { return no_mk() }
+    k += 1;
+    if k != hit { continue }
+    return Mk { matched: true, bad: false, pts: [k, k * 2] }
+  }
+  no_mk()
+}
+fn r9() {
+  s = 0;
+  for i in 0..6 {
+    m = scan_mk(4, i);
+    s += if m.matched { m.pts[1]? } else { 100 + len(m.pts) };
+  }
+  assert(s == 220, "r9 {s}");
+  println("r9 {s}");
+}
+
+// r10 — `parse_scene_at`'s shape: several parsers per line, one bound inside an `if`.
+fn scan_a(line: integer) -> Mk {
+  if md(line, 3) == 0 { return Mk { matched: true, bad: false, pts: [line] } }
+  no_mk()
+}
+fn scan_b(line: integer) -> Mk {
+  bp: vector<integer> = [];
+  for j in 0..md(line, 4) { bp += [j + line]; }
+  Mk { matched: len(bp) > 0, bad: false, pts: bp }
+}
+fn r10() {
+  total = 0;
+  for line in 0..12 {
+    ma = scan_a(line);
+    if ma.matched { total += ma.pts[0]?; continue }
+    if md(line, 2) == 0 {
+      mb = scan_b(line);
+      if mb.matched { total += len(mb.pts) * 1000 + mb.pts[len(mb.pts) - 1]?; }
+      continue
+    }
+    total += 1;
+  }
+  assert(total == 4036, "r10 {total}");
+  println("r10 {total}");
+}
+
+// r11 — recursion: the promoted local rebound from the function itself.
+fn rec(n: integer) -> Canvas {
+  cv = Canvas { data: [n], w: n };
+  if n > 0 {
+    cv = rec(n - 1);
+    cv.data += [n];
+  }
+  cv
+}
+fn r11() {
+  s = 0;
+  for t in 0..3 {
+    m = rec(t + 1);
+    assert(len(m.data) == t + 2 && m.data[t + 1]? == t + 1 && m.w == 0, "r11 {t} {len(m.data)} {m.w}");
+    s += len(m.data);
+  }
+  assert(s == 9, "r11 {s}");
+  println("r11 {s}");
+}
+
+// r12 — the adopting local is itself the caller's result (the § V-an phantom).
+fn outer(t: integer) -> Canvas {
+  m = alloc_canvas(t, 2, t);
+  m.w += 1;
+  m
+}
+fn r12() {
+  s = 0;
+  for t in 0..3 {
+    o = outer(t);
+    assert(o.w == t + 1 && len(o.data) == 2 && o.data[1]? == t, "r12 {t} {o.w}");
+    s += o.w;
+  }
+  assert(s == 6, "r12 {s}");
+  println("r12 {s}");
+}
+
+// r13 — the CONTROL: a result local assigned twice (the pool declines it).
+fn r13() {
+  s = 0;
+  for t in 0..3 {
+    m = alloc_canvas(t, 1, t);
+    m = alloc_canvas(t + 5, 2, t + 7);
+    assert(m.w == t + 5 && len(m.data) == 2, "r13 {t} {m.w}");
+    s += m.data[1]?;
+  }
+  assert(s == 24, "r13 {s}");
+  println("r13 {s}");
+}
+
+// r14 — a TEXT-owning record: the refill releases the previous name.
+struct Card { name: text, n: integer }
+fn mk_card(t: integer) -> Card {
+  c = Card { name: "c{t}", n: t };
+  c.n += 1;
+  c
+}
+fn card_lit_then_call(t: integer) -> Card {
+  c = Card { name: "x", n: 0 };
+  c = mk_card(t);
+  c
+}
+fn r14() {
+  s = 0;
+  for t in 0..4 {
+    k = card_lit_then_call(t);
+    assert(k.name == "c{t}" && k.n == t + 1, "r14 {t} {k.name} {k.n}");
+    s += k.n;
+  }
+  assert(s == 10, "r14 {s}");
+  println("r14 {s}");
+}
+
+fn run(c: text) {
+  if c == "r1" { r1() } else if c == "r2" { r2() } else if c == "r3" { r3() }
+  else if c == "r4" { r4() } else if c == "r5" { r5() } else if c == "r6" { r6() }
+  else if c == "r7" { r7() } else if c == "r8" { r8() } else if c == "r9" { r9() }
+  else if c == "r10" { r10() } else if c == "r11" { r11() } else if c == "r12" { r12() }
+  else if c == "r13" { r13() } else if c == "r14" { r14() }
+}
+
+/// With no argument every cell runs; `-- r9` runs one.
+fn main() {
+  args = arguments();
+  if len(args) == 0 {
+    r1(); r2(); r3(); r4(); r5(); r6(); r7(); r8(); r9(); r10(); r11(); r12(); r13(); r14();
+    println("B1b cells PASSED");
+  } else {
+    for a in args { run(a); }
+  }
+}
