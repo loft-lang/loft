@@ -1,0 +1,112 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN164 B1b (`@FR-O-Buffer`, `@FR-O-Move`) — A CHAIN HANDS ITS CALLEE'S ANSWER ON:
+// `fn outer(…) -> Mk { scan(…) }` passes the buffer it was handed to `scan` and returns what
+// `scan` answers, which is that buffer (the caller's pooled store) or a store `scan` minted.
+// The scope pass hoists the call into a returned `__ret_N`, which native binds up front, and
+// that bind read as a REASSIGNMENT: its copy-or-adopt split copied the answer into a fresh
+// store and freed the source — the caller's pooled buffer, which the caller cleared and
+// handed on again the next iteration.  The bind is the local's first and adopts, as it does
+// on the interpreter.  The cells vary what sits around the chain (a literal exit, a chain
+// exit, nothing) and what it chains to (a chain, a literal tail, a literal callee); every
+// value is hand-computed and each cell runs in a loop so a pooled buffer is refilled.
+// `LOFT_NO_ADOPT_BUFFER_REUSE=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`,
+// `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1` must answer identically.  Plan cells:
+// `doc/claude/plans/164-activation-arena/bytecode-comparisons/B2-chain-literal-exit-cells.loft`
+// (c5).
+//
+// @falsified-at: c9639695 — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/164-a-chain-of-chains-adopts-its-callees-answer.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   — the predeclared `__ret_N` read as a reassignment again.  Score it with
+//   `LOFT_STRICT_STORES=1 scripts/falsify.sh <this file> --patch <that patch>`.
+//   ARMED: nothing needed — `LOFT_STRICT_STORES=1` only names the free sooner.
+//   CHANNEL: an assertion on native (and exit); the interpreter always adopted here.
+//   WITNESS: unarmed native answers `m4 417` where 827 is right (a later cell's record lands
+//   in the freed buffer); armed, `[strict-store] USE AFTER FREE (read) store #0 type=Mk` and
+//   `m7 420` for 830.
+//   HOLDS: the interpreter's values are equal on both trees, and every value on this tree is
+//   the hand-computed one.
+
+struct Mk { matched: boolean = false, bad: boolean = false, pts: vector<integer> }
+
+fn no_mk() -> Mk { Mk { matched: false, bad: false, pts: [] } }
+fn lit(k: integer) -> Mk { Mk { matched: true, bad: false, pts: [k, k] } }
+/// Chain exits, a literal exit, a chain tail.
+fn scan(n: integer, hit: integer) -> Mk {
+  if hit > n { return no_mk() }
+  if hit > 0 { return Mk { matched: true, bad: false, pts: [hit] } }
+  no_mk()
+}
+/// A literal tail: the unpromoted buffer.
+fn plain(n: integer, hit: integer) -> Mk { Mk { matched: hit > 0, bad: false, pts: [hit, n] } }
+fn outer(n: integer, hit: integer) -> Mk { scan(n, hit) }
+fn outer_p(n: integer, hit: integer) -> Mk { plain(n, hit) }
+
+fn o_m1(n: integer, hit: integer) -> Mk {
+  if hit < 0 { return Mk { matched: false, bad: true, pts: [] } }
+  outer(n, hit)
+}
+fn o_m2(n: integer, hit: integer) -> Mk {
+  if hit < 0 { return Mk { matched: false, bad: true, pts: [] } }
+  scan(n, hit)
+}
+fn o_m3(n: integer, hit: integer) -> Mk { outer(n, hit) }
+fn o_m4(n: integer, hit: integer) -> Mk {
+  if hit < 0 { return Mk { matched: false, bad: true, pts: [] } }
+  outer_p(n, hit)
+}
+fn o_m5(n: integer, hit: integer) -> Mk {
+  if hit < 0 { return Mk { matched: false, bad: true, pts: [] } }
+  plain(n, hit)
+}
+fn o_m6(n: integer, hit: integer) -> Mk {
+  if hit < 0 { return no_mk() }
+  outer(n, hit)
+}
+fn lit_of(n: integer) -> Mk { lit(n) }
+fn o_m7(n: integer, hit: integer) -> Mk {
+  if hit < 0 { return Mk { matched: false, bad: true, pts: [] } }
+  lit_of(n)
+}
+
+/// `matched` + 10 × `bad` + 100 × the point count + the sum of the points.
+fn v(m: Mk) -> integer {
+  t = len(m.pts) * 100;
+  if m.matched { t += 1 }
+  if m.bad { t += 10 }
+  for p in m.pts { t += p }
+  t
+}
+
+// Each cell binds the result for hit = -1, 0, 1, 2, 3 with n = 2.
+// scan: -1 and 0 and 3 answer no_mk (0); 1 → [1] (102); 2 → [2] (103).
+// plain: [hit, 2], matched when hit > 0 → 202, 204, 205, 206 for hit 0..3.
+fn cell(which: integer) -> integer {
+  s = 0;
+  for i in 0..5 {
+    h = i - 1;
+    m = if which == 1 { o_m1(2, h) } else if which == 2 { o_m2(2, h) }
+        else if which == 3 { o_m3(2, h) } else if which == 4 { o_m4(2, h) }
+        else if which == 5 { o_m5(2, h) } else if which == 6 { o_m6(2, h) }
+        else { o_m7(2, h) };
+    s += v(m);
+  }
+  s
+}
+
+fn main() {
+  // m1, m2: the literal exit (10) + 0 + 102 + 103 + 0
+  assert(cell(1) == 215, "m1 {cell(1)}");
+  assert(cell(2) == 215, "m2 {cell(2)}");
+  // m3, m6: no literal exit — scan's no_mk for hit -1
+  assert(cell(3) == 205, "m3 {cell(3)}");
+  assert(cell(6) == 205, "m6 {cell(6)}");
+  // m4, m5: 10 + 202 + 204 + 205 + 206
+  assert(cell(4) == 827, "m4 {cell(4)}");
+  assert(cell(5) == 827, "m5 {cell(5)}");
+  // m7: 10 + four times lit(2) = 1 + 200 + 4
+  assert(cell(7) == 830, "m7 {cell(7)}");
+  println("chain-of-chains cells PASSED");
+}

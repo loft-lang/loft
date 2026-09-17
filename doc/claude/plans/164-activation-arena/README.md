@@ -618,6 +618,7 @@ the caller hands the sentinel.  Handed a live store:
 | 3 | native's copy arm at a pre-init rebind | `if c { m = scan(…) }` in a loop (r22 — `ps_f`) | the copy's source-free released the pooled store, native only; the interpreter's post-wrap reset freed it too, which only defeated the pool |
 | 4 | every top-of-body insertion | a body the scan wraps as `Insert([Set(sc, null), Block])` because its result is a hoisted local (r25 — `parse_scene_at` itself) | the pool, A0's lazy mints and the `__rbo_`/witness initialisers all matched a bare `Block` and skipped it in silence |
 | 5 | native's value-record gate | any promoted buffer the snapshot below mentions (`find_word_from`, `read_number`) | "the return buffer is used": the scanner lost its registers, 248 `Scan` mints per two parses |
+| 6 | native's first bind of a PREDECLARED `__ret_N` | a pure chain `fn outer() -> Mk { scan() }` (found after B1b shipped, by the chain cells' c5) | the prologue binds a returned `__ret_N` up front, so its one bind read as a reassignment: the copy freed `scan`'s answer — the caller's pooled buffer.  Unarmed native answered `m4 417` for 827 |
 
 *The mechanism.*  (1–2) One fact, read at every free: the scope pass snapshots the store a
 promoted record buffer was handed (`__rbw_<buf> = OpRefAlias(buf)`, `Function::entry_witness`,
@@ -628,7 +629,10 @@ bind after an `if` pre-init is recorded as a first bind (`Variable::deferred_fir
 format 8) when it is the local's only assignment and a B1 adopt; both bind arms take the adopt.
 (4) `scopes::body_block_mut` finds the body through the wrapper, for every site.  (5) The
 value-record gate and emitters account for the snapshot: a phantom buffer's alias is the null
-reference.  `LOFT_TRACE_POOL=1` names the gate that declines a buffer.  `(O-Buffer)` gained the
+reference.  (6) A predeclared local's first body `Set` is a first bind in native's B1 arm too
+(`Output::predeclared`), as it always was on the interpreter; guard
+`tests/scripts/164-a-chain-of-chains-adopts-its-callees-answer.loft` with its sabotage patch.
+`LOFT_TRACE_POOL=1` names the gate that declines a buffer.  `(O-Buffer)` gained the
 callee-side clause, and D-own-43 is closed (`formal/ownership.md`).
 
 *Two defects the cells found that predate this unit*, both reproducing on the pre-session

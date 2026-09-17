@@ -206,6 +206,43 @@ fn an_inline_container_over_an_adopting_callee_is_released() {
 }
 
 #[test]
+fn a_chain_of_chains_adopts_its_callees_answer() {
+    // A pure chain (`fn outer() -> Mk { scan() }`) binds the call to a `__ret_N` native
+    // declares up front; that first bind adopts, where a copy freed the caller's pooled
+    // buffer the callee had written into.
+    let out = std::env::temp_dir().join("loft_adopt_buffer_reuse_chain.rs");
+    let guard = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scripts/164-a-chain-of-chains-adopts-its-callees-answer.loft");
+    let mut cmd = loft();
+    cmd.arg("--native-emit").arg(&out).arg(&guard);
+    let status = cmd.output().expect("spawn loft --native-emit");
+    assert!(
+        out.exists(),
+        "no Rust emitted: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
+    assert!(
+        section(&rust, "n_outer")
+            .contains("var___ret_1 = n_scan(cell, var_n, var_hit, var___ref_1);"),
+        "outer: the chain's answer is adopted"
+    );
+    let _ = std::fs::remove_file(&out);
+    for mode in ["--interpret", "--native"] {
+        let mut cmd = loft();
+        cmd.arg(mode)
+            .arg(&guard)
+            .env("LOFT_NATIVE_LEAK_CHECK", "1")
+            .env("LOFT_STRICT_STORES", "1");
+        let out = cmd.output().expect("spawn loft");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{mode}: {err}");
+        assert!(!err.contains("USE AFTER FREE"), "{mode}: {err}");
+        assert!(!err.contains("not freed"), "{mode}: {err}");
+    }
+}
+
+#[test]
 fn the_store_census_drops() {
     // Hand-checked 2026-09-17 on the cells as written; a cell edit re-measures both pairs.
     let (i_on, i_off) = (
