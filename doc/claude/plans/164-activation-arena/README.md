@@ -20,7 +20,9 @@ on the release binary itself reads loft runtime 63 %, program 31 % — the class
 of the row.  **P0b is done (2026-09-17, § P0b):** charged to loft lines through the inline chain,
 the runtime is 72 % and the store mint/free family 20 % — half of it buffers minted at FUNCTION
 ENTRY on paths that never use them.  Moving those mints to their first use measured −9–10 % by
-hand, so **A0** (§ A0) is cut, after @PLN157's prelude elision (−11–14 %).**  The
+hand, so **A0** (§ A0) is cut, after @PLN157's prelude elision (−11–14 %).  Both are BUILT
+(2026-09-17), and so is **C6** (§ C6): the parse row is 38.8–41.7 k → 29.8–29.9 k ns/op, every
+other row equal or faster, and the next class is the last-use vector field (§ Re-measured).**  The
 measurements are under § P0 below and the mechanism under § B1.  What P0 changed in the
 plan: tier 1's ceiling is ~10 % of the parse row, not a fifth, and its store-identity cost
 (287 `store_nr !=` sites in one emission) is real, so A1/A2 stay behind B and C in the
@@ -56,8 +58,8 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
 - **Effort:** M (tiers 1–2) · MH (tier 3)
 - **Design:** ~ — the invariants are named; the store-identity question (§ Edge cases E1)
   is open and decides tier 1's shape.
-- **Last touched:** 2026-09-17 (P0b: the release row charged to loft lines, A0 measured and cut —
-  § P0b)
+- **Last touched:** 2026-09-17 (P0b, row 11, A0 and C6 built, loft#1548 and D-own-44 fixed on
+  the way; the 14-row table and the parse row re-measured — § Re-measured)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -307,10 +309,14 @@ lifecycle phase changes.
    33.5–34.1 k → 31.2–31.4 k ns/op on top of row 11.
 3. ~~**C6 — a nested record literal built inside the element**~~ (§ C6) — BUILT 2026-09-17:
    hand-measured −8.5 %, built −6–7 %; loft#1548 fixed on the way.
-4. **The last-use vector field** (`widths: pf_wids`) — part of `:704`'s 5.1 %; C5's parked
-   vector `place_result` is the same question and is re-priced here.
-5. **A1/A2** — re-priced after A0 against what is left of the store family (the body half,
-   9.4 %: `Mark` exits, `no_mark`, the per-iteration `Paint` temp C6 removes).
+4. **The last-use vector field** — now the largest class the row shows: `:704`'s `widths:
+   pf_wids` and the parsers' exit `Mark { …, pts: <local> }` copies, where the local is dead
+   after the literal (≈ 5–8 % together, § Re-measured).  C5's parked vector `place_result` is
+   the same question.  `:704`'s `pts: pf_line` is the two-destination copy tier 3 keeps.
+5. **The `Mark` result path** — `no_mark()` mints a store per call (1.9 %) and `:986` copies
+   `parse_fronds`' result (1.2 %).
+6. **A1/A2** — re-priced: the store family is 13.7 % of the row now (`parse_poly` 3.8,
+   `parse_scene_at` 2.1, `parse_fronds` 1.6, `no_mark` 1.6, `parse_circle` 1.1).
 
 ## A0 — the buffer minted at its first use (`@FR-O-Buffer`)
 
@@ -378,6 +384,54 @@ mints now guarded, the row 33.5–34.1 k → **31.2–31.4 k ns/op** (−7 %), `
 instructions 2 023 M → 1 871 M (−7.5 %), cycles −6.8 %, hash `33f6d2b8`, clean under all three
 falsifiers.  The hand patch measured −9–10 % on the pre-row-11 emission; together the two
 levers take the row from 38.8–41.7 k to 31.2–31.4 k.
+
+## Re-measured after row 11, A0 and C6 (2026-09-17)
+
+*The 14-row table*, one binary, the four new switches on vs off (`LOFT_NO_LEAF_CHAIN`,
+`LOFT_NO_LAZY_BUFFER`, `LOFT_NO_NESTED_IN_PLACE`, `LOFT_NO_APPEND_STAGING`), `compare.py
+--skip-interp --repeat 3`, two passes each, 14/14 hashes, `LOFT_HOIST_VERIFY=1` clean over the
+whole bench:
+
+| row | on (ns/op) | off (ns/op) | change |
+|---|---:|---:|---:|
+| parse | 29.8–29.9 k | 39.3–40.0 k | **−25 %** |
+| smooth | 1.18–1.20 k | 1.28–1.36 k | −8 to −12 % |
+| hair | 26.7–27.3 k | 28.8–29.3 k | −7 % |
+| fill_star | 22.1–22.3 k | 23.9–24.1 k | −7 % |
+| wide_line | 12.8 k | 13.7 k | −7 % |
+| lock | 3.03 M | 3.18–3.19 M | −5 % |
+| lock_curved | 3.13 M | 3.22 M | −3 % |
+| fill_circle | 59.5 k | 61.0–61.2 k | −2.5 % |
+| render_lock | 15.06 M | 15.29–15.34 M | −1.7 % |
+| fronds | 175–177 k | 178 k | −1 to −2 % |
+| hash, composite, render_marks, resize | — | — | equal |
+
+Most of the rows other than `parse` move through row 11 (the lean frame).  Two costs the first
+build of A0 carried were found by this table and removed before it: a dead join buffer's
+guard in `lock_ribbons`' loop (`hoist::dead_buffers` now counts the witness of a free guarded
+for a value local), and a lazy mint counted as growth for `@FR-R-Base`, which took the
+element bases out of `lock_layer`'s loop (+3.9 % instructions on `lock_curved`, found by
+`perf stat` on a `lock_curved`-only bench).  The `render_*` and `resize` rows move ±3 % with
+code LAYOUT alone — measured: `resize`'s own functions are byte-identical under
+`LOFT_NO_LAZY_BUFFER` and its time still moved — so a ±3 % change on those rows is not
+evidence either way; read them with `perf stat` instructions.
+
+*The parse row, attributed again* (`scripts/native_attrib.py`, 14 742 samples):
+
+| family | § P0b | now |
+|---|---:|---:|
+| store mint/free | 20.0 % | **13.7 %** |
+| store access | 9.6 % | 13.3 % |
+| vector field copy | 9.2 % | 12.6 % |
+| record mint/copy/move | 11.0 % | 11.8 % |
+| vector append/grow | 6.7 % | 9.0 % |
+| frame prelude | 6.4 % | **gone** |
+
+(Shares of a row that is a quarter shorter, so a family that held still in time grew in share.)
+By line: `:704` is still first at 11.3 %, now almost all `vector_add` (6.9 %) — the `pts` and
+`widths` copies into the element.  Then `no_mark()` minting a `Mark` store per call (`:499`,
+1.9 %), the `Mark` results' `pts` copies at the parser exits (`:709`, `:545`, `:831`, `:836`,
+≈ 5 % together), and `:986` copying `parse_fronds`' `Mark` (1.2 %).
 
 ## C6 — a nested record literal built inside the element (BUILT 2026-09-17, `@FR-R-InPlaceLiteral`)
 
