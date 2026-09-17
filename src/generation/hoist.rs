@@ -1700,6 +1700,10 @@ pub struct BoundedNest<'a> {
     /// The variables the chains read that are not the loop's counters — invariant for the
     /// loop's extent, since the body writes only `acc`.
     pub invariants: Vec<u16>,
+    /// Every read's index chain names a counter at most ONCE, so each is affine in the
+    /// counter and its extremes over the range are at the range's two ends — the fact the
+    /// guard's in-range clause (raw reads, step 2) rests on.
+    pub affine: bool,
 }
 
 /// Parse `lp` as a bounded nest, or say which part of the shape it is not.
@@ -1757,12 +1761,31 @@ pub fn bounded_nest<'a>(lp: &'a Block, data: &Data) -> Result<BoundedNest<'a>, S
         term: &args[1],
         reads: Vec::new(),
         invariants: Vec::new(),
+        affine: false,
     };
     nest_chain(&args[1], data, &counter_vars, *acc, &mut nest, false)?;
     if nest.reads.is_empty() {
         return Err("the term reads no vector".to_string());
     }
+    nest.affine = nest
+        .reads
+        .iter()
+        .all(|(_, chain)| counter_mentions(chain, &counter_vars) <= 1);
     Ok(nest)
+}
+
+/// How many times `v` names one of the loop's counters.
+fn counter_mentions(v: &Value, counters: &[u16]) -> usize {
+    let mut n = 0;
+    v.any_node(&mut |node| {
+        if let Value::Var(x) = node
+            && counters.contains(x)
+        {
+            n += 1;
+        }
+        false
+    });
+    n
 }
 
 /// One chain of a bounded nest: the term, or a read's index (`in_index`, where a nested read

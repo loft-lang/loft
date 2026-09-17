@@ -9,6 +9,32 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The nest reads raw — `R-BoundedNest` step 2, `render_marks` −35 % again, 1.75× its reference (2026-09-17)
+
+`--native`, generation time, default ON (`LOFT_NO_NEST_RAW_READS=1` keeps step 1's arm).  Inside
+the plain arm every element read still went through `get_elem_at` — a bounds test and the
+discharge's null select per element — which is what kept LLVM from turning the tap into the
+vectorised multiply-accumulate the Rust reference compiles to.  Both tests are now proved at the
+loop's entry, in the guard that already exists: where every read's index chain names the counter
+at most ONCE (`hoist::bounded_nest`'s `affine`) it is affine in the counter, so its extremes over
+`[lo, hi)` are its values at the two ends — `nest_chain_at` spells the chain at `__lo` and at
+`__hi - 1` with wrapping operators (the magnitude bound has already proved no step overflows) and
+the guard requires both in `[0, __vh_N.len)`; the element bound is `None` on any stored null, so
+the select is the element itself.  The arm then emits one `read_unaligned` through the held base
+(`ops::vector_ops`) and the discharge's `if` as its variable (`Output::output_if_inner`).  A chain
+that names the counter twice (`a[x * x]`) is not affine and keeps the checked read; an index
+outside the range at either end declines the whole nest to the checked loop, where the absent
+element answers 0 (n19) and a negative index counts from the end (n23) exactly as before.  Under
+`LOFT_HOIST_VERIFY=1` the checked read is emitted beside the raw one and compared at the read.
+Falsified: the range clause removed, n19 reads the element past the end and n23 the one before
+the start where the checked loop answers 21 and 14, and under verify the run stops at the first
+raw read.
+
+Measured on the drawing bench, interleaved, hash `4203420772`: `render_marks` 1 721–1 760 →
+**1 112–1 140 µs/op** (against the reference's 636 µs, **1.75×**, from 2.75×); the hand patch
+that priced the step read 1 042–1 067.  Cells n18–n23 (`157-bounded-nest.loft`), pins
+`tests/bounded_nest.rs`.
+
 ### A nest whose arithmetic cannot fault runs plain — `render_marks` −54 % (2026-09-17)
 
 @PLN157 `R-BoundedNest` (`@FR-R-BoundedNest`, `formal/rewrites.md`), `--native`, generation

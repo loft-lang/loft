@@ -1691,6 +1691,22 @@ impl Output<'_> {
         // that hides an `Insert` or a `Block` does not change what the branch is, only what
         // this function can see of it.  Measured over the 863-program native corpus: 4 193 of
         // 110 157 arrivals carry one.
+        // `@FR-R-BoundedNest` step 2 — the discharge's `if __ncc != null { __ncc } else { 0 }`
+        // inside the raw arm of an admitted nest: the element bound the guard read is `None` on
+        // any stored null, so the select is the element itself.  Kept under `LOFT_HOIST_VERIFY=1`,
+        // where the raw read beside it is already compared with the checked one.
+        if self.nest_raw_arm
+            && !self.hoist_verify
+            && let Value::Call(d, cargs) = test.unspan()
+            && (*d as usize) < self.data.definitions.len()
+            && self.data.def(*d).name() == "OpConvBoolFromInt"
+            && cargs.len() == 1
+            && let Value::Var(t) = cargs[0].unspan()
+            && matches!(true_v.unspan(), Value::Var(s) if s == t)
+            && matches!(false_v.unspan(), Value::Int(0))
+        {
+            return self.output_code_inner(w, true_v);
+        }
         let wrap_block = matches!(test.unspan(), Value::Insert(ops) if ops.len() >= 2);
         if wrap_block {
             write!(w, "{{")?;

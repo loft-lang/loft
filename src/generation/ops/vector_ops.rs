@@ -125,6 +125,37 @@ impl OpEmitter for FusedElementReadEmitter {
         // @PLN157 § V-ak (`@FR-R-Base`) — a growth-free loop holds the element base too;
         // the read through it is `unsafe` at the call, which is where the proof lives.
         let base = ctx.output.active_vec_base(&fused.path).map(str::to_owned);
+        // `@FR-R-BoundedNest` step 2 — inside the raw arm of an admitted nest the guard has
+        // proved this index in range and the element not null, so the read is one load
+        // through the held base.  Under `LOFT_HOIST_VERIFY=1` the checked read is emitted
+        // beside it and the two compared at the read.
+        if ctx.output.nest_raw_arm
+            && let Some(base) = &base
+        {
+            let raw_verify = ctx.output.hoist_verify;
+            if raw_verify {
+                write!(ctx.w, "{{ let _raw: {ty} = ")?;
+            }
+            write!(ctx.w, "unsafe {{ {base}.add(((")?;
+            ctx.emit(fused.index)?;
+            write!(ctx.w, ") as usize) * ((")?;
+            ctx.emit(fused.size)?;
+            write!(ctx.w, ") as usize) + ((")?;
+            ctx.emit(fused.fld)?;
+            write!(ctx.w, ") as usize)).cast::<{ty}>().read_unaligned() }}")?;
+            if raw_verify {
+                write!(ctx.w, "; let _chk: {ty} = ")?;
+                ctx.output.nest_raw_arm = false;
+                let r = self.emit(ctx, args);
+                ctx.output.nest_raw_arm = true;
+                r?;
+                write!(
+                    ctx.w,
+                    "; assert!(_raw == _chk, \"bounded nest: a raw read disagrees with the checked read — the guard admitted an index out of range or a null element\"); _raw }}"
+                )?;
+            }
+            return Ok(());
+        }
         if let Some(base) = &base {
             write!(
                 ctx.w,

@@ -5,7 +5,10 @@
 //! the checked loop as its `else`; the element bounds (`__bd_N`) are derived at the
 //! outermost loop whose body leaves the vector alone, never at the nest's own prelude; a
 //! loop whose body writes the vector holds no bound and the nest under it declines;
-//! `LOFT_NO_BOUNDED_NEST=1` restores the checked form everywhere.  The cell corpus
+//! `LOFT_NO_BOUNDED_NEST=1` restores the checked form everywhere.  Step 2: where every read's
+//! index chain is affine in the counter the guard also proves both range ends in `[0, len)`
+//! and the arm reads RAW through the held base with no null select; `LOFT_NO_NEST_RAW_READS=1`
+//! keeps step 1's bounds-tested arm.  The cell corpus
 //! (`tests/scripts/157-bounded-nest.loft`) says the VALUES hold on both backends, in both
 //! switch states and under `LOFT_HOIST_VERIFY=1`; this pins what is emitted and runs it.
 use std::path::{Path, PathBuf};
@@ -115,16 +118,70 @@ fn the_tap_nest_is_guarded_and_runs_plain_with_the_checked_loop_as_its_else() {
 }
 
 #[test]
+fn an_affine_nest_reads_raw_through_the_base_and_a_non_affine_one_keeps_the_checked_read() {
+    let rust = emit("raw", &[]);
+    let taps = body(&rust, "n_bn_taps");
+    let arm = &taps[taps.find("plain nest").unwrap()..taps.find("plain nest*/").unwrap()];
+    assert!(
+        arm.contains(".read_unaligned()"),
+        "the tap's plain arm does not read raw:\n{arm}"
+    );
+    assert!(
+        !arm.contains("get_elem_at"),
+        "the tap's plain arm keeps a bounds-tested read:\n{arm}"
+    );
+    assert!(
+        !arm.contains("op_conv_bool_from_int"),
+        "the tap's plain arm keeps the null select:\n{arm}"
+    );
+    // The guard proves both ends of every read's index in range against the header's length.
+    assert!(
+        taps.contains("let __ln_0: i64 = i64::from(__vh_"),
+        "no in-range clause:\n{taps}"
+    );
+    assert!(
+        taps.contains("__xh_1 >= __ln_1 { return None; }"),
+        "the second read's range test is missing:\n{taps}"
+    );
+    // n21 (`a[x * x]`) names the counter twice: not affine, so its arm keeps the checked read.
+    let main = body(&rust, "n_main");
+    let arms: Vec<&str> = main.split("plain nest\n").skip(1).collect();
+    assert!(
+        arms.iter()
+            .any(|a| a.contains("get_elem_at") && !a.contains("read_unaligned")),
+        "no plain arm kept its checked read — n21's non-affine chain should have"
+    );
+}
+
+#[test]
+fn the_raw_read_switch_restores_the_bounds_tested_arm() {
+    let rust = emit("raw_off", &[("LOFT_NO_NEST_RAW_READS", "1")]);
+    let taps = body(&rust, "n_bn_taps");
+    assert!(
+        taps.contains("let __nb_"),
+        "the nest itself should still be guarded"
+    );
+    assert!(
+        !taps.contains(".read_unaligned()"),
+        "a raw read survived the switch:\n{taps}"
+    );
+    assert!(
+        !taps.contains("let __ln_0"),
+        "the range clause survived the switch"
+    );
+}
+
+#[test]
 fn a_loop_that_writes_the_vector_holds_no_bound_and_its_nest_declines() {
     // n16/n17: `a16[0] = …` inside the enclosing loop.  Its nest stays checked.
     let rust = emit("written", &[]);
     let main = body(&rust, "n_main");
-    // The two admitted main-level nests (n13, n15) are guarded; n16's and n17's are not:
-    // count the guards against the admissions the trace names for main.
+    // main's admitted nests are n13, n15 and the step-2 cells n18–n23 — eight — and n16's and
+    // n17's are NOT among them, because the loop enclosing each writes `a16`/`a17`.
     let guards = main.matches("let __nb_").count();
     assert_eq!(
-        guards, 2,
-        "main should guard exactly its two admitted nests:\n{main}"
+        guards, 8,
+        "main should guard exactly its eight admitted nests:\n{main}"
     );
 }
 
@@ -147,12 +204,16 @@ fn the_values_hold_on_both_backends_in_both_switch_states_and_under_verify() {
     run_ok(&["--interpret"], &[]);
     run_ok(&["--native-release"], &[]);
     run_ok(&["--native"], &[("LOFT_NO_BOUNDED_NEST", "1")]);
+    run_ok(&["--native"], &[("LOFT_NO_NEST_RAW_READS", "1")]);
     run_ok(
         &["--native"],
         &[
             ("LOFT_HOIST_VERIFY", "1"),
             ("LOFT_STRICT_STORES", "1"),
             ("LOFT_POISON", "1"),
+            // A raw read one past the end lands in the claim's zeroed slack and would answer
+            // the checked read's 0 by luck; poisoned, n19 can only pass through the checked loop.
+            ("LOFT_POISON_CLAIM", "1"),
             ("LOFT_NATIVE_LEAK_CHECK", "1"),
         ],
     );

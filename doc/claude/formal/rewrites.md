@@ -674,6 +674,13 @@ loop.  Sites: `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoiste
                  outermost loop whose body neither writes the vector (an element
                  or field set through it, an append, a rebind of its root) nor
                  hands it to a call — never at the nest's own prelude.
+                 When every read's chain names the counter at most ONCE (so it
+                 is affine, and its extremes over the range are its values at
+                 the two ends), the guard also requires both ends in [0, len)
+                 for every read; then each read is one load through the held
+                 base with no bounds test and no null select — the element
+                 bound has already ruled out a stored null.  A read outside the
+                 range at either end declines the nest whole.
 ```
 
 **In words.**  @PLN157's guarded plain nest, the admissible successor C120 names: the
@@ -689,12 +696,17 @@ of the nest's enclosing loop, against the nest's taps under it; at the nest's ow
 it would be the nest's cost again, which is why a function-level nest with no enclosing
 loop declines.  A stored null, an accumulator near the maximum, a null invariant and a
 vector written by the enclosing loop are the cells that must DECLINE
-(`tests/scripts/157-bounded-nest.loft` n2, n3, n7c, n8, n16, n17).  Switch
-`LOFT_NO_BOUNDED_NEST`; falsifier `LOFT_HOIST_VERIFY=1` (every plain operator's answer is
-compared with the checked template's at the operator — `ops::nest_verify`); trace
-`LOFT_TRACE_NEST=1`.  Sites: `hoist::bounded_nest`, `hoist::nest_read_paths`,
-`Output::nest_fast_path`, `nest_bound_expr`, `ops::int_arith::nest_form`,
-`vector::abs_bound_i64`.
+(`tests/scripts/157-bounded-nest.loft` n2, n3, n7c, n8, n16, n17); a read one past the end
+and a chain that goes negative decline the RAW form and answer through the checked loop
+(n19, n23), while the last element, a negative coefficient and a constant index are in range
+(n18, n20, n22) and a counter named twice is not affine (n21).  Switches
+`LOFT_NO_BOUNDED_NEST` and, one step finer, `LOFT_NO_NEST_RAW_READS` (the plain arm keeps its
+bounds-tested reads); falsifier `LOFT_HOIST_VERIFY=1` (every plain operator's answer is
+compared with the checked template's at the operator — `ops::nest_verify` — and every raw read
+with the checked read); trace `LOFT_TRACE_NEST=1`.  Sites: `hoist::bounded_nest`,
+`hoist::nest_read_paths`, `Output::nest_fast_path`, `nest_bound_expr`, `nest_chain_at`,
+`ops::int_arith::nest_form`, `ops::vector_ops` (the raw read), `Output::output_if_inner` (the
+select), `vector::abs_bound_i64`.
 
 ### A witnessed buffer is allocated once, not minted per call
 

@@ -33,9 +33,13 @@ judged row but `lock_curved` (3.87× on this lane) is under the 3× bar, median 
 it a runtime item the same session's `sample` profile named: a self-append (`v += v`, the
 canvas fill's doubling ladder) copied byte by byte through a snapshot and, for heap-owning
 elements, read the source through a freed block — one block copy now, both backends,
-`render_marks` −8 % (D-heap-17).  Switches `LOFT_NO_BOUNDED_NEST`, `LOFT_NO_SELF_APPEND_BLOCK`;
-falsifier `LOFT_HOIST_VERIFY=1` (`ops::nest_verify`); pins `tests/bounded_nest.rs`; cells
-`tests/scripts/157-bounded-nest.loft`.
+`render_marks` −8 % (D-heap-17).  **Step 2 the same evening:** where every read's chain is affine
+in the counter the guard also proves both range ends in `[0, len)` and the arm reads RAW through
+the held base with no null select — the vectorisable multiply-accumulate: `render_marks`
+1 740 → **1 125 µs/op (−35 %), 1.75× its reference**; the branchless `abs_bound_i64` −4 % beside
+it.  Switches `LOFT_NO_BOUNDED_NEST`, `LOFT_NO_NEST_RAW_READS`, `LOFT_NO_SELF_APPEND_BLOCK`;
+falsifier `LOFT_HOIST_VERIFY=1` (`ops::nest_verify`, and the raw read compared with the checked
+one); pins `tests/bounded_nest.rs`; cells `tests/scripts/157-bounded-nest.loft` n1–n23.
 **§ V-ab SHIPPED 2026-09-13** (DESIGN.md § V-ab): a counted `for` whose start is not a
 literal runs a second counter seeded AT the start instead of a null-encoded one — no null
 test per iteration on either backend (bare loop −32 %, a contiguous fill −18 %, the

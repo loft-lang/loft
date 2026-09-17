@@ -90,15 +90,17 @@ now creates 13 collections where it created 31, runs **more than twice as fast**
 within 3.1× of the same parser written by hand in Rust, where it was 7.6× before.  Nothing about
 what you write, or about what your program computes, changes.
 
-**Image resampling — and every loop shaped like it — is about twice as fast.**  The inner loop
+**Image resampling — and every loop shaped like it — is three to four times as fast.**  The inner loop
 of a resample multiplies and adds thousands of numbers per pixel, and loft checks every one of
 those operations for overflow so that a fault becomes a null rather than a wrong number.  The
 compiler now proves, once before such a loop starts, that none of its operations *can* overflow
 — it knows how large the numbers in the vectors are and how many steps the loop takes — and
 runs the loop with plain arithmetic when the proof holds, falling back to the checked loop when
-it does not.  Nothing your program computes changes; a loop that could overflow still gets its
-null.  Drawing a 64×64 scene through the library's 3× supersample went from 6.1× to 2.7× the
-time of the same code written in Rust, and resizing an image from 5.4× to 2.4×.
+it does not.  Where the proof also shows every element index stays inside its vector, the loop
+reads its elements directly as well — no bounds test, no absent check — which is the shape the
+processor can run several elements at a time.  Nothing your program computes changes; a loop that
+could overflow, or read past an end, still gets its null or its 0.  Drawing a 64×64 scene through
+the library's 3× supersample went from 6.1× to 1.75× the time of the same code written in Rust.
 
 **Appending a list to itself is a single copy, and it no longer breaks on text.**  `v += v` —
 the step a fast constant fill repeats — copied its elements one byte at a time through a

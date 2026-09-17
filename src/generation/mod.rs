@@ -679,6 +679,13 @@ pub struct Output<'a> {
     pub bounded_nest_disabled: bool,
     /// `LOFT_TRACE_NEST=1` — name every nest admitted and every loop declined, with why.
     pub nest_trace: bool,
+    /// `@FR-R-BoundedNest` step 2 — set while the plain arm of a nest whose guard also proved
+    /// every index IN RANGE is emitted: a fused element read is a raw load through the held
+    /// base, and the discharge's null select is the element itself.
+    pub nest_raw_arm: bool,
+    /// `LOFT_NO_NEST_RAW_READS=1` — the plain arm keeps its bounds-tested reads and null
+    /// selects (step 1's form).
+    pub nest_raw_disabled: bool,
     /// @PLN157 P4c — record scalars hoisted out of the enclosing loops, innermost last:
     /// `(variable, field offset)` → the Rust local holding the value the prelude read
     /// once.  Pushed and popped beside [`Self::vec_headers`], one frame per `Value::Loop`.
@@ -1140,6 +1147,36 @@ fn nest_bound_expr(
             e
         }
         _ => "return None".to_string(),
+    }
+}
+
+/// `@FR-R-BoundedNest` step 2 — a read's index chain as Rust, with every counter replaced by
+/// `counter` (the range's low end, or its high end less one) and the operators wrapping: the
+/// guard's magnitude bound has already proved no step can overflow, so the wrapping form is the
+/// exact value.  Only the nodes [`hoist::bounded_nest`] admits reach here; anything else spells
+/// the sentinel, which fails the range test.
+fn nest_chain_at(
+    v: &Value,
+    data: &Data,
+    counters: &[u16],
+    var: &dyn Fn(u16) -> String,
+    counter: &str,
+) -> String {
+    match v.unspan() {
+        Value::Int(k) => format!("({k}_i64)"),
+        Value::Var(x) if counters.contains(x) => counter.to_string(),
+        Value::Var(x) => var(*x),
+        Value::Call(d, args) => {
+            let a = |i: usize| nest_chain_at(&args[i], data, counters, var, counter);
+            match (data.def(*d).name(), args.len()) {
+                ("OpAddInt", 2) => format!("({}).wrapping_add({})", a(0), a(1)),
+                ("OpMinInt", 2) => format!("({}).wrapping_sub({})", a(0), a(1)),
+                ("OpMulInt", 2) => format!("({}).wrapping_mul({})", a(0), a(1)),
+                ("OpMinSingleInt", 1) => format!("({}).wrapping_neg()", a(0)),
+                _ => "i64::MIN".to_string(),
+            }
+        }
+        _ => "i64::MIN".to_string(),
     }
 }
 
@@ -1822,6 +1859,8 @@ impl<'a> Output<'a> {
             plain_nest: 0,
             bounded_nest_disabled: std::env::var("LOFT_NO_BOUNDED_NEST").is_ok_and(|v| v != "0"),
             nest_trace: std::env::var("LOFT_TRACE_NEST").is_ok_and(|v| v != "0"),
+            nest_raw_arm: false,
+            nest_raw_disabled: std::env::var("LOFT_NO_NEST_RAW_READS").is_ok_and(|v| v != "0"),
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
             scalar_hoist_disabled: std::env::var("LOFT_NO_SCALAR_HOIST").is_ok_and(|v| v != "0"),
@@ -2315,19 +2354,50 @@ impl Output<'_> {
             "let __ab: i64 = {}.checked_abs()?; ",
             var(nest.acc)
         ));
-        parts.push(
-            "__trips.checked_mul(__tb)?.checked_add(__ab) })().is_some(); //@FR-R-BoundedNest guard"
-                .to_string(),
-        );
+        parts.push("__trips.checked_mul(__tb)?.checked_add(__ab)?; ".to_string());
+        // Step 2 — every index in range at both ends of the range.  Each chain is affine in
+        // the counter (`nest.affine`), so its extremes over `[lo, hi)` are its values at `lo`
+        // and at `hi - 1`, spelled with wrapping operators: the magnitude bound above has
+        // already proved no step overflows.  A read outside `[0, len)` at either end declines
+        // the whole nest to the checked loop, where the absent element answers as it always has.
+        let raw = nest.affine && !self.nest_raw_disabled;
+        if raw {
+            for (j, (path, chain)) in nest.reads.iter().enumerate() {
+                let header = self
+                    .active_vec_header(path)
+                    .expect("checked above")
+                    .to_string();
+                let at_lo = nest_chain_at(chain, self.data, &counters, &var, "__lo");
+                let at_hi = nest_chain_at(
+                    chain,
+                    self.data,
+                    &counters,
+                    &var,
+                    "(__hi.wrapping_sub(1_i64))",
+                );
+                parts.push(format!(
+                    "let __ln_{j}: i64 = i64::from({header}.len); let __xl_{j}: i64 = {at_lo}; let __xh_{j}: i64 = {at_hi}; \
+                     if __xl_{j} < 0 || __xl_{j} >= __ln_{j} || __xh_{j} < 0 || __xh_{j} >= __ln_{j} {{ return None; }} "
+                ));
+            }
+        }
+        parts.push("Some(0) })().is_some(); //@FR-R-BoundedNest guard".to_string());
         let g = parts.concat();
         self.indent(w)?;
         writeln!(w, "{g}")?;
         if self.nest_trace {
             eprintln!(
-                "nest: {fn_name} loop {} admitted — {} read(s), {} invariant(s)",
+                "nest: {fn_name} loop {} admitted — {} read(s), {} invariant(s), raw reads: {}",
                 lp.scope,
                 nest.reads.len(),
-                nest.invariants.len()
+                nest.invariants.len(),
+                if raw {
+                    "yes"
+                } else if nest.affine {
+                    "no (switch)"
+                } else {
+                    "no (a chain is not affine)"
+                }
             );
         }
         self.indent(w)?;
@@ -2337,6 +2407,7 @@ impl Output<'_> {
         // checked arm declares the same locals again in its own block.
         let declared_before = self.declared.clone();
         self.plain_nest += 1;
+        self.nest_raw_arm = raw;
         self.loop_stack.push(lp.scope);
         self.indent(w)?;
         writeln!(
@@ -2355,6 +2426,7 @@ impl Output<'_> {
         writeln!(w, "}} /*{}_{} plain nest*/", lp.name, lp.scope)?;
         self.loop_stack.pop();
         self.plain_nest -= 1;
+        self.nest_raw_arm = false;
         self.declared = declared_before;
         self.indent(w)?;
         writeln!(w, "}} else {{")?;

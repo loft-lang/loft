@@ -19,6 +19,12 @@
 //   "plain OpMulInt answered 0 where the checked form answers -9223372036854775808".  With
 //   both in place every cell holds on both backends, in both switch states, under verify and
 //   the store falsifiers; the interpreter never takes the rewrite and agrees on every value.
+//   Step 2 (raw reads), hand-measured the same evening: the guard's in-range clause replaced by a
+//   no-op, n4 — the tap that reads past the end — is the first cell to fail on `--native-release`
+//   (a raw read of the claim's slack where the checked read answers 0), and under
+//   LOFT_HOIST_VERIFY=1 the run stops at the first raw read — "a raw read disagrees with the
+//   checked read".  n19 needs LOFT_POISON_CLAIM=1 to be a witness: unpoisoned, the slack it
+//   would read raw is zero, which is the checked answer by luck.
 
 const MAXI = 9223372036854775807;
 
@@ -188,6 +194,72 @@ fn main() {
     a17[0] = 1 << 62;
   }
   assert((t17 ?? -7) == -7, "n17: {t17 ?? -7}");
+
+  // ── step 2: raw reads inside the nest, admitted only when every index is proven in range ──
+
+  // n18 — the last tap lands exactly on the last element: a = [1..8], k = [1,1,1,1], n = 4 over
+  //       a[4 + x]: 5+6+7+8 = 26.  In range at both ends → raw.
+  a18: vector<integer> = [1, 2, 3, 4, 5, 6, 7, 8];
+  k18: vector<integer> = [1, 1, 1, 1];
+  t18 = 0;
+  for _r in 0..1 {
+    acc18 = 0;
+    for x in 0..4 { acc18 += a18[4 + x]? * k18[x]?; }
+    t18 += acc18;
+  }
+  assert(t18 == 26, "n18: {t18}");
+
+  // n19 — one past the end: a[5 + x] for x in 0..4 reads a[8], absent → 0: 6+7+8 = 21.
+  //       The range clause declines raw reads; the checked loop answers.
+  t19 = 0;
+  for _r in 0..1 {
+    acc19 = 0;
+    for x in 0..4 { acc19 += a18[5 + x]? * k18[x]?; }
+    t19 += acc19;
+  }
+  assert(t19 == 21, "n19: {t19}");
+
+  // n20 — a NEGATIVE coefficient: a[7 - x] descends 8,7,6,5 → 26; the extremes swap ends and
+  //       both are in range → raw.
+  t20 = 0;
+  for _r in 0..1 {
+    acc20 = 0;
+    for x in 0..4 { acc20 += a18[7 - x]? * k18[x]?; }
+    t20 += acc20;
+  }
+  assert(t20 == 26, "n20: {t20}");
+
+  // n21 — the counter twice in the chain (x*x) is not affine: raw declines at compile time,
+  //       the arithmetic stays plain.  a[0] + a[1] + a[4] = 1 + 2 + 5 = 8.
+  t21 = 0;
+  for _r in 0..1 {
+    acc21 = 0;
+    for x in 0..3 { acc21 += a18[x * x]?; }
+    t21 += acc21;
+  }
+  assert(t21 == 8, "n21: {t21}");
+
+  // n22 — an index with no counter at all (k[kb]) is constant: in range → raw.  kb = 2:
+  //       (1+2+3) * k[2] = 6.
+  kb22 = 2;
+  t22 = 0;
+  for _r in 0..1 {
+    acc22 = 0;
+    for x in 0..3 { acc22 += a18[x]? * k18[kb22]?; }
+    t22 += acc22;
+  }
+  assert(t22 == 6, "n22: {t22}");
+
+  // n23 — a chain that goes NEGATIVE at one end: a[2 - x] for x in 0..4 reads a[2], a[1], a[0]
+  //       and a[-1] — a negative index counts from the END in loft, so a[-1] is 8: 3+2+1+8 = 14.
+  //       Raw declines (the low end is outside [0, len)); the checked read answers.
+  t23 = 0;
+  for _r in 0..1 {
+    acc23 = 0;
+    for x in 0..4 { acc23 += a18[2 - x]?; }
+    t23 += acc23;
+  }
+  assert(t23 == 14, "n23: {t23}");
 
   println("ok");
 }

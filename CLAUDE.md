@@ -829,10 +829,15 @@ chain and of `|acc| + trips × bound(term)` fits, so no operation can fault and 
 answer is the checked one; the checked loop is the `else` arm.  It is C120's admissible
 successor built — the fact is established before the arithmetic runs, not assumed — and it
 took the drawing lane's three resample rows from 4.9–6.1× to 2.4–2.8× their Rust reference
-(`render_marks` −54 %).  It is the first bisect step for a wrong accumulate or index out of
-such a loop on native; `LOFT_HOIST_VERIFY=1` compares every plain operator's answer with the
-checked template's at the operator and panics on a disagreement; `LOFT_TRACE_NEST=1` names
-every admission and decline.
+(`render_marks` −54 %).  **Step 2, `LOFT_NO_NEST_RAW_READS=1`** keeps the arm's bounds-tested
+reads — with it off, where every read's chain names the counter at most once (affine) the guard
+also proves both range ends in `[0, len)` and the arm reads RAW through the held base with no
+null select (the bound already ruled out a stored null): the tap becomes the multiply-accumulate
+LLVM vectorises (`render_marks` −40 % again, to ~1.7×).  Both are the first bisect steps for a
+wrong accumulate or index out of such a loop on native; `LOFT_HOIST_VERIFY=1` compares every
+plain operator's answer with the checked template's and every raw read with the checked read,
+panicking on a disagreement; `LOFT_TRACE_NEST=1` names every admission and decline and whether
+the reads are raw.
 **`LOFT_NO_SELF_APPEND_BLOCK=1`** (runtime, BOTH backends) makes `v += v` copy through a
 byte snapshot taken before the growth again — with it off, a self-append is one block copy
 inside the grown record, its source re-read from the field slot after the growth (which is
