@@ -2242,7 +2242,7 @@ fn quality_unspan_table_matches_the_audit() {
     let lines: Vec<&str> = doc.lines().collect();
     let header = lines
         .iter()
-        .position(|l| l.starts_with("| sites discriminating on 2+ specific"))
+        .position(|l| l.starts_with("| sites a `Span` hides the shape from"))
         .expect("the unspan table header is gone from QUALITY.md — update this gate with it");
     let row = lines
         .get(header + 2)
@@ -2251,10 +2251,16 @@ fn quality_unspan_table_matches_the_audit() {
         .split('|')
         .filter_map(|c| c.trim().trim_matches('*').parse::<u32>().ok())
         .collect();
+    // Only the RATCHET is pinned — the sites a `Span` hides the shape from, which must not
+    // grow.  The descriptive totals beside it (how many sites discriminate at all, how many
+    // peel) moved with every refactor that added a walker and carried no decision, so they
+    // live in the tool's output instead of in a row that has to be remembered.
     assert_eq!(
-        cells, nums,
-        "QUALITY.md's unspan row says {cells:?} and `ir_walker_audit.py unspan` reports \
-         {nums:?} — re-run the audit and update the row"
+        cells,
+        vec![nums[2]],
+        "QUALITY.md's unspan row says {cells:?} and `ir_walker_audit.py unspan` reports {} \
+         sites a `Span` hides the shape from — re-run the audit and update the row",
+        nums[2]
     );
 }
 
@@ -2296,7 +2302,7 @@ fn quality_spellings_table_matches_the_audit() {
     let lines: Vec<&str> = doc.lines().collect();
     let header = lines
         .iter()
-        .position(|l| l.starts_with("| functions resolving a projection by OP NAME"))
+        .position(|l| l.starts_with("| functions ALSO handling the `TupleGet` spelling"))
         .expect("the spellings table header is gone from QUALITY.md — update this gate with it");
     let row = lines
         .get(header + 2)
@@ -2305,10 +2311,15 @@ fn quality_spellings_table_matches_the_audit() {
         .split('|')
         .filter_map(|c| c.trim().trim_matches('*').parse::<u32>().ok())
         .collect();
+    // The one number with a direction: functions handling BOTH projection spellings, which must
+    // not shrink.  The totals beside it describe the tree rather than constrain it, and the
+    // tool prints the LIST, which is what a reader actually needs.
     assert_eq!(
-        cells, nums,
+        cells,
+        vec![nums[1]],
         "QUALITY.md's spellings row says {cells:?} and `ir_walker_audit.py spellings` reports \
-         {nums:?} — re-run the audit and update the row"
+         {} functions handling `TupleGet` too — re-run the audit and update the row",
+        nums[1]
     );
 }
 
@@ -2342,7 +2353,7 @@ fn quality_optional_table_matches_the_audit() {
     let lines: Vec<&str> = doc.lines().collect();
     let header = lines
         .iter()
-        .position(|l| l.starts_with("| functions discriminating on a `Type` variant"))
+        .position(|l| l.starts_with("| opaque to a wrapped shape"))
         .expect("the optional table header is gone from QUALITY.md — update this gate with it");
     let row = lines
         .get(header + 2)
@@ -2351,10 +2362,16 @@ fn quality_optional_table_matches_the_audit() {
         .split('|')
         .filter_map(|c| c.trim().trim_matches('*').parse::<u32>().ok())
         .collect();
+    // The RATCHET, and only it: functions opaque to a wrapped shape, which must not grow — the
+    // same number `--check-ratchet` compares.  The three totals beside it were re-measured on
+    // this row far more often than they were read, and a merge made both sides' copies wrong
+    // at once; a derived total belongs in the tool, which always knows which tree it is on.
     assert_eq!(
-        cells, nums,
+        cells,
+        vec![nums[3]],
         "QUALITY.md's optional row says {cells:?} and `ir_walker_audit.py optional` reports \
-         {nums:?} — re-run the audit and update the row"
+         {} functions opaque to a wrapped shape — re-run the audit and update the row",
+        nums[3]
     );
 }
 

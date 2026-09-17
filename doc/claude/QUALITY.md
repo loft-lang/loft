@@ -478,9 +478,18 @@ question hid inside one of them.
 `code.unspan()` first. Without this, the per-site wraps silently break optimisations that
 rely on the unwrapped shape."* That turns a vague worry into a checkable predicate:
 
-| sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
-|---:|---:|---:|
-| 527 | 504 | **23** |
+| sites a `Span` hides the shape from — must not grow |
+|---:|
+| **23** |
+
+**Only the ratchet is pinned here.**  The full census — how many sites discriminate on 2+
+`Value` variants, how many peel, and the queue of the ones that do not — is one command away and
+is always true of the tree you are standing on: `python3 scripts/ir_walker_audit.py unspan`.
+The two descriptive totals used to sit in this row, and they were re-measured far more often
+than they were read: every refactor that added a walker reddened the gate, and the
+`origin/157-native-4x` join made BOTH sides' totals wrong at once — each was correct against its
+own base and neither against the join.  A count that must not GROW is a control worth gating; a
+count that merely describes the tree is the tool's to print.
 
 (2026-09-17, ../loft2's three picks and the `origin/157-native-4x` MERGE, re-measured on THIS
 tree at the join's END: 527 · 504 · 23, against the 525 · 502 · 23 this branch read before it.
@@ -1643,9 +1652,13 @@ against whether its enclosing function handles `TupleGet` at all.
 `return_projects_into_local`, the two B6e had just fixed.** The screen reproduces the answers
 already found by hand, which is what makes the other sixteen worth reading.
 
-| functions resolving a projection by OP NAME | ALSO handling `TupleGet` | seeing only the call spelling |
-|---:|---:|---:|
-| 71 | **14** | 57 |
+| functions ALSO handling the `TupleGet` spelling — must not shrink |
+|---:|
+| **14** |
+
+The census this came from — how many functions resolve a projection by op name, and which ones
+see only the call spelling — is `python3 scripts/ir_walker_audit.py spellings`, which prints the
+LIST rather than a total, and the list is what tells you where to work.
 
 (2026-09-17, re-measured on THIS tree with `ir_walker_audit.py spellings`: 71 · 14 · 57, which is
 what the joined branch reports too.  The two agreeing is CONVERGENCE, not a number carried across
@@ -2709,9 +2722,14 @@ classifies every body that discriminates on a `Type` variant; the CALLER half is
 first half cannot give — for each opaque verb in `data.rs`, who peels the receiver before asking
 and who does not.
 
-| functions discriminating on a `Type` variant | see through the wrapper | descend via the keystone | opaque |
-|---:|---:|---:|---:|
-| 846 | 506 | 6 | **334** |
+| opaque to a wrapped shape — must not grow |
+|---:|
+| **334** |
+
+The census behind it — how many functions discriminate on a `Type` variant, how many see through
+the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
+function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
+comparison this row gates.
 
 (2026-09-17, ../loft2's three picks and the `origin/157-native-4x` MERGE, re-measured on THIS
 tree at the join's END: 846 · 506 · 6 · 334.  **Neither side's row was true of the join** — this
