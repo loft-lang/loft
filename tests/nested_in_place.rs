@@ -59,7 +59,11 @@ fn the_values_hold_on_both_backends_in_both_switch_states() {
                 let out = String::from_utf8_lossy(&res.stdout);
                 let err = String::from_utf8_lossy(&res.stderr);
                 let label = format!("{backend} {switch:?} {falsifier:?}");
-                assert!(res.status.success(), "{label}: exit {:?}\n{err}", res.status);
+                assert!(
+                    res.status.success(),
+                    "{label}: exit {:?}\n{err}",
+                    res.status
+                );
                 assert_eq!(out, EXPECTED.repeat(2), "{label}\n{err}");
                 assert!(
                     !err.contains("not freed") && !err.contains("strict-store"),
@@ -75,11 +79,7 @@ fn the_nested_fields_are_written_through_the_place() {
     let src = cells();
     let on = String::from_utf8_lossy(&loft(&["introspect", &src], &[]).stdout).into_owned();
     let off = String::from_utf8_lossy(
-        &loft(
-            &["introspect", &src],
-            &[("LOFT_NO_NESTED_IN_PLACE", "1")],
-        )
-        .stdout,
+        &loft(&["introspect", &src], &[("LOFT_NO_NESTED_IN_PLACE", "1")]).stdout,
     )
     .into_owned();
     // n1's element: `paint`'s fields go straight into `OpGetField(_elm_N, 8, …)`, and no
