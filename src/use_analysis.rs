@@ -4783,6 +4783,7 @@ pub fn drop_copy_census(data: &Data) {
                 frame: crate::lease::Frame::new(data, def),
                 fname: &def.name,
                 copy_d,
+                op_append: data.def_nr("OpAppendVector"),
                 returned: data
                     .type_owns_droppable_anywhere(def.returned.base())
                     .then(|| data.type_name_str(&def.returned)),
@@ -4828,6 +4829,9 @@ struct Census<'a> {
     frame: crate::lease::Frame<'a>,
     fname: &'a str,
     copy_d: u32,
+    /// `OpAppendVector` — the op a copy of a whole COLLECTION is written with, where a record's
+    /// copy is an `OpCopyRecord`.
+    op_append: u32,
     /// The function's result type name, when that type owns a droppable.
     returned: Option<String>,
     /// The tuple a whole-tuple bind being scanned copies: its member copies are that bind's.
@@ -4988,6 +4992,39 @@ impl Census<'_> {
                     )
                 };
                 self.emit(kind, &tp, &from, &into, (&lease, &liveness), frees);
+            }
+            // A whole COLLECTION placed in another one, which the parser writes as an APPEND and
+            // never as a bind: `d = v` mints a backing and fills it (`d = OpGetField(__vdb_N, 0)`
+            // then `OpAppendVector(d, v)`, `vectors.rs` *"deep-COPY a's elements into v's own
+            // store"*), a concat `v += w` fills the vector it already has, and `v += v` appends
+            // `v`'s own elements back into it.  Each places an EXISTING value in a second
+            // structure, which is what `(H-Copy-Refuse)` judges.
+            //
+            // The SOURCE decides, not the op: one parts loop emits this node both for a copy
+            // (`v = a + b`) and for a fresh literal (`v += [mk()]`), and `written_verdict` answers
+            // `move` for the literal because `leaves` reads it as `Leaf::Fresh`.  An append into a
+            // FIELD (`OpAppendVector(OpGetField(rec, fld), src)`) is a different site, recorded by
+            // `Uses::construct_copy`, and is not listed here.
+            Value::Call(d, args)
+                if *d == self.op_append
+                    && args.len() >= 2
+                    && matches!(args[0].unspan(), Value::Var(v)
+                        if self.data.type_owns_droppable_anywhere(self.func.tp(*v).base())) =>
+            {
+                let Some(Value::Var(dest)) = args.first().map(Value::unspan) else {
+                    unreachable!("matched above")
+                };
+                let mut from = Vec::new();
+                copy_source_roots(&args[1], self.data, self.func, &mut from);
+                let tp = self.data.type_name_str(self.func.tp(*dest));
+                let into = self.func.name(*dest).to_string();
+                let lease = lease_column(
+                    self.func,
+                    self.frame.written_verdict(&args[1], self.placement),
+                );
+                let liveness = lease_column(self.func, self.frame.liveness_verdict(node, &args[1]));
+                self.note_destination(&args[0]);
+                self.emit("append", &tp, &from, &into, (&lease, &liveness), false);
             }
             // A bind whose type depends on its own source is a VIEW of it — a destructure's
             // `__ref_2 = u`, a nested copy's `_tuphold_1 = inner` — and copies nothing.  So is a
