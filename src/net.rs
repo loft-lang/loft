@@ -118,7 +118,17 @@ pub(crate) fn fetch_text(url: &str) -> Option<String> {
 /// Native range GET over the same `ureq` client the whole-image path uses.
 /// Available whenever a feature that pulls `ureq` is on — `remote-store` (the
 /// paged loaders' own feature) or `registry`.
+///
+/// `paged_store` gates it too, because `paged_reader` — the only caller of this
+/// function, its size and text siblings, and `agent` — is `#[cfg(paged_store)]`,
+/// and `build.rs` sets that flag for `remote-store` or a browser build, never for
+/// `registry`.  Tracking the transport features alone left all four compiled with
+/// nothing to call them under `--no-default-features` (the stubs below) and under
+/// `--features registry` (these), which `-D warnings` reports as dead code.  The
+/// browser-wasm twins above need no clause: `build.rs` sets `paged_store` for that
+/// build, so it is already implied there.
 #[cfg(all(
+    paged_store,
     any(feature = "remote-store", feature = "registry"),
     not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
 ))]
@@ -162,6 +172,7 @@ pub(crate) fn fetch_range(url: &str, off: u64, len: usize) -> Result<Vec<u8>, St
 /// # Errors
 /// A transport failure, or neither header carrying a usable total.
 #[cfg(all(
+    paged_store,
     any(feature = "remote-store", feature = "registry"),
     not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
 ))]
@@ -179,6 +190,7 @@ pub(crate) fn fetch_size(url: &str) -> Result<u64, String> {
 
 /// Native small-text GET — see the browser twin for why `None` is a normal answer.
 #[cfg(all(
+    paged_store,
     any(feature = "remote-store", feature = "registry"),
     not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
 ))]
@@ -186,8 +198,10 @@ pub(crate) fn fetch_text(url: &str) -> Option<String> {
     agent().get(url).call().ok()?.into_string().ok()
 }
 
-/// The shared client for the native range/size/text calls.
+/// The shared client for the native range/size/text calls, and so carrying their
+/// `paged_store` clause: it exists exactly where they do.
 #[cfg(all(
+    paged_store,
     any(feature = "remote-store", feature = "registry"),
     not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
 ))]
@@ -230,6 +244,7 @@ pub(crate) fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
 /// # Errors
 /// Always; see [`fetch_bytes`]'s twin for why this is an answer and not a panic.
 #[cfg(all(
+    paged_store,
     not(any(feature = "remote-store", feature = "registry")),
     not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
 ))]
@@ -245,6 +260,7 @@ pub(crate) fn fetch_range(url: &str, _off: u64, _len: usize) -> Result<Vec<u8>, 
 /// # Errors
 /// Always — refusing at the size probe is what stops a paged open before it starts.
 #[cfg(all(
+    paged_store,
     not(any(feature = "remote-store", feature = "registry")),
     not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
 ))]
@@ -257,6 +273,7 @@ pub(crate) fn fetch_size(url: &str) -> Result<u64, String> {
 /// No transport, so no remote sidecar — `None`, which the layout gate already
 /// treats as "no sidecar" rather than as a failure.
 #[cfg(all(
+    paged_store,
     not(any(feature = "remote-store", feature = "registry")),
     not(all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm")))
 ))]
