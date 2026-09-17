@@ -1132,6 +1132,21 @@ patches on one emission, hash `2a3aa61` throughout):
   whose interval fits emits plain — `rgba`, `color_*`, the alpha-over arithmetic and
   `lock_layer`'s `chan()` are all of that shape; it needs a per-function result interval for the
   small colour helpers, and a design note before it is cut.
+  **Why LLVM does not hoist the store resolution itself — measured, because the owner would rather
+  it did than have the emitter repeat its algorithm.**  Two ways of GIVING it the knowledge were
+  built by hand on the same emission and moved nothing (rounds 2–4, hash `cf852074`): whole-program
+  fat LTO over a runtime built with `-C embed-bitcode=yes`, so every `#[cold]` hook body was in view
+  (116–118 µs, against 115–118 shipped), and the generated ABI rewritten from
+  `cell: &UnsafeCell<Stores>` to `stores: &mut Stores` — a `noalias` argument — on all 42 functions
+  (117.6–118 µs).  The base handed in by the emitter: 85.5–86.5.  The barrier is not the opaque
+  calls and not the missing `noalias`; it is that the element write goes through a pointer LOADED
+  from the store table (`allocations[k].ptr`), and a loaded pointer has no provenance LLVM can
+  relate to anything — not to a `noalias` argument, not to an identified object — so alias analysis
+  must let that write clobber the table it was loaded from.  The fact that makes the hoist sound is
+  loft's own allocator invariant, *an element buffer never overlaps the store table*, which no
+  source-level construct states; carrying the base is the one way to state it.  So `@FR-R-Base`
+  and a base through a twin are not LICM re-implemented: LLVM's LICM is not ABLE to do this one.
+
 * **After those, ~2.2× and diffuse:** five `st.*` scalar reads per resolved pixel still go
   through `store_mut` (unhoisted record scalars of a `const` parameter in the resolve loop),
   `brush_sample`/`chan`/`ramp` per pixel, the two `??`-discharged divisions per raster pixel
