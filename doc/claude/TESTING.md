@@ -3451,6 +3451,35 @@ is checked. `make falsify` catches the commonest case — a guard that never fai
 build it was written to catch — but it only answers for the commit you name. These are the
 shapes that survive it, each one measured here rather than imagined.
 
+**⚠ TWO guards can cover one question and both be blind to the same WINDOW — and each one's
+existence is why nobody looked for the other's gap.**  Measured 2026-09-17 on
+`@FR-H-Wilderness`.  `Store::init` left word 1 named in `claims` while also recording it as
+the wilderness, so `fl_validate`'s *"the wilderness is in claims"* aborted the FIRST `claim`
+of every store: `loft --interpret` on a hello-world died under `-C debug-assertions=on`, and
+746 of 833 tests went red in the nightly DA gate — while every ordinary build stayed green.
+
+Two guards watched that invariant and neither could see it:
+
+* `fl_validate` DOES check the window — it runs at the top of `claim`, before anything is
+  claimed — but it is `#[cfg(debug_assertions)]`, and `[profile.dev.package.loft]` strips
+  those from every ordinary dev and test build.  Only the nightly gate compiles it in.
+* `check_wilderness` is a plain `assert!` written *deliberately* so it survives that strip —
+  its own comment says so.  But every test called it AFTER a claim, and the first claim moves
+  the wilderness off word 1, so the contradiction was always gone by the time it looked.
+
+The window was "after `init`, before the first claim", and it belonged to neither guard.  The
+author was careful about the strip and still missed it, because the second guard's existence
+made the first one's `cfg` look harmless.
+
+**How to apply.**  When a `debug_assert!` family is mirrored by a plain-`assert!` twin — the
+right move, in a crate that strips debug assertions — the twin's COVERAGE is a separate
+question from its existence: list the states the debug form can observe and check the twin is
+invoked in each of them, not merely that it asserts the same thing.  A state reachable only
+between construction and first use is the one to suspect, because every test starts by using
+the thing.  The regression guard here is one line of call placement
+(`a_fresh_store_never_claims_its_wilderness` calls `check_wilderness` on a store that has
+claimed nothing) and it fails on any ordinary `cargo test`.
+
 **⚠ A probe on ONE of two arms that reports nothing is not a negative result — it is an
 unarmed instrument, and it reads exactly like a disproof.**  Measured twice, independently, on
 loft#1505 (2026-09-10).  `pre_eval.rs::rewrite_code` substitutes an inner pre-eval into its

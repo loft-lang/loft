@@ -917,7 +917,7 @@ impl Store {
             durable_tier: 0,
             init_shadow: Vec::new(),
         };
-        store.init(); // sets claims = {PRIMARY} and free_root = 0
+        store.init(); // one free block spanning the store: claims empty, free_root = 0
         store
     }
 
@@ -1251,7 +1251,23 @@ impl Store {
         self.free_root = 0;
         self.wild = 0;
         self.claims.clear();
-        self.claims.insert(PRIMARY);
+        // NOT `claims.insert(PRIMARY)`.  `set_free_header(1, …)` above makes word 1 the
+        // store's one FREE block, so naming it in the live-record set records a block that
+        // is free.  `claims_rebuild` answers the same question off the store's own bytes for
+        // an opened image and inserts a position only where its header is POSITIVE — one
+        // question, two decoders, and this was the dishonest one.  It guarded no access
+        // either: `valid()` tests `claims.contains(rec)` and then `size > 0`, so an access to
+        // record 1 before it is claimed fails on the header whether or not the set names it.
+        // The first claim inserts it, which is where the set becomes true.
+        //
+        // Harmless while nothing tracked that block, and unsound the moment
+        // `@FR-H-Wilderness` began to: `fl_insert(PRIMARY)` records it as the wilderness and
+        // `fl_validate`'s *"the wilderness is in claims"* then fired on the FIRST claim of
+        // every store — measured on a hello-world under `-C debug-assertions=on`, which
+        // `[profile.dev.package.loft]` strips from every ordinary build.  The window is after
+        // `init` and before the first claim, the one window neither oracle covered: the
+        // tests' `check_wilderness` is plain-`assert!` precisely so it survives that strip,
+        // but it only runs after a claim has moved the wilderness off PRIMARY.
         // The whole store is one free block ending at its end: the wilderness, so the first
         // claim takes position 1 without the chain walk (`claim_scan` took the same block).
         if self.wilderness {
@@ -5365,6 +5381,51 @@ mod tests {
         store.init();
         store.free = false;
         store
+    }
+
+    /// `@FR-H-Wilderness` in the window that had NO oracle: after `init`, before the first
+    /// claim.
+    ///
+    /// Both existing guards miss exactly here, and each for its own reason.  `fl_validate`
+    /// does check this window — it runs at the top of `claim` — but it is
+    /// `#[cfg(debug_assertions)]`, which `[profile.dev.package.loft]` strips from every
+    /// ordinary build, so only the nightly DA gate could see it.  `check_wilderness` is
+    /// plain-`assert!` precisely so it survives that strip, but every test called it AFTER a
+    /// claim, by which point the wilderness has moved off `PRIMARY` and the contradiction is
+    /// gone.  So a fresh store shipped with word 1 named in `claims` AND recorded as the
+    /// wilderness, and `loft --interpret` on a hello-world aborted under debug assertions
+    /// while every ordinary build stayed green.
+    ///
+    /// The assertion that matters is `check_wilderness`'s own `!claims.contains(w)`; the
+    /// rest states the layout a fresh store owes so a future change cannot satisfy this by
+    /// making the store empty of everything.
+    #[test]
+    fn a_fresh_store_never_claims_its_wilderness() {
+        for wilderness in [false, true] {
+            let store = store_with(wilderness);
+            check_wilderness(&store);
+            assert!(
+                store.claims_empty(),
+                "wilderness={wilderness}: a store that has claimed nothing owes an empty \
+                 claims set — record 1 is the free block `init` just established, and \
+                 `claims_rebuild` (the same question off the store's own bytes) inserts \
+                 only a POSITIVE header"
+            );
+            assert!(
+                store.read::<i32>(crate::store::PRIMARY, 0) < 0,
+                "wilderness={wilderness}: record 1 is free until something claims it"
+            );
+            assert_eq!(
+                store.wild,
+                if wilderness { crate::store::PRIMARY } else { 0 },
+                "wilderness={wilderness}: the whole-store block is the wilderness exactly \
+                 when the store keeps one"
+            );
+            assert_eq!(
+                store.free_root, 0,
+                "wilderness={wilderness}: and the tree holds nothing either way"
+            );
+        }
     }
 
     /// `bump_tail` is a layout twin of the tree path: a fresh store claims from its tail,
