@@ -513,11 +513,12 @@ hashes): every row equal or faster — `lock_curved` −21.5 %, `lock` −12 %, 
 of a freed store — a positive control by hand on the emission, since no test asserts that the
 report fires.
 
-*With every row judged.*  The drawing bench's own `bench.rs` carries no reference for the four
-late rows; @PLN157's `bench-reference-scene.rs` is that reference, written to be appended to
-it.  Appended (a scratch copy, `compare.py`'s own logic, `--skip-interp --repeat 3`, 14/14
-hashes agree, the four late hashes the recorded `33f6d2b8`, `432ddd47`, `fa8b1c64`,
-`77de7581`):
+*With every row judged.*  The drawing bench's own `bench.rs` carried no reference for the four
+late rows; @PLN157's `bench-reference-scene.rs` is that reference, and it is now appended to
+the package's `bench.rs` (loft-libs-graphics `drawing-lock`, 47947ec).  Measured with it
+(`compare.py --skip-interp --repeat 3`, 14/14 hashes agree, the four late hashes the recorded
+`33f6d2b8`, `432ddd47`, `fa8b1c64`, `77de7581`; the reference lane moves a few per cent run to
+run, the package's own run the same hour read 3.7×, 4.1×, 4.8× and 5.8×):
 
 | row | Rust ns/op | native ns/op | native / Rust | @PLN157's last full table |
 |---|---:|---:|---:|---:|
