@@ -513,6 +513,23 @@ hashes): every row equal or faster — `lock_curved` −21.5 %, `lock` −12 %, 
 of a freed store — a positive control by hand on the emission, since no test asserts that the
 report fires.
 
+*With every row judged.*  The drawing bench's own `bench.rs` carries no reference for the four
+late rows; @PLN157's `bench-reference-scene.rs` is that reference, written to be appended to
+it.  Appended (a scratch copy, `compare.py`'s own logic, `--skip-interp --repeat 3`, 14/14
+hashes agree, the four late hashes the recorded `33f6d2b8`, `432ddd47`, `fa8b1c64`,
+`77de7581`):
+
+| row | Rust ns/op | native ns/op | native / Rust | @PLN157's last full table |
+|---|---:|---:|---:|---:|
+| parse | 7 280 | 25 940 | **3.56** | 7.59 |
+| render_lock | 2 882 380 | 12 795 200 | 4.44 | 5.46 |
+| resize | 17 739 680 | 84 760 660 | 4.78 | 5.57 |
+| render_marks | 887 700 | 5 582 880 | 6.29 | 7.96 |
+
+The reference lane reads what it read then (render_marks 887 k both times, render_lock and
+resize within 2 %), so the ratios moved on the native side.  `parse` is under the 4× bar for
+the first time; the three rows still over it are the resample's (@PLN157), not this plan's.
+
 Three levers measured and dropped.  Testing the slot's `free` flag before the strict-mode switch
 in `store`/`store_mut` (with the report outlined) measured −2 % instructions on this row — and
 the fourteen-row A/B then read `smooth` +38 %, `fill_circle` +15 %, `fill_star` +7 %,
