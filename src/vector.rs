@@ -858,19 +858,19 @@ pub fn abs_bound_i64(h: &VecHeader, stores: &[Store]) -> Option<i64> {
         return Some(0);
     }
     let base = vec_base(h, stores);
+    // One max over the magnitudes, no branch in the loop: the sentinel's magnitude is 2^63,
+    // above every other value's, so a null element shows as a bound the type cannot hold and
+    // the test runs once at the end.  Written this way the loop vectorises; with an early exit
+    // on the sentinel it did not, and the scan itself was 5.6 % of a resample-bound row.
     let mut bound: u64 = 0;
     for i in 0..h.len as usize {
         // SAFETY: `base` is element 0 of a live vector record of `len` eight-byte elements
         // (the header was derived from it in this same prelude); `read_unaligned` because an
         // element offset need not be aligned for `i64` (loft#1481).
         let v = unsafe { base.add(i * 8).cast::<i64>().read_unaligned() };
-        if v == i64::MIN {
-            return None;
-        }
         bound = bound.max(v.unsigned_abs());
     }
-    // Every element was above the sentinel, so its magnitude fits the positive range.
-    Some(bound as i64)
+    i64::try_from(bound).ok()
 }
 
 /// [`get_elem_hoisted`]'s twin through a hoisted BASE (`@FR-R-Base`): the same bounds test
