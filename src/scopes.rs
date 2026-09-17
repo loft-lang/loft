@@ -3736,6 +3736,7 @@ fn reuse_record_buffers(
     code: &mut Value,
     function: &mut Function,
     data: &Data,
+    d_nr: u32,
     witness_buffer: &HashMap<u16, Vec<u16>>,
     minted_pairs: &HashSet<u16>,
     multi_assigned: &HashSet<u16>,
@@ -3743,7 +3744,9 @@ fn reuse_record_buffers(
     if !crate::keys::retbuf_reuse_enabled() {
         return;
     }
-    let Value::Block(bl) = code else { return };
+    let Some(bl) = body_block_mut(code) else {
+        return;
+    };
     let ungated = crate::keys::retbuf_witness_gate_disabled();
     let mut guarded: Vec<u16> = if ungated {
         // The positive control: every hidden buffer, guarded or not.
@@ -3765,30 +3768,49 @@ fn reuse_record_buffers(
     // Emitted in variable order so identical source compiles to identical IR.
     let mut eager: Vec<(u16, Value, Option<Value>)> = Vec::new();
     let mut lazy: Vec<(u16, Value, Option<Value>)> = Vec::new();
+    // `LOFT_TRACE_POOL=1` names the gate that keeps each witnessed buffer out of the pool.
+    let trace = std::env::var_os("LOFT_TRACE_POOL").is_some();
+    if trace {
+        crate::loft_eprintln!("[pool] {} candidates {:?}", data.def(d_nr).name(), guarded);
+    }
+    let decline = |av: u16, why: &str| {
+        if trace {
+            crate::loft_eprintln!(
+                "[pool] {} {}: {why}",
+                data.def(d_nr).name(),
+                function.name(av)
+            );
+        }
+    };
     for av in guarded {
         // @FR-O-Proxy asks alloc — decides whether to ALLOCATE the buffer's store here; a
         // buffer carrying a dep is a view of something else and gets no store of its own.
         // The release is not this site's: the scan already placed the buffer's scope-exit
         // free and the result's guarded one.
         if !function.is_caller_hidden_buf(av) || !function.tp(av).depend().is_empty() {
+            decline(av, "not an owned caller buffer");
             continue;
         }
         // @PLN164 B1 — a buffer whose callee mints the store its result adopts is paired
         // for the guarded free only; pre-minting it hands the callee a store its own rebind
         // frees on the interpreter (`Scopes::minted_pairs`).
         if !ungated && !crate::keys::adopt_buffer_reuse_enabled() && minted_pairs.contains(&av) {
+            decline(av, "the result adopts the callee's mint");
             continue;
         }
         let Some(td) = function.tp(av).base().heap_def_nr() else {
+            decline(av, "not a record");
             continue;
         };
         let known = data.def(td).known_type();
         if known == u16::MAX {
+            decline(av, "the record type has no layout");
             continue;
         }
         if !ungated && buffer_call_uses(&bl.operators, av, data) != 1 {
             // A work-ref the parser handed to a SECOND call has one guarded use and one
             // this has not looked at; `witness_buffer` names the guarded one either way.
+            decline(av, "handed to more than one call");
             continue;
         }
         if !ungated
@@ -3798,9 +3820,11 @@ fn reuse_record_buffers(
         {
             // The result local is reassigned somewhere: its set lowering frees the store
             // it displaces, which would be this buffer's.
+            decline(av, "its result local is assigned more than once");
             continue;
         }
         if null_init_at(&bl.operators, av).is_none() {
+            decline(av, "no top-level null-init");
             continue;
         }
         let mint = Value::Call(db_nr, vec![Value::Var(av), Value::Int(i32::from(known))]);
@@ -3844,6 +3868,27 @@ fn reuse_record_buffers(
             release.unwrap_or(Value::Null),
         );
         insert_before_uses(&mut bl.operators, av, &guard, &frees);
+    }
+}
+
+/// The function body's own statement block, which is where a statement that must run
+/// first is prepended and where a top-level null-init stands.
+///
+/// A body whose result is a reference the scan HOISTED to the frame arrives as
+/// `Insert([Set(w, null), Block])` (the `hoisted_ref` arm of `scan_inner`), so the block is
+/// found inside that wrapper too; any other shape is not a body this pass rewrites.  Matching
+/// a bare `Block` alone skipped every such function in silence — the pool, the lazy mints and
+/// the entry-time flag and witness initialisers alike.
+fn body_block_mut(code: &mut Value) -> Option<&mut Block> {
+    match code {
+        Value::Block(bl) => Some(&mut **bl),
+        Value::Insert(ops) => match ops.as_mut_slice() {
+            [Value::Set(_, init), Value::Block(bl)] if matches!(**init, Value::Null) => {
+                Some(&mut **bl)
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -3993,7 +4038,9 @@ fn lazy_buffer_mints(code: &mut Value, function: &mut Function, data: &Data) {
     if code.any_node(&mut |v| matches!(v, Value::Yield(..) | Value::Parallel(..))) {
         return;
     }
-    let Value::Block(bl) = code else { return };
+    let Some(bl) = body_block_mut(code) else {
+        return;
+    };
     let frees = free_ops(data);
     let is_null = data.def_nr("OpRefIsNull");
     for av in 0..function.count() {
@@ -4375,13 +4422,13 @@ fn run_scan_phase(
     // all (`fn g() -> Res { mk(2) }`), and `needs_pre_init` does not cover `boolean`, so an
     // uninitialised slot would read as garbage and free the caller's buffer.
     if let Some((_, flag)) = scopes.rbuf_witness
-        && let Value::Block(bl) = &mut code
+        && let Some(bl) = body_block_mut(&mut code)
     {
         bl.operators.insert(0, v_set(flag, Value::Boolean(false)));
     }
     // The entry witness names what the buffer holds BEFORE any statement can rebind it.
     if let Some((buf, w)) = scopes.entry_witness
-        && let Value::Block(bl) = &mut code
+        && let Some(bl) = body_block_mut(&mut code)
     {
         bl.operators.insert(
             0,
@@ -4395,7 +4442,7 @@ fn run_scan_phase(
     // assignment there is no store of its own to release, and an uninitialised boolean slot
     // would read as garbage and free one.
     if !scopes.local_owns.is_empty()
-        && let Value::Block(bl) = &mut code
+        && let Some(bl) = body_block_mut(&mut code)
     {
         let mut flags: Vec<u16> = scopes.local_owns.values().copied().collect();
         flags.sort_unstable();
@@ -4407,7 +4454,7 @@ fn run_scan_phase(
     // copy has taken the source's release, so an uninitialised slot would read as garbage and
     // suppress a release that is owed.
     if !scopes.handed_off.is_empty()
-        && let Value::Block(bl) = &mut code
+        && let Some(bl) = body_block_mut(&mut code)
     {
         let mut flags: Vec<u16> = scopes.handed_off.values().copied().collect();
         flags.sort_unstable();
@@ -4422,7 +4469,7 @@ fn run_scan_phase(
     // stack-record placeholder the allocator is expected to replace — and a free of THAT is
     // the `#306` refusal.
     if !scopes.owner_witness.is_empty()
-        && let Value::Block(bl) = &mut code
+        && let Some(bl) = body_block_mut(&mut code)
     {
         let mut witnesses: Vec<u16> = scopes.owner_witness.values().copied().collect();
         witnesses.sort_unstable();
@@ -4450,14 +4497,14 @@ fn run_scan_phase(
     // their `OpFreeRef` lives at function exit; prepend the null-inits so codegen
     // reserves their slot along every path (see the original comment in check).
     if !scopes.lift_vars.is_empty()
-        && let Value::Block(bl) = &mut code
+        && let Some(bl) = body_block_mut(&mut code)
     {
         for &v in scopes.lift_vars.iter().rev() {
             bl.operators.insert(0, v_set(v, Value::Null));
         }
     }
     if !scopes.lift_texts.is_empty()
-        && let Value::Block(bl) = &mut code
+        && let Some(bl) = body_block_mut(&mut code)
     {
         for &v in scopes.lift_texts.iter().rev() {
             bl.operators.insert(0, v_set(v, Value::Text(String::new())));
@@ -4467,6 +4514,7 @@ fn run_scan_phase(
         &mut code,
         &mut function,
         data,
+        d_nr,
         &scopes.witness_buffer,
         &scopes.minted_pairs,
         &scopes.multi_assigned,
@@ -5118,6 +5166,27 @@ pub(crate) fn multi_assigned_in(node: &Value) -> HashSet<u16> {
         .filter(|&(_, n)| n >= 2)
         .map(|(v, _)| v)
         .collect()
+}
+
+/// The value of `v`'s one `Set` in the two arms of an `if`, where `v` is assigned under no
+/// loop and under no other name, or `None`.  `scan_if` reads it together with
+/// `multi_assigned` (the whole body's count), so a `Some` is the variable's ONLY bind.
+fn only_bind_in_arms<'a>(t_val: &'a Value, f_val: &'a Value, v: u16) -> Option<&'a Value> {
+    fn find<'a>(node: &'a Value, v: u16, out: &mut Vec<&'a Value>) {
+        match node.unspan() {
+            Value::Set(w, value) if *w == v => out.push(value),
+            // A bind inside a loop runs again on the next pass, after a bind of its own.
+            Value::Loop(_) => {}
+            other => other.for_each_child(&mut |c| find(c, v, out)),
+        }
+    }
+    let mut found = Vec::new();
+    find(t_val, v, &mut found);
+    find(f_val, v, &mut found);
+    match found.as_slice() {
+        [one] => Some(one),
+        _ => None,
+    }
 }
 
 /// Every variable assigned at any depth inside `node`.
@@ -10998,6 +11067,20 @@ impl Scopes<'_> {
             }
         }
 
+        // @PLN164 B1 behind a null-init (`@FR-O-Move`) — the pre-init below turns a local's
+        // bind in this `if` into a REBIND, and a rebind copies where a first bind adopts.
+        // When that bind is the local's only assignment it follows the pre-init on every
+        // path that reaches it, so the local holds the sentinel there: it is a first bind.
+        if crate::keys::adopt_first_bind_enabled() {
+            for &v in &pre_inits {
+                if !self.multi_assigned.contains(&v)
+                    && let Some(value) = only_bind_in_arms(t_val, f_val, v)
+                    && crate::use_analysis::adopts_minted_at_bind(data, function, v, value)
+                {
+                    function.mark_deferred_first_bind(v);
+                }
+            }
+        }
         // Register pre-inited vars in var_scope BEFORE scanning branches so that
         // the branch scans see them as already assigned and use the set_var/OpPutRef
         // re-assignment path instead of claim().
@@ -11396,9 +11479,11 @@ impl Scopes<'_> {
     ///
     /// A true parameter belongs to the caller and the callee may free none of it; the
     /// promoted buffer is a LOCAL that `classify_ret_promotion` renamed onto the hidden
-    /// `__retbuf` attribute and `become_argument`ed, and this function mints its store.
-    /// The un-renamed `__retbuf` placeholder is left out — no local was promoted onto
-    /// it, so it holds no store of ours (loft#688).
+    /// `__retbuf` attribute and `become_argument`ed.  It holds the store the CALLER handed
+    /// or, when the caller handed the null sentinel, one this function minted — only the
+    /// second is this frame's, and the entry witness (`Function::entry_witness`) tells the
+    /// two apart per run wherever a free of it is emitted.  The un-renamed `__retbuf`
+    /// placeholder is left out — no local was promoted onto it (loft#688).
     fn is_promoted_ret_buffer(&self, function: &Function, data: &Data, v: u16) -> bool {
         let n = function.name(v);
         n != "__retbuf"
@@ -11774,11 +11859,14 @@ impl Scopes<'_> {
             // parameter belongs to the caller, so the callee must not free it.
             // An NRVO buffer breaks that premise.  It is a promoted LOCAL — the
             // rename in `classify_ret_promotion` gives the hidden `__retbuf` attr
-            // the local's name and `become_argument`s it — and THIS function mints
-            // its store with `OpDatabase`.  When a sibling return path delivers a
-            // different store, the minted one is returned by nobody and freed by
-            // nobody: one orphan per call, which exhausted the 65,535-entry store
-            // table after 65,535 calls and was invisible below that.
+            // the local's name and `become_argument`s it — and when the caller
+            // handed the null sentinel THIS function mints its store with
+            // `OpDatabase`.  When a sibling return path delivers a different store,
+            // the minted one is returned by nobody and freed by nobody: one orphan
+            // per call, which exhausted the 65,535-entry store table after 65,535
+            // calls and was invisible below that.  When the caller handed a LIVE
+            // store (a pooled record buffer, `reuse_record_buffers`) that store is
+            // the caller's, and the free is guarded by the entry witness.
             //
             // So treat it like any other candidate source that may or may not be
             // the returned store: route it through the same hoist +

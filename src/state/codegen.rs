@@ -2582,6 +2582,16 @@ impl State {
                     // the view, and `scopes` registered the identity free for the
                     // minted arm.
                     && !stack.function.is_view_elided(v)
+                    // @PLN164 B1 — the local's one bind after its `if` pre-init is its
+                    // first: the slot holds the sentinel, and the plain `PutRef` below
+                    // adopts the store the callee minted, as the first-bind arm does.
+                    && !(stack.function.is_deferred_first_bind(v)
+                        && crate::use_analysis::adopts_minted_at_bind(
+                            stack.data,
+                            &stack.function,
+                            v,
+                            value,
+                        ))
                 {
                     let tp_nr = stack.data.def(d_nr).known_type();
                     // Plan-04 Phase B.3.f: allocate fresh store directly

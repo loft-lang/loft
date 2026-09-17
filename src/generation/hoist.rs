@@ -6080,7 +6080,8 @@ pub fn value_locals_in(
                     let d = shapes.get(v).copied().flatten()?;
                     let empty = HashSet::new();
                     let offs = view_offs.get(&d).unwrap_or(&empty);
-                    local_uses_ok(body, *v, data, &served, admitted, offs).then_some((*v, d))
+                    local_uses_ok(body, *v, data, &served, admitted, offs, Some(*v) == rb)
+                        .then_some((*v, d))
                 })
                 .collect();
             let stable = kept.len() == cands.len();
@@ -6161,6 +6162,7 @@ fn local_uses_ok(
     served: &HashSet<usize>,
     admitted: &HashSet<u32>,
     view_offs: &HashSet<i64>,
+    phantom: bool,
 ) -> bool {
     // @PLN164 C5 — the view-field reads this local's uses may be accounted against, read
     // once: which of them stand where the field can only be READ.
@@ -6217,6 +6219,11 @@ fn local_uses_ok(
                     accounted += 1;
                 }
                 if arg_is_v(1) && matches!(name, "OpFreeRefIfDistinct" | "OpDistinctStore") {
+                    accounted += 1;
+                }
+                // `@FR-O-Buffer` — the phantom buffer's entry witness snapshots it; a phantom
+                // is in no store, so the snapshot is the null reference (`OpRefAliasEmitter`).
+                if phantom && arg_is_v(0) && name == "OpRefAlias" {
                     accounted += 1;
                 }
             }

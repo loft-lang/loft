@@ -1048,6 +1048,18 @@ rebind of the promoted local (plan 51 cluster 3's shape; native guards that free
 is the first bisect step for a leak, a double free or a wrong field out of a local bound
 from such a callee; `LOFT_STRICT_STORES=1` and `LOFT_POISON=1` are the falsifiers.
 
+**Reuse the adopting call's buffer (@PLN164 B1b, `@FR-O-Buffer`, default-ON, both backends,
+scopes pass):** the record-buffer pool now takes those buffers too, so such a callee is handed
+the CALLER's store after the first call and fills it — one store per call site per activation
+instead of one per call (the parse row's `Mark` class).  A callee's promoted buffer local then
+holds either the caller's store or one it minted, so the scope pass snapshots the store handed
+in (`__rbw_<buf> = OpRefAlias(buf)`) and every free of that local declines on it; and a local
+first bound inside an `if` (whose pre-init makes the bind a rebind) adopts at that bind
+(`Variable::deferred_first_bind`).  **`LOFT_NO_ADOPT_BUFFER_REUSE=1`** keeps those buffers
+null again and mints no snapshot — the first bisect step for a use-after-free or a wrong
+field out of a callee that rebinds or returns past a local it promoted onto its buffer.
+`LOFT_TRACE_POOL=1` names the gate that keeps each witnessed buffer out of the pool.
+
 **Mint at first use (@PLN164 A0, `@FR-O-LazyBuffer`, default-ON, both backends, scopes
 pass):** a hidden return buffer (`__ref_N`) is minted in front of the statement that hands it
 to a callee, behind `OpRefIsNull`, instead of at function entry — a scanner tried on every

@@ -1188,8 +1188,7 @@ pub fn adopt_first_bind_enabled() -> bool {
 /// `LOFT_NATIVE_LEAK_CHECK=1` are the falsifiers.
 pub fn adopt_buffer_reuse_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    // WIP: opt-in (`LOFT_ADOPT_BUFFER_REUSE=1`) until D-own-43 and the exit free are closed.
-    *ON.get_or_init(|| env_set("LOFT_ADOPT_BUFFER_REUSE") && !env_set("LOFT_NO_ADOPT_BUFFER_REUSE"))
+    *ON.get_or_init(|| !env_set("LOFT_NO_ADOPT_BUFFER_REUSE"))
 }
 
 /// @PLN164 B2 (`@FR-R-Place`, `@FR-R-MoveLast`): a call result whose ONE owning destination

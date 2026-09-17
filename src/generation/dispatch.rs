@@ -861,7 +861,8 @@ impl Output<'_> {
             // returns its promoted local adopts the minted store: the plain assignment
             // below, the same emit a fresh-adopting callee's result takes.  A reassignment
             // keeps this arm's in-place copy, as the interpreter's reassignment path does.
-            && (self.declared.contains(&var)
+            // The local's one bind after its `if` pre-init is its first (`deferred_first_bind`).
+            && ((self.declared.contains(&var) && !variables.is_deferred_first_bind(var))
                 || !crate::use_analysis::adopts_minted_at_bind(self.data, variables, var, to))
         {
             let tp_nr = self.data.def(d_nr).known_type();

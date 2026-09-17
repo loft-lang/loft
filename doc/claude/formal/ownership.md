@@ -8,9 +8,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 **Catalogue:** @F21 (references `&T`), @I60 (deps / lifetime tracker) — Goal E. Roadmap: @PLN85, @PLN87.
 
 > **Rules then deviations** (see [README](README.md)). The rules below are loft's
-> ownership model.  The register stands at **`OPEN: 1`** — `D-own-43`, a masked backend
-> divergence opened 2026-09-15 for @PLN164 B1b to close; `D-own-40` and `D-own-41` both
-> opened and CLOSED 2026-09-11, below.  It read `OPEN: 0` from 2026-07-04 until then, and what
+> ownership model.  The register stands at **`OPEN: 0`** — `D-own-43`, a masked backend
+> divergence opened 2026-09-15, was CLOSED by @PLN164 B1b on 2026-09-17; `D-own-40` and
+> `D-own-41` both opened and CLOSED 2026-09-11, below.  It read `OPEN: 0` from 2026-07-04
+> until 2026-09-11, and what
 > moved it was not a new defect but a VALIDATION of loft#1517 against these rules: the zero had
 > been re-measured against its oracle, which covers the JOIN family and does not ask whether a
 > witness should EXIST at all.  A zero that an oracle cannot disturb is only as strong as the
@@ -89,6 +90,14 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 buffer and its free declines against each (O-Complete, per path).  A
                 result reached any other way — a lift temp with a plain free, a local
                 assigned twice — has no such witness.
+                The callee reads the same fact from its side.  A local it PROMOTES onto
+                the buffer IS that parameter, so it holds the caller's store when the
+                caller handed a live one and a store the callee minted when the caller
+                handed the null sentinel — and only the second is the callee's to
+                release.  No static bit separates them, so the callee snapshots the store
+                it was handed at entry (its ENTRY WITNESS) and every free it emits of the
+                promoted local — the displaced store at a rebind, the store left behind
+                at an exit that answers another — declines on that store.
                 A buffer that IS A DESTINATION PLACE is the exception, and the only one:
                 where (R-Place) hands a call the place its result is going — the place
                 EXISTS at the call and no argument reaches it — the buffer is not a
@@ -436,9 +445,9 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 1.**  `D-own-43` (the interpreter's rebind of a promoted buffer local frees the
+**OPEN: 0.**  `D-own-43` (the interpreter's rebind of a promoted buffer local frees the
 buffer the caller handed it — masked while such callees receive the null sentinel) opened
-2026-09-15, below, and closes with @PLN164 B1b.  `D-own-42` (a plain local's first bind
+2026-09-15 and CLOSED 2026-09-17 with @PLN164 B1b, below.  `D-own-42` (a plain local's first bind
 from a callee returning its promoted local COPIED where `(O-Move)` transfers) opened and
 CLOSED 2026-09-15, below; `D-own-44` (a consumed lift temp freed again at its rebind) opened
 and CLOSED 2026-09-17, below; `D-own-40`
@@ -490,7 +499,7 @@ made the identity-guarded free decline.  Guard:
 `tests/scripts/164-consumed-keyed-lift-rebind.loft` (c1–c4 fail on both backends with the
 mark removed, c5–c6 are the controls).
 
-### D-own-43 — OPEN (2026-09-15): the interpreter's rebind of a promoted buffer local frees the buffer the caller handed it
+### D-own-43 — OPENED (2026-09-15) AND CLOSED (2026-09-17): the interpreter's rebind of a promoted buffer local frees the buffer the caller handed it
 
 `(O-Buffer)` — a hidden return buffer is the CALLER's store: the callee fills it and hands
 it back, or mints its own and hands that back — and `(O-Owner)`: the callee never frees what
@@ -509,6 +518,24 @@ sentinel is a no-op.  Measured 2026-09-15: B1's cell c6 with that exclusion remo
 `p.tag` read it.  Closes with @PLN164 B1b: the interpreter's reassignment path takes the
 same guard, after which the pool may enrol these buffers and the cell must stay green under
 `LOFT_STRICT_STORES=1` on both backends.
+
+**Closed by @PLN164 B1b — and the rebind was one of THREE frees that held the same false
+belief.**  The scope pass's own sentence for the promoted buffer read *"this function mints
+its store"* (`Scopes::is_promoted_ret_buffer`, the loft#688 exit leg), which is true only
+while the caller hands the null sentinel.  With the pool enrolling these buffers, the cells
+(`plans/164-activation-arena/bytecode-comparisons/B1b-adopt-buffer-reuse-cells.loft`) found
+the other two: the free a LITERAL exit emits for the promoted buffer when a chain renamed it
+(`fn scan(…) -> Mk { … return no_mk() … return Mk { … } }`, both backends — native's
+`_rb_w_` guards only its rebind), and native's COPY arm at a bind that a scope-pass pre-init
+had turned into a rebind (`if c { m = scan(…) }` in a loop, `parse_scene_at`'s `ps_f`),
+whose source-free released the pooled store.  Closed at the fact rather than per site: the
+scope pass mints an ENTRY WITNESS for every promoted record buffer (`__rbw_<buf> =
+OpRefAlias(buf)`, `Function::entry_witness`) and guards its exit legs with it; the
+interpreter's rebind frees read the same witness (`OpFreeRefUnlessEntry` where the displaced
+store is already on the stack); and the one bind after an `if` pre-init is recorded as a
+first bind (`Variable::deferred_first_bind`), adopted on both backends.  The rule gained the
+callee-side clause above.  Guard `tests/scripts/164-adopt-buffer-reuse.loft`, pins
+`tests/adopt_buffer_reuse.rs`.
 
 ### D-own-42 — OPENED AND CLOSED (2026-09-15): a plain local's first bind from a callee that returns its promoted local COPIED where the rule transfers
 
