@@ -285,6 +285,12 @@ jobs:
             # verdict names both rather than asserting the graver one.  It used to claim a
             # retro-break outright, which would now misread every warning-debt leg as a
             # freeze violation.
-            echo "::error::a published library leg is RED. `Test against this loft` = a language change retro-broke a shipped lib (fix the lib, or reconsider the change — the stdlib may only grow additively). `Release-ready` = warning debt: the library cannot be released as it stands, which is the ecosystem's state and not this PR's fault. Open the red leg; the step name says which."
+            # The step names are \`-escaped: bare backticks inside a double-quoted
+            # string are COMMAND SUBSTITUTION, and bash ran `Test against this loft`
+            # as a command and spliced its empty output into the message.  The
+            # annotation then read "is RED.  = a language change retro-broke …" —
+            # the verdict lost the two names it exists to tell apart, which is the
+            # one thing a reader needs from it.
+            echo "::error::a published library leg is RED. \`Test against this loft\` = a language change retro-broke a shipped lib (fix the lib, or reconsider the change — the stdlib may only grow additively). \`Release-ready\` = warning debt: the library cannot be released as it stands, which is the ecosystem's state and not this PR's fault. Open the red leg; the step name says which."
             exit 1
           fi
