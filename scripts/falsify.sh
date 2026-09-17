@@ -568,8 +568,18 @@ elif [ $falsified_any -eq 1 ]; then
     pdir="$ROOT/tests/falsified"
     pbase=$(basename "$GUARD" .loft)
     mkdir -p "$pdir"
-    git -C "$ROOT" diff -R "$SHA" -- src/ default/ > "$pdir/$pbase.patch" 2>/dev/null || true
-    plines=$(wc -l < "$pdir/$pbase.patch" 2>/dev/null || echo 0)
+    # Derive into a TEMP path, and move it into place only once it is ACCEPTED below.  Written
+    # straight to the final name, a re-run against a distant control overwrote an EXISTING patch
+    # and the reject branches then deleted it — the tool that exists to produce a receipt
+    # destroying a committed one, while printing "no durable patch written", which a reader takes
+    # to mean there never was one.  Measured 2026-09-17: a 19302-byte patch lost exactly that way
+    # while re-deriving a guard's `@falsified-at` line, and recovered from HEAD by hand.  A
+    # re-derivation must never be able to cost what it is re-deriving.
+    new="$pdir/.$pbase.patch.new"
+    kept=no
+    if [ -s "$pdir/$pbase.patch" ]; then kept=yes; fi
+    git -C "$ROOT" diff -R "$SHA" -- src/ default/ > "$new" 2>/dev/null || true
+    plines=$(wc -l < "$new" 2>/dev/null || echo 0)
     # A patch receipt is only a receipt while it isolates ONE defect.  Run against the commit
     # just before the fix — the documented use — the diff IS the fix and runs to a few dozen
     # lines; run against a DISTANT control it becomes the whole source difference since, which
@@ -577,17 +587,24 @@ elif [ $falsified_any -eq 1 ]; then
     # measured 47079-line "receipt" is the shape of that mistake.  The recorded receipts run
     # 17 to 203 lines, so a bound well above them separates the two uses without tuning.
     if [ "${plines:-0}" -eq 0 ]; then
-      rm -f "$pdir/$pbase.patch"
+      rm -f "$new"
       echo
       echo "note: no durable patch written — the fix touches nothing under src/ or default/,"
       echo "      so the control cannot be reconstructed from a source diff alone."
+      if [ "$kept" = yes ]; then
+        echo "      The EXISTING tests/falsified/$pbase.patch is untouched."
+      fi
     elif [ "$plines" -gt 800 ]; then
-      rm -f "$pdir/$pbase.patch"
+      rm -f "$new"
       echo
       echo "note: no durable patch written — $SHA is $plines source lines from this tree, so a"
       echo "      diff against it reintroduces everything fixed in between, not this defect."
       echo "      Re-run against the commit immediately before the fix to get one."
+      if [ "$kept" = yes ]; then
+        echo "      The EXISTING tests/falsified/$pbase.patch is untouched."
+      fi
     else
+      mv "$new" "$pdir/$pbase.patch"
       echo
       echo "…and the receipt that does not decay — written to tests/falsified/$pbase.patch."
       echo "Score it with: scripts/falsify.sh $GUARD --patch tests/falsified/$pbase.patch"
