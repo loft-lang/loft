@@ -565,9 +565,10 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **3** — `D-heap-8`, `D-heap-9` and `D-heap-11`, below, are the copy-lease rules
-(H-Copy-Refuse, H-Copy-Lease, H-View-Drop), written 2026-09-15 before their implementation
-(@PLN163).  The rules were revised the same day to judge a copy by its own line (§ Drop, *Why the
+OPEN: **2** — `D-heap-8` and `D-heap-9`, below, are the copy-lease rules `(H-Copy-Refuse)` and
+`(H-Copy-Lease)`, written 2026-09-15 before their implementation (@PLN163).  The third of that
+set, `D-heap-11` for `(H-View-Drop)`, CLOSED 2026-09-17: a view of a droppable member is no longer
+turned into a copy — the disturbance is refused, which is what the rule asked for.  The rules were revised the same day to judge a copy by its own line (§ Drop, *Why the
 verdict is read off the line*), which reclassified the older entries: every shape of `D-heap-1` and
 `D-heap-7` that writes a copy of an existing value belongs to `D-heap-8`, so `D-heap-1` and
 `D-heap-10` are CLOSED as reclassified.  `D-heap-7` kept `return a ?? b` over two locals, the one
@@ -659,7 +660,7 @@ buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17,
 - **Removal:** the signature check, the synthesized copy cascade, and a call at every copy site
   on both backends; the moved release removed wherever a copy leases.
 
-### D-heap-11 — OPEN (2026-09-15): a view of a droppable member is turned into a copy when its container is disturbed
+### D-heap-11 — OPENED 2026-09-15, CLOSED 2026-09-17: a view of a droppable member is turned into a copy when its container is disturbed
 
 - **Violates:** (H-View-Drop).
 - **Where:** `(B-View)`'s materialisation — a bind is given its own copy when its container is
@@ -678,9 +679,35 @@ buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17,
   D-bind-47 gave `(B-Ref-Reshape)`'s refusal the store it needs to see a growth of a container
   held in a FIELD, which is the answer this entry's **Removal** already points at.  What is left
   open here is the plain view, which `(B-View)` materialises on purpose for every other type.
-- **Status:** OPEN — @PLN163 P3.
-- **Removal:** no materialisation for such a view: the disturbance is a compile-time error naming
-  the view, the answer `(B-Ref-Reshape)` already gives a `&` reference.
+- **Status:** CLOSED 2026-09-17 (@PLN163 P3's `(H-View-Drop)` half).
+- **Removal, as taken:** the disturbance is a compile-time error naming the view — the answer
+  `(B-Ref-Reshape)` already gives a `&` reference — raised from the walk that already refuses for
+  that family (`scopes::def_reshape_refusals`), with one condition added: the view's type owns a
+  droppable.  Nothing new decides WHICH bindings are views: `record_target` already admits only a
+  binding that is a view at all and whose right-hand side names a container, so the walk's answer
+  and the copy-out advice agree cell for cell (measured), and the type question is the only one
+  this rule adds.  The message is its own, because the `&` family's — *"a write through `c` would
+  no longer reach the element it names"* — is beside the point for a plain view, which never wrote
+  through: this population is told that the copy itself is the fault, and is offered reading the
+  member where it lives rather than "bind without `&` to work on a copy", which names exactly the
+  copy `(H-Copy-Refuse)` rejects.
+- **Boundary, measured and deliberate:** the refusal walk runs with `cross_frame: Some(..)` but
+  `disturbed: None`, so a callee's REMOVAL from a droppable container refuses while a callee's
+  GROWTH does not — the same program, one frame apart, gets two answers.  The materialise walk has
+  the callee half (@PLN164 C3) and copies there, so the defect survives in that one shape; closing
+  it is C3's separable widening, not this rule's.
+- **Verified:** 13 cells, both backends byte-identical, each predicted before it was run — the
+  three disturbance events and a nested droppable refuse; a non-droppable view still materialises
+  and still says so; a droppable TUPLE member, a view with no disturbance, a view dead before the
+  growth, a sibling field's growth and a whole-container bind all keep compiling.  Corpus: 1590
+  files compiled with a before and an after binary, **0 changed** — no program in the tree writes
+  this shape, which is why the corpus could not have caught it.  Guards:
+  `tests/scripts/a-view-of-a-droppable-member-stays-a-view.loft` (the over-reach controls) and
+  `parse_errors::h_view_drop_*` (the four refusals, with their exact prose).
+- **Found while measuring this entry, and NOT it:** `d = b.v; b.v += [mk(2)]` — a whole-container
+  bind of droppables — releases one resource twice in silence.  Nothing is materialised there, so
+  it is not `(H-View-Drop)`; it is a written COPY, which `D-heap-8` already owns, and it now has a
+  measured cell waiting for that pass.
 
 ### D-heap-10 — CLOSED (2026-09-15, reclassified): a variable rebound to a `??` over itself released its record before the read, and again
 
