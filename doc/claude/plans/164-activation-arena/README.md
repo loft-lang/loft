@@ -22,7 +22,10 @@ the runtime is 72 % and the store mint/free family 20 % — half of it buffers m
 ENTRY on paths that never use them.  Moving those mints to their first use measured −9–10 % by
 hand, so **A0** (§ A0) is cut, after @PLN157's prelude elision (−11–14 %).  Both are BUILT
 (2026-09-17), and so is **C6** (§ C6): the parse row is 38.8–41.7 k → 29.8–29.9 k ns/op, every
-other row equal or faster, and the next class is the last-use vector field (§ Re-measured).**  The
+other row equal or faster.  The last-use vector field, measured next, is not a move; the
+release profile named three runtime fast paths instead, which took the row to 25.0–25.3 k
+(≈ 3.5× the Rust reference) and every other row equal or faster, and loft#1549 was fixed on the way (§ The runtime under the
+row).**  The
 measurements are under § P0 below and the mechanism under § B1.  What P0 changed in the
 plan: tier 1's ceiling is ~10 % of the parse row, not a fifth, and its store-identity cost
 (287 `store_nr !=` sites in one emission) is real, so A1/A2 stay behind B and C in the
@@ -59,7 +62,8 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
 - **Design:** ~ — the invariants are named; the store-identity question (§ Edge cases E1)
   is open and decides tier 1's shape.
 - **Last touched:** 2026-09-17 (P0b, row 11, A0 and C6 built, loft#1548 and D-own-44 fixed on
-  the way; the 14-row table and the parse row re-measured — § Re-measured)
+  the way; the 14-row table and the parse row re-measured — § Re-measured; the runtime fast
+  paths and loft#1549 — § The runtime under the row)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -311,8 +315,8 @@ lifecycle phase changes.
    hand-measured −8.5 %, built −6–7 %; loft#1548 fixed on the way.
 4. ~~**The last-use vector field**~~ — measured before it was cut, and it is not a move:
    every copy it named crosses stores and reads a view or a reused buffer (§ The runtime
-   under the row).  What the profile named instead — four runtime fast paths — is BUILT
-   (2026-09-17, same section): the row 28.4–28.9 k → 24.3–24.8 k ns/op.
+   under the row).  What the profile named instead — three runtime fast paths — is BUILT
+   (2026-09-17, same section): the row 28.3–28.5 k → 25.0–25.3 k ns/op.
 5. **The `Mark` result path** — now the largest store class, 12 of the 30 stores a parse
    mints (§ The runtime under the row, *The census*).
 6. **A1/A2** — re-priced: the store family is 13.7 % of the row now (`parse_poly` 3.8,
@@ -490,25 +494,38 @@ bytes.
 *What the release profile named instead* (`perf` by symbol, then the branch stack for callers):
 `begin_write_inner::<u32>` 7.5 % — the write check, out of line, and called mostly by the
 allocator's own metadata writes (`claim`, the free-tree inserts and rotations, `Store::init`);
-`Stores::store_mut` 3.4 % in two out-of-line copies — its strict-mode test ran before the
-slot's `free` flag; and `vector_add`'s per-element `copy_claims` walk for an element that owns
-no heap.  Four runtime changes followed.  None changes the IR, and all four apply to both
-backends:
+`Stores::store_mut` 3.4 % in two out-of-line copies; and `vector_add`'s per-element
+`copy_claims` walk for an element that owns no heap.  Three runtime changes stayed.  None
+changes the IR, and all three apply to both backends:
 
 | change (`perf stat -r 5`, one emission, one core) | instructions | cycles |
 |---|---:|---:|
 | `vector_add` skips the claims walk when the element owns no heap | −3.3 % | −3.3 % |
 | the write check inlined, the lock refusal outlined | −8.5 % | −7 % |
-| `store`/`store_mut` test `free` first, the strict report outlined | −2 % | −3 % |
 | a fresh store initialised once (`null` then `clear` initialised it twice, on both backends and in B2's placement fallback); a retype moves no budget nothing reads | −1.1 % | −2 % |
 
-The row: **28.4–28.9 k → 24.3–24.8 k ns/op**, instructions 1 742 M → 1 493 M (−14 %), cycles
-435 M → 369 M (−15 %), hash `33f6d2b8`, about 3.4× the Rust reference (≈ 7.2 k).
-`LOFT_STRICT_STORES` still reports a read and a write of a freed store — a positive control by
-hand on the emission, since no test asserts that the report fires.  Two levers measured and
-dropped: reserving the whole copy before `vector_add` claims (+0.2 % instructions — an empty
+The row: **28.3–28.5 k → 25.0–25.3 k ns/op** (−12 %), instructions 1 742 M → 1 523 M, cycles
+429 M → 380 M, hash `33f6d2b8`, about 3.5× the Rust reference (≈ 7.2 k).  Same-moment A/B of
+all fourteen rows (the pre-session rlib against this one, one emission, best of three, 14/14
+hashes): every row equal or faster — `lock_curved` −21.5 %, `lock` −12 %, `render_marks`
+−12 %, `render_lock` −11 %, `fronds` −10 %, `parse` −8.5 %, `smooth` −5 %, `hair` −4 %,
+`resize` −3.5 %, the rest within ±3 %.  `LOFT_STRICT_STORES` still reports a read and a write
+of a freed store — a positive control by hand on the emission, since no test asserts that the
+report fires.
+
+Three levers measured and dropped.  Testing the slot's `free` flag before the strict-mode switch
+in `store`/`store_mut` (with the report outlined) measured −2 % instructions on this row — and
+the fourteen-row A/B then read `smooth` +38 %, `fill_circle` +15 %, `fill_star` +7 %,
+`wide_line` +6 % with instructions flat: the pixel loops load the flag per access
+(`cmpb $0x0, 0x106(%rbx,%r15)`) and spill a loop variable, where the static switch test left
+them alone — which is what `store`'s own doc says the order is for.  Keeping the switch first
+and only outlining the report did not recover it, so the accessors are as they were.
+Reserving the whole copy before `vector_add` claims (+0.2 % instructions — an empty
 destination's first claim already has room for eleven elements), and the capacity test without
-its division (cycles unchanged; the `divl` samples were skid).
+its division (cycles unchanged; the `divl` samples were skid).  The lesson is the one § Re-measured
+already states: a runtime change reaches every row, so the fourteen-row A/B is owed before it
+stands, and a single-row `perf stat` that moves cycles without instructions is a code-shape
+effect to look at, not noise.
 
 *The census.*  A parse mints 30 stores: `Mark` 12, `vector<Pt>` 6, `vector<float>` 4,
 `PointList` 3, and one each of `vector<text>`, `vector<Frond>`, `Sketch`, `Paint` and
@@ -529,11 +546,29 @@ wants: the one call bind after the scope's null-init, with no loop between them,
 bind — and the null-init is then a sentinel on the interpreter too.  Worth about 1 % of this
 row.
 
+*What reusing the `Mark` buffers first ran into — loft#1549.*  Pooling a buffer whose record
+owns heap (`(R-Reuse)`, shipped with #1465) leaked on both backends: the callee's literal
+overwrote the record's handles on every refill, and what the previous call left there stayed
+claimed in the buffer's store — about 100 bytes a turn for `S { n, v: [..] }`, 600 for a
+vector of heap-owning records, unbounded in the loop length, with right values and no gate
+that counts stores able to see it.  Fixed on the way (`formal/heap.md` D-heap-12, the record
+clause of `(H-ClearRelease)`): the pool's lazy guard releases on reuse,
+`if OpRefIsNull(b) { mint } else OpClear(b, T)`.  The first cut released in the callee's
+offered arm and measured +1 % instructions on this row — B2 offers a freshly placed `Paint` to
+every `read_paint`, where the walk finds nothing — so the release is the pool's, and the row's
+emission differs from before only in one arm that never runs (`parse_circle` returns after its
+one `read_paint`).  Twelve cells and the resident-memory guard
+(`tests/scripts/1549-a-pooled-buffer-releases-its-previous-occupant.loft`, falsified against
+04cc50b1 on both backends); pins `tests/pooled_buffer_release.rs`.  What it unblocks here:
+the pool is now sound for a `Mark`, which owns a vector.
+
 ### The queue after the runtime pass
 
 1. **The `Mark` class** — twelve stores a parse.  Two separate questions: `no_mark()` behind
    `parse_circle`'s tail (a constant, heap-free result handed up a buffer chain), and the
-   three literal exits C5 declines.
+   three literal exits C5 declines.  Pooling the callers' buffers is sound for a heap-owning
+   record since loft#1549; what still keeps them null is B1's exclusion (D-own-43) and the
+   null-init below.
 2. **B1 behind a null-init** (`:986`, above) — both backends, one home for the admission.
 3. **The free tree under a live store.**  Once a store has freed anything, `bump_tail` is off
    for good, so every claim is a tree delete, a split and an insert.  In the scene's store
