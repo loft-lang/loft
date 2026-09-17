@@ -854,11 +854,12 @@ impl State {
         // same sentinel a caller-side `OpInitRefSentinel` reset
         // produces.  Without this, `clear()` below would OOB into
         // `allocations[u16::MAX as usize]`.
-        if db.store_nr == u16::MAX {
+        let fresh = db.store_nr == u16::MAX;
+        if fresh {
             db = self.database.null();
             *self.mut_var::<DbRef>(var) = db;
         }
-        let r = self.alloc_record_into(&db, db_tp, size, code_pos);
+        let r = self.alloc_record_into(&db, db_tp, size, code_pos, fresh);
         let db = self.mut_var::<DbRef>(var);
         db.store_nr = r.store_nr;
         db.rec = 1;
@@ -869,9 +870,19 @@ impl State {
     /// stamp its header — the store-side half of [`alloc_record_at`], split out
     /// so a caller that has no variable slot to write back to (the entry frame's
     /// hidden return buffer, #618) allocates by exactly the same rules.
-    /// The returned `DbRef` addresses the record's payload.
-    fn alloc_record_into(&mut self, db: &DbRef, db_tp: u16, size: u16, code_pos: u32) -> DbRef {
-        self.database.clear(db);
+    /// The returned `DbRef` addresses the record's payload.  `fresh` says `db` is a store
+    /// [`Stores::null`] has just initialised, which needs no second `clear`.
+    fn alloc_record_into(
+        &mut self,
+        db: &DbRef,
+        db_tp: u16,
+        size: u16,
+        code_pos: u32,
+        fresh: bool,
+    ) -> DbRef {
+        if !fresh {
+            self.database.clear(db);
+        }
         // The record layout is: word 0 = size header (4 B) + type tag (4 B),
         // payload from byte 8.  `Stores::claim` takes WORDS, so the payload's
         // `size` BYTES need `1 + ceil(size / 8)` words — passing `size` raw
@@ -927,7 +938,7 @@ impl State {
         // B2-runtime: EnumValue records must fit the parent enum's largest variant.
         let size = self.database.enum_parent_size(db_tp);
         let fresh = self.database.null();
-        Some(self.alloc_record_into(&fresh, db_tp, size, self.code_pos))
+        Some(self.alloc_record_into(&fresh, db_tp, size, self.code_pos, true))
     }
 
     pub fn new_record(&mut self) {

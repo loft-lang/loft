@@ -2214,9 +2214,12 @@ impl Store {
             return;
         }
         if !self.borrowed && !self.is_file_backed() {
-            let bytes = self.size as usize * 8;
-            crate::store_budget::release(self.known_type, bytes, self.created_at);
-            crate::store_budget::add(kt, bytes, self.created_at);
+            crate::store_budget::retype(
+                self.known_type,
+                kt,
+                self.size as usize * 8,
+                self.created_at,
+            );
         }
         self.known_type = kt;
     }

@@ -2501,7 +2501,6 @@ impl Stores {
             || (host.store_nr as usize) >= self.allocations.len()
         {
             let fresh = self.null();
-            self.clear(&fresh);
             let r = self.claim(&fresh, words);
             self.allocations[r.store_nr as usize].set_known_type(db_tp);
             self.store_mut(&r).zero_fill(r.rec);
