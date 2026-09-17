@@ -867,11 +867,14 @@ before it is built**, and re-measured with `perf` on the release binary after.
    that reason; what changed is its role — it is what makes every points local single-consumer.
    Owes C5's step 2 debts first (per-PATH mention counting, the wider source resolution) and
    the corpus under the switch on both backends.
-2. **E-2 — the single-consumer vector built in its destination.** — E-2a built 2026-09-17
-   (§ E-2 below); the joined arms and the value branch (E-2b) and `pf_all` (E-2c) remain.  Element-first (@PLN157
-   § V-z) already does this for a local consumed by one append; un-park the vector
-   `place_result` for a call result.
-3. **E-3 — `PointList` reused.**  `LOFT_TRACE_POOL=1` names the declining gate.
+2. **E-2 — the single-consumer vector built in its destination.** — E-2a and E-2b (the joined
+   arms) built 2026-09-17 (§ E-2 below).  Remaining: the VALUE BRANCH (`parse_poly`'s widths,
+   `if … { smooth_vals(…) } else { copy }`, about −0.5 %: the hand patch's −4.0 % less E-2a and E-2b) and
+   E-2c (`parse_fronds`' `pf_all` built in the returned record) — priced by hand patch at
+   −0.57 % instructions, which is below what a unit of its size is worth now; parked.
+3. ~~**E-3 — `PointList` reused.**~~ Priced by hand patch 2026-09-17 (the list's store cleared
+   and reused instead of minted per call): a wash within noise.  Dropped — the `PointList`
+   mint is not where the row's time goes once E-2 removed the copies around it.
 
 E1 returns only if a row shows a class of temporaries that can be neither removed nor reused
 and costs more than a few percent, measured with `perf`.
@@ -1051,6 +1054,48 @@ points local is appended in BOTH arms of an `if` (one early element would serve 
 the second arm's mint becoming an alias), and `parse_poly`'s widths local is a value branch
 (`if smooth_applies { smooth_vals(…) } else { copy }`), whose arms would each fill the field.
 Both are E-2b; `parse_fronds`' `pf_all`, which lives only in the returned record, is E-2c.
+
+### E-2b, the joined arms (2026-09-17)
+
+*Built.*  `parse_circle` appends its points local in BOTH arms of an `if` (stroked, filled).  One
+early element now serves the two arms: the group of each arm is recognised on its own
+(`group_at`), the arms must append the same temps into the same destination, and the second
+arm's mint becomes an alias of the first's (`var_elm_2 = var_elm_1`), each arm keeping its own
+field writes and its finish.  The parser pre-initialises every `_elm` to null at the top of the
+list, AFTER the early mint, so the emitter drops those `Set(elm, null)` for an early element
+(the first build wrote the arm's scalars through a null element).  Two gates moved with it:
+
+* a collection FIELD destination's call arguments and window statements may name the record
+  when the naming reaches only ANOTHER field (`circle_pts(…, sc.sw, sc.sh)`) —
+  `namings_avoid_place`, the view leaf's own test.  That also admits `parse_lock`, which E-2a
+  declined on `sc.brushes[i]?` in its window;
+* **a view the early mint may have moved declines** (loft#1553).  The early mint is the append's
+  growth brought forward, and the scope pass placed its view copies against the growth where
+  the IR has it.  A growth-boundary sweep found that `e = out[0]` bound before the declaration
+  and read in the window read the relocated vector's freed block on `--native` —
+  `4609434218613702656` for `100` at the eleventh element — and that § V-z's local form on
+  `main` has it too (`formal/rewrites.md` D-rw-3).  The gate now declines a window that reads a
+  local whose deps close over the destination's store or, where that store is a caller's, a
+  heap parameter; a local whose every binding views a SIBLING field is spared, read with the
+  scope pass's own place model (`scopes::value_view_places`).  `parse_circle`'s paint, a record
+  B2 placed in the same store, owns its block and is not named.
+
+*Side-finding, filed (loft#1554, `formal/binding.md` D-bind-47).*  The same matrix's
+aliased-parameter cell (`p(s, s.ops[0], n)`, the callee appending to `sc.ops` and reading its
+element parameter AFTER) read `0` in the ORDINARY form on both backends: `(B-Ref-Reshape)`'s
+call-site refusal covers only a removal through a `&vector` parameter.  Not this plan's
+mechanism; its fix widens a compile-time refusal and is measured over the consumers first.
+
+*Measured on the library* (release tier, `perf stat -r 5` × 3 interleaved, `--n 5000`; stores
+counted with callgrind as the n = 20 minus n = 10 difference): `parse_circle`, `parse_lock`,
+`parse_poly`'s three locals and `parse_line_cmd`'s two are admitted.  **14 → 13 stores per
+parse, −0.71 % instructions and −3.2 % cycles** against E-2a, hash `33f6d2b8`; the row reads
+**20 740 ns against the Rust reference's 6 675** in the same sitting (**3.11×**; E-2a 21 310,
+3.19×).  Cells `g16`–`g27` of `164-element-place.loft`, hand-computed, clean on both backends
+under the leak check, `LOFT_STRICT_STORES` and `LOFT_POISON`; the two halves of the view gate
+sabotaged in turn (`g25` read `0` for `100` without it, `g27` read `0` for `100` without its
+parameter half).  Guard `an-element-view-read-before-an-element-first-append-is-not-moved.loft`,
+falsified against f547cf1c (native exit 1 → 0).
 
 ## The three tiers — the invariant each rests on
 
@@ -2030,9 +2075,9 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | **B2 unit 1 over a chain** — a literal exit writes the buffer a chain renamed (`parse_circle`'s shape) | § B2 unit 1 over a chain | cells c1–c17 both backends, pooled and unpooled, under every falsifier; the value-record verdicts unchanged; pins `tests/literal_exit_buffer.rs`; a native chain-of-chains use-after-free found and fixed on the way | Built 2026-09-17 (`LOFT_NO_LITERAL_EXIT_BUFFER`) — `Mark` mints 21 → 12, the parse row −2.5 % |
 | **The wilderness** — the store's tail free block held beside the free tree (`@FR-H-Wilderness`) | § The wilderness | a seeded side-by-side store test (same positions, same chain); the store subject (321), wrap, native, lib tests on both forms; the fourteen-row same-binary A/B | Built 2026-09-17, default ON (`LOFT_NO_WILDERNESS`) — the parse row −6.3 %, `fronds` −2.6 % |
 | **Text per character** — `#[inline]` on the two per-character runtime calls | § The queue after B1b | `perf stat`, three interleaved pairs | Measured and DROPPED 2026-09-17 (−1.0 % instructions, +1.1 % cycles) |
-| **E-1** — C5 on by default: `Mark` as a tuple with a view | § The elimination queue | C5's step 2 debts; the corpus under the switch, both backends; a hand patch first | In progress — the dead-buffer release fixed (`Mark` 12 → 9 armed, −1.9 % instructions); the per-path source and the loop-contained append are next (§ E-1, first measurement) |
-| **E-2** — a single-consumer vector built in its destination (element-first; the vector `place_result`) | § The elimination queue | cells in the @PLN157 shape; a hand patch first | After E-1 |
-| **E-3** — `PointList` reused per call site | § The elimination queue | `LOFT_TRACE_POOL=1` names the gate | After E-1 |
+| **E-1** — C5 on by default: `Mark` as a tuple with a view | § The elimination queue | C5's step 2 debts; the corpus under the switch, both backends; a hand patch first | Built 2026-09-17, default ON (`LOFT_NO_VIEW_FIELD`, `LOFT_NO_FORWARD_TUPLE`) — § E-1 |
+| **E-2** — a single-consumer vector built in its destination (element-first; the vector `place_result`) | § The elimination queue | cells in the @PLN157 shape; a hand patch first | E-2a and E-2b built 2026-09-17, default ON (`LOFT_NO_ELEMENT_PLACE`) — 19 → 13 stores per parse; loft#1552 and loft#1553 fixed on the way; the value branch and E-2c (`pf_all`, −0.57 %) remain |
+| **E-3** — `PointList` reused per call site | § The elimination queue | `LOFT_TRACE_POOL=1` names the gate | Priced and DROPPED 2026-09-17 — a wash |
 | **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |
 | **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state), and B1 behind an `if` pre-init | § B1b | 23 cells both backends, both switch states, under every falsifier; the entry witness closes D-own-43 and the two other frees that held its belief; the body behind a hoisted result reached; `wrap` + `native` green; parse bench `Mark` mints 24 → 14 per two parses | Built 2026-09-17, default ON (`LOFT_NO_ADOPT_BUFFER_REUSE`) |
 | **B2** — the result's buffer claimed in its destination's store, the field taking it by relocation at the last use (`R-Place`, `R-MoveLast`) | § B2 | cells b1–b15 both backends under the falsifiers; the census 184 → 50; `parse_poly`'s `paint: pp_paint` emits `OpMoveRecord` and `read_paint`'s buffer is a record in the scene's store; the parse row a wash (`perf stat`) | Shipped 2026-09-16 |
@@ -2070,7 +2115,7 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
    P0b*.  A1/A2 are re-priced after A0 against the body half of the store family.  **B1b**
    beside them whenever D-own-43 closes (the interpreter's rebind guard).
 8. ~~A1/A2~~ — superseded by the owner's ruling C125 (2026-09-17): § The elimination queue is
-   the plan's remaining order (E-1, E-2, E-3).
+   the plan's remaining order (E-1, E-2, E-3) — E-1 and E-2a/b built, E-3 dropped.
 9. Re-measure the 14-row bench after each phase (`compare.py`, 14/14 hashes), and the parse
    row's profile with `perf` on the release binary — never with a count.
 

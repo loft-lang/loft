@@ -770,10 +770,24 @@ panic's frame block read.  Switch `LOFT_NO_LEAF_CHAIN` (one step finer than
                  finish — by the prelude mint's prefill, a paired build, or the
                  kept sets.  Gates: declaration and append are top-level
                  statements of ONE block (an if-arm append strands unfinished
-                 elements per skipped iteration), and no statement between them
-                 jumps out of it (a `return`, `break` or `continue` strands the
-                 element the same way, holding what the temp built); nothing
-                 between them mentions `out`; the temp's declaration is its ONLY
+                 elements per skipped iteration) — or (@PLN164 E-2b) the append
+                 stands in EACH arm of an `if` that block holds, into the same
+                 destination with the same temps, and the two arms share ONE early
+                 element: the second arm's mint becomes an alias of the first's,
+                 each arm keeping its own writes and its finish; no statement
+                 between them jumps out of it (a `return`, `break` or `continue`
+                 strands the element the same way, holding what the temp built);
+                 nothing between them names `out` in a way that reaches its
+                 collection (for a FIELD destination a naming that reaches only
+                 another field moves nothing, `namings_avoid_place`); and nothing
+                 between them READS A VIEW the early mint may have moved — the
+                 mint is the append's GROWTH brought forward, and `(B-Disturb)`'s
+                 copies were placed against the growth where the IR has it
+                 (loft#1553): a local whose deps close over `out`'s store, and,
+                 where that store is a caller's, any heap parameter (a caller may
+                 hand an element in beside its container), decline — except a
+                 local whose every binding views a SIBLING field, whose
+                 collection the growth does not move; the temp's declaration is its ONLY
                  binding (a rebind points the temp at another store, and the
                  element keeps what the declaration built); the temp's
                  whole-function mentions reconcile to its build plus the one copy
@@ -1029,6 +1043,18 @@ Two instruments check the assumptions, and the chapter is not complete without b
 ## Deviations
 
 **OPEN: 0** (2026-09-17).
+
+- **D-rw-3 — OPENED AND CLOSED 2026-09-17 (loft#1553).**  `(R-ElemFirst)` moves the append's
+  mint — its GROWTH — to the temp's declaration, and the gate asked only whether a statement in
+  between NAMED `out`.  A view of `out`'s element is another variable: `e = out[0]; ws = [];
+  ws += […]; w = e.fid; out += [F { fpts: ws }]` left `e` a view (the scope pass saw the growth
+  at the append, after the read), and on `--native` it read the vector record the early mint
+  had relocated — `4609434218613702656` for `100` at the eleventh element, silently, since
+  @PLN157 § V-z.  Found by @PLN164 E-2b's growth-boundary sweep.  Closed at the gate: the
+  window may not read a local whose deps close over `out`'s store or, where that store is a
+  caller's, a heap parameter; a view of a sibling field is spared by the scope pass's own place
+  model.  Guard `tests/scripts/an-element-view-read-before-an-element-first-append-is-not-moved.loft`;
+  cells `g25`–`g27` of `164-element-place.loft` for the field destination.
 
 - **D-rw-2 — OPENED AND CLOSED 2026-09-17 (loft#1552).**  `(R-ElemFirst)` says the temp is consumed
   exactly once, and the gate counted its READS but never its BINDINGS: `p: vector<Pt> = [];

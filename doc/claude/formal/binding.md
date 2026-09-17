@@ -391,7 +391,21 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 2.**
+**OPEN: 3.**
+
+* **D-bind-47** *(opened 2026-09-17, [loft#1554](https://github.com/loft-lang/loft/issues/1554))* —
+  `(B-Ref-Reshape)`'s call-site refusal for a PLAIN or FIELD container, and for GROWTH.  The rule
+  refuses a call handed both a container and a reference into it when the callee DISTURBS the
+  container, and `(B-Disturb)` names four events; the refusal fires for one shape only — a
+  `&vector` parameter the callee REMOVES from.  `fn rm(e: Op, sc: Sc) { sc.ops.remove(0); e.ow }`
+  called as `rm(s.ops[0], s)` reads **2** for a refusal, a plain `vector` parameter the same, and
+  a growth through `sc.ops` reads **0** once the vector reallocates — both backends, no
+  diagnostic.  **Where (measured).**  The refusal's call-site half reads `removed_params_map`
+  (`RefVar` slots, `OpRemove*` on a bare `Var`); @PLN164 C3's `disturbed_params_map` carries
+  the wider fact (plain parameters, a field inside one, growth, closed over the call graph) and
+  the MATERIALISE half already reads it.  Closing it widens a compile-time refusal, so the
+  corpus and the consumers are measured first.  **Workaround (verified, both backends):** pass
+  the INDEX and read the element again after the reshape.
 
 * **D-bind-48** *(opened 2026-09-17, CLOSED 2026-09-17)* — `(B-Ref-Reshape)`'s CALLEE clause was
   never implemented for a GROWTH, so a disturbance one frame down did not refuse.  The rule states

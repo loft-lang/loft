@@ -1,0 +1,100 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1553, `@FR-B-Disturb` over `@FR-R-ElemFirst` — AN ELEMENT VIEW READ BEFORE AN
+// ELEMENT-FIRST APPEND IS NOT MOVED.  The element-first build mints the appended element at the
+// temp's DECLARATION, so the append's growth runs there, ahead of every statement up to the
+// append.  The scope pass decides which views to copy from where the IR puts the growth, which
+// is the append.  So a view of the container's element that is bound before the declaration
+// and read between it and the append was left a view, and on `--native` it read the vector
+// record the early mint had just moved.  Each cell sits on an allocation boundary: the vector
+// starts at eleven elements and roughly doubles, and something is allocated after it so that
+// growing it moves it.
+//
+// Every expected value is the interpreter's, worked out by hand: the view names element 0,
+// whose `fid` is 100.  The appended element holds [1.5, 2.5], which sums to 4.
+//
+// @falsified-at: f547cf1c4 — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   WITNESS: `y1 m=11: 4609434218613702656,12,4, want 100,12,4` — the view read the relocated
+//   vector's freed block.
+
+struct Frond { fpts: vector<float>, fid: integer = 0 }
+struct Pt { px: integer = 0, py: integer = 0 }
+struct Op { opts: vector<Pt>, ow: integer = 0 }
+struct Sc { ops: vector<Op>, seen: integer = 0 }
+
+fn tot(v: const vector<float>) -> float { t = 0.0; for x in v { t += x; } t }
+fn totp(v: const vector<Pt>) -> integer { t = 0; for p in v { t += p.px + p.py; } t }
+fn mkpts(n: integer) -> vector<Pt> {
+  o: vector<Pt> = [];
+  for i in 0..n { o += [Pt { px: i, py: i * 2 }]; }
+  o
+}
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+/// y1 — a LOCAL destination (§ V-z): a view of element 0, read between the declaration and
+/// the append.
+fn y1(m: integer) -> text {
+  out: vector<Frond> = [];
+  for j in 0..m { out += [Frond { fpts: [0.5], fid: 100 + j }]; }
+  y1_e = out[0];
+  ws: vector<float> = [];
+  ws += [1.5, 2.5];
+  w = y1_e.fid;
+  out += [Frond { fpts: ws, fid: -1 }];
+  "{w},{len(out)},{tot(out[m]?.fpts)}"
+}
+/// y2 — the control: the same read through the container, which the gate always saw.
+fn y2(m: integer) -> text {
+  out: vector<Frond> = [];
+  for j in 0..m { out += [Frond { fpts: [0.5], fid: 100 + j }]; }
+  ws: vector<float> = [];
+  ws += [1.5, 2.5];
+  w = out[0]?.fid;
+  out += [Frond { fpts: ws, fid: -1 }];
+  "{w},{len(out)},{tot(out[m]?.fpts)}"
+}
+/// y3 — the control: the view bound AFTER the append names the moved vector.
+fn y3(m: integer) -> text {
+  out: vector<Frond> = [];
+  for j in 0..m { out += [Frond { fpts: [0.5], fid: 100 + j }]; }
+  ws: vector<float> = [];
+  ws += [1.5, 2.5];
+  out += [Frond { fpts: ws, fid: -1 }];
+  y3_e = out[0];
+  "{y3_e.fid},{len(out)},{tot(out[m]?.fpts)}"
+}
+/// y4 — a destination FIELD filled by a call (@PLN164 E-2): the view names element 0 of the
+/// field.  The early mint's element is filled by the call.
+fn y4(sc: Sc, n: integer) -> integer {
+  y4_e = sc.ops[0];
+  y4_p = mkpts(n);
+  sc.seen = y4_e.ow;
+  sc.ops += [Op { opts: y4_p, ow: n }];
+  sc.seen
+}
+fn sc_of(m: integer) -> Sc {
+  s = Sc { ops: [], seen: 0 };
+  for j in 0..m { s.ops += [Op { opts: [Pt { px: j, py: 1 }], ow: 100 + j }]; }
+  s
+}
+
+fn main() {
+  ok("y1 m=11      ", y1(11), "100,12,4");
+  ok("y1 m=24      ", y1(24), "100,25,4");
+  ok("y1 m=3       ", y1(3), "100,4,4");
+  ok("y2 m=11      ", y2(11), "100,12,4");
+  ok("y3 m=11      ", y3(11), "100,12,4");
+  bad = 0;
+  for m in 1..40 {
+    if y1(m) != "100,{m + 1},4" { bad += 1; }
+  }
+  ok("y1 sweep     ", "{bad}", "0");
+  // mkpts(3) sums to 9 with totp; element 0 holds the single point (0,1), which sums to 1.
+  s4 = sc_of(11);
+  ok("y4 m=11      ", "{y4(s4, 3)}", "100");
+  ok("y4 elements  ", "{len(s4.ops)},{s4.ops[0]?.ow},{totp(s4.ops[0]?.opts)},{s4.ops[11]?.ow},{totp(s4.ops[11]?.opts)}", "12,100,1,3,9");
+  println("an element view read before an element-first append: every cell holds");
+}
