@@ -10,9 +10,9 @@
 // store the buffer lives in growing by the previous occupant's heap on every call, unbounded
 // in the loop length and invisible to every store-count gate (the store itself dies on time).
 // So the guard measures the process's own resident memory across 300 000 turns of three
-// leaking shapes (Linux; elsewhere `rss_kb` answers -1 and the check is vacuous), and the
-// twelve value cells hold the refill to its hand-computed answers — c5 an omitted field that
-// must not keep the previous turn's vector, c12 a variant change.  Plan cells:
+// leaking shapes (Linux, outside AddressSanitizer; elsewhere `rss_kb` answers -1 and the
+// check is vacuous), and the twelve value cells hold the refill to its hand-computed answers
+// — c5 an omitted field that must not keep the previous turn's vector, c12 a variant change.  Plan cells:
 // `doc/claude/plans/164-activation-arena/bytecode-comparisons/1549-pooled-buffer-release-cells.loft`.
 // `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1`
 // must answer identically.
@@ -177,7 +177,11 @@ fn c12() -> integer {
 }
 
 
+/// The process's resident memory in KB, or -1 where it cannot be read — and under
+/// AddressSanitizer, whose quarantine keeps freed memory resident on purpose, so a growth
+/// there measures the sanitizer rather than the program.
 fn rss_kb() -> integer {
+  if env_variable("ASAN_OPTIONS") != "" { return -1 }
   st = file("/proc/self/status").content() ?? "";
   for line in st.split('\n') {
     if line.starts_with("VmRSS:") {
@@ -204,7 +208,8 @@ fn m1() {
       Empty => { t += 1; }
     }
   }
-  grown = rss_kb() - before;
+  after = rss_kb();
+  grown = if before < 0 || after < 0 { 0 } else { after - before };
   assert(grown < 8000, "m1 resident memory grew {grown} KB over 900 000 refills");
   println("m1 {t > 0}");
 }
