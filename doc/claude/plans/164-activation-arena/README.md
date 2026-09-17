@@ -63,7 +63,7 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
   is open and decides tier 1's shape.
 - **Last touched:** 2026-09-17 (P0b, row 11, A0 and C6 built, loft#1548 and D-own-44 fixed on
   the way; the 14-row table and the parse row re-measured — § Re-measured; the runtime fast
-  paths and loft#1549 — § The runtime under the row; B1b and D-own-43 — § B1b)
+  paths and loft#1549 — § The runtime under the row; B1b, D-own-43 and loft#1550 — § B1b)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -643,12 +643,18 @@ build (a0ae1ad0):
   The hoist now asks `adopts_minted_at_bind` as well (and the hoisted null-init makes the
   bind a `deferred_first_bind`), and `adopts_minted_at_bind` no longer reads `__ref_p2_N` as
   a buffer name.  Under `LOFT_NO_ADOPT_FIRST_BIND=1` the leak returns with B1's own lowering.
-* **r17 — filed as loft#1550** (`silent-wrong`, both backends, on `main`): `if first { a }
-  else { h.c }` joins two borrows with different bases into `Join { base: a }`, which
-  `formal/ownership.md`'s own `γ(Join(b))` does not cover, and every `Join` reader assumes an
-  owned arm — the caller's record is freed and read back as another record's bytes.  The
-  domain has no element for "a borrow of one of several bases", so it is a rule extension
-  rather than a site fix.
+* **r17 — filed as loft#1550, FIXED 2026-09-17** (`silent-wrong`, both backends, on `main`):
+  `if first { a } else { h.c }` joined two borrows with different bases into
+  `Join { base: a }`, which `formal/ownership.md`'s own `γ(Join(b))` does not cover, and every
+  `Join` reader assumes an owned arm — the caller's record was freed and read back as another
+  record's bytes.  Changing the lattice regressed four guards (1257, 1257b, 1318, 1323), so the
+  rule sits at the call boundary instead: a callee whose return may hand back any of several
+  arguments (`use_analysis::returns_one_of_several_args`) answers a base-less `Join`, and
+  every bind of it copies with no runtime guard against one argument — the nullable first
+  bind included, and the interpreter's rebind through the fresh path (`D-own-45`).  Cells
+  `bytecode-comparisons/1550-two-borrow-join-cells.loft` (j1–j12, five red on both backends
+  before), guard `tests/scripts/1550-a-view-of-one-of-several-arguments-is-copied.loft` with
+  its sabotage patch, pins `tests/one_of_several_args.rs`.
 
 *Receipts.*  Guard `tests/scripts/164-adopt-buffer-reuse.loft` (26 cells) with the sabotage
 patch `tests/falsified/164-adopt-buffer-reuse.patch` (the witness and the deferred bind removed,
@@ -703,7 +709,7 @@ a parse and the three frees that could release a caller's store.
 1. ~~**The `Mark` class** and **B1 behind a null-init**~~ — built above; 7 `Mark` stores a
    parse remain, the literal exits of the parsers a chain renamed (`parse_circle`,
    `parse_fronds`, `parse_line_cmd`: B2 unit 1 declines a renamed buffer) and `parse_poly`'s.
-2. **loft#1550** (r17) — the rule extension above, fixed before this arc ships.
+2. ~~**loft#1550** (r17)~~ — fixed above, at the call boundary.
 3. **The free tree under a live store** and **text per character** — as before.
 4. **A1/A2** — re-priced after item 1.
 
