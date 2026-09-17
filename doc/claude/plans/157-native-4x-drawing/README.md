@@ -21,6 +21,21 @@ place), § V-e (the runtime's per-allocation overhead), § V-f (the runtime's
 per-record bookkeeping) and § V-g (read-only view elision at a record join)
 SHIPPED (see Sub-arcs); the queue is re-ranked below, and **§ Where to
 resume** is the hand-off for the next session.
+**`R-BoundedNest` SHIPPED 2026-09-17** (`formal/rewrites.md`, the queue's item 2 and C120's
+admissible successor): an innermost counted loop that accumulates `?`-discharged element
+products runs with PLAIN operators behind a guard evaluated once at its entry — every range end
+and invariant not the sentinel, every read's element bound known (taken once at the outermost
+loop that leaves the vector alone), the magnitude bound of every chain and of
+`|acc| + trips × bound(term)` fitting `i64` — with the checked loop as its `else`.  Measured
+on the arm64 lane (`compare.py`, 14/14 hashes): `render_marks` 6.11× → **2.69×**,
+`render_lock` 4.87× → **2.76×**, `resize` 5.37× → **2.42×**, the rest within noise — **every
+judged row but `lock_curved` (3.87× on this lane) is under the 3× bar, median 2.35×**.  Beside
+it a runtime item the same session's `sample` profile named: a self-append (`v += v`, the
+canvas fill's doubling ladder) copied byte by byte through a snapshot and, for heap-owning
+elements, read the source through a freed block — one block copy now, both backends,
+`render_marks` −8 % (D-heap-14).  Switches `LOFT_NO_BOUNDED_NEST`, `LOFT_NO_SELF_APPEND_BLOCK`;
+falsifier `LOFT_HOIST_VERIFY=1` (`ops::nest_verify`); pins `tests/bounded_nest.rs`; cells
+`tests/scripts/157-bounded-nest.loft`.
 **§ V-ab SHIPPED 2026-09-13** (DESIGN.md § V-ab): a counted `for` whose start is not a
 literal runs a second counter seeded AT the start instead of a null-encoded one — no null
 test per iteration on either backend (bare loop −32 %, a contiguous fill −18 %, the
@@ -1056,9 +1071,10 @@ verify form is what found it.  Cells m1–m16, pins `tests/invariant_arith.rs`, 
 | **parse** | 6 654 | 50 294 | **7.56** | 7.59 |
 
 
-*Next, by the queue:* item 2, **`R-BoundedNest`** — a bound over the nest's inputs taken
-once per nest, the plain vectorised loop under it, the checked loop as fallback; the unit
-that reaches the reference's cycles per tap.  What to read first: § V-ae's fill for the
+*Next, by the queue:* ~~item 2, **`R-BoundedNest`**~~ — SHIPPED 2026-09-17 (§ Status); the
+three resample rows are under the bar.  What remains over it on the arm64 lane is
+`lock_curved` (3.87×; 2.42× on x86-64 — the lanes differ, and the row was not touched by the
+nest), and the row-by-row table below is the one to re-measure on the x86-64 box.  What to read first: § V-ae's fill for the
 guard-and-fallback shape, § V-al for the emitter placement, and § V-ao's placement lesson
 (a memo one loop out lost its gain — the bounded nest's guard must sit where LLVM can see
 it is decided).  The vertical tap's chain (counter innermost) is the case R-InvariantArith

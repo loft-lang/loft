@@ -668,6 +668,17 @@ pub struct Output<'a> {
     /// hoisted header when the loop grows no store (`hoist::LoopHoist::growth_free`);
     /// an empty frame for a loop that does.  Pushed and popped beside `vec_headers`.
     pub vec_bases: Vec<HashMap<hoist::PathKey, String>>,
+    /// `@FR-R-BoundedNest` — per loop frame, the element bound (`__bd_N: Option<i64>`) held
+    /// beside a hoisted header for every vector a bounded nest under the loop reads.  Pushed
+    /// and popped beside [`Self::vec_headers`].
+    pub vec_bounds: Vec<HashMap<hoist::PathKey, String>>,
+    /// `@FR-R-BoundedNest` — how many admitted nests the emission is inside; above 0 the four
+    /// nest operators emit their plain form ([`ops::int_arith`]).
+    pub plain_nest: u32,
+    /// `LOFT_NO_BOUNDED_NEST=1` — no nest is guarded and run plain.
+    pub bounded_nest_disabled: bool,
+    /// `LOFT_TRACE_NEST=1` — name every nest admitted and every loop declined, with why.
+    pub nest_trace: bool,
     /// @PLN157 P4c — record scalars hoisted out of the enclosing loops, innermost last:
     /// `(variable, field offset)` → the Rust local holding the value the prelude read
     /// once.  Pushed and popped beside [`Self::vec_headers`], one frame per `Value::Loop`.
@@ -1089,6 +1100,49 @@ pub struct Output<'a> {
 
 /// Use this to convert loft names that contain `#` into valid Rust identifiers.
 /// Loft uses `#` as a separator in compiler-generated names (e.g., loop iterators).
+/// `@FR-R-BoundedNest` — the Rust expression of a chain's MAGNITUDE BOUND, spelled with
+/// checked operators so that any step past `i64` fails the guard's closure through `?`: a
+/// literal by its value, a counter by `__cb` (the larger of the range's ends), an invariant
+/// by its `__iv_k`, a `?`-discharged read by its vector's `__rb_j`, `+` and `-` summing,
+/// `*` multiplying, negation as its operand.  Only the nodes [`hoist::bounded_nest`] admits
+/// reach here; `read_no` counts the reads in the order the matcher recorded them.
+fn nest_bound_expr(
+    v: &Value,
+    data: &Data,
+    counters: &[u16],
+    invariants: &[u16],
+    read_no: &mut usize,
+) -> String {
+    match v.unspan() {
+        Value::Int(k) => format!("{}_i64", i64::from(*k).unsigned_abs()),
+        Value::Var(x) if counters.contains(x) => "__cb".to_string(),
+        Value::Var(x) => match invariants.iter().position(|i| i == x) {
+            Some(k) => format!("__iv_{k}"),
+            None => "return None".to_string(),
+        },
+        Value::Call(d, args) => match (data.def(*d).name(), args.len()) {
+            ("OpAddInt" | "OpMinInt", 2) => format!(
+                "({}).checked_add({})?",
+                nest_bound_expr(&args[0], data, counters, invariants, read_no),
+                nest_bound_expr(&args[1], data, counters, invariants, read_no)
+            ),
+            ("OpMulInt", 2) => format!(
+                "({}).checked_mul({})?",
+                nest_bound_expr(&args[0], data, counters, invariants, read_no),
+                nest_bound_expr(&args[1], data, counters, invariants, read_no)
+            ),
+            ("OpMinSingleInt", 1) => nest_bound_expr(&args[0], data, counters, invariants, read_no),
+            _ => "return None".to_string(),
+        },
+        Value::Block(bl) if bl.name == "ncc" => {
+            let e = format!("__rb_{}", *read_no);
+            *read_no += 1;
+            e
+        }
+        _ => "return None".to_string(),
+    }
+}
+
 fn sanitize(name: &str) -> String {
     name.replace('#', "__")
 }
@@ -1764,6 +1818,10 @@ impl<'a> Output<'a> {
             loop_stack: Vec::new(),
             vec_headers: Vec::new(),
             vec_bases: Vec::new(),
+            vec_bounds: Vec::new(),
+            plain_nest: 0,
+            bounded_nest_disabled: std::env::var("LOFT_NO_BOUNDED_NEST").is_ok_and(|v| v != "0"),
+            nest_trace: std::env::var("LOFT_TRACE_NEST").is_ok_and(|v| v != "0"),
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
             scalar_hoist_disabled: std::env::var("LOFT_NO_SCALAR_HOIST").is_ok_and(|v| v != "0"),
@@ -2133,6 +2191,7 @@ impl Output<'_> {
         self.next_format_count = 0;
         self.vec_headers.clear();
         self.vec_bases.clear();
+        self.vec_bounds.clear();
         self.scalar_hoists.clear();
         self.push_headers.clear();
         self.mint_push_headers.clear();
@@ -2157,6 +2216,149 @@ impl Output<'_> {
         let mut buf: Vec<u8> = Vec::new();
         self.output_code_inner(&mut buf, v)?;
         Ok(String::from_utf8_lossy(&buf).into_owned())
+    }
+
+    /// `@FR-R-BoundedNest` — when `lp` is a bounded nest ([`hoist::bounded_nest`]) whose every
+    /// read has a header AND an element bound held by an enclosing frame, emit the guard
+    /// `let __nb_N: bool = …;`, then `if __nb_N { <the loop with plain operators> } else {`,
+    /// and answer `true`; the caller emits the checked loop as the `else` arm and closes it.
+    ///
+    /// The guard is one closure evaluated at the loop's entry.  It answers `Some` exactly when
+    /// no operation of the nest can fault: the range's start and end are not the sentinel and
+    /// the trip count is positive; every invariant the chains read is not the sentinel
+    /// (`checked_abs` fails on `i64::MIN`); every element bound is known (no stored null);
+    /// and the MAGNITUDE BOUND of every index chain and of the term — literals by value,
+    /// counters by the larger of the range's ends, invariants and reads by their bounds, `+`
+    /// and `-` summing, `*` multiplying, each step checked — fits `i64`, as does the
+    /// accumulate's `|acc| + trips × bound(term)`.  A magnitude bound that fits means the true
+    /// value of every intermediate fits, so the plain operator answers exactly what the
+    /// checked template would; the checked loop is the fallback for every case the guard
+    /// declines.  Emits `@FR-R-BoundedNest`.
+    fn nest_fast_path(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<bool> {
+        if self.bounded_nest_disabled || self.hoist_disabled || self.release_pass_probe {
+            return Ok(false);
+        }
+        let fn_name = self.data.def(self.def_nr).name().to_string();
+        let nest = match hoist::bounded_nest(lp, self.data) {
+            Ok(n) => n,
+            Err(why) => {
+                if self.nest_trace && lp.name == "For loop" {
+                    eprintln!("nest: {fn_name} loop {} declined — {why}", lp.scope);
+                }
+                return Ok(false);
+            }
+        };
+        // Every read needs a held header (the read is fused through it) and a held bound.
+        let mut read_bounds: Vec<String> = Vec::new();
+        for (path, _) in &nest.reads {
+            let held = self.active_vec_header(path).is_some();
+            match self.active_vec_bound(path) {
+                Some(b) if held => read_bounds.push(b.to_string()),
+                _ => {
+                    if self.nest_trace {
+                        eprintln!(
+                            "nest: {fn_name} loop {} declined — no held header/bound for the read of variable {}",
+                            lp.scope, path.0
+                        );
+                    }
+                    return Ok(false);
+                }
+            }
+        }
+        let variables = self.data.def(self.def_nr).variables();
+        let var = |v: u16| format!("var_{}", sanitize(variables.name(v)));
+        let idx = var(nest.counters.index);
+        let lo = match nest.counters.next {
+            Some(nx) => var(nx),
+            None => format!("({idx}).checked_add(1_i64)?"),
+        };
+        let hi = self.expr_string(nest.counters.hi)?;
+        let mut counters = vec![nest.counters.loop_var, nest.counters.index];
+        if let Some(nx) = nest.counters.next {
+            counters.push(nx);
+        }
+        // The guard, one line: spelled as parts and joined, so every clause is a plain string.
+        let mut parts: Vec<String> = vec![
+            format!("let __nb_{}: bool = (|| -> Option<i64> {{ ", lp.scope),
+            format!("let __lo: i64 = {lo}; let __hi: i64 = {hi}; "),
+            "if __lo == i64::MIN || __hi == i64::MIN { return None; } ".to_string(),
+            "let __trips: i64 = __hi.checked_sub(__lo)?; if __trips <= 0 { return None; } "
+                .to_string(),
+            "let __cb: i64 = __lo.checked_abs()?.max(__hi.checked_abs()?); ".to_string(),
+        ];
+        for (k, v) in nest.invariants.iter().enumerate() {
+            parts.push(format!("let __iv_{k}: i64 = {}.checked_abs()?; ", var(*v)));
+        }
+        for (j, b) in read_bounds.iter().enumerate() {
+            parts.push(format!("let __rb_{j}: i64 = ({b})?; "));
+        }
+        // The index chains' bounds: bound for the `?`, the value itself unused.
+        for (j, (_, chain)) in nest.reads.iter().enumerate() {
+            let mut dummy = 0usize;
+            let e = nest_bound_expr(chain, self.data, &counters, &nest.invariants, &mut dummy);
+            parts.push(format!("let _ = {e}; let __ib_{j} = 0_i64; "));
+        }
+        let mut read_no = 0usize;
+        let term = nest_bound_expr(
+            nest.term,
+            self.data,
+            &counters,
+            &nest.invariants,
+            &mut read_no,
+        );
+        parts.push(format!("let __tb: i64 = {term}; "));
+        parts.push(format!(
+            "let __ab: i64 = {}.checked_abs()?; ",
+            var(nest.acc)
+        ));
+        parts.push(
+            "__trips.checked_mul(__tb)?.checked_add(__ab) })().is_some(); //@FR-R-BoundedNest guard"
+                .to_string(),
+        );
+        let g = parts.concat();
+        self.indent(w)?;
+        writeln!(w, "{g}")?;
+        if self.nest_trace {
+            eprintln!(
+                "nest: {fn_name} loop {} admitted — {} read(s), {} invariant(s)",
+                lp.scope,
+                nest.reads.len(),
+                nest.invariants.len()
+            );
+        }
+        self.indent(w)?;
+        writeln!(w, "if __nb_{} {{", lp.scope)?;
+        // The plain arm: the same loop, its four nest operators in their plain form.  Its
+        // `let`s live in this arm's block, so the declared set is restored afterwards and the
+        // checked arm declares the same locals again in its own block.
+        let declared_before = self.declared.clone();
+        self.plain_nest += 1;
+        self.loop_stack.push(lp.scope);
+        self.indent(w)?;
+        writeln!(
+            w,
+            "'l{}: loop {{ //{}_{} plain nest",
+            lp.scope, lp.name, lp.scope
+        )?;
+        for v in &lp.operators {
+            self.indent(w)?;
+            self.indent += 1;
+            self.output_code_inner(w, v)?;
+            self.indent -= 1;
+            writeln!(w, ";")?;
+        }
+        self.indent(w)?;
+        writeln!(w, "}} /*{}_{} plain nest*/", lp.name, lp.scope)?;
+        self.loop_stack.pop();
+        self.plain_nest -= 1;
+        self.declared = declared_before;
+        self.indent(w)?;
+        writeln!(w, "}} else {{")?;
+        Ok(true)
     }
 
     /// @PLN157 § V-ae (`@FR-R-Fill`) — when `lp` is one fill over a path an enclosing frame
@@ -2316,6 +2518,21 @@ impl Output<'_> {
     ) -> std::io::Result<bool> {
         let mut frame: HashMap<hoist::PathKey, String> = HashMap::new();
         let mut scalar_frame: HashMap<hoist::ScalarKey, String> = HashMap::new();
+        // `@FR-R-BoundedNest` — the vectors a nest under this loop reads get an element bound
+        // beside their header, derived once here where the header is.
+        let mut bound_frame: HashMap<hoist::PathKey, String> = HashMap::new();
+        // Never at the nest's OWN prelude: a bound there is a scan per nest entry, which is the
+        // nest's own cost again.  The prelude that binds it is the outermost loop whose body
+        // leaves the vector alone — every enclosing loop runs this same test first, so the
+        // first level that can hold the bound is the one that does.
+        let nest_paths = if self.bounded_nest_disabled
+            || self.hoist_disabled
+            || hoist::bounded_nest(lp, self.data).is_ok()
+        {
+            HashSet::new()
+        } else {
+            hoist::nest_read_paths(lp, self.data)
+        };
         let hoisted = if self.hoist_disabled {
             hoist::LoopHoist::default()
         } else {
@@ -2407,7 +2624,7 @@ impl Output<'_> {
                     lines.push(format!(
                         "let {base}: *const u8 = vector::vec_base(&{held}, &stores.allocations); //@PLN157 § V-ak element base of the held header"
                     ));
-                    base_frame.insert(path, base);
+                    base_frame.insert(path.clone(), base);
                 }
                 continue;
             }
@@ -2496,6 +2713,40 @@ impl Output<'_> {
                 }
             }
         }
+        // `@FR-R-BoundedNest` — the element bound of every vector a nest under this loop
+        // reads and this body leaves alone, derived once here: from the header this prelude or
+        // an enclosing one holds, or from a header taken for the purpose — a bound is a fact
+        // about the VALUES, so it needs no hoisted header, only that nothing in the body
+        // changes or hands out the elements (the filter in `nest_read_paths`).
+        let mut nest_paths: Vec<hoist::PathKey> = nest_paths.into_iter().collect();
+        nest_paths.sort();
+        for path in nest_paths {
+            if self.active_vec_bound(&path).is_some()
+                || self.coroutine_persistent_fields.contains_key(&path.0)
+            {
+                continue;
+            }
+            let header = match frame
+                .get(&path)
+                .cloned()
+                .or_else(|| self.active_vec_header(&path).map(str::to_owned))
+            {
+                Some(h) => format!("&{h}"),
+                // A standalone bound is spelled for a plain variable only; a field path
+                // without a held header keeps the checked loop.
+                None if path.1.is_empty() => {
+                    let operand = self.expr_string(&Value::Var(path.0))?;
+                    format!("&vector::vec_header(&({operand}), &stores.allocations)")
+                }
+                None => continue,
+            };
+            self.hoist_counter += 1;
+            let bound = format!("__bd_{}", self.hoist_counter);
+            lines.push(format!(
+                "let {bound}: Option<i64> = vector::abs_bound_i64({header}, &stores.allocations); //@FR-R-BoundedNest element bound"
+            ));
+            bound_frame.insert(path, bound);
+        }
         let opened = !lines.is_empty();
         if opened {
             writeln!(w, "{{ //loft#885 loop-invariant vector headers")?;
@@ -2507,6 +2758,7 @@ impl Output<'_> {
         }
         self.vec_headers.push(frame);
         self.vec_bases.push(base_frame);
+        self.vec_bounds.push(bound_frame);
         self.scalar_hoists.push(scalar_frame);
         self.invariant_hoists.push(invariant_frame);
         self.push_headers.push(push_frame);
@@ -2518,6 +2770,7 @@ impl Output<'_> {
     fn end_vector_hoist(&mut self, w: &mut dyn Write, opened: bool) -> std::io::Result<()> {
         self.vec_headers.pop();
         self.vec_bases.pop();
+        self.vec_bounds.pop();
         self.scalar_hoists.pop();
         self.invariant_hoists.pop();
         self.push_headers.pop();
@@ -2757,6 +3010,15 @@ impl Output<'_> {
     #[must_use]
     pub fn active_vec_header(&self, path: &hoist::PathKey) -> Option<&str> {
         self.vec_headers
+            .iter()
+            .rev()
+            .find_map(|f| f.get(path).map(String::as_str))
+    }
+
+    /// `@FR-R-BoundedNest` — the element bound an enclosing frame holds for `path`.
+    #[must_use]
+    pub fn active_vec_bound(&self, path: &hoist::PathKey) -> Option<&str> {
+        self.vec_bounds
             .iter()
             .rev()
             .find_map(|f| f.get(path).map(String::as_str))

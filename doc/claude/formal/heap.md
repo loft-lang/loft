@@ -643,7 +643,30 @@ open TODAY and not the original filing.  `D-heap-4` (a mixed own/view local's ow
 freed without its hook) opened and CLOSED 2026-09-10, below.  `D-heap-12` (a refilled record
 buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.  `D-heap-13`
 (a collection from a call, bound to a local, whose elements are never dropped) opened
-2026-09-17 and is the fifth OPEN entry, below.
+2026-09-17 and is the fifth OPEN entry, below.  `D-heap-14` (a self-append's claims walk
+read the source record through a number captured before the growth relocated it) opened and
+CLOSED 2026-09-17, below.
+
+### D-heap-14 — OPENED AND CLOSED (2026-09-17): a self-append read its source through the record number captured before the growth moved it
+
+- **Violates:** (H-Move) — the elements of a vector appended to itself are the vector's own
+  values; `Stores::vector_add` answered them through a freed block.
+- **Where:** `Stores::vector_add` captured the source record's number BEFORE growing the
+  destination, and for a self-append (`v += v`) the source IS the record the growth
+  relocates.  The byte copy took a pre-growth snapshot (a `Vec<u8>` filled and written back a
+  byte at a time — 8.6 % of the drawing lane's `render_marks` row), but the CLAIMS walk that
+  follows it for heap-owning elements read the source through the stale number: for a `text`
+  vector of 200 the run stopped with `Store access out of bounds … the reference is corrupt`
+  on both backends, and under `LOFT_POISON=1` the copied texts mismatched.  A no-heap
+  self-append was right by luck — the snapshot had already left the freed block.
+- **Closed:** the source record is re-read from its field slot after the growth whenever it
+  shares the destination's store, and the self-append is the same-store block copy every
+  other append already took (source range at the record's front, destination at its new tail,
+  no overlap).  `LOFT_NO_SELF_APPEND_BLOCK=1` keeps the snapshot form of the copy — with the
+  re-read, since the switch is a bisect step for the copy, not a way back to the fault.
+  Guard `tests/scripts/a-self-append-is-one-block-copy.loft` (twelve cells: scalars, a
+  relocating growth, text, records, nested vectors, a field, the doubling fill), falsified
+  against 48d49e24 (both backends panicked → clean).
 
 ### D-heap-13 — OPEN (2026-09-17): a collection returned from a call and bound to a local never releases its elements (loft#1551)
 

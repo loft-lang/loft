@@ -1682,6 +1682,242 @@ pub fn range_counters<'a>(lp: &'a Block, data: &Data) -> Result<RangeCounters<'a
     })
 }
 
+/// `@FR-R-BoundedNest` — an innermost counted loop whose body is ONE accumulate over
+/// `?`-discharged element reads: `acc = acc + <term>`, the term a chain of `+`, `-`, `*` and
+/// negation over literals, the loop's counters, variables the loop does not write, and reads
+/// `v[<index chain>]?` of `integer` vectors (the `ncc` block the parser lowers the discharge
+/// to).  The emitter runs the nest with PLAIN operators when a guard, evaluated once at the
+/// loop's entry, proves that no operation in it can fault: every invariant is not the
+/// sentinel, every element bound is known, and the magnitude bound of every chain and of the
+/// accumulate over the trip count fits `i64`.
+pub struct BoundedNest<'a> {
+    pub counters: RangeCounters<'a>,
+    /// The accumulator: set once per trip to `acc + term`.
+    pub acc: u16,
+    pub term: &'a Value,
+    /// Each read's vector path and its index chain, in body order.
+    pub reads: Vec<(PathKey, &'a Value)>,
+    /// The variables the chains read that are not the loop's counters — invariant for the
+    /// loop's extent, since the body writes only `acc`.
+    pub invariants: Vec<u16>,
+}
+
+/// Parse `lp` as a bounded nest, or say which part of the shape it is not.
+///
+/// The fallback of every `_ =>` below is a DECLINE: a node this matcher does not name is one
+/// whose plain form it cannot vouch for (a division faults on zero, a shift on its width, a
+/// call may do anything), and declining keeps the checked loop, which is always right.
+///
+/// # Errors
+///
+/// The reason the loop is not a bounded nest — what `LOFT_TRACE_NEST=1` prints.
+pub fn bounded_nest<'a>(lp: &'a Block, data: &Data) -> Result<BoundedNest<'a>, String> {
+    if lp.name != "For loop" {
+        return Err("not a for loop".to_string());
+    }
+    let counters = range_counters(lp, data)?;
+    if counters.inclusive {
+        return Err("an inclusive range".to_string());
+    }
+    if !matches!(counters.hi.unspan(), Value::Var(_) | Value::Int(_)) {
+        return Err("the range's end is not a variable or a literal".to_string());
+    }
+    let Value::Block(body) = lp.operators[1].unspan() else {
+        return Err("the body is not a block".to_string());
+    };
+    // A statement carries its `Value::Line` marker beside it; only the statement counts.
+    let stmts: Vec<&Value> = body
+        .operators
+        .iter()
+        .map(Value::unspan)
+        .filter(|v| !matches!(v, Value::Line(_)))
+        .collect();
+    let [stmt] = stmts[..] else {
+        return Err(format!("the body has {} statements, not one", stmts.len()));
+    };
+    let Value::Set(acc, rhs) = stmt else {
+        return Err("the body is not an assignment".to_string());
+    };
+    let Value::Call(d, args) = rhs.unspan() else {
+        return Err("the assignment is not an add".to_string());
+    };
+    if data.def(*d).name() != "OpAddInt"
+        || args.len() != 2
+        || !matches!(args[0].unspan(), Value::Var(a) if a == acc)
+    {
+        return Err("the assignment is not `acc = acc + term`".to_string());
+    }
+    let mut counter_vars = vec![counters.loop_var, counters.index];
+    if let Some(nx) = counters.next {
+        counter_vars.push(nx);
+    }
+    let mut nest = BoundedNest {
+        counters,
+        acc: *acc,
+        term: &args[1],
+        reads: Vec::new(),
+        invariants: Vec::new(),
+    };
+    nest_chain(&args[1], data, &counter_vars, *acc, &mut nest, false)?;
+    if nest.reads.is_empty() {
+        return Err("the term reads no vector".to_string());
+    }
+    Ok(nest)
+}
+
+/// One chain of a bounded nest: the term, or a read's index (`in_index`, where a nested read
+/// is not admitted).  Records the reads and the invariants it meets.
+fn nest_chain<'a>(
+    v: &'a Value,
+    data: &Data,
+    counters: &[u16],
+    acc: u16,
+    nest: &mut BoundedNest<'a>,
+    in_index: bool,
+) -> Result<(), String> {
+    match v.unspan() {
+        Value::Int(_) => Ok(()),
+        Value::Var(x) if *x == acc => Err("the accumulator appears inside the term".to_string()),
+        Value::Var(x) => {
+            if !counters.contains(x) && !nest.invariants.contains(x) {
+                nest.invariants.push(*x);
+            }
+            Ok(())
+        }
+        Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+            match (data.def(*d).name(), args.len()) {
+                ("OpAddInt" | "OpMinInt" | "OpMulInt", 2) => {
+                    nest_chain(&args[0], data, counters, acc, nest, in_index)?;
+                    nest_chain(&args[1], data, counters, acc, nest, in_index)
+                }
+                ("OpMinSingleInt", 1) => nest_chain(&args[0], data, counters, acc, nest, in_index),
+                (name, _) => Err(format!("`{name}` is not a nest operator")),
+            }
+        }
+        Value::Block(bl) if bl.name == "ncc" && !in_index => {
+            // `__ncc = OpGetInt(OpGetVectorNullable(v, 8, idx), 0); if __ncc != null { __ncc } else { 0 }`
+            let ops: Vec<&Value> = bl.operators.iter().map(Value::unspan).collect();
+            let [Value::Set(t, read), Value::If(cond, on_some, on_none)] = ops[..] else {
+                return Err("a discharge block of another shape".to_string());
+            };
+            let Value::Call(gd, gargs) = read.unspan() else {
+                return Err("the discharge does not read a call".to_string());
+            };
+            if data.def(*gd).name() != "OpGetInt"
+                || gargs.len() != 2
+                || !matches!(gargs[1].unspan(), Value::Int(0))
+            {
+                return Err("the discharge is not an `integer` field read".to_string());
+            }
+            let Value::Call(vd, vargs) = gargs[0].unspan() else {
+                return Err("the discharge does not read an element".to_string());
+            };
+            if data.def(*vd).name() != "OpGetVectorNullable"
+                || vargs.len() != 3
+                || !matches!(vargs[1].unspan(), Value::Int(8))
+            {
+                return Err(
+                    "the element read is not an eight-byte `OpGetVectorNullable`".to_string(),
+                );
+            }
+            let Some(path) = vector_path(data, &vargs[0]) else {
+                return Err("the read's vector is not a pure path".to_string());
+            };
+            if path.0 == acc || counters.contains(&path.0) {
+                return Err("the read's vector is the accumulator or a counter".to_string());
+            }
+            let some_ok = matches!(cond.unspan(), Value::Call(cd, cargs)
+                if data.def(*cd).name() == "OpConvBoolFromInt" && cargs.len() == 1
+                    && matches!(cargs[0].unspan(), Value::Var(c) if c == t));
+            if !some_ok
+                || !matches!(on_some.unspan(), Value::Var(s) if s == t)
+                || !matches!(on_none.unspan(), Value::Int(0))
+            {
+                return Err("the discharge does not select the element or 0".to_string());
+            }
+            nest_chain(&vargs[2], data, counters, acc, nest, true)?;
+            nest.reads.push((path, &vargs[2]));
+            Ok(())
+        }
+        other => Err(format!("`{}` is not a nest node", kind_of(other))),
+    }
+}
+
+/// The vector paths every bounded nest under `body` reads and `body` leaves ALONE — what a
+/// loop's prelude derives an element bound for beside the header (`@FR-R-BoundedNest`).
+///
+/// A header survives an in-place element write (the record does not move); a magnitude
+/// bound does not (the element did).  So a path is dropped when anything in `body` can
+/// change or hand out its elements: a rebind of its root, or its root reaching any op that
+/// is not a plain read — an element or field SET (whose target is a projection over the
+/// root), an append, a user call that could write through the parameter, a fn-ref call.
+/// The reads are an ALLOW-list (`OpGet*`, `OpLength*`, `OpConv*`): an op missing from it
+/// costs the bound, never correctness.
+#[must_use]
+pub fn nest_read_paths(body: &Block, data: &Data) -> HashSet<PathKey> {
+    let mut out = HashSet::new();
+    let mut touched: HashSet<u16> = HashSet::new();
+    for op in &body.operators {
+        op.any_node(&mut |n| {
+            match n {
+                Value::Loop(lp) => {
+                    if let Ok(nest) = bounded_nest(lp, data) {
+                        out.extend(nest.reads.iter().map(|(p, _)| p.clone()));
+                    }
+                }
+                Value::Set(v, _) | Value::TuplePut(v, ..) => {
+                    touched.insert(*v);
+                }
+                Value::Call(d, args) => {
+                    let read_only = (*d as usize) < data.definitions.len() && {
+                        let name = data.def(*d).name();
+                        !matches!(data.def(*d).code(), Value::Block(_))
+                            && (name.starts_with("OpGet")
+                                || name.starts_with("OpLength")
+                                || name.starts_with("OpConv"))
+                    };
+                    if !read_only {
+                        for a in args {
+                            if let Some(root) = projection_root(data, a) {
+                                touched.insert(root);
+                            }
+                        }
+                    }
+                }
+                Value::CallRef(_, args) => {
+                    for a in args {
+                        if let Some(root) = projection_root(data, a) {
+                            touched.insert(root);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            false
+        });
+    }
+    out.retain(|p| !touched.contains(&p.0));
+    out
+}
+
+/// The variable at the root of a projection chain — a bare variable, or `OpGet*` calls
+/// (field, element, scalar) over one — or `None` for anything else.  The fallback is a
+/// non-answer, not a clearance: the callers above mark roots to EXCLUDE, so a shape this
+/// does not see through leaves its root unmarked only when no variable stands at it.
+fn projection_root(data: &Data, v: &Value) -> Option<u16> {
+    match v.unspan() {
+        Value::Var(x) => Some(*x),
+        Value::Call(d, args)
+            if (*d as usize) < data.definitions.len()
+                && data.def(*d).name().starts_with("OpGet")
+                && !args.is_empty() =>
+        {
+            projection_root(data, &args[0])
+        }
+        _ => None,
+    }
+}
+
 pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
     let trace = std::env::var("LOFT_TRACE_FILL").is_ok();
     let decline = |why: &str| -> Option<FillLoop<'a>> {

@@ -482,6 +482,12 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 |---:|
 | **23** |
 
+(2026-09-17, `R-BoundedNest`: three sites added, all peeling — the nest's matcher
+`hoist::bounded_nest` and `hoist::nest_chain`, and the guard's bound spelling
+`nest_bound_expr`, each reading every node through `.unspan()`; the write filter's root walk
+`hoist::projection_root` and `hoist::nest_read_paths` peel the same way.  The opaque column
+is unmoved.)
+
 **Only the ratchet is pinned here.**  The full census — how many sites discriminate on 2+
 `Value` variants, how many peel, and the queue of the ones that do not — is one command away and
 is always true of the tree you are standing on: `python3 scripts/ir_walker_audit.py unspan`.

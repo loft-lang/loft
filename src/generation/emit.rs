@@ -639,6 +639,9 @@ impl Output<'_> {
             Value::Block(bl) => self.output_block(w, IrBlock::Native(bl), false, false)?,
             Value::Loop(lp) => {
                 let hoisted = self.begin_vector_hoist(w, lp)?;
+                // `@FR-R-BoundedNest` — a nest whose guard proves its arithmetic cannot
+                // fault runs with plain operators; the checked loop below is its `else` arm.
+                let nested = self.nest_fast_path(w, lp)?;
                 // @PLN157 § V-ae (`@FR-R-Fill`) — a loop that is one fill over a held header
                 // runs the slice fill first; the per-element loop below is its fallback for
                 // every range the fill declines (a negative or partial index, an overflow,
@@ -673,6 +676,9 @@ impl Output<'_> {
                 }
                 if fill {
                     self.fill_fast_path_tail(w, lp)?;
+                }
+                if nested {
+                    write!(w, "\n}} /* checked nest */")?;
                 }
                 self.end_vector_hoist(w, hoisted)?;
             }

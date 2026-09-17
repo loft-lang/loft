@@ -9,6 +9,51 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A nest whose arithmetic cannot fault runs plain — `render_marks` −54 % (2026-09-17)
+
+@PLN157 `R-BoundedNest` (`@FR-R-BoundedNest`, `formal/rewrites.md`), `--native`, generation
+time, default ON (`LOFT_NO_BOUNDED_NEST=1`).  An innermost counted loop whose body is one
+accumulate over `?`-discharged element reads — the resample's tap,
+`acc += a[(yy*w + x)*4 + ch]? * k[base + x]?` — is emitted twice: once with the four nest
+operators (`+ - *` and negation) in their plain form behind a guard, and once checked as the
+guard's `else`.  The guard (`Output::nest_fast_path`, one closure at the loop's entry) proves no
+operation can fault: the range's ends and every invariant are not the sentinel
+(`checked_abs`), every read's vector has a known element bound, and the magnitude bound of
+every index chain and of `|acc| + trips × bound(term)` fits `i64`, each step `checked_*` so a
+failure is the decline.  The reads themselves stay as they were — the bounds-tested load and
+the discharge's null test.  The element bound (`vector::abs_bound_i64`, `None` on a stored
+null) is derived ONCE beside the header at the outermost loop whose body leaves the vector
+alone — `hoist::nest_read_paths` filters out any path the body writes through, rebinds or
+hands to a call, an allow-list of `OpGet*`/`OpLength*`/`OpConv*` reads — and never at the
+nest's own prelude (measured: with the header placement instead, the vertical pass scanned
+`rl_mid` 4 096 times per render and the row read 29× SLOWER).  `hoist::bounded_nest` is the
+matcher (`Value::Line` markers are not statements), `int_arith::nest_form` the plain
+operators, `ops::nest_verify` the `LOFT_HOIST_VERIFY=1` form that compares each plain answer
+with the checked template's at the operator.  This is the C120 successor the plan named —
+the fact is established before the arithmetic runs.
+
+Measured on the drawing lane (arm64, `compare.py`, 14/14 hashes): `render_marks` 6.11× → 2.69×
+(3.95 → 1.82 ms/op, the hybrid hand patch's −54 % exactly), `render_lock` 4.87× → 2.76×,
+`resize` 5.37× → 2.42×, every other row within noise; the emission with the switch off is
+byte-identical to the build before.  Cells `tests/scripts/157-bounded-nest.loft` (n1–n17,
+hand-computed, the interpreter the oracle; two sabotages each caught by the cell written for
+it), pins `tests/bounded_nest.rs`.
+
+### A self-append is one block copy — and its heap-owning case no longer reads a freed block (2026-09-17)
+
+`Stores::vector_add`, both backends, default ON (`LOFT_NO_SELF_APPEND_BLOCK=1` keeps the
+snapshot copy).  `v += v` — the doubling fill a canvas is built with (`graphics.loft:110`),
+run to a ladder of 20 per canvas — took the `same_vec` branch: a `Vec<u8>` snapshot filled
+byte by byte through `Store::read::<u8>` and written back byte by byte, 8.6 % of
+`render_marks` by `sample`; the claims walk after it read the source through the record
+number captured BEFORE the growth relocated it.  The source is now re-read from its field
+slot after the growth whenever it shares the destination's store, and the self-append takes
+the same-store `copy_block` every other append does.  The matrix found the second half before
+the change: a `text` vector of 200 appended to itself stopped with `Store access out of bounds
+… the reference is corrupt` on both backends (`formal/heap.md` D-heap-14).  `render_marks`
+−8.3 % (4 230 → 3 885 µs, same hash).  Guard `tests/scripts/a-self-append-is-one-block-copy.loft`
+(s1–s12), falsified against 48d49e24 on both backends with a patch receipt.
+
 ### @PLN164 closes — the drawing `parse` row at 3.11× its Rust reference (2026-09-17)
 
 The plan that removes the per-call temporaries a record-returning style mints is finished:

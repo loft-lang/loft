@@ -847,6 +847,32 @@ pub fn vec_base(h: &VecHeader, stores: &[Store]) -> *const u8 {
     }
 }
 
+/// `@FR-R-BoundedNest` — the largest magnitude among a vector's `integer` elements, or
+/// `None` when any element is the null sentinel.  A guarded plain nest is admitted against
+/// this bound, taken once where the vector's header is derived and held beside it, so a nest
+/// that reads the vector pays one linear pass per header derivation and nothing per tap.
+/// An absent or empty vector bounds at 0.
+#[must_use]
+pub fn abs_bound_i64(h: &VecHeader, stores: &[Store]) -> Option<i64> {
+    if h.rec == 0 || h.len == 0 {
+        return Some(0);
+    }
+    let base = vec_base(h, stores);
+    let mut bound: u64 = 0;
+    for i in 0..h.len as usize {
+        // SAFETY: `base` is element 0 of a live vector record of `len` eight-byte elements
+        // (the header was derived from it in this same prelude); `read_unaligned` because an
+        // element offset need not be aligned for `i64` (loft#1481).
+        let v = unsafe { base.add(i * 8).cast::<i64>().read_unaligned() };
+        if v == i64::MIN {
+            return None;
+        }
+        bound = bound.max(v.unsigned_abs());
+    }
+    // Every element was above the sentinel, so its magnitude fits the positive range.
+    Some(bound as i64)
+}
+
 /// [`get_elem_hoisted`]'s twin through a hoisted BASE (`@FR-R-Base`): the same bounds test
 /// against the header's length, then a single unaligned load at `base + from * size + fld`.
 /// The cold path — an index outside the vector — is the same one.

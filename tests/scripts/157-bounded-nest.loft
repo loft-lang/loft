@@ -1,0 +1,193 @@
+// `@FR-R-BoundedNest` — an innermost counted loop that accumulates `?`-discharged element
+// products runs with PLAIN operators on `--native` when a guard, evaluated once at the loop's
+// entry, proves no operation in it can fault: no invariant is the sentinel, every element
+// bound is known, and the magnitude bound of every chain and of the accumulate fits.  The
+// checked loop is the fallback for every case the guard declines, and the interpreter never
+// takes the rewrite — it is the values oracle for every cell.
+//
+// Every value below is hand-computed.  Cells whose guard must DECLINE (a stored null, a
+// product that overflows, a null invariant, an accumulator near the maximum, a vector written
+// in the enclosing loop) assert the checked semantics: an absent read contributes 0, an
+// overflow makes the accumulator null and null propagates.  n17 is the falsifier of the
+// write filter: a bound scanned before the write would admit an overflow.
+//
+// @falsified-at: hand-measured (two sabotages, 2026-09-17, `--native-release`).  The guard's
+//   accumulate clause replaced by `Some(0)`: n7c reads -9223372036854775779 for null, and under
+//   LOFT_HOIST_VERIFY=1 the run stops at the operator — "plain OpAddInt answered
+//   -9223372036854775779 where the checked form answers -9223372036854775808".  The write
+//   filter removed from `hoist::nest_read_paths`: n17 reads 20 for null, and verify stops at
+//   "plain OpMulInt answered 0 where the checked form answers -9223372036854775808".  With
+//   both in place every cell holds on both backends, in both switch states, under verify and
+//   the store falsifiers; the interpreter never takes the rewrite and agrees on every value.
+
+const MAXI = 9223372036854775807;
+
+/// The resample's tap nest, minimal: acc += a[(yy*w + x)*4 + ch]? * k[x]?, fixed-point.
+fn bn_taps(a: const vector<integer>, k: const vector<integer>, rows: integer, w: integer,
+           n: integer) -> integer {
+  t = 0;
+  for yy in 0..rows {
+    for ch in 0..4 {
+      acc = 1 << 21;
+      for x in 0..n {
+        acc += a[(yy * w + x) * 4 + ch]? * k[x]?;
+      }
+      t += acc >> 22;
+    }
+  }
+  t
+}
+
+/// The same nest with an accumulator that starts near the maximum.
+fn bn_taps_from(a: const vector<integer>, k: const vector<integer>, n: integer,
+                start: integer) -> integer {
+  acc = start;
+  for x in 0..n { acc += a[x]? * k[x]?; }
+  acc
+}
+
+fn bn_null_int() -> integer { m = MAXI; m + 1 }
+
+fn main() {
+  a8: vector<integer> = [10, 20, 30, 40, 50, 60, 70, 80];
+
+  // n1 — the tap: per channel acc = 2^21 + a[ch]*(3<<20) + a[4+ch]*(5<<20), then >> 22.
+  //      ch0 (10*3+50*5=280): 70 · ch1 (360): 90 · ch2 (440): 110 · ch3 (520): 130 → 400.
+  k1: vector<integer> = [3 << 20, 5 << 20];
+  n1 = bn_taps(a8, k1, 1, 2, 2);
+  assert(n1 == 400, "n1: {n1}");
+
+  // n2 — a stored null element: a[5] is null, so ch1's second tap contributes 0:
+  //      2^21 + 20*(3<<20) = 65011712 >> 22 = 15 → 70 + 15 + 110 + 130 = 325.  Declined (bound).
+  a2: vector<integer> = [10, 20, 30, 40, 50, bn_null_int(), 70, 80];
+  n2 = bn_taps(a2, k1, 1, 2, 2);
+  assert(n2 == 325, "n2: {n2}");
+
+  // n3 — the product overflows: (1<<30) * (1<<40) = 2^70 → null → acc null → t null.  Declined.
+  a3: vector<integer> = [1 << 30, 1 << 30, 1 << 30, 1 << 30, 1 << 30, 1 << 30, 1 << 30, 1 << 30];
+  k3: vector<integer> = [1 << 40, 1];
+  n3 = bn_taps(a3, k3, 1, 2, 2);
+  assert((n3 ?? -7) == -7, "n3: {n3 ?? -7}");
+
+  // n4 — a tap past the end: n = 3 reads a[8..12], absent → 0; k[2] exists.  Same as n1.
+  k4: vector<integer> = [3 << 20, 5 << 20, 7 << 20];
+  n4 = bn_taps(a8, k4, 1, 2, 3);
+  assert(n4 == 400, "n4: {n4}");
+
+  // n5 — a negative kernel lobe: ch0 (-30+250=220): 55 · ch1 (240): 60 · ch2 (260): 65 ·
+  //      ch3 (280): 70 → 250.
+  k5: vector<integer> = [-(3 << 20), 5 << 20];
+  n5 = bn_taps(a8, k5, 1, 2, 2);
+  assert(n5 == 250, "n5: {n5}");
+
+  // n6 — zero trips: acc stays 2^21, >> 22 is 0, four channels → 0.
+  n6 = bn_taps(a8, k1, 1, 2, 0);
+  assert(n6 == 0, "n6: {n6}");
+
+  // n7 — the accumulator starts 100 below the maximum and the term is positive: the checked
+  //      add overflows to null.  Declined (|acc| + trips × bound does not fit).
+  a7: vector<integer> = [60, 70];
+  k7: vector<integer> = [1, 1];
+  n7 = bn_taps_from(a7, k7, 2, MAXI - 100);
+  assert((n7 ?? -7) == -7, "n7: {n7 ?? -7}");
+  // n7b — the same start with a term that fits: MAXI - 100 + 60 + 70 overflows too → null.
+  //       And 30 below: MAXI - 200 + 130 = MAXI - 70, exact.
+  n7b = bn_taps_from(a7, k7, 2, MAXI - 200);
+  assert(n7b == MAXI - 70, "n7b: {n7b}");
+
+  // n7c — the accumulate bound in an ADMITTED nest (an enclosing loop holds the bounds): the
+  //       term fits (60 + 70) but MAXI - 100 + 130 does not → null.  Declined by the guard's
+  //       last clause; without it the plain add would wrap to a number.
+  t7c = 0;
+  for _r in 0..1 {
+    acc7c = MAXI - 100;
+    for x in 0..2 { acc7c += a7[x]? * k7[x]?; }
+    t7c += acc7c;
+  }
+  assert((t7c ?? -7) == -7, "n7c: {t7c ?? -7}");
+  // n7d — the same nest 200 below the maximum: MAXI - 200 + 130 = MAXI - 70, admitted, exact.
+  t7d = 0;
+  for _r in 0..1 {
+    acc7d = MAXI - 200;
+    for x in 0..2 { acc7d += a7[x]? * k7[x]?; }
+    t7d += acc7d;
+  }
+  assert(t7d == MAXI - 70, "n7d: {t7d}");
+
+  // n8 — a null invariant (w): the index chain is null, every read absent → 0 → t = 0.
+  n8 = bn_taps(a8, k1, 1, bn_null_int(), 2);
+  assert(n8 == 0, "n8: {n8}");
+
+  // n9 — two nests over one vector in one function: 400 + 250.
+  n9 = bn_taps(a8, k1, 1, 2, 2) + bn_taps(a8, k5, 1, 2, 2);
+  assert(n9 == 650, "n9: {n9}");
+
+  // n10 — the accumulator inside the term is not a nest: acc = acc + (acc + a[x]) over
+  //       [1, 2, 3] from 0 → 1, 4, 11.
+  a10: vector<integer> = [1, 2, 3];
+  acc10 = 0;
+  for x in 0..3 { acc10 = acc10 + (acc10 + a10[x]?); }
+  assert(acc10 == 11, "n10: {acc10}");
+
+  // n11 — subtraction and negation in the term: -(5-1) + -(9-4) + -(2-7) = -4.
+  a11: vector<integer> = [5, 9, 2];
+  k11: vector<integer> = [1, 4, 7];
+  acc11 = 0;
+  for x in 0..3 { acc11 += -(a11[x]? - k11[x]?); }
+  assert(acc11 == -4, "n11: {acc11}");
+
+  // n12 — floats are not a nest: 1.5*2 + 2.5*2 = 8.
+  f12: vector<float> = [1.5, 2.5];
+  acc12 = 0.0;
+  for x in 0..2 { acc12 += f12[x]? * 2.0; }
+  assert(acc12 == 8.0, "n12: {acc12}");
+
+  // n13 — three vectors: 1*3*5 + 2*4*6 = 63.
+  a13: vector<integer> = [1, 2];
+  b13: vector<integer> = [3, 4];
+  c13: vector<integer> = [5, 6];
+  acc13 = 0;
+  for x in 0..2 { acc13 += a13[x]? * b13[x]? * c13[x]?; }
+  assert(acc13 == 63, "n13: {acc13}");
+
+  // n14 — a range end that is an expression is not a nest: 1 + 2 + 3 = 6.
+  n14n = 2;
+  acc14 = 0;
+  for x in 0..(n14n + 1) { acc14 += a10[x]?; }
+  assert(acc14 == 6, "n14: {acc14}");
+
+  // n15 — a computed start (the two-counter range): a[1] + a[2] over [1, 2, 3, 4] = 5.
+  a15: vector<integer> = [1, 2, 3, 4];
+  s15 = 1;
+  acc15 = 0;
+  for x in s15..3 { acc15 += a15[x]?; }
+  assert(acc15 == 5, "n15: {acc15}");
+
+  // n16 — the vector is written in the loop that encloses the nest: no bound is held there,
+  //       so the nest declines and the values are the checked ones: 6, then 101+2+3 = 106.
+  a16: vector<integer> = [1, 2, 3];
+  t16 = 0;
+  for _r in 0..2 {
+    acc16 = 0;
+    for x in 0..3 { acc16 += a16[x]?; }
+    t16 += acc16;
+    a16[0] = a16[0] + 100;
+  }
+  assert(t16 == 112, "n16: {t16}");
+
+  // n17 — the write filter's falsifier: a bound scanned BEFORE the write (elements ≤ 1) would
+  //       admit the nest, and the second round's 2^62 * 4 then overflows in plain arithmetic
+  //       where the checked form answers null.  Round 1: 4+4+4 = 12; round 2: null.
+  a17: vector<integer> = [1, 1, 1];
+  k17: vector<integer> = [4, 4, 4];
+  t17 = 0;
+  for _r in 0..2 {
+    acc17 = 0;
+    for x in 0..3 { acc17 += a17[x]? * k17[x]?; }
+    t17 += acc17;
+    a17[0] = 1 << 62;
+  }
+  assert((t17 ?? -7) == -7, "n17: {t17 ?? -7}");
+
+  println("ok");
+}

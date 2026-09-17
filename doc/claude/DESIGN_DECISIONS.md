@@ -3815,6 +3815,16 @@ ledger; the registry's own artefacts never lose the layer.  That is also why the
 come first: a check retired by a proof is retired inside the library's ordinary build
 and reaches every consumer, checks intact.
 
+**Built (2026-09-17): the admissible successor, `R-BoundedNest`** (`formal/rewrites.md`).  Not the
+closure — a RANGE proof of the kind this ruling names: the innermost tap loop of a resample runs
+with plain operators only behind a guard, evaluated once at the loop's entry, that establishes
+from the vectors' element bounds, the range's ends and the accumulator's value that no operation
+in the loop can overflow; the checked loop is its `else`.  The values are the language's on every
+path (the interpreter is the oracle for the cells; a stored null, a product that overflows, an
+accumulator near the maximum all DECLINE and answer null as before).  Measured: `render_marks`
+6.11× → 2.69× its Rust reference, `render_lock` 4.87× → 2.76×, `resize` 5.37× → 2.42× — the
+−54 % the § V-aj hand patch priced, without moving the C85 line.
+
 ## C121 — a copy of a droppable takes its own lease or is refused; the release no longer moves with a copy
 
 **Catalogue:** @F-drop (`OpDrop`) · @PLN163 · revises C111's whole-value extension

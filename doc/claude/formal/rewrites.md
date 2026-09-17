@@ -651,6 +651,51 @@ second statement keep the loop.  Switch `LOFT_NO_FILL_HOIST`; falsifier
 `tests/scripts/157-fill-hoist.loft`; `LOFT_TRACE_FILL=1` names the check that declined a
 loop.  Sites: `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoisted`.
 
+### A nest whose arithmetic cannot fault runs plain
+
+```
+  (R-BoundedNest) an innermost counted loop whose body is ONE accumulate over
+                 `?`-discharged element reads — `acc = acc + term`, the term a
+                 chain of `+`, `-`, `*` and negation over literals, the loop's
+                 counters, variables the loop does not write, and reads
+                 `v[chain]?` of `integer` vectors — runs with the processor's
+                 PLAIN operators when a guard, evaluated once at the loop's
+                 entry, proves that no operation in it can fault: the range's
+                 ends are not the sentinel and the trip count is positive; no
+                 invariant is the sentinel; every vector read has a known
+                 element bound (no stored null); and the MAGNITUDE BOUND of every
+                 chain and of `|acc| + trips × bound(term)` — literals by value,
+                 counters by the larger range end, reads by their vector's bound,
+                 `+`/`-` summing and `*` multiplying, each step checked — fits
+                 the type.  A bound that fits means every true intermediate
+                 fits, so the plain operator answers exactly what the checked
+                 template would; otherwise the checked loop runs, unchanged.
+                 An element bound is a fact about VALUES, taken once at the
+                 outermost loop whose body neither writes the vector (an element
+                 or field set through it, an append, a rebind of its root) nor
+                 hands it to a call — never at the nest's own prelude.
+```
+
+**In words.**  @PLN157's guarded plain nest, the admissible successor C120 names: the
+integer closure is not taken (R-Counter) because an overflow's null must propagate on both
+backends, so the plain form is admitted only where a fact ESTABLISHED before the arithmetic
+runs says no overflow can occur — which is exactly what the guard checks, in the same
+magnitude-bound arithmetic the rule states, with `checked_*` operators whose failure is the
+decline.  The reads stay what they were (a bounds-tested load and the discharge's null
+test); what goes plain is the index chain, the product and the accumulate — the taps of a
+resample, where they were 12 checked operators per tap and ~55 checking instructions in
+front of the arithmetic.  The bound's placement is the cost model: one linear pass per pass
+of the nest's enclosing loop, against the nest's taps under it; at the nest's own prelude
+it would be the nest's cost again, which is why a function-level nest with no enclosing
+loop declines.  A stored null, an accumulator near the maximum, a null invariant and a
+vector written by the enclosing loop are the cells that must DECLINE
+(`tests/scripts/157-bounded-nest.loft` n2, n3, n7c, n8, n16, n17).  Switch
+`LOFT_NO_BOUNDED_NEST`; falsifier `LOFT_HOIST_VERIFY=1` (every plain operator's answer is
+compared with the checked template's at the operator — `ops::nest_verify`); trace
+`LOFT_TRACE_NEST=1`.  Sites: `hoist::bounded_nest`, `hoist::nest_read_paths`,
+`Output::nest_fast_path`, `nest_bound_expr`, `ops::int_arith::nest_form`,
+`vector::abs_bound_i64`.
+
 ### A witnessed buffer is allocated once, not minted per call
 
 ```

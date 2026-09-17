@@ -818,6 +818,28 @@ step for a wrong index or arithmetic value inside a loop on native.  `LOFT_HOIST
 re-evaluates the chain at every use and panics when the memo disagrees; that form is what
 found loft#1534, a by-reference argument the non-sentinel proof's escape collector could
 not see.  `LOFT_TRACE_INVARIANT=1` names each memo.
+**`LOFT_NO_BOUNDED_NEST=1`** (@PLN157 `R-BoundedNest`, `@FR-R-BoundedNest`, default-ON,
+generation time, `--native` only) keeps every tap nest checked — with it off, an innermost
+counted loop that is one accumulate over `?`-discharged element products
+(`acc += a[(yy*w + x)*4 + ch]? * k[base + x]?`, a resample's tap) runs with PLAIN operators
+behind a guard evaluated once at the loop's entry: no range end or invariant is the sentinel,
+every vector read has a known element bound (taken ONCE at the outermost loop whose body
+leaves the vector alone, never at the nest's own prelude), and the magnitude bound of every
+chain and of `|acc| + trips × bound(term)` fits, so no operation can fault and the plain
+answer is the checked one; the checked loop is the `else` arm.  It is C120's admissible
+successor built — the fact is established before the arithmetic runs, not assumed — and it
+took the drawing lane's three resample rows from 4.9–6.1× to 2.4–2.8× their Rust reference
+(`render_marks` −54 %).  It is the first bisect step for a wrong accumulate or index out of
+such a loop on native; `LOFT_HOIST_VERIFY=1` compares every plain operator's answer with the
+checked template's at the operator and panics on a disagreement; `LOFT_TRACE_NEST=1` names
+every admission and decline.
+**`LOFT_NO_SELF_APPEND_BLOCK=1`** (runtime, BOTH backends) makes `v += v` copy through a
+byte snapshot taken before the growth again — with it off, a self-append is one block copy
+inside the grown record, its source re-read from the field slot after the growth (which is
+also what fixed the heap-owning case: the claims walk read the source through a number
+captured before the growth relocated it — a freed block).  The doubling fill a canvas is
+built with is this shape run to a ladder; `render_marks` −8 %.  First bisect step for a
+wrong element out of a self-append.
 **`LOFT_RELEASE_PASS_PROBE=1`** (generation time) is a MEASUREMENT INSTRUMENT, never a
 build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal
 division emits the processor's wrapping operator and every float comparison the plain

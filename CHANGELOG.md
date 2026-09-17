@@ -90,6 +90,22 @@ now creates 13 collections where it created 31, runs **more than twice as fast**
 within 3.1× of the same parser written by hand in Rust, where it was 7.6× before.  Nothing about
 what you write, or about what your program computes, changes.
 
+**Image resampling — and every loop shaped like it — is about twice as fast.**  The inner loop
+of a resample multiplies and adds thousands of numbers per pixel, and loft checks every one of
+those operations for overflow so that a fault becomes a null rather than a wrong number.  The
+compiler now proves, once before such a loop starts, that none of its operations *can* overflow
+— it knows how large the numbers in the vectors are and how many steps the loop takes — and
+runs the loop with plain arithmetic when the proof holds, falling back to the checked loop when
+it does not.  Nothing your program computes changes; a loop that could overflow still gets its
+null.  Drawing a 64×64 scene through the library's 3× supersample went from 6.1× to 2.7× the
+time of the same code written in Rust, and resizing an image from 5.4× to 2.4×.
+
+**Appending a list to itself is a single copy, and it no longer breaks on text.**  `v += v` —
+the step a fast constant fill repeats — copied its elements one byte at a time through a
+temporary, and for a list of texts (or of records holding text) it could read memory the
+growth had just moved away from and stop with *the reference is corrupt*.  It is one block copy
+now, on both backends, and the text case is right.
+
 **A record you append keeps the fields you computed from the same collection.**  `s.rows += [Row
 { id: i, prev: last(s.rows) }]` built the new row first and only then worked out its field
 values, so a field value that read — or added to — the very collection being appended to was

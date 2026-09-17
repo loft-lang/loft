@@ -121,8 +121,55 @@ fn probe_form(op_name: &str, args: &[Value]) -> Option<&'static str> {
     }
 }
 
+/// A guarded plain nest's form of an op (`@FR-R-BoundedNest`, `Output::plain_nest > 0`):
+/// the processor's operator for exactly the four operators [`hoist::bounded_nest`] admits —
+/// the nest's guard has proved none of them can fault in the loop's extent.  `None` keeps
+/// the ordinary path, so an op the matcher never admits (it cannot appear in an admitted
+/// nest, but the counter test's compare and the discharge's null test do) is untouched.
+fn nest_form(op_name: &str, args: &[Value]) -> Option<&'static str> {
+    match (op_name, args.len()) {
+        ("OpAddInt", 2) => Some("wrapping_add"),
+        ("OpMinInt", 2) => Some("wrapping_sub"),
+        ("OpMulInt", 2) => Some("wrapping_mul"),
+        ("OpMinSingleInt", 1) => Some("wrapping_neg"),
+        _ => None,
+    }
+}
+
+/// `((a).wrapping_add(b))` / `((a).wrapping_neg())` — the nest form of one op.
+fn write_plain(ctx: &mut EmitCtx<'_, '_>, form: &str, args: &[Value]) -> io::Result<()> {
+    write!(ctx.w, "((")?;
+    ctx.emit(&args[0])?;
+    if form == "wrapping_neg" {
+        return write!(ctx.w, ").wrapping_neg())");
+    }
+    write!(ctx.w, ").{form}(")?;
+    ctx.emit(&args[1])?;
+    write!(ctx.w, "))")
+}
+
 impl OpEmitter for IntArithEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        if ctx.output.plain_nest > 0
+            && !ctx.output.release_pass_probe
+            && let Some(form) = nest_form(ctx.def_fn.name(), args)
+        {
+            if ctx.output.hoist_verify {
+                // `LOFT_HOIST_VERIFY=1` — the plain answer beside the checked template's,
+                // compared at the operator (`ops::nest_verify`); the checked copy is the
+                // ordinary emission, taken with the nest mode suspended.
+                write!(ctx.w, "ops::nest_verify(")?;
+                write_plain(ctx, form, args)?;
+                write!(ctx.w, ", ")?;
+                let depth = ctx.output.plain_nest;
+                ctx.output.plain_nest = 0;
+                let checked = self.emit(ctx, args);
+                ctx.output.plain_nest = depth;
+                checked?;
+                return write!(ctx.w, ", \"{}\")", ctx.def_fn.name());
+            }
+            return write_plain(ctx, form, args);
+        }
         if ctx.output.release_pass_probe
             && let Some(form) = probe_form(ctx.def_fn.name(), args)
         {

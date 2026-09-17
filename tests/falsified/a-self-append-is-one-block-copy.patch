@@ -1,0 +1,86 @@
+diff --git b/src/database/structures.rs a/src/database/structures.rs
+index fff4c002..63f21d19 100644
+--- b/src/database/structures.rs
++++ a/src/database/structures.rs
+@@ -7,13 +7,6 @@ use crate::database::{Field, Parts, Stores};
+ 
+ /// `LOFT_TRACE_VADD=1` — trace `vector_add` stride resolution (read once;
+ /// `vector_add` is runtime-hot, a per-call `env::var` lookup is not).
+-/// `LOFT_NO_SELF_APPEND_BLOCK=1` — a self-append copies through a pre-growth byte snapshot
+-/// again instead of one block copy inside the grown record (the first bisect step for a wrong
+-/// element out of `v += v`).
+-fn self_append_block_enabled() -> bool {
+-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+-    *ON.get_or_init(|| std::env::var_os("LOFT_NO_SELF_APPEND_BLOCK").is_none())
+-}
+ fn vadd_trace_enabled() -> bool {
+     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+     *ON.get_or_init(|| std::env::var("LOFT_TRACE_VADD").is_ok())
+@@ -895,12 +888,11 @@ impl Stores {
+             self.vector_add_array(db, o_db, known, o_length);
+             return;
+         }
+-        // The source record, read BEFORE the growth.  A source in another store cannot move
+-        // under the growth and keeps this number; a source in the SAME store is re-read from
+-        // its field slot after the growth below, because a self-append (`v += v`) grows the
+-        // very record the source elements live in and may relocate it — the slot is the one
+-        // authority on where the record is now, and this number is then a freed block.
+-        let mut o_rec = keys::store(o_db, &self.allocations).get_u32_raw(o_db.rec, o_db.pos);
++        // Snapshot the source record number BEFORE any resize: if `db` and `o_db` share the
++        // same backing store the resize inside `vector_append` / `vector_set_size` may
++        // reallocate the vector and invalidate `o_rec`.  Reading it after the resize would
++        // reference freed memory, silently producing corrupt data.
++        let o_rec = keys::store(o_db, &self.allocations).get_u32_raw(o_db.rec, o_db.pos);
+         // Element stride — the element type's own size, for every row shape.
+         // A VECTOR-typed row (`vector<vector<T>>`) is the inner vector's 4-byte
+         // handle, which is exactly `size(known)` now that the element type
+@@ -909,19 +901,13 @@ impl Stores {
+         // `size(content(known)).max(4)` reproduced the READ path's own
+         // mis-derivation; both now read this one fact.
+         let size = u32::from(self.size(known));
+-        // A self-append — source and destination are ONE backing record (`v += v`, the
+-        // doubling fill's step).  The growth carries the original elements along, so after
+-        // it they sit at the front of the current record and the new slots follow them
+-        // without overlap: the same-store block copy below serves this shape once the source
+-        // rec is re-read.  `LOFT_NO_SELF_APPEND_BLOCK=1` restores the earlier form, a byte
+-        // snapshot taken before the growth and written back byte by byte — the first bisect
+-        // step for a wrong element out of a self-append.
++        // If source and destination share the same backing vector record, copy source elements
++        // to a local buffer first so the resize cannot invalidate the source pointer.
+         let same_vec = db.store_nr == o_db.store_nr && o_rec != 0 && {
+             let dest_rec = keys::store(db, &self.allocations).get_u32_raw(db.rec, db.pos);
+             dest_rec == o_rec
+         };
+-        let snapshot_form = same_vec && !self_append_block_enabled();
+-        let snapshot: Vec<u8> = if snapshot_form {
++        let snapshot: Vec<u8> = if same_vec {
+             let store = keys::store(o_db, &self.allocations);
+             let byte_len = o_length as usize * size as usize;
+             (0..byte_len)
+@@ -945,21 +931,16 @@ impl Stores {
+             rec: dest_rec,
+             pos: append_pos,
+         };
+-        if db.store_nr == o_db.store_nr {
+-            // The source may have moved with the growth (it did whenever it IS the
+-            // destination); the field slot names where it is now, for this copy and for
+-            // the claims walk below alike.
+-            o_rec = keys::store(o_db, &self.allocations).get_u32_raw(o_db.rec, o_db.pos);
+-        }
+-        if snapshot_form {
+-            // The earlier form: write the pre-growth snapshot back, a byte at a time.
++        if same_vec {
++            // Write from the pre-resize snapshot; `new_db.rec` is already the correct
++            // (possibly reallocated) destination record after `vector_set_size`.
+             let store = keys::mut_store(db, &mut self.allocations);
+             for (i, &byte) in snapshot.iter().enumerate() {
+                 store.write::<u8>(new_db.rec, new_db.pos + i as u32, byte);
+             }
+         } else if db.store_nr == o_db.store_nr {
+-            // One block copy — for a self-append the source range is the record's own
+-            // front, [8, 8 + len), and the destination its new tail; they do not overlap.
++            // Re-read o_rec after resize in case it moved (non-self-append same-store case).
++            let o_rec = keys::store(o_db, &self.allocations).get_u32_raw(o_db.rec, o_db.pos);
+             keys::mut_store(db, &mut self.allocations).copy_block(
+                 o_rec,
+                 8,
