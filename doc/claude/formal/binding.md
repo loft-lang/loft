@@ -411,14 +411,18 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
   **Where:** `def_reshape_refusals` ran `ViewWalk::run(..., Some(removed), None, …)` — `removed`
   passed, `disturbed` withheld.
   ⚠ **The lesson, and it cost the first reading of this defect a much larger cure.**
-  `ViewWalk::shake_plain_places`'s doc says it works *"over PLAIN views only, leaving every `&`
-  link alone"*, which describes its INTENT for the materialise consumer and not what it does.  The
+  `ViewWalk::shake_plain_places`'s doc SAID it works *"over PLAIN views only, leaving every `&`
+  link alone"*, which described its INTENT for the materialise consumer and not what it does.  The
   code has no `&` test anywhere: `shake_places_keyed` builds its hit list from `same_place &&
   !spared && !names_container_itself`.  So a link INTO a disturbed container was already shaken and
   already MATERIALISED — the silent `&`-to-copy downgrade this rule exists to forbid, emitted with
   the copy-out advice — and what was missing was only a CONSUMER reading that answer.  A comment
   that states intent where a reader will take it for behaviour is worth more care than a wrong one,
-  because it is believed.
+  because it is believed.  That doc now states what the function does: the shake is followed by a
+  restore keyed by VIEW over `whole_container`, which is `(B-Ref-Alias)`'s in-versus-to distinction
+  and not a `&`-versus-plain one.  The quotation is kept in the PAST tense deliberately — nothing
+  gates a doc that quotes a code comment, since `check_doc_drift.sh` reads plan links, time
+  projections and retired-feature claims, so the next edit of that comment cannot report this line.
   **Cure:** `reshape_refusals` builds `disturbed_params_map` and threads it into
   `def_reshape_refusals` → `ViewWalk::run`'s fifth argument.  Two hunks; no new fact and no new
   predicate.
@@ -517,8 +521,10 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
   collection bind is not in its population.  Closing it widens which programs the refusal declines
   and needs its own measurement over the corpus and the published libraries.
   Found via @PLN164 C3's matrix (loft#1543).  ⚠ That issue's body names
-  `ViewWalk::shake_plain_places` and `use_analysis::view_source_place_indexed` as code C3 landed;
-  neither existed anywhere — C3 is Open, not shipped, and the two names are its design sketch.
+  `ViewWalk::shake_plain_places` and `use_analysis::view_source_place_indexed` as code C3 landed.
+  Both are live code now — C3 merged in `46aaf2967` — but neither existed when the issue was
+  filed: the body describes a design sketch as though it had shipped.  Date what it claims against
+  that merge rather than reading it as a record of the tree.
 * **D-bind-45** *(opened 2026-09-15, CLOSED 2026-09-15)* — `(Const-Value)` for a
   value-const value handed to a PLAIN heap parameter.  A plain struct or vector parameter names the
   caller's record (`calls.md` F-ParamHeap), so `fn bump(a: Account) { a.balance = 999 }` called as
