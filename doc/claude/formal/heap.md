@@ -691,11 +691,18 @@ buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17,
   through: this population is told that the copy itself is the fault, and is offered reading the
   member where it lives rather than "bind without `&` to work on a copy", which names exactly the
   copy `(H-Copy-Refuse)` rejects.
-- **Boundary, measured and deliberate:** the refusal walk runs with `cross_frame: Some(..)` but
-  `disturbed: None`, so a callee's REMOVAL from a droppable container refuses while a callee's
-  GROWTH does not — the same program, one frame apart, gets two answers.  The materialise walk has
-  the callee half (@PLN164 C3) and copies there, so the defect survives in that one shape; closing
-  it is C3's separable widening, not this rule's.
+- **Boundary — stated wrongly here on 2026-09-17, RE-MEASURED and CLOSED the same day.**  This
+  entry read *"a callee's REMOVAL from a droppable container refuses while a callee's GROWTH does
+  not — the same program, one frame apart, gets two answers."*  The asymmetry was real; the
+  description of it was not.  Measured over 17 cells on both backends, **neither refused**: the
+  removal refuses only when the container is the `&` PARAMETER ITSELF, because
+  `scopes::removed_ref_params` keys on `OpRemoveVector(arg0)` / `OpRemove(arg1)` over a bare
+  `Var` typed `RefVar`, so a removal from a FIELD of a parameter
+  (`fn shrink(b: &Bag) { b.v.remove(0) }`) was not refused either, and a GROWTH had no callee
+  producer on the refusal side at all.  The claim was written from the code's shape rather than
+  from a cell, which is the error it records.
+  **Closed** by giving the refusal the callee reach the rules already state — see `binding.md`
+  D-bind-48, which is one change serving both populations, this rule's and `(B-Ref-Reshape)`'s.
 - **Verified:** 13 cells, both backends byte-identical, each predicted before it was run — the
   three disturbance events and a nested droppable refuse; a non-droppable view still materialises
   and still says so; a droppable TUPLE member, a view with no disturbance, a view dead before the

@@ -393,6 +393,54 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 **OPEN: 2.**
 
+* **D-bind-48** *(opened 2026-09-17, CLOSED 2026-09-17)* — `(B-Ref-Reshape)`'s CALLEE clause was
+  never implemented for a GROWTH, so a disturbance one frame down did not refuse.  The rule states
+  the reach outright — *"The disturbance may be in this frame or in anything the frame CALLS"* —
+  and `(B-Disturb)` states it for all four events: *"an event disturbs WHEREVER IT HAPPENS … at any
+  depth."*  @PLN164 C3 gave that reach to the MATERIALISE walk and not to the refusal.
+  **Measured**, 17 cells, both backends byte-identical.  The purest is all-`&`, with the callee
+  disturbing the very parameter it was handed: `fn vgrow(v: &vector<H>, n) { v += [mk(n)] }` under
+  a live `e = &v[0]` compiled and released one resource TWICE (`M1 M2 R1 D1 D1 D2`).  The droppable
+  population `(H-View-Drop)` owns the same shape without the `&`, and a callee's REMOVAL from a
+  FIELD of a parameter was not refused either — `removed_ref_params` keys on
+  `OpRemoveVector(arg0)` / `OpRemove(arg1)` over a bare `Var` typed `RefVar`, so producer 1
+  reached only a parameter named DIRECTLY (`fn drop_last(all: &vector<Box>) { all.remove(2) }`,
+  pinned by `b_ref_reshape_callee_removal_under_local_amp_link_is_error`).  Producer 2 — a call
+  handed BOTH a container and a reference into it, `shift(v[2], v)` — is a separate route with its
+  own message and was never in question here.
+  **Where:** `def_reshape_refusals` ran `ViewWalk::run(..., Some(removed), None, …)` — `removed`
+  passed, `disturbed` withheld.
+  ⚠ **The lesson, and it cost the first reading of this defect a much larger cure.**
+  `ViewWalk::shake_plain_places`'s doc says it works *"over PLAIN views only, leaving every `&`
+  link alone"*, which describes its INTENT for the materialise consumer and not what it does.  The
+  code has no `&` test anywhere: `shake_places_keyed` builds its hit list from `same_place &&
+  !spared && !names_container_itself`.  So a link INTO a disturbed container was already shaken and
+  already MATERIALISED — the silent `&`-to-copy downgrade this rule exists to forbid, emitted with
+  the copy-out advice — and what was missing was only a CONSUMER reading that answer.  A comment
+  that states intent where a reader will take it for behaviour is worth more care than a wrong one,
+  because it is believed.
+  **Cure:** `reshape_refusals` builds `disturbed_params_map` and threads it into
+  `def_reshape_refusals` → `ViewWalk::run`'s fifth argument.  Two hunks; no new fact and no new
+  predicate.
+  **What keeps it from over-reaching, both measured as controls:** `names_container_itself` still
+  spares a link TO a container, so `157-view-header`'s `grown_between` keeps reading 11 — D-bind-46's
+  in-versus-to distinction does the work — and the gate is unchanged (`amp || drops`), so a
+  NON-droppable plain view across a callee's growth still compiles, still materialises and still
+  says so.  That last cell is the one that decides the unit, and it holds.
+  **Consequence worth stating:** the refusal reads the same `callee_disturb_enabled` switch as the
+  scope pass, so `LOFT_NO_CALLEE_DISTURB=1` restores pre-C3 blindness on BOTH sides at once and is
+  no longer a clean A/B for the materialise alone.  That is the switch's honest meaning — one
+  rule's reach, two consumers — and the halves stay tellable apart at the symptom, a refusal being
+  loud where a materialise is quiet.
+  **Blast radius (measured, not predicted):** corpus A/B over 1591 files, **0 changed** — no
+  program in the tree writes the shape, which is why the corpus could not have caught it and is
+  also why it is not evidence of safety for real code.
+  The message gained a population-dependent joiner: the callee form names the callee's act before
+  the reason, and for a droppable view the growth CAUSES the copy (`so`) where for a `&` link the
+  two are parallel facts (`and`).  With one joiner both read *"would grow `b`, and … and …"*.
+  Found while re-measuring `heap.md` D-heap-11, whose own **Boundary** paragraph described this
+  asymmetry incorrectly and is corrected there.
+
 * **D-bind-47** *(opened 2026-09-17, CLOSED 2026-09-17)* — `(B-Ref-Reshape)`'s refusal could not
   see a GROWTH of a container held in a FIELD, so the rule's answer depended on where the
   container was stored.  Measured on both backends, four cells varying only the container's home
