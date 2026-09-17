@@ -3736,7 +3736,7 @@ fn reuse_record_buffers(
     code: &mut Value,
     function: &mut Function,
     data: &Data,
-    d_nr: u32,
+    fn_nr: u32,
     witness_buffer: &HashMap<u16, Vec<u16>>,
     minted_pairs: &HashSet<u16>,
     multi_assigned: &HashSet<u16>,
@@ -3771,13 +3771,13 @@ fn reuse_record_buffers(
     // `LOFT_TRACE_POOL=1` names the gate that keeps each witnessed buffer out of the pool.
     let trace = std::env::var_os("LOFT_TRACE_POOL").is_some();
     if trace {
-        crate::loft_eprintln!("[pool] {} candidates {:?}", data.def(d_nr).name(), guarded);
+        crate::loft_eprintln!("[pool] {} candidates {:?}", data.def(fn_nr).name(), guarded);
     }
     let decline = |av: u16, why: &str| {
         if trace {
             crate::loft_eprintln!(
                 "[pool] {} {}: {why}",
-                data.def(d_nr).name(),
+                data.def(fn_nr).name(),
                 function.name(av)
             );
         }

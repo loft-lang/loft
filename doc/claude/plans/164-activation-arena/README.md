@@ -631,18 +631,30 @@ value-record gate and emitters account for the snapshot: a phantom buffer's alia
 reference.  `LOFT_TRACE_POOL=1` names the gate that declines a buffer.  `(O-Buffer)` gained the
 callee-side clause, and D-own-43 is closed (`formal/ownership.md`).
 
-*Two defects the cells found that are not this unit's*, both reproducing on the pre-session
-build (a0ae1ad0) and kept out of the guard: r17 — `cv = either(cv, h, …)`, a callee answering a
-view of one of TWO arguments, is adopted as owned and the exit frees `h`'s store (both
-backends; the ownership lattice joins two different borrows into `Join`, whose readers assume
-an owned arm); r23 — `scan_mk(3, i).pts[0]?` in a loop leaks the callee's result through its
-`inline_container` temp, one `Mk` per call (both backends).
+*Two defects the cells found that predate this unit*, both reproducing on the pre-session
+build (a0ae1ad0):
 
-*Receipts.*  Guard `tests/scripts/164-adopt-buffer-reuse.loft` (23 cells) with the sabotage
+* **r23 — FIXED here.**  `scan_mk(3, i).pts[0]?` binds the call to an inline container temp
+  (`Parser::bind_inline_container`).  The block pre-registration in `scan_inner` hoists that
+  temp out of its block only when its type has no deps YET, and for a B1 callee (a promoted
+  local, a chain beside a literal exit) the parser's dep on the call's buffer is stripped
+  later, inside the block — so the temp stayed there, the block's exit free was suppressed
+  because the block's result is the temp, and one record leaked per call on both backends.
+  The hoist now asks `adopts_minted_at_bind` as well (and the hoisted null-init makes the
+  bind a `deferred_first_bind`), and `adopts_minted_at_bind` no longer reads `__ref_p2_N` as
+  a buffer name.  Under `LOFT_NO_ADOPT_FIRST_BIND=1` the leak returns with B1's own lowering.
+* **r17 — filed as loft#1550** (`silent-wrong`, both backends, on `main`): `if first { a }
+  else { h.c }` joins two borrows with different bases into `Join { base: a }`, which
+  `formal/ownership.md`'s own `γ(Join(b))` does not cover, and every `Join` reader assumes an
+  owned arm — the caller's record is freed and read back as another record's bytes.  The
+  domain has no element for "a borrow of one of several bases", so it is a rule extension
+  rather than a site fix.
+
+*Receipts.*  Guard `tests/scripts/164-adopt-buffer-reuse.loft` (26 cells) with the sabotage
 patch `tests/falsified/164-adopt-buffer-reuse.patch` (the witness and the deferred bind removed,
 the pool kept); pins `tests/adopt_buffer_reuse.rs` (the witness in the IR, the guarded exit, the
 pool reaching a wrapped body, the switch, the adopt at r22 on both backends, a value record kept,
-the census 294 → 236 interpret / 261 → 194 native).  B1's pins now run with B1b off, and B1's
+the census 303 → 246 interpret / 270 → 204 native, the inline container released).  B1's pins now run with B1b off, and B1's
 own census moved 108 → 98 / 106 → 101 with the deferred bind and the wrapped body.  The
 `wrap` and `native` corpora are green.  On the parse bench the `Mark` mints are 24 → 14 per two
 parses, hash `33f6d2b8`, clean under `LOFT_STRICT_STORES`, `LOFT_POISON` and the leak gate.
@@ -652,7 +664,7 @@ parses, hash `33f6d2b8`, clean under `LOFT_STRICT_STORES`, `LOFT_POISON` and the
 1. ~~**The `Mark` class** and **B1 behind a null-init**~~ — built above; 7 `Mark` stores a
    parse remain, the literal exits of the parsers a chain renamed (`parse_circle`,
    `parse_fronds`, `parse_line_cmd`: B2 unit 1 declines a renamed buffer) and `parse_poly`'s.
-2. **r23 and r17** — the two pre-existing defects above, fixed before this arc ships.
+2. **loft#1550** (r17) — the rule extension above, fixed before this arc ships.
 3. **The free tree under a live store** and **text per character** — as before.
 4. **A1/A2** — re-priced after item 1.
 
