@@ -1103,7 +1103,12 @@ patches on one emission, hash `2a3aa61` throughout):
   comprehension block (emitter).  **BOTH BUILT the same evening** — `Stores::fill_from_template`
   (switch `LOFT_NO_BLOCK_REPEAT`) and the field fill (`LOFT_NO_FIELD_FILL`): `lock_curved`
   **1 635 → 895–931 µs, 2.2×**, the row under the bar on this lane; cells
-  `a-repeated-element-fills-in-one-block.loft`.  Sites: `src/codegen_runtime.rs` `OpAppendCopy`,
+  `a-repeated-element-fills-in-one-block.loft`.  The full lane, two interleaved rounds against
+  both switches off, 14/14 hashes: `lock_curved` 3.89× → **2.17×**, and every other layer-building
+  row moved with it — `lock` 2.38× → **1.84×**, `hair` 2.07–2.24× → **1.58–1.72×**, `render_lock`
+  2.01× → **1.81×** — the rest within their swing.  **Every one of the fourteen rows is under the
+  3× bar on this lane; the median is 1.73×** (2.04× before the fills, 2.35× at the start of the
+  evening).  Sites: `src/codegen_runtime.rs` `OpAppendCopy`,
   `src/state/io.rs` `append_copy`, `src/parser/vectors.rs:3411` (the comprehension loop) and
   `:5389` (the `[x; n]` lowering), `hoist::fill_loop`.
 * **After those, ~2.2× and diffuse:** five `st.*` scalar reads per resolved pixel still go

@@ -38,7 +38,10 @@ Switch `LOFT_NO_FIELD_FILL=1`.  Measured: with both units the row reads
 
 Cells `tests/scripts/a-repeated-element-fills-in-one-block.loft` (r1–r12: both spellings, both
 destinations, scalar/text/record/nested templates, the ladder's edge counts, a negative count),
-hand-computed, both backends under the store falsifiers and both switches.
+hand-computed, both backends under the store falsifiers and both switches.  The full lane, two
+interleaved rounds against both switches off, 14/14 hashes: `lock_curved` 3.89× → 2.17×, `lock`
+2.38× → 1.84×, `hair` 2.1× → 1.6×, `render_lock` 2.01× → 1.81×, the rest within their swing —
+every row under 3×, median 1.73×.
 
 ### The nest reads raw — `R-BoundedNest` step 2, `render_marks` −35 % again, 1.75× its reference (2026-09-17)
 
