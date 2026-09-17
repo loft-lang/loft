@@ -163,6 +163,46 @@ fn p_k7() { s = S { h: mk(9) }; p_k7_b(s); println("R{s.h.id}"); }"#,
             r#"fn p_v4_b(p: vector<H>) { u = p; println("R{len(u)}"); }
 fn p_v4() { v: vector<H> = [mk(84)]; p_v4_b(v); }"#,
         ),
+        // heap.md D-heap-13 (loft#1551): a bare COLLECTION a call answers, bound to a LOCAL,
+        // never releases its elements.  `(H-Move)` makes the bind a move — a fresh call result
+        // placed where it is produced — so `d` is the owner, and `(H-Drop)` releases at the
+        // owner's scope end.  It does not, on either backend, and no free-side instrument can
+        // see it: the memory IS freed and only the hook is skipped.  These three score LOST,
+        // which is the gate asserting the ABSENCE of a hook rather than a value.
+        cell(
+            "p_v5",
+            r#"fn p_v5_m() -> vector<H> { r: vector<H> = [mk(140)]; return r; }
+fn p_v5() { d = p_v5_m(); println("R{len(d)}"); }"#,
+        ),
+        // The same, reading the ELEMENT back first: the resource is demonstrably live and
+        // reachable at the read, so "it was never really there" is not available as a reading.
+        cell(
+            "p_v6",
+            r#"fn p_v6_m() -> vector<H> { r: vector<H> = [mk(141)]; return r; }
+fn p_v6() { d = p_v6_m(); println("R{d[0].id}"); }"#,
+        ),
+        // Grown after the bind, which does not restore the cascade: BOTH ids leak, so the
+        // defect is the local's backing and not the callee's one element.
+        cell(
+            "p_v7",
+            r#"fn p_v7_m() -> vector<H> { r: vector<H> = [mk(142)]; return r; }
+fn p_v7() { d = p_v7_m(); d += [mk(143)]; println("R{len(d)}"); }"#,
+        ),
+        // The two CONTROLS that bound D-heap-13, and that an over-reaching cure must leave
+        // alone.  Wrapping the very same call's vector in a record releases it, because a
+        // record backing carries a generated cascade; and assigning the same call into a FIELD
+        // releases it too (@PLN164 C2's buffer-is-the-place path).  So the axis is the bare
+        // collection crossing a return, not the collection and not the call.
+        cell(
+            "p_v8",
+            r#"fn p_v8_m() -> Bag { return Bag { v: [mk(144)], tag: 1 }; }
+fn p_v8() { d = p_v8_m(); println("R{len(d.v)}"); }"#,
+        ),
+        cell(
+            "p_v9",
+            r#"fn p_v9_m() -> vector<H> { r: vector<H> = [mk(145)]; return r; }
+fn p_v9() { b = Bag { v: [], tag: 0 }; b.v = p_v9_m(); println("R{len(b.v)}"); }"#,
+        ),
         // heap.md D-heap-1's open shapes.
         cell(
             "p_o1",
@@ -1210,6 +1250,10 @@ const PILOT_ONCE: &[&str] = &[
     "p_n1", "p_n2", "p_n3", "p_n4", // fresh values written into places, and a removal
     "p_t1", // a member read through a call result, which nothing outlives
     "p_v4", // a vector parameter, which F-ParamHeap binds without copying
+    // A collection a CALL answers is a fresh value placed where it is produced, which (H-Move)
+    // moves: the local owns it and owes exactly one release.  `p_v5`–`p_v7` do not run it
+    // (D-heap-13); `p_v8` and `p_v9` do, and are the controls that bound the defect.
+    "p_v5", "p_v6", "p_v7", "p_v8", "p_v9",
 ];
 
 /// The pilot cells that write a copy of an existing `H`, each classified by hand.
@@ -1314,7 +1358,13 @@ const CENSUS_BLIND: &[&str] = &[];
 
 /// Each OPEN deviation in `formal/heap.md` that a cell with a `Once` verdict still measures, with
 /// those cells.  A refused cell compiles today and is `D-heap-8`'s, so it is not listed.
-const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[];
+///
+/// `D-heap-13` is a collection a call answers and a local binds, which never releases its
+/// elements (loft#1551).  Its three cells owe one release each by `(H-Move)` and `(H-Drop)` and
+/// run none, so each fails its baseline under a `Once` verdict and is carried here until the
+/// entry closes.  The controls `p_v8` and `p_v9` are deliberately absent: they are clean, and a
+/// clean cell listed under a deviation is itself a failure (*"retire it there"*).
+const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[("D-heap-13", &["p_v5", "p_v6", "p_v7"])];
 
 /// Every cell has a lease verdict, and every cell the rules say must release once while a
 /// baseline says it does not is carried by exactly one OPEN deviation in `formal/heap.md`.  A fix
