@@ -50,7 +50,7 @@ number captured BEFORE the growth relocated it.  The source is now re-read from 
 slot after the growth whenever it shares the destination's store, and the self-append takes
 the same-store `copy_block` every other append does.  The matrix found the second half before
 the change: a `text` vector of 200 appended to itself stopped with `Store access out of bounds
-… the reference is corrupt` on both backends (`formal/heap.md` D-heap-14).  `render_marks`
+… the reference is corrupt` on both backends (`formal/heap.md` D-heap-17).  `render_marks`
 −8.3 % (4 230 → 3 885 µs, same hash).  Guard `tests/scripts/a-self-append-is-one-block-copy.loft`
 (s1–s12), falsified against 48d49e24 on both backends with a patch receipt.
 

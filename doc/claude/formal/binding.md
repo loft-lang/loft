@@ -391,26 +391,7 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 3.**
-
-* **D-bind-47** *(opened 2026-09-17, CLOSED 2026-09-17, [loft#1554](https://github.com/loft-lang/loft/issues/1554))* —
-  `(B-Ref-Reshape)`'s refusal for a PLAIN or FIELD container, for GROWTH, and in a FORMAT string.
-  The rule refuses a disturbance while a reference into the container is live, in this frame or
-  in anything it calls, and `(B-Disturb)` names four events; the refusal fired for fewer.  The
-  call-site half read `removed_params_map` (a `&vector` parameter the callee REMOVES from), so
-  `rm(s.ops[0], s)` with `rm` removing from `sc.ops` read **2**, a plain `vector` parameter the
-  same, and a growth read **0** once the vector reallocated — both backends, no diagnostic.  Its
-  element test did not count the nullable element read a format string passes
-  (`print("{shift(v[2], v)}")` printed the moved element's stale bytes) nor a `?`-discharged
-  one.  The frame half ran without the store and without the callee's disturbance, so a `&` link
-  into `b.items` across `b.items += […]` or `grow(b)` was COPIED with advice — the downgrade the
-  rule forbids.  **Closed:** both halves read @PLN164 C3's `disturbed_params_map` and the store;
-  the element test reads the place through `value_view_places`, and a SIBLING field's growth
-  still compiles.  **Measured before landing:** over the 1629-file corpus and the consumer
-  sources (crawler, dryopea, moros, zero-trust-shared-files, loft-libs-*) the wider refusal
-  names one program — `164-element-place`'s `g27`, written to hand a container and its element
-  in, now called through a fn-ref.  Guards: `tests/parse_errors.rs` `b_ref_reshape_*` h1–h8 and
-  the two compiling controls.
+**OPEN: 2.**
 
 * **D-bind-48** *(opened 2026-09-17, CLOSED 2026-09-17)* — `(B-Ref-Reshape)`'s CALLEE clause was
   never implemented for a GROWTH, so a disturbance one frame down did not refuse.  The rule states
@@ -429,6 +410,14 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
   own message and was never in question here.
   **Where:** `def_reshape_refusals` ran `ViewWalk::run(..., Some(removed), None, …)` — `removed`
   passed, `disturbed` withheld.
+  **Two shapes the call-site half also missed, and the blast radius, measured before landing.**
+  Its element test did not count the nullable element read a FORMAT string passes
+  (`print("{shift(v[2], v)}")` printed the moved element's stale bytes) nor a `?`-discharged one;
+  the test reads the place through `value_view_places` now, and a SIBLING field's growth still
+  compiles.  Over the 1629-file corpus and the consumer sources (crawler, dryopea, moros,
+  zero-trust-shared-files, loft-libs-*) the wider refusal names ONE program —
+  `164-element-place`'s `g27`, written to hand a container and its element in, now called
+  through a fn-ref, which is the one edge the refusal cannot follow.
   ⚠ **The lesson, and it cost the first reading of this defect a much larger cure.**
   `ViewWalk::shake_plain_places`'s doc SAID it works *"over PLAIN views only, leaving every `&`
   link alone"*, which described its INTENT for the materialise consumer and not what it does.  The

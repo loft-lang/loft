@@ -33,7 +33,7 @@ judged row but `lock_curved` (3.87× on this lane) is under the 3× bar, median 
 it a runtime item the same session's `sample` profile named: a self-append (`v += v`, the
 canvas fill's doubling ladder) copied byte by byte through a snapshot and, for heap-owning
 elements, read the source through a freed block — one block copy now, both backends,
-`render_marks` −8 % (D-heap-14).  Switches `LOFT_NO_BOUNDED_NEST`, `LOFT_NO_SELF_APPEND_BLOCK`;
+`render_marks` −8 % (D-heap-17).  Switches `LOFT_NO_BOUNDED_NEST`, `LOFT_NO_SELF_APPEND_BLOCK`;
 falsifier `LOFT_HOIST_VERIFY=1` (`ops::nest_verify`); pins `tests/bounded_nest.rs`; cells
 `tests/scripts/157-bounded-nest.loft`.
 **§ V-ab SHIPPED 2026-09-13** (DESIGN.md § V-ab): a counted `for` whose start is not a

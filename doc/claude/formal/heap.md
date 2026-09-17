@@ -641,13 +641,11 @@ been re-cut twice as it was measured — a shape closed, a shape that turned out
 opposite fault, and a shape found by widening one cell — so the three named there are what is
 open TODAY and not the original filing.  `D-heap-4` (a mixed own/view local's owned record
 freed without its hook) opened and CLOSED 2026-09-10, below.  `D-heap-12` (a refilled record
-buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.  `D-heap-13`
-(a collection from a call, bound to a local, whose elements are never dropped) opened
-2026-09-17 and is the fifth OPEN entry, below.  `D-heap-14` (a self-append's claims walk
+buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.  `D-heap-17` (a self-append's claims walk
 read the source record through a number captured before the growth relocated it) opened and
 CLOSED 2026-09-17, below.
 
-### D-heap-14 — OPENED AND CLOSED (2026-09-17): a self-append read its source through the record number captured before the growth moved it
+### D-heap-17 — OPENED AND CLOSED (2026-09-17): a self-append read its source through the record number captured before the growth moved it
 
 - **Violates:** (H-Move) — the elements of a vector appended to itself are the vector's own
   values; `Stores::vector_add` answered them through a freed block.
