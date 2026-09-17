@@ -867,7 +867,8 @@ before it is built**, and re-measured with `perf` on the release binary after.
    that reason; what changed is its role — it is what makes every points local single-consumer.
    Owes C5's step 2 debts first (per-PATH mention counting, the wider source resolution) and
    the corpus under the switch on both backends.
-2. **E-2 — the single-consumer vector built in its destination.**  Element-first (@PLN157
+2. **E-2 — the single-consumer vector built in its destination.** — E-2a built 2026-09-17
+   (§ E-2 below); the joined arms and the value branch (E-2b) and `pf_all` (E-2c) remain.  Element-first (@PLN157
    § V-z) already does this for a local consumed by one append; un-park the vector
    `place_result` for a call result.
 3. **E-3 — `PointList` reused.**  `LOFT_TRACE_POOL=1` names the declining gate.
@@ -1003,6 +1004,53 @@ values unchanged on both backends).  The full suite on this box reached 5070 of 
 the harness stopped it for memory, with that pin and `poison_claim`'s load-bound census as the
 only reds; the gate is run on GitHub instead (CI_BUDGET.md § When the local gate is
 unreliable).
+
+### E-2, the single-consumer vector built in its element (2026-09-17)
+
+*Re-profiled first.*  With E-1 on, a parse mints 19 stores (`vector<Pt>` 6, `vector<float>` 4,
+`PointList` 3, one each of `Sketch`, `vector<text>`, `vector<Frond>`, `Paint`, `Mark`,
+`FrondSpec`).  `perf` on the release binary puts the mint/free family at ~20 % of the row, where
+the Rust reference spends ~9 % in `malloc`/`free`/`memmove` — the largest gap a profile can name —
+while the text scanner (`find_option` 12 %) is inlined into `read_paint` and `opt_num` in the
+reference and costs about the same absolute time there.
+
+*Priced by hand patch* (the emitted Rust of `parse_poly`'s three paths, `parse_circle` and
+`parse_line_cmd` edited to mint the appended `Op` first and hand each call, or each literal
+build, the element's field; same hash, clean under `LOFT_STRICT_STORES`, `LOFT_POISON`,
+`LOFT_POISON_CLAIM` and the leak check): **19 → 12 stores per parse, −4.0 % instructions and
+−4.8 % cycles** (three interleaved `perf stat -r 5` rounds at `--n 5000`).  `parse_poly` alone
+was −2.5 % / −2.9 %.
+
+*Built* as an extension of @PLN157 § V-z, `LOFT_NO_ELEMENT_PLACE`: the destination may be a
+record's collection FIELD (`OpNewRecord(sc, tp, fld)`, elements stored inline), and a temp may
+be filled by a CALL handed a lazy hidden buffer that serves it alone, the call then handed
+`DbRef { element + field }`.  The callee has to FILL its buffer — `(R-Place)`'s own test, no
+`OpDatabase` into an argument slot — and no other argument may name the container.  An admitted
+function's exit copies are not uses (E-1 drops them), and a value the list does not declare
+keeps its copy into the early element.  Two gates are new for both destinations: no statement
+between the declaration and the append may JUMP out (a `return` or `continue` strands the early
+element, holding the call's vector inside the container's store, where only a record census
+sees it — cell `g15` counts records), and the declaration must be the temp's ONLY binding.
+
+*The second gate is loft#1552, found by cell `g13`.*  § V-z counted a temp's reads, never its
+bindings: `p: vector<Pt> = []; if c { p = mk(n) }; out += [Op { pts: p }]` bound `p` to the
+early element, the rebind pointed `p` at the call's own store, and the suppressed copy left the
+element empty — `1000` for `1093`, silently, on `main` since § V-z (`formal/rewrites.md` D-rw-2;
+guard `a-rebound-element-first-temp-keeps-its-copy.loft`, falsified against f547cf1c).
+
+*Measured on the library:* `parse_poly`'s three points locals and `parse_line_cmd`'s points and
+widths are admitted; `parse_lock` declines on a container read between its call and its append
+(`brush_index(sc, …)`, correct).  **19 → 14 stores per parse, −2.8 % instructions and −3.1 %
+cycles**, hash `33f6d2b8`; only the parser functions' emission changes on the bench, and over
+the 1595-file corpus only this plan's three cell files move.  Cells
+`tests/scripts/164-element-place.loft` (fifteen, hand-computed, clean on both backends under
+every falsifier; three gates sabotaged and each caught), pins `tests/element_first.rs`.
+
+*What the hand patch had that the unit does not* — about −1.2 % of the row: `parse_circle`'s
+points local is appended in BOTH arms of an `if` (one early element would serve the two arms,
+the second arm's mint becoming an alias), and `parse_poly`'s widths local is a value branch
+(`if smooth_applies { smooth_vals(…) } else { copy }`), whose arms would each fill the field.
+Both are E-2b; `parse_fronds`' `pf_all`, which lives only in the returned record, is E-2c.
 
 ## The three tiers — the invariant each rests on
 

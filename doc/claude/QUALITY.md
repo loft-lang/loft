@@ -518,6 +518,11 @@ step.  The opaque column is unmoved.  ../loft2's branch reports the same two uni
 523 · 500 against ITS base, and both are right about what they add; the totals differ because the
 bases do, which is why this row is measured here and never accumulated.)
 
+(2026-09-17, @PLN164 E-2: three sites added, all peeling — `hoist::lazy_buffer_guard` reads a
+lazy buffer's guard and its arm, `hoist::jumps_out` a statement's jumps, and the buffer-use count
+inside `hoist::element_first` its nodes, each through `.unspan()` or `any_node`, which peels.
+The opaque column is unmoved.)
+
 (2026-09-17, loft#1549: one site fewer, and not a behaviour change — the null-init test moved
 out of `scopes::reuse_record_buffers` into the one-line `scopes::null_init_at`, after which
 neither function names two `Value` variants.  The opaque column is unmoved.)
@@ -1697,7 +1702,9 @@ and the function's fallback for any destination it does not recognise is exactly
 into a frame-owned place, a READ of the local that the view never names.  And one more the
 same day — `Output::write_tuple_fields` names `OpGetField` to BUILD the field place of the
 record a tuple is written into.  CHECKED: that destination is a record by construction (a
-return buffer or a copy's destination), never a tuple member.)
+return buffer or a copy's destination), never a tuple member.  And @PLN164 E-2 one more: the
+`walk` nested in `hoist::element_first` (the audit charges the function's later `OpGetField`
+matches to it) reads the fields of an element being appended, which a tuple member never is.)
 
 (2026-09-16, @PLN164 C5 step 2: one more on the call-only side — `namings_avoid_place` resolves
 what a naming of a container REACHES by op name, and `TupleGet` names a stack tuple member,

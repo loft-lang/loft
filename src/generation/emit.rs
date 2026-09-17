@@ -2691,23 +2691,35 @@ impl Output<'_> {
                                 .iter()
                                 .find(|b| b.vdb == vdb)
                                 .expect("by_vdb names a bind");
-                            let outn = sanitize(dvars.name(pair.out));
-                            let elmn = sanitize(dvars.name(pair.elm));
                             let tmpn = sanitize(dvars.name(b.tmp));
+                            let elmn = sanitize(dvars.name(pair.elm));
+                            let (first, field_off) = (b.first, b.field_off);
+                            self.write_elem_first_mint(w, pi, first)?;
                             self.indent(w)?;
-                            if b.first {
-                                writeln!(
-                                    w,
-                                    "{{vector::pre_alloc_vector(&(var_{outn}), (1_i64) as u32, ({}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, var_{outn}, {}_i32, 65535_i32); //@PLN157 § V-z element minted at the declaration",
-                                    pair.prealloc_size, pair.out_tp
-                                )?;
-                                self.indent(w)?;
-                            }
                             writeln!(
                                 w,
-                                "var_{tmpn} = DbRef {{ store_nr: var_{elmn}.store_nr, rec: var_{elmn}.rec, pos: var_{elmn}.pos + {} }}; //@PLN157 § V-z field-slot bind",
-                                b.field_off
+                                "var_{tmpn} = DbRef {{ store_nr: var_{elmn}.store_nr, rec: var_{elmn}.rec, pos: var_{elmn}.pos + {field_off} }}; //@PLN157 § V-z field-slot bind"
                             )?;
+                            handled = true;
+                        }
+                    }
+                    // @PLN164 E-2 — a call-filled temp's lazy buffer guard: the buffer is
+                    // never minted, and the element is, when this temp carries the mint.
+                    Value::If(cond, _, _)
+                        if matches!(cond.unspan(), Value::Call(d, cargs)
+                            if named(d, "OpRefIsNull")
+                                && uv(cargs.first())
+                                    .is_some_and(|u| self.elem_first.buf_place.contains_key(&u))) =>
+                    {
+                        if let Value::Call(_, cargs) = cond.unspan()
+                            && let Some(buf) = uv(cargs.first())
+                            && let Some(&pi) = self.elem_first.by_vdb.get(&buf)
+                        {
+                            let first = self.elem_first.pairs[pi]
+                                .binds
+                                .iter()
+                                .any(|b| b.vdb == buf && b.first);
+                            self.write_elem_first_mint(w, pi, first)?;
                             handled = true;
                         }
                     }
@@ -3184,5 +3196,40 @@ impl Output<'_> {
                 .show(self.data, self.data.def(self.def_nr).variables())
         )?;
         Ok(())
+    }
+}
+
+impl Output<'_> {
+    /// The element-first MINT at a temp's declaration site (@PLN157 § V-z, @PLN164 E-2): the
+    /// element is claimed where the first temp is declared, so every paired temp can be built in
+    /// its field; the length bump stays at the append's finish.  A local vector is reserved
+    /// first, as its append would have; a record's collection field is not.  Writes nothing for
+    /// a temp that does not carry the mint.
+    fn write_elem_first_mint(
+        &mut self,
+        w: &mut dyn Write,
+        pi: usize,
+        first: bool,
+    ) -> std::io::Result<()> {
+        if !first {
+            return Ok(());
+        }
+        let pair = &self.elem_first.pairs[pi];
+        let dvars = self.data.def(self.def_nr).variables();
+        let outn = sanitize(dvars.name(pair.out));
+        let elmn = sanitize(dvars.name(pair.elm));
+        let (size, tp, fld) = (pair.prealloc_size, pair.out_tp, pair.out_fld);
+        self.indent(w)?;
+        if fld == 65535 {
+            writeln!(
+                w,
+                "{{vector::pre_alloc_vector(&(var_{outn}), (1_i64) as u32, ({size}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, var_{outn}, {tp}_i32, 65535_i32); //@PLN157 § V-z element minted at the declaration"
+            )
+        } else {
+            writeln!(
+                w,
+                "var_{elmn} = OpNewRecord(cell, var_{outn}, {tp}_i32, {fld}_i32); //@PLN164 E-2 element minted at the declaration"
+            )
+        }
     }
 }

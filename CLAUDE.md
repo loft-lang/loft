@@ -979,7 +979,18 @@ is excluded, or every record-returning function that fills a vector field would 
 keep its temp-store build and deep copy again — with it off, a local vector consumed
 exactly once by one append is built INSIDE the appended element (minted at the temp's
 declaration, invisible until the finish's length bump) — and is the bisect step for a
-wrong vector field of an appended record on native.
+wrong vector field of an appended record on native.  The declaration must be the local's only
+binding (loft#1552: a local declared `[]` and rebound under an `if` left the element empty).
+**`LOFT_NO_ELEMENT_PLACE=1`** (@PLN164 E-2, `@FR-R-ElemFirst`, default-ON, generation time,
+`--native` only) keeps that build to local vectors and literal-built locals again — with it
+off, it also reaches an append into a record's COLLECTION FIELD (`sc.ops += [Op { pts: p }]`)
+and a local a CALL fills (`p = smooth(raw)`): the call is handed the early element's field as
+its return buffer, provided it fills its buffer and never mints into it, no other argument
+names the container, and the buffer serves that call alone.  No statement between the
+declaration and the append may name the container or jump out (a stranded early element keeps
+the call's vector inside the container's store, where only a record census sees it).  It is
+the first bisect step for a wrong, empty or leaked vector field of an element a parser
+appended; `LOFT_TRACE_ELEMFIRST=1` names every admission and decline.
 **`LOFT_NO_COMPLETE_WRITE=1`** (@PLN157 § V-y) makes every record keep its default
 prefill again — with it off, a literal group the emitter PROVES writes every field
 (declared defaults, sentinels, the variant tag included: the parser's lowering is

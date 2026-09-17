@@ -97,3 +97,70 @@ fn the_switch_restores_the_temp_store_build() {
     );
     let _ = std::fs::remove_file(&out);
 }
+
+/// @PLN164 E-2 — the element-first build reaches a record's COLLECTION FIELD and a temp a CALL
+/// fills: `tests/scripts/164-element-place.loft`.  `(function, elements minted at a declaration)`.
+const PLACE_CELLS: &str = "tests/scripts/164-element-place.loft";
+const PLACE_MARK: &str = "E-2 element minted";
+const PLACE_EXPECTED: &[(&str, usize)] = &[
+    ("n_g1", 1),  // a call result appended once, viewed by the result
+    ("n_g2", 1),  // a literal-built local and a second local into one element
+    ("n_g3", 0),  // a `return` between the call and the append
+    ("n_g4", 0),  // the container named in between
+    ("n_g5", 0),  // the callee mints into its buffer
+    ("n_g6", 0),  // an argument reads the destination
+    ("n_g7", 0),  // the local read after the append
+    ("n_g8", 0),  // a record-form exit copies the local: a second consumer
+    ("n_g9", 1),  // repeated by a loop
+    ("n_g10", 1), // two calls into one element
+    ("n_g11", 1), // a local record's collection
+    ("n_g13", 0), // the local rebound under a condition (loft#1552)
+    ("n_g14", 0), // a `continue` between the call and the append
+];
+
+fn place_counts(rust: &str) -> HashMap<String, usize> {
+    let mut map: HashMap<String, usize> = HashMap::new();
+    let mut current = String::new();
+    for line in rust.lines() {
+        if let Some(rest) = line.strip_prefix("fn ")
+            && let Some(paren) = rest.find('(')
+        {
+            current = rest[..paren].to_string();
+            map.entry(current.clone()).or_default();
+        }
+        *map.entry(current.clone()).or_default() += line.matches(PLACE_MARK).count();
+    }
+    map
+}
+
+#[test]
+fn a_parameter_collection_and_a_call_take_the_element_first_build() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(PLACE_CELLS);
+    let out = std::env::temp_dir().join("loft_element_place_on.rs");
+    let rust = emit(&src, &out, &[]);
+    let got = place_counts(&rust);
+    for (name, mints) in PLACE_EXPECTED {
+        let g = got
+            .get(*name)
+            .copied()
+            .unwrap_or_else(|| panic!("{name} was not emitted"));
+        assert_eq!(g, *mints, "{name}: elements minted at a declaration site");
+    }
+    // The call is handed the element's field as its buffer.
+    assert!(
+        rust.contains("= n_mkpts(cell, var_n, DbRef { store_nr: var__elm_1.store_nr, rec: var__elm_1.rec, pos: var__elm_1.pos + 20 });"),
+        "g1's call builds into the element"
+    );
+    let _ = std::fs::remove_file(&out);
+    let off = emit(
+        &src,
+        &std::env::temp_dir().join("loft_element_place_off.rs"),
+        &[("LOFT_NO_ELEMENT_PLACE", "1")],
+    );
+    assert_eq!(
+        off.matches(PLACE_MARK).count(),
+        0,
+        "under LOFT_NO_ELEMENT_PLACE=1 no parameter collection or call takes the build"
+    );
+    let _ = std::fs::remove_file(std::env::temp_dir().join("loft_element_place_off.rs"));
+}

@@ -1,0 +1,274 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN164 E-2 (`@FR-R-ElemFirst`, `@FR-R-Place`) — A SINGLE-CONSUMER VECTOR IS BUILT IN THE
+// ELEMENT IT IS APPENDED INTO.  A parser fills a points local — by a call, or by a literal and
+// pushes — and appends it once, as a record-literal field, into a collection its caller owns:
+// `p = smooth(raw); sc.ops += [Op { pts: p }]`.  The record form fills a store of the local's
+// own and deep-copies it into the element.  The element-first build mints the element where
+// the local is declared and makes the local its field, so the call fills the element and the
+// copy is gone; the finish (the length bump) stays where the append was, so the element is
+// invisible until then.
+//
+// Every value is the record form's, hand-computed from the declarations: `--interpret` keeps
+// the copies and is the oracle.  `mkpts(n)`: px = i, py = 2i, so `len` n and `totp`
+// 3n(n-1)/2 — 1 → 0, 2 → 3, 3 → 9, 4 → 18.
+//
+// The DECLINES are the rule's conditions, one cell each: a jump between the declaration and the
+// append (the early element would be stranded, holding what the call built), a naming of the
+// container in between, a callee that MINTS into its buffer, an argument that reads the
+// destination, the local read after the append, a second consumer, a declaration the append's
+// statement list does not hold.  Each asserts a value AND the container's contents, and the
+// leak gate is what a stranded element would trip.
+//
+// @falsified-at: hand-measured (2026-09-17), on `--native` with each gate removed in turn — the
+// admissions' own channel cannot move (the copy the rewrite drops is correct, which is the
+// point), so the receipt is the declines':
+//   * the callee test (`fills_its_buffer`) — `g5` read 0,0 for 2,10: a callee returning a
+//     literal minted over the element's field;
+//   * the single-binding test — `g13` read 0,0 for 2,3 (loft#1552, which this cell found);
+//   * the jump test — `g15`'s census grew by 100 records for 0: each early return stranded
+//     the call's vector inside the container's store, where the store-level leak check sees
+//     nothing, which is why the cell counts records instead.
+
+struct Pt { px: integer = 0, py: integer = 0 }
+struct Pn { pk: integer = 0, spec: vector<integer> }
+struct Op { opts: vector<Pt>, ow: integer = 0, wid: vector<float>, pn: Pn }
+struct Sc { ops: vector<Op>, seen: integer = 0 }
+struct Mark { matched: boolean = false, bad: boolean = false, mpts: vector<Pt> }
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+fn totp(v: const vector<Pt>) -> integer { t = 0; for p in v { t += p.px + p.py; } t }
+fn totw(v: const vector<float>) -> float { t = 0.0; for x in v { t += x; } t }
+/// The `smooth_pts` shape: a local built and returned, adopted as the return buffer.
+fn mkpts(n: integer) -> vector<Pt> {
+  o: vector<Pt> = [];
+  for i in 0..n { o += [Pt { px: i, py: i * 2 }]; }
+  o
+}
+fn mkw(n: integer) -> vector<float> {
+  w_o: vector<float> = [];
+  for i in 0..n { w_o += [(i as float) + 0.5]; }
+  w_o
+}
+/// Returns a vector LITERAL, which mints into its buffer.
+fn lit_pts(n: integer) -> vector<Pt> { [Pt { px: n, py: n }, Pt { px: n + 1, py: 0 }] }
+fn copy_pts(v: const vector<Pt>) -> vector<Pt> {
+  c_o: vector<Pt> = [];
+  for p in v { c_o += [Pt { px: p.px * 10, py: p.py }]; }
+  c_o
+}
+
+/// g1 — the `parse_poly` shape: a call result appended once, viewed by the result.  ADMIT.
+fn g1(sc: Sc, n: integer) -> Mark {
+  g1_p = mkpts(n);
+  sc.ops += [Op { opts: g1_p, ow: n, wid: [], pn: Pn { pk: 1, spec: [] } }];
+  Mark { matched: true, bad: false, mpts: g1_p }
+}
+/// g2 — the `parse_line_cmd` shape: a literal-built local and a second local filled under a
+/// condition, both into the one element.  ADMIT.
+fn g2(sc: Sc, n: integer) -> Mark {
+  g2_p: vector<Pt> = [Pt { px: n, py: 1 }, Pt { px: n + 1, py: 2 }];
+  g2_w: vector<float> = [];
+  if n > 1 { g2_w += [0.5]; g2_w += [1.5]; }
+  sc.ops += [Op { opts: g2_p, ow: 7, wid: g2_w, pn: Pn { pk: 2, spec: [] } }];
+  Mark { matched: true, bad: false, mpts: g2_p }
+}
+/// g3 — a `return` between the call and the append.  DECLINE.
+fn g3(sc: Sc, n: integer) -> Mark {
+  g3_p = mkpts(n);
+  if n > 3 { return Mark { matched: true, bad: true, mpts: [] } }
+  sc.ops += [Op { opts: g3_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: g3_p }
+}
+/// g4 — the container named between the call and the append.  DECLINE.
+fn g4(sc: Sc, n: integer) -> Mark {
+  g4_p = mkpts(n);
+  sc.seen = len(sc.ops);
+  sc.ops += [Op { opts: g4_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: g4_p }
+}
+/// g5 — the callee MINTS into its buffer (it returns a literal).  DECLINE.
+fn g5(sc: Sc, n: integer) -> Mark {
+  g5_p = lit_pts(n);
+  sc.ops += [Op { opts: g5_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: g5_p }
+}
+/// g6 — an argument reads the destination's container.  DECLINE.
+fn g6(sc: Sc) -> Mark {
+  g6_p = copy_pts(sc.ops[0]?.opts);
+  sc.ops += [Op { opts: g6_p, ow: 6 }];
+  Mark { matched: true, bad: false, mpts: g6_p }
+}
+/// g7 — the local read after the append.  DECLINE.
+fn g7(sc: Sc, n: integer) -> integer {
+  g7_p = mkpts(n);
+  sc.ops += [Op { opts: g7_p, ow: n }];
+  len(g7_p) * 100 + totp(g7_p)
+}
+/// g8 — a function that keeps its record: its exit copies the local, a second consumer.
+/// DECLINE.
+fn g8(sc: Sc, n: integer) -> Mark {
+  g8_p = mkpts(n);
+  sc.ops += [Op { opts: g8_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: g8_p }
+}
+/// g9 — the call and the append repeated by a loop, each pass its own element.  ADMIT.
+fn g9(sc: Sc, n: integer) -> integer {
+  g9_t = 0;
+  for k in 1..=n {
+    g9_p = mkpts(k);
+    sc.ops += [Op { opts: g9_p, ow: k }];
+    g9_t += k;
+  }
+  g9_t
+}
+/// g10 — two calls into one element: points and widths.  ADMIT.
+fn g10(sc: Sc, n: integer) -> Mark {
+  g10_p = mkpts(n);
+  g10_w = mkw(n);
+  sc.ops += [Op { opts: g10_p, ow: n, wid: g10_w }];
+  Mark { matched: true, bad: false, mpts: g10_p }
+}
+/// g11 — the destination is a LOCAL record's collection.  The values hold either way.
+fn g11(n: integer) -> integer {
+  s11 = Sc { ops: [], seen: 0 };
+  g11_p = mkpts(n);
+  s11.ops += [Op { opts: g11_p, ow: n }];
+  len(s11.ops) * 1000 + totp(s11.ops[0]?.opts)
+}
+/// g13 — the local assigned under a condition: its declaration is not in the append's list.
+/// DECLINE.
+fn g13(sc: Sc, n: integer) -> Mark {
+  g13_p: vector<Pt> = [];
+  if n > 0 { g13_p = mkpts(n); }
+  sc.ops += [Op { opts: g13_p, ow: n }];
+  Mark { matched: true, bad: false, mpts: g13_p }
+}
+/// g14 — a `continue` between the call and the append.  DECLINE.
+fn g14(sc: Sc, n: integer) -> integer {
+  g14_c = 0;
+  for k in 0..n {
+    g14_p = mkpts(k + 1);
+    if k % 2 == 1 { continue }
+    sc.ops += [Op { opts: g14_p, ow: k }];
+    g14_c += 1;
+  }
+  g14_c
+}
+/// g15's driver: `g3`'s early return, `n` times over one container.  Both censuses are taken
+/// after it returns, so the same stores are alive at each.
+fn g15_runs(sc: Sc, n: integer) -> integer {
+  g15_t = 0;
+  for k in 0..n { g15_m = g3(sc, 5); g15_t += len(g15_m.mpts); }
+  g15_t
+}
+
+/// The live record count of every store, off the runtime's own census — what a claim stranded
+/// inside a store that stays alive shows up in, where a store-level leak check sees nothing.
+fn census_records() -> integer {
+  cr_t = store_memory();
+  cr_i = cr_t.find("records ");
+  if !cr_i { return -1 }
+  cr_j = cr_i + 8;
+  cr_n = 0;
+  while cr_j < len(cr_t) && cr_t[cr_j] >= '0' && cr_t[cr_j] <= '9' {
+    cr_n = cr_n * 10 + (cr_t[cr_j] as integer - '0' as integer);
+    cr_j += 1;
+  }
+  cr_n
+}
+
+fn main() {
+  // g1: 3 points, totp 9; the element holds them and its nested record.
+  s1 = Sc { ops: [], seen: 0 };
+  m1 = g1(s1, 3);
+  ok("g1 result   ", "{m1.matched},{len(m1.mpts)},{totp(m1.mpts)}", "true,3,9");
+  ok("g1 element  ", "{len(s1.ops)},{s1.ops[0]?.ow},{totp(s1.ops[0]?.opts)},{s1.ops[0]?.pn.pk}", "1,3,9,1");
+
+  // g2: (3,1),(4,2) → totp 10; widths 0.5 + 1.5.  With n = 1 the widths stay empty.
+  s2 = Sc { ops: [], seen: 0 };
+  m2 = g2(s2, 3);
+  ok("g2 result   ", "{len(m2.mpts)},{totp(m2.mpts)}", "2,10");
+  ok("g2 element  ", "{s2.ops[0]?.ow},{totp(s2.ops[0]?.opts)},{len(s2.ops[0]?.wid)},{totw(s2.ops[0]?.wid)},{s2.ops[0]?.pn.pk}", "7,10,2,2,2");
+  m2b = g2(s2, 1);
+  ok("g2 no widths", "{len(m2b.mpts)},{totp(m2b.mpts)}", "2,6");
+  ok("g2 second   ", "{len(s2.ops)},{len(s2.ops[1]?.wid)}", "2,0");
+
+  // g3: n = 5 returns early and appends nothing; n = 2 appends two points.
+  s3 = Sc { ops: [], seen: 0 };
+  m3 = g3(s3, 5);
+  ok("g3 early    ", "{m3.bad},{len(m3.mpts)}", "true,0");
+  ok("g3 untouched", "{len(s3.ops)}", "0");
+  m3b = g3(s3, 2);
+  ok("g3 appended ", "{m3b.bad},{len(m3b.mpts)},{totp(m3b.mpts)}", "false,2,3");
+  ok("g3 container", "{len(s3.ops)}", "1");
+
+  // g4: `seen` is the length BEFORE the append.
+  s4 = Sc { ops: [Op { ow: 1 }], seen: 0 };
+  m4 = g4(s4, 3);
+  ok("g4          ", "{len(m4.mpts)},{totp(m4.mpts)}", "3,9");
+  ok("g4 container", "{s4.seen},{len(s4.ops)}", "1,2");
+
+  // g5: (3,3),(4,0) → totp 10.
+  s5 = Sc { ops: [], seen: 0 };
+  m5 = g5(s5, 3);
+  ok("g5          ", "{len(m5.mpts)},{totp(m5.mpts)}", "2,10");
+  ok("g5 element  ", "{totp(s5.ops[0]?.opts)}", "10");
+
+  // g6: the first element's points scaled: (0,0),(10,2),(20,4) → 36.
+  s6 = Sc { ops: [], seen: 0 };
+  s6.ops += [Op { opts: mkpts(3), ow: 1 }];
+  m6 = g6(s6);
+  ok("g6          ", "{len(m6.mpts)},{totp(m6.mpts)}", "3,36");
+  ok("g6 elements ", "{totp(s6.ops[0]?.opts)},{totp(s6.ops[1]?.opts)}", "9,36");
+
+  // g7: 4 points → 400 + 18.
+  s7 = Sc { ops: [], seen: 0 };
+  ok("g7          ", "{g7(s7, 4)},{totp(s7.ops[0]?.opts)}", "418,18");
+
+  // g8: its record is kept in a collection, so the exit's copy is a real consumer.
+  s8 = Sc { ops: [], seen: 0 };
+  keep8: vector<Mark> = [];
+  keep8 += [g8(s8, 3)];
+  keep8[0]?.mpts += [Pt { px: 100, py: 0 }];
+  ok("g8          ", "{totp(keep8[0]?.mpts)},{totp(s8.ops[0]?.opts)}", "109,9");
+
+  // g9: k = 1, 2, 3 → t 6, and the elements hold 0, 3, 9.
+  s9 = Sc { ops: [], seen: 0 };
+  ok("g9          ", "{g9(s9, 3)},{len(s9.ops)},{totp(s9.ops[0]?.opts)},{totp(s9.ops[1]?.opts)},{totp(s9.ops[2]?.opts)}", "6,3,0,3,9");
+
+  // g10: widths 0.5 + 1.5 + 2.5.
+  s10 = Sc { ops: [], seen: 0 };
+  m10 = g10(s10, 3);
+  ok("g10         ", "{len(m10.mpts)},{totp(m10.mpts)}", "3,9");
+  ok("g10 widths  ", "{len(s10.ops[0]?.wid)},{totw(s10.ops[0]?.wid)}", "3,4.5");
+
+  // g11: one element of three points → 1000 + 9.
+  ok("g11         ", "{g11(3)}", "1009");
+
+  // g13: n = 2 → two points; n = 0 → none.
+  s13 = Sc { ops: [], seen: 0 };
+  m13 = g13(s13, 2);
+  ok("g13 filled  ", "{len(m13.mpts)},{totp(m13.mpts)}", "2,3");
+  m13b = g13(s13, 0);
+  ok("g13 empty   ", "{len(m13b.mpts)}", "0");
+  ok("g13 elements", "{len(s13.ops)},{len(s13.ops[1]?.opts)}", "2,0");
+
+  // g14: k = 0 and k = 2 append (1 and 3 points); k = 1 and 3 continue.
+  s14 = Sc { ops: [], seen: 0 };
+  ok("g14         ", "{g14(s14, 4)},{len(s14.ops)},{totp(s14.ops[0]?.opts)},{totp(s14.ops[1]?.opts)}", "2,2,0,9");
+
+  // g15 — g3's early return, a hundred times over one container: an element minted before
+  // the return and never finished would strand what the call built inside `s15`'s store,
+  // one record per call, and the census is what sees it.
+  s15 = Sc { ops: [], seen: 0 };
+  g15_t = g15_runs(s15, 10);
+  c15a = census_records();
+  g15_t += g15_runs(s15, 100);
+  c15b = census_records();
+  ok("g15 no growth", "{c15b - c15a},{g15_t},{len(s15.ops)}", "0,0,0");
+
+  println("164-element-place: every cell holds");
+}

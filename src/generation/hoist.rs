@@ -3863,10 +3863,15 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
 /// `field_off` of the element `elm` appended to `out`.
 pub struct ElemBind {
     pub tmp: u16,
+    /// The declaration's key: the `__vdb` witness of a literal-built temp, or — `from_call` —
+    /// the hidden return buffer of a temp a call fills (@PLN164 E-2).
     pub vdb: u16,
     pub field_off: i32,
     /// This temp's declaration carries the element MINT (the first temp in decl order).
     pub first: bool,
+    /// The temp is `tmp = g(…, vdb)`: the call is handed the element's field as its buffer,
+    /// and `vdb` is never minted.
+    pub from_call: bool,
 }
 
 /// @PLN157 § V-z — an admitted element-first APPEND: the element minted at the first
@@ -3876,6 +3881,9 @@ pub struct ElemBind {
 pub struct ElemFirst {
     pub out: u16,
     pub out_tp: i32,
+    /// The collection's field NUMBER in `out`'s record (@PLN164 E-2), or `65535` when `out`
+    /// is the vector itself — the mint's own third argument.
+    pub out_fld: i32,
     pub elm: u16,
     pub prealloc_size: i32,
     pub binds: Vec<ElemBind>,
@@ -3891,6 +3899,9 @@ pub struct ElemFirstMap {
     pub by_vdb: HashMap<u16, usize>,
     pub by_elm: HashMap<u16, usize>,
     pub elms: HashSet<u16>,
+    /// @PLN164 E-2 — a call-filled temp's hidden buffer → the element and the field offset the
+    /// call is handed in its place.
+    pub buf_place: HashMap<u16, (u16, i32)>,
 }
 
 fn call_named<'v>(stmt: &'v Value, data: &Data, name: &str) -> Option<&'v [Value]> {
@@ -3918,25 +3929,118 @@ fn as_int(v: Option<&Value>) -> Option<i32> {
     }
 }
 
+/// Default-ON; `LOFT_NO_ELEMENT_PLACE=1` keeps § V-z to what it admitted before @PLN164 E-2 —
+/// a literal-built temp appended into a LOCAL vector — and is the first bisect step for a
+/// wrong, empty or leaked vector field in an element appended to a parameter's collection, or
+/// built by a call (read once, generation time, `--native` only).
+fn element_place_on() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| !std::env::var("LOFT_NO_ELEMENT_PLACE").is_ok_and(|v| v != "0"))
+}
+
+/// `if OpRefIsNull(buf) { buf = null }` — a lazy hidden buffer's mint (`@FR-O-LazyBuffer`),
+/// the statement that stands in front of the call it serves.  Answers `buf`.
+fn lazy_buffer_guard(stmt: &Value, data: &Data) -> Option<u16> {
+    let Value::If(cond, then_v, else_v) = stmt.unspan() else {
+        return None;
+    };
+    if !matches!(else_v.unspan(), Value::Null) {
+        return None;
+    }
+    let buf = as_var(call_named(cond, data, "OpRefIsNull")?.first())?;
+    let only_null_set = |ops: &[Value]| {
+        matches!(ops, [one] if matches!(one.unspan(), Value::Set(w, x)
+            if *w == buf && matches!(x.unspan(), Value::Null)))
+    };
+    let ok = match then_v.unspan() {
+        Value::Insert(ops) => only_null_set(ops),
+        Value::Block(bl) => only_null_set(&bl.operators),
+        Value::Set(w, x) => *w == buf && matches!(x.unspan(), Value::Null),
+        _ => false,
+    };
+    ok.then_some(buf)
+}
+
+/// Does user function `g` FILL the buffer it is handed rather than mint into it?  The same
+/// positive test `(R-Place)`'s buffer-is-the-place clause reads (`Parser::buffer_is_the_place`):
+/// a loft-defined body with no `OpDatabase` into any argument slot.  A callee returning a vector
+/// literal mints into its buffer and would mint over the element's field.
+fn fills_its_buffer(data: &Data, g: u32) -> bool {
+    if (g as usize) >= data.definitions.len() {
+        return false;
+    }
+    let def = data.def(g);
+    if !def.is_loft_defined() || matches!(def.code(), Value::Null) {
+        return false;
+    }
+    let vars = def.variables();
+    !def.code().any_node(&mut |n| {
+        call_named(n, data, "OpDatabase")
+            .or_else(|| call_named(n, data, "OpDatabaseNP"))
+            .is_some_and(|a| as_var(a.first()).is_some_and(|w| vars.is_argument(w)))
+    })
+}
+
+/// Does `v` carry a jump that leaves it — a `return`, or a `break`/`continue` aimed past the
+/// loops `v` itself holds?  Between a temp's declaration and its append such a jump would leave
+/// the early element minted and unfinished, holding what the temp built.
+fn jumps_out(v: &Value) -> bool {
+    fn walk(v: &Value, depth: u16) -> bool {
+        match v.unspan() {
+            Value::Return(_) => true,
+            Value::Break(n) | Value::Continue(n) => *n >= depth,
+            Value::Loop(bl) => bl.operators.iter().any(|o| walk(o, depth + 1)),
+            other => {
+                let mut found = false;
+                other.for_each_child(&mut |c| found |= walk(c, depth));
+                found
+            }
+        }
+    }
+    walk(v, 0)
+}
+
 /// @PLN157 § V-z (`@FR-R-ElemFirst`) — pair the temps with their one consuming append.
 ///
-/// Gates, each carried by a cell: the temp's declaration (`OpDatabase(vdb) ·
-/// Set(tmp, OpGetField(vdb)) · OpSetInt4(vdb, 0, 0)`) and the append group
-/// (`OpPreAlloc(out, 1) · Set(elm, OpNewRecord(out)) · zeros · appends · finish`) are
-/// top-level statements of the SAME block (an append under an `if` arm declines — the
-/// early mint would strand an unfinished element per skipped iteration, c7); nothing
-/// between them mentions `out` (an early mint changes what `len(out)` answers, c5); the
-/// temp's whole-function uses reconcile to its build mentions plus the ONE
-/// `OpAppendVector` (a read after the append or a second append declines, c3/c4);
-/// `out` is an owned plain vector never rebound, its element a plain struct.
-pub fn element_first(data: &Data, def_nr: u32) -> ElemFirstMap {
+/// Gates, each carried by a cell: the temp's declaration and the append group are top-level
+/// statements of the SAME block (an append under an `if` arm declines — the early mint would
+/// strand an unfinished element per skipped iteration, c7), and no statement between them
+/// names `out` (an early mint changes what `len(out)` answers, c5) or jumps out of the block
+/// (the same stranding, by a `return`, `break` or `continue`); the temp's whole-function uses
+/// reconcile to its build mentions plus the ONE `OpAppendVector` (a read after the append or a
+/// second append declines, c3/c4); `out` is never rebound and its element a plain struct.
+///
+/// Two declarations are recognised.  A LITERAL-built temp: `OpDatabase(vdb) · Set(tmp,
+/// OpGetField(vdb)) · OpSetInt4(vdb, 0, 0)`.  And (@PLN164 E-2, `LOFT_NO_ELEMENT_PLACE`) a
+/// temp a CALL fills: `if OpRefIsNull(buf) { buf = null } · Set(tmp, g(…, buf))`, where `g`
+/// fills the buffer it is handed ([`fills_its_buffer`]), no other argument names `out`, and
+/// `buf` serves that call alone (its other mentions are frees and identity tests) — the call
+/// is handed the element's field instead, and `buf` is never minted.
+///
+/// Two destinations: a local vector (`OpPreAllocVector(out, 1, size) · Set(elm,
+/// OpNewRecord(out, tp, 65535))`), and (E-2) a collection FIELD of a record variable
+/// (`Set(elm, OpNewRecord(out, tp, fld))`) whose elements are stored inline.
+///
+/// An admitted function's EXIT copies of a temp are not uses (`views`): the value form drops
+/// them — the view leaf names the element's field instead (`@FR-O-ViewField`).
+pub fn element_first(
+    data: &Data,
+    stores: &Stores,
+    def_nr: u32,
+    views: Option<&ViewPlan>,
+) -> ElemFirstMap {
     let def = data.def(def_nr);
     let vars = def.variables();
     let body = def.code();
     if body.any_node(&mut |n| matches!(n, Value::Yield(_) | Value::Parallel(_))) {
         return ElemFirstMap::default();
     }
+    let place_on = element_place_on();
     let trace = std::env::var("LOFT_TRACE_ELEMFIRST").is_ok();
+    // The admitted exits: a temp's copy inside one is dropped by the value form.
+    let exits: HashSet<usize> = views
+        .map(|v| v.leaves.keys().map(|(addr, _)| *addr).collect())
+        .unwrap_or_default();
     // Rebind counts, decl-style Sets excluded (the move-append convention).
     let mut set_counts: HashMap<u16, u32> = HashMap::new();
     body.any_node(&mut |n| {
@@ -3958,6 +4062,54 @@ pub fn element_first(data: &Data, def_nr: u32) -> ElemFirstMap {
         }
         false
     });
+    // Mentions of `w` outside the admitted exits.
+    let uses = |w: u16| -> u32 {
+        fn walk(n: &Value, w: u16, exits: &HashSet<usize>, total: &mut u32) {
+            if let Value::Block(bl) = n
+                && exits.contains(&(std::ptr::from_ref(&**bl) as usize))
+            {
+                return;
+            }
+            if matches!(n, Value::Var(x) if *x == w) {
+                *total += 1;
+            }
+            n.for_each_child(&mut |c| walk(c, w, exits, total));
+        }
+        let mut total = 0;
+        walk(body, w, &exits, &mut total);
+        total
+    };
+    // A call-filled temp's buffer serves the call alone: every other mention of it is a free
+    // or an identity test, which a never-minted buffer answers as nothing.
+    let buffer_serves_one_call = |buf: u16| -> bool {
+        let mut total = 0u32;
+        let mut released = 0u32;
+        let mut calls = 0u32;
+        body.any_node(&mut |n| {
+            match n {
+                Value::Var(w) if *w == buf => total += 1,
+                Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                    let callee = data.def(*d);
+                    let is_release = matches!(
+                        callee.name(),
+                        "OpFreeRef" | "OpFreeRefIfDistinct" | "OpDistinctStore" | "OpRefIsNull"
+                    );
+                    for a in args {
+                        if matches!(a.unspan(), Value::Var(w) if *w == buf) {
+                            if is_release {
+                                released += 1;
+                            } else if callee.is_loft_defined() {
+                                calls += 1;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            false
+        });
+        calls == 1 && total == released + calls
+    };
     let mut out_map = ElemFirstMap::default();
     body.any_node(&mut |n| {
         let Value::Block(bl) = n else { return false };
@@ -3965,8 +4117,9 @@ pub fn element_first(data: &Data, def_nr: u32) -> ElemFirstMap {
         let code_idx: Vec<usize> = (0..ops.len())
             .filter(|j| !matches!(ops[*j].unspan(), Value::Line(_)))
             .collect();
-        // Temp declarations in this list: tmp -> (vdb, position in code_idx).
-        let mut decls: HashMap<u16, (u16, usize)> = HashMap::new();
+        // Temp declarations in this list: tmp -> (key var, first position, last position,
+        // the call's arguments when a call fills it).
+        let mut decls: HashMap<u16, (u16, usize, usize, Option<&[Value]>)> = HashMap::new();
         for (k, &j) in code_idx.iter().enumerate() {
             if let Some(args) = call_named(&ops[j], data, "OpDatabase")
                 && let Some(vdb) = as_var(args.first())
@@ -3979,55 +4132,108 @@ pub fn element_first(data: &Data, def_nr: u32) -> ElemFirstMap {
                 && call_named(&ops[code_idx[k + 2]], data, "OpSetInt4")
                     .is_some_and(|a| as_var(a.first()) == Some(vdb))
             {
-                decls.insert(*tmp, (vdb, k));
+                decls.insert(*tmp, (vdb, k, k + 2, None));
+            } else if place_on
+                && let Some(buf) = lazy_buffer_guard(&ops[j], data)
+                && k + 1 < code_idx.len()
+                && let Value::Set(tmp, rhs) = ops[code_idx[k + 1]].unspan()
+                && let Value::Call(g, gargs) = rhs.unspan()
+                && fills_its_buffer(data, *g)
+                && data
+                    .def(*g)
+                    .hidden_return_buffer_attr()
+                    .is_some_and(|i| as_var(gargs.get(i)) == Some(buf))
+                && vars.tp(*tmp).depend() == [buf]
+                && buffer_serves_one_call(buf)
+            {
+                decls.insert(*tmp, (buf, k, k + 1, Some(gargs.as_slice())));
             }
         }
         if decls.is_empty() {
             return false;
         }
-        // Append groups: reservation + mint + zeros/appends/sets + finish.
+        // Append groups: (reservation +) mint + field writes + finish.
         for (k, &j) in code_idx.iter().enumerate() {
-            let Some(pa) = call_named(&ops[j], data, "OpPreAllocVector") else {
+            // The mint, with the reservation that precedes it for a local vector.
+            let (mint_k, out, out_fld, size) =
+                if let Some(pa) = call_named(&ops[j], data, "OpPreAllocVector") {
+                    let (Some(out), Some(size)) = (as_var(pa.first()), as_int(pa.get(2))) else {
+                        continue;
+                    };
+                    if as_int(pa.get(1)) != Some(1) || k + 1 >= code_idx.len() {
+                        continue;
+                    }
+                    (k + 1, out, 65535, size)
+                } else if place_on
+                    && let Value::Set(_, m) = ops[j].unspan()
+                    && let Some(margs) = call_named(m, data, "OpNewRecord")
+                    && let (Some(out), Some(fld)) = (as_var(margs.first()), as_int(margs.get(2)))
+                    && fld != 65535
+                {
+                    (k, out, fld, 0)
+                } else {
+                    continue;
+                };
+            let Value::Set(elm, mint) = ops[code_idx[mint_k]].unspan() else {
                 continue;
             };
-            let Some(out) = as_var(pa.first()) else {
+            let Some(margs) = call_named(mint, data, "OpNewRecord") else {
                 continue;
             };
-            if as_int(pa.get(1)) != Some(1) {
-                continue;
-            }
-            let Some(size) = as_int(pa.get(2)) else {
-                continue;
-            };
-            if k + 1 >= code_idx.len() {
-                continue;
-            }
-            let Value::Set(elm, mint) = ops[code_idx[k + 1]].unspan() else {
-                continue;
-            };
-            let Value::Call(md, margs) = mint.unspan() else {
-                continue;
-            };
-            if data.def(*md).name() != "OpNewRecord"
-                || as_var(margs.first()) != Some(out)
-                || as_int(margs.get(2)) != Some(65535)
-            {
+            if as_var(margs.first()) != Some(out) || as_int(margs.get(2)) != Some(out_fld) {
                 continue;
             }
             let Some(out_tp) = as_int(margs.get(1)) else {
                 continue;
             };
-            // `out`: owned plain vector, never rebound, element a plain struct.
-            if set_counts.contains_key(&out)
-                || !matches!(vars.tp(out).peel_link(), Type::Vector(e, _)
-                    if plain_record_type(data, e).is_some())
-            {
+            if set_counts.contains_key(&out) {
                 continue;
             }
-            // Scan the group: paired appends, and the finish that closes it.
+            if out_fld == 65535 {
+                // `out`: a plain vector whose element is a plain struct.
+                if !matches!(vars.tp(out).peel_link(), Type::Vector(e, _)
+                    if plain_record_type(data, e).is_some())
+                {
+                    continue;
+                }
+            } else {
+                // `out`: a record variable whose collection field stores plain structs INLINE.
+                let (Ok(ptp), Ok(fld)) = (u16::try_from(out_tp), u16::try_from(out_fld)) else {
+                    continue;
+                };
+                if plain_record_type(data, vars.tp(out)).is_none()
+                    || (ptp as usize) >= stores.types.len()
+                {
+                    continue;
+                }
+                let coll = stores.field_type(ptp, fld);
+                if coll == u16::MAX
+                    || !matches!(
+                        stores.types.get(coll as usize).map(|t| &t.parts),
+                        Some(crate::database::Parts::Vector(_))
+                    )
+                {
+                    continue;
+                }
+                let content = stores.content(coll);
+                if content == u16::MAX
+                    || stores.is_linked(content)
+                    || !matches!(
+                        stores.types.get(content as usize).map(|t| &t.parts),
+                        Some(crate::database::Parts::Struct(_))
+                    )
+                {
+                    continue;
+                }
+            }
+            // Scan the group: paired appends, and the finish that closes it.  Under E-2 a
+            // statement that names neither `out` nor the element's paired fields, and jumps
+            // nowhere, is part of the group too — the literal's nested records and scalar
+            // writes run where they ran, after the mint.
             let mut appended: Vec<(u16, i32)> = Vec::new();
+            let mut others: Vec<usize> = Vec::new();
             let mut fin = None;
-            for &j2 in code_idx.iter().skip(k + 2) {
+            for &j2 in code_idx.iter().skip(mint_k + 1) {
                 let stmt = &ops[j2];
                 if let Some(a) = call_named(stmt, data, "OpSetInt4")
                     && as_var(a.first()) == Some(*elm)
@@ -4056,36 +4262,73 @@ pub fn element_first(data: &Data, def_nr: u32) -> ElemFirstMap {
                     && as_var(a.get(1)) == Some(*elm)
                 {
                     fin = Some(j2);
+                    break;
+                }
+                if place_on && !stmt.reads_var(out) && !jumps_out(stmt) {
+                    others.push(j2);
+                    continue;
                 }
                 break;
             }
             if fin.is_none() || appended.is_empty() {
                 continue;
             }
-            // Pair each appended temp with a declaration EARLIER in this list, and
-            // require the stretch between declaration and reservation clean of `out`.
+            // Nothing else in the group reaches a paired field: the only writes to it are the
+            // suppressed zero and the paired copy.
+            let paired: HashSet<i32> = appended.iter().map(|(_, o)| *o).collect();
+            if others.iter().any(|&j2| {
+                ops[j2].any_node(&mut |m| {
+                    matches!(m, Value::Call(d, a)
+                        if (*d as usize) < data.definitions.len()
+                            && data.def(*d).name() == "OpGetField"
+                            && as_var(a.first()) == Some(*elm)
+                            && as_int(a.get(1)).is_some_and(|o| paired.contains(&o)))
+                })
+            }) {
+                if trace {
+                    eprintln!(
+                        "[elemfirst] {}: a paired field is written twice",
+                        def.name()
+                    );
+                }
+                continue;
+            }
+            // Pair each appended temp with a declaration EARLIER in this list.
             let mut binds: Vec<ElemBind> = Vec::new();
             let mut first_decl = usize::MAX;
             let mut sound = true;
             for (tmp, off) in &appended {
-                let Some((vdb, dk)) = decls.get(tmp).copied() else {
+                let Some((key, dk, dend, call)) = decls.get(tmp).copied() else {
+                    // Under E-2 a value this list does not declare keeps its copy at the
+                    // append, into the early element; before it, it declined the group.
+                    if place_on && appended.iter().filter(|(t, _)| t == tmp).count() == 1 {
+                        continue;
+                    }
                     sound = false;
                     break;
                 };
-                if dk + 2 >= k {
-                    // the declaration must fully precede the reservation
+                if dend >= k {
+                    // the declaration must fully precede the group
+                    sound = false;
+                    break;
+                }
+                // A call's other arguments may not name the destination.
+                if let Some(cargs) = call
+                    && cargs.iter().any(|a| a.reads_var(out))
+                {
                     sound = false;
                     break;
                 }
                 first_decl = first_decl.min(dk);
                 binds.push(ElemBind {
                     tmp: *tmp,
-                    vdb,
+                    vdb: key,
                     field_off: *off,
                     first: false,
+                    from_call: call.is_some(),
                 });
             }
-            if !sound {
+            if !sound || binds.is_empty() {
                 if trace {
                     eprintln!("[elemfirst] {}: append pairing incomplete", def.name());
                 }
@@ -4095,7 +4338,10 @@ pub fn element_first(data: &Data, def_nr: u32) -> ElemFirstMap {
             // first would put the prelude before `out`'s binding exists (the sqldb
             // schema fixture's E0425, and a mint into a store not yet allocated).
             // `out` declared in an ENCLOSING block is not in this list and passes.
-            if decls.get(&out).is_some_and(|(_, ok)| *ok >= first_decl) {
+            if decls
+                .get(&out)
+                .is_some_and(|(_, ok, _, _)| *ok >= first_decl)
+            {
                 if trace {
                     eprintln!(
                         "[elemfirst] {}: out declared after the first temp",
@@ -4104,20 +4350,23 @@ pub fn element_first(data: &Data, def_nr: u32) -> ElemFirstMap {
                 }
                 continue;
             }
-            // No `out` mention strictly between the first declaration and the group.
-            for &j2 in &code_idx[first_decl + 3..k] {
-                ops[j2].any_node(&mut |m| {
-                    if matches!(m, Value::Var(w) if *w == out) {
-                        sound = false;
-                        return true;
-                    }
-                    false
+            // Between the first declaration and the group: no naming of `out` outside the
+            // declarations themselves, and no jump out of the list.
+            for &j2 in &code_idx[first_decl..k] {
+                let is_call_decl = binds.iter().any(|b| {
+                    b.from_call
+                        && decls.get(&b.tmp).is_some_and(|(_, dk, dend, _)| {
+                            code_idx[*dk] == j2 || code_idx[*dend] == j2
+                        })
                 });
+                if (!is_call_decl && ops[j2].reads_var(out)) || jumps_out(&ops[j2]) {
+                    sound = false;
+                }
             }
             if !sound {
                 if trace {
                     eprintln!(
-                        "[elemfirst] {}: out read between decl and append",
+                        "[elemfirst] {}: out read or a jump between decl and append",
                         def.name()
                     );
                 }
@@ -4127,15 +4376,26 @@ pub fn element_first(data: &Data, def_nr: u32) -> ElemFirstMap {
             // (between its own declaration and the group), the one append — and
             // nothing else (a later read, a second append, an escape all decline).
             for b in &binds {
-                let mut total = 0u32;
-                body.any_node(&mut |m| {
-                    if matches!(m, Value::Var(w) if *w == b.tmp) {
-                        total += 1;
+                // The declaration is the temp's ONLY binding: a rebind points the temp at
+                // another store, and the element — whose copy is suppressed — keeps what
+                // the declaration built (`p: vector = []; if c { p = mk() }` appended an
+                // empty vector wherever `c` held).  A call-filled temp's own `Set` is its one
+                // counted binding; a literal-built temp's is a declaration and uncounted.
+                let rebinds = set_counts.get(&b.tmp).copied().unwrap_or(0);
+                if rebinds != u32::from(b.from_call) {
+                    if trace {
+                        eprintln!(
+                            "[elemfirst] {}: {} is bound more than once",
+                            def.name(),
+                            vars.name(b.tmp)
+                        );
                     }
-                    false
-                });
+                    sound = false;
+                    continue;
+                }
+                let total = uses(b.tmp);
                 let mut allowed = 1u32; // the one OpAppendVector
-                let (_, dk) = decls[&b.tmp];
+                let (_, dk, _, _) = decls[&b.tmp];
                 for &j2 in &code_idx[dk + 1..k] {
                     ops[j2].any_node(&mut |m| {
                         if matches!(m, Value::Var(w) if *w == b.tmp) {
@@ -4147,11 +4407,16 @@ pub fn element_first(data: &Data, def_nr: u32) -> ElemFirstMap {
                 if total != allowed {
                     if trace {
                         eprintln!(
-                            "[elemfirst] {}: {} has uses beyond its build ({} vs {})",
+                            "[elemfirst] {}: {} has uses beyond its build ({} vs {}{})",
                             def.name(),
                             vars.name(b.tmp),
                             total,
-                            allowed
+                            allowed,
+                            if views.is_some() {
+                                ""
+                            } else {
+                                ", no view plan"
+                            }
                         );
                     }
                     sound = false;
@@ -4165,15 +4430,35 @@ pub fn element_first(data: &Data, def_nr: u32) -> ElemFirstMap {
             if let Some(b0) = binds.first_mut() {
                 b0.first = true;
             }
+            if trace {
+                eprintln!(
+                    "[elemfirst] {}: {} built in its element ({})",
+                    def.name(),
+                    binds
+                        .iter()
+                        .map(|b| vars.name(b.tmp))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    if out_fld == 65535 {
+                        "local vector"
+                    } else {
+                        "a record's collection"
+                    }
+                );
+            }
             let idx = out_map.pairs.len();
             for b in &binds {
                 out_map.by_vdb.insert(b.vdb, idx);
+                if b.from_call {
+                    out_map.buf_place.insert(b.vdb, (*elm, b.field_off));
+                }
             }
             out_map.elms.insert(*elm);
             out_map.by_elm.insert(*elm, idx);
             out_map.pairs.push(ElemFirst {
                 out,
                 out_tp,
+                out_fld,
                 elm: *elm,
                 prealloc_size: size,
                 binds,

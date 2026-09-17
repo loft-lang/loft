@@ -2080,7 +2080,12 @@ impl Output<'_> {
         self.elem_first = if self.element_first_disabled {
             hoist::ElemFirstMap::default()
         } else {
-            hoist::element_first(self.data, def_nr)
+            hoist::element_first(
+                self.data,
+                self.stores,
+                def_nr,
+                self.value_records.views.get(&def_nr),
+            )
         };
         self.complete_writes = if self.complete_write_disabled {
             hoist::CompleteWrites::default()
@@ -6666,7 +6671,9 @@ extern crate loft;"
                         // the first temp's declaration site, and each temp is bound
                         // there to its field slot: both lose their in-place `let`.
                         || self.elem_first.elms.contains(&v)
-                        || self.elem_first.pairs.iter().any(|p| p.binds.iter().any(|b| b.tmp == v))
+                        || self.elem_first.pairs.iter().any(|p| {
+                            p.binds.iter().any(|b| b.tmp == v && !b.from_call)
+                        })
                         || (returned_vars.contains(&v) && !vars.tp(v).depend().is_empty()))
                     && rust_type(vars.tp(v), &Context::Variable) == "DbRef"
                 {

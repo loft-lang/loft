@@ -770,12 +770,28 @@ panic's frame block read.  Switch `LOFT_NO_LEAF_CHAIN` (one step finer than
                  finish — by the prelude mint's prefill, a paired build, or the
                  kept sets.  Gates: declaration and append are top-level
                  statements of ONE block (an if-arm append strands unfinished
-                 elements per skipped iteration); nothing between them mentions
-                 `out`; the temp's whole-function mentions reconcile to its build
-                 plus the one copy (a later read or a second consuming append
-                 declines — though an INTERVENING append merely reads the slot and
-                 the later one may pair); `out` an owned never-rebound plain
-                 vector of a plain-struct element.  The interpreter keeps the
+                 elements per skipped iteration), and no statement between them
+                 jumps out of it (a `return`, `break` or `continue` strands the
+                 element the same way, holding what the temp built); nothing
+                 between them mentions `out`; the temp's declaration is its ONLY
+                 binding (a rebind points the temp at another store, and the
+                 element keeps what the declaration built); the temp's
+                 whole-function mentions reconcile to its build plus the one copy
+                 (a later read or a second consuming append declines — though an
+                 INTERVENING append merely reads the slot and the later one may
+                 pair), where an admitted function's own EXIT copies are not
+                 mentions (the value form drops them, `(O-ViewField)`); `out` is
+                 never rebound, and its element a plain struct stored inline.
+                 `out` is a local vector, or (@PLN164 E-2) a collection FIELD of a
+                 record variable — a parser appending into `sc.ops` — and the temp
+                 is a local built from a literal, or (E-2) the result of a call
+                 handed a hidden buffer that serves it alone: the call is then
+                 handed the element's field as that buffer, which is `(R-Place)`'s
+                 "the buffer IS the place" with the place made to exist by the
+                 early mint, and it needs `(R-Place)`'s callee condition — a
+                 callee that FILLS its buffer and never mints into it — and its
+                 argument condition — no other argument names `out`.  A value the
+                 list does not declare keeps its copy into the early element.  The interpreter keeps the
                  temp-store build and is the oracle.
 
   (R-ValueRecord) a function whose result is a PLAIN NO-HEAP RECORD of at most six
@@ -1012,7 +1028,17 @@ Two instruments check the assumptions, and the chapter is not complete without b
 
 ## Deviations
 
-**OPEN: 0** (2026-09-09).
+**OPEN: 0** (2026-09-17).
+
+- **D-rw-2 — OPENED AND CLOSED 2026-09-17 (loft#1552).**  `(R-ElemFirst)` says the temp is consumed
+  exactly once, and the gate counted its READS but never its BINDINGS: `p: vector<Pt> = [];
+  if c { p = mk(n) }; out += [Op { pts: p }]` bound `p` to the early element's field at the
+  declaration, the conditional rebind pointed `p` at the call's store, and the suppressed copy
+  left the element holding the empty vector — `len(out[0].pts)` 0 where the interpreter says 3
+  (`1000` for `1093` in the guard), silently, on `--native` since @PLN157 § V-z.  Found by
+  @PLN164 E-2's cell `g13`, which widened the same gate.  Closed at the gate: the declaration
+  must be the temp's only binding.  Guard
+  `tests/scripts/a-rebound-element-first-temp-keeps-its-copy.loft`.
 
 - **D-rw-1 — CLOSED 2026-09-09.**  `one_op_wrapper` asked the body's SHAPE and not
   the definition's ORIGIN, so a user function whose body is one op (`fn reader(w:

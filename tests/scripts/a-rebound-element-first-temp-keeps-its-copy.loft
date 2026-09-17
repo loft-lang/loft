@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1552, D-rw-2 (`@FR-R-ElemFirst`) — A REBOUND ELEMENT-FIRST TEMP KEEPS ITS COPY.  The
+// element-first build binds a vector local, at its declaration, to the field of an element
+// minted there, and drops the copy the append would make.  That is right only when the declaration is the local's
+// one binding: `p: vector<Pt> = []; if c { p = mk(n) }` rebinds `p` to the call's own store on
+// one path, and the element — whose copy was dropped — kept the empty vector the declaration
+// built.  Each cell appends a local that is rebound on some path, and reads the element back;
+// r3 is the control, a local built in place and never rebound.
+//
+// @falsified-at: f547cf1c4 — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   WITNESS: `r1 rebound  : 1,0,0, want 1,3,9` on the control — the element kept the empty
+//   vector the declaration built.
+
+struct Pt { px: integer = 0, py: integer = 0 }
+struct Op { opts: vector<Pt>, ow: integer = 0 }
+fn totp(v: const vector<Pt>) -> integer { t = 0; for p in v { t += p.px + p.py; } t }
+fn mkpts(n: integer) -> vector<Pt> {
+  o: vector<Pt> = [];
+  for i in 0..n { o += [Pt { px: i, py: i * 2 }]; }
+  o
+}
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+/// r1 — rebound under a condition.
+fn r1(n: integer) -> text {
+  out: vector<Op> = [];
+  r1_p: vector<Pt> = [];
+  if n > 0 { r1_p = mkpts(n); }
+  out += [Op { opts: r1_p, ow: n }];
+  "{len(out)},{len(out[0]?.opts)},{totp(out[0]?.opts)}"
+}
+/// r2 — rebound unconditionally after the declaration.
+fn r2(n: integer) -> text {
+  out: vector<Op> = [];
+  r2_p: vector<Pt> = [Pt { px: 9, py: 9 }];
+  r2_p = mkpts(n);
+  out += [Op { opts: r2_p, ow: n }];
+  "{len(out[0]?.opts)},{totp(out[0]?.opts)}"
+}
+/// r3 — the control: built in place, never rebound.
+fn r3(n: integer) -> text {
+  out: vector<Op> = [];
+  r3_p: vector<Pt> = [];
+  for i in 0..n { r3_p += [Pt { px: i, py: 1 }]; }
+  out += [Op { opts: r3_p, ow: n }];
+  "{len(out[0]?.opts)},{totp(out[0]?.opts)}"
+}
+
+fn main() {
+  // mkpts(3): (0,0),(1,2),(2,4) → 9.
+  ok("r1 rebound  ", r1(3), "1,3,9");
+  ok("r1 kept     ", r1(0), "1,0,0");
+  // mkpts(4) → 18; the literal's (9,9) is replaced, not appended to.
+  ok("r2          ", r2(4), "4,18");
+  // (0,1),(1,1),(2,1) → 6.
+  ok("r3 control  ", r3(3), "3,6");
+  println("rebound element-first temp: every cell holds");
+}
