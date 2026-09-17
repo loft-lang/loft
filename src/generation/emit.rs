@@ -3183,6 +3183,7 @@ impl Output<'_> {
         }
         for _ in 0..view_frames {
             self.vec_headers.pop();
+            self.vec_bases.pop();
         }
         if has_trailing_void && !return_value_is_return {
             self.indent(w)?;

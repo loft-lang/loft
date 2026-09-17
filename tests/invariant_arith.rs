@@ -99,8 +99,9 @@ fn the_tap_shape_memoises_its_invariant_part_at_the_innermost_loop() {
     let rust = emit("tap", &[]);
     let b = body(&rust, "n_m1");
     // The x loop's `yy * iw + xmin` and the ch loop's `yy * 2` — one memo each, declared
-    // at the loop that spells it and read once there.
-    assert_eq!(memos(b), (2, 2), "m1 memos:\n{b}");
+    // at the loop that spells it.  The x loop is a `R-BoundedNest` tap emitted TWICE — the
+    // plain arm and the checked `else` — so its memo is read in both; the ch loop's once.
+    assert_eq!(memos(b), (2, 3), "m1 memos:\n{b}");
     assert!(
         b.contains("((var_yy), (var_iw))), (var_xmin))); __ia_"),
         "the tap's memo evaluates `yy * iw + xmin` at its first use:\n{b}"

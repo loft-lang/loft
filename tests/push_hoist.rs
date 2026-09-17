@@ -19,7 +19,8 @@ const CELLS: &str =
 /// `(function, push headers bound, hoisted pushes emitted, plain headers bound)` — the
 /// predictions written beside the cells.
 const EXPECTED: &[(&str, usize, usize, usize)] = &[
-    ("n_c1", 2, 2, 0), // the two constant-fill comprehensions
+    ("n_c1", 0, 0, 0), // the two constant-fill comprehensions are `[x; n]` repeat literals
+    // since the field fill (2026-09-17, `LOFT_NO_FIELD_FILL`): no push loop is emitted at all
     ("n_c2", 1, 1, 1), // out pushed, xs read: two owners, both hoisted
     ("n_c3", 1, 1, 0), // the value READS the pushed vector: since § V-w the read rides a
     // pre-push TEMP instead of a per-iteration whole-vector copy, so the loop hoists —

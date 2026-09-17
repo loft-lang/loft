@@ -172,7 +172,14 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  for the inner loop's extent alone: the enclosing loop's growth
                  happens outside it.  A base is valid exactly while no store's buffer
                  is reallocated, which is what "grows no store" secures; the verify
-                 form re-derives it at every use.
+                 form re-derives it at every use.  A callee TWIN (R-Inputs) takes,
+                 beside each header input, that header's base — the caller's held
+                 base where its loop holds one, else a base derived from the held
+                 header at the call — and every fused read and write of the path
+                 inside the twin, a view of the path (R-View) included, goes through
+                 it: an admitted callee (R-Callee) is store-free or writes only in
+                 place, so no store reallocates for the call's duration, which is the
+                 same condition the loop's base rests on.
 
   (R-Counter)    a counted range's counters — its `#index`, the `next` counter of a
                  computed start, and the loop variable — are never the sentinel: an
@@ -427,6 +434,18 @@ replacement, whose variable numbers are the caller's), the key by
 call ask.  A scalar input still needs a leaf variable — its key carries a variable,
 not a path.  A return-buffer writer (R-Callee's second half) is admitted like any
 other: its write set is its buffer's type whole, which no parameter's field shares.
+**The base half** (2026-09-18, (R-Base)'s twin clause): a header input alone left the
+twin resolving the store per element — `composite`'s `get_pixel`/`set_pixel` twins ran
+`get_elem_hoisted` through `allocations[k].ptr` on every pixel, and LLVM cannot hoist that
+load (the pointer is loaded from memory the twin's own writes may alias; LTO and a
+`noalias` ABI were both measured as no gain).  So the twin's signature carries `__ib_k:
+*const u8` after its headers, `twin_call_inputs` passes the loop's `__vb_N` or
+`vector::vec_base(&hdr, …)` at the call, `push_twin_frames` binds each base under the
+header's key, and `bind_view_header` shares a held base with the view it binds
+(`__vb_N = __ib_k`), so `ops::vector_ops`' fused read and write take `get_elem_at` /
+`vec_set_at` through the base exactly as inside a growth-free loop.  Switch
+`LOFT_NO_TWIN_BASE`; falsifier `LOFT_HOIST_VERIFY=1` (the base re-derived at every use);
+cells `tests/scripts/157-twin-base.loft`, pins `tests/twin_base.rs`.
 
 ### A push keeps its own header current
 

@@ -170,6 +170,25 @@ fn functions(rust: &str) -> HashMap<String, (String, usize)> {
     map
 }
 
+/// The signature with the `@FR-R-Base` twin-clause bases (`, __ib_k: *const u8`) removed:
+/// these pins state the INPUTS, and a base accompanies every header input by construction
+/// (`tests/twin_base.rs` pins the bases themselves).
+fn without_bases(sig: &str) -> String {
+    let mut out = String::new();
+    let mut rest = sig;
+    while let Some(i) = rest.find(", __ib_") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 2..];
+        let end = after
+            .find(": *const u8")
+            .expect("a base input is `*const u8`")
+            + ": *const u8".len();
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 fn cells() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS)
 }
@@ -184,7 +203,7 @@ fn each_callee_earns_exactly_the_twin_predicted_and_each_call_takes_it() {
             .get(&twin)
             .unwrap_or_else(|| panic!("{twin} was not emitted"));
         assert!(
-            sig.contains(&format!(", {params})")),
+            without_bases(sig).contains(&format!(", {params})")),
             "{twin}: the inputs must be `{params}`, got:\n{sig}"
         );
     }
@@ -215,7 +234,7 @@ fn a_path_argument_hands_its_header_to_the_twin() {
             .get(&twin)
             .unwrap_or_else(|| panic!("{twin} was not emitted"));
         assert!(
-            sig.contains(", __ih_0: vector::VecHeader)"),
+            without_bases(sig).contains(", __ih_0: vector::VecHeader)"),
             "{twin}: one header input, got:\n{sig}"
         );
     }

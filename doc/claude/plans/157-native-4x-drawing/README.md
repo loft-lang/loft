@@ -43,6 +43,12 @@ step-1 arm, 14/14 hashes): `render_marks` 2.79–2.86× → **1.54–1.74×**, `
 (Perf-Weight) median bar met on this lane, `lock_curved` (3.85×) the one row still over 3×.  Switches `LOFT_NO_BOUNDED_NEST`, `LOFT_NO_NEST_RAW_READS`, `LOFT_NO_SELF_APPEND_BLOCK`;
 falsifier `LOFT_HOIST_VERIFY=1` (`ops::nest_verify`, and the raw read compared with the checked
 one); pins `tests/bounded_nest.rs`; cells `tests/scripts/157-bounded-nest.loft` n1–n23.
+**`R-Base`'s twin clause SHIPPED 2026-09-18** (`formal/rewrites.md`, unit (1) of the
+`composite` pricing below): a § V-p twin takes the element BASE of each header it is handed
+(`__ib_k`), a view of the path inside it shares that base, and its fused reads and writes take
+`get_elem_at` / `vec_set_at` — the caller passes its held `__vb_N` or derives one from the held
+header at the call.  Measured on the arm64 lane, two interleaved rounds against the switch, 14/14 hashes: `composite` **114.5 → 91.3 µs (−20 %), 2.98× → 2.40×**; `lock` 1.83× → 1.76×, `lock_curved` 2.16× → 2.09×, `render_lock` 1.80× → 1.72×, the rest within their swing; **median 1.74×, every row under 3×**.  Switch `LOFT_NO_TWIN_BASE`; falsifier `LOFT_HOIST_VERIFY=1`;
+cells `tests/scripts/157-twin-base.loft` t1–t10, pins `tests/twin_base.rs`.
 **§ V-ab SHIPPED 2026-09-13** (DESIGN.md § V-ab): a counted `for` whose start is not a
 literal runs a second counter seeded AT the start instead of a null-encoded one — no null
 test per iteration on either backend (bare loop −32 %, a contiguous fill −18 %, the
@@ -1127,7 +1133,8 @@ patches on one emission, hash `2a3aa61` throughout):
   u8` beside `__ih_k`, its body a `vec_bases` frame so the fused read/write take
   `get_elem_at`/`vec_set_at`; a caller passes its held base, or derives one from the header at
   the call when its loop is not growth-free — sound either way, because a twin is store-free or
-  in-place-only, so nothing reallocates for the call's duration.  Unit (2) is C120's next range
+  in-place-only, so nothing reallocates for the call's duration.  **Unit (1) BUILT 2026-09-18**
+  (`LOFT_NO_TWIN_BASE`; § Status): `composite` 114.5 → 91.3 µs (−20 %), 2.98× → 2.40×, `lock`/`lock_curved`/`render_lock` −4 % each, 14/14 hashes.  Short of the hand patch's 84–87 because `composite_layer`'s own callers grow a store and so derive the base at the call rather than passing a held one; unit (2) is what remains.  Unit (2) is C120's next range
   proof: `x & K` bounds `x` to `[0, K]`, so a chain of `+ - *` over masked leaves and literals
   whose interval fits emits plain — `rgba`, `color_*`, the alpha-over arithmetic and
   `lock_layer`'s `chan()` are all of that shape; it needs a per-function result interval for the

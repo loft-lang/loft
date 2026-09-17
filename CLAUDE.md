@@ -787,6 +787,14 @@ loop; `LOFT_HOIST_VERIFY=1` re-derives every base at every use and panics when a
 grew under one, and `LOFT_TRACE_BASE=1` prints each loop's growth-free verdict.
 `LOFT_NO_NN_FAST=1` (P3c) also restores the nullable-aware counter step and the guarded
 literal division that § V-aj (`@FR-R-Counter`, `@FR-R-LitDiv`) replaced.
+**`LOFT_NO_TWIN_BASE=1`** (`@FR-R-Base`'s twin clause, default-ON, generation time) makes
+a callee twin (`__inv`) take its header inputs alone again, every element read or write
+inside it resolving the store — with it off, the twin takes each header's element BASE
+beside it (`__ib_k`; the caller's held `__vb_N`, or one derived from the held header at the
+call), a view of the path inside the twin shares it, and the fused reads and writes are one
+bounds test and one load or store (`composite`'s pixel accessors) — and is the first bisect
+step for a wrong element read or write inside a function a hoisting loop calls;
+`LOFT_HOIST_VERIFY=1` re-derives the base at every use.
 **`LOFT_NO_LOOP_BUFFER_REUSE=1`** (@PLN157 § V-al, `@FR-R-LoopBuffer`, default-ON,
 generation time) makes a vector local declared `[]` INSIDE a loop re-mint its per-site
 buffer every iteration again — with it off, the buffer's store and its vector survive the

@@ -686,6 +686,9 @@ pub struct Output<'a> {
     /// `LOFT_NO_NEST_RAW_READS=1` — the plain arm keeps its bounds-tested reads and null
     /// selects (step 1's form).
     pub nest_raw_disabled: bool,
+    /// `LOFT_NO_TWIN_BASE=1` — a twin takes its header inputs alone again, and every element
+    /// read or write inside it resolves the store (`@FR-R-Base`'s twin clause off).
+    pub twin_base_disabled: bool,
     /// @PLN157 P4c — record scalars hoisted out of the enclosing loops, innermost last:
     /// `(variable, field offset)` → the Rust local holding the value the prelude read
     /// once.  Pushed and popped beside [`Self::vec_headers`], one frame per `Value::Loop`.
@@ -1861,6 +1864,9 @@ impl<'a> Output<'a> {
             nest_trace: std::env::var("LOFT_TRACE_NEST").is_ok_and(|v| v != "0"),
             nest_raw_arm: false,
             nest_raw_disabled: std::env::var("LOFT_NO_NEST_RAW_READS").is_ok_and(|v| v != "0"),
+            // One rule: `LOFT_NO_VECTOR_BASE` switches its twin clause off with it.
+            twin_base_disabled: std::env::var("LOFT_NO_TWIN_BASE").is_ok_and(|v| v != "0")
+                || !crate::keys::vector_base_enabled(),
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
             scalar_hoist_disabled: std::env::var("LOFT_NO_SCALAR_HOIST").is_ok_and(|v| v != "0"),
@@ -2889,10 +2895,24 @@ impl Output<'_> {
         // @PLN157 § V-p — a view of a path whose header is already held (a loop's prelude, or
         // a twin's input) copies that header: the binding's `DbRef` is the path's, so the
         // header derived from either is the same one (`@FR-R-State`).
-        let held = match stmts[at].unspan() {
-            Value::Set(_, rhs) => hoist::vector_path(self.data, rhs)
-                .and_then(|p| self.active_vec_header(&p).map(str::to_owned)),
+        let held_path = match stmts[at].unspan() {
+            Value::Set(_, rhs) => hoist::vector_path(self.data, rhs),
             _ => None,
+        };
+        let held = held_path
+            .as_ref()
+            .and_then(|p| self.active_vec_header(p).map(str::to_owned));
+        // `@FR-R-Base`'s twin clause — where the held path also carries a BASE (a twin's
+        // input, or a growth-free loop's), the view shares it under its own key, so its
+        // element reads and writes take the one-load form.  A path held without a base
+        // (a loop that grows a store) shares the header alone.
+        let held_base = if self.twin_base_disabled {
+            None
+        } else {
+            held_path
+                .as_ref()
+                .filter(|_| held.is_some())
+                .and_then(|p| self.active_vec_base(p).map(str::to_owned))
         };
         let mut operand: Vec<u8> = Vec::new();
         self.output_code_inner(&mut operand, &Value::Var(d))?;
@@ -2911,7 +2931,18 @@ impl Output<'_> {
                 "let {name} = vector::vec_header(&({operand}), &stores.allocations); //@PLN157 § V-n view header for {operand}"
             )?;
         }
+        let mut bases = HashMap::new();
+        if let Some(base) = held_base {
+            let bname = format!("__vb_{}", self.hoist_counter);
+            self.indent(w)?;
+            writeln!(
+                w,
+                "let {bname} = {base}; //@FR-R-Base view base for {operand}, shared from the held path"
+            )?;
+            bases.insert(path.clone(), bname);
+        }
         self.vec_headers.push(HashMap::from([(path, name)]));
+        self.vec_bases.push(bases);
         Ok(true)
     }
 
@@ -2988,10 +3019,25 @@ impl Output<'_> {
         }
         // A header input is keyed on the argument's PATH (§ V-ac): `br.img` for a vector
         // parameter, `h.cv` + the callee's `data` offset for a record parameter's field.
+        let mut header_keys: Vec<hoist::PathKey> = Vec::with_capacity(inputs.headers.len());
         for (p, offs, _) in &inputs.headers {
             let (c, mut key) = hoist::vector_path(self.data, vals.get(*p as usize)?)?;
             key.extend_from_slice(offs);
-            args.push(self.active_vec_header(&(c, key))?.to_owned());
+            args.push(self.active_vec_header(&(c, key.clone()))?.to_owned());
+            header_keys.push((c, key));
+        }
+        // `@FR-R-Base`'s twin clause — a base beside each header: the one this loop holds
+        // when it grows no store, or one derived from the held header AT THE CALL — valid
+        // for the call's duration either way, since an admitted callee is store-free or
+        // writes only in place, so no store reallocates while it runs.
+        if !self.twin_base_disabled {
+            for key in &header_keys {
+                let hdr = self.active_vec_header(key)?.to_owned();
+                match self.active_vec_base(key) {
+                    Some(b) => args.push(b.to_owned()),
+                    None => args.push(format!("vector::vec_base(&{hdr}, &stores.allocations)")),
+                }
+            }
         }
         Some(args)
     }
@@ -3012,14 +3058,27 @@ impl Output<'_> {
             .enumerate()
             .map(|(k, (p, offs, _))| ((*p, offs.clone()), format!("__ih_{k}")))
             .collect();
+        // `@FR-R-Base`'s twin clause — each header's base under the same key, so the fused
+        // read and write emitters find it exactly as they find a loop's.
+        let bases: HashMap<hoist::PathKey, String> = if self.twin_base_disabled {
+            HashMap::new()
+        } else {
+            t.headers
+                .iter()
+                .enumerate()
+                .map(|(k, (p, offs, _))| ((*p, offs.clone()), format!("__ib_{k}")))
+                .collect()
+        };
         self.scalar_hoists.push(scalars);
         self.vec_headers.push(headers);
+        self.vec_bases.push(bases);
     }
 
     fn pop_twin_frames(&mut self) {
         if self.twin.is_some() {
             self.scalar_hoists.pop();
             self.vec_headers.pop();
+            self.vec_bases.pop();
         }
     }
 
@@ -6933,6 +6992,13 @@ extern crate loft;"
             }
             for k in 0..t.headers.len() {
                 write!(w, ", __ih_{k}: vector::VecHeader")?;
+            }
+            // `@FR-R-Base`'s twin clause — the element base of each header, valid for the
+            // call because an admitted callee is store-free or writes only in place.
+            if !self.twin_base_disabled {
+                for k in 0..t.headers.len() {
+                    write!(w, ", __ib_{k}: *const u8")?;
+                }
             }
         }
         write!(w, ") ")?;

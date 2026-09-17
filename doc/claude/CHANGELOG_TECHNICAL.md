@@ -9,6 +9,33 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A callee twin takes the element base beside each header — `composite` 2.98× → 2.40× (2026-09-18)
+
+`--native`, generation time, default ON (`LOFT_NO_TWIN_BASE=1` restores the header-only twin).
+`@FR-R-Base` gains its twin clause (`formal/rewrites.md`).  A § V-p twin (`__inv`) took a header
+per vector path it indexes and nothing else, so every element read and write inside it was
+`get_elem_hoisted` / `vec_set_hoisted` — a store resolution per access, `allocations[k].ptr`
+loaded again each time because LLVM cannot prove the twin's own writes leave that pointer alone
+(LTO and a `noalias` ABI were both measured as no gain; the plan's README carries the
+analysis).  `composite`'s `get_pixel` and `set_pixel` ran that on every pixel.  The twin's
+signature now carries `__ib_k: *const u8` after its headers, in the headers' order;
+`twin_call_inputs` passes the caller's held base (`__vb_N`, a growth-free loop's) or
+`vector::vec_base(&hdr, …)` derived from the held header at the call when the caller's loop
+grows a store; `push_twin_frames` binds each base under its header's key; and
+`bind_view_header` shares a held base with the view it binds (`let __vb_N = __ib_k`), which is
+the shape the accessors take (`d = &self.data; d[i]`).  The fused read and write in
+`ops::vector_ops` then pick `get_elem_at` / `vec_set_at` as they already do inside a growth-free
+loop — no emitter site changed for them.  Sound for the same reason the loop's base is: an
+admitted callee is store-free or writes only in place, so no store reallocates for the call.
+Falsifier `LOFT_HOIST_VERIFY=1` (the base re-derived at every use).  Cells
+`tests/scripts/157-twin-base.loft` t1–t10 (read, write, read+write, a growing caller loop, a
+call outside any loop, out-of-canvas and past-the-plane indexes, two headers, a twin calling a
+twin, a float plane), hand-computed, both backends, both switch states, under
+`LOFT_STRICT_STORES` / `LOFT_POISON` / `LOFT_POISON_CLAIM` / `LOFT_NATIVE_LEAK_CHECK` /
+`LOFT_HOIST_VERIFY`; sabotage receipt (the passed base skewed one element) fails t2; pins
+`tests/twin_base.rs`.  Measured on the drawing bench's `composite` row, hand patch 115 → 84–87 µs
+priced it; shipped: **114.5 → 91.3–91.5 µs/op (−20 %), 2.98× → 2.40×** its reference on the arm64 lane, hash agreeing on every run; the layer-building rows moved with it — `lock` 1.83× → 1.76×, `lock_curved` 2.16× → 2.09×, `render_lock` 1.80× → 1.72× — every other row within its swing (two interleaved rounds against `LOFT_NO_TWIN_BASE=1`, `compare.py --skip-interp --repeat 3 --n-ref 500 --n-native 500`, 14/14 hashes); the hand patch had priced 84–87 µs, and the gap to it is the `vec_base` derivation at the call in the caller loops that grow a store (`composite_layer`'s callers hold no base: they append).
+
 ### `[x; n]` fills as doubling block copies, and a constant comprehension in a record field is one — `lock_curved` 4.2× → 2.2× (2026-09-17)
 
 Two units out of the `lock_curved` analysis (@PLN157 § Where to resume), both backends.
