@@ -72,12 +72,14 @@ const PURE_NULLARY_OPS: [&str; 15] = [
 /// direction: a reader left out of this list only means a loop that keeps re-deriving its
 /// headers. Add to it when a loop that should hoist does not — never to make a loop hoist
 /// that a measurement said was slow.
-const READ_ONLY_COLLECTION_OPS: [&str; 23] = [
+const READ_ONLY_COLLECTION_OPS: [&str; 24] = [
     // the reference's own identity — `store_nr`/`rec` tests that touch no store at all
-    // (@PLN157 § V-c: the R1 guard put `OpRefIsNull` in every buffer-building body)
+    // (@PLN157 § V-c: the R1 guard put `OpRefIsNull` in every buffer-building body), and
+    // the copy of one (@PLN164 B1b: the entry witness snapshots every promoted buffer)
     "OpRefIsNull",
     "OpConvBoolFromRef",
     "OpDistinctStore",
+    "OpRefAlias",
     // element address + length: the vector reads themselves
     "OpGetVector",
     "OpGetVectorNullable",

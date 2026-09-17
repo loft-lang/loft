@@ -3876,11 +3876,13 @@ fn reuse_record_buffers(
 ///
 /// A body whose result is a reference the scan HOISTED to the frame arrives as
 /// `Insert([Set(w, null), Block])` (the `hoisted_ref` arm of `scan_inner`), so the block is
-/// found inside that wrapper too; any other shape is not a body this pass rewrites.  Matching
-/// a bare `Block` alone skipped every such function in silence — the pool, the lazy mints and
-/// the entry-time flag and witness initialisers alike.
+/// found inside that wrapper too, and a `Span` (position only) is peeled; any other shape is
+/// not a body this pass rewrites.  Matching a bare `Block` alone skipped every such function
+/// in silence — the pool, the lazy mints and the entry-time flag and witness initialisers
+/// alike.
 fn body_block_mut(code: &mut Value) -> Option<&mut Block> {
     match code {
+        Value::Span(b) => body_block_mut(&mut b.1),
         Value::Block(bl) => Some(&mut **bl),
         Value::Insert(ops) => match ops.as_mut_slice() {
             [Value::Set(_, init), Value::Block(bl)] if matches!(**init, Value::Null) => {
@@ -4260,10 +4262,7 @@ fn run_scan_phase(
     if crate::keys::adopt_buffer_reuse_enabled()
         && let Some(buf) = hidden_return_buffer_var(d_nr, &function, data)
         && function.name(buf) != "__retbuf"
-        && let Some(record) = match function.tp(buf) {
-            Type::Reference(_, _) | Type::Enum(_, true, _) => function.tp(buf).heap_def_nr(),
-            _ => None,
-        }
+        && let Some(record) = function.tp(buf).heap_def_nr()
     {
         let name = Function::entry_witness_name(function.name(buf));
         let w = function.add_temp_var(&name, &Type::Reference(record, Deps::none()));

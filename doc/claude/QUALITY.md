@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites discriminating on 2+ specific `Value` variants | peel `Span` | neither |
 |---:|---:|---:|
-| 525 | 502 | **23** |
+| 527 | 504 | **23** |
 
 (2026-09-17, loft#1549: one site fewer, and not a behaviour change — the null-init test moved
 out of `scopes::reuse_record_buffers` into the one-line `scopes::null_init_at`, after which

@@ -536,9 +536,11 @@ mod tests {
         // literal-divisor form (`@FR-R-LitDiv`): 115 measured on 2026-09-15.  @PLN164 C5
         // adds one, `ViewFieldReadEmitter` for `OpGetField`: a view-leaf field read off a
         // value local is the tuple's own reference, and every other `OpGetField` falls
-        // through to the template unchanged (`@FR-O-ViewField`).
+        // through to the template unchanged (`@FR-O-ViewField`).  @PLN164 B1b adds one,
+        // `OpRefAliasEmitter`: the entry witness of a promoted buffer that native keeps as a
+        // value record (a phantom) or a value local is the null reference (`@FR-O-Buffer`).
         assert!(
-            count <= 116,
+            count <= 117,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );
