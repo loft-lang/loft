@@ -137,6 +137,32 @@ fn p_k4() { p_k4_b(0); }"#,
             r#"fn p_k7_b(x: S) { t = x; println("R{t.h.id}"); }
 fn p_k7() { s = S { h: mk(9) }; p_k7_b(s); println("R{s.h.id}"); }"#,
         ),
+        // heap.md D-heap-8's COLLECTION spelling.  A whole-value bind of a droppable collection
+        // makes a second structure — the parser mints a `__vdb_N` backing and fills it — and both
+        // structures release, with no disturbance needed to provoke it.  `LOFT_DROP_COPY_CENSUS`
+        // lists no row for any of the three: its bind arm matches `Set(v, Var(src))`, a node this
+        // spelling never produces, so these are the population a refusal built from the census
+        // alone would skip.
+        cell(
+            "p_v1",
+            r#"fn p_v1() { v: vector<H> = [mk(80)]; d = v; println("R{len(d)}"); }"#,
+        ),
+        cell(
+            "p_v2",
+            r#"fn p_v2() { v: vector<H> = [mk(81)]; d = v; v += [mk(82)]; println("R{len(d)}"); }"#,
+        ),
+        cell(
+            "p_v3",
+            r#"fn p_v3() { b = Bag { v: [mk(83)], tag: 1 }; d = b.v; println("R{len(d)}"); }"#,
+        ),
+        // CONTROL — the PARAMETER spelling of the same bind releases once, because
+        // `calls.md` F-ParamHeap binds without copying.  A cure for the three above must leave
+        // this one alone, which is what makes it the cell that decides an over-reach.
+        cell(
+            "p_v4",
+            r#"fn p_v4_b(p: vector<H>) { u = p; println("R{len(u)}"); }
+fn p_v4() { v: vector<H> = [mk(84)]; p_v4_b(v); }"#,
+        ),
         // heap.md D-heap-1's open shapes.
         cell(
             "p_o1",
@@ -1090,8 +1116,14 @@ fn the_census_names_the_copy_each_cell_makes() {
                 c.name
             ));
         }
+        let blind = CENSUS_BLIND.contains(&c.name.as_str());
         match lease_verdict(&c.name) {
-            Lease::Refused if refusals.is_empty() => wrong.push(format!(
+            Lease::Refused if blind && !refusals.is_empty() => wrong.push(format!(
+                "{}: the census refuses {refusals:?} — its enumeration reaches this spelling now, \
+                 so take the cell out of CENSUS_BLIND",
+                c.name
+            )),
+            Lease::Refused if refusals.is_empty() && !blind => wrong.push(format!(
                 "{}: refused by the lease rules, but the census refuses nothing in {sites:?}",
                 c.name
             )),
@@ -1177,6 +1209,7 @@ const PILOT_ONCE: &[&str] = &[
     "p_k5", "p_k6", "p_r1", "p_g2", "p_s8", // fresh values only
     "p_n1", "p_n2", "p_n3", "p_n4", // fresh values written into places, and a removal
     "p_t1", // a member read through a call result, which nothing outlives
+    "p_v4", // a vector parameter, which F-ParamHeap binds without copying
 ];
 
 /// The pilot cells that write a copy of an existing `H`, each classified by hand.
@@ -1191,6 +1224,11 @@ const PILOT_REFUSED: &[&str] = &[
     "p_j1", "p_j2", "p_j3", "p_j4", "p_s1", "p_s2", "p_s3", "p_s4",
     "p_s5", // a local in a join
     "p_g1", "p_g3", "p_g4", "p_g5", // a member of a call result
+    // `d = v` and `d = b.v` of a droppable COLLECTION.  Both mint their own owning `__vdb_N`
+    // backing — the variable table reads `d … deps=[__vdb_N]` beside an OWNING record, where a
+    // genuine view of the container reads `deps=[b]` — so each is a written copy and not the
+    // member view `(H-Copy-Refuse)` permits.
+    "p_v1", "p_v2", "p_v3",
 ];
 
 /// What the lease rules require of the cell `name`, read — as the rule is read — off the cell's
@@ -1252,6 +1290,17 @@ fn liveness_verdict(name: &str) -> Option<Lease> {
         _ => None,
     }
 }
+
+/// The cells the rules REFUSE and the census names no copy for, because its site enumeration does
+/// not reach their spelling — `heap.md` D-heap-8's collection clause.  A whole-collection bind
+/// mints a `__vdb_N` backing and fills it, so the `Value::Set(v, Var(src))` node the census's bind
+/// arm matches never exists, and an absent row is indistinguishable from a clean one.
+///
+/// Listed rather than reclassified: the verdict is what the rules say, and the silence is the
+/// defect.  The list empties when the enumeration grows this spelling, which
+/// [`the_census_names_the_copy_each_cell_makes`] enforces from both sides — a cell here that the
+/// census DOES refuse fails until it is removed.
+const CENSUS_BLIND: &[&str] = &["p_v1", "p_v2", "p_v3"];
 
 /// Each OPEN deviation in `formal/heap.md` that a cell with a `Once` verdict still measures, with
 /// those cells.  A refused cell compiles today and is `D-heap-8`'s, so it is not listed.

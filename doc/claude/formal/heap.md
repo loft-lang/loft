@@ -590,7 +590,13 @@ freed without its hook) opened and CLOSED 2026-09-10, below.
 ### D-heap-8 — OPEN (2026-09-15): nothing refuses a copy — a written copy of a droppable without `OpCopy` compiles
 
 - **Violates:** (H-Copy-Refuse).
-- **Where:** no site refuses a copy.  The copy sites are the ones `LOFT_DROP_COPY_CENSUS` lists.
+- **Where:** no site refuses a copy.  The copy sites are the ones `LOFT_DROP_COPY_CENSUS` lists —
+  and that enumeration is NOT the whole population.  Its bind arm matches `Value::Set(v, Var(src))`,
+  a node the parser never produces for a whole-COLLECTION bind: `d = v` mints a fresh `__vdb_N`
+  and fills it, so `d` reads `OpGetField(__vdb_N, 0, …)` and the variable table shows
+  `d … deps=[__vdb_N]` beside an OWNING backing.  A refusal built from the census alone therefore
+  skips that spelling, though `type_owns_droppable_anywhere` answers true for `vector<H>` and
+  `(H-Copy-Refuse)` names `x = a` as a copy.
   In place of a refusal, `scopes::copy_moves_drop_from`, `scopes::copy_hands_off`,
   `scopes::appends_to_element` and the per-path hand-off flags move the release to ONE of the two
   structures, and `use_analysis::warn_double_move` warns on some of the shapes inside a structure.
@@ -601,6 +607,22 @@ freed without its hook) opened and CLOSED 2026-09-10, below.
   `q_present_local_var_ret`, and every CLEAN cell that writes a copy (`p_k1`, `p_h2`–`p_h7`,
   `c_local_local`, `c_param_local`, …).  The sqldb fixtures' `cs = sq.db_select(sql);
   out = RowsSqlite { rs: cs }` is one, rewritten as `out = RowsSqlite { rs: sq.db_select(sql) }`.
+  **Measured 2026-09-17, five cells, both backends byte-identical.**  A whole-collection bind of a
+  droppable collection releases one resource TWICE with no diagnostic, and needs no disturbance to
+  do it: `v: vector<H> = []; v += [mk(1)]; d = v; len(d)` prints `M1 L1 D1 D1`.  A growth after the
+  bind (`d = v; v += [mk(2)]`) and the FIELD spelling (`d = b.v`) both read `M1 M2 L1 D1 D2 D1`, so
+  the growth is incidental rather than the cause.  Every neighbour is correct and releases once:
+  the record local bind `d = s` (which the census judges, `bind … lease=refuse:copy:s`), the record
+  member view `d = b.s`, and the vector PARAMETER bind `u = p` — `calls.md` F-ParamHeap binds
+  without copying, pinned by `a-copy-off-a-tuple-parameter-member-leaves-the-caller-owning.loft`'s
+  `c_vector_param`.  So the axis is collection-versus-record, not where the container is stored.
+  No file in the corpus writes the local spelling — the only whole-value bind of a droppable
+  collection in the 37 hook-declaring files is that parameter control — which is why nothing had
+  reported it.  The release itself runs through `OpFreeRef` and the type's generated `OpDropAll`
+  cascade — at scope end BOTH backings take `OpDropAll` + `OpFreeRef`, so two structures run two
+  cascades over one resource.  ⚠ `OpDropAll` is a generated per-type METHOD rather than an
+  operator, so the operator census cannot see it: `OpFreeRef` being among the most emitted ops in
+  the tree says nothing about how well that cascade is covered, and no instrument here measures it.
 - **Status:** OPEN — @PLN163 P2 (the refusal as a report, reworked to this rule), then P3 (the
   error).
 - **Removal:** the refusal on every line that writes a copy, naming the copy and what to write
