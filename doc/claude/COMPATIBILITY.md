@@ -449,19 +449,28 @@ change: `contract:settled` = the formal rules and the tests already gave the rig
 fix makes that promise hold; `contract:strained` = it took a rule EXTENDED, a documented surface
 changed, or a design call. `make bug-review` § 5 reports the monthly ratio.
 
-That is the convergence evidence the freeze decision has been missing, and it is a different gate
-from the one below it:
+That is the convergence evidence the freeze decision has been missing. It is one of the freeze
+gates below, which come in two kinds, interleaved rather than grouped. Three ask whether what we
+FOUND is settled — `silent-wrong`, `contract:strained`, and open deviations. Two ask how much we
+LOOKED — rule coverage, and the light pass. A gate of the first kind can be met by a quiet month;
+only the second kind can say the quiet was earned:
 
 - **`silent-wrong` → 0** is the per-bug blocker — no known wrong answer may be frozen into the
-  contract. True on any given day, and true today.
+  contract. Ask it rather than reading a status here:
+  `gh issue list -R loft-lang/loft --state open --label silent-wrong`. ⚠ This line read *"true
+  on any given day, and true today"* while two were open, which is the same rot as a committed
+  position figure: a status asserted in prose is stale the moment it is written, and it reads
+  as measured rather than as stale. ⚠ And a `fixed-pending-merge` entry is a fix on a BRANCH,
+  not on `main` — whether the gate counts those as met is a decision rather than a
+  measurement, and the freeze binds what main ships.
 - **`contract:strained` → 0, SUSTAINED over a window long enough to be evidence**, is the
   convergence gate — the standard has stopped moving. Only this one can say the blockers are
   truly gone rather than currently absent.
 - **Rule coverage at or above its contract-1 floors** — `make rule-coverage`, currently
   **70 % of `@FR-` rules carrying a code annotation and 40 % an active guard** — is the
   *coverage* gate: enough of the written standard has been checked against the implementation
-  that the unwalked surface has been looked at deliberately rather than left to chance. The
-  two above ask whether what we FOUND is settled; this one asks how much we LOOKED. ⚠ These
+  that the unwalked surface has been looked at deliberately rather than left to chance — a
+  LOOKED gate, where the three found-gates can all be met without anyone having looked. ⚠ These
   are **minimum thresholds, not targets** — informed owner estimates (2026-09-17) of the least
   that could earn the freeze, expected to move, and the walk continues past them. Crossing them
   is necessary and never sufficient, for the same reason the checklist minimum is: it measures
@@ -476,9 +485,10 @@ from the one below it:
   naming it here is the point. It is deliberately *lighter* than
   [STABILITY_METHOD.md § The rule-led walk](STABILITY_METHOD.md): the walk splits one rule into
   the questions its sites ask, finds each question's one home and verifies the related cases —
-  deep work per rule, and it took the most-changed and most-error-prone rules FIRST. That ordering is why the remainder is the low-yield tail, and
-  why the tail wants a different instrument: **read each remaining rule once and ask only
-  whether it looks semantically wrong or unenforced**, producing suspicions to triage rather
+  deep work per rule, and it took the most-changed and most-error-prone rules FIRST. That
+  ordering is why the remainder is the low-yield tail, and why it wants a different
+  instrument: **read each remaining rule once and ask only whether it looks semantically
+  wrong or unenforced**, producing suspicions to triage rather
   than citations to land. The walk is how a suspicion gets resolved; this pass is how the tail
   gets looked at ALL, before a freeze makes every unlooked-at path a permanent promise.
 
