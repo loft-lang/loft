@@ -9,6 +9,37 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `[x; n]` fills as doubling block copies, and a constant comprehension in a record field is one — `lock_curved` 4.2× → 2.2× (2026-09-17)
+
+Two units out of the `lock_curved` analysis (@PLN157 § Where to resume), both backends.
+
+**The runtime fill.**  `OpAppendCopy` and its interpreter twin `State::append_copy` filled
+`[x; n]` with one `copy_block` AND one `copy_claims` call per element — for the raster row's
+`ll_out = [for _i in 0..ll_n { 0 }]`, 38 249 calls of each per `lock_layer`, 14 % of the row by
+`sample`.  Both twins now call ONE `Stores::fill_from_template`: the run copied so far is the
+source of the next copy, so the bytes go as block copies that double (sixteen for 38 250
+elements), and the claims walk — one per copy, since every copy of a text, a text-owning record
+or a nested vector needs its own claim — runs only when the template owns heap.  Switch
+`LOFT_NO_BLOCK_REPEAT=1` (the per-element form).  Alone: `lock_curved` 1 680 → 1 435 µs (−14 %).
+
+**The field fill.**  The seven planes of a `Lay` — `best: [for _i in 0..ll_n { 2.0 }]`, … in a
+record literal — lowered to a `For comprehension` loop pushing one element at a time into the
+record's field, where the same comprehension into a LOCAL has been the repeat literal
+`[2.0; n]` since loft#884.  `try_const_fill_comprehension`'s destination test admits a struct
+FIELD now when its collection is a plain inline-element vector (`is_plain_vector`) — the
+question the old restriction left open was a KEYED collection, where n appends are not n
+inserts, and that is exactly what the test excludes; a captured or indexed target stays on the
+loop.  The first build appended through the RECORD (loft#892's shape, reached from this path for
+the first time): the fill and const-unroll paths handed `build_vector_list` a `Vector` parent
+type meant for a local, which `new_record` reads as "an element of a nested vector" and
+resolves to the record the field read projects from.  A field keeps its struct as the parent.
+Switch `LOFT_NO_FIELD_FILL=1`.  Measured: with both units the row reads
+**1 635 → 895–931 µs, 2.2× the reference** (hand patches had priced 860–942), hash `2a3aa61`.
+
+Cells `tests/scripts/a-repeated-element-fills-in-one-block.loft` (r1–r12: both spellings, both
+destinations, scalar/text/record/nested templates, the ladder's edge counts, a negative count),
+hand-computed, both backends under the store falsifiers and both switches.
+
 ### The nest reads raw — `R-BoundedNest` step 2, `render_marks` −35 % again, 1.75× its reference (2026-09-17)
 
 `--native`, generation time, default ON (`LOFT_NO_NEST_RAW_READS=1` keeps step 1's arm).  Inside

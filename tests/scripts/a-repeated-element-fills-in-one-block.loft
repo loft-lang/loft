@@ -1,0 +1,108 @@
+// `[x; n]` — and the comprehension of a constant it is one spelling of — fills its elements as
+// BLOCK copies of the template, doubling, not one element at a time.
+//
+// `OpAppendCopy` / `State::append_copy` used to walk the count with one `copy_block` and one
+// `copy_claims` call per element: a 38 250-element plane cost 38 249 calls of each, 14 % of a
+// raster row.  The fill is now a doubling block copy inside the grown record, and the claims
+// walk runs only for a template that owns heap — a text, a record with text, a nested vector —
+// where every copy needs its own claim.  Both spellings, both destinations (a local, a record
+// literal's field), every template kind, and the counts that bound the ladder (0, 1, 2, a
+// power of two, one past it, one below it, a large one) are cells; every cell asserts length
+// AND content, since a doubling that copies one chunk too few leaves a tail of zeros with the
+// right length.  The interpreter takes the same runtime and is not a separate oracle here, so
+// every value is hand-computed.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-17) — the doubling loop made to stop one chunk
+//   short (`while done + 1 < total`): r2, the ladder's edge counts, fails on --interpret and
+//   --native alike (the last element of every fill is never written), and every cell holds with
+//   the loop as written, on both backends, under LOFT_STRICT_STORES=1 LOFT_POISON=1
+//   LOFT_POISON_CLAIM=1 LOFT_NATIVE_LEAK_CHECK=1 and under both switches (LOFT_NO_BLOCK_REPEAT=1,
+//   LOFT_NO_FIELD_FILL=1).  A first sabotage that only shrank each chunk by one was VACUOUS — the
+//   loop still ran to the total — and is why the receipt names the one that stops short.
+
+struct RfP { x: integer, y: integer }
+struct RfN { name: text, n: integer }
+struct RfH { v: vector<integer>, w: vector<float> }
+
+fn rf_sum(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+fn rf_all(v: const vector<integer>, c: integer) -> boolean { for x in v { if x != c { return false } } true }
+
+fn main() {
+  // r1 — the literal spelling, a count that is not a power of two: 7 sevens.
+  r1 = [7; 7];
+  assert(len(r1) == 7 && rf_all(r1, 7) && rf_sum(r1) == 49, "r1: {len(r1)} {rf_sum(r1)}");
+
+  // r2 — the ladder's edges: 0, 1, 2, 4, 5, 3 elements.
+  r2a = [9; 0]; r2b = [9; 1]; r2c = [9; 2]; r2d = [9; 4]; r2e = [9; 5]; r2f = [9; 3];
+  assert(len(r2a) == 0 && len(r2b) == 1 && r2b[0] == 9 && len(r2c) == 2 && r2c[1] == 9
+         && len(r2d) == 4 && rf_all(r2d, 9) && len(r2e) == 5 && rf_all(r2e, 9)
+         && len(r2f) == 3 && rf_all(r2f, 9), "r2: {len(r2a)} {len(r2b)} {len(r2c)} {len(r2d)} {len(r2e)} {len(r2f)}");
+
+  // r3 — a large count, the raster row's shape: 38 250 zeros, then the last is written and read.
+  r3 = [0; 38250];
+  r3[38249] = 5;
+  assert(len(r3) == 38250 && r3[0] == 0 && r3[19125] == 0 && r3[38249] == 5 && rf_sum(r3) == 5,
+         "r3: {len(r3)} {rf_sum(r3)}");
+
+  // r4 — the constant comprehension into a LOCAL, the spelling the library writes: 1000 twos.
+  r4n = 1000;
+  r4 = [for _i in 0..r4n { 2 }];
+  assert(len(r4) == 1000 && rf_all(r4, 2) && rf_sum(r4) == 2000, "r4: {len(r4)} {rf_sum(r4)}");
+
+  // r5 — the constant comprehension as a record literal's FIELD, twice in one literal (the
+  //      `Lay` shape): 300 ints and 300 floats, then one element of each written.
+  r5n = 300;
+  r5 = RfH { v: [for _i in 0..r5n { 3 }], w: [for _i in 0..r5n { 2.5 }] };
+  r5.v[299] = 4;
+  r5.w[0] = 0.5;
+  r5_ws = 0.0;
+  for f in r5.w { r5_ws += f; }
+  assert(len(r5.v) == 300 && len(r5.w) == 300 && rf_sum(r5.v) == 3 * 299 + 4 && r5.v[150] == 3
+         && r5.w[1] == 2.5 && r5_ws == 2.5 * 299.0 + 0.5, "r5: {len(r5.v)} {len(r5.w)} {rf_sum(r5.v)} {r5_ws}");
+
+  // r6 — a TEXT template: every copy is its own text, so writing one leaves the others.
+  r6 = ["ab"; 6];
+  r6[3] = "zz";
+  assert(len(r6) == 6 && r6[0] == "ab" && r6[2] == "ab" && r6[3] == "zz" && r6[5] == "ab",
+         "r6: {len(r6)} {r6[0]} {r6[3]} {r6[5]}");
+
+  // r7 — a RECORD template with a text field: 9 copies, one edited.
+  r7 = [RfN { name: "n", n: 1 }; 9];
+  r7[8].name = "last";
+  r7[8].n = 8;
+  r7_t = 0;
+  for e in r7 { r7_t += e.n; }
+  assert(len(r7) == 9 && r7[0].name == "n" && r7[7].name == "n" && r7[8].name == "last" && r7_t == 16,
+         "r7: {len(r7)} {r7[0].name} {r7[8].name} {r7_t}");
+
+  // r8 — a no-heap RECORD template: 33 copies of (1, 2), sums 33 and 66.
+  r8 = [RfP { x: 1, y: 2 }; 33];
+  r8_x = 0; r8_y = 0;
+  for p in r8 { r8_x += p.x; r8_y += p.y; }
+  assert(len(r8) == 33 && r8_x == 33 && r8_y == 66, "r8: {len(r8)} {r8_x} {r8_y}");
+
+  // r9 — a nested-vector template: each copy owns its own inner vector.
+  r9 = [[1, 2]; 5];
+  r9[2] += [3];
+  assert(len(r9) == 5 && len(r9[0]) == 2 && len(r9[2]) == 3 && r9[2][2] == 3 && len(r9[4]) == 2,
+         "r9: {len(r9)} {len(r9[0])} {len(r9[2])} {len(r9[4])}");
+
+  // r10 — appended onto an existing vector: `v += [7; 4]` keeps the three before.
+  r10 = [1, 2, 3];
+  r10 += [7; 4];
+  assert(len(r10) == 7 && r10[2] == 3 && r10[3] == 7 && r10[6] == 7 && rf_sum(r10) == 34,
+         "r10: {len(r10)} {rf_sum(r10)}");
+
+  // r11 — a negative count is no vector at all.
+  r11n = -3;
+  r11 = [5; r11n];
+  assert(len(r11) == 0, "r11: {len(r11)}");
+
+  // r12 — a float template at a power-of-two count: 1024 halves sum to 512.
+  r12 = [0.5; 1024];
+  r12_s = 0.0;
+  for f in r12 { r12_s += f; }
+  assert(len(r12) == 1024 && r12_s == 512.0, "r12: {len(r12)} {r12_s}");
+
+  println("ok");
+}

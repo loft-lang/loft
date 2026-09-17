@@ -102,6 +102,13 @@ processor can run several elements at a time.  Nothing your program computes cha
 could overflow, or read past an end, still gets its null or its 0.  Drawing a 64×64 scene through
 the library's 3× supersample went from 6.1× to 1.75× the time of the same code written in Rust.
 
+**Filling a list with one value is a block copy, wherever you write it.**  `[0; n]`, and the
+`[for _ in 0..n { 0 }]` that means the same thing, used to be filled one element at a time — a
+copy and a bookkeeping walk each — and inside a record literal (`Layer { plane: [for _ in 0..n
+{ 2.0 }] }`) the comprehension was a loop pushing element by element.  Both now fill in a
+handful of block copies that double.  A brush stroke on a curved path went from 4.2× to 2.2× the
+time of the same code written in Rust.
+
 **Appending a list to itself is a single copy, and it no longer breaks on text.**  `v += v` —
 the step a fast constant fill repeats — copied its elements one byte at a time through a
 temporary, and for a list of texts (or of records holding text) it could read memory the

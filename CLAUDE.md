@@ -838,6 +838,15 @@ wrong accumulate or index out of such a loop on native; `LOFT_HOIST_VERIFY=1` co
 plain operator's answer with the checked template's and every raw read with the checked read,
 panicking on a disagreement; `LOFT_TRACE_NEST=1` names every admission and decline and whether
 the reads are raw.
+**`LOFT_NO_BLOCK_REPEAT=1`** (runtime, BOTH backends) makes `[x; n]` fill one element at a
+time again — a `copy_block` and a `copy_claims` call each — where with it off
+`Stores::fill_from_template` doubles block copies and walks claims only for a heap-owning
+template (`lock_curved` −14 %); first bisect step for a wrong element out of a repeat literal or
+a constant comprehension.  **`LOFT_NO_FIELD_FILL=1`** (parse time, BOTH backends) keeps a
+constant comprehension in a struct FIELD (`Lay { best: [for _ in 0..n { 2.0 }] }`) on its
+per-element push loop — with it off it takes the repeat-literal lowering a local's already has,
+when the field is a plain vector (`is_plain_vector`; a keyed collection stays on the loop, since
+n appends are not n inserts); together with the block repeat `lock_curved` 4.2× → 2.2×.
 **`LOFT_NO_SELF_APPEND_BLOCK=1`** (runtime, BOTH backends) makes `v += v` copy through a
 byte snapshot taken before the growth again — with it off, a self-append is one block copy
 inside the grown record, its source re-read from the field slot after the growth (which is

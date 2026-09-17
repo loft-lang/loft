@@ -1595,30 +1595,11 @@ impl State {
         vector::vector_append(&data, size, &mut self.database.allocations);
         self.database.vector_set_size(&data, extra, size);
         // Re-read the backing record AFTER the resize: growing the vector can move it,
-        // and both ends of the copy live inside it. Reading it once up front left the
-        // template `from` — and every destination — pointing at the record's old home.
+        // and both ends of the copy live inside it.
         let v_rec =
             crate::keys::store(&data, &self.database.allocations).get_u32_raw(data.rec, data.pos);
-        let from = DbRef {
-            store_nr: data.store_nr,
-            rec: v_rec,
-            pos: 8 + (length * size - size),
-        };
-        for i in 0..extra {
-            let to = DbRef {
-                store_nr: data.store_nr,
-                rec: v_rec,
-                pos: 8 + (length + i) * size,
-            };
-            self.database.copy_block(&from, &to, size);
-            // The claim source is the TEMPLATE element, not the vector handle. `data`
-            // points at the vector's 4-byte record id, so a `text` element re-interned
-            // whatever those bytes decoded to: `["abc"; 4]` gave "abc" in element 0 and
-            // junk in every copy. Same word wrong in the `--native` twin.
-            self.database.copy_claims(&from, &to, ctp);
-            self.database
-                .watch_oob_text(&to, ctp, Some(&data), "append_copy");
-        }
+        self.database
+            .fill_from_template(&data, v_rec, length, extra, size, ctp);
     }
 
     pub fn copy_record(&mut self) {

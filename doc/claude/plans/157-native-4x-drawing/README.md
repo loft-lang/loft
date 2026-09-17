@@ -1100,7 +1100,10 @@ patches on one emission, hash `2a3aa61` throughout):
   `State::append_copy` (a block copy that doubles, the claims walk only for a heap-owning
   template — both backends), and the constant comprehension into a record-literal field taking
   the same lowering a local's does (parser, both backends) or the fill idiom admitting a
-  comprehension block (emitter).  Sites: `src/codegen_runtime.rs` `OpAppendCopy`,
+  comprehension block (emitter).  **BOTH BUILT the same evening** — `Stores::fill_from_template`
+  (switch `LOFT_NO_BLOCK_REPEAT`) and the field fill (`LOFT_NO_FIELD_FILL`): `lock_curved`
+  **1 635 → 895–931 µs, 2.2×**, the row under the bar on this lane; cells
+  `a-repeated-element-fills-in-one-block.loft`.  Sites: `src/codegen_runtime.rs` `OpAppendCopy`,
   `src/state/io.rs` `append_copy`, `src/parser/vectors.rs:3411` (the comprehension loop) and
   `:5389` (the `[x; n]` lowering), `hoist::fill_loop`.
 * **After those, ~2.2× and diffuse:** five `st.*` scalar reads per resolved pixel still go

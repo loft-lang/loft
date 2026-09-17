@@ -10,6 +10,13 @@ use crate::database::{Field, Parts, Stores};
 /// `LOFT_NO_SELF_APPEND_BLOCK=1` — a self-append copies through a pre-growth byte snapshot
 /// again instead of one block copy inside the grown record (the first bisect step for a wrong
 /// element out of `v += v`).
+/// `LOFT_NO_BLOCK_REPEAT=1` — `[x; n]` fills one element at a time again, a copy and a claims
+/// walk each, instead of doubling block copies (the first bisect step for a wrong element out
+/// of a repeat literal or a constant comprehension).
+fn block_repeat_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_NO_BLOCK_REPEAT").is_none())
+}
 fn self_append_block_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("LOFT_NO_SELF_APPEND_BLOCK").is_none())
@@ -851,6 +858,84 @@ impl Stores {
             let store = self.store_mut(&slot);
             store.set_u32_raw(slot.rec, slot.pos, v);
             Self::append_done(store, &slot);
+        }
+    }
+
+    /// The fill behind `[x; n]` (and the comprehension of a constant, which lowers to it):
+    /// `extra` more copies of the TEMPLATE — the vector's last element, at `length - 1` —
+    /// written into the `extra` slots that follow it, which `vector_set_size` has already
+    /// claimed.  The bytes go as block copies that DOUBLE: the run copied so far is the source
+    /// of the next copy, so a plane of 38 250 floats is sixteen `copy_block`s instead of
+    /// 38 249, and the claims walk — one per copy, because every copy of a text, a record
+    /// owning text or a nested vector needs its own claim — runs only for a template that owns
+    /// heap.  `v_rec` is the backing record read AFTER the growth.  One home for both
+    /// backends (`OpAppendCopy`, `State::append_copy`), so they cannot disagree on a
+    /// heap-corrupting count.
+    pub fn fill_from_template(
+        &mut self,
+        data: &DbRef,
+        v_rec: u32,
+        length: u32,
+        extra: u32,
+        size: u32,
+        ctp: u16,
+    ) {
+        let from_pos = 8 + (length - 1) * size;
+        if !block_repeat_enabled() {
+            // The earlier form: one copy and one claims walk per element.  The first bisect
+            // step for a wrong element out of `[x; n]`.
+            let from = DbRef {
+                store_nr: data.store_nr,
+                rec: v_rec,
+                pos: from_pos,
+            };
+            for i in 1..=extra {
+                let to = DbRef {
+                    store_nr: data.store_nr,
+                    rec: v_rec,
+                    pos: from_pos + i * size,
+                };
+                self.copy_block(&from, &to, size);
+                self.copy_claims(&from, &to, ctp);
+                self.watch_oob_text(&to, ctp, Some(data), "append_copy");
+            }
+            return;
+        }
+        {
+            let store = keys::mut_store(data, &mut self.allocations);
+            // Copied so far, in elements, the template included; the next copy takes as many
+            // as exist, capped at what is still missing.
+            let mut done: u32 = 1;
+            let total = extra + 1;
+            while done < total {
+                let n = done.min(total - done);
+                store.copy_block(
+                    v_rec,
+                    from_pos as isize,
+                    v_rec,
+                    (from_pos + done * size) as isize,
+                    (n * size) as isize,
+                );
+                done += n;
+            }
+        }
+        if !self.type_owns_heap(ctp) {
+            return;
+        }
+        let from = DbRef {
+            store_nr: data.store_nr,
+            rec: v_rec,
+            pos: from_pos,
+        };
+        for i in 1..=extra {
+            let to = DbRef {
+                store_nr: data.store_nr,
+                rec: v_rec,
+                pos: from_pos + i * size,
+            };
+            // The claim source is the TEMPLATE element, not the vector handle.
+            self.copy_claims(&from, &to, ctp);
+            self.watch_oob_text(&to, ctp, Some(data), "append_copy");
         }
     }
 
