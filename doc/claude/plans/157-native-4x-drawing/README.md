@@ -1079,9 +1079,34 @@ verify form is what found it.  Cells m1–m16, pins `tests/invariant_arith.rs`, 
 
 
 *Next, by the queue:* ~~item 2, **`R-BoundedNest`**~~ — SHIPPED 2026-09-17 (§ Status); the
-three resample rows are under the bar.  What remains over it on the arm64 lane is
-`lock_curved` (3.87×; 2.42× on x86-64 — the lanes differ, and the row was not touched by the
-nest), and the row-by-row table below is the one to re-measure on the x86-64 box.  What to read first: § V-ae's fill for the
+three resample rows are under the bar.  What remains over it is **`lock_curved`**, analysed
+and PRICED 2026-09-17 (arm64, both binaries sampled with `sample`, the emission read, two hand
+patches on one emission, hash `2a3aa61` throughout):
+
+* **It is not the checks.**  `LOFT_RELEASE_PASS_PROBE=1` moves the row only 1 660 → 1 429 µs
+  (−14 %; still 3.5× the reference's 404), so the lever that closed the resample rows does not
+  reach this one.
+* **It is two fills that are not fills.**  `ll_out = [for _i in 0..ll_n { 0 }]` (brush.loft:476)
+  lowers to `OpAppendCopy`, whose runtime fills `[x; n]` with ONE `copy_block` AND ONE
+  `copy_claims` call PER ELEMENT — 38 249 calls each per `lock_layer`, 14 % of the row by
+  `sample` (`copy_block` 9.4, `copy_claims` 4.6); the interpreter's `State::append_copy` is its
+  twin.  The seven `Lay` planes, `best: [for _i in 0..ll_n { 2.0 }]` … (brush.loft:450–453), lower
+  the OTHER way — a `For comprehension` block pushing one element at a time into the record's
+  field (`push_hoisted` × 7 × 38 250) — and § V-am's fill idiom never sees them, because its
+  matcher admits `For loop` only; a reserve up front measured nothing (the cost is the push
+  loop, not the growth ladder).  Hand-patched on the emission: the seven planes as one
+  `push_fill` each, **1 635 → 1 108–1 204 µs**; plus `ll_out` as one fill, **→ 860–942 µs =
+  2.2×** the reference, from 4.2×.  Both are engine units: the runtime fill in `OpAppendCopy` /
+  `State::append_copy` (a block copy that doubles, the claims walk only for a heap-owning
+  template — both backends), and the constant comprehension into a record-literal field taking
+  the same lowering a local's does (parser, both backends) or the fill idiom admitting a
+  comprehension block (emitter).  Sites: `src/codegen_runtime.rs` `OpAppendCopy`,
+  `src/state/io.rs` `append_copy`, `src/parser/vectors.rs:3411` (the comprehension loop) and
+  `:5389` (the `[x; n]` lowering), `hoist::fill_loop`.
+* **After those, ~2.2× and diffuse:** five `st.*` scalar reads per resolved pixel still go
+  through `store_mut` (unhoisted record scalars of a `const` parameter in the resolve loop),
+  `brush_sample`/`chan`/`ramp` per pixel, the two `??`-discharged divisions per raster pixel
+  with their fault notes.  The x86-64 lane read this row 2.42× before any of it.  What to read first: § V-ae's fill for the
 guard-and-fallback shape, § V-al for the emitter placement, and § V-ao's placement lesson
 (a memo one loop out lost its gain — the bounded nest's guard must sit where LLVM can see
 it is decided).  The vertical tap's chain (counter innermost) is the case R-InvariantArith
