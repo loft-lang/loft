@@ -177,10 +177,10 @@ chapters do not.
 | doc | area | status |
 |---|---|---|
 | [types.md](types.md) | type system + conversion relation (incl. integer width) | **0 open** — the value/null model (DN1–DN6), null-flow (`N-Prop`/`N-Domain`/`N-Cast`/`N-Store`, DN3-Float) and the narrowing rules; register in [types-history.md](types-history.md) |
-| [binding.md](binding.md) | reference types & `&` (the bind-site link law) + the `const` immutability axis | **0 open** (D-bind-28 closed 2026-09-07: the `&hash<τ[k]>` PARAMETER spelling links like the LOCAL and FIELD ones) — `&` is a type annotation (`B-Ref-*`), the bind-site link law, `B-Ref-Reshape` (disturbing a container under a live `&` is refused), the two-level `const` model; register in [binding-history.md](binding-history.md) |
+| [binding.md](binding.md) | reference types & `&` (the bind-site link law) + the `const` immutability axis | **2 open** (D-bind-38 and D-bind-39, both `(B-Ref-Lvalue)`: a link to a TEXT place is refused, and so is one to an integer place stored in fewer than 8 bytes — the rule says both link) — `&` is a type annotation (`B-Ref-*`), the bind-site link law, `B-Ref-Reshape` (disturbing a container under a live `&` is refused), the two-level `const` model; register in [binding-history.md](binding-history.md) |
 | [grammar.md](grammar.md) | concrete grammar + operator precedence | **0 open** — the 12-level precedence ladder; the prefix-`&`/infix-`&` overload and the non-CFG surface are decided edges (C81/C82) |
 | [operational.md](operational.md) | small-step semantics — the scalar core | **2 open** — the META pair `D-op-1`/`D-op-2` (conformance is differential, not definitional), inherited by every operational chapter below; the rules are complete for the scalar core; register in [operational-history.md](operational-history.md) |
-| [heap.md](heap.md) | store steps — alloc / read / write / **copy** / free / **drop** | **1 open** (D-heap-1: a copy of a tuple releases a droppable member twice — nested, nullable and parameter shapes) — the `DbRef`/`Store` model, the whole-value COPY (C86), `H-Materialise`, the LIFO free discipline whose soundness is ownership.md, the drop hook's one-release-per-resource rule (`H-Drop`: owner's scope end, reassignment, container cascade; a copy moves the responsibility); conformance via the oracle (D-op-1) |
+| [heap.md](heap.md) | store steps — alloc / read / write / **copy** / free / **drop** | **3 open** (D-heap-8, D-heap-9, D-heap-11 — the copy-lease rules `H-Copy-Refuse` / `H-Copy-Lease` / `H-View-Drop`, written 2026-09-15 ahead of their implementation, @PLN163; the revision that judges a copy by its own line reclassified `D-heap-1` and `D-heap-7` into them) — the `DbRef`/`Store` model, the whole-value COPY (C86), `H-Materialise`, the LIFO free discipline whose soundness is ownership.md, the drop hook's one-release-per-resource rule (`H-Drop`: owner's scope end, reassignment, container cascade; a copy moves the responsibility); conformance via the oracle (D-op-1) |
 | [layout.md](layout.md) | the store BYTE layout — `layout(τ)` (widths, offsets, packing, the reference encoding) | **1 open** — `D-layout-1`: no version guard on persisted bytes; the golden test and the `.dschema` sidecar are shipped and opt-in, pending a durable-store consumer (@PLN97). One format (RAM = disk); nullability is a sentinel, not a layout (`L-Null`); register in [layout-history.md](layout-history.md) |
 | [iteration.md](iteration.md) | `for`, ranges, text iteration, the map/filter/reduce/comprehension combinators | **0 own** — index-cursor `for`, deterministic combinator order, fresh result vector; conformance via the oracle; register in [iteration-history.md](iteration-history.md) |
 | [coroutines.md](coroutines.md) | generators — `yield` / `next`, stackful suspension | **0 own** — lazy one-value-per-advance; a loop body with a SECOND statement is eager on native (a decided edge, loft#836); conformance via the oracle; register in [coroutines-history.md](coroutines-history.md) |
@@ -192,9 +192,9 @@ chapters do not.
 | [formatting.md](formatting.md) | text formatting — `"{x}"` interpolation + value→text rendering | **0 own** — arbitrary-expression interpolation, per-type render, the width/align/pad/precision/radix specs, fault-safe interpolation, one rendering sink, `F-Target` (a template builds a VALUE against a type defining `lit`/`hole_*`); register in [formatting-history.md](formatting-history.md) |
 | [interfaces.md](interfaces.md) | interfaces (traits) + generics — bounds, satisfaction, monomorphization | **0 open** — STRUCTURAL satisfaction (no `impl`), bounded generics, parser-side monomorphization, static satisfaction check; compile-time only (decided edges); register in [interfaces-history.md](interfaces-history.md) |
 | [collections.md](collections.md) | collection kinds (`vector`/`hash`/`sorted`/`index`/`spatial`/`trie`), indexing & slicing | **0 open** — the six kinds, indexing, slicing (`Slice-Open`/`Slice-Cap` hold), linked groups; still a SCOPE doc graduating to rules; register in [collections-history.md](collections-history.md) |
-| [ownership.md](ownership.md) | the `deps` / borrow **checker** (lifetimes) — distinct from binding.md's surface | **0 open** — every store-lifetime decision reads the one total `deps` fact (`O-Deps`), per binding, per path, complete (`O-Complete`); the soundness proof heap.md's free rules rest on; register in [ownership-history.md](ownership-history.md) |
+| [ownership.md](ownership.md) | the `deps` / borrow **checker** (lifetimes) — distinct from binding.md's surface | **1 open** (D-own-43: the interpreter's rebind of a promoted buffer local frees the buffer the caller handed it — masked while such callees receive the null sentinel; closes with @PLN164 B1b) — every store-lifetime decision reads the one total `deps` fact (`O-Deps`), per binding, per path, complete (`O-Complete`); the soundness proof heap.md's free rules rest on; register in [ownership-history.md](ownership-history.md) |
 | [capabilities.md](capabilities.md) | sandbox **admission** — what a restricted caller may do (call / parameter / field / mutation rights) | **0 open** — the 6-rule judgment `P;ctx ⊢ e ✓` fully enforced, each closed entry with a RED/GREEN adversarial pair; register in [capabilities-history.md](capabilities-history.md) |
-| [rewrites.md](rewrites.md) | the NATIVE emitter's cheaper forms — a header derived once, a scalar read once, a view's header at its binding, a stdlib wrapper as its op, a callee handed its invariant inputs, a push through its own header | **0 open** — the HOIST STATE the rewrites compose through (`R-State` one holder per path, `R-Refresh` the changing op refreshes at its own site, `R-Alias` ownership decides who may name one vector) and ten rewrites (`R-Switch` … `R-Leaf`): every rewrite has a generation-time switch and a falsifier (`LOFT_HOIST_VERIFY=1`), the interpreter applies none and is the oracle; the emission audit (@PLN157 § V-r) is the emission-time check; D-rw-1 closed 2026-09-09; [rewrites-history.md](rewrites-history.md) records where each invariant is held |
+| [rewrites.md](rewrites.md) | the NATIVE emitter's cheaper forms — a header derived once, a scalar read once, a view's header at its binding, a stdlib wrapper as its op, a callee handed its invariant inputs, a push through its own header | **0 open** — the HOIST STATE the rewrites compose through (`R-State` one holder per path, `R-Refresh` the changing op refreshes at its own site, `R-Alias` ownership decides who may name one vector) and the rewrites themselves (`R-Switch` … `R-LeafChain`): every rewrite has a generation-time switch and a falsifier (`LOFT_HOIST_VERIFY=1`), the interpreter applies none and is the oracle; the emission audit (@PLN157 § V-r) is the emission-time check; D-rw-1 closed 2026-09-09; [rewrites-history.md](rewrites-history.md) records where each invariant is held |
 | [performance.md](performance.md) | routines pull their weight — the DISTRIBUTION's speed contract | **1 open** — `Perf-Like` (hash-equal lanes before any comparison), `Perf-Weight` (per-release measurement against an industry-language twin — drift satisfies nothing), `Perf-Twin` (a twin is written where a hit is expected, never waived), `Perf-Cure` (the twin MEASURES, never ships — the cure goes to the engine, keeping libraries readable loft); D-perf-1 = loft#1426 |
 
 ## Roadmap
@@ -231,12 +231,16 @@ What that buys, and none of it is available from a rule NAME alone:
 
 **Two constraints the measurement forced** (numbers in [IMPLEMENTATIONS.md](IMPLEMENTATIONS.md)):
 
-1. **Match with an explicit boundary.** 21 of the 285 defined rules are a prefix of another —
-   `@FR-B-View` / `@FR-B-View-Base`, `@FR-T-Ref` / `@FR-T-Ref-El`. A plain
-   `grep @FR-B-View` sweeps in its own sub-rules, and `\b` does not help because `-` is already a
-   word boundary. So a citation matches `@Name` only when the next character is not
-   `[-A-Za-z0-9]`. **Renaming those 23 is deliberately NOT the fix** — the sub-rule names are
-   meaningful, and a matcher that is right by construction beats 23 renames plus the churn.
+1. **Match with an explicit boundary.** A substantial share of the defined rules are a prefix of
+   another — `@FR-B-View` / `@FR-B-View-Base`, `@FR-T-Ref` / `@FR-T-Ref-El` — and
+   `rule_tags.py check` reports how many. A plain `grep @FR-B-View` sweeps in its own sub-rules,
+   and `\b` does not help because `-` is already a word boundary. So a citation matches `@Name`
+   only when the next character is not `[-A-Za-z0-9]`. **Renaming them is deliberately NOT the
+   fix** — the sub-rule names are meaningful, and a matcher that is right by construction beats
+   the renames plus the churn. ⚠ This paragraph used to carry the count, and managed to say
+   **21** in its first sentence and **23** in its last — disagreeing with itself before either
+   figure also went stale. The number belongs in the tool, where it is recomputed rather than
+   remembered.
 2. **Only a DEFINED rule is a citation target.** `B-Ref`, `D-op`, `D-own`, `D-cap` and
    `D-op-null` read like rules and are family PREFIXES used in prose — no definition line
    exists for them. A citation naming one is an error, which is exactly what the resolve check
@@ -253,7 +257,8 @@ The entry did not fail to describe the class. It failed to be reachable from the
 needed it: a reader at `variables.tp(var)` has nothing to grep, because the thing they are
 about to get wrong is an absence. That is the case for the citation direction — **a site
 enforcing a rule names it, so "which sites ask this?" is a grep instead of a memory** — and it
-is why 179 of 257 rules having no code representation is the backlog rather than a statistic.
+is why the rules with no code representation are the backlog rather than a statistic
+(`make rule-coverage` counts them; the contract-1 floors are 70 % annotated, 40 % guarded).
 Better prose in the register could not have closed any of the six.
 
 **Why this is the quality lever, and not just tidiness.** Fixing a bug has no intrinsic test
@@ -270,13 +275,17 @@ worth failing on from the first day; *every rule has at least one citation* tigh
 grows. Any rule→site index is **generated** from the citations, never maintained beside
 them — a second copy of where the rules live is the defect this convention exists to remove.
 
-**Coverage, measured (2026-08-28): 76 of 255 rules cited, across 163 sites — 179 uncited.**
-Re-measure rather than reading that off this page (`scripts/rule_tags.py check`). ⚠ **An
+**Coverage: `make rule-coverage`.** The contract-1 floors are **70 % of rules carrying a code
+annotation and 40 % an active guard** — minimums for the freeze rather than targets to stop at —
+and the command says how many rules short of each the tree is. No share
+is written here on purpose — this line read `76 of 255 cited, across 163 sites` for long enough
+to go stale, in company with three other homes that carried the same figure and rotted together.
+A stale share does not read as stale; it reads as a measured position. ⚠ **An
 uncited rule is not merely undocumented — it is one where the coverage question cannot be
 ASKED**, because the query returns nothing and the absence looks identical to "no sites needed".
-By area the gap tracks where the bugs still are: `types.md` 38 uncited of 49 and `tuples.md` 7
-of 8, whose classes are both RISING in `make bug-review`; `ownership.md` 11 of 11 CITED and
-`layout.md` 8 of 9, whose classes are falling or paid off. ⚠ Read that correlation the right
+By area the gap tracks where the bugs still are: the chapters whose classes are RISING in
+`make bug-review` hold most of the uncited rules, while `ownership.md` is fully cited and
+`layout.md` all but one, their classes falling or paid off. ⚠ Read that correlation the right
 way round: `ownership.md` is fully cited BECAUSE it was hammered, so coverage is a lagging
 record of attention, not a leading indicator of safety. What it does say is where the next
 coverage question cannot yet be asked at all.

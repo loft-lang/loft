@@ -965,6 +965,11 @@ impl Stores {
         // appended element still point into the source store.  Deep-copy those claims so
         // that the destination owns independent copies and is not affected when the source
         // vector is freed.
+        // An element that owns no heap has no claims to copy: its bytes are the whole value.
+        // The walk stays armed for a store `LOFT_WATCH_STORE` names, which reports per element.
+        if !self.type_owns_heap(known) && crate::keys::watch_store() != Some(db.store_nr) {
+            return;
+        }
         for i in 0..o_length {
             self.copy_claims(
                 &DbRef {

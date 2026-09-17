@@ -185,6 +185,7 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     free_ref_tag,
     free_ref_if_distinct,
     free_ref_or_hand_up,
+    free_ref_unless_entry,
     free_scratch,
     sizeof_ref,
     var_ref,
@@ -1472,6 +1473,15 @@ fn free_ref_or_hand_up(s: &mut State) {
     }
 }
 
+fn free_ref_unless_entry(s: &mut State) {
+    let v_entry = s.get_stack::<DbRef>();
+    let v_witness = s.get_stack::<DbRef>();
+    let v_placeholder = s.get_stack::<DbRef>();
+    if v_placeholder.store_nr != v_entry.store_nr {
+        s.database.free_displaced(&v_placeholder, &v_witness);
+    }
+}
+
 fn free_scratch(s: &mut State) {
     let v_scratch = s.get_stack::<DbRef>();
     s.database.free_iteration_scratch(&v_scratch);
@@ -2425,7 +2435,9 @@ fn remove(s: &mut State) {
 }
 
 fn clear(s: &mut State) {
-    s.clear();
+    let v_tp = s.code::<u16>();
+    let v_data = s.get_stack::<DbRef>();
+    s.database.remove_claims(&v_data, v_tp);
 }
 
 fn append_copy(s: &mut State) {

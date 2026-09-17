@@ -1273,13 +1273,23 @@ pub fn fetch_index(url: &str) -> Result<FetchedIndex, String> {
 ///
 /// Returns a `String` error on HTTP / IO failure.
 pub fn download_tarball(url: &str, dest: &std::path::Path) -> Result<Vec<u8>, String> {
-    let bytes = http_get_bytes(url).map_err(|e| format!("downloading {url}: {e}"))?;
+    let bytes = fetch_bytes(url)?;
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("creating {}: {e}", parent.display()))?;
     }
-    std::fs::write(dest, &bytes).map_err(|e| format!("writing {}: {e}", dest.display()))?;
+    // Atomically: a prebuilt cdylib lands here, and another process may load it the moment
+    // the name exists — a plain write would hand that process a short file.
+    replace_atomically(dest, &bytes).map_err(|e| format!("writing {}: {e}", dest.display()))?;
     Ok(bytes)
+}
+
+/// Fetch `url` in full, with the download's error spelling.
+///
+/// # Errors
+/// The transport's error, prefixed with the URL.
+pub fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
+    http_get_bytes(url).map_err(|e| format!("downloading {url}: {e}"))
 }
 
 /// Default ceiling on a single HTTP response — the registry index, or a package
@@ -1391,6 +1401,62 @@ pub fn extract_tarball(
     ar.unpack(dest_parent)
         .map_err(|e| format!("extract {}: {e}", tarball_path.display()))?;
     Ok(())
+}
+
+/// Unpack a gzipped tarball held in memory into `dest_parent`, as [`extract_tarball`] does
+/// for one on disk.
+///
+/// # Errors
+/// IO errors propagate as `String`.
+pub fn unpack_tarball_bytes(bytes: &[u8], dest_parent: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dest_parent)
+        .map_err(|e| format!("create {}: {e}", dest_parent.display()))?;
+    let dec = flate2::read::GzDecoder::new(bytes);
+    tar::Archive::new(dec)
+        .unpack(dest_parent)
+        .map_err(|e| format!("extract into {}: {e}", dest_parent.display()))
+}
+
+/// Place a verified package tarball at [`extract_dir`]`(pkg, version)` in ONE step, so the
+/// directory other processes test for (`loft.toml` inside it) never exists half-filled.
+///
+/// Several processes install the same package at once — a server and its clients each
+/// resolving `use web`, or one test process per test — and every one of them used to unpack
+/// into the shared directory from a shared scratch tarball: one install deleted the tarball
+/// another was about to open, rewrote the one another was reading, or truncated a source file
+/// another had already found and was parsing.  Each install now unpacks into a staging
+/// directory of its own and renames the package directory into place.  The first rename
+/// wins; a later one finds the directory complete and answers `false`, and that install
+/// counts the package as already cached.
+///
+/// A tarball whose top-level directory is not `<pkg>-<version>/`, and a directory left
+/// without its `loft.toml` by an interrupted older install, are unpacked straight into the
+/// cache as before: the rename has nothing it can promise for either.
+///
+/// # Errors
+/// IO errors propagate as `String`.
+pub fn place_package(bytes: &[u8], pkg: &str, version: &str) -> Result<bool, String> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let cache = cache_dir();
+    let dest = extract_dir(pkg, version);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let staging = cache.join(format!(
+        ".staging-{pkg}-{version}-{}-{n}",
+        std::process::id()
+    ));
+    let placed = unpack_tarball_bytes(bytes, &staging).and_then(|()| {
+        let top = staging.join(format!("{pkg}-{version}"));
+        if !top.join("loft.toml").exists() {
+            return unpack_tarball_bytes(bytes, &cache).map(|()| true);
+        }
+        match std::fs::rename(&top, &dest) {
+            Ok(()) => Ok(true),
+            Err(_) if dest.join("loft.toml").exists() => Ok(false),
+            Err(_) => unpack_tarball_bytes(bytes, &cache).map(|()| true),
+        }
+    });
+    let _ = std::fs::remove_dir_all(&staging);
+    placed
 }
 
 /// Render the registry catalog: one line per package — name, latest STABLE

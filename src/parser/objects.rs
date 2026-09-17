@@ -3708,6 +3708,61 @@ impl Parser {
         base_ok && index_ok
     }
 
+    /// @PLN164 C6 (`@FR-R-InPlaceLiteral`) — the place a nested record literal is written
+    /// into, when this field's value is one: `Op { paint: Paint { … } }` builds `Paint`'s
+    /// fields straight into `paint`, the way a literal assigned to a field already does,
+    /// instead of in a store of its own followed by a deep copy.
+    ///
+    /// `None` keeps the copy.  Admitted only for an EMBEDDED record field (a
+    /// `reference<T>` field is a pointer, and a nullable one is a tagged enum), whose value
+    /// starts with the field type's own name and `{`, inside an outer record nothing can
+    /// read yet — an appended element or a temporary, which is what an absent
+    /// `self_read_root` means.  A destination the program can read (`x = S { … }`,
+    /// `o.f = S { … }`, `v[i] = S { … }`) keeps the copy, because a nested field expression
+    /// could read the old value after the outer literal has started overwriting it.
+    fn nested_literal_place(
+        &mut self,
+        td: &Type,
+        code: &Value,
+        pos: u16,
+        self_read_root: Option<(u16, u32)>,
+    ) -> Option<Value> {
+        if self.first_pass
+            || !crate::keys::nested_in_place_enabled()
+            || self_read_root.is_some()
+            || matches!(code, Value::Null)
+            || matches!(code, Value::Var(v) if *v == u16::MAX)
+        {
+            return None;
+        }
+        // A `τ?` field is declined whatever it wraps: a nullable record is a tagged
+        // `__nullable<S>` enum, whose payload this road does not write.
+        if matches!(td, Type::Optional(_)) {
+            return None;
+        }
+        let Type::Reference(inner, deps) = td.base() else {
+            return None;
+        };
+        if deps.is_pointer_marker() || self.data.def_type(*inner) != DefType::Struct {
+            return None;
+        }
+        let link = self.lexer.link();
+        let starts = self
+            .lexer
+            .has_identifier()
+            .is_some_and(|id| id == self.data.def(*inner).name())
+            && self.lexer.peek_token("{");
+        self.lexer.revert(link);
+        if !starts {
+            return None;
+        }
+        let kt = i32::from(self.data.def(*inner).known_type());
+        Some(self.cl(
+            "OpGetField",
+            &[code.clone(), Value::Int(i32::from(pos)), Value::Int(kt)],
+        ))
+    }
+
     pub(crate) fn parse_object_field(
         &mut self,
         td_nr: u32,
@@ -3827,9 +3882,16 @@ impl Parser {
                     "OpGetField",
                     &[code.clone(), Value::Int(i32::from(pos)), info],
                 )
+            } else if let Some(place) = self.nested_literal_place(&td, code, pos, self_read_root) {
+                place
             } else {
                 Value::Null
             };
+            let nested_place =
+                matches!(td_base, Type::Reference(_, _)) && !matches!(value, Value::Null);
+            let nested_link = self.lexer.link();
+            let nested_work = self.vars.work_ref();
+            let nested_work_p2 = self.vars.work_ref_p2();
             let mut parent_tp = Type::Reference(td_nr, crate::data::Deps::none());
             // A `u16::MAX` destination is the "no slot" sentinel a file-scope
             // construction carries (`P p = P{}` at module scope); it has no frame
@@ -3930,7 +3992,28 @@ impl Parser {
                 if Self::seeds_lambda_hint(&td) {
                     self.expected = td.clone();
                 }
-                let t = self.parse_operators(&td, &mut value, &mut parent_tp, 0);
+                let mut t = self.parse_operators(&td, &mut value, &mut parent_tp, 0);
+                // A nested literal primed with its field place must have been parsed WHOLE:
+                // the literal alone, written into the place (`Value::Insert`), and nothing
+                // after it but the next field or the end of the body.  Anything else — a
+                // postfix on the literal, an expression that merely starts with the type's
+                // name — is parsed again the ordinary way, as loft#1304's retry does.
+                if nested_place
+                    && !(matches!(value, Value::Insert(_))
+                        && (self.lexer.peek_token(",") || self.lexer.peek_token("}")))
+                {
+                    self.lexer.revert(nested_link);
+                    self.vars.clean_work_refs(nested_work);
+                    self.vars.clean_work_refs_p2(nested_work_p2);
+                    value = Value::Null;
+                    parent_tp = Type::Reference(td_nr, crate::data::Deps::none());
+                    if let Value::Var(v) = code
+                        && *v != u16::MAX
+                    {
+                        parent_tp = parent_tp.depending(*v);
+                    }
+                    t = self.parse_operators(&td, &mut value, &mut parent_tp, 0);
+                }
                 self.expected = saved_expected;
                 self.amp_head = AmpHead::No;
                 t

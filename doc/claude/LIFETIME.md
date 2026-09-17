@@ -300,11 +300,25 @@ caller-hidden buffer and not the call's own buffer argument.  The local's deps a
 owns the store the callee minted), its free is paired with the call's buffer by identity as a
 literal-returning callee's result already is, and the delivery is a bare `PutRef` / plain
 assignment — one mint and one free per call where there were two mints, a deep copy and two
-frees.  The caller's buffer stays NULL: enrolling it in the entry-time pool (`@FR-R-Reuse`)
-hands the callee a store its own rebind of the promoted local then frees on the interpreter,
-which native guards with its `_rb_w_` witness and the interpreter does not (the plan's B1b).
-A rebind keeps the in-place copy on both backends.  `LOFT_NO_ADOPT_FIRST_BIND=1` restores the
+frees.  A rebind keeps the in-place copy on both backends — except the one bind that follows
+an `if`'s pre-init (`scopes::scan_if` puts `m = null` in front of an `if` whose arm first
+binds `m`), which is recorded as a first bind (`Variable::deferred_first_bind`) because the
+local holds the sentinel there on every path.  `LOFT_NO_ADOPT_FIRST_BIND=1` restores the
 copy; `tests/scripts/164-adopt-first-bind.loft` and `tests/adopt_first_bind.rs` are the receipts.
+
+**The caller's buffer is pooled for such a callee too (@PLN164 B1b, `@FR-O-Buffer`).**  The
+entry-time record-buffer pool (`@FR-R-Reuse`) enrolls the paired buffer, so the callee is
+handed the CALLER's store from the second call on and fills it.  That makes the callee's
+promoted local hold one of two stores — the caller's, or one it minted because it was handed
+the sentinel — and only the second is the callee's to free.  The scope pass therefore mints an
+ENTRY WITNESS for every promoted record buffer (`__rbw_<buf> = OpRefAlias(buf)` at the top of
+the body, `Function::entry_witness`), guards the buffer's exit frees with
+`OpDistinctStore(buf, __rbw_<buf>)`, and the interpreter's rebind frees read the same variable
+(`OpFreeRefIfDistinct(v, entry)`, or `OpFreeRefUnlessEntry` where the displaced store is
+already on the stack) — the interpreter's twin of native's `_rb_w_<buf>`.  On a native value
+record the buffer is a phantom and the witness is the null reference.
+`LOFT_NO_ADOPT_BUFFER_REUSE=1` restores B1's null buffer; `tests/scripts/164-adopt-buffer-reuse.loft`
+and `tests/adopt_buffer_reuse.rs` are the receipts.
 
 **A call result with ONE owning destination is built where it will live and stored there by
 relocation (@PLN164 B2, `@FR-R-Place`, `@FR-R-MoveLast`).**  `pp = read_paint(s); …;

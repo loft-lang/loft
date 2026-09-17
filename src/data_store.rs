@@ -262,8 +262,8 @@ pub(crate) const POS_POS: u32 = 8;
 pub(crate) const POS_FILE: u32 = 16;
 
 /// `Variable` record (element of `Function.variables` = `vector<Variable>`) —
-/// the eleven codegen-read fields the snapshot seam exposes.
-pub(crate) const VARIABLE_STRIDE: u32 = 38;
+/// the thirteen codegen-read fields the snapshot seam exposes.
+pub(crate) const VARIABLE_STRIDE: u32 = 40;
 pub(crate) const VAR_NAME: u32 = 24;
 pub(crate) const VAR_TYPE_DEF: u32 = 28; // vector<TypeT> (box-of-one)
 pub(crate) const VAR_STACK_POS: u32 = 0;
@@ -276,6 +276,10 @@ pub(crate) const VAR_CAPTURED: u32 = 35;
 pub(crate) const VAR_CALLER_HIDDEN_BUF: u32 = 36;
 /// @PLN157 § V-g — the elided-copy mark; a fact the EMITTERS read, so it is stored.
 pub(crate) const VAR_VIEW_ELIDED: u32 = 37;
+/// `@FR-O-LazyBuffer` — the buffer's store is minted at its first use; the emitters read it.
+pub(crate) const VAR_LAZY_BUFFER: u32 = 38;
+/// `@FR-O-Move` — the one bind after an `if`'s pre-init is a first bind; the emitters read it.
+pub(crate) const VAR_DEFERRED_FIRST_BIND: u32 = 39;
 
 /// `Function` field offsets, relative to a `Function` base (it is inlined in
 /// `Definition`, never stored in a vector).
@@ -1439,6 +1443,12 @@ mod tests {
         assert_eq!(
             pos(ids.variable, "caller_hidden_buf"),
             VAR_CALLER_HIDDEN_BUF
+        );
+        assert_eq!(pos(ids.variable, "view_elided"), VAR_VIEW_ELIDED);
+        assert_eq!(pos(ids.variable, "lazy_buffer"), VAR_LAZY_BUFFER);
+        assert_eq!(
+            pos(ids.variable, "deferred_first_bind"),
+            VAR_DEFERRED_FIRST_BIND
         );
         assert_eq!(pos(ids.variable, "owner_witness"), VAR_OWNER_WITNESS);
 

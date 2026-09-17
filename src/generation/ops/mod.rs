@@ -297,6 +297,8 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     r.insert("OpPutRef", Box::new(ref_ops::OpPutRefEmitter));
     r.insert("OpCopyRecord", Box::new(ref_ops::OpCopyRecordEmitter));
     r.insert("OpDistinctStore", Box::new(ref_ops::OpDistinctStoreEmitter));
+    r.insert("OpRefAlias", Box::new(ref_ops::OpRefAliasEmitter));
+    r.insert("OpClear", Box::new(ref_ops::OpClearEmitter));
     r.insert("OpSizeofRef", Box::new(ref_ops::OpSizeofRefEmitter));
 
     // Match elimination — the text/format/buffer family relocated VERBATIM from
@@ -535,9 +537,13 @@ mod tests {
         // literal-divisor form (`@FR-R-LitDiv`): 115 measured on 2026-09-15.  @PLN164 C5
         // adds one, `ViewFieldReadEmitter` for `OpGetField`: a view-leaf field read off a
         // value local is the tuple's own reference, and every other `OpGetField` falls
-        // through to the template unchanged (`@FR-O-ViewField`).
+        // through to the template unchanged (`@FR-O-ViewField`).  @PLN164 B1b adds one,
+        // `OpRefAliasEmitter`: the entry witness of a promoted buffer that native keeps as a
+        // value record (a phantom) or a value local is the null reference (`@FR-O-Buffer`).
+        // @PLN164 E-1 adds one, `OpClearEmitter`: a dead buffer's release-on-reuse is
+        // emitted as nothing, like its mint (`@FR-R-ValueRecord`).
         assert!(
-            count <= 116,
+            count <= 118,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

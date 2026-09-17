@@ -34,8 +34,19 @@ fn loft_bin() -> PathBuf {
 /// Every test file is a group member (each region is written by at least two
 /// files), because a base is only built once a second file asks for one — a
 /// fixture of singletons would exercise nothing.
-fn fixture() -> PathBuf {
-    let root = std::env::temp_dir().join(format!("loft_925_{}", std::process::id()));
+///
+/// `who` gives each TEST its own root, and that is load-bearing rather than tidy:
+/// this function begins by REMOVING the root, the tests in this binary run in
+/// parallel by default, and `std::process::id()` is the same value for all of
+/// them — so a root keyed on the pid alone is one directory that every test
+/// wipes.  One test's removal then lands between another's `create_dir_all` and
+/// its first write, or under a run already in progress.  Measured on the
+/// pid-only form: six failures in eighteen runs under concurrency (panics at the
+/// write below and inside `the_shared_base_is_built_for_every_group`), against
+/// eight clean runs when the binary ran alone — a flake that only appears on a
+/// loaded box, which is where gates run.
+fn fixture(who: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!("loft_925_{}_{who}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("src")).expect("mkdir src");
     std::fs::create_dir_all(root.join("tests")).expect("mkdir tests");
@@ -161,7 +172,7 @@ fn run(root: &PathBuf, extra: &[(&str, &str)]) -> (i32, String) {
 /// The guard: the same binary, the same package, the sharing on and off.
 #[test]
 fn a_shared_library_parse_answers_what_a_private_one_did() {
-    let root = fixture();
+    let root = fixture("equivalence");
     let (shared_code, shared) = run(&root, &[]);
     let (private_code, private) = run(&root, &[("LOFT_NO_TEST_BASE", "1")]);
 
@@ -193,7 +204,7 @@ fn a_shared_library_parse_answers_what_a_private_one_did() {
 /// that silently stopped being built would leave it comparing a run to itself.
 #[test]
 fn the_shared_base_is_built_for_every_group() {
-    let root = fixture();
+    let root = fixture("base_built");
     let (_, out) = run(&root, &[("LOFT_TEST_BASE_REPORT", "1")]);
     for region in ["use alpha;", "use beta;", "use base925;", "#cwd use alpha;"] {
         assert!(
@@ -216,7 +227,7 @@ fn the_shared_base_is_built_for_every_group() {
 /// CI green — the failure mode that makes this whole change worth verifying.
 #[test]
 fn deny_warnings_still_sees_the_librarys_own_warning() {
-    let root = fixture();
+    let root = fixture("deny_warnings");
     let (shared_code, shared) = run(&root, &[("LOFT_DENY_WARNINGS", "1")]);
     let (private_code, private) = run(
         &root,

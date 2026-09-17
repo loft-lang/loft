@@ -2503,6 +2503,15 @@ impl<'a> Ownership<'a> {
             Own::Unknown => return Own::Unknown,
             Own::Borrowed { base } | Own::Join { base } => base,
         };
+        // @FR-O-Oracle — loft#1550: a return that may hand back ANY of several arguments has
+        // no single witness among them.  The callee's own summary names one base (its lattice
+        // joins two borrows into a `Join` of the first), and a runtime guard against that one
+        // argument adopts the other as the binding's own store.  Read from the caller's side
+        // it is a `Join` with no nameable base, which every reader copies, bracketing the
+        // arguments.
+        if returns_one_of_several_args(self.data, callee_d) {
+            return Own::Join { base: u16::MAX };
+        }
         let base = self.caller_arg_base(callee_d, callee_base, caller_args, func, defs);
         match callee_own {
             Own::Join { .. } => Own::Join { base },
@@ -3389,6 +3398,23 @@ pub fn call_return_frees_source(data: &Data, d_nr: u32, call: &Value) -> bool {
     !data.def(fn_nr).returns_borrowed_view() || protectable_ref_args(data, d_nr, call).1
 }
 
+/// loft#1550 — does `callee`'s return name MORE THAN ONE of its visible parameters?  Then a
+/// borrow it hands back may be any of them, and no single caller argument witnesses it.
+#[must_use]
+pub fn returns_one_of_several_args(data: &Data, callee: u32) -> bool {
+    if callee as usize >= data.definitions.len() {
+        return false;
+    }
+    let def = data.def(callee);
+    let attrs = def.attributes();
+    def.returned()
+        .depend()
+        .iter()
+        .filter(|&&d| attrs.get(d as usize).is_some_and(|a| !a.hidden))
+        .count()
+        > 1
+}
+
 /// loft#1106 — does a FIRST bind of a NULLABLE heap local from this call have to go
 /// through the runtime join guard, the way its non-null twin already does?
 ///
@@ -3409,6 +3435,11 @@ pub fn call_return_frees_source(data: &Data, d_nr: u32, call: &Value) -> bool {
 /// the two backends emit the guard that makes that free correct.  A site that decided
 /// this differently would either free a store the caller still names, or strip the
 /// deps off a bind that stays a plain alias.
+///
+/// A base of `u16::MAX` answers a borrow of one of SEVERAL arguments (loft#1550): no run is
+/// owned and no single witness exists, so the bind copies on every run — the interpreter
+/// through its plain call copy, native through its copy-or-adopt split, which adopts only a
+/// null answer.
 ///
 /// A JOIN or a pure BORROW with a nameable witness — `(F-Ret)` says the value a call
 /// answers is FRESH whichever arm produced it, so a callee that always hands its argument
@@ -3442,6 +3473,11 @@ pub fn nullable_join_first_bind(
     let callee = data.def(*fn_nr);
     if !callee.is_loft_defined() || !callee.returns_borrowed_view() {
         return None;
+    }
+    // loft#1550 — a borrow of ONE OF SEVERAL arguments has no witness, and the bind copies on
+    // every run; `u16::MAX` is the base each site reads as "copy always".
+    if returns_one_of_several_args(data, *fn_nr) {
+        return Some((*rec, u16::MAX));
     }
     let base = match ownership_of(data, d_nr, value) {
         Own::Join { base } => base,
@@ -3730,8 +3766,14 @@ pub fn adopts_minted_at_bind(
     if function.is_argument(v) || function.is_caller_hidden_buf(v) || function.is_skip_free(v) {
         return false;
     }
+    // The compiler's BUFFER names.  An inline container's `__ref_p2_N` shares the prefix and
+    // is not one: it is the plain owner of the call's result (`Parser::bind_inline_container`),
+    // and declined here it kept no pairing, so nothing released the store it adopted.
     let name = function.name(v);
-    if name.starts_with("__ref_") || name.starts_with("__rref_") || name.starts_with("__retbuf") {
+    let buffer_name = (name.starts_with("__ref_") && !name.starts_with("__ref_p2_"))
+        || name.starts_with("__rref_")
+        || name.starts_with("__retbuf");
+    if buffer_name {
         return false;
     }
     !args
@@ -4736,8 +4778,9 @@ pub fn post_scope_lints(
     warn_linked_group_append(data, diags, fallback_file);
     // loft#1397 — a payload binding whose subject's place is overwritten with another variant.
     warn_variant_overwritten(data, diags, fallback_file);
-    // @PLN163 P0 — the census of copies of a record with a release (gated `LOFT_DROP_COPY_CENSUS`).
-    drop_copy_census(data);
+    // @PLN163 P0/P3 — the census of copies of a record with a release (gated
+    // `LOFT_DROP_COPY_CENSUS`), and the refusal the same verdicts raise (`LOFT_LEASE_REFUSE`).
+    drop_copy_census(data, diags, fallback_file);
 }
 
 /// Lists every place the program deep-copies a record that has a release to run — the copies the
@@ -4763,11 +4806,19 @@ pub fn post_scope_lints(
 /// variable (`-` when the source names none), the destination, the `(H-Move)` verdict
 /// (`src/lease.rs`), and `frees-source` when the op frees its source — then the count, which is
 /// printed even when it is zero.
-pub fn drop_copy_census(data: &Data) {
-    if !crate::keys::drop_copy_census_enabled() {
+pub fn drop_copy_census(
+    data: &Data,
+    diags: &mut crate::diagnostics::Diagnostics,
+    fallback_file: &str,
+) {
+    let census = crate::keys::drop_copy_census_enabled();
+    let refuse = crate::keys::lease_refuse_enabled();
+    if !census && !refuse {
         return;
     }
-    crate::copy_manifest::clear_lease();
+    if census {
+        crate::copy_manifest::clear_lease();
+    }
     let mut sites = 0;
     if data.any_drop_hook() {
         let copy_d = data.def_nr("OpCopyRecord");
@@ -4783,6 +4834,7 @@ pub fn drop_copy_census(data: &Data) {
                 frame: crate::lease::Frame::new(data, def),
                 fname: &def.name,
                 copy_d,
+                op_append: data.def_nr("OpAppendVector"),
                 returned: data
                     .type_owns_droppable_anywhere(def.returned.base())
                     .then(|| data.type_name_str(&def.returned)),
@@ -4791,6 +4843,8 @@ pub fn drop_copy_census(data: &Data) {
                 placement: crate::lease::Placement::Structure,
                 blocks: Vec::new(),
                 line: 0,
+                pos: None,
+                refusals: Vec::new(),
                 sites: 0,
             };
             cx.scan(&def.code);
@@ -4802,21 +4856,101 @@ pub fn drop_copy_census(data: &Data) {
                     continue;
                 }
                 cx.line = line;
-                let lease = lease_column(
-                    func,
-                    cx.frame
-                        .written_var_verdict(var, crate::lease::Placement::Structure),
-                );
+                cx.pos = None;
+                let lease = cx
+                    .frame
+                    .written_var_verdict(var, crate::lease::Placement::Structure);
                 let tp = data.type_name_str(func.tp(var));
-                cx.emit("bind", &tp, &[var], func.name(var), (&lease, "-"), false);
+                cx.emit(
+                    "bind",
+                    &tp,
+                    &[var],
+                    func.name(var),
+                    (Some(&lease), "-"),
+                    false,
+                );
             }
             sites += cx.sites;
+            if refuse {
+                raise_copy_refusals(&mut cx, def, diags, fallback_file);
+            }
         }
     }
-    eprintln!(
-        "drop-copy census: {sites} site{}",
-        if sites == 1 { "" } else { "s" }
-    );
+    if census {
+        eprintln!(
+            "drop-copy census: {sites} site{}",
+            if sites == 1 { "" } else { "s" }
+        );
+    }
+}
+
+/// @PLN163 P3 — the census's refusals, raised as the compile-time error `(H-Copy-Refuse)` states.
+///
+/// The verdicts are the ones P2r proved complete as a report; this only decides where each is
+/// reported and in what words.  One error per copy, de-duplicated by position and by the value it
+/// names: several sites can share a line (the corpus's 355 refusals fall on 227 lines), and the
+/// same sentence twice on one line is noise, while two DIFFERENT copies there are two findings.
+fn raise_copy_refusals(
+    cx: &mut Census<'_>,
+    def: &crate::data::Definition,
+    diags: &mut crate::diagnostics::Diagnostics,
+    fallback_file: &str,
+) {
+    // The file comes from the DEFINITION, never the entry file: pairing a dependency's line
+    // number with the consumer's path is a real line in the wrong file (loft#781).
+    let def_file = if def.position.file.is_empty() {
+        fallback_file
+    } else {
+        def.position.file.as_str()
+    };
+    let mut seen = std::collections::HashSet::new();
+    for (pos, line, refusal, tp) in std::mem::take(&mut cx.refusals) {
+        // `Later` is the superseded liveness reading.  P2r settled that liveness decides an
+        // ELISION and never validity, so it must not fail a build — and `written_verdict` cannot
+        // produce one, which this keeps true rather than assumes.
+        if matches!(refusal, crate::lease::Refusal::Later { .. }) {
+            continue;
+        }
+        let (file, line, col) = match &pos {
+            Some(p) if !p.file.is_empty() => (p.file.as_str(), p.line, p.pos),
+            Some(p) => (def_file, p.line, p.pos),
+            None => (def_file, line, 0),
+        };
+        let who = cx.frame.author_name(&refusal).map(str::to_string);
+        if !seen.insert((line, col, refusal.var(), who.clone())) {
+            continue;
+        }
+        diags.add_at_coded(
+            crate::diagnostics::Level::Error,
+            Some("copy-of-droppable"),
+            &refusal.message(who.as_deref(), &tp),
+            file,
+            line,
+            col,
+        );
+        // Both ways out are Conditional: the rule proves this line writes a copy, not which of
+        // the two shapes the author meant.  Neither spells an `edit` — the rewrite is a
+        // restructure of the construction site, not a replacement at this span, which is the
+        // reason `avoidable-copy` already carries in `EDIT_BLOCKED`.
+        diags.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: "build the value where it belongs".to_string(),
+            condition: Some("the new structure is meant to hold a value of its own".to_string()),
+            edit: None,
+            concept: "move",
+            concept_ref: "@F106",
+        });
+        diags.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: "use the value where it is, or pass it as an argument".to_string(),
+            condition: Some(
+                "the value is only being READ here — an argument binds without copying".to_string(),
+            ),
+            edit: None,
+            concept: "move",
+            concept_ref: "@F106",
+        });
+    }
 }
 
 /// The walk behind [`drop_copy_census`] for one function.
@@ -4828,6 +4962,9 @@ struct Census<'a> {
     frame: crate::lease::Frame<'a>,
     fname: &'a str,
     copy_d: u32,
+    /// `OpAppendVector` — the op a copy of a whole COLLECTION is written with, where a record's
+    /// copy is an `OpCopyRecord`.
+    op_append: u32,
     /// The function's result type name, when that type owns a droppable.
     returned: Option<String>,
     /// The tuple a whole-tuple bind being scanned copies: its member copies are that bind's.
@@ -4842,6 +4979,18 @@ struct Census<'a> {
     blocks: Vec<*const Value>,
     /// The nearest line seen before the node being visited.
     line: u32,
+    /// The nearest full position seen before the node being visited, when one carries a column.
+    /// A bare `Value::Line` marker has no column, so it clears this and the refusal falls back to
+    /// the line alone — a caret at column 0 rather than one pointing at the wrong token.
+    pos: Option<crate::lexer::Position>,
+    /// The refusals this function's sites produced, for @PLN163 P3's error: where each was
+    /// written, the nearest line, the verdict, and the type copied.
+    refusals: Vec<(
+        Option<crate::lexer::Position>,
+        u32,
+        crate::lease::Refusal,
+        String,
+    )>,
     sites: usize,
 }
 
@@ -4865,8 +5014,10 @@ impl Census<'_> {
         use crate::lease::{Lease, Placement, Refusal};
         if let Some(p) = node.span_pos() {
             self.line = p.line;
+            self.pos = Some(p.clone());
         } else if let Value::Line(n) = node {
             self.line = *n;
+            self.pos = None;
         }
         let node = node.unspan();
         let mut whole = None;
@@ -4903,15 +5054,12 @@ impl Census<'_> {
                     }) {
                         let (root, through_member) = self.frame.resolve_view(hold);
                         let (lease, liveness) = if through_member {
-                            let refused =
-                                lease_column(self.func, Lease::Refuse(Refusal::Container(root)));
-                            (refused.clone(), refused)
+                            let refused = Lease::Refuse(Refusal::Container(root));
+                            let column = lease_column(self.func, refused.clone());
+                            (refused, column)
                         } else {
                             (
-                                lease_column(
-                                    self.func,
-                                    self.frame.written_var_verdict(root, Placement::Return),
-                                ),
+                                self.frame.written_var_verdict(root, Placement::Return),
                                 lease_column(
                                     self.func,
                                     self.frame.liveness_var_verdict(node, root),
@@ -4919,7 +5067,7 @@ impl Census<'_> {
                             )
                         };
                         let tp = self.data.type_name_str(self.func.tp(hold));
-                        self.emit("tuple", &tp, &[root], "-", (&lease, &liveness), false);
+                        self.emit("tuple", &tp, &[root], "-", (Some(&lease), &liveness), false);
                         crate::copy_manifest::note_lease_return(self.d_nr);
                         whole = Some(root);
                     }
@@ -4979,15 +5127,52 @@ impl Census<'_> {
                     Placement::Structure
                 };
                 let (lease, liveness) = if kind == "snapshot" {
-                    ("-".to_string(), "-".to_string())
+                    (None, "-".to_string())
                 } else {
                     self.note_destination(&args[1]);
                     (
-                        lease_column(self.func, self.frame.written_verdict(&args[0], placement)),
+                        Some(self.frame.written_verdict(&args[0], placement)),
                         lease_column(self.func, self.frame.liveness_verdict(node, &args[0])),
                     )
                 };
-                self.emit(kind, &tp, &from, &into, (&lease, &liveness), frees);
+                self.emit(kind, &tp, &from, &into, (lease.as_ref(), &liveness), frees);
+            }
+            // A whole COLLECTION placed in another one, which the parser writes as an APPEND and
+            // never as a bind: `d = v` mints a backing and fills it (`d = OpGetField(__vdb_N, 0)`
+            // then `OpAppendVector(d, v)`, `vectors.rs` *"deep-COPY a's elements into v's own
+            // store"*), a concat `v += w` fills the vector it already has, and `v += v` appends
+            // `v`'s own elements back into it.  Each places an EXISTING value in a second
+            // structure, which is what `(H-Copy-Refuse)` judges.
+            //
+            // The SOURCE decides, not the op: one parts loop emits this node both for a copy
+            // (`v = a + b`) and for a fresh literal (`v += [mk()]`), and `written_verdict` answers
+            // `move` for the literal because `leaves` reads it as `Leaf::Fresh`.  An append into a
+            // FIELD (`OpAppendVector(OpGetField(rec, fld), src)`) is a different site, recorded by
+            // `Uses::construct_copy`, and is not listed here.
+            Value::Call(d, args)
+                if *d == self.op_append
+                    && args.len() >= 2
+                    && matches!(args[0].unspan(), Value::Var(v)
+                        if self.data.type_owns_droppable_anywhere(self.func.tp(*v).base())) =>
+            {
+                let Some(Value::Var(dest)) = args.first().map(Value::unspan) else {
+                    unreachable!("matched above")
+                };
+                let mut from = Vec::new();
+                copy_source_roots(&args[1], self.data, self.func, &mut from);
+                let tp = self.data.type_name_str(self.func.tp(*dest));
+                let into = self.func.name(*dest).to_string();
+                let lease = self.frame.written_verdict(&args[1], self.placement);
+                let liveness = lease_column(self.func, self.frame.liveness_verdict(node, &args[1]));
+                self.note_destination(&args[0]);
+                self.emit(
+                    "append",
+                    &tp,
+                    &from,
+                    &into,
+                    (Some(&lease), &liveness),
+                    false,
+                );
             }
             // A bind whose type depends on its own source is a VIEW of it — a destructure's
             // `__ref_2 = u`, a nested copy's `_tuphold_1 = inner` — and copies nothing.  So is a
@@ -5012,13 +5197,10 @@ impl Census<'_> {
                 };
                 let tp = self.data.type_name_str(self.func.tp(*v));
                 let into = self.func.name(*v).to_string();
-                let lease = lease_column(
-                    self.func,
-                    self.frame.written_var_verdict(*src, self.placement),
-                );
+                let lease = self.frame.written_var_verdict(*src, self.placement);
                 let liveness = lease_column(self.func, self.frame.liveness_var_verdict(node, *src));
                 crate::copy_manifest::note_lease_site(self.d_nr, *v);
-                self.emit(kind, &tp, &[*src], &into, (&lease, &liveness), false);
+                self.emit(kind, &tp, &[*src], &into, (Some(&lease), &liveness), false);
             }
             // A join whose arm is a variable as it is (`a = a ?? mk(122)`) places that variable
             // without a copy; the rules judge the line all the same.  An arm that is a view — the
@@ -5055,9 +5237,8 @@ impl Census<'_> {
                     {
                         continue;
                     }
-                    let lease =
-                        lease_column(self.func, self.frame.written_var_verdict(src, placement));
-                    self.emit("bind", &tp, &[src], &into, (&lease, "-"), false);
+                    let lease = self.frame.written_var_verdict(src, placement);
+                    self.emit("bind", &tp, &[src], &into, (Some(&lease), "-"), false);
                 }
             }
             // A tuple literal that reads every member of one tuple, in order, copies that tuple
@@ -5072,15 +5253,12 @@ impl Census<'_> {
                             .type_owns_droppable_anywhere(self.func.tp(base).base())
                     {
                         let (lease, liveness) = if through_member {
-                            let refused =
-                                lease_column(self.func, Lease::Refuse(Refusal::Container(root)));
-                            (refused.clone(), refused)
+                            let refused = Lease::Refuse(Refusal::Container(root));
+                            let column = lease_column(self.func, refused.clone());
+                            (refused, column)
                         } else {
                             (
-                                lease_column(
-                                    self.func,
-                                    self.frame.written_var_verdict(root, self.placement),
-                                ),
+                                self.frame.written_var_verdict(root, self.placement),
                                 lease_column(
                                     self.func,
                                     self.frame.liveness_var_verdict(node, root),
@@ -5088,7 +5266,7 @@ impl Census<'_> {
                             )
                         };
                         let tp = self.data.type_name_str(self.func.tp(base));
-                        self.emit("tuple", &tp, &[root], "-", (&lease, &liveness), false);
+                        self.emit("tuple", &tp, &[root], "-", (Some(&lease), &liveness), false);
                     }
                     if let Some((rhs, v)) = self.rhs_of
                         && std::ptr::eq(rhs, node)
@@ -5112,14 +5290,11 @@ impl Census<'_> {
                             {
                                 continue;
                             }
-                            let lease = lease_column(
-                                func,
-                                self.frame.written_verdict(item, self.placement),
-                            );
+                            let lease = self.frame.written_verdict(item, self.placement);
                             let mut from = Vec::new();
                             copy_source_roots(item, self.data, func, &mut from);
                             let tp = self.data.type_name_str(elm);
-                            self.emit("item", &tp, &from, func.name(v), (&lease, "-"), false);
+                            self.emit("item", &tp, &from, func.name(v), (Some(&lease), "-"), false);
                         }
                     }
                 }
@@ -5131,13 +5306,15 @@ impl Census<'_> {
                 if let Some(returned) = self.returned.clone() {
                     crate::copy_manifest::note_lease_return(self.d_nr);
                     if let Some(refusal) = self.frame.return_refusal(value) {
-                        let lease = format!("refuse:{}", refusal.describe(self.func));
+                        let var = refusal.var();
+                        let lease = Lease::Refuse(refusal);
+                        let column = lease_column(self.func, lease.clone());
                         self.emit(
                             "return",
                             &returned,
-                            &[refusal.var()],
+                            &[var],
                             "-",
-                            (&lease, &lease),
+                            (Some(&lease), &column),
                             false,
                         );
                     }
@@ -5178,10 +5355,25 @@ impl Census<'_> {
         tp: &str,
         from: &[u16],
         into: &str,
-        verdicts: (&str, &str),
+        verdicts: (Option<&crate::lease::Lease>, &str),
         frees: bool,
     ) {
+        let (lease, liveness) = verdicts;
         self.sites += 1;
+        // @PLN163 P3 — every site funnels through here, so this is where the rules' refusal is
+        // taken: one chokepoint rather than eight arms that can drift apart.  A `snapshot` is the
+        // scope pass's own copy and carries no verdict (`None`), so it can never be refused —
+        // which the corpus agrees with, 0 refusals across 666 snapshot rows.
+        if crate::keys::lease_refuse_enabled()
+            && let Some(crate::lease::Lease::Refuse(r)) = lease
+        {
+            self.refusals
+                .push((self.pos.clone(), self.line, r.clone(), tp.to_string()));
+        }
+        if !crate::keys::drop_copy_census_enabled() {
+            return;
+        }
+        let lease = lease.map_or_else(|| "-".to_string(), |l| lease_column(self.func, l.clone()));
         let from = if from.is_empty() {
             "-".to_string()
         } else {
@@ -5191,11 +5383,9 @@ impl Census<'_> {
                 .join(",")
         };
         eprintln!(
-            "drop-copy fn={} line={} kind={kind} type={tp} from={from} into={into} lease={} liveness={}{}",
+            "drop-copy fn={} line={} kind={kind} type={tp} from={from} into={into} lease={lease} liveness={liveness}{}",
             self.fname,
             self.line,
-            verdicts.0,
-            verdicts.1,
             if frees { " frees-source" } else { "" }
         );
     }

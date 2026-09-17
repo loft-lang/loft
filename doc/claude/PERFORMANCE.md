@@ -455,6 +455,25 @@ while a checkpoint is keyed to the loft function the operator was WRITTEN in. Th
 one question a sampler on optimised code cannot answer, and the reason to keep this
 instrument beside the normal one.
 
+### `scripts/native_attrib.py` — the release binary, charged to loft lines
+
+The third instrument answers what the two above cannot answer together: **on the build that
+ships, which loft LINE drives the runtime's cycles?**  A self-time profile of a release
+binary names runtime routines (`OpDatabase`, `vector_add`) but not the line that called them,
+and it counts a runtime helper inlined into a program function as program.  This tool reads
+`perf record --call-graph fp`, expands every frame to its inline chain with
+`llvm-symbolizer`, and charges each sample to the innermost frame of the emitted program —
+whose `// loft:<file>:<line>` comment names the line.  It prints the runtime share by family
+of the entry the program called, by loft function, and by loft line.
+
+It needs frame pointers and line tables in the program AND in the runtime rlib it links, or
+every chain stops at the runtime boundary; the build recipe is in the script's header
+(`cargo build --profile profiling --lib` with `-Cforce-frame-pointers=yes`, then the release
+rustc line with `-Cdebuginfo=1 -Cforce-frame-pointers=yes`).  Frame pointers cost a few per
+cent, so quote SHARES from this build and TIMES from the release one.  The worked example is
+@PLN164 § P0b: it moved the drawing `parse` row's store family from 9 % (self time) to 20 %
+(entry-inclusive) and found half of it minted at function entry on paths that never used it.
+
 ### Count before you time
 
 For an *asymptotic* question — "why is this quadratic?" — a profiler is the wrong first tool.
@@ -526,6 +545,33 @@ Wall-clock milliseconds, **best of 3 warm runs**, single core, Linux x86-64, **r
 > again. The hash rows are doubly out of date: they also predate **@PLN135**, which measured
 > integer-key insert 933 → 505 ms (350 ms with `reserve`) and lookup ~95 → ~75 ms — see
 > [plans/135-hash-performance/README.md](plans/135-hash-performance/README.md).
+
+**Re-measured 2026-09-17** (`bench/run_bench.sh --skip-python --skip-wasm --warmup`, this
+x86-64 box, one run; the Rust column is `rustc -O`).  These are ENGINE measurements: synthetic
+programs, read beside `(Perf-Weight)`'s bar (3× per routine, a median of 2×) but not part of
+its population, which is the routines loft and its libraries ship (@PLN158):
+
+| # | Benchmark | interp ms | native ms | Rust ms | native/Rust |
+|---|-----------|----------:|----------:|--------:|------------:|
+| 01 | fibonacci (recursive)  | 10 220 | 401 |  86 | **4.7×** |
+| 02 | sum loop               |     46 |   4 |   3 | 1.3× ‡ |
+| 03 | prime sieve            |     25 |   2 |   3 | 0.7× ‡ |
+| 04 | Collatz lengths        |  1 655 | 283 | 147 | 1.9× |
+| 05 | Mandelbrot             |     16 |  10 |  12 | 0.8× ‡ |
+| 06 | Newton sqrt            |    651 | 347 | 140 | 2.5× |
+| 07 | string build           |     82 |  49 |  20 | 2.5× |
+| 08 | word frequency         |    139 |  42 |  16 | 2.6× |
+| 09 | matrix mul (float)     |     56 |  12 |   3 | **4.0×** ‡ |
+| 10 | insertion sort         |     55 |   4 |   6 | 0.7× ‡ |
+| 11 | parallel-for           |     28 |   9 |   8 | 1.1× ‡ |
+| 12 | drawing (bench subset) |    230 |  21 |  13 | 1.6× |
+
+‡ a run of a few milliseconds, so the ratio is only as fine as the timer's millisecond: 09
+reads anywhere from 3× to 5×.  What the engine rows say: `fibonacci` still pays the per-call
+frame (@PLN157's leaf rules elide it only for a function off every call cycle, and a recursive
+one is on one; N2/N4 below are the designs), and `matrix mul` is the element-access class N1
+names.  Both matter where a real routine is recursive or matrix-shaped — which is where the
+library routines of @PLN158 should show it first.
 
 **What changed since the old table (and what it means):**
 - **The interpreter now beats CPython on 8 of 11** (interp/Py 0.09–1.22, median ~0.6) — the
@@ -1073,7 +1119,9 @@ The 2× gaps on data structures and strings are design-level issues addressed by
 was nearly full (254/256, "2 slots left") and deferred P1 *"until opcode space is freed,
 e.g. by a two-byte escape prefix."* **That escape prefix now exists** — byte 255 escapes
 to `OPERATORS[255 + ext]` (see [How the interpreter executes](#how-the-interpreter-executes)),
-the table is at **269/511 with ~242 free slots**, and 14 escape-range ops already use it.
+the table sits well inside **511 slots**, and the escape range is already in use.
+(No occupancy figure is quoted here any more: it was hand-copied into five documents and
+every copy drifted, this one included.  `make ops-census` derives it.)
 So P1 can proceed: its superinstructions land in the escape range, i.e. as **two-byte
 opcodes** (`255` prefix + `ext`). The one extra byte-fetch is negligible against the win
 — a superinstruction replaces ~4 one-byte ops (4 fetches + 4 indirect calls + the
@@ -2091,6 +2139,11 @@ purity-classifier extension.
 > `LOFT_NO_LEAF_PRELUDE=1` restores the push (the bisect switch).  Measured on the
 > drawing pass (probed by hand-editing the emitted Rust first, then reproduced by the
 > emitter): `hash` −36 % (0.81M ns/op named tier, ~2.3× Rust), `lock` −7 %.
+>
+> **Made transitive in the lean tier** (`@FR-R-LeafChain`, formal/rewrites.md): a function
+> whose whole call tree is frameless — every user callee loft-bodied, none on a cycle, no
+> fn-ref — drops its prelude too, which takes the scanner helpers (`at` fails the plain test
+> only because `size` is a loft-bodied wrapper).  `LOFT_NO_LEAF_CHAIN=1` is the bisect step.
 
 ### Background
 

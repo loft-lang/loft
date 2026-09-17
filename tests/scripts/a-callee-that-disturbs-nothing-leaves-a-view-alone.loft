@@ -1,0 +1,143 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// binding.md D-bind-48 / `(B-Ref-Reshape)`'s callee clause — the OVER-REACH half.
+//
+// `(B-Disturb)` says an event disturbs *"WHEREVER IT HAPPENS — in this frame, or in anything the
+// frame CALLS, at any depth"*, and `(B-Ref-Reshape)` repeats it for the refusal.  @PLN164 C3 gave
+// that reach to the MATERIALISE walk; the refusal ran `ViewWalk::run(..., Some(removed), None, …)`
+// and so could not see a callee's GROWTH at all.  Handing it the same `disturbed` map closes that,
+// and the risk of doing so is reaching PAST the population the rule names.
+//
+// **The refusal cells are not in this file**: a cell that refuses takes the whole file with it and
+// every assertion behind it, so they live in `tests/parse_errors.rs::b_ref_reshape_callee_*`.
+// What this file pins is the other half — the shapes that must KEEP compiling across a call,
+// because each one rejects a cure one step too wide.
+//
+// @falsified-at: none — this file is CONTROLS ONLY, and controls cannot fail on an earlier build:
+//   every cell here compiles and releases once both before and after the fix, by construction.
+//   The cells that DO separate the two builds are refusals, and a refusal cannot live in a `.loft`
+//   guard without taking the file down — they are pinned in `parse_errors.rs::b_ref_reshape_callee_*`.
+//   Those four SHAPES were measured on the pre-fix binary (`1f87e1aee`) as standalone programs and
+//   compiled there, releasing one resource twice — an `&` link across a callee's growth
+//   `M1 M2 R1 D1 D1 D2`, a droppable plain view across one `M1 M2 R1 D1 D1 D2`, the same two frames
+//   down `M1 M2 R1 D1 D1 D2`, and a callee's removal from a FIELD of a parameter, unrefused —
+//   and they refuse after it.
+//   CHANNEL: none on this file, deliberately — see above.  Its job is over-reach, not detection.
+//   ARMED: no instrument; the `D` lines are the oracle and an ordinary run prints them.
+//   WITNESS: measured on the pre-fix binary (`1f87e1aee`) — all four cells answered exactly what
+//   they answer now, and the non-droppable cell printed the copy-out advice then as it does now.
+//   ⚠ Score the advice with `LOFT_NO_CACHE=1`.  A warm whole-program cache REPLAYS a stored
+//   diagnostic set, so the same source reads zero advice on one binary and one on another — which
+//   looks like "the control is dead" or "the fix changed the advice" and is neither.
+//   HOLDS: each cell must keep COMPILING and release every resource exactly once.  A cure that
+//   ignores the droppable question moves `a_non_droppable_view_survives_a_callees_growth` (which
+//   must still materialise AND still say so); one that ignores LIVENESS moves
+//   `a_view_dead_before_the_callees_growth_still_compiles`; one that counts a container the callee
+//   MINTED ITSELF — the hidden `__retbuf` included — moves
+//   `a_container_the_callee_mints_itself_reaches_nothing`; and one that treats any call as a
+//   disturbance moves `a_callee_that_only_reads_disturbs_nothing`.
+//   ⚠ `matrix_axes file` still reports A2 `container provenance` MISSING `parameter` even though
+//   `a_parameter_container_with_a_read_only_callee_is_untouched` holds its view off a PARAMETER.
+//   That is the tool reading what it can read, not a gap to paper over: its provenance detector
+//   answers for the container a cell DISTURBS, and the parameter cells for this rule are the ones
+//   that REFUSE — `parse_errors.rs::b_ref_reshape_callee_*`, which no `.loft` scan can see.  The
+//   axis IS measured, twice (a parameter handed to a disturbing callee, and one forwarded a frame
+//   further, where the message names the callee this frame calls rather than the one that grows).
+//   A9 `loop` DID move to 2/2 when the loop cell landed, which is what says the tool is working.
+//   ⚠ The fifth control for this rule lives elsewhere and must be run with it:
+//   `a-link-to-a-whole-container-survives-that-containers-growth.loft`'s
+//   `a_growth_in_a_callee_keeps_it_aliasing` (and `157-view-header`'s `grown_between`) pin a link
+//   TO a container across a callee's growth at 11.  That one is spared by `names_container_itself`
+//   rather than by anything here, and it is the cell a cure keyed on the container instead of the
+//   place would break.
+
+struct H { id: integer }
+fn OpDrop(self: H) { println("D{self.id}"); }
+fn mk(id: integer) -> H { println("M{id}"); return H { id: id }; }
+struct Bag { v: vector<H>, tag: integer }
+struct P { n: integer }
+struct PBag { v: vector<P>, tag: integer }
+
+fn grow(b: Bag, n: integer) { b.v += [mk(n)]; }
+fn pgrow(b: PBag, n: integer) { b.v += [P { n: n }]; }
+fn peek(b: Bag) -> integer { return len(b.v); }
+fn mkbag(n: integer) -> Bag { c = Bag { v: [], tag: 0 }; c.v += [mk(n)]; return c; }
+
+// The NON-droppable twin of the refused shape, with the growth in a CALLEE: it still materialises
+// and still says so, which is `(B-View)`'s own answer.  If this one starts refusing, the cure
+// reached past droppables and past `&` links both.
+fn a_non_droppable_view_survives_a_callees_growth() -> integer {
+  b = PBag { v: [P { n: 1 }], tag: 0 };
+  e = b.v[0];
+  pgrow(b, 2);
+  e.n
+}
+
+// LIVENESS is the condition, exactly as `(B-Ref-Reshape)` has it: a view whose last use precedes
+// the call is not at risk, so the growth inside the callee still compiles.
+fn a_view_dead_before_the_callees_growth_still_compiles() -> integer {
+  b = Bag { v: [], tag: 0 };
+  b.v += [mk(1)];
+  e = b.v[0];
+  n = e.id;
+  grow(b, 2);
+  n + len(b.v)
+}
+
+// A container the CALLEE minted itself dies with the callee and no caller can hold a view into it;
+// the callee's hidden RETURN BUFFER is an argument slot too, so without that test every
+// record-returning function that fills a vector field would report a disturbance.
+fn a_container_the_callee_mints_itself_reaches_nothing() -> integer {
+  b = Bag { v: [], tag: 0 };
+  b.v += [mk(1)];
+  e = b.v[0];
+  other = mkbag(2);
+  e.id + len(other.v)
+}
+
+// A callee that only READS its container parameter is not one of `(B-Disturb)`'s four events.
+fn a_callee_that_only_reads_disturbs_nothing() -> integer {
+  b = Bag { v: [], tag: 0 };
+  b.v += [mk(1)];
+  e = b.v[0];
+  e.id + peek(b)
+}
+
+// A9 — the same non-droppable view inside a LOOP, disturbed by a callee on every pass.
+// `matrix_axes file` named `loop` as an axis this guard did not reach, and a bind re-made each
+// iteration is not the same question as one made once: the materialise has to happen per pass.
+fn a_non_droppable_view_in_a_loop_survives_a_callees_growth() -> integer {
+  b = PBag { v: [P { n: 1 }], tag: 0 };
+  t = 0;
+  for i in 0..2 { e = b.v[0]; pgrow(b, i + 2); t = t + e.n; }
+  t
+}
+
+// A2 — the container is a PARAMETER of the frame holding the view, which is exactly what
+// `disturbed_params_map`'s forward edge keys on (*"the argument is rooted at one of the caller's
+// OWN parameter slots"*), and the callee it hands that parameter to only READS.  A cure that
+// treated any parameter passed to any call as disturbed would move this cell.
+fn reads_only(b: Bag) -> integer { e = b.v[0]; return e.id + peek(b); }
+
+fn a_parameter_container_with_a_read_only_callee_is_untouched() -> integer {
+  b = Bag { v: [], tag: 0 };
+  b.v += [mk(1)];
+  return reads_only(b);
+}
+
+fn main() {
+  assert(a_non_droppable_view_survives_a_callees_growth() == 1,
+         "a non-droppable view survives a callee's growth: {a_non_droppable_view_survives_a_callees_growth()}");
+  assert(a_view_dead_before_the_callees_growth_still_compiles() == 3,
+         "a view dead at the call still compiles: {a_view_dead_before_the_callees_growth_still_compiles()}");
+  assert(a_container_the_callee_mints_itself_reaches_nothing() == 2,
+         "a callee-minted container reaches nothing: {a_container_the_callee_mints_itself_reaches_nothing()}");
+  assert(a_callee_that_only_reads_disturbs_nothing() == 2,
+         "a read-only callee disturbs nothing: {a_callee_that_only_reads_disturbs_nothing()}");
+  assert(a_non_droppable_view_in_a_loop_survives_a_callees_growth() == 2,
+         "a non-droppable view in a loop survives: {a_non_droppable_view_in_a_loop_survives_a_callees_growth()}");
+  assert(a_parameter_container_with_a_read_only_callee_is_untouched() == 2,
+         "a parameter container with a read-only callee: {a_parameter_container_with_a_read_only_callee_is_untouched()}");
+  println("callee-disturbance controls ok");
+}

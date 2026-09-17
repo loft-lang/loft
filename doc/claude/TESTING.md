@@ -707,6 +707,18 @@ BOTH directions: one clone held three controls the other had lost (it had fetche
 the other held two the first had lost (local gc, no other explanation).  Neither clone is the
 authority, and nothing in the guard file tells a reader which one they are in.
 
+**What that costs is a RELEASE number, not a guard.**  The same ref state moves the census's
+own totals: measured 2026-09-17 on two checkouts of this repo, 490 receipts read 247 controls
+reachable with the PR refs and 69 without (public commit set 10 365 against 1 186), and 8× on
+the second box — so the count swings by 178 where the branch pruning below moves it by single
+digits.  `M-falsify-receipts` records its run as ESTABLISHING the baseline the next cycle
+subtracts from to get the inflow rate, and that subtraction is not available: two totals taken
+on differently-fetched checkouts measure the fetch, and two taken on trees that are not
+ancestors of one another also carry different guard populations (584 against 594 receipt-bearing
+files, measured the same day).  Until the census states the basis it counted under, a
+cycle-over-cycle delta of these totals is noise — say which tree and which ref state a number
+came from, or do not subtract it.
+
 The rot is invisible because the gate does not check what it appears to — `doc_hygiene.rs` is
 `src.contains("@falsified-at:")`, the presence of the STRING, never the resolvability of the
 ref — so a receipt degrades from re-runnable proof to an assertion that someone once watched it
@@ -3439,6 +3451,35 @@ is checked. `make falsify` catches the commonest case — a guard that never fai
 build it was written to catch — but it only answers for the commit you name. These are the
 shapes that survive it, each one measured here rather than imagined.
 
+**⚠ TWO guards can cover one question and both be blind to the same WINDOW — and each one's
+existence is why nobody looked for the other's gap.**  Measured 2026-09-17 on
+`@FR-H-Wilderness`.  `Store::init` left word 1 named in `claims` while also recording it as
+the wilderness, so `fl_validate`'s *"the wilderness is in claims"* aborted the FIRST `claim`
+of every store: `loft --interpret` on a hello-world died under `-C debug-assertions=on`, and
+746 of 833 tests went red in the nightly DA gate — while every ordinary build stayed green.
+
+Two guards watched that invariant and neither could see it:
+
+* `fl_validate` DOES check the window — it runs at the top of `claim`, before anything is
+  claimed — but it is `#[cfg(debug_assertions)]`, and `[profile.dev.package.loft]` strips
+  those from every ordinary dev and test build.  Only the nightly gate compiles it in.
+* `check_wilderness` is a plain `assert!` written *deliberately* so it survives that strip —
+  its own comment says so.  But every test called it AFTER a claim, and the first claim moves
+  the wilderness off word 1, so the contradiction was always gone by the time it looked.
+
+The window was "after `init`, before the first claim", and it belonged to neither guard.  The
+author was careful about the strip and still missed it, because the second guard's existence
+made the first one's `cfg` look harmless.
+
+**How to apply.**  When a `debug_assert!` family is mirrored by a plain-`assert!` twin — the
+right move, in a crate that strips debug assertions — the twin's COVERAGE is a separate
+question from its existence: list the states the debug form can observe and check the twin is
+invoked in each of them, not merely that it asserts the same thing.  A state reachable only
+between construction and first use is the one to suspect, because every test starts by using
+the thing.  The regression guard here is one line of call placement
+(`a_fresh_store_never_claims_its_wilderness` calls `check_wilderness` on a store that has
+claimed nothing) and it fails on any ordinary `cargo test`.
+
 **⚠ A probe on ONE of two arms that reports nothing is not a negative result — it is an
 unarmed instrument, and it reads exactly like a disproof.**  Measured twice, independently, on
 loft#1505 (2026-09-10).  `pre_eval.rs::rewrite_code` substitutes an inner pre-eval into its
@@ -3494,6 +3535,27 @@ extraction is not measuring until it has reproduced a number you already know by
 run it against one case whose answer you have, before trusting it over a thousand.  Both are one
 command, and both are the only things that caught these.  Sibling of the `--changed` selection
 trap (loft#1520): a suite that runs the wrong subjects also reports green.
+
+**⚠ A probe that can only CONFIRM is not a probe.**  Measured 2026-09-17 on
+`scripts/release-liveness.py`, whose census attributed each skip-list entry's issue citation to
+the whole list BODY — so an uncited entry inherited every issue cited anywhere in the list,
+including a comment about an entry already removed, and read as justified.  The fix is not the
+interesting half; the fixture is.  One entry under one citing comment passes whether the
+attribution is per-entry or per-body, because the only cell it has is positive.  The fixture
+that DECIDES puts two entries under one citing comment, so the second must come back with no
+citation at all.  Build the negative cell first — it is the whole experiment, and the positive
+one is decoration.
+
+**⚠ Replacing a SELECTOR is a set change, and "does it still work" cannot see it.**  The same
+commit swapped three hardcoded grep names for a shape pattern over declarations — the better
+design, and it silently stopped reaching `wrap.rs::ignored_scripts`, a FUNCTION the name list
+had covered.  Scope narrowed while a scope bug was being fixed, in the opposite direction, and
+nothing announced it.  So when you change how a tool CHOOSES what it looks at, print the
+selected set under both selectors and diff them: an item that leaves the set is a decision to
+state, never a side effect.  (Here the cure was matching `fn … () -> HashSet` on the RETURN
+TYPE, because a name pattern wide enough to catch `ignored_scripts` also sweeps in the fifteen
+ordinary test functions called `skip_*`.)  Same trap as the `--changed` one above, one level
+up — there the suite runs the wrong subjects, here the instrument reads the wrong population.
 
 **Several `@EXPECT_ERROR`s in one file report only if they come from the SAME compiler phase —
 and the annotation is not what stops.**  `test_runner` checks every annotation and fails on each

@@ -8,9 +8,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 **Catalogue:** @F21 (references `&T`), @I60 (deps / lifetime tracker) — Goal E. Roadmap: @PLN85, @PLN87.
 
 > **Rules then deviations** (see [README](README.md)). The rules below are loft's
-> ownership model.  The register stands at **`OPEN: 1`** — `D-own-43`, a masked backend
-> divergence opened 2026-09-15 for @PLN164 B1b to close; `D-own-40` and `D-own-41` both
-> opened and CLOSED 2026-09-11, below.  It read `OPEN: 0` from 2026-07-04 until then, and what
+> ownership model.  The register stands at **`OPEN: 0`** — `D-own-46`, a view leaf the opt-in
+> unit admitted off the per-path clause, opened and CLOSED 2026-09-17; `D-own-43`, a masked backend
+> divergence opened 2026-09-15, was CLOSED by @PLN164 B1b on 2026-09-17; `D-own-40` and
+> `D-own-41` both opened and CLOSED 2026-09-11, below.  It read `OPEN: 0` from 2026-07-04
+> until 2026-09-11, and what
 > moved it was not a new defect but a VALIDATION of loft#1517 against these rules: the zero had
 > been re-measured against its oracle, which covers the JOIN family and does not ask whether a
 > witness should EXIST at all.  A zero that an oracle cannot disturb is only as strong as the
@@ -89,6 +91,14 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 buffer and its free declines against each (O-Complete, per path).  A
                 result reached any other way — a lift temp with a plain free, a local
                 assigned twice — has no such witness.
+                The callee reads the same fact from its side.  A local it PROMOTES onto
+                the buffer IS that parameter, so it holds the caller's store when the
+                caller handed a live one and a store the callee minted when the caller
+                handed the null sentinel — and only the second is the callee's to
+                release.  No static bit separates them, so the callee snapshots the store
+                it was handed at entry (its ENTRY WITNESS) and every free it emits of the
+                promoted local — the displaced store at a rebind, the store left behind
+                at an exit that answers another — declines on that store.
                 A buffer that IS A DESTINATION PLACE is the exception, and the only one:
                 where (R-Place) hands a call the place its result is going — the place
                 EXISTS at the call and no argument reaches it — the buffer is not a
@@ -98,6 +108,14 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 destination.  The clause is here rather than in (R-Place) because it is
                 this rule that says what a buffer is; without it the two describe
                 different objects.
+  (O-LazyBuffer) A HIDDEN RETURN BUFFER IS MINTED WHERE IT IS FIRST USED.  (O-Buffer) says
+                whose store a buffer is and when it is released; it does not tie the MINT
+                to function entry.  The store is minted in front of each statement that
+                hands the buffer to a callee, behind a null test — at most once per
+                activation, and only on a path that makes the call.  A path that does not
+                leaves the slot at the null sentinel, and every exit's free of the sentinel
+                is a no-op (H-FreeNull), so no release moves.  A buffer named only by a
+                free or an identity test is never read, and is never minted.
   (O-Complete)  PER BINDING, PER PATH, COMPLETE.  Every binding, including every `match`/`if`
                 arm — a set-and-reconcile, not a single-variable structural walk.
   (O-ViewField) A FIELD OF A RETURNED RECORD MAY BE A VIEW.  Where a heap field of a
@@ -106,18 +124,46 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 or one handed up to the caller — so that the place outlives the frame,
                 the field may be delivered as a VIEW of that place instead of a copy of
                 its own, and the return type records the borrow on the field as it
-                records a whole-value borrow (O-Move).  The licence is decided over
-                EVERY call site of the function at once: each site binds the result to
-                a local that only READS the field (a field read, a `const` argument, a
-                length) and reaches its last read with no disturbance (B-Disturb) of
-                the container the view names between the call and that read, in the
-                caller or through what it calls; one site that stores, appends to,
-                rebinds, returns or hands the field to a by-value parameter declines the
-                function whole, and every site keeps the owning copy.  "Every call site"
-                means every site the compiler sees whole (R-Escape): a result that
-                escapes the unit — a library's exported function — is materialised at
-                the boundary as the value tuple already is, so an unseen caller never
-                receives a view.  A declined view is a copy, never a stale read.
+                records a whole-value borrow (O-Move).
+                THE CALLEE'S HALF is a fact at each EXIT, on EVERY path to it (O-Complete):
+                the last change to that container was the append of an element whose
+                field took a copy of the value, and after that copy neither the value —
+                nor a store it views, nor a view of it — nor that field, nor the
+                container changed.  The view is that element's field; where the paths
+                appended DIFFERENT elements it is the field of the container's LAST
+                element, which is the appended one on each of them.  The value views
+                only stores the FRAME owns — a parameter's store can arrive under a
+                second name the frame cannot watch — and has exactly ONE destination
+                outside the frame, or the place is undecided.  A `?`-discharged element
+                is not such a value: its absent arm is a record of the frame's own
+                (B-View), so a view of the container would dangle there.  An exit that
+                writes the field NOT AT ALL delivers a null view, which reads as the
+                empty vector it replaces; "not at all" is PROVEN by accounting every
+                write the exit makes to its record, never assumed from the absence of
+                one spelling — a vector literal fills by element pushes and a record
+                literal's vector field by element appends.  A leaf is a plain
+                `vector<T>`: a `text` is read through its own getters and a keyed
+                collection through its keys, neither through the field slot.
+                THE SITES' HALF is decided over EVERY call site of the function at once:
+                each site binds the result to a local whose bind DOMINATES its reads and
+                that only READS the field — a use that answers a VALUE: a length, a null
+                test, a `const` argument.  An ELEMENT read answers a PLACE and is not a
+                read, however read-only the op that answers it, because the site may
+                write through what it answered.  The local reaches its last read with no
+                disturbance (B-Disturb — a removal renumbers, a growth relocates) of the
+                container the view names between the call and that read, in the caller
+                or through what it calls, and that span is judged as an UPPER bound: a
+                naming of the container is a disturbance unless what it reaches is shown
+                to move nothing (a sibling field, a claim in the store, a fixed-width
+                field write, a read of the watched field itself, a call whose own
+                disturbance summary does not reach it).  One site that stores, appends
+                to, iterates, rebinds, returns or hands the field to a by-value parameter
+                declines the function whole, and every site keeps the owning copy.
+                "Every call site" means every site the compiler sees whole (R-Escape): a
+                result that escapes the unit — a library's exported function — never
+                carries a view.  It keeps its record, since the boundary that
+                materialises a tuple writes FIELDS and a reference is not one.  A
+                declined view is a copy, never a stale read.
 ```
 
 **`(O-ViewField)` in words** (@PLN164 C5, written before the phase is cut).  The natural
@@ -134,6 +180,24 @@ Every part declines to the copy the code emits today, which is the direction
 `(O-Move)` already points.  Admitted by the owner on 2026-09-15 (C122): the contract is
 semantics, not representation, so a returned view needs only its conditions; the library
 API is the boundary, and a construction that does not escape it may be rewritten freely.
+
+**What the build measured** (@PLN164 C5, 2026-09-16, and E-1, 2026-09-17 — the conditions
+above that are not in the rule as first written, each with the cell that bought it in
+`tests/scripts/164-view-field.loft`).  The per-PATH clause: a test that asked "is the
+element built earlier in this exit's statement list" admitted an append under an `if`
+(`p4` read 0 points for 3) and never asked about the value after its copy (`p7`, `p7c`,
+`p7d`, `p17`: 3,9 where the record holds 4,109, 5,30, 3,109, 4,109) — D-own-46.  The
+discharge: a `?`-discharged source is a `Join`, and the hand-proven rung that viewed one was
+sound only because its element was always present (`d2`).  The accounted empty exit: read as
+"no append names the field", a returned vector literal delivered a null view for a vector of
+eight (`723-ncc-loop-element-bind`, and `d6`).  The element read: `m.mpts[0]?.px = 100`
+wrote into the container, which read 109 where the copy holds 9 (`b7`).  The removal:
+`s.ops.remove(0)` between the bind and the read made the first result read the SECOND
+element's points (`b8`, 5,30 for 2,3).  The upper bound: the scope pass's own
+`grown_containers` is a documented LOWER bound, and reusing it admitted `b2` and `b3`.  The
+LAST-element clause is what admits the shape a parser writes most — an append in each arm of
+an `if` (`p1`, `p11`, `p12`, `p14`); sabotaged to read the FIRST element, `p1` read 3,9 for
+4,18.
 
 **In words.** One thing owns each piece of heap, and it's the only thing that frees it.
 When you return a heap value you *give it away* (the function stops owning it); if you
@@ -428,11 +492,16 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 1.**  `D-own-43` (the interpreter's rebind of a promoted buffer local frees the
+**OPEN: 0.**  `D-own-46` (a view leaf admitted where the element was not the value's copy on
+every path — the opt-in `LOFT_VIEW_FIELD` unit only) opened and CLOSED 2026-09-17, below.
+`D-own-43` (the interpreter's rebind of a promoted buffer local frees the
 buffer the caller handed it — masked while such callees receive the null sentinel) opened
-2026-09-15, below, and closes with @PLN164 B1b.  `D-own-42` (a plain local's first bind
+2026-09-15 and CLOSED 2026-09-17 with @PLN164 B1b, below; `D-own-45` (a return that may hand
+back one of several arguments guarded against the first, loft#1550) opened and CLOSED
+2026-09-17, below.  `D-own-42` (a plain local's first bind
 from a callee returning its promoted local COPIED where `(O-Move)` transfers) opened and
-CLOSED 2026-09-15, below; `D-own-40`
+CLOSED 2026-09-15, below; `D-own-44` (a consumed lift temp freed again at its rebind) opened
+and CLOSED 2026-09-17, below; `D-own-40`
 (`(O-Witness)` armed for locals whose assignments do NOT mix, and
 `(O-Owner)` broken while one was) and `D-own-41` (a detach by in-place re-allocation, wiping the
 value being copied in) both opened and CLOSED 2026-09-11, below; `D-own-39` opened and CLOSED
@@ -457,7 +526,80 @@ the entry records why the obvious widening is not taken: it answers wrong on `--
 > and the `--native` release of a displaced store on a fn-ref re-bind of a USER local, which
 > is loft#1328 and which the `??` hoist sidesteps by releasing in the IR.
 
-### D-own-43 — OPEN (2026-09-15): the interpreter's rebind of a promoted buffer local frees the buffer the caller handed it
+### D-own-46 — OPENED AND CLOSED (2026-09-17): a view leaf was admitted where the element was not the value's copy on every path
+
+`(O-ViewField)`'s callee half, `(O-Complete)`.  The opt-in view-leaf unit (`LOFT_VIEW_FIELD`)
+asked its question per EXIT and by statement position: "is the element this exit views built
+earlier in the exit's own statement list, with no other build in between".  A statement that
+holds the append under an `if` counts as that build, and nothing asked about the value after its
+copy.  Four shapes answered wrong on `--native`, with nothing to say so, on every build that
+armed the unit: `if c { sc.ops += [Op { opts: p }] }; Mark { mpts: p }` read 0 points for 3 on
+the path that did not append; and the value grown (`p += [x]`), rebound (`p = mkpts(n + 2)`) or
+written (`p[0]?.px = 100`) after its copy read the element's 3,9 where the record holds 4,109,
+5,30 and 3,109.  No default program was affected — the unit was opt-in — which is why it was
+found by the matrix written before a default flip rather than by a consumer.
+
+Closed by making the rule's per-path clause the test itself: `hoist::fresh_leaf` walks the
+structured IR forward (an `if` joins its arms, a loop runs to its fixpoint, a `break`,
+`continue` or `return` carries its state to its target) and admits an exit only where the fact
+holds on every path.  It also admits what the old test declined and the rule allows — an append
+in each arm, viewed as the container's last element, and an append with its `return` inside a
+loop — and it declines a value changed inside the literal between its copy and the element's
+finish (`p17`), which neither test had a cell for until the finish rule was sabotaged.  The gate
+stores each exit's leaf and the emitter writes the stored one; before, the emitter re-derived it
+without the disturbance summary the gate had used.  Guard `tests/scripts/164-view-field.loft`
+(`p1`–`p17`), pins `tests/view_field.rs`.
+
+### D-own-45 — OPENED AND CLOSED (2026-09-17): a return that may hand back one of several arguments was guarded against the first
+
+`(O-Oracle)` — the fact is derived, never upgraded on a base that cannot be trusted — and
+`(B-Copy)`.  `fn either(a: Canvas, h: H, c: boolean) -> Canvas { if c { a } else { h.c } }`
+summarised its return as `Join(a)`: the lattice joined two borrows with different bases into a
+`Join` of the first, which the Galois connection above does not cover.  Every `Join` reader
+assumes one arm is OWNED, so the caller's guard compared the answer with `a` alone, adopted
+`h`'s store as the binding's own whenever the callee answered `h.c`, and the binding's
+scope-exit free released the caller's record: `pick = either(cv, h, false); pick` read `h` back
+as another record's bytes on both backends (`55 51539607552` for `101 42`), with no diagnostic
+(loft#1550, `silent-wrong`).  The rebind spelling (`cv = either(cv, h, c)`) aliased on native
+and freed on the interpreter; the nullable return aliased once the guard was gone.
+
+Closed at the call boundary: a callee whose return deps name more than one visible parameter
+answers `Join(∅)` there (above), which every reader copies — native's copy-or-adopt split, the
+interpreter's first-bind call copy, the nullable first bind (`nullable_join_first_bind`'s
+"copy always" base), and the interpreter's rebind through a FRESH store, whose protect
+bracket no longer names the local (it named the new store after the copy and left the old
+one protected, one leaked store per call).  Changing the lattice itself was measured and
+reverted: `q ?? [7, 8]` joins a parameter with the function's own literal backing, and
+`Join(q)` is the right answer there (`1257-…`, `1318-…` and `1323-…` went red).  Twelve files'
+emission moved over the 1 590-file corpus before that correction and three after it — the
+three that ARE this shape.  Guard
+`tests/scripts/1550-a-view-of-one-of-several-arguments-is-copied.loft`.
+
+### D-own-44 — OPENED AND CLOSED (2026-09-17): a lift temp whose value a consuming op had freed was freed again at its rebind
+
+`(O-Override)` — *a binding marked never-free takes no ownership-derived free in ANY of a
+free's spellings* — and `(O-Owner)`.  `rs = f()` on a keyed local lowers to a lifted call
+result `__lift_N` that `OpReplaceKeyed` copies into `rs` and then FREES (its source-free
+bit): the call's store is the op's to release.  `scopes::mark_lift_handoff` recorded that
+hand-off (loft#890) in a set the scope-exit sweep reads, so the lift took no free at scope
+exit — but the fact never reached the variable, and the second spelling of its free, the
+displaced-store free a REBIND emits (`Function::owns_displaced_store`, both backends), still
+fired.  In a loop the rebind released the slot the op had already freed, which by the next
+pass belonged to whatever store the program made in between: a vector literal read `1` for
+`24`, a record read `3 4294967308` for `5 3`, on both backends, dense and nullable returns,
+`sorted` and `hash` alike — silent without `LOFT_STRICT_STORES`, a panic under
+`LOFT_POISON`.
+
+Closed at the fact: every temp in the hand-off set is marked never-free after the scan
+(`scopes::run_scan_phase`), so both backends' displaced-store predicate answers no through
+the veto it already consults.  It surfaced because @PLN164 A0 moved a buffer mint into the
+first pass, where the freed slot was, and `1150-…`'s vector control read 0; eager minting had
+masked it only because the next call's result happened to reuse the same slot number, which
+made the identity-guarded free decline.  Guard:
+`tests/scripts/164-consumed-keyed-lift-rebind.loft` (c1–c4 fail on both backends with the
+mark removed, c5–c6 are the controls).
+
+### D-own-43 — OPENED (2026-09-15) AND CLOSED (2026-09-17): the interpreter's rebind of a promoted buffer local frees the buffer the caller handed it
 
 `(O-Buffer)` — a hidden return buffer is the CALLER's store: the callee fills it and hands
 it back, or mints its own and hands that back — and `(O-Owner)`: the callee never frees what
@@ -476,6 +618,24 @@ sentinel is a no-op.  Measured 2026-09-15: B1's cell c6 with that exclusion remo
 `p.tag` read it.  Closes with @PLN164 B1b: the interpreter's reassignment path takes the
 same guard, after which the pool may enrol these buffers and the cell must stay green under
 `LOFT_STRICT_STORES=1` on both backends.
+
+**Closed by @PLN164 B1b — and the rebind was one of THREE frees that held the same false
+belief.**  The scope pass's own sentence for the promoted buffer read *"this function mints
+its store"* (`Scopes::is_promoted_ret_buffer`, the loft#688 exit leg), which is true only
+while the caller hands the null sentinel.  With the pool enrolling these buffers, the cells
+(`plans/164-activation-arena/bytecode-comparisons/B1b-adopt-buffer-reuse-cells.loft`) found
+the other two: the free a LITERAL exit emits for the promoted buffer when a chain renamed it
+(`fn scan(…) -> Mk { … return no_mk() … return Mk { … } }`, both backends — native's
+`_rb_w_` guards only its rebind), and native's COPY arm at a bind that a scope-pass pre-init
+had turned into a rebind (`if c { m = scan(…) }` in a loop, `parse_scene_at`'s `ps_f`),
+whose source-free released the pooled store.  Closed at the fact rather than per site: the
+scope pass mints an ENTRY WITNESS for every promoted record buffer (`__rbw_<buf> =
+OpRefAlias(buf)`, `Function::entry_witness`) and guards its exit legs with it; the
+interpreter's rebind frees read the same witness (`OpFreeRefUnlessEntry` where the displaced
+store is already on the stack); and the one bind after an `if` pre-init is recorded as a
+first bind (`Variable::deferred_first_bind`), adopted on both backends.  The rule gained the
+callee-side clause above.  Guard `tests/scripts/164-adopt-buffer-reuse.loft`, pins
+`tests/adopt_buffer_reuse.rs`.
 
 ### D-own-42 — OPENED AND CLOSED (2026-09-15): a plain local's first bind from a callee that returns its promoted local COPIED where the rule transfers
 
@@ -769,6 +929,15 @@ where concretely `owns(v) ≠ v`.
 where `v` aliases `b`'s store, `owns(v)=owns(b)≠v` } (**O-Borrow**); `γ(Join(b)) = γ(Owned) ∪
 γ(Borrowed(b))` (runtime-dependent); `γ(⊥) = ∅`. `α` is the pointwise best abstraction. Obligation:
 `γ` is monotone w.r.t. `refines` and `⊔` is its sound join — *straightforward from (1); to write.*
+The join of two borrows with DIFFERENT bases is not `Join` of either — `Borrowed(a) ⊔
+Borrowed(b)` is covered by no `Join(b)` — so the domain carries a base-less top below `⊤`:
+`γ(Join(∅)) = γ(Owned) ∪ ⋃ₓ γ(Borrowed(x))`, spelled `Join { base: u16::MAX }`.  A reader of
+it has no witness to compare against, so it decides per run by COPYING, the arguments
+bracketed (@P290) so the copy's source-free releases only a store the callee minted.  The
+implementation takes it at the CALL boundary (`use_analysis::returns_one_of_several_args`):
+inside a body a second "base" may be the function's own literal backing (`q ?? [7, 8]`),
+which the lattice cannot tell from a parameter, while a callee's return deps name exactly the
+parameters a caller must witness (loft#1550, `D-own-45`).
 
 **(4) Local soundness of the transfer — DISCHARGED for the over-free property (given the O-\* rules).**
 The property the over-free check needs is **no false `Owned`**: wherever the fixpoint reports

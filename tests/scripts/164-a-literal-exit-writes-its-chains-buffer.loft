@@ -1,0 +1,422 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN164 B2 (`@FR-R-Place`'s callee clause, `@FR-O-Buffer`) — A LITERAL EXIT WRITES THE
+// BUFFER A CHAIN RENAMED: a record function that hands its buffer to another record function
+// on some exit (`return no_mk()`, a tail `no_mk()`) has that buffer renamed after the chain's
+// work ref, and every literal exit beside such a chain now builds into it — as a literal exit
+// beside an unrenamed `__retbuf` already did — so the function answers the caller's store on
+// every exit.  With the caller's record-buffer pool that is one store per call site per
+// activation where each matched literal exit minted its own (`parse_circle`, `parse_fronds`,
+// `parse_line_cmd`).  The cells vary where the chain stands (a mid-body exit, the tail, both,
+// a recursion, a chain of chains), what the literal writes (a vector field from a local also
+// appended into a parameter, an omitted field's default, an empty vector), how the caller
+// binds the result (a loop local, a rebind, a bind inside an `if`, an append, a discarded
+// call, a fn-ref, two live results) and the value record native returns in registers (c17).
+// Every value is hand-computed and each cell runs in a loop so a pooled buffer is refilled.
+// `LOFT_NO_LITERAL_EXIT_BUFFER=1`, `LOFT_NO_ADOPT_BUFFER_REUSE=1`, `LOFT_POISON=1`,
+// `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1` must answer
+// identically.  Plan cells:
+// `doc/claude/plans/164-activation-arena/bytecode-comparisons/B2-chain-literal-exit-cells.loft`.
+//
+// @falsified-at: none — an optimisation, and every cell answered the same before it: measured
+//   against 49040d27 with `LOFT_STRICT_STORES=1 scripts/falsify.sh`, INERT on both backends.
+//   What the unit changes is WHERE a literal exit builds its record, and that is pinned by
+//   `tests/literal_exit_buffer.rs` (the literal writes the chain's buffer in `scan`, `outer2`
+//   and `tail_lit`, not in `pick`; the scanners of c17 stay value records).  These cells hold
+//   the values — pooled and unpooled, on both backends, under the store falsifiers — while it
+//   does; the first draft of the unit un-admitted every scanner of c17's shapes on native,
+//   which the pin caught and no value did.
+
+struct Pt { x: integer, y: integer }
+struct Mk { matched: boolean = false, bad: boolean = false, pts: vector<Pt> }
+struct Op { kind: integer, pts: vector<Pt> }
+struct Sk { ops: vector<Op>, n: integer }
+struct Hold { marks: vector<Mk> }
+struct Sc { ok: boolean, at: integer, value: float }
+
+fn no_mk() -> Mk { Mk { matched: false, bad: false, pts: [] } }
+
+/// The first point as `x * 10 + y`, or -1.
+fn px(m: Mk) -> integer {
+  for p in m.pts { return p.x * 10 + p.y }
+  -1
+}
+fn val(m: Mk) -> integer { if m.bad { 5000 } else if m.matched { px(m) } else { 1 } }
+/// `matched` + 10 × `bad` + 100 × the point count + the sum of the xs.
+fn v7(m: Mk) -> integer {
+  t = len(m.pts) * 100;
+  if m.matched { t += 1 }
+  if m.bad { t += 10 }
+  for p in m.pts { t += p.x }
+  t
+}
+fn sum_pts(m: Mk) -> integer {
+  t = 0;
+  for p in m.pts { t += p.x * 10 + p.y }
+  t
+}
+
+/// The shape: chain exits, one literal exit, a chain tail.
+fn scan(n: integer, hit: integer) -> Mk {
+  k = 0;
+  while true {
+    if k >= n { return no_mk() }
+    k += 1;
+    if k != hit { continue }
+    return Mk { matched: true, bad: false, pts: [Pt { x: k, y: k * 2 }] }
+  }
+  no_mk()
+}
+
+// c1 — a plain local bound in a loop (the pooled buffer).
+fn c1() {
+  s = 0;
+  for i in 0..8 {
+    m = scan(4, i % 6);
+    if m.matched { s += px(m) + len(m.pts) * 100 } else { s += 1 }
+  }
+  // hit 0,1,2,3,4,5,0,1 → 1, 112, 124, 136, 148, 1, 1, 112
+  assert(s == 635, "c1 {s}");
+  println("c1 {s}");
+}
+
+/// `parse_circle` itself: the literal's vector is a local also appended into a parameter.
+fn scan_into(sc: Sk, n: integer, hit: integer) -> Mk {
+  k = 0;
+  while true {
+    if k >= n { return no_mk() }
+    k += 1;
+    if k != hit { continue }
+    pp: vector<Pt> = [Pt { x: k, y: sc.n }, Pt { x: k + 1, y: sc.n }];
+    sc.ops += [Op { kind: k, pts: pp }];
+    return Mk { matched: true, bad: false, pts: pp }
+  }
+  no_mk()
+}
+
+// c2 — the result read after the parameter's store grew.
+fn c2() {
+  sc = Sk { ops: [], n: 7 };
+  s = 0;
+  for i in 0..6 {
+    m = scan_into(sc, 3, i % 4);
+    for _j in 0..20 { sc.ops += [Op { kind: 0, pts: [] }]; }
+    if m.matched { s += sum_pts(m) } else { s += 1000 }
+  }
+  // hit 0,1,2,3,0,1 → 1000, 17+27, 27+37, 37+47, 1000, 44
+  assert(s == 2236, "c2 {s}");
+  kinds = 0;
+  xs = 0;
+  for o in sc.ops {
+    kinds += o.kind;
+    for p in o.pts { xs += p.x }
+  }
+  // four matched ops of kinds 1, 2, 3, 1 with xs (1+2) (2+3) (3+4) (1+2), and 120 empties
+  assert(len(sc.ops) == 124 && kinds == 7 && xs == 18, "c2 ops {len(sc.ops)} {kinds} {xs}");
+  println("c2 {s}");
+}
+
+// c3 — one local rebound from the same callee three times per iteration.
+fn c3() {
+  s = 0;
+  for _i in 0..4 {
+    m = scan(3, 1);
+    a = px(m);
+    m = scan(3, 2);
+    b = px(m);
+    m = scan(3, 5);
+    c = if m.matched { 1 } else { 0 };
+    s += a + b * 100 + c * 10000;
+  }
+  // 12 + 2400 + 0 per iteration
+  assert(s == 9648, "c3 {s}");
+  println("c3 {s}");
+}
+
+// c4 — bound inside an `if` (`ps_f`'s shape: a null pre-init in front of the bind).
+fn c4() {
+  s = 0;
+  for i in 0..6 {
+    if i % 2 == 0 {
+      f = scan(5, i);
+      if f.matched { s += px(f) } else { s += 7 }
+    }
+  }
+  // i = 0, 2, 4 → 7, 24, 48
+  assert(s == 79, "c4 {s}");
+  println("c4 {s}");
+}
+
+fn outer(n: integer, hit: integer) -> Mk { scan(n, hit) }
+fn outer2(n: integer, hit: integer) -> Mk {
+  if hit < 0 { return Mk { matched: false, bad: true, pts: [] } }
+  outer(n, hit)
+}
+
+// c5 — a chain of chains, beside a literal exit two levels up.
+fn c5() {
+  s = 0;
+  for i in 0..6 {
+    m = outer2(3, i - 1);
+    s += val(m);
+  }
+  // hit -1, 0, 1, 2, 3, 4 → 5000, 1, 12, 24, 36, 1
+  assert(s == 5074, "c5 {s}");
+  println("c5 {s}");
+}
+
+// c6 — the result appended into a collection.
+fn c6() {
+  h = Hold { marks: [] };
+  for i in 0..5 { h.marks += [scan(4, i)]; }
+  s = 0;
+  for mm in h.marks { s += val(mm) }
+  // hit 0..4 → 1, 12, 24, 36, 48
+  assert(len(h.marks) == 5 && s == 121, "c6 {len(h.marks)} {s}");
+  println("c6 {s}");
+}
+
+/// Two literal exits, each omitting a field (its default), and a `while` condition.
+fn scan_bad(n: integer, bad_at: integer) -> Mk {
+  k = 0;
+  while k < n {
+    k += 1;
+    if k == bad_at { return Mk { bad: true, pts: [] } }
+    if k * 10 == bad_at { return Mk { matched: true, pts: [Pt { x: k, y: 0 }, Pt { x: 0, y: k }] } }
+  }
+  no_mk()
+}
+
+// c7 — a refilled buffer keeps nothing of the previous exit.
+fn c7() {
+  s = 0;
+  for i in 0..6 {
+    b = if i % 3 == 0 { i + 1 } else if i % 3 == 1 { i * 10 } else { 0 };
+    m = scan_bad(4, b);
+    s += v7(m);
+  }
+  // bad_at 1, 10, 0, 4, 40, 0 → 10, 202, 0, 10, 205, 0
+  assert(s == 427, "c7 {s}");
+  println("c7 {s}");
+}
+
+fn no_sc() -> Sc { Sc { ok: false, at: 0, value: 0.0 } }
+/// A scalar record (native's value record) with the same exits.
+fn find(n: integer, want: integer) -> Sc {
+  k = 0;
+  while true {
+    if k >= n { return no_sc() }
+    k += 1;
+    if k != want { continue }
+    return Sc { ok: true, at: k, value: k as float * 1.5 }
+  }
+  no_sc()
+}
+
+// c8 — the value record.
+fn c8() {
+  s = 0;
+  for i in 0..6 {
+    r = find(4, i);
+    s += if r.ok { r.at * 100 + (r.value * 2.0) as integer } else { 1 };
+  }
+  // want 0..5 → 1, 103, 206, 309, 412, 1
+  assert(s == 1032, "c8 {s}");
+  println("c8 {s}");
+}
+
+/// A literal TAIL beside mid-body chains.
+fn tail_lit(n: integer, hit: integer) -> Mk {
+  if hit <= 0 { return no_mk() }
+  if hit > n { return scan(n, 0) }
+  Mk { matched: true, bad: false, pts: [Pt { x: hit, y: n }] }
+}
+
+// c9 — the other order.
+fn c9() {
+  s = 0;
+  for i in 0..6 {
+    m = tail_lit(3, i - 1);
+    s += val(m);
+  }
+  // hit -1, 0, 1, 2, 3, 4 → 1, 1, 13, 23, 33, 1
+  assert(s == 72, "c9 {s}");
+  println("c9 {s}");
+}
+
+// c10 — a discarded call beside a bound one.
+fn c10() {
+  s = 0;
+  for i in 0..4 {
+    scan(3, i);
+    m = scan(3, i + 1);
+    s += val(m);
+  }
+  // hit 1, 2, 3, 4 → 12, 24, 36, 1
+  assert(s == 73, "c10 {s}");
+  println("c10 {s}");
+}
+
+fn scan_alt(n: integer, hit: integer) -> Mk {
+  if hit == 2 { return Mk { matched: true, bad: false, pts: [Pt { x: 20, y: 0 }] } }
+  scan(n, hit)
+}
+
+// c11 — through a function reference.
+fn c11() {
+  s = 0;
+  for i in 0..6 {
+    f: fn(integer, integer) -> Mk = scan;
+    if i % 2 == 1 { f = scan_alt; }
+    m = f(3, i % 4);
+    s += v7(m);
+  }
+  // scan h0, alt h1, scan h2, alt h3, scan h0, alt h1 → 0, 102, 103, 104, 0, 102
+  assert(s == 411, "c11 {s}");
+  println("c11 {s}");
+}
+
+/// Two literal exits and a mid-body chain.
+fn scan2(n: integer, hit: integer) -> Mk {
+  k = 0;
+  while true {
+    if k >= n { return no_mk() }
+    k += 1;
+    if k == hit { return Mk { matched: true, bad: false, pts: [Pt { x: k, y: 1 }] } }
+    if k == -hit { return Mk { matched: false, bad: true, pts: [Pt { x: k, y: 2 }, Pt { x: k, y: 3 }] } }
+  }
+  no_mk()
+}
+
+// c12 — either literal, or the chain.
+fn c12() {
+  s = 0;
+  for i in 0..7 {
+    m = scan2(3, i - 3);
+    s += v7(m);
+  }
+  // hit -3..3 → 216, 214, 212, 0, 102, 103, 104
+  assert(s == 951, "c12 {s}");
+  println("c12 {s}");
+}
+
+/// A chain to itself.
+fn scan_r(n: integer, hit: integer) -> Mk {
+  if n <= 0 { return no_mk() }
+  if n == hit { return Mk { matched: true, bad: false, pts: [Pt { x: n, y: hit }] } }
+  scan_r(n - 1, hit)
+}
+
+// c13 — the literal written at the bottom of a recursion.
+fn c13() {
+  s = 0;
+  for i in 0..6 {
+    m = scan_r(4, i);
+    s += v7(m);
+  }
+  // hit 0..5 → 0, 102, 103, 104, 105, 0
+  assert(s == 414, "c13 {s}");
+  println("c13 {s}");
+}
+
+/// B1's callee: a local promoted onto its buffer.
+fn mk_prom(k: integer) -> Mk {
+  o = Mk { matched: true, bad: false, pts: [] };
+  for j in 0..k { o.pts += [Pt { x: j, y: k }]; }
+  o
+}
+fn via_prom(n: integer, hit: integer) -> Mk {
+  if hit == 0 { return Mk { matched: false, bad: true, pts: [] } }
+  if hit < 0 { return no_mk() }
+  mk_prom(hit + n)
+}
+
+// c14 — a chain to a promoting callee, beside a literal exit.
+fn c14() {
+  s = 0;
+  for i in 0..5 {
+    m = via_prom(1, i - 1);
+    s += v7(m);
+  }
+  // hit -1, 0, 1, 2, 3 → 0, 10, 202, 304, 407
+  assert(s == 923, "c14 {s}");
+  println("c14 {s}");
+}
+
+fn pick(n: integer, hit: integer) -> Mk {
+  m = scan(n, hit);
+  if !m.matched { return Mk { matched: false, bad: true, pts: [] } }
+  m
+}
+
+// c15 — the result bound, read and returned by the caller.
+fn c15() {
+  s = 0;
+  for i in 0..5 {
+    r = pick(4, i);
+    s += v7(r);
+  }
+  // hit 0..4 → 10, 102, 103, 104, 105
+  assert(s == 424, "c15 {s}");
+  println("c15 {s}");
+}
+
+// c16 — two results of one callee alive at once.
+fn c16() {
+  s = 0;
+  for i in 0..4 {
+    a = scan(4, 1 + i % 4);
+    b = scan(4, 4 - i % 4);
+    s += px(a) * 1000 + px(b);
+  }
+  // (12, 48) (24, 36) (36, 24) (48, 12)
+  assert(s == 120120, "c16 {s}");
+  println("c16 {s}");
+}
+
+struct Scan { ok: boolean, at: integer, value: float }
+fn scan_fail() -> Scan { Scan { ok: false, at: -1, value: 0.0 } }
+// shape A: a literal exit, a chain tail
+fn find_w(s: text, c: integer, start: integer) -> Scan {
+  i = start;
+  while i < len(s) {
+    if s.byte_at(i) == c { return Scan { ok: true, at: i + 1, value: 0.5 } }
+    i += 1;
+  }
+  scan_fail()
+}
+// shape B: chain exits, a literal tail
+fn digits(s: text, i: integer) -> Scan {
+  if i >= len(s) { return scan_fail() }
+  j = i;
+  while j < len(s) && s.byte_at(j) >= 48 && s.byte_at(j) <= 57 { j += 1; }
+  if j == i { return scan_fail() }
+  Scan { ok: true, at: j, value: (j - i) as float }
+}
+// a chain of both
+fn either(s: text, i: integer) -> Scan {
+  if i < 0 { return Scan { ok: false, at: -2, value: 0.0 } }
+  if s.byte_at(i) == 35 { return find_w(s, 36, i) }
+  digits(s, i)
+}
+// c17 — the value record (native returns these in registers): a literal exit before a chain
+// tail (`find_w`), chain exits before a literal tail (`digits`), and a chain over both.
+fn c17() {
+  t = 0;
+  src = "ab12#x$9";
+  for k in 0..9 {
+    r = either(src, k - 1);
+    v = if r.ok { r.at * 100 + (r.value * 10.0) as integer } else { r.at };
+    t += v * (k + 1);
+  }
+  // k = 0..8 read i = -1..7: the literal exit (-2), 'a' and 'b' fail (-1), "12" (420),
+  // "2" (410), '#' finds '$' at 6 (705), 'x' and '$' fail (-1), "9" (810); weighted by k + 1
+  assert(t == 15228, "c17 {t}");
+  println("c17 {t}");
+}
+
+fn main() {
+  c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c10(); c11(); c12(); c13(); c14();
+  c15(); c16(); c17();
+  println("chain literal-exit cells PASSED");
+}

@@ -328,6 +328,18 @@ pub(crate) fn shrink(kt: u16, old: usize, new: usize, born_at: u32) {
 /// filed under site 0, which is a report that names nothing. Store slots are also
 /// POOLED — a reused slot keeps its buffer and gets a new site — so this is the
 /// normal path, not a corner.
+/// A store's `bytes` move from type `from` to type `to`, allocated at `born_at`.
+///
+/// The total does not change, so the move is only owed to the two ledgers keyed by
+/// type: the per-type breakdown a ceiling keeps, and the allocation-site ledger.
+pub(crate) fn retype(from: u16, to: u16, bytes: usize, born_at: u32) {
+    if LIMIT.load(Ordering::Relaxed) == 0 && !sites_armed() {
+        return;
+    }
+    release(from, bytes, born_at);
+    add(to, bytes, born_at);
+}
+
 pub(crate) fn relabel(from: (u32, u16), to: (u32, u16), bytes: usize) {
     if from == to || !sites_armed() {
         return;

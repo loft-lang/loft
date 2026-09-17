@@ -27,20 +27,30 @@
 //   because these cells leak NOTHING either way, so neither column is evidence here.
 //   WITNESS: measured cell by cell on the control before this file was written — the growth
 //   read 0 where 11 is right, the removal 13 where 22 is, the write-through lost its write
-//   (`1 99 2`), and the nine control cells answered exactly what they answer now.
-//   HOLDS: the nine control cells must not move on either tree — the reassigned base still
-//   materialises (`1 2`), a link INTO the container and an element view still answer `1`, the
-//   plain loop-variable bind still copies (`2`), the sibling field stays `1 1`, and the keyed
-//   and nested links stay `2 two` and `2 7`.  Advice must fire on exactly four cells and on
-//   none of the three fixed ones.  Leak, panic and free-refusal are equal on both trees.
+//   (`1 99 2`), and the control cells answered exactly what they answer now (nine of them then,
+//   eight here — see the note below).
+//   HOLDS: the eight control cells must not move on either tree — the reassigned base still
+//   materialises (`1 2`), an element view still answers `1`, the plain loop-variable bind still
+//   copies (`2`), the sibling field stays `1 1`, and the keyed and nested links stay `2 two` and
+//   `2 7`.  Advice must fire on exactly THREE cells — the element view, the plain loop-variable
+//   bind and the reassigned base (measured 2026-09-17, both backends) — and on none of the three
+//   fixed ones.  It was four while the ninth control below was here.  Leak, panic and
+//   free-refusal are equal on both trees.
 //   Those cells are what reject the two neighbouring cures: one that spares every
 //   `(B-Disturb)` cause moves the reassigned base, and one that skips the `&` fact moves the
 //   plain loop-variable bind.
+//   ⚠ A NINTH control stood here until 2026-09-17: a `&` link INTO the field-held container
+//   across a growth (`d = &pv.items[0]; pv.items += [P{n: 7}]; d.n`), asserting `1`.
+//   `(B-Ref-Reshape)` refuses that program — the walk simply could not see a field-qualified
+//   growth, so the cell pinned the compiler's answer rather than the rule's.  It is now
+//   `parse_errors::b_ref_reshape_growth_of_a_field_container_under_amp_link_is_error`, because a
+//   cell that REFUSES takes the whole file with it and every assertion behind it.  The receipt
+//   above was measured with that cell present and is unchanged by the move: the control still
+//   fails at the FIRST cell and reaches no later one.
 
 struct Cv { w: integer, data: vector<integer> }
 struct Two { a: vector<integer>, b: vector<integer> }
 struct P { n: integer }
-struct Pv { w: integer, items: vector<P> }
 struct Inner { data: vector<integer> }
 struct Outer { inner: Inner }
 struct Row { id: integer, tag: text }
@@ -108,12 +118,14 @@ fn a_reassignment_of_the_base_still_materialises() -> text {
 }
 
 // ── the controls for a reference INTO the container ──────────────────────────────────
-fn a_link_into_the_container_is_unchanged() -> integer {
-  pv = Pv { w: 0, items: [P{n: 1}] };
-  d = &pv.items[0];
-  pv.items += [P{n: 7}];
-  d.n
-}
+// A `&` link INTO a field-held container across a growth — `d = &pv.items[0]; pv.items +=
+// [P{n: 7}]; d.n` — stood here reading `1`, and is REFUSED since 2026-09-17.  That is what
+// `(B-Ref-Reshape)` says about a reference into a container that grows while the link is live;
+// the cell pinned today's answer rather than the rule's, because the refusal walk could not see
+// a field-qualified growth at all.  A cell that refuses takes the whole file with it, so its
+// home is a refusal case:
+// `parse_errors::b_ref_reshape_growth_of_a_field_container_under_amp_link_is_error`.
+// The PLAIN element view below is the half that stays: it is `(B-View)`'s own answer, not `&`'s.
 
 fn an_element_view_is_unchanged() -> integer {
   v: vector<P> = [P{n: 1}];
@@ -169,8 +181,6 @@ fn main() {
 
   assert(a_reassignment_of_the_base_still_materialises() == "1 2",
          "a reassigned base still materialises: {a_reassignment_of_the_base_still_materialises()}");
-  assert(a_link_into_the_container_is_unchanged() == 1,
-         "a link INTO the container keeps today's answer: {a_link_into_the_container_is_unchanged()}");
   assert(an_element_view_is_unchanged() == 1,
          "an element view keeps today's answer: {an_element_view_is_unchanged()}");
   assert(a_plain_bind_off_a_loop_variable_still_materialises() == 2,

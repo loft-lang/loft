@@ -191,6 +191,11 @@ struct Scopes<'s> {
     /// `None` unless the body actually reaches a displacing site (`displaces_return_buffer`),
     /// so a function that cannot leak pays no slot.
     rbuf_witness: Option<(u16, u16)>,
+    /// @PLN164 B1b / `@FR-O-Buffer` — `(promoted buffer var, its ENTRY WITNESS)`: the store
+    /// the caller handed, snapshotted before the body runs (`Function::entry_witness`).  A
+    /// promoted buffer holds the caller's store or one this frame minted, and only the run
+    /// can say which; every free of the buffer this pass emits is guarded by it.
+    entry_witness: Option<(u16, u16)>,
     /// loft#1200 — the per-LOCAL ownership witness: a nullable heap-record local that is
     /// reassigned from a minting call, mapped to the boolean that records whether the store
     /// it currently holds is this frame's SOLE property.  The static answer is not available
@@ -1625,8 +1630,16 @@ struct ViewWalk<'a> {
     /// where the other direction costs a program its meaning.
     cleared: HashSet<(u16, u32)>,
     /// The store, where the caller has one.  Only the field-NUMBER to byte-OFFSET conversion
-    /// needs it (`grown_containers`); the refusal path runs without and keeps the conservative
-    /// answer, which for a REFUSAL is the safe direction — refusing less, never more.
+    /// needs it (`grown_containers`): a growth names its container by field number and a view
+    /// carries a byte offset, so a walk without the store cannot see a growth of a container
+    /// held in a FIELD at all.
+    ///
+    /// Both callers pass one.  Without it `grown_containers` leaves every field-qualified
+    /// growth UNCOLLECTED, so `(B-Ref-Reshape)`'s answer would depend on where the container is
+    /// STORED — `c = &b.v[0]; b.v += [x]` unrefused while the same growth of a plain local is
+    /// refused, and a removal from that same field is.  A missed disturbance is the safe
+    /// direction for a refusal, but it is not a reason to leave one class of disturbance
+    /// invisible.  (`binding.md` D-bind-47)
     database: Option<&'a crate::database::Stores>,
     /// The source line of the statement being walked, tracked from the `Value::Line` markers
     /// a block interleaves with its operators — the only line information the IR carries.
@@ -1877,23 +1890,32 @@ impl ViewWalk<'_> {
         }
     }
 
-    /// [`Self::shake_places`] over PLAIN views only, leaving every `&` link alone.
+    /// [`Self::shake_places`], with the prior state restored afterwards for every binding in
+    /// [`Self::whole_container`].  The callee path's shake — [`Self::disturb_via_calls`] is the
+    /// only caller.
     ///
-    /// The rules split the two and give them different answers: @FR-B-View materialises a plain
-    /// bind, because a plain bind already meant value semantics and losing the alias is
-    /// consistent with what it meant, while @FR-B-Ref-Reshape REFUSES a `&` reference into a
-    /// disturbed container — *"loft will not quietly downgrade the reference to a copy"* — and
-    /// that refusal is `reshape_refusals`' half of this file, which reads this frame's answer.
-    /// So the callee's half has no `&` case to add: materialising one is the thing the rule
-    /// says not to do.
+    /// What it spares is `(B-Ref-Alias)`'s in-versus-to distinction, NOT a `&`-versus-plain one.
+    /// Entry into that map needs BOTH `is_amp_container_link` and a chain that read no element,
+    /// so it holds exactly the `&` links naming a container WHOLE (`d = &cv.data`).  A `&` link
+    /// INTO a container (`e = &v[0]`) is shaken here like any other view, deliberately: a growth
+    /// moves the element that link names, where it only repoints the field SLOT the
+    /// whole-container link re-reads.
     ///
-    /// Measured, and this is what the restriction is for: `d = &cv.data; grow(cv, 7);
-    /// grow(cv, 8); d[2]` is `157-view-header`'s `grown_between`, where the link names the
-    /// FIELD SLOT rather than a place inside the vector — a growth repoints that slot and the
-    /// link re-reads it, so the link must SEE the growth and the cell reads `11`.  Shaking it
-    /// gave `0`.  Its inline twin already reads `0` today, on `main` and under this unit's
-    /// switch alike, and that is a separate deviation from `(B-Ref-Reshape)` — a `&` link
-    /// silently downgraded to a copy — which is filed rather than widened into here.
+    /// The restore is keyed by VIEW, where [`Self::names_container_itself`] matches the place
+    /// EXACTLY — so a whole-container link is spared from every place one call disturbs,
+    /// including a disturbance of the whole variable, which [`compose_param_place`] answers as
+    /// `ANY_FIELD` and [`same_place`] matches by wildcard.
+    ///
+    /// What the sparing is for: `d = &cv.data; grow(cv, 7); grow(cv, 8); d[2]` is
+    /// `157-view-header`'s `grown_between`, which must read `11`.  Shaking the link gives `0`.
+    ///
+    /// TWO consumers read this one answer and want opposite things from the `&` links it does
+    /// shake.  @FR-B-View materialises a plain bind, because a plain bind already meant value
+    /// semantics and losing the alias is consistent with what it meant.  @FR-B-Ref-Reshape
+    /// REFUSES a `&` reference into a disturbed container — *"loft will not quietly downgrade
+    /// the reference to a copy"* — and `reshape_refusals` reads this walk's answer for the
+    /// callee's half too (`binding.md` D-bind-48), which is why this function may not start
+    /// sparing `&` links INTO a container.
     fn shake_plain_places(
         &mut self,
         places: &HashSet<(u16, u32)>,
@@ -2385,16 +2407,51 @@ pub struct ReshapeRefusal {
 /// filter silently made the check a no-op there while it still fired on a file. A pass over
 /// definitions that cannot possibly trip it is the cheaper mistake.
 #[must_use]
-pub fn reshape_refusals(data: &Data) -> Vec<ReshapeRefusal> {
+pub fn reshape_refusals(data: &Data, database: &crate::database::Stores) -> Vec<ReshapeRefusal> {
     let removed = removed_params_map(data);
+    // @FR-B-Ref-Reshape — *"The disturbance may be in this frame or in anything the frame
+    // CALLS"*, and `(B-Disturb)` states the same for all four events: *"an event disturbs
+    // WHEREVER IT HAPPENS — in this frame, or in anything the frame CALLS, at any depth."*
+    //
+    // `removed` carries only a REMOVAL, and only one spelled against the `&` parameter itself
+    // (`removed_ref_params` keys on `OpRemoveVector`/`OpRemove` over a bare `Var` typed
+    // `RefVar`).  `disturbed` carries the rest of that reach — a callee's GROWTH, and a removal
+    // from a FIELD of a parameter — so the refusal answers the question the MATERIALISE walk
+    // answers.  The case the rule states in as many words has every part spelled `&`, with the
+    // callee disturbing the very parameter it was handed: `fn vgrow(v: &vector<H>, n) { v +=
+    // [mk(n)] }` under a live `e = &v[0]`, which without both halves compiles and releases one
+    // resource TWICE on both backends.
+    //
+    // Built here rather than per definition because the question is asked once per CALL and a
+    // callee body would otherwise be re-walked once per call to it — the same reason
+    // `removed_params_map` is built here, and the same construction the scope pass uses.
+    //
+    // Gated on the SAME `callee_disturb_enabled` switch as the scope pass, deliberately: the
+    // switch names the callee half of `(B-Disturb)`, and that half is ONE rule's reach with two
+    // consumers, not two behaviours that happen to share a cause.  The consequence is worth
+    // stating, because it costs something: `LOFT_NO_CALLEE_DISTURB=1` withholds the callee half
+    // from BOTH consumers at once, so it is not an A/B for the materialise alone.  That is the
+    // honest meaning of the flag rather than a limitation of it — and the two halves stay
+    // distinguishable at the symptom, since a refusal is loud where a materialise is quiet.
+    let disturbed =
+        crate::keys::callee_disturb_enabled().then(|| disturbed_params_map(data, Some(database)));
+    let disturbed = disturbed.as_ref();
     let mut out: Vec<ReshapeRefusal> = Vec::new();
     for d_nr in 0..data.definitions() {
-        out.extend(def_reshape_refusals(data, d_nr, &removed));
+        out.extend(def_reshape_refusals(
+            data, d_nr, &removed, disturbed, database,
+        ));
     }
     out
 }
 
-fn def_reshape_refusals(data: &Data, d_nr: u32, removed: &RemovedParams) -> Vec<ReshapeRefusal> {
+fn def_reshape_refusals(
+    data: &Data,
+    d_nr: u32,
+    removed: &RemovedParams,
+    disturbed: Option<&DisturbedParams>,
+    database: &crate::database::Stores,
+) -> Vec<ReshapeRefusal> {
     let def = data.def(d_nr);
     if !matches!(def.def_type, DefType::Function) || matches!(def.code, Value::Null) {
         return Vec::new();
@@ -2407,16 +2464,49 @@ fn def_reshape_refusals(data: &Data, d_nr: u32, removed: &RemovedParams) -> Vec<
     // reference that cannot reach its source is not what `&` asked for.  That includes the
     // GROWTH the walk learned in loft#1373 — `c = &v[0]; v += [x]; c.n` names an element the
     // growth may have moved, which is the same reason the other three are refused.
+    //
+    // @FR-B-Ref-Reshape — the walk is handed the STORE, because a growth names its container
+    // by field NUMBER (`OpNewRecord(b, tp, 1)`) while a view carries a byte OFFSET, and
+    // `Stores::field_position` is the only thing that converts between them.  Without it
+    // `grown_containers` leaves every field-qualified growth UNCOLLECTED, so
+    // `c = &b.v[0]; b.v += [x]` goes unrefused while the same growth of a plain LOCAL is
+    // refused, and a removal from the same field is: the rule's answer would depend on where
+    // the container is stored.  The materialise walk has the store on every path, which is why
+    // that side copies the link (and tells the author) wherever this side would say nothing.
+    // The callee's half (`disturbed`) is handed to the REFUSAL as well as the materialise.  It
+    // needs no `&` case of its own: `shake_places_keyed` spares a view only when the keyed
+    // filter proves a different record or when `names_container_itself` says the binding names
+    // the CONTAINER rather than a place inside it — never because it is spelled `&`.  So a link
+    // INTO a disturbed container is shaken here whatever it is spelled, and this walk's answer
+    // is what the refusal consumes.  A link TO one (`d = &cv.data`) stays spared, which keeps
+    // `157-view-header`'s `grown_between` reading 11 — `(B-Ref-Alias)`'s in-versus-to
+    // distinction, closed as D-bind-46.
     for (view, d) in ViewWalk::run(
         &def.code,
         function,
         data,
         Some(removed),
-        None,
-        None,
+        disturbed,
+        Some(database),
         def.position.line,
     ) {
-        if !function.is_amp_link(view) {
+        // @FR-H-View-Drop — two populations, one walk.  An `&` link asked for a reference and
+        // must get one or the program is refused.  A PLAIN view of a member that owns a
+        // droppable is refused for a different reason, and one the author cannot escape by
+        // dropping the `&`: `(B-View)` would hand it a COPY, and a copy of a droppable is a
+        // second structure holding one resource, which `(H-Lease)` does not allow.  Every other
+        // type keeps the materialise-and-tell answer `(B-View)` gives it.
+        //
+        // No further type test belongs here, because the walk's own answer is the rest of the
+        // gate: `record_target` admits a binding only when it is a view at all (`Reference |
+        // Enum | Vector`, and not an iteration source) and only when its right-hand side names
+        // a container.  So a TUPLE-element view — which the emitter never copies, and which
+        // releases once today — is not in this set to begin with, and refusing it would reject
+        // a sound program.  Measured over the cell matrix: the walk's answer and the copy-out
+        // advice agree on every cell.
+        let amp = function.is_amp_link(view);
+        let drops = data.type_owns_droppable_anywhere(function.tp(view));
+        if !amp && !drops {
             continue;
         }
         let view_name = function.name(view);
@@ -2473,16 +2563,55 @@ fn def_reshape_refusals(data: &Data, d_nr: u32, removed: &RemovedParams) -> Vec<
                 ),
             ),
         };
+        // The REASON differs with the population, not only the way out.  The clause above
+        // explains a LOST WRITE through a `&` link — true for a reference, and beside the point
+        // for a plain view, which never wrote through to its container in the first place
+        // `(B-View)`.  What is wrong for this population is the COPY itself: `(H-View-Drop)`
+        // keeps a view of a droppable a view, because the copy `(B-View)` would otherwise hand
+        // it is a second structure holding one resource.  A reader given the other population's
+        // reason could check it and find it false, which is the `(Col-RemoveKeyed)` mistake
+        // loft#1458 already paid for once.
+        let why = if amp {
+            why
+        } else {
+            format!(
+                "`{view_name}` would be given its own copy of `{tp}`, and a copy of a value that \
+                 owns a resource is a second structure releasing that resource a second time",
+                tp = data.type_name_str(function.tp(view))
+            )
+        };
+        // The way out differs too, and the `&` one is WRONG here: "bind without `&` to work on a
+        // copy" names exactly the copy `(H-Copy-Refuse)` rejects, so offering it would send the
+        // author from a refused program to one that releases a resource twice.
+        let cure = if amp {
+            "or bind without `&` to work on a copy".to_string()
+        } else {
+            format!(
+                "or read `{tp}` where it lives",
+                tp = data.type_name_str(function.tp(view))
+            )
+        };
+        // The CALLEE form names the callee's act before the reason, and the JOINER between them
+        // differs with the population because the two clauses stand in different relations.  For
+        // a `&` link they are parallel facts about the container — *"would grow `v`, AND a
+        // container that outgrows its allocation moves every element"*.  For a plain droppable
+        // view the growth CAUSES the copy — *"would grow `b`, SO `e` would be given its own copy
+        // of `H`"*.  With one joiner for both, that population read *"would grow `b`, and `e`
+        // would be given its own copy of `H`, and a copy of a value…"*: two `and`s in one
+        // sentence, because this `why` opens with a clause of its own where the `&` one opens
+        // with a continuation.  The inline form needs no joiner — it reaches `why` straight off
+        // the dash — which is why the run-on appears only once the disturbance is a call.
+        let joiner = if amp { "and" } else { "so" };
         let message = match d.via {
             Some(callee) => format!(
                 "cannot call `{callee_name}` while `{view_name}` references a place inside \
-                 `{container}` — `{callee_name}` would {what}, and {why}. Move the call after \
-                 the last use of `{view_name}`, or bind without `&` to work on a copy",
+                 `{container}` — `{callee_name}` would {what}, {joiner} {why}. Move the call \
+                 after the last use of `{view_name}`, {cure}",
                 callee_name = data.def(callee).original_name()
             ),
             None => format!(
                 "cannot {what} while `{view_name}` references a place inside it — {why}. Move \
-                 it after the last use of `{view_name}`, or bind without `&` to work on a copy"
+                 it after the last use of `{view_name}`, {cure}"
             ),
         };
         out.push(ReshapeRefusal {
@@ -3797,8 +3926,9 @@ fn tail_calls(v: &Value) -> Vec<&Value> {
 
 fn reuse_record_buffers(
     code: &mut Value,
-    function: &Function,
+    function: &mut Function,
     data: &Data,
+    fn_nr: u32,
     witness_buffer: &HashMap<u16, Vec<u16>>,
     minted_pairs: &HashSet<u16>,
     multi_assigned: &HashSet<u16>,
@@ -3806,7 +3936,9 @@ fn reuse_record_buffers(
     if !crate::keys::retbuf_reuse_enabled() {
         return;
     }
-    let Value::Block(bl) = code else { return };
+    let Some(bl) = body_block_mut(code) else {
+        return;
+    };
     let ungated = crate::keys::retbuf_witness_gate_disabled();
     let mut guarded: Vec<u16> = if ungated {
         // The positive control: every hidden buffer, guarded or not.
@@ -3824,32 +3956,53 @@ fn reuse_record_buffers(
         }
     }
     let db_nr = data.def_nr("OpDatabase");
+    let clear_nr = data.def_nr("OpClear");
     // Emitted in variable order so identical source compiles to identical IR.
-    let mut inserts: Vec<(usize, Value)> = Vec::new();
+    let mut eager: Vec<(u16, Value, Option<Value>)> = Vec::new();
+    let mut lazy: Vec<(u16, Value, Option<Value>)> = Vec::new();
+    // `LOFT_TRACE_POOL=1` names the gate that keeps each witnessed buffer out of the pool.
+    let trace = std::env::var_os("LOFT_TRACE_POOL").is_some();
+    if trace {
+        crate::loft_eprintln!("[pool] {} candidates {:?}", data.def(fn_nr).name(), guarded);
+    }
+    let decline = |av: u16, why: &str| {
+        if trace {
+            crate::loft_eprintln!(
+                "[pool] {} {}: {why}",
+                data.def(fn_nr).name(),
+                function.name(av)
+            );
+        }
+    };
     for av in guarded {
         // @FR-O-Proxy asks alloc — decides whether to ALLOCATE the buffer's store here; a
         // buffer carrying a dep is a view of something else and gets no store of its own.
         // The release is not this site's: the scan already placed the buffer's scope-exit
         // free and the result's guarded one.
         if !function.is_caller_hidden_buf(av) || !function.tp(av).depend().is_empty() {
+            decline(av, "not an owned caller buffer");
             continue;
         }
         // @PLN164 B1 — a buffer whose callee mints the store its result adopts is paired
         // for the guarded free only; pre-minting it hands the callee a store its own rebind
         // frees on the interpreter (`Scopes::minted_pairs`).
-        if !ungated && minted_pairs.contains(&av) {
+        if !ungated && !crate::keys::adopt_buffer_reuse_enabled() && minted_pairs.contains(&av) {
+            decline(av, "the result adopts the callee's mint");
             continue;
         }
         let Some(td) = function.tp(av).base().heap_def_nr() else {
+            decline(av, "not a record");
             continue;
         };
         let known = data.def(td).known_type();
         if known == u16::MAX {
+            decline(av, "the record type has no layout");
             continue;
         }
         if !ungated && buffer_call_uses(&bl.operators, av, data) != 1 {
             // A work-ref the parser handed to a SECOND call has one guarded use and one
             // this has not looked at; `witness_buffer` names the guarded one either way.
+            decline(av, "handed to more than one call");
             continue;
         }
         if !ungated
@@ -3859,21 +4012,275 @@ fn reuse_record_buffers(
         {
             // The result local is reassigned somewhere: its set lowering frees the store
             // it displaces, which would be this buffer's.
+            decline(av, "its result local is assigned more than once");
             continue;
         }
-        let Some(at) = bl.operators.iter().position(
-            |op| matches!(op.unspan(), Value::Set(s, v) if *s == av && **v == Value::Null),
-        ) else {
+        if null_init_at(&bl.operators, av).is_none() {
+            decline(av, "no top-level null-init");
+            continue;
+        }
+        let mint = Value::Call(db_nr, vec![Value::Var(av), Value::Int(i32::from(known))]);
+        // `@FR-H-ClearRelease`, the record clause — a reused buffer is REFILLED: the
+        // callee's literal overwrites every handle it writes, so what the previous call left
+        // in the record is released before each call after the first.
+        let release = releases_what_it_held(data, function.tp(av))
+            .then(|| Value::Call(clear_nr, vec![Value::Var(av), Value::Int(i32::from(known))]));
+        if !ungated && crate::keys::lazy_buffer_enabled() {
+            // `@FR-O-LazyBuffer` — once per activation still, but only on a path that
+            // reaches the call: the null test lets a later pass through a loop reuse it,
+            // and a reuse takes the release.
+            lazy.push((av, mint, release));
+        } else {
+            eager.push((av, mint, release));
+        }
+    }
+    let frees = free_ops(data);
+    // A buffer minted at entry is live at every call, and the first release finds the
+    // record the mint just prefilled: nothing to walk.  The releases go in before the mints
+    // do, because a mint names the buffer and would itself take one.
+    for (av, _, release) in &eager {
+        if let Some(release) = release {
+            insert_before_uses(&mut bl.operators, *av, release, &frees);
+        }
+    }
+    for (av, mint, _) in eager {
+        if let Some(at) = null_init_at(&bl.operators, av) {
+            bl.operators.insert(at + 1, mint);
+        }
+    }
+    let is_null = data.def_nr("OpRefIsNull");
+    for (av, mint, release) in lazy {
+        // The mark tells the native hoist gate that this `OpDatabase` only ever takes a
+        // fresh store from the sentinel (`hoist::lazy_buffer_mint`); a record buffer's
+        // null-init already writes the sentinel on both backends.
+        function.mark_lazy_buffer(av);
+        let guard = v_if(
+            Value::Call(is_null, vec![Value::Var(av)]),
+            Value::Insert(vec![mint]),
+            release.unwrap_or(Value::Null),
+        );
+        insert_before_uses(&mut bl.operators, av, &guard, &frees);
+    }
+}
+
+/// The function body's own statement block, which is where a statement that must run
+/// first is prepended and where a top-level null-init stands.
+///
+/// A body whose result is a reference the scan HOISTED to the frame arrives as
+/// `Insert([Set(w, null), Block])` (the `hoisted_ref` arm of `scan_inner`), so the block is
+/// found inside that wrapper too, and a `Span` (position only) is peeled; any other shape is
+/// not a body this pass rewrites.  Matching a bare `Block` alone skipped every such function
+/// in silence — the pool, the lazy mints and the entry-time flag and witness initialisers
+/// alike.
+fn body_block_mut(code: &mut Value) -> Option<&mut Block> {
+    match code {
+        Value::Span(b) => body_block_mut(&mut b.1),
+        Value::Block(bl) => Some(&mut **bl),
+        Value::Insert(ops) => match ops.as_mut_slice() {
+            [Value::Set(_, init), Value::Block(bl)] if matches!(**init, Value::Null) => {
+                Some(&mut **bl)
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The top-level position of `av`'s null-init, where an eager mint goes right after it.
+fn null_init_at(ops: &[Value], av: u16) -> Option<usize> {
+    ops.iter()
+        .position(|op| matches!(op.unspan(), Value::Set(s, v) if *s == av && **v == Value::Null))
+}
+
+/// Can a record of this buffer type own heap — so a refill of it owes a release of what it
+/// held?  A struct with a field that is not a scalar can, and so can a struct-enum, whose
+/// variants this does not read.
+///
+/// Conservative on purpose, and the fallback says why: a record this answers `true` for
+/// that owns nothing pays one walk that returns at once, while a `false` for one that
+/// owns heap strands the previous occupant's heap on every call.  The release walks the
+/// buffer's own type — for a struct-enum the PARENT, whose walk follows the variant the
+/// buffer holds rather than the one the next call writes.
+fn releases_what_it_held(data: &Data, tp: &Type) -> bool {
+    // `.base()`: a buffer's record shape is the same behind a nullability marker
+    // (`@FR-N-Shape`).
+    match tp.base() {
+        Type::Reference(td, _) => !data
+            .def(*td)
+            .attributes()
+            .iter()
+            .all(|a| crate::data::is_scalar(&a.typedef)),
+        Type::Enum(_, true, _) => true,
+        _ => false,
+    }
+}
+
+/// The ops that name a store only to release it or to compare its identity: a buffer
+/// mentioned in nothing else is never read, so it needs no store.
+fn free_ops(data: &Data) -> Vec<u32> {
+    [
+        "OpFreeRef",
+        "OpFreeRefIfDistinct",
+        "OpFreeRefOrHandUp",
+        "OpFreeRefTag",
+        "OpStoreTag",
+        "OpDistinctStore",
+    ]
+    .iter()
+    .map(|n| data.def_nr(n))
+    .filter(|&d| d != u32::MAX)
+    .collect()
+}
+
+/// Does `v` name `av` anywhere but inside a free (`free_ops`)?  A `Set(av, Null)` — the
+/// buffer's own null-init or an already inserted mint — is not a use either.  Every other
+/// shape is walked, so a buffer reached through an expression the walker does not name is
+/// still found: the fallback over-reports, and an extra mint on a path that runs the call
+/// anyway is only the eager behaviour.
+fn names_outside_free(v: &Value, av: u16, frees: &[u32]) -> bool {
+    match v.unspan() {
+        Value::Var(x) => *x == av,
+        Value::Call(d, _) if frees.contains(d) => false,
+        Value::Set(x, val) if *x == av && matches!(val.unspan(), Value::Null) => false,
+        other => {
+            let mut hit = false;
+            other.for_each_child(&mut |c| {
+                if !hit && names_outside_free(c, av, frees) {
+                    hit = true;
+                }
+            });
+            hit
+        }
+    }
+}
+
+/// Put `guard` in front of every statement of `ops` that uses `av` (`names_outside_free`),
+/// descending into the statement lists of blocks, loops, inserts and `if` arms so the
+/// guard lands on the innermost list that holds the use.  An `if` whose CONDITION uses
+/// `av`, or whose arm is a bare expression that does, takes the guard in front of the
+/// whole `if`.
+fn insert_before_uses(ops: &mut Vec<Value>, av: u16, guard: &Value, frees: &[u32]) {
+    let mut i = 0;
+    while i < ops.len() {
+        let before = match ops[i].unspan_mut() {
+            Value::Block(bl) | Value::Loop(bl) => {
+                insert_before_uses(&mut bl.operators, av, guard, frees);
+                false
+            }
+            Value::Insert(ls) => {
+                insert_before_uses(ls, av, guard, frees);
+                false
+            }
+            Value::If(cond, a, b) => {
+                if names_outside_free(cond, av, frees) {
+                    true
+                } else {
+                    let mut bare = false;
+                    for arm in [a, b] {
+                        match arm.unspan_mut() {
+                            Value::Block(bl) => {
+                                insert_before_uses(&mut bl.operators, av, guard, frees)
+                            }
+                            Value::Insert(ls) => insert_before_uses(ls, av, guard, frees),
+                            other => bare |= names_outside_free(other, av, frees),
+                        }
+                    }
+                    bare
+                }
+            }
+            other => names_outside_free(other, av, frees),
+        };
+        if before {
+            ops.insert(i, guard.clone());
+            i += 1;
+        }
+        i += 1;
+    }
+}
+
+/// Is `av` the buffer of a call a `for` loop ITERATES (`for f in make(…) { … }`)?  Such a
+/// buffer is the native emitter's to place (@PLN157 § V-j, `hoist::move_appends`): it starts
+/// as the sentinel and is claimed in the destination's store at the loop, so a guarded mint
+/// in front of the loop would be a second owner of the same slot.
+fn iterates_a_call_into(ops: &[Value], av: u16) -> bool {
+    ops.iter().any(|op| {
+        op.any_node(&mut |n| {
+            let Value::Block(bl) = n else { return false };
+            bl.name == "For block"
+                && matches!(bl.operators.first().map(Value::unspan),
+                    Some(Value::Set(_, call)) if matches!(call.unspan(),
+                        Value::Call(_, args) if matches!(args.last().map(Value::unspan),
+                            Some(Value::Var(b)) if *b == av)))
+        })
+    })
+}
+
+/// @PLN164 A0 (`@FR-O-LazyBuffer`) — a hidden VECTOR return buffer is minted in front of
+/// the statements that hand it to a callee, behind `OpRefIsNull`, instead of at function
+/// entry: its null-init writes the sentinel (`Function::mark_lazy_buffer` tells both
+/// emitters), and the guarded `Set(av, Null)` is the mint.  A path that never makes the
+/// call never mints the store, and every exit's free already tolerates the sentinel
+/// (`@FR-H-FreeNull`).  Declined for a body that suspends or forks (a generator, `par`),
+/// and for a buffer with a second assignment, which this cannot order.  The type test is
+/// on the bare `vector<T>` on purpose: a `vector<T>?` buffer's entry init already writes
+/// the ABSENT sentinel and is minted by another route, so it is declined and keeps its
+/// entry-time behaviour, as does every buffer this does not name.
+fn lazy_buffer_mints(code: &mut Value, function: &mut Function, data: &Data) {
+    if !crate::keys::lazy_buffer_enabled() {
+        return;
+    }
+    if code.any_node(&mut |v| matches!(v, Value::Yield(..) | Value::Parallel(..))) {
+        return;
+    }
+    let Some(bl) = body_block_mut(code) else {
+        return;
+    };
+    let frees = free_ops(data);
+    let is_null = data.def_nr("OpRefIsNull");
+    for av in 0..function.count() {
+        if !function.is_caller_hidden_buf(av)
+            || function.is_argument(av)
+            || function.is_inline_ref(av)
+            || function.is_skip_free(av)
+            || !function.name(av).starts_with("__ref_")
+        {
+            continue;
+        }
+        // A `vector<T>?` buffer is minted by another route (see the doc above).
+        if matches!(function.tp(av), Type::Optional(_)) {
+            continue;
+        }
+        let Type::Vector(_, dep) = function.tp(av).base() else {
             continue;
         };
-        inserts.push((
-            at + 1,
-            Value::Call(db_nr, vec![Value::Var(av), Value::Int(i32::from(known))]),
-        ));
-    }
-    inserts.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
-    for (at, op) in inserts {
-        bl.operators.insert(at, op);
+        if !dep.is_empty() {
+            continue;
+        }
+        let top_inits = bl
+            .operators
+            .iter()
+            .filter(|op| matches!(op.unspan(), Value::Set(x, v) if *x == av && matches!(v.unspan(), Value::Null)))
+            .count();
+        let mut sets = 0;
+        for op in &bl.operators {
+            op.walk(&mut |v| {
+                if let Value::Set(x, _) = v
+                    && *x == av
+                {
+                    sets += 1;
+                }
+            });
+        }
+        if top_inits != 1 || sets != 1 || iterates_a_call_into(&bl.operators, av) {
+            continue;
+        }
+        function.mark_lazy_buffer(av);
+        let guard = v_if(
+            Value::Call(is_null, vec![Value::Var(av)]),
+            Value::Insert(vec![v_set(av, Value::Null)]),
+            Value::Null,
+        );
+        insert_before_uses(&mut bl.operators, av, &guard, &frees);
     }
 }
 
@@ -3998,6 +4405,7 @@ fn run_scan_phase(
         witness_buffer: HashMap::new(),
         owned_refs: HashMap::new(),
         rbuf_witness: None,
+        entry_witness: None,
         local_owns: HashMap::new(),
         owner_witness: HashMap::new(),
         displaced_owned,
@@ -4037,6 +4445,25 @@ fn run_scan_phase(
         scopes.var_scope.insert(flag, 0);
         scopes.var_order.push(flag);
         scopes.rbuf_witness = Some((buf, flag));
+    }
+    // @PLN164 B1b / `@FR-O-Buffer` — the promoted buffer's ENTRY WITNESS.  Once the caller's
+    // record-buffer pool hands such a callee a live store, "a promoted buffer is a local this
+    // function mints" stops being true on every run, and the snapshot is what tells the two
+    // apart.  Minted for every promoted record buffer, because every such body can free it
+    // (the exit legs of `free_vars` and the interpreter's rebind).
+    if crate::keys::adopt_buffer_reuse_enabled()
+        && let Some(buf) = hidden_return_buffer_var(d_nr, &function, data)
+        && function.name(buf) != "__retbuf"
+        && let Some(record) = function.tp(buf).heap_def_nr()
+    {
+        let name = Function::entry_witness_name(function.name(buf));
+        let w = function.add_temp_var(&name, &Type::Reference(record, Deps::none()));
+        // A self-dep: not a borrow, and not the empty list @FR-O-Proxy reads as "owner", so no
+        // site frees the snapshot on its own (the owner witness's construction).
+        function.depend(w, w);
+        scopes.var_scope.insert(w, 0);
+        scopes.var_order.push(w);
+        scopes.entry_witness = Some((buf, w));
     }
     // loft#1200 — the same construction one scope in: a boolean per nullable heap-record LOCAL
     // that a minting call reassigns, recording whether the store it holds is this frame's sole
@@ -4186,15 +4613,27 @@ fn run_scan_phase(
     // all (`fn g() -> Res { mk(2) }`), and `needs_pre_init` does not cover `boolean`, so an
     // uninitialised slot would read as garbage and free the caller's buffer.
     if let Some((_, flag)) = scopes.rbuf_witness
-        && let Value::Block(bl) = &mut code
+        && let Some(bl) = body_block_mut(&mut code)
     {
         bl.operators.insert(0, v_set(flag, Value::Boolean(false)));
+    }
+    // The entry witness names what the buffer holds BEFORE any statement can rebind it.
+    if let Some((buf, w)) = scopes.entry_witness
+        && let Some(bl) = body_block_mut(&mut code)
+    {
+        bl.operators.insert(
+            0,
+            v_set(
+                w,
+                Value::Call(data.def_nr("OpRefAlias"), vec![Value::Var(buf)]),
+            ),
+        );
     }
     // Every per-local witness starts FALSE for the same reason: before the local's first
     // assignment there is no store of its own to release, and an uninitialised boolean slot
     // would read as garbage and free one.
     if !scopes.local_owns.is_empty()
-        && let Value::Block(bl) = &mut code
+        && let Some(bl) = body_block_mut(&mut code)
     {
         let mut flags: Vec<u16> = scopes.local_owns.values().copied().collect();
         flags.sort_unstable();
@@ -4206,7 +4645,7 @@ fn run_scan_phase(
     // copy has taken the source's release, so an uninitialised slot would read as garbage and
     // suppress a release that is owed.
     if !scopes.handed_off.is_empty()
-        && let Value::Block(bl) = &mut code
+        && let Some(bl) = body_block_mut(&mut code)
     {
         let mut flags: Vec<u16> = scopes.handed_off.values().copied().collect();
         flags.sort_unstable();
@@ -4221,7 +4660,7 @@ fn run_scan_phase(
     // stack-record placeholder the allocator is expected to replace — and a free of THAT is
     // the `#306` refusal.
     if !scopes.owner_witness.is_empty()
-        && let Value::Block(bl) = &mut code
+        && let Some(bl) = body_block_mut(&mut code)
     {
         let mut witnesses: Vec<u16> = scopes.owner_witness.values().copied().collect();
         witnesses.sort_unstable();
@@ -4233,18 +4672,30 @@ fn run_scan_phase(
             );
         }
     }
+    // @FR-O-Override — a temp whose value a consuming op takes over (`mark_lift_handoff`'s
+    // store hand-off: `OpReplaceKeyed` with its source-free bit) owns nothing at ANY later
+    // free, not only at scope exit.  The op either freed the store or declined because it
+    // was a protected borrow, and neither is the temp's to release.  Marked never-free, the
+    // rebind on the next pass through a loop emits no displaced-store free on either
+    // backend — that free released the slot the op had already freed, which by then was
+    // whatever the allocator had handed it to next.
+    let mut transferred: Vec<u16> = scopes.free_transferred.iter().copied().collect();
+    transferred.sort_unstable();
+    for v in transferred {
+        function.set_skip_free(v);
+    }
     // lift vars from `scan_args` are assigned inside conditional branches but
     // their `OpFreeRef` lives at function exit; prepend the null-inits so codegen
     // reserves their slot along every path (see the original comment in check).
     if !scopes.lift_vars.is_empty()
-        && let Value::Block(bl) = &mut code
+        && let Some(bl) = body_block_mut(&mut code)
     {
         for &v in scopes.lift_vars.iter().rev() {
             bl.operators.insert(0, v_set(v, Value::Null));
         }
     }
     if !scopes.lift_texts.is_empty()
-        && let Value::Block(bl) = &mut code
+        && let Some(bl) = body_block_mut(&mut code)
     {
         for &v in scopes.lift_texts.iter().rev() {
             bl.operators.insert(0, v_set(v, Value::Text(String::new())));
@@ -4252,12 +4703,14 @@ fn run_scan_phase(
     }
     reuse_record_buffers(
         &mut code,
-        &function,
+        &mut function,
         data,
+        d_nr,
         &scopes.witness_buffer,
         &scopes.minted_pairs,
         &scopes.multi_assigned,
     );
+    lazy_buffer_mints(&mut code, &mut function, data);
     data.definitions[d_nr as usize].code = code;
     data.definitions[d_nr as usize].variables = function;
     #[cfg(debug_assertions)]
@@ -4904,6 +5357,27 @@ pub(crate) fn multi_assigned_in(node: &Value) -> HashSet<u16> {
         .filter(|&(_, n)| n >= 2)
         .map(|(v, _)| v)
         .collect()
+}
+
+/// The value of `v`'s one `Set` in the two arms of an `if`, where `v` is assigned under no
+/// loop and under no other name, or `None`.  `scan_if` reads it together with
+/// `multi_assigned` (the whole body's count), so a `Some` is the variable's ONLY bind.
+fn only_bind_in_arms<'a>(t_val: &'a Value, f_val: &'a Value, v: u16) -> Option<&'a Value> {
+    fn find<'a>(node: &'a Value, v: u16, out: &mut Vec<&'a Value>) {
+        match node.unspan() {
+            Value::Set(w, value) if *w == v => out.push(value),
+            // A bind inside a loop runs again on the next pass, after a bind of its own.
+            Value::Loop(_) => {}
+            other => other.for_each_child(&mut |c| find(c, v, out)),
+        }
+    }
+    let mut found = Vec::new();
+    find(t_val, v, &mut found);
+    find(f_val, v, &mut found);
+    match found.as_slice() {
+        [one] => Some(one),
+        _ => None,
+    }
 }
 
 /// Every variable assigned at any depth inside `node`.
@@ -6812,6 +7286,20 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
             &mut seq,
             0,
         );
+        // `@FR-O-Buffer` — the interpreter reads a promoted buffer's entry witness at every
+        // rebind of the buffer, outside the IR, so the witness lives as long as the buffer: a
+        // slot handed on after the snapshot's own initialisation would answer another
+        // variable's store.
+        let witnessed = {
+            let vars = &data.definitions[d_nr as usize].variables;
+            hidden_return_buffer_var(d_nr, vars, data)
+                .and_then(|buf| vars.entry_witness(buf).map(|w| (buf, w)))
+        };
+        if let Some((buf, w)) = witnessed {
+            data.definitions[d_nr as usize]
+                .variables
+                .extend_last_use_to(w, buf);
+        }
         // Plan-57 last-use freeing, Phase 1: definition-point liveness diagnostic
         // (read-only).  Reports each function-scoped owning store held past its
         // last use while later allocations run — the I-b / III-straight-line
@@ -8657,14 +9145,33 @@ impl Scopes<'_> {
                 // the block, the outer Zone 2 would never see it and the slot would remain
                 // u16::MAX → "variable never assigned a slot" panic at codegen.
                 let mut hoisted_ref: Option<u16> = None;
-                if let Some(Value::Var(ret_v)) = bl.operators.last() {
-                    let ret_v = *self.var_mapping.get(ret_v).unwrap_or(ret_v);
+                if let Some(Value::Var(orig_ret)) = bl.operators.last() {
+                    let ret_v = *self.var_mapping.get(orig_ret).unwrap_or(orig_ret);
+                    // @PLN164 B1 — a bind that ADOPTS the callee's minted record has its deps
+                    // stripped by `scan_set` inside the block, after this decision; the
+                    // parser's dep on the call's buffer is not a borrow (loft's inline
+                    // container `f().pts[i]` over such a callee leaked one record per call).
+                    let adopts = bl.operators.iter().any(|op| {
+                        matches!(op.unspan(), Value::Set(w, value)
+                        if w == orig_ret
+                            && crate::use_analysis::adopts_minted_at_bind(
+                                data, function, ret_v, value,
+                            ))
+                    });
                     if !self.var_scope.contains_key(&ret_v)
                         && let Type::Reference(_, dep)
                         | Type::Vector(_, dep)
                         | Type::Enum(_, true, dep) = function.tp(ret_v)
-                        && dep.is_empty()
+                        && (dep.is_empty() || adopts)
                     {
+                        // The hoisted null-init below stands right in front of the block, so
+                        // the block's one bind is the temp's first (`deferred_first_bind`).
+                        if adopts
+                            && crate::keys::adopt_first_bind_enabled()
+                            && !self.multi_assigned.contains(orig_ret)
+                        {
+                            function.mark_deferred_first_bind(ret_v);
+                        }
                         self.var_scope.insert(ret_v, self.scope);
                         self.var_order.push(ret_v);
                         hoisted_ref = Some(ret_v);
@@ -10774,6 +11281,20 @@ impl Scopes<'_> {
             }
         }
 
+        // @PLN164 B1 behind a null-init (`@FR-O-Move`) — the pre-init below turns a local's
+        // bind in this `if` into a REBIND, and a rebind copies where a first bind adopts.
+        // When that bind is the local's only assignment it follows the pre-init on every
+        // path that reaches it, so the local holds the sentinel there: it is a first bind.
+        if crate::keys::adopt_first_bind_enabled() {
+            for &v in &pre_inits {
+                if !self.multi_assigned.contains(&v)
+                    && let Some(value) = only_bind_in_arms(t_val, f_val, v)
+                    && crate::use_analysis::adopts_minted_at_bind(data, function, v, value)
+                {
+                    function.mark_deferred_first_bind(v);
+                }
+            }
+        }
         // Register pre-inited vars in var_scope BEFORE scanning branches so that
         // the branch scans see them as already assigned and use the set_var/OpPutRef
         // re-assignment path instead of claim().
@@ -11172,9 +11693,11 @@ impl Scopes<'_> {
     ///
     /// A true parameter belongs to the caller and the callee may free none of it; the
     /// promoted buffer is a LOCAL that `classify_ret_promotion` renamed onto the hidden
-    /// `__retbuf` attribute and `become_argument`ed, and this function mints its store.
-    /// The un-renamed `__retbuf` placeholder is left out — no local was promoted onto
-    /// it, so it holds no store of ours (loft#688).
+    /// `__retbuf` attribute and `become_argument`ed.  It holds the store the CALLER handed
+    /// or, when the caller handed the null sentinel, one this function minted — only the
+    /// second is this frame's, and the entry witness (`Function::entry_witness`) tells the
+    /// two apart per run wherever a free of it is emitted.  The un-renamed `__retbuf`
+    /// placeholder is left out — no local was promoted onto it (loft#688).
     fn is_promoted_ret_buffer(&self, function: &Function, data: &Data, v: u16) -> bool {
         let n = function.name(v);
         n != "__retbuf"
@@ -11559,11 +12082,14 @@ impl Scopes<'_> {
             // parameter belongs to the caller, so the callee must not free it.
             // An NRVO buffer breaks that premise.  It is a promoted LOCAL — the
             // rename in `classify_ret_promotion` gives the hidden `__retbuf` attr
-            // the local's name and `become_argument`s it — and THIS function mints
-            // its store with `OpDatabase`.  When a sibling return path delivers a
-            // different store, the minted one is returned by nobody and freed by
-            // nobody: one orphan per call, which exhausted the 65,535-entry store
-            // table after 65,535 calls and was invisible below that.
+            // the local's name and `become_argument`s it — and when the caller
+            // handed the null sentinel THIS function mints its store with
+            // `OpDatabase`.  When a sibling return path delivers a different store,
+            // the minted one is returned by nobody and freed by nobody: one orphan
+            // per call, which exhausted the 65,535-entry store table after 65,535
+            // calls and was invisible below that.  When the caller handed a LIVE
+            // store (a pooled record buffer, `reuse_record_buffers`) that store is
+            // the caller's, and the free is guarded by the entry witness.
             //
             // So treat it like any other candidate source that may or may not be
             // the returned store: route it through the same hoist +
@@ -11836,7 +12362,23 @@ impl Scopes<'_> {
                         Value::Null,
                     ));
                 }
-                result.push(Value::Call(free_if, vec![Value::Var(src), Value::Var(tmp)]));
+                let free = Value::Call(free_if, vec![Value::Var(src), Value::Var(tmp)]);
+                // `@FR-O-Buffer` — the promoted buffer may still hold the store the CALLER
+                // handed, which this frame never frees; the entry witness says so per run.
+                // Composed with the hook above rather than replacing it: the two guard DIFFERENT
+                // failures — the hook is a release this leg would otherwise lose, the witness
+                // stops this frame freeing a store it does not own — so either alone is a bug.
+                result.push(match self.entry_witness {
+                    Some((buf, w)) if buf == src => v_if(
+                        Value::Call(
+                            data.def_nr("OpDistinctStore"),
+                            vec![Value::Var(src), Value::Var(w)],
+                        ),
+                        free,
+                        Value::Null,
+                    ),
+                    _ => free,
+                });
             }
             result.append(&mut ls);
             result.push(Value::Return(Box::new(Value::Var(tmp))));

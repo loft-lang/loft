@@ -1825,44 +1825,21 @@ impl State {
                 stack.position += bump;
             }
             let slot_offset = stack.var_pos(v);
-            if stack.function.is_skip_free(v) || stack.function.is_inline_ref(v) {
+            if stack.function.is_skip_free(v)
+                || stack.function.is_inline_ref(v)
+                || stack.function.is_lazy_buffer(v)
+            {
                 // skip_free bindings borrow; inline_ref lift temporaries are
-                // overwritten before read.  Both want a null sentinel in the
-                // slot with no store alloc.
+                // overwritten before read; a lazy buffer mints at its first use
+                // (`@FR-O-LazyBuffer`).  All want a null sentinel in the slot with
+                // no store alloc.
                 stack.add_op("OpInitRefSentinel", self);
                 self.code_add(slot_offset);
             } else if dep.is_empty() {
-                // Owned vector: allocate a fresh store at v's slot, then
-                // init the header's length field (4B) and dep field (1B).
+                // Owned vector: the slot's null-init, then a fresh store at it.
                 stack.add_op("OpInitRef", self);
                 self.code_add(slot_offset);
-                stack.add_op("OpDatabase", self);
-                self.code_add(slot_offset);
-                let name = format!("main_vector<{}>", elm_tp.name(stack.data));
-                let known = stack.data.name_type(&name, self.source);
-                debug_assert_ne!(
-                    known,
-                    u16::MAX,
-                    "Incomplete type {name} in {}",
-                    stack.function.name
-                );
-                self.code_add(known);
-                // Push a DbRef copy of v's slot, set length=0 (4B), set dep byte.
-                stack.add_op("OpVarRef", self);
-                self.code_add(slot_offset);
-                stack.add_op("OpConstInt", self);
-                self.code_add(0i64);
-                // Vector header length field is 4 bytes (u32).
-                stack.add_op("OpSetInt4", self);
-                self.code_add(4u16);
-                // OpCreateStack pointing at v's slot (now the real DbRef).
-                let dep_offset = stack.var_pos(v);
-                self.emit_push_create_stack(stack, dep_offset);
-                stack.add_op("OpConstInt", self);
-                self.code_add(12i64);
-                stack.add_op("OpSetByte", self);
-                self.code_add(4u16);
-                self.code_add(0u16);
+                self.gen_owned_vector_store(stack, v, &elm_tp);
             } else {
                 // Borrowed view: a stack-frame DbRef pointing into dep's
                 // slot.  Must be overwritten by OpPutRef before any field
@@ -1874,6 +1851,42 @@ impl State {
                 self.code_add(dep_offset);
             }
         }
+    }
+
+    /// Allocate a fresh `main_vector<elm>` store at `v`'s slot, which holds a DbRef or the
+    /// null sentinel (`OpDatabase` allocates fresh from the sentinel), then init the
+    /// header's length field (4B) and dep field (1B).  The owned-vector null-init, and the
+    /// mint a lazy buffer's guarded `Set(v, Null)` lowers to (`@FR-O-LazyBuffer`).
+    fn gen_owned_vector_store(&mut self, stack: &mut Stack, v: u16, elm_tp: &Type) {
+        let slot_offset = stack.var_pos(v);
+        stack.add_op("OpDatabase", self);
+        self.code_add(slot_offset);
+        let name = format!("main_vector<{}>", elm_tp.name(stack.data));
+        let known = stack.data.name_type(&name, self.source);
+        debug_assert_ne!(
+            known,
+            u16::MAX,
+            "Incomplete type {name} in {}",
+            stack.function.name
+        );
+        self.code_add(known);
+        // Push a DbRef copy of v's slot, set length=0 (4B), set dep byte.
+        let slot_offset = stack.var_pos(v);
+        stack.add_op("OpVarRef", self);
+        self.code_add(slot_offset);
+        stack.add_op("OpConstInt", self);
+        self.code_add(0i64);
+        // Vector header length field is 4 bytes (u32).
+        stack.add_op("OpSetInt4", self);
+        self.code_add(4u16);
+        // OpCreateStack pointing at v's slot (now the real DbRef).
+        let dep_offset = stack.var_pos(v);
+        self.emit_push_create_stack(stack, dep_offset);
+        stack.add_op("OpConstInt", self);
+        self.code_add(12i64);
+        stack.add_op("OpSetByte", self);
+        self.code_add(4u16);
+        self.code_add(0u16);
     }
 
     /// The null-init of a NULLABLE vector local (`vector<T>?`): the slot takes the null
@@ -2242,14 +2255,19 @@ impl State {
             // (measured: `w`, `d`, `target` in `1184-a-view-assigned-back-onto-its-own-source`,
             // all with empty dep lists), and that population needs the in-place destination
             // precisely because it is assigning a view back onto its own source.
-            let rhs_may_alias_v =
-                match crate::use_analysis::ownership_of(stack.data, stack.def_nr, value) {
-                    crate::use_analysis::Own::Borrowed { base }
-                    | crate::use_analysis::Own::Join { base } => {
-                        base == v || stack.function.tp(base).depend().contains(&v)
-                    }
-                    _ => false,
-                };
+            let rhs_base = match crate::use_analysis::ownership_of(stack.data, stack.def_nr, value)
+            {
+                crate::use_analysis::Own::Borrowed { base }
+                | crate::use_analysis::Own::Join { base } => Some(base),
+                _ => None,
+            };
+            // A base of `u16::MAX` names no variable — a borrow of one of several arguments
+            // (loft#1550) — so it may be `v` exactly when the value reads `v`.
+            let rhs_may_alias_v = match rhs_base {
+                Some(u16::MAX) => rhs_reads_v,
+                Some(base) => base == v || stack.function.tp(base).depend().contains(&v),
+                None => false,
+            };
             // loft#615 — an OWNED heap variable that is re-assigned must free the
             // store it is dropping, and `Vector` was missing from this list while
             // `Reference` / `Enum` had it.  A `??` materialises its subject into a
@@ -2327,6 +2345,10 @@ impl State {
             // measured: `LOFT_POISON=1` answers identically to `LOFT_POISON=0`.
             let owned_ref =
                 stack.function.owns_displaced_store(v, value, stack.data) && !is_hidden_buf_arg;
+            // `@FR-O-Buffer` — a promoted return buffer may hold the store the CALLER handed,
+            // which no free below may release: every one of them is guarded by the entry
+            // witness the scope pass minted (native compares `_rb_w_<name>` at its rebind).
+            let entry_w = stack.function.entry_witness(v);
             // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
             // container's backing store (a vector element / nested field), so
             // the new value can land in the SAME store as v's old value —
@@ -2397,13 +2419,17 @@ impl State {
                 } else {
                     None
                 };
-                if let Some(container) = witness {
-                    let c_pos = stack.var_pos(container);
-                    stack.add_op("OpVarRef", self);
-                    self.code_add(c_pos);
-                    stack.add_op("OpFreeRefIfDistinct", self);
-                } else {
-                    stack.add_op("OpFreeRef", self);
+                match (witness, entry_w) {
+                    (Some(container), Some(entry)) => {
+                        self.push_var_ref(stack, container);
+                        self.push_var_ref(stack, entry);
+                        stack.add_op("OpFreeRefUnlessEntry", self);
+                    }
+                    (Some(keep), None) | (None, Some(keep)) => {
+                        self.push_var_ref(stack, keep);
+                        stack.add_op("OpFreeRefIfDistinct", self);
+                    }
+                    (None, None) => stack.add_op("OpFreeRef", self),
                 }
                 // @PLN118 — this var takes an unconditional pre-build free; its
                 // block-exit free must reset it to the sentinel so a loop re-entry's
@@ -2452,7 +2478,12 @@ impl State {
                 let old_pos = stack.var_pos(v);
                 stack.add_op("OpVarRef", self);
                 self.code_add(old_pos);
-                stack.add_op("OpFreeRef", self);
+                if let Some(entry) = entry_w {
+                    self.push_var_ref(stack, entry);
+                    stack.add_op("OpFreeRefIfDistinct", self);
+                } else {
+                    stack.add_op("OpFreeRef", self);
+                }
                 // The call result (`src`) FIRST, then the witness on top — so the
                 // witness's frame-relative `var_pos` accounts for `src` already on the
                 // eval stack. `OpBindOrCopy` pops witness (top) then src.
@@ -2551,11 +2582,29 @@ impl State {
                     // temp is declared nullable and assigned in the arm) aliased the
                     // callee's argument field on this backend alone — `--native` copies
                     // through its own arm (loft#1346, @FR-O-NoDiverge).
-                    && !(rhs_reads_v && stack.data.def(fn_nr).returns_borrowed_view())
+                    //
+                    // loft#1550 — except a view of one of SEVERAL arguments, which the plain
+                    // pointer pass-through would keep as an alias of whichever argument the
+                    // callee answered (`cv = either(cv, h, c)` then wrote into `h`).  It takes
+                    // the copy through a FRESH store, which `rhs_may_alias_v` arms below, so
+                    // the answer being `v`'s own store is copied before the old one is freed.
+                    && !(rhs_reads_v
+                        && stack.data.def(fn_nr).returns_borrowed_view()
+                        && !(rhs_base == Some(u16::MAX) && stash_old_for_post_free))
                     // @PLN157 § V-g — the copy is elided: the plain `PutRef` below binds
                     // the view, and `scopes` registered the identity free for the
                     // minted arm.
                     && !stack.function.is_view_elided(v)
+                    // @PLN164 B1 — the local's one bind after its `if` pre-init is its
+                    // first: the slot holds the sentinel, and the plain `PutRef` below
+                    // adopts the store the callee minted, as the first-bind arm does.
+                    && !(stack.function.is_deferred_first_bind(v)
+                        && crate::use_analysis::adopts_minted_at_bind(
+                            stack.data,
+                            &stack.function,
+                            v,
+                            value,
+                        ))
                 {
                     let tp_nr = stack.data.def(d_nr).known_type();
                     // Plan-04 Phase B.3.f: allocate fresh store directly
@@ -2638,9 +2687,22 @@ impl State {
                     // loft#981/#982 — ONE derivation, shared with the source-free gate
                     // above (which asks whether these cover every ref argument) and with
                     // the native backend.  Two lists of the same arguments drift.
+                    //
+                    // The FRESH-store path below (the value may alias `v`) leaves `v` out of
+                    // the bracket: `v` names a different store once the copy has landed, so
+                    // an unprotect read through it releases the wrong one and `v`'s old store
+                    // stays protected — which the stashed free then declines, one store per
+                    // call (loft#1550's `cv = either(cv, h, c)`).  The old store is the one
+                    // being displaced, so the copy's source-free may release it; the stashed
+                    // free after it is then a no-op.
+                    let fresh_path =
+                        (witnessed && rhs_reads_v) || (stash_old_for_post_free && rhs_may_alias_v);
                     let ref_args: Vec<u16> =
                         crate::use_analysis::protectable_ref_args(stack.data, stack.def_nr, value)
-                            .0;
+                            .0
+                            .into_iter()
+                            .filter(|&a| !(fresh_path && a == v))
+                            .collect();
                     // @PLAN51 Cluster II Step 2 — collect caller-hidden-buf
                     // work-ref args.  After the OpCopyRecord wrap frees
                     // the source store (via 0x8000), the caller's slot
@@ -2689,7 +2751,7 @@ impl State {
                     // on the eval stack (its slot offset is taken there);
                     // OpCopyRefOrNull's slot offset is taken after it pops src.
                     self.generate(value, stack, false);
-                    if (witnessed && rhs_reads_v) || (stash_old_for_post_free && rhs_may_alias_v) {
+                    if fresh_path {
                         // The call is done with the old store; take a FRESH one.  Two reasons,
                         // each from its own rule, which is why this is not `witnessed` alone: a
                         // WITNESSED local may be holding a view, so an in-place `OpDatabase`
@@ -2765,10 +2827,7 @@ impl State {
                         // #330 epilogue: free the stashed old store unless
                         // the assignment kept it (witness = v's NEW DbRef;
                         // same store → no-op).
-                        let free_pos = stack.var_pos(v);
-                        stack.add_op("OpVarRef", self);
-                        self.code_add(free_pos);
-                        stack.add_op("OpFreeRefIfDistinct", self);
+                        self.free_stashed(stack, v, entry_w);
                     }
                     // @PLN130 — REASSIGNMENT from a call.  A lift temp inside an expression
                     // (`__lift_N = file(path)`) is compiled here, not through any first-bind
@@ -2855,10 +2914,7 @@ impl State {
                         // #330 epilogue: free the stashed old store unless
                         // the assignment kept it (witness = v's NEW DbRef;
                         // same store → no-op).
-                        let free_pos = stack.var_pos(v);
-                        stack.add_op("OpVarRef", self);
-                        self.code_add(free_pos);
-                        stack.add_op("OpFreeRefIfDistinct", self);
+                        self.free_stashed(stack, v, entry_w);
                     }
                     return;
                 }
@@ -2889,10 +2945,7 @@ impl State {
             self.set_var(stack, v, value);
             if stash_old_for_post_free {
                 // #330 epilogue (fall-through path): see above.
-                let free_pos = stack.var_pos(v);
-                stack.add_op("OpVarRef", self);
-                self.code_add(free_pos);
-                stack.add_op("OpFreeRefIfDistinct", self);
+                self.free_stashed(stack, v, entry_w);
             }
         } else {
             // First allocation — slot pre-assigned by assign_slots.
@@ -2994,6 +3047,27 @@ impl State {
                 other => panic!("emit_tuple_put_ops: unsupported elem {other:?}"),
             }
             self.code_add(pos);
+        }
+    }
+
+    /// Push a reference variable's value, taking its position before the push as every
+    /// `OpVarRef` must.
+    fn push_var_ref(&mut self, stack: &mut Stack, var: u16) {
+        let pos = stack.var_pos(var);
+        stack.add_op("OpVarRef", self);
+        self.code_add(pos);
+    }
+
+    /// Free the store `v` held before its assignment, stashed on the stack, unless `v` now
+    /// holds that same store — and, for a promoted return buffer, unless it is the store the
+    /// caller handed in (`entry`, `@FR-O-Buffer`).
+    fn free_stashed(&mut self, stack: &mut Stack, v: u16, entry: Option<u16>) {
+        self.push_var_ref(stack, v);
+        if let Some(entry) = entry {
+            self.push_var_ref(stack, entry);
+            stack.add_op("OpFreeRefUnlessEntry", self);
+        } else {
+            stack.add_op("OpFreeRefIfDistinct", self);
         }
     }
 
@@ -3158,7 +3232,12 @@ impl State {
             // witness's and adopts when it is not, so the scope-exit free is right on
             // both arms.  It is also what makes a `null` answer safe — a null `src` has
             // no store to alias, so the guard adopts it and the local stays null.
-            self.gen_set_first_ref_join(stack, v, value, join_d_nr, base);
+            if base == u16::MAX {
+                // loft#1550 — a borrow of one of several arguments: copied on every run.
+                self.gen_set_first_ref_call_copy(stack, v, value, join_d_nr);
+            } else {
+                self.gen_set_first_ref_join(stack, v, value, join_d_nr, base);
+            }
         } else if let Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) =
             stack.function.tp(v).clone()
             // loft#1245 — BOTH spellings of a call, because a `CallRef` reaching a
@@ -4933,6 +5012,18 @@ impl State {
     }
 
     pub(super) fn set_var(&mut self, stack: &mut Stack, var: u16, value: &Value) {
+        // `@FR-O-LazyBuffer` — a lazy buffer's later `Set(v, Null)` is its MINT (the scopes
+        // pass places it behind `OpRefIsNull(v)`); its entry null-init wrote the sentinel.
+        // A lazy buffer is never `vector<T>?` (`lazy_buffer_mints` declines those).
+        if matches!(value.unspan(), Value::Null)
+            && stack.function.is_lazy_buffer(var)
+            && !matches!(stack.function.tp(var), Type::Optional(_))
+            && let Type::Vector(elm_tp, dep) = stack.function.tp(var).base().clone()
+            && dep.is_empty()
+        {
+            self.gen_owned_vector_store(stack, var, &elm_tp);
+            return;
+        }
         if let Type::RefVar(tp) = stack.function.tp(var).clone() {
             // loft#1372 — the write half of the same peel: `Optional(τ)` stores as `τ`, so
             // the write op is the slot's, and whether the slot may hold null is

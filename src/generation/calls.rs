@@ -197,6 +197,18 @@ impl Output<'_> {
         } else {
             None
         };
+        // @PLN164 E-1 — a FORWARD (`hoist::forward_site`): the call's value is the buffer it
+        // was handed, with the tuple written into it as the callee's record form would have.
+        // Keyed by the argument list's address, which is the slice this call was handed.
+        let forward = self
+            .value_records
+            .fns
+            .contains_key(&self.current_call_def)
+            .then(|| self.forward_sites.get(&(vals.as_ptr() as usize)).copied())
+            .flatten();
+        if forward.is_some() {
+            write!(w, "{{ let __vt = ")?;
+        }
         write!(
             w,
             "{}{}(",
@@ -250,6 +262,24 @@ impl Output<'_> {
             // @PLN17: boolean's expression form is u8/bool, never i64 — no widening
             // (incl. `boolean?`: its slot is u8, so `.base()` excludes it here too).
             write!(w, " as i64")?;
+        }
+        if let Some(buf) = forward {
+            let tp = self
+                .value_records
+                .fns
+                .get(&callee_nr)
+                .copied()
+                .unwrap_or(u16::MAX);
+            write!(w, "; let mut __vd = ")?;
+            self.output_code_inner(w, &Value::Var(buf))?;
+            // The callee's own allocate-or-reuse guard: a buffer that is absent or holds no
+            // record is minted here, as the callee's exit mints it.
+            write!(
+                w,
+                "; if !(__vd.store_nr != u16::MAX && __vd.rec != 0) {{ __vd = OpDatabase(cell, __vd, {tp}_i32); }} "
+            )?;
+            self.write_tuple_fields(w, callee_nr, &Value::RawExpr("__vd".to_string()), "__vt")?;
+            write!(w, "__vd }}")?;
         }
         Ok(())
     }

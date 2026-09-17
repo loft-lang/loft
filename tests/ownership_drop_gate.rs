@@ -137,6 +137,72 @@ fn p_k4() { p_k4_b(0); }"#,
             r#"fn p_k7_b(x: S) { t = x; println("R{t.h.id}"); }
 fn p_k7() { s = S { h: mk(9) }; p_k7_b(s); println("R{s.h.id}"); }"#,
         ),
+        // heap.md D-heap-8's COLLECTION spelling.  A whole-value bind of a droppable collection
+        // makes a second structure — the parser mints a `__vdb_N` backing and fills it — and both
+        // structures release, with no disturbance needed to provoke it.  `LOFT_DROP_COPY_CENSUS`
+        // lists no row for any of the three: its bind arm matches `Set(v, Var(src))`, a node this
+        // spelling never produces, so these are the population a refusal built from the census
+        // alone would skip.
+        cell(
+            "p_v1",
+            r#"fn p_v1() { v: vector<H> = [mk(80)]; d = v; println("R{len(d)}"); }"#,
+        ),
+        cell(
+            "p_v2",
+            r#"fn p_v2() { v: vector<H> = [mk(81)]; d = v; v += [mk(82)]; println("R{len(d)}"); }"#,
+        ),
+        cell(
+            "p_v3",
+            r#"fn p_v3() { b = Bag { v: [mk(83)], tag: 1 }; d = b.v; println("R{len(d)}"); }"#,
+        ),
+        // CONTROL — the PARAMETER spelling of the same bind releases once, because
+        // `calls.md` F-ParamHeap binds without copying.  A cure for the three above must leave
+        // this one alone, which is what makes it the cell that decides an over-reach.
+        cell(
+            "p_v4",
+            r#"fn p_v4_b(p: vector<H>) { u = p; println("R{len(u)}"); }
+fn p_v4() { v: vector<H> = [mk(84)]; p_v4_b(v); }"#,
+        ),
+        // heap.md D-heap-13 (loft#1551): a bare COLLECTION a call answers, bound to a LOCAL,
+        // never releases its elements.  `(H-Move)` makes the bind a move — a fresh call result
+        // placed where it is produced — so `d` is the owner, and `(H-Drop)` releases at the
+        // owner's scope end.  It does not, on either backend, and no free-side instrument can
+        // see it: the memory IS freed and only the hook is skipped.  These three score LOST,
+        // which is the gate asserting the ABSENCE of a hook rather than a value.
+        cell(
+            "p_v5",
+            r#"fn p_v5_m() -> vector<H> { r: vector<H> = [mk(140)]; return r; }
+fn p_v5() { d = p_v5_m(); println("R{len(d)}"); }"#,
+        ),
+        // The same, reading the ELEMENT back first: the resource is demonstrably live and
+        // reachable at the read, so "it was never really there" is not available as a reading.
+        cell(
+            "p_v6",
+            r#"fn p_v6_m() -> vector<H> { r: vector<H> = [mk(141)]; return r; }
+fn p_v6() { d = p_v6_m(); println("R{d[0].id}"); }"#,
+        ),
+        // Grown after the bind, which does not restore the cascade: BOTH ids leak, so the
+        // defect is the local's backing and not the callee's one element.
+        cell(
+            "p_v7",
+            r#"fn p_v7_m() -> vector<H> { r: vector<H> = [mk(142)]; return r; }
+fn p_v7() { d = p_v7_m(); d += [mk(143)]; println("R{len(d)}"); }"#,
+        ),
+        // The two CONTROLS that bound D-heap-13, and that an over-reaching cure must leave
+        // alone.  Wrapping the very same call's vector in a record releases it, because a
+        // record backing carries a generated cascade; and assigning the same call into a FIELD
+        // releases it too (@PLN164 C2's buffer-is-the-place path).  So the axis is the bare
+        // collection crossing a return, not the collection and not the call.
+        cell(
+            "p_v8",
+            r#"fn p_v8_m() -> Bag { return Bag { v: [mk(144)], tag: 1 }; }
+fn p_v8() { d = p_v8_m(); println("R{len(d.v)}"); }"#,
+        ),
+        cell(
+            "p_v9",
+            r#"fn p_v9_m() -> vector<H> { r: vector<H> = [mk(145)]; return r; }
+fn p_v9() { b = Bag { v: [], tag: 0 }; b.v = p_v9_m(); println("R{len(b.v)}"); }"#,
+        ),
         // heap.md D-heap-1's open shapes.
         cell(
             "p_o1",
@@ -1090,8 +1156,14 @@ fn the_census_names_the_copy_each_cell_makes() {
                 c.name
             ));
         }
+        let blind = CENSUS_BLIND.contains(&c.name.as_str());
         match lease_verdict(&c.name) {
-            Lease::Refused if refusals.is_empty() => wrong.push(format!(
+            Lease::Refused if blind && !refusals.is_empty() => wrong.push(format!(
+                "{}: the census refuses {refusals:?} — its enumeration reaches this spelling now, \
+                 so take the cell out of CENSUS_BLIND",
+                c.name
+            )),
+            Lease::Refused if refusals.is_empty() && !blind => wrong.push(format!(
                 "{}: refused by the lease rules, but the census refuses nothing in {sites:?}",
                 c.name
             )),
@@ -1171,36 +1243,57 @@ enum Lease {
     Refused,
 }
 
-/// The pilot cells that write no copy of an existing `H`, each classified by hand.
+/// The pilot cells the rules MOVE or leave alone, each classified by hand.
+///
+/// Rewritten 2026-09-17 to the owner's ruling: a value the function OWNS moves into a new
+/// structure, its lifetime ending there `(H-Move)`.  So every cell whose source is a local the
+/// function made is a move, wherever it is placed — the bind `x = a`, the tuple `u = t`, the `??`
+/// operand, the join arm, and the whole-collection bind.  What stays a copy is what the function
+/// does NOT own, which is the list below this one.
 const PILOT_ONCE: &[&str] = &[
     "p_k4", // a block yields the variable it declares
     "p_k5", "p_k6", "p_r1", "p_g2", "p_s8", // fresh values only
     "p_n1", "p_n2", "p_n3", "p_n4", // fresh values written into places, and a removal
     "p_t1", // a member read through a call result, which nothing outlives
-];
-
-/// The pilot cells that write a copy of an existing `H`, each classified by hand.
-const PILOT_REFUSED: &[&str] = &[
+    "p_v4", // a vector parameter, which F-ParamHeap binds without copying
+    // A collection a CALL answers is a fresh value placed where it is produced, which (H-Move)
+    // moves: the local owns it and owes exactly one release.  `p_v5`–`p_v7` do not run it
+    // (D-heap-13); `p_v8` and `p_v9` do, and are the controls that bound the defect.
+    "p_v5", "p_v6", "p_v7", "p_v8", "p_v9",
+    // A local the function OWNS, placed — each a MOVE since the 2026-09-17 ruling.
     "p_k1", "p_k2", "p_k3", "p_h1", "p_i1", // `x = a` of a local
-    "p_k7", "p_h2", "p_h3", "p_h4", "p_h5", "p_h6", "p_h7", // `x = p` of a parameter
-    "p_o1", // `u = e` of a loop variable
-    "p_o2", // `u = t` of a tuple
-    "p_o3", "p_o4", // `return` of a view, of a member, of a parameter
-    "p_o5", "p_e1", "p_e2", // a member placed in a literal or appended
+    "p_o2", // `u = t` of a tuple the function built
     "p_l1", "p_l2", "p_i2", "p_s6", "p_s7", // a local as an operand of `??`
     "p_j1", "p_j2", "p_j3", "p_j4", "p_s1", "p_s2", "p_s3", "p_s4",
     "p_s5", // a local in a join
+    // `d = v` of a droppable COLLECTION the function owns.  ⚠ These two are MOVES by the rules
+    // and still release TWICE today (`M1 L1 D1 D1`, measured both backends) — `formal/heap.md`
+    // D-heap-15 carries that, and `LEASE_DEVIATIONS` names them so the gate stays honest about it.
+    "p_v1", "p_v2",
+];
+
+/// The pilot cells that place a value the function does NOT own — the copies `(H-Copy-Refuse)`
+/// still refuses after the 2026-09-17 ruling, each measured releasing twice.
+const PILOT_REFUSED: &[&str] = &[
+    "p_k7", "p_h2", "p_h3", "p_h4", "p_h5", "p_h6", "p_h7", // `x = p` of a parameter
+    "p_o1", // `u = e` of a loop variable — a member of the container it iterates
+    "p_o3", "p_o4", // `return` of a view, of a member, of a parameter
+    "p_o5", "p_e1", "p_e2", // a member placed in a literal or appended
     "p_g1", "p_g3", "p_g4", "p_g5", // a member of a call result
+    // `d = b.v` of a droppable COLLECTION held in a FIELD: the container still owns it.
+    "p_v3",
 ];
 
 /// What the lease rules require of the cell `name`, read — as the rule is read — off the cell's
 /// own lines: by hand for a pilot, and from its two axes for a generated cell.
 ///
-/// A fresh source (a call, a literal) is placed where it is produced.  A local, a parameter, a
-/// `??` over a local and a member of a call result are existing values, so every position copies
-/// them — except a `return` of a local, or of a `??` over locals, which (H-Move) moves.  A member
-/// of a variable (`s.h`, `vs[0]`, `tt.0`, `p.h`) bound to a variable or chosen by a join arm is a
-/// view; placed in a literal, appended or returned it is a copy.
+/// A fresh source (a call, a literal) is placed where it is produced, and so is a value the
+/// function OWNS — a local, or a `??` over locals — since the 2026-09-17 ruling: `(H-Move)` moves
+/// it wherever it goes, the new structure releases it, and the name is SPENT `(H-Spent)`.  What
+/// the function does NOT own is still a copy: a parameter, a member of one, a member of a call
+/// result.  A member of a variable (`s.h`, `vs[0]`, `tt.0`, `p.h`) bound to a variable or chosen
+/// by a join arm is a VIEW, which makes no structure at all; placed in a literal, appended or
+/// returned it is a copy of what its container still owns.
 fn lease_verdict(name: &str) -> Lease {
     const VIEWING: &[&str] = &["local", "annot", "nullable", "arm", "arm0", "reassign"];
     let parts: Vec<&str> = name.split('_').collect();
@@ -1208,15 +1301,16 @@ fn lease_verdict(name: &str) -> Lease {
         ["p", ..] if PILOT_ONCE.contains(&name) => Lease::Once,
         ["p", ..] if PILOT_REFUSED.contains(&name) => Lease::Refused,
         ["c", source, dest] => match *source {
-            "call" | "literal" => Lease::Once,
-            "local" | "coalesce" if *dest == "ret" => Lease::Once,
+            // Fresh, or the function's own — both move, in every destination.
+            "call" | "literal" | "local" | "coalesce" => Lease::Once,
             "field" | "elem" | "tuple" | "pfield" if VIEWING.contains(dest) => Lease::Once,
             _ => Lease::Refused,
         },
-        // `A ?? B`: a local A is copied except when returned; a parameter A always is; a member A
-        // is a view in a viewing position, where a local B is still copied.
-        ["q", _, "local", _, "ret"] => Lease::Once,
-        ["q", _, "field", b, dest] if VIEWING.contains(dest) && *b != "var" => Lease::Once,
+        // `A ?? B`: a local A moves wherever it goes, and so does a local B — the `*b != "var"`
+        // exclusion that used to sit on the member arm went with the ruling, because the local
+        // DEFAULT it excluded is no longer a copy either.  A parameter A is still the caller's.
+        ["q", _, "local", ..] => Lease::Once,
+        ["q", _, "field", _, dest] if VIEWING.contains(dest) => Lease::Once,
         ["q", ..] => Lease::Refused,
         _ => panic!("{name} has no lease verdict: classify it under formal/heap.md § Drop"),
     }
@@ -1233,6 +1327,12 @@ fn liveness_verdict(name: &str) -> Option<Lease> {
     const REFUSED_PILOTS: &[&str] = &[
         "p_k7", "p_o1", "p_o3", "p_o4", "p_o5", "p_l1", "p_l2", "p_h2", "p_h3", "p_h4", "p_h5",
         "p_h6", "p_h7", "p_e1", "p_e2", "p_g1", "p_g3", "p_g4", "p_g5", "p_s4", "p_t1",
+        // The collection binds, under the superseded reading too: `p_v2` grows `v` after the copy,
+        // so the source is used again (`refuse:later`), and `p_v3` copies a member `b` still
+        // holds (`refuse:container`).  `p_v1` is deliberately absent — its `v` is dead after the
+        // bind, which is the one thing the liveness reading and the written rule disagree about
+        // for this family, and the cell that shows the two oracles are not one oracle twice.
+        "p_v2", "p_v3",
     ];
     let parts: Vec<&str> = name.split('_').collect();
     match parts.as_slice() {
@@ -1253,9 +1353,67 @@ fn liveness_verdict(name: &str) -> Option<Lease> {
     }
 }
 
+/// The cells the rules REFUSE and the census names no copy for, because its site enumeration does
+/// not reach their spelling.  An absent row is indistinguishable from a clean one, so a cell is
+/// listed here rather than reclassified: the verdict stays what the rules say, and the silence is
+/// recorded as the defect it is.
+///
+/// EMPTY since 2026-09-17, and it emptied itself.  It held `p_v1`, `p_v2` and `p_v3` — a
+/// whole-collection bind mints a `__vdb_N` backing and fills it with an APPEND, so the
+/// `Value::Set(v, Var(src))` node the census's bind arm matched never existed for them.  The
+/// census now judges that append, [`the_census_names_the_copy_each_cell_makes`] reported all three
+/// with *"its enumeration reaches this spelling now"*, and they left.  That is the list working in
+/// the direction that retires it: it enforces from BOTH sides, so a cell here whose copy the
+/// census DOES refuse fails until it is removed, and a merely tolerant list would have gone green
+/// on the cure and stayed forever.
+const CENSUS_BLIND: &[&str] = &[];
+
 /// Each OPEN deviation in `formal/heap.md` that a cell with a `Once` verdict still measures, with
 /// those cells.  A refused cell compiles today and is `D-heap-8`'s, so it is not listed.
-const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[];
+///
+/// `D-heap-13` is a collection a call answers and a local binds, which never releases its
+/// elements (loft#1551).  Its three cells owe one release each by `(H-Move)` and `(H-Drop)` and
+/// run none, so each fails its baseline under a `Once` verdict and is carried here until the
+/// entry closes.  The controls `p_v8` and `p_v9` are deliberately absent: they are clean, and a
+/// clean cell listed under a deviation is itself a failure (*"retire it there"*).
+///
+/// `D-heap-15` and `D-heap-16` were EXPOSED by the 2026-09-17 ruling rather than introduced by
+/// it.  Every cell below was verdict `Refused` before it, and a refused cell's releases are
+/// asked nothing — so widening what the rules refuse had been hiding 23 cells whose releases
+/// disagree with them.  They are split by CHANNEL because they are different defects: the
+/// `D-heap-15` cells release TWICE (`p_o2` and `p_i2` also on the scorer's EARLY channel, so
+/// twice AND before a read), while the `D-heap-16` cells release NONE — the fresh value of a
+/// `??` default arm, which has no source to hand over and so is not `D-heap-14`'s family.
+const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[
+    ("D-heap-13", &["p_v5", "p_v6", "p_v7"]),
+    (
+        "D-heap-15",
+        &[
+            "p_v1",
+            "p_v2",
+            "p_o2",
+            "p_i2",
+            "p_j3",
+            "p_j4",
+            "c_coalesce_field",
+            "c_coalesce_enum",
+            "c_coalesce_push",
+            "c_coalesce_veclit",
+            "q_present_local_call_field",
+            "q_present_local_call_push",
+            "q_present_local_var_field",
+            "q_present_local_var_push",
+            "q_present_local_literal_field",
+            "q_present_local_literal_push",
+            "q_default_local_call_field",
+            "q_default_local_var_field",
+            "q_default_local_var_push",
+            "q_default_local_literal_field",
+            "q_default_local_literal_push",
+        ],
+    ),
+    ("D-heap-16", &["p_l2", "q_default_local_call_local"]),
+];
 
 /// Every cell has a lease verdict, and every cell the rules say must release once while a
 /// baseline says it does not is carried by exactly one OPEN deviation in `formal/heap.md`.  A fix
@@ -1272,10 +1430,27 @@ fn every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation() {
     for dev in LEASE_DEVIATIONS
         .iter()
         .map(|(d, _)| *d)
-        .chain(["D-heap-8", "D-heap-9", "D-heap-11"])
+        .chain(["D-heap-8", "D-heap-9"])
     {
         let header = format!("### {dev} — OPEN");
-        if !heap.lines().any(|l| l.starts_with(&header)) {
+        // A closed entry's header — `— OPENED 2026-09-15, CLOSED 2026-09-17` — has the open
+        // spelling as a PREFIX, so `starts_with` alone answers "it is open" about an entry that
+        // says CLOSED three words later.  The half of this test that exists to catch *a deviation
+        // closed in the register while a cell still measures it* was green on exactly that:
+        // `D-heap-11` closed on 2026-09-17 and stayed chained here, satisfying its own check.
+        // A closed entry always says so on that line, so require CLOSED to be absent from it.
+        //
+        // This is one of only TWO decoders of deviation STATE in the tree, and the other cannot
+        // have this bug: `scripts/rule_tags.py` finds its chapters with `glob` rather than a
+        // maintained list, and each of its three status decisions asks CLOSED FIRST
+        // (`"CLOSED" if "closed" in head.lower() else "OPEN"`) after stripping the chapter's
+        // `OPEN: n` COUNT, which is a count and never a status.  A THIRD decoder should copy
+        // that shape and not this one — deciding CLOSED first needs no guard at all, whereas
+        // matching OPEN first needs the guard above and will be written without it.
+        if !heap
+            .lines()
+            .any(|l| l.starts_with(&header) && !l.contains("CLOSED"))
+        {
             wrong.push(format!("{dev} is not OPEN in formal/heap.md"));
         }
     }

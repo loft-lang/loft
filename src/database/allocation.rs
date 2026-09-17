@@ -3588,6 +3588,12 @@ impl Stores {
                 if !borrowed && !self.type_owns_heap(tp) {
                     return;
                 }
+                // A record whose heap slots are all empty RIGHT NOW frees nothing either —
+                // a reused return buffer is released before every refill (`@FR-H-ClearRelease`),
+                // and most refills follow a result that held no heap.
+                if !borrowed && self.holds_no_heap(rec, tp) {
+                    return;
+                }
                 let walk = self.owned_walk(rec, tp, borrowed);
                 for c in walk.children {
                     // @PLN102 heap-free audit — an `owning_elem == Some(0)` slot is an
@@ -4258,6 +4264,52 @@ impl Stores {
     #[inline]
     pub(super) fn type_owns_heap(&self, tp: u16) -> bool {
         self.heap_facts(tp).0
+    }
+
+    /// Does the `tp` STRUCT at `rec` hold no heap at this moment — every slot of a
+    /// heap-owning field empty, nested inline records included?  Then tearing it down
+    /// frees nothing, which is what lets [`Self::remove_claims`] skip the walk.
+    ///
+    /// Conservative, and the fallback says why: a field kind this does not read — a
+    /// struct-enum, a fn-ref, a radix or trie, a secondary view of a linked group, or a
+    /// slot past the store's end — answers "may hold heap", so the full walk runs for it.
+    /// A `false` here only costs the walk the release always did.
+    fn holds_no_heap(&self, rec: &DbRef, tp: u16) -> bool {
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) = &self.types[tp as usize].parts
+        else {
+            return false;
+        };
+        let capacity_bytes = u64::from(self.store(rec).capacity_words()) * 8;
+        fields.iter().all(|f| {
+            if !self.type_owns_heap(f.content) {
+                return true;
+            }
+            if f.other_indexes.first() == Some(&u16::MAX) {
+                return false;
+            }
+            let pos = rec.pos + u32::from(f.position);
+            if u64::from(pos) + 4 > capacity_bytes {
+                return false;
+            }
+            match &self.types[f.content as usize].parts {
+                Parts::Struct(_) | Parts::EnumValue(..) => self.holds_no_heap(
+                    &DbRef {
+                        store_nr: rec.store_nr,
+                        rec: rec.rec,
+                        pos,
+                    },
+                    f.content,
+                ),
+                Parts::Base if f.content == 5 => self.store(rec).get_u32_raw(rec.rec, pos) == 0,
+                Parts::Vector(_)
+                | Parts::Array(_)
+                | Parts::Sorted(..)
+                | Parts::Ordered(..)
+                | Parts::Hash(..)
+                | Parts::Index(..) => self.store(rec).get_u32_raw(rec.rec, pos) == 0,
+                _ => false,
+            }
+        })
     }
 
     /// @PLN134, @PLN136 — lay every radix TREE in `slot` out for PAGING, and answer

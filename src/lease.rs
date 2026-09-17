@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I60 — Scope & dependency/lifetime tracker (deps)
 
 //! @I60 — Scope & dependency/lifetime tracker (deps): the copy-lease half.
 //!
@@ -72,6 +73,48 @@ impl Refusal {
             Self::Container(v) => format!("container:{}", func.name(*v)),
             Self::Caller(v) => format!("caller:{}", func.name(*v)),
             Self::Captured(v) => format!("captured:{}", func.name(*v)),
+        }
+    }
+
+    /// What `(H-Copy-Refuse)` says to the author about this copy: the act, why it is refused, and
+    /// what to write instead — *"use the value where it is, pass it, build it where it belongs,
+    /// or return the owner"*.
+    ///
+    /// `who` is the name the author wrote for the value, from [`Frame::author_name`], and is
+    /// `None` when the refusal reaches only a compiler temp — then the sentence describes the
+    /// value by its TYPE instead.  Naming `__lift_2` would describe the compiler's workings to
+    /// someone reading about their own program, which is the shape loft#1453 already paid for.
+    ///
+    /// It never names a LATER line, because no later line decides the verdict: the rule is read
+    /// off this one and the declared types alone.
+    #[must_use]
+    pub fn message(&self, who: Option<&str>, tp: &str) -> String {
+        let it = who.map_or_else(|| format!("a value of `{tp}`"), |name| format!("`{name}`"));
+        let twice = "so the copy releases it a second time";
+        match self {
+            // `Later` is the SUPERSEDED liveness reading, which P2r settled does not decide
+            // validity; the raise site skips it.  Phrased as a plain copy so this stays total.
+            Self::Copied(_) | Self::Later { .. } => format!(
+                "cannot copy {it} here — `{tp}` owns a resource, and a copy is a second \
+                 structure that releases it a second time. Use it where it is, pass it as an \
+                 argument, or build a new value here"
+            ),
+            Self::Container(_) => {
+                let owner = who.map_or_else(|| "the container".to_string(), |n| format!("`{n}`"));
+                format!(
+                    "cannot copy a member of {owner} here — {owner} still owns that member and \
+                     releases it when it goes, {twice}. Read it where it lives, or build a new \
+                     value here"
+                )
+            }
+            Self::Caller(_) => format!(
+                "cannot copy {it} here — the caller still owns what it passed and releases it, \
+                 {twice}. Read it where it lives, or return the owner"
+            ),
+            Self::Captured(_) => format!(
+                "cannot copy {it} here — the closure that captured it still owns it, {twice}. \
+                 Read it where it lives, or build a new value here"
+            ),
         }
     }
 }
@@ -291,6 +334,26 @@ impl<'a> Frame<'a> {
         self.buffers.contains(&var)
     }
 
+    /// The name the AUTHOR wrote for the value a refusal names, or `None` when the refusal
+    /// reaches only a compiler temp.
+    ///
+    /// A refusal's variable is not always one a reader can see.  [`Self::member_owner`] answers
+    /// `Container(root)` with whatever root [`Self::member_container`] found, and for a lifted
+    /// join arm or a call-result projection that root is a `__lift_N` — measured on the corpus
+    /// 2026-09-17, four sites in `1506-a-call-result-projection-releases-once.loft` read
+    /// `refuse:container:__lift_2`.  [`Self::resolve_view`] walks the view temps back to what
+    /// they stand for; when the answer is still generated, the caller has no name to print and
+    /// says so instead of printing that one.
+    ///
+    /// A PARAMETER is an author name even though it is an argument, which is why the argument
+    /// test sits beside the generated one rather than inside it.
+    #[must_use]
+    pub fn author_name(&self, refusal: &Refusal) -> Option<&str> {
+        let var = self.resolve_view(refusal.var()).0;
+        (!self.func.is_compiler_generated(var) || self.func.is_argument(var))
+            .then(|| self.func.name(var))
+    }
+
     /// The rule read off the line, for one value a copy may produce.
     fn written_leaf(&self, leaf: Leaf, placement: Placement, followed: &mut HashSet<u16>) -> Lease {
         if placement == Placement::ReadThrough {
@@ -329,19 +392,21 @@ impl<'a> Frame<'a> {
         if self.func.is_captured(var) {
             return Lease::Refuse(Refusal::Captured(var));
         }
-        match placement {
-            Placement::Return => Lease::Move,
-            Placement::BlockResult(block) if self.declared_in(var, block) => Lease::Move,
-            _ => Lease::Refuse(Refusal::Copied(var)),
-        }
-    }
-
-    /// Is every assignment that gives `var` a value inside the block at `block`?  A declaration's
-    /// null initialiser, which the compiler hoists to the top of the function, gives no value.
-    fn declared_in(&self, var: u16, block: *const Value) -> bool {
-        let mut counts = (0, 0);
-        count_assignments(self.body, var, block, false, self.ops.database, &mut counts);
-        counts.0 > 0 && counts.1 == 0
+        // What reaches here is a value this function OWNS: a buffer, a compiler temp, a member,
+        // a parameter-held local and a captured variable have each been answered above.  `(H-Move)`
+        // moves it wherever it is placed — its lifetime ENDS in the new structure, which releases
+        // it, and the name is SPENT from the end of that statement `(H-Spent)`.
+        //
+        // The rule's `return` and block-result clauses need no test of their own any more: both
+        // name a value the function owns, so both are this answer.  That is why `declared_in` and
+        // the assignment count behind it went with the owner's 2026-09-17 ruling — a block yielding
+        // its own variable was only ever a narrower way of saying what this line now says.
+        //
+        // Placing it TWICE, and reading the name afterwards, are the two errors `(H-Spent)` asks
+        // for, and neither is built yet — `formal/heap.md` D-heap-8 carries them.  Until they are,
+        // this verdict is deliberately the SOUND subset: it never refuses a program the rules
+        // permit, and it is silent on two the rules forbid.
+        Lease::Move
     }
 
     fn whole_var(&self, site: &Value, var: u16) -> Lease {
@@ -442,35 +507,6 @@ impl<'a> Frame<'a> {
         pass.before(self.body, None);
         pass.found
     }
-}
-
-/// Count the assignments that give `var` a value, as `(inside the block at block, outside it)`.
-fn count_assignments(
-    node: &Value,
-    var: u16,
-    block: *const Value,
-    within: bool,
-    database: u32,
-    counts: &mut (usize, usize),
-) {
-    let node = node.unspan();
-    let within = within || std::ptr::eq(node, block);
-    let gives = match node {
-        Value::Set(v, rhs) => *v == var && !matches!(rhs.unspan(), Value::Null),
-        Value::Call(op, args) => {
-            *op == database
-                && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == var)
-        }
-        _ => false,
-    };
-    if gives {
-        if within {
-            counts.0 += 1;
-        } else {
-            counts.1 += 1;
-        }
-    }
-    node.for_each_child(&mut |c| count_assignments(c, var, block, within, database, counts));
 }
 
 /// The tuple variable a tuple literal copies WHOLE, or `None`.

@@ -393,6 +393,87 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 **OPEN: 2.**
 
+* **D-bind-48** *(opened 2026-09-17, CLOSED 2026-09-17)* — `(B-Ref-Reshape)`'s CALLEE clause was
+  never implemented for a GROWTH, so a disturbance one frame down did not refuse.  The rule states
+  the reach outright — *"The disturbance may be in this frame or in anything the frame CALLS"* —
+  and `(B-Disturb)` states it for all four events: *"an event disturbs WHEREVER IT HAPPENS … at any
+  depth."*  @PLN164 C3 gave that reach to the MATERIALISE walk and not to the refusal.
+  **Measured**, 17 cells, both backends byte-identical.  The purest is all-`&`, with the callee
+  disturbing the very parameter it was handed: `fn vgrow(v: &vector<H>, n) { v += [mk(n)] }` under
+  a live `e = &v[0]` compiled and released one resource TWICE (`M1 M2 R1 D1 D1 D2`).  The droppable
+  population `(H-View-Drop)` owns the same shape without the `&`, and a callee's REMOVAL from a
+  FIELD of a parameter was not refused either — `removed_ref_params` keys on
+  `OpRemoveVector(arg0)` / `OpRemove(arg1)` over a bare `Var` typed `RefVar`, so producer 1
+  reached only a parameter named DIRECTLY (`fn drop_last(all: &vector<Box>) { all.remove(2) }`,
+  pinned by `b_ref_reshape_callee_removal_under_local_amp_link_is_error`).  Producer 2 — a call
+  handed BOTH a container and a reference into it, `shift(v[2], v)` — is a separate route with its
+  own message and was never in question here.
+  **Where:** `def_reshape_refusals` ran `ViewWalk::run(..., Some(removed), None, …)` — `removed`
+  passed, `disturbed` withheld.
+  ⚠ **The lesson, and it cost the first reading of this defect a much larger cure.**
+  `ViewWalk::shake_plain_places`'s doc SAID it works *"over PLAIN views only, leaving every `&`
+  link alone"*, which described its INTENT for the materialise consumer and not what it does.  The
+  code has no `&` test anywhere: `shake_places_keyed` builds its hit list from `same_place &&
+  !spared && !names_container_itself`.  So a link INTO a disturbed container was already shaken and
+  already MATERIALISED — the silent `&`-to-copy downgrade this rule exists to forbid, emitted with
+  the copy-out advice — and what was missing was only a CONSUMER reading that answer.  A comment
+  that states intent where a reader will take it for behaviour is worth more care than a wrong one,
+  because it is believed.  That doc now states what the function does: the shake is followed by a
+  restore keyed by VIEW over `whole_container`, which is `(B-Ref-Alias)`'s in-versus-to distinction
+  and not a `&`-versus-plain one.  The quotation is kept in the PAST tense deliberately — nothing
+  gates a doc that quotes a code comment, since `check_doc_drift.sh` reads plan links, time
+  projections and retired-feature claims, so the next edit of that comment cannot report this line.
+  **Cure:** `reshape_refusals` builds `disturbed_params_map` and threads it into
+  `def_reshape_refusals` → `ViewWalk::run`'s fifth argument.  Two hunks; no new fact and no new
+  predicate.
+  **What keeps it from over-reaching, both measured as controls:** `names_container_itself` still
+  spares a link TO a container, so `157-view-header`'s `grown_between` keeps reading 11 — D-bind-46's
+  in-versus-to distinction does the work — and the gate is unchanged (`amp || drops`), so a
+  NON-droppable plain view across a callee's growth still compiles, still materialises and still
+  says so.  That last cell is the one that decides the unit, and it holds.
+  **Consequence worth stating:** the refusal reads the same `callee_disturb_enabled` switch as the
+  scope pass, so `LOFT_NO_CALLEE_DISTURB=1` restores pre-C3 blindness on BOTH sides at once and is
+  no longer a clean A/B for the materialise alone.  That is the switch's honest meaning — one
+  rule's reach, two consumers — and the halves stay tellable apart at the symptom, a refusal being
+  loud where a materialise is quiet.
+  **Blast radius (measured, not predicted):** corpus A/B over 1591 files, **0 changed** — no
+  program in the tree writes the shape, which is why the corpus could not have caught it and is
+  also why it is not evidence of safety for real code.
+  The message gained a population-dependent joiner: the callee form names the callee's act before
+  the reason, and for a droppable view the growth CAUSES the copy (`so`) where for a `&` link the
+  two are parallel facts (`and`).  With one joiner both read *"would grow `b`, and … and …"*.
+  Found while re-measuring `heap.md` D-heap-11, whose own **Boundary** paragraph described this
+  asymmetry incorrectly and is corrected there.
+
+* **D-bind-47** *(opened 2026-09-17, CLOSED 2026-09-17)* — `(B-Ref-Reshape)`'s refusal could not
+  see a GROWTH of a container held in a FIELD, so the rule's answer depended on where the
+  container was stored.  Measured on both backends, four cells varying only the container's home
+  and the disturbance: `v = [...]; c = &v[0]; v.remove(1)` refused, `v += [x]` refused,
+  `b.v.remove(1)` refused — and `c = &b.v[0]; b.v += [x]` **compiled**, materialising the link
+  into a copy with the copy-out advice.  So a `&` was silently downgraded exactly where this rule
+  says REFUSE: a write through the link is lost, and where the element owns a droppable the
+  resource is released TWICE (`M1 M2 R1 D1 D1 D2`, both backends).  `is_amp_link` is not the axis
+  — the identical binding refuses under `remove`.
+  **Where (measured).**  A growth names its container by field NUMBER (`OpNewRecord(b, tp, 1)`)
+  while a view carries a byte OFFSET; `Stores::field_position` is the only converter, and
+  `grown_containers` returns early without a store, leaving every field-qualified growth
+  UNCOLLECTED.  `def_reshape_refusals` ran `ViewWalk::run` with `database: None`, which
+  `binding-history.md` records as deliberate — *"the `&`-refusal path has no store to convert with
+  and keeps the conservative answer, which for a REFUSAL is the safe direction"*.  That is an
+  AVAILABILITY premise, and it no longer holds: the parser owns `pub database: Stores` at
+  `check_reshape_under_reference`, the layouts are registered when each struct is declared, and
+  `field_position` answers `u16::MAX` — *cannot say* — for anything it does not know.  A missed
+  disturbance is still the safe direction; it was not a reason to leave one whole class invisible.
+  **Cure:** the refusal walk is handed the same store the materialise walk has always had.  The
+  callee reach (`disturbed`) stays `None` deliberately — that is @PLN164 C3's separable widening.
+  **Blast radius (measured, not predicted):** one corpus file, this rule's own guard
+  `a-link-to-a-whole-container-survives-that-containers-growth.loft`, whose control cell
+  `a_link_into_the_container_is_unchanged` asserted the unrefused answer in so many words
+  (*"keeps today's answer"*).  It pinned the compiler, not the rule, and is now
+  `parse_errors::b_ref_reshape_growth_of_a_field_container_under_amp_link_is_error` — a cell that
+  refuses belongs in the refusal harness, because it takes a whole `.loft` file with it.
+  Found while measuring `heap.md` D-heap-11, whose cure reuses this gate.
+
 * **D-bind-46** *(opened 2026-09-16, CLOSED 2026-09-16)* — `(B-Ref-Alias)`'s in-versus-to
   distinction at a container held in a FIELD.  `d = &cv.data; cv.data += [7]; cv.data += [8];
   (d[2] ?? -1) + len(d)` read **0** where 11 is right, on both backends, with the copy-out advice
@@ -440,8 +521,10 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
   collection bind is not in its population.  Closing it widens which programs the refusal declines
   and needs its own measurement over the corpus and the published libraries.
   Found via @PLN164 C3's matrix (loft#1543).  ⚠ That issue's body names
-  `ViewWalk::shake_plain_places` and `use_analysis::view_source_place_indexed` as code C3 landed;
-  neither existed anywhere — C3 is Open, not shipped, and the two names are its design sketch.
+  `ViewWalk::shake_plain_places` and `use_analysis::view_source_place_indexed` as code C3 landed.
+  Both are live code now — C3 merged in `46aaf2967` — but neither existed when the issue was
+  filed: the body describes a design sketch as though it had shipped.  Date what it claims against
+  that merge rather than reading it as a record of the tree.
 * **D-bind-45** *(opened 2026-09-15, CLOSED 2026-09-15)* — `(Const-Value)` for a
   value-const value handed to a PLAIN heap parameter.  A plain struct or vector parameter names the
   caller's record (`calls.md` F-ParamHeap), so `fn bump(a: Account) { a.balance = 999 }` called as

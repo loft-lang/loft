@@ -449,14 +449,72 @@ change: `contract:settled` = the formal rules and the tests already gave the rig
 fix makes that promise hold; `contract:strained` = it took a rule EXTENDED, a documented surface
 changed, or a design call. `make bug-review` § 5 reports the monthly ratio.
 
-That is the convergence evidence the freeze decision has been missing, and it is a different gate
-from the one below it:
+That is the convergence evidence the freeze decision has been missing. It is one of the freeze
+gates below, which come in two kinds, interleaved rather than grouped. Three ask whether what we
+FOUND is settled — `silent-wrong`, `contract:strained`, and open deviations. Two ask how much we
+LOOKED — rule coverage, and the light pass. A gate of the first kind can be met by a quiet month;
+only the second kind can say the quiet was earned:
 
 - **`silent-wrong` → 0** is the per-bug blocker — no known wrong answer may be frozen into the
-  contract. True on any given day, and true today.
+  contract. Ask it rather than reading a status here:
+  `gh issue list -R loft-lang/loft --state open --label silent-wrong`. ⚠ This line read *"true
+  on any given day, and true today"* while two were open, which is the same rot as a committed
+  position figure: a status asserted in prose is stale the moment it is written, and it reads
+  as measured rather than as stale. ⚠ And a `fixed-pending-merge` entry is a fix on a BRANCH,
+  not on `main` — whether the gate counts those as met is a decision rather than a
+  measurement, and the freeze binds what main ships.
 - **`contract:strained` → 0, SUSTAINED over a window long enough to be evidence**, is the
   convergence gate — the standard has stopped moving. Only this one can say the blockers are
   truly gone rather than currently absent.
+- **Rule coverage at or above its contract-1 floors** — `make rule-coverage`, currently
+  **70 % of `@FR-` rules carrying a code annotation and 40 % an active guard** — is the
+  *coverage* gate: enough of the written standard has been checked against the implementation
+  that the unwalked surface has been looked at deliberately rather than left to chance — a
+  LOOKED gate, where the three found-gates can all be met without anyone having looked. ⚠ These
+  are **minimum thresholds, not targets** — informed owner estimates (2026-09-17) of the least
+  that could earn the freeze, expected to move, and the walk continues past them. Crossing them
+  is necessary and never sufficient, for the same reason the checklist minimum is: it measures
+  the rules we have written, and a rule nobody has written yet is not counted by anything.
+  ⚠ **The distance overstates the WORK.** Many tail rules are simple enough that the existing
+  tests already validate them fully — so no new exception is waiting to be found, and closing
+  the gap is an annotation at a site that already holds, not verification to do. Evidence,
+  2026-09-17: five rules drawn from the untouched tail (`F-Escape`, `E-And`, `F-Args`, `M-Bool`,
+  `Col-Copy`, each with neither an annotation nor a guard) were probed on the interpreter and
+  every one behaved exactly as written. Read a shortfall as labelling debt until a probe says
+  otherwise. ⚠ Five rules took SIX probes: `Col-Copy`'s first tested a `vector` where the rule
+  is stated for KEYED collections, and passed — a probe landing beside a rule rather than on it
+  reads exactly like a verification, which is the light pass's dominant hazard.
+- **Open deviations as few as they can be made** — `python3 scripts/rule_tags.py registers`
+  counts them; no figure is written here. A deviation is a *written rule the code does not
+  obey*, so freezing on top of one promises the rule and ships the exception. "As few as
+  possible" rather than zero on purpose: some will be closed by an owner ruling that the rule
+  was wrong, and a few may be knowingly carried with their reason recorded — what must not
+  happen is carrying one nobody decided about.
+  ⚠ **The count cannot tell a deviation FOUND from one CREATED, and it moves the same way for
+  both.** Measured 2026-09-17, when the register went 10 → 12 in a day: one entry was a plain
+  new defect record, found by probing and independent of any rule change; two were *exposed* by
+  narrowing a verdict — the defects predated it, and what moved was 23 cells going from
+  `Refused`, which asks nothing of a release, to `Once`, which asks for exactly one; and a
+  fourth entry SHRANK the same day, 156 of its 227 measured sites becoming legal, which the
+  count does not show at all. The register got more accurate in **both** directions and the
+  number rose for all of it. So read the reason beside each entry, never the delta: a rising
+  count can mean the code got worse, or that something finally started measuring it, and those
+  want opposite responses. Cell counts mislead the same way — 23 cells there were two defect
+  CLASSES, split by channel rather than by count.
+- **A light detection pass over every rule** — ⚠ **this instrument does not exist yet**, and
+  naming it here is the point. It is deliberately *lighter* than
+  [STABILITY_METHOD.md § The rule-led walk](STABILITY_METHOD.md): the walk splits one rule into
+  the questions its sites ask, finds each question's one home and verifies the related cases —
+  deep work per rule, and it took the most-changed and most-error-prone rules FIRST. That
+  ordering is why the remainder is the low-yield tail, and why it wants a different
+  instrument: **read each remaining rule once and ask only whether it looks semantically
+  wrong or unenforced**, producing suspicions to triage rather
+  than citations to land. The walk is how a suspicion gets resolved; this pass is how the tail
+  gets looked at ALL, before a freeze makes every unlooked-at path a permanent promise.
+  ⚠ **It runs immediately before the contract-1 decision, not continuously** (owner,
+  2026-09-17). Run early it reads a surface still moving and has to be run again; its whole
+  value is being the LAST look before the one-way door. So it is the final gate to clear, not
+  a task to start now — and nothing else on this list waits for it.
 
 ⚠ **A bug count cannot substitute for it, and reading one as the other is the specific mistake
 this axis exists to prevent.** `silent-wrong` ran at 33 % of everything filed in August while
@@ -515,9 +573,17 @@ user down — and the instrument for that is the one thing we have that is state
 domain* rather than over the programs we happen to own: the formal rules. A corpus can only
 cover what somebody already wrote; a rule covers every case it quantifies over, so walking one
 reaches cells no program in the tree does. That is the practice in
-[STABILITY_METHOD.md § The rule-led walk](STABILITY_METHOD.md), and its position marker is the
-one to read against this section: **179 of 255 rules currently have no representation in the
-code at all.**
+[STABILITY_METHOD.md § The rule-led walk](STABILITY_METHOD.md), and the position marker to read
+against this section is a command rather than a figure: **`make rule-coverage`**, whose contract-1
+floors are **70 % of rules carrying a code annotation and 40 % an active guard** — minimums for
+the freeze, not targets — and which says how many rules short of each the tree is today.
+
+⚠ **No position figure is quoted here, and that is the point.** This sentence carried
+**179 of 255** for a year — overstating the uncovered share at nearly double — and read as a
+measured position rather than as stale, in the one section where being pessimistic about
+readiness costs the most. ⚠ And read the command's answer as work LEFT, never readiness: the
+walk takes the most-changed and most-error-prone rules first, so what remains is the low-yield
+tail, and a bare fraction cannot express that in either direction.
 
 This does not add a checklist item to the two phases above; it says what the phases are *for*.
 The checklist minimum stays necessary-not-sufficient, and the judgement it is not sufficient for

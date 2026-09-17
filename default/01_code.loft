@@ -906,6 +906,12 @@ fn OpFreeRefIfDistinct(placeholder: reference, witness: reference);
 // the store itself.  See `formal/closures.md` D-clo-13 and @PLN150.
 fn OpFreeRefOrHandUp(placeholder: reference, witness: reference);
 #rust"if @placeholder.store_nr == @witness.store_nr {{ s.hand_up_returned(@witness); }} else {{ s.database.free(&@placeholder); }}"
+// `OpFreeRefIfDistinct` for a promoted return buffer (@FR-O-Buffer): the displaced store is
+// also kept when it is `entry`, the store the CALLER handed in, which this frame never frees.
+// Emitted by the interpreter's rebind of the buffer, where the displaced value is already on
+// the stack and the entry witness is the one variable that remembers the caller's store.
+fn OpFreeRefUnlessEntry(placeholder: reference, witness: reference, entry: reference);
+#rust"if @placeholder.store_nr != @entry.store_nr {{ s.database.free_displaced(&@placeholder, &@witness); }}"
 // Release an on=4 iteration scratch at loop exit.  A read-only/exposed source's
 // scratch lives in a store of its own and goes back whole; a CO-LOCATED one (writable
 // source) goes back as the two records it claimed inside that source store — leaving
@@ -1452,7 +1458,14 @@ fn OpIterate(
 ) -> integer;
 fn OpStep(state_var: const u16, data: reference, on: const u8, arg: const u16) -> reference[data];
 fn OpRemove(state_var: const u16, data: reference, on: const u8, tp: const u16);
+// Release what the `tp` record at `data` owns — its vectors, texts and nested records —
+// and leave the record itself in place with those fields empty.  A return buffer the
+// caller offered is refilled by the callee's literal, and the literal overwrites every
+// field it writes; this is what the previous occupant's heap is released by first
+// (`@FR-H-ClearRelease`, the record clause).
 fn OpClear(data: reference, tp: const u16);
+#rust"stores.remove_claims(&@data, @tp);"
+#impure(parent_write)
 fn OpAppendCopy(data: reference, count: integer, tp: const u16);
 fn OpCopyRecord(data: reference, to: reference, tp: const u16);
 // @PLN164 B2 (`@FR-R-Place`) — claim a `tp` record inside `host`'s store, prefilled as

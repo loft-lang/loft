@@ -22,7 +22,9 @@ fn cells() -> PathBuf {
 
 fn loft() -> Command {
     let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    // B1 on its own: B1b (`tests/adopt_buffer_reuse.rs`) pools the buffer this file pins as null.
     cmd.env("LOFT_TIMEOUT", "120")
+        .env("LOFT_NO_ADOPT_BUFFER_REUSE", "1")
         .env_remove("LOFT_NO_ADOPT_FIRST_BIND");
     cmd
 }
@@ -177,7 +179,8 @@ fn the_interpreter_binds_by_put_ref() {
 
 #[test]
 fn the_store_census_drops_by_one_per_adopting_bind() {
-    // Hand-checked 2026-09-15 on the cells as written; a cell edit re-measures both pairs.
+    // Hand-checked 2026-09-17 on the cells as written (the bind after an `if` pre-init adopts
+    // too since then); a cell edit re-measures both pairs.
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -186,11 +189,11 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
         i_on < i_off,
         "interpret: {i_on} mints with adoption, {i_off} without"
     );
-    assert_eq!((i_on, i_off), (108, 139), "interpret mints (on, off)");
+    assert_eq!((i_on, i_off), (98, 139), "interpret mints (on, off)");
     let (n_on, n_off) = (store_mints("--native", &[]), store_mints("--native", OFF));
     assert!(
         n_on < n_off,
         "native: {n_on} mints with adoption, {n_off} without"
     );
-    assert_eq!((n_on, n_off), (106, 137), "native mints (on, off)");
+    assert_eq!((n_on, n_off), (101, 137), "native mints (on, off)");
 }

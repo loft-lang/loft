@@ -162,7 +162,7 @@ const ctrl = {{ ac: null, assets: {{}} }};
 }
 
 /// Run one probe page and return the harness's verdict plus its output.
-fn check(url: &str, assert_expr: &str, wait_ms: u32, port: u16) -> (bool, String) {
+fn check(url: &str, assert_expr: &str, wait_ms: u32, port: u16) -> Option<(bool, String)> {
     check_when(url, PAGE_RAN, assert_expr, wait_ms, port)
 }
 
@@ -180,13 +180,17 @@ const PAGE_RAN: &str = "Array.isArray(globalThis.loftFonts) && globalThis.loftFo
 /// `undefined` at 1500ms and the control read it as *"a throttled font still resolved"*, which
 /// is a font-ordering bug that was not there.  The harness reports a `ready.timeout` failure
 /// for that shape, and [`page_never_ran`] is how the assertions tell the two apart.
+///
+/// `None` is the harness's own SKIP (exit 2: no browser, or one that never answered its
+/// debugging port) — nothing about the page was observed, so the caller skips rather than
+/// asserting, as every other browser gate does.
 fn check_when(
     url: &str,
     ready_expr: &str,
     assert_expr: &str,
     wait_ms: u32,
     port: u16,
-) -> (bool, String) {
+) -> Option<(bool, String)> {
     let out = Command::new("node")
         .arg(repo_root().join("tools/html_render_check.mjs"))
         .arg(url)
@@ -196,12 +200,16 @@ fn check_when(
         .args(["--assert", assert_expr])
         .output()
         .expect("invoke node harness");
+    if out.status.code() == Some(2) {
+        eprintln!("SKIP: {}", String::from_utf8_lossy(&out.stderr));
+        return None;
+    }
     let text = format!(
         "stdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    (out.status.success(), text)
+    Some((out.status.success(), text))
 }
 
 /// Did the run observe NOTHING — the page never reached the bridge inside its budget — rather
@@ -275,12 +283,14 @@ fn each_declared_font_source_resolves_to_the_requested_family() {
         return;
     };
     let _guard = ServerGuard(server);
-    let (ok, text) = check(
+    let Some((ok, text)) = check(
         &format!("http://127.0.0.1:{port}/probe.html"),
         ALL_RESOLVED,
         3000,
         port.wrapping_add(1),
-    );
+    ) else {
+        return;
+    };
     assert!(
         ok,
         "a declared font did not resolve to the family the program asked for — \
@@ -319,12 +329,14 @@ fn the_boot_await_holds_the_program_until_a_slow_font_has_arrived() {
     };
     let _guard = ServerGuard(server);
 
-    let (ok, text) = check(
+    let Some((ok, text)) = check(
         &format!("http://127.0.0.1:{port}/awaited.html"),
         ALL_RESOLVED,
         5000,
         port.wrapping_add(1),
-    );
+    ) else {
+        return;
+    };
     assert!(
         ok,
         "{}\n{text}",
@@ -340,7 +352,7 @@ fn the_boot_await_holds_the_program_until_a_slow_font_has_arrived() {
     // The control: the same page, the same server, no await.  The two families this
     // page BRINGS must still be in flight — the resident one is not fetched at all,
     // so it resolves either way and is what proves the run happened.
-    let (ok, text) = check(
+    let Some((ok, text)) = check(
         &format!("http://127.0.0.1:{port}/control.html"),
         "globalThis.loftFonts.length===3 && \
          globalThis.loftFonts.filter(f=>!f.resolved).map(f=>f.base).join('|')===\
@@ -351,7 +363,9 @@ fn the_boot_await_holds_the_program_until_a_slow_font_has_arrived() {
         // were live, and on a loaded runner it expired before the page had booted.
         5000,
         port.wrapping_add(2),
-    );
+    ) else {
+        return;
+    };
     assert!(
         ok,
         "{}\n{text}",

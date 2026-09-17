@@ -97,6 +97,9 @@ def main():
 
     pub = public_commits()
     rows = []
+    # Receipts this census has no grammar for, held APART from `rows` so that `--check` — the
+    # gate's input — is unchanged by construction.  Counting them is the whole point: see below.
+    optouts, unclassified = [], []
     for f in sorted(Path("tests/scripts").glob("*.loft")):
         if not f.is_file():
             continue          # `.loft/` is a cache DIRECTORY and matches this glob
@@ -105,7 +108,16 @@ def main():
             continue
         m = re.search(r"@falsified-at:\s*([0-9a-f]{7,})", block)
         if not m:
-            continue                      # `none — <reason>`: a stated opt-out, not a receipt
+            # `none — <reason>` is the stated opt-out and not a receipt.  Every OTHER non-sha
+            # spelling is a receipt this census has no grammar for — `hand-measured`, `INERT by
+            # construction`, a `HEAD~1` control, a `switch, <date>` A/B — and dropping those
+            # silently is what makes an absent row and a clean row indistinguishable: they leave
+            # the counts below AND `--check`, so the gate asks them nothing while its baseline
+            # reads zero.  Classify instead of discarding, and say how many there are.
+            v = re.search(r"@falsified-at:\s*(\S+)", block)
+            v = v.group(1) if v else ""
+            (optouts if v.startswith("none") else unclassified).append((f, v))
+            continue
         sha = m.group(1)
         full = sh("git", "rev-parse", "--verify", "--quiet", sha + "^{commit}")
         reachable = bool(full) and full in pub
@@ -165,10 +177,27 @@ def main():
     print(f"    of those, carrying a patch     : {len([r for r in orphan if r['patch']])}")
     print(f"  patch receipts total             : {len(withpatch)}"
           f"   (still applying: {len([r for r in withpatch if r['runnable']])})")
+    print(f"  stated opt-outs (`none — …`)     : {len(optouts)}   (not receipts, by design)")
     if stale:
         print(f"\n⚠ {len(stale)} patch receipt(s) no longer apply — re-derive or downgrade to a marker:")
         for r in stale:
             print(f"    {r['f'].name}")
+
+    # The population the census could not read.  Stated rather than dropped: every count above
+    # describes the receipts this tool can parse, and without this line that scope is invisible —
+    # a reader takes "falsification receipts: N" for the whole corpus, and an empty
+    # `falsified_docs.baseline` for a debt of zero, when neither speaks for these files.
+    if unclassified:
+        kinds = {}
+        for _, v in unclassified:
+            # One row per SPELLING: `hand-measured` and `hand-measured,` are one population split
+            # by a comma, and rows of 41 and 1 read as two kinds where there is one.
+            k = v.rstrip(",.;:")
+            kinds[k] = kinds.get(k, 0) + 1
+        print(f"\n⚠ {len(unclassified)} receipt(s) this census cannot classify — excluded from every")
+        print("  count above, and absent from `--check`, so the documentation gate asks them nothing:")
+        for kind, n in sorted(kinds.items(), key=lambda kv: (-kv[1], kv[0])):
+            print(f"    {n:3d}  @falsified-at: {kind}")
 
     # A receipt that does not say how to score it is a defective guard whatever its control
     # does — the guard claims to catch something and does not record how anyone would check

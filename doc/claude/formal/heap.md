@@ -304,6 +304,19 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  length zero — instead of deleting each element's owned blocks
                  into the free tree.  The cleared vector must stay PRESENT, since
                  an absent heap value is falsy where an empty one is true.
+                 A RECORD the ABI refills is the same case: a hidden return
+                 buffer REUSED across calls (R-Reuse hands one record to every
+                 call of a site) is written by the callee's literal field by
+                 field, and the literal overwrites every handle it writes, so
+                 what the previous occupant owned is released before each call
+                 after the first.  The release is the reuse's, at the call site
+                 that reuses: a buffer offered once (a placed record, a return
+                 arena) holds nothing yet and pays nothing.  A record buffer is
+                 not a store root, so the release is the walk of its fields, not
+                 a reset; it walks the record's own type, or a struct-enum's
+                 PARENT type, so it follows the variant the buffer HOLDS rather
+                 than the one about to be written.  A record of scalars has
+                 nothing to release and emits nothing.
 
   (H-FreeFooter) inside one store, a FREE block of n words carries −n at BOTH ends: its
                  header word and the HIGH half of its LAST word (the tree node's color
@@ -319,6 +332,19 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  for exactly that case.  Footers live in FREE space only — a persisted
                  image is unchanged, and an image written before footers existed is
                  re-footed by the open walk.
+  (H-Wilderness) inside one store, the free block that ENDS the store (the wilderness)
+                 is held beside the free tree rather than in it, and every tree
+                 operation treats it as the node it would have been: a block of at
+                 least the tree's minimum size that ends the store is recorded as the
+                 wilderness instead of inserted, removing it clears the record, and a
+                 best-fit take weighs it against the smallest fitting node by the
+                 tree's own (size, position) order — the wilderness has the highest
+                 position of any free block, so a node of equal size precedes it.
+                 The block every claim takes, and so the store's layout, is therefore
+                 the one the tree alone would give; what changes is that a claim from
+                 the tail and a delete into it cost no tree delete, insert or
+                 rebalance.  At most one wilderness exists, it never overlaps a claim,
+                 and the open walk (and every re-tiling) re-derives it.
 ```
 
 **`H-RootExtent` is what makes `H-ClearRelease`'s release affordable.** The release has to
@@ -429,37 +455,56 @@ installed, which the frame does own.
              compaction — is not a copy.
   (H-Move)   a MOVE is WRITTEN, never inferred: whether a position moves is read off the
              line and the declared types alone, whatever the program does after that line.
-             Three positions move a value:
+             Four positions move a value:
                - a FRESH value — a call result, a constructor, a literal — placed where it
                  is produced: bound, written into a field, element or tuple member,
                  appended, or returned;
+               - a value this function OWNS — a local it bound to a fresh value, and never a
+                 parameter, a member of a container, or a captured variable — placed into a
+                 new structure: bound, written into a field, element or tuple member,
+                 appended, or returned.  Its lifetime ENDS there: the new structure releases
+                 it, and the name is SPENT (H-Spent);
                - a `return` whose every possible value is a variable this function OWNS
                  (not a parameter, not a view) or a fresh value — `return a`,
                  `return a ?? mk()` — since the function's own variables end with it;
                - a block whose value is a variable declared in that block
                  (`if c { a = mk(); a } else { … }`).
-             Every other position that places an EXISTING value into a new structure is a
+             Every other position that places an existing value into a new structure is a
              COPY.
+  (H-Spent)  a name whose value has MOVED to a new owner is SPENT from the END of the
+             statement that moved it: reading it is a compile-time error, and the error names
+             where the value went.  Reads inside that same statement are not late — the
+             members of `Named { h: c, label: c.tag }` are read before the structure is
+             built, so both are reads of a value the name still holds.  A reassignment
+             REFILLS the name, which is spent again only if it moves again.  On a path where
+             the move did not run the name is NOT spent and still owes its release, so a move
+             written under a branch is decided PER PATH — one name may be spent on one path
+             and live on another, and the release must run on exactly the paths that did not
+             move it.
   (H-Copy-Lease) a copy of a type that declares `fn OpCopy(self: τ)` copies the bytes and
              then runs `OpCopy` on the NEW structure, which takes its own lease there.  A
              struct holding such a member gets a synthesized copy cascade, the mirror of the
              drop cascade: its own `OpCopy` first, then its members'.
   (H-Copy-Refuse) a COPY of a type that owns a droppable without `OpCopy` — the type itself,
              or a member at any depth — is a COMPILE-TIME ERROR on the line that writes it,
-             whatever the program does after that line.  A copy places an EXISTING value —
-             a variable, a parameter, a loop variable, a `match` binding, a member (`s.h`,
-             `v[i]`, `t.0`), a member of a call result (`mk().h`) — into a new structure:
-               - bound to a variable as a whole value (binding.md B-Copy: `x = a`, `x = p`);
+             whatever the program does after that line.  A copy places a value the function
+             does NOT own — a parameter, or a local holding the caller's record, since the
+             caller releases it; a member of a container (`s.h`, `v[i]`, `t.0`, `mk().h`),
+             since the container releases it; a loop variable or a `match` binding over one;
+             a captured variable — or a name already SPENT (H-Spent), into a new structure:
+               - bound to a variable as a whole value (binding.md B-Copy: `x = p`);
                - written into a field, enum payload, element or tuple member of a literal,
-                 or appended (`S { h: a }`, `v += [a]`, `(a, 1)`);
+                 or appended (`S { h: p }`, `v += [s.h]`, `(p, 1)`);
                - returned where (H-Move) does not allow it (`return p`, `return s.h`);
                - as an operand of `??` or an arm of a join in any of those positions
-                 (`x = a ?? mk()`, `x = if c { a } else { mk() }`).
-             Legal, because no second structure is made: a fresh value anywhere, passing a
-             value as an argument (calls.md F-ParamHeap binds without copying), a `&` bind
+                 (`x = p ?? mk()`, `x = if c { s.h } else { mk() }`).
+             Legal, because no second structure is made: a fresh value anywhere, a value the
+             function OWNS placed ONCE (H-Move — its lifetime ends there), passing a value as
+             an argument (calls.md F-ParamHeap binds without copying), a `&` bind
              (binding.md B-Ref-Alias), and a view of a member of a variable (B-View,
              `x = s.h`).  The error names the copy and what to write instead: use the value
-             where it is, pass it, build it where it belongs, or return the owner.
+             where it is, pass it, build it where it belongs, or return the owner — and for a
+             spent name, read it through the owner it moved to.
   (H-View-Drop) a VIEW of a member that owns a droppable without `OpCopy` stays a view: the
              compiler never turns it into a copy.  Disturbing its container while the view
              is still used (binding.md B-Disturb) is a COMPILE-TIME ERROR reported at the
@@ -552,9 +597,20 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **3** — `D-heap-8`, `D-heap-9` and `D-heap-11`, below, are the copy-lease rules
-(H-Copy-Refuse, H-Copy-Lease, H-View-Drop), written 2026-09-15 before their implementation
-(@PLN163).  The rules were revised the same day to judge a copy by its own line (§ Drop, *Why the
+OPEN: **6** — `D-heap-8`, `D-heap-9`, `D-heap-13`, `D-heap-14`, `D-heap-15` and `D-heap-16`.  The
+first two are the copy-lease rules `(H-Copy-Refuse)` and `(H-Copy-Lease)`, written 2026-09-15
+before their implementation (@PLN163); `D-heap-8` was NARROWED 2026-09-17 when the owner ruled that
+a value the function owns MOVES, which makes 156 of its 227 measured sites legal and leaves the 71
+that are not the function's.  `D-heap-13` and `D-heap-14` are separate and were both found while
+measuring that population — a collection a CALL answers, bound to a local, never releases its
+elements (loft#1551), and a hand-over written under a BRANCH leaks the source on the path that does
+not run, for every destination except a bind to a local.  `D-heap-15` and `D-heap-16` were EXPOSED
+by the ruling rather than found beside it: narrowing the verdict to what the rules move turned 23
+gate cells from `Refused`, which asks nothing of a release, into `Once`, which asks for exactly
+one — 21 of them run two and 2 run none.  A cell the rules refuse is a cell whose releases nothing
+measures, so a register that refuses widely hides what it has not yet judged.  The third of the copy-lease
+set, `D-heap-11` for `(H-View-Drop)`, CLOSED 2026-09-17: a view of a droppable member is no longer
+turned into a copy — the disturbance is refused, which is what the rule asked for.  The rules were revised the same day to judge a copy by its own line (§ Drop, *Why the
 verdict is read off the line*), which reclassified the older entries: every shape of `D-heap-1` and
 `D-heap-7` that writes a copy of an existing value belongs to `D-heap-8`, so `D-heap-1` and
 `D-heap-10` are CLOSED as reclassified.  `D-heap-7` kept `return a ?? b` over two locals, the one
@@ -584,12 +640,75 @@ first (`D-own-41`); the entry carries the cure that landed and the one that was 
 been re-cut twice as it was measured — a shape closed, a shape that turned out to be the
 opposite fault, and a shape found by widening one cell — so the three named there are what is
 open TODAY and not the original filing.  `D-heap-4` (a mixed own/view local's owned record
-freed without its hook) opened and CLOSED 2026-09-10, below.
+freed without its hook) opened and CLOSED 2026-09-10, below.  `D-heap-12` (a refilled record
+buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.
+
+### D-heap-12 — OPENED AND CLOSED (2026-09-17): a refilled record buffer stranded its previous occupant's heap (loft#1549)
+
+- **Violates:** (H-ClearRelease) — its record clause, which this entry added: the rule named the
+  vector a buffer ABI reuses and said nothing of the record (R-Reuse) reuses.
+- **Where:** `scopes::reuse_record_buffers` handed the same record to every call of a site,
+  and the callee's literal — behind the "caller offered a record" guard
+  `Parser::build_into_return_buffer` puts around its `OpDatabase` — overwrote the record's
+  vector, text and nested-record handles with nothing releasing what they named.
+- **Effect:** a loop binding a call whose record owns heap (`s = mk(i)`, `mk` returning
+  `S { n: i, v: [i, i + 1, i + 2] }`) kept every previous turn's heap claimed in the buffer's
+  store: about 100 bytes a turn for that shape, 600 for a vector of heap-owning records, on both
+  backends, unbounded in the loop length.  Values were right, and the store itself is freed on
+  time, so no store-count gate saw it.
+- **Closed by:** the pool's lazy guard releases on reuse —
+  `if OpRefIsNull(b) { OpDatabase(b, T) } else OpClear(b, T)`, `OpClear` being `remove_claims`
+  (the eager form releases in front of each use) — emitted only when a field is not a scalar
+  (`scopes::releases_what_it_held`), with a struct-enum released through its parent type.
+  The first cut released in the CALLEE's offered arm instead: equally correct, and measured
+  +1 % instructions on the drawing parse row, because B2 offers a freshly placed `Paint` on
+  every `read_paint` and the walk there finds nothing.  Only the pool ever re-offers a record,
+  so the release is the pool's.  Guard
+  `tests/scripts/1549-a-pooled-buffer-releases-its-previous-occupant.loft` (resident memory
+  across 900 000 refills, and twelve value cells); plan cells
+  `plans/164-activation-arena/bytecode-comparisons/1549-pooled-buffer-release-cells.loft`.
 
 ### D-heap-8 — OPEN (2026-09-15): nothing refuses a copy — a written copy of a droppable without `OpCopy` compiles
 
 - **Violates:** (H-Copy-Refuse).
-- **Where:** no site refuses a copy.  The copy sites are the ones `LOFT_DROP_COPY_CENSUS` lists.
+- ⚠ **NARROWED 2026-09-17, when the owner ruled on the copy rules.**  `(H-Move)` now moves a value
+  the function OWNS, so most of what this entry covered is not a copy at all.  Measured over the
+  227 refused lines in the corpus: **156 are a local the function owns, and every one already
+  releases exactly once on both backends** — they were never unsound, and the rules now say so.
+  What stays open here is the 71 that are NOT the function's — a parameter (45) and a member of a
+  container (26) — each of which really does release twice (`L1 D2 A2 D2` and `L1 D3 D3`,
+  measured, both backends).  A SECOND half is open with no implementation at all: `(H-Spent)`'s
+  error for reading a name after its value moved.  Today that is silent — `c = open(1);
+  if c { v += [c]; } … c.id` reads a value whose hook has already run, and no store instrument can
+  see it because the memory is intact and only the resource is gone.  ⚠ The refusal built behind
+  `LOFT_LEASE_REFUSE` still implements the PRE-ruling population, so it is now WIDER than the
+  rules: it refuses the 156 owned-local placements the rules permit.  Narrowing it to the
+  not-yours cases, and adding the spent-name error, is what closes this entry.
+- **Where:** no site refuses a copy.  The copy sites are the ones `LOFT_DROP_COPY_CENSUS` lists,
+  and that enumeration is now the whole population — it was not until 2026-09-17.  The bind arm
+  matches `Value::Set(v, Var(src))`, a node the parser never produces for a whole COLLECTION:
+  `d = v` mints a fresh `__vdb_N`, reads `d = OpGetField(__vdb_N, 0, …)` out of it, and fills it
+  with **`OpAppendVector(d, v)`** — `vectors.rs` calls that fill a *"deep-COPY of a's elements into
+  v's own store"* in its own comment.  So the census saw only the backing's `snapshot` rows, judged
+  neither (`lease=-`), and an absent row was indistinguishable from a clean one.
+  **The spelling is not one shape but four, and three of them are not binds at all**, which is why
+  an arm keyed on the bind would still have missed them (measured 2026-09-17, both backends):
+  `d = v` and `d = b.v`, the concat `v += w` (`M70 M71 R2 D70 D71 D71`), the self-append `v += v`
+  (`M52 R2 D52 D52`), and `d = a + b`, which copies BOTH operands and doubles both
+  (`D42 D43 D42 D43`).  The census now judges the append and answers `refuse:copy:<var>` for a
+  local source and `refuse:container:<root>` for a member one.
+  **The bound is measured, not asserted:** a concat whose right-hand side is FRESH (`v += mkv()`,
+  `d = mkv() + mkv()`) is outside the population and answers `lease=move`, because the arm judges
+  the source EXPRESSION rather than the op — one parts loop (`parser/vectors.rs`) emits this node
+  for a copy and for a fresh literal alike, and `lease::leaves` reads a call as `Leaf::Fresh`.  An
+  append into a FIELD (`b.v += w`, `OpAppendVector(OpGetField(rec, fld), src)`) is a different
+  site, recorded by `Uses::construct_copy`, and releases once today.
+  A refusal built from the census now covers the spelling; `type_owns_droppable_anywhere` answers
+  true for `vector<H>` and `(H-Copy-Refuse)` names `x = a` a copy, so the rule always did.
+  ⚠ **No program in the tree writes any of these shapes** — the census over all 37 corpus files
+  that declare `OpDrop` reports 1299 rows before the arm and 1299 after, none of them an append.
+  So the corpus cannot validate this arm, and could never have caught the defect; only the gate's
+  `p_v1`/`p_v2`/`p_v3` cells and the probes they were cut from measure it.
   In place of a refusal, `scopes::copy_moves_drop_from`, `scopes::copy_hands_off`,
   `scopes::appends_to_element` and the per-path hand-off flags move the release to ONE of the two
   structures, and `use_analysis::warn_double_move` warns on some of the shapes inside a structure.
@@ -600,11 +719,35 @@ freed without its hook) opened and CLOSED 2026-09-10, below.
   `q_present_local_var_ret`, and every CLEAN cell that writes a copy (`p_k1`, `p_h2`–`p_h7`,
   `c_local_local`, `c_param_local`, …).  The sqldb fixtures' `cs = sq.db_select(sql);
   out = RowsSqlite { rs: cs }` is one, rewritten as `out = RowsSqlite { rs: sq.db_select(sql) }`.
-- **Status:** OPEN — @PLN163 P2 (the refusal as a report, reworked to this rule), then P3 (the
-  error).
-- **Removal:** the refusal on every line that writes a copy, naming the copy and what to write
-  instead; the refused cells become refusal cells, and the corpus programs that write such a copy
-  are rewritten.
+  **Measured 2026-09-17, five cells, both backends byte-identical.**  A whole-collection bind of a
+  droppable collection releases one resource TWICE with no diagnostic, and needs no disturbance to
+  do it: `v: vector<H> = []; v += [mk(1)]; d = v; len(d)` prints `M1 L1 D1 D1`.  A growth after the
+  bind (`d = v; v += [mk(2)]`) and the FIELD spelling (`d = b.v`) both read `M1 M2 L1 D1 D2 D1`, so
+  the growth is incidental rather than the cause.  Every neighbour is correct and releases once:
+  the record local bind `d = s` (which the census judges, `bind … lease=refuse:copy:s`), the record
+  member view `d = b.s`, and the vector PARAMETER bind `u = p` — `calls.md` F-ParamHeap binds
+  without copying, pinned by `a-copy-off-a-tuple-parameter-member-leaves-the-caller-owning.loft`'s
+  `c_vector_param`.  So the axis is collection-versus-record, not where the container is stored.
+  No file in the corpus writes the local spelling — the only whole-value bind of a droppable
+  collection in the 37 hook-declaring files is that parameter control — which is why nothing had
+  reported it.  The release itself runs through `OpFreeRef` and the type's generated `OpDropAll`
+  cascade — at scope end BOTH backings take `OpDropAll` + `OpFreeRef`, so two structures run two
+  cascades over one resource.  ⚠ `OpDropAll` is a generated per-type METHOD rather than an
+  operator, so the operator census cannot see it: `OpFreeRef` being among the most emitted ops in
+  the tree says nothing about how well that cascade is covered, and no instrument here measures it.
+- **Status:** OPEN — @PLN163 P2 (the refusal as a report, reworked to this rule) is done, and P3's
+  refusal is BUILT behind `LOFT_LEASE_REFUSE` (opt-in, 2026-09-17).  With the switch on, every
+  verdict above is raised as `error[copy-of-droppable]` naming the copy and what to write instead,
+  identically on both backends — it is decided after the scope pass, before either generates, so
+  the two cannot disagree.  The entry stays OPEN because the default is off: what the rules refuse
+  still compiles on an ordinary build.  The switch is opt-in while this repository's own corpus is
+  converted, which is 227 lines across 29 of the 38 files that declare `OpDrop`, plus 8 sites in
+  the `registry` sqldb fixture; no published library, consumer or registry package declares one
+  (P0), so nothing outside this tree waits on it.  Measured with the switch OFF: the census is
+  byte-identical over all 38 files, so an ordinary build is unchanged.
+- **Removal:** the corpus and the fixtures converted — the refused cells become refusal cells —
+  and then the refusal on by default, with the switch left as the bisect step for a program the
+  rules refuse.
 
 ### D-heap-9 — OPEN (2026-09-15): `OpCopy` is not a hook
 
@@ -620,7 +763,203 @@ freed without its hook) opened and CLOSED 2026-09-10, below.
 - **Removal:** the signature check, the synthesized copy cascade, and a call at every copy site
   on both backends; the moved release removed wherever a copy leases.
 
-### D-heap-11 — OPEN (2026-09-15): a view of a droppable member is turned into a copy when its container is disturbed
+### D-heap-13 — OPEN (2026-09-17): a collection returned from a call and bound to a local never releases its elements
+
+- **Violates:** (H-Drop), and through it (H-Move) and (H-Lease).
+- **Where:** the release a local's scope end runs is the cascade of the WRAPPER RECORD its backing
+  names.  A vector built locally is backed by a `main_vector<τ>` record — the variable table reads
+  `v … deps=[__vdb_1]` with `__vdb_1` typed `ref(723)` — and that type has a generated
+  `OpDropAll`, which the scope exit calls.  A vector a CALL answers is backed by the callee's
+  return buffer instead, typed as the bare collection (`d … deps=[__ref_1]`, `__ref_1` typed
+  `vec<ref(718)>`), and the scope exit emits `OpFreeRef(__ref_1)` with **no cascade call at all**.
+  The cascade itself is correct wherever it runs — read on both backends, it walks the elements
+  and calls the hook.
+  **The site is `scopes::drop_hook`, and it was MEASURED rather than read.**  The buffer IS
+  offered to the scope-exit drop gate — twice — and the gate's own type pattern
+  `Type::Reference(d, _) | Type::Enum(d, true, _)` turns it away, so it answers `None` and no
+  cascade is emitted.  An env-gated probe printing BEFORE that pattern gives, for the leaking
+  program, exactly `2 × var=__ref_1 kind=Vector` and, for the clean one, ZERO Vector lines; the
+  full multiset of variables reaching the gate differs between the two programs by three lines,
+  and that is the only new one.  ⚠ Reading alone had got this wrong twice in one sitting — first
+  by naming the guard without testing it, then by concluding from a TRUNCATED frequency list
+  (`sort -rn | head -12`, which hides a line seen twice) that no collection reached the gate at
+  all.  The probe is what settled it.
+  ⚠ **The cure is not to widen that pattern where it stands.**  `Type::heap_def_nr` carries the
+  identical pattern and has 44 call sites across 11 files, and the `Reference | Enum` spelling of
+  *"this is a heap owner"* is written out 148 times across 12 files (`scopes.rs` 44,
+  `parser/control.rs` 20, `state/codegen.rs` 14).  Widening the shared predicate moves the parser,
+  the scope pass, both backends and the hoist at once.  What the drop sites need is a narrow
+  question of their own.  The cascade to run belongs to the WRAPPER record `main_vector<T>`, which
+  is derivable from the element type (`compile.rs`, `native_lib.rs`, `data.rs` all build that
+  name) — but not by naive name lookup: `data.rs`'s own regression
+  `vector_wrapper_is_per_element_def_not_per_spelling` records a collision where the second asker
+  got the first's wrapper.
+- **Effect:** the resource stays open for the life of the process, with no diagnostic.  `(H-Move)`
+  makes `d = mkv()` a MOVE — a fresh call result placed where it is produced — so `d` is the owner,
+  `(H-Lease)` gives that owner its own lease, and `(H-Drop)` releases it at the owner's scope end.
+  Measured 2026-09-17, both backends byte-identical, markers around each cell:
+  `d = mkv(); d[0].id` prints `Cstart M75 R75 Cend` — minted, READ BACK, never released.
+  Leaks too: grown after the bind (`d += [mk()]`, both ids), passed on to another function, a
+  nested `vector<vector<H>>`, and a callee that fills by push rather than by literal.
+  **Four neighbours are clean and bound it to the bare collection crossing a return**: a STRUCT
+  from a call (`M60 R60 D60`), a struct CONTAINING a vector from a call (`M61 R1 D61`), the same
+  call assigned into a FIELD (`b.v = mkv()`, `M63 R1 D63` — @PLN164 C2's buffer-is-the-place path),
+  and a plain local vector (`M64 R1 D64`).
+- ⚠ **`d = mkv(); e = d` releases exactly once (`M34 R1 D34`), and that is two defects cancelling,
+  not a clean shape.**  The whole-collection bind mints a second structure whose backing IS a
+  wrapper record, so `D-heap-8`'s extra copy supplies the release this entry lost.  It is therefore
+  not a control, and curing either entry alone changes its answer — `D-heap-13` alone makes it
+  release twice, `D-heap-8`'s refusal alone makes it an error.
+- **Why nothing reported it.**  Every free-side instrument is structurally blind here: the MEMORY
+  is freed correctly and only the hook is skipped, so `LOFT_STRICT_STORES=1` and `LOFT_POISON=1`
+  are both silent.  `tests/ownership_drop_gate.rs`'s CROSS family has no collection SOURCE and no
+  collection DESTINATION — its `push` and `veclit` destinations put a droppable INTO a collection
+  and never bind one — so no generated cell produces the shape, and none of the 37 corpus files
+  that declare `OpDrop` writes it.  Found only by probing the axis by hand while measuring
+  `D-heap-8`'s census population.
+- **The population is WIDER than the four rows above** — measured 2026-09-17, both backends
+  byte-identical, markers around each cell.  Every one of these binds a collection a call
+  answered and releases nothing: `d = mkv() ?? []` (`M21 R1`), a TUPLE member
+  `t = (mkv(), 1)` (`M23 R1`), an ANNOTATED bind `d: vector<H> = mkv()` (`M24 R1`), a bind in
+  a LOOP body (`M13 R1 M14 R1`), a branch of calls `d = if c { mkv() } else { mkv() }`
+  (`M11 R1`), and a call that returns a local IT bound from another call (`M14 R1`).  The
+  entry's own table reads as four shapes; the axis is *any* bind of a call-answered
+  collection, which `scripts/matrix_axes.py` names as the container-provenance axis.
+- ⚠ **The KEYED neighbour is not this defect and must not be chased as one.**  `d = mkh()`
+  and a plain local `h: hash<E[k]> = []` both release nothing (`M31 R1`, `M32 R1`, both
+  backends) — but `(H-Drop-Not)` says a keyed collection's records are not released by the
+  language at all, and INTERFACES.md § *Three things a drop does NOT do* documents it as a
+  boundary.  It is by DESIGN, so no vector-side cure should reach it, and a cascade that did
+  would be a defect rather than a fix.
+- **The cure is TWO changes, and the narrow one alone is measurably wrong.**  Built and
+  measured 2026-09-17, then reverted:
+  - Teaching `scopes::drop_hook` a `Type::Vector` arm that resolves `main_vector<τ>` from the
+    element (collision-checked against the wrapper's own `vector` attribute, the
+    `vector_wrapper_is_per_element_def_not_per_spelling` hazard) DOES emit the cascade, and the
+    site is confirmed: the buffer reaches the sweep's final leg, which calls `scope_end_hook`
+    (`is_buffer` is false — the `paired_witness` leg would have emitted
+    `OpFreeRefIfDistinct(__ref_1, d)` and the emission is a plain `OpFreeRef`).  So the gate,
+    not the sweep, is what turned the collection away.
+  - On `--native` that alone fixed six of the families — and **doubled** `d = mkv(); e = d`
+    (`M5 R1 D5 D5`, the `D-heap-8` interaction this entry already predicts) and
+    `b.v = mkv()` (`M7 R1 D7 D7`), released EARLY in the nested `vector<vector<H>>`
+    (`M4 D4 R1`, the inner buffer released while the outer element holds a copy), and never
+    reached the loop bind.  `(H-Drop)`'s ⚠ makes that inadmissible: three lost hooks became
+    doubled ones.  The missing half is `(H-Drop)`'s responsibility clause — *the copy owns,
+    the source stops dropping* — which wants the buffer registered in `drop_transferred`
+    wherever its elements are copied out (`OpAppendVector` into a field, `OpCopyRecord` into
+    an element), the machinery `copy_hands_off` / `appends_to_element` already spell for
+    other shapes.  ⚠ Whether `OpAppendVector` COPIES the element records, which decides
+    whether `b.v = mkv()` holds one structure or two, was NOT established — and it decides
+    whether that cell's pre-cure `D7` is a correct single release or itself a lost hook.
+  - The two backends then DISAGREED on one IR, which is the second reason it cannot land: the
+    interpreter ran no cascade at all.  A vector-typed var loads through `OpVarVector` — the
+    4-byte record pointer `state/codegen.rs` gives vectors and keyed locals — while the
+    cascade's `self` and `OpConvBoolFromRef` want the full `DbRef` that `OpVarRef` pushes, so
+    the liveness guard read `rec == 0` and declined silently; `--native`, where a `DbRef` is a
+    `DbRef` either way, ran them.  Wrapping the subject in `OpRefAlias` does NOT fix it — the
+    argument is still loaded by `OpVarVector` (measured).
+- **Status:** OPEN — loft#1551.  Recorded rather than cured on purpose: `(H-Drop)`'s own ⚠ clause
+  says a drop has no safe direction, so the cure has to be right on every path before it lands,
+  and a change that turns this lost hook into a doubled one is not progress.  The attempt above
+  is the evidence for that sentence rather than a counter-example to it.
+- **Removal:** the fact belongs in the TYPE, not in the gate.  The callee already retypes its
+  buffer — `n_mkv`'s `__vdb_1` loads as `ref(main_vector<H>)` under `OpVarRef` while the
+  caller's `__ref_1` for the same store keeps `vector<τ>` and loads under `OpVarVector` — so
+  the caller-side return buffer carrying the wrapper's record type is what makes the existing
+  `Reference` arm fire, both backends agree, and no new spelling is added at the 148-site
+  predicate's expense.  Then the hand-off half above, so a buffer whose elements were copied
+  out stops dropping.  The pinning cells `p_v5`–`p_v7` go clean and leave this entry's list
+  only when BOTH halves are in and `p_v8`/`p_v9` still read one release each.
+
+### D-heap-14 — OPEN (2026-09-17): a hand-over written under a branch leaks the source on the path that does not run
+
+- **Violates:** (H-Drop), and (H-Spent)'s per-path clause.
+- **Where:** `Scopes::mint_handoff_flag` arms a per-path `__hoff_` flag only for a conditional bind
+  to a LOCAL — loft#1515's shape, and its own doc says so (*"a copy off a PARAMETER written in a
+  branch arm"*).  Every other destination a hand-over can have suppresses the source's scope-end
+  release STATICALLY, with nothing to restore it on the path that did not run.
+- **Effect:** the source is never released.  Measured 2026-09-17 with the branch never taken,
+  both backends byte-identical, no diagnostic:
+  `if c { x = cc }` (a bind to a local) traces `V9 D9 D1` — correct, and it is the only form that
+  mints a flag (2 of them); `if c { s = S { h: cc } }` traces `E` — nothing released;
+  `if c { s.h = cc }` traces `F2 D2` — the source leaked; `if c { v += [cc] }` traces `L0` —
+  nothing released.  The control with the same append and the branch TAKEN traces `L1 D1`, so the
+  hand-over itself is correct; what is missing is the other path.  The variable tables of the
+  taken and not-taken forms are byte-identical and neither carries a `__hoff_` variable, so the
+  decision is static — measured, not read off the source.
+  ⚠ **No leak instrument can see this.**  `LOFT_POISON`, `LOFT_POISON_CLAIM`, `LOFT_STRICT_STORES`
+  and `LOFT_NATIVE_LEAK_CHECK` report nothing on the leaking cell — and nothing on the clean
+  control either, so their silence is not a verdict.  What is skipped is the HOOK while the
+  record's memory is still freed, which is the blindness `D-heap-13` already records.  The hook
+  trace is the only channel that shows it.
+- **Status:** OPEN — found while measuring `D-heap-8`'s population.  No corpus guard exercises the
+  shape: the only conditional appends among the 38 hook-declaring files are
+  `bytes += [c as u8 ?? 0]` in the trace helper, which appends bytes rather than a droppable.
+- **Removal:** the per-path flag armed for every destination a hand-over can have, not only a bind
+  to a local.  `(H-Spent)` makes that a rule rather than an implementation detail: a name spent on
+  one path is live on the other, and the release must run on exactly the paths that did not move
+  it.
+
+### D-heap-15 — OPEN (2026-09-17): a value the rules MOVE is still copied, and both structures release it
+
+- **Violates:** (H-Move), and through it (H-Lease).
+- **Where:** not established.  What is measured is the population, below; the shapes share that
+  the value reaches its destination through a LIFT or a backing rather than a direct bind, but
+  that is an observation about the cells and not a site, and naming a site without probing one is
+  the error this chapter has already paid for twice.
+- **Effect:** the owner's 2026-09-17 ruling makes a value the function OWNS a MOVE wherever it is
+  placed, so each of these owes exactly ONE release.  21 of the drop gate's 285 cells run two,
+  identically on both backends: `p_v1` and `p_v2` (a whole-collection bind), `p_j3` and `p_j4` (a
+  join arm placed into a container), `c_coalesce_field`, `c_coalesce_enum`, `c_coalesce_push`,
+  `c_coalesce_veclit`, and every `q_*_local_*_field` / `q_*_local_*_push`.  Measured directly:
+  `a: H? = mk(1); v += [a ?? mk(9)]` traces `M1 L1 D1 D1` and
+  `a: H? = mk(2); c = Hold { h: a ?? mk(9) }` traces `M2 F2 D2 D2` — the present arm's local is
+  copied into the destination and both copies release.  `p_o2` (a tuple) and `p_i2` (a self-bind)
+  add the scorer's EARLY channel on top, so those two release twice AND release before a read,
+  which is a use-after-release as well as a double one.
+  ⚠ **The plain bind is CLEAN and that is the boundary**: `a = open(1); v: vector<H> = [a]`
+  traces `L1 D1`, one release, and `c_local_field` / `c_local_push` / `c_local_veclit` /
+  `c_local_enum` are all absent from this set.  So this is not "an owned local placed into a
+  container" in general — it is the shapes that reach the destination some other way.
+- **Status:** OPEN — exposed 2026-09-17 by narrowing the refusal to the rules.  Before the
+  ruling every one of these was verdict `Refused`, so the gate asked nothing of their releases
+  and the disagreement could not show.
+  ⚠ **That is worth stating as a property and not as an anecdote: a `Refused` verdict is an
+  ABSENT MEASUREMENT wearing a verdict's clothes.**  A refused cell is never asked how many times
+  it releases, so a register that refuses too widely does not merely forbid correct programs — it
+  HIDES the cells nobody has judged, and it hides them behind something that reads like an
+  answer.  This is the same failure as an instrument that answers a narrower question than the one
+  it appears to, where silence reads as a pass; it is worse only because a verdict does not even
+  look like silence.  The 23 cells here and in `D-heap-16` were the measure of it: they appeared
+  the moment the verdict narrowed, having been there all along.
+- **Removal:** the copy that makes the second structure, removed wherever the rules move the
+  value; `scopes::copy_moves_drop_from` and the hand-off flags beside it are @PLN163 P5's
+  subject and this entry is the measurement P5 is verified against.
+
+### D-heap-16 — OPEN (2026-09-17): the fresh value of a `??` DEFAULT arm is never released
+
+- **Violates:** (H-Drop).
+- **Where:** not established.
+- **Effect:** the value the default arm builds owes one release and runs none.  Measured on both
+  backends: `a: H? = null; x = a ?? mk(7)` traces `M7 R7` — minted, read, never released — and
+  the loop form `for i in 0..2 { x = a ?? mk(27 + i) }` leaks once per iteration
+  (`M27 R27 M28 R28`).  The PRESENT twin is correct and is the control: `a: H? = mk(5);
+  x = a ?? mk(7)` traces `M5 R5 D5`, one release, with `mk(7)` never evaluated at all.  Two gate
+  cells carry it, `p_l2` and `q_default_local_call_local`, scored `LOST`.
+  ⚠ **Not the same as D-heap-14** despite both involving a branch.  There is no hand-over here:
+  nothing suppresses a source's release, because the default arm's value has no source — it is
+  minted in the arm.  The per-path `__hoff_` flag is absent from these cells and would not apply.
+  That distinction was measured rather than read off the shape.
+  The neighbouring record is `closures-history.md`'s `??`-default STORE leak
+  (`g = fn(q: P?) -> P { q ?? P{} }`, argument witness closed by loft#1248, capture witness
+  tracked there).  That is a lambda leaking a store per call; this is a plain function leaving a
+  HOOK unrun.  Whether one cure reaches both is not established.
+- **Status:** OPEN — exposed 2026-09-17 by narrowing the refusal, the same way as `D-heap-15`.
+- **Removal:** the default arm's value released at the scope end of whatever binds it, on both
+  backends, with the present-arm control held at one release.
+
+### D-heap-11 — OPENED 2026-09-15, CLOSED 2026-09-17: a view of a droppable member is turned into a copy when its container is disturbed
 
 - **Violates:** (H-View-Drop).
 - **Where:** `(B-View)`'s materialisation — a bind is given its own copy when its container is
@@ -629,9 +968,52 @@ freed without its hook) opened and CLOSED 2026-09-10, below.
 - **Effect:** for a type that owns a droppable without `OpCopy`, the materialised copy is a second
   structure on one resource, made by the compiler on a line the author did not write as a copy,
   with only the advice that writes no longer reach the container.  No gate cell covers it yet.
-- **Status:** OPEN — @PLN163 P3.
-- **Removal:** no materialisation for such a view: the disturbance is a compile-time error naming
-  the view, the answer `(B-Ref-Reshape)` already gives a `&` reference.
+  **Measured 2026-09-17**, both backends byte-identical, one resource released TWICE on each of
+  `(B-Disturb)`'s three reachable events — a growth (`M1 M2 R1 D1 D1 D2`), a removal
+  (`M1 M2 R2 D2 D2`, the removed element correctly released by nobody per `(H-Drop-Not)`), and a
+  reassignment of the base (`M1 D1 R1 D1`, the second release after the read) — against controls
+  with no disturbance, which release once (`M1 R1 D1`).
+- **Narrowed 2026-09-17 to the view the author did NOT spell `&`.**  The `&`-spelled half was
+  measured releasing twice the same way, and is now refused rather than copied: `binding.md`
+  D-bind-47 gave `(B-Ref-Reshape)`'s refusal the store it needs to see a growth of a container
+  held in a FIELD, which is the answer this entry's **Removal** already points at.  What is left
+  open here is the plain view, which `(B-View)` materialises on purpose for every other type.
+- **Status:** CLOSED 2026-09-17 (@PLN163 P3's `(H-View-Drop)` half).
+- **Removal, as taken:** the disturbance is a compile-time error naming the view — the answer
+  `(B-Ref-Reshape)` already gives a `&` reference — raised from the walk that already refuses for
+  that family (`scopes::def_reshape_refusals`), with one condition added: the view's type owns a
+  droppable.  Nothing new decides WHICH bindings are views: `record_target` already admits only a
+  binding that is a view at all and whose right-hand side names a container, so the walk's answer
+  and the copy-out advice agree cell for cell (measured), and the type question is the only one
+  this rule adds.  The message is its own, because the `&` family's — *"a write through `c` would
+  no longer reach the element it names"* — is beside the point for a plain view, which never wrote
+  through: this population is told that the copy itself is the fault, and is offered reading the
+  member where it lives rather than "bind without `&` to work on a copy", which names exactly the
+  copy `(H-Copy-Refuse)` rejects.
+- **Boundary — stated wrongly here on 2026-09-17, RE-MEASURED and CLOSED the same day.**  This
+  entry read *"a callee's REMOVAL from a droppable container refuses while a callee's GROWTH does
+  not — the same program, one frame apart, gets two answers."*  The asymmetry was real; the
+  description of it was not.  Measured over 17 cells on both backends, **neither refused**: the
+  removal refuses only when the container is the `&` PARAMETER ITSELF, because
+  `scopes::removed_ref_params` keys on `OpRemoveVector(arg0)` / `OpRemove(arg1)` over a bare
+  `Var` typed `RefVar`, so a removal from a FIELD of a parameter
+  (`fn shrink(b: &Bag) { b.v.remove(0) }`) was not refused either, and a GROWTH had no callee
+  producer on the refusal side at all.  The claim was written from the code's shape rather than
+  from a cell, which is the error it records.
+  **Closed** by giving the refusal the callee reach the rules already state — see `binding.md`
+  D-bind-48, which is one change serving both populations, this rule's and `(B-Ref-Reshape)`'s.
+- **Verified:** 13 cells, both backends byte-identical, each predicted before it was run — the
+  three disturbance events and a nested droppable refuse; a non-droppable view still materialises
+  and still says so; a droppable TUPLE member, a view with no disturbance, a view dead before the
+  growth, a sibling field's growth and a whole-container bind all keep compiling.  Corpus: 1590
+  files compiled with a before and an after binary, **0 changed** — no program in the tree writes
+  this shape, which is why the corpus could not have caught it.  Guards:
+  `tests/scripts/a-view-of-a-droppable-member-stays-a-view.loft` (the over-reach controls) and
+  `parse_errors::h_view_drop_*` (the four refusals, with their exact prose).
+- **Found while measuring this entry, and NOT it:** `d = b.v; b.v += [mk(2)]` — a whole-container
+  bind of droppables — releases one resource twice in silence.  Nothing is materialised there, so
+  it is not `(H-View-Drop)`; it is a written COPY, which `D-heap-8` already owns, and it now has a
+  measured cell waiting for that pass.
 
 ### D-heap-10 — CLOSED (2026-09-15, reclassified): a variable rebound to a `??` over itself released its record before the read, and again
 

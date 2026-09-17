@@ -970,6 +970,14 @@ work:  ## The open issues that are PICK-UP work (minus fixed-pending-merge and s
 bug-review:  ## Monthly bug-review aid: which mechanism classes are still producing bugs
 	@python3 scripts/bug-review.py $(ARGS)
 
+# An operator is cheap to add and invisible to retire: nothing asked whether a program
+# still reaches one.  This asks the COMPILER, over every .loft file in the tree — a grep
+# cannot answer it, because the parser names most operators by computing the name from
+# the token and the operand types.  A REPORT, never a gate (RELEASE.md § The operator
+# census); `ARGS=--verbose` for every operator with its emission count.
+ops-census:  ## Which bytecode operators does anything still emit? (report, never a gate)
+	@python3 scripts/op_census.py $(ARGS)
+
 # @PLN155 arc A — the four gates that pick a campaign, joined into one report:
 #   make campaign-review                       # which class earns a campaign next
 #   make campaign-review ARGS=--verbose        # + the evidence behind each gate
@@ -2605,6 +2613,18 @@ linkcheck-external:
 #   make falsify-review                     # summary + the worklist
 #   make falsify-review ARGS=--all          # every under-documented receipt
 #   make falsify-review ARGS="--since <ref>"  # + how many controls went unreachable since
+# What share of the formal rules carry a code ANNOTATION, and what share an active GUARD,
+# against the contract-1 FLOORS.  Docs link to this instead of restating the position: a
+# measured share is stale the moment it is committed, and this one had rotted across five files
+# and seven passages at once (CLAUDE.md, STABILITY_METHOD.md, COMPATIBILITY.md, formal/README.md
+# three times over, formal/IMPLEMENTATIONS.md) before anybody noticed.
+# The contract-1 FLOORS are the only figures worth writing into prose, and they live in
+# `rule_tags.py` alone — move them with RULE_MIN_ANNOTATED / RULE_MIN_GUARDED.  They are
+# minimums for the freeze, not targets to stop at.  A REPORT, never a gate.
+.PHONY: rule-coverage
+rule-coverage:  ## What share of the formal rules carry a code annotation, and an active guard
+	@python3 scripts/rule_tags.py coverage
+
 .PHONY: falsify-review
 falsify-review:  ## Which falsification receipts can still be re-validated, and how quickly
 	@python3 scripts/falsify-review.py $(ARGS)

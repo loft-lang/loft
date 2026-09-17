@@ -1147,16 +1147,16 @@ iterates none at all.  Read it into a variable and test it, as above.
 | Boolean          | `true`, `false`                     |
 | Null             | `null`                              |
 | String           | `"hello world"`                     |
-| Function ref     | `fn double_score`                   |
+| Function ref     | `double_score` (the bare name)      |
 | Lambda (long)    | `fn(x: integer) -> integer { x * 2 }` |
 | Lambda (short)   | `\|x\| { x * 2 }`                    |
 
-A **function reference** (`fn <name>`) produces a `Type::Function` value whose runtime representation is the definition number of the named function.  The compiler resolves the name at **compile time** and errors if it does not exist or is not a function.  The value is 4 bytes (same as `integer`).
+A **function reference** — a function's bare name used as a value (`f = double_score`) — produces a `Type::Function` value whose runtime representation is the definition number of the named function.  The compiler resolves the name at **compile time** and errors if it does not exist or is not a function.  The value is 4 bytes (same as `integer`).
 
 **Calling a fn-ref variable:** a variable or parameter of type `fn(T) -> R` can be called directly:
 
 ```loft
-f = fn double_score           // type: fn(const Score) -> integer
+f = double_score              // type: fn(const Score) -> integer
 x = f(some_score)             // calls double_score via f
 ```
 
@@ -1164,7 +1164,7 @@ x = f(some_score)             // calls double_score via f
 
 ```loft
 fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }
-result = apply(fn double_it, 5)
+result = apply(double_it, 5)   // `fn double_it` is refused: use the bare name
 ```
 
 A parameter of a function type may be `const` — `fn(const Score) -> integer` — which says the

@@ -135,10 +135,27 @@ documentation recommendations were false before the guard (`len(secs) < 2` canno
 - **`A-validator-dryrun` has never run in any recorded cycle.**  It reports structural gates passed
   at exit 3, which is not the full verdict, so the checklist reads UNKNOWN rather than green.
   Whether the registry-validator rehearsal belongs mid-cycle or on the candidate is the owner's call.
-- **CLAUDE.md's rule count is stale, and is not edited here.**  It reads *"179 of 257 rules have no
-  code representation"*; `python3 scripts/rule_tags.py list` now reports **351 defined** and `check`
-  **214 cited**.  A standing-instruction number is the owner's to move, and the command is given so
-  it can be re-read rather than taken on this record's word.
+- **CLAUDE.md's rule count was stale; on 2026-09-17 the owner had it REMOVED rather than
+  refreshed.**  It read *"179 of 257 rules have no code representation"*.  A standing-instruction
+  number is the owner's to move, which is why this record left it — that reservation is now
+  DISCHARGED, so this line is history rather than a live decision.  The first cure refreshed the
+  figure; the owner's call was that refreshing it only restarts the clock, because *a number in a
+  committed file is stale the moment it is committed*.  So the position figure is gone from every
+  prose home that carried one — **five files, seven passages**: CLAUDE.md, `STABILITY_METHOD.md`
+  (where every one of its five numbers had moved), `COMPATIBILITY.md` § the honest bound,
+  `formal/README.md` three times over (the coverage line, the backlog sentence, and the
+  prefix-pair paragraph, which contradicted ITSELF at 21 and 23 before going stale), and
+  `formal/IMPLEMENTATIONS.md`'s census table, whose *"cited from code today"* row was wrong by
+  more than two orders of magnitude while reading as current.  Each now links to
+  **`make rule-coverage`** (`rule_tags.py coverage`, added the same day).  Dated RECORDS keep
+  their figures on purpose — `BUG_REVIEW.md`'s per-cycle rows, `QUALITY.md`'s phase narratives,
+  the plan files, IMPLEMENTATIONS' counting progression and the changelog are evidence of what
+  was measured then, and refreshing them would falsify the record.  What
+  IS written down is the contract-1 FLOOR, which does not rot — a MINIMUM for the freeze rather
+  than a target to stop at, recorded in `COMPATIBILITY.md` § The road to contract 1 beside
+  `silent-wrong` → 0, `contract:strained` → 0, "open deviations as few as they can be made" and a
+  LIGHT detection pass over every rule (named there, and not yet built): **70 % of rules carrying a code annotation,
+  40 % an active guard**, stated once in `rule_tags.py` and overridable by env.
 - **`M-docs-review` is four-fifths done and deliberately untickled.**  RELEASE.md steps 1, 2, 3 and
   8 are complete: PROBLEMS.md is uniformly closed (its `@P1`–`@P6` rows are a 3-column legacy shape,
   not open entries), PLANNING.md carries no done-in-place items, 0 of 93 docs are orphaned, and the

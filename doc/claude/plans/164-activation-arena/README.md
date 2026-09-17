@@ -10,16 +10,27 @@ Tracker: [@PLN164](https://github.com/loft-lang/plans/issues/164) · `status:act
 
 ## Status (REQUIRED)
 
-Active (the owner's go, 2026-09-15).  **P0 done**, **B1, C4, B2, C3, C1 and C2 shipped**, **C5
+Active (the owner's go, 2026-09-15).  **RE-SCOPED 2026-09-17 (owner, C125): tier 1 — the
+activation arena, A1/A2 — is SUPERSEDED and its store-identity question E1 is withdrawn.  The
+store model stays as it is (one store is one object) and the plan's remaining work REMOVES the
+temporaries instead: § The elimination queue.**  Built since the paragraph below was written:
+B1b, loft#1550, B2 unit 1 over a chain, the wilderness — the parse row is 24.0–24.1 k ns/op,
+3.38× its Rust reference (25.98 k and 3.65× at the start of that day).  **P0 done**, **B1, C4, B2, C3, C1 and C2 shipped**, **C5
 step 1 built OPT-IN** (`LOFT_VIEW_FIELD=1`) — B2's caller side and C2 are both a wash on the parse
 row, structural gain only (§ B2 and § C2 *Measured*), and C5 does not reach the consumer yet, with
 the gate that declines each library function measured per function (§ C5 *Built*).  **The
 re-profile's verdict is CORRECTED (2026-09-16, § Re-profiled *The correction*): "the row is the
 scanner, the class is paid down" was read off operator COUNTS and INTERPRETED profiles, and `perf`
 on the release binary itself reads loft runtime 63 %, program 31 % — the class is still two thirds
-of the row.  What P0 priced (the store mint/free pair, 9 %) holds; the per-record churn around it
-(allocator, copies, appends, ≈ 30 %) was never priced, and attributing it to loft lines is the
-next step (P0b) before any phase is cut.**  The
+of the row.  **P0b is done (2026-09-17, § P0b):** charged to loft lines through the inline chain,
+the runtime is 72 % and the store mint/free family 20 % — half of it buffers minted at FUNCTION
+ENTRY on paths that never use them.  Moving those mints to their first use measured −9–10 % by
+hand, so **A0** (§ A0) is cut, after @PLN157's prelude elision (−11–14 %).  Both are BUILT
+(2026-09-17), and so is **C6** (§ C6): the parse row is 38.8–41.7 k → 29.8–29.9 k ns/op, every
+other row equal or faster.  The last-use vector field, measured next, is not a move; the
+release profile named three runtime fast paths instead, which took the row to 25.0–25.3 k
+(≈ 3.5× the Rust reference) and every other row equal or faster, and loft#1549 was fixed on the way (§ The runtime under the
+row).**  The
 measurements are under § P0 below and the mechanism under § B1.  What P0 changed in the
 plan: tier 1's ceiling is ~10 % of the parse row, not a fifth, and its store-identity cost
 (287 `store_nr !=` sites in one emission) is real, so A1/A2 stay behind B and C in the
@@ -53,10 +64,14 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
 ## Effort + design
 
 - **Effort:** M (tiers 1–2) · MH (tier 3)
-- **Design:** ~ — the invariants are named; the store-identity question (§ Edge cases E1)
-  is open and decides tier 1's shape.
-- **Last touched:** 2026-09-16 (the re-profile's verdict corrected by `perf` on the release binary,
-  the queue re-cut under it, and the frame-prelude lever priced — § Re-profiled *The correction*)
+- **Design:** ~ — the invariants are named.  The store-identity question (§ Edge cases E1) is
+  withdrawn with tier 1 (C125); what remains is elimination, unit by unit.
+- **Last touched:** 2026-09-17 (P0b, row 11, A0 and C6 built, loft#1548 and D-own-44 fixed on
+  the way; the 14-row table and the parse row re-measured — § Re-measured; the runtime fast
+  paths and loft#1549 — § The runtime under the row; B1b, D-own-43 and loft#1550 — § B1b;
+  the chain-renamed literal exits — § B2 unit 1 over a chain; the wilderness; the re-scope to
+  § The elimination queue under C125; E-1's per-path proof, D-own-46 and the forward unit —
+  § E-1, the per-path proof and § E-1, the forward)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -225,6 +240,770 @@ plan's.
 4. Re-measure the 14-row `compare.py` table after each of these; the parse row's re-profile is
    re-taken with `perf` on the release binary, never with a count.
 
+*P0b answered item 1 — § P0b below.  It re-cut the queue a second time.*
+
+## P0b — the release row charged to loft lines (DONE 2026-09-17)
+
+**The instrument.**  `scripts/native_attrib.py` takes a `--native-release` binary built with
+frame pointers and line tables — the program AND the runtime rlib it links
+(`RUSTFLAGS=-Cforce-frame-pointers=yes cargo build --profile profiling --lib`; the rustc line
+is in the script's header) — plus the emission and a `perf record --call-graph fp`.  It
+expands each physical frame to its inline chain with `llvm-symbolizer`, charges the sample to
+the innermost frame of the emitted program, and reads the loft line off that frame's
+`// loft:` comment.  A runtime routine is reported under the ENTRY the program called, grouped
+into families.  Run: `taskset -c 2`, `--n 80000`, 16 835 samples, hash `33f6d2b8`, 42.2 k ns/op
+(frame pointers cost a few per cent; shares come from this build, times from the release one).
+
+**Two corrections to the earlier read.**  The runtime share is **72 %**, not 63 %: the self-time
+table counted a runtime helper inlined into a program function (`op_add_long`, `store_mut`,
+`offset_in_bounds`) as program.  And the store mint/free family is **20 %**, not 9 %: the 9 %
+was the store routines' own SELF time, while the entry-inclusive cost also carries the claim,
+the zero fill, `Store::init`'s free header and the release walk each mint pays.
+
+| family (by the entry the program called) | share | where it is charged |
+|---|---:|---|
+| store mint/free | **20.0 %** | `parse_poly` 5.6, `parse_circle` 3.9, `parse_fronds` 2.7, `read_paint` 2.4, `parse_scene_at` 1.6, `no_mark` 1.1 |
+| record mint/copy/move | 11.0 % | `parse_fronds` 4.7, `read_points` 1.6, `parse_poly` 1.1 |
+| store access | 9.6 % | `acc_pts` 2.4, `parse_fronds` 2.0 |
+| vector field copy (`vector_add`) | 9.2 % | `parse_fronds` 5.5, `parse_poly` 2.0, `parse_circle` 1.2 |
+| vector append/grow | 6.7 % | `read_points` 2.1, `fronds` 1.8 |
+| frame prelude | 6.4 % | `matches_at` 2.2, `word_boundary` 1.6, `at` 1.4 |
+| std (`dec2flt`, malloc, memcpy) | 5.0 % | |
+| text | 4.8 % | `t_4text_split` 2.4 |
+| checked arithmetic | 3.8 % | `matches_at` 2.1 |
+| libm | 1.3 % | `circle_pts` |
+| **the program's own code** | **21.2 %** | `matches_at` 5.2, `find_option` 2.8, `t_4text_split` 2.5 |
+
+**By line, two findings carry most of the plan's class.**
+
+1. **Half of the store family is minted at FUNCTION ENTRY, on every path.**  The function
+   prologues alone — before the first loft line runs — take `parse_poly` 4.0 %, `parse_circle`
+   3.1 %, `read_paint` 2.0 % (9.1 % together, their exit frees on top).  The preamble's
+   `__ref_N = null` lowers to a store mint on both backends, and it runs whether or not the
+   path that uses the buffer is taken.  `parse_circle` is called for 7 of the scene's lines and
+   matches ONE: on the other six it mints its two buffers (`Paint`, `vector<Pt>`) and frees them
+   unused.  `parse_poly` mints four, one per `smooth_pts` / `smooth_vals` site, and its three
+   exits take one or two of them.  P0 judged this pattern not worth a hand patch by arithmetic
+   (≈ 0.7 µs); measured, it is the largest single lever the row has.
+2. **`drawing.loft:704` — the `Op` literal appended in the frond loop — is 12.5 % of the row.**
+   `vector_add` 5.1 % (the `pts` and `widths` copies), `OpCopyRecord` 2.5 % + `OpDatabaseNP`
+   1.3 % (the nested `Paint { … }` literal is built in a store of its own and deep-copied into
+   the element's inline `paint` field — per frond), `OpNewRecord` 1.1 %.  The same nested
+   literal is at `:594` (`parse_line_cmd`).  Of the two vector copies, `widths: pf_wids` is the
+   variable's last use; `pts: pf_line` is not (line 707 reads it again), so that copy is the
+   two-destination copy tier 3 keeps.
+
+**The first finding, measured by hand** (`bytecode-comparisons/A0-lazy-mint-hand-patch.py`):
+all 16 entry mints in 7 functions moved to a null-guarded mint in front of the call that takes
+the buffer; the declaration holds the null sentinel; the exits' `OpFreeRef` already ignores a
+null store, so no free moved.
+
+| variant | ns/op (ABAB ×4, `--n 4000`, P-core) | `perf stat -r 5` instructions / cycles | hash |
+|---|---|---|---|
+| as emitted | 38.6–39.8 k | 2 499 M / 583 M | `33f6d2b8` |
+| entry mints lazy | **35.3–35.8 k** (−9 to −10 %) | **2 319 M / 536 M** (−7.2 % / −8.0 %) | `33f6d2b8` |
+
+Both variants run clean under `LOFT_STRICT_STORES=1 LOFT_NATIVE_LEAK_CHECK=1`, and the
+instrument can fail: the same emission with one exit's `OpFreeRef` deleted reports
+`1 stores not freed … main_vector<Pt>×20`.
+
+**Smaller items the attribution names.**  `strict_stores()` shows as 1.8 % of leaf time: the
+store accessors test the switch BEFORE the slot's `free` flag, so the common path pays an atomic
+load that `s.free && strict_stores()` would skip.  `offset_in_bounds` (6.4 % leaf) and
+`begin_write_inner` (4.9 %) are the per-access checks of the store family, which no
+lifecycle phase changes.
+
+### The queue after P0b
+
+1. ~~**@PLN157's transitive-leaf prelude elision**~~ (its row 11) — SHIPPED 2026-09-17
+   (`@FR-R-LeafChain`): the row 38.8–41.7 k → 33.5–34.1 k ns/op, instructions −19.1 %.
+2. ~~**A0 — the buffer minted at its first use**~~ (§ A0) — BUILT 2026-09-17: the row
+   33.5–34.1 k → 31.2–31.4 k ns/op on top of row 11.
+3. ~~**C6 — a nested record literal built inside the element**~~ (§ C6) — BUILT 2026-09-17:
+   hand-measured −8.5 %, built −6–7 %; loft#1548 fixed on the way.
+4. ~~**The last-use vector field**~~ — measured before it was cut, and it is not a move:
+   every copy it named crosses stores and reads a view or a reused buffer (§ The runtime
+   under the row).  What the profile named instead — three runtime fast paths — is BUILT
+   (2026-09-17, same section): the row 28.3–28.5 k → 25.0–25.3 k ns/op.
+5. **The `Mark` result path** — now the largest store class, 12 of the 30 stores a parse
+   mints (§ The runtime under the row, *The census*).
+6. **A1/A2** — re-priced: the store family is 13.7 % of the row now (`parse_poly` 3.8,
+   `parse_scene_at` 2.1, `parse_fronds` 1.6, `no_mark` 1.6, `parse_circle` 1.1).
+
+## A0 — the buffer minted at its first use (`@FR-O-Buffer`)
+
+*Invariant:* a hidden return buffer is minted at most once per activation, before the first
+statement that hands it to a callee on the path that runs; a path that never uses it never
+mints it.  `(O-Buffer)` says who owns a buffer and when it is freed; it does not require the
+mint to precede the path.  The free side already holds: every exit frees the buffer with a
+null-tolerant free (native `OpFreeRef` returns on the sentinel; the interpreter's `FreeRef`
+is asked the same question in the cells).
+
+*The shape:* the preamble's `__ref_N = null` becomes the non-allocating sentinel (the
+`OpInitRefSentinel` the interpreter already has for an inline ref, `DbRef::NULL` on native),
+and each statement that passes the buffer to a call is preceded by
+`if OpVectorIsNull(__ref_N) { __ref_N = null }` — the guarded-mint shape a vector `+=` already
+uses (`vectors.rs`, loft#1219), idempotent in a loop.
+
+*Cases to settle before the first cell is written:*
+
+| # | case | why it bites |
+|---|---|---|
+| A0-1 | the buffer used on one branch only, freed at every exit | the plain win; the exit free on the un-minting path must be a no-op on BOTH backends |
+| A0-2 | the buffer used inside a loop | the guard must mint once, not per iteration — a re-mint clears what the previous iteration's result local still reads |
+| A0-3 | a result local ADOPTS the buffer (`p = mk(s)`, deps `["__ref_1"]`) and is read after | the local IS the buffer; the witness compare at the exits (`p.store_nr != __ref_1.store_nr`) must still decline |
+| A0-4 | two call sites in exclusive arms sharing nothing but the exit | each arm mints its own; the exit frees both, one of them null |
+| A0-5 | a buffer the H7 loop rotation (`OpPutRef(__ref_1, __ref_2)`) swaps | the partner must be minted before the swap reads it — a use that is not a call argument |
+| A0-6 | a buffer promoted to `__retbuf` / an adopting `_rb_w_` witness | the promoted path is the caller's store, never minted here — excluded |
+| A0-7 | a generator body and a `par` arm | declined, as every hoist declines them |
+| A0-8 | the interpreter's slot allocator | the preamble `Set` is the buffer's first def (plan 51 cluster IV); the sentinel init must keep that role |
+
+Switch `LOFT_NO_LAZY_BUFFER=1`; falsifiers `LOFT_STRICT_STORES=1`, `LOFT_NATIVE_LEAK_CHECK=1`,
+`LOFT_POISON=1`; cells `bytecode-comparisons/A0-lazy-buffer-cells.loft` on both backends.
+
+### Built 2026-09-17 (`@FR-O-LazyBuffer`, default ON)
+
+*Where it lives.*  `scopes::lazy_buffer_mints`, after the scan, so every exit free is already
+in the body and can be told apart from a use (`names_outside_free`: `OpFreeRef`,
+`OpFreeRefIfDistinct`, `OpFreeRefOrHandUp`, the tag ops and `OpDistinctStore` are not uses).
+`insert_before_uses` puts `if OpRefIsNull(b) { b = null }` in front of the innermost statement
+that names the buffer — descending blocks, loops, inserts and `if` arms; a use in an `if`
+condition or a bare arm takes the guard in front of the whole `if`.  The record-buffer pool
+(`reuse_record_buffers`, § V's Route R) places its `OpDatabase` the same way unless its
+ungated control is armed.  Declined: a body that yields or runs `par`, a buffer with a second
+assignment, a null-init that is not a top-level statement (the one left in the parse bench,
+`parse_scene_at`'s `split` buffer, is used on every path anyway).
+
+*The fact both emitters read* is a new `Variable::lazy_buffer` (IR schema, store and JSON
+codecs, cache format 7): the vector null-init writes the sentinel (`OpInitRefSentinel` /
+`DbRef::NULL`) and the interpreter lowers the later `Set(b, Null)` to the owned-vector mint
+(`gen_owned_vector_store`, the same ops the entry init emitted); native's reassignment arm was
+already `OpDatabase`, which mints from the sentinel.  A record buffer needs no mark — its mint
+is an explicit `OpDatabase` in the IR.  The history's warning was the design constraint:
+`mark_inline_ref` would also have RELOCATED the null-init (formal/ownership-history.md, the
+`__vdb` entry), so the mark changes alloc-vs-sentinel and nothing else.
+
+*Verified.*  The 14 cells (13 functions rewritten, `a5`'s rotated pair guarded at the call and
+at the rotation, `f15` the record pool) hold on both backends in both switch states under
+`LOFT_STRICT_STORES`, `LOFT_POISON` and `LOFT_NATIVE_LEAK_CHECK`; with the switch off the
+native emission is byte-identical to the build before A0 and the interpreter's bytecode for
+`f1` is too.  Falsified: an unconditional mint (the null test replaced by `true`) turns `a5`
+into `0 0` on both backends — a re-mint clears the store the loop-carried result holds.  Pins
+`tests/lazy_buffer.rs`, subject `codegen`.
+
+*Measured* on the parse bench (release lean tier, after @PLN157 row 11): 15 of the 16 entry
+mints now guarded, the row 33.5–34.1 k → **31.2–31.4 k ns/op** (−7 %), `perf stat`
+instructions 2 023 M → 1 871 M (−7.5 %), cycles −6.8 %, hash `33f6d2b8`, clean under all three
+falsifiers.  The hand patch measured −9–10 % on the pre-row-11 emission; together the two
+levers take the row from 38.8–41.7 k to 31.2–31.4 k.
+
+## Re-measured after row 11, A0 and C6 (2026-09-17)
+
+*The 14-row table*, one binary, the four new switches on vs off (`LOFT_NO_LEAF_CHAIN`,
+`LOFT_NO_LAZY_BUFFER`, `LOFT_NO_NESTED_IN_PLACE`, `LOFT_NO_APPEND_STAGING`), `compare.py
+--skip-interp --repeat 3`, two passes each, 14/14 hashes, `LOFT_HOIST_VERIFY=1` clean over the
+whole bench:
+
+| row | on (ns/op) | off (ns/op) | change |
+|---|---:|---:|---:|
+| parse | 29.8–29.9 k | 39.3–40.0 k | **−25 %** |
+| smooth | 1.18–1.20 k | 1.28–1.36 k | −8 to −12 % |
+| hair | 26.7–27.3 k | 28.8–29.3 k | −7 % |
+| fill_star | 22.1–22.3 k | 23.9–24.1 k | −7 % |
+| wide_line | 12.8 k | 13.7 k | −7 % |
+| lock | 3.03 M | 3.18–3.19 M | −5 % |
+| lock_curved | 3.13 M | 3.22 M | −3 % |
+| fill_circle | 59.5 k | 61.0–61.2 k | −2.5 % |
+| render_lock | 15.06 M | 15.29–15.34 M | −1.7 % |
+| fronds | 175–177 k | 178 k | −1 to −2 % |
+| hash, composite, render_marks, resize | — | — | equal |
+
+Most of the rows other than `parse` move through row 11 (the lean frame).  Two costs the first
+build of A0 carried were found by this table and removed before it: a dead join buffer's
+guard in `lock_ribbons`' loop (`hoist::dead_buffers` now counts the witness of a free guarded
+for a value local), and a lazy mint counted as growth for `@FR-R-Base`, which took the
+element bases out of `lock_layer`'s loop (+3.9 % instructions on `lock_curved`, found by
+`perf stat` on a `lock_curved`-only bench).  The `render_*` and `resize` rows move ±3 % with
+code LAYOUT alone — measured: `resize`'s own functions are byte-identical under
+`LOFT_NO_LAZY_BUFFER` and its time still moved — so a ±3 % change on those rows is not
+evidence either way; read them with `perf stat` instructions.
+
+*The parse row, attributed again* (`scripts/native_attrib.py`, 14 742 samples):
+
+| family | § P0b | now |
+|---|---:|---:|
+| store mint/free | 20.0 % | **13.7 %** |
+| store access | 9.6 % | 13.3 % |
+| vector field copy | 9.2 % | 12.6 % |
+| record mint/copy/move | 11.0 % | 11.8 % |
+| vector append/grow | 6.7 % | 9.0 % |
+| frame prelude | 6.4 % | **gone** |
+
+(Shares of a row that is a quarter shorter, so a family that held still in time grew in share.)
+By line: `:704` is still first at 11.3 %, now almost all `vector_add` (6.9 %) — the `pts` and
+`widths` copies into the element.  Then `no_mark()` minting a `Mark` store per call (`:499`,
+1.9 %), the `Mark` results' `pts` copies at the parser exits (`:709`, `:545`, `:831`, `:836`,
+≈ 5 % together), and `:986` copying `parse_fronds`' `Mark` (1.2 %).
+
+## C6 — a nested record literal built inside the element (BUILT 2026-09-17, `@FR-R-InPlaceLiteral`)
+
+*The row.*  P0b charged `drawing.loft:704` with a `Paint { … }` built in a store of its own
+and deep-copied into the element's inline `paint` field, per frond; the same shape is at
+`:594` and in `parse_lock`/`parse_background`.  The hand patch
+(`bytecode-comparisons/C6-nested-literal-hand-patch.py`, the five sites written straight into
+the field) measured **31.2–32.0 k → 28.5–28.7 k ns/op** (−8.5 %), instructions −5.4 %, hash
+unchanged — twice what the attribution predicted, because the removed store churn also
+relieves the cache.
+
+*The shape built.*  `Parser::nested_literal_place` primes an EMBEDDED record field's value
+with the field's own place (`OpGetField(outer, pos, kt)`) when the value starts with the
+field type's name and `{`, so `parse_object` takes the field road it already has (the
+precedent is `parse_some_payload_object`) and writes the nested fields in place; omitted
+fields take their declared defaults through `object_init`.  Declined: a `reference<T>`
+field (a pointer), a nullable one (a tagged enum), and any destination the program can read
+(`x = S { … }`, `o.f = S { … }`, `v[i] = S { … }` — a nested field expression could read the
+old value after the outer literal has begun overwriting it).  A value that turns out to be
+more than the literal (a postfix) is parsed again the ordinary way, as loft#1304's retry is.
+
+*What the cells found first — loft#1548.*  Cell n4 (a nested field expression that appends
+to the SAME container) answered `0` for `1030` on both backends on the build BEFORE C6: the
+element road minted the element before its field expressions ran, against
+`(E-Asgn-Compound)`.  It was the whole class, not the nested case — `s.qs += [Q { a: i, b:
+g(s) }]` read 0 for 24.  Filed and fixed in this arc (`formal/operational-history.md`
+D-op-10): `Parser::stage_append_fields` evaluates every scalar or text field value, and runs
+every nested construction, ahead of the mint whenever a field value reads the container's
+root.  The parse bench's emission is byte-identical under it (no field there reads its own
+container).  Guard `tests/scripts/1548-an-appended-literal-reads-its-own-container.loft`.
+
+*Verified.*  Seven cells (fresh element, a vector in the nested record, a partial literal,
+the loft#1548 shape, two levels deep, a rebound local, a readable destination) hold on both
+backends in both switch states under `LOFT_STRICT_STORES`, `LOFT_POISON` and
+`LOFT_NATIVE_LEAK_CHECK`; with the switch off the parse bench's emission is byte-identical
+to the build before C6.  Pins `tests/nested_in_place.rs`, subject `codegen`.
+
+*Measured* on the parse bench: the emission reaches the hand patch's instruction count
+(1 870 M → **1 770 M**, −5.4 %), the row **31.2 k → 29.1–29.5 k ns/op** (−6 to −7 %), cycles
+−7.0 %, hash `33f6d2b8`, clean under all three falsifiers.  Together with row 11 and A0 the
+row has moved from 38.8–41.7 k to 29.1–29.5 k this session.
+
+## The runtime under the row (2026-09-17, later the same day)
+
+*Item 4 re-measured before it was cut — and it is not a move.*  At `:704` both copies read a
+VIEW or a reused BUFFER: `pf_line = f.fpts` and `pf_wids = f.fwid` view an element of
+`fronds`' result, and on the smoothed path they are `smooth_pts`/`smooth_vals`' buffers, which
+A0's guard mints once and every later iteration reuses.  Every copy lands in the scene's store,
+a different one.  Moving a vector across stores still copies its bytes, and moving a reused
+buffer's vector out would make its next call re-grow it — so there is no move to make.  The
+parsers' exit `Mark { pts: <local> }` copies are the same shape into a store of their own.
+The copied lengths say where the cost actually is (`LOFT_COPY_DUMP=1`, per parse): 29
+`vector_add`s, 22 of them two elements long.  The time is the destination's CLAIM, not the
+bytes.
+
+*What the release profile named instead* (`perf` by symbol, then the branch stack for callers):
+`begin_write_inner::<u32>` 7.5 % — the write check, out of line, and called mostly by the
+allocator's own metadata writes (`claim`, the free-tree inserts and rotations, `Store::init`);
+`Stores::store_mut` 3.4 % in two out-of-line copies; and `vector_add`'s per-element
+`copy_claims` walk for an element that owns no heap.  Three runtime changes stayed.  None
+changes the IR, and all three apply to both backends:
+
+| change (`perf stat -r 5`, one emission, one core) | instructions | cycles |
+|---|---:|---:|
+| `vector_add` skips the claims walk when the element owns no heap | −3.3 % | −3.3 % |
+| the write check inlined, the lock refusal outlined | −8.5 % | −7 % |
+| a fresh store initialised once (`null` then `clear` initialised it twice, on both backends and in B2's placement fallback); a retype moves no budget nothing reads | −1.1 % | −2 % |
+
+The row: **28.3–28.5 k → 25.0–25.3 k ns/op** (−12 %), instructions 1 742 M → 1 523 M, cycles
+429 M → 380 M, hash `33f6d2b8`, about 3.5× the Rust reference (≈ 7.2 k).  Same-moment A/B of
+all fourteen rows (the pre-session rlib against this one, one emission, best of three, 14/14
+hashes): every row equal or faster — `lock_curved` −21.5 %, `lock` −12 %, `render_marks`
+−12 %, `render_lock` −11 %, `fronds` −10 %, `parse` −8.5 %, `smooth` −5 %, `hair` −4 %,
+`resize` −3.5 %, the rest within ±3 %.  `LOFT_STRICT_STORES` still reports a read and a write
+of a freed store — a positive control by hand on the emission, since no test asserts that the
+report fires.
+
+*With every row judged.*  The drawing bench's own `bench.rs` carried no reference for the four
+late rows; @PLN157's `bench-reference-scene.rs` is that reference, and it is now appended to
+the package's `bench.rs` (loft-libs-graphics `drawing-lock`, 47947ec).  Measured with it
+(`compare.py --skip-interp --repeat 3`, 14/14 hashes agree, the four late hashes the recorded
+`33f6d2b8`, `432ddd47`, `fa8b1c64`, `77de7581`; the reference lane moves a few per cent run to
+run, the package's own run the same hour read 3.7×, 4.1×, 4.8× and 5.8×):
+
+| row | Rust ns/op | native ns/op | native / Rust | @PLN157's last full table |
+|---|---:|---:|---:|---:|
+| parse | 7 280 | 25 940 | **3.56** | 7.59 |
+| render_lock | 2 882 380 | 12 795 200 | 4.44 | 5.46 |
+| resize | 17 739 680 | 84 760 660 | 4.78 | 5.57 |
+| render_marks | 887 700 | 5 582 880 | 6.29 | 7.96 |
+
+The reference lane reads what it read then (render_marks 887 k both times, render_lock and
+resize within 2 %), so the ratios moved on the native side.  `parse` is under the 4× bar for
+the first time; the three rows still over it are the resample's (@PLN157), not this plan's.
+
+Three levers measured and dropped.  Testing the slot's `free` flag before the strict-mode switch
+in `store`/`store_mut` (with the report outlined) measured −2 % instructions on this row — and
+the fourteen-row A/B then read `smooth` +38 %, `fill_circle` +15 %, `fill_star` +7 %,
+`wide_line` +6 % with instructions flat: the pixel loops load the flag per access
+(`cmpb $0x0, 0x106(%rbx,%r15)`) and spill a loop variable, where the static switch test left
+them alone — which is what `store`'s own doc says the order is for.  Keeping the switch first
+and only outlining the report did not recover it, so the accessors are as they were.
+Reserving the whole copy before `vector_add` claims (+0.2 % instructions — an empty
+destination's first claim already has room for eleven elements), and the capacity test without
+its division (cycles unchanged; the `divl` samples were skid).  The lesson is the one § Re-measured
+already states: a runtime change reaches every row, so the fourteen-row A/B is owed before it
+stands, and a single-row `perf stat` that moves cycles without instructions is a code-shape
+effect to look at, not noise.
+
+*The census.*  A parse mints 30 stores: `Mark` 12, `vector<Pt>` 6, `vector<float>` 4,
+`PointList` 3, and one each of `vector<text>`, `vector<Frond>`, `Sketch`, `Paint` and
+`FrondSpec`.  So `Mark` is the largest class: `parse_circle`'s `no_mark()` on the five lines it
+does not match, and the literal exits of `parse_circle`, `parse_fronds` and `parse_line_cmd`.
+C5 armed removes three of the twelve (`parse_poly`'s) and still measures a wash (−2 %
+instructions, +1 % cycles).  It declines the other three functions, each for its own reason:
+a source whose copy lands in either arm of an `if`, a source with no place outside the frame
+(`pf_all`), and a body that names the container inside a loop.
+
+*`:986` is B1's shape behind a null-init.*  `ps_f = parse_fronds(…)` sits inside an `if`, and
+loft scopes `ps_f` to the loop body, so the scope pass puts `ps_f = null` in front of the `if`.
+On both backends the call bind is then the SECOND `Set`, which takes the rebind copy: the
+interpreter mints a store at the null-init (`OpInitRef`) and copies into it, and native mints
+in its copy arm.  Either way that is two mints and a deep copy where B1's adopt would do.
+Probe: `if n == 4 { f = try_a(n + 1); … }` against a top-level `m = try_a(n)`.  The rule it
+wants: the one call bind after the scope's null-init, with no loop between them, is a first
+bind — and the null-init is then a sentinel on the interpreter too.  Worth about 1 % of this
+row.
+
+*What reusing the `Mark` buffers first ran into — loft#1549.*  Pooling a buffer whose record
+owns heap (`(R-Reuse)`, shipped with #1465) leaked on both backends: the callee's literal
+overwrote the record's handles on every refill, and what the previous call left there stayed
+claimed in the buffer's store — about 100 bytes a turn for `S { n, v: [..] }`, 600 for a
+vector of heap-owning records, unbounded in the loop length, with right values and no gate
+that counts stores able to see it.  Fixed on the way (`formal/heap.md` D-heap-12, the record
+clause of `(H-ClearRelease)`): the pool's lazy guard releases on reuse,
+`if OpRefIsNull(b) { mint } else OpClear(b, T)`.  The first cut released in the callee's
+offered arm and measured +1 % instructions on this row — B2 offers a freshly placed `Paint` to
+every `read_paint`, where the walk finds nothing — so the release is the pool's, and the row's
+emission differs from before only in one arm that never runs (`parse_circle` returns after its
+one `read_paint`).  Twelve cells and the resident-memory guard
+(`tests/scripts/1549-a-pooled-buffer-releases-its-previous-occupant.loft`, falsified against
+04cc50b1 on both backends); pins `tests/pooled_buffer_release.rs`.  What it unblocks here:
+the pool is now sound for a `Mark`, which owns a vector.
+
+### The queue after the runtime pass
+
+1. **The `Mark` class** — twelve stores a parse.  Two separate questions: `no_mark()` behind
+   `parse_circle`'s tail (a constant, heap-free result handed up a buffer chain), and the
+   three literal exits C5 declines.  Pooling the callers' buffers is sound for a heap-owning
+   record since loft#1549; what still keeps them null is B1's exclusion (D-own-43) and the
+   null-init below.
+2. **B1 behind a null-init** (`:986`, above) — both backends, one home for the admission.
+3. **The free tree under a live store.**  Once a store has freed anything, `bump_tail` is off
+   for good, so every claim is a tree delete, a split and an insert.  In the scene's store
+   that is every element vector.  A tail block kept OUT of the tree (a wilderness) would give
+   the common claim `bump_tail`'s cost back — about 6 % of the row sits in `fl_*`,
+   `claim_block` and `set_free_header`.  It is an allocator change with `@FR-H-FreeFooter`
+   and store images in its blast radius, so it gets its own cells.
+4. **Text per character** — `split` calls `text_character` and `OpLengthCharacter` per
+   character, both out of line across the rlib (2 %).
+5. **A1/A2** — the store family, re-priced after items 1–2.
+
+## B1b — the caller's buffer handed in (BUILT 2026-09-17, `@FR-O-Buffer`, default ON)
+
+*The queue's first two items were one question.*  The `Mark` buffers `parse_scene_at` hands
+its parsers were kept null by B1's exclusion (`minted_pairs`, D-own-43), and the one bound
+inside an `if` (`ps_f`) took the rebind copy because of the pre-init in front of it.  Lifting
+the exclusion (`LOFT_NO_ADOPT_BUFFER_REUSE=1` restores it) was the plan; the cells
+(`bytecode-comparisons/B1b-adopt-buffer-reuse-cells.loft`, r1–r25, hand-computed, each in a
+loop) said what it owed first.
+
+*What the matrix found — one false sentence at three sites, and two gaps beside it.*  The scope
+pass's own doc for the promoted buffer read *"this function mints its store"*, true only while
+the caller hands the sentinel.  Handed a live store:
+
+| # | where | shape | measured |
+|---|---|---|---|
+| 1 | the interpreter's rebind (D-own-43) | `cv = Canvas { … }; cv = alloc(…); cv` (r1), the value reading `cv` (r4), a `Var` rhs (r5) | `USE AFTER FREE` on `--interpret`; native's `_rb_w_` guards its own rebind |
+| 2 | the scope pass's exit leg (loft#688) | a chain `return no_mk()` beside a literal `return Mk { … }` (r9, r10 — `parse_circle`'s shape) | `USE AFTER FREE` on BOTH backends: the literal exit freed the caller's buffer |
+| 3 | native's copy arm at a pre-init rebind | `if c { m = scan(…) }` in a loop (r22 — `ps_f`) | the copy's source-free released the pooled store, native only; the interpreter's post-wrap reset freed it too, which only defeated the pool |
+| 4 | every top-of-body insertion | a body the scan wraps as `Insert([Set(sc, null), Block])` because its result is a hoisted local (r25 — `parse_scene_at` itself) | the pool, A0's lazy mints and the `__rbo_`/witness initialisers all matched a bare `Block` and skipped it in silence |
+| 5 | native's value-record gate | any promoted buffer the snapshot below mentions (`find_word_from`, `read_number`) | "the return buffer is used": the scanner lost its registers, 248 `Scan` mints per two parses |
+| 6 | native's first bind of a PREDECLARED `__ret_N` | a pure chain `fn outer() -> Mk { scan() }` (found after B1b shipped, by the chain cells' c5) | the prologue binds a returned `__ret_N` up front, so its one bind read as a reassignment: the copy freed `scan`'s answer — the caller's pooled buffer.  Unarmed native answered `m4 417` for 827 |
+
+*The mechanism.*  (1–2) One fact, read at every free: the scope pass snapshots the store a
+promoted record buffer was handed (`__rbw_<buf> = OpRefAlias(buf)`, `Function::entry_witness`,
+kept live as long as the buffer), guards the exit legs with `OpDistinctStore(buf, __rbw_<buf>)`,
+and the interpreter's rebind frees read the same variable (`OpFreeRefIfDistinct(v, entry)`, or
+the new `OpFreeRefUnlessEntry` where the displaced store is already on the stack).  (3) The one
+bind after an `if` pre-init is recorded as a first bind (`Variable::deferred_first_bind`, cache
+format 8) when it is the local's only assignment and a B1 adopt; both bind arms take the adopt.
+(4) `scopes::body_block_mut` finds the body through the wrapper, for every site.  (5) The
+value-record gate and emitters account for the snapshot: a phantom buffer's alias is the null
+reference.  (6) A predeclared local's first body `Set` is a first bind in native's B1 arm too
+(`Output::predeclared`), as it always was on the interpreter; guard
+`tests/scripts/164-a-chain-of-chains-adopts-its-callees-answer.loft` with its sabotage patch.
+`LOFT_TRACE_POOL=1` names the gate that declines a buffer.  `(O-Buffer)` gained the
+callee-side clause, and D-own-43 is closed (`formal/ownership.md`).
+
+*Two defects the cells found that predate this unit*, both reproducing on the pre-session
+build (a0ae1ad0):
+
+* **r23 — FIXED here.**  `scan_mk(3, i).pts[0]?` binds the call to an inline container temp
+  (`Parser::bind_inline_container`).  The block pre-registration in `scan_inner` hoists that
+  temp out of its block only when its type has no deps YET, and for a B1 callee (a promoted
+  local, a chain beside a literal exit) the parser's dep on the call's buffer is stripped
+  later, inside the block — so the temp stayed there, the block's exit free was suppressed
+  because the block's result is the temp, and one record leaked per call on both backends.
+  The hoist now asks `adopts_minted_at_bind` as well (and the hoisted null-init makes the
+  bind a `deferred_first_bind`), and `adopts_minted_at_bind` no longer reads `__ref_p2_N` as
+  a buffer name.  Under `LOFT_NO_ADOPT_FIRST_BIND=1` the leak returns with B1's own lowering.
+* **r17 — filed as loft#1550, FIXED 2026-09-17** (`silent-wrong`, both backends, on `main`):
+  `if first { a } else { h.c }` joined two borrows with different bases into
+  `Join { base: a }`, which `formal/ownership.md`'s own `γ(Join(b))` does not cover, and every
+  `Join` reader assumes an owned arm — the caller's record was freed and read back as another
+  record's bytes.  Changing the lattice regressed four guards (1257, 1257b, 1318, 1323), so the
+  rule sits at the call boundary instead: a callee whose return may hand back any of several
+  arguments (`use_analysis::returns_one_of_several_args`) answers a base-less `Join`, and
+  every bind of it copies with no runtime guard against one argument — the nullable first
+  bind included, and the interpreter's rebind through the fresh path (`D-own-45`).  Cells
+  `bytecode-comparisons/1550-two-borrow-join-cells.loft` (j1–j12, five red on both backends
+  before), guard `tests/scripts/1550-a-view-of-one-of-several-arguments-is-copied.loft` with
+  its sabotage patch, pins `tests/one_of_several_args.rs`.
+
+*Receipts.*  Guard `tests/scripts/164-adopt-buffer-reuse.loft` (26 cells) with the sabotage
+patch `tests/falsified/164-adopt-buffer-reuse.patch` (the witness and the deferred bind removed,
+the pool kept); pins `tests/adopt_buffer_reuse.rs` (the witness in the IR, the guarded exit, the
+pool reaching a wrapped body, the switch, the adopt at r22 on both backends, a value record kept,
+the census 303 → 246 interpret / 270 → 204 native, the inline container released).  B1's pins now run with B1b off, and B1's
+own census moved 108 → 98 / 106 → 101 with the deferred bind and the wrapped body.  The
+`wrap` and `native` corpora are green.  On the parse bench the `Mark` mints are 24 → 14 per two
+parses, hash `33f6d2b8`, clean under `LOFT_STRICT_STORES`, `LOFT_POISON` and the leak gate.
+
+*Measured — and the first measurement said no.*  With the pool on, the parse row was SLOWER:
++1.5 % instructions, +1.1 % cycles (`perf stat -r 5`, one emission per state, hash
+`33f6d2b8`).  The store mints it removes were paid back by the release the pool owes each
+reuse (`OpClear` → `remove_claims`, loft#1549): `owned_walk` builds its child list for every
+heap-OWNING type, also when the record holds nothing — and a `Mark` refilled after `no_mark()`
+holds nothing on most lines.  `Stores::holds_no_heap` (a runtime change, both backends) reads
+the heap-owning slots first and skips the walk when all are empty, conservatively for every
+kind it does not read.  After it, pool on against pool off on one rlib: **1 499.6 M against
+1 506.8 M instructions, 373.5 M against 377.5 M cycles** — and the exit alone moved the pool-off
+build from 1 515 M to 1 507 M.
+
+The fourteen rows (`--n 50`, best of five interleaved rounds, one core, 14/14 hashes agree).
+The runtime change first, one emission against the rlib before and after it: every row equal
+or faster, `smooth` −6.7 %, `parse` −3.2 %, `fill_circle` −2.6 %; `fill_star` and `composite`
+read +2.6 % / +1.2 % at `--n 50` and −0.7 % / −0.1 % instructions at `--n 500` (their function
+bodies are byte-identical; the short run carries loader noise on this hybrid CPU).  Then the
+pool, one rlib:
+
+| row | pool on | pool off | on / off | pool off, before the exit |
+|---|---:|---:|---:|---:|
+| hash | 108 440 | 110 080 | 0.985 | 107 700 |
+| hair | 26 440 | 27 520 | 0.961 | 26 820 |
+| smooth | 1 160 | 1 180 | 0.983 | 1 140 |
+| fronds | 153 660 | 154 500 | 0.995 | 155 520 |
+| lock | 2 659 300 | 2 755 320 | 0.965 | 2 722 340 |
+| lock_curved | 2 458 040 | 2 493 980 | 0.986 | 2 514 640 |
+| composite | 196 700 | 196 240 | 1.002 | 195 600 |
+| fill_circle | 56 860 | 58 020 | 0.980 | 59 320 |
+| fill_star | 21 480 | 21 240 | 1.011 | 21 900 |
+| wide_line | 12 280 | 12 240 | 1.003 | 12 280 |
+| **parse** | **25 360** | 25 840 | **0.981** | 26 500 |
+| render_lock | 12 973 180 | 13 068 060 | 0.993 | 12 821 880 |
+| render_marks | 5 665 660 | 5 762 140 | 0.983 | 5 612 900 |
+| resize | 85 537 320 | 86 836 960 | 0.985 | 84 812 480 |
+
+So the unit's time gain on its own row is small (−1.9 %, ≈ −4 % with the exit), as P0's
+arithmetic said a store-pair class would be; what it removes structurally is five `Mark` stores
+a parse and the three frees that could release a caller's store.
+
+### B2 unit 1 over a chain (BUILT 2026-09-17, `@FR-R-Place`'s callee clause)
+
+*The shape.*  `parse_circle` answers `no_mark()` on two exits and `Mark { … }` on one.  A
+chain exit hands the function's buffer to the callee and RENAMES it after the chain's work
+ref (`__retbuf` → `__ref_N`), so unit 1's `unpromoted_return_buffer_var` found nothing and
+the literal exit minted a store of its own on every matched line, while the chain exits
+wrote the caller's pooled buffer.  The same held for a literal exit before a chain TAIL
+(`outer2`, the scanners' `… scan_fail()`) and for a literal tail after chain exits
+(`read_uint`).
+
+*The rule.*  `Parser::chain_return_buffer_var` accepts a compiler-generated `__ref_N` buffer
+that nothing but a chain names — a `one_buffer_chain` block, or the tail call it is handed to
+(`tail_hands_on`) — and a chain exit counts as compatible in `literal_exits_into_buffer`; a
+literal tail beside chain exits takes the same buffer in `classify_reference_delivery`.  A
+chain always returns, so a literal exit never meets a value another statement put in the
+buffer.  A promoted NAMED local is never such a buffer (`pick`'s literal keeps its store —
+`164-adopt-first-bind` c3's reason).  Same switch: `LOFT_NO_LITERAL_EXIT_BUFFER=1`.
+
+*What it cost to get right.*  The first draft un-admitted every scanner on native (258 `Scan`
+mints in a two-parse run where there had been none): the chain's buffer is a PHANTOM value
+local, and once the literal wrote it, its mentions inside the converted `Object` were uses
+`local_uses_ok` did not account — so `scan_fail`'s site "consumed its record" and the
+admission fixpoint emptied.  Those mentions vanish with the block, as `retbuf_uses_ok`
+already said for a phantom that is no local; `local_uses_ok` now says it too, and the
+value-record verdicts on the bench are identical to the pre-unit build.  The value channel
+could not see this — only `tests/literal_exit_buffer.rs`'s signature pin did (confirmed by
+reverting the clause).  The chain cells also found row 6 of the B1b table.
+
+*Receipts.*  Cells `bytecode-comparisons/B2-chain-literal-exit-cells.loft` (c1–c17,
+hand-computed: the chain mid-body, at the tail, both, recursive, two levels deep; a vector
+field from a local also appended into a parameter; an omitted default; a loop local, a
+rebind, a bind inside an `if`, an append, a discarded call, a fn-ref, two live results; the
+value record in both shapes), clean on both backends under `LOFT_STRICT_STORES`,
+`LOFT_POISON`, `LOFT_POISON_CLAIM` and the leak gate, pooled and unpooled and under the
+switch; every other @PLN164 cell corpus and the @PLN157 § V-a value-record corpora likewise.
+Guard `tests/scripts/164-a-literal-exit-writes-its-chains-buffer.loft` (INERT at 49040d27 —
+an optimisation), pins in `tests/literal_exit_buffer.rs`; the B1b census pins moved with it
+(pooled 246 → 197 interpret, 204 → 174 native).  `wrap` and `native` green.
+
+*Measured* (the pre-unit generator against this one, both emissions compiled against ONE
+rlib, since the unit changes generation only; hash `33f6d2b8`):
+
+| | before | after | |
+|---|---:|---:|---:|
+| `Mark` mints, `--n 2` run (lean tier and `--native` alike) | 21 | 12 | −9 |
+| parse row, instructions (`perf stat -r 3`, `--n 5000`, whole process) | 1 875.3 M | 1 849.8 M | −1.4 % |
+| parse row, cycles | 461.4 M | 450.9 M | −2.3 % |
+| parse row, ns/op (`--n 5000`) | 24 066 | 23 471 | −2.5 % |
+
+The fourteen rows (`--n 50`, best of five and of seven interleaved rounds, one core): `parse`
+−3.3 % in both runs, every other row within noise — `lock` read +3.4 % in the first run and
+−0.8 % in the second, on function bodies that differ only in a source-path comment.
+
+### The wilderness (BUILT 2026-09-17, `@FR-H-Wilderness`, default ON)
+
+*Re-measured first.*  After the units above, the parse row's profile (lean tier, `perf record`
+at 9 999 Hz over `--n 60000`, 14 452 samples) put the allocator at ≈ 12 % — `claim` 3.2 %,
+`fl_insert_node` 1.5 %, `set_free_header` 1.4 %, `claim_block` 1.4 %, `fl_delete_node` 1.4 %,
+`finish_claim` 1.2 %, `fl_insert` and `fl_balance` 0.7 % each — twice the 6 % this item was
+priced at.  The single largest function, `find_option` at 12 %, is the library's per-option
+scan of the whole line, already fully inlined with only byte compares and checked adds left:
+not a compiler lever.  An env-gated counter over the claim paths (removed after) said where
+the tree work comes from, per 2^20 deletes: 9.9 M bump claims, 4.2 M tree claims of which
+**2.7 M took the TAIL block** (a delete, a split and a re-insert to move one number), 3.9 M
+first claims of a fresh store (`init` left its one block untracked, so each took the chain
+walk — one block long), and 0.45 M of the 1.05 M deletes merged INTO the tail and re-inserted it.
+
+*The rule.*  The free block that ends a store is held beside the tree (`Store::wild`), and the
+tree's three entry points treat it as the node it would have been: `fl_insert` of a block
+ending the store records it, `fl_remove` clears it, and `fl_take_ge` weighs it against the
+smallest fitting node by the tree's own `(size, position)` order — the tail has the highest
+position, so a node of equal size precedes it.  Every caller keeps its code, and the block a
+claim takes is the one the tree alone would take; a block below the tree's minimum stays
+untracked as before.  `init` records the whole fresh store as the wilderness, so a first claim
+no longer walks.  `bump_tail` is the no-wilderness path only.  Switch
+`LOFT_NO_WILDERNESS=1`, read per store at construction.
+
+*Receipts.*  `store::tests::the_wilderness_takes_the_blocks_the_tree_takes`: 24 seeds × 600
+claims, deletes and in-place resizes on a store with a wilderness and one without, the same
+position from every claim and resize and the same block chain after every step, through
+growth, backward merges and deletes into the tail, with the wilderness invariant checked on
+its own (this crate's test profile has no debug assertions).  Falsified by a wilderness-FIRST
+take (the plausible wrong policy): seed 1, step 15.  `bump_tail`'s layout test runs both forms.
+
+*Measured* (one binary, the switch per run, `perf stat -r 3` × 3 interleaved, `--n 5000`,
+hash `33f6d2b8`):
+
+| | tail in the tree | wilderness | |
+|---|---:|---:|---:|
+| instructions (whole process) | 1 877.1 M | 1 775.3 M | −5.4 % |
+| cycles | 461.2 M | 432.0 M | −6.3 % |
+| parse row, ns/op | 24 108 | 22 658 | −6.0 % |
+
+The fourteen rows, one binary with the switch per arm (`--n 50`, best of five interleaved
+rounds, one core, 14/14 hashes agree): `parse` −6.3 %, `fronds` −2.6 %, `hash`, `lock` and
+`hair` −1.0 to −1.3 %, `smooth` −1.6 %; `composite`, `wide_line`, `lock_curved` and
+`render_marks` read +0.1 to +0.4 %, inside this box's run-to-run spread; the rest equal.
+One lib probe moved with it: `journal::freelist_repurposes_a_freed_blocks_body` showed a
+freed record's body overwritten by tree links, and a lone record freed into the tail now
+keeps its bytes until reclaimed — the probe frees an interior record, which is still a node,
+and its comment says which is which (neither is a window to rely on).  `wrap`, `native`, the
+`store` subject (321 tests), the lib tests on both forms and every @PLN164 cell corpus under
+the store falsifiers are green.
+
+### The queue after B1b
+
+1. ~~**The `Mark` class** and **B1 behind a null-init**~~ — built above, and the literal exits
+   of the chain-renamed parsers with it (§ B2 unit 1 over a chain).  The 12 `Mark` mints left
+   in a two-parse run are the pool's own: one per pooled call site per activation (five
+   parser buffers), which only the activation arena (A1/A2) removes.
+2. ~~**loft#1550** (r17)~~ — fixed above, at the call boundary.
+3. ~~**The free tree under a live store**~~ — the wilderness, above.
+4. ~~**Text per character**~~ — measured and dropped (2026-09-17): `#[inline]` on
+   `ops::text_character` and `OpLengthCharacter`, the two calls `split` makes per character,
+   read −1.0 % instructions and +1.1 % cycles on the parse row (three interleaved
+   `perf stat -r 3` pairs, `--n 5000`) and mixed on the other rows.  Not a gain.
+5. ~~**A1/A2**~~ — superseded, below.
+
+## The elimination queue (2026-09-17, owner ruling C125)
+
+*The ruling.*  Tier 1 kept every temporary and moved it into a shared store, which is what
+raised E1: once two buffers share a `store_nr`, the 287 store-identity tests in a parse
+emission stop meaning "same object".  The owner's answer was that this is the wrong question:
+*"the optimized version can eliminate the object and thus make this whole question moot"*, and
+*"if we make our model more complex it will be hard to reason about and thus impossible to
+solve, when individual objects can just be removed"* (`DESIGN_DECISIONS.md` C125).  The plan's
+own record agrees: every unit that paid — the value record, C4, C6, B2's placement, the chain
+unit — removed an object or its copy, and B2 already showed that a temporary inside its owner's
+store needs a compile-time path fact, not a wider identity.
+
+*What is left to remove* (stores minted per parse on HEAD, `LOFT_TRACE_DB=1`, halved from a
+two-parse run):
+
+| stores | what | how it goes |
+|---:|---|---|
+| 6 | `Mark` buffers (one per pooled call site per activation) | **E-1** — C5's tuple with a view of `sc.ops[last].pts`, on by default |
+| 9 | `vector<Pt>` locals (`pc_pts`, `pp_pts`, `pl_pts`, …), each deep-copied into `Op.pts` AND `Mark.pts` | **E-2** — with `Mark.pts` a view the local has ONE consumer: element-first for a literal, the vector `place_result` for a call result (`smooth_pts`) |
+| 6 | `vector<float>` widths, one consumer (`Op.widths`) | **E-2**, the same units |
+| 4.5 | `PointList` from `read_points` — scratch of four dynamically sized vectors, only read | **E-3** — a REUSED store per call site (the pool); find the gate that declines it today |
+| 2 | `Sketch` | real data |
+| 3 + 1 | `Paint`, `FrondSpec`, `vector<integer>`, `Row` | not classified; small |
+
+About 21 of 31, each with the deep copy it carries — which costs more than its store.  Priced
+from the census at P0's ≈ 60 ns a pair, not from a patch: **each unit is priced by hand patch
+before it is built**, and re-measured with `perf` on the release binary after.
+
+1. ~~**E-1 — C5 on by default.**~~ Done 2026-09-17 (§ E-1 below), with the forward unit it
+   turned out to need.  It measured a wash alone (§ C5 *Step 2*), and it is parked for
+   that reason; what changed is its role — it is what makes every points local single-consumer.
+   Owes C5's step 2 debts first (per-PATH mention counting, the wider source resolution) and
+   the corpus under the switch on both backends.
+2. **E-2 — the single-consumer vector built in its destination.**  Element-first (@PLN157
+   § V-z) already does this for a local consumed by one append; un-park the vector
+   `place_result` for a call result.
+3. **E-3 — `PointList` reused.**  `LOFT_TRACE_POOL=1` names the declining gate.
+
+E1 returns only if a row shows a class of temporaries that can be neither removed nor reused
+and costs more than a few percent, measured with `perf`.
+
+### E-1, first measurement (2026-09-17)
+
+*Priced by switch, not by patch* — C5 exists, so the price is `LOFT_VIEW_FIELD=1` on the same
+library.  **The first read moved nothing:** the census was identical with the unit armed,
+although `parse_poly` and `parse_lock` were admitted as tuples.  The caller still minted their
+`Mark` buffers, because a dead buffer is one whose every mention the value form drops, and the
+pool's release-on-reuse (`OpClear`, loft#1549) was not in that list — so a HEAP-OWNING buffer
+could never be dead.  Fixed: `hoist::dead_buffers` counts `OpClear` as dropped and
+`OpClearEmitter` emits it as nothing, as the mint already was.  The default emission is
+byte-identical (pinned by comparing the bench's emission before and after); cell e1 of
+`tests/scripts/164-view-field.loft` (an admitted callee called in a loop, hand-computed 1030)
+and `view_field::a_pooled_caller_mints_nothing_for_a_tuple` pin it, and the pin fails with the
+clause removed.
+
+*Then:* `Mark` 12 → 9 in a two-parse run, the parse row −1.9 % instructions (1 771.5 M →
+1 738.0 M, three interleaved `perf stat -r 3` pairs at `--n 5000`), cycles flat within this
+box's current spread (the same binary read 433–451 M).  The three parsers still declined, and
+each decline is now a named shape:
+
+| parser | decline | what it wants |
+|---|---|---|
+| `parse_circle` | `+0 has no resolvable source` | the points local is appended on TWO paths (`if Stroked { sc.ops += [Op { pts: pc_pts, … }] } else { … same … }`); the view is "the element just appended" on either path, which `leaf_source` does not express (C5's per-path debt) |
+| `parse_line_cmd` | `the body disturbs the place it views` | the append stands inside the `while` loop with its `return` right after it; the disturbance walk reads the loop, not the path |
+| `parse_fronds` | `+0 has no resolvable source` | correct: `pf_all` gathers the points of eight ops and lives nowhere else — this one is E-2's (build it inside the returned record) |
+
+Per parse the bench runs each of these once, beside three `Poly`s that are already views.
+
+### E-1, the per-path proof (2026-09-17)
+
+*The matrix came first, and it found the unit wrong while opt-in.*  Nineteen shapes, each with
+the record form's value hand-computed (`tests/scripts/164-view-field.loft` § per-path cells),
+run armed on the commit above: **four answered wrong with nothing to say so.**  `p4`
+(`if c { sc.ops += [Op { opts: p }] }; Mark { mpts: p }`) read 0 points for 3 on the path that
+did not append, and `p7`/`p7c`/`p7d` read the element's copy where the local had grown, been
+rebound or been written after it.  The per-exit test asked "is the element built EARLIER in the
+exit's statement list", and a statement holding the append under an `if` counts as a build; it
+never asked about the local after its copy at all.  None of this reached a consumer — the unit
+is opt-in — but it is exactly the class the gate exists to exclude.
+
+*The rule, stated once.*  The view answers the element's field; the record form answers the
+local at the exit.  They agree exactly when, on EVERY path to the exit, the last change to the
+container was the append of an element whose field took the local's copy, and neither the
+local (nor any store it views, nor any view of it), nor that field, nor the container changed
+after the copy.  `hoist::fresh_leaf` proves it with a forward must-walk over the structured IR
+(`FreshWalk`: an `if` joins its arms, a loop runs to its fixpoint, `break`/`continue`/`return`
+carry their state to their targets).  It replaces `body_keeps_places` and the per-exit list
+test whole; the other callee spelling (a source that is itself a parameter's place) is gone
+with it, since no shape of it was ever admitted.  The gate stores the answer per exit
+(`ViewPlan::leaves`) and the emitter writes what is stored — before, the emitter re-derived it
+without the disturbance map the gate had used.
+
+*The join.*  Where the arms append through different element temps (`parse_circle`'s shape) no
+temp names the place on both paths, and the container's LAST element does: the leaf is
+`get_vector(<container>, <stride>, -1)` plus the field offset, the stride derived from the
+mint's own `(parent_tp, fld)` as the runtime derives it.
+
+*Measured on the matrix:* eight admissions (the two-arm append, the nested arms, the append and
+`return` inside a loop, earlier iterations appending and continuing, an arm that returns an
+empty mark) and eleven declines, clean on both backends and under `LOFT_STRICT_STORES`,
+`LOFT_POISON`, `LOFT_POISON_CLAIM` and the leak gate.  Two sabotages are caught: the join reading
+the first element (`p1`: 3,9 for 4,18) and the finish ignoring whether the copy still holds
+(`p17`, a local grown inside the literal: 3,9 for 4,109).  The default emission is unchanged.
+
+*Measured on the library:* `parse_circle` now proves a joined leaf and `parse_line_cmd` an
+element leaf — and both still decline, one step later: their tail `no_mark()` is not a value
+leaf, because `no_mark` is declined, because `parse_fronds` — whose `pf_all` lives nowhere but
+the record (E-2's shape) — forwards `no_mark()`'s record through its own buffer.  So the next
+question is the forwarding site, not the leaf: a record-form function that returns an admitted
+callee's result.
+
+### E-1, the forward (2026-09-17)
+
+*Priced by source patch first.*  In the scratch bench clone, `parse_fronds`' two `no_mark()`
+calls were replaced by the literal they return — the same program — which admitted `no_mark`,
+`parse_circle` and `parse_line_cmd` under `LOFT_VIEW_FIELD=1`.  Three binaries from one rlib,
+hash `33f6d2b8` on all three, `perf stat -r 5` at `--n 5000`, three interleaved rounds:
+
+| variant | instructions | cycles |
+|---|---:|---:|
+| default | 1 767.1 M | 428.8–431.1 M |
+| `LOFT_VIEW_FIELD=1` (`parse_poly`, `parse_lock`) | 1 731.1 M (−2.0 %) | 416.4–416.9 M (−3.0 %) |
+| the same, `parse_fronds` patched (+ `parse_circle`, `parse_line_cmd`, `no_mark`) | 1 693.8 M (−4.1 %) | 410.0–411.2 M (−4.5 %) |
+
+`parse_circle` runs on almost every line and misses on most, so its pooled `Mark` buffer was
+written and released per LINE, not per parse — which is where the step comes from.
+
+*The mechanism* (`@FR-R-ValueRecord`'s new FORWARD clause, `LOFT_FORWARD_TUPLE`, opt-in beside
+`LOFT_VIEW_FIELD`).  `return g(…)` in a function that keeps its record lowers to
+`b = g(…, b)` inside a `one_buffer_chain`: the callee fills the buffer it is handed.
+`hoist::forward_site` recognises that shape — an admitted `g`, its buffer argument the very
+variable the answer is bound to, the same record type — and it is the one record-consuming
+position the site gate now admits.  The emitter wraps the call:
+`{ let __vt = n_g(cell, …); let mut __vd = b; <mint b if absent>; <write every field>; __vd }`,
+the mint being the callee's own allocate-or-reuse guard and the field writes the ones its exit
+makes — so the chain's copy-or-adopt split around the call sees exactly the store it saw
+before.  The writes have ONE home, `Output::write_tuple_fields`, which the copy FROM a value
+local now uses too; it gained the view part (the field emptied, then `vector_add` from the
+view), which the copy had no spelling for.  `dead_buffers` reads the same site list, since a
+forward's buffer argument is a use: counted as dropped, its mint and frees would vanish and the
+store the site mints would leak.
+
+*The cells* (`tests/scripts/164-forward-tuple.loft`, eight, hand-computed): a null view, a
+view (and that the record is a COPY — the container grown and written afterwards), a joined
+view, a scalar-only callee, a buffer handed in ABSENT (only an adopting first bind does that,
+and it is the mint branch's only reach), the forwarder in a loop cycling every exit over one
+reused buffer, two levels of forwarding, and the admitted callees called directly.  Both
+backends and every store falsifier clean; pins in `tests/view_field.rs`.  Two sabotages,
+measured: the mint guard removed stops the run at `q5` ("a NULL DbRef reached a store
+accessor"); the view copy removed moves five cells (`q6`: 513,509 for 1025,1021).
+
+### E-1, on by default (2026-09-17)
+
+Both units flipped to default-ON (`LOFT_NO_VIEW_FIELD`, `LOFT_NO_FORWARD_TUPLE` are the
+opt-outs) once the evidence the queue asked for was in: the native corpus with both armed —
+1372 scripts, 69 docs, 36 feature examples, no compile or run failure (the one skip,
+`75-native-stub`, refuses by design on the default build too).  The flip changes the emission
+of 15 of the 1594 corpus files against f547cf1c, every one a record-returning function, a
+forward or a chain; all 15 run clean on native under `LOFT_STRICT_STORES`, `LOFT_POISON`,
+`LOFT_POISON_CLAIM` and the leak check.  On the drawing bench only the seven parser functions
+change, and the parse row reads 22.4 k ns/op — 3.16× its Rust reference, from 3.39×.
+One of the 15 is a second spelling of the forward the unit was built for: the CALL arm of a
+value branch whose other arm is a record (`157-value-tail.loft` t5) hands the join's buffer to
+the call and binds it back, so `half5` — declined before, with the `pt5` it forwards — is
+admitted and the arm writes its tuple (the pins in `tests/value_record.rs` moved with it,
+values unchanged on both backends).  The full suite on this box reached 5070 of 5082 before
+the harness stopped it for memory, with that pin and `poison_claim`'s load-bound census as the
+only reds; the gate is run on GitHub instead (CI_BUDGET.md § When the local gate is
+unreliable).
+
 ## The three tiers — the invariant each rests on
 
 Each tier is a situation the compiler PROVES (C120: no rewrite may change a value after a
@@ -232,7 +1011,8 @@ fault; only situations we know), switchable and falsifiable in the @PLN157 style
 lands on BOTH backends where it changes the IR (the interpreter is the values oracle, and
 `O-NoDiverge` says the two translate the same `deps` facts).
 
-**Tier 1 — the activation arena.**  *Invariant:* a hidden return buffer (`__ref_N`, a
+**Tier 1 — the activation arena.  SUPERSEDED 2026-09-17 (C125, § The elimination queue); kept
+as the record of what was considered.**  *Invariant:* a hidden return buffer (`__ref_N`, a
 `__ref_p2_N` discharge buffer, a literal's temp) never outlives the activation that minted
 it (`O-Buffer`: the buffer is the caller's store, freed at frame exit; a result that must
 survive is adopted, copied or moved OUT of it).  So every buffer of an activation may be a
@@ -1146,6 +1926,9 @@ mark cannot be re-drawn).
 
 ## Edge cases to inspect before a phase is cut
 
+**E1–E6, E18 and E19 are the arena's own cases and lapse with tier 1 (C125, 2026-09-17); E7–E17
+and E20 stand — they are about adopting, moving and building in place.**
+
 Numbered for the review.  **Verdict** is the proposal; the owner confirms or moves it.
 Every row is first judged on NATURALNESS: `natural` means a programmer writes it without
 knowing the store model and the mechanism owes it the efficient code; `contrived` means
@@ -1188,11 +1971,22 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | Item | Source | Verify | Status |
 |---|---|---|---|
 | **P0** — probe first: count the store-identity sites; price tier 1; the hand patch judged not worth building by the arithmetic; the leak-gate extension (E19) deferred to A1's shape | § P0 | 287 identity sites in one emission; ~88 mints per parse at ≈ 60 ns a pair: tier 1's ceiling ≈ 10 % of the row | Done 2026-09-15 |
-| **P0b** — attribute the runtime's 63 % of the release row to loft lines: a frame-pointer rlib build, `perf` with call chains, an inclusive table per loft function with each family charged to a line | § Re-profiled *The correction* | the allocator, copy and append families each named with the line and the phase that owns it; the store-pair family confirmed at 9 % | **Open — next** (2026-09-16) |
-| **A1** — arena for one activation's own buffers (`__ref_N`, `__ref_p2_N`, literal temps), mark/release at every exit | § Tier 1 | `tests/scripts/164-arena-activation.loft` both backends; plan 51's ten graduated guards under the switch; `emission_audit.py` R-State per record | Blocked on P0b — the store-pair family is 9 % of the release row; whether the free-tree family (12 %) charges to activation temporaries is what decides the shape |
-| **A2** — the caller-threaded arena, reset per loop iteration | § Tier 1 | parse row −20 %; E2/E3/E4 cells | Blocked on A1 |
+| **P0b** — attribute the runtime's share of the release row to loft lines: a frame-pointer rlib build, `perf` with call chains, each family charged to a line | § P0b | `scripts/native_attrib.py`; runtime 72 %, store mint/free 20 % (half at function entry), `:704` 12.5 %; A0's lever measured by hand −9–10 % | Done 2026-09-17 |
+| **A0** — the buffer minted at its first use on the path that runs, not at function entry | § A0 | 14 cells both backends, both switch states, under the falsifiers; switch-off byte-identical; the parse row −7 % after row 11 | Built 2026-09-17, default ON (`LOFT_NO_LAZY_BUFFER`) |
+| **C6** — a nested record literal built inside the element it is a field of (`Op { paint: Paint { … } }`) | § C6 | 7 cells both backends, both switch states, under the falsifiers; switch-off byte-identical; the parse row −6–7 %; loft#1548 found and fixed on the way | Built 2026-09-17, default ON (`LOFT_NO_NESTED_IN_PLACE`) |
+| **Runtime pass** — what the release profile named once item 4 proved not to be a move: the write check inlined, the no-heap claims walk skipped, a fresh store initialised once | § The runtime under the row | `perf stat` per change; the fourteen-row same-moment A/B (pre-session rlib vs this one, one emission): every row equal or faster, 14/14 hashes; an accessor reorder measured and dropped (pixel rows +15–38 %) | Shipped 2026-09-17 — the parse row 28.3–28.5 k → 25.0–25.3 k ns/op, 3.56× its reference |
+| **loft#1549** — a reused record buffer releases what it held (`(H-ClearRelease)`'s record clause, D-heap-12) | § The runtime under the row | 12 cells both backends under every falsifier and `LOFT_NO_LAZY_BUFFER`; resident memory flat over 1 000 000 refills; guard falsified against 04cc50b1 with a patch receipt; pins `tests/pooled_buffer_release.rs` | Fixed 2026-09-17 (`fixed-pending-merge`) |
+| **A1** — arena for one activation's own buffers (`__ref_N`, `__ref_p2_N`, literal temps), mark/release at every exit | § Tier 1 | — | **Superseded 2026-09-17 (C125)** — the temporaries are removed instead (§ The elimination queue); the free-tree family it waited on is the wilderness |
+| **A2** — the caller-threaded arena, reset per loop iteration | § Tier 1 | — | **Superseded 2026-09-17 (C125)** |
+| **loft#1550** — a return that may hand back one of several arguments is copied at every bind (D-own-45) | § B1b | cells j1–j12 both backends (five red before); guard with a patch receipt; pins `tests/one_of_several_args.rs` | Fixed 2026-09-17 (`fixed-pending-merge`) |
+| **B2 unit 1 over a chain** — a literal exit writes the buffer a chain renamed (`parse_circle`'s shape) | § B2 unit 1 over a chain | cells c1–c17 both backends, pooled and unpooled, under every falsifier; the value-record verdicts unchanged; pins `tests/literal_exit_buffer.rs`; a native chain-of-chains use-after-free found and fixed on the way | Built 2026-09-17 (`LOFT_NO_LITERAL_EXIT_BUFFER`) — `Mark` mints 21 → 12, the parse row −2.5 % |
+| **The wilderness** — the store's tail free block held beside the free tree (`@FR-H-Wilderness`) | § The wilderness | a seeded side-by-side store test (same positions, same chain); the store subject (321), wrap, native, lib tests on both forms; the fourteen-row same-binary A/B | Built 2026-09-17, default ON (`LOFT_NO_WILDERNESS`) — the parse row −6.3 %, `fronds` −2.6 % |
+| **Text per character** — `#[inline]` on the two per-character runtime calls | § The queue after B1b | `perf stat`, three interleaved pairs | Measured and DROPPED 2026-09-17 (−1.0 % instructions, +1.1 % cycles) |
+| **E-1** — C5 on by default: `Mark` as a tuple with a view | § The elimination queue | C5's step 2 debts; the corpus under the switch, both backends; a hand patch first | In progress — the dead-buffer release fixed (`Mark` 12 → 9 armed, −1.9 % instructions); the per-path source and the loop-contained append are next (§ E-1, first measurement) |
+| **E-2** — a single-consumer vector built in its destination (element-first; the vector `place_result`) | § The elimination queue | cells in the @PLN157 shape; a hand patch first | After E-1 |
+| **E-3** — `PointList` reused per call site | § The elimination queue | `LOFT_TRACE_POOL=1` names the gate | After E-1 |
 | **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |
-| **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state) | § B1 | c6 under the pool without `minted_pairs` — the interpreter's rebind free must first match native's `_rb_w_` guard | Blocked on that divergence |
+| **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state), and B1 behind an `if` pre-init | § B1b | 23 cells both backends, both switch states, under every falsifier; the entry witness closes D-own-43 and the two other frees that held its belief; the body behind a hoisted result reached; `wrap` + `native` green; parse bench `Mark` mints 24 → 14 per two parses | Built 2026-09-17, default ON (`LOFT_NO_ADOPT_BUFFER_REUSE`) |
 | **B2** — the result's buffer claimed in its destination's store, the field taking it by relocation at the last use (`R-Place`, `R-MoveLast`) | § B2 | cells b1–b15 both backends under the falsifiers; the census 184 → 50; `parse_poly`'s `paint: pp_paint` emits `OpMoveRecord` and `read_paint`'s buffer is a record in the scene's store; the parse row a wash (`perf stat`) | Shipped 2026-09-16 |
 | **C1** — element overwrite from a literal in place (`R-InPlaceLiteral`) | § C1 | step 1 (the STAGING clause, a both-backend silent-wrong on the shipped FIELD road) and step 2 (the element receiver): 25 cells both backends under every falsifier, four declines pinned, the `acc_pts` census 3 → 2 | Shipped 2026-09-16 |
 | **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § C2 | the 11-cell oracle (today's answers, which C2 may not move); the aliasing decline; `(O-Buffer)`'s new clause | Shipped 2026-09-16 — a pure-IR rewrite, the buffer variable re-pointed at the destination; ZERO admitted sites in the parse bench (the emission is byte-identical under the switch) and none in the 15-file consumer corpus, so the gain is structural |
@@ -1222,24 +2016,26 @@ the pins in `tests/<unit>.rs`, `scripts/test_subjects.sh` extended — the @PLN1
    row's points class actually sits.
 5. ~~**C5 is next**~~ — steps 1 and 2 built opt-in; the row measured a wash and the `Mark`
    class under 2 %, so step 3 and the vector `place_result` are PARKED (§ C5 *Step 2*).
-6. **P0b** — the attribution on a frame-pointer rlib build (§ Re-profiled *The correction*):
-   the runtime is 63 % of the release row and no line has been charged with it yet.
-7. **Then A1/A2 or the remaining copy sites, whichever the attribution names** — A1 as a pooled
-   store or a release-to-mark arena if the store-pair (9 %) and free-tree (12 %) families charge
-   to activation temporaries; the copy sites if `copy_claims` / `remove_claims_mode` charge to a
-   bind or an assignment.  **B1b** beside them whenever D-own-43 closes (the interpreter's rebind
-   guard).
-8. Re-measure the 14-row bench after each phase (`compare.py`, 14/14 hashes), and the parse
+6. ~~**P0b**~~ — done (§ P0b): the store family is 20 % of the release row, half of it minted
+   at function entry.
+7. **@PLN157 row 11 (the transitive-leaf prelude), then A0, then C6** — § P0b *The queue after
+   P0b*.  A1/A2 are re-priced after A0 against the body half of the store family.  **B1b**
+   beside them whenever D-own-43 closes (the interpreter's rebind guard).
+8. ~~A1/A2~~ — superseded by the owner's ruling C125 (2026-09-17): § The elimination queue is
+   the plan's remaining order (E-1, E-2, E-3).
+9. Re-measure the 14-row bench after each phase (`compare.py`, 14/14 hashes), and the parse
    row's profile with `perf` on the release binary — never with a count.
 
 ## Open design questions
 
-1. **E1 — what is an object's identity once buffers share a store?**  `(store_nr, rec)`
+1. **E1 — WITHDRAWN (owner, 2026-09-17, C125).**  The question exists only if temporaries are
+   kept and co-located; the plan removes them instead, and the store model stays *one store is
+   one object*.  As asked: *what is an object's identity once buffers share a store?*  `(store_nr, rec)`
    is the proposal; it touches `free_displaced`, `OpDistinctStore`, the § V-af witness
    and the audit.  Or: keep one store per buffer and make the STORE cheap (a pooled
    `Store` with no file handle, no budget row) — a smaller change that keeps identity as
    it is and takes less of the fifth.  The owner picks; P0 measures both.
-2. **Is the arena a parse-time IR fact (both backends) or an emission fact?**  The
+2. **(Moot with E1.)  Is the arena a parse-time IR fact (both backends) or an emission fact?**  The
    buffers are IR (`OpDatabase(__ref_N)`), so tier 1 is IR-level unless the interpreter
    keeps stores and only native pools them — which `O-NoDiverge` allows for a lifecycle
    detail with no value, but the leak gate must then read both.

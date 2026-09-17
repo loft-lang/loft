@@ -228,6 +228,23 @@ only as strong as the rules above it, not only as strong as its oracle.
   found this, and the shared front end needs its own oracle rather than a differential one.
   Related: the reference-route discipline in [DEBUG.md](../DEBUG.md).
 
+### D-op-10 — CLOSED (2026-09-17, loft#1548): an appended record literal minted its element before its field expressions ran
+
+- **Violates:** `(E-Asgn-Compound)` — *step 3 reduces the right-hand side before step 4
+  applies the operator*.  For `c += [S { … }]` the right-hand side is the literal, so every
+  field expression runs before the append.
+- **Where:** the element road of `Parser::new_record` (`parser/vectors.rs`) emitted
+  `_elm = OpNewRecord(c, …)` first and each field write, with its expression, after it.
+- **Symptom:** a field expression that grows `c` claimed the slot the element already held,
+  and one element's writes landed on the other's — `s.qs += [Q { a: i, b: g(s) }]` read `0`
+  for `24` on both backends, silently; a read of `len(c)` inside the literal saw the length
+  after the mint.
+- **Closed at:** `Parser::stage_append_fields` — when a field value reads the container's
+  root, every scalar or text value is evaluated into a temp and every nested construction
+  runs, in source order, ahead of the mint.  A record or collection VIEW keeps its place (a
+  view taken before the mint could name the array the append moves).  Switch
+  `LOFT_NO_APPEND_STAGING`; guard `tests/scripts/1548-an-appended-literal-reads-its-own-container.loft`.
+
 ### D-op-5 — CLOSED (2026-09-02, opened 2026-08-25): two spellings of a following null-check still reported
 
 - **Violates:** `(E-Report)` — *"a GUARDED site (the operand of `??` / **a following

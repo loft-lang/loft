@@ -779,6 +779,9 @@ pub struct Output<'a> {
     /// join buffer every use of which the value form drops, so its mint and its frees
     /// emit as nothing.
     pub dead_buffers: HashSet<u16>,
+    /// @PLN164 E-1 — the current function's FORWARDS (`hoist::forward_sites`): the address
+    /// of an admitted call's argument list → the buffer the site writes the tuple into.
+    pub forward_sites: HashMap<usize, u16>,
     /// @PLN157 § V-z (`@FR-R-ElemFirst`) — the element-first pairings of the current
     /// function ([`hoist::element_first`]): each paired temp is BUILT inside the
     /// appended element instead of its own store.
@@ -870,6 +873,8 @@ pub struct Output<'a> {
     nn_cache: HashMap<u32, std::rc::Rc<HashMap<u16, bool>>>,
     /// N4 (@PLN157): per-definition verdict of [`Output::is_elidable_leaf`].
     leaf_cache: HashMap<u32, bool>,
+    /// Per-definition verdict of [`Output::is_frameless_chain`].
+    chain_cache: HashMap<u32, bool>,
     /// `LOFT_NATIVE_CHECKPOINTS=count|time` — emit a per-OPERATOR checkpoint into the
     /// generated Rust, so a native run attributes its own time without `perf`, without
     /// symbols, and identically under wasm.  This is a SUPPLEMENTARY instrument: the
@@ -897,6 +902,11 @@ pub struct Output<'a> {
     /// before N4.  The bisect switch for a diagnostic that lost its
     /// innermost frame, same contract as `LOFT_NO_VECTOR_HOIST`.
     pub leaf_elide_disabled: bool,
+    /// `LOFT_NO_LEAF_CHAIN=1` — in the lean tier, elide the prelude on true
+    /// leaves only, not on a function whose whole call tree is frameless
+    /// (`@FR-R-LeafChain`).  The bisect step one finer than
+    /// `LOFT_NO_LEAF_PRELUDE`.
+    pub leaf_chain_disabled: bool,
     /// The `--lean` tier (@PLN157): the frame push demotes to the depth-only
     /// `cr_call_push_lean`.  Keyed on the FLAG, not on `emit_live`: a default
     /// `--html` build also has `emit_live == false` (debug is opt-in there)
@@ -1785,6 +1795,7 @@ impl<'a> Output<'a> {
             value_leaves: hoist::ValueLeaves::default(),
             value_phantom: None,
             dead_buffers: HashSet::new(),
+            forward_sites: HashMap::new(),
             elem_first: hoist::ElemFirstMap::default(),
             element_first_disabled: std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"),
             loop_buffers: HashSet::new(),
@@ -1807,11 +1818,13 @@ impl<'a> Output<'a> {
             release_pass_probe: std::env::var("LOFT_RELEASE_PASS_PROBE").is_ok_and(|v| v != "0"),
             nn_cache: HashMap::new(),
             leaf_cache: HashMap::new(),
+            chain_cache: HashMap::new(),
             checkpoints: CkptMode::from_env(),
             ckpt_filter: ckpt_filter_from_env(),
             ckpt_sites: Vec::new(),
             ckpt_cur_line: 0,
             leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
+            leaf_chain_disabled: std::env::var("LOFT_NO_LEAF_CHAIN").is_ok_and(|v| v != "0"),
             lean_tier: false,
             write_hoist_disabled: std::env::var("LOFT_NO_WRITE_HOIST").is_ok_and(|v| v != "0"),
             next_format_count: 0,
@@ -2048,11 +2061,14 @@ impl Output<'_> {
         self.value_leaves = hoist::ValueLeaves::default();
         self.value_phantom = None;
         self.dead_buffers.clear();
+        self.forward_sites.clear();
         if !self.value_records.fns.is_empty() {
             self.dead_buffers = hoist::dead_buffers(self.data, def_nr, &self.value_records);
             let admitted: HashSet<u32> = self.value_records.fns.keys().copied().collect();
             self.value_record_locals =
                 hoist::value_locals_in(self.data, def_nr, &admitted, &self.value_records.view_offs);
+            self.forward_sites =
+                hoist::forward_sites(self.data, def_nr, &admitted, &self.value_record_locals);
             self.value_leaves = hoist::value_leaves(self.data, def_nr, &self.value_records);
             if admitted.contains(&def_nr) {
                 let def = self.data.def(def_nr);
@@ -2814,6 +2830,62 @@ impl Output<'_> {
         format!("({}{tail})", parts.join(", "))
     }
 
+    /// @PLN164 E-1 (`@FR-R-ValueRecord`) — write the tuple `tuple` of admitted function
+    /// `d` into the record `dst`, one field at a time, as the record form's own exit writes it:
+    /// a scalar through its setter, a view part as an empty vector followed by the deep copy
+    /// of what the view names (a null view copies nothing, which is the empty literal's
+    /// value).  Each write is followed by `"; "`.  ONE home for materialising a tuple: a copy
+    /// from a value local and a forward both write through it.
+    pub(crate) fn write_tuple_fields(
+        &mut self,
+        w: &mut dyn Write,
+        d: u32,
+        dst: &Value,
+        tuple: &str,
+    ) -> std::io::Result<()> {
+        let Some(fields) = self.value_records.fields.get(&d).cloned() else {
+            return Ok(());
+        };
+        let tp = self.value_records.fns.get(&d).copied();
+        for (i, (off, rt)) in fields.iter().enumerate() {
+            let part = Value::RawExpr(format!("{tuple}.{i}"));
+            let off_v = Value::Int(i32::try_from(*off).unwrap_or(i32::MAX));
+            if hoist::is_view_part(rt) {
+                let (vec_tp, elem_tp) = tp
+                    .and_then(|t| hoist::view_field_types(self.stores, t, *off))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "the view part at +{off} of {} has no vector type",
+                            self.data.def(d).name()
+                        )
+                    });
+                let clear = Value::Call(
+                    self.data.def_nr("OpSetInt4"),
+                    vec![dst.clone(), off_v.clone(), Value::Int(0)],
+                );
+                self.output_code_inner(w, &clear)?;
+                write!(w, "; ")?;
+                let field = Value::Call(
+                    self.data.def_nr("OpGetField"),
+                    vec![dst.clone(), off_v, Value::Int(i32::from(vec_tp))],
+                );
+                let copy = Value::Call(
+                    self.data.def_nr("OpAppendVector"),
+                    vec![field, part, Value::Int(i32::from(elem_tp))],
+                );
+                self.output_code_inner(w, &copy)?;
+            } else {
+                let setter = Value::Call(
+                    self.data.def_nr(hoist::value_setter(rt)),
+                    vec![dst.clone(), off_v, part],
+                );
+                self.output_code_inner(w, &setter)?;
+            }
+            write!(w, "; ")?;
+        }
+        Ok(())
+    }
+
     /// @PLN157 § V-aa (`@FR-R-ValueRecord`) — the per-field VALUES an `Object` block
     /// writes, in field order, or `None` when the block is not the complete
     /// constant-offset write set the value path needs (then the buffer form stands).
@@ -3029,6 +3101,60 @@ impl Output<'_> {
         });
         self.leaf_cache.insert(def_nr, leaf);
         leaf
+    }
+
+    /// Is this definition's whole call tree FRAMELESS — every user function it calls,
+    /// transitively, has a loft body, none of them is on a cycle, and none calls a fn-ref,
+    /// runs `parallel` or yields?  Such a function cannot be re-entered while it runs, so
+    /// the depth cap needs no entry for it, and no fn-ref buffer can be pushed beneath it,
+    /// so its buffer guard would always drop empty.  The lean tier elides its prelude as it
+    /// does a leaf's; the named tiers keep it, because there the frame also NAMES the
+    /// function in `stack_trace()` and in a panic's frame block.
+    /// Decides `@FR-R-LeafChain`.
+    fn is_frameless_chain(&mut self, def_nr: u32) -> bool {
+        let mut on_path = HashSet::new();
+        self.frameless_chain_from(def_nr, &mut on_path)
+    }
+
+    /// Depth-first half of [`Self::is_frameless_chain`].  A callee already on the current
+    /// path closes a cycle, and every definition on that cycle — and every caller above it
+    /// — answers `false`, so each answer is final and cached.
+    fn frameless_chain_from(&mut self, def_nr: u32, on_path: &mut HashSet<u32>) -> bool {
+        if let Some(&v) = self.chain_cache.get(&def_nr) {
+            return v;
+        }
+        if !on_path.insert(def_nr) {
+            return false;
+        }
+        let data = self.data;
+        let mut callees: Vec<u32> = Vec::new();
+        let blocked = data.def(def_nr).code().any_node(&mut |v| match v {
+            Value::Call(d, _) => {
+                let callee = data.def(*d);
+                let name = callee.name();
+                let loft_bodied = matches!(callee.code(), Value::Block(_));
+                if name.starts_with("n_") && !loft_bodied {
+                    // a native user-level function: what it reaches is not visible here
+                    return true;
+                }
+                if (name.starts_with("n_") || name.starts_with("t_"))
+                    && loft_bodied
+                    && !callees.contains(d)
+                {
+                    callees.push(*d);
+                }
+                false
+            }
+            Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
+            _ => false,
+        });
+        let chain = !blocked
+            && callees
+                .into_iter()
+                .all(|d| self.frameless_chain_from(d, on_path));
+        on_path.remove(&def_nr);
+        self.chain_cache.insert(def_nr, chain);
+        chain
     }
 
     /// @PLN18 08-S2 — build the live-dispatch entry check for a user fn, or
@@ -6828,7 +6954,15 @@ extern crate loft;"
                 // The live-flip check stays — editing a leaf live is the
                 // live tier's contract.  Probed at −39 % on the hash row,
                 // −7 % on lock; `LOFT_NO_LEAF_PRELUDE=1` restores the push.
-                let leaf = !self.leaf_elide_disabled && self.is_elidable_leaf(def_nr);
+                //
+                // `@FR-R-LeafChain` widens that in the lean tier to a function whose whole
+                // call tree is frameless: there the frame carries no name, so the depth
+                // count is all it holds, and such a function cannot be re-entered.
+                let leaf = !self.leaf_elide_disabled
+                    && (self.is_elidable_leaf(def_nr)
+                        || (self.lean
+                            && !self.leaf_chain_disabled
+                            && self.is_frameless_chain(def_nr)));
                 // @PLN157 — a leaf carries no fn-ref buffer guard either: it calls no
                 // user function and no fn-ref, so it can neither push a buffer nor sit
                 // between the frame that pushed one and the frame that releases it —

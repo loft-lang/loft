@@ -766,6 +766,8 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
             captured: vr.field_bool(stores, ds::VAR_CAPTURED),
             caller_hidden_buf: vr.field_bool(stores, ds::VAR_CALLER_HIDDEN_BUF),
             view_elided: vr.field_bool(stores, ds::VAR_VIEW_ELIDED),
+            lazy_buffer: vr.field_bool(stores, ds::VAR_LAZY_BUFFER),
+            deferred_first_bind: vr.field_bool(stores, ds::VAR_DEFERRED_FIRST_BIND),
             owner_witness: vr.field_int(stores, ds::VAR_OWNER_WITNESS) as u16,
         });
     }

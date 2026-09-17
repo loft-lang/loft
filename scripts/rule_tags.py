@@ -29,6 +29,12 @@
 #                  `--issues` also asks whether an open entry's issue has closed
 #   dups           rules cited from 2+ sites — the duplication question, asked by MEANING
 #                  rather than by code shape (which is what rule_predicate_audit.py does)
+#   coverage       what share of the rules carry a code ANNOTATION and what share carry an
+#                  active GUARD, against the contract-1 FLOORS — the command a doc links to
+#                  INSTEAD of writing a position down.  A measured position is stale the
+#                  moment it is committed; a floor is not, so the floor is the only number
+#                  worth putting in prose.  Floors are MINIMUMS for the freeze, not targets
+#                  to stop at.  A REPORT: always exit 0.
 
 import collections
 import glob
@@ -44,6 +50,20 @@ FORMAL = os.environ.get("RULES_DIR", os.path.join(ROOT, "doc/claude/formal"))
 SRC = os.path.join(ROOT, "src")
 CITE_DIRS = os.environ.get("CITE_DIRS", "").split(":") if os.environ.get("CITE_DIRS") else [SRC]
 CITE_EXTS = os.environ.get("CITE_EXTS", ".rs").split(",")
+
+# `coverage`'s second tier and the contract-1 MINIMUM THRESHOLDS it reports against.  These
+# are floors, not targets: the owner's informed estimate of the least coverage that could earn
+# the `CONTRACT_VERSION` 0 -> 1 freeze, and the work goes on past them.  They are the only
+# figures worth committing to prose — a position measured today is stale tomorrow, so a doc
+# links to this command rather than restating a number that then rots in several homes at
+# once.  Both are env-overridable, and GUARD_DIRS mirrors CITE_DIRS so a vendoring project
+# points them at its own layout.  Guards cite from `.loft` as well as `.rs`.
+MIN_ANNOTATED = int(os.environ.get("RULE_MIN_ANNOTATED", "70"))
+MIN_GUARDED = int(os.environ.get("RULE_MIN_GUARDED", "40"))
+TESTS = os.path.join(ROOT, "tests")
+GUARD_DIRS = (os.environ["GUARD_DIRS"].split(":")
+              if os.environ.get("GUARD_DIRS") else [TESTS])
+GUARD_EXTS = os.environ.get("GUARD_EXTS", ".rs,.loft").split(",")
 
 # A rule is DEFINED by a rules-block line `  (Name)  prose` or a deviation header `### Name —`.
 # A RULE is defined by a line `  (Name)  prose` INSIDE A FENCED BLOCK — that is the shape the
@@ -291,16 +311,26 @@ def closed_issues(numbers):
     return out, unreachable
 
 
-def citations():
-    """{tag: [(file, line)]} for every `@Tag` in the citation dirs (default: src/*.rs)."""
+def citations_in(dirs, exts):
+    """{tag: [(file, line)]} for every `@FR-` citation under `dirs` with those `exts`.
+
+    The ONE collector.  `coverage` asks it twice with different roots rather than growing a
+    second scanner beside it — two decoders of one question disagree eventually, and here
+    they would disagree about what counts as enforcing a rule.
+    """
     out = collections.defaultdict(list)
-    for d in CITE_DIRS:
-        for ext in CITE_EXTS:
+    for d in dirs:
+        for ext in exts:
             for path in glob.glob(os.path.join(d, "**/*" + ext), recursive=True):
                 for n, line in enumerate(open(path, encoding="utf-8", errors="replace"), 1):
                     for tag in CITE.findall(line):
                         out[tag].append((os.path.relpath(path, ROOT), n))
     return out
+
+
+def citations():
+    """{tag: [(file, line)]} for every `@Tag` in the citation dirs (default: src/*.rs)."""
+    return citations_in(CITE_DIRS, CITE_EXTS)
 
 
 def main():
@@ -322,6 +352,47 @@ def main():
         for tag in sorted(rules):
             print(f"@FR-{tag:<28} {', '.join(sorted(set(rules[tag])))}")
         print(f"\n{len(rules)} defined rules")
+        return 0
+
+    if cmd == "coverage":
+        # Two tiers, because they answer different questions.  ANNOTATION says a code site
+        # claims to enforce the rule, which makes "where is this enforced?" a grep.  GUARD is
+        # the stronger one and is still a PROXY: a test citing a rule means a guard NAMES it,
+        # never that the guard would fail without it.  Say that in the output rather than let
+        # the column heading promise a property nobody measured.
+        ann = {t for t in citations_in(CITE_DIRS, CITE_EXTS) if t in rules}
+        grd = {t for t in citations_in(GUARD_DIRS, GUARD_EXTS) if t in rules}
+        total = len(rules)
+        pct = (lambda k: 100.0 * k / total if total else 0.0)
+        print(f"{total} defined rules\n")
+        for label, got, floor in (("code annotation", ann, MIN_ANNOTATED),
+                                  ("active guard", grd, MIN_GUARDED)):
+            have = pct(len(got))
+            short = max(0, int(floor * total / 100 + 0.999) - len(got))
+            mark = "floor met" if have >= floor else f"{short} rule(s) short of {floor} %"
+            print(f"  {label:<16} {len(got):>4} / {total}   {have:5.1f} %   "
+                  f"contract-1 floor {floor} %  ({mark})")
+        print(f"\n  both tiers       {len(ann & grd):>4} / {total}   {pct(len(ann & grd)):5.1f} %")
+        print(f"  neither          {len(rules.keys() - ann - grd):>4} / {total}   "
+              f"{pct(len(rules.keys() - ann - grd)):5.1f} %")
+        print("\nA guard tier counts a rule NAMED by a test, which is not the same as a test "
+              "that\nwould fail without it — read it as the weaker claim.  The floors are "
+              "contract-1 MINIMUMS,\nnot targets to stop at, and are informed estimates the "
+              "owner may move (RULE_MIN_ANNOTATED,\nRULE_MIN_GUARDED).  Crossing them is "
+              "necessary for the freeze, never sufficient —\nCOMPATIBILITY.md § The road to "
+              "contract 1.  A report, never a gate.")
+        # The denominator is EVERY defined rule, which quietly asserts that every rule could
+        # carry a guard — and not all warrant one (`performance.md`, `capabilities.md` and
+        # `concurrency.md` state how to MEASURE or what a capability IS, not what a program
+        # does).  So the shortfall above is an upper bound on the real distance.  Said here
+        # rather than left silent, because a metric that cannot reach its own floor reads
+        # identically to one that simply has not yet.
+        print("\n⚠ The share is over ALL defined rules, some of which warrant no guard at all, "
+              "so the\n  distance to the guard floor is an UPPER bound — and it overstates the "
+              "WORK besides:\n  a tail rule the existing tests already validate closes with an "
+              "ANNOTATION, not with\n  verification.  No exclusion set exists, and one is not "
+              "being sized up front: the owner\n  judges it against the progress made and the "
+              "bugs actually met (2026-09-17).")
         return 0
 
     cites = citations()
@@ -431,6 +502,11 @@ def main():
             for f, n in where:
                 problems.append(f"{f}:{n}: cites @FR-{tag}, which is not a defined rule")
     cited = sum(1 for t in cites if t in rules)
+    # Rules that are a PREFIX of another — the reason a citation matches only when the next
+    # character is not `[-A-Za-z0-9]` (§ Rule tags).  Reported here rather than written into
+    # prose: it moves with every sub-rule added, and the paragraph that carried it managed to
+    # contradict ITSELF (21 in one sentence, 23 two sentences later) before it also went stale.
+    prefixes = sum(1 for a in rules if any(b != a and b.startswith(a) for b in rules))
     n_open = sum(1 for v in devs.values() if v[1] == "OPEN")
     # This count and `registers`' are now the SAME set — both read `defined_deviations`, in all
     # three entry spellings.  They differ in the question asked, not the number: this one decides
@@ -439,6 +515,7 @@ def main():
     # closed deviations sit in the register reading OPEN.
     print(f"{len(rules)} defined rules · {cited} cited · "
           f"{sum(len(v) for v in cites.values())} citation sites · "
+          f"{prefixes} a prefix of another · "
           f"{len(devs)} deviation entries ({n_open} open; "
           f"`registers` checks the chapters' stated counts against these), "
           f"{implementing} site(s) implementing one")
