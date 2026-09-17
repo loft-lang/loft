@@ -817,12 +817,60 @@ buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17,
   and never bind one — so no generated cell produces the shape, and none of the 37 corpus files
   that declare `OpDrop` writes it.  Found only by probing the axis by hand while measuring
   `D-heap-8`'s census population.
+- **The population is WIDER than the four rows above** — measured 2026-09-17, both backends
+  byte-identical, markers around each cell.  Every one of these binds a collection a call
+  answered and releases nothing: `d = mkv() ?? []` (`M21 R1`), a TUPLE member
+  `t = (mkv(), 1)` (`M23 R1`), an ANNOTATED bind `d: vector<H> = mkv()` (`M24 R1`), a bind in
+  a LOOP body (`M13 R1 M14 R1`), a branch of calls `d = if c { mkv() } else { mkv() }`
+  (`M11 R1`), and a call that returns a local IT bound from another call (`M14 R1`).  The
+  entry's own table reads as four shapes; the axis is *any* bind of a call-answered
+  collection, which `scripts/matrix_axes.py` names as the container-provenance axis.
+- ⚠ **The KEYED neighbour is not this defect and must not be chased as one.**  `d = mkh()`
+  and a plain local `h: hash<E[k]> = []` both release nothing (`M31 R1`, `M32 R1`, both
+  backends) — but `(H-Drop-Not)` says a keyed collection's records are not released by the
+  language at all, and INTERFACES.md § *Three things a drop does NOT do* documents it as a
+  boundary.  It is by DESIGN, so no vector-side cure should reach it, and a cascade that did
+  would be a defect rather than a fix.
+- **The cure is TWO changes, and the narrow one alone is measurably wrong.**  Built and
+  measured 2026-09-17, then reverted:
+  - Teaching `scopes::drop_hook` a `Type::Vector` arm that resolves `main_vector<τ>` from the
+    element (collision-checked against the wrapper's own `vector` attribute, the
+    `vector_wrapper_is_per_element_def_not_per_spelling` hazard) DOES emit the cascade, and the
+    site is confirmed: the buffer reaches the sweep's final leg, which calls `scope_end_hook`
+    (`is_buffer` is false — the `paired_witness` leg would have emitted
+    `OpFreeRefIfDistinct(__ref_1, d)` and the emission is a plain `OpFreeRef`).  So the gate,
+    not the sweep, is what turned the collection away.
+  - On `--native` that alone fixed six of the families — and **doubled** `d = mkv(); e = d`
+    (`M5 R1 D5 D5`, the `D-heap-8` interaction this entry already predicts) and
+    `b.v = mkv()` (`M7 R1 D7 D7`), released EARLY in the nested `vector<vector<H>>`
+    (`M4 D4 R1`, the inner buffer released while the outer element holds a copy), and never
+    reached the loop bind.  `(H-Drop)`'s ⚠ makes that inadmissible: three lost hooks became
+    doubled ones.  The missing half is `(H-Drop)`'s responsibility clause — *the copy owns,
+    the source stops dropping* — which wants the buffer registered in `drop_transferred`
+    wherever its elements are copied out (`OpAppendVector` into a field, `OpCopyRecord` into
+    an element), the machinery `copy_hands_off` / `appends_to_element` already spell for
+    other shapes.  ⚠ Whether `OpAppendVector` COPIES the element records, which decides
+    whether `b.v = mkv()` holds one structure or two, was NOT established — and it decides
+    whether that cell's pre-cure `D7` is a correct single release or itself a lost hook.
+  - The two backends then DISAGREED on one IR, which is the second reason it cannot land: the
+    interpreter ran no cascade at all.  A vector-typed var loads through `OpVarVector` — the
+    4-byte record pointer `state/codegen.rs` gives vectors and keyed locals — while the
+    cascade's `self` and `OpConvBoolFromRef` want the full `DbRef` that `OpVarRef` pushes, so
+    the liveness guard read `rec == 0` and declined silently; `--native`, where a `DbRef` is a
+    `DbRef` either way, ran them.  Wrapping the subject in `OpRefAlias` does NOT fix it — the
+    argument is still loaded by `OpVarVector` (measured).
 - **Status:** OPEN — loft#1551.  Recorded rather than cured on purpose: `(H-Drop)`'s own ⚠ clause
   says a drop has no safe direction, so the cure has to be right on every path before it lands,
-  and a change that turns this lost hook into a doubled one is not progress.
-- **Removal:** the scope exit of a local bound from a call runs the element cascade, whatever
-  backs it — established at the site that decides today, once that site is measured rather than
-  guessed; the pinning cells below then go clean and leave this entry's list.
+  and a change that turns this lost hook into a doubled one is not progress.  The attempt above
+  is the evidence for that sentence rather than a counter-example to it.
+- **Removal:** the fact belongs in the TYPE, not in the gate.  The callee already retypes its
+  buffer — `n_mkv`'s `__vdb_1` loads as `ref(main_vector<H>)` under `OpVarRef` while the
+  caller's `__ref_1` for the same store keeps `vector<τ>` and loads under `OpVarVector` — so
+  the caller-side return buffer carrying the wrapper's record type is what makes the existing
+  `Reference` arm fire, both backends agree, and no new spelling is added at the 148-site
+  predicate's expense.  Then the hand-off half above, so a buffer whose elements were copied
+  out stops dropping.  The pinning cells `p_v5`–`p_v7` go clean and leave this entry's list
+  only when BOTH halves are in and `p_v8`/`p_v9` still read one release each.
 
 ### D-heap-14 — OPEN (2026-09-17): a hand-over written under a branch leaks the source on the path that does not run
 
