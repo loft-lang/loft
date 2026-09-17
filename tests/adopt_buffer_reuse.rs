@@ -176,6 +176,36 @@ fn a_bind_after_an_if_pre_init_adopts() {
 }
 
 #[test]
+fn an_inline_container_over_an_adopting_callee_is_released() {
+    // r23/r27: `f(…).pts[1]?` binds the call to an inline container; for a callee that
+    // returns its promoted local or a chain beside a literal exit, the container is hoisted
+    // out of its block like a fresh callee's and released by identity against the buffer.
+    let ir = introspect(&[]);
+    let via = section(&ir, "n_via_chain");
+    assert!(
+        via.contains("__ref_p2_1(2):ref(Mk) = null;"),
+        "via_chain: the container is hoisted to the statement's scope"
+    );
+    assert!(
+        via.contains("OpFreeRefIfDistinct(__ref_p2_1(2), __ref_1(1))"),
+        "via_chain: and released unless it is the pooled buffer"
+    );
+    for mode in ["--interpret", "--native"] {
+        let mut cmd = loft();
+        cmd.arg(mode)
+            .arg(cells())
+            .arg("r23")
+            .arg("r27")
+            .env("LOFT_NATIVE_LEAK_CHECK", "1")
+            .env("LOFT_STRICT_STORES", "1");
+        let out = cmd.output().expect("spawn loft");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{mode}: {err}");
+        assert!(!err.contains("not freed"), "{mode}: {err}");
+    }
+}
+
+#[test]
 fn the_store_census_drops() {
     // Hand-checked 2026-09-17 on the cells as written; a cell edit re-measures both pairs.
     let (i_on, i_off) = (
@@ -190,7 +220,7 @@ fn the_store_census_drops() {
     assert!(n_on < n_off, "native: {n_on} mints pooled, {n_off} without");
     assert_eq!(
         (i_on, i_off, n_on, n_off),
-        (236, 294, 194, 261),
+        (246, 303, 204, 270),
         "mints (interpret on, off, native on, off)"
     );
 }

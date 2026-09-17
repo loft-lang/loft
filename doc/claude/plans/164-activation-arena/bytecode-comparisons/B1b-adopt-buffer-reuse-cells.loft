@@ -535,6 +535,42 @@ fn r25() {
   println("r25 {u}");
 }
 
+// r26 — a local bound inside a loop from a chain callee and read after the loop: the loop
+// pre-init makes every bind after the first a real rebind.
+fn r26() {
+  t = 0;
+  for i in 0..5 {
+    lm = scan_mk(3, i);
+    t += len(lm.pts);
+  }
+  // i = 1, 2, 3 match (2 each); after the loop `lm` is i = 4's empty answer
+  t += lm.pts[1]? * 100;
+  assert(t == 6, "r26 {t}");
+  println("r26 {t}");
+}
+
+// r27 — the inline container outside a loop: a literal callee, a promoted local and a chain
+// with a literal exit, each read through `f(…).pts[1]?` once.
+fn lit_card(i: integer) -> Mk { Mk { matched: true, bad: false, pts: [i, i * 2] } }
+fn loc_card(i: integer) -> Mk {
+  o = Mk { matched: true, bad: false, pts: [] };
+  o.pts += [i, i * 2];
+  o
+}
+fn chain_card(i: integer) -> Mk {
+  if i > 1 { return Mk { matched: true, bad: false, pts: [i, i * 3] } }
+  lit_card(i)
+}
+fn via_lit() -> integer { x = lit_card(4).pts[1]?; x + 1 }
+fn via_loc() -> integer { x = loc_card(6).pts[1]?; x + 1 }
+fn via_chain() -> integer { x = chain_card(5).pts[1]?; x + 1 }
+fn r27() {
+  s = via_lit() * 10000 + via_loc() * 100 + via_chain();
+  // 4*2+1 = 9, 6*2+1 = 13, 5*3+1 = 16
+  assert(s == 91316, "r27 {s}");
+  println("r27 {s}");
+}
+
 fn run(c: text) {
   if c == "r1" { r1() } else if c == "r2" { r2() } else if c == "r3" { r3() }
   else if c == "r4" { r4() } else if c == "r5" { r5() } else if c == "r6" { r6() }
@@ -544,7 +580,7 @@ fn run(c: text) {
   else if c == "r16" { r16() } else if c == "r17" { r17() } else if c == "r18" { r18() }
   else if c == "r19" { r19() } else if c == "r20" { r20() } else if c == "r21" { r21() }
   else if c == "r22" { r22() } else if c == "r23" { r23() } else if c == "r24" { r24() }
-  else if c == "r25" { r25() }
+  else if c == "r25" { r25() } else if c == "r26" { r26() } else if c == "r27" { r27() }
 }
 
 /// With no argument every cell runs; `-- r9` runs one.
@@ -552,7 +588,7 @@ fn main() {
   args = arguments();
   if len(args) == 0 {
     r1(); r2(); r3(); r4(); r5(); r6(); r7(); r8(); r9(); r10(); r11(); r12(); r13(); r14();
-    r15(); r16(); r18(); r19(); r20(); r21(); r22(); r23(); r24(); r25();
+    r15(); r16(); r18(); r19(); r20(); r21(); r22(); r23(); r24(); r25(); r26(); r27();
     println("B1b cells PASSED");
   } else {
     for a in args { run(a); }

@@ -8954,14 +8954,33 @@ impl Scopes<'_> {
                 // the block, the outer Zone 2 would never see it and the slot would remain
                 // u16::MAX → "variable never assigned a slot" panic at codegen.
                 let mut hoisted_ref: Option<u16> = None;
-                if let Some(Value::Var(ret_v)) = bl.operators.last() {
-                    let ret_v = *self.var_mapping.get(ret_v).unwrap_or(ret_v);
+                if let Some(Value::Var(orig_ret)) = bl.operators.last() {
+                    let ret_v = *self.var_mapping.get(orig_ret).unwrap_or(orig_ret);
+                    // @PLN164 B1 — a bind that ADOPTS the callee's minted record has its deps
+                    // stripped by `scan_set` inside the block, after this decision; the
+                    // parser's dep on the call's buffer is not a borrow (loft's inline
+                    // container `f().pts[i]` over such a callee leaked one record per call).
+                    let adopts = bl.operators.iter().any(|op| {
+                        matches!(op.unspan(), Value::Set(w, value)
+                        if w == orig_ret
+                            && crate::use_analysis::adopts_minted_at_bind(
+                                data, function, ret_v, value,
+                            ))
+                    });
                     if !self.var_scope.contains_key(&ret_v)
                         && let Type::Reference(_, dep)
                         | Type::Vector(_, dep)
                         | Type::Enum(_, true, dep) = function.tp(ret_v)
-                        && dep.is_empty()
+                        && (dep.is_empty() || adopts)
                     {
+                        // The hoisted null-init below stands right in front of the block, so
+                        // the block's one bind is the temp's first (`deferred_first_bind`).
+                        if adopts
+                            && crate::keys::adopt_first_bind_enabled()
+                            && !self.multi_assigned.contains(orig_ret)
+                        {
+                            function.mark_deferred_first_bind(ret_v);
+                        }
                         self.var_scope.insert(ret_v, self.scope);
                         self.var_order.push(ret_v);
                         hoisted_ref = Some(ret_v);

@@ -63,7 +63,7 @@ line of the consumer's code changing, and the drawing library's `parse` row goes
   is open and decides tier 1's shape.
 - **Last touched:** 2026-09-17 (P0b, row 11, A0 and C6 built, loft#1548 and D-own-44 fixed on
   the way; the 14-row table and the parse row re-measured — § Re-measured; the runtime fast
-  paths and loft#1549 — § The runtime under the row)
+  paths and loft#1549 — § The runtime under the row; B1b and D-own-43 — § B1b)
 
 ## The evaluation — what one parsed line costs, and why
 
@@ -597,6 +597,64 @@ the pool is now sound for a `Mark`, which owns a vector.
 4. **Text per character** — `split` calls `text_character` and `OpLengthCharacter` per
    character, both out of line across the rlib (2 %).
 5. **A1/A2** — the store family, re-priced after items 1–2.
+
+## B1b — the caller's buffer handed in (BUILT 2026-09-17, `@FR-O-Buffer`, default ON)
+
+*The queue's first two items were one question.*  The `Mark` buffers `parse_scene_at` hands
+its parsers were kept null by B1's exclusion (`minted_pairs`, D-own-43), and the one bound
+inside an `if` (`ps_f`) took the rebind copy because of the pre-init in front of it.  Lifting
+the exclusion (`LOFT_NO_ADOPT_BUFFER_REUSE=1` restores it) was the plan; the cells
+(`bytecode-comparisons/B1b-adopt-buffer-reuse-cells.loft`, r1–r25, hand-computed, each in a
+loop) said what it owed first.
+
+*What the matrix found — one false sentence at three sites, and two gaps beside it.*  The scope
+pass's own doc for the promoted buffer read *"this function mints its store"*, true only while
+the caller hands the sentinel.  Handed a live store:
+
+| # | where | shape | measured |
+|---|---|---|---|
+| 1 | the interpreter's rebind (D-own-43) | `cv = Canvas { … }; cv = alloc(…); cv` (r1), the value reading `cv` (r4), a `Var` rhs (r5) | `USE AFTER FREE` on `--interpret`; native's `_rb_w_` guards its own rebind |
+| 2 | the scope pass's exit leg (loft#688) | a chain `return no_mk()` beside a literal `return Mk { … }` (r9, r10 — `parse_circle`'s shape) | `USE AFTER FREE` on BOTH backends: the literal exit freed the caller's buffer |
+| 3 | native's copy arm at a pre-init rebind | `if c { m = scan(…) }` in a loop (r22 — `ps_f`) | the copy's source-free released the pooled store, native only; the interpreter's post-wrap reset freed it too, which only defeated the pool |
+| 4 | every top-of-body insertion | a body the scan wraps as `Insert([Set(sc, null), Block])` because its result is a hoisted local (r25 — `parse_scene_at` itself) | the pool, A0's lazy mints and the `__rbo_`/witness initialisers all matched a bare `Block` and skipped it in silence |
+| 5 | native's value-record gate | any promoted buffer the snapshot below mentions (`find_word_from`, `read_number`) | "the return buffer is used": the scanner lost its registers, 248 `Scan` mints per two parses |
+
+*The mechanism.*  (1–2) One fact, read at every free: the scope pass snapshots the store a
+promoted record buffer was handed (`__rbw_<buf> = OpRefAlias(buf)`, `Function::entry_witness`,
+kept live as long as the buffer), guards the exit legs with `OpDistinctStore(buf, __rbw_<buf>)`,
+and the interpreter's rebind frees read the same variable (`OpFreeRefIfDistinct(v, entry)`, or
+the new `OpFreeRefUnlessEntry` where the displaced store is already on the stack).  (3) The one
+bind after an `if` pre-init is recorded as a first bind (`Variable::deferred_first_bind`, cache
+format 8) when it is the local's only assignment and a B1 adopt; both bind arms take the adopt.
+(4) `scopes::body_block_mut` finds the body through the wrapper, for every site.  (5) The
+value-record gate and emitters account for the snapshot: a phantom buffer's alias is the null
+reference.  `LOFT_TRACE_POOL=1` names the gate that declines a buffer.  `(O-Buffer)` gained the
+callee-side clause, and D-own-43 is closed (`formal/ownership.md`).
+
+*Two defects the cells found that are not this unit's*, both reproducing on the pre-session
+build (a0ae1ad0) and kept out of the guard: r17 — `cv = either(cv, h, …)`, a callee answering a
+view of one of TWO arguments, is adopted as owned and the exit frees `h`'s store (both
+backends; the ownership lattice joins two different borrows into `Join`, whose readers assume
+an owned arm); r23 — `scan_mk(3, i).pts[0]?` in a loop leaks the callee's result through its
+`inline_container` temp, one `Mk` per call (both backends).
+
+*Receipts.*  Guard `tests/scripts/164-adopt-buffer-reuse.loft` (23 cells) with the sabotage
+patch `tests/falsified/164-adopt-buffer-reuse.patch` (the witness and the deferred bind removed,
+the pool kept); pins `tests/adopt_buffer_reuse.rs` (the witness in the IR, the guarded exit, the
+pool reaching a wrapped body, the switch, the adopt at r22 on both backends, a value record kept,
+the census 294 → 236 interpret / 261 → 194 native).  B1's pins now run with B1b off, and B1's
+own census moved 108 → 98 / 106 → 101 with the deferred bind and the wrapped body.  The
+`wrap` and `native` corpora are green.  On the parse bench the `Mark` mints are 24 → 14 per two
+parses, hash `33f6d2b8`, clean under `LOFT_STRICT_STORES`, `LOFT_POISON` and the leak gate.
+
+### The queue after B1b
+
+1. ~~**The `Mark` class** and **B1 behind a null-init**~~ — built above; 7 `Mark` stores a
+   parse remain, the literal exits of the parsers a chain renamed (`parse_circle`,
+   `parse_fronds`, `parse_line_cmd`: B2 unit 1 declines a renamed buffer) and `parse_poly`'s.
+2. **r23 and r17** — the two pre-existing defects above, fixed before this arc ships.
+3. **The free tree under a live store** and **text per character** — as before.
+4. **A1/A2** — re-priced after item 1.
 
 ## The three tiers — the invariant each rests on
 
@@ -1557,7 +1615,7 @@ shape it uses (E7, E13, E15, E16, E17, E20) is natural by construction.
 | **A1** — arena for one activation's own buffers (`__ref_N`, `__ref_p2_N`, literal temps), mark/release at every exit | § Tier 1 | `tests/scripts/164-arena-activation.loft` both backends; plan 51's ten graduated guards under the switch; `emission_audit.py` R-State per record | Blocked on P0b — the store-pair family is 9 % of the release row; whether the free-tree family (12 %) charges to activation temporaries is what decides the shape |
 | **A2** — the caller-threaded arena, reset per loop iteration | § Tier 1 | parse row −20 %; E2/E3/E4 cells | Blocked on A1 |
 | **B1** — adopt at first bind | § B1 | cells c1–c17 both backends; the store census 139 → 108; plan-51 guards under both switch states | Shipped 2026-09-15 |
-| **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state) | § B1 | c6 under the pool without `minted_pairs` — the interpreter's rebind free must first match native's `_rb_w_` guard | Blocked on that divergence |
+| **B1b** — reuse the buffer across activations for a promoted-local callee (E7's steady state), and B1 behind an `if` pre-init | § B1b | 23 cells both backends, both switch states, under every falsifier; the entry witness closes D-own-43 and the two other frees that held its belief; the body behind a hoisted result reached; `wrap` + `native` green; parse bench `Mark` mints 24 → 14 per two parses | Built 2026-09-17, default ON (`LOFT_NO_ADOPT_BUFFER_REUSE`) |
 | **B2** — the result's buffer claimed in its destination's store, the field taking it by relocation at the last use (`R-Place`, `R-MoveLast`) | § B2 | cells b1–b15 both backends under the falsifiers; the census 184 → 50; `parse_poly`'s `paint: pp_paint` emits `OpMoveRecord` and `read_paint`'s buffer is a record in the scene's store; the parse row a wash (`perf stat`) | Shipped 2026-09-16 |
 | **C1** — element overwrite from a literal in place (`R-InPlaceLiteral`) | § C1 | step 1 (the STAGING clause, a both-backend silent-wrong on the shipped FIELD road) and step 2 (the element receiver): 25 cells both backends under every falsifier, four declines pinned, the `acc_pts` census 3 → 2 | Shipped 2026-09-16 |
 | **C2** — the destination as return buffer (`R-Place`'s "the buffer IS the place") | § C2 | the 11-cell oracle (today's answers, which C2 may not move); the aliasing decline; `(O-Buffer)`'s new clause | Shipped 2026-09-16 — a pure-IR rewrite, the buffer variable re-pointed at the destination; ZERO admitted sites in the parse bench (the emission is byte-identical under the switch) and none in the 15-file consumer corpus, so the gain is structural |

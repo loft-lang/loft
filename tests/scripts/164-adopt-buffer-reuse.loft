@@ -9,22 +9,26 @@
 // (`__rbw_<buf>`, the store handed in), on the rebind (r1–r8, r15–r19) and at an exit that
 // answers another store (r9, r10, r20, r21).  A local first bound inside an `if` gets a null
 // pre-init in front of it, so its one bind is a first bind (r22, `parse_scene_at`'s `ps_f`):
-// adopted on both backends, where the rebind's copy freed the pooled store on native.  Every
+// adopted on both backends, where the rebind's copy freed the pooled store on native.  An
+// inline container over such a callee (`scan_mk(3, i).pts[0]?`, r23 and r27) is hoisted out
+// of its block and released, where it leaked one record per call; a local read after its
+// loop (r26) is a real rebind and stays out of the pool.  Every
 // value is hand-computed; each cell runs in a loop so a pooled buffer is refilled.
 // `LOFT_NO_ADOPT_BUFFER_REUSE=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1`,
 // `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1` must answer identically.  Plan cells:
 // `doc/claude/plans/164-activation-arena/bytecode-comparisons/B1b-adopt-buffer-reuse-cells.loft`.
 //
-// @falsified-by: tests/falsified/164-adopt-buffer-reuse.patch — the pool admission kept, the
-//   entry witness's guards and the deferred first bind removed.  Score it with
-//   `LOFT_STRICT_STORES=1 scripts/falsify.sh <this file> --patch <that patch>`.
-//   ARMED: `LOFT_STRICT_STORES=1` — the defect is a free of the caller's store, which the
-//   value channel does not reliably show.
-//   CHANNEL: exit — the strict-store report fails the run on both backends.
-//   WITNESS: `[strict-store] USE AFTER FREE (read) store #N type=Canvas` on `--interpret`
-//   (r1's rebind frees the caller's buffer) and `type=Mk` on `--native` (r9's literal exit).
-//   HOLDS: every assertion passes on both trees — the values stay right while the store
-//   they live in is released under them.
+// @falsified-by: tests/falsified/164-adopt-buffer-reuse.patch — interpret exit 1 -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   — the pool admission kept, the entry witness and the deferred first bind removed.  Score
+//   it with `LOFT_STRICT_STORES=1 scripts/falsify.sh <this file> --patch <that patch>`.
+//   ARMED: `LOFT_STRICT_STORES=1` — the interpreter's defect is a free of the caller's store,
+//   which its value channel does not show.
+//   CHANNEL: exit on both backends (the strict-store report); on native also an assertion.
+//   WITNESS: `[strict-store] USE AFTER FREE (read) store #3 type=Canvas` on `--interpret`
+//   (r1's rebind frees the caller's buffer); `type=Mk … killed by the free of var___ref_1` on
+//   `--native` (r9's literal exit), and unarmed native answers `r10 2025` where 4036 is right.
+//   HOLDS: every interpreter assertion passes on both trees, leak and panic are equal on
+//   both, and every value on this tree is the hand-computed one.
 
 struct Q { tag: integer }
 struct Canvas { data: vector<integer>, w: integer }
@@ -518,8 +522,57 @@ fn r25() {
   println("r25 {u}");
 }
 
+// r23 — a LIFTED call result: the temp is declared at function scope and bound inside the
+// loop, so its bind is a rebind too.
+fn r23() {
+  s = 0;
+  for i in 0..4 {
+    s += alloc_canvas(i + 1, 2, i).w * 10 + scan_mk(3, i).pts[0]?;
+  }
+  // w = 1..4 → 100; pts[0] = hit for i = 1, 2, 3 (k reaches 3 before `k >= n` fires),
+  // and 0 for i = 0, which never matches: 0 + 1 + 2 + 3
+  assert(s == 106, "r23 {s}");
+  println("r23 {s}");
+}
+
+// r26 — a local bound inside a loop from a chain callee and read after the loop: the loop
+// pre-init makes every bind after the first a real rebind.
+fn r26() {
+  t = 0;
+  for i in 0..5 {
+    lm = scan_mk(3, i);
+    t += len(lm.pts);
+  }
+  // i = 1, 2, 3 match (2 each); after the loop `lm` is i = 4's empty answer
+  t += lm.pts[1]? * 100;
+  assert(t == 6, "r26 {t}");
+  println("r26 {t}");
+}
+
+// r27 — the inline container outside a loop: a literal callee, a promoted local and a chain
+// with a literal exit, each read through `f(…).pts[1]?` once.
+fn lit_card(i: integer) -> Mk { Mk { matched: true, bad: false, pts: [i, i * 2] } }
+fn loc_card(i: integer) -> Mk {
+  o = Mk { matched: true, bad: false, pts: [] };
+  o.pts += [i, i * 2];
+  o
+}
+fn chain_card(i: integer) -> Mk {
+  if i > 1 { return Mk { matched: true, bad: false, pts: [i, i * 3] } }
+  lit_card(i)
+}
+fn via_lit() -> integer { x = lit_card(4).pts[1]?; x + 1 }
+fn via_loc() -> integer { x = loc_card(6).pts[1]?; x + 1 }
+fn via_chain() -> integer { x = chain_card(5).pts[1]?; x + 1 }
+fn r27() {
+  s = via_lit() * 10000 + via_loc() * 100 + via_chain();
+  // 4*2+1 = 9, 6*2+1 = 13, 5*3+1 = 16
+  assert(s == 91316, "r27 {s}");
+  println("r27 {s}");
+}
+
 fn main() {
   r1(); r2(); r3(); r4(); r5(); r6(); r7(); r8(); r9(); r10(); r11(); r12(); r13(); r14();
-  r15(); r16(); r18(); r19(); r20(); r21(); r22(); r24(); r25();
+  r15(); r16(); r18(); r19(); r20(); r21(); r22(); r23(); r24(); r25(); r26(); r27();
   println("B1b cells PASSED");
 }

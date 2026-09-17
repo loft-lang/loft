@@ -3734,8 +3734,14 @@ pub fn adopts_minted_at_bind(
     if function.is_argument(v) || function.is_caller_hidden_buf(v) || function.is_skip_free(v) {
         return false;
     }
+    // The compiler's BUFFER names.  An inline container's `__ref_p2_N` shares the prefix and
+    // is not one: it is the plain owner of the call's result (`Parser::bind_inline_container`),
+    // and declined here it kept no pairing, so nothing released the store it adopted.
     let name = function.name(v);
-    if name.starts_with("__ref_") || name.starts_with("__rref_") || name.starts_with("__retbuf") {
+    let buffer_name = (name.starts_with("__ref_") && !name.starts_with("__ref_p2_"))
+        || name.starts_with("__rref_")
+        || name.starts_with("__retbuf");
+    if buffer_name {
         return false;
     }
     !args
