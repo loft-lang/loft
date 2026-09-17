@@ -121,7 +121,12 @@ pub fn surface(data: &Data, lib_file: &str) -> Vec<Member> {
 
     // 1. Roots — the `pub`-marked, surface-kind top-level defs of this library.
     for d in 0..data.definitions() {
-        if in_lib(d) && data.def(d).pub_visible && classify(data, d).is_some() && seen.insert(d) {
+        if in_lib(d)
+            && data.def(d).pub_visible
+            && classify(data, d).is_some()
+            && !is_receiver_alias(data, d)
+            && seen.insert(d)
+        {
             work.push(d);
         }
     }
@@ -145,7 +150,11 @@ pub fn surface(data: &Data, lib_file: &str) -> Vec<Member> {
             signature,
         });
         for r in referenced_defs_of(data, d) {
-            if in_lib(r) && classify(data, r).is_some() && seen.insert(r) {
+            if in_lib(r)
+                && classify(data, r).is_some()
+                && !is_receiver_alias(data, r)
+                && seen.insert(r)
+            {
                 work.push(r);
             }
         }
@@ -153,6 +162,49 @@ pub fn surface(data: &Data, lib_file: &str) -> Vec<Member> {
 
     members.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.kind.cmp(b.kind)));
     members
+}
+
+/// Is this the bare-name alias a `both` receiver registers — a member no caller can observe?
+///
+/// `data.rs`'s `add_fn` gives ONE `Dynamic` dispatcher two jobs (`if is_both ||
+/// overload_label.is_some()`), and only the targets tell them apart:
+///
+/// * an **overload set** targets free functions (`f_…`), and its dispatcher is the only member
+///   carrying the name a consumer writes — `pick`, `scale`. Recording it is REQUIRED; the real
+///   overloads live under mangled keys (`f_15integer#integer_pick`) nobody can call.
+/// * a **`both` receiver** targets the method (`t_<LEN><Type>_<name>`) it is a second spelling
+///   of. C123 measured `self` and `both` identical across every call spelling — import lists
+///   included, once methods were brought in by name — so this alias is not an independent
+///   member, and recording it makes the C123 migration it prescribes read as `removed fn`.
+///
+/// That is the whole defect: `regex`'s published surface carried `matches · fn · (text: fn) ->
+/// unknown` beside `text.matches`, so renaming its receiver — the migration C123 names this
+/// library for — reported an API BREAK against a caller-invisible phantom.
+///
+/// Filtered HERE and not in [`classify`], which is the canonical def→(kind, name) mapper the LSP
+/// outline reuses: this is an api-surface policy, not a naming fact.
+fn is_receiver_alias(data: &Data, d: u32) -> bool {
+    let def = data.def(d);
+    if def.def_type != DefType::Dynamic {
+        return false;
+    }
+    let mut targets = def
+        .attributes
+        .iter()
+        .filter_map(|a| match a.typedef.base() {
+            Type::Routine(r) => Some(*r),
+            _ => None,
+        });
+    // Every target a method, and at least one: a dispatcher with no routine target is not a
+    // spelling of anything, so it keeps whatever `classify` makes of it.
+    let mut any = false;
+    for r in &mut targets {
+        any = true;
+        if r >= data.definitions() || !data.def(r).name.starts_with("t_") {
+            return false;
+        }
+    }
+    any
 }
 
 /// The surface `(kind, user-facing name)` for a def, or `None` if it is not a standalone

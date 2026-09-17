@@ -59,6 +59,54 @@ fn api_diff_cli(base: &str, new: &str, json: bool) -> (String, i32) {
     )
 }
 
+/// C123 — `both` is a second SPELLING of `self`, not a second member.
+///
+/// A `both` receiver registers a bare-name `Dynamic` dispatcher targeting its own method. That
+/// alias is not observable to a caller (C123 measured the two spellings identical, import lists
+/// included), so recording it made the migration C123 prescribes — it names `regex`'s `matches` —
+/// diff as `removed fn`, refusing the very rename the deprecation asks for.
+#[test]
+fn a_both_receiver_records_no_bare_name_phantom() {
+    let out = api_surface("pub fn f(both: text, p: text) -> boolean { len(both) > len(p) }\n");
+    assert!(
+        out.lines().any(|l| l.starts_with("text.f · method")),
+        "the method itself is still recorded:\n{out}"
+    );
+    assert!(
+        !out.lines().any(|l| l.starts_with("f · fn")),
+        "the bare-name alias must NOT be a member of its own:\n{out}"
+    );
+}
+
+/// The control for the rule above, and the reason it is not a blanket skip of `Dynamic`: for a
+/// real OVERLOAD SET the dispatcher is the only member carrying the name a consumer writes — the
+/// overloads themselves live under mangled keys (`f_15integer#integer_pick`) nobody can call.
+#[test]
+fn an_overload_set_keeps_its_dispatcher_member() {
+    let out = api_surface(
+        "pub fn pick(a: integer, b: integer) -> integer { a }\n\
+         pub fn pick(s: text, b: integer) -> text { s }\n",
+    );
+    assert!(
+        out.lines().any(|l| l.starts_with("pick · fn")),
+        "an overload set's dispatcher IS its callable name:\n{out}"
+    );
+}
+
+/// End to end: the rename C123 prescribes must diff as a superset, not a break.
+#[test]
+fn renaming_a_both_receiver_to_self_is_not_a_break() {
+    let (out, _code) = api_diff_cli(
+        "pub fn f(both: text, p: text) -> boolean { len(both) > len(p) }\n",
+        "pub fn f(self: text, p: text) -> boolean { len(self) > len(p) }\n",
+        true,
+    );
+    assert!(
+        out.contains(r#""api":{"verdict":"superset""#),
+        "both->self is the sanctioned migration, not a break:\n{out}"
+    );
+}
+
 /// Commit 7 — the PR-check round-trip: `--emit-baseline` on `released`, then `--check` the
 /// baseline against `current`. Returns (stdout, exit code).
 fn emit_and_check(released: &str, current: &str) -> (String, i32) {

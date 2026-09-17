@@ -124,7 +124,12 @@ fn signature_break(old_sig: &str, new_sig: &str) -> Option<String> {
         ));
     }
     for (i, old_param) in old_p.iter().enumerate() {
-        if new_p[i] != *old_param {
+        let (old_cmp, new_cmp) = if i == 0 {
+            (receiver_spelling(old_param), receiver_spelling(&new_p[i]))
+        } else {
+            (old_param.clone(), new_p[i].clone())
+        };
+        if new_cmp != old_cmp {
             return Some(format!(
                 "parameter {} `{old_param}` became `{}`",
                 i + 1,
@@ -147,6 +152,30 @@ fn signature_break(old_sig: &str, new_sig: &str) -> Option<String> {
                 .collect::<Vec<_>>()
                 .join(", ")
         ))
+    }
+}
+
+/// One receiver, written either way: `both` and `self` name the SAME parameter.
+///
+/// C123 revised: *"`both` still compiles and means `self`"* — the two spellings were measured
+/// identical across method and free calls, overloads, **named and default arguments**, nullable
+/// and scalar receivers, enum-variant and generic dispatch. So a first parameter renamed between
+/// them changes nothing a caller can observe, and reporting it as a break would refuse the very
+/// migration C123 prescribes — it names `regex`'s `matches` as the published case to rename.
+///
+/// Applied at position 0 ONLY, because only the first parameter is the receiver: `both` at any
+/// other position is an ordinary name whose rename IS a break. The type is untouched, so
+/// `both: text` → `self: integer` still breaks on the half that matters.
+///
+/// ⚠ This is the ninth site spelling "these two names are one receiver" — `registry_index.rs`'s
+/// `receiver != "self" && receiver != "both"` and `triggers.rs`'s `recv_name == "self" ||
+/// recv_name == "both"` ask the same question, and `data.rs` carries three `is_self`/`is_both`
+/// pairs. There is no canonical home; collapsing them is its own arc (the duplicate-predicate
+/// audit in `formal/IMPLEMENTATIONS.md`), not a rider on a compat fix.
+fn receiver_spelling(param: &str) -> String {
+    match param.strip_prefix("both:") {
+        Some(rest) => format!("self:{rest}"),
+        None => param.to_string(),
     }
 }
 
@@ -357,6 +386,57 @@ mod tests {
         let old = vec![pubm("make", "fn", "() -> integer")];
         let new = vec![pubm("produce", "fn", "() -> integer")];
         assert!(is_break(&diff(&old, &new)), "renaming a public fn breaks");
+    }
+
+    #[test]
+    fn a_receiver_renamed_both_to_self_is_not_a_break() {
+        // C123: `both` still compiles and MEANS `self`, so this rename — the migration C123
+        // prescribes, naming `regex`'s `matches` — changes nothing a caller can observe.
+        let old = vec![pubm(
+            "matches",
+            "fn",
+            "(both: text, pattern: text) -> boolean",
+        )];
+        let new = vec![pubm(
+            "matches",
+            "fn",
+            "(self: text, pattern: text) -> boolean",
+        )];
+        assert_eq!(diff(&old, &new), Verdict::Superset);
+    }
+
+    #[test]
+    fn an_ordinary_first_parameter_rename_still_breaks() {
+        // The control for the rule above: it must equate the two RECEIVER spellings, not stop
+        // comparing the first parameter at all.
+        let old = vec![pubm("f", "fn", "(a: text) -> boolean")];
+        let new = vec![pubm("f", "fn", "(b: text) -> boolean")];
+        assert!(
+            is_break(&diff(&old, &new)),
+            "a plain first-param rename breaks"
+        );
+    }
+
+    #[test]
+    fn both_to_self_away_from_the_receiver_still_breaks() {
+        // Only position 0 is the receiver; `both` elsewhere is an ordinary parameter name.
+        let old = vec![pubm("f", "fn", "(a: text, both: text) -> boolean")];
+        let new = vec![pubm("f", "fn", "(a: text, self: text) -> boolean")];
+        assert!(
+            is_break(&diff(&old, &new)),
+            "non-receiver rename still breaks"
+        );
+    }
+
+    #[test]
+    fn a_receiver_whose_type_changed_still_breaks() {
+        // The spelling is equated; the TYPE is not.
+        let old = vec![pubm("f", "fn", "(both: text) -> boolean")];
+        let new = vec![pubm("f", "fn", "(self: integer) -> boolean")];
+        assert!(
+            is_break(&diff(&old, &new)),
+            "a retyped receiver still breaks"
+        );
     }
 
     #[test]
