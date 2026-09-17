@@ -1116,14 +1116,16 @@ reference's cycles per tap and takes the three rows under the bar).  The probe i
 last read 95.4 ms/op), the falsifier `LOFT_HOIST_VERIFY=1`, the ceiling
 `LOFT_RELEASE_PASS_PROBE=1` (38.3 ms/op on the probe).
 
-`parse` WAITS, by the same rule — and its class now has its own plan, **@PLN164**
-(`plans/164-activation-arena/`: activation arenas, adopt-at-bind, build-in-place, with the
-edge-case matrix the owner reviews before a phase is cut): after § V-an its profile is flat (the byte scan at 9 % is
-the largest routine) and what remains is a CLASS — deep record copies, 18.5 % over four
-sites (DESIGN.md § V-an's table: the first bind of a record result copies, an indexed
-element overwrite from a literal, a field assigned from a local at its last use).  That
-class is a memory-model unit (adopt at the first bind, move at the last use) and comes
-after the resample.
+`parse`'s class had its own plan, **@PLN164** (`plans/164-activation-arena/`: adopt-at-bind,
+build-in-place, and the elimination of the per-call temporaries a record-returning style
+mints), **closed 2026-09-17**: the row is **20 740 ns against the Rust reference's 6 675 —
+3.11×**, from 7.6×, and one parse mints 13 stores where it minted 31.  What is left of it is
+NOT a copy class: about 1.2 of the 2.1 units the row is over Rust is the per-RECORD and
+per-PUSH work every KEPT object pays (claim/free, the append pair, the append path's
+`heap_facts` and `nullable_field_parent` tests, `store_mut`) — a RUNTIME lever on both
+backends, priced the way every unit here is (a hand patch first, `perf` on the release
+binary, all fourteen rows), and registered with the role/lifetime work in PERFORMANCE.md
+§ 3e.
 
 *Machine notes for the resample unit.*  A fresh session needs: `cargo build --release`
 (bin AND lib — the native tests link the rlib), a scratch clone of `loft-libs-graphics`

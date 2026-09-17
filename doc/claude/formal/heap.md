@@ -641,7 +641,35 @@ been re-cut twice as it was measured — a shape closed, a shape that turned out
 opposite fault, and a shape found by widening one cell — so the three named there are what is
 open TODAY and not the original filing.  `D-heap-4` (a mixed own/view local's owned record
 freed without its hook) opened and CLOSED 2026-09-10, below.  `D-heap-12` (a refilled record
-buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.
+buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.  `D-heap-13`
+(a collection from a call, bound to a local, whose elements are never dropped) opened
+2026-09-17 and is the fifth OPEN entry, below.
+
+### D-heap-13 — OPEN (2026-09-17): a collection returned from a call and bound to a local never releases its elements (loft#1551)
+
+- **Violates:** (H-Drop), reached through (H-Move) and (H-Lease) — `d = mkv()` is a legal move of
+  a fresh call result, so `d` is the owner, the owner has its own lease, and the hook runs at the
+  owner's scope end.
+- **Where:** the local's backing is the callee's return buffer, a bare `vec<ref(T)>`, where a
+  local vector's is the wrapper record that carries the generated `OpDropAll` cascade; scope exit
+  emits `OpFreeRef` with no cascade call.  WHICH site decides to omit it is not established —
+  the candidates all read `Data::drop_cascade_nr` — and establishing it is the first step of a
+  fix, not an assumption to build on.
+- **Effect:** the resource stays open for the life of the process, both backends, byte-identical,
+  with no diagnostic.  `d = mkv(); d += […]` and `take(d)` leak too, and so does a
+  `vector<vector<H>>`; the same call into a FIELD (`b.v = mkv()`), a struct from a call, a struct
+  CONTAINING a vector and a plain local vector are all clean, which is what bounds it to a bare
+  collection from a call into a local.
+- **Why nothing caught it:** the MEMORY is freed correctly and only the hook is skipped, so
+  `LOFT_STRICT_STORES` and `LOFT_POISON` are structurally blind; `ownership_drop_gate`'s CROSS
+  family has no collection source and no collection destination, so no generated cell writes the
+  shape.
+- **Status:** OPEN — the drop-cascade family (@PLN163).  `d = mkv(); e = d` releases exactly once
+  today because `D-heap-8`'s second structure supplies the release this entry loses, so that
+  shape is not a control and curing either entry alone changes its answer.
+- **Removal:** give the bound local the cascade its wrapper-backed twin has.  `(H-Drop)`'s own
+  warning applies — a drop has no safe direction, and turning a lost hook into a doubled one must
+  not land as an improvement.
 
 ### D-heap-12 — OPENED AND CLOSED (2026-09-17): a refilled record buffer stranded its previous occupant's heap (loft#1549)
 

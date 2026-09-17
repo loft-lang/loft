@@ -9,6 +9,170 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### @PLN164 closes — the drawing `parse` row at 3.11× its Rust reference (2026-09-17)
+
+The plan that removes the per-call temporaries a record-returning style mints is finished:
+the row is **20 740 ns against the Rust reference's 6 675** where it began at 7.6×, and one
+parse mints **13 stores where it minted 31**, with no line of the consumer changing.  The
+units below are its last day; `plans/164-activation-arena/README.md` is the closure record
+and `LIFETIME.md` the reference.  What remains of the row is not temporaries — about 1.2 of
+the 2.1 units it is over Rust is the per-RECORD and per-PUSH work every KEPT object pays
+(claim/free, the append pair, the append path's `heap_facts` and `nullable_field_parent`
+tests, `store_mut`), a runtime lever on both backends registered in PERFORMANCE.md § 3e.
+Two units were hand-priced and dropped on price: E-2's value branch (≈ −0.5 %) and E-2c
+(−0.57 %).
+
+### A single-consumer vector is built inside the element it is appended into (2026-09-17)
+
+@PLN164 E-2, `@FR-R-ElemFirst`, `--native`, generation time, default ON
+(`LOFT_NO_ELEMENT_PLACE=1` keeps @PLN157 § V-z's narrower form).  § V-z built a local vector
+consumed by exactly one append inside that appended element; the destination may now also be a
+record's COLLECTION FIELD (`sc.ops += [Op { pts: p }]`, elements stored inline) and the local
+may be filled by a CALL (`p = smooth(raw)`), which is handed the early element's field as its
+return buffer — provided the callee fills its buffer and never mints into it, no other argument
+names the container, and the buffer serves that call alone.  An append in EACH arm of an `if`
+shares one early element, the second arm's mint an alias of the first's (`group_at` reads each
+arm's group on its own, and the parser's `Set(elm, null)` pre-init is dropped for an early
+element).  The window between the declaration and the append is what the gates read: the
+declaration must be the local's ONLY binding, no statement may jump out of it, none may name
+the container unless the naming reaches only ANOTHER field (`namings_avoid_place`), and none may
+read a view the early mint could move.  `LOFT_TRACE_ELEMFIRST=1` names every admission and
+decline.  Cells `tests/scripts/164-element-place.loft` (g1–g27, hand-computed, both backends
+under every falsifier, three gates sabotaged in turn); pins `tests/element_first.rs`.  Measured
+on the drawing bench: 19 → 13 stores per parse, −3.5 % instructions.
+
+**Two silent-wrong defects the cells found, both pre-existing on `main` in § V-z's local form.**
+loft#1552 (`formal/rewrites.md` D-rw-2): § V-z counted a temp's READS and never its bindings, so
+`p: vector<Pt> = []; if c { p = mk(n) }; out += [Op { pts: p }]` bound `p` to the early element,
+the rebind pointed it at the call's store, and the suppressed copy left the element empty —
+`1000` for `1093`.  loft#1553 (D-rw-3): the early mint is the append's growth brought forward,
+so a view bound before the declaration and read inside the window read the relocated vector's
+freed block on `--native` — `4609434218613702656` for `100`.  Guards
+`a-rebound-element-first-temp-keeps-its-copy.loft` and
+`an-element-view-read-before-an-element-first-append-is-not-moved.loft`, both falsified against
+f547cf1c.
+
+### `(B-Ref-Reshape)`'s call-site refusal reads the callee's disturbance (loft#1554, 2026-09-17)
+
+`formal/binding.md` D-bind-47, both backends.  A call that hands a container and one of its
+elements to the same callee (`p(s, s.ops[0], n)`, the callee appending to `sc.ops` and reading
+its element parameter afterwards) read `0` in the ORDINARY form: the refusal covered only a
+removal through a `&vector` parameter, missed a format string's nullable element read, and its
+frame half ran without the store or the callee's own disturbance.  Both halves now read @PLN164
+C3's `disturbed_params_map` — plain and field containers, growth as well as removal.  Measured
+over the corpus and the consumer sources first: the wider refusal names only the fn-ref cell,
+the one edge it cannot follow and the one the element-first parameter gate still covers.
+
+### A returned record's vector field is a view of the place the value already lives in (2026-09-17)
+
+@PLN164 E-1, `@FR-O-ViewField` + `@FR-R-ValueRecord`, `--native`, generation time, default ON
+(`LOFT_NO_VIEW_FIELD=1`, `LOFT_NO_FORWARD_TUPLE=1`).  A function answering
+`Mark { matched, bad, pts }` built from a local it appended into a parameter's collection
+returns a TUPLE whose vector element REFERENCES that element's field: no buffer store, no deep
+copy, and an empty-literal exit delivers a null view, which reads as the empty vector it
+replaces.  The interpreter keeps the record form and is the values oracle.  The callee's half is
+a per-PATH proof (`hoist::fresh_leaf`, a forward must-walk that joins `if` arms and runs loops
+to a fixpoint): on every path to the exit the last change to the container is the append of the
+local's copy, and neither the local, a store it views, nor that element changes after it.  Where
+the arms append through different element temps the leaf is the container's LAST element
+(`get_vector(<container>, <stride>, -1)` plus the field offset).  The site's half is that the
+place outlives the frame and every site only READS it: a `?`-discharged element, an element read
+or an iteration at the site, a disturbance between the bind and the last read, and a `pub`
+function whole (`(R-Escape)`) decline.  A FORWARD — `return g(…)`, or the call arm of a value
+branch whose other arm is a record — keeps an admitted callee by writing its tuple into the
+buffer at the site (`Output::write_tuple_fields`, one home, which the copy from a value local
+uses too).  `hoist::dead_buffers` counts `OpClear` as dropped, without which a heap-owning
+buffer could never be dead and the caller kept minting it.
+
+That proof replaced a per-exit test that four of the matrix's nineteen shapes falsified while
+the unit was opt-in (`p4` read 0 points for 3 on the path that did not append; `p7`/`p7c`/`p7d`
+read the element's copy where the local had grown, been rebound or been written after it).
+Cells `tests/scripts/164-view-field.loft` and `164-forward-tuple.loft`, both backends under
+every falsifier, with the join and the finish sabotaged in turn; pins `tests/view_field.rs`.
+The flip to default changes the emission of 15 of 1594 corpus files, every one a
+record-returning function, a forward or a chain, all clean under the store falsifiers.
+Measured: the parse row 3.39× → 3.16× its reference.
+
+### A hidden return buffer is minted at its first use, not at function entry (2026-09-17)
+
+@PLN164 A0, `@FR-O-LazyBuffer`, both backends, scopes pass, default ON
+(`LOFT_NO_LAZY_BUFFER=1`).  A function that hands a callee a buffer on one path minted that
+store in its preamble whatever the path did — a scanner that tries twenty rules and matches one
+paid for the other nineteen.  The preamble writes the non-allocating sentinel
+(`OpInitRefSentinel`, `DbRef::NULL`) and `scopes::lazy_buffer_mints` puts
+`if OpRefIsNull(b) { b = null }` in front of the innermost statement that names the buffer; a
+use in an `if` condition or a bare arm takes the guard in front of the whole `if`, and a guard
+inside a loop mints once, because a re-mint clears the store the previous iteration's result
+still reads.  A free is not a use, so the null-tolerant exit frees stand unchanged.  Both
+backends read one new fact, `Variable::lazy_buffer` (IR schema, store and JSON codecs, cache
+format 7).  Declined for a body that yields or runs `par`, a buffer with a second assignment,
+and a null-init that is not a top-level statement.  Falsified: an unconditional mint turns cell
+`a5` into `0 0` on both backends.  Cells `A0-lazy-buffer-cells.loft`, pins `tests/lazy_buffer.rs`;
+with the switch off the native emission is byte-identical.  Measured: the parse row −7 %.
+
+### A nested record literal is built inside the field it initialises (2026-09-17)
+
+@PLN164 C6, `@FR-R-InPlaceLiteral`, both backends, parse time, default ON
+(`LOFT_NO_NESTED_IN_PLACE=1`).  `sc.ops += [Op { paint: Paint { … } }]` writes `Paint`'s fields
+into the element's own field instead of building a store of its own and copying it in.
+`Parser::nested_literal_place` primes an embedded record field's value with the field's place
+(`OpGetField(outer, pos, kt)`) when the value opens with the field type's name and `{`, so
+`parse_object` takes the field road it already has and an omitted field takes its declared
+default; a value that turns out to be more than the literal is parsed again the ordinary way.
+Admitted only where the outer record is FRESH, so nothing can read the place while it is
+written: a readable destination (`x = S { … }`, `o.f = S { … }`, `v[i] = S { … }`), a
+`reference<T>` field and a nullable field decline.  Cells `C6-nested-literal-cells.loft`, pins
+`tests/nested_in_place.rs`.  Measured: the parse row −6–7 %, instructions −5.4 %.
+
+**loft#1548, found by the cells and fixed in the same arc** (`formal/operational-history.md`
+D-op-10, both backends, `silent-wrong`): the element road minted an appended element BEFORE its
+field expressions ran, against `(E-Asgn-Compound)`, so `s.qs += [Q { a: i, b: g(s) }]` — a field
+value that appends to the same container — read `0` for `24`.  `Parser::stage_append_fields`
+evaluates every scalar or text field value, and runs every nested construction, ahead of the
+mint whenever a field value reads the container's root (`LOFT_NO_APPEND_STAGING=1` restores the
+old order).  Guard `tests/scripts/1548-an-appended-literal-reads-its-own-container.loft`.
+
+### The caller's return buffer is pooled for a promoted-local callee (2026-09-17)
+
+@PLN164 B1b, `@FR-O-Buffer`, both backends, scopes pass, default ON
+(`LOFT_NO_ADOPT_BUFFER_REUSE=1` restores B1's null buffer).  The entry-time record-buffer pool
+(`@FR-R-Reuse`) now enrolls the buffer paired with an adopting first bind, so a callee that
+returns a local it promoted onto its buffer is handed the CALLER's store from the second call
+on — one store per call site per activation instead of one per call.  That makes the callee's
+promoted local hold either the caller's store or one it minted from the sentinel, and only the
+second is its to free: the scope pass mints an ENTRY WITNESS (`__rbw_<buf> = OpRefAlias(buf)`,
+`Function::entry_witness`), guards the buffer's exit frees with `OpDistinctStore`, and the
+interpreter's rebind frees read the same variable — the twin of native's `_rb_w_`.  A local
+first bound inside an `if` (whose pre-init makes the bind a rebind) adopts at that bind
+(`Variable::deferred_first_bind`).  `LOFT_TRACE_POOL=1` names the gate that keeps a witnessed
+buffer out of the pool.  Closes `formal/ownership.md` D-own-43.  23 cells both backends in both
+switch states; pins `tests/adopt_buffer_reuse.rs`.  Measured: `Mark` mints 24 → 14 per two
+parses.
+
+**Two defects it surfaced, each with its guard.**  loft#1549 (`@FR-H-ClearRelease`'s record
+clause, `formal/heap.md` D-heap-12): a reused record buffer did not release what it held, so a
+heap-owning record's previous occupant was stranded — resident memory now flat over 1 000 000
+refills, pins `tests/pooled_buffer_release.rs`.  loft#1550 (`formal/ownership.md` D-own-45): a
+return that may hand back one of SEVERAL arguments was copied at every bind, five of twelve
+cells red before the fix; pins `tests/one_of_several_args.rs`.
+
+### The store's tail free block is a wilderness (2026-09-17)
+
+@PLN164, `@FR-H-Wilderness`, both backends, default ON (`LOFT_NO_WILDERNESS=1` keeps the tail in
+the tree, read per store at construction).  The free block that ends a store is held beside the
+free tree, and the tree's insert, remove and best-fit take treat it as the node it would have
+been — so every claim takes the block it always took (a seeded side-by-side unit test pins the
+layout), while a claim from the tail or a delete into it costs no tree delete, insert or
+rebalance.  64 % of the parse row's tree claims took the tail; the row −6.3 % and `fronds`
+−2.6 %.
+
+### Three runtime fast paths under the drawing row (2026-09-17)
+
+The write check inlined, the no-heap claims walk skipped, and a fresh store initialised once —
+each measured with `perf stat` and then against the fourteen-row bench at one moment (every row
+equal or faster, 14/14 hashes agreeing).  The parse row 28.3–28.5 k → 25.0–25.3 k ns/op.  An
+accessor reorder was measured in the same sitting and DROPPED: the pixel rows read +15–38 %.
+
 ### The browser kernel's fn-ref calls read a moved-from `Data` after the first frame (loft#1541, 2026-09-16)
 
 `execute_log_impl` installs two raw pointers to the `Data` it is handed — `State::data_ptr`,

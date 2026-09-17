@@ -74,6 +74,47 @@ which had been bending upward at every size, is close to a straight line again. 
 what your program computes changes — only what it costs.  Reading an element out of a vector in a
 hot loop also got a little cheaper, for a related reason: the rare out-of-range path was sitting
 in the same body as the common one and was keeping it from being inlined.
+
+**Building a value and handing it back no longer costs a temporary.**  Writing a function that
+builds a record and returns it, and letting the caller put that record in a field or a
+collection, is the natural way to write loft — and it used to be the most expensive.  Each such
+call created a hidden collection to answer through, the caller copied the answer out of it, the
+field copied it again, and every record was filled with its defaults field by field on the way.
+The compiler now builds those values where they will finally live: a function's hidden result
+space is created only on the path that actually uses it and is reused between calls, a value
+returned by a call is taken over instead of copied, a record written into an element or into a
+nested field is written straight into that slot, a list with exactly one destination is built
+inside it, and a returned record's collection can point at the place its value already lives.
+Measured on a drawing library's scene parser — real code, not one line of it changed — one parse
+now creates 13 collections where it created 31, runs **more than twice as fast**, and sits
+within 3.1× of the same parser written by hand in Rust, where it was 7.6× before.  Nothing about
+what you write, or about what your program computes, changes.
+
+**A record you append keeps the fields you computed from the same collection.**  `s.rows += [Row
+{ id: i, prev: last(s.rows) }]` built the new row first and only then worked out its field
+values, so a field value that read — or added to — the very collection being appended to was
+written into a row that had already moved.  The fields are now worked out first, and the row is
+added once they are all known.
+
+**Two ways a list inside a record you append could come back empty or stale are fixed
+(compiled backend).**  A list the compiler had already decided to build inside the element it
+was going to be appended to came back empty if you gave that list a new value in between
+(`p = []; if c { p = points(n) }; out += [Op { pts: p }]`), and a view you had taken into the
+same collection before that point could read freed memory.  Both are compile-time decisions the
+compiler now declines to take in those shapes; the interpreter was never affected.
+
+**A function that hands back one of several things it was given, and a reused result buffer,
+both keep their contents.**  A function whose result may be any one of its arguments handed back
+a value the caller then copied wrongly, and a function whose result space is reused between
+calls could leave the previous result's text or lists allocated with nothing to free them.  Both
+are fixed; neither needed a change to the code that calls them.
+
+**Handing a collection and one of its elements to the same function is refused when that
+function changes the collection.**  `f(s, s.items[0])` where `f` adds to or removes from `s` left
+the element argument pointing at memory that had moved, and only some spellings of it were
+caught.  All of them are now, at compile time, with the message naming the call — the same
+refusal loft already gave for a `&` reference into a collection that is disturbed while it is
+still in use.
 **A block that hands back part of something it built keeps it alive.**  A `{ … }` used as a
 value can build a struct and hand back one of its collections:
 
