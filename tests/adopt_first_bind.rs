@@ -180,7 +180,10 @@ fn the_interpreter_binds_by_put_ref() {
 #[test]
 fn the_store_census_drops_by_one_per_adopting_bind() {
     // Hand-checked 2026-09-17 on the cells as written (the bind after an `if` pre-init adopts
-    // too since then); a cell edit re-measures both pairs.
+    // too since then); a cell edit re-measures both pairs.  The native pair fell 101/137 →
+    // 91/127 on 2026-09-18 with `@FR-R-LoopRecord`: a record literal bound inside a loop keeps
+    // its store across the iterations, so ten per-pass mints are one — in BOTH arms, which is
+    // why the adoption's own drop (36) is unchanged.
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -195,5 +198,5 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
         n_on < n_off,
         "native: {n_on} mints with adoption, {n_off} without"
     );
-    assert_eq!((n_on, n_off), (101, 137), "native mints (on, off)");
+    assert_eq!((n_on, n_off), (91, 127), "native mints (on, off)");
 }

@@ -255,7 +255,10 @@ fn the_store_census_drops() {
     // Hand-checked 2026-09-17 on the cells as written; a cell edit re-measures both pairs.
     // The pooled counts fell again (246 → 197, 204 → 174) when a literal exit beside a chain
     // began writing the pooled buffer; the unpooled ones are the same, since there the
-    // literal mints into the null buffer where it minted a store of its own.
+    // literal mints into the null buffer where it minted a store of its own.  The native pair
+    // fell again 174/270 → 169/265 on 2026-09-18 with `@FR-R-LoopRecord` (a record literal
+    // bound inside a loop keeps its store across the iterations) — in both arms, so the
+    // pool's own drop (96) is unchanged.
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -268,7 +271,7 @@ fn the_store_census_drops() {
     assert!(n_on < n_off, "native: {n_on} mints pooled, {n_off} without");
     assert_eq!(
         (i_on, i_off, n_on, n_off),
-        (197, 303, 174, 270),
+        (197, 303, 169, 265),
         "mints (interpret on, off, native on, off)"
     );
 }
