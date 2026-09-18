@@ -23,13 +23,13 @@ partial one (`OpDatabase`) re-establishes the omitted fields' declared defaults 
 pass paid `free_named` + `find_free_slot` + re-init + claim + zero + tag on a record that was
 about to be rewritten: 39 ns per pass against the vector loop buffer's 10 ns reset.  Admission
 (`hoist::loop_records`): every mention of the local is its init family, a fusable field
-read/write, a free, or a hand-off to a loft callee whose return borrows nothing; a copy to
+read/write, a free, or a hand-off to a loft callee whose return does not borrow that parameter (the deps name parameters by index — a record function's hidden buffer is named there and is no borrow of the argument, which is what let `fronds`' own `fd_sub` and `parse_fronds`' `pf_spec` in); a copy to
 another local, a return, a capture, an append, a native op taking it otherwise, a heap-owning or
 nullable type, `par`/`yield` decline; frees on a `return`/`continue` path are inside an `Insert`
 and stay.  Measured: the probe (`s = S1 { a: k }; t += s.a`, 200 000 passes) 7 600–8 500 → 480–540 µs (39 → 2.4 ns per pass), value unchanged; the drawing lane does not move (two interleaved rounds on and off, 14/14 hashes: `fronds` 2.60× vs 2.62×, whose `fd_sub` is 24 mints of a 105 µs call — the shape is structural, its gain lands wherever a record literal sits in a hot loop).  Cells `tests/scripts/157-loop-record.loft` l1–l15 (reads,
 a write, a callee, an in-place-writing callee, omitted fields, `break`, `continue`, a `return`
 from inside the loop, nested loops, a text field, a copy, a borrowing callee, an append,
-single/float fields, a declared default re-established after a write), hand-computed, both
+single/float fields, a declared default re-established after a write, a callee borrowing the handed parameter, one borrowing another), hand-computed, both
 backends, both switch states, four falsifiers; sabotage (the guarded mint never taken) fails l1 with `l1: null`; pins `tests/loop_record.rs`.
 
 ### A split variable carries its use count — the interpreter's last-use move no longer fires on a re-declared name (2026-09-18)

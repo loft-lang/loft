@@ -95,17 +95,18 @@ fn the_cells_hold_on_both_backends_in_both_switch_states_under_the_falsifiers() 
 fn an_admitted_record_is_declared_at_the_prelude_kept_across_passes_and_freed_once_after() {
     let rust = emit("on", &[]);
     let main = body(&rust, "n_main");
-    // l1–l7, l9 (two), l14, l15 keep their store: eleven prelude declarations and eleven
+    // l1–l7, l9 (two), l14, l15, l17 keep their store: twelve prelude declarations and twelve
     // frees after their loops; l8's `r` is returned, l10's owns text, l11's is copied,
-    // l12's `o` carries a record field, l13's is appended.
+    // l12's `o` carries a record field, l13's is appended, l16's is handed to a callee
+    // whose return borrows that parameter.
     let kept = main
         .matches("//@FR-R-LoopRecord kept across iterations")
         .count();
     let freed = main
         .matches("/*@FR-R-LoopRecord freed after the loop*/")
         .count();
-    assert_eq!(kept, 11, "prelude declarations:\n{main}");
-    assert_eq!(freed, 11, "frees after the loop:\n{main}");
+    assert_eq!(kept, 12, "prelude declarations:\n{main}");
+    assert_eq!(freed, 12, "frees after the loop:\n{main}");
     // The per-pass mint is null-guarded and re-mints nothing after the first pass: every
     // literal here is a complete write (the parser spells an omitted field's declared default
     // as an explicit write — l15's `Ld { a: i }` writes `k = 5` itself), so the partial-literal
@@ -113,7 +114,7 @@ fn an_admitted_record_is_declared_at_the_prelude_kept_across_passes_and_freed_on
     // and no cell reaches it.
     assert_eq!(
         main.matches("/* @FR-R-LoopRecord kept record */").count(),
-        11,
+        12,
         "kept-record mints:\n{main}"
     );
     assert!(
@@ -160,5 +161,9 @@ fn the_declines_are_the_designed_ones() {
     assert!(
         trace.contains("declines: a native op takes it otherwise"),
         "l13's append must decline:\n{trace}"
+    );
+    assert!(
+        trace.contains("declines: handed to a callee whose return borrows it"),
+        "l16's hand-off to a borrowing callee must decline:\n{trace}"
     );
 }

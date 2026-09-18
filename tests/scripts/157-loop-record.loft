@@ -14,7 +14,7 @@
 //
 // @falsified-at: hand-measured (sabotage, 2026-09-18) — with the kept record's null-guarded mint
 //   never taken (`if false`), l1 fails on --native (`l1: null`: every field reads the null
-//   store's sentinel).  Restored, l1–l15 hold on both backends, both switch states
+//   store's sentinel).  Restored, l1–l17 hold on both backends, both switch states
 //   (`LOFT_NO_LOOP_RECORD=1`), under LOFT_STRICT_STORES=1, LOFT_POISON=1, LOFT_POISON_CLAIM=1
 //   and LOFT_NATIVE_LEAK_CHECK=1 (a kept store is freed exactly once).  The same run found the
 //   interpreter's last-use move firing on a re-declared name (l11's shape; fixed first, guard
@@ -29,6 +29,10 @@ fn lr_use(x: const Lr, y: integer) -> integer { (y - x.b) * x.a }
 fn lr_write(x: Lr) { x.a = x.a * 2; }
 /// Returns a VIEW of its parameter's field record: the caller's local is borrowed (declines).
 fn lr_inner(o: const LrO) -> Lr { o.inner }
+/// Returns its parameter itself: the return BORROWS parameter 0 (`(O-Borrow)`), so a record
+/// handed to it declines; a callee whose return borrows a DIFFERENT parameter does not.
+fn lr_same(x: const Lr) -> Lr { x }
+fn lr_other(x: const Lr, o: const LrO) -> Lr { if x.a < 0 { o.inner } else { o.inner } }
 
 fn lr_ret_in_loop(v: vector<integer>) -> Lr {
   for i in 0..len(v) {
@@ -134,6 +138,19 @@ fn main() {
   l15a = 0;
   for i in 0..12 { r = Ld { a: i }; l15k += r.k; r.k = 99 + i; l15a += r.a; }
   assert(l15k == 60 && l15a == 66, "l15: {l15k} {l15a}");
+
+  // l16 — handed to a callee whose return borrows THAT parameter (declines): 660 through the view.
+  l16 = 0;
+  for i in 0..12 { r = Lr { a: i * 10, b: i, s: 0.0f, f: 0.0, flag: false }; v = lr_same(r); l16 += v.a; }
+  assert(l16 == 660, "l16: {l16}");
+
+  // l17 — handed to a callee whose return borrows a DIFFERENT parameter (kept): the view reads
+  //       the other record's 7 each pass, 84; r's own a is read too, 660.
+  o17 = LrO { inner: Lr { a: 7, b: 0, s: 0.0f, f: 0.0, flag: false }, k: 0 };
+  l17 = 0;
+  l17r = 0;
+  for i in 0..12 { r = Lr { a: i * 10, b: i, s: 0.0f, f: 0.0, flag: false }; w = lr_other(r, o17); l17 += w.a; l17r += r.a; }
+  assert(l17 == 84 && l17r == 660, "l17: {l17} {l17r}");
 
   println("ok");
 }

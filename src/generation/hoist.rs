@@ -5799,13 +5799,17 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
                         return;
                     }
                     if !native {
-                        // A loft callee: `v` may be handed as any argument when the return
-                        // borrows nothing.
-                        let hands = args
-                            .iter()
-                            .any(|a| matches!(a.unspan(), Value::Var(w) if *w == v));
-                        if hands && !data.def(*g).returned().depend().is_empty() {
-                            declined.get_or_insert("handed to a callee whose return borrows");
+                        // A loft callee: `v` may be handed as any argument whose PARAMETER the
+                        // return does not borrow (`(O-Borrow)`: the return type names the
+                        // parameters it aliases by index — a record-returning callee names its
+                        // hidden buffer there too, which is not a borrow of `v`).
+                        let deps = data.def(*g).returned().depend();
+                        let borrowed = args.iter().enumerate().any(|(i, a)| {
+                            matches!(a.unspan(), Value::Var(w) if *w == v)
+                                && u16::try_from(i).is_ok_and(|p| deps.contains(&p))
+                        });
+                        if borrowed {
+                            declined.get_or_insert("handed to a callee whose return borrows it");
                             return;
                         }
                         for a in args {

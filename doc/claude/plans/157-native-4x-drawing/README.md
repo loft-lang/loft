@@ -1117,7 +1117,18 @@ that parameter (`(O-Borrow)`: a callee cannot keep a caller's record except by c
 its return deps); a copy to another local, a return, a capture, a heap-owning field, `par` or
 `yield` decline.  Frees on a `return`/`continue` path stay (they are nested in an `Insert`, not
 the body's tail).  Priced on the probe: 39 → ~12 ns; on the bench ~1 % (`fd_sub` is 24/call).
-*Unit B — per-site buffer retention across activations:* the 127 fresh stores of `parse` are
+*Correction, later the same night — the 127 and 152 are the INTERPRETER's counts.*  The
+native trace (`LOFT_TRACE_DB=1` on `--native`, `db=#65535` = a fresh mint) shows `parse`
+minting **~11 fresh stores per call** (3 `vector<float>`, 3 `PointList`, 1.5 `Sketch`, a
+`Paint`, a `Mark`, a `FrondSpec`, a `vector<Pt>`) and `fronds` **~51** (25 `vector<float>` —
+`fd_sides`, one per activation — 24.5 `FrondSpec`, 1 `vector<Frond>`): the value-record,
+element-first and buffer-adoption rewrites already remove most of what the interpreter
+mints, so the per-site retention below has ~11 × 30 ns ≈ 0.3 µs to win on `parse` (2 %),
+not 25–30 %.  That settles it: unit B is not worth its instrument cost, and C125 already
+said so (the owner ruled against a pooled cheap store per buffer).  What remains on `parse`
+is the scanner; on `fronds` the append machinery, the hash, and `fd_sides` (a per-activation
+two-element literal vector — a candidate for `(R-LiteralHoist)`'s const-param branch).
+*Unit B — per-site buffer retention across activations (SUPERSEDED by the correction):* the 127 fresh stores of `parse` are
 hidden buffers minted and freed once per callee activation.  A per-(function, buffer) chain
 that keeps the store between activations (`clear` on entry instead of `null` + `database`,
 push instead of `free_named` at exit; recursion takes the next link, so a live buffer is never

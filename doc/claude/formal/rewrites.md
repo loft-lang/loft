@@ -301,8 +301,11 @@ re-derives the header at every access.  Sites: `hoist::vector_path`,
                  Admitted where the local's every mention is its init family —
                  the declaration, the mint, a fusable scalar field read or
                  in-place write, a free — or a hand-off to a loft callee whose
-                 return borrows nothing (O-Borrow: a callee keeps a caller's
-                 record only by copy or through its return's deps); a heap-owning
+                 return does not borrow THAT parameter (O-Borrow: a callee keeps
+                 a caller's record only by copy or through its return's deps,
+                 which name the parameters they alias by index; a record
+                 function's hidden buffer is named there too and is no borrow of
+                 the argument); a heap-owning
                  or nullable type, a second binding, a copy to another local, a
                  return, a capture, a native op taking it otherwise, `par` and
                  `yield` decline.  A free on a `return`/`continue` path stays.
