@@ -586,7 +586,18 @@ and `PreAllocEmitter`, `Stores::push_hoisted`.  Shipped: the consumer's `lock_cu
                  named by a variable whose getter the prelude already ran.  The
                  same op names over a KEYED collection are a keyed insert — a mover
                  of OTHER records — and stay blocking: admission asks the TYPE,
-                 never the op shape.
+                 never the op shape.  A mover whose ROOT the body REBINDS takes no
+                 holder (a holder describes what the root named on the way in);
+                 it declines the loop unless every rebind is alias-free — a null,
+                 or the projection OpGetField(b, …) of a buffer var b the EMITTER
+                 owns the mint of (a § V-al loop buffer, a § V-z element-first
+                 witness), which names a fresh store's root or a fresh element's
+                 field slot that no kept header can describe.  Such a mover's ops
+                 keep their templates or take a GROUP header (R-GroupPush), and the
+                 loop is not growth-free.  The same clause admits OpDatabase(b, …)
+                 on such a b (a fresh store, a length reset of its own, or nothing
+                 at all) and the § V-z paired copy into the element's field slot
+                 (emitted as nothing) as statements that move no held record.
 ```
 
 **In words.** @PLN157 § V-s.  Before it, `OpNewRecord`/`OpFinishRecord` were
@@ -600,6 +611,18 @@ the sabotage turns the write-through-parameter and write-through-alias cells red
 `LOFT_HOIST_VERIFY=1` panics naming the stale scalar.  Switch `LOFT_NO_MINT_HOIST`;
 falsifier `LOFT_HOIST_VERIFY=1`.  Sites: `hoist::mint_path`,
 `hoist::blocks_header_hoist`, `hoist::body_writes`, the mint arm in `hoist::hoistable`.
+*The rebound clause (2026-09-18):* the drawing library's `fronds` declares its point and width
+vectors per pass of the side loop, and every rebound mover declined the WHOLE loop — so
+neither the side loop nor the `for i` around it hoisted anything (the `for i` was declined a
+second way, by its per-pass `fd_sides` loop buffer's `OpDatabase`).  A rebind from the
+emitter's own buffer is the one rebind that cannot alias a held vector, so it costs the mover
+its holder and nothing else.  Falsified on the alias the clause refuses: a mover rebound to a
+VIEW of a held vector (`w = &big; w += [...]` beside `len(big)`) must still decline the loop,
+or the hoisted length answers the pre-push count (`tests/scripts/157-group-push.loft` g7).
+Switch `LOFT_NO_REBOUND_MOVER`; trace `LOFT_TRACE_HOIST_DECLINE=1` names the first statement
+that declines a loop.  Sites: `hoist::HoistOwned`, `hoist::rebinds_alias_free`, the
+`buffer_alloc`/`elided_copy` arms in `hoist::blocks_header_hoist`, the rebound arm in
+`hoist::hoistable`, `Output::hoist_owned`.
 
 ### A record append emits through its push header
 
@@ -617,10 +640,14 @@ falsifier `LOFT_HOIST_VERIFY=1`.  Sites: `hoist::mint_path`,
                  vector_finish was.  A growth step is the runtime's own append
                  followed by a fresh header (R-Refresh), taken BEFORE the element's
                  writes so they land in the moved record.  Admission asks the TYPE:
-                 an element owning heap (text, a nested collection) keeps the
-                 templates, because a raw slot carries stale bytes where a heap
-                 handle's zero matters; a __nullable element's discriminant is not
-                 a field the literal writes.
+                 the element must be a plain struct — a __nullable element's
+                 discriminant is not a field the literal writes.  An element that
+                 OWNS heap (text, a nested collection) takes the header too, its
+                 slot ZEROED at the mint (push_record_hoisted_zero): the zero is the
+                 whole of what the prefill did for its handles, and a raw slot's
+                 stale handle is exactly what a reused buffer's slot carries.  The
+                 § V-z element minted at its temp's declaration emits through the
+                 same header when the container holds one.
 ```
 
 **In words.** @PLN157 § V-t.  Before it, an admitted mint still paid per element a
@@ -640,6 +667,56 @@ the finish).  Sites: `hoist::mint_push_qualifies`, the mint arm in `hoist::hoist
 `Stores::push_record_hoisted`, `Stores::push_record_finish`.  Shipped: standalone
 `smooth` −32 % (3 070 → 2 090 ns/op), consumer `smooth` 11.0× → 4.6× and `fronds` 11.1× →
 8.4× of Rust on the measuring box, 14/14 hashes unchanged.
+*The heap clause (2026-09-18):* `fronds`' element is `Frond { fpts, fwid }`, two vector
+handles, so every one of its 1 272 mints per call paid the dispatch and a `set_default_value`
+walk whose whole effect was two zero words.  Falsified by sabotage: `push_record_hoisted_zero`
+made to skip its `zero_range` turns the reused-buffer cell red on `--native` under
+`LOFT_POISON_CLAIM=1` — the slot's poisoned handle is read as the element's `xs` vector, a
+store guard panic naming record `3735928559` — while the plain run (zero-on-claim) stays
+green, which is why that falsifier and not the plain run guards the clause.  Switch
+`LOFT_NO_HEAP_RECORD_PUSH`; cells `tests/scripts/157-group-push.loft` g2, g3, g8–g10; pins
+`tests/group_push.rs`.  Sites: `hoist::mint_push_qualifies` (`heap`), `NewRecordEmitter`,
+`Output::write_elem_first_mint`, `Stores::push_record_hoisted_zero`.
+
+### A mint group outside any held header binds its own
+
+```
+  (R-GroupPush)  a mint GROUP — OpPreAllocVector(P, n, size) · n × (e = OpNewRecord(P)
+                 · writes into e · OpFinishRecord(P, e)) — over a bare-variable plain
+                 vector P (the (R-Mint) shape) whose path holds NO record-push header
+                 where it stands, whose every mint qualifies under (R-PushRec), and
+                 whose every OTHER statement up to the n-th finish is one the header
+                 admission lets through (an in-place set, a store-free builder, a
+                 § V-d fresh delivery, a nested mint on another path) with P never
+                 rebound and never minted or reserved outside the count, binds a
+                 push header of its own right after its reservation and emits its
+                 mints and finishes through it (R-PushRec), the header dying at the
+                 n-th finish; every read of P inside the group stays a store read.
+                 The reservation STAYS — it is what gives the header its capacity —
+                 and a growth inside the group is (R-Refresh)'s.  A builder that may
+                 write a store, a mint or finish on P nested where the count cannot
+                 see it, and a group that runs out before its n-th finish each keep
+                 the templates, which resolve per element and are always right.
+```
+
+**In words.** @PLN157 (2026-09-18).  `(R-PushRec)` gave the header to a mint INSIDE a loop
+that holds one; every other append — a literal group at function level, a group inside a
+loop that declined, a group on a per-pass local — paid the `record_new` dispatch, the prefill
+and the `record_finish` dispatch per element: the drawing library's `fronds` built its 1 296
+points per call that way (`fd_pts += [pt(…), pt(…)]`, `fd_pts` declared per pass), 15 µs of a
+102 µs call.  The group's own reservation already guarantees the slots, so the header derived
+after it is exact for the whole group, and the group is straight-line code the parser emits —
+the same producer `(R-Mint)` trusts.  Hand-priced first on the lean emission (H7 −15 µs, H8
+the heap clause −12 µs, together −33 µs), then built: `fronds` 101.7 → 69.6 µs per call
+(2.71× → 1.86× of the Rust reference), hash `ebcfd875` on every run, the hand ceiling met.
+The audit reads the group's close marker (`// @FR-R-GroupPush group __ph_N closed`) because
+the header's Rust binding outlives the group.  Switch `LOFT_NO_GROUP_PUSH`; falsifier
+`LOFT_HOIST_VERIFY=1` (the header re-derived at the slot and the finish; the growth cell g6
+is the one that moves the record mid-group).  Cells `tests/scripts/157-group-push.loft`
+g1, g3–g7, g10; pins `tests/group_push.rs`, and `tests/record_push.rs` re-derived where the
+group reaches a cell the loop declined (c8, c11, c15).  Sites: `hoist::mint_group`,
+`Output::bind_group_push`, `Output::close_groups_before`, `Output::hoist_tiers`, the
+`GROUP_CLOSE` rule in `scripts/emission_audit.py`.
 
 ### A dying temporary's elements move into the append that consumes them
 

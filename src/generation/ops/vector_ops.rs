@@ -445,11 +445,18 @@ impl OpEmitter for NewRecordEmitter {
         let Ok(tp) = u16::try_from(*tp) else {
             return super::default::DefaultEmitter.emit(ctx, args);
         };
-        let size = out.stores.size(out.stores.content(tp));
+        let elem = out.stores.content(tp);
+        let size = out.stores.size(elem);
         let verify = verify(ctx);
+        // `@FR-R-PushRec` heap clause — a heap-owning element's slot is zeroed at the mint.
+        let zero = if out.stores.owns_heap(elem) {
+            "_zero"
+        } else {
+            ""
+        };
         write!(
             ctx.w,
-            "stores.push_record_hoisted::<{verify}>(&mut {header}, &("
+            "stores.push_record_hoisted{zero}::<{verify}>(&mut {header}, &("
         )?;
         ctx.emit(&args[0])?;
         write!(ctx.w, "), {size})")

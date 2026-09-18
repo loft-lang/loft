@@ -771,6 +771,27 @@ mint-group templates — with it on, a no-heap struct element is built IN the pu
 next slot (no `record_new` dispatch, no default prefill: the group's writes fill every field
 explicitly) and the finish is the length bump — and is the bisect step for a wrong element,
 default value or length out of a record-appending loop.
+**`LOFT_NO_GROUP_PUSH=1`** (`@FR-R-GroupPush`, default-ON, generation time, `--native` only)
+makes a record append OUTSIDE any held header keep its templates again — with it off, a
+literal group `v += [pt(a, b), pt(c, d)]` that no enclosing loop holds a header for (a group
+at function level, in a loop that declined, or on a vector declared per pass) binds a push
+header of its own right after its reservation and emits its mints and finishes through it
+(`fronds` built its 1 296 points per call that way: 101.7 → 69.6 µs with the two clauses
+below, 2.71× → 1.86× of Rust) — and is the first bisect step for a wrong element out of a
+literal record append on native; `LOFT_HOIST_VERIFY=1` re-derives the header at the slot and
+the finish.  **`LOFT_NO_HEAP_RECORD_PUSH=1`** (`@FR-R-PushRec`'s heap clause) keeps an element
+that OWNS heap (a `Frond { fpts, fwid }`) on its templates — with it off, such an element goes
+through the header too, its slot ZEROED at the mint, which is the whole of what the prefill did
+for its handles — and is the bisect step for a wrong or stale handle in an appended record
+whose fields own heap; `LOFT_POISON_CLAIM=1` is the falsifier (the plain run's zero-on-claim
+hides a missing zero).  **`LOFT_NO_REBOUND_MOVER=1`** (`@FR-R-Mint`'s rebound clause) makes a
+loop whose body REBINDS a pushed or minted vector decline every hoist again — with it off, a
+mover rebound to a § V-al loop buffer's or a § V-z element slot's projection simply takes no
+holder, the loop keeps its other headers and scalars, and the buffer's own mint and the
+elided element-first copy are admitted as statements that move nothing — and is the bisect
+step for a wrong element or scalar read in a loop that declares a vector per pass.
+**`LOFT_TRACE_HOIST_DECLINE=1`** names the FIRST statement that declines a loop's hoist —
+reach for it when a loop that should hoist does not, before reading the admission.
 **`LOFT_NO_MOVE_APPEND=1`** (@PLN157 § V-j) makes `for f in call(…) { v += [f] }` keep the
 deep copy — with it on, the call's buffer is PLACED as a record in `v`'s own store, the
 append relocates the element's bytes (heap handles included — they never change store) and

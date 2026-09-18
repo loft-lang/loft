@@ -9,6 +9,34 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A record append outside a held header binds its own — `R-GroupPush`, the heap and rebound clauses (2026-09-18)
+
+`--native`, generation time, default ON.  Three clauses, one arc, priced by hand patch on the
+drawing library's `fronds` before any was built (Pt groups −15 µs, Frond mints −12 µs, both
+−33 µs of a 102 µs call) and then measured built: **101.7 → 69.6 µs per call, 2.71× → 1.86× of
+the Rust reference**, hash exact.  `formal/rewrites.md` gains `(R-GroupPush)`: a mint group
+(`OpPreAllocVector(P, n)` and its n mints and finishes) on a bare-variable plain vector that no
+enclosing loop holds a record-push header for binds one of its own right after its reservation
+— the reservation is what gives it its capacity — and emits through it (`hoist::mint_group`,
+`Output::bind_group_push`; the header's Rust binding outlives the group, so a close marker tells
+`scripts/emission_audit.py` where the holder dies).  `(R-PushRec)` gains its **heap clause**: an
+element that owns heap goes through the header with its slot zeroed at the mint
+(`Stores::push_record_hoisted_zero`), which is the whole of what the prefill did for its handles;
+the § V-z early mint takes the same header.  `(R-Mint)` gains its **rebound clause**: a mover
+the body rebinds to a § V-al loop buffer's or a § V-z element slot's projection takes no holder
+instead of declining the loop (`hoist::rebinds_alias_free`), and the buffer's own `OpDatabase`
+and the elided element-first copy are admitted (`hoist::HoistOwned`) — before, `fronds`' side
+loop and the `for i` around it hoisted nothing.  Falsified: the zero skipped by sabotage turns
+the reused-buffer cell red under `LOFT_POISON_CLAIM=1` (a poisoned handle read as the element's
+vector) while the plain run stays green; a mover rebound to a `&` view of a held vector still
+declines the loop (g7).  Switches `LOFT_NO_GROUP_PUSH`, `LOFT_NO_HEAP_RECORD_PUSH`,
+`LOFT_NO_REBOUND_MOVER`; trace `LOFT_TRACE_HOIST_DECLINE=1` (the first statement that declines a
+loop).  Cells `tests/scripts/157-group-push.loft` g1–g10 (25 native cells against the
+interpreter: five switch states × five falsifiers), pins `tests/group_push.rs`;
+`tests/record_push.rs` re-derived where the group now reaches a cell the loop declined (c8,
+c11, c15).  Found on the way: the two `adopt_*` census pins moved with `R-LoopRecord` (fewer
+native mints, deltas unchanged) and were re-pinned.
+
 ### A record local declared in a loop keeps its store — `R-LoopRecord` (2026-09-18)
 
 `--native`, generation time, default ON (`LOFT_NO_LOOP_RECORD=1` restores the per-pass free

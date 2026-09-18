@@ -762,6 +762,32 @@ pub struct Output<'a> {
     /// loop.  `LOFT_HOIST_VERIFY=1` is the falsifier (the header is re-derived and compared
     /// at the slot and at the finish).
     pub record_push_disabled: bool,
+    /// `LOFT_NO_HEAP_RECORD_PUSH=1` — a heap-owning element keeps its mint-group templates
+    /// (`@FR-R-PushRec`'s heap clause off): the bisect step for a wrong or stale handle in an
+    /// appended record whose fields own heap.  `LOFT_POISON_CLAIM=1` is the falsifier.
+    pub heap_record_push_disabled: bool,
+    /// `LOFT_NO_REBOUND_MOVER=1` — a loop whose body rebinds a mover (a pushed or minted
+    /// vector) declines every hoist again, as before `(R-Mint)`'s rebound clause; the bisect
+    /// step for a wrong element or scalar read in a loop that declares a vector per pass.
+    pub rebound_mover_disabled: bool,
+    /// `LOFT_NO_GROUP_PUSH=1` — a mint group outside any held header keeps its templates
+    /// (`@FR-R-GroupPush` off); the bisect step for a wrong element out of a literal record
+    /// append.  `LOFT_HOIST_VERIFY=1` is the falsifier (header re-derived at slot and finish).
+    pub group_push_disabled: bool,
+    /// `(R-Mint)`'s rebound clause — the current function's emitter-owned buffer vars: the
+    /// § V-al loop buffers and the § V-z element-first witnesses, whose `OpDatabase` the
+    /// loop-hoist admission lets through and whose projection a rebound mover may be bound
+    /// from.  Rebuilt per function beside [`Self::loop_buffers`].
+    pub hoist_owned: hoist::HoistOwned,
+    /// `@FR-R-GroupPush` — the open mint GROUPS: `(block serial, index of the group's last
+    /// statement)`, innermost last; the header frame each pushed on
+    /// [`Self::mint_push_headers`] is popped when ITS block reaches the statement after the
+    /// end, or closes.  Keyed by block so a nested block's statement indices cannot close an
+    /// enclosing block's group (an `if` arm inside the group is emitted through the same
+    /// `output_block`).
+    group_ends: Vec<(usize, usize)>,
+    /// The serial of the `output_block` invocation being emitted, for [`Self::group_ends`].
+    block_serial: usize,
     /// @PLN157 § V-j (`@FR-R-MoveAppend`) — the paired move-appends of the function being
     /// emitted, keyed by BUFFER variable ([`hoist::move_appends`]); rebuilt per function.
     pub move_pairs: BTreeMap<u16, hoist::MoveAppend>,
@@ -1906,6 +1932,13 @@ impl<'a> Output<'a> {
             mint_hoist_disabled: std::env::var("LOFT_NO_MINT_HOIST").is_ok_and(|v| v != "0"),
             mint_push_headers: Vec::new(),
             record_push_disabled: std::env::var("LOFT_NO_RECORD_PUSH").is_ok_and(|v| v != "0"),
+            heap_record_push_disabled: std::env::var("LOFT_NO_HEAP_RECORD_PUSH")
+                .is_ok_and(|v| v != "0"),
+            rebound_mover_disabled: std::env::var("LOFT_NO_REBOUND_MOVER").is_ok_and(|v| v != "0"),
+            group_push_disabled: std::env::var("LOFT_NO_GROUP_PUSH").is_ok_and(|v| v != "0"),
+            hoist_owned: hoist::HoistOwned::default(),
+            group_ends: Vec::new(),
+            block_serial: 0,
             move_pairs: BTreeMap::new(),
             move_by_loopvar: HashMap::new(),
             active_move_vars: Vec::new(),
@@ -2257,6 +2290,23 @@ impl Output<'_> {
             });
             self.loop_buffers = lb;
         }
+        // `(R-Mint)`'s rebound clause — the buffer vars whose mint the hoist admission lets
+        // through: what the emitter itself owns the mint of.
+        self.hoist_owned = hoist::HoistOwned {
+            buffers: self
+                .loop_buffers
+                .iter()
+                .copied()
+                .chain(self.elem_first.by_vdb.keys().copied())
+                .collect(),
+            elem_fields: self
+                .elem_first
+                .pairs
+                .iter()
+                .flat_map(|p| p.binds.iter().map(move |b| (p.elm, i64::from(b.field_off))))
+                .collect(),
+        };
+        self.group_ends.clear();
         self.declared.clear();
         self.local_record_link.clear();
         self.retbuf_witness.clear();
@@ -2657,8 +2707,11 @@ impl Output<'_> {
                     push: !self.push_hoist_disabled,
                     mint: !self.mint_hoist_disabled,
                     record_push: !self.record_push_disabled,
+                    heap_push: !self.heap_record_push_disabled,
+                    rebound_movers: !self.rebound_mover_disabled,
                 },
                 (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
+                Some(&self.hoist_owned),
             )
         };
         let hoist::LoopHoist {
@@ -3327,6 +3380,110 @@ impl Output<'_> {
         }
         self.rec_ptrs.push(HashMap::from([(r, name)]));
         Ok(true)
+    }
+
+    /// The tiers the loop hoist runs under, as [`Self::begin_vector_hoist`] passes them —
+    /// the ONE spelling, so the group admission (`@FR-R-GroupPush`) asks the same question.
+    fn hoist_tiers(&self) -> hoist::HoistTiers {
+        hoist::HoistTiers {
+            in_place: !self.write_hoist_disabled,
+            scalars: !self.scalar_hoist_disabled,
+            push: !self.push_hoist_disabled,
+            mint: !self.mint_hoist_disabled,
+            record_push: !self.record_push_disabled,
+            heap_push: !self.heap_record_push_disabled,
+            rebound_movers: !self.rebound_mover_disabled,
+        }
+    }
+
+    /// `@FR-R-GroupPush` — after statement `at` of a block was emitted: if it is the
+    /// `OpPreAllocVector` heading a mint GROUP on a path no enclosing loop holds a record-push
+    /// header for, and the group is admitted ([`hoist::mint_group`]), emit
+    /// `let mut __ph_N = vector::push_header(&(P), …);` as the next statement and push a
+    /// record-push frame for P that the group's mints and finishes emit through; the frame
+    /// is popped after the group's last statement ([`Self::group_ends`]).  The reservation
+    /// just emitted is what gives the header its capacity, so it stays.
+    pub(super) fn bind_group_push(
+        &mut self,
+        w: &mut dyn Write,
+        ops: &[Value],
+        at: usize,
+        block: usize,
+    ) -> std::io::Result<()> {
+        if self.group_push_disabled || self.record_push_disabled || self.hoist_disabled {
+            return Ok(());
+        }
+        let Value::Call(d, args) = ops[at].unspan() else {
+            return Ok(());
+        };
+        if (*d as usize) >= self.data.definitions.len()
+            || self.data.def(*d).name() != "OpPreAllocVector"
+        {
+            return Ok(());
+        }
+        let Some(path) = hoist::pre_alloc_path(self.data, "OpPreAllocVector", args) else {
+            return Ok(());
+        };
+        if self.active_mint_push(&path).is_some()
+            || self.coroutine_persistent_fields.contains_key(&path.0)
+        {
+            return Ok(());
+        }
+        let tiers = self.hoist_tiers();
+        let Some((path, end)) = hoist::mint_group(
+            ops,
+            at,
+            self.data,
+            self.stores,
+            self.def_nr,
+            &mut self.hoist_cache,
+            tiers,
+            Some(&self.hoist_owned),
+        ) else {
+            return Ok(());
+        };
+        self.hoist_counter += 1;
+        let name = format!("__ph_{}", self.hoist_counter);
+        let mut operand: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut operand, &args[0])?;
+        let operand = String::from_utf8_lossy(&operand).into_owned();
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let mut {name} = vector::push_header(&({operand}), &stores.allocations); //@FR-R-GroupPush group push header"
+        )?;
+        let mut frame: HashMap<hoist::PathKey, String> = HashMap::new();
+        frame.insert(path, name);
+        self.mint_push_headers.push(frame);
+        self.group_ends.push((block, end));
+        Ok(())
+    }
+
+    /// `@FR-R-GroupPush` — close every group of `block` whose last statement lies before
+    /// `at` (`usize::MAX` closes all of the block's).  Each close writes a marker comment:
+    /// the header's Rust binding outlives the group, and the marker is how the emission
+    /// audit (`scripts/emission_audit.py`) knows the holder is dead from here — a later
+    /// holder of the same path is then not a second one (`R-State`).
+    pub(super) fn close_groups_before(
+        &mut self,
+        w: &mut dyn Write,
+        block: usize,
+        at: usize,
+    ) -> std::io::Result<()> {
+        while self
+            .group_ends
+            .last()
+            .is_some_and(|&(b, end)| b == block && end < at)
+        {
+            self.group_ends.pop();
+            if let Some(frame) = self.mint_push_headers.pop() {
+                for name in frame.values() {
+                    self.indent(w)?;
+                    writeln!(w, "// @FR-R-GroupPush group {name} closed")?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// @PLN157 § V-q — the push header an enclosing loop holds for `path`, when one does.

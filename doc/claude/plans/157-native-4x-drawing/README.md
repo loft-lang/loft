@@ -43,6 +43,17 @@ step-1 arm, 14/14 hashes): `render_marks` 2.79–2.86× → **1.54–1.74×**, `
 (Perf-Weight) median bar met on this lane, `lock_curved` (3.85×) the one row still over 3×.  Switches `LOFT_NO_BOUNDED_NEST`, `LOFT_NO_NEST_RAW_READS`, `LOFT_NO_SELF_APPEND_BLOCK`;
 falsifier `LOFT_HOIST_VERIFY=1` (`ops::nest_verify`, and the raw read compared with the checked
 one); pins `tests/bounded_nest.rs`; cells `tests/scripts/157-bounded-nest.loft` n1–n23.
+**`R-GroupPush` + the heap and rebound clauses SHIPPED 2026-09-18** (`formal/rewrites.md`, unit C of
+the store-traffic analysis in § Where to resume — the record-append machinery): a mint group that
+holds no push header binds one of its own after its reservation; an element that owns heap goes
+through the header with its slot zeroed at the mint; a loop whose body rebinds a mover to a loop
+buffer's or an element slot's projection hoists instead of declining.  Priced by hand patch first
+(−15 / −12 / −33 µs of `fronds`' 102 µs), then built: **`fronds` 101.7 → 69.6 µs per call, the lane
+2.60× → 1.63×, `smooth` 1.82× → 1.13×**, every other row within noise (`lock`, `lock_curved`,
+`wide_line`, `parse` A/B'd under each switch), 14/14 hashes.  Switches `LOFT_NO_GROUP_PUSH`,
+`LOFT_NO_HEAP_RECORD_PUSH`, `LOFT_NO_REBOUND_MOVER`; trace `LOFT_TRACE_HOIST_DECLINE`; cells
+`tests/scripts/157-group-push.loft` g1–g10, pins `tests/group_push.rs`; `tests/record_push.rs`
+re-derived (c8, c11, c15 now fuse through a group header).
 **`R-LoopRecord` SHIPPED 2026-09-18** (`formal/rewrites.md`, unit A of the store-traffic
 analysis in § Where to resume): a plain no-heap record local declared and minted by a literal
 inside a loop keeps its store and its record across passes — declared at the loop's prelude, a
@@ -1117,6 +1128,24 @@ that parameter (`(O-Borrow)`: a callee cannot keep a caller's record except by c
 its return deps); a copy to another local, a return, a capture, a heap-owning field, `par` or
 `yield` decline.  Frees on a `return`/`continue` path stay (they are nested in an `Insert`, not
 the body's tail).  Priced on the probe: 39 → ~12 ns; on the bench ~1 % (`fd_sub` is 24/call).
+*Unit C — the record append (SHIPPED 2026-09-18, `R-GroupPush` + `(R-PushRec)`'s heap clause +
+`(R-Mint)`'s rebound clause):* the class the correction below points at.  The A/B on the switch
+settled the first suspect first — `LOFT_NO_MOVE_APPEND=1` costs `fronds` 101.7 → 151 µs, so the
+624 fractal moves per call are already shallow — and a copy probe priced one deep copy of a
+`Frond` at ~117 ns against 4 ns for a read.  Hand patches on the lean emission (`fr_long.rs`,
+n = 60 000, baseline 102.6–103.8 µs): Pt mints without prefill −7.5 µs (1 296/call, ~5.8 ns
+each); Frond mints without prefill −7 µs (1 272/call); `sp`'s 38 field reads through one record
+address −3 µs; the Pt groups through a per-group push header −15 µs; the Frond mints through one
+held header with the two handles zeroed −12 µs; both −33 µs (70.1–70.8 µs).  Why nothing hoisted
+before: `fd_pts`/`fd_wid` are declared per pass (a rebound mover declined the side loop whole),
+the `for i` was declined by its `fd_sides` loop buffer's `OpDatabase` and by the element-first
+copies the emitter elides, and a `Frond` owns heap.  Built as three clauses, `fronds` 101.7 →
+69.6 µs (the ceiling met exactly), lane 2.60× → 1.63×.  **Left on `fronds`:** `sp`'s scalar
+reads do NOT hoist at the `for i` although the loop now hoists (headers 0, scalars 0 — the
+write-set walk returns `None` somewhere in the body; ~3 µs), and `fd_sides` per activation.
+**Left on `parse`:** its appends are FIELD-PATH mints (`sc.ops += [Op {…}]`), outside the
+bare-variable `(R-Mint)` admission, so neither the loop header nor the group header reaches
+them — the natural next unit for that row, together with the `Paint` copies the advice names.
 *Correction, later the same night — the 127 and 152 are the INTERPRETER's counts.*  The
 native trace (`LOFT_TRACE_DB=1` on `--native`, `db=#65535` = a fresh mint) shows `parse`
 minting **~11 fresh stores per call** (3 `vector<float>`, 3 `PointList`, 1.5 `Sketch`, a

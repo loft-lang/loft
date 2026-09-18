@@ -179,10 +179,24 @@ pub fn hoistable_vectors(
         in_place: allow_in_place,
         ..HoistTiers::default()
     };
-    if body_blocks_hoist(body, data, def_nr, cache, tiers) {
+    if body_blocks_hoist(body, data, def_nr, cache, tiers, None) {
         return Vec::new();
     }
     vector_candidates(body, data, def_nr)
+}
+
+/// `(R-Mint)`'s rebound clause — what the EMITTER owns the mint or copy of in the current
+/// function, so the loop-hoist admission can let those statements through: they emit as a
+/// fresh store, a length reset, or nothing at all, and move no record a header describes.
+#[derive(Clone, Default, Debug)]
+pub struct HoistOwned {
+    /// The § V-al loop buffers and the § V-z element-first witnesses: `OpDatabase(b, …)` on
+    /// one is a fresh store or its own reset (or, for a witness, never emitted), and a local
+    /// bound from `OpGetField(b, …)` names a fresh root or a fresh element's slot.
+    pub buffers: HashSet<u16>,
+    /// The § V-z paired `(element, field offset)`s: the `OpAppendVector(OpGetField(e, off),
+    /// tmp, tp)` copy into one is emitted as NOTHING — the temp was built in the slot.
+    pub elem_fields: HashSet<(u16, i64)>,
 }
 
 /// The generation-time tiers of the hoist family — one flag per admitted rewrite, each an
@@ -205,6 +219,12 @@ pub struct HoistTiers {
     /// through a push header of its own (`LOFT_NO_RECORD_PUSH` off).  A refinement of
     /// `mint`: it changes what the group's ops emit, never whether the loop hoists.
     pub record_push: bool,
+    /// `(R-PushRec)`'s heap clause — an admitted mint whose element OWNS heap emits through
+    /// the header too, its slot zeroed at the mint (`LOFT_NO_HEAP_RECORD_PUSH` off).
+    pub heap_push: bool,
+    /// `(R-Mint)`'s rebound clause — a mover the body REBINDS to a fresh buffer or element
+    /// slot takes no holder instead of declining the loop (`LOFT_NO_REBOUND_MOVER` off).
+    pub rebound_movers: bool,
 }
 
 /// Does anything in `body` invalidate a hoisted header?  The ONE gate both the vector
@@ -218,10 +238,12 @@ fn body_blocks_hoist(
     def_nr: u32,
     cache: &mut HashMap<u32, bool>,
     tiers: HoistTiers,
+    owned: Option<&HoistOwned>,
 ) -> bool {
     let mut fresh: HashSet<u16> = HashSet::new();
+    let trace = std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok();
     body.operators.iter().any(|op| {
-        blocks_header_hoist(
+        let blocks = blocks_header_hoist(
             op,
             data,
             cache,
@@ -229,7 +251,20 @@ fn body_blocks_hoist(
             Some(data.def(def_nr).variables()),
             tiers,
             &mut fresh,
-        )
+            owned,
+        );
+        if blocks && trace {
+            // The FIRST statement of the body the admission declines — the one to read
+            // when a loop that should hoist does not.
+            let shown = format!("{op:?}");
+            eprintln!(
+                "hoist: {} loop {} declined by {}",
+                data.def(def_nr).name(),
+                body.scope,
+                &shown[..shown.len().min(200)]
+            );
+        }
+        blocks
     })
 }
 
@@ -396,10 +431,10 @@ pub struct LoopHoist {
 // The eight parameters are the loop, the two things that type it (the IR and the schema),
 // the two memos shared across every loop of the program, and the two switches; a struct
 // would put a name between each and the one call site without removing anything.
-// The eight parameters are the loop, the two things that type it (the IR and the schema),
-// the two memos shared across every loop of the program, the tier switches and the § V-p
-// memo; a struct would put a name between each and the one call site without removing
-// anything.
+// The nine parameters are the loop, the two things that type it (the IR and the schema),
+// the two memos shared across every loop of the program, the tier switches, the § V-p
+// memo and the emitter-owned buffer vars; a struct would put a name between each and the
+// one call site without removing anything.
 #[allow(clippy::too_many_arguments)]
 /// Enforces `@FR-R-Scalar` (the candidates and the write set) beside `@FR-R-Header`.
 pub fn hoistable(
@@ -411,8 +446,9 @@ pub fn hoistable(
     writes: &mut WriteCache,
     tiers: HoistTiers,
     inputs: Option<&mut InputCache>,
+    owned: Option<&HoistOwned>,
 ) -> LoopHoist {
-    if body_blocks_hoist(body, data, def_nr, cache, tiers) {
+    if body_blocks_hoist(body, data, def_nr, cache, tiers, owned) {
         return LoopHoist::default();
     }
     let mut out = LoopHoist {
@@ -526,7 +562,7 @@ pub fn hoistable(
                     && data.def(*d).name() == "OpNewRecord"
                     && let Some(path) = mint_path(data, "OpNewRecord", args, vars)
                 {
-                    let q = tiers.record_push && mint_push_qualifies(stores, args);
+                    let q = tiers.record_push && mint_push_qualifies(stores, args, tiers.heap_push);
                     if let Some(row) = mint_fused.iter_mut().find(|(p, _, _)| *p == path) {
                         row.2 &= q;
                     } else {
@@ -538,16 +574,39 @@ pub fn hoistable(
             });
         }
     }
+    // `(R-Mint)`'s rebound clause — a mover whose root the body REBINDS: its holder would
+    // describe what the root named on the way in, so it takes none.  It declines the loop
+    // (as every rebound mover did) unless every rebind is alias-free — a null, or the
+    // projection of an emitter-owned buffer var (§ V-al's loop buffer, § V-z's element
+    // slot: a fresh store or a fresh element's field, which no kept header can name).
+    // Its pushes and mints keep their templates — or take a GROUP header (`R-GroupPush`)
+    // — and they still GROW a store, so the loop is not growth-free.
+    let mut dropped_mover = false;
+    if !pushes.is_empty() || !mints.is_empty() {
+        let rebound_movers: Vec<u16> = pushes
+            .iter()
+            .map(|(p, _)| p.0)
+            .chain(mints.iter().map(|p| p.0))
+            .filter(|r| rebound.contains(r))
+            .collect::<HashSet<u16>>()
+            .into_iter()
+            .collect();
+        if !rebound_movers.is_empty() {
+            if !tiers.rebound_movers
+                || !rebound_movers
+                    .iter()
+                    .all(|r| rebinds_alias_free(body, *r, data, owned))
+            {
+                return LoopHoist::default();
+            }
+            dropped_mover = true;
+            pushes.retain(|(p, _)| !rebound_movers.contains(&p.0));
+            mints.retain(|p| !rebound_movers.contains(&p.0));
+            mint_fused.retain(|(p, _, _)| !rebound_movers.contains(&p.0));
+        }
+    }
     if !pushes.is_empty() || !mints.is_empty() {
         let mover = |q: &PathKey| pushes.iter().any(|(p, _)| p == q) || mints.contains(q);
-        if pushes
-            .iter()
-            .map(|(p, _)| p)
-            .chain(mints.iter())
-            .any(|p| rebound.contains(&p.0))
-        {
-            return LoopHoist::default();
-        }
         let retbuf = retbuf_var(data, def_nr);
         let others = out.vectors.iter().any(|(q, _)| !mover(q));
         if pushes.len() + mints.len() > 1 || others {
@@ -578,7 +637,7 @@ pub fn hoistable(
     // `@FR-R-Base` — decided here, before either early return below: a loop with no
     // record scalars to hoist is exactly the shape a pixel loop has.
     let null_buf = mints_null_buffer(body, data, vars);
-    out.growth_free = out.pushes.is_empty() && out.mint_pushes.is_empty();
+    out.growth_free = out.pushes.is_empty() && out.mint_pushes.is_empty() && !dropped_mover;
     if std::env::var("LOFT_TRACE_BASE").is_ok() {
         eprintln!(
             "base: {} loop {} growth_free={} (pushes {}, mint pushes {}, null buffer {}, headers {})",
@@ -1259,6 +1318,7 @@ pub fn view_def_header(
                 ..HoistTiers::default()
             },
             &mut HashSet::new(),
+            None,
         )
     }) {
         return None;
@@ -1374,6 +1434,7 @@ pub fn record_view_ptr(
                 ..HoistTiers::default()
             },
             &mut HashSet::new(),
+            None,
         )
     }) {
         return Err("the remainder may grow a store");
@@ -2463,6 +2524,145 @@ pub fn mint_path(
     matches!(vars.tp(path.0).peel_link(), Type::Vector(_, _)).then_some(path)
 }
 
+/// `(R-Mint)`'s rebound clause — is every `Set(root, rhs)` in `body` alias-free: a null, or
+/// the field projection of an emitter-owned buffer var (`buffers`: a § V-al loop buffer or a
+/// § V-z element-first witness)?  Such a rebind names a fresh store's root or a fresh
+/// element's field slot, which no header kept across the body can describe; a `Set` from
+/// anything else (`v = w`, a call's result, an element of another vector) may alias a held
+/// vector, and the fallback answers NO because the caller then declines the whole loop —
+/// the conservative side.
+fn rebinds_alias_free(body: &Block, root: u16, data: &Data, owned: Option<&HoistOwned>) -> bool {
+    let Some(owned) = owned else { return false };
+    let buffers = &owned.buffers;
+    !body.operators.iter().any(|op| {
+        op.any_node(&mut |n| match n {
+            Value::Set(v, rhs) if *v == root => !match rhs.unspan() {
+                Value::Null => true,
+                Value::Call(d, args) => {
+                    (*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpGetField"
+                        && matches!(args.first().map(Value::unspan), Some(Value::Var(b))
+                            if buffers.contains(b))
+                }
+                _ => false,
+            },
+            Value::TuplePut(v, _, _) => *v == root,
+            _ => false,
+        })
+    })
+}
+
+/// `(R-GroupPush)` — a mint GROUP that holds no push header of its own: the statements
+/// `ops[at + 1 ..= end]` after an `OpPreAllocVector(P, n, size)` at `ops[at]`, where P is a
+/// bare-variable plain vector (the `(R-Mint)` shape), the group's `n` mints and finishes
+/// name P, every mint qualifies for the record push, and every OTHER statement in the range
+/// is one the header admission lets through (an in-place set, a store-free builder, a fresh
+/// delivery) — so nothing in the range moves P's record but the group's own pushes, which
+/// the header follows.  Answers the index of the n-th finish; `None` declines.  The
+/// reservation stays: it is what gives the header its capacity.  A rebind of P inside the
+/// range, a statement that may grow or clear a store, a mint on P outside the count, or a
+/// range that runs out before the n-th finish each decline — the fallback is the template,
+/// which resolves per element and is always right.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn mint_group(
+    ops: &[Value],
+    at: usize,
+    data: &Data,
+    stores: &Stores,
+    def_nr: u32,
+    cache: &mut HashMap<u32, bool>,
+    tiers: HoistTiers,
+    owned: Option<&HoistOwned>,
+) -> Option<(PathKey, usize)> {
+    let vars = data.def(def_nr).variables();
+    let Value::Call(d, pargs) = ops.get(at)?.unspan() else {
+        return None;
+    };
+    if (*d as usize) >= data.definitions.len() {
+        return None;
+    }
+    let path = pre_alloc_path(data, data.def(*d).name(), pargs)?;
+    if !path.1.is_empty() || path.0 >= vars.count() {
+        return None;
+    }
+    if !matches!(vars.tp(path.0).peel_link(), Type::Vector(_, _)) {
+        return None;
+    }
+    let Some(Value::Int(n)) = pargs.get(1).map(Value::unspan) else {
+        return None;
+    };
+    let n = usize::try_from(*n).ok().filter(|n| *n > 0)?;
+    let mut fresh: HashSet<u16> = HashSet::new();
+    let mut mints = 0usize;
+    let mut finishes = 0usize;
+    // The arguments of `inner` when it is one of the group's own mints on P.
+    fn group_mint<'v>(
+        inner: &'v Value,
+        data: &Data,
+        vars: &crate::variables::Function,
+        path: &PathKey,
+    ) -> Option<&'v [Value]> {
+        if let Value::Call(md, margs) = inner.unspan()
+            && (*md as usize) < data.definitions.len()
+            && data.def(*md).name() == "OpNewRecord"
+            && mint_path(data, "OpNewRecord", margs, vars).as_ref() == Some(path)
+        {
+            Some(margs)
+        } else {
+            None
+        }
+    }
+    for (i, op) in ops.iter().enumerate().skip(at + 1) {
+        if matches!(op, Value::Line(_)) {
+            continue;
+        }
+        if let Value::Set(e, inner) = op.unspan()
+            && let Some(margs) = group_mint(inner, data, vars, &path)
+        {
+            if !mint_push_qualifies(stores, margs, tiers.heap_push) {
+                return None;
+            }
+            mints += 1;
+            if mints > n {
+                return None;
+            }
+            fresh.insert(*e);
+            continue;
+        }
+        match op.unspan() {
+            Value::Call(fd, fargs)
+                if (*fd as usize) < data.definitions.len()
+                    && data.def(*fd).name() == "OpFinishRecord"
+                    && mint_path(data, "OpFinishRecord", fargs, vars).as_ref() == Some(&path) =>
+            {
+                finishes += 1;
+                if let Some(Value::Var(e)) = fargs.get(1).map(Value::unspan) {
+                    fresh.remove(e);
+                }
+                if finishes == n {
+                    return (mints == n).then_some((path, i));
+                }
+                continue;
+            }
+            Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == path.0 => return None,
+            _ => {}
+        }
+        // A statement of the group that is not one of its mints or finishes: admitted on
+        // the same terms as a loop body's — and a mint or finish on P NESTED in it (inside an
+        // `if`) is one the count above cannot see, so it declines.
+        if blocks_header_hoist(op, data, cache, &mut HashSet::new(), Some(vars), tiers, &mut fresh, owned)
+            || op.any_node(&mut |x| matches!(x, Value::Call(xd, xargs)
+                if (*xd as usize) < data.definitions.len()
+                    && matches!(data.def(*xd).name(), "OpNewRecord" | "OpFinishRecord" | "OpPreAllocVector")
+                    && vector_path(data, xargs.first().unwrap_or(&Value::Null)).as_ref() == Some(&path)))
+        {
+            return None;
+        }
+    }
+    None
+}
+
 /// @PLN157 § V-t (`@FR-R-PushRec`) — may this mint group EMIT through a push header?  The
 /// schema is asked, not the op shape: the parent must be a plain inline-element vector
 /// (`Parts::Vector` — an `array`/`ordered` conversion holds 4-byte handles, and a keyed
@@ -2473,7 +2673,7 @@ pub fn mint_path(
 /// (the IR's literal lowering emits omitted fields' defaults and sentinels itself; a
 /// declined delivery is a whole-record copy), so no prefill is owed.
 #[must_use]
-pub fn mint_push_qualifies(stores: &Stores, args: &[Value]) -> bool {
+pub fn mint_push_qualifies(stores: &Stores, args: &[Value], heap: bool) -> bool {
     let (Some(Value::Int(tp)), Some(Value::Int(fld))) = (
         args.get(1).map(Value::unspan),
         args.get(2).map(Value::unspan),
@@ -2490,7 +2690,10 @@ pub fn mint_push_qualifies(stores: &Stores, args: &[Value]) -> bool {
         return false;
     }
     let elem = stores.content(tp);
-    elem != u16::MAX && stores.is_struct(elem) && !stores.owns_heap(elem)
+    // `@FR-R-PushRec` heap clause — a heap-owning element's slot is ZEROED at the mint
+    // (the handles' prefill, one range write), so the stale-bytes objection no longer
+    // holds; `heap` is the switch that keeps such an element on its templates.
+    elem != u16::MAX && stores.is_struct(elem) && (heap || !stores.owns_heap(elem))
 }
 
 const FUSABLE_SETTERS: [(&str, &str); 3] = [
@@ -2600,6 +2803,7 @@ fn writes_store(
         vars,
         HoistTiers::default(),
         &mut HashSet::new(),
+        None,
     )
 }
 
@@ -2670,6 +2874,11 @@ fn frees_a_record(name: &str, args: &[Value], vars: Option<&crate::variables::Fu
 /// when its writes happen to be in-place — interprocedural in-place classification
 /// is not worth its soundness surface here.
 /// Enforces `@FR-R-InPlace` and admits a callee under `@FR-R-Callee`.
+// The eight parameters are the statement, the two things that type it (the IR and the
+// variables), the two memos, the tier switches, the fresh-element window and the emitter's
+// owned buffers; a struct would put a name between each and the five call sites without
+// removing anything.
+#[allow(clippy::too_many_arguments)]
 fn blocks_header_hoist(
     node: &Value,
     data: &Data,
@@ -2678,6 +2887,7 @@ fn blocks_header_hoist(
     vars: Option<&crate::variables::Function>,
     tiers: HoistTiers,
     fresh: &mut HashSet<u16>,
+    owned: Option<&HoistOwned>,
 ) -> bool {
     node.any_node(&mut |n| match n {
         // @PLN157 § V-s (`@FR-R-Mint`) — track the element variables the body has minted
@@ -2705,9 +2915,29 @@ fn blocks_header_hoist(
                 && frees_a_record(data.def(*d).name(), args, vars);
             // @PLN157 § V-ad — the null-discharge buffer's allocation moves nothing a header
             // describes; its field sets below are in-place and walk on their own.
+            // `(R-Mint)`'s rebound clause — so is the mint of a buffer the EMITTER owns: a
+            // § V-al loop buffer (a fresh store, or a length reset of its own) and a § V-z
+            // element-first witness (never minted: the temp binds the element's slot).
+            // Neither moves a record another store's header or base describes, and the
+            // local bound from it is REBOUND in the body, so nothing hoists off it.
             let buffer_alloc = known
                 && (null_buffer_alloc(data.def(*d).name(), args, vars, data).is_some()
-                    || lazy_buffer_mint(data.def(*d).name(), args, vars));
+                    || lazy_buffer_mint(data.def(*d).name(), args, vars)
+                    || (tiers.rebound_movers
+                        && matches!(data.def(*d).name(), "OpDatabase" | "OpDatabaseNP")
+                        && matches!(args.first().map(Value::unspan), Some(Value::Var(b))
+                            if owned.is_some_and(|o| o.buffers.contains(b)))));
+            // …and the § V-z paired copy into the element's field slot, which is emitted as
+            // nothing: the temp was built in that slot.
+            let elided_copy = known
+                && tiers.rebound_movers
+                && data.def(*d).name() == "OpAppendVector"
+                && matches!(args.first().map(Value::unspan), Some(Value::Call(gd, gargs))
+                    if (*gd as usize) < data.definitions.len()
+                        && data.def(*gd).name() == "OpGetField"
+                        && matches!((gargs.first().map(Value::unspan), gargs.get(1).map(Value::unspan)),
+                            (Some(Value::Var(e)), Some(Value::Int(off)))
+                                if owned.is_some_and(|o| o.elem_fields.contains(&(*e, i64::from(*off))))));
             // @PLN157 § V-q (`@FR-R-Push`) — a fusable push over a pure path is admitted
             // under its own tier: it grows one vector whose header the loop keeps current
             // through the push itself; `hoistable` decides the aliasing.  The value operand
@@ -2741,6 +2971,7 @@ fn blocks_header_hoist(
             if in_place_setter
                 || record_free
                 || buffer_alloc
+                || elided_copy
                 || fusable_push
                 || record_mint
                 || fresh_delivery

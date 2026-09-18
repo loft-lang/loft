@@ -50,7 +50,8 @@ SCALAR_KEY = re.compile(r"let db = \((var_\w+)\);.*db\.pos \+ \((\d+)_i64\)")
 FN_HEAD = re.compile(r"^fn (\w+)\((.*)\)")
 USE_ELEM = re.compile(r"(get_elem_hoisted|vec_set_hoisted_or_raise_runtime|get_elem_at|vec_set_at)::<[^>]*>\(&([\w.]+), (?:(__vb_\d+), )?&\((.*?)\), \(\d+_i64\) as u32")
 USE_PUSH = re.compile(r"push_hoisted::<[^>]*>\(&mut (__ph_\d+), &\((.*?)\), \d+, __pv\)")
-USE_PUSHREC = re.compile(r"push_record_(?:hoisted|finish)::<[^>]*>\(&mut (__ph_\d+), &\((.*?)\)(?:, \d+)?\)")
+GROUP_CLOSE = re.compile(r"^\s*// @FR-R-GroupPush group (__ph_\d+) closed")
+USE_PUSHREC = re.compile(r"push_record_(?:hoisted|hoisted_zero|finish)::<[^>]*>\(&mut (__ph_\d+), &\((.*?)\)(?:, \d+)?\)")
 MOVER_MINT = re.compile(r"\b(OpNewRecord|OpFinishRecord)\(cell, (var_\w+),")
 USE_LEN = re.compile(r"\(i64::from\(([\w.]+)\.len\)\)")
 USE_SCALAR = re.compile(r"\b(__vs_\d+)\b")
@@ -84,6 +85,12 @@ def audit(text, quiet=False):
             for param in re.findall(r"(__i[shb]_\d+): ", m.group(2)):
                 holders.append(Holder(param, "input", None, 1, nr))
         code = line.split("//")[0]
+        # R-GroupPush — a group header's Rust binding outlives its group; the emitter marks
+        # where the holder dies, and from there it is not a holder of the path.
+        mg = GROUP_CLOSE.match(raw)
+        if mg:
+            holders = [h for h in holders if h.name != mg.group(1)]
+            continue
 
         def live(name):
             base = name[:-2] if name.endswith(".h") else name

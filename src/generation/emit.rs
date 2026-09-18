@@ -2675,7 +2675,12 @@ impl Output<'_> {
         let mut ptr_frames = 0usize;
         // @PLN157 § V-x — the open FLAT literal group, if any: `(local, witness)`.
         let mut flat_lit_open: Option<(u16, u16)> = None;
+        // `@FR-R-GroupPush` — the groups this block opens are closed by index; a nested
+        // block's statements are emitted inside a group's range and never reach here.
+        self.block_serial += 1;
+        let block_serial = self.block_serial;
         for (vnr, v) in operators.iter().enumerate() {
+            self.close_groups_before(w, block_serial, vnr)?;
             // DX-source-map: surface line comments at the
             // statement-list level so rustc errors map back to .loft
             // source.  Without this, only Value::Line nodes inside an
@@ -3248,7 +3253,9 @@ impl Output<'_> {
             if self.bind_record_ptr(w, operators, vnr)? {
                 ptr_frames += 1;
             }
+            self.bind_group_push(w, operators, vnr, block_serial)?;
         }
+        self.close_groups_before(w, block_serial, usize::MAX)?;
         if flat_lit_open.is_some() {
             self.indent -= 1;
             self.indent(w)?;
@@ -3340,6 +3347,28 @@ impl Output<'_> {
         let elmn = sanitize(dvars.name(pair.elm));
         let (size, tp, fld) = (pair.prealloc_size, pair.out_tp, pair.out_fld);
         self.indent(w)?;
+        // `@FR-R-PushRec` — the early mint emits through the record-push header an enclosing
+        // loop holds for the container, exactly as the append site's mint would have.
+        if fld == 65535
+            && !self.record_push_disabled
+            && let Some(header) = self
+                .active_mint_push(&(pair.out, Vec::new()))
+                .map(str::to_owned)
+        {
+            let ptp = u16::try_from(tp).unwrap_or(u16::MAX);
+            let elem = self.stores.content(ptp);
+            let esize = self.stores.size(elem);
+            let zero = if self.stores.owns_heap(elem) {
+                "_zero"
+            } else {
+                ""
+            };
+            let verify = if self.hoist_verify { "true" } else { "false" };
+            return writeln!(
+                w,
+                "var_{elmn} = stores.push_record_hoisted{zero}::<{verify}>(&mut {header}, &(var_{outn}), {esize}); //@PLN157 § V-z element minted at the declaration, through the held header"
+            );
+        }
         if fld == 65535 {
             writeln!(
                 w,
