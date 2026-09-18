@@ -1136,7 +1136,23 @@ re-seated) replaces the ~30 ns pair with a pop and a re-init.  Liveness is ident
 today's unconditional exit free, so the soundness question is only the LEAK instruments: a
 retained chain must drain at exit so `LOFT_NATIVE_LEAK_CHECK` and `LOFT_STRICT_STORES` keep
 their meaning.  Price by hand patch on `parse_circle`'s emission before building.
-*The scanner* (`parse`'s 55 %) is a third unit: a leaf reading a `text` byte-wise pays a call
+*The scanner, measured alone (2026-09-18, morning):* a like-for-like micro-bench — `find_option`
+over one 100-byte scene line, five keys, 200 000 rounds, the same checksum on both sides —
+runs **114–139 ns per call in loft against 71–96 in the Rust reference: 1.6×**, not the row's
+2.6×.  Three hand patches on the lean emission were WASHES within noise (13.2–14.4k ns/op
+for every variant): the byte read inlined in `at` (`text_byte_at_native` is a cross-crate
+call), `#[inline(always)]` on the ten scanner leaves, both together — LLVM already inlines
+the leaves and the byte read is cheap.  Two consequences.  (1) The tick census over-credited
+the scanner (its documented caveat: it inflates operator-dense functions); read as 55 % of
+14 µs it would be 7.7 µs against Rust's ~4.8 µs — nearly all of Rust's 5.4 µs — which puts
+loft's NON-scanner work at ~6 µs against Rust's ~0.6 µs, **~10×**: the per-line record and
+text building (`Op` records with `pts`, the two `Paint` copies per `parse_circle`, `pc_pts`,
+`to_lowercase`/`trim`/`split`/`"line {n}: …"`, `elem_index`'s text compares).  That is the
+parse lever, ahead of the scanner's own 1.6× (~2.7 µs).  (2) Whatever unit follows needs a
+real profile to be cut right; on this box the instruments are counts and probes, so the next
+step is the same method as today's — a per-line census of copies and text allocations from
+the emission, each priced by hand patch — or `scripts/profile.sh -- --native` on the x86-64
+box.  *The scanner as a unit* (the remaining 1.6×) is: a leaf reading a `text` byte-wise pays a call
 with a `Str` argument per byte; a twin taking the bytes once (as a header is taken) or an
 inlined leaf is the shape.
 
