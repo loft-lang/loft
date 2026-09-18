@@ -805,7 +805,8 @@ view is handed to takes its scalar inputs read through the address at the call
 (`wide_line`'s crossing loop −35 %) — and is the first bisect step for a wrong field read
 through a record view, or a wrong argument inside a callee handed one, on native.  Admitted
 where the block's remainder grows no store, frees no record before a later use, and never
-rebinds the view; a nullable view is never bound.  `LOFT_HOIST_VERIFY=1` re-derives the
+rebinds the view; a nullable view — `e = v[i]` without `?`, a `for e in v` loop variable —
+is admitted as its record, the null address answering the sentinel.  `LOFT_HOIST_VERIFY=1` re-derives the
 address and re-reads the store at every use; `LOFT_TRACE_RECPTR=1` names each view bound
 and each declined with its reason.  `LOFT_NO_VECTOR_BASE=1` switches it off too (one rule).
 **`LOFT_NO_LOOP_BUFFER_REUSE=1`** (@PLN157 § V-al, `@FR-R-LoopBuffer`, default-ON,

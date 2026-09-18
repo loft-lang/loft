@@ -29,8 +29,11 @@ use and are fine; a view outliving its container is `B-Disturb`'s materialisatio
 the parser), never rebinds the view — a `Set`, or a NATIVE op taking it as its first operand
 that is not a read or a fusable scalar set (a mint into it, a copy into it, a free) — and
 reads, writes or hands it at least once; a binding to null (a buffer's pre-init) is never a
-view; a nullable view, an enum payload and a `__nullable<S>` are not plain records and are
-never bound.  The last two clauses are a receipt: the first build took a return buffer's
+view; an enum payload and a `__nullable<S>` are not plain records and are never bound, while
+a NULLABLE view — `e = v[i]` without `?`, and the `for e in v` loop variable, whose null is
+the loop's end signal — is admitted as its inner record (the null address answers the
+sentinel), so a body iterating records reads each field through one address per iteration.
+The null-bind and native-op clauses are a receipt: the first build took a return buffer's
 `__ref_p2_N = null` as a view and did not read the literal's `OpDatabaseNP(buf, …)` as a
 rebind, so a literal-returning `mk()` in a library wrote its fields through a null address
 and answered zeros — the 47 golden and the #672 parity test caught it before the commit, and
@@ -51,7 +54,8 @@ every use); trace `LOFT_TRACE_RECPTR=1`.  Cells `tests/scripts/157-record-ptr.lo
 nullable view, the discharge buffer, single/float fields, a write through another route, a
 view copy, a text-carrying record), hand-computed, both backends, three switch states, five
 falsifiers; sabotage receipt (the address skewed one word: r1 fails, `HOIST_VERIFY` names the read); pins `tests/record_ptr.rs`; `scripts/emission_audit.py`
-learns the `__pa_N` holders.  The full lane (arm64, two interleaved rounds against `LOFT_NO_RECORD_PTR=1`, `compare.py --skip-interp --repeat 3 --n-ref 500 --n-native 500`, 14/14 hashes): **`wide_line` 7 262 → 5 296 ns/op (−27 %), 2.41× → 1.76×**, and the two fills that share `polygon_generic` with it — **`fill_circle` 37 998 → 22 954 (−40 %), 1.46× → 0.89×; `fill_star` 12 208 → 8 732 (−28 %), 1.31× → 0.94×** — both under their reference; every other row within its swing (`parse` +2.5 %, inside its round-to-round spread).  Median 1.74× → 1.67×.  Not yet a view bound by a `for e in v`
+learns the `__pa_N` holders; r8 (a nullable view) and r16 (the loop variable) hold the
+nullable clause.  The full lane (arm64, two interleaved rounds against `LOFT_NO_RECORD_PTR=1`, `compare.py --skip-interp --repeat 3 --n-ref 500 --n-native 500`, 14/14 hashes): **`wide_line` 7 262 → 5 296 ns/op (−27 %), 2.41× → 1.76×**, and the two fills that share `polygon_generic` with it — **`fill_circle` 37 998 → 22 954 (−40 %), 1.46× → 0.89×; `fill_star` 12 208 → 8 732 (−28 %), 1.31× → 0.94×** — both under their reference; every other row within its swing (`parse` +2.5 %, inside its round-to-round spread).  Median 1.74× → 1.67×.  The loop-variable clause moves no lane row (the bench's one `for e in v` over records grows a store and declines); its own probe — three fields read per element over 100 000 records — runs 562–584 → 389–405 µs per pass (−31 %), hand-checked value, both switch states under every falsifier.  Not yet a view bound by a `for e in v`
 loop variable — the next shape of the same rule (`polygon_generic`'s first loop, `thin_line`).
 
 ### A callee twin takes the element base beside each header — `composite` 2.98× → 2.40× (2026-09-18)

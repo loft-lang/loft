@@ -52,9 +52,10 @@ admits the null-discharge buffer's mint as growth-free, so the crossing loop hol
 Standalone probe: `wide_line` **7 800 → 5 060 ns/op (−35 %), 2.9× → 1.9×** its reference.
 The lane, two interleaved rounds against the switch, 14/14 hashes: `wide_line` 2.41× → **1.76×** (−27 %), `fill_circle` 1.46× → **0.89×** (−40 %), `fill_star` 1.31× → **0.94×** (−28 %) — the fills share `polygon_generic` — the rest within swing; **median 1.67×, three rows now under 1×**.  Switches `LOFT_NO_RECORD_PTR` (and `LOFT_NO_VECTOR_BASE`); falsifier
 `LOFT_HOIST_VERIFY=1`; trace `LOFT_TRACE_RECPTR`; cells `tests/scripts/157-record-ptr.loft`
-r1–r13, pins `tests/record_ptr.rs`.  Next shape of the same rule: a view bound by a `for e in v`
-loop variable (`polygon_generic`'s first loop, `thin_line`), and the 16 store field reads still
-in `polygon_generic` are of that shape or of `cv`'s fields.
+r1–r16, pins `tests/record_ptr.rs`.  **The `for e in v` loop variable joined the same day**: the
+loop's own statements are emitted from `Value::Loop`, not `output_block`, so the hook had never seen
+its `Set(e, iter-next)`; and its type is the NULLABLE element (the null ends the loop), admitted as
+its record with the null address answering the sentinel.  Its probe: three fields per element over 100 000 records, −31 %; no lane row moves (the bench's only record-iterating loop grows `pg_table` and declines by design), and a second lane pass on and off confirmed every row within its swing, 14/14 hashes.
 **`R-Base`'s twin clause SHIPPED 2026-09-18** (`formal/rewrites.md`, unit (1) of the
 `composite` pricing below): a § V-p twin takes the element BASE of each header it is handed
 (`__ib_k`), a view of the path inside it shares that base, and its fused reads and writes take
@@ -1062,6 +1063,62 @@ its assumptions are written as a rule and checkable by both.
 - **Last touched:** 2026-09-11 (§ V-t … § V-w)
 
 ## Where to resume
+
+**2026-09-18, night — the store-traffic analysis of `fronds` (2.6×) and `parse` (2.6×), and the two
+units it asks for.  START HERE.**
+
+*Instruments that worked on this box (no `perf`; `sample` attaches to rustc or misses the
+short-lived binary):* the native checkpoint census (`LOFT_NATIVE_CHECKPOINTS=count`, exact
+counts per site), its `time` rollup (ticks are a HINT), the interpreter store log
+(`LOFT_STORES=log`: `+ alloc`/`- free` events are FRESH stores), the release-pass ceiling, the
+interpreter line profiler, and a loft micro-bench of the two runtime paths.
+
+*What the rows are made of:*
+- `fronds` (109 µs/call): 44 000 operators — 24 000 the noise hash (`seed_hash`/`seed_wave`,
+  ~30 % of ticks), 3 300 trig; the object machinery at the appends `fd_out += [Frond {…}]`
+  (drawing.loft:1647/1649: 654 `OpPreAllocVector` 12 %, 654 `OpNewRecord` 7 %, 654 `OpCopyRecord`
+  2 %, 1 300 `OpPushFloat` 4 %) ≈ 25 % of ticks; the per-k `FrondSpec` literal 5 %; **152 fresh
+  stores per call** (25 activations × ~5 hidden buffers + 24 `fd_sub`) ≈ 4 %.  The checks are
+  ~1 % (`LOFT_RELEASE_PASS_PROBE`).  Rust does ~700 mallocs per call here, so the COUNT is not
+  the gap; the per-append runtime calls are.
+- `parse` (14 µs/call): 42 000 operators for 13 lines — the byte scanner (`word_boundary`,
+  `matches_at`, `at`, `find_option`, `is_word_byte`: one loft call per byte per pass, 10 138 `at()`
+  per scene) ≈ 55 % of ticks, `text.split` 8 %, `size()` 3 %; **127 fresh stores per call**, all
+  temporaries dying with their activation (each `parse_*` call re-mints its return, discharge and
+  vector buffers and frees them at exit) ≈ 25–30 % by the pair cost below; checks ~8 %.
+
+*The two runtime paths, measured (native, 200 000 iterations):* a vector local declared inside
+a loop (`§ V-al`: keep the store, `clear`) **10 ns**; a record literal bound inside a loop
+(`s = S1 { a: k }`: `free_named` at the iteration's end, then `find_free_slot` + `reinit` +
+`claim` + zero + tag) **39 ns**, 1 003 fresh stores per 1 000 iterations.  A "fresh" store is
+NOT a malloc in steady state (the slot table only grows when every slot is live); the ~30 ns
+pair is the free/search/init bookkeeping.  So the reset-and-reuse path is ~4× cheaper and is
+taken only by `§ V-al` vector buffers and by return buffers within ONE activation.
+
+*Owner ruling C125 bounds the design:* temporaries are REMOVED, not co-located; one store is
+one object.  So "link them together" means RETAIN and re-use a site's store, never share one.
+
+*Unit A — `R-LoopRecord` (the `§ V-al` shape for a record local):* a plain no-heap record
+literal bound inside a loop (`fd_sub = FrondSpec {…}`) keeps its store across iterations —
+the emitter declares the local at the loop's prelude, the per-iteration mint takes
+`OpDatabase`'s clear arm, the body's `Set(v, null)` and its direct end-of-body `OpFreeRef`
+are not emitted, one free follows the loop.  Admitted where every mention is the mint, a
+fusable field read/write, a free, or a hand-off to a loft callee whose return does not borrow
+that parameter (`(O-Borrow)`: a callee cannot keep a caller's record except by copy or through
+its return deps); a copy to another local, a return, a capture, a heap-owning field, `par` or
+`yield` decline.  Frees on a `return`/`continue` path stay (they are nested in an `Insert`, not
+the body's tail).  Priced on the probe: 39 → ~12 ns; on the bench ~1 % (`fd_sub` is 24/call).
+*Unit B — per-site buffer retention across activations:* the 127 fresh stores of `parse` are
+hidden buffers minted and freed once per callee activation.  A per-(function, buffer) chain
+that keeps the store between activations (`clear` on entry instead of `null` + `database`,
+push instead of `free_named` at exit; recursion takes the next link, so a live buffer is never
+re-seated) replaces the ~30 ns pair with a pop and a re-init.  Liveness is identical to
+today's unconditional exit free, so the soundness question is only the LEAK instruments: a
+retained chain must drain at exit so `LOFT_NATIVE_LEAK_CHECK` and `LOFT_STRICT_STORES` keep
+their meaning.  Price by hand patch on `parse_circle`'s emission before building.
+*The scanner* (`parse`'s 55 %) is a third unit: a leaf reading a `text` byte-wise pays a call
+with a `Str` argument per byte; a twin taking the bytes once (as a header is taken) or an
+inlined leaf is the shape.
 
 **2026-09-15, afternoon — HAND-OFF after § V-ao.  START HERE.**
 

@@ -392,10 +392,12 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  operand that is not a read (`OpGet…`) or a fusable scalar set:
                  a mint into it, a copy into it, a free — and reads, writes or
                  hands r at least once.  A binding to null (a buffer's pre-init,
-                 minted later) is never a view.  A nullable, an enum payload and
-                 a synthetic `__nullable<S>` are not plain records and are never
-                 bound.  The null record keeps its sentinel: the address is null
-                 and every read tests it.
+                 minted later) is never a view.  A NULLABLE view — `e = v[i]`
+                 without `?`, the loop variable of `for e in v`, whose null is the
+                 loop's end signal — is admitted as its inner record: the null
+                 record keeps its sentinel, the address is null and every read
+                 tests it.  An enum payload and a synthetic `__nullable<S>` are
+                 not plain records and are never bound.
 ```
 
 **In words.** 2026-09-18, the drawing library's crossing loop (`pg_cur = pg_table[i]?`,
@@ -419,8 +421,11 @@ the store at every use); trace `LOFT_TRACE_RECPTR=1`.  Sites: `hoist::record_vie
 `Output::bind_record_ptr`, `Output::rec_ptr_read` (the twin input),
 `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`
 (the read and the write), `vector::rec_ptr` / `rec_get` / `rec_set`.  Cells
-`tests/scripts/157-record-ptr.loft`, pins `tests/record_ptr.rs`.  Not yet a view bound
-by a `for e in v` loop variable — the next shape of the same rule.
+`tests/scripts/157-record-ptr.loft`, pins `tests/record_ptr.rs`.  The `for e in v` loop
+variable is a `Set(e, Iter…)` of the NULLABLE element type (its null ends the loop), so
+the same gate admits it once the `Optional` is peeled — the loop body reads every field of
+`e` through one address per iteration (`polygon_generic`'s first loop, `thin_line`; the
+`forview` probe — `for e in v { t += e.a * 2 + e.b - (e.f as integer) }` over 100 000 records — 562–584 → 389–405 µs per pass, −31 %, the value hand-checked).  No lane row moved: the one such loop on the drawing bench (`polygon_generic`'s `for e in edges`) appends to `pg_table` and so declines by design.
 
 ### A stdlib one-op wrapper is its op
 

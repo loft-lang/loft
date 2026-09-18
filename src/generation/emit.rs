@@ -661,12 +661,23 @@ impl Output<'_> {
                 }
                 self.loop_stack.push(lp.scope);
                 writeln!(w, "'l{}: loop {{ //{}_{}", lp.scope, lp.name, lp.scope)?;
-                for v in &lp.operators {
+                // `@FR-R-RecPtr` — the loop's own statements are emitted here, not through
+                // `output_block`, so the record-view hook runs here too: a `for e in v`
+                // binds its element view (`Set(e, iter-next)`) as the loop's first statement,
+                // and its address serves the body once per iteration.
+                let mut ptr_frames = 0usize;
+                for (at, v) in lp.operators.iter().enumerate() {
                     self.indent(w)?;
                     self.indent += 1;
                     self.output_code_inner(w, v)?;
                     self.indent -= 1;
                     writeln!(w, ";")?;
+                    if self.bind_record_ptr(w, &lp.operators, at)? {
+                        ptr_frames += 1;
+                    }
+                }
+                for _ in 0..ptr_frames {
+                    self.rec_ptrs.pop();
                 }
                 self.indent(w)?;
                 write!(w, "}} /*{}_{}*/", lp.name, lp.scope)?;

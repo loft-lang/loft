@@ -1342,7 +1342,16 @@ pub fn record_view_ptr(
         return Err("not a binding");
     };
     let vars = data.def(def_nr).variables();
-    if plain_record_type(data, vars.tp(*r)).is_none() {
+    // A NULLABLE view (`e = v[i]` without `?`, a `for e in v` loop variable whose null is
+    // the loop's end signal) is the same record or the null DbRef: the address is null
+    // there and every read through it answers the getter's own sentinel, exactly as the
+    // store read does.  The enum payload and `__nullable<S>` exclusions are the inner
+    // type's, as for a plain view.
+    let view_tp = match vars.tp(*r) {
+        Type::Optional(inner) => inner.as_ref(),
+        tp => tp,
+    };
+    if plain_record_type(data, view_tp).is_none() {
         return Err("not a plain record");
     }
     // A buffer's pre-init (`__ref_p2_N = null`, then a mint into it): no place yet, so no

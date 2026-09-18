@@ -13,7 +13,7 @@
 //   word, r1 fails on --native (`r1: 78 null`: every field reads its neighbour) and
 //   LOFT_HOIST_VERIFY=1 panics at the first read (`record view read 1 disagrees with the
 //   store's 0`).  r14 fails on the build before the null-bind and native-op-rebind clauses
-//   (`r14: 6 0.0`: the literal's writes went through a null address).  Restored, r1–r15 hold
+//   (`r14: 6 0.0`: the literal's writes went through a null address).  Restored, r1–r16 hold
 //   on both backends, in all three switch states
 //   (default, LOFT_NO_RECORD_PTR=1, LOFT_NO_VECTOR_BASE=1), under LOFT_STRICT_STORES=1,
 //   LOFT_POISON=1, LOFT_POISON_CLAIM=1, LOFT_NATIVE_LEAK_CHECK=1 and LOFT_HOIST_VERIFY=1.
@@ -108,7 +108,7 @@ fn main() {
   for el7 in acc7 { r7 += el7; }
   assert(len(acc7) == 12 && r7 == 660, "r7: {len(acc7)} {r7}");
 
-  // r8 — a NULLABLE view (no `?`; declines, not a plain record): the reads are unchanged, 660.
+  // r8 — a NULLABLE view (no `?`): admitted as its record, the reads unchanged, 660.
   v8 = rp_mk();
   r8 = 0;
   for i in 0..12 { e = v8[i]; r8 += e.a; }
@@ -156,6 +156,16 @@ fn main() {
   // r15 — the lifted form, the field read straight off the call: 5 and 6.
   r15 = rp_mkone().a * 10 + rp_mkone().b;
   assert(r15 == 56, "r15: {r15}");
+
+  // r16 — the `for e in v` loop variable (nullable: its null ends the loop) is a view per
+  //       iteration: sum of 2a + b = 1320 + 78 = 1398; and a write through it lands: a = 7 → 84.
+  v16 = rp_mk();
+  r16 = 0;
+  for e16 in v16 { r16 += e16.a * 2 + e16.b; }
+  for f16 in v16 { f16.a = 7; }
+  r16b = 0;
+  for g16 in v16 { r16b += g16.a; }
+  assert(r16 == 1398 && r16b == 84, "r16: {r16} {r16b}");
 
   println("ok");
 }
