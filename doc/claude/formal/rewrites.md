@@ -159,9 +159,12 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
 ### A vector reached by a pure path has one header for a loop that cannot move it
 
 ```
-  (R-Base)       in a loop that GROWS no store — no push, no mint push, no
-                 null-discharge buffer minted in its body; in-place sets, store-free
-                 ops, store-free or in-place-only callees and frees may run — a
+  (R-Base)       in a loop that GROWS no store — no push, no mint push; in-place
+                 sets, store-free ops, store-free or in-place-only callees, frees
+                 and a null-discharge buffer's mint (a FRESH store, or a clear of
+                 the buffer's own — neither moves an element any header names;
+                 admitted 2026-09-18, the crossing loop's `pg_table[i]?` had kept
+                 its loop on headers alone) may run — a
                  hoisted header (R-Header) is accompanied by the address of its
                  vector's element 0, derived once beside it, and every fused element
                  read and write of the path in the loop is one bounds test against
@@ -372,6 +375,53 @@ after a `Set(d, P)` instead of a loop body.  A length read alone earns no header
 is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
 `LOFT_HOIST_VERIFY=1`.  Sites: `hoist::view_def_header`, `Output::bind_view_header`.
 
+### A record view carries its address
+
+```
+  (R-RecPtr)     a plain-record local r bound by a statement — `e = tbl[i]?`,
+                 `s = o.inner`, a copy of another view — has its DbRef FIXED at
+                 the bind (B-View), so the address of r's first byte is one
+                 address for as long as the place lives.  It may be derived once,
+                 right after the binding, and serve every fusable scalar field
+                 read and in-place field write of r in the rest of the block —
+                 and the scalar inputs of a twin (R-Inputs) r is handed to, read
+                 through it at the call — when the remainder grows no store
+                 (R-Base's condition; a null-discharge buffer's mint is not a
+                 growth), frees no record before a later use of r, never
+                 rebinds r — a `Set`, and a NATIVE op taking r as its first
+                 operand that is not a read (`OpGet…`) or a fusable scalar set:
+                 a mint into it, a copy into it, a free — and reads, writes or
+                 hands r at least once.  A binding to null (a buffer's pre-init,
+                 minted later) is never a view.  A nullable, an enum payload and
+                 a synthetic `__nullable<S>` are not plain records and are never
+                 bound.  The null record keeps its sentinel: the address is null
+                 and every read tests it.
+```
+
+**In words.** 2026-09-18, the drawing library's crossing loop (`pg_cur = pg_table[i]?`,
+then six field reads of `pg_cur` and three more inside `edge_x` per edge per row): each
+read resolved the store — `stores.store(&db).get_int(db.rec, db.pos + off)` — where the
+Rust reference's `let cur = table[i]` reads registers.  (R-View) hoists the HEADER of a
+vector view; this is the same promise for a RECORD view, whose derivation is an address
+rather than a header.  Sound for the reason (R-Base) is: nothing in the remainder can move
+the record's bytes, and a freed record's read is excluded by order (the releases a block
+ends with follow the last use).  Measured on the `wide_line` probe: 7 800 → 5 060 ns/op
+(−35 %), 2.9× → 1.9× the reference; hand-priced first at −25 % for the reads and −15 % for
+the callee's inputs.  The first build admitted a return BUFFER's null pre-init
+(`__ref_p2_N = null`) as a binding and did not read the literal's mint into it
+(`OpDatabaseNP(buf, tp)`, a native op writing its first operand, not a `Set`) as a rebind,
+so the literal's field writes went through a null address and were dropped — a library's
+`mk()` answered a record of zeros; the suite caught it the same day (the 47 golden, the
+#672 parity test) and the two clauses above are its receipt, with cells r14/r15.  Switch
+`LOFT_NO_RECORD_PTR` (and `LOFT_NO_VECTOR_BASE`, one rule);
+falsifier `LOFT_HOIST_VERIFY=1` (`vector::rec_get` re-derives the address and re-reads
+the store at every use); trace `LOFT_TRACE_RECPTR=1`.  Sites: `hoist::record_view_ptr`,
+`Output::bind_record_ptr`, `Output::rec_ptr_read` (the twin input),
+`ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`
+(the read and the write), `vector::rec_ptr` / `rec_get` / `rec_set`.  Cells
+`tests/scripts/157-record-ptr.loft`, pins `tests/record_ptr.rs`.  Not yet a view bound
+by a `for e in v` loop variable — the next shape of the same rule.
+
 ### A stdlib one-op wrapper is its op
 
 ```
@@ -434,6 +484,12 @@ replacement, whose variable numbers are the caller's), the key by
 call ask.  A scalar input still needs a leaf variable — its key carries a variable,
 not a path.  A return-buffer writer (R-Callee's second half) is admitted like any
 other: its write set is its buffer's type whole, which no parameter's field shares.
+**The address half** (2026-09-18, (R-RecPtr)): a scalar input the caller holds no VALUE
+for — the record changes per iteration — but whose record ADDRESS the caller's block holds
+is read through that address at the call (`Output::rec_ptr_read`), so `edge_x(pg_cur, y)`
+takes its twin with three loads for arguments where the plain call read three store
+resolutions inside; and handing `r` to such a twin counts as a use of `r`'s address for
+(R-RecPtr)'s admission.
 **The base half** (2026-09-18, (R-Base)'s twin clause): a header input alone left the
 twin resolving the store per element — `composite`'s `get_pixel`/`set_pixel` twins ran
 `get_elem_hoisted` through `allocations[k].ptr` on every pixel, and LLVM cannot hoist that

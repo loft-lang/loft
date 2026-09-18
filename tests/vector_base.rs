@@ -96,10 +96,16 @@ fn a_growing_loop_binds_no_base_and_an_inner_growth_free_loop_binds_one_of_the_h
         b3.contains("get_elem_at::<"),
         "b3's inner reads go through that base"
     );
+    // b4 mints a null-discharge buffer (§ V-ad): a FRESH store, or a clear of the buffer's
+    // own — neither moves an element a base addresses, so since 2026-09-18 the loop binds
+    // its base (before, the mint counted as a growth and the loop held headers alone).
+    // The element itself is a RECORD, so its reads are not fused element loads: the base is
+    // bound, and the discharged view `p` reads its fields through its own address
+    // (`@FR-R-RecPtr`, `tests/record_ptr.rs`).
     let b4 = body(&rust, "n_b4");
     assert!(
-        !b4.contains("__vb_"),
-        "b4 mints a null-discharge buffer, so it binds no base"
+        b4.contains("§ V-ak element base") && b4.contains("vector::rec_get::<i64>(__pa_"),
+        "b4's discharge-buffer mint must not keep the loop off its base:\n{b4}"
     );
 }
 

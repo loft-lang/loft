@@ -374,10 +374,12 @@ pub struct LoopHoist {
     /// through (the slot from the header, the length bump at the finish).  A mint that does
     /// not qualify stays a plain mover (§ V-s: admitted, no holder, templates per element).
     pub mint_pushes: Vec<(PathKey, Value)>,
-    /// @PLN157 § V-ak (`@FR-R-Base`) — the loop GROWS no store: no push, no mint push,
-    /// no null-discharge buffer minted in its body.  Everything else the admission lets
-    /// through — in-place sets, store-free ops, store-free or in-place-only callees, a
-    /// free — leaves every store's buffer where it is, so a hoisted header may carry the
+    /// @PLN157 § V-ak (`@FR-R-Base`) — the loop GROWS no store: no push, no mint push.
+    /// Everything else the admission lets through — in-place sets, store-free ops,
+    /// store-free or in-place-only callees, a free, and a null-discharge buffer's mint
+    /// (§ V-ad: a FRESH store, or a clear of the buffer's own, which no header names —
+    /// see [`lazy_buffer_mint`] for why a new slot moves no live store's memory) —
+    /// leaves every store's buffer where it is, so a hoisted header may carry the
     /// address of its vector's element 0 for the loop's whole extent.
     pub growth_free: bool,
 }
@@ -576,7 +578,7 @@ pub fn hoistable(
     // `@FR-R-Base` — decided here, before either early return below: a loop with no
     // record scalars to hoist is exactly the shape a pixel loop has.
     let null_buf = mints_null_buffer(body, data, vars);
-    out.growth_free = out.pushes.is_empty() && out.mint_pushes.is_empty() && !null_buf;
+    out.growth_free = out.pushes.is_empty() && out.mint_pushes.is_empty();
     if std::env::var("LOFT_TRACE_BASE").is_ok() {
         eprintln!(
             "base: {} loop {} growth_free={} (pushes {}, mint pushes {}, null buffer {}, headers {})",
@@ -620,8 +622,11 @@ pub fn hoistable(
 }
 
 /// Does the body mint a § V-ad null-discharge buffer — the one store allocation the
-/// header admission lets through?  It moves no header's record, but it is a growth, and
-/// `@FR-R-Base` asks for none.
+/// header admission lets through?  It moves no header's record and no base's element
+/// (a fresh store is its own allocation; a clear touches the buffer's own store, which no
+/// header or base names), so since 2026-09-18 it is not a growth for `@FR-R-Base` either —
+/// the drawing library's crossing loop (`pg_cur = pg_table[i]?`) held headers and no bases
+/// for it, a store resolution per element read and write.  Reported by `LOFT_TRACE_BASE`.
 fn mints_null_buffer(body: &Block, data: &Data, vars: &crate::variables::Function) -> bool {
     body.operators.iter().any(|op| {
         op.any_node(&mut |n| {
@@ -1277,6 +1282,155 @@ pub fn view_def_header(
         });
     }
     (indexed && !rebound).then_some(*d)
+}
+
+/// The Rust type a fusable scalar getter loads and the sentinel it answers at the null
+/// record — [`FUSABLE_GETTERS`]' row, for the record-address read (`@FR-R-RecPtr`).
+#[must_use]
+pub fn scalar_kind(getter: &str) -> Option<(&'static str, &'static str)> {
+    FUSABLE_GETTERS
+        .iter()
+        .find(|(name, _, _)| *name == getter)
+        .map(|(_, ty, absent)| (*ty, *absent))
+}
+
+/// The Rust type a fusable scalar setter stores — [`FUSABLE_SETTERS`]' row.
+#[must_use]
+pub fn setter_kind(setter: &str) -> Option<&'static str> {
+    FUSABLE_SETTERS
+        .iter()
+        .find(|(name, _)| *name == setter)
+        .map(|(_, ty)| *ty)
+}
+
+/// `@FR-R-RecPtr` — does statement `at` of `stmts` bind a plain-record local whose ADDRESS
+/// the rest of the block may derive once, right after the binding?
+///
+/// The record twin of [`view_def_header`].  `(B-View)` fixes the binding's `DbRef` at the
+/// bind — `e = tbl[i]?`, `s = o.inner`, a copy of another view — so the record's first
+/// byte is one address for as long as the place lives, and every scalar field read and
+/// in-place field write of `r` in the remainder can be one load or store through it instead
+/// of a store resolution each.  The promise is `(R-Base)`'s applied to the statements AFTER
+/// the binding: none grows a store (pushes and mints block; a null-discharge buffer's mint
+/// does not, see [`mints_null_buffer`]), none frees a record BEFORE a later use of `r` (a
+/// freed record read through the store answers the sentinel, through a pointer it would
+/// answer stale bytes; the releases a block ends with follow the last use and are fine),
+/// none rebinds `r`, and at least one reads or writes a fusable scalar field of `r` — or hands
+/// `r` to a callee whose TWIN takes that parameter's fields as inputs (`twin_params`, the
+/// `(callee, parameter)` pairs the caller resolved: `(R-Inputs)` then reads them through the
+/// address at the call).  Only a PLAIN struct qualifies ([`plain_record_type`]): a nullable, an enum payload and a
+/// synthetic `__nullable<S>` carry a layout question this does not model.  The null record
+/// keeps its sentinel: the address is null and the read tests it.
+///
+/// Answers the view variable.
+///
+/// # Errors
+///
+/// The reason the statement declines, in the words `LOFT_TRACE_RECPTR=1` prints: not a
+/// binding, not a plain record, a remainder that may grow a store, one that frees a
+/// record before a use of the view, one that rebinds it, or no fusable use at all.
+pub fn record_view_ptr(
+    stmts: &[Value],
+    at: usize,
+    data: &Data,
+    def_nr: u32,
+    cache: &mut HashMap<u32, bool>,
+    allow_in_place: bool,
+    twin_params: &HashSet<(u32, u16)>,
+) -> Result<u16, &'static str> {
+    let Some(Value::Set(r, rhs)) = stmts.get(at).map(Value::unspan) else {
+        return Err("not a binding");
+    };
+    let vars = data.def(def_nr).variables();
+    if plain_record_type(data, vars.tp(*r)).is_none() {
+        return Err("not a plain record");
+    }
+    // A buffer's pre-init (`__ref_p2_N = null`, then a mint into it): no place yet, so no
+    // address — measured: the address was taken null and the literal's field writes through
+    // it were dropped, a library's `mk()` answering a record of zeros (loft's own 47 golden
+    // and the #672 parity test).
+    if matches!(rhs.unspan(), Value::Null) {
+        return Err("bound null");
+    }
+    let rest = &stmts[at + 1..];
+    if rest.iter().any(|op| {
+        blocks_header_hoist(
+            op,
+            data,
+            cache,
+            &mut HashSet::new(),
+            Some(vars),
+            HoistTiers {
+                in_place: allow_in_place,
+                ..HoistTiers::default()
+            },
+            &mut HashSet::new(),
+        )
+    }) {
+        return Err("the remainder may grow a store");
+    }
+    // In statement order: a free (a scope exit's release of a local, a buffer's) BEFORE a
+    // use of `r` declines — through the store a freed record answers the sentinel, through
+    // an address it would answer stale bytes — while the frees that follow the last use,
+    // which is where a block's own releases stand, cost nothing.  A view that outlives its
+    // container is `(B-Disturb)`'s case and is materialised by the parser before this runs.
+    let mut rebound = false;
+    let mut touched = false;
+    let mut released_before = false;
+    for op in rest {
+        let mut uses = false;
+        let mut releases = false;
+        op.any_node(&mut |n| {
+            match n {
+                Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == *r => rebound = true,
+                Value::Var(v) if *v == *r => uses = true,
+                Value::Call(g, args) if (*g as usize) < data.definitions.len() => {
+                    let name = data.def(*g).name();
+                    if frees_a_record(name, args, Some(vars)) {
+                        releases = true;
+                    }
+                    let on_r =
+                        matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == *r);
+                    // A NATIVE op with the view as its first operand that is not a read
+                    // (`OpGet…`) or a fusable scalar set re-seats or releases the place —
+                    // `OpDatabaseNP(buf, tp)` mints into it, `OpNewRecord`, a copy into it, a
+                    // free — so it is a rebind; a loft-bodied callee can only write in place
+                    // (`(R-Callee)`).
+                    let native = matches!(data.def(*g).code(), Value::Null)
+                        || !data.def(*g).rust().is_empty();
+                    if on_r && native && !name.starts_with("OpGet") && setter_kind(name).is_none() {
+                        rebound = true;
+                    }
+                    if on_r
+                        && ((scalar_kind(name).is_some() && scalar_read(name, args).is_some())
+                            || (setter_kind(name).is_some()
+                                && matches!(args.get(1).map(Value::unspan), Some(Value::Int(_)))))
+                    {
+                        touched = true;
+                    }
+                    if args.iter().enumerate().any(|(i, a)| {
+                        matches!(a.unspan(), Value::Var(v) if *v == *r)
+                            && u16::try_from(i).is_ok_and(|p| twin_params.contains(&(*g, p)))
+                    }) {
+                        touched = true;
+                    }
+                }
+                _ => {}
+            }
+            false
+        });
+        if uses && (released_before || releases) {
+            return Err("the remainder frees a record before a use of the view");
+        }
+        released_before |= releases;
+    }
+    if rebound {
+        return Err("the remainder rebinds the view");
+    }
+    if !touched {
+        return Err("no fusable field read or write of the view");
+    }
+    Ok(*r)
 }
 
 /// @PLN157 § V-o — is `d_nr` a stdlib ONE-OP wrapper: a loft function whose whole body is

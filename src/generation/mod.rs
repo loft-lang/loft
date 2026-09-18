@@ -689,6 +689,16 @@ pub struct Output<'a> {
     /// `LOFT_NO_TWIN_BASE=1` — a twin takes its header inputs alone again, and every element
     /// read or write inside it resolves the store (`@FR-R-Base`'s twin clause off).
     pub twin_base_disabled: bool,
+    /// `@FR-R-RecPtr` — per block, the `__pa_N` local holding the address of a record VIEW
+    /// bound in it, keyed by the view variable; a field read or in-place write of that
+    /// variable goes through it ([`Self::bind_record_ptr`]).
+    pub rec_ptrs: Vec<HashMap<u16, String>>,
+    /// `LOFT_NO_RECORD_PTR=1` — no record view carries its address; every field read and
+    /// write resolves the store again.
+    pub record_ptr_disabled: bool,
+    /// `LOFT_TRACE_RECPTR=1` — name every record view bound to an address and every
+    /// declined binding with its reason.
+    pub recptr_trace: bool,
     /// @PLN157 P4c — record scalars hoisted out of the enclosing loops, innermost last:
     /// `(variable, field offset)` → the Rust local holding the value the prelude read
     /// once.  Pushed and popped beside [`Self::vec_headers`], one frame per `Value::Loop`.
@@ -1867,6 +1877,11 @@ impl<'a> Output<'a> {
             // One rule: `LOFT_NO_VECTOR_BASE` switches its twin clause off with it.
             twin_base_disabled: std::env::var("LOFT_NO_TWIN_BASE").is_ok_and(|v| v != "0")
                 || !crate::keys::vector_base_enabled(),
+            rec_ptrs: Vec::new(),
+            // One rule: `LOFT_NO_VECTOR_BASE` switches its record clause off with it.
+            record_ptr_disabled: std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0")
+                || !crate::keys::vector_base_enabled(),
+            recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
             scalar_hoist_disabled: std::env::var("LOFT_NO_SCALAR_HOIST").is_ok_and(|v| v != "0"),
@@ -2236,6 +2251,7 @@ impl Output<'_> {
         self.next_format_count = 0;
         self.vec_headers.clear();
         self.vec_bases.clear();
+        self.rec_ptrs.clear();
         self.vec_bounds.clear();
         self.scalar_hoists.clear();
         self.push_headers.clear();
@@ -3011,11 +3027,22 @@ impl Output<'_> {
     fn twin_call_inputs(&mut self, def_nr: u32, vals: &[Value]) -> Option<Vec<String>> {
         let inputs = self.callee_inputs_of(def_nr)?;
         let mut args = Vec::with_capacity(inputs.scalars.len() + inputs.headers.len());
-        for (p, fld, _) in &inputs.scalars {
+        for (p, fld, getter) in &inputs.scalars {
             let Some(Value::Var(c)) = vals.get(*p as usize).map(Value::unspan) else {
                 return None;
             };
-            args.push(self.active_scalar_hoist(&(*c, *fld))?.to_owned());
+            if let Some(held) = self.active_scalar_hoist(&(*c, *fld)) {
+                args.push(held.to_owned());
+                continue;
+            }
+            // `@FR-R-RecPtr` — an input the caller does not hold as a value but whose
+            // record's ADDRESS it holds is read through that address at the call: one load,
+            // where the plain call read it through the store inside the callee.
+            let Value::Call(g, _) = getter.unspan() else {
+                return None;
+            };
+            let name = self.data.def(*g).name().to_string();
+            args.push(self.rec_ptr_read(*c, *fld, &name)?);
         }
         // A header input is keyed on the argument's PATH (§ V-ac): `br.img` for a vector
         // parameter, `h.cv` + the callee's `data` offset for a record parameter's field.
@@ -3165,6 +3192,127 @@ impl Output<'_> {
             .iter()
             .rev()
             .find_map(|f| f.get(path).map(String::as_str))
+    }
+
+    /// `@FR-R-RecPtr` — the `__pa_N` local holding the address of record view `v`, when an
+    /// enclosing block bound one.
+    #[must_use]
+    pub fn active_rec_ptr(&self, v: u16) -> Option<&str> {
+        self.rec_ptrs
+            .iter()
+            .rev()
+            .find_map(|f| f.get(&v).map(String::as_str))
+    }
+
+    /// `@FR-R-RecPtr` — the expression reading field `fld` of record view `v` through its
+    /// held address with getter `getter`'s type and sentinel, or `None` when no address is
+    /// held or the getter is not one the address serves.
+    pub fn rec_ptr_read(&mut self, v: u16, fld: i64, getter: &str) -> Option<String> {
+        let ptr = self.active_rec_ptr(v)?.to_owned();
+        let (ty, absent) = hoist::scalar_kind(getter)?;
+        let mut operand: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut operand, &Value::Var(v)).ok()?;
+        let operand = String::from_utf8_lossy(&operand).into_owned();
+        Some(format!(
+            "unsafe {{ vector::rec_get::<{ty}>({ptr}, &({operand}), ({fld}_i64) as u32, {absent}, &stores.allocations, {}) }}",
+            self.hoist_verify
+        ))
+    }
+
+    /// `@FR-R-RecPtr` — after statement `at` of a block was emitted: if it bound a plain
+    /// record VIEW whose address the rest of the block may share ([`hoist::record_view_ptr`]),
+    /// emit `let __pa_N = vector::rec_ptr(&var_r, …);` as the next statement and push a frame
+    /// for it.  Answers whether a frame was pushed; `output_block` pops what it pushed before
+    /// the block closes.  A value-record local (`@FR-R-ValueRecord`) is a tuple, not a place,
+    /// and is never bound.
+    pub(super) fn bind_record_ptr(
+        &mut self,
+        w: &mut dyn Write,
+        stmts: &[Value],
+        at: usize,
+    ) -> std::io::Result<bool> {
+        if self.hoist_disabled || self.record_ptr_disabled {
+            return Ok(false);
+        }
+        let Some(Value::Set(r, _)) = stmts.get(at).map(Value::unspan) else {
+            return Ok(false);
+        };
+        if self.value_record_locals.contains_key(r)
+            || self.coroutine_persistent_fields.contains_key(r)
+            || self.rec_ptrs.iter().any(|f| f.contains_key(r))
+        {
+            return Ok(false);
+        }
+        // The `(callee, parameter)` pairs of the remainder's calls that hand `r` to a twin
+        // taking that parameter's scalar fields as inputs — a use of the address at the call.
+        let mut candidates: Vec<(u32, u16)> = Vec::new();
+        for op in &stmts[at + 1..] {
+            op.any_node(&mut |n| {
+                if let Value::Call(g, args) = n
+                    && (*g as usize) < self.data.definitions.len()
+                {
+                    for (i, a) in args.iter().enumerate() {
+                        if matches!(a.unspan(), Value::Var(v) if *v == *r)
+                            && let Ok(p) = u16::try_from(i)
+                        {
+                            candidates.push((*g, p));
+                        }
+                    }
+                }
+                false
+            });
+        }
+        let mut twin_params: HashSet<(u32, u16)> = HashSet::new();
+        for (g, p) in candidates {
+            if self
+                .callee_inputs_of(g)
+                .is_some_and(|ci| ci.scalars.iter().any(|(q, _, _)| *q == p))
+            {
+                twin_params.insert((g, p));
+            }
+        }
+        let verdict = hoist::record_view_ptr(
+            stmts,
+            at,
+            self.data,
+            self.def_nr,
+            &mut self.hoist_cache,
+            !self.write_hoist_disabled,
+            &twin_params,
+        );
+        let r = match verdict {
+            Ok(r) => r,
+            Err(why) => {
+                // Scalar locals and non-bindings are not candidates worth a line.
+                if self.recptr_trace && why != "not a plain record" && why != "not a binding" {
+                    eprintln!(
+                        "recptr: {} declines `{}`: {why}",
+                        self.data.def(self.def_nr).name(),
+                        self.data.def(self.def_nr).variables().name(*r)
+                    );
+                }
+                return Ok(false);
+            }
+        };
+        self.hoist_counter += 1;
+        let name = format!("__pa_{}", self.hoist_counter);
+        let mut operand: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut operand, &Value::Var(r))?;
+        let operand = String::from_utf8_lossy(&operand).into_owned();
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let {name}: *const u8 = vector::rec_ptr(&({operand}), &stores.allocations); //@FR-R-RecPtr record view address for {operand}"
+        )?;
+        if self.recptr_trace {
+            eprintln!(
+                "recptr: {} binds {name} for `{}`",
+                self.data.def(self.def_nr).name(),
+                self.data.def(self.def_nr).variables().name(r)
+            );
+        }
+        self.rec_ptrs.push(HashMap::from([(r, name)]));
+        Ok(true)
     }
 
     /// @PLN157 § V-q — the push header an enclosing loop holds for `path`, when one does.

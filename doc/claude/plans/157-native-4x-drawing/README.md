@@ -43,6 +43,18 @@ step-1 arm, 14/14 hashes): `render_marks` 2.79–2.86× → **1.54–1.74×**, `
 (Perf-Weight) median bar met on this lane, `lock_curved` (3.85×) the one row still over 3×.  Switches `LOFT_NO_BOUNDED_NEST`, `LOFT_NO_NEST_RAW_READS`, `LOFT_NO_SELF_APPEND_BLOCK`;
 falsifier `LOFT_HOIST_VERIFY=1` (`ops::nest_verify`, and the raw read compared with the checked
 one); pins `tests/bounded_nest.rs`; cells `tests/scripts/157-bounded-nest.loft` n1–n23.
+**`R-RecPtr` SHIPPED 2026-09-18** (`formal/rewrites.md`, `(R-View)`'s record twin, out of the
+`wide_line` analysis below): a plain-record VIEW (`pg_cur = pg_table[i]?`, `s = o.inner`)
+carries the address of its record for the rest of its block, every scalar field read is one
+load and every in-place write one store through it, and a callee twin the view is handed to
+takes its scalar inputs read through the address at the call (`edge_x`); beside it `(R-Base)`
+admits the null-discharge buffer's mint as growth-free, so the crossing loop holds its bases.
+Standalone probe: `wide_line` **7 800 → 5 060 ns/op (−35 %), 2.9× → 1.9×** its reference.
+The lane, two interleaved rounds against the switch, 14/14 hashes: `wide_line` 2.41× → **1.76×** (−27 %), `fill_circle` 1.46× → **0.89×** (−40 %), `fill_star` 1.31× → **0.94×** (−28 %) — the fills share `polygon_generic` — the rest within swing; **median 1.67×, three rows now under 1×**.  Switches `LOFT_NO_RECORD_PTR` (and `LOFT_NO_VECTOR_BASE`); falsifier
+`LOFT_HOIST_VERIFY=1`; trace `LOFT_TRACE_RECPTR`; cells `tests/scripts/157-record-ptr.loft`
+r1–r13, pins `tests/record_ptr.rs`.  Next shape of the same rule: a view bound by a `for e in v`
+loop variable (`polygon_generic`'s first loop, `thin_line`), and the 16 store field reads still
+in `polygon_generic` are of that shape or of `cv`'s fields.
 **`R-Base`'s twin clause SHIPPED 2026-09-18** (`formal/rewrites.md`, unit (1) of the
 `composite` pricing below): a § V-p twin takes the element BASE of each header it is handed
 (`__ib_k`), a view of the path inside it shares that base, and its fused reads and writes take
@@ -1139,6 +1151,19 @@ patches on one emission, hash `2a3aa61` throughout):
   whose interval fits emits plain — `rgba`, `color_*`, the alpha-over arithmetic and
   `lock_layer`'s `chan()` are all of that shape; it needs a per-function result interval for the
   small colour helpers, and a design note before it is cut.
+* **`wide_line` (2.57× on the lane, 2.93× standalone) analysed and PRICED 2026-09-18**, the
+  same instruments (the lean emission read, hand patches compiled through loft's own rustc
+  line — the `--native-emit` default is the DEBUG tier, `--lean --native-emit` is what
+  `--native-release` builds, and the first control ran 10.5 µs against loft's 7.8 for that
+  reason), hash `91c48fd2` on every run.  The crossing loop `pg_cur = pg_table[i]?` paid a
+  STORE RESOLUTION per record field read — six on `pg_cur`/`pg_oth` per edge per row and
+  three more inside each `edge_x` — where Rust's `let cur = table[i]` reads registers, and its
+  `pg_xx` reads and writes went through `get_elem_hoisted` because the `?` discharge's buffer
+  mint counted as a growth and kept the loop off its bases.  Priced: bases past the mint
+  7 800 → 7 300–7 600 (−5 %); record addresses for `pg_cur`/`pg_oth` → 5 800 (−25 %); `edge_x`
+  reading through them → **4 650–5 050 (−40 %), 1.75×**.  **BUILT the same day** as
+  `R-RecPtr` (§ Status), the emitter reproducing the hand patch's shape at 5 060 (−35 %).
+
   **Why LLVM does not hoist the store resolution itself — measured, because the owner would rather
   it did than have the emitter repeat its algorithm.**  Two ways of GIVING it the knowledge were
   built by hand on the same emission and moved nothing (rounds 2–4, hash `cf852074`): whole-program

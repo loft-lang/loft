@@ -196,6 +196,13 @@ fn emit_hoisted_scalar_or_default(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> 
         .hoisted_scalar_read(ctx.def_fn.name(), args)
         .map(str::to_owned)
     else {
+        // `@FR-R-RecPtr` — a field read off a record VIEW whose address the block holds is
+        // one load through it; `unsafe` at the call, where the block's proof lives.
+        if let Some((v, fld)) = crate::generation::hoist::scalar_read(ctx.def_fn.name(), args)
+            && let Some(expr) = ctx.output.rec_ptr_read(v, fld, ctx.def_fn.name())
+        {
+            return write!(ctx.w, "{expr}");
+        }
         return super::default::DefaultEmitter.emit(ctx, args);
     };
     if ctx.output.hoist_verify {
@@ -251,6 +258,24 @@ pub struct FusedElementWriteEmitter;
 
 impl OpEmitter for FusedElementWriteEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        // `@FR-R-RecPtr` — an in-place field write of a record VIEW whose address the block
+        // holds is one store through it (the setter's `rec != 0` test is the null address).
+        if let [base, fld, val] = args
+            && let Value::Var(v) = base.unspan()
+            && let Value::Int(off) = fld.unspan()
+            && let Some(ty) = crate::generation::hoist::setter_kind(ctx.def_fn.name())
+            && let Some(ptr) = ctx.output.active_rec_ptr(*v).map(str::to_owned)
+        {
+            let verify = ctx.output.hoist_verify;
+            write!(ctx.w, "{{ let __wv = (")?;
+            ctx.emit(val)?;
+            write!(ctx.w, "); unsafe {{ vector::rec_set::<{ty}>({ptr}, &(")?;
+            ctx.emit(base)?;
+            return write!(
+                ctx.w,
+                "), ({off}_i64) as u32, __wv, &stores.allocations, {verify}) }} }}"
+            );
+        }
         let Some(fused) = ctx.output.fused_element_write(ctx.def_fn.name(), args) else {
             return super::default::DefaultEmitter.emit(ctx, args);
         };

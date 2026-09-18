@@ -779,7 +779,8 @@ wrong element, a leak or a double free out of a loop that appends a dying tempor
 elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
 **`LOFT_NO_VECTOR_BASE=1`** (@PLN157 § V-ak, `@FR-R-Base`, default-ON) makes a
 growth-free loop's fused element reads and writes resolve the store per element again —
-with it off, a loop that grows no store (no push, no mint push, no null-discharge buffer)
+with it off, a loop that grows no store (no push, no mint push — a null-discharge
+buffer's mint is a fresh store and does not count, since 2026-09-18)
 binds the address of each hoisted vector's element 0 beside its header and every read
 or write is one bounds test and one load or store through it (the resample probe −14 %)
 — and is the first bisect step for a wrong element read or write inside a growth-free
@@ -795,6 +796,18 @@ call), a view of the path inside the twin shares it, and the fused reads and wri
 bounds test and one load or store (`composite`'s pixel accessors) — and is the first bisect
 step for a wrong element read or write inside a function a hoisting loop calls;
 `LOFT_HOIST_VERIFY=1` re-derives the base at every use.
+**`LOFT_NO_RECORD_PTR=1`** (`@FR-R-RecPtr`, default-ON, generation time, `--native` only)
+makes every field read and in-place field write of a record VIEW resolve the store again —
+with it off, a plain-record local bound by a statement (`e = tbl[i]?`, `s = o.inner`)
+carries the address of its record for the rest of its block (`__pa_N`), every scalar
+field read is one load and every in-place field write one store through it, and a twin the
+view is handed to takes its scalar inputs read through the address at the call
+(`wide_line`'s crossing loop −35 %) — and is the first bisect step for a wrong field read
+through a record view, or a wrong argument inside a callee handed one, on native.  Admitted
+where the block's remainder grows no store, frees no record before a later use, and never
+rebinds the view; a nullable view is never bound.  `LOFT_HOIST_VERIFY=1` re-derives the
+address and re-reads the store at every use; `LOFT_TRACE_RECPTR=1` names each view bound
+and each declined with its reason.  `LOFT_NO_VECTOR_BASE=1` switches it off too (one rule).
 **`LOFT_NO_LOOP_BUFFER_REUSE=1`** (@PLN157 § V-al, `@FR-R-LoopBuffer`, default-ON,
 generation time) makes a vector local declared `[]` INSIDE a loop re-mint its per-site
 buffer every iteration again — with it off, the buffer's store and its vector survive the
@@ -1068,7 +1081,9 @@ PERFORMANCE.md § Design: P2, NATIVE.md.
 time):** `e = tbl[i]?` on a vector of all-scalar records mints an absent element into a
 hidden per-site buffer, and that allocation used to decline every header in the loop
 around it — the drawing bench's polygon crossing loop hoisted nothing (`wide_line` −31 %
-when it did).  **`LOFT_NO_NULL_BUFFER_HOIST=1`** restores the blocking form and is the
+when it did); since 2026-09-18 it does not block the loop's BASES either (a fresh store,
+or a clear of the buffer's own, moves no element a base addresses).
+**`LOFT_NO_NULL_BUFFER_HOIST=1`** restores the blocking form and is the
 first bisect step for a wrong element read in a loop that discharges a record element
 with `?`; `LOFT_HOIST_VERIFY=1` is the falsifier.
 

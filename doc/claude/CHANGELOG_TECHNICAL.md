@@ -9,6 +9,51 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A record view carries its address — `R-RecPtr`, `wide_line` 2.41× → 1.76×, the polygon fills under 1× (2026-09-18)
+
+`--native`, generation time, default ON (`LOFT_NO_RECORD_PTR=1` — and `LOFT_NO_VECTOR_BASE=1`,
+one rule — restore the store reads).  `formal/rewrites.md` gains `(R-RecPtr)`, `(R-View)`'s
+record twin: a plain-record local bound by a statement (`e = tbl[i]?`, `s = o.inner`, a copy of
+another view) has its DbRef fixed at the bind (`B-View`), so the address of its first byte is
+derived ONCE right after the binding (`let __pa_N: *const u8 = vector::rec_ptr(…)`) and every
+fusable scalar field read of the view in the rest of the block is `vector::rec_get` — a null
+test and one unaligned load — every in-place field write `vector::rec_set`, and a callee twin
+the view is handed to takes its scalar inputs read through the address at the call
+(`Output::rec_ptr_read`, `(R-Inputs)`' address half).  Before, each field read was
+`stores.store(&db).get_int(db.rec, db.pos + off)`: a store resolution per field, per element,
+per row — the drawing library's crossing loop paid six on `pg_cur`/`pg_oth` and three more
+inside every `edge_x` call, where the Rust reference's `let cur = table[i]` reads registers.
+Admission (`hoist::record_view_ptr`): the remainder grows no store (`(R-Base)`'s condition),
+frees no record BEFORE a later use of the view (the releases a block ends with follow the last
+use and are fine; a view outliving its container is `B-Disturb`'s materialisation, made by
+the parser), never rebinds the view — a `Set`, or a NATIVE op taking it as its first operand
+that is not a read or a fusable scalar set (a mint into it, a copy into it, a free) — and
+reads, writes or hands it at least once; a binding to null (a buffer's pre-init) is never a
+view; a nullable view, an enum payload and a `__nullable<S>` are not plain records and are
+never bound.  The last two clauses are a receipt: the first build took a return buffer's
+`__ref_p2_N = null` as a view and did not read the literal's `OpDatabaseNP(buf, …)` as a
+rebind, so a literal-returning `mk()` in a library wrote its fields through a null address
+and answered zeros — the 47 golden and the #672 parity test caught it before the commit, and
+cells r14/r15 now hold that shape.
+
+Beside it, `(R-Base)` admits the null-discharge buffer's mint (§ V-ad) as growth-free: it takes
+a FRESH store or clears the buffer's own, neither of which moves an element a base addresses
+(`lazy_buffer_mint`'s reasoning, which `mints_null_buffer`'s own doc contradicted), so a loop
+that discharges a record element with `?` now binds its bases (`vector_base`'s b4 pin flips).
+
+Priced by hand patch on the standalone `wide_line` probe (arm64): bases past the mint −5 %,
+the record addresses −25 %, `edge_x` through them −15 % more; built, the emitter reproduces
+the hand patch's shape (2 addresses, 27 loads, no `get_elem_hoisted`, `edge_x` through its
+twin) at **7 800 → 5 060 ns/op (−35 %), 2.9× → 1.9× the reference**, hash unchanged.
+Falsifier `LOFT_HOIST_VERIFY=1` (`rec_get` re-derives the address and re-reads the store at
+every use); trace `LOFT_TRACE_RECPTR=1`.  Cells `tests/scripts/157-record-ptr.loft` r1–r13
+(reads, a write, two views in a nest, a projection view, the callee twin, a rebind, a push, a
+nullable view, the discharge buffer, single/float fields, a write through another route, a
+view copy, a text-carrying record), hand-computed, both backends, three switch states, five
+falsifiers; sabotage receipt (the address skewed one word: r1 fails, `HOIST_VERIFY` names the read); pins `tests/record_ptr.rs`; `scripts/emission_audit.py`
+learns the `__pa_N` holders.  The full lane (arm64, two interleaved rounds against `LOFT_NO_RECORD_PTR=1`, `compare.py --skip-interp --repeat 3 --n-ref 500 --n-native 500`, 14/14 hashes): **`wide_line` 7 262 → 5 296 ns/op (−27 %), 2.41× → 1.76×**, and the two fills that share `polygon_generic` with it — **`fill_circle` 37 998 → 22 954 (−40 %), 1.46× → 0.89×; `fill_star` 12 208 → 8 732 (−28 %), 1.31× → 0.94×** — both under their reference; every other row within its swing (`parse` +2.5 %, inside its round-to-round spread).  Median 1.74× → 1.67×.  Not yet a view bound by a `for e in v`
+loop variable — the next shape of the same rule (`polygon_generic`'s first loop, `thin_line`).
+
 ### A callee twin takes the element base beside each header — `composite` 2.98× → 2.40× (2026-09-18)
 
 `--native`, generation time, default ON (`LOFT_NO_TWIN_BASE=1` restores the header-only twin).

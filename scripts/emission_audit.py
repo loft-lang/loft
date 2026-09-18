@@ -19,6 +19,8 @@ rewrites make about the loop they sit in (doc/claude/formal/rewrites.md):
   R-Inputs  a twin call (`<fn>__inv(cell, …)`) hands in only live holders.
   R-Base    (twin clause) a twin's `__ib_k` inputs are holders, and a view's shared base
             (`let __vb_N = __ib_k; //@FR-R-Base view base for …`) is derived from a live one.
+  R-RecPtr  a record view's address (`let __pa_N: *const u8 = vector::rec_ptr(…)`) is a holder
+            for the rest of its block, and every `rec_get`/`rec_set` through one names a live one.
 
 A runtime read on a held path (`vec_get_or_raise_runtime`, `length_vector`) is reported as a
 NOTE — a missed hoist, never a wrong answer.  Textual by design: the emitter spells a path
@@ -39,6 +41,10 @@ BIND_BASE = re.compile(r"^\s*let (__vb_\d+): \*const u8 = vector::vec_base\(&([\
 # R-Base's twin clause: a view inside a twin SHARES the twin's base input (`__ib_k`) — or a
 # loop's base — under its own name; the source must be live here.
 BIND_VIEW_BASE = re.compile(r"^\s*let (__vb_\d+) = (__[iv]b_\d+); //@FR-R-Base view base for")
+# R-RecPtr: a record VIEW's address, bound right after the binding and live to the block's
+# end; every `rec_get`/`rec_set` through it must name a live one.
+BIND_RECPTR = re.compile(r"^\s*let (__pa_\d+): \*const u8 = vector::rec_ptr\(&\((\S+?)\), &stores\.allocations\); //@FR-R-RecPtr record view address for")
+USE_RECPTR = re.compile(r"vector::rec_(get|set)::<[^>]*>\((__pa_\d+), ")
 BIND_SCALAR = re.compile(r"^\s*let (__vs_\d+) = (.*);")
 SCALAR_KEY = re.compile(r"let db = \((var_\w+)\);.*db\.pos \+ \((\d+)_i64\)")
 FN_HEAD = re.compile(r"^fn (\w+)\((.*)\)")
@@ -95,6 +101,13 @@ def audit(text, quiet=False):
         mp = BIND_PUSH.match(line)
         mv = BIND_VIEW.match(line)
         ms = BIND_SCALAR.match(line)
+        mr = BIND_RECPTR.match(line)
+        if mr:
+            holders.append(Holder(mr.group(1), "recptr", f"rec:{mr.group(2)}", depth, nr))
+            bound_total += 1
+            depth += code.count("{") - code.count("}")
+            holders = [h for h in holders if h.depth <= depth]
+            continue
         mb = BIND_BASE.match(line) or BIND_VIEW_BASE.match(line)
         if mb:
             # A base holds the path of the header it was derived from; that header must be
@@ -129,6 +142,10 @@ def audit(text, quiet=False):
             uses_total += (len(USE_ELEM.findall(code)) + len(USE_PUSH.findall(code))
                            + len(USE_PUSHREC.findall(code))
                            + len(USE_LEN.findall(code)) + len(USE_SCALAR.findall(code)))
+            for kind, ptr in USE_RECPTR.findall(code):
+                uses_total += 1
+                if live(ptr) is None:
+                    violations.append(f"{fn}:{nr}: R-RecPtr — rec_{kind} through {ptr}, which is not live here")
             for kind, name, base, path in USE_ELEM.findall(code):
                 if base and live(base) is None:
                     violations.append(f"{fn}:{nr}: R-Base — {kind} through {base}, which is not live here")

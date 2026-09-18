@@ -2629,6 +2629,8 @@ impl Output<'_> {
         // @PLN157 § V-n — the header frames this block's view bindings pushed, popped
         // before the block closes.
         let mut view_frames = 0usize;
+        // `@FR-R-RecPtr` — the record-address frames this block's view bindings pushed.
+        let mut ptr_frames = 0usize;
         // @PLN157 § V-x — the open FLAT literal group, if any: `(local, witness)`.
         let mut flat_lit_open: Option<(u16, u16)> = None;
         for (vnr, v) in operators.iter().enumerate() {
@@ -3175,6 +3177,9 @@ impl Output<'_> {
             if self.bind_view_header(w, operators, vnr)? {
                 view_frames += 1;
             }
+            if self.bind_record_ptr(w, operators, vnr)? {
+                ptr_frames += 1;
+            }
         }
         if flat_lit_open.is_some() {
             self.indent -= 1;
@@ -3184,6 +3189,9 @@ impl Output<'_> {
         for _ in 0..view_frames {
             self.vec_headers.pop();
             self.vec_bases.pop();
+        }
+        for _ in 0..ptr_frames {
+            self.rec_ptrs.pop();
         }
         if has_trailing_void && !return_value_is_return {
             self.indent(w)?;
