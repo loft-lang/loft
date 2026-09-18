@@ -287,6 +287,40 @@ re-derives the header at every access.  Sites: `hoist::vector_path`,
 `hoist::vector_candidates`, `Output::begin_vector_hoist`, the registry's
 `FusedElementReadEmitter`, `FusedElementWriteEmitter` and `HoistedLengthEmitter`.
 
+### A record local declared in a loop keeps its store
+
+```
+  (R-LoopRecord) a plain no-heap record local declared by a statement INSIDE a
+                 loop and minted by a literal (`sub = Spec {…}` per pass) keeps
+                 its store and its record across the loop's iterations: it is
+                 declared at the loop's prelude, the per-pass mint is taken only
+                 where the local holds no store (the first pass), a complete
+                 literal writes every field over the kept record, a partial one
+                 re-establishes the omitted fields' defaults first, and one free
+                 follows the loop.  Observably the same record as a fresh one.
+                 Admitted where the local's every mention is its init family —
+                 the declaration, the mint, a fusable scalar field read or
+                 in-place write, a free — or a hand-off to a loft callee whose
+                 return borrows nothing (O-Borrow: a callee keeps a caller's
+                 record only by copy or through its return's deps); a heap-owning
+                 or nullable type, a second binding, a copy to another local, a
+                 return, a capture, a native op taking it otherwise, `par` and
+                 `yield` decline.  A free on a `return`/`continue` path stays.
+```
+
+**In words.** 2026-09-18, the `(R-LoopBuffer)` shape for a record.  A record literal
+bound inside a loop cost the free of its store at the body's end and a fresh store next
+pass — `free_named`, the free-slot search, the re-init, the claim, the zero, the tag: 39 ns
+per pass against 10 ns for a vector loop buffer's reset — where a local declared outside
+the loop already kept its store through `OpDatabase`'s clear arm.  Measured on the probe
+(`s = S1 { a: k }; t += s.a`, 200 000 passes): 7 600–8 500 → 480–540 µs per 200 000 passes, 39 → 2.4 ns per pass (the kept record's field write and read no longer resolve a store per pass either), value unchanged.  Switch `LOFT_NO_LOOP_RECORD`
+(and `LOFT_NO_LOOP_BUFFER_REUSE`, one family); trace `LOFT_TRACE_LOOP_RECORD=1`; falsifiers
+`LOFT_STRICT_STORES` / `LOFT_POISON` / `LOFT_POISON_CLAIM` / `LOFT_NATIVE_LEAK_CHECK` (a kept
+store must still be freed exactly once).  Sites: `hoist::loop_records`, the `Value::Loop`
+emission in `emit.rs` (prelude and postlude), `output_block` (the two dropped statements),
+`ops::misc_ops` (the kept-record mint).  Cells `tests/scripts/157-loop-record.loft` l1–l15,
+pins `tests/loop_record.rs`.
+
 ### An in-place scalar set disturbs no header
 
 ```

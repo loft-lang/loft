@@ -1,0 +1,139 @@
+// `@FR-R-LoopRecord` — a plain no-heap record literal bound to a local INSIDE a loop keeps its
+// store across iterations (the `@FR-R-LoopBuffer` shape for a record): the local is declared at
+// the loop's prelude, every pass mints through `OpDatabase`'s clear arm into the store the
+// previous pass left, and one free follows the loop — where before each pass freed the store
+// and took a fresh one.  Observably the same record as a fresh one: every field is written by
+// the literal (or takes its declared default through the prefill) before it is read.
+//
+// Admitted where every mention of the local is its mint, a fusable scalar field read or
+// in-place write, a free, or a hand-off to a loft callee whose return does not borrow that
+// parameter.  A copy to another local, a return of it, a capture, a heap-owning field, a
+// nullable type and a `par`/`yield` body decline.  A `return`/`continue` path inside the loop
+// keeps its own frees.  The interpreter takes the per-pass free and fresh store and is the
+// oracle; every value is hand-computed.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-18) — with the kept record's null-guarded mint
+//   never taken (`if false`), l1 fails on --native (`l1: null`: every field reads the null
+//   store's sentinel).  Restored, l1–l15 hold on both backends, both switch states
+//   (`LOFT_NO_LOOP_RECORD=1`), under LOFT_STRICT_STORES=1, LOFT_POISON=1, LOFT_POISON_CLAIM=1
+//   and LOFT_NATIVE_LEAK_CHECK=1 (a kept store is freed exactly once).  The same run found the
+//   interpreter's last-use move firing on a re-declared name (l11's shape; fixed first, guard
+//   `a-name-reused-in-a-sibling-scope-copies.loft`).
+
+struct Lr { a: integer, b: integer, s: single, f: float, flag: boolean }
+struct LrT { name: text, n: integer }
+struct LrO { inner: Lr, k: integer }
+struct Ld { a: integer, k: integer = 5 }
+
+fn lr_use(x: const Lr, y: integer) -> integer { (y - x.b) * x.a }
+fn lr_write(x: Lr) { x.a = x.a * 2; }
+/// Returns a VIEW of its parameter's field record: the caller's local is borrowed (declines).
+fn lr_inner(o: const LrO) -> Lr { o.inner }
+
+fn lr_ret_in_loop(v: vector<integer>) -> Lr {
+  for i in 0..len(v) {
+    r = Lr { a: v[i] ?? 0, b: i, s: 0.0f, f: 0.0, flag: false };
+    if r.a > 25 { return r }
+  }
+  Lr { a: -1, b: -1, s: 0.0f, f: 0.0, flag: false }
+}
+
+fn main() {
+  // l1 — reads through the record per iteration: sum a * 10 + b over 12 = 660 + 66 = 726.
+  l1 = 0;
+  for i in 0..12 { r = Lr { a: i * 10, b: i, s: 0.5f, f: 2.0, flag: true }; l1 += r.a + r.b; }
+  assert(l1 == 726, "l1: {l1}");
+
+  // l2 — a write through the record, then a read: (i * 10 + 1) summed = 660 + 12 = 672.
+  l2 = 0;
+  for i in 0..12 { r = Lr { a: i * 10, b: i, s: 0.5f, f: 2.0, flag: false }; r.a = r.a + 1; l2 += r.a; }
+  assert(l2 == 672, "l2: {l2}");
+
+  // l3 — handed to a callee whose return borrows nothing: sum (100 - i) * 10 i = 10 * (100 * 66 - 506) = 60940.
+  l3 = 0;
+  for i in 0..12 { r = Lr { a: i * 10, b: i, s: 0.0f, f: 0.0, flag: false }; l3 += lr_use(r, 100); }
+  assert(l3 == 60940, "l3: {l3}");
+
+  // l4 — handed to a callee that WRITES it in place, read after: 2 * 660.
+  l4 = 0;
+  for i in 0..12 { r = Lr { a: i * 10, b: i, s: 0.0f, f: 0.0, flag: false }; lr_write(r); l4 += r.a; }
+  assert(l4 == 1320, "l4: {l4}");
+
+  // l5 — an omitted field takes its zero through the prefill on EVERY pass, not the previous
+  //      pass's value: b is written on odd passes only via a second literal shape … here every
+  //      pass omits `flag` and `s`; they must read false / 0 each time.  Sum of a: 660.
+  l5 = 0;
+  l5f = 0;
+  for i in 0..12 {
+    r = Lr { a: i * 10, b: i, f: 1.0 };
+    if r.flag { l5f += 1; }
+    if r.s == 0.0f { l5 += r.a; }
+  }
+  assert(l5 == 660 && l5f == 0, "l5: {l5} {l5f}");
+
+  // l6 — `break` out of the loop: the record's store is released after the loop; the value
+  //      read before the break is 30.
+  l6 = 0;
+  for i in 0..12 { r = Lr { a: i * 10, b: i, s: 0.0f, f: 0.0, flag: false }; if i == 3 { l6 = r.a; break } }
+  assert(l6 == 30, "l6: {l6}");
+
+  // l7 — `continue` on even passes: sum of a on odd i = 10 * 36 = 360.
+  l7 = 0;
+  for i in 0..12 { r = Lr { a: i * 10, b: i, s: 0.0f, f: 0.0, flag: false }; if i % 2 == 0 { continue } l7 += r.a; }
+  assert(l7 == 360, "l7: {l7}");
+
+  // l8 — a `return` from inside the loop (in a function): the record is returned by value: 30.
+  l8 = lr_ret_in_loop([0, 10, 20, 30, 40]);
+  assert(l8.a == 30 && l8.b == 3, "l8: {l8.a} {l8.b}");
+
+  // l9 — nested loops, one record per level: sum over i<4, j<3 of (10 i + j) = 3 * 60 + 4 * 3 = 192.
+  l9 = 0;
+  for i in 0..4 {
+    o = Lr { a: i * 10, b: 0, s: 0.0f, f: 0.0, flag: false };
+    for j in 0..3 { p = Lr { a: o.a, b: j, s: 0.0f, f: 0.0, flag: false }; l9 += p.a + p.b; }
+  }
+  assert(l9 == 192, "l9: {l9}");
+
+  // l10 — a record with a TEXT field (owns heap): declines; the values are unchanged: 30, "n4".
+  l10 = 0;
+  l10n = "";
+  for i in 0..5 { t = LrT { name: "n{i}", n: i * 3 }; l10 += t.n; l10n = t.name; }
+  assert(l10 == 30 && l10n == "n4", "l10: {l10} {l10n}");
+
+  // l11 — a copy to another local (declines): sums through the copy, 660.
+  l11 = 0;
+  for i in 0..12 { r = Lr { a: i * 10, b: i, s: 0.0f, f: 0.0, flag: false }; c = r; l11 += c.a; }
+  assert(l11 == 660, "l11: {l11}");
+
+  // l12 — handed to a callee whose return BORROWS the parameter (a view of its field): declines;
+  //       the view reads 7 each pass, 12 * 7 = 84.
+  l12 = 0;
+  for i in 0..12 {
+    o = LrO { inner: Lr { a: 7, b: i, s: 0.0f, f: 0.0, flag: false }, k: i };
+    v = lr_inner(o);
+    l12 += v.a;
+  }
+  assert(l12 == 84, "l12: {l12}");
+
+  // l13 — the record kept into a container (a copy at the append): 12 elements, 660.
+  kept: vector<Lr> = [];
+  for i in 0..12 { r = Lr { a: i * 10, b: i, s: 0.0f, f: 0.0, flag: false }; kept += [r]; }
+  l13 = 0;
+  for e in kept { l13 += e.a; }
+  assert(len(kept) == 12 && l13 == 660 && kept[3].a == 30, "l13: {len(kept)} {l13}");
+
+  // l14 — float and single fields read back: 0.5 * 12 = 6.0f, 2.0 * 12 = 24.0.
+  l14s = 0.0f;
+  l14f = 0.0;
+  for _i in 0..12 { r = Lr { a: 0, b: 0, s: 0.5f, f: 2.0, flag: false }; l14s += r.s; l14f += r.f; }
+  assert(l14s == 6.0f && l14f == 24.0, "l14: {l14s} {l14f}");
+
+  // l15 — an omitted field with a DECLARED default is re-established on every pass, even
+  //       after the previous pass wrote it: k reads 5 each time (12 * 5 = 60), a reads 66.
+  l15k = 0;
+  l15a = 0;
+  for i in 0..12 { r = Ld { a: i }; l15k += r.k; r.k = 99 + i; l15a += r.a; }
+  assert(l15k == 60 && l15a == 66, "l15: {l15k} {l15a}");
+
+  println("ok");
+}

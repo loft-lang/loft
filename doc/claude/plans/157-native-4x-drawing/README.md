@@ -43,6 +43,15 @@ step-1 arm, 14/14 hashes): `render_marks` 2.79–2.86× → **1.54–1.74×**, `
 (Perf-Weight) median bar met on this lane, `lock_curved` (3.85×) the one row still over 3×.  Switches `LOFT_NO_BOUNDED_NEST`, `LOFT_NO_NEST_RAW_READS`, `LOFT_NO_SELF_APPEND_BLOCK`;
 falsifier `LOFT_HOIST_VERIFY=1` (`ops::nest_verify`, and the raw read compared with the checked
 one); pins `tests/bounded_nest.rs`; cells `tests/scripts/157-bounded-nest.loft` n1–n23.
+**`R-LoopRecord` SHIPPED 2026-09-18** (`formal/rewrites.md`, unit A of the store-traffic
+analysis in § Where to resume): a plain no-heap record local declared and minted by a literal
+inside a loop keeps its store and its record across passes — declared at the loop's prelude, a
+null-guarded first mint, a partial literal re-establishing its declared defaults, one free after
+the loop.  Probe: 39 → 2.4 ns per pass; the lane does not move (`fd_sub` is 24 mints per `fronds` call).  Switch `LOFT_NO_LOOP_RECORD`; trace `LOFT_TRACE_LOOP_RECORD`; cells
+`tests/scripts/157-loop-record.loft` l1–l15, pins `tests/loop_record.rs`.  Found on the way and
+fixed first: the interpreter's last-use move firing on a name re-declared in a sibling scope
+(`Function::copy_variable` started the split at `uses: 1`; guard
+`a-name-reused-in-a-sibling-scope-copies.loft`).
 **`R-RecPtr` SHIPPED 2026-09-18** (`formal/rewrites.md`, `(R-View)`'s record twin, out of the
 `wide_line` analysis below): a plain-record VIEW (`pg_cur = pg_table[i]?`, `s = o.inner`)
 carries the address of its record for the rest of its block, every scalar field read is one

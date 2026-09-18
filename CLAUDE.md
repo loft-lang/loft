@@ -819,6 +819,15 @@ a vector declared inside a loop on native.  Only for elements that own no heap (
 vector keeps the re-mint: a length reset would strand what its elements own), a buffer no
 other call reaches, and a declaration outside the loop.  `LOFT_TRACE_LOOP_BUFFER=1` names
 each buffer kept and each declined.
+**`LOFT_NO_LOOP_RECORD=1`** (`@FR-R-LoopRecord`, default-ON, generation time, `--native`
+only) makes a plain no-heap record local declared and minted by a literal INSIDE a loop
+(`sub = Spec {…}` per pass) free its store at the iteration's end and take a fresh one next
+pass again — with it off, the local is declared at the loop's prelude, keeps its store and
+its record across passes (a complete literal re-mints nothing, a partial one re-establishes
+its declared defaults) and is freed once after the loop — and is the first bisect step for a
+stale field, a leak or a double free out of a record literal in a loop on native.  Declined
+where the local is copied, returned, captured, appended, handed to a callee whose return
+borrows it, or owns heap.  `LOFT_TRACE_LOOP_RECORD=1` names each kept local and each decline.
 **`LOFT_NO_PUSH_FILL=1`** (@PLN157 § V-am, `@FR-R-PushFill`, default-ON, generation time)
 makes a counted push loop grow per push again — with it off, `for i in a..b { v += [x, y] }`
 reserves two elements times its trip count once before it runs, and `for _ in a..b

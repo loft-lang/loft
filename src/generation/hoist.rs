@@ -5660,6 +5660,196 @@ pub fn loop_buffers(data: &Data, stores: &Stores, def_nr: u32) -> HashSet<u16> {
     out
 }
 
+/// `@FR-R-LoopRecord` — one admitted loop record: the loop that owns the reuse and the body
+/// block that declares the local (whose `Set(v, null)` and end-of-body `OpFreeRef(v)` the
+/// emitter drops).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LoopRecord {
+    /// The `Loop` block's scope: the local is declared at its prelude and freed after it.
+    pub loop_scope: u16,
+    /// The block whose direct `Set(v, null)` declares the local per iteration.
+    pub decl_block: u16,
+}
+
+/// `@FR-R-LoopRecord` (the `@FR-R-LoopBuffer` shape for a RECORD) — the loop records of
+/// `def_nr`: a plain no-heap record local declared and minted by a literal INSIDE a loop
+/// (`sub = Spec {…}` per iteration), keyed by variable.  Such a local's store dies with the
+/// iteration today — `OpFreeRef` at the body's end, a fresh store minted next pass — where a
+/// local declared OUTSIDE the loop already keeps its store (`OpDatabase` on a var that still
+/// holds one clears it and claims the record again).  The emitter gives the body-declared
+/// local the same life: declared at the loop's prelude, freed once after the loop, its
+/// per-pass mint taking the clear arm.  Observably the same record as a fresh one — every
+/// field is written by the literal or by the prefill before it is read.
+///
+/// Admitted where the local's every mention is its init family — the declaration
+/// `Set(v, null)`, the mint `OpDatabase*(v, tp)`, a fusable scalar field read or in-place
+/// write, a free — or a hand-off as an argument to a loft-bodied callee whose return borrows
+/// nothing (`(O-Borrow)`: a callee can keep a caller's record only by copying it or through
+/// its return's deps).  Declined: a heap-owning or nullable type, a second `Set` (a copy to
+/// another local, a rebind), a `return` of it, a capture, a native op taking it otherwise, a
+/// declaration outside any loop, and — as for the loop buffers — a body with `yield` or `par`.
+/// The fallback is "not a loop record", which costs the reuse and never a value.
+#[must_use]
+pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    let mut out = HashMap::new();
+    if matches!(body, Value::Null)
+        || body.any_node(&mut |n| matches!(n, Value::Yield(_) | Value::Parallel(_)))
+    {
+        return out;
+    }
+    let trace = std::env::var("LOFT_TRACE_LOOP_RECORD").is_ok();
+    // Where each candidate is declared: the innermost enclosing loop and the block holding
+    // its `Set(v, null)`.
+    let mut decls: HashMap<u16, LoopRecord> = HashMap::new();
+    fn walk(
+        v: &Value,
+        loop_scope: Option<u16>,
+        block: Option<u16>,
+        f: &mut impl FnMut(&Value, Option<u16>, Option<u16>),
+    ) {
+        let n = v.unspan();
+        f(n, loop_scope, block);
+        let (ls, bs) = match n {
+            Value::Loop(lp) => (Some(lp.scope), Some(lp.scope)),
+            Value::Block(b) => (loop_scope, Some(b.scope)),
+            _ => (loop_scope, block),
+        };
+        n.for_each_child(&mut |c| walk(c, ls, bs, f));
+    }
+    walk(body, None, None, &mut |n, ls, bs| {
+        if let Value::Set(v, rhs) = n
+            && matches!(rhs.unspan(), Value::Null)
+            && let (Some(loop_scope), Some(decl_block)) = (ls, bs)
+            && !vars.name(*v).starts_with("__")
+            && !vars.is_captured(*v)
+            && !matches!(vars.tp(*v), Type::Optional(_))
+            && let Type::Reference(d, _) = vars.tp(*v).peel_link()
+            && data.def_type(*d) == DefType::Struct
+            && all_scalar_record(data, *d)
+        {
+            decls.entry(*v).or_insert(LoopRecord {
+                loop_scope,
+                decl_block,
+            });
+        }
+    });
+    for (v, rec) in decls {
+        let mut minted = false;
+        let mut declined: Option<&'static str> = None;
+        // Every mention of `v`, judged by its parent.
+        fn check(
+            n: &Value,
+            v: u16,
+            data: &Data,
+            minted: &mut bool,
+            declined: &mut Option<&'static str>,
+        ) {
+            let n = n.unspan();
+            match n {
+                Value::Var(w) if *w == v => {
+                    // A bare mention reaching here was not consumed by an accounted parent.
+                    declined.get_or_insert("a mention outside its init family");
+                    return;
+                }
+                Value::Set(w, rhs) if *w == v => {
+                    if !matches!(rhs.unspan(), Value::Null) {
+                        declined.get_or_insert("a second binding");
+                    }
+                    return;
+                }
+                Value::Set(_, rhs) if matches!(rhs.unspan(), Value::Var(w) if *w == v) => {
+                    declined.get_or_insert("copied to another local");
+                    return;
+                }
+                Value::Return(val) if matches!(val.unspan(), Value::Var(w) if *w == v) => {
+                    declined.get_or_insert("returned");
+                    return;
+                }
+                Value::Call(g, args) if (*g as usize) < data.definitions.len() => {
+                    let name = data.def(*g).name();
+                    let first =
+                        matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v);
+                    let native = matches!(data.def(*g).code(), Value::Null)
+                        || !data.def(*g).rust().is_empty();
+                    if first && native {
+                        let fld_lit = matches!(args.get(1).map(Value::unspan), Some(Value::Int(_)));
+                        let ok = match name {
+                            "OpDatabase" | "OpDatabaseNP" => {
+                                *minted = true;
+                                true
+                            }
+                            "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefTag" => true,
+                            _ => {
+                                fld_lit
+                                    && (SCALAR_GETTERS.contains(&name)
+                                        || IN_PLACE_SET_OPS.contains(&name))
+                            }
+                        };
+                        if !ok {
+                            declined.get_or_insert("a native op takes it otherwise");
+                            return;
+                        }
+                        // The other operands still walk (a value may mention `v` again).
+                        for a in args.iter().skip(1) {
+                            check(a, v, data, minted, declined);
+                        }
+                        return;
+                    }
+                    if !native {
+                        // A loft callee: `v` may be handed as any argument when the return
+                        // borrows nothing.
+                        let hands = args
+                            .iter()
+                            .any(|a| matches!(a.unspan(), Value::Var(w) if *w == v));
+                        if hands && !data.def(*g).returned().depend().is_empty() {
+                            declined.get_or_insert("handed to a callee whose return borrows");
+                            return;
+                        }
+                        for a in args {
+                            if !matches!(a.unspan(), Value::Var(w) if *w == v) {
+                                check(a, v, data, minted, declined);
+                            }
+                        }
+                        return;
+                    }
+                }
+                _ => {}
+            }
+            n.for_each_child(&mut |c| check(c, v, data, minted, declined));
+        }
+        check(body, v, data, &mut minted, &mut declined);
+        if !minted {
+            declined.get_or_insert("never minted by a literal");
+        }
+        match declined {
+            None => {
+                if trace {
+                    eprintln!(
+                        "[loop-record] {}: {} keeps its store across iterations of loop {}",
+                        def.name(),
+                        vars.name(v),
+                        rec.loop_scope
+                    );
+                }
+                out.insert(v, rec);
+            }
+            Some(why) => {
+                if trace {
+                    eprintln!(
+                        "[loop-record] {}: {} declines: {why}",
+                        def.name(),
+                        vars.name(v)
+                    );
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The hidden RETURN-BUFFER attribute of a record-returning function — the parameter
 /// `ref_return` appends, a `Reference` or struct-enum marked hidden — by position, or
 /// `None` for a function that has none.  ONE predicate for the four sites that drop it:

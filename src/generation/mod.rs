@@ -825,6 +825,13 @@ pub struct Output<'a> {
     /// per-site vector buffer minted inside a loop whose mint after the first is a length
     /// reset, and whose literal field zero is not emitted.
     pub loop_buffers: HashSet<u16>,
+    /// `@FR-R-LoopRecord` — the current function's LOOP RECORDS (`hoist::loop_records`): a
+    /// plain no-heap record local declared and minted inside a loop, keyed by variable, with
+    /// the loop that owns its reuse and the block that declares it.
+    pub loop_records: HashMap<u16, hoist::LoopRecord>,
+    /// `LOFT_NO_LOOP_RECORD` (generation time): every such local frees its store at the
+    /// iteration's end and takes a fresh one next pass again.
+    pub loop_record_disabled: bool,
     /// `LOFT_NO_LOOP_BUFFER_REUSE` (generation time): every such buffer re-mints per
     /// iteration again.
     pub loop_buffer_disabled: bool,
@@ -1918,6 +1925,9 @@ impl<'a> Output<'a> {
             element_first_disabled: std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"),
             loop_buffers: HashSet::new(),
             loop_buffer_disabled: !crate::keys::loop_buffer_reuse_enabled(),
+            loop_records: HashMap::new(),
+            loop_record_disabled: std::env::var("LOFT_NO_LOOP_RECORD").is_ok_and(|v| v != "0")
+                || !crate::keys::loop_buffer_reuse_enabled(),
             push_fill_disabled: !crate::keys::push_fill_enabled(),
             ret_adopt: None,
             retbuf_adopt_disabled: std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0"),
@@ -2232,6 +2242,10 @@ impl Output<'_> {
         // that owns a buffer's mint has claimed its own: an invariant literal (§ V-x), an
         // element-first pair (§ V-z), a move host (§ V-j) and the adopted result's witness
         // (§ V-u) are left to those.
+        self.loop_records.clear();
+        if !self.loop_record_disabled {
+            self.loop_records = hoist::loop_records(self.data, def_nr);
+        }
         self.loop_buffers.clear();
         if !self.loop_buffer_disabled {
             let mut lb = hoist::loop_buffers(self.data, self.stores, def_nr);

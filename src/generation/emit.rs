@@ -659,6 +659,28 @@ impl Output<'_> {
                     self.indent(w)?;
                     writeln!(w, "if !__pf_{} {{", lp.scope)?;
                 }
+                // `@FR-R-LoopRecord` — a record local declared inside this loop is declared
+                // here instead, so its store survives the iteration: the per-pass mint takes
+                // `OpDatabase`'s clear arm, and the one free follows the loop.
+                let mut loop_recs: Vec<u16> = self
+                    .loop_records
+                    .iter()
+                    .filter(|(_, r)| r.loop_scope == lp.scope)
+                    .map(|(v, _)| *v)
+                    .collect();
+                loop_recs.sort_unstable();
+                let variables = self.data.def(self.def_nr).variables();
+                for &v in &loop_recs {
+                    if !self.declared.contains(&v) {
+                        let name = sanitize(variables.name(v));
+                        self.indent(w)?;
+                        writeln!(
+                            w,
+                            "let mut var_{name}: DbRef = DbRef::NULL; //@FR-R-LoopRecord kept across iterations"
+                        )?;
+                        self.declared.insert(v);
+                    }
+                }
                 self.loop_stack.push(lp.scope);
                 writeln!(w, "'l{}: loop {{ //{}_{}", lp.scope, lp.name, lp.scope)?;
                 // `@FR-R-RecPtr` — the loop's own statements are emitted here, not through
@@ -682,6 +704,15 @@ impl Output<'_> {
                 self.indent(w)?;
                 write!(w, "}} /*{}_{}*/", lp.name, lp.scope)?;
                 self.loop_stack.pop();
+                for &v in &loop_recs {
+                    let name = sanitize(self.data.def(self.def_nr).variables().name(v));
+                    writeln!(w, ";")?;
+                    self.indent(w)?;
+                    write!(
+                        w,
+                        "OpFreeRef(cell,var_{name}, \"var_{name}\"); var_{name}.store_nr = u16::MAX /*@FR-R-LoopRecord freed after the loop*/"
+                    )?;
+                }
                 if pushed {
                     self.push_fast_path_tail(w, lp)?;
                 }
@@ -2854,6 +2885,32 @@ impl Output<'_> {
                     _ => {}
                 }
                 if handled {
+                    continue;
+                }
+            }
+            // `@FR-R-LoopRecord` — a loop record's per-pass declaration (`Set(v, null)`) and
+            // its end-of-body free are not emitted from the block that declares it: the local
+            // was declared at the loop's prelude and is freed once after the loop.  A free on
+            // a `return`/`continue` path sits in an `Insert`, not here, and stays.
+            if !self.loop_records.is_empty() {
+                let dropped = match v.unspan() {
+                    Value::Set(lv, rhs) if matches!(rhs.unspan(), Value::Null) => self
+                        .loop_records
+                        .get(lv)
+                        .is_some_and(|r| r.decl_block == bl.scope),
+                    Value::Call(d, args)
+                        if (*d as usize) < self.data.definitions.len()
+                            && matches!(
+                                self.data.def(*d).name(),
+                                "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefTag"
+                            ) =>
+                    {
+                        matches!(args.first().map(Value::unspan), Some(Value::Var(lv))
+                            if self.loop_records.get(lv).is_some_and(|r| r.decl_block == bl.scope))
+                    }
+                    _ => false,
+                };
+                if dropped {
                     continue;
                 }
             }

@@ -9,6 +9,48 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A record local declared in a loop keeps its store — `R-LoopRecord` (2026-09-18)
+
+`--native`, generation time, default ON (`LOFT_NO_LOOP_RECORD=1` restores the per-pass free
+and fresh store).  `formal/rewrites.md` gains `(R-LoopRecord)`, the `(R-LoopBuffer)` shape for
+a record: a plain no-heap record local declared and minted by a literal inside a loop
+(`fd_sub = FrondSpec {…}` per k) is declared at the loop's prelude (`emit.rs`, the `Value::Loop`
+emission), its body's `Set(v, null)` and end-of-body `OpFreeRef` are not emitted
+(`output_block`), its per-pass mint is null-guarded so it fires on the first pass only — a
+complete-write literal (`OpDatabaseNP`) then writes every field over the kept record and a
+partial one (`OpDatabase`) re-establishes the omitted fields' declared defaults through
+`set_default_value` first (`ops::misc_ops`) — and one free follows the loop.  Before, every
+pass paid `free_named` + `find_free_slot` + re-init + claim + zero + tag on a record that was
+about to be rewritten: 39 ns per pass against the vector loop buffer's 10 ns reset.  Admission
+(`hoist::loop_records`): every mention of the local is its init family, a fusable field
+read/write, a free, or a hand-off to a loft callee whose return borrows nothing; a copy to
+another local, a return, a capture, an append, a native op taking it otherwise, a heap-owning or
+nullable type, `par`/`yield` decline; frees on a `return`/`continue` path are inside an `Insert`
+and stay.  Measured: the probe (`s = S1 { a: k }; t += s.a`, 200 000 passes) 7 600–8 500 → 480–540 µs (39 → 2.4 ns per pass), value unchanged; the drawing lane does not move (two interleaved rounds on and off, 14/14 hashes: `fronds` 2.60× vs 2.62×, whose `fd_sub` is 24 mints of a 105 µs call — the shape is structural, its gain lands wherever a record literal sits in a hot loop).  Cells `tests/scripts/157-loop-record.loft` l1–l15 (reads,
+a write, a callee, an in-place-writing callee, omitted fields, `break`, `continue`, a `return`
+from inside the loop, nested loops, a text field, a copy, a borrowing callee, an append,
+single/float fields, a declared default re-established after a write), hand-computed, both
+backends, both switch states, four falsifiers; sabotage (the guarded mint never taken) fails l1 with `l1: null`; pins `tests/loop_record.rs`.
+
+### A split variable carries its use count — the interpreter's last-use move no longer fires on a re-declared name (2026-09-18)
+
+`Function::copy_variable` — the scopes pass's split of a name re-declared in a later sibling
+scope (`var_mapping`) — created the new variable with `uses: 1`.  The parser had counted every
+use of the name, both scopes', on the original; a count of 1 is exactly what the interpreter's
+O-B1 last-use MOVE (`gen_set_first_ref_var_copy`) reads as "used once, by this bind", so
+`c = r` with `r` the split variable handed `c` the source's `DbRef` instead of a copy
+(`OpVarRef` + `OpPutRef`, the source skip-free), the block's compile-time stack position was
+bumped for a push the runtime had already popped, `FreeStack(16)` drifted the eval stack once
+per iteration, and every frame-relative read after the loop was garbage — `w=1 x=4294967298`
+for `100100`, then `Store access out of bounds`.  `--interpret` only; `--native` decides the
+copy from the type and was right.  Found by the `157-loop-record` cells (l11: `c = r` in a
+loop after another loop had used the name `r`).  The copy now inherits the original's `uses`
+and `uses_at_write`: an over-count for either half, which only withholds a move (`(B-Copy)`
+asks the copy; the move is the optimisation).  Contract: settled.  Guard
+`tests/scripts/a-name-reused-in-a-sibling-scope-copies.loft` (n1–n4: sibling `if`s with the
+copy written, two loops, three scopes, a written copy read back through the source), both
+backends under the store falsifiers, falsified on the build before the fix.
+
 ### A record view carries its address — `R-RecPtr`, `wide_line` 2.41× → 1.76×, the polygon fills under 1× (2026-09-18)
 
 `--native`, generation time, default ON (`LOFT_NO_RECORD_PTR=1` — and `LOFT_NO_VECTOR_BASE=1`,
