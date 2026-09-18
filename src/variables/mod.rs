@@ -2283,8 +2283,18 @@ impl Function {
             source: self.variables[var as usize].source,
             scope: u16::MAX,
             stack_pos: u16::MAX,
-            uses: 1,
-            uses_at_write: 0,
+            // The copy carries the ORIGINAL's use count, never a fresh `1`.  The parser
+            // counted every use of the name — both scopes' — on the one variable, and a
+            // count of 1 means "used once, by this bind" to the interpreter's last-use
+            // MOVE (`gen_set_first_ref_var_copy`): a record bound from a split variable
+            // was handed the source's `DbRef` instead of a copy, the block's stack
+            // bookkeeping drifted by one ref per iteration, and every value read after
+            // the loop was garbage — on `--interpret` only, silently (`r = Lr {…}` in two
+            // sibling loops, the second bound to `c = r`).  The inherited total is an
+            // over-count for either half, which only ever withholds a move (`@FR-B-Copy`
+            // asks a copy; the move is an optimisation).
+            uses: self.variables[var as usize].uses,
+            uses_at_write: self.variables[var as usize].uses_at_write,
             write_source: (0, 0),
             argument: false,
             defined: self.variables[var as usize].defined,

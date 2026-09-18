@@ -14,6 +14,13 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A record copied from a local whose name an earlier block also used reads right on the
+interpreter.**  `r = P {…}` in one loop and, in a later loop, `r = P {…}; c = r` — the second
+`r` is a new variable under the old name, and on `--interpret` the copy `c = r` was handed the
+original instead of a copy, after which every value read past that loop was garbage and the
+program could abort.  `--native` was right throughout.  The copy is a copy now on both
+backends.
+
 **A `const` value stays read-only wherever you hand it.**  `fn total(v: const vector<T>)`
 promised not to change `v`, but the value could still be changed by handing it on: to a function
 whose parameter is plain, through a function reference, to a `map` or `filter` callback, or from a
