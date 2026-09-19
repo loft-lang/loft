@@ -31,8 +31,12 @@ the reused-buffer cell red under `LOFT_POISON_CLAIM=1` (a poisoned handle read a
 vector) while the plain run stays green; a mover rebound to a `&` view of a held vector still
 declines the loop (g7).  Switches `LOFT_NO_GROUP_PUSH`, `LOFT_NO_HEAP_RECORD_PUSH`,
 `LOFT_NO_REBOUND_MOVER`; trace `LOFT_TRACE_HOIST_DECLINE=1` (the first statement that declines a
-loop).  Cells `tests/scripts/157-group-push.loft` g1–g10 (25 native cells against the
-interpreter: five switch states × five falsifiers), pins `tests/group_push.rs`;
+loop).  The same day the clause reached `(R-Scalar)`'s write-set walk (`hoist::body_writes`):
+a loop buffer's mint, a loop record's mint (a write of its whole type) and the element-first
+copy into a fresh element's field are typed instead of declining every scalar, so `fronds`'
+outer loop reads its `sp` parameter's twelve fields once per activation — 69.8 → 64.9 µs per
+call.  Cells `tests/scripts/157-group-push.loft` g1–g12 (30 native cells against the
+interpreter: six switch states × five falsifiers), pins `tests/group_push.rs`;
 `tests/record_push.rs` re-derived where the group now reaches a cell the loop declined (c8,
 c11, c15).  Found on the way: the two `adopt_*` census pins moved with `R-LoopRecord` (fewer
 native mints, deltas unchanged) and were re-pinned.

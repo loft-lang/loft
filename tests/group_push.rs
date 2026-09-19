@@ -6,8 +6,11 @@
 //! its slot (`push_record_hoisted_zero`), and a loop whose body rebinds a mover to a fresh
 //! buffer or element slot hoists instead of declining.  `LOFT_NO_GROUP_PUSH=1`,
 //! `LOFT_NO_HEAP_RECORD_PUSH=1` and `LOFT_NO_REBOUND_MOVER=1` each restore one clause's
-//! pre-form.  The cell corpus (`tests/scripts/157-group-push.loft`) says the VALUES hold on
-//! both backends, in every switch state and under the falsifiers; this pins what is emitted.
+//! pre-form.  The rebound clause also reaches `(R-Scalar)`'s write-set walk: an emitter-owned
+//! mint (a loop buffer's, a loop record's) and the element-first copy into a fresh element are
+//! typed instead of declining every scalar of the loop.  The cell corpus
+//! (`tests/scripts/157-group-push.loft`) says the VALUES hold on both backends, in every switch
+//! state and under the falsifiers; this pins what is emitted.
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -180,6 +183,62 @@ fn each_cell_emits_exactly_the_forms_predicted() {
         rust.matches("// @FR-R-GroupPush group __ph_").count(),
         "every group header must carry its close marker"
     );
+}
+
+/// g11/g12 — the write-set half of the rebound clause: the loop past a per-pass loop buffer
+/// hoists the parameter's scalars (`sp.a`, `sp.b`, and `sp.n` for the range end), and the
+/// loop beside a loop record keeps the vector's header while the record's mint — a write of
+/// its whole type — evicts the scalars of that type (`sp` is a `Spec` too: none hoist there,
+/// the type-keyed conservatism `(R-Scalar)` already has).
+#[test]
+fn an_owned_mint_leaves_the_scalar_write_set_typed() {
+    let rust = emit("scalars", &[]);
+    let g11 = body(&rust, "n_g11_run");
+    assert_eq!(
+        g11.matches("let __vs_").count(),
+        3,
+        "g11: sp's three fields hoist past the loop buffer's mint:\n{g11}"
+    );
+    assert_eq!(
+        g11.matches("loft#885 loop-invariant vector headers")
+            .count(),
+        2,
+        "g11: both loops open a hoist block:\n{g11}"
+    );
+    let g12 = body(&rust, "n_g12_run");
+    assert!(
+        g12.contains("vector::vec_header(&(var_v)") && g12.contains("@FR-R-LoopRecord kept record"),
+        "g12: the vector's header holds beside the kept loop record:\n{g12}"
+    );
+    assert_eq!(
+        g12.matches("let __vs_").count(),
+        0,
+        "g12: the loop record's mint writes its whole type, which evicts sp's fields:\n{g12}"
+    );
+    // The switch takes the write-set clause with it: the OUTER loop (the one with the buffer's
+    // mint) declines whole; the inner `for s in sides` has no owned mint and still hoists
+    // `sp.a` and `sp.b` — one hoist block, two scalars.
+    let rust = emit("scalars_off", &[("LOFT_NO_REBOUND_MOVER", "1")]);
+    let g11 = body(&rust, "n_g11_run");
+    assert_eq!(
+        (
+            g11.matches("let __vs_").count(),
+            g11.matches("loft#885 loop-invariant vector headers")
+                .count()
+        ),
+        (2, 1),
+        "g11 under LOFT_NO_REBOUND_MOVER=1 keeps only the inner loop's hoists:\n{g11}"
+    );
+}
+
+/// The emitted body of one function, up to the next top-level `fn`.
+fn body<'a>(rust: &'a str, name: &str) -> &'a str {
+    let start = rust
+        .find(&format!("\nfn {name}("))
+        .unwrap_or_else(|| panic!("{name} was not emitted"));
+    let rest = &rust[start + 1..];
+    let end = rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3);
+    &rest[..end]
 }
 
 #[test]

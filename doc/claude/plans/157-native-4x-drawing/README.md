@@ -49,7 +49,8 @@ holds no push header binds one of its own after its reservation; an element that
 through the header with its slot zeroed at the mint; a loop whose body rebinds a mover to a loop
 buffer's or an element slot's projection hoists instead of declining.  Priced by hand patch first
 (−15 / −12 / −33 µs of `fronds`' 102 µs), then built: **`fronds` 101.7 → 69.6 µs per call, the lane
-2.60× → 1.63×, `smooth` 1.82× → 1.13×**, every other row within noise (`lock`, `lock_curved`,
+2.60× → 1.63×, `smooth` 1.82× → 1.13×**, and 64.9 µs once the write-set walk typed the owned
+mints too (the `sp` scalars); every other row within noise (`lock`, `lock_curved`,
 `wide_line`, `parse` A/B'd under each switch), 14/14 hashes.  Switches `LOFT_NO_GROUP_PUSH`,
 `LOFT_NO_HEAP_RECORD_PUSH`, `LOFT_NO_REBOUND_MOVER`; trace `LOFT_TRACE_HOIST_DECLINE`; cells
 `tests/scripts/157-group-push.loft` g1–g10, pins `tests/group_push.rs`; `tests/record_push.rs`
@@ -1140,9 +1141,13 @@ held header with the two handles zeroed −12 µs; both −33 µs (70.1–70.8 �
 before: `fd_pts`/`fd_wid` are declared per pass (a rebound mover declined the side loop whole),
 the `for i` was declined by its `fd_sides` loop buffer's `OpDatabase` and by the element-first
 copies the emitter elides, and a `Frond` owns heap.  Built as three clauses, `fronds` 101.7 →
-69.6 µs (the ceiling met exactly), lane 2.60× → 1.63×.  **Left on `fronds`:** `sp`'s scalar
-reads do NOT hoist at the `for i` although the loop now hoists (headers 0, scalars 0 — the
-write-set walk returns `None` somewhere in the body; ~3 µs), and `fd_sides` per activation.
+69.6 µs (the ceiling met exactly), lane 2.60× → 1.63×.  *Same day, the write-set half:* `sp`'s
+scalar reads did not hoist at the `for i` although the loop hoisted — `LOFT_TRACE_HOIST_DECLINE`
+(taught to name the untyped node) showed the write-set walk giving up at the loop buffers'
+`OpDatabase` and the elided element-first copy, the very statements the admission let through;
+typed (`hoist::body_writes`), the twelve `sp` fields read once per activation: 69.8 → **64.9 µs**.
+**Left on `fronds`:** `fd_sides` per activation, and the `for k` loop's recursive call
+(`call_writes_store` is conservative on recursion).
 **Left on `parse`:** its appends are FIELD-PATH mints (`sc.ops += [Op {…}]`), outside the
 bare-variable `(R-Mint)` admission, so neither the loop header nor the group header reaches
 them — the natural next unit for that row, together with the `Paint` copies the advice names.

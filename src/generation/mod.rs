@@ -2305,6 +2305,7 @@ impl Output<'_> {
                 .iter()
                 .flat_map(|p| p.binds.iter().map(move |b| (p.elm, i64::from(b.field_off))))
                 .collect(),
+            records: self.loop_records.keys().copied().collect(),
         };
         self.group_ends.clear();
         self.declared.clear();

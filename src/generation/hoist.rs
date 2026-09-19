@@ -197,6 +197,10 @@ pub struct HoistOwned {
     /// The § V-z paired `(element, field offset)`s: the `OpAppendVector(OpGetField(e, off),
     /// tmp, tp)` copy into one is emitted as NOTHING — the temp was built in the slot.
     pub elem_fields: HashSet<(u16, i64)>,
+    /// The `(R-LoopRecord)` locals: `OpDatabase(r, tp)` on one is the kept record's first
+    /// mint or a re-establishment of its defaults — a write of r's whole TYPE and nothing
+    /// else, so a scalar hoisted off that type is evicted and every other one stands.
+    pub records: HashSet<u16>,
 }
 
 /// The generation-time tiers of the hoist family — one flag per admitted rewrite, each an
@@ -667,7 +671,18 @@ pub fn hoistable(
             writes,
             &mut HashSet::new(),
             &mut fresh,
+            owned,
         ) else {
+            // A statement the write-set walk cannot type: no scalar hoists in this loop.
+            if std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
+                let shown = format!("{op:?}");
+                eprintln!(
+                    "hoist: {} loop {} scalars declined by {}",
+                    data.def(def_nr).name(),
+                    body.scope,
+                    &shown[..shown.len().min(200)]
+                );
+            }
             return out;
         };
         written.extend(&w);
@@ -840,6 +855,17 @@ fn element_target(
     }
 }
 
+/// `LOFT_TRACE_HOIST_DECLINE=1` — name the node that made [`body_writes`] answer `None`.
+fn trace_write_decline(n: &Value) {
+    if std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
+        let shown = format!("{n:?}");
+        eprintln!(
+            "hoist: write set untyped at {}",
+            &shown[..shown.len().min(160)]
+        );
+    }
+}
+
 /// The [`WriteSet`] of a body that passed the hoist gate, or `None` when it writes through
 /// something this analysis cannot type.  Walks every call: an [`IN_PLACE_SET_OPS`] setter
 /// contributes its target's `(type, offset)`; a record free contributes the record's whole
@@ -871,6 +897,7 @@ fn body_writes(
     writes: &mut WriteCache,
     active: &mut HashSet<u32>,
     fresh: &mut HashSet<u16>,
+    owned: Option<&HoistOwned>,
 ) -> Option<WriteSet> {
     let mut set = WriteSet::default();
     let mut ok = true;
@@ -890,6 +917,7 @@ fn body_writes(
         Value::Call(d, args) => {
             if (*d as usize) >= data.definitions.len() {
                 ok = false;
+                trace_write_decline(n);
                 return true;
             }
             let def = data.def(*d);
@@ -898,6 +926,7 @@ fn body_writes(
                 let fld = args.get(1).map(Value::unspan);
                 let Some(Value::Int(fld)) = fld else {
                     ok = false;
+                    trace_write_decline(n);
                     return true;
                 };
                 // A write into a freshly minted element reaches no record a hoisted
@@ -917,6 +946,7 @@ fn body_writes(
                     Target::NoRecord => {}
                     Target::Unknown => {
                         ok = false;
+                        trace_write_decline(n);
                         return true;
                     }
                 }
@@ -947,6 +977,38 @@ fn body_writes(
                 // § V-ad — the discharge buffer is re-initialised whole; only a scalar hoisted
                 // off ITS type could observe that, and the buffer's view is rebound per use.
                 set.whole.insert(tp);
+            } else if name == "OpAppendVector"
+                && let Some(Value::Call(gd, gargs)) = args.first().map(Value::unspan)
+                && (*gd as usize) < data.definitions.len()
+                && data.def(*gd).name() == "OpGetField"
+                && let (Some(Value::Var(e)), Some(Value::Int(off))) = (
+                    gargs.first().map(Value::unspan),
+                    gargs.get(1).map(Value::unspan),
+                )
+                && (fresh.contains(e)
+                    || owned.is_some_and(|o| o.elem_fields.contains(&(*e, i64::from(*off)))))
+            {
+                // The literal's copy of a vector into a FRESH element's field (`@FR-R-Mint`:
+                // a record minted in the body, which no hoisted scalar can name) — or the § V-z
+                // paired copy the emitter elides outright, the temp having been built in the
+                // slot.  Neither writes a record a getter the prelude ran could read.
+            } else if matches!(name, "OpDatabase" | "OpDatabaseNP")
+                && let Some(Value::Var(b)) = args.first().map(Value::unspan)
+                && owned.is_some_and(|o| o.buffers.contains(b) || o.records.contains(b))
+            {
+                // `(R-Mint)`'s rebound clause — an emitter-owned mint.  A vector BUFFER (a § V-al
+                // loop buffer, a § V-z witness) is a fresh store or a length reset that holds no
+                // record a hoisted scalar can name — the local bound from it is rebound in the
+                // body and never a candidate.  A `(R-LoopRecord)` local's mint re-establishes
+                // its record's defaults: a write of that whole type.
+                if owned.is_some_and(|o| o.records.contains(b)) {
+                    let Some(tp) = plain_record_type(data, vars.tp(*b)) else {
+                        ok = false;
+                        trace_write_decline(n);
+                        return true;
+                    };
+                    set.whole.insert(tp);
+                }
             } else if lazy_buffer_mint(name, args, Some(vars)) {
                 // `@FR-O-LazyBuffer` — a fresh store for the buffer from its sentinel; only a
                 // scalar hoisted off the buffer's own record type could observe it.
@@ -956,6 +1018,7 @@ fn body_writes(
                 };
                 let Some(tp) = minted else {
                     ok = false;
+                    trace_write_decline(n);
                     return true;
                 };
                 set.whole.insert(tp);
@@ -966,17 +1029,20 @@ fn body_writes(
                 };
                 let Some(tp) = freed else {
                     ok = false;
+                    trace_write_decline(n);
                     return true;
                 };
                 set.whole.insert(tp);
             } else if matches!(def.code(), Value::Null) {
                 if !native_op_is_store_free(def) {
                     ok = false;
+                    trace_write_decline(n);
                     return true;
                 }
             } else if call_writes_store(*d, data, cache, active) {
                 let Some(w) = callee_writes(*d, data, stores, cache, writes, active) else {
                     ok = false;
+                    trace_write_decline(n);
                     return true;
                 };
                 set.extend(&w);
@@ -985,6 +1051,7 @@ fn body_writes(
         }
         Value::CallRef(_, _) | Value::Parallel(_) | Value::Yield(_) => {
             ok = false;
+            trace_write_decline(n);
             true
         }
         _ => false,
@@ -1015,6 +1082,8 @@ fn callee_writes(
         None
     } else {
         let inner = if in_place_only_writer(d_nr, data, cache, active) {
+            // A callee's body: its own emitter-owned mints are not this frame's, so none
+            // is admitted here (the conservative side — an untyped mint declines).
             body_writes(
                 def.code(),
                 data,
@@ -1024,6 +1093,7 @@ fn callee_writes(
                 writes,
                 active,
                 &mut HashSet::new(),
+                None,
             )
         } else if retbuf_only_writer(d_nr, data, cache, active) {
             def.hidden_return_buffer_attr()
@@ -1144,6 +1214,7 @@ fn callee_inputs_inner(
                 writes,
                 &mut HashSet::new(),
                 &mut fresh_elems,
+                None,
             )?);
         }
         written
@@ -2926,7 +2997,7 @@ fn blocks_header_hoist(
                     || (tiers.rebound_movers
                         && matches!(data.def(*d).name(), "OpDatabase" | "OpDatabaseNP")
                         && matches!(args.first().map(Value::unspan), Some(Value::Var(b))
-                            if owned.is_some_and(|o| o.buffers.contains(b)))));
+                            if owned.is_some_and(|o| o.buffers.contains(b) || o.records.contains(b)))));
             // …and the § V-z paired copy into the element's field slot, which is emitted as
             // nothing: the temp was built in that slot.
             let elided_copy = known

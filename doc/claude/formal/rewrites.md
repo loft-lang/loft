@@ -622,7 +622,17 @@ or the hoisted length answers the pre-push count (`tests/scripts/157-group-push.
 Switch `LOFT_NO_REBOUND_MOVER`; trace `LOFT_TRACE_HOIST_DECLINE=1` names the first statement
 that declines a loop.  Sites: `hoist::HoistOwned`, `hoist::rebinds_alias_free`, the
 `buffer_alloc`/`elided_copy` arms in `hoist::blocks_header_hoist`, the rebound arm in
-`hoist::hoistable`, `Output::hoist_owned`.
+`hoist::hoistable`, `Output::hoist_owned`.  *The same clause reaches `(R-Scalar)`'s write set
+(the same day):* the loop the clause admitted still hoisted no scalar, because the write-set
+walk answered "untyped" at the very statements the admission let through — the loop buffer's
+`OpDatabase`, the `(R-LoopRecord)` local's mint, and the element-first copy into a fresh
+element's field.  Each is now typed: a vector buffer's mint writes no record a hoisted scalar
+can name, a loop record's mint is a write of its whole TYPE (evicting scalars hoisted off that
+type — the type-keyed conservatism `(R-Scalar)` already has), and a copy into a fresh
+element's field is `(R-Mint)`'s own exemption.  `fronds`' outer loop then reads its `sp`
+parameter's twelve fields once per activation: 69.8 → 64.9 µs per call (`tests/scripts/
+157-group-push.loft` g11, g12; trace `LOFT_TRACE_HOIST_DECLINE=1` now also names the node
+that left a write set untyped).  Sites: the owned arms in `hoist::body_writes`.
 
 ### A record append emits through its push header
 

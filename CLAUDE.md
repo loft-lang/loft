@@ -787,11 +787,14 @@ whose fields own heap; `LOFT_POISON_CLAIM=1` is the falsifier (the plain run's z
 hides a missing zero).  **`LOFT_NO_REBOUND_MOVER=1`** (`@FR-R-Mint`'s rebound clause) makes a
 loop whose body REBINDS a pushed or minted vector decline every hoist again — with it off, a
 mover rebound to a § V-al loop buffer's or a § V-z element slot's projection simply takes no
-holder, the loop keeps its other headers and scalars, and the buffer's own mint and the
-elided element-first copy are admitted as statements that move nothing — and is the bisect
-step for a wrong element or scalar read in a loop that declares a vector per pass.
-**`LOFT_TRACE_HOIST_DECLINE=1`** names the FIRST statement that declines a loop's hoist —
-reach for it when a loop that should hoist does not, before reading the admission.
+holder, the loop keeps its other headers and scalars, and the buffer's own mint, a loop
+record's mint and the elided element-first copy are admitted as statements that move nothing
+— by the header admission AND by the scalar write-set walk (a loop record's mint evicts the
+scalars of its own type) — and is the bisect step for a wrong element or scalar read in a
+loop that declares a vector or a record per pass.
+**`LOFT_TRACE_HOIST_DECLINE=1`** names the FIRST statement that declines a loop's hoist, and
+the node that left its scalar write set untyped — reach for it when a loop that should hoist
+does not, before reading the admission.
 **`LOFT_NO_MOVE_APPEND=1`** (@PLN157 § V-j) makes `for f in call(…) { v += [f] }` keep the
 deep copy — with it on, the call's buffer is PLACED as a record in `v`'s own store, the
 append relocates the element's bytes (heap handles included — they never change store) and
