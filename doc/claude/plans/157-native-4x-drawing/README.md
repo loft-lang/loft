@@ -1145,7 +1145,10 @@ copies the emitter elides, and a `Frond` owns heap.  Built as three clauses, `fr
 scalar reads did not hoist at the `for i` although the loop hoisted — `LOFT_TRACE_HOIST_DECLINE`
 (taught to name the untyped node) showed the write-set walk giving up at the loop buffers'
 `OpDatabase` and the elided element-first copy, the very statements the admission let through;
-typed (`hoist::body_writes`), the twelve `sp` fields read once per activation: 69.8 → **64.9 µs**.
+typed (`hoist::body_writes`), the twelve `sp` fields read once per activation: 69.8 → **64.9 µs**;
+the lane's `fronds` row 1.52× → **1.35×** (48.7 vs 65.9 µs, cdylib libs), `smooth` 1.38×, `hair`
+1.43×; `lock` and `parse` A/B'd interleaved against `LOFT_NO_REBOUND_MOVER=1` (default 1 % faster
+on both — the lane's ±10 % swings on those two rows between runs are noise, not the clause).
 **Left on `fronds`:** `fd_sides` per activation, and the `for k` loop's recursive call
 (`call_writes_store` is conservative on recursion).
 **Left on `parse`:** its appends are FIELD-PATH mints (`sc.ops += [Op {…}]`), outside the
