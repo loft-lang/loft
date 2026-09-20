@@ -32,7 +32,10 @@ arm; a parameter is a fine leaf, because the guard tests its value.  **`composit
 per call (−34 %)**, hash exact; `LOFT_TRACE_CHAIN=1` shows the guard admitting `fill_rect`,
 `fill_triangle`, `resample`, `mat4_mul` and `sphere` loops across the graphics library.  Found
 by the cells: a `(R-LoopRecord)` local must be declared before any guarded arm and freed after
-both arms close (the loop emission's order, corrected for the bounded nest too).  Switches
+both arms close (the loop emission's order, corrected for the bounded nest too).  A body carrying a `Yield`, a `Parallel` or a `CallRef` is never copied — the hoist family
+refuses those anyway, and a generator's loop body carries the native collector's refusal, which
+copied delivers the same `compile_error!` to the author twice (`native_yield_channel`'s
+"exactly once", the one user-facing regression the corpus caught).  Switches
 `LOFT_NO_RANGE_ARITH`, `LOFT_NO_GUARDED_CHAIN`; falsifier `LOFT_HOIST_VERIFY=1`
 (`ops::range_verify` at every admitted operator); cells `tests/scripts/157-range-arith.loft`
 a1–a9 and `157-guarded-chain.loft` c1–c6 against the interpreter under every switch and

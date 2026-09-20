@@ -25,7 +25,10 @@ const EXPECTED: &str = "a1 35 a2 15 10 a3 34 a4 2 105 a5 4 6 a6 3 a7 21\n\
 /// and at the rotation, `f15` is the record-buffer pool).
 const REWRITTEN: [(&str, usize); 13] = [
     ("n_f1", 1),
-    ("n_a2", 1),
+    // ×2 since `@FR-R-GuardedChain` (2026-09-20): a2's loop is an INNERMOST counted loop with
+    // a chain (`i - 1`), so its body is emitted twice — the guarded plain copy and the checked
+    // `else` arm — and the one buffer's guarded mint is counted in each.
+    ("n_a2", 2),
     ("n_a3", 2),
     ("n_f4", 2),
     ("n_a5", 4),

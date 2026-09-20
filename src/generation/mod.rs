@@ -2887,10 +2887,23 @@ impl Output<'_> {
         // as the bounded nest does — LLVM does not unswitch a body that calls.  A loop with
         // loops inside is emitted once, each admitted op branching on the guard, so nothing
         // below it is duplicated.
-        let has_inner_loop = lp
-            .operators
-            .iter()
-            .any(|op| op.any_node(&mut |n| matches!(n, Value::Loop(_))));
+        // A body the hoist family refuses outright is one this must not COPY either: a
+        // `Yield` / `Parallel` / `CallRef` is not ours to run twice, and a generator's loop
+        // body carries the native collector's refusal — emitted twice, the author reads the
+        // same `compile_error!` twice (`native_yield_channel`'s "delivered exactly once").
+        let uncopyable = lp.operators.iter().any(|op| {
+            op.any_node(&mut |n| {
+                matches!(
+                    n,
+                    Value::Yield(_) | Value::Parallel(_) | Value::CallRef(_, _)
+                )
+            })
+        });
+        let has_inner_loop = uncopyable
+            || lp
+                .operators
+                .iter()
+                .any(|op| op.any_node(&mut |n| matches!(n, Value::Loop(_))));
         if !has_inner_loop {
             self.indent(w)?;
             writeln!(w, "if __gc_{} {{", lp.scope)?;

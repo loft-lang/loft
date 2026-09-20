@@ -796,7 +796,11 @@ Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range
                  loop inside it) is emitted twice, the guarded copy plain and the
                  checked loop as the `else` arm; a loop with loops inside is emitted
                  once, each admitted operator branching on the guard, so nothing below
-                 it is duplicated — its nested loops guard their own chains.  The
+                 it is duplicated — its nested loops guard their own chains.  A body
+                 carrying a `Yield`, a `Parallel` or a `CallRef` is never copied: it
+                 is not this rewrite's to run twice, and a generator's loop body
+                 carries the native collector's REFUSAL, which copied reaches the
+                 author twice.  The
                  `*Nullable` twins of `+ - *` are chain operators too: a chain the
                  guard admits has no fault for them to be silent about.  A chain any
                  of whose leaves is not one of these is declined whole and its
