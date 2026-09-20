@@ -8371,19 +8371,31 @@ use a separate collection or add after the loop"
                     self.vars.depend(v_nr, tmp);
                     return Value::Set(v_nr, Box::new(view));
                 }
-                // Both passes agree the element is a record and add NO dependency;
-                // only pass 2 emits the copy, exactly as `assign_refvar_reference`
-                // does.  Adding the dependency on pass 1 alone would make the
-                // binding's deps differ by pass, which is the divergence the H5
-                // contract catches.
+                // The copy is built into a compiler WORK-REF and the binding is then bound
+                // to it — the shape a plain assignment into the same local already takes
+                // (`m = Inner { … }` builds into `__ref_p2_N` and binds).  Minting through
+                // the BINDING instead was loft#1557: `Set(v, Null)` is elided for a local
+                // already in scope (`scopes::scan_set`, the deliberate in-place reuse a
+                // `[]` / loop-buffer re-init wants), which leaves `OpDatabase(v, tp)` on a
+                // local still holding a VIEW — and its reuse arm resets the store the view
+                // points INTO.  Measured on `m = o.inner; (m, _x) = bump(m)`: `o`'s record
+                // came back as a bare `Inner`, so `o.tag` read past its end (17179869184)
+                // and `o.inner` took the copy; on an ELEMENT view the container grew a
+                // second element instead.  The work-ref owns what it mints whatever the
+                // binding holds, so the reuse arm is right for IT on every later turn.
+                //
+                // Allocated on BOTH passes: a slot taken on pass 2 alone renumbers every
+                // later variable, which is the divergence the H5 contract catches.
+                let w = self.vars.work_refs(elem, &mut self.lexer);
                 if self.first_pass {
                     return Value::Set(v_nr, Box::new(view));
                 }
                 let kt = i32::from(self.data.def(td).known_type());
                 Value::Insert(vec![
-                    v_set(v_nr, Value::Null),
-                    self.cl("OpDatabase", &[Value::Var(v_nr), Value::Int(kt)]),
-                    Value::Call(copy_d, vec![view, Value::Var(v_nr), Value::Int(kt)]),
+                    v_set(w, Value::Null),
+                    self.cl("OpDatabase", &[Value::Var(w), Value::Int(kt)]),
+                    Value::Call(copy_d, vec![view, Value::Var(w), Value::Int(kt)]),
+                    Value::Set(v_nr, Box::new(Value::Var(w))),
                 ])
             }
             Type::Vector(elm_tp, _) => {
