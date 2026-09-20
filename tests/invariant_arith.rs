@@ -100,8 +100,10 @@ fn the_tap_shape_memoises_its_invariant_part_at_the_innermost_loop() {
     let b = body(&rust, "n_m1");
     // The x loop's `yy * iw + xmin` and the ch loop's `yy * 2` — one memo each, declared
     // at the loop that spells it.  The x loop is a `R-BoundedNest` tap emitted TWICE — the
-    // plain arm and the checked `else` — so its memo is read in both; the ch loop's once.
-    assert_eq!(memos(b), (2, 3), "m1 memos:\n{b}");
+    // plain arm and the checked `else` — so its memo is read in both; the ch loop is an
+    // innermost loop with a chain, emitted twice under its chain guard
+    // (`@FR-R-GuardedChain`, 2026-09-20), so its memo is read twice too.
+    assert_eq!(memos(b), (2, 4), "m1 memos:\n{b}");
     assert!(
         b.contains("((var_yy), (var_iw))), (var_xmin))); __ia_"),
         "the tap's memo evaluates `yy * iw + xmin` at its first use:\n{b}"
@@ -109,7 +111,11 @@ fn the_tap_shape_memoises_its_invariant_part_at_the_innermost_loop() {
     // m7: `a * b + i * 10` is invariant in the j loop (i is the outer counter) — one memo,
     // three ops, and the i loop itself declares none.
     let b7 = body(&rust, "n_m7");
-    assert_eq!(memos(b7), (1, 1), "m7 memos:\n{b7}");
+    assert_eq!(
+        memos(b7),
+        (1, 2),
+        "m7 memos (the j loop's body is emitted twice under its chain guard, `@FR-R-GuardedChain`):\n{b7}"
+    );
     assert!(
         b7.contains("//@PLN157 § V-ao invariant chain, 3 ops"),
         "m7's memo carries the whole invariant chain:\n{b7}"
@@ -139,7 +145,9 @@ fn a_rebound_or_escaped_leaf_a_field_read_and_a_literal_chain_decline() {
 fn one_chain_spelled_twice_is_one_memo_and_every_loop_shape_takes_one() {
     let rust = emit("shapes", &[]);
     let b8 = body(&rust, "n_m8");
-    assert_eq!(memos(b8), (1, 2), "m8: one memo, two uses:\n{b8}");
+    // Two uses in the body, and the body emitted twice under its chain guard
+    // (`@FR-R-GuardedChain`, 2026-09-20): four reads of the one memo.
+    assert_eq!(memos(b8), (1, 4), "m8: one memo, two uses:\n{b8}");
     for (name, what) in [
         ("n_m9", "a while loop"),
         ("n_m10", "the range's end in the loop's own test"),

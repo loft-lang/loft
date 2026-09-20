@@ -1,0 +1,192 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! `@FR-R-GuardedChain` — the EMISSION pins.  A counted loop's admitted chains run plain
+//! behind a guard evaluated once at the loop's entry (`//@FR-R-GuardedChain guard`): an
+//! innermost loop is emitted twice (`plain chains` copy + checked `else` arm), a loop with
+//! loops inside once with each admitted op branching on the guard (`(if __gc_N {`).
+//! `LOFT_NO_GUARDED_CHAIN=1` restores the checked loops.  The cell corpus
+//! (`tests/scripts/157-guarded-chain.loft`) says the VALUES hold on both backends, in every
+//! switch state and under the falsifiers; this pins what is emitted.
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+const CELLS: &str = "tests/scripts/157-guarded-chain.loft";
+
+/// Per function: `(guards, plain-copy markers, per-op branches; wrapping add, sub, mul, neg;
+/// checked `op_add_int(`, `op_min_int(`, nullable adds)` — written beside the cells.
+const EXPECTED: &[(&str, [usize; 10])] = &[
+    // c1: the inner pixel loop (no loop inside it) is guarded and emitted twice: three chains
+    // plain in the copy (`j*lw + i`, `x0 + i`, `y0 + j` — 3 adds, 1 mul), their checked forms
+    // in the else arm beside `acc`'s self-stepping adds.  The outer loop has no chain of its
+    // own (its only chains lie in the inner loop, which owns them).
+    ("n_c1_run", [1, 2, 0, 3, 0, 1, 0, 9, 0, 0]),
+    // c2: `base + i` is the nullable twin (the `??` operand) — admitted, plain in the copy,
+    // its checked template in the else arm; the two `- base` and `-1` stay as they are.
+    ("n_c2_run", [1, 2, 0, 1, 0, 0, 2, 2, 2, 1]),
+    // c3: `y + i` over the null invariant — guarded, plain in the copy, checked in the arm
+    // (the guard declines at run time, so the arm is what runs).
+    ("n_c3", [1, 2, 0, 1, 0, 0, 0, 1, 0, 0]),
+    // c4: `-(a * i) - b` — negation, a product and a subtraction in one chain.
+    ("n_c4", [1, 2, 0, 0, 1, 1, 3, 2, 1, 0]),
+    // c5: `2 * i + 1` plain; `w + i` keeps its template (w is written in the loop).
+    ("n_c5", [1, 2, 0, 1, 0, 1, 0, 5, 0, 0]),
+    // c6: `base + 2 * i` with the parameter as the invariant leaf.
+    ("n_c6_run", [1, 2, 0, 1, 0, 1, 0, 3, 0, 0]),
+];
+
+const KEYS: [&str; 10] = [
+    "GuardedChain guard",
+    "plain chains",
+    "(if __gc_",
+    "wrapping_add",
+    "wrapping_sub",
+    "wrapping_mul",
+    "wrapping_neg",
+    "ops::op_add_int(",
+    "ops::op_min_int(",
+    "op_add_int_nullable",
+];
+
+fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
+    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    cmd.args(args)
+        .env("LOFT_TIMEOUT", "300")
+        .env_remove("LOFT_NO_RANGE_ARITH")
+        .env_remove("LOFT_NO_GUARDED_CHAIN")
+        .env_remove("LOFT_HOIST_VERIFY");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd.output().expect("spawn loft")
+}
+
+fn cells() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS)
+}
+
+fn emit(tag: &str, env: &[(&str, &str)]) -> String {
+    let out = std::env::temp_dir().join(format!(
+        "loft_guarded_chain_{}_{tag}.rs",
+        std::process::id()
+    ));
+    let status = loft(
+        &[
+            "--native-emit",
+            out.to_str().unwrap(),
+            cells().to_str().unwrap(),
+        ],
+        env,
+    );
+    assert!(
+        out.exists(),
+        "no Rust emitted (exit {:?}): {}",
+        status.status,
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
+    let _ = std::fs::remove_file(&out);
+    rust
+}
+
+fn counts(rust: &str) -> HashMap<String, [usize; 10]> {
+    let mut map: HashMap<String, [usize; 10]> = HashMap::new();
+    let mut current = String::new();
+    for line in rust.lines() {
+        if let Some(rest) = line.strip_prefix("fn ")
+            && let Some(paren) = rest.find('(')
+        {
+            current = rest[..paren].to_string();
+            map.entry(current.clone()).or_default();
+        }
+        let row = map.entry(current.clone()).or_default();
+        for (i, k) in KEYS.iter().enumerate() {
+            row[i] += line.matches(k).count();
+        }
+    }
+    map
+}
+
+fn run(args: &[&str], env: &[(&str, &str)]) -> String {
+    let mut a: Vec<&str> = args.to_vec();
+    let s = cells().to_str().unwrap().to_string();
+    a.push(&s);
+    let out = loft(&a, env);
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success() && stdout.trim_end().ends_with("guarded chain ok"),
+        "{args:?} {env:?}: exit {:?}\nstdout: {stdout}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    stdout
+}
+
+#[test]
+fn the_cells_answer_the_interpreter_in_every_switch_state_under_the_falsifiers() {
+    let oracle = run(&["--interpret"], &[("LOFT_STRICT_STORES", "1")]);
+    for switch in [
+        None,
+        Some(("LOFT_NO_GUARDED_CHAIN", "1")),
+        Some(("LOFT_NO_RANGE_ARITH", "1")),
+    ] {
+        for falsifier in [
+            ("LOFT_STRICT_STORES", "1"),
+            ("LOFT_POISON", "1"),
+            ("LOFT_POISON_CLAIM", "1"),
+            ("LOFT_NATIVE_LEAK_CHECK", "1"),
+            ("LOFT_HOIST_VERIFY", "1"),
+        ] {
+            let mut env = vec![falsifier];
+            env.extend(switch);
+            let got = run(&["--native"], &env);
+            assert_eq!(
+                got, oracle,
+                "native under {env:?} must print what the interpreter printed"
+            );
+        }
+    }
+}
+
+#[test]
+fn each_cell_emits_exactly_the_forms_predicted() {
+    let rust = emit("on", &[]);
+    let got = counts(&rust);
+    for (name, expected) in EXPECTED {
+        let row = got
+            .get(*name)
+            .copied()
+            .unwrap_or_else(|| panic!("{name} was not emitted"));
+        assert_eq!(row, *expected, "{name}: {KEYS:?}");
+    }
+    // The guard's shape: the range's ends tested, every chain bounded with checked operators.
+    let c1 = &rust[rust.find("\nfn n_c1_run(").unwrap()..];
+    assert!(
+        c1.contains("if __lo == i64::MIN || __hi == i64::MIN { return None; }")
+            && c1.contains(".checked_abs()?")
+            && c1.contains(".checked_mul(")
+            && c1.contains(".checked_add("),
+        "c1's guard tests the ends and bounds its chains with checked operators:\n{}",
+        &c1[..c1.len().min(3000)]
+    );
+}
+
+#[test]
+fn the_switch_restores_the_checked_loops() {
+    let rust = emit("off", &[("LOFT_NO_GUARDED_CHAIN", "1")]);
+    let got = counts(&rust);
+    for (name, _) in EXPECTED {
+        let row = got[*name];
+        assert_eq!(
+            (row[0], row[1], row[2]),
+            (0, 0, 0),
+            "{name}: LOFT_NO_GUARDED_CHAIN=1 guards no loop: {row:?}"
+        );
+    }
+    // c1's chains are back on their templates (only R-Range's plain forms may remain).
+    assert!(
+        got["n_c1_run"][7] >= 6,
+        "c1's chains are checked again: {:?}",
+        got["n_c1_run"]
+    );
+}

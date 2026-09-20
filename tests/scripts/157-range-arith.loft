@@ -1,0 +1,136 @@
+// `@FR-R-Range` — an integer operator whose RESULT provably fits the type emits the
+// processor's plain operator on `--native`: no operation can fault, so the plain answer is
+// the checked template's.  C120's admissible successor for straight-line arithmetic (the
+// bounded nest is the loop form): every leaf's range is a fact of the language — a literal,
+// a mask of a non-sentinel value, a text size or vector length, a byte, a counted range's
+// counter, a one-expression callee over its arguments — and interval arithmetic in i128
+// decides whether the result fits.  The interpreter keeps the checked operators and is the
+// oracle; every cell prints its values.  `LOFT_NO_RANGE_ARITH=1` and `LOFT_HOIST_VERIFY=1`
+// must answer identically (the verify form compares the plain answer with the checked one
+// at every admitted operator).
+//
+// Predictions (tests/range_arith.rs pins them): a1 the composite chain — masks, `255 -`,
+// products and sums of bytes, `/ 2` — every `+ - *` plain, the division by the chain's own
+// sum checked (its range holds zero); a2 a product whose BOUND does not fit stays checked
+// and its real overflow answers null through `??` on both backends; a3 the same product
+// under masks whose bound fits is plain; a4 a counted range with literal ends ranges its
+// counter; a5 a parameter is not trusted; a6 a one-expression callee (`color_a`, `lower_byte`)
+// over a non-sentinel argument is ranged, over a parameter it is not; a7 negation, `>>` of a
+// signed range, `/` and `%` by a ranged divisor; a8 `len`/`size` are u32-bounded — their sum
+// is plain, their product (2^64) is not; a9 the mask of a NULL read stays null: the mask
+// rule requires a non-sentinel operand, and the fallback is the checked template.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-20) — the mask rule's non-sentinel
+// requirement removed turns a9 red on --native (`null` → `-9223372036854775807`: the mask
+// template still answers the sentinel for a null, and the plain `+ 1` the wrong proof admits
+// steps it to MIN + 1 where the checked template propagates null) while a1–a8 stay green;
+// LOFT_HOIST_VERIFY=1 panics at the operator: "plain OpAddInt answered -9223372036854775807
+// where the checked form answers -9223372036854775808".  Restored, interpret / native /
+// LOFT_NO_RANGE_ARITH / LOFT_HOIST_VERIFY all green.
+
+fn color_a(c: integer) -> integer { ((c & 0xFF000000) >> 24) & 255 }
+fn color_r(c: integer) -> integer { (c >> 16) & 255 }
+fn lower_byte(b: integer) -> integer { if b >= 65 && b <= 90 { b + 32 } else { b } }
+
+// a1 — composite_layer's chain over two pixels: sa=0x80 (128), d has a=255 r=0x40.
+fn a1() {
+  px: vector<integer> = [0x80FF0000, 0x00000000];
+  dv: vector<integer> = [0xFF400000, 0];
+  c = px[0] ?? 0;
+  d = dv[0] ?? 0;
+  sa = (c >> 24) & 255;
+  t = color_a(d) * (255 - sa);
+  oa = sa * 255 + t;
+  r = ((((c >> 16) & 255) * sa * 255 + color_r(d) * t + oa / 2) / oa) ?? 0;
+  // sa 128, t 255*127 = 32385, oa 32640 + 32385 = 65025, r = (255*128*255 + 64*32385 + 32512) / 65025
+  //   = (8323200 + 2072640 + 32512) / 65025 = 10428352 / 65025 = 160 (160.37)
+  println("a1 {sa} {t} {oa} {r}");
+  assert(sa == 128 && t == 32385 && oa == 65025 && r == 160, "a1");
+}
+
+// a2 — the bound of `m * m * 4` is 2^62 * 4 = 2^64: it does not fit, the multiply stays
+// checked, and with both masks at their top the real product overflows to null.
+fn a2() {
+  v: vector<integer> = [0x7FFFFFFF7FFFFFFF];
+  x = v[0] ?? 0;
+  m = x & 0x7FFFFFFF;            // 2^31 - 1
+  big = (m * m * 4) ?? -1;       // (2^31-1)^2 * 4 = 2^64 - 2^33 + 4 > i64::MAX → null → -1
+  small = (m * 3) ?? -1;         // fits: 6442450941
+  println("a2 {m} {big} {small}");
+  assert(m == 2147483647 && big == -1 && small == 6442450941, "a2");
+}
+
+// a3 — the same shape under masks whose bound fits (2^31 * 2^31 = 2^62 < 2^63): plain.
+fn a3() {
+  v: vector<integer> = [0x7FFFFFFF7FFFFFFF];
+  x = v[0] ?? 0;
+  m = x & 0x7FFFFFFF;
+  n = (x >> 32) & 0x7FFFFFFF;
+  p = m * n;                     // (2^31-1)^2 = 4611686014132420609
+  println("a3 {p}");
+  assert(p == 4611686014132420609, "a3");
+}
+
+// a4 — a counted range with literal ends: `i` lies in 0..=999, so `i * i + i` is plain;
+// the accumulator steps itself and stays checked.
+fn a4() {
+  s = 0;
+  for i in 0..1000 { s = s + i * i + i; }
+  // sum i^2 = 999*1000*1999/6 = 332833500, sum i = 499500
+  println("a4 {s}");
+  assert(s == 333333000, "a4");
+}
+
+// a5 — a parameter is not trusted (C80): `p * 3 + 1` keeps its template.
+fn a5_f(p: integer) -> integer { p * 3 + 1 }
+fn a5() { println("a5 {a5_f(7)} {a5_f(-4)}"); assert(a5_f(7) == 22 && a5_f(-4) == -11, "a5"); }
+
+// a6 — a one-expression callee over a non-sentinel argument is ranged: `color_a(d) * 255`
+// plain; `lower_byte(70)` is a literal's range through an `if` merge.
+fn a6() {
+  dv: vector<integer> = [0xC0112233];
+  d = dv[0] ?? 0;
+  q = color_a(d) * 255 + lower_byte(70) + lower_byte(102);
+  // 192*255 + 102 + 102 = 48960 + 204 = 49164
+  println("a6 {q}");
+  assert(q == 49164, "a6");
+}
+
+// a7 — negation, an arithmetic shift of a signed range, division and remainder by a
+// ranged divisor: -(x & 255) - 300 lies in -555..=-300; >> 3 in -70..=-38.
+fn a7() {
+  v: vector<integer> = [0x1234];
+  x = v[0] ?? 0;
+  neg = -(x & 255) - 300;        // -(0x34=52) - 300 = -352
+  sh = neg >> 3;                 // -352 >> 3 = -44
+  dv = (x & 255) / ((x & 15) + 1); // 52 / (4 + 1) = 10
+  rm = (x & 255) % ((x & 15) + 1); // 52 % 5 = 2
+  println("a7 {neg} {sh} {dv} {rm}");
+  assert(neg == -352 && sh == -44 && dv == 10 && rm == 2, "a7");
+}
+
+// a8 — `len` and `size` are u32-bounded: their sum fits (plain), their product does not.
+fn a8() {
+  v: vector<integer> = [1, 2, 3];
+  s = "hello";
+  sum = len(v) + size(s);        // 8
+  prod = len(v) * size(s);       // 15, checked (bound 2^64)
+  println("a8 {sum} {prod}");
+  assert(sum == 8 && prod == 15, "a8");
+}
+
+// a9 — the mask of a NULL: a read past the vector's end is null (C80), `null & 255` is
+// null, and `+ 1` keeps it null.  The mask rule requires a non-sentinel operand, so this
+// chain stays on the checked template and answers what the interpreter answers.
+fn a9() {
+  v: vector<integer> = [1, 2];
+  y = v[9];
+  z = (y & 255) + 1;
+  println("a9 {z}");
+  assert(z == null, "a9");
+}
+
+fn main() {
+  a1(); a2(); a3(); a4(); a5(); a6(); a7(); a8(); a9();
+  println("range arith ok");
+}

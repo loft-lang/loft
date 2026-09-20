@@ -275,6 +275,67 @@ fn body_blocks_hoist(
 /// The variables `body` rebinds — a `Set` or a `TuplePut` anywhere in it.  A rebind leaves
 /// the store untouched and still invalidates anything hoisted off that variable, because the
 /// hoist describes what the variable named on the way in.
+/// `@FR-R-GuardedChain` — every counted loop nested anywhere in `body`, with the SEED of
+/// its stepped counter (the one `Set` to it that is not its own step, found in `body`): the
+/// leaves a guard needs to bound that counter over the enclosing loop's extent.  A loop
+/// whose seed is set from two places, or not at all in `body`, is left out.
+pub fn nested_counted_loops<'a>(
+    body: &'a Block,
+    data: &Data,
+) -> Vec<(RangeCounters<'a>, &'a Value)> {
+    let mut out: Vec<(RangeCounters<'a>, &'a Value)> = Vec::new();
+    for op in &body.operators {
+        op.any_node(&mut |n| {
+            if let Value::Loop(lp) = n
+                && let Ok(rc) = range_counters(lp, data)
+            {
+                let stepped = rc.next.unwrap_or(rc.index);
+                let mut seed: Option<&'a Value> = None;
+                let mut seeds = 0usize;
+                for o in &body.operators {
+                    o.any_node(&mut |m| {
+                        if let Value::Set(v, e) = m
+                            && *v == stepped
+                        {
+                            let is_step = matches!(e.unspan(), Value::Call(d, a)
+                                if data.def(*d).name() == "OpAddInt"
+                                    && a.len() == 2
+                                    && matches!(a[0].unspan(), Value::Var(c) if *c == stepped));
+                            if !is_step {
+                                seeds += 1;
+                                seed = Some(e);
+                            }
+                        }
+                        false
+                    });
+                }
+                if seeds == 1
+                    && let Some(s) = seed
+                {
+                    out.push((rc, s));
+                }
+            }
+            false
+        });
+    }
+    out
+}
+
+/// The variables `body` rebinds anywhere — a `Set`, a `TuplePut`, an `Iter` binding.
+#[must_use]
+pub fn written_vars(body: &Block) -> HashSet<u16> {
+    let mut w = rebound_vars(body);
+    for op in &body.operators {
+        op.any_node(&mut |n| {
+            if let Value::Iter(v, ..) = n {
+                w.insert(*v);
+            }
+            false
+        });
+    }
+    w
+}
+
 fn rebound_vars(body: &Block) -> HashSet<u16> {
     let mut rebound: HashSet<u16> = HashSet::new();
     for op in &body.operators {

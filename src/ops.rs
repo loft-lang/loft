@@ -503,6 +503,23 @@ pub fn op_rem_long_nullable(v1: i64, v2: i64) -> i64 {
 // Skip the i64::MIN sentinel check when both operands are known non-null
 // (local variables with definite assignment).  Used by native codegen.
 
+/// `@FR-R-Range`'s and `@FR-R-GuardedChain`'s falsifier (`LOFT_HOIST_VERIFY=1`): the plain
+/// operator's answer beside the checked template's, compared at the operator.
+///
+/// # Panics
+///
+/// When the two answers differ — the proof or the guard admitted an operation that faults,
+/// which is the defect this instrument exists to surface.  Never in the emitted default.
+#[inline]
+#[must_use]
+pub fn range_verify(plain: i64, checked: i64, op: &'static str) -> i64 {
+    assert!(
+        plain == checked,
+        "range proof: plain {op} answered {plain} where the checked form answers {checked} — the proof admitted an operation that faults"
+    );
+    plain
+}
+
 /// `LOFT_HOIST_VERIFY=1` inside a guarded plain nest (`@FR-R-BoundedNest`): the plain
 /// operator's answer beside the checked template's, so a guard that admitted a nest whose
 /// arithmetic faults is caught at the operator that faulted, not read off a wrong result.

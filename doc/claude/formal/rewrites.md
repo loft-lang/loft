@@ -728,6 +728,105 @@ group reaches a cell the loop declined (c8, c11, c15).  Sites: `hoist::mint_grou
 `Output::bind_group_push`, `Output::close_groups_before`, `Output::hoist_tiers`, the
 `GROUP_CLOSE` rule in `scripts/emission_audit.py`.
 
+### An integer operator whose result provably fits emits the plain operator
+
+```
+  (R-Range)      an integer `+`, `-`, `*`, negation, `/` or `%` whose RESULT lies in a
+                 range the emitter can prove — a literal by its value; `a & lit` (a
+                 non-negative literal) in `0 ..= lit` when `a` is NON-SENTINEL; `&`
+                 and `|` over two non-negative ranges; `>> k` of a range; `+ - *` and
+                 negation by interval arithmetic over ranged operands whose result
+                 fits `(i64::MIN, i64::MAX]`; `/` and `%` by a ranged divisor whose
+                 range excludes zero; a text's size and a vector's length in `0 ..=
+                 u32::MAX` (the store's length word); a text byte in `0 ..= 255`; an
+                 `if` merge as the union of its arms; a counted range's counters from
+                 ranged ends; a LOCAL whose every assignment is ranged, never handed
+                 out by reference and never a self-step; a ONE-EXPRESSION callee
+                 evaluated over its arguments' facts, three calls deep at most —
+                 emits the processor's operator (`wrapping_*`, bare `/` `%`): no
+                 operation can fault, so the plain answer IS the checked template's.
+                 A range implies non-sentinel: the sentinel is never inside one, and
+                 a parameter or a record/element read is never ranged (C80).  The
+                 fallback is the checked template, always right.
+```
+
+**In words.** 2026-09-20.  C120 declined the CLOSURE of the non-sentinel proof over
+arithmetic — an overflow's null must propagate on both backends — and named the admissible
+successor: *"a PROOF, not a policy: arithmetic whose operands carry ranges such that the
+result CANNOT overflow may emit the plain operator, because no fault can occur and no value
+can differ."*  `(R-BoundedNest)` built it for one loop shape with a run-time guard; this is
+the same proof for straight-line arithmetic, decided at generation time
+(`generation::range`, mirroring the non-sentinel proof's per-function fixpoint).  The one
+rule that needed its own falsifier is the mask: `null & 255` is null
+(`op_logical_and_int` propagates the sentinel), so `a & lit` is ranged only over a
+non-sentinel `a` — the a9 cell holds a null read from past a vector's end, and the mask
+rule without that requirement answers `1` for null.  Beside it the non-sentinel proof gained
+a callee's RETURN summary (`callee_returns_non_sentinel`: every exit non-sentinel under the
+callee's own facts, parameters trusted for nothing), which is what lets `color_a(get_pixel(…))`
+range at all — the pixel is any integer, the accessor's `?? 0` makes it non-null, the mask
+makes it a byte.  Measured on `composite_layer`: 24 of its 36 checked operators take the
+plain form and the row does NOT move — the twelve that remain (`j * lw + i`, `x0 + i`,
+`y0 + j`, the accessors' `by * width + bx`) have record-scalar or parameter operands no
+static proof can bound, and the ceiling (every operator plain, −33 %) is carried by exactly
+those (class split: those six −35 %, the counters −5 %, the divisions −3 %).  That is what
+`(R-GuardedChain)` is for.  Switch `LOFT_NO_RANGE_ARITH`; falsifier `LOFT_HOIST_VERIFY=1`
+(`ops::range_verify` compares the plain answer with the checked one at every admitted
+operator).  Cells `tests/scripts/157-range-arith.loft` a1–a9, pins `tests/range_arith.rs`.
+Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range arm in
+`ops::int_arith`, `Output::op_range`, `non_sentinel::callee_returns_non_sentinel`.
+
+### A counted loop's index chains run plain behind a guard
+
+```
+  (R-GuardedChain) a counted loop whose body holds CHAINS of `+`, `-`, `*` and negation
+                 over literals, the loop's own counters, the counters of a counted loop
+                 NESTED in it, integer locals the loop never writes (nor takes the
+                 address of) and record scalars an enclosing frame hoisted, runs those
+                 chains with the processor's PLAIN operators when a guard, evaluated
+                 once at the loop's entry, proves that none can fault: the range's
+                 ends are not the sentinel; every invariant leaf is not the sentinel
+                 (`checked_abs` fails on `i64::MIN`); every nested loop's seed and end
+                 are bounded over the same leaves; and the MAGNITUDE BOUND of every
+                 chain — a literal by its value, a counter by the larger of its
+                 range's ends plus one, an invariant by its absolute value, `+`/`-`
+                 summing and `*` multiplying, each step checked — fits the type.  A
+                 bound that fits means every true intermediate fits, so the plain
+                 operator answers exactly what the checked template would; every
+                 OTHER operator of the body is untouched.  An INNERMOST loop (no
+                 loop inside it) is emitted twice, the guarded copy plain and the
+                 checked loop as the `else` arm; a loop with loops inside is emitted
+                 once, each admitted operator branching on the guard, so nothing below
+                 it is duplicated — its nested loops guard their own chains.  The
+                 `*Nullable` twins of `+ - *` are chain operators too: a chain the
+                 guard admits has no fault for them to be silent about.  A chain any
+                 of whose leaves is not one of these is declined whole and its
+                 sub-chains asked again.  A loop already admitted as a bounded nest is
+                 not guarded twice.
+```
+
+**In words.** 2026-09-20.  `(R-BoundedNest)`'s method — a fact ESTABLISHED before the
+arithmetic runs, in the same magnitude-bound arithmetic the rule states — for the index
+chains of any counted loop, where the static `(R-Range)` proof stops: `composite_layer`'s
+`j * lw + i`, `x0 + i`, `y0 + j` read record scalars (`lay.lw`, `lay.x0`) that a program
+cannot bound at generation time and a guard can bound at the loop's entry in six checked
+operations.  Measured, `composite` 103 → 68 µs per call (−34 %, the hand ceiling for those
+six operators met), hash exact; the trace shows the guard admitting the graphics library's
+`fill_rect`, `fill_triangle`, `resample`, `mat4_mul`, `sphere` loops as well.  A leaf may be
+a PARAMETER — the guard tests its value — where the static proofs never trust one.  The
+two emission forms were measured against each other: the branch-per-operator form alone
+keeps `composite` at −21 % (LLVM does not unswitch a body that calls), the innermost
+loop's duplicated copy gives the full −35 % at +7 % emitted lines on the drawing probe;
+duplicating every guarded loop cost +16 % and doubled every per-function pin, which is
+why only the innermost loop — where the time is and the body is small — is copied.  Found by
+the cells: a `(R-LoopRecord)` local declared at the loop's prelude must be declared before
+the guard and freed after BOTH arms, or the plain arm neither sees it nor frees it (the
+`Value::Loop` emission's order was corrected for the bounded nest too).  Switch
+`LOFT_NO_GUARDED_CHAIN`; trace `LOFT_TRACE_CHAIN=1`; falsifier `LOFT_HOIST_VERIFY=1`
+(`ops::range_verify` at every admitted operator).  Cells `tests/scripts/157-guarded-chain.loft`
+c1–c6, pins `tests/guarded_chain.rs`.  Sites: `Output::chain_fast_path`,
+`Output::in_plain_chain`, `hoist::nested_counted_loops`, `hoist::written_vars`, the chain
+arm in `ops::int_arith`, the loop hook in `emit.rs`.
+
 ### A dying temporary's elements move into the append that consumes them
 
 ```

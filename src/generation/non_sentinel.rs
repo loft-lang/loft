@@ -112,10 +112,44 @@ pub fn non_sentinel(data: &Data, vars: &HashMap<u16, bool>, v: &Value) -> bool {
             // overflow (C85's decided edge — the REWRITE to `_nn` keeps that
             // via checked_*, but the RESULT cannot be trusted onward), `^`
             // and `|` can compose it bitwise, `/`/`%` mint it on zero.
-            _ => false,
+            _ => callee_returns_non_sentinel(data, *d_nr),
         },
+        Value::Return(inner) => non_sentinel(data, vars, inner),
         _ => false,
     }
+}
+
+/// Does the user function `d_nr` answer a non-sentinel value on EVERY exit?  Its body's
+/// tail and every `return` are judged under the callee's own var facts (its parameters
+/// trusted for nothing), so `fn get_pixel(…) { …; data[i] ?? 0 }` answers true through the
+/// discharge and a body that can return a parameter or an arithmetic result answers false.
+/// Memoised per definition for the generation run; a cycle answers false at the re-entry,
+/// which only declines.  A native (no body) answers false.
+fn callee_returns_non_sentinel(data: &Data, d_nr: u32) -> bool {
+    thread_local! {
+        static RETURNS: std::cell::RefCell<HashMap<u32, bool>> = std::cell::RefCell::new(HashMap::new());
+    }
+    if let Some(known) = RETURNS.with(|m| m.borrow().get(&d_nr).copied()) {
+        return known;
+    }
+    let def = data.def(d_nr);
+    if !matches!(def.code(), Value::Block(_)) {
+        return false;
+    }
+    // Pessimistic entry: a recursive callee reads itself as unproven.
+    RETURNS.with(|m| m.borrow_mut().insert(d_nr, false));
+    let vars = non_sentinel_vars(data, def.code());
+    let mut every_exit = non_sentinel(data, &vars, def.code().tail());
+    def.code().any_node(&mut |n| {
+        if let Value::Return(inner) = n
+            && !non_sentinel(data, &vars, inner)
+        {
+            every_exit = false;
+        }
+        false
+    });
+    RETURNS.with(|m| m.borrow_mut().insert(d_nr, every_exit));
+    every_exit
 }
 
 /// The parser's null-discharge shape: `if OpConvBoolFrom*(x) x else d` —

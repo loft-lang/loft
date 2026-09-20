@@ -639,29 +639,11 @@ impl Output<'_> {
             Value::Block(bl) => self.output_block(w, IrBlock::Native(bl), false, false)?,
             Value::Loop(lp) => {
                 let hoisted = self.begin_vector_hoist(w, lp)?;
-                // `@FR-R-BoundedNest` — a nest whose guard proves its arithmetic cannot
-                // fault runs with plain operators; the checked loop below is its `else` arm.
-                let nested = self.nest_fast_path(w, lp)?;
-                // @PLN157 § V-ae (`@FR-R-Fill`) — a loop that is one fill over a held header
-                // runs the slice fill first; the per-element loop below is its fallback for
-                // every range the fill declines (a negative or partial index, an overflow,
-                // an empty range), and the counters are left as the loop would leave them.
-                let fill = self.fill_fast_path(w, lp)?;
-                if fill {
-                    self.indent(w)?;
-                    writeln!(w, "if !__fill_{} {{", lp.scope)?;
-                }
-                // @PLN157 § V-am (`@FR-R-PushFill`) — a counted push loop reserves its
-                // pushes times its trip count first; one push of an invariant is one fill
-                // of the tail, the per-element loop its fallback exactly as the fill's.
-                let pushed = self.push_fast_path(w, lp)?;
-                if pushed {
-                    self.indent(w)?;
-                    writeln!(w, "if !__pf_{} {{", lp.scope)?;
-                }
                 // `@FR-R-LoopRecord` — a record local declared inside this loop is declared
                 // here instead, so its store survives the iteration: the per-pass mint takes
-                // `OpDatabase`'s clear arm, and the one free follows the loop.
+                // `OpDatabase`'s clear arm, and the one free follows the loop.  Declared
+                // BEFORE any guarded arm (`@FR-R-BoundedNest`, `@FR-R-GuardedChain`) so both
+                // copies of the loop see it, and freed after both arms close.
                 let mut loop_recs: Vec<u16> = self
                     .loop_records
                     .iter()
@@ -680,6 +662,34 @@ impl Output<'_> {
                         )?;
                         self.declared.insert(v);
                     }
+                }
+                // `@FR-R-BoundedNest` — a nest whose guard proves its arithmetic cannot
+                // fault runs with plain operators; the checked loop below is its `else` arm.
+                let nested = self.nest_fast_path(w, lp)?;
+                // `@FR-R-GuardedChain` — a counted loop whose index chains a guard proves
+                // cannot fault runs them plain under that guard; the frame is popped after
+                // the loop.
+                let chained = if nested {
+                    super::ChainGuard::None
+                } else {
+                    self.chain_fast_path(w, lp)?
+                };
+                // @PLN157 § V-ae (`@FR-R-Fill`) — a loop that is one fill over a held header
+                // runs the slice fill first; the per-element loop below is its fallback for
+                // every range the fill declines (a negative or partial index, an overflow,
+                // an empty range), and the counters are left as the loop would leave them.
+                let fill = self.fill_fast_path(w, lp)?;
+                if fill {
+                    self.indent(w)?;
+                    writeln!(w, "if !__fill_{} {{", lp.scope)?;
+                }
+                // @PLN157 § V-am (`@FR-R-PushFill`) — a counted push loop reserves its
+                // pushes times its trip count first; one push of an invariant is one fill
+                // of the tail, the per-element loop its fallback exactly as the fill's.
+                let pushed = self.push_fast_path(w, lp)?;
+                if pushed {
+                    self.indent(w)?;
+                    writeln!(w, "if !__pf_{} {{", lp.scope)?;
                 }
                 self.loop_stack.push(lp.scope);
                 writeln!(w, "'l{}: loop {{ //{}_{}", lp.scope, lp.name, lp.scope)?;
@@ -704,15 +714,6 @@ impl Output<'_> {
                 self.indent(w)?;
                 write!(w, "}} /*{}_{}*/", lp.name, lp.scope)?;
                 self.loop_stack.pop();
-                for &v in &loop_recs {
-                    let name = sanitize(self.data.def(self.def_nr).variables().name(v));
-                    writeln!(w, ";")?;
-                    self.indent(w)?;
-                    write!(
-                        w,
-                        "OpFreeRef(cell,var_{name}, \"var_{name}\"); var_{name}.store_nr = u16::MAX /*@FR-R-LoopRecord freed after the loop*/"
-                    )?;
-                }
                 if pushed {
                     self.push_fast_path_tail(w, lp)?;
                 }
@@ -721,6 +722,24 @@ impl Output<'_> {
                 }
                 if nested {
                     write!(w, "\n}} /* checked nest */")?;
+                }
+                match chained {
+                    super::ChainGuard::Branch => {
+                        self.plain_chains.pop();
+                    }
+                    super::ChainGuard::Arms => {
+                        write!(w, "\n}} /* checked chains */")?;
+                    }
+                    super::ChainGuard::None => {}
+                }
+                for &v in &loop_recs {
+                    let name = sanitize(self.data.def(self.def_nr).variables().name(v));
+                    writeln!(w, ";")?;
+                    self.indent(w)?;
+                    write!(
+                        w,
+                        "OpFreeRef(cell,var_{name}, \"var_{name}\"); var_{name}.store_nr = u16::MAX /*@FR-R-LoopRecord freed after the loop*/"
+                    )?;
                 }
                 self.end_vector_hoist(w, hoisted)?;
             }

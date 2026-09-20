@@ -43,6 +43,16 @@ step-1 arm, 14/14 hashes): `render_marks` 2.79–2.86× → **1.54–1.74×**, `
 (Perf-Weight) median bar met on this lane, `lock_curved` (3.85×) the one row still over 3×.  Switches `LOFT_NO_BOUNDED_NEST`, `LOFT_NO_NEST_RAW_READS`, `LOFT_NO_SELF_APPEND_BLOCK`;
 falsifier `LOFT_HOIST_VERIFY=1` (`ops::nest_verify`, and the raw read compared with the checked
 one); pins `tests/bounded_nest.rs`; cells `tests/scripts/157-bounded-nest.loft` n1–n23.
+**`R-Range` + `R-GuardedChain` SHIPPED 2026-09-20** (`formal/rewrites.md`; C120's admissible
+successor built twice — the static interval proof and the run-time guard for a counted loop's
+index chains): `composite` 103 → **68 µs** per call (−34 %, the hand ceiling for its six
+record-scalar chains met), hash exact, the guard admitting loops across the graphics library.
+The static half alone moved nothing on `composite` and says why in its prose (the twelve
+operators that carry the cost have operands no static proof can bound).  `parse` analysed in the
+same pass: scanner-bound (1.6× alone; inlining `size` and `byte_at` by hand is a wash), the rest
+a long tail — no compiler lever of this kind.  Switches `LOFT_NO_RANGE_ARITH`,
+`LOFT_NO_GUARDED_CHAIN`; trace `LOFT_TRACE_CHAIN`; cells `157-range-arith.loft` a1–a9,
+`157-guarded-chain.loft` c1–c6; pins `tests/range_arith.rs`, `tests/guarded_chain.rs`.
 **`R-GroupPush` + the heap and rebound clauses SHIPPED 2026-09-18** (`formal/rewrites.md`, unit C of
 the store-traffic analysis in § Where to resume — the record-append machinery): a mint group that
 holds no push header binds one of its own after its reservation; an element that owns heap goes

@@ -9,6 +9,38 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### C120's successor, twice over — `R-Range` and `R-GuardedChain` (2026-09-20)
+
+`--native`, generation time, both default ON.  **`(R-Range)`** (`formal/rewrites.md`,
+`src/generation/range.rs`): an integer `+ - *`, negation, `/` or `%` whose RESULT provably fits
+the type emits the processor's operator — the proof is interval arithmetic in i128 over the
+language's own facts (a literal; `a & lit` over a NON-SENTINEL `a`, since `null & 255` is null;
+`&`/`|` of non-negative ranges; `>> k`; `len`/`size` in `0..=u32::MAX`; a text byte; an `if`
+merge; a counted range's counters from ranged ends; a local whose every assignment is ranged and
+never a self-step; a one-expression callee over its arguments' facts, three deep), per-function
+fixpoint beside the non-sentinel proof, which gains a callee RETURN summary
+(`callee_returns_non_sentinel`).  A parameter or a record/element read is never ranged (C80).
+Measured honestly: `composite` converts 24 of 36 checked operators and does NOT move — the twelve
+left (`j * lw + i`, `x0 + i`, `y0 + j`, the accessors' `by * width + bx`) have record-scalar or
+parameter operands and carry the whole ceiling (class split by hand patch: those six −35 %, the
+counters −5 %, the divisions −3 %).  **`(R-GuardedChain)`** (`Output::chain_fast_path`) is what
+takes them: `(R-BoundedNest)`'s method for any counted loop — its chains of `+ - *` and negation
+over literals, its own and nested loops' counters, integer locals it never writes and hoisted
+record scalars run plain behind a guard evaluated once at the loop's entry (every leaf not the
+sentinel, every chain's magnitude bound fits, by checked operators), the checked loop the `else`
+arm; a parameter is a fine leaf, because the guard tests its value.  **`composite` 103 → 68 µs
+per call (−34 %)**, hash exact; `LOFT_TRACE_CHAIN=1` shows the guard admitting `fill_rect`,
+`fill_triangle`, `resample`, `mat4_mul` and `sphere` loops across the graphics library.  Found
+by the cells: a `(R-LoopRecord)` local must be declared before any guarded arm and freed after
+both arms close (the loop emission's order, corrected for the bounded nest too).  Switches
+`LOFT_NO_RANGE_ARITH`, `LOFT_NO_GUARDED_CHAIN`; falsifier `LOFT_HOIST_VERIFY=1`
+(`ops::range_verify` at every admitted operator); cells `tests/scripts/157-range-arith.loft`
+a1–a9 and `157-guarded-chain.loft` c1–c6 against the interpreter under every switch and
+falsifier; pins `tests/range_arith.rs`, `tests/guarded_chain.rs`.  `parse` (2.35×) was analysed
+alongside and has no compiler lever of this kind: its scanner is 1.6× alone with every
+call-inlining patch a wash, and the rest is a long tail (`text.split`, the fronds machinery,
+the checked counters ≈ 8 %).
+
 ### A record append outside a held header binds its own — `R-GroupPush`, the heap and rebound clauses (2026-09-18)
 
 `--native`, generation time, default ON.  Three clauses, one arc, priced by hand patch on the

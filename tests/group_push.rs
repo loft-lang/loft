@@ -27,7 +27,9 @@ const EXPECTED: &[(&str, usize, usize, usize, usize, usize, usize)] = &[
     // g2: the side loop hoists although `pts` is rebound per pass (to the element slot);
     // the Frond mint goes through the loop's header with its slot zeroed, the point group
     // through its own header — six fused uses, no template.
-    ("n_g2_build", 1, 1, 1, 6, 0, 1),
+    // ×2 on the inner forms: the side loop is an innermost loop with a chain (`i + 1`),
+    // emitted twice under its chain guard (`@FR-R-GuardedChain`, 2026-09-20).
+    ("n_g2_build", 1, 2, 2, 12, 0, 1),
     // g3: a heap-owning element appended outside any loop — the GROUP header, zeroed.
     ("n_g3_mk", 0, 1, 1, 2, 0, 0),
     // g4: a builder that grows another vector is a store write — the group declines and
@@ -286,8 +288,8 @@ fn each_switch_restores_its_clause_alone() {
         );
     }
     assert_eq!(
-        got["n_g2_build"].1, 1,
-        "g2's point group still takes its header"
+        got["n_g2_build"].1, 2,
+        "g2's point group still takes its header (×2: the side loop's body is emitted twice under its chain guard)"
     );
     assert_eq!(
         got["n_g1"],

@@ -17,6 +17,7 @@ pub mod hoist;
 pub mod non_sentinel;
 pub(crate) mod ops;
 mod pre_eval;
+pub mod range;
 mod text;
 
 /// One hoisted binding produced by `collect_pre_evals`:
@@ -677,6 +678,17 @@ pub struct Output<'a> {
     pub plain_nest: u32,
     /// `LOFT_NO_BOUNDED_NEST=1` — no nest is guarded and run plain.
     pub bounded_nest_disabled: bool,
+    /// `@FR-R-GuardedChain` — per guarded loop, the argument-slice addresses of every
+    /// `+ - *`/negation node inside a chain its guard bounds, and the guard's name: those ops
+    /// emit the plain operator under the guard and the template otherwise
+    /// ([`ops::int_arith`]).  Pushed before the loop's body, popped after it.
+    pub plain_chains: Vec<(HashSet<usize>, Option<String>)>,
+    /// Non-zero while a verified chain operator's CHECKED copy is emitted.
+    pub chains_suspended: u32,
+    /// `LOFT_NO_GUARDED_CHAIN=1` — no counted loop's affine chains are guarded and run plain.
+    pub chain_guard_disabled: bool,
+    /// `LOFT_TRACE_CHAIN=1` — name every loop whose chains are guarded, and why one is not.
+    pub chain_trace: bool,
     /// `LOFT_TRACE_NEST=1` — name every nest admitted and every loop declined, with why.
     pub nest_trace: bool,
     /// `@FR-R-BoundedNest` step 2 — set while the plain arm of a nest whose guard also proved
@@ -935,6 +947,16 @@ pub struct Output<'a> {
     /// keyed by `def_nr` — computed on the first simplifiable compare a
     /// function emits, shared by the rest.
     nn_cache: HashMap<u32, std::rc::Rc<HashMap<u16, bool>>>,
+    /// `@FR-R-Range` — the per-definition range facts ([`range::range_vars`]), computed on
+    /// the first integer op a function emits and cached beside the non-sentinel ones.
+    range_cache: HashMap<u32, std::rc::Rc<HashMap<u16, range::Range>>>,
+    /// `LOFT_NO_RANGE_ARITH=1` — every integer operator keeps its checked template, as
+    /// before `@FR-R-Range`; the bisect step for a wrong integer value on native where the
+    /// range proof admitted a plain operator.  `LOFT_HOIST_VERIFY=1` is the falsifier.
+    pub range_arith_disabled: bool,
+    /// Non-zero while the CHECKED copy of a verified operator is being emitted, so the range
+    /// arm does not fire inside its own verify form.
+    range_suspended: u32,
     /// N4 (@PLN157): per-definition verdict of [`Output::is_elidable_leaf`].
     leaf_cache: HashMap<u32, bool>,
     /// Per-definition verdict of [`Output::is_frameless_chain`].
@@ -1149,6 +1171,19 @@ pub struct Output<'a> {
     /// Only loft's own functions are pinned — std, alloc and loft's runtime still
     /// inline freely, so the cost is confined to the code the backtrace is about.
     pub keep_fn_names: bool,
+}
+
+/// `@FR-R-GuardedChain` — what [`Output::chain_fast_path`] emitted for a loop.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ChainGuard {
+    /// No guard: the loop has no admitted chain.
+    None,
+    /// A guard and a frame for the whole loop, each admitted op branching on it; the caller
+    /// pops the frame after the loop.
+    Branch,
+    /// A guard, the loop's plain copy and an open `else {`: the caller emits the checked loop
+    /// and closes the arm.
+    Arms,
 }
 
 /// Use this to convert loft names that contain `#` into valid Rust identifiers.
@@ -1904,6 +1939,10 @@ impl<'a> Output<'a> {
             vec_bounds: Vec::new(),
             plain_nest: 0,
             bounded_nest_disabled: std::env::var("LOFT_NO_BOUNDED_NEST").is_ok_and(|v| v != "0"),
+            plain_chains: Vec::new(),
+            chains_suspended: 0,
+            chain_guard_disabled: std::env::var("LOFT_NO_GUARDED_CHAIN").is_ok_and(|v| v != "0"),
+            chain_trace: std::env::var("LOFT_TRACE_CHAIN").is_ok_and(|v| v != "0"),
             nest_trace: std::env::var("LOFT_TRACE_NEST").is_ok_and(|v| v != "0"),
             nest_raw_arm: false,
             nest_raw_disabled: std::env::var("LOFT_NO_NEST_RAW_READS").is_ok_and(|v| v != "0"),
@@ -1978,6 +2017,9 @@ impl<'a> Output<'a> {
             nn_fast_disabled: std::env::var("LOFT_NO_NN_FAST").is_ok_and(|v| v != "0"),
             release_pass_probe: std::env::var("LOFT_RELEASE_PASS_PROBE").is_ok_and(|v| v != "0"),
             nn_cache: HashMap::new(),
+            range_cache: HashMap::new(),
+            range_arith_disabled: std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0"),
+            range_suspended: 0,
             leaf_cache: HashMap::new(),
             chain_cache: HashMap::new(),
             checkpoints: CkptMode::from_env(),
@@ -2518,6 +2560,368 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(w, "}} else {{")?;
         Ok(true)
+    }
+
+    /// How the op node with arguments `args` emits: `None` — the checked template (no
+    /// guarded loop holds it, or a verified op's checked copy is being emitted);
+    /// `Some(None)` — plain unconditionally (inside an innermost loop's guarded copy);
+    /// `Some(Some(g))` — plain under the guard `g` (a loop with loops inside it, emitted
+    /// once with the branch per op).
+    #[must_use]
+    pub fn plain_chain_guard(&self, args: &[Value]) -> Option<Option<String>> {
+        if self.chains_suspended > 0 {
+            return None;
+        }
+        self.plain_chains
+            .iter()
+            .rev()
+            .find(|(s, _)| s.contains(&(args.as_ptr() as usize)))
+            .map(|(_, g)| g.clone())
+    }
+
+    /// `@FR-R-GuardedChain` — when the counted loop `lp` carries integer CHAINS of `+`, `-`,
+    /// `*` and negation whose leaves are literals, the loop's own counters, the counters of a
+    /// counted loop nested in it, integer locals the loop never writes, and record scalars an
+    /// enclosing frame hoisted, emit a guard `let __gc_N: bool = …;` evaluated once at the
+    /// loop's entry — every leaf's value is not the sentinel and every chain's MAGNITUDE BOUND,
+    /// spelled with checked operators over the leaves' bounds (a counter by the larger of its
+    /// range's ends plus one, an invariant by its absolute value), fits the type — then
+    /// push the chains as a frame and answer `true`; every op of an admitted chain then
+    /// emits `if __gc_N { plain } else { checked }` — the guard is loop-invariant, so LLVM
+    /// unswitches the loop on it once while the body is emitted ONCE (the bounded nest
+    /// duplicates its one-statement body instead).  The caller pops the frame after the
+    /// loop.  A bound that fits means every true intermediate fits, so the plain operator
+    /// answers exactly what the checked template would; every other operator is untouched.
+    /// `(R-BoundedNest)`'s method for any counted loop's index arithmetic — the six operators
+    /// of `composite_layer`'s pixel loop (`j * lw + i`, `x0 + i`, `y0 + j`) whose unproven
+    /// record-scalar operands no static proof can bound.
+    fn chain_fast_path(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<ChainGuard> {
+        if self.chain_guard_disabled || self.hoist_disabled || self.release_pass_probe {
+            return Ok(ChainGuard::None);
+        }
+        let data = self.data;
+        let fn_name = data.def(self.def_nr).name().to_string();
+        let Ok(rc) = hoist::range_counters(lp, data) else {
+            return Ok(ChainGuard::None);
+        };
+        let variables = data.def(self.def_nr).variables();
+        let written = hoist::written_vars(lp);
+        let mut escaped: HashSet<u16> = HashSet::new();
+        non_sentinel::collect_escapes(data, data.def(self.def_nr).code(), &mut escaped);
+        let own: Vec<u16> = std::iter::once(rc.loop_var)
+            .chain(std::iter::once(rc.index))
+            .chain(rc.next)
+            .collect();
+        let nested = hoist::nested_counted_loops(lp, data);
+        let nested_counters: Vec<Vec<u16>> = nested
+            .iter()
+            .map(|(n, _)| {
+                std::iter::once(n.loop_var)
+                    .chain(std::iter::once(n.index))
+                    .chain(n.next)
+                    .collect()
+            })
+            .collect();
+        // The leaves a bound may name, registered as they are met so the guard declares them
+        // in order: integer locals the loop never writes, and hoisted record scalars.
+        let mut invariants: Vec<u16> = Vec::new();
+        let mut scalars: Vec<String> = Vec::new();
+        let sanitize_var = |v: u16| format!("var_{}", sanitize(variables.name(v)));
+        // The bound of a chain node, or `None` where a leaf is not one the guard can bound.
+        // `counters` false while bounding a nested loop's own seed and end (those are
+        // declared before any counter).  Eleven parameters: the node, what types it, the
+        // five leaf classes, the two registries and the one switch — a struct would name
+        // each once more at the three call sites without removing anything.
+        #[allow(clippy::too_many_arguments)]
+        fn bound(
+            v: &Value,
+            data: &Data,
+            variables: &crate::variables::Function,
+            own: &[u16],
+            nested_counters: &[Vec<u16>],
+            written: &HashSet<u16>,
+            escaped: &HashSet<u16>,
+            scalar_hoists: &[HashMap<hoist::ScalarKey, String>],
+            invariants: &mut Vec<u16>,
+            scalars: &mut Vec<String>,
+            counters: bool,
+        ) -> Option<String> {
+            match v.unspan() {
+                Value::Int(k) => Some(format!("{}_i64", i64::from(*k).unsigned_abs())),
+                Value::Long(l) if *l != i64::MIN => Some(format!("{}_i64", l.unsigned_abs())),
+                Value::Var(x) => {
+                    if own.contains(x) {
+                        return counters.then(|| "__cb".to_string());
+                    }
+                    if let Some(k) = nested_counters.iter().position(|c| c.contains(x)) {
+                        return counters.then(|| format!("__nc_{k}"));
+                    }
+                    if written.contains(x)
+                        || escaped.contains(x)
+                        || !matches!(variables.tp(*x).peel_link(), Type::Integer(_))
+                    {
+                        return None;
+                    }
+                    let k = invariants.iter().position(|i| i == x).unwrap_or_else(|| {
+                        invariants.push(*x);
+                        invariants.len() - 1
+                    });
+                    Some(format!("__gv_{k}"))
+                }
+                Value::Call(d, args) => {
+                    let name = data.def(*d).name();
+                    let sub = |a: &Value, invariants: &mut Vec<u16>, scalars: &mut Vec<String>| {
+                        bound(
+                            a,
+                            data,
+                            variables,
+                            own,
+                            nested_counters,
+                            written,
+                            escaped,
+                            scalar_hoists,
+                            invariants,
+                            scalars,
+                            counters,
+                        )
+                    };
+                    match (name, args.len()) {
+                        ("OpAddInt" | "OpMinInt" | "OpAddIntNullable" | "OpMinIntNullable", 2) => {
+                            let a = sub(&args[0], invariants, scalars)?;
+                            let b = sub(&args[1], invariants, scalars)?;
+                            Some(format!("({a}).checked_add({b})?"))
+                        }
+                        ("OpMulInt" | "OpMulIntNullable", 2) => {
+                            let a = sub(&args[0], invariants, scalars)?;
+                            let b = sub(&args[1], invariants, scalars)?;
+                            Some(format!("({a}).checked_mul({b})?"))
+                        }
+                        ("OpMinSingleInt", 1) => sub(&args[0], invariants, scalars),
+                        ("OpGetInt", _) => {
+                            let key = hoist::scalar_read(name, args)?;
+                            let held = scalar_hoists
+                                .iter()
+                                .rev()
+                                .find_map(|f| f.get(&key).cloned())?;
+                            let k = scalars.iter().position(|s| *s == held).unwrap_or_else(|| {
+                                scalars.push(held);
+                                scalars.len() - 1
+                            });
+                            Some(format!("__gs_{k}"))
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        }
+        let is_chain_op = |v: &Value| -> bool {
+            matches!(v.unspan(), Value::Call(d, args)
+                if matches!((data.def(*d).name(), args.len()),
+                    ("OpAddInt" | "OpMinInt" | "OpMulInt" | "OpAddIntNullable" | "OpMinIntNullable" | "OpMulIntNullable", 2) | ("OpMinSingleInt", 1)))
+        };
+        // Collect the maximal chains: a chain op whose whole subtree bounds is admitted whole
+        // (every chain op inside it emits plain); one that does not is descended for smaller
+        // chains.  The loop's own iterator is skipped — its step is (R-Counter)'s already.
+        let mut chains: Vec<String> = Vec::new();
+        let mut admitted: HashSet<usize> = HashSet::new();
+        fn collect_ops(v: &Value, data: &Data, into: &mut HashSet<usize>) {
+            if let Value::Call(d, args) = v.unspan()
+                && matches!(
+                    (data.def(*d).name(), args.len()),
+                    (
+                        "OpAddInt"
+                            | "OpMinInt"
+                            | "OpMulInt"
+                            | "OpAddIntNullable"
+                            | "OpMinIntNullable"
+                            | "OpMulIntNullable",
+                        2
+                    ) | ("OpMinSingleInt", 1)
+                )
+            {
+                into.insert(args.as_ptr() as usize);
+            }
+            v.for_each_child(&mut |c| collect_ops(c, data, into));
+        }
+        let scalar_hoists = self.scalar_hoists.clone();
+        // A chain an ENCLOSING guarded arm already admitted emits plain there already; asking
+        // again would guard the inner loop a second time inside the outer plain arm.
+        let already = |v: &Value| -> bool {
+            matches!(v.unspan(), Value::Call(_, args)
+                if self.plain_chains.iter().any(|(s, _)| s.contains(&(args.as_ptr() as usize))))
+        };
+        let mut stack: Vec<&Value> = lp.operators.iter().skip(1).collect();
+        while let Some(v) = stack.pop() {
+            if already(v) {
+                continue;
+            }
+            // A loop NESTED in this one guards its own chains (its body is where the time
+            // is, and it can duplicate itself); this loop's chains are the ones outside it.
+            if matches!(v.unspan(), Value::Loop(_)) {
+                continue;
+            }
+            if is_chain_op(v) {
+                let mut inv2 = invariants.clone();
+                let mut sc2 = scalars.clone();
+                if let Some(b) = bound(
+                    v,
+                    data,
+                    variables,
+                    &own,
+                    &nested_counters,
+                    &written,
+                    &escaped,
+                    &scalar_hoists,
+                    &mut inv2,
+                    &mut sc2,
+                    true,
+                ) {
+                    invariants = inv2;
+                    scalars = sc2;
+                    chains.push(b);
+                    collect_ops(v, data, &mut admitted);
+                    continue;
+                }
+            }
+            v.for_each_child(&mut |c| stack.push(c));
+        }
+        if chains.is_empty() {
+            return Ok(ChainGuard::None);
+        }
+        // The nested loops' seeds and ends, bounded over the same leaves (no counters).
+        let mut nested_bounds: Vec<(String, String)> = Vec::new();
+        for (n, seed) in &nested {
+            let mut inv2 = invariants.clone();
+            let mut sc2 = scalars.clone();
+            let s = bound(
+                seed,
+                data,
+                variables,
+                &own,
+                &nested_counters,
+                &written,
+                &escaped,
+                &scalar_hoists,
+                &mut inv2,
+                &mut sc2,
+                false,
+            );
+            let h = bound(
+                n.hi,
+                data,
+                variables,
+                &own,
+                &nested_counters,
+                &written,
+                &escaped,
+                &scalar_hoists,
+                &mut inv2,
+                &mut sc2,
+                false,
+            );
+            let (Some(s), Some(h)) = (s, h) else {
+                // A chain naming this loop's counter cannot be bounded: decline whole.
+                if self.chain_trace {
+                    eprintln!(
+                        "chain: {fn_name} loop {} declined — a nested loop's seed or end is not a leaf",
+                        lp.scope
+                    );
+                }
+                return Ok(ChainGuard::None);
+            };
+            invariants = inv2;
+            scalars = sc2;
+            nested_bounds.push((s, h));
+        }
+        let idx = sanitize_var(rc.index);
+        let lo = match rc.next {
+            Some(nx) => sanitize_var(nx),
+            None => format!("({idx}).checked_add(1_i64)?"),
+        };
+        let hi = self.expr_string(rc.hi)?;
+        let mut parts: Vec<String> = vec![
+            format!("let __gc_{}: bool = (|| -> Option<i64> {{ ", lp.scope),
+            format!("let __lo: i64 = {lo}; let __hi: i64 = {hi}; "),
+            "if __lo == i64::MIN || __hi == i64::MIN { return None; } ".to_string(),
+            "let __cb: i64 = __lo.checked_abs()?.max(__hi.checked_abs()?).checked_add(1_i64)?; "
+                .to_string(),
+        ];
+        for (k, v) in invariants.iter().enumerate() {
+            parts.push(format!(
+                "let __gv_{k}: i64 = {}.checked_abs()?; ",
+                sanitize_var(*v)
+            ));
+        }
+        for (k, s) in scalars.iter().enumerate() {
+            parts.push(format!("let __gs_{k}: i64 = {s}.checked_abs()?; "));
+        }
+        for (k, (s, h)) in nested_bounds.iter().enumerate() {
+            parts.push(format!(
+                "let __nc_{k}: i64 = ({s}).max({h}).checked_add(1_i64)?; "
+            ));
+        }
+        for c in &chains {
+            parts.push(format!("let _ = {c}; "));
+        }
+        parts.push("Some(0) })().is_some(); //@FR-R-GuardedChain guard".to_string());
+        let g = parts.concat();
+        self.indent(w)?;
+        writeln!(w, "{g}")?;
+        if self.chain_trace {
+            eprintln!(
+                "chain: {fn_name} loop {} admitted — {} chain(s), {} invariant(s), {} hoisted scalar(s), {} nested loop(s)",
+                lp.scope,
+                chains.len(),
+                invariants.len(),
+                scalars.len(),
+                nested_bounds.len()
+            );
+        }
+        // An INNERMOST loop (no loop of any kind inside it) is where the time is and its body is small:
+        // emit it twice, the guarded copy plain and the checked loop as the `else` arm, exactly
+        // as the bounded nest does — LLVM does not unswitch a body that calls.  A loop with
+        // loops inside is emitted once, each admitted op branching on the guard, so nothing
+        // below it is duplicated.
+        let has_inner_loop = lp
+            .operators
+            .iter()
+            .any(|op| op.any_node(&mut |n| matches!(n, Value::Loop(_))));
+        if !has_inner_loop {
+            self.indent(w)?;
+            writeln!(w, "if __gc_{} {{", lp.scope)?;
+            let declared_before = self.declared.clone();
+            self.plain_chains.push((admitted, None));
+            self.loop_stack.push(lp.scope);
+            self.indent(w)?;
+            writeln!(
+                w,
+                "'l{}: loop {{ //{}_{} plain chains",
+                lp.scope, lp.name, lp.scope
+            )?;
+            for v in &lp.operators {
+                self.indent(w)?;
+                self.indent += 1;
+                self.output_code_inner(w, v)?;
+                self.indent -= 1;
+                writeln!(w, ";")?;
+            }
+            self.indent(w)?;
+            writeln!(w, "}} /*{}_{} plain chains*/", lp.name, lp.scope)?;
+            self.loop_stack.pop();
+            self.plain_chains.pop();
+            self.declared = declared_before;
+            self.indent(w)?;
+            writeln!(w, "}} else {{")?;
+            return Ok(ChainGuard::Arms);
+        }
+        self.plain_chains
+            .push((admitted, Some(format!("__gc_{}", lp.scope))));
+        Ok(ChainGuard::Branch)
     }
 
     /// @PLN157 § V-ae (`@FR-R-Fill`) — when `lp` is one fill over a path an enclosing frame
@@ -3780,18 +4184,53 @@ impl Output<'_> {
     /// float-compare and integer-arithmetic emitters, which fall through to
     /// the `#rust` template on a `false`.
     pub fn non_sentinel_args(&mut self, args: &[Value]) -> bool {
-        let vars = if let Some(v) = self.nn_cache.get(&self.def_nr) {
-            v.clone()
-        } else {
-            let map = std::rc::Rc::new(non_sentinel::non_sentinel_vars(
-                self.data,
-                self.data.def(self.def_nr).code(),
-            ));
-            self.nn_cache.insert(self.def_nr, map.clone());
-            map
-        };
+        let vars = self.nn_facts();
         args.iter()
             .all(|a| non_sentinel::non_sentinel(self.data, &vars, a))
+    }
+
+    /// The current function's non-sentinel var facts, computed once and cached.
+    fn nn_facts(&mut self) -> std::rc::Rc<HashMap<u16, bool>> {
+        if let Some(v) = self.nn_cache.get(&self.def_nr) {
+            return v.clone();
+        }
+        let map = std::rc::Rc::new(non_sentinel::non_sentinel_vars(
+            self.data,
+            self.data.def(self.def_nr).code(),
+        ));
+        self.nn_cache.insert(self.def_nr, map.clone());
+        map
+    }
+
+    /// `@FR-R-Range` — the range the integer op `name` over `args` provably lies in, in the
+    /// current function, or `None`; computes the per-definition facts on first use.  `None`
+    /// while a verified operator's checked copy is being emitted, and under the switch.
+    pub fn op_range(&mut self, name: &str, args: &[Value]) -> Option<range::Range> {
+        if self.range_arith_disabled || self.range_suspended > 0 {
+            return None;
+        }
+        let nn = self.nn_facts();
+        let rv = if let Some(v) = self.range_cache.get(&self.def_nr) {
+            v.clone()
+        } else {
+            let map = std::rc::Rc::new(range::range_vars(
+                self.data,
+                self.data.def(self.def_nr).code(),
+                &nn,
+            ));
+            self.range_cache.insert(self.def_nr, map.clone());
+            map
+        };
+        range::op_range(self.data, &nn, &rv, name, args, 0)
+    }
+
+    /// Emit the CHECKED form of an operator for a verify comparison: the range arm is held
+    /// off for the duration.
+    pub fn with_range_suspended<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.range_suspended += 1;
+        let r = f(self);
+        self.range_suspended -= 1;
+        r
     }
 
     /// N4 (@PLN157): is this definition a LEAF — a body with no call to a

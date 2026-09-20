@@ -101,11 +101,13 @@ fn a_view_binds_its_address_and_reads_and_writes_go_through_it() {
     let rust = emit("on", &[]);
     let main = body(&rust, "n_main");
     // r1, r2, r3 (two views), r5, r6's SECOND binding, r8 (nullable), r9, r10, r12's `e` (its
-    // copy `e2 = e` reads the fields), r13 and r16's three loop variables — fourteen addresses.
+    // copy `e2 = e` reads the fields), r13 and r16's three loop variables — fourteen
+    // addresses; two of r16's loops are innermost loops with a chain, emitted twice under
+    // their chain guard (`@FR-R-GuardedChain`, 2026-09-20), so their bindings count twice: 16.
     assert_eq!(
         main.matches("//@FR-R-RecPtr record view address for")
             .count(),
-        14,
+        16,
         "main should bind exactly its fourteen admitted views:\n{main}"
     );
     assert!(

@@ -3784,6 +3784,14 @@ must leave every observable value as the interpreter answers it, faults included
 speed-up bought with a value the program cannot predict is not an optimisation.  Both
 forms — checked-only and plain — are closed by this, not only the silent one.
 
+**Built, 2026-09-20 — the successor, twice over:** `(R-Range)` (formal/rewrites.md) is the
+static half — an operator whose result provably fits by interval arithmetic over the
+language's own facts emits the plain operator — and `(R-GuardedChain)` the dynamic half — a
+counted loop's index chains over record scalars and parameters run plain behind a guard
+evaluated once at the loop's entry, `(R-BoundedNest)`'s method for any counted loop.  Neither
+changes a value: the plain form is admitted only where a fact established BEFORE the
+arithmetic says no fault can occur.  `composite` 103 → 68 µs.
+
 **What would reopen it: nothing about the closure itself.**  The sound successor is a
 PROOF, not a policy: arithmetic whose operands carry declared ranges (`integer(lo, hi)`,
 the counters a counted range bounds, a masked value) such that the result CANNOT

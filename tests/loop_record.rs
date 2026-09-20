@@ -112,9 +112,11 @@ fn an_admitted_record_is_declared_at_the_prelude_kept_across_passes_and_freed_on
     // as an explicit write — l15's `Ld { a: i }` writes `k = 5` itself), so the partial-literal
     // form that re-establishes defaults through `set_default_value` is the emitter's fallback
     // and no cell reaches it.
+    // Twelve mint sites; nine of them sit in an innermost loop with a chain, whose body is
+    // emitted twice under its chain guard (`@FR-R-GuardedChain`, 2026-09-20): 12 + 9.
     assert_eq!(
         main.matches("/* @FR-R-LoopRecord kept record */").count(),
-        12,
+        21,
         "kept-record mints:\n{main}"
     );
     assert!(

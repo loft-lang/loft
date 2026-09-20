@@ -107,14 +107,16 @@ const NO_TWIN_AC: &[&str] = &[
 
 /// `(caller, twin calls in its body)`.
 const CALLS_AC: &[(&str, usize)] = &[
-    ("n_k1", 1),      // the brush shape through `br.img`
-    ("n_k2", 0),      // rb_copy has no twin
-    ("n_k3", 0),      // grow has no twin, and the loop hoists nothing
-    ("n_k4", 2),      // two paths, two headers
-    ("n_k5", 2),      // an empty and an omitted vector: headers of length 0
-    ("n_k6", 0),      // a conditional as the argument
-    ("n_k7a", 1),     // an in-place element write beside the call
-    ("n_k7b", 1),     // the path held by a PUSH header, handed at the call
+    ("n_k1", 1),  // the brush shape through `br.img`
+    ("n_k2", 0),  // rb_copy has no twin
+    ("n_k3", 0),  // grow has no twin, and the loop hoists nothing
+    ("n_k4", 2),  // two paths, two headers
+    ("n_k5", 2),  // an empty and an omitted vector: headers of length 0
+    ("n_k6", 0),  // a conditional as the argument
+    ("n_k7a", 2), // an in-place element write beside the call — its loop body is emitted
+    //                   twice under the chain guard (`@FR-R-GuardedChain`, 2026-09-20)
+    ("n_k7b", 2), // the path held by a PUSH header, handed at the call (×2: its loop body is
+    //                   emitted twice under its chain guard, `@FR-R-GuardedChain`)
     ("n_k8", 0),      // the root is a `&` view rebound in the loop
     ("n_k9", 1),      // a record parameter's field through the path `h.cv`
     ("n_k10", 0),     // cnt

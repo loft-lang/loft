@@ -1,0 +1,120 @@
+// `@FR-R-GuardedChain` — a counted loop's integer CHAINS of `+ - *` and negation over
+// literals, the loop's counters, a nested counted loop's counters, integer locals the loop
+// never writes and hoisted record scalars run with the processor's plain operators when a
+// guard, evaluated once at the loop's entry, proves every leaf is not the sentinel and every
+// chain's magnitude bound fits the type; the checked loop is the `else` arm.  `(R-BoundedNest)`'s
+// method for any counted loop's index arithmetic — composite_layer's `j * lw + i`, `x0 + i`,
+// `y0 + j` over record scalars no static proof can bound.  The interpreter keeps the checked
+// operators and is the oracle; every cell prints its values.  `LOFT_NO_GUARDED_CHAIN=1` and
+// `LOFT_HOIST_VERIFY=1` (the plain answer compared with the checked one at every admitted
+// operator) must answer identically.
+//
+// Predictions (tests/guarded_chain.rs pins them): c1 the pixel loop over a record's scalars
+// — one guard at the OUTER loop covering the inner loop's counter, both chains plain in the
+// guarded arm, the checked copy as the else arm; c2 a base near i64::MAX declines at run
+// time — the guard's bound overflows, the checked loop runs and answers null through `??`;
+// c3 a null invariant (a read past a vector's end) declines at run time the same way; c4
+// negative ranges and negation; c5 a local the loop WRITES is not a leaf (its chain stays
+// checked, the others still plain); c6 the same shape with an integer parameter as the
+// invariant — a parameter is a fine LEAF here, because the guard tests its value at entry.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-20) — the guard's `checked_abs()?` on an
+// invariant leaf replaced by `wrapping_abs()` turns c3 red on --native (`true` → `false`: the
+// null invariant passes the guard and the plain `y + 1` answers MIN + 1 where the checked
+// template answers null) while c1, c2, c4–c6 stay green; LOFT_HOIST_VERIFY=1 panics at the
+// operator: "plain OpAddInt answered -9223372036854775807 where the checked form answers
+// -9223372036854775808".  A first cut of c3 accumulated the terms and was VACUOUS under the
+// same sabotage (an accumulator turns null either way); the first-term form is what scores.
+// Restored, interpret / native / LOFT_NO_GUARDED_CHAIN / LOFT_HOIST_VERIFY all green.
+
+struct Lay { x0: integer, y0: integer, lw: integer, lh: integer, px: vector<integer> }
+
+fn mk(x0: integer, y0: integer, lw: integer, lh: integer) -> Lay {
+  p: vector<integer> = [];
+  for k in 0..(lw * lh) { p += [k * 3]; }
+  Lay { x0: x0, y0: y0, lw: lw, lh: lh, px: p }
+}
+
+// c1 — the pixel loop: idx = j*lw + i, the destination (x0 + i, y0 + j) folded into one sum.
+// lw 4, lh 3, x0 10, y0 20: sum over (j*lw+i)*3 = 3 * (0+…+11) = 198; sum of (x0+i) + (y0+j)
+// over 12 cells = 12*30 + 3*(0+1+2+3) + 4*(0+1+2) = 360 + 18 + 12 = 390.
+fn c1_run(lay: const Lay) -> integer {
+  acc = 0;
+  for j in 0..lay.lh {
+    for i in 0..lay.lw {
+      c = lay.px[j * lay.lw + i] ?? 0;
+      acc = acc + c + (lay.x0 + i) + (lay.y0 + j);
+    }
+  }
+  acc
+}
+fn c1() { r = c1_run(mk(10, 20, 4, 3)); println("c1 {r}"); assert(r == 588, "c1"); }
+
+// c2 — a base near the top of the type: `base + i` overflows for i >= 8, the checked form
+// answers null there and `??` turns it into -1.  The guard's bound overflows, so it declines
+// and the checked loop answers exactly that.  Each term is parenthesised so only the
+// intended operator can fault: n=8 sums 0..7 = 28; n=16 adds eight terms of -1 - base,
+// whose sum overflows the accumulator to null on both backends.
+fn c2_run(base: integer, n: integer) -> integer {
+  acc = 0;
+  for i in 0..n { acc = acc + (((base + i) ?? -1) - base); }
+  acc
+}
+fn c2() {
+  s = c2_run(9223372036854775800, 8);      // i64::MAX - 7
+  r = c2_run(9223372036854775800, 16);
+  println("c2 {s} {r == null}");
+  assert(s == 28 && r == null, "c2");
+}
+
+// c3 — a null invariant: `v[9]` past the end is null, so `y + i` is null on every pass and
+// the guard declines the loop (a sentinel leaf fails its `checked_abs`).  The FIRST term is
+// kept apart from the accumulator on purpose: an accumulator turns null whichever form ran
+// (a plain `MIN + 1` is a number the checked `acc +` then propagates as null), while the
+// first term alone is null under the checked form and `MIN + 1` under a plain one.
+fn c3() {
+  v: vector<integer> = [1, 2];
+  y = v[9];
+  first = 0;
+  for i in 1..4 {
+    t = y + i;
+    if i == 1 { first = t; }
+  }
+  println("c3 {first == null}");
+  assert(first == null, "c3");
+}
+
+// c4 — negative ranges and negation: -(a * i) - b over i in -3..3 with a=7, b=100:
+// sum(-7i) = -7 * (-3-2-1+0+1+2) = 21; minus 100 × 6 = -600 → -579.
+fn c4() {
+  a = 7;
+  b = 100;
+  acc = 0;
+  for i in -3..3 { acc = acc + (-(a * i) - b); }
+  println("c4 {acc}");
+  assert(acc == -579, "c4");
+}
+
+// c5 — a local the loop writes is not a leaf: `w = w + i` keeps its checked form while
+// `2 * i + 1` beside it runs plain.  sum(2i+1) for i in 0..5 = 25; w = 0+1+2+3+4 = 10.
+fn c5() {
+  w = 0;
+  acc = 0;
+  for i in 0..5 { w = w + i; acc = acc + (2 * i + 1); }
+  println("c5 {acc} {w}");
+  assert(acc == 25 && w == 10, "c5");
+}
+
+// c6 — a parameter as the invariant leaf: the guard tests its VALUE at entry, so a parameter
+// is admitted where the static proofs never trust one.  base 1000, n 5: sum(base + 2i) = 5020.
+fn c6_run(base: integer, n: integer) -> integer {
+  acc = 0;
+  for i in 0..n { acc = acc + (base + 2 * i); }
+  acc
+}
+fn c6() { r = c6_run(1000, 5); println("c6 {r}"); assert(r == 5020, "c6"); }
+
+fn main() {
+  c1(); c2(); c3(); c4(); c5(); c6();
+  println("guarded chain ok");
+}

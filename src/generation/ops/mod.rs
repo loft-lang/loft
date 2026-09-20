@@ -226,6 +226,12 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
         "OpDivIntNullable",
         "OpRemInt",
         "OpRemIntNullable",
+        // The guarded `*Nullable` twins of `+ - *` (`(E-Report)`: a defended site's silent
+        // fault): plain where `@FR-R-Range` bounds the result or `@FR-R-GuardedChain`'s guard
+        // admits the chain; the template otherwise.
+        "OpAddIntNullable",
+        "OpMinIntNullable",
+        "OpMulIntNullable",
     ] {
         r.insert(op, Box::new(int_arith::IntArithEmitter));
     }
@@ -541,9 +547,12 @@ mod tests {
         // `OpRefAliasEmitter`: the entry witness of a promoted buffer that native keeps as a
         // value record (a phantom) or a value local is the null reference (`@FR-O-Buffer`).
         // @PLN164 E-1 adds one, `OpClearEmitter`: a dead buffer's release-on-reuse is
-        // emitted as nothing, like its mint (`@FR-R-ValueRecord`).
+        // emitted as nothing, like its mint (`@FR-R-ValueRecord`).  `@FR-R-Range` /
+        // `@FR-R-GuardedChain` add three, the `*Nullable` twins of `+ - *` into
+        // `IntArithEmitter`: a defended site's silent-fault twin is the same arithmetic, so a
+        // result the range proof bounds (or a chain the guard admits) emits plain there too.
         assert!(
-            count <= 118,
+            count <= 121,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

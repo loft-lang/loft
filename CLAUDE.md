@@ -893,6 +893,24 @@ wrong accumulate or index out of such a loop on native; `LOFT_HOIST_VERIFY=1` co
 plain operator's answer with the checked template's and every raw read with the checked read,
 panicking on a disagreement; `LOFT_TRACE_NEST=1` names every admission and decline and whether
 the reads are raw.
+**`LOFT_NO_RANGE_ARITH=1`** (`@FR-R-Range`, default-ON, generation time, `--native` only)
+makes every integer operator keep its checked template again — with it off, an operator
+whose RESULT provably fits the type (a literal, a mask of a non-sentinel value, `len`/`size`
+in `0..=u32::MAX`, a byte, a counted range's counter, a one-expression callee such as
+`color_a`, and interval arithmetic over those in i128) emits the processor's operator, since
+no fault can occur — and is the first bisect step for a wrong integer value on native where
+the range proof admitted a plain operator; `LOFT_HOIST_VERIFY=1` compares the plain answer
+with the checked one at every such operator.  It is C120's admissible successor for
+straight-line arithmetic; a parameter or a record/element read is never ranged.
+**`LOFT_NO_GUARDED_CHAIN=1`** (`@FR-R-GuardedChain`, default-ON, generation time, `--native`
+only) makes a counted loop's index chains keep their checked operators — with it off, chains
+of `+ - *` and negation over literals, the loop's and nested loops' counters, integer locals
+the loop never writes and hoisted record scalars run PLAIN behind a guard evaluated once at
+the loop's entry (every leaf not the sentinel, every chain's magnitude bound fits), the
+checked loop being the `else` arm (`composite` 103 → 68 µs: `j * lw + i`, `x0 + i`, `y0 + j`
+over record scalars no static proof can bound) — and is the first bisect step for a wrong
+index or accumulate in a counted loop on native; `LOFT_HOIST_VERIFY=1` is the falsifier and
+`LOFT_TRACE_CHAIN=1` names every loop admitted and declined.
 **`LOFT_NO_BLOCK_REPEAT=1`** (runtime, BOTH backends) makes `[x; n]` fill one element at a
 time again — a `copy_block` and a `copy_claims` call each — where with it off
 `Stores::fill_from_template` doubles block copies and walks claims only for a heap-owning

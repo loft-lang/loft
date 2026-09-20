@@ -128,12 +128,29 @@ fn probe_form(op_name: &str, args: &[Value]) -> Option<&'static str> {
 /// nest, but the counter test's compare and the discharge's null test do) is untouched.
 fn nest_form(op_name: &str, args: &[Value]) -> Option<&'static str> {
     match (op_name, args.len()) {
-        ("OpAddInt", 2) => Some("wrapping_add"),
-        ("OpMinInt", 2) => Some("wrapping_sub"),
-        ("OpMulInt", 2) => Some("wrapping_mul"),
+        // The `*Nullable` twins reach here only through a guarded CHAIN (`@FR-R-GuardedChain`
+        // admits them; the nest matcher never does), and a chain the guard admits has no
+        // fault for the twin to be silent about.
+        ("OpAddInt" | "OpAddIntNullable", 2) => Some("wrapping_add"),
+        ("OpMinInt" | "OpMinIntNullable", 2) => Some("wrapping_sub"),
+        ("OpMulInt" | "OpMulIntNullable", 2) => Some("wrapping_mul"),
         ("OpMinSingleInt", 1) => Some("wrapping_neg"),
         _ => None,
     }
+}
+
+/// `@FR-R-Range`'s plain form: the wrapping operator for `+ - *` and negation (the exact
+/// value — the range proved no step overflows), the bare `/` or `%` for a division whose
+/// divisor's range excludes zero.
+fn write_range_plain(ctx: &mut EmitCtx<'_, '_>, form: &str, args: &[Value]) -> io::Result<()> {
+    if form == "/" || form == "%" {
+        write!(ctx.w, "((")?;
+        ctx.emit(&args[0])?;
+        write!(ctx.w, ") {form} (")?;
+        ctx.emit(&args[1])?;
+        return write!(ctx.w, "))");
+    }
+    write_plain(ctx, form, args)
 }
 
 /// `((a).wrapping_add(b))` / `((a).wrapping_neg())` — the nest form of one op.
@@ -170,6 +187,39 @@ impl OpEmitter for IntArithEmitter {
             }
             return write_plain(ctx, form, args);
         }
+        // `@FR-R-GuardedChain` — an op of an admitted chain: the plain operator under the
+        // loop's guard, the checked template otherwise.  The guard is loop-invariant, so LLVM
+        // unswitches the loop on it once and the body is emitted once.
+        if !ctx.output.release_pass_probe
+            && let Some(guard) = ctx.output.plain_chain_guard(args)
+            && let Some(form) = nest_form(ctx.def_fn.name(), args)
+        {
+            let name = ctx.def_fn.name();
+            if let Some(g) = &guard {
+                write!(ctx.w, "(if {g} {{ ")?;
+            }
+            if ctx.output.hoist_verify {
+                write!(ctx.w, "ops::range_verify(")?;
+                write_plain(ctx, form, args)?;
+                write!(ctx.w, ", ")?;
+                ctx.output.chains_suspended += 1;
+                let checked = self.emit(ctx, args);
+                ctx.output.chains_suspended -= 1;
+                checked?;
+                write!(ctx.w, ", \"{name}\")")?;
+            } else {
+                write_plain(ctx, form, args)?;
+            }
+            if guard.is_some() {
+                write!(ctx.w, " }} else {{ ")?;
+                ctx.output.chains_suspended += 1;
+                let checked = self.emit(ctx, args);
+                ctx.output.chains_suspended -= 1;
+                checked?;
+                write!(ctx.w, " }})")?;
+            }
+            return Ok(());
+        }
         if ctx.output.release_pass_probe
             && let Some(form) = probe_form(ctx.def_fn.name(), args)
         {
@@ -204,6 +254,26 @@ impl OpEmitter for IntArithEmitter {
                     return write!(ctx.w, "))");
                 }
             }
+        }
+        // `@FR-R-Range` — the result provably fits the type, so no operation can fault and
+        // the processor's operator answers exactly what the checked template would.
+        if !ctx.output.nn_fast_disabled
+            && let Some(form) = crate::generation::range::plain_form(ctx.def_fn.name(), args.len())
+            && ctx.output.op_range(ctx.def_fn.name(), args).is_some()
+        {
+            if ctx.output.hoist_verify {
+                write!(ctx.w, "ops::range_verify(")?;
+                write_range_plain(ctx, form, args)?;
+                write!(ctx.w, ", ")?;
+                // The checked copy: the ordinary emission with the range arm held off.
+                let name = ctx.def_fn.name();
+                ctx.output.range_suspended += 1;
+                let checked = self.emit(ctx, args);
+                ctx.output.range_suspended -= 1;
+                checked?;
+                return write!(ctx.w, ", \"{name}\")");
+            }
+            return write_range_plain(ctx, form, args);
         }
         if !ctx.output.nn_fast_disabled
             && let Some(sym) = literal_divisor_form(ctx.def_fn.name(), args)

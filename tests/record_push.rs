@@ -23,25 +23,28 @@ const CELLS: &str =
 /// fused uses (slot + finish), template `OpNewRecord(cell,` calls left)` — the predictions
 /// written beside the cells before the emitters existed; the group column was added
 /// 2026-09-18 with the group header, and each row it moved is re-derived beside it.
+// Uses, group headers and template mints count ×2 where the loop is an INNERMOST loop
+// with a chain: its body is emitted twice under its chain guard (`@FR-R-GuardedChain`,
+// 2026-09-20); a LOOP header is bound once, outside the arms.
 const EXPECTED: &[(&str, usize, usize, usize, usize)] = &[
-    ("n_m1", 1, 0, 2, 0), // c1: the literal append across growth
+    ("n_m1", 1, 0, 4, 0), // c1: the literal append across growth
     ("n_m2", 1, 0, 2, 0), // c2: the builder append (smooth's shape), delivery guard kept
     ("n_m3", 1, 0, 2, 0), // c3: the partial literal writes every field explicitly
-    ("n_m4", 1, 0, 2, 0), // c4: the same pin through a call
+    ("n_m4", 1, 0, 4, 0), // c4: the same pin through a call
     ("n_m5", 0, 0, 0, 1), // c5: a borrow-returning element declines the loop (V-s c12's
     //                        class) and its delivery declines the group too — template
-    ("n_m6", 1, 0, 2, 0), // c6: boolean, integer, float fields through the slot
+    ("n_m6", 1, 0, 4, 0), // c6: boolean, integer, float fields through the slot
     ("n_m7", 0, 0, 0, 1), // c7: a text field — the formatting write into the element is a
     //                        store write the admission declines, loop and group alike
-    ("n_m8", 0, 1, 2, 0), // c8: a nested collection field — the element owns heap: the
+    ("n_m8", 0, 2, 4, 0), // c8: a nested collection field — the element owns heap: the
     //                        GROUP header takes it, its slot zeroed at the mint (the
     //                        literal `xs` mints a store, which declines the LOOP)
-    ("n_m9", 0, 0, 0, 1), // c9: a keyed container is a keyed insert — not admitted
+    ("n_m9", 0, 0, 0, 2), // c9: a keyed container is a keyed insert — not admitted
     ("n_m10", 0, 0, 0, 1), // c10: a `__nullable<Pt>` element is not a plain struct
     ("n_m11", 0, 1, 2, 0), // c11: the self-reading push declines the LOOP (V-s), but the
     //                        group's own header serves it: `len(out)` reads the store
     //                        and the bump lands at the finish
-    ("n_m12", 2, 0, 4, 0), // c12: two minted paths, one header each
+    ("n_m12", 2, 0, 8, 0), // c12: two minted paths, one header each
     ("n_m13", 1, 0, 2, 0), // c13: a mint and a scalar push, both fused
     ("n_m14", 0, 0, 0, 1), // c14: a field-path mint is outside the bare-variable admission
     ("n_m15", 0, 2, 4, 0), // c15: the two singleton appends outside any loop — one GROUP

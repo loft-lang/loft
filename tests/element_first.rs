@@ -19,9 +19,11 @@ const CELLS: &str =
 /// `(function, elements minted at a declaration site)`.
 const EXPECTED: &[(&str, usize)] = &[
     ("n_c1", 1), // the base shape: two temps, one early mint
-    ("n_c2", 1), // the fronds shape: builds under if arms, append after
+    ("n_c2", 2), // the fronds shape: builds under if arms, append after — the loop body is
+    //              emitted twice under its chain guard (`@FR-R-GuardedChain`, 2026-09-20)
     ("n_c3", 0), // a temp read AFTER the append
-    ("n_c4", 1), // two appends: the SECOND pairs (the first keeps its copy and merely
+    ("n_c4", 2), // two appends (×2: the loop body is emitted twice under its chain guard,
+    //              `@FR-R-GuardedChain`): the SECOND pairs (the first keeps its copy and merely
     // reads the slot), the first is declined by the use-reconciliation
     ("n_c5", 0), // `len(out)` read between declaration and append
     ("n_c6", 1), // a single-field wrapper
