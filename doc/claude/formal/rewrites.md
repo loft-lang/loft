@@ -800,7 +800,13 @@ Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range
                  carrying a `Yield`, a `Parallel` or a `CallRef` is never copied: it
                  is not this rewrite's to run twice, and a generator's loop body
                  carries the native collector's REFUSAL, which copied reaches the
-                 author twice.  The
+                 author twice.  Inside a COROUTINE's state machine the guard is
+                 not emitted at all: a persistent local is spelled `self.var_…`
+                 there, so a guard naming one emits an identifier that does not
+                 exist, and the machine RE-ENTERS its loop across a `next_*`
+                 call, so a fact proved once at entry is not proved for the
+                 resumes after it (`R-BoundedNest`'s guard declines there for the
+                 same second reason).  The
                  `*Nullable` twins of `+ - *` are chain operators too: a chain the
                  guard admits has no fault for them to be silent about.  A chain any
                  of whose leaves is not one of these is declined whole and its

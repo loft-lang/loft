@@ -1698,6 +1698,11 @@ impl Output<'_> {
         // `Output` instance and would otherwise inherit stale declared marks
         // for `__yf_*` / `__vdb_*` etc., causing E0425 in the eager-collect
         // factory path.
+        // `@FR-R-GuardedChain` / `@FR-R-BoundedNest` — a loop-entry guard declines inside
+        // this body: a persistent local is spelled `self.var_…` there, and a state machine
+        // re-enters its loop across a `next_*` call, so a fact proved at entry is not proved
+        // for the resumes after it.
+        let prev_in_coroutine = std::mem::replace(&mut self.in_coroutine_body, true);
         let prev_persistent = std::mem::take(&mut self.coroutine_persistent_fields);
         let prev_allocated = std::mem::take(&mut self.coroutine_allocated_vars);
         self.coroutine_persistent_fields.clone_from(&fields);
@@ -1718,6 +1723,7 @@ impl Output<'_> {
                 .any(|s| matches!(s, YieldSegment::ForLoopBody { .. }));
         emit_drop_stores(w, &persistent, &fields, self.data, def_nr, owns_snapshots)?;
         writeln!(w, "}}\n")?;
+        self.in_coroutine_body = prev_in_coroutine;
         self.coroutine_persistent_fields = prev_persistent;
         self.coroutine_allocated_vars = prev_allocated;
         for v in newly_declared {

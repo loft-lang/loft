@@ -190,3 +190,56 @@ fn the_switch_restores_the_checked_loops() {
         got["n_c1_run"]
     );
 }
+
+/// `@FR-R-GuardedChain` / `@FR-R-BoundedNest` — loft#928's generator corpus, caught by CI's
+/// native corpus and by nothing faster.  A coroutine's state-machine body carries NO
+/// loop-entry guard, for two reasons: its persistent locals are spelled `self.var_…`, so a
+/// guard naming one emits an identifier that does not exist (`E0425` on
+/// `var_i__1__index`), and the machine RE-ENTERS its loop across a `next_*` call, so a fact
+/// proved once at entry is not proved for the resumes after it.
+///
+/// Non-vacuous by construction: the same run asserts the ordinary cells file still emits
+/// guards, so a detector that had gone blind fails here rather than passing quietly.
+#[test]
+fn a_coroutine_body_carries_no_loop_entry_guard_and_still_compiles() {
+    let gen_src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scripts/928-generator-duplicate-local-name.loft");
+    let out = std::env::temp_dir().join(format!("loft_gc_coroutine_{}.rs", std::process::id()));
+    let status = loft(
+        &[
+            "--native-emit",
+            out.to_str().unwrap(),
+            gen_src.to_str().unwrap(),
+        ],
+        &[],
+    );
+    assert!(
+        out.exists(),
+        "no Rust emitted (exit {:?}): {}",
+        status.status,
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
+    let _ = std::fs::remove_file(&out);
+    for marker in ["GuardedChain guard", "BoundedNest guard"] {
+        assert_eq!(
+            rust.matches(marker).count(),
+            0,
+            "a generator's emission carries no `{marker}`"
+        );
+    }
+    // The detector is alive: the ordinary cells still guard their loops.
+    assert!(
+        counts(&emit("alive", &[]))["n_c1_run"][0] > 0,
+        "the guard still fires outside a coroutine"
+    );
+    // And the program itself compiles and runs on native, which is what E0425 denied.
+    let ran = loft(&["--native", gen_src.to_str().unwrap()], &[]);
+    let stdout = String::from_utf8_lossy(&ran.stdout).into_owned();
+    assert!(
+        ran.status.success() && stdout.trim_end().ends_with("ok"),
+        "the generator corpus runs on native: exit {:?}\nstdout: {stdout}\nstderr: {}",
+        ran.status,
+        String::from_utf8_lossy(&ran.stderr)
+    );
+}

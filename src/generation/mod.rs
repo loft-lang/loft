@@ -1065,6 +1065,22 @@ pub struct Output<'a> {
     /// the current `impl LoftCoroutine`.  A second `Set(v, Null)` on the same field is the
     /// @P302 in-place clear, which must NOT re-run `null_named` (that would orphan the store).
     pub coroutine_allocated_vars: HashSet<u16>,
+    /// `@FR-R-GuardedChain` / `@FR-R-BoundedNest` — true while the body of a coroutine's
+    /// state machine is being emitted (`impl LoftCoroutine`), and the reason both LOOP-ENTRY
+    /// guards decline there.
+    ///
+    /// Two reasons, and the second is the one that would survive a spelling fix.  A
+    /// generator's persistent locals live on the state struct, so a guard that spells one
+    /// `var_i__1__index` names a Rust identifier that does not exist (loft#928's corpus file,
+    /// caught as `E0425` in CI and not by any pin).  And a state machine RE-ENTERS its loop
+    /// across a `next_*` call, so a fact established once at loop entry is not established
+    /// for the resumes that follow it — a guard evaluated in one activation cannot license
+    /// plain arithmetic in another.
+    ///
+    /// Kept as its own flag rather than read off `coroutine_persistent_fields` being
+    /// non-empty: a coroutine whose locals all happen to be non-persistent would spell every
+    /// variable correctly and still re-enter, so the empty map is not this question.
+    pub in_coroutine_body: bool,
     /// When true, `Value::Int` emits a `(d_nr_u32, null_DbRef)` tuple
     /// instead of `d_nr_i32`.  Set during fn-ref variable assignment so
     /// if-else branches produce the correct tuple type.
@@ -1939,6 +1955,7 @@ impl<'a> Output<'a> {
             vec_bounds: Vec::new(),
             plain_nest: 0,
             bounded_nest_disabled: std::env::var("LOFT_NO_BOUNDED_NEST").is_ok_and(|v| v != "0"),
+            in_coroutine_body: false,
             plain_chains: Vec::new(),
             chains_suspended: 0,
             chain_guard_disabled: std::env::var("LOFT_NO_GUARDED_CHAIN").is_ok_and(|v| v != "0"),
@@ -2407,7 +2424,11 @@ impl Output<'_> {
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<bool> {
-        if self.bounded_nest_disabled || self.hoist_disabled || self.release_pass_probe {
+        if self.bounded_nest_disabled
+            || self.hoist_disabled
+            || self.release_pass_probe
+            || self.in_coroutine_body
+        {
             return Ok(false);
         }
         let fn_name = self.data.def(self.def_nr).name().to_string();
@@ -2600,7 +2621,11 @@ impl Output<'_> {
         w: &mut dyn Write,
         lp: &crate::data::Block,
     ) -> std::io::Result<ChainGuard> {
-        if self.chain_guard_disabled || self.hoist_disabled || self.release_pass_probe {
+        if self.chain_guard_disabled
+            || self.hoist_disabled
+            || self.release_pass_probe
+            || self.in_coroutine_body
+        {
             return Ok(ChainGuard::None);
         }
         let data = self.data;

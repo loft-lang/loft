@@ -73,7 +73,16 @@ by the cells: a `(R-LoopRecord)` local must be declared before any guarded arm a
 both arms close (the loop emission's order, corrected for the bounded nest too).  A body carrying a `Yield`, a `Parallel` or a `CallRef` is never copied — the hoist family
 refuses those anyway, and a generator's loop body carries the native collector's refusal, which
 copied delivers the same `compile_error!` to the author twice (`native_yield_channel`'s
-"exactly once", the one user-facing regression the corpus caught).  Switches
+"exactly once", the one user-facing regression the corpus caught).  And inside a COROUTINE's
+state machine neither loop-entry guard is emitted at all — a persistent local is spelled
+`self.var_…` there, so a guard naming one emits an identifier that does not exist (`E0425` on
+`var_i__1__index`, loft#928's corpus file, red on CI's native corpus and on nothing faster),
+and the machine RE-ENTERS its loop across a `next_*` call, so a fact proved once at entry is
+not proved for the resumes after it.  The second reason is the one that survives a spelling
+fix, and it is why `R-BoundedNest` declines there too.  Pinned by
+`guarded_chain::a_coroutine_body_carries_no_loop_entry_guard_and_still_compiles`, which is
+non-vacuous in its own run (the ordinary cells still guard) and falsified by sabotage.
+Switches
 `LOFT_NO_RANGE_ARITH`, `LOFT_NO_GUARDED_CHAIN`; falsifier `LOFT_HOIST_VERIFY=1`
 (`ops::range_verify` at every admitted operator); cells `tests/scripts/157-range-arith.loft`
 a1–a9 and `157-guarded-chain.loft` c1–c6 against the interpreter under every switch and
