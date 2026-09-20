@@ -9,6 +9,44 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A collection a call answers releases its elements — D-heap-13 closed (2026-09-20)
+
+Both backends, parse + scope pass.  `(H-Move)` makes `d = mkv()` a move, so the local owns the
+result and `(H-Drop)` owes its elements a release at that owner's scope end.  It did not run:
+the binding's backing is the callee's return buffer, typed as the bare collection, and
+`scopes::drop_hook` read only `Reference | Enum`.  Minted, read back, never released, with no
+diagnostic — every free-side instrument is blind to it, because the memory IS freed and only
+the hook is skipped (loft#1551).
+
+Two facts, and the register's earlier attempt had the first one wrong.  **The cascade is the
+COLLECTION's own**: `vector<τ>` already has a def beside the wrapper, so it now carries a
+cascade whose `self` IS the collection — one walk of `self`, no own hook, no fields
+(`synth_drop_cascades`' `DefType::Vector` target, `cascade_self_type`, and
+`drop_elements_loop` taking the collection VALUE so a record's cascade and a collection's share
+one body).  Handing the WRAPPER's cascade a collection binding instead releases on `--native`
+and silently does nothing on `--interpret`, because a `vector<τ>` binding's address is the
+wrapper record's on native alone (`@1,8` against `@1,12`).  **And it runs over the BINDING the
+buffer delivered to, and only where there is one** (`delivered_binding`) — the owner `(H-Drop)`
+names, and the only subject that works on the interpreter, where `OpDatabase`'s reuse arm
+claims a fresh record in the cleared store while native re-establishes record 1, leaving the
+caller's buffer naming the record it held before the call.  Requiring a binding is what keeps
+`b.v = mkv()` single: that buffer has no binding and the field already releases it.
+
+The register's `d = mkv(); e = d` "double" was a misreading and its oracle settles it: the bind
+COPIES (measured — `e += [mk()]` leaves `d` at 1), so two structures owe two releases, and the
+no-call twin releases twice both before and after.  Not reached, both pre-existing and both
+measured against the same oracle: a local REASSIGNED in a loop through a call (one release
+where the no-call twin gives three), and a nested `vector<vector<τ>>` (whose no-call twin
+releases nothing either).
+
+Guard `tests/scripts/1551-a-collection-a-call-answers-releases-its-elements.loft`: eleven cells
+asserting the exact drop TRACE with its no-call oracle beside each, byte-identical on both
+backends.  Falsified by sabotage (the arm made to answer `u32::MAX` fails `a1` first on both
+backends and the drop gate reports `p_v5`–`p_v7` `clean -> LOST`).  The drop gate's verdict on
+the cure is exactly those three lines GONE with **no NEW line on either baseline** and the
+controls `p_v8`/`p_v9` unmoved; both baselines re-blessed and the `D-heap-13` deviation retired
+from `LEASE_DEVIATIONS`.
+
 ### C120's successor, twice over — `R-Range` and `R-GuardedChain` (2026-09-20)
 
 `--native`, generation time, both default ON.  **`(R-Range)`** (`formal/rewrites.md`,

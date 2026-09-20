@@ -1384,8 +1384,10 @@ const CENSUS_BLIND: &[&str] = &[];
 /// `D-heap-15` cells release TWICE (`p_o2` and `p_i2` also on the scorer's EARLY channel, so
 /// twice AND before a read), while the `D-heap-16` cells release NONE — the fresh value of a
 /// `??` default arm, which has no source to hand over and so is not `D-heap-14`'s family.
+// `D-heap-13` was retired 2026-09-20 with its fix (a collection a call answers releases
+// through the binding, `scopes::drop_hook`'s collection arm): `p_v5`–`p_v7` moved LOST →
+// clean on both backends and `p_v8` / `p_v9`, the controls that bound it, did not move.
 const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[
-    ("D-heap-13", &["p_v5", "p_v6", "p_v7"]),
     (
         "D-heap-15",
         &[

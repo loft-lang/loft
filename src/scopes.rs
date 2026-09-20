@@ -17400,38 +17400,87 @@ fn call(to: &'static str, v: u16, data: &Data) -> Value {
 /// null here and correctly does not fire, while one that WAS adopted never reaches this
 /// branch at all (it takes the `OpFreeRefIfDistinct` pairing above).
 fn drop_hook(function: &Function, v: u16, data: &Data) -> Option<Value> {
-    // A struct-enum binding is a heap record exactly as a `Reference` one is — it just
-    // carries a discriminator at its head — so it drops the same way. Reading only
-    // `Reference` here is why an enum's cascade was synthesized and then never called
-    // (@PLN139 stage D).
-    //
-    // D-heap-13 (loft#1551) — and reading only those two is why a COLLECTION a call answers
-    // releases nothing: its backing is the callee's return buffer, typed as the bare
-    // collection.  The gate is the site, confirmed by probe; a WIDENING here is not the cure,
-    // and that was measured rather than assumed.  Passing the bare-collection DbRef to the
-    // wrapper's cascade makes `--native` correct and leaves `--interpret` unchanged, because
-    // a `vector<T>` binding's address is the wrapper record's on native alone (`@1,8` there,
-    // `@1,12` here — the same backend discrepancy `Stores::clear_vector_release` records, and
-    // why IT asks the store's SHAPE instead of an offset).  So the cure has to reach the
-    // elements without naming the wrapper's address: a release the runtime performs from the
-    // collection itself, on both backends, which is a unit of its own and not a gate edit.
-    let (Type::Reference(d, _) | Type::Enum(d, true, _)) = function.tp(v).base() else {
-        return None;
-    };
     // @PLN139 — the CASCADE, not the bare hook: for a type that owns droppable members it
     // is the synthesized function that runs the type's own hook and then releases what it
     // owns, and for every other type it IS the bare hook (`Data::drop_cascade_nr`), so a
     // program with no containers is unchanged.
-    let nr = data.drop_cascade_nr(*d);
+    let nr = match function.tp(v).base() {
+        // A struct-enum binding is a heap record exactly as a `Reference` one is — it just
+        // carries a discriminator at its head — so it drops the same way. Reading only
+        // `Reference` here is why an enum's cascade was synthesized and then never called
+        // (@PLN139 stage D).
+        Type::Reference(d, _) | Type::Enum(d, true, _) => data.drop_cascade_nr(*d),
+        // `@FR-H-Drop` / D-heap-13 (loft#1551) — and reading only those two is why a COLLECTION a call
+        // answers released nothing: its backing is the callee's return buffer, typed as the
+        // bare collection, so this gate turned it away.  `(H-Move)` makes `d = mkv()` a move
+        // and `(H-Drop)` owes its elements a release at the owner's scope end.
+        //
+        // The cascade called is the COLLECTION's own (`collection_def_nr`), not the wrapper
+        // record's, and that is measured rather than stylistic: handing the wrapper's
+        // cascade this binding's DbRef releases on `--native` and silently does nothing on
+        // `--interpret`, because a `vector<T>` binding's address is the wrapper record's on
+        // native alone (`@1,8` there, `@1,12` here — the discrepancy
+        // `Stores::clear_vector_release` carries, and why IT asks the store's SHAPE rather
+        // than an offset).  A collection cascade walks `self`, so one IR releases on both.
+        Type::Vector(elem, _) => data.drop_cascade_nr(data.collection_def_nr(elem)),
+        _ => return None,
+    };
     if nr == u32::MAX {
         return None;
     }
-    let live = Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(v)]);
+    // D-heap-13 — the cascade runs over the BINDING the buffer delivered to, where there is
+    // one.  `(H-Drop)` names the owner, and for a collection a call answers that is the
+    // author's local: `(H-Move)` places the fresh result where it is produced.  It also has
+    // to be the local for the release to happen at all on the INTERPRETER, and that is
+    // measured: `OpDatabase`'s reuse arm claims a FRESH record in the cleared store there
+    // while native re-establishes record 1, so after the callee fills it the caller's buffer
+    // variable still names the record it held before the call — empty — and the binding names
+    // the delivered one.  On native the two are one address, so the subject changes nothing.
+    let subject = match function.tp(v).base() {
+        // The collection arm releases through the BINDING and only where there is one: a
+        // buffer nobody bound handed its value somewhere that releases it (a field, an
+        // argument), and cascading over the buffer as well releases twice — measured on
+        // `b.v = mkv()`, which doubles on `--native` where the field's place IS the buffer.
+        Type::Vector(_, _) => delivered_binding(function, v)?,
+        _ => v,
+    };
+    let live = Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(subject)]);
     Some(Value::If(
         Box::new(live),
-        Box::new(Value::Call(nr, vec![Value::Var(v)])),
+        Box::new(Value::Call(nr, vec![Value::Var(subject)])),
         Box::new(Value::Null),
     ))
+}
+
+/// `@FR-H-Drop` / D-heap-13 — the local a return BUFFER delivered its collection to: the one
+/// whose type borrows `buffer` and is a collection itself.  `(H-Move)` places a fresh call
+/// result where it is produced, so that local is the owner whose scope end the hook belongs to.
+///
+/// `None` unless there is exactly one.  Two bindings naming one buffer cannot both be the
+/// owner `(H-Drop)` asks for, and releasing through a guess would double a drop — which
+/// `(H-Drop)` rules out more firmly than it rules out losing one — so the ambiguous case
+/// keeps the buffer as the subject and behaves as it did before.
+fn delivered_binding(function: &Function, buffer: u16) -> Option<u16> {
+    // A hidden RETURN buffer only (`__ref_N`).  A local's own `__vdb_N` backing already
+    // releases through itself, and redirecting THAT onto a binding that borrows it releases
+    // twice — measured on `d = mkv(); e = d`, the shape D-heap-13 warns is not a control.
+    if !function.name(buffer).starts_with("__ref") {
+        return None;
+    }
+    let mut found = None;
+    for x in 0..function.count() {
+        if x == buffer
+            || !matches!(function.tp(x).base(), Type::Vector(_, _))
+            || !function.tp(x).depend().contains(&buffer)
+        {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = Some(x);
+    }
+    found
 }
 
 /// @PLN85 skip_free-orphan (case a): collect the `skip_free` text `__ncc_N` temps

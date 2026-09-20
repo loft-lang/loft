@@ -1,0 +1,133 @@
+// loft#1551 / `formal/heap.md` D-heap-13 — a COLLECTION a call answers, bound to a local,
+// releases its elements at the owner's scope end.
+//
+// `(H-Move)` makes `d = mkv()` a move — a fresh call result placed where it is produced — so
+// the local is the owner, `(H-Lease)` gives that owner its own lease, and `(H-Drop)` runs the
+// hook at its scope end.  It did not run: the binding's backing is the callee's return
+// buffer, typed as the bare collection, and `scopes::drop_hook` read only `Reference | Enum`,
+// so nothing was emitted.  Minted, read back, never released, with no diagnostic — every
+// free-side instrument is structurally blind to it, because the MEMORY is freed correctly and
+// only the hook is skipped.
+//
+// Two things about the cure are measured rather than assumed, and both are why a one-line
+// gate widening is not it:
+//   * the cascade called is the COLLECTION's own (`vector<T>`'s, synthesized to walk `self`),
+//     not the wrapper record's.  Handing the wrapper's cascade a collection binding releases
+//     on `--native` and silently does nothing on `--interpret`, because a `vector<T>`
+//     binding's address is the wrapper record's on native alone (`@1,8` against `@1,12`).
+//   * it runs over the BINDING the buffer delivered to, and only where there is one.  On the
+//     interpreter `OpDatabase`'s reuse arm claims a FRESH record in the cleared store while
+//     native re-establishes record 1, so after the callee fills it the caller's buffer still
+//     names the record it held before the call — empty.  And a buffer nobody bound handed its
+//     value somewhere that already releases it: cascading over it too releases TWICE, which
+//     `b.v = mkv()` showed on native (cell g3 here).
+//
+// Every cell ASSERTS its drops, and each has its NO-CALL twin beside it as the oracle — the
+// shape the fix cannot touch — so "correct" is what the language already does for the same
+// program written without the call, not a number chosen here.  The trace is a FILE for the
+// reason `139-drop-cascade.loft` gives: a drop receives only `self`, so it cannot write into
+// a loft-side collection.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-20) — the collection arm of
+// `scopes::drop_hook` made to answer `u32::MAX` fails a1 FIRST on both backends with the
+// trace it was written to catch (`r1` where `r1,1` is owed), and the drop gate reports
+// `p_v5`–`p_v7` `clean -> LOST` (`released 0x, want 1`) on both baselines.  Restored, both
+// backends print `1551 ok` and the gate is clean.
+
+struct H { id: integer }
+struct B { v: vector<H>, n: integer }
+
+fn trace_path() -> text { return "loft_1551_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn OpDrop(self: H) { note("{self.id}"); }
+fn mk(id: integer) -> H { return H { id: id }; }
+fn mkv(id: integer) -> vector<H> { r: vector<H> = [mk(id)]; return r; }
+fn mks(id: integer) -> H { return H { id: id }; }
+fn mkb(id: integer) -> B { return B { v: [mk(id)], n: 1 }; }
+fn take(x: const vector<H>) -> integer { len(x) }
+
+// a1 — the filed shape: minted, read, and now released.
+fn a1() { d = mkv(1); note("r{len(d)}"); }
+
+// a2 — grown after the call: both elements belong to the binding.
+fn a2() { d = mkv(2); d += [mk(3)]; note("r{len(d)}"); }
+
+// a3 — passed on to a `const` parameter, which borrows and releases nothing.
+fn a3() { d = mkv(4); n = take(d); note("r{n}"); }
+
+// a9 / o1 — a COPY pair.  `e = d` copies (measured: growing `e` leaves `d` at 1), so there
+// are two structures and two releases.  o1 is the same pair without a call and is the
+// oracle: it released twice before this fix and releases twice after.
+fn a9() { d = mkv(10); e = d; note("r{len(e)}"); }
+fn o1() { f: vector<H> = [mk(30)]; g = f; note("r{len(g)}"); }
+
+// The four clean neighbours the entry bounded the defect with — each released exactly once
+// before the fix and must still.
+fn g1() { d = mks(6); note("r{d.id}"); }
+fn g2() { d = mkb(7); note("r{d.n}"); }
+fn g3() { b = B { v: [], n: 0 }; b.v = mkv(8); note("r{len(b.v)}"); }
+fn g4() { d: vector<H> = [mk(9)]; note("r{len(d)}"); }
+
+// g5 — a field assigned a LITERAL: g3's oracle, once on both backends.
+fn g5() { b = B { v: [], n: 0 }; b.v = [mk(31)]; note("r{len(b.v)}"); }
+
+// g6 — no droppable element at all: nothing is synthesized and nothing runs.
+fn g6() { v: vector<integer> = [1, 2]; note("r{len(v)}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  a1(); got = drain();
+  assert(got == "r1,1", "a1 a collection a call answers releases its element: {got}");
+
+  a2(); got = drain();
+  assert(got == "r2,2,3", "a2 an element appended after the call belongs to the binding: {got}");
+
+  a3(); got = drain();
+  assert(got == "r1,4", "a3 a const parameter borrows, so the binding still releases once: {got}");
+
+  a9(); got = drain();
+  assert(got == "r1,10,10", "a9 a copy pair is two structures and two releases: {got}");
+
+  o1(); got = drain();
+  assert(got == "r1,30,30", "o1 a9's no-call oracle answers the same: {got}");
+
+  g1(); got = drain();
+  assert(got == "r6,6", "g1 a struct from a call releases once: {got}");
+
+  g2(); got = drain();
+  assert(got == "r1,7", "g2 a struct CONTAINING the collection releases once: {got}");
+
+  g3(); got = drain();
+  assert(got == "r1,8", "g3 the same call into a FIELD releases once, not twice: {got}");
+
+  g4(); got = drain();
+  assert(got == "r1,9", "g4 a plain local vector releases once: {got}");
+
+  g5(); got = drain();
+  assert(got == "r1,31", "g5 g3's no-call oracle answers the same: {got}");
+
+  g6(); got = drain();
+  assert(got == "r2", "g6 no droppable element, nothing synthesized and nothing run: {got}");
+
+  println("1551 ok");
+}
