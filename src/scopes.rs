@@ -17404,6 +17404,17 @@ fn drop_hook(function: &Function, v: u16, data: &Data) -> Option<Value> {
     // carries a discriminator at its head — so it drops the same way. Reading only
     // `Reference` here is why an enum's cascade was synthesized and then never called
     // (@PLN139 stage D).
+    //
+    // D-heap-13 (loft#1551) — and reading only those two is why a COLLECTION a call answers
+    // releases nothing: its backing is the callee's return buffer, typed as the bare
+    // collection.  The gate is the site, confirmed by probe; a WIDENING here is not the cure,
+    // and that was measured rather than assumed.  Passing the bare-collection DbRef to the
+    // wrapper's cascade makes `--native` correct and leaves `--interpret` unchanged, because
+    // a `vector<T>` binding's address is the wrapper record's on native alone (`@1,8` there,
+    // `@1,12` here — the same backend discrepancy `Stores::clear_vector_release` records, and
+    // why IT asks the store's SHAPE instead of an offset).  So the cure has to reach the
+    // elements without naming the wrapper's address: a release the runtime performs from the
+    // collection itself, on both backends, which is a unit of its own and not a gate edit.
     let (Type::Reference(d, _) | Type::Enum(d, true, _)) = function.tp(v).base() else {
         return None;
     };
