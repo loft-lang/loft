@@ -25,13 +25,19 @@ const EXPECTED: &[(&str, usize, usize, usize)] = &[
     ("n_c3", 1, 1, 0), // the value READS the pushed vector: since § V-w the read rides a
     // pre-push TEMP instead of a per-iteration whole-vector copy, so the loop hoists —
     // the tail read serves from the push header and the accumulator is linear
-    ("n_c4", 2, 2, 0),   // two pushed locals
-    ("n_c5", 1, 1, 0),   // a view root, alone: admitted
-    ("n_c6", 1, 1, 0),   // v pushed; the view w is dropped from the hoist (a runtime read)
-    ("n_c7", 1, 1, 1), // the outer loop holds out's push header and rows' header; the inner re-uses
-    ("n_c8", 0, 0, 0), // the pushed root is rebound
+    ("n_c4", 2, 2, 0), // two pushed locals
+    ("n_c5", 1, 1, 0), // a view root, alone: admitted
+    ("n_c6", 1, 1, 0), // v pushed; the view w is dropped from the hoist (a runtime read)
+    // c7: the outer loop holds out's push header and rows' header; the inner re-uses it.
+    // TWO hoisted pushes for one header since `(R-GuardedChain)` (2026-09-20): c7's inner
+    // loop is innermost, so it is emitted twice — the guarded plain copy and the checked
+    // `else` arm — and the one hoisted push appears in each.  `LOFT_NO_GUARDED_CHAIN=1`
+    // gives (1, 1, 1) again, and the header count is unchanged because the header is bound
+    // once, outside both arms.
+    ("n_c7", 1, 2, 1),
+    ("n_c8", 0, 0, 0),   // the pushed root is rebound
     ("n_fill", 1, 1, 0), // c9: a parameter's field, alone: admitted
-    ("n_c10", 1, 1, 0), // the growth ladder
+    ("n_c10", 1, 1, 0),  // the growth ladder
     ("n_c11", 0, 0, 1), // boolean / character pushes are not fusable: that loop declines; the read-only loop over b keeps its header
     ("n_c12", 1, 1, 1), // a push beside an in-place write to another owned local
     ("n_c13", 1, 1, 0), // a callee reads the length through the runtime

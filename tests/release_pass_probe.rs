@@ -61,8 +61,18 @@ fn the_default_build_keeps_every_checked_helper() {
         "l1's multiply is a checked helper by default"
     );
     assert!(
-        !l1.contains(".wrapping_mul(") && !l1.contains(".wrapping_add("),
-        "no wrapping operator is emitted without the probe"
+        !l1.contains(".wrapping_mul("),
+        "the probe's own change to the multiply is absent without it"
+    );
+    // The pin used to read "no wrapping operator is emitted without the probe".  That
+    // claim was true only while the probe was the SOLE source of one, and `(R-Range)` and
+    // `(R-GuardedChain)` retired it: a chain a static proof bounds, or one a loop-entry
+    // guard licenses, emits the processor's operator in the ordinary build too.  What
+    // still separates the two builds is that by default every operator no proof reaches
+    // keeps its checked helper — which is the claim the probe's own test inverts.
+    assert!(
+        l1.contains("ops::op_add_int(") || l1.contains("ops::op_add_long_nn("),
+        "the unproven additions keep their checked helpers by default"
     );
 }
 
