@@ -53,6 +53,27 @@ same pass: scanner-bound (1.6× alone; inlining `size` and `byte_at` by hand is 
 a long tail — no compiler lever of this kind.  Switches `LOFT_NO_RANGE_ARITH`,
 `LOFT_NO_GUARDED_CHAIN`; trace `LOFT_TRACE_CHAIN`; cells `157-range-arith.loft` a1–a9,
 `157-guarded-chain.loft` c1–c6; pins `tests/range_arith.rs`, `tests/guarded_chain.rs`.
+Three follow-ups the CORPUS caught and no pin did, all on 2026-09-20: a guarded body carrying
+a `Yield`, a `Parallel` or a `CallRef` is never COPIED (a generator's loop body carries the
+native collector's refusal, delivered twice when duplicated); inside a coroutine's state
+machine NEITHER loop-entry guard is emitted at all (a persistent local is spelled
+`self.var_…`, so the guard named an identifier that does not exist — `E0425`, `928-generator-
+duplicate-local-name.loft` — and the machine re-enters its loop across a `next_*` call, so a
+fact proved once at entry is not proved for the resumes after it, which is the reason that
+survives a spelling fix and is why `R-BoundedNest` declines there too); and two pins were
+re-derived, `release_pass_probe`'s "no wrapping operator without the probe" (retired: the two
+rewrites are now sources of one, and what separates the builds is that every UNPROVEN operator
+keeps its checked helper) and `push_hoist` n_c7 (1, 1, 1) → (1, 2, 1) (its inner loop is
+innermost, so the one hoisted push appears in each of the two arms).
+
+**Lane, 2026-09-20 late** (`compare.py --loft <this build> --skip-interp --repeat 3 --n-ref 500
+--n-native 500`, arm64; 14/14 hashes agree, **every judged row under the 4× bar, median ≈1.71×**):
+`hash` 1.04×, `resize` 1.37×, `render_marks` 1.53×, `fronds` 1.55×, `composite` 1.62×,
+`hair` 1.67×, `render_lock` 1.70×, `lock` 1.74×, `smooth` 1.75×, `fill_circle` 1.86×,
+`fill_star` 1.93×, `lock_curved` 2.05×, `wide_line` 2.22×, `parse` 3.08× — the one row over 3×,
+and the pass above says it has no compiler lever of this kind.  ⚠ `compare.py` defaults `--loft`
+to the binary on PATH: pass the repo build explicitly or the lane measures the INSTALLED loft
+and reads 15–180× while the hashes still agree.
 **`R-GroupPush` + the heap and rebound clauses SHIPPED 2026-09-18** (`formal/rewrites.md`, unit C of
 the store-traffic analysis in § Where to resume — the record-append machinery): a mint group that
 holds no push header binds one of its own after its reservation; an element that owns heap goes
