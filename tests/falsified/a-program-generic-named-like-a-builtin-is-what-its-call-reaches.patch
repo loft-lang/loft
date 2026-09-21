@@ -1,0 +1,41 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 54b1d6cb9..24c152aaa 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -17341,15 +17341,7 @@ impl Parser {
+             // parameter 'e'"*, *"Unknown variable 'e'"*, *"Field of unknown variable"*, and only
+             // then *"map: first argument must be a vector"*.  The author was sent to annotate a
+             // parameter the dense spelling infers fine (loft#1453).
+-            // A program definition of the name steers the argument where it has a `fn(…)`
+-            // parameter here.  Where it has none — it takes another arity, or another type at
+-            // this position — and the argument IS a lambda, the program's definition cannot be
+-            // what the call reaches with it, so the builtin's hint stands: withholding it
+-            // refused `count_if(v, |x| …)` beside an unrelated three-parameter `count_if`.
+-            let lambda_unsteered = fn_def_nr.is_none()
+-                || (!Self::seeds_lambda_hint(&self.expected)
+-                    && (self.lexer.peek_token("|") || self.lexer.peek_token("||")));
+-            if lambda_unsteered
++            if fn_def_nr.is_none()
+                 && !types.is_empty()
+                 && let Type::Vector(elm, _) = types[0].base()
+             {
+diff --git b/src/parser/dispatch.rs a/src/parser/dispatch.rs
+index 5adec0038..627313ac1 100644
+--- b/src/parser/dispatch.rs
++++ a/src/parser/dispatch.rs
+@@ -309,14 +309,8 @@ impl Parser {
+             Selection::NoneApplicable => return false,
+             Selection::NotDecidable => self.data.select_fn(source, name, types),
+         };
+-        // A program's GENERIC is as much a definition as its function: `fn reverse<T>(v:
+-        // vector<T>)` is what `reverse(a)` reaches.  Accepting only a `Function` left the
+-        // special form to answer a call the first pass had typed through the program's
+-        // template — refused as a type change where the result was bound, and answered by the
+-        // builtin, in silence, where it was not.  `definition_ranks` asks a template whether
+-        // it binds and its bounds hold.
+         d != u32::MAX
+-            && matches!(self.data.def_type(d), DefType::Function | DefType::Generic)
++            && self.data.def_type(d) == DefType::Function
+             && !crate::portable_path::is_stdlib_source(&self.data.def(d).position().file)
+             && self.definition_ranks(d, &routed).is_some()
+     }

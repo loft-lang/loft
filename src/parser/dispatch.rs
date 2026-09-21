@@ -309,8 +309,14 @@ impl Parser {
             Selection::NoneApplicable => return false,
             Selection::NotDecidable => self.data.select_fn(source, name, types),
         };
+        // A program's GENERIC is as much a definition as its function: `fn reverse<T>(v:
+        // vector<T>)` is what `reverse(a)` reaches.  Accepting only a `Function` left the
+        // special form to answer a call the first pass had typed through the program's
+        // template — refused as a type change where the result was bound, and answered by the
+        // builtin, in silence, where it was not.  `definition_ranks` asks a template whether
+        // it binds and its bounds hold.
         d != u32::MAX
-            && self.data.def_type(d) == DefType::Function
+            && matches!(self.data.def_type(d), DefType::Function | DefType::Generic)
             && !crate::portable_path::is_stdlib_source(&self.data.def(d).position().file)
             && self.definition_ranks(d, &routed).is_some()
     }

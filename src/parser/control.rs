@@ -17341,7 +17341,15 @@ impl Parser {
             // parameter 'e'"*, *"Unknown variable 'e'"*, *"Field of unknown variable"*, and only
             // then *"map: first argument must be a vector"*.  The author was sent to annotate a
             // parameter the dense spelling infers fine (loft#1453).
-            if fn_def_nr.is_none()
+            // A program definition of the name steers the argument where it has a `fn(…)`
+            // parameter here.  Where it has none — it takes another arity, or another type at
+            // this position — and the argument IS a lambda, the program's definition cannot be
+            // what the call reaches with it, so the builtin's hint stands: withholding it
+            // refused `count_if(v, |x| …)` beside an unrelated three-parameter `count_if`.
+            let lambda_unsteered = fn_def_nr.is_none()
+                || (!Self::seeds_lambda_hint(&self.expected)
+                    && (self.lexer.peek_token("|") || self.lexer.peek_token("||")));
+            if lambda_unsteered
                 && !types.is_empty()
                 && let Type::Vector(elm, _) = types[0].base()
             {
