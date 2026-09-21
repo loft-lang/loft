@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D3 (F20) — an instance is named by its arguments' spellings in every message:
+// `Box<integer>`, never a flattened `Box_integer_`.  (The arity refusal is pass 2's, so it
+// has a file of its own: `a-generic-struct-takes-its-declared-number-of-arguments`.)
+//
+// @falsified-at: 684cd140f — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/an-instance-names-its-arguments-in-its-messages.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — refused on both trees; the words move.
+//   ARMED: nothing.
+//   WITNESS: on the control `Box<integer>` is "`Box` is a generic struct — name its type
+//     arguments".
+//   HOLDS: the program is refused on both trees.
+// @EXPECT_ERROR: Variable 'x' cannot change type from text to Box<integer>
+
+struct Box<T> { v: T }
+
+fn main() {
+  b: Box<integer> = Box { v: 1 };
+  x: text = b;
+  println(x);
+}

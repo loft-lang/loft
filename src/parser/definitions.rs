@@ -3274,6 +3274,44 @@ impl Parser {
         if tp_nr != u32::MAX && self.data.def_type(tp_nr) == DefType::Unknown {
             return Some(Type::Unknown(tp_nr));
         }
+        // `D-Template` — an INSTANCE in type position (@PLN165 D3): `Box<integer>` names the
+        // struct `instance_def` mints for those arguments.
+        if tp_nr != u32::MAX
+            && self.data.def_type(tp_nr) == DefType::TypeTemplate
+            && self.lexer.has_token("<")
+        {
+            let mut args: Vec<Type> = Vec::new();
+            while let Some(t) = self.parse_type_full(on_d, false) {
+                args.push(t);
+                if !self.lexer.has_token(",") {
+                    break;
+                }
+            }
+            self.lexer.closing_angle();
+            let takes = self.data.def(tp_nr).type_params.len();
+            if takes != args.len() {
+                if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`{type_name}` takes {takes} type argument{}, and {} {} given",
+                        if takes == 1 { "" } else { "s" },
+                        args.len(),
+                        if args.len() == 1 { "is" } else { "are" }
+                    );
+                }
+                return Some(Type::Never);
+            }
+            let mut dep = Vec::new();
+            self.parse_depended(returned, &mut dep);
+            let inst = self.data.instance_def(&mut self.lexer, tp_nr, &args);
+            if inst == u32::MAX {
+                // An argument not resolved yet (pass 1), or one that still names a type
+                // variable (an OPEN instance, @PLN165 D5).
+                return Some(Type::Unknown(0));
+            }
+            return Some(Type::Reference(inst, crate::data::Deps::unknown(dep)));
+        }
         let link = self.lexer.link();
         if self.lexer.has_token("<")
             && let Some(value) = self.sub_type(on_d, type_name, link)
@@ -3572,7 +3610,7 @@ impl Parser {
             // enum. The `?` is a flag on the type, not the headline — hence postfix,
             // pairing with `x ?? d`. Keyed collections stay dense (a key denotes
             // presence) — `?` there is an error.
-            let nullable_elem = self.lexer.has_token("?");
+            let mut nullable_elem = self.lexer.has_token("?");
             if nullable_elem && type_name != "vector" {
                 diagnostic!(
                     self.lexer,
@@ -3597,6 +3635,7 @@ impl Parser {
                         | DefType::EnumValue
                         | DefType::Type
                         | DefType::Unknown
+                        | DefType::TypeTemplate
                 ) {
                     diagnostic!(
                         self.lexer,
@@ -3615,7 +3654,22 @@ impl Parser {
                     return Some(Type::Unknown(0));
                 }
             }
+            let element_is_template =
+                dn != u32::MAX && self.data.def_type(dn) == DefType::TypeTemplate;
             if let Some(tp) = self.parse_type(on_d, &sub_name, false) {
+                // @PLN165 D3 — a template element (`vector<Box<integer>?>`) writes its `?`
+                // after its own arguments, which `parse_type` has just read.
+                if element_is_template && !nullable_elem && self.lexer.has_token("?") {
+                    nullable_elem = true;
+                    if type_name != "vector" {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "`?` (nullable element) is only valid on `vector` — `{type_name}` \
+                             elements are always dense (a key / slot denotes presence)"
+                        );
+                    }
+                }
                 let sub_nr = if let Type::Unknown(d) = tp {
                     d
                 } else {
@@ -4316,6 +4370,7 @@ impl Parser {
         }
         // `D-Template` — a struct with a header is a type template: its variables are types
         // in its fields, and the definition is its own kind, so no struct site lays it out.
+        self.context_type_template = d_nr;
         if !header.is_empty() && self.bind_type_header(&header) {
             self.data.definitions[d_nr as usize].def_type = DefType::TypeTemplate;
         }
@@ -4401,6 +4456,11 @@ impl Parser {
                     return false;
                 }
             }
+        }
+        // The variables in HEADER order: `Box<integer, text>` binds its arguments by position.
+        let params: Vec<u32> = self.cur_type_vars.iter().map(|(_, h)| *h).collect();
+        if params.len() == header.len() {
+            self.data.definitions[self.context_type_template as usize].type_params = params;
         }
         for var in header {
             if var.bounds.is_empty() {

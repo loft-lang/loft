@@ -65,7 +65,10 @@ use sha2::{Digest, Sha256};
 ///
 /// 9 — `DefType::TypeTemplate` (code 11), a generic struct or enum (@PLN165 D2): an older
 /// reader panics on the code, so an image carrying one must not be read by it.
-const CACHE_FORMAT_VERSION: u8 = 9;
+///
+/// 10 — `Definition` carries `type_params`, `instance_of` and `instance_args` (stride
+/// 167 → 183, @PLN165 D2/D3): an older image lays the record out differently.
+const CACHE_FORMAT_VERSION: u8 = 10;
 
 /// Loft crate version — a release bump invalidates every cache.
 const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");

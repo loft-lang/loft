@@ -1080,6 +1080,18 @@ fn write_definition(out: &mut String, d: &Definition) {
     write_str_list(out, &d.scalars_to_box);
     out.push_str(",\"bounds\":");
     write_u32_list(out, &d.bounds);
+    // @PLN165 D2/D3 — a type template's variables; an instance's template and arguments.
+    out.push_str(",\"type_params\":");
+    write_u32_list(out, &d.type_params);
+    let _ = write!(out, ",\"instance_of\":{}", d.instance_of);
+    out.push_str(",\"instance_args\":[");
+    for (i, t) in d.instance_args.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        write_type(out, t);
+    }
+    out.push(']');
     // forced_size: Option<u8>, n ∈ {1,2,4,8}; 0 is never valid → encodes None.
     let _ = write!(out, ",\"forced_size\":{}", d.forced_size.unwrap_or(0));
     out.push_str(",\"purity\":");
@@ -1344,6 +1356,9 @@ fn definition_from_parsed(p: &Parsed) -> Result<Definition, TypeDecodeError> {
         mutated_captures: str_list(field(p, "mutated_captures")?)?,
         scalars_to_box: str_list(field(p, "scalars_to_box")?)?,
         bounds: u32_list(field(p, "bounds")?)?,
+        type_params: u32_list(field(p, "type_params")?)?, // @PLN165 D2
+        instance_of: as_u32(field(p, "instance_of")?)?,   // @PLN165 D3
+        instance_args: type_list(field(p, "instance_args")?)?, // @PLN165 D3
         forced_size: if forced == 0 { None } else { Some(forced) },
         purity: purity_from_parsed(field(p, "purity")?)?,
         field_groups: field_group_list(field(p, "field_groups")?)?,
@@ -2279,6 +2294,9 @@ mod tests {
             mutated_captures: Vec::new(),
             scalars_to_box: Vec::new(),
             bounds: vec![5, 9],
+            type_params: vec![12, 13],
+            instance_of: 11,
+            instance_args: vec![Type::Text(Deps::none()), Type::Reference(7, Deps::none())],
             const_ref: None,
             forced_size: Some(4),
             purity: Purity::Impure(ImpureCategory::HostIo),
@@ -2354,6 +2372,9 @@ mod tests {
             mutated_captures: Vec::new(),
             scalars_to_box: Vec::new(),
             bounds: Vec::new(),
+            type_params: Vec::new(),
+            instance_of: u32::MAX,
+            instance_args: Vec::new(),
             const_ref: None,
             forced_size: None,
             purity: Purity::Unknown,

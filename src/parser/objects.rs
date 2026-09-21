@@ -2064,6 +2064,31 @@ impl Parser {
         if d_nr != u32::MAX && matches!(self.data.def_type(d_nr), DefType::Unknown) {
             d_nr = u32::MAX;
         }
+        // @PLN165 D3 — a literal of a generic struct names the INSTANCE it builds: the one the
+        // expected type (a binding's annotation, a parameter) is, as `v: vector<integer> = []`
+        // takes its element type from the annotation.
+        if d_nr != u32::MAX
+            && self.data.def_type(d_nr) == DefType::TypeTemplate
+            && self.lexer.peek_token("{")
+        {
+            let expected = match self.expected.base() {
+                Type::Reference(inst, _) if self.data.def(*inst).instance_of == d_nr => *inst,
+                _ => u32::MAX,
+            };
+            if expected == u32::MAX {
+                if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`{name} {{ … }}` needs its type arguments — give the binding its type, \
+                         `x: {name}<integer> = {name} {{ … }}`"
+                    );
+                }
+                self.skip_braced();
+                return Type::Never;
+            }
+            d_nr = expected;
+        }
         if d_nr != u32::MAX {
             self.data.def_used(d_nr);
             t = self.data.def(d_nr).returned().clone();
@@ -4131,6 +4156,27 @@ impl Parser {
         self.vars.mark_inline_ref(orig);
         self.vars.set_rebind_orig(param, orig);
         orig
+    }
+
+    /// Consume a `{ … }` body whole, nested braces included, stopping at the end of input —
+    /// what a literal refused before its fields are typed leaves behind, so the parser stays
+    /// aligned for the next statement.
+    fn skip_braced(&mut self) {
+        if !self.lexer.has_token("{") {
+            return;
+        }
+        let mut depth = 1u32;
+        while depth > 0 {
+            if self.lexer.has_token("{") {
+                depth += 1;
+            } else if self.lexer.has_token("}") {
+                depth -= 1;
+            } else if matches!(self.lexer.peek().has, crate::lexer::LexItem::None) {
+                return;
+            } else {
+                self.lexer.cont();
+            }
+        }
     }
 
     pub(crate) fn parse_object(&mut self, td_nr: u32, code: &mut Value) -> Type {

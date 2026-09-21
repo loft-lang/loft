@@ -243,6 +243,9 @@ struct Definition {
   superseded: text, // @PLN102 arc C #superseded "Y" -> "" = not superseded
   c_symbol: text, // @PLN24 #c "sym" -> "" = not a C binding
   c_sig: text, // @PLN24 the declared C signature, e.g. "int(void*)"
+  type_params: vector<integer>, // @PLN165 D2 a type template's variables, in header order
+  instance_of: integer, // @PLN165 D3 the type template an instance was minted from; -1 = none
+  instance_args: vector<TypeT>, // @PLN165 D3 that instance's type arguments, header order
 }
 
 // One retained import (src/data.rs::AppliedImport).  `rebuild_indices` can

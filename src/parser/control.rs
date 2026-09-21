@@ -17224,6 +17224,7 @@ impl Parser {
                             if Self::seeds_collection_hint(&expected)
                                 || self.interpolation_target(&expected) != u32::MAX
                                 || Self::seeds_lambda_hint(&expected)
+                                || self.seeds_instance_hint(&expected)
                             {
                                 self.expected = expected;
                             } else if let Some(tuple) = self.tuple_hint_type(&expected) {
@@ -17302,7 +17303,7 @@ impl Parser {
                         // binding in the native emitter, and the `CallRef` arm in the
                         // reachability walk — the refusal has nothing left to protect.
                         self.expected = expected;
-                    } else if self.enum_context(&expected) {
+                    } else if self.enum_context(&expected) || self.seeds_instance_hint(&expected) {
                         self.expected = expected;
                     } else if Self::seeds_collection_hint(&expected) {
                         // #432 — seed a bare vector-literal argument's element width
@@ -18725,6 +18726,7 @@ impl Parser {
                         if Self::seeds_collection_hint(&expected)
                             || self.interpolation_target(&expected) != u32::MAX
                             || Self::seeds_lambda_hint(&expected)
+                            || self.seeds_instance_hint(&expected)
                         {
                             self.expected = expected;
                         }
@@ -18763,6 +18765,7 @@ impl Parser {
                 if Self::seeds_collection_hint(&expected)
                     || self.interpolation_target(&expected) != u32::MAX
                     || Self::seeds_lambda_hint(&expected)
+                    || self.seeds_instance_hint(&expected)
                 {
                     self.expected = expected;
                 }

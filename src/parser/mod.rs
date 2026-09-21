@@ -993,6 +993,8 @@ pub struct Parser {
     /// The variables a `struct` / `enum` header wrote where the language refuses one: its
     /// fields may name them, and the header's refusal already covers that.
     pub(crate) refused_header_vars: Vec<String>,
+    /// The struct whose header `bind_type_header` is binding (@PLN165 D2).
+    pub(crate) context_type_template: u32,
     /// The placeholder definition standing for a `(type-variable spelling, bound set)` pair.
     ///
     /// Sharing one placeholder across generic functions is what lets the stdlib's many
@@ -1559,6 +1561,7 @@ impl Parser {
             instance_bindings: Vec::new(),
             set_call_refs: Vec::new(),
             refused_header_vars: Vec::new(),
+            context_type_template: u32::MAX,
             type_var_holders: std::collections::HashMap::new(),
             type_var_bounds: std::collections::HashMap::new(),
             closure_vars: std::collections::HashMap::new(),
@@ -4139,6 +4142,15 @@ impl Parser {
     /// answer cannot differ between a call argument, a struct-literal field, a vector
     /// element, a block tail and a parameter default (loft#1067). LOFT.md states the
     /// rule as *the expected type wherever there is one* — this is "wherever".
+    /// @PLN165 D3 — is `tp` an INSTANCE of a generic struct (`Box<integer>`)?  A literal of
+    /// the template (`Box { … }`) cannot say which instance it builds, so an expected type
+    /// that is one tells it — the way an empty `[]` learns its element type.
+    pub(crate) fn seeds_instance_hint(&self, tp: &Type) -> bool {
+        matches!(tp.base(), Type::Reference(d, _)
+            if (*d as usize) < self.data.definitions.len()
+                && self.data.def(*d).instance_of != u32::MAX)
+    }
+
     pub(crate) fn seeds_lambda_hint(tp: &Type) -> bool {
         matches!(tp.base(), Type::Function(..))
     }
@@ -4183,6 +4195,7 @@ impl Parser {
             || crate::parser::vectors::is_collection(result)
             || self.interpolation_target(result) != u32::MAX
             || Self::seeds_lambda_hint(result)
+            || self.seeds_instance_hint(result)
         {
             self.expected = result.clone();
         } else if let Some(tuple) = self.tuple_hint_type(result) {
@@ -9878,25 +9891,17 @@ impl Parser {
     /// are separate definitions — so the order only fixes which is tried first, never the
     /// result.
     fn substitute_all(tp: Type, bindings: &[(u32, Type)]) -> Type {
-        bindings.iter().fold(tp, |t, (holder, bound_to)| {
-            Self::substitute_type(t, *holder, bound_to)
-        })
+        tp.substitute_all(bindings)
     }
 
     /// `[T ↦ C]` over one type — @FR-G-Mono's *"applied throughout"*, for the signature
     /// half.  Its twin for the variable table is `Function::subst_type`.
     fn substitute_type(tp: Type, tv_nr: u32, concrete: &Type) -> Type {
-        match tp {
-            Type::Reference(d, _) if d == tv_nr => concrete.clone(),
-            // Every former descends through the keystone, so `[T ↦ C]` reaches a type
-            // variable wherever it sits — `vector<T>`, `(T, T)`, `T?`, `iterator<T>`,
-            // `fn(T) -> T`, and whatever the next `Type` variant is.  The four arms
-            // this replaces were added one defect at a time (Plan-17 for the tuple,
-            // #493 for the optional, loft#1032 for the iterator) and each was the same
-            // omission a former further out; `Type::map_children` is exhaustive, so
-            // the next variant fails the build here rather than staying parametric.
-            other => other.map_children(&mut |c| Self::substitute_type(c.clone(), tv_nr, concrete)),
-        }
+        // Every former descends through the keystone (`Type::substitute`), so `[T ↦ C]`
+        // reaches a type variable wherever it sits.  The four arms that one home replaced
+        // were added one defect at a time (Plan-17 for the tuple, #493 for the optional,
+        // loft#1032 for the iterator), each the same omission a former further out.
+        tp.substitute(tv_nr, concrete)
     }
 
     /// Recursively substitute types in a Value IR tree and re-resolve Call targets

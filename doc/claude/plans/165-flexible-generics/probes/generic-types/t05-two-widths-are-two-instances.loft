@@ -1,0 +1,8 @@
+// D3 — `Box<u8>` and `Box<integer>` are two instances (two widths are two types).
+// @EXPECT: 200 70000
+struct Box<T> { v: T }
+fn main() {
+  a: Box<u8> = Box { v: 200 };
+  b: Box<integer> = Box { v: 70000 };
+  println("{a.v} {b.v}");
+}

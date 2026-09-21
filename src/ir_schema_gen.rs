@@ -711,6 +711,11 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t80, "superseded", t5);
     db.field(t80, "c_symbol", t5);
     db.field(t80, "c_sig", t5);
+    let vec_type_params = db.vector(t0);
+    db.field(t80, "type_params", vec_type_params);
+    db.field(t80, "instance_of", 0);
+    let vec_instance_args = db.vector(t7);
+    db.field(t80, "instance_args", vec_instance_args);
     let t120 = db.vector(t76);
     let _ = t120; // may be unused
     let t121 = db.vector(t79);

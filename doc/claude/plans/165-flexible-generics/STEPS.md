@@ -599,6 +599,24 @@ annotation, the way `v: vector<integer> = []` takes its element type.
 - **Also:** `LOFT_STRICT_SCHEMA_IDS=1` clean on `--native` (F18); two instances whose
   arguments differ only in deps are ONE instance (F12); an `@EXPECT_ERROR` cell reads
   `Box<integer>` in its message, not `Box_integer_` (F20).
+- **Built** (2026-09-21).  `Data::instance_def` beside `tuple_def`; `Definition` gains
+  `type_params` (a template's variables, header order), `instance_of` and `instance_args` —
+  the IR schema source (`tools/ir_schema/ir.loft`), the regenerated schema, the pinned
+  positions (stride 167 → 183), both codecs, and `CACHE_FORMAT_VERSION` 9 → 10.  Type
+  substitution moved onto `Type` (`substitute`, `substitute_all`) so `Data` can instantiate
+  without the parser; the parser's two helpers delegate.  `Box<…>` parses before the
+  collection sub-type dispatch; a collection's element takes a template (and its `?` after
+  the arguments); a wrong argument count is refused saying how many the template takes.  A
+  literal takes its instance from the expected type — `seeds_instance_hint`, added to the
+  leaving-value hint and the four argument admission lists — and without one is refused for
+  now (D4 infers).  The strongest gate: `loft introspect` of a program over `Box<integer>`
+  against its twin over `struct BoxInteger { v: integer }` — IDENTICAL once the one name is
+  mapped and numbers masked (the template's `__typevar_T` store registration aside, which
+  any generic program carries).  F18 clean on native; F12 one `Box<text>` for three
+  spellings with different deps; F20 reads `Box<integer>`.  Cells
+  [generic-types/](probes/generic-types/) t01–t06 green on both backends under
+  `LOFT_STRICT_STORES` + `LOFT_POISON`.  Corpus against D2: one file differs, the
+  `field_value` message the respelling fix changed (the snapshot predates it).
 
 ### D4 — a literal infers its argument  ·  S
 
