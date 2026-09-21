@@ -704,7 +704,7 @@ impl Output<'_> {
                     self.output_code_inner(w, v)?;
                     self.indent -= 1;
                     writeln!(w, ";")?;
-                    if self.bind_record_ptr(w, &lp.operators, at)? {
+                    if self.bind_record_ptr(w, &lp.operators, at, None)? {
                         ptr_frames += 1;
                     }
                 }
@@ -2700,6 +2700,7 @@ impl Output<'_> {
         let block_serial = self.block_serial;
         for (vnr, v) in operators.iter().enumerate() {
             self.close_groups_before(w, block_serial, vnr)?;
+            self.close_ptr_windows_before(block_serial, vnr);
             // DX-source-map: surface line comments at the
             // statement-list level so rustc errors map back to .loft
             // source.  Without this, only Value::Line nodes inside an
@@ -3269,12 +3270,13 @@ impl Output<'_> {
             if self.bind_view_header(w, operators, vnr)? {
                 view_frames += 1;
             }
-            if self.bind_record_ptr(w, operators, vnr)? {
+            if self.bind_record_ptr(w, operators, vnr, Some(block_serial))? {
                 ptr_frames += 1;
             }
             self.bind_group_push(w, operators, vnr, block_serial)?;
         }
         self.close_groups_before(w, block_serial, usize::MAX)?;
+        self.close_ptr_windows_before(block_serial, usize::MAX);
         if flat_lit_open.is_some() {
             self.indent -= 1;
             self.indent(w)?;

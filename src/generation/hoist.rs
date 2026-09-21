@@ -1580,7 +1580,96 @@ pub fn record_view_ptr(
     if matches!(rhs.unspan(), Value::Null) {
         return Err("bound null");
     }
-    let rest = &stmts[at + 1..];
+    view_extent_verdict(
+        &stmts[at + 1..],
+        *r,
+        data,
+        def_nr,
+        cache,
+        allow_in_place,
+        twin_params,
+    )?;
+    Ok(*r)
+}
+
+/// `@FR-R-RecPtr`'s MINT clause — does statement `at` of `stmts` mint a plain-record
+/// element (`e = OpNewRecord(…)`) whose ADDRESS may serve the group's writes, from the mint
+/// up to its own `OpFinishRecord(…, e, …)`?
+///
+/// [`record_view_ptr`] promises an address for the whole REMAINDER of a block, and a mint
+/// group never gets one: the remainder holds the next append, which grows a store.  The
+/// element needs the address only while it is being filled, and that WINDOW — the
+/// statements between the mint and its finish — is the literal's field writes and the
+/// expressions they store.  The window is judged exactly as a remainder is
+/// ([`view_extent_verdict`]): nothing in it grows a store (a nested mint, a builder that
+/// appends, a delivery copy all decline), frees a record before a use, or rebinds `e`, and
+/// at least one write is fusable.  The address is taken right after the mint — after its
+/// growth step, if it had one — so the window cannot start stale.  Any mint form
+/// qualifies (a vector's tail slot, a keyed collection's claimed record): each answers one
+/// `DbRef` whose bytes stay put until a store grows.
+///
+/// Answers the element variable and the index of its finish, where the address dies.
+///
+/// # Errors
+///
+/// The reason the statement declines, as `LOFT_TRACE_RECPTR=1` prints it.
+pub fn mint_window(
+    stmts: &[Value],
+    at: usize,
+    data: &Data,
+    def_nr: u32,
+    cache: &mut HashMap<u32, bool>,
+    allow_in_place: bool,
+) -> Result<(u16, usize), &'static str> {
+    let Some(Value::Set(e, rhs)) = stmts.get(at).map(Value::unspan) else {
+        return Err("not a binding");
+    };
+    let minted = matches!(rhs.unspan(), Value::Call(d, args)
+        if (*d as usize) < data.definitions.len()
+            && data.def(*d).name() == "OpNewRecord"
+            && args.len() == 3);
+    if !minted {
+        return Err("not a mint");
+    }
+    if plain_record_type(data, data.def(def_nr).variables().tp(*e)).is_none() {
+        return Err("not a plain record");
+    }
+    let finish = stmts[at + 1..].iter().position(|op| {
+        matches!(op.unspan(), Value::Call(d, args)
+            if (*d as usize) < data.definitions.len()
+                && data.def(*d).name() == "OpFinishRecord"
+                && matches!(args.get(1).map(Value::unspan), Some(Value::Var(v)) if v == e))
+    });
+    let Some(finish) = finish.map(|i| at + 1 + i) else {
+        return Err("the mint's finish is not in this block");
+    };
+    view_extent_verdict(
+        &stmts[at + 1..finish],
+        *e,
+        data,
+        def_nr,
+        cache,
+        allow_in_place,
+        &HashSet::new(),
+    )?;
+    Ok((*e, finish))
+}
+
+/// The statements a record view's address must stay good for — a block's remainder
+/// ([`record_view_ptr`]) or a mint's window ([`mint_window`]) — judged under ONE definition:
+/// none may grow a store, free a record before a use of `r`, or rebind `r`, and at least one
+/// must read or write a fusable scalar field of `r` or hand it to a twin.
+fn view_extent_verdict(
+    rest: &[Value],
+    r: u16,
+    data: &Data,
+    def_nr: u32,
+    cache: &mut HashMap<u32, bool>,
+    allow_in_place: bool,
+    twin_params: &HashSet<(u32, u16)>,
+) -> Result<(), &'static str> {
+    let vars = data.def(def_nr).variables();
+    let r = &r;
     if rest.iter().any(|op| {
         blocks_header_hoist(
             op,
@@ -1622,13 +1711,19 @@ pub fn record_view_ptr(
                     let on_r =
                         matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == *r);
                     // A NATIVE op with the view as its first operand that is not a read
-                    // (`OpGet…`) or a fusable scalar set re-seats or releases the place —
-                    // `OpDatabaseNP(buf, tp)` mints into it, `OpNewRecord`, a copy into it, a
-                    // free — so it is a rebind; a loft-bodied callee can only write in place
-                    // (`(R-Callee)`).
+                    // (`OpGet…`) or an in-place scalar set (`IN_PLACE_SET_OPS`: a fixed-width
+                    // value stored at the address it is given — a kind the address does not
+                    // serve keeps its store write, to the same bytes) re-seats or releases
+                    // the place — `OpDatabaseNP(buf, tp)` mints into it, `OpNewRecord`, a
+                    // copy into it, a free — so it is a rebind; a loft-bodied callee can only
+                    // write in place (`(R-Callee)`).
                     let native = matches!(data.def(*g).code(), Value::Null)
                         || !data.def(*g).rust().is_empty();
-                    if on_r && native && !name.starts_with("OpGet") && setter_kind(name).is_none() {
+                    if on_r
+                        && native
+                        && !name.starts_with("OpGet")
+                        && !IN_PLACE_SET_OPS.contains(&name)
+                    {
                         rebound = true;
                     }
                     // A fusable scalar field read or in-place write of the view, by either
@@ -1663,7 +1758,7 @@ pub fn record_view_ptr(
     if !touched {
         return Err("no fusable field read or write of the view");
     }
-    Ok(*r)
+    Ok(())
 }
 
 /// `@FR-R-RecPtr`'s path clause is on — `LOFT_NO_NESTED_FIELD=1` keeps a field reached

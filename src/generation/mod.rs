@@ -705,6 +705,14 @@ pub struct Output<'a> {
     /// bound in it, keyed by the view variable; a field read or in-place write of that
     /// variable goes through it ([`Self::bind_record_ptr`]).
     pub rec_ptrs: Vec<HashMap<u16, String>>,
+    /// `@FR-R-RecPtr`'s mint clause — the open mint WINDOWS, innermost last: `(block serial,
+    /// the index of the element's finish, the element variable)`.  A window's address frame
+    /// is dropped once the statement at that index has been emitted
+    /// ([`Self::close_ptr_windows_before`]), by the element it serves rather than by
+    /// position, since an ordinary view bound inside the window sits above it.
+    pub ptr_windows: Vec<(usize, usize, u16)>,
+    /// `LOFT_NO_MINT_WINDOW=1` — a minted element's field writes resolve the store again.
+    pub mint_window_disabled: bool,
     /// `LOFT_NO_RECORD_PTR=1` — no record view carries its address; every field read and
     /// write resolves the store again.
     pub record_ptr_disabled: bool,
@@ -1982,6 +1990,8 @@ impl<'a> Output<'a> {
             twin_base_disabled: std::env::var("LOFT_NO_TWIN_BASE").is_ok_and(|v| v != "0")
                 || !crate::keys::vector_base_enabled(),
             rec_ptrs: Vec::new(),
+            ptr_windows: Vec::new(),
+            mint_window_disabled: std::env::var("LOFT_NO_MINT_WINDOW").is_ok_and(|v| v != "0"),
             // One rule: `LOFT_NO_VECTOR_BASE` switches its record clause off with it.
             record_ptr_disabled: std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0")
                 || !crate::keys::vector_base_enabled(),
@@ -3804,6 +3814,7 @@ impl Output<'_> {
         w: &mut dyn Write,
         stmts: &[Value],
         at: usize,
+        block: Option<usize>,
     ) -> std::io::Result<bool> {
         if self.hoist_disabled || self.record_ptr_disabled {
             return Ok(false);
@@ -3854,6 +3865,30 @@ impl Output<'_> {
             !self.write_hoist_disabled,
             &twin_params,
         );
+        // `@FR-R-RecPtr`'s mint clause — a minted element the remainder declines (the next
+        // append grows a store) may still hold its address for its own WINDOW, up to its
+        // finish.  Only in a block whose statements this emitter walks by index.
+        let mut window: Option<usize> = None;
+        let verdict = match (verdict, block) {
+            (Err(_), Some(_)) if !self.mint_window_disabled => {
+                match hoist::mint_window(
+                    stmts,
+                    at,
+                    self.data,
+                    self.def_nr,
+                    &mut self.hoist_cache,
+                    !self.write_hoist_disabled,
+                ) {
+                    Ok((e, finish)) => {
+                        window = Some(finish);
+                        Ok(e)
+                    }
+                    Err("not a mint") => verdict,
+                    Err(why) => Err(why),
+                }
+            }
+            (v, _) => v,
+        };
         let r = match verdict {
             Ok(r) => r,
             Err(why) => {
@@ -3897,7 +3932,29 @@ impl Output<'_> {
             );
         }
         self.rec_ptrs.push(HashMap::from([(r, name)]));
+        if let (Some(finish), Some(block)) = (window, block) {
+            // A window's frame is closed at its finish, not with the block: the caller
+            // must not count it among the frames it pops.
+            self.ptr_windows.push((block, finish, r));
+            return Ok(false);
+        }
         Ok(true)
+    }
+
+    /// `@FR-R-RecPtr`'s mint clause — drop the address of every mint window of `block`
+    /// whose finish (statement `end`) has been emitted: `end < at`.  The frame is found by
+    /// the element it serves, since a view bound inside the window sits above it.
+    pub(super) fn close_ptr_windows_before(&mut self, block: usize, at: usize) {
+        while self
+            .ptr_windows
+            .last()
+            .is_some_and(|&(b, end, _)| b == block && end < at)
+        {
+            let (_, _, e) = self.ptr_windows.pop().expect("tested above");
+            if let Some(i) = self.rec_ptrs.iter().rposition(|f| f.contains_key(&e)) {
+                self.rec_ptrs.remove(i);
+            }
+        }
     }
 
     /// `@FR-R-RecPtr`'s base clause — for a statement that is the head of a vector iteration
