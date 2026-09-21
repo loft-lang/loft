@@ -2593,7 +2593,8 @@ impl Output<'_> {
         // body block — without the patch, native codegen emits the Call as a
         // discarded statement and returns STRING_NULL.
         let fn_name = self.data.def(self.def_nr).name();
-        let is_t_stub_text_body = matches!(bl.result, Type::Text(_)) && fn_name.starts_with("t_");
+        let specialised = fn_name.starts_with("t_") || self.data.def(self.def_nr).is_instance();
+        let is_t_stub_text_body = matches!(bl.result, Type::Text(_)) && specialised;
         // P240 fix (2026-05-11): bounded-generic T-stubs that return a
         // stack-passed tuple — `t_<len><Type>_<method>` returning
         // `Type::Tuple(...)` — go through the same hoisted-return
@@ -2607,7 +2608,7 @@ impl Output<'_> {
         // the text branch above; same hoist logic applies because
         // both shapes have a `Return(Null)` tail with the actual
         // value as a preceding statement.
-        let is_t_stub_tuple_body = matches!(bl.result, Type::Tuple(_)) && fn_name.starts_with("t_");
+        let is_t_stub_tuple_body = matches!(bl.result, Type::Tuple(_)) && specialised;
         // Any text-returning block whose body contains the B5-L3
         // `Set(__ret_N, call); ...; Return(Var(__ret_N))` temp-transfer
         // pattern must also go through `patch_hoisted_returns` so the

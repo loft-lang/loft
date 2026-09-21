@@ -1052,6 +1052,15 @@ pub fn value_return_enabled() -> bool {
 /// a store of its own (@PLN164 B2, `@FR-R-Place`'s callee clause: a callee that on some exit
 /// answers a store other than the buffer it was handed cannot be placed) — the bisect step
 /// for a wrong record out of a callee with more than one literal exit.
+/// @PLN165 A5 (`D-Key`) — an instance of a generic is keyed `i_<LEN><bound types>_<template
+/// key>`: its own key kind, naming its template and every bound type.  **DEFAULT ON.**
+/// `LOFT_NO_INSTANCE_KEY=1` mints the method-shaped `t_<LEN><type>_<name>` key again — the
+/// rollback, and the first bisect step for a generic call that reaches the wrong definition.
+pub fn instance_key_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_INSTANCE_KEY"))
+}
+
 pub fn literal_exit_buffer_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_LITERAL_EXIT_BUFFER"))

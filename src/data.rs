@@ -4199,6 +4199,10 @@ pub enum KeyKind {
     /// `f_<LEN><spelling>_<name>` — a free member of an overload set, keyed on the spelling
     /// of every declared parameter.
     FreeOverload,
+    /// `i_<LEN><spelling>_<template key>` — an INSTANCE of a generic: the identity spelling
+    /// of every type it binds, joined with `#`, then the key of the template it was made from
+    /// (`D-Key`, @PLN165).
+    Instance,
 }
 
 /// A length-counted definition key read back into its parts by [`Data::split_key`].
@@ -4636,9 +4640,14 @@ impl Definition {
     /// `contains`.  Used by diagnostics (the @PLN102 arc-C steer + fold lint).
     #[must_use]
     pub fn display_name(&self) -> &str {
-        match self.method_type_prefix() {
-            Some(p) => &self.name[p.len()..],
-            None => self.name.strip_prefix("n_").unwrap_or(&self.name),
+        let mut name = self.name.as_str();
+        // An instance displays as its template.
+        while let Some(parts) = Data::split_key(name).filter(|k| k.kind == KeyKind::Instance) {
+            name = parts.rest;
+        }
+        match Data::split_key(name).filter(|k| k.kind == KeyKind::Method) {
+            Some(parts) => parts.rest,
+            None => name.strip_prefix("n_").unwrap_or(name),
         }
     }
 
@@ -5076,7 +5085,16 @@ impl Definition {
     /// question that reaches them.
     #[must_use]
     pub fn is_loft_defined(&self) -> bool {
-        (self.name.starts_with("n_") || self.name.starts_with("t_")) && self.code != Value::Null
+        (self.name.starts_with("n_") || self.name.starts_with("t_") || self.is_instance())
+            && self.code != Value::Null
+    }
+
+    /// Is this an INSTANCE of a generic — keyed `i_<LEN><types>_<template>` (`D-Key`)?  Asked
+    /// of the key's shape, not of its prefix: the runtime's own `i_parse_*` helpers share the
+    /// letter and are no instance.
+    #[must_use]
+    pub fn is_instance(&self) -> bool {
+        Data::split_key(&self.name).is_some_and(|k| k.kind == KeyKind::Instance)
     }
 
     /// Cluster-A.3 (OWNERSHIP_MODEL row 102) — THE adopt-vs-copy answer for a
@@ -5237,13 +5255,20 @@ impl Definition {
             .find(|g| matches!(g.kind, LinkedFieldKind::Tuple))
     }
 
+    /// The name the source wrote for the function keyed `key`: a method's or a free
+    /// overload's `rest`, an instance's TEMPLATE's name, a plain `n_<name>`'s `<name>`.
+    fn source_name_of_key(key: &str) -> String {
+        match Data::split_key(key) {
+            Some(parts) if parts.kind == KeyKind::Instance => Self::source_name_of_key(parts.rest),
+            Some(parts) => parts.rest.to_string(),
+            None => key.get(2..).unwrap_or(key).to_string(),
+        }
+    }
+
     #[must_use]
     pub fn original_name(&self) -> String {
         if self.def_type == DefType::Function {
-            match Data::split_key(&self.name) {
-                Some(key) => key.rest.to_string(),
-                None => self.name[2..].to_string(),
-            }
+            Self::source_name_of_key(&self.name)
         } else {
             self.name.clone()
         }
@@ -7490,8 +7515,9 @@ impl Data {
     }
 
     /// The ONE decoder of a length-counted definition key — `t_<LEN><spelling>_<rest>` (a
-    /// method) or `f_<LEN><spelling>_<rest>` (a free member of an overload set) — and the
-    /// inverse of [`Self::mangle_method`] and [`Self::mangle_free_overload`].  `LEN` is read as
+    /// method), `f_<LEN><spelling>_<rest>` (a free member of an overload set) or
+    /// `i_<LEN><spelling>_<rest>` (an instance of a generic) — and the inverse of
+    /// [`Self::mangle_method`], [`Self::mangle_free_overload`] and [`Self::mangle_instance`].  `LEN` is read as
     /// EVERY leading digit, so a spelling of 100 characters or more decodes like a short one.
     /// `None` for a key of any other shape (`n_…`, an operator, a type), for a `LEN` that runs
     /// past the key, and for a spelling not followed by the `_` separator.
@@ -7499,6 +7525,8 @@ impl Data {
     pub fn split_key(name: &str) -> Option<KeyParts<'_>> {
         let (kind, body) = if let Some(body) = name.strip_prefix("t_") {
             (KeyKind::Method, body)
+        } else if let Some(body) = name.strip_prefix("i_") {
+            (KeyKind::Instance, body)
         } else {
             (KeyKind::FreeOverload, name.strip_prefix("f_")?)
         };
@@ -7525,6 +7553,48 @@ impl Data {
     pub fn mangle_free_overload(spelling: &str, name: &str) -> String {
         Self::assert_spelling_decodes(spelling);
         format!("f_{}{}_{name}", spelling.len(), spelling)
+    }
+
+    /// The key of an INSTANCE of a generic (`D-Key`, @PLN165): `i_<LEN><spelling>_<template>`,
+    /// `spelling` every bound type's [`Self::identity_spelling`] joined with `#` in the order the
+    /// template's variables first appear, `template` the template's own key.  Its own kind,
+    /// because an instance is not a method on its first bound type — keyed as one
+    /// (`t_3Cat_count_of`), it took a real method `count_of` on `Cat` for itself — and the
+    /// template's key in it keeps two templates of one name from sharing an instance.  The key
+    /// keeps its readable characters; the native emitter makes it an identifier.
+    #[must_use]
+    pub fn mangle_instance(spelling: &str, template: &str) -> String {
+        Self::assert_spelling_decodes(spelling);
+        format!("i_{}{}_{template}", spelling.len(), spelling)
+    }
+
+    /// What distinguishes one binding of a type variable from another in an instance's key.
+    ///
+    /// A collection keeps its element (a `vector`'s type def is the bare `vector`, which
+    /// erases it — loft#1024); an integer keeps its range and a forced width (every
+    /// `Integer(_)` resolves to the one `integer` def — loft#1383, loft#1418); any other type
+    /// is its def's name.  `(C-Int)` admits a widening for CONVERSION, which is why this is not
+    /// the conversion predicate: identity is exactly what one instance per distinct
+    /// instantiation (`@FR-G-Mono`) is keyed by.
+    #[must_use]
+    pub fn identity_spelling(&self, tp: &Type) -> String {
+        if crate::parser::Parser::is_collection_type(tp.base()) {
+            tp.name(self) // schema-key — the instance's identity; @FR-G-Mono wants the element
+        } else if let Type::Integer(spec) = tp.base() {
+            // schema-key — loft#1418's forced WIDTH is part of which instance this is.
+            let named = tp.name(self);
+            match spec.forced_size {
+                Some(n) => format!("{named}s{n}"),
+                None => named,
+            }
+        } else {
+            let nr = self.type_def_nr(tp);
+            if nr == u32::MAX {
+                tp.name(self)
+            } else {
+                self.def(nr).name().to_string()
+            }
+        }
     }
 
     /// The internal name of a BOUND-METHOD STUB for `holder` — a generic's type variable, or an
@@ -9057,6 +9127,15 @@ impl Data {
         }
         self.definitions[v_nr as usize].known_type = vec_tp;
         v_nr
+    }
+    /// Does `tp` mention a type-variable placeholder anywhere — is it still a template's type
+    /// rather than a type?
+    #[must_use]
+    pub fn mentions_type_var(&self, tp: &Type) -> bool {
+        tp.any_node(&mut |t| {
+            matches!(t, Type::Reference(d, _) if (*d as usize) < self.definitions.len()
+                && self.is_type_var_placeholder(*d))
+        })
     }
 
     /// A generic type-variable placeholder: the attribute-less, self-referential

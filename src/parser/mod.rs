@@ -3072,6 +3072,13 @@ impl Parser {
     /// `t_6vector_head`, rather than as `n_head`, and instantiates on pass 2 the same way
     /// (loft#1539) — so a template of either spelling makes the name legal.
     fn h5_names_a_generic_template(&self, name: &str) -> bool {
+        // `D-Key` — an instance's key names its template outright.
+        if let Some(key) =
+            Data::split_key(name).filter(|k| k.kind == crate::data::KeyKind::Instance)
+        {
+            let g = self.data.def_nr(key.rest);
+            return g != u32::MAX && matches!(self.data.def_type(g), DefType::Generic);
+        }
         let Some((_, fn_name)) = Self::h5_split_mangled(name) else {
             return false;
         };
@@ -7441,70 +7448,17 @@ impl Parser {
         self.instantiate_template(g_nr, name, types)
     }
 
-    /// [`Self::try_generic_instantiation`] for the template `g_nr` itself: a free generic
-    /// found by its `n_` name, or a METHOD template (`t_6vector_head`) that a method call
-    /// selected (loft#1539).  `name` is the spelling the call wrote, and the monomorph is
-    /// named from it exactly as a free generic's is.
-    fn instantiate_template(&mut self, g_nr: u32, name: &str, types: &[Type]) -> u32 {
-        if types.is_empty() || types[0].is_unknown() {
-            // First-pass argument types may be incomplete; defer the diagnostic
-            // to second pass when types are stable.  Returning MAX here is the
-            // same effect; it just doesn't emit a noisy first-pass error.
-            if !self.first_pass {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Cannot infer type for generic parameter — provide an explicit type annotation"
-                );
-            }
-            return u32::MAX;
-        }
-        // loft#1538 — a template refused at its declaration has no instance; the refusal
-        // already names why, and the call site answers its declared return.
-        if self.refused_templates.contains(&g_nr) {
-            return u32::MAX;
-        }
-        // What each of the template's variables binds to at this call.
-        let Some(var_bindings) = Self::bind_template(&self.data, g_nr, types) else {
-            return u32::MAX;
-        };
-        let tvs: Vec<u32> = var_bindings.iter().map(|(tv, _)| *tv).collect();
-        // loft#761 — a SELF-recursive generic arrives here while its own template is
-        // still being parsed, and the argument type is the type VARIABLE, so `concrete`
-        // resolves to that variable rather than to any type. Instantiating against it
-        // built a def by cloning the template's variable table — which the parser has
-        // not written back yet, so the clone was EMPTY. That def is a plain `Function`,
-        // so codegen emitted it and indexed a table of length 0: "index out of bounds:
-        // the len is 0 but the index is 1", before any of the program ran.
-        //
-        // There is nothing to instantiate at this point, and nothing to diagnose
-        // either: the call is perfectly good, it just has no concrete type YET. Answer
-        // the TEMPLATE. A real caller then instantiates for its own concrete type, and
-        // `instantiate_nested_generics` retargets this call at that monomorph while
-        // building it — the same path any other call to a generic takes from inside a
-        // template. Self-recursion terminates there on the `existing` check.
-        if var_bindings
-            .iter()
-            .any(|(_, b)| tvs.iter().any(|tv| b.contains_def(*tv)))
-        {
-            return g_nr;
-        }
-        if var_bindings.iter().any(|(_, b)| b.is_unknown()) {
-            if !self.first_pass {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Cannot resolve generic type parameter from argument type"
-                );
-            }
-            return u32::MAX;
-        }
-        // The instance is named from the first variable's binding, which with one variable
-        // is the whole of it.
-        let concrete = var_bindings[0].1.clone();
-        // Build the mangled name for the instantiated function.
-        let type_nr = self.data.type_def_nr(&concrete);
-        let mangled = if type_nr == u32::MAX {
+    /// The instance key before `D-Key` — `t_<LEN><first bound type>_<name>`, the spelling of a
+    /// METHOD on that type — kept for `LOFT_NO_INSTANCE_KEY=1` and for the rename map
+    /// `LOFT_TRACE_INSTANCE_KEY=1` prints (old key -> new key).
+    fn method_shaped_instance_key(
+        &self,
+        g_nr: u32,
+        name: &str,
+        concrete: &Type,
+        type_nr: u32,
+    ) -> String {
+        if type_nr == u32::MAX {
             format!("n_{name}")
         } else {
             // @PLN25 E2 — this mangled name becomes a Rust function identifier in
@@ -7577,7 +7531,92 @@ impl Parser {
                 safe
             };
             crate::data::Data::mangle_method(&safe, name)
+        }
+    }
+
+    /// [`Self::try_generic_instantiation`] for the template `g_nr` itself: a free generic
+    /// found by its `n_` name, or a METHOD template (`t_6vector_head`) that a method call
+    /// selected (loft#1539).  `name` is the spelling the call wrote, and the monomorph is
+    /// named from it exactly as a free generic's is.
+    fn instantiate_template(&mut self, g_nr: u32, name: &str, types: &[Type]) -> u32 {
+        if types.is_empty() || types[0].is_unknown() {
+            // First-pass argument types may be incomplete; defer the diagnostic
+            // to second pass when types are stable.  Returning MAX here is the
+            // same effect; it just doesn't emit a noisy first-pass error.
+            if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Cannot infer type for generic parameter — provide an explicit type annotation"
+                );
+            }
+            return u32::MAX;
+        }
+        // loft#1538 — a template refused at its declaration has no instance; the refusal
+        // already names why, and the call site answers its declared return.
+        if self.refused_templates.contains(&g_nr) {
+            return u32::MAX;
+        }
+        // What each of the template's variables binds to at this call.
+        let Some(var_bindings) = Self::bind_template(&self.data, g_nr, types) else {
+            return u32::MAX;
         };
+        let tvs: Vec<u32> = var_bindings.iter().map(|(tv, _)| *tv).collect();
+        // loft#761 — a SELF-recursive generic arrives here while its own template is
+        // still being parsed, and the argument type is the type VARIABLE, so `concrete`
+        // resolves to that variable rather than to any type. Instantiating against it
+        // built a def by cloning the template's variable table — which the parser has
+        // not written back yet, so the clone was EMPTY. That def is a plain `Function`,
+        // so codegen emitted it and indexed a table of length 0: "index out of bounds:
+        // the len is 0 but the index is 1", before any of the program ran.
+        //
+        // There is nothing to instantiate at this point, and nothing to diagnose
+        // either: the call is perfectly good, it just has no concrete type YET. Answer
+        // the TEMPLATE. A real caller then instantiates for its own concrete type, and
+        // `instantiate_nested_generics` retargets this call at that monomorph while
+        // building it — the same path any other call to a generic takes from inside a
+        // template. Self-recursion terminates there on the `existing` check.
+        if var_bindings
+            .iter()
+            .any(|(_, b)| tvs.iter().any(|tv| b.contains_def(*tv)))
+        {
+            return g_nr;
+        }
+        if var_bindings.iter().any(|(_, b)| b.is_unknown()) {
+            if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Cannot resolve generic type parameter from argument type"
+                );
+            }
+            return u32::MAX;
+        }
+        // `concrete` is the first variable's binding: what the associated types and the
+        // bound check are read against (C3 carries them per variable).
+        let concrete = var_bindings[0].1.clone();
+        let type_nr = self.data.type_def_nr(&concrete);
+        // `D-Key` — the instance's key names its template and every bound type.
+        let mangled = if crate::keys::instance_key_enabled() {
+            let spelling: Vec<String> = var_bindings
+                .iter()
+                .map(|(_, b)| self.data.identity_spelling(b))
+                .collect();
+            crate::data::Data::mangle_instance(&spelling.join("#"), self.data.def(g_nr).name())
+        } else {
+            self.method_shaped_instance_key(g_nr, name, &concrete, type_nr)
+        };
+        if std::env::var_os("LOFT_TRACE_INSTANCE_KEY").is_some() {
+            let spelling: Vec<String> = var_bindings
+                .iter()
+                .map(|(_, b)| self.data.identity_spelling(b))
+                .collect();
+            eprintln!(
+                "[instance-key] {} -> {}",
+                self.method_shaped_instance_key(g_nr, name, &concrete, type_nr),
+                crate::data::Data::mangle_instance(&spelling.join("#"), self.data.def(g_nr).name())
+            );
+        }
         // Return existing instantiation if already created.
         let existing = self.data.def_nr(&mangled);
         if existing != u32::MAX {
@@ -9239,6 +9278,26 @@ impl Parser {
         });
         self.data.definitions[d_nr as usize].code = code;
     }
+    /// The template of `d` when `d` is an instance bound to a type VARIABLE — minted while
+    /// another template's body was parsed (`i_1S_n_inner`) — else `u32::MAX`.  An instance
+    /// at a real type is its own answer; one at a variable stands for its template.
+    fn placeholder_instance_template(&self, d: u32) -> u32 {
+        let def = self.data.def(d);
+        let Some(key) =
+            Data::split_key(def.name()).filter(|k| k.kind == crate::data::KeyKind::Instance)
+        else {
+            return u32::MAX;
+        };
+        let template = self.data.def_nr(key.rest);
+        if template == u32::MAX || self.data.def_type(template) != DefType::Generic {
+            return u32::MAX;
+        }
+        let at_a_variable = def
+            .attributes()
+            .iter()
+            .any(|a| self.data.mentions_type_var(&a.typedef));
+        if at_a_variable { template } else { u32::MAX }
+    }
 
     /// The half of [`re_resolve_call`] that has to CREATE rather than look up.
     ///
@@ -9280,14 +9339,29 @@ impl Parser {
         // call really passes.  Anything that is not a plain variable falls back to
         // `concrete`, which is what every caller got before.
         let mut targets: Vec<(u32, Type)> = Vec::new();
+        // `(instance called, its template)` for a call the template aimed at an instance of
+        // ANOTHER generic bound to one of its own type variables (`outer<S>` calling `inner(s)`
+        // binds `inner`'s variable to `S`).  That instance is keyed by `S`, so no lookup by
+        // the outer binding finds it; its call is aimed through the template it names.
+        let mut via_template: Vec<(u32, u32)> = Vec::new();
         let mono_vars = self.data.def(d_nr).variables.clone();
         self.data.def(d_nr).code.walk(&mut |v| {
             if let Value::Call(d, args) = v
                 && *d != u32::MAX
                 && (*d as usize) < self.data.definitions.len()
-                && self.data.def(*d).def_type() == DefType::Generic
                 && !targets.iter().any(|(t, _)| t == d)
             {
+                let template = if self.data.def(*d).def_type() == DefType::Generic {
+                    *d
+                } else {
+                    self.placeholder_instance_template(*d)
+                };
+                if template == u32::MAX {
+                    return;
+                }
+                if template != *d {
+                    via_template.push((*d, template));
+                }
                 let arg_tp = match args.first().map(Value::unspan) {
                     Some(Value::Var(a)) if *a < mono_vars.count() => mono_vars.tp(*a).clone(),
                     _ => concrete.clone(),
@@ -9340,7 +9414,11 @@ impl Parser {
         // parses against `self.vars` / `self.context`, and it must see the ordinary
         // ones, not this monomorph's.
         let mut remap: HashMap<u32, u32> = HashMap::new();
-        for (t, arg_tp) in targets {
+        for (callee, arg_tp) in targets {
+            let t = via_template
+                .iter()
+                .find(|(c, _)| *c == callee)
+                .map_or(callee, |(_, tmpl)| *tmpl);
             // A free template is stored `n_<name>`; a METHOD template under its receiver's
             // key, `t_6vector_head` (loft#1539).  Both instantiate from the template itself.
             let key = self.data.def(t).name().to_string();
@@ -9350,8 +9428,8 @@ impl Parser {
                 None => continue,
             };
             let inst = self.instantiate_template(t, &name, std::slice::from_ref(&arg_tp));
-            if inst != u32::MAX && inst != t {
-                remap.insert(t, inst);
+            if inst != u32::MAX && inst != t && inst != callee {
+                remap.insert(callee, inst);
             }
         }
         // Repair the ARG LISTS too, and not only for the calls remapped above:
@@ -10218,6 +10296,8 @@ impl Parser {
             *child = Self::rewrite_generic_vector_writes(taken, bindings, vars, data, database);
         });
         match val {
+            // A `Span` wraps one statement, and the walk above has already rewritten it.
+            span @ Value::Span(_) => span,
             Value::Block(mut bl) => {
                 let ops = std::mem::take(&mut bl.operators);
                 bl.operators =

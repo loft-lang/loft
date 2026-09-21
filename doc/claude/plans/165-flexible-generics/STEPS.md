@@ -136,6 +136,18 @@ sanitise to one identifier.
   it through the template and the `existing` lookup.  [x1](probes/x1-monomorph-is-not-a-method.loft)
   must stay refused in all three orders, and the unknown-function suggestions must stop
   offering instances as methods of a type.
+- **Built** (2026-09-21).  The rename claim measured 1621/1624 — the other three are the
+  change the step is for, not a rename: a2's own guard; `1418`, where a later call at `i32`
+  had reached the `integer` instance through that method lookup and now reaches its own
+  width's instance through the template; and `1032`, whose generator STRUCT name is derived
+  from the key.  Two things the watch did not name surfaced: `re_resolve_call` had found the
+  instance a template-in-a-template call needed by that same method lookup (a call
+  `outer<S>` aims at `inner`'s instance bound to `S`), now aimed through its template by
+  `instantiate_nested_generics`; and six emitter/scopes sites recognised a monomorph by the
+  `t_` prefix (`is_loft_defined`, the leaf and frameless-chain tests, the T-stub body
+  patch, the monomorph lift), now asked of the key's shape (`Definition::is_instance` —
+  the runtime's `i_parse_*` helpers share the letter).  `LOFT_NO_INSTANCE_KEY=1` is
+  byte-identical to A7 over the corpus.
 
 ### A6 — a lambda argument is typed under the bindings made so far  ·  S
 

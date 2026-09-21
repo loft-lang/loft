@@ -10,6 +10,10 @@
 // file plainly declares — and the call through the failed binding added `Unknown function f`.
 // @falsified-at: 04f5791cf — exit 1 -> 0, expectations FAIL/1 -> 0/1
 //   CHANNEL: expectations (the refusal is what moves; the program is refused on both trees).
+//   ARMED: nothing.
+//   WITNESS: on the control the program is refused `Unknown variable 'idf'`, then
+//     `Unknown function f`.
+//   HOLDS: the program is refused on both trees; only the message moves.
 // @EXPECT_ERROR: `idf` is a generic function, and a generic is not a function VALUE — it has no single body until a call fixes its type variables. Wrap one call of it in a lambda that names the types: `|x: integer| { idf(x) }`
 
 fn idf<T>(x: T) -> T { x }

@@ -6,6 +6,9 @@
 // at the `<` and nothing about what was meant.
 // @falsified-at: 04f5791cf — exit 1 -> 0, expectations FAIL/2 -> 0/2
 //   CHANNEL: expectations (the refusal is what moves; the program is refused on both trees).
+//   ARMED: nothing.
+//   WITNESS: on the control each declaration reports three syntax errors at its `<`.
+//   HOLDS: the program is refused on both trees; only the messages move.
 // @EXPECT_ERROR: a struct declares no type variables — `Box<T>`; a container over any type is a generic FUNCTION over `vector<T>`
 // @EXPECT_ERROR: an enum declares no type variables — `Shape<T>`; a container over any type is a generic FUNCTION over `vector<T>`
 

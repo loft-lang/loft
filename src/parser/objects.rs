@@ -52,6 +52,18 @@ pub(crate) struct FieldSinks {
     group_fills: Vec<Value>,
 }
 impl Parser {
+    /// Does `name` name a TYPE — a collection former (`hash`, `vector`, …), a struct, an enum?
+    /// `hash<Row[id]>()` is a type written where a value is, which has a refusal of its own; it
+    /// is not a call given type arguments.
+    pub(crate) fn names_a_type(&self, name: &str) -> bool {
+        let d = self.data.def_nr(name);
+        d != u32::MAX
+            && matches!(
+                self.data.def_type(d),
+                DefType::Type | DefType::Struct | DefType::Enum | DefType::Vector
+            )
+    }
+
     /// The refusal for a GENERIC function named where a value is wanted (`f = idf`), or
     /// `None` when `name` names no generic.  A template has a body only once a call has
     /// fixed its type variables, so there is no one function to bind; one call of it
@@ -436,9 +448,11 @@ impl Parser {
         }
         // `D-Infer` — a type argument is written in TYPE position only; a call infers its
         // type variables from its arguments.  `first<integer>(a)` otherwise reads as the
-        // chained comparison `first < integer > (a)`.  A local variable keeps that reading.
+        // chained comparison `first < integer > (a)`.  A local variable keeps that reading,
+        // and a TYPE name (`hash<Row[id]>()`) keeps the refusal written for it.
         if self.lexer.peek_token("<")
             && !self.vars.name_exists(&nm)
+            && !self.names_a_type(&nm)
             && self.type_arguments_then_call()
         {
             if !self.first_pass {

@@ -403,10 +403,20 @@ pub fn reachable_functions(data: &Data, entry_defs: &[u32]) -> HashSet<u32> {
 /// may export the same `pub fn` name — `Data` scopes defs by `(name, source)`,
 /// but emitted Rust is one flat namespace, so such names need a disambiguated
 /// identifier (#305: rustc E0428 "defined multiple times").
+///
+/// # Panics
+/// When two DIFFERENT keys flatten to one Rust identifier — a compiler defect, since the
+/// emitted crate would define one symbol twice.
 #[must_use]
 pub fn duplicate_fn_names(data: &Data) -> HashSet<String> {
     let mut seen: HashSet<&str> = HashSet::new();
     let mut dups = HashSet::new();
+    // Two DIFFERENT keys that flatten to one Rust identifier ([`rust_fn_ident`]) would be two
+    // definitions under one symbol — a key keeps its readable characters (`i_15vector<text>_…`,
+    // `f_10Rock#Paper_…`) and this is the one place that makes it an identifier, so it is the
+    // one place that can refuse the collision.  Two definitions of the SAME key from two
+    // modules are the ordinary duplicate, disambiguated below.
+    let mut flat: HashMap<String, &str> = HashMap::new();
     for d in 0..data.definitions() {
         let def = data.def(d);
         if !matches!(def.def_type(), DefType::Function | DefType::Dynamic) {
@@ -414,6 +424,15 @@ pub fn duplicate_fn_names(data: &Data) -> HashSet<String> {
         }
         if !seen.insert(def.name()) {
             dups.insert(def.name().to_string());
+        }
+        let ident = rust_fn_ident(def.name());
+        if let Some(prev) = flat.insert(ident.clone(), def.name()) {
+            assert!(
+                prev == def.name(),
+                "native emission: the definitions `{prev}` and `{}` flatten to one Rust \
+                 identifier `{ident}`",
+                def.name()
+            );
         }
     }
     dups
@@ -487,7 +506,7 @@ pub fn disambiguated_fn_ident(dups: &HashSet<String>, def: &crate::data::Definit
 /// — and `<`, `>`, `,`, and spaces are not valid in a Rust identifier (#395).  Every
 /// emission of a fn name (definition AND every call) routes through `fn_ident`, so
 /// flattening at this one chokepoint keeps the definition and its callers in sync.
-fn rust_fn_ident(name: &str) -> String {
+pub(crate) fn rust_fn_ident(name: &str) -> String {
     if name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
         return name.to_string();
     }
@@ -4311,7 +4330,8 @@ impl Output<'_> {
                 let callee = data.def(*d);
                 let name = callee.name();
                 name.starts_with("n_")
-                    || (name.starts_with("t_") && matches!(callee.code(), Value::Block(_)))
+                    || ((name.starts_with("t_") || callee.is_instance())
+                        && matches!(callee.code(), Value::Block(_)))
             }
             Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
             _ => false,
@@ -4354,7 +4374,7 @@ impl Output<'_> {
                     // a native user-level function: what it reaches is not visible here
                     return true;
                 }
-                if (name.starts_with("n_") || name.starts_with("t_"))
+                if (name.starts_with("n_") || name.starts_with("t_") || callee.is_instance())
                     && loft_bodied
                     && !callees.contains(d)
                 {

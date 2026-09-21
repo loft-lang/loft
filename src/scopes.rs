@@ -16156,13 +16156,13 @@ impl Scopes<'_> {
             // the `__retbuf` exemption below — copies at its `Set` and stays independent
             // (`(F-Ret)`: *the concrete twin is the oracle for the instance*).
             let monomorph_returns_a_borrow =
-                def.name.starts_with("t_") && def.returns_borrowed_view();
+                (def.name.starts_with("t_") || def.is_instance()) && def.returns_borrowed_view();
             let lift_owned_return = if def.has_fnref_return_site() {
                 self.monomorph_fnref_return_is_fresh(val, data, def)
             } else {
                 def.name.starts_with("n_")
                     || monomorph_returns_a_borrow
-                    || (def.name.starts_with("t_")
+                    || ((def.name.starts_with("t_") || def.is_instance())
                         && (def.attr_names.contains_key("__retbuf")
                             || def.monomorph_return_is_fresh()
                             // loft#1273 — a tail that DELEGATES (`a + b` is `Call(n_OpAdd)`)

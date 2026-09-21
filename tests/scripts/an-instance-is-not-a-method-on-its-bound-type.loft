@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// An instance of a generic has a key of its own (@PLN165 `D-Key`): it names the template and
+// every type the template binds, and it is not the key of any method.
+//
+// `count_of<T>(v: vector<T>)` at `T = Cat` was keyed `t_3Cat_count_of` — exactly the key of a
+// METHOD `count_of` on `Cat`.  The instantiation asks "does this key exist?", found the method,
+// and answered it as its own instance, so two definitions that are each legal, and legal
+// together, were refused "expected Cat, got vector<Cat>" in both declaration orders.  The
+// instance is now `i_3Cat_n_count_of`, and a method of the name is untouched by it.
+//
+// The method call and a generic call at a type with no such method are the controls.
+//
+// @falsified-at: 2596bc4dd — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/an-instance-is-not-a-method-on-its-bound-type.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the program at the parse.
+//   ARMED: nothing.
+//   WITNESS: on the control `count_of(cats)` is "expected Cat, got vector<Cat> on argument 1
+//     of call to count_of", in both declaration orders.
+//   HOLDS: the method spellings and the instance at `integer`.
+
+struct Cat { n: integer }
+struct Dog { n: integer }
+
+fn count_of<T>(v: vector<T>) -> integer { len(v) }
+fn count_of(self: Cat) -> integer { 100 + self.n }
+
+// The other declaration order.
+fn size_of(self: Dog) -> integer { 200 + self.n }
+fn size_of<T>(v: vector<T>) -> integer { len(v) * 2 }
+
+fn test_the_generic_first() {
+  cats: vector<Cat> = [Cat { n: 1 }, Cat { n: 2 }, Cat { n: 3 }];
+  c = Cat { n: 7 };
+  assert(count_of(cats) == 3, "the instance at Cat: {count_of(cats)}");
+  assert(c.count_of() == 107, "the method on Cat: {c.count_of()}");
+  assert(count_of(c) == 107, "the method's free spelling: {count_of(c)}");
+  assert(count_of([1, 2]) == 2, "an instance at integer: {count_of([1, 2])}");
+}
+
+fn test_the_method_first() {
+  dogs: vector<Dog> = [Dog { n: 1 }, Dog { n: 2 }];
+  d = Dog { n: 5 };
+  assert(size_of(dogs) == 4, "the instance at Dog: {size_of(dogs)}");
+  assert(d.size_of() == 205, "the method on Dog: {d.size_of()}");
+}

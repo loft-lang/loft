@@ -14345,6 +14345,16 @@ impl Parser {
     fn backward_ref_defnr(&self, op: u32) -> u32 {
         if (op as usize) < self.data.definitions.len() {
             let def = self.data.def(op);
+            // `D-Key` — an instance's key names its template outright.
+            if def.def_type() == DefType::Function
+                && let Some(key) = crate::data::Data::split_key(def.name())
+                    .filter(|k| k.kind == crate::data::KeyKind::Instance)
+            {
+                let tmpl = self.data.def_nr(key.rest);
+                if tmpl != u32::MAX && self.data.def_type(tmpl) == DefType::Generic {
+                    return tmpl;
+                }
+            }
             if def.def_type() == DefType::Function && def.name().starts_with("t_") {
                 let tmpl = self.data.def_nr(&format!("n_{}", def.original_name()));
                 if tmpl != u32::MAX && self.data.def_type(tmpl) == DefType::Generic {
