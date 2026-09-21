@@ -1,0 +1,149 @@
+// @PLN158 R3 — a scalar field reached through INLINE sub-records (`v.pos.x`) is read and
+// written through the record view's address at the summed offset (`@FR-R-RecPtr`'s path
+// clause).  `v.pos.x` lowers to `OpGetFloat(OpGetField(v, off(pos), _), off(x))`, and only
+// a DIRECT field of the view counted as a fusable access — so a loop over records of
+// records bound no address at all, and each read rebuilt a `DbRef` and resolved the store
+// (`mesh_aabb`, 9.2x the Rust reference: twelve such reads per vertex).  An inline record's
+// field is the parent's field at a constant offset; with the clause 70.3 -> 37.4 us (-47 %),
+// 4.7x.  The interpreter applies no rewrite and is the oracle; every cell prints its values
+// and asserts them.  `LOFT_NO_NESTED_FIELD=1`, `LOFT_NO_RECORD_PTR=1`, `LOFT_NO_BASE_RECPTR=1`
+// and `LOFT_HOIST_VERIFY=1` must all answer identically.
+//
+// Predictions (tests/nested_field.rs pins them): n1-n5 and n12 read or write through the
+// address; n6 reads the sentinel through a null address and drops the write; n8 has no
+// binding, so no address; n9's middle step is an element, which forms no path; n11's
+// whole-record copy is a store writer and declines the view.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-21) — see the receipt below the cells'
+// first run; recorded as MEASURED.
+
+struct V3 { x: float, y: float, z: float }
+struct Vertex { id: integer, pos: V3, nrm: V3 }
+struct Inner { a: integer, b: integer }
+struct Mid { pad: integer, inn: Inner }
+struct Outer { tag: integer, mid: Mid, w: float }
+struct Sm { s: single, t: single }
+struct Wrap { k: integer, sm: Sm }
+struct Bag { items: vector<Inner>, n: integer }
+struct Holder { id: integer, bag: Bag }
+
+fn verts(n: integer) -> vector<Vertex> {
+  vs: vector<Vertex> = [];
+  for i in 0..n {
+    f = i as float;
+    vs += [Vertex { id: i, pos: V3 { x: f, y: 10.0 - f, z: f * 0.5 }, nrm: V3 { x: 0.0, y: 1.0, z: 2.0 } }];
+  }
+  vs
+}
+
+// n1 — nested reads through the loop variable.
+fn n1() {
+  vs = verts(6);
+  lo = 1000.0; sx = 0.0; sz = 0.0; ids = 0;
+  for v in vs { if v.pos.y < lo { lo = v.pos.y; } sx += v.pos.x + v.nrm.y; sz += v.pos.z * v.nrm.z; ids += v.id; }
+  println("n1 {lo} {sx} {sz} {ids}");
+  assert(lo == 5.0 && sx == 21.0 && sz == 15.0 && ids == 15, "n1");
+}
+
+// n2 — nested writes through the view, then read back by another walk.
+fn n2() {
+  vs = verts(5);
+  for v in vs { v.pos.x = v.pos.x + v.nrm.z; v.nrm.y += 0.5; v.pos.z = 0.0; }
+  sx = 0.0; sy = 0.0; sz = 0.0;
+  for v in vs { sx += v.pos.x; sy += v.nrm.y; sz += v.pos.z; }
+  println("n2 {sx} {sy} {sz}");
+  assert(sx == 20.0 && sy == 7.5 && sz == 0.0, "n2");
+}
+
+// n3 — three levels deep, integers, read and written.
+fn n3() {
+  os: vector<Outer> = [];
+  for i in 0..7 { os += [Outer { tag: i, mid: Mid { pad: 100, inn: Inner { a: i * 2, b: i + 1 } }, w: 0.5 }]; }
+  for o in os { o.mid.inn.b = o.mid.inn.b * 10 + o.tag; o.mid.pad += 1; }
+  ta = 0; tb = 0; tp = 0;
+  for o in os { ta += o.mid.inn.a; tb += o.mid.inn.b; tp += o.mid.pad; }
+  println("n3 {ta} {tb} {tp}");
+  assert(ta == 42 && tb == 301 && tp == 707, "n3");
+}
+
+// n4 — a VIEW of the sub-record is written while the parent's path is read: nothing may
+// be cached across the write.
+fn n4() {
+  vs = verts(4);
+  t = 0.0;
+  for v in vs { before = v.pos.x; p = v.pos; p.x = 9.0 + before; t += v.pos.x * 2.0 - before; }
+  println("n4 {t}");
+  assert(t == 78.0, "n4");
+}
+
+// n5 — `single` fields in the sub-record.
+fn n5() {
+  ws: vector<Wrap> = [];
+  for i in 0..6 { ws += [Wrap { k: i, sm: Sm { s: i as single, t: 0.5f } }]; }
+  for w in ws { w.sm.t = w.sm.s * 2.0f + w.sm.t; }
+  t = 0.0f; k = 0;
+  for w in ws { t += w.sm.t; k += w.k; }
+  println("n5 {t} {k}");
+  assert(t == 33.0f && k == 15, "n5");
+}
+
+// n6 — a NULL view: reads answer the sentinel, the write is dropped.
+fn n6() {
+  vs = verts(3);
+  hit = 0; miss = 0;
+  for i in 0..5 {
+    e = vs[i];
+    e.pos.x = 50.0;
+    if e.pos.x == 50.0 { hit += 1; } else { miss += 1; }
+  }
+  println("n6 {hit} {miss} {vs[2]?.pos.x}");
+  assert(hit == 3 && miss == 2 && vs[2]?.pos.x == 50.0, "n6");
+}
+
+// n8 — a PARAMETER's nested fields: no binding, so the store read stands.
+fn n8_len2(v: const Vertex) -> float { v.pos.x * v.pos.x + v.pos.y * v.pos.y + v.nrm.z }
+fn n8() {
+  vs = verts(4);
+  t = 0.0;
+  for v in vs { t += n8_len2(v); }
+  println("n8 {t}");
+  assert(t == 316.0, "n8");
+}
+
+// n9 — the middle step is an ELEMENT, not an inline record: no path forms.
+fn n9() {
+  hs: vector<Holder> = [];
+  for i in 0..3 { hs += [Holder { id: i, bag: Bag { items: [Inner { a: i, b: 7 }, Inner { a: i * 10, b: 8 }], n: 2 } }]; }
+  t = 0;
+  for h in hs { t += (h.bag.items[1]?.a) + h.bag.n + h.id; h.bag.n += 1; }
+  u = 0;
+  for h in hs { u += h.bag.n; }
+  println("n9 {t} {u}");
+  assert(t == 39 && u == 9, "n9");
+}
+
+// n11 — the sub-record is replaced WHOLE inside the block that reads it.
+fn n11() {
+  vs = verts(4);
+  t = 0.0;
+  for v in vs { a = v.pos.x; v.pos = V3 { x: a + 1.0, y: 2.0, z: 3.0 }; t += v.pos.x + v.pos.y + v.pos.z; }
+  u = 0.0;
+  for v in vs { v.nrm = v.pos; u += v.nrm.x + v.nrm.z; }
+  println("n11 {t} {u}");
+  assert(t == 30.0 && u == 22.0, "n11");
+}
+
+// n12 — the view binds by explicit index, and a callee takes it.
+fn n12_score(v: const Vertex) -> float { v.pos.z + v.nrm.z }
+fn n12() {
+  vs = verts(5);
+  t = 0.0;
+  for i in 0..len(vs) { v = vs[i]?; v.pos.z = v.pos.z + 1.0; t += v.pos.z + n12_score(v); }
+  println("n12 {t}");
+  assert(t == 30.0, "n12");
+}
+
+fn main() {
+  n1(); n2(); n3(); n4(); n5(); n6(); n8(); n9(); n11(); n12();
+  println("nested field ok");
+}

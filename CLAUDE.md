@@ -868,6 +868,16 @@ rebinds the view; a nullable view — `e = v[i]` without `?`, a `for e in v` loo
 is admitted as its record, the null address answering the sentinel.  `LOFT_HOIST_VERIFY=1` re-derives the
 address and re-reads the store at every use; `LOFT_TRACE_RECPTR=1` names each view bound
 and each declined with its reason.  `LOFT_NO_VECTOR_BASE=1` switches it off too (one rule).
+**`LOFT_NO_BASE_RECPTR=1`** (`@FR-R-RecPtr`'s base clause, default-ON, generation time,
+`--native` only) makes the loop variable of `for e in v` resolve the store for its address
+again — with it off, the address is the loop's held element base plus index times size
+under the in-range test, no `DbRef` consulted, and the iteration's `#index` (never the
+sentinel, `@FR-R-Counter`'s iteration clause, `LOFT_NO_NN_FAST`) steps through the non-null
+add (`record_walk` −49 %, 2.98× → 1.50× of Rust; `tuple_kernel` −20 %; `entity_tick`
+−30 %) — and is the first bisect step for a wrong field read through a `for e in v` loop
+variable on native; `LOFT_HOIST_VERIFY=1` compares the address with a fresh `rec_ptr` at
+every use.  An address derived from the element's `DbRef` instead of the index measured
++46 % SLOWER and is not what ships.
 **`LOFT_NO_LOOP_BUFFER_REUSE=1`** (@PLN157 § V-al, `@FR-R-LoopBuffer`, default-ON,
 generation time) makes a vector local declared `[]` INSIDE a loop re-mint its per-site
 buffer every iteration again — with it off, the buffer's store and its vector survive the

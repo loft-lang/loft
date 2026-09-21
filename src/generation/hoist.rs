@@ -426,6 +426,29 @@ pub fn scalar_read(getter: &str, args: &[Value]) -> Option<ScalarKey> {
     Some((*v, i64::from(*fld)))
 }
 
+/// `@FR-R-RecPtr`'s path clause — the record VIEW a scalar field access goes through and the
+/// byte offset of the field from the view's first byte.  The access has two spellings and
+/// both are one notion: `r.f` is `OpGet<K>(Var(r), f)`, and `r.pos.x` — a field reached
+/// through INLINE sub-records — is `OpGet<K>(OpGetField(Var(r), off(pos), _), off(x))`.
+/// `OpGetField` adds a constant to the `DbRef`'s position and leaves its record alone, so
+/// the field is the view's at `off(pos) + off(x)`, and the null view stays null through
+/// the chain.  A base that is anything else — an element address, a pointer field
+/// (`OpGetDbRef`), a call — forms no path and answers `None`.
+///
+/// For the record ADDRESS only: a read through it loads the bytes where they are each
+/// time, so no aliasing question arises.  `(R-Scalar)`'s hoisted scalars keep
+/// [`scalar_read`]'s bare-variable key on purpose — a hoist CACHES a value keyed by
+/// (record type, offset), and a write through a sub-record view (`p = v.pos; p.x = …`)
+/// is typed by the sub-record, which would never evict a key typed by the parent.
+#[must_use]
+pub fn view_field(data: &Data, base: &Value, fld: &Value) -> Option<(u16, i64)> {
+    let Value::Int(fld) = fld.unspan() else {
+        return None;
+    };
+    let (root, offs) = vector_path(data, base)?;
+    Some((root, offs.iter().sum::<i64>() + i64::from(*fld)))
+}
+
 /// What a loop body writes in place, by RECORD TYPE (a schema type number) and offset
 /// (@PLN157 P4c).  A hoisted scalar `(v, fld)` of a record typed `tp` is stale after a
 /// write at `(tp, fld)` through ANY route — the variable itself, a `&`-bound alias, an
@@ -1608,10 +1631,13 @@ pub fn record_view_ptr(
                     if on_r && native && !name.starts_with("OpGet") && setter_kind(name).is_none() {
                         rebound = true;
                     }
-                    if on_r
-                        && ((scalar_kind(name).is_some() && scalar_read(name, args).is_some())
-                            || (setter_kind(name).is_some()
-                                && matches!(args.get(1).map(Value::unspan), Some(Value::Int(_)))))
+                    // A fusable scalar field read or in-place write of the view, by either
+                    // spelling of the field (`view_field`): direct, or through inline
+                    // sub-records.
+                    if (scalar_kind(name).is_some() || setter_kind(name).is_some())
+                        && args.len() >= 2
+                        && view_field(data, &args[0], &args[1]).is_some_and(|(v, _)| v == *r)
+                        && (on_r || nested_field_enabled())
                     {
                         touched = true;
                     }
@@ -1638,6 +1664,15 @@ pub fn record_view_ptr(
         return Err("no fusable field read or write of the view");
     }
     Ok(*r)
+}
+
+/// `@FR-R-RecPtr`'s path clause is on — `LOFT_NO_NESTED_FIELD=1` keeps a field reached
+/// through an inline sub-record (`v.pos.x`) on its store read (`@FR-R-Switch`).  Read at
+/// generation time.
+#[must_use]
+pub fn nested_field_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_NESTED_FIELD").is_ok_and(|v| v != "0"))
 }
 
 /// @PLN157 § V-o — is `d_nr` a stdlib ONE-OP wrapper: a loft function whose whole body is

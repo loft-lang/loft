@@ -197,7 +197,16 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  an overflow's sentinel propagate onward as null on both backends,
                  and a native closure would answer a number there, a divergence after
                  a reported fault.  Its price is measured (§ V-aj), and it is the
-                 owner's line to move.
+                 owner's line to move.  THE ITERATION CLAUSE: the `#index` of a
+                 `for e in v` loop is a counter of the same kind — it starts at the
+                 parser's literal seed, its one step is the head's `idx + 1`, and
+                 the loop's own bound `if len(v) <= idx { break }` stands between
+                 every two steps, so it never exceeds a vector's length (a u32)
+                 plus one, whatever the body does to the vector.  It is seeded
+                 when the loop's first two statements are that head and that bound
+                 over ONE vector operand, nothing else in the loop assigns it,
+                 every other assignment in the function is a literal, and its
+                 address is never taken.
 
   (R-LitDiv)     a division or remainder by a LITERAL that is neither 0 nor -1 emits
                  as one sentinel test and the plain operator — `if x == MIN { MIN }
@@ -434,7 +443,13 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  loop's end signal — is admitted as its inner record: the null
                  record keeps its sentinel, the address is null and every read
                  tests it.  An enum payload and a synthetic `__nullable<S>` are
-                 not plain records and are never bound.
+                 not plain records and are never bound.  THE BASE CLAUSE: where
+                 the binding is the head of `for e in v` — `e = { idx = idx + 1;
+                 v[idx] }` — over a path whose header AND element base the loop
+                 holds (R-Base), the address is `base + idx * size` when `idx` is
+                 in range of the header's length, and null past the end (the null
+                 record that ends the loop): no DbRef is consulted and no store is
+                 resolved.
 ```
 
 **In words.** 2026-09-18, the drawing library's crossing loop (`pg_cur = pg_table[i]?`,
@@ -463,6 +478,28 @@ variable is a `Set(e, Iter…)` of the NULLABLE element type (its null ends the 
 the same gate admits it once the `Optional` is peeled — the loop body reads every field of
 `e` through one address per iteration (`polygon_generic`'s first loop, `thin_line`; the
 `forview` probe — `for e in v { t += e.a * 2 + e.b - (e.f as integer) }` over 100 000 records — 562–584 → 389–405 µs per pass, −31 %, the value hand-checked).  No lane row moved: the one such loop on the drawing bench (`polygon_generic`'s `for e in edges`) appends to `pg_table` and so declines by design.
+
+*The base clause (2026-09-21, @PLN158 R2).*  A `for e in v` loop built a `DbRef` for its
+element and then resolved the store a second time to turn that `DbRef` back into an address
+— per element, in a loop that already held the address of element 0.  Hand-priced on the
+emitted Rust before anything was built (`record_walk`, 32.0 µs per call): the address from
+the base and the index −40 %, the element's `DbRef` no longer built −49 %, the index stepped
+unchecked −62 % (1.12× the Rust reference).  Built, the first two arrive together — once the
+address stops depending on the `DbRef`, LLVM drops the `DbRef` where nothing else reads it —
+and the third is `(R-Counter)`'s iteration clause: `record_walk` 31.97 → 16.15 µs (2.98× →
+1.50×), `tuple_kernel` −20 % (2.02× → 1.62×), `entity_tick` −30 % (its inner scan).  The
+form matters and was measured: a first build took the address from the `DbRef` — an
+identity (`rec_ptr` is the store's pointer plus `rec * 8 + pos`, the base the same pointer
+plus `rec * 8 + 8`) guarded by a test of its store and record — and ran **+46 % slower**
+than the store resolution it replaced, because the tests and the fallback hid the induction
+from the optimiser; the index form is what ships.  An explicit index binding (`e = v[i]?`)
+is a JOIN — the element, or a discharge buffer in another store — and keeps `rec_ptr`.
+Switch `LOFT_NO_BASE_RECPTR`; falsifier `LOFT_HOIST_VERIFY=1` (`rec_get`/`rec_set` compare
+the address with a fresh `rec_ptr` at every use — a sabotaged `index + 1` panics there, and
+answers `0 0 162 135 243` for `0 -7 155 135 250` without it).  Cells
+`tests/scripts/158-iteration-base.loft`, pins `tests/iteration_base.rs`.  Sites:
+`hoist::iteration_head`, `Output::held_iteration_base`, `Output::bind_record_ptr`, the
+`BIND_RECPTR_BASE` rule in `scripts/emission_audit.py`.
 
 ### A stdlib one-op wrapper is its op
 

@@ -203,6 +203,16 @@ fn emit_hoisted_scalar_or_default(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> 
         {
             return write!(ctx.w, "{expr}");
         }
+        // …and so is a field reached through INLINE sub-records (`v.pos.x`): the same
+        // address, at the summed offset (`hoist::view_field`, the path clause).
+        if crate::generation::hoist::nested_field_enabled()
+            && let [base, fld, ..] = args
+            && !matches!(base.unspan(), Value::Var(_))
+            && let Some((v, off)) = crate::generation::hoist::view_field(ctx.output.data, base, fld)
+            && let Some(expr) = ctx.output.rec_ptr_read(v, off, ctx.def_fn.name())
+        {
+            return write!(ctx.w, "{expr}");
+        }
         return super::default::DefaultEmitter.emit(ctx, args);
     };
     if ctx.output.hoist_verify {
@@ -283,17 +293,21 @@ impl OpEmitter for FusedElementWriteEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         // `@FR-R-RecPtr` — an in-place field write of a record VIEW whose address the block
         // holds is one store through it (the setter's `rec != 0` test is the null address).
+        // The field is the view's own, or one reached through INLINE sub-records
+        // (`v.pos.x = …`) at the summed offset (`hoist::view_field`, the path clause); the
+        // `DbRef` handed to the checking form is the VIEW's, which the offset counts from.
         if let [base, fld, val] = args
-            && let Value::Var(v) = base.unspan()
-            && let Value::Int(off) = fld.unspan()
+            && (matches!(base.unspan(), Value::Var(_))
+                || crate::generation::hoist::nested_field_enabled())
+            && let Some((v, off)) = crate::generation::hoist::view_field(ctx.output.data, base, fld)
             && let Some(ty) = crate::generation::hoist::setter_kind(ctx.def_fn.name())
-            && let Some(ptr) = ctx.output.active_rec_ptr(*v).map(str::to_owned)
+            && let Some(ptr) = ctx.output.active_rec_ptr(v).map(str::to_owned)
         {
             let verify = ctx.output.hoist_verify;
             write!(ctx.w, "{{ let __wv = (")?;
             ctx.emit(val)?;
             write!(ctx.w, "); unsafe {{ vector::rec_set::<{ty}>({ptr}, &(")?;
-            ctx.emit(base)?;
+            ctx.emit(&Value::Var(v))?;
             return write!(
                 ctx.w,
                 "), ({off}_i64) as u32, __wv, &stores.allocations, {verify}) }} }}"
