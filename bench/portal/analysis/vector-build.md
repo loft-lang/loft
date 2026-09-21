@@ -72,6 +72,48 @@ Priced on `record_update` (`v[i].x = v[i]?.y + …`, whose WRITE is already fuse
 existing fused element read (`hoist::fused_element_read`) serves a SCALAR vector's `v[i]?`;
 this is its record-field twin.
 
+### F1 priced to the form it will be EMITTED in (2026-09-22, not built)
+
+The IR is `OpGetFloat( Block "ncc" { Set(t, OpGetVectorNullable(v, size, i)); If(OpConvBoolFromRef(t),
+t, Object { OpDatabase(buf, tp); …the default record's fields…; buf }) }, fld )` — the scalar
+getter's operand is the JOIN block, which is why `hoist::fused_element_read` (it wants the
+element address directly, and already fuses `v[i].y` WITHOUT the `?`) answers `None`.  Four
+forms, `record_update`, three runs each within ±1 %, hash `7537` throughout:
+
+| form | µs | |
+|---|---|---|
+| today | 34.9 | |
+| the join kept, its RESULT identity-tested against the header (`rec`/`store_nr`), load through the base | 21.4 | −39 % |
+| **A** — the index tested FIRST; in range one load, the join only in the fallback | 12.1 | −65 % |
+| **B** — A, and the join's temp still assigned in range (`t = element`) | 12.2 | −65 % |
+| **C** — B through an `inline(always)` helper answering `Option<(DbRef, T)>` | 12.0–12.4 | −65 % |
+
+Read it as: **build C.**  The result-identity form looked better on paper — it re-evaluates
+nothing and drops no side effect — and loses 40 % of the gain, because the join stays in
+the loop and with it a cold `OpDatabaseNP(cell, …)` call that holds the whole body back.
+B against A is the useful half: assigning the join's temp in range costs NOTHING (LLVM drops
+the dead store), so the rewrite preserves the join's one side effect exactly and owes no
+proof that the temp is dead outside its block — a walker that did not have to be written.
+What C still owes: the index is evaluated once for the test and again inside the fallback's
+join, so it must be free of side effects (find the existing purity predicate; a `Var` is
+the clear case), and out of range the ORIGINAL expression answers — never a constant: the
+absent arm is the default RECORD's field, which a declared field default can make non-zero.
+
+**Where F1 has to be built — TWO sites, one recogniser.**  An emitter arm alone would
+compile, pass every test and never fire: `pre_eval.rs` treats every `Value::Block` argument
+as needing pre-evaluation (`needs_pre_eval`, the `Value::Block(_) … => true` arm), so by the
+time `FusedElementReadEmitter` runs the join is already `let _pre_40 = { //ncc_6 … }` and the
+getter's operand is a local, not the join block.  The existing fused read solves the same
+problem the same way — `collect_pre_evals_inner` asks `fused_element_read` so the collector
+and the emitter cannot disagree about what is folded — and F1 wants that shape: ONE
+`hoist::fused_join_read` asked by both, the collector leaving the join in place where it
+answers, the emitter folding it.  The arm belongs INSIDE `FusedElementReadEmitter` (it owns
+every scalar getter; a second registration would silently replace it), beside the existing
+fused read, with a re-entrancy flag for the fallback's own emission as `nest_raw_arm` has.
+The index is a `Var` in the first build: a computed index would re-run CHECKED arithmetic
+on the fallback path and could note one overflow twice.  Needs a held header AND base
+(`active_vec_base`) — the priced form is the load through the base.
+
 ## T1: a walk of texts allocates a `String` per element
 
 `for p in words` binds `p` as `{ … store.get_str(…) }.to_string()` — a heap allocation and a
