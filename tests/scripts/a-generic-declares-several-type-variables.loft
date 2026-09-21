@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic's header declares a LIST of type variables (@PLN165 C2, C126): `<K, V>`, each
+// with its own bounds, each inferred from the parameters that name it.  Two calls binding
+// the two variables to swapped types are two instances; a variable's bound is checked on its
+// own binding (a `text` bound to `V: Named` is refused, the other variable's bound holding);
+// the second variable may sit in a vector or a tuple; and a two-variable pattern takes part
+// in selection like any other (`(T, integer)` is an instance of `(T, U)`).
+//
+// Before, the header was refused — "declares 2 type variables, and a generic function
+// declares one" (and, before A4, five syntax errors from the comma).
+//
+// @falsified-at: 7e1e85c0a — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-generic-declares-several-type-variables.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses every two-variable header.
+//   ARMED: nothing.
+//   WITNESS: on the control `pair_up` is "declares 2 type variables (`K`, `V`)".
+//   HOLDS: nothing else — every cell declares two variables.
+
+interface Named { fn tag(self: Self) -> text }
+struct Cat { n: integer }
+struct Dog { n: integer }
+fn tag(self: Cat) -> text { "cat {self.n}" }
+fn tag(self: Dog) -> text { "dog {self.n}" }
+
+fn pair_up<K: Printable, V: Printable>(k: K, v: V) -> text { "{k}:{v}" }
+fn label<K: Named, V: Printable>(k: K, v: V) -> text { "{k.tag()}={v}" }
+fn last_with<K, V>(k: K, v: vector<V>) -> V { v[len(v) - 1] }
+fn both<A, B>(a: A, b: B) -> (A, B) { (a, b) }
+fn g<T: Printable>(p: (T, integer)) -> text { "ti {p.0} {p.1}" }
+fn g<T: Printable, U: Printable>(p: (T, U)) -> text { "tu {p.0}" }
+
+fn test_swapped_bindings_are_two_instances() {
+  assert("{pair_up(1, "a")}|{pair_up("b", 2)}" == "1:a|b:2", "{pair_up("b", 2)}");
+}
+
+fn test_each_variable_its_own_bound() {
+  assert(label(Cat { n: 1 }, 2.5) == "cat 1=2.5", "{label(Cat { n: 1 }, 2.5)}");
+  assert(label(Dog { n: 2 }, "x") == "dog 2=x", "{label(Dog { n: 2 }, "x")}");
+}
+
+fn test_a_second_variable_in_a_vector_and_a_tuple() {
+  a: vector<text> = ["x", "z"];
+  b: vector<integer> = [3, 4];
+  assert(last_with(1, a) == "z" && last_with("k", b) == 4, "{last_with(1, a)}");
+  t = both(7, "q");
+  u = both("r", 8);
+  assert("{t.0} {t.1}|{u.0} {u.1}" == "7 q|r 8", "{t.0}");
+}
+
+fn test_a_two_variable_pattern_in_a_set() {
+  assert(g(("x", 2)) == "ti x 2", "{g(("x", 2))}");
+  assert(g((1.5, "y")) == "tu 1.5", "{g((1.5, "y"))}");
+}

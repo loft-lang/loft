@@ -1,0 +1,591 @@
+diff --git b/src/data.rs a/src/data.rs
+index 76cfb14e7..124bbb738 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -4199,10 +4199,6 @@ pub enum KeyKind {
+     /// `f_<LEN><spelling>_<name>` — a free member of an overload set, keyed on the spelling
+     /// of every declared parameter.
+     FreeOverload,
+-    /// `i_<LEN><spelling>_<template key>` — an INSTANCE of a generic: the identity spelling
+-    /// of every type it binds, joined with `#`, then the key of the template it was made from
+-    /// (`D-Key`, @PLN165).
+-    Instance,
+ }
+ 
+ /// A length-counted definition key read back into its parts by [`Data::split_key`].
+@@ -4640,14 +4636,9 @@ impl Definition {
+     /// `contains`.  Used by diagnostics (the @PLN102 arc-C steer + fold lint).
+     #[must_use]
+     pub fn display_name(&self) -> &str {
+-        let mut name = self.name.as_str();
+-        // An instance displays as its template.
+-        while let Some(parts) = Data::split_key(name).filter(|k| k.kind == KeyKind::Instance) {
+-            name = parts.rest;
+-        }
+-        match Data::split_key(name).filter(|k| k.kind == KeyKind::Method) {
+-            Some(parts) => parts.rest,
+-            None => name.strip_prefix("n_").unwrap_or(name),
++        match self.method_type_prefix() {
++            Some(p) => &self.name[p.len()..],
++            None => self.name.strip_prefix("n_").unwrap_or(&self.name),
+         }
+     }
+ 
+@@ -5085,16 +5076,7 @@ impl Definition {
+     /// question that reaches them.
+     #[must_use]
+     pub fn is_loft_defined(&self) -> bool {
+-        (self.name.starts_with("n_") || self.name.starts_with("t_") || self.is_instance())
+-            && self.code != Value::Null
+-    }
+-
+-    /// Is this an INSTANCE of a generic — keyed `i_<LEN><types>_<template>` (`D-Key`)?  Asked
+-    /// of the key's shape, not of its prefix: the runtime's own `i_parse_*` helpers share the
+-    /// letter and are no instance.
+-    #[must_use]
+-    pub fn is_instance(&self) -> bool {
+-        Data::split_key(&self.name).is_some_and(|k| k.kind == KeyKind::Instance)
++        (self.name.starts_with("n_") || self.name.starts_with("t_")) && self.code != Value::Null
+     }
+ 
+     /// Cluster-A.3 (OWNERSHIP_MODEL row 102) — THE adopt-vs-copy answer for a
+@@ -5255,20 +5237,13 @@ impl Definition {
+             .find(|g| matches!(g.kind, LinkedFieldKind::Tuple))
+     }
+ 
+-    /// The name the source wrote for the function keyed `key`: a method's or a free
+-    /// overload's `rest`, an instance's TEMPLATE's name, a plain `n_<name>`'s `<name>`.
+-    fn source_name_of_key(key: &str) -> String {
+-        match Data::split_key(key) {
+-            Some(parts) if parts.kind == KeyKind::Instance => Self::source_name_of_key(parts.rest),
+-            Some(parts) => parts.rest.to_string(),
+-            None => key.get(2..).unwrap_or(key).to_string(),
+-        }
+-    }
+-
+     #[must_use]
+     pub fn original_name(&self) -> String {
+         if self.def_type == DefType::Function {
+-            Self::source_name_of_key(&self.name)
++            match Data::split_key(&self.name) {
++                Some(key) => key.rest.to_string(),
++                None => self.name[2..].to_string(),
++            }
+         } else {
+             self.name.clone()
+         }
+@@ -7515,9 +7490,8 @@ impl Data {
+     }
+ 
+     /// The ONE decoder of a length-counted definition key — `t_<LEN><spelling>_<rest>` (a
+-    /// method), `f_<LEN><spelling>_<rest>` (a free member of an overload set) or
+-    /// `i_<LEN><spelling>_<rest>` (an instance of a generic) — and the inverse of
+-    /// [`Self::mangle_method`], [`Self::mangle_free_overload`] and [`Self::mangle_instance`].  `LEN` is read as
++    /// method) or `f_<LEN><spelling>_<rest>` (a free member of an overload set) — and the
++    /// inverse of [`Self::mangle_method`] and [`Self::mangle_free_overload`].  `LEN` is read as
+     /// EVERY leading digit, so a spelling of 100 characters or more decodes like a short one.
+     /// `None` for a key of any other shape (`n_…`, an operator, a type), for a `LEN` that runs
+     /// past the key, and for a spelling not followed by the `_` separator.
+@@ -7525,8 +7499,6 @@ impl Data {
+     pub fn split_key(name: &str) -> Option<KeyParts<'_>> {
+         let (kind, body) = if let Some(body) = name.strip_prefix("t_") {
+             (KeyKind::Method, body)
+-        } else if let Some(body) = name.strip_prefix("i_") {
+-            (KeyKind::Instance, body)
+         } else {
+             (KeyKind::FreeOverload, name.strip_prefix("f_")?)
+         };
+@@ -7555,48 +7527,6 @@ impl Data {
+         format!("f_{}{}_{name}", spelling.len(), spelling)
+     }
+ 
+-    /// The key of an INSTANCE of a generic (`D-Key`, @PLN165): `i_<LEN><spelling>_<template>`,
+-    /// `spelling` every bound type's [`Self::identity_spelling`] joined with `#` in the order the
+-    /// template's variables first appear, `template` the template's own key.  Its own kind,
+-    /// because an instance is not a method on its first bound type — keyed as one
+-    /// (`t_3Cat_count_of`), it took a real method `count_of` on `Cat` for itself — and the
+-    /// template's key in it keeps two templates of one name from sharing an instance.  The key
+-    /// keeps its readable characters; the native emitter makes it an identifier.
+-    #[must_use]
+-    pub fn mangle_instance(spelling: &str, template: &str) -> String {
+-        Self::assert_spelling_decodes(spelling);
+-        format!("i_{}{}_{template}", spelling.len(), spelling)
+-    }
+-
+-    /// What distinguishes one binding of a type variable from another in an instance's key.
+-    ///
+-    /// A collection keeps its element (a `vector`'s type def is the bare `vector`, which
+-    /// erases it — loft#1024); an integer keeps its range and a forced width (every
+-    /// `Integer(_)` resolves to the one `integer` def — loft#1383, loft#1418); any other type
+-    /// is its def's name.  `(C-Int)` admits a widening for CONVERSION, which is why this is not
+-    /// the conversion predicate: identity is exactly what one instance per distinct
+-    /// instantiation (`@FR-G-Mono`) is keyed by.
+-    #[must_use]
+-    pub fn identity_spelling(&self, tp: &Type) -> String {
+-        if crate::parser::Parser::is_collection_type(tp.base()) {
+-            tp.name(self) // schema-key — the instance's identity; @FR-G-Mono wants the element
+-        } else if let Type::Integer(spec) = tp.base() {
+-            // schema-key — loft#1418's forced WIDTH is part of which instance this is.
+-            let named = tp.name(self);
+-            match spec.forced_size {
+-                Some(n) => format!("{named}s{n}"),
+-                None => named,
+-            }
+-        } else {
+-            let nr = self.type_def_nr(tp);
+-            if nr == u32::MAX {
+-                tp.name(self)
+-            } else {
+-                self.def(nr).name().to_string()
+-            }
+-        }
+-    }
+-
+     /// The internal name of a BOUND-METHOD STUB for `holder` — a generic's type variable, or an
+     /// interface's associated type.
+     ///
+@@ -9128,16 +9058,6 @@ impl Data {
+         self.definitions[v_nr as usize].known_type = vec_tp;
+         v_nr
+     }
+-    /// Does `tp` mention a type-variable placeholder anywhere — is it still a template's type
+-    /// rather than a type?
+-    #[must_use]
+-    pub fn mentions_type_var(&self, tp: &Type) -> bool {
+-        tp.any_node(&mut |t| {
+-            matches!(t, Type::Reference(d, _) if (*d as usize) < self.definitions.len()
+-                && self.is_type_var_placeholder(*d))
+-        })
+-    }
+-
+ 
+     /// A generic type-variable placeholder: the attribute-less, self-referential
+     /// `Struct` the parser registers for a `<T>` type parameter (e.g. stdlib
+diff --git b/src/generation/coroutine.rs a/src/generation/coroutine.rs
+index c0fada939..147b861ec 100644
+--- b/src/generation/coroutine.rs
++++ a/src/generation/coroutine.rs
+@@ -97,10 +97,7 @@ pub(crate) fn yield_slot_read(kind: YieldSlot, slot: usize) -> String {
+ /// Derive the generator struct name from the loft function name.
+ /// `n_count` → `NCountGen`, `n_gen_len` → `NGenLenGen`.
+ fn gen_struct_name(fn_name: &str) -> String {
+-    // A key may keep non-identifier characters (an instance's `i_15vector<integer>_…`); the
+-    // one flattening the function's own identifier goes through applies here too.
+-    let flat = super::rust_fn_ident(fn_name);
+-    let base = flat.strip_prefix("n_").unwrap_or(&flat);
++    let base = fn_name.strip_prefix("n_").unwrap_or(fn_name);
+     let capitalized: String = base
+         .split('_')
+         .map(|part| {
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index f4fa51f6b..994370f41 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -2593,8 +2593,7 @@ impl Output<'_> {
+         // body block — without the patch, native codegen emits the Call as a
+         // discarded statement and returns STRING_NULL.
+         let fn_name = self.data.def(self.def_nr).name();
+-        let specialised = fn_name.starts_with("t_") || self.data.def(self.def_nr).is_instance();
+-        let is_t_stub_text_body = matches!(bl.result, Type::Text(_)) && specialised;
++        let is_t_stub_text_body = matches!(bl.result, Type::Text(_)) && fn_name.starts_with("t_");
+         // P240 fix (2026-05-11): bounded-generic T-stubs that return a
+         // stack-passed tuple — `t_<len><Type>_<method>` returning
+         // `Type::Tuple(...)` — go through the same hoisted-return
+@@ -2608,7 +2607,7 @@ impl Output<'_> {
+         // the text branch above; same hoist logic applies because
+         // both shapes have a `Return(Null)` tail with the actual
+         // value as a preceding statement.
+-        let is_t_stub_tuple_body = matches!(bl.result, Type::Tuple(_)) && specialised;
++        let is_t_stub_tuple_body = matches!(bl.result, Type::Tuple(_)) && fn_name.starts_with("t_");
+         // Any text-returning block whose body contains the B5-L3
+         // `Set(__ret_N, call); ...; Return(Var(__ret_N))` temp-transfer
+         // pattern must also go through `patch_hoisted_returns` so the
+diff --git b/src/generation/mod.rs a/src/generation/mod.rs
+index 436c06e8d..d71b0b78e 100644
+--- b/src/generation/mod.rs
++++ a/src/generation/mod.rs
+@@ -407,12 +407,6 @@ pub fn reachable_functions(data: &Data, entry_defs: &[u32]) -> HashSet<u32> {
+ pub fn duplicate_fn_names(data: &Data) -> HashSet<String> {
+     let mut seen: HashSet<&str> = HashSet::new();
+     let mut dups = HashSet::new();
+-    // Two DIFFERENT keys that flatten to one Rust identifier ([`rust_fn_ident`]) would be two
+-    // definitions under one symbol — a key keeps its readable characters (`i_15vector<text>_…`,
+-    // `f_10Rock#Paper_…`) and this is the one place that makes it an identifier, so it is the
+-    // one place that can refuse the collision.  Two definitions of the SAME key from two
+-    // modules are the ordinary duplicate, disambiguated below.
+-    let mut flat: HashMap<String, &str> = HashMap::new();
+     for d in 0..data.definitions() {
+         let def = data.def(d);
+         if !matches!(def.def_type(), DefType::Function | DefType::Dynamic) {
+@@ -421,15 +415,6 @@ pub fn duplicate_fn_names(data: &Data) -> HashSet<String> {
+         if !seen.insert(def.name()) {
+             dups.insert(def.name().to_string());
+         }
+-        let ident = rust_fn_ident(def.name());
+-        if let Some(prev) = flat.insert(ident.clone(), def.name()) {
+-            assert!(
+-                prev == def.name(),
+-                "native emission: the definitions `{prev}` and `{}` flatten to one Rust \
+-                 identifier `{ident}`",
+-                def.name()
+-            );
+-        }
+     }
+     dups
+ }
+@@ -502,7 +487,7 @@ pub fn disambiguated_fn_ident(dups: &HashSet<String>, def: &crate::data::Definit
+ /// — and `<`, `>`, `,`, and spaces are not valid in a Rust identifier (#395).  Every
+ /// emission of a fn name (definition AND every call) routes through `fn_ident`, so
+ /// flattening at this one chokepoint keeps the definition and its callers in sync.
+-pub(crate) fn rust_fn_ident(name: &str) -> String {
++fn rust_fn_ident(name: &str) -> String {
+     if name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+         return name.to_string();
+     }
+@@ -4326,8 +4311,7 @@ impl Output<'_> {
+                 let callee = data.def(*d);
+                 let name = callee.name();
+                 name.starts_with("n_")
+-                    || ((name.starts_with("t_") || callee.is_instance())
+-                        && matches!(callee.code(), Value::Block(_)))
++                    || (name.starts_with("t_") && matches!(callee.code(), Value::Block(_)))
+             }
+             Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
+             _ => false,
+@@ -4370,7 +4354,7 @@ impl Output<'_> {
+                     // a native user-level function: what it reaches is not visible here
+                     return true;
+                 }
+-                if (name.starts_with("n_") || name.starts_with("t_") || callee.is_instance())
++                if (name.starts_with("n_") || name.starts_with("t_"))
+                     && loft_bodied
+                     && !callees.contains(d)
+                 {
+diff --git b/src/keys.rs a/src/keys.rs
+index 53780c47c..3a621dc2d 100644
+--- b/src/keys.rs
++++ a/src/keys.rs
+@@ -1052,15 +1052,6 @@ pub fn value_return_enabled() -> bool {
+ /// a store of its own (@PLN164 B2, `@FR-R-Place`'s callee clause: a callee that on some exit
+ /// answers a store other than the buffer it was handed cannot be placed) — the bisect step
+ /// for a wrong record out of a callee with more than one literal exit.
+-/// @PLN165 A5 (`D-Key`) — an instance of a generic is keyed `i_<LEN><bound types>_<template
+-/// key>`: its own key kind, naming its template and every bound type.  **DEFAULT ON.**
+-/// `LOFT_NO_INSTANCE_KEY=1` mints the method-shaped `t_<LEN><type>_<name>` key again — the
+-/// rollback, and the first bisect step for a generic call that reaches the wrong definition.
+-pub fn instance_key_enabled() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_INSTANCE_KEY"))
+-}
+-
+ pub fn literal_exit_buffer_enabled() -> bool {
+     static ON: OnceLock<bool> = OnceLock::new();
+     *ON.get_or_init(|| !env_set("LOFT_NO_LITERAL_EXIT_BUFFER"))
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 24c152aaa..6c16ed380 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -14345,16 +14345,6 @@ impl Parser {
+     fn backward_ref_defnr(&self, op: u32) -> u32 {
+         if (op as usize) < self.data.definitions.len() {
+             let def = self.data.def(op);
+-            // `D-Key` — an instance's key names its template outright.
+-            if def.def_type() == DefType::Function
+-                && let Some(key) = crate::data::Data::split_key(def.name())
+-                    .filter(|k| k.kind == crate::data::KeyKind::Instance)
+-            {
+-                let tmpl = self.data.def_nr(key.rest);
+-                if tmpl != u32::MAX && self.data.def_type(tmpl) == DefType::Generic {
+-                    return tmpl;
+-                }
+-            }
+             if def.def_type() == DefType::Function && def.name().starts_with("t_") {
+                 let tmpl = self.data.def_nr(&format!("n_{}", def.original_name()));
+                 if tmpl != u32::MAX && self.data.def_type(tmpl) == DefType::Generic {
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index c5b675c0a..771d4764d 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -3072,11 +3072,6 @@ impl Parser {
+     /// `t_6vector_head`, rather than as `n_head`, and instantiates on pass 2 the same way
+     /// (loft#1539) — so a template of either spelling makes the name legal.
+     fn h5_names_a_generic_template(&self, name: &str) -> bool {
+-        // `D-Key` — an instance's key names its template outright.
+-        if let Some(key) = Data::split_key(name).filter(|k| k.kind == crate::data::KeyKind::Instance) {
+-            let g = self.data.def_nr(key.rest);
+-            return g != u32::MAX && matches!(self.data.def_type(g), DefType::Generic);
+-        }
+         let Some((_, fn_name)) = Self::h5_split_mangled(name) else {
+             return false;
+         };
+@@ -7446,11 +7441,70 @@ impl Parser {
+         self.instantiate_template(g_nr, name, types)
+     }
+ 
+-    /// The instance key before `D-Key` — `t_<LEN><first bound type>_<name>`, the spelling of a
+-    /// METHOD on that type — kept for `LOFT_NO_INSTANCE_KEY=1` and for the rename map
+-    /// `LOFT_TRACE_INSTANCE_KEY=1` prints (old key -> new key).
+-    fn method_shaped_instance_key(&self, g_nr: u32, name: &str, concrete: &Type, type_nr: u32) -> String {
+-        if type_nr == u32::MAX {
++    /// [`Self::try_generic_instantiation`] for the template `g_nr` itself: a free generic
++    /// found by its `n_` name, or a METHOD template (`t_6vector_head`) that a method call
++    /// selected (loft#1539).  `name` is the spelling the call wrote, and the monomorph is
++    /// named from it exactly as a free generic's is.
++    fn instantiate_template(&mut self, g_nr: u32, name: &str, types: &[Type]) -> u32 {
++        if types.is_empty() || types[0].is_unknown() {
++            // First-pass argument types may be incomplete; defer the diagnostic
++            // to second pass when types are stable.  Returning MAX here is the
++            // same effect; it just doesn't emit a noisy first-pass error.
++            if !self.first_pass {
++                diagnostic!(
++                    self.lexer,
++                    Level::Error,
++                    "Cannot infer type for generic parameter — provide an explicit type annotation"
++                );
++            }
++            return u32::MAX;
++        }
++        // loft#1538 — a template refused at its declaration has no instance; the refusal
++        // already names why, and the call site answers its declared return.
++        if self.refused_templates.contains(&g_nr) {
++            return u32::MAX;
++        }
++        // What each of the template's variables binds to at this call.
++        let Some(var_bindings) = Self::bind_template(&self.data, g_nr, types) else {
++            return u32::MAX;
++        };
++        let tvs: Vec<u32> = var_bindings.iter().map(|(tv, _)| *tv).collect();
++        // loft#761 — a SELF-recursive generic arrives here while its own template is
++        // still being parsed, and the argument type is the type VARIABLE, so `concrete`
++        // resolves to that variable rather than to any type. Instantiating against it
++        // built a def by cloning the template's variable table — which the parser has
++        // not written back yet, so the clone was EMPTY. That def is a plain `Function`,
++        // so codegen emitted it and indexed a table of length 0: "index out of bounds:
++        // the len is 0 but the index is 1", before any of the program ran.
++        //
++        // There is nothing to instantiate at this point, and nothing to diagnose
++        // either: the call is perfectly good, it just has no concrete type YET. Answer
++        // the TEMPLATE. A real caller then instantiates for its own concrete type, and
++        // `instantiate_nested_generics` retargets this call at that monomorph while
++        // building it — the same path any other call to a generic takes from inside a
++        // template. Self-recursion terminates there on the `existing` check.
++        if var_bindings
++            .iter()
++            .any(|(_, b)| tvs.iter().any(|tv| b.contains_def(*tv)))
++        {
++            return g_nr;
++        }
++        if var_bindings.iter().any(|(_, b)| b.is_unknown()) {
++            if !self.first_pass {
++                diagnostic!(
++                    self.lexer,
++                    Level::Error,
++                    "Cannot resolve generic type parameter from argument type"
++                );
++            }
++            return u32::MAX;
++        }
++        // The instance is named from the first variable's binding, which with one variable
++        // is the whole of it.
++        let concrete = var_bindings[0].1.clone();
++        // Build the mangled name for the instantiated function.
++        let type_nr = self.data.type_def_nr(&concrete);
++        let mangled = if type_nr == u32::MAX {
+             format!("n_{name}")
+         } else {
+             // @PLN25 E2 — this mangled name becomes a Rust function identifier in
+@@ -7523,92 +7577,7 @@ impl Parser {
+                 safe
+             };
+             crate::data::Data::mangle_method(&safe, name)
+-        }
+-    }
+-
+-    /// [`Self::try_generic_instantiation`] for the template `g_nr` itself: a free generic
+-    /// found by its `n_` name, or a METHOD template (`t_6vector_head`) that a method call
+-    /// selected (loft#1539).  `name` is the spelling the call wrote, and the monomorph is
+-    /// named from it exactly as a free generic's is.
+-    fn instantiate_template(&mut self, g_nr: u32, name: &str, types: &[Type]) -> u32 {
+-        if types.is_empty() || types[0].is_unknown() {
+-            // First-pass argument types may be incomplete; defer the diagnostic
+-            // to second pass when types are stable.  Returning MAX here is the
+-            // same effect; it just doesn't emit a noisy first-pass error.
+-            if !self.first_pass {
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "Cannot infer type for generic parameter — provide an explicit type annotation"
+-                );
+-            }
+-            return u32::MAX;
+-        }
+-        // loft#1538 — a template refused at its declaration has no instance; the refusal
+-        // already names why, and the call site answers its declared return.
+-        if self.refused_templates.contains(&g_nr) {
+-            return u32::MAX;
+-        }
+-        // What each of the template's variables binds to at this call.
+-        let Some(var_bindings) = Self::bind_template(&self.data, g_nr, types) else {
+-            return u32::MAX;
+-        };
+-        let tvs: Vec<u32> = var_bindings.iter().map(|(tv, _)| *tv).collect();
+-        // loft#761 — a SELF-recursive generic arrives here while its own template is
+-        // still being parsed, and the argument type is the type VARIABLE, so `concrete`
+-        // resolves to that variable rather than to any type. Instantiating against it
+-        // built a def by cloning the template's variable table — which the parser has
+-        // not written back yet, so the clone was EMPTY. That def is a plain `Function`,
+-        // so codegen emitted it and indexed a table of length 0: "index out of bounds:
+-        // the len is 0 but the index is 1", before any of the program ran.
+-        //
+-        // There is nothing to instantiate at this point, and nothing to diagnose
+-        // either: the call is perfectly good, it just has no concrete type YET. Answer
+-        // the TEMPLATE. A real caller then instantiates for its own concrete type, and
+-        // `instantiate_nested_generics` retargets this call at that monomorph while
+-        // building it — the same path any other call to a generic takes from inside a
+-        // template. Self-recursion terminates there on the `existing` check.
+-        if var_bindings
+-            .iter()
+-            .any(|(_, b)| tvs.iter().any(|tv| b.contains_def(*tv)))
+-        {
+-            return g_nr;
+-        }
+-        if var_bindings.iter().any(|(_, b)| b.is_unknown()) {
+-            if !self.first_pass {
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "Cannot resolve generic type parameter from argument type"
+-                );
+-            }
+-            return u32::MAX;
+-        }
+-        // `concrete` is the first variable's binding: what the associated types and the
+-        // bound check are read against (C3 carries them per variable).
+-        let concrete = var_bindings[0].1.clone();
+-        let type_nr = self.data.type_def_nr(&concrete);
+-        // `D-Key` — the instance's key names its template and every bound type.
+-        let mangled = if crate::keys::instance_key_enabled() {
+-            let spelling: Vec<String> = var_bindings
+-                .iter()
+-                .map(|(_, b)| self.data.identity_spelling(b))
+-                .collect();
+-            crate::data::Data::mangle_instance(&spelling.join("#"), self.data.def(g_nr).name())
+-        } else {
+-            self.method_shaped_instance_key(g_nr, name, &concrete, type_nr)
+         };
+-        if std::env::var_os("LOFT_TRACE_INSTANCE_KEY").is_some() {
+-            let spelling: Vec<String> = var_bindings
+-                .iter()
+-                .map(|(_, b)| self.data.identity_spelling(b))
+-                .collect();
+-            eprintln!(
+-                "[instance-key] {} -> {}",
+-                self.method_shaped_instance_key(g_nr, name, &concrete, type_nr),
+-                crate::data::Data::mangle_instance(&spelling.join("#"), self.data.def(g_nr).name())
+-            );
+-        }
+         // Return existing instantiation if already created.
+         let existing = self.data.def_nr(&mangled);
+         if existing != u32::MAX {
+@@ -9270,26 +9239,6 @@ impl Parser {
+         });
+         self.data.definitions[d_nr as usize].code = code;
+     }
+-    /// The template of `d` when `d` is an instance bound to a type VARIABLE — minted while
+-    /// another template's body was parsed (`i_1S_n_inner`) — else `u32::MAX`.  An instance
+-    /// at a real type is its own answer; one at a variable stands for its template.
+-    fn placeholder_instance_template(&self, d: u32) -> u32 {
+-        let def = self.data.def(d);
+-        let Some(key) = Data::split_key(def.name()).filter(|k| k.kind == crate::data::KeyKind::Instance)
+-        else {
+-            return u32::MAX;
+-        };
+-        let template = self.data.def_nr(key.rest);
+-        if template == u32::MAX || self.data.def_type(template) != DefType::Generic {
+-            return u32::MAX;
+-        }
+-        let at_a_variable = def
+-            .attributes()
+-            .iter()
+-            .any(|a| self.data.mentions_type_var(&a.typedef));
+-        if at_a_variable { template } else { u32::MAX }
+-    }
+-
+ 
+     /// The half of [`re_resolve_call`] that has to CREATE rather than look up.
+     ///
+@@ -9331,29 +9280,14 @@ impl Parser {
+         // call really passes.  Anything that is not a plain variable falls back to
+         // `concrete`, which is what every caller got before.
+         let mut targets: Vec<(u32, Type)> = Vec::new();
+-        // `(instance called, its template)` for a call the template aimed at an instance of
+-        // ANOTHER generic bound to one of its own type variables (`outer<S>` calling `inner(s)`
+-        // binds `inner`'s variable to `S`).  That instance is keyed by `S`, so no lookup by
+-        // the outer binding finds it; its call is aimed through the template it names.
+-        let mut via_template: Vec<(u32, u32)> = Vec::new();
+         let mono_vars = self.data.def(d_nr).variables.clone();
+         self.data.def(d_nr).code.walk(&mut |v| {
+             if let Value::Call(d, args) = v
+                 && *d != u32::MAX
+                 && (*d as usize) < self.data.definitions.len()
++                && self.data.def(*d).def_type() == DefType::Generic
+                 && !targets.iter().any(|(t, _)| t == d)
+             {
+-                let template = if self.data.def(*d).def_type() == DefType::Generic {
+-                    *d
+-                } else {
+-                    self.placeholder_instance_template(*d)
+-                };
+-                if template == u32::MAX {
+-                    return;
+-                }
+-                if template != *d {
+-                    via_template.push((*d, template));
+-                }
+                 let arg_tp = match args.first().map(Value::unspan) {
+                     Some(Value::Var(a)) if *a < mono_vars.count() => mono_vars.tp(*a).clone(),
+                     _ => concrete.clone(),
+@@ -9406,11 +9340,7 @@ impl Parser {
+         // parses against `self.vars` / `self.context`, and it must see the ordinary
+         // ones, not this monomorph's.
+         let mut remap: HashMap<u32, u32> = HashMap::new();
+-        for (callee, arg_tp) in targets {
+-            let t = via_template
+-                .iter()
+-                .find(|(c, _)| *c == callee)
+-                .map_or(callee, |(_, tmpl)| *tmpl);
++        for (t, arg_tp) in targets {
+             // A free template is stored `n_<name>`; a METHOD template under its receiver's
+             // key, `t_6vector_head` (loft#1539).  Both instantiate from the template itself.
+             let key = self.data.def(t).name().to_string();
+@@ -9420,8 +9350,8 @@ impl Parser {
+                 None => continue,
+             };
+             let inst = self.instantiate_template(t, &name, std::slice::from_ref(&arg_tp));
+-            if inst != u32::MAX && inst != t && inst != callee {
+-                remap.insert(callee, inst);
++            if inst != u32::MAX && inst != t {
++                remap.insert(t, inst);
+             }
+         }
+         // Repair the ARG LISTS too, and not only for the calls remapped above:
+diff --git b/src/scopes.rs a/src/scopes.rs
+index fe1c1ef8d..4d9962daa 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -16156,13 +16156,13 @@ impl Scopes<'_> {
+             // the `__retbuf` exemption below — copies at its `Set` and stays independent
+             // (`(F-Ret)`: *the concrete twin is the oracle for the instance*).
+             let monomorph_returns_a_borrow =
+-                (def.name.starts_with("t_") || def.is_instance()) && def.returns_borrowed_view();
++                def.name.starts_with("t_") && def.returns_borrowed_view();
+             let lift_owned_return = if def.has_fnref_return_site() {
+                 self.monomorph_fnref_return_is_fresh(val, data, def)
+             } else {
+                 def.name.starts_with("n_")
+                     || monomorph_returns_a_borrow
+-                    || ((def.name.starts_with("t_") || def.is_instance())
++                    || (def.name.starts_with("t_")
+                         && (def.attr_names.contains_key("__retbuf")
+                             || def.monomorph_return_is_fresh()
+                             // loft#1273 — a tail that DELEGATES (`a + b` is `Call(n_OpAdd)`)

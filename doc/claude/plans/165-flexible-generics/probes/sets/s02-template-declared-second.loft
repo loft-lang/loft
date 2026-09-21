@@ -1,0 +1,8 @@
+// B2 — the same set with the template declared SECOND.
+// @EXPECT: 999
+fn first(v: vector<integer>) -> integer { 999 }
+fn first<T>(v: vector<T>) -> T { v[0] }
+fn main() {
+  a: vector<integer> = [1, 2, 3];
+  println("{first(a)}");
+}

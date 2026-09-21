@@ -1,0 +1,24 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A set of CONCRETE members called at a generic's type variable is refused (@PLN165 B3b): a
+// variable's capabilities are its bounds, and no member is a template those bounds could
+// reach — so nothing in the generic says the call applies, whatever its instances would
+// find.  The refusal names the set — what was passed and what is declared — where it used to
+// speak of a "method call" about a free one.
+//
+// @falsified-at: 142e35694 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-concrete-set-is-not-called-at-a-type-variable.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — refused on both trees; only the wording moves.
+//   ARMED: nothing.
+//   WITNESS: on the control "generic type T: method call requires a concrete type".
+//   HOLDS: the program is refused on both trees.
+// @EXPECT_ERROR: no definition of `f` takes (T) — declared: f(integer), f(text)
+
+fn f(x: integer) -> text { "int" }
+fn f(x: text) -> text { "text" }
+fn g<T>(x: T) -> text { f(x) }
+
+fn main() {
+  println("{g(1)}|{g("a")}");
+}

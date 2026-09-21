@@ -222,8 +222,7 @@ impl Parser {
                     && self.data.def(*v).parent == e_nr
             })
             .collect();
-        let spelling =
-            |data: &crate::data::Data, d: u32| data.type_spelling(data.def(d).returned());
+        let spelling = |data: &crate::data::Data, d: u32| data.key_identity(data.def(d).returned());
         if let Some(((first, _), rest)) = impls.split_first()
             && let Some((other, _)) = rest
                 .iter()
@@ -922,6 +921,7 @@ impl Parser {
                 "Expect enum definitions to be in camel case style"
             );
         }
+        self.refuse_type_var_header("an enum", &type_name);
         let mut d_nr = self.data.def_nr(&type_name);
         // @PLN22 Phase 2 — shadow a prelude/import name of the same key.
         if self.prelude_shadowed(&type_name) {
@@ -1519,6 +1519,236 @@ impl Parser {
         None
     }
 
+    /// Parse a generic header — `<T>`, `<T: A + B>`, `<K, V: A>` — after a definition's
+    /// name: the ONE header parser.  Empty when no `<` follows.  Each variable carries its
+    /// spelling, the interface names bounding it (resolved later, where the definition
+    /// exists) and where it is written.
+    pub(crate) fn parse_type_var_header(&mut self) -> Vec<HeaderVar> {
+        let mut out: Vec<HeaderVar> = Vec::new();
+        if !self.lexer.has_token("<") {
+            return out;
+        }
+        loop {
+            let at = self.lexer.peek_pos().clone();
+            let Some(tv) = self.lexer.has_identifier() else {
+                if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Expected type variable name after '<'"
+                    );
+                }
+                break;
+            };
+            if !is_camel(&tv) && !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Type variable '{}' must be CamelCase",
+                    tv
+                );
+            }
+            // I4: `<T: A + B>` — the raw bound names; resolved where the definition exists.
+            let mut bounds: Vec<String> = Vec::new();
+            if self.lexer.has_token(":") {
+                loop {
+                    if let Some(bound_name) = self.lexer.has_identifier() {
+                        bounds.push(bound_name);
+                    } else if !self.first_pass {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "Expected interface name in type bound"
+                        );
+                    }
+                    if !self.lexer.has_token("+") {
+                        break;
+                    }
+                }
+            }
+            out.push(HeaderVar {
+                name: tv,
+                bounds,
+                at,
+            });
+            if !self.lexer.has_token(",") {
+                break;
+            }
+        }
+        self.lexer.closing_angle();
+        out
+    }
+
+    /// Resolve a header variable's bound names to interface definitions, reporting a name
+    /// that is no interface.  On the first pass an unknown name is skipped in silence: the
+    /// interface may be declared further down, and the second pass reports what is still
+    /// unknown.
+    fn resolve_bound_names(&mut self, names: &[String]) -> Vec<u32> {
+        let mut bounds = Vec::new();
+        for bname in names {
+            let b_nr = self.data.def_nr(bname);
+            if b_nr == u32::MAX {
+                if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "'{}' is not a known interface",
+                        bname
+                    );
+                }
+            } else if !matches!(self.data.def_type(b_nr), DefType::Interface) {
+                if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "'{}' is not an interface — bounds must be interface names",
+                        bname
+                    );
+                }
+            } else {
+                bounds.push(b_nr);
+            }
+        }
+        bounds
+    }
+
+    /// A `struct` or `enum` declares no type variables: a `<…>` after its name is refused
+    /// once, where it is written, and read past so the declaration parses.  Reported on the
+    /// first pass, which keeps the layout check (skipped once an error stands) from also
+    /// reporting the field the variable typed.
+    fn refuse_type_var_header(&mut self, kind: &str, id: &str) {
+        if !self.lexer.peek_token("<") {
+            return;
+        }
+        let at = self.lexer.peek_pos().clone();
+        let header = self.parse_type_var_header();
+        if self.first_pass && !header.is_empty() {
+            let names: Vec<&str> = header.iter().map(|v| v.name.as_str()).collect();
+            diagnostic_at!(
+                self.lexer,
+                &at,
+                Level::Error,
+                "{kind} declares no type variables — `{id}<{}>`; a container over any \
+                 type is a generic FUNCTION over `vector<{}>`",
+                names.join(", "),
+                names[0]
+            );
+        }
+    }
+
+    /// Bind one header variable to the placeholder that stands for it (`(G-Gen)`: a header
+    /// INTRODUCES its variables).  `Some(u32::MAX)` when there is nothing to bind (a header
+    /// the first pass refused); `None` on a collision with a definition of another kind,
+    /// which is reported here.
+    fn bind_header_var(&mut self, var: &HeaderVar) -> Option<u32> {
+        let type_var_name = &var.name;
+        let bounds_key = Self::type_var_bounds_key(&var.bounds);
+        let claimed = self
+            .type_var_holders
+            .get(&(type_var_name.clone(), bounds_key.clone()))
+            .copied();
+        let existing = self.data.def_nr(type_var_name);
+        // A prior generic's type-var placeholder is an attribute-less `Struct`, safe to
+        // reuse (that is how `<T>` is shared across functions). Any OTHER existing def
+        // — a constant (e.g. `E`), a function, an enum, or a real struct/type — is a
+        // COLLISION: loft has one flat namespace, so a generic parameter cannot share a
+        // name. Report it (mirroring the `type X conflicts with …` diagnostic) instead
+        // of silently binding the parameter to that def and panicking later in
+        // `predict_generic_return_type`.
+        let collision = claimed.is_none()
+            && existing != u32::MAX
+            && !(self.data.def(existing).def_type() == DefType::Struct
+                && self.data.def(existing).attributes().is_empty());
+        if collision {
+            if self.first_pass {
+                let ed = self.data.def(existing);
+                let prev_pos = ed.position().clone();
+                let prev_kind = format!("{:?}", ed.def_type()).to_lowercase();
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "generic type parameter '{type_var_name}' conflicts with a \
+                     {prev_kind} of the same name already defined at {prev_pos} — \
+                     pick a different name"
+                );
+            }
+            return None;
+        }
+        if let Some(holder) = claimed {
+            // This exact `(spelling, bounds)` header has been seen — on the other
+            // pass, or in another function declaring the same variable the same way.
+            self.data.type_var_bound_keys.insert(holder, bounds_key);
+            return Some(holder);
+        }
+        // `(G-Gen)`: this header INTRODUCES the variable.  It may reuse the
+        // placeholder the spelling already names, but only while that placeholder
+        // stands for the same bound set — a second bound set is a second variable
+        // and needs a placeholder of its own, because the placeholder is what keys
+        // the bound-method stubs (loft#1300, loft#1301).
+        // Where this parser has no record of the placeholder — it was minted by another parse
+        // whose Data this one continues (a prepared or cached stdlib) — the placeholder's OWN
+        // recorded bounds decide: reused blind, a `<T>` took a stdlib `<T: Ordered>`'s
+        // placeholder and, once a variable's bounds live on its placeholder (@PLN165 C2), its
+        // bound as well — an unbounded `a == b` compiled and a `boolean` was refused as not
+        // `Ordered`.
+        let reusable = existing != u32::MAX
+            && self.type_var_bounds.get(&existing).map_or_else(
+                || self.placeholder_bounds_key(existing) == bounds_key,
+                |b| *b == bounds_key,
+            );
+        let holder = if reusable {
+            existing
+        } else if !self.first_pass {
+            // Placeholders are minted on the first pass; reaching here on the
+            // second means the first refused this header, and there is nothing
+            // to bind.
+            u32::MAX
+        } else {
+            // register the type variable as a struct so parse_type
+            // resolves it to Reference(d, []).  The definition is never
+            // compiled — it only exists for the template's type resolution.
+            //
+            // Under its own spelling while that is free; otherwise under a name
+            // the source cannot write, since `#` is not an identifier character,
+            // so `T#2` is reachable only through this header.
+            //
+            // Uniqueness is asked PROGRAM-WIDE, not of this source: the
+            // placeholder is registered as a store structure under
+            // `__typevar_<name>`, and that registry is not keyed by source.
+            let mut name = type_var_name.clone();
+            let mut n = 1;
+            while self.data.name_taken_anywhere(&name) {
+                n += 1;
+                name = format!("{type_var_name}#{n}");
+            }
+            let tv_nr = self.data.add_def(&name, self.lexer.pos(), DefType::Struct);
+            self.data
+                .set_returned(tv_nr, Type::Reference(tv_nr, crate::data::Deps::none()));
+            tv_nr
+        };
+        if holder != u32::MAX {
+            self.type_var_holders
+                .insert((type_var_name.clone(), bounds_key.clone()), holder);
+            self.data
+                .type_var_bound_keys
+                .insert(holder, bounds_key.clone());
+            self.type_var_bounds.insert(holder, bounds_key);
+        }
+        Some(holder)
+    }
+
+    /// The bound-set key (`Parser::type_var_bounds_key`'s spelling) of the bounds a type-variable
+    /// placeholder carries on its own definition — the record that travels with the Data
+    /// (@PLN165 C2), where this parser's own map may not.
+    fn placeholder_bounds_key(&self, holder: u32) -> String {
+        let names: Vec<String> = self.data.definitions[holder as usize]
+            .bounds
+            .iter()
+            .map(|b| self.data.def(*b).name().to_string())
+            .collect();
+        Self::type_var_bounds_key(&names)
+    }
+
     #[allow(clippy::too_many_lines)]
     // @F16 — functions & declarations (pub, parameters, return)
     pub(crate) fn parse_function(&mut self) -> bool {
@@ -1534,8 +1764,7 @@ impl Parser {
         self.len_bound_locals.clear();
         // @PLN25 E2 — clear any type-var from a previous function before parsing
         // this one; set below if this function is generic.
-        self.cur_type_var = u32::MAX;
-        self.cur_type_var_name.clear();
+        self.cur_type_vars.clear();
         if !self.default && !is_lower(&fn_name) && !is_op(&fn_name) {
             diagnostic!(
                 self.lexer,
@@ -1544,48 +1773,26 @@ impl Parser {
             );
         }
         // detect `<T>` type parameter after function name.
-        // @F25 — generics: single type variable <T>, inferred
-        let mut is_generic = false;
-        let mut type_var_name = String::new();
-        // I4: bound names collected from `<T: A + B>` — resolved to def_nrs in the second pass.
-        let mut pending_bounds: Vec<String> = Vec::new();
-        if self.lexer.has_token("<") {
-            if let Some(tv) = self.lexer.has_identifier() {
-                if !is_camel(&tv) && !self.first_pass {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "Type variable '{}' must be CamelCase",
-                        tv
-                    );
-                }
-                type_var_name = tv;
-                is_generic = true;
-                // I4: parse `<T: A + B>` bound list; collect raw names here, resolve in second pass.
-                if self.lexer.has_token(":") {
-                    loop {
-                        if let Some(bound_name) = self.lexer.has_identifier() {
-                            pending_bounds.push(bound_name);
-                        } else if !self.first_pass {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "Expected interface name in type bound"
-                            );
-                        }
-                        if !self.lexer.has_token("+") {
-                            break;
-                        }
-                    }
-                }
-            } else if !self.first_pass {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Expected type variable name after '<'"
-                );
-            }
-            self.lexer.closing_angle();
+        // @F25 — generics: type variables, inferred from the call's arguments.
+        let header = self.parse_type_var_header();
+        let mut is_generic = !header.is_empty();
+        let type_var_name = header.first().map(|v| v.name.clone()).unwrap_or_default();
+        // @PLN165 C2 — a header declares a LIST of variables (`<K, V>`); each is bound on its
+        // own, carries its own bounds, and is inferred from the parameters that name it.
+        // `LOFT_NO_SEVERAL_VARS=1` refuses a header with more than one again.
+        let several = header.len() > 1 && !crate::keys::several_vars_enabled();
+        if several && !self.first_pass {
+            let names: Vec<&str> = header.iter().map(|v| v.name.as_str()).collect();
+            diagnostic_at!(
+                self.lexer,
+                &header[1].at,
+                Level::Error,
+                "`{fn_name}` declares {} type variables (`{}`), and a generic function declares \
+                 one — `<{}>`",
+                header.len(),
+                names.join("`, `"),
+                header[0].name
+            );
         }
         let mut arguments = Vec::new();
         if self.lexer.token("(") {
@@ -1593,99 +1800,27 @@ impl Parser {
             // resolves it to Reference(d, []).  The definition is never
             // compiled — it only exists for the template's type resolution.
             if is_generic {
-                let bounds_key = Self::type_var_bounds_key(&pending_bounds);
-                let claimed = self
-                    .type_var_holders
-                    .get(&(type_var_name.clone(), bounds_key.clone()))
-                    .copied();
-                let existing = self.data.def_nr(&type_var_name);
-                // A prior generic's type-var placeholder is an attribute-less `Struct`, safe to
-                // reuse (that is how `<T>` is shared across functions). Any OTHER existing def
-                // — a constant (e.g. `E`), a function, an enum, or a real struct/type — is a
-                // COLLISION: loft has one flat namespace, so a generic parameter cannot share a
-                // name. Report it (mirroring the `type X conflicts with …` diagnostic) instead
-                // of silently binding the parameter to that def and panicking later in
-                // `predict_generic_return_type`.
-                let collision = claimed.is_none()
-                    && existing != u32::MAX
-                    && !(self.data.def(existing).def_type() == DefType::Struct
-                        && self.data.def(existing).attributes().is_empty());
-                if collision {
-                    if self.first_pass {
-                        let ed = self.data.def(existing);
-                        let prev_pos = ed.position().clone();
-                        let prev_kind = format!("{:?}", ed.def_type()).to_lowercase();
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "generic type parameter '{type_var_name}' conflicts with a \
-                             {prev_kind} of the same name already defined at {prev_pos} — \
-                             pick a different name"
-                        );
-                    }
-                    // Stop treating the function as generic so the unresolved parameter never
-                    // reaches the generic type-resolution path (which would panic).
-                    is_generic = false;
-                } else if let Some(holder) = claimed {
-                    // This exact `(spelling, bounds)` header has been seen — on the other
-                    // pass, or in another function declaring the same variable the same way.
-                    self.cur_type_var = holder;
-                } else {
-                    // `(G-Gen)`: this header INTRODUCES the variable.  It may reuse the
-                    // placeholder the spelling already names, but only while that placeholder
-                    // stands for the same bound set — a second bound set is a second variable
-                    // and needs a placeholder of its own, because the placeholder is what keys
-                    // the bound-method stubs (loft#1300, loft#1301).
-                    let reusable = existing != u32::MAX
-                        && self
-                            .type_var_bounds
-                            .get(&existing)
-                            .is_none_or(|b| *b == bounds_key);
-                    let holder = if reusable {
-                        existing
-                    } else if !self.first_pass {
-                        // Placeholders are minted on the first pass; reaching here on the
-                        // second means the first refused this header, and there is nothing
-                        // to bind.
-                        u32::MAX
-                    } else {
-                        // register the type variable as a struct so parse_type
-                        // resolves it to Reference(d, []).  The definition is never
-                        // compiled — it only exists for the template's type resolution.
-                        //
-                        // Under its own spelling while that is free; otherwise under a name
-                        // the source cannot write, since `#` is not an identifier character,
-                        // so `T#2` is reachable only through this header.
-                        //
-                        // Uniqueness is asked PROGRAM-WIDE, not of this source: the
-                        // placeholder is registered as a store structure under
-                        // `__typevar_<name>`, and that registry is not keyed by source.
-                        let mut name = type_var_name.clone();
-                        let mut n = 1;
-                        while self.data.name_taken_anywhere(&name) {
-                            n += 1;
-                            name = format!("{type_var_name}#{n}");
+                for var in &header {
+                    match self.bind_header_var(var) {
+                        // @PLN25 E2 — the placeholder is recorded here (valid in both passes:
+                        // it is added on the first and found again on the second) so
+                        // `e2_nullable_elem` leaves a generic `vector<T>` dense.  It is also
+                        // what `parse_type` resolves the spelling to from here on, which is
+                        // what keeps two headers writing `T` apart.  A header the first pass
+                        // refused binds nothing.
+                        Some(holder) if holder != u32::MAX => {
+                            self.cur_type_vars.push((var.name.clone(), holder));
                         }
-                        let tv_nr = self.data.add_def(&name, self.lexer.pos(), DefType::Struct);
-                        self.data
-                            .set_returned(tv_nr, Type::Reference(tv_nr, crate::data::Deps::none()));
-                        tv_nr
-                    };
-                    if holder != u32::MAX {
-                        self.type_var_holders
-                            .insert((type_var_name.clone(), bounds_key.clone()), holder);
-                        self.type_var_bounds.insert(holder, bounds_key);
+                        Some(_) => {}
+                        None => {
+                            // Stop treating the function as generic so the unresolved
+                            // parameter never reaches the generic type-resolution path.
+                            is_generic = false;
+                            self.cur_type_vars.clear();
+                            break;
+                        }
                     }
-                    self.cur_type_var = holder;
                 }
-            }
-            // @PLN25 E2 — the type-var def_nr is recorded above (valid in both passes: the
-            // placeholder is added on the first and found again on the second) so
-            // `e2_nullable_elem` leaves a generic `vector<T>` dense.  It is also what
-            // `parse_type` resolves the spelling to from here on, which is what keeps two
-            // headers writing `T` apart.
-            if is_generic {
-                self.cur_type_var_name.clone_from(&type_var_name);
             }
             if !self.parse_arguments(&fn_name, &mut arguments) {
                 return true;
@@ -1723,20 +1858,33 @@ impl Parser {
                 );
             }
         }
-        // validate that the type variable appears in the first parameter.
-        if is_generic && !arguments.is_empty() {
+        // `D-Every-Var` (@PLN165 C1): every declared variable appears in SOME parameter,
+        // which is where a call infers it from.  It replaces the first-parameter rule: the
+        // binding reads every parameter (`Parser::bind_template`), so the first is not special.
+        let mut unnamed_var = false;
+        if is_generic && several {
+            // Refused at the header; the rules below are about one variable.
+        } else if is_generic && !arguments.is_empty() {
             // The HEADER's variable, not whatever the spelling names globally: two headers
-            // writing `T` bind two placeholders, and the parameter was resolved against
+            // writing `T` bind two placeholders, and the parameters were resolved against
             // this one.
-            let has_tv = arguments[0].typedef.contains_def(self.cur_type_var);
-            if !has_tv && !self.first_pass {
+            let unnamed: Vec<String> = self
+                .cur_type_vars
+                .iter()
+                .filter(|(_, h)| !arguments.iter().any(|a| a.typedef.contains_def(*h)))
+                .map(|(n, _)| crate::data::Data::type_var_spelling(n).to_string())
+                .collect();
+            unnamed_var = !unnamed.is_empty();
+            if unnamed_var && !self.first_pass {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
-                    "Type variable {} must appear in the first parameter — \
-                     move {} to the first parameter position",
-                    type_var_name,
-                    type_var_name
+                    "type variable {} of `{fn_name}` appears in no parameter — a call infers a \
+                     type variable from its arguments, so each must name one \
+                     (`fn {fn_name}<{}>(x: {}, …)`)",
+                    unnamed[0],
+                    unnamed[0],
+                    unnamed[0]
                 );
             }
         } else if is_generic && arguments.is_empty() && !self.first_pass {
@@ -1774,6 +1922,11 @@ impl Parser {
         };
         if self.context == u32::MAX {
             return false;
+        }
+        // loft#1538's shape: a template refused at its declaration answers its declared
+        // return at a call, which the declaration's own refusal explains.
+        if (several || unnamed_var) && !self.first_pass {
+            self.refused_templates.insert(self.context);
         }
         // @PLN86 §7.2 (F7) — now the function's def_nr exists, key each parsed parameter
         // `…#default` lock by `(this fn, param index)`.  First pass only (definitions
@@ -1838,42 +1991,32 @@ impl Parser {
         // u32::MAX.  We skip the diagnostic on first pass (it'll fire
         // again on second pass with all defs visible) but still install
         // any bounds we CAN resolve so the body can dispatch.
-        // I4: resolve pending bound names to interface def_nrs.
-        if !pending_bounds.is_empty() {
-            let mut bounds = Vec::new();
-            for bname in &pending_bounds {
-                let b_nr = self.data.def_nr(bname);
-                if b_nr == u32::MAX {
-                    if !self.first_pass {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "'{}' is not a known interface",
-                            bname
-                        );
-                    }
-                    // First pass: silent skip — interface may be a
-                    // forward declaration; second pass will catch
-                    // genuinely-unknown ones.
-                } else if !matches!(self.data.def_type(b_nr), DefType::Interface) {
-                    if !self.first_pass {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "'{}' is not an interface — bounds must be interface names",
-                            bname
-                        );
-                    }
-                } else {
-                    bounds.push(b_nr);
-                }
+        // I4: resolve each variable's bound names to interface def_nrs.  The definition's
+        // `bounds` are its FIRST variable's (what a one-variable reader has always asked);
+        // every variable's own are on its placeholder (@PLN165 C2), which is where
+        // `has_bound_for_method` and satisfaction read them — a placeholder stands for one
+        // (spelling, bound set) pair, so the two never disagree.
+        for (i, var) in header.iter().enumerate() {
+            if var.bounds.is_empty() {
+                continue;
             }
-            self.data.definitions[self.context as usize].bounds = bounds;
+            let bounds = self.resolve_bound_names(&var.bounds);
+            if i == 0 {
+                self.data.definitions[self.context as usize]
+                    .bounds
+                    .clone_from(&bounds);
+            }
             // I7/I8.1: Create T-parameterized stubs for each bound interface's methods so
             // the body parser can emit `Value::Call(t_stub_nr, ...)` for method/op calls on T.
             // `re_resolve_call` then substitutes these with the concrete type's implementation.
-            let iface_nrs: Vec<u32> = self.data.definitions[self.context as usize].bounds.clone();
-            self.create_bound_method_stubs(self.cur_type_var, &iface_nrs);
+            if let Some(&(_, holder)) = self.cur_type_vars.iter().find(|(n, _)| *n == var.name) {
+                if holder != u32::MAX && crate::keys::several_vars_enabled() {
+                    self.data.definitions[holder as usize]
+                        .bounds
+                        .clone_from(&bounds);
+                }
+                self.create_bound_method_stubs(holder, &bounds);
+            }
         }
         let mut returned_not_null = false;
         let mut result = if self.lexer.has_token("->") {
@@ -1895,8 +2038,8 @@ impl Parser {
         // monomorph can resolve it.  Refused here, where it is written: the definition used to
         // compile and drop out of every call's candidates, so each call reported the function
         // as unknown and nothing pointed at the declaration (loft#1538).
-        if is_generic && !self.first_pass && self.cur_type_var != u32::MAX {
-            let tv = self.cur_type_var;
+        if is_generic && !self.first_pass && !self.cur_type_vars.is_empty() {
+            let tvs: Vec<u32> = self.cur_type_vars.iter().map(|(_, h)| *h).collect();
             let keyed_over_tv = |t: &Type| {
                 t.any_node(&mut |n| {
                     // `@FR-N-Shape` — a keyed collection is a SHAPE, alike for `τ` and `τ?`.
@@ -1905,7 +2048,7 @@ impl Parser {
                         | Type::Sorted(d, _, _)
                         | Type::Index(d, _, _)
                         | Type::Radix(d, _, _)
-                        | Type::Trie(d, _, _) if *d == tv)
+                        | Type::Trie(d, _, _) if tvs.contains(d))
                 })
             };
             let at = arguments
@@ -1930,14 +2073,10 @@ impl Parser {
         // up on the RECEIVER's type, so no call can ever reach it: each call reported an
         // unknown field of whatever it was called on.  Refused where it is written.  A
         // receiver built over the variable (`self: vector<T>`) is keyed on `vector` and works.
-        let tv = self.cur_type_var;
-        if is_generic
-            && !self.first_pass
-            && tv != u32::MAX
-            && arguments.first().is_some_and(|a| {
-                a.name == "self" && matches!(a.typedef.base(), Type::Reference(d, _) if *d == tv)
-            })
-        {
+        if is_generic && !self.first_pass && arguments.first().is_some_and(|a| {
+            a.name == "self"
+                && matches!(a.typedef.base(), Type::Reference(d, _) if self.is_header_type_var(*d))
+        }) {
             self.refused_templates.insert(self.context);
             diagnostic!(
                 self.lexer,
@@ -4069,6 +4208,7 @@ impl Parser {
             diagnostic!(self.lexer, Level::Error, "Expect attribute");
             return true;
         };
+        self.refuse_type_var_header("a struct", &id);
         let mut d_nr = self.data.def_nr(&id);
         // @PLN22 Phase 2 — shadow a prelude/import struct of the same key.  This
         // includes the stdlib's generic type-var marker (`<T>`): a user `struct T`
@@ -4603,8 +4743,15 @@ impl Parser {
         // `re_resolve_call` substitutes, and the result was read from a
         // slot nobody wrote: the call returned EMPTY on `--interpret` —
         // exit 0, no diagnostic — and did not compile on `--native`.
+        //
+        // HIDDEN, as the concrete method's buffer is (`text_return` marks it) and as the
+        // `__retbuf` below is: a signature's arity counts only what a caller writes, and
+        // `(G-Sat)` compares the stub's against the interface method's.  Left visible, a
+        // bounded generic calling another bounded generic at a variable spelled differently
+        // (`outer<U: Named>` → `inner<T: Named>(x)`) read the stub of every text-returning
+        // method as one parameter too many and refused `U` as "missing" it.
         if matches!(t_ret_type.base(), crate::data::Type::Text(_)) {
-            self.data.add_attribute(
+            let a = self.data.add_attribute(
                 &mut self.lexer,
                 t_stub_nr,
                 "__work_1",
@@ -4612,6 +4759,7 @@ impl Parser {
                     crate::data::Deps::none(),
                 ))),
             );
+            self.data.definitions[t_stub_nr as usize].attributes[a].hidden = true;
         }
         // The @PLAN59 twin of the I9-text arm: a concrete method
         // returning Reference / Vector / struct-Enum carries the
@@ -6505,4 +6653,14 @@ impl Parser {
         let synthetic_d_nr = self.data.tuple_def(&mut self.lexer, &elems);
         Type::Reference(synthetic_d_nr, crate::data::Deps::none())
     }
+}
+
+/// One variable a generic header declares ([`Parser::parse_type_var_header`]).
+pub(crate) struct HeaderVar {
+    /// The spelling the source wrote.
+    pub(crate) name: String,
+    /// The interface names bounding it, unresolved.
+    pub(crate) bounds: Vec<String>,
+    /// Where it is written.
+    pub(crate) at: crate::lexer::Position,
 }

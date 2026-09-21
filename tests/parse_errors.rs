@@ -4589,18 +4589,23 @@ fn a_generic_refuses_field_access() {
     );
 }
 
-/// The type variable has to be reachable from the FIRST argument, because that is what the
-/// call site infers it from.
+/// `D-Every-Var` (@PLN165 C1): every type variable has to be named by SOME parameter, because
+/// the call infers it from its arguments.  The first parameter is not special — the binding
+/// reads every one — so a variable in a later parameter compiles.
 #[test]
-fn a_type_variable_must_reach_the_first_parameter() {
-    code!("fn probe<T>(tag: text, x: T) -> T { x }\nfn test() { }")
-        .error(
-            "Type variable T must appear in the first parameter — move T to the first parameter \
-         position at a_type_variable_must_reach_the_first_parameter:1:32",
-        )
-        .warning(
-            "Parameter tag is never read at a_type_variable_must_reach_the_first_parameter:1:36",
-        );
+fn a_type_variable_must_reach_a_parameter() {
+    code!("fn probe<T>(n: integer) -> integer { n }\nfn test() { }").error(
+        "type variable T of `probe` appears in no parameter — a call infers a type variable from \
+         its arguments, so each must name one (`fn probe<T>(x: T, …)`) at \
+         a_type_variable_must_reach_a_parameter:1:27",
+    );
+}
+
+#[test]
+fn a_type_variable_in_a_later_parameter_binds() {
+    code!(
+        "fn probe<T: Printable>(tag: text, x: T) -> text { \"{tag}{x}\" }\nfn test() { assert(probe(\"t\", 4) == \"t4\", \"\"); }"
+    );
 }
 
 /// A user type that has not defined the bound's operator is refused at the CALL, which is

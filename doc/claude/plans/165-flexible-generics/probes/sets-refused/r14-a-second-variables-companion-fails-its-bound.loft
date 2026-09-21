@@ -1,0 +1,18 @@
+// C3 — `K.Item` is bounded by `Cursor`; `DbSink` makes an `Odd`, which lacks `width`.  The
+// refusal names `DbSink` (the second variable's implementor), not the first variable's.
+interface Cursor { fn width(self: Self) -> integer }
+interface Source { type Rows: Cursor
+  fn open(self: Self) -> Self.Rows }
+interface Sink { type Item: Cursor
+  fn make(self: Self) -> Self.Item }
+struct FileRows { w: integer }
+struct Odd { v: integer }
+fn width(self: FileRows) -> integer { self.w }
+struct FileSource { path: text }
+struct DbSink { cols: integer }
+fn open(self: FileSource) -> FileRows { FileRows { w: len(self.path) } }
+fn make(self: DbSink) -> Odd { Odd { v: self.cols } }
+fn cross<S: Source, K: Sink>(s: S, k: K) -> integer { s.open().width() + k.make().width() }
+fn main() {
+  println("{cross(FileSource { path: "abc" }, DbSink { cols: 6 })}");
+}

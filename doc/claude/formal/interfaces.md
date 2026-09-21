@@ -110,6 +110,55 @@ error naming the type, the interface, and the missing method — never a runtime
 fires where the generic is instantiated, so the same interface can be satisfied by different sets
 of visible functions at different call sites.
 
+### Selection — a generic is a member of its name's overload set
+
+```
+  (G-Select)  a generic is a MEMBER of its name's overload set, beside concrete definitions,
+              other generics and same-named methods, and the definition a call reaches is a
+              function of the argument types alone:
+              · a parameter naming a type variable ranks GENERIC where every variable binds
+                and C ⊨ Iⱼ holds (asked without reporting) — worse than an exact, a widened or
+                a nullable-discharging match, and INCOMPARABLE with an implicit conversion;
+              · between two generics at one position, the one admitting strictly FEWER types
+                is more specific: a pattern that is a substitution instance of the other's and
+                not the reverse, a bound set that is a strict superset — the two orders must
+                agree, or the pair is not ranked;
+              · a call written inside a generic at its own type variable is decided again in
+                each instance, with that instance's argument types — the call its concrete
+                twin makes (G-Mono);
+              · a decision by variant (a value held at an enum) reaches, for a variant only a
+                generic takes, that generic's instance AT THE VARIANT.
+              Two minimal members nothing ranks are refused naming both.
+```
+
+**In words.** `fn first<T>(v: vector<T>) -> T` beside `fn first(v: vector<integer>) -> integer` is
+one name with two definitions: `first(ints)` reaches the concrete one, because a definition that
+takes the argument as it is beats an instantiation, and `first(texts)` reaches the generic's
+instance.  Where one definition needs a conversion (an enum into an `integer`) and another an
+instantiation, nothing says which is more specific, so the call is refused naming both — a
+refusal can be broadened later, a choice cannot.  `<T: A + B>` beats `<T: A>`, `vector<T>` beats
+`T`; `<T: A>` against `<T: B>` at a type with both is refused.  A generic's body is typed once,
+but a call in it that depends on the variable is decided per instance, so `wrap<U>` calling
+`show(x)` reaches `show(x: Cat)` in the instance at `Cat`.
+
+### Instances — a key of their own, naming the template and every bound type
+
+```
+  (G-Key)   a specialisation of the template g with its variables bound to τ₁ … τₙ — in the
+            order the variables FIRST APPEAR in g's parameters — is keyed
+                i_<LEN><τ₁#τ₂#…#τₙ>_<key of g>
+            each τᵢ spelled by its full identity (a collection's element, an integer's width,
+            a `τ?`'s nullability, a function type's signature).  One key per (template, bound
+            types): two templates of one name, or one template at two types, are two keys;
+            an instance is never keyed as a METHOD on a bound type.
+```
+
+**In words.** `pair_up<K, V>` called at `(integer, text)` and at `(text, integer)` is two
+functions, `i_12integer#text_n_pair_up` and `i_12text#integer_n_pair_up`; the template's own key
+closes the name, so `f<T>(v: vector<T>)` and `f<T>(x: T)` bound at one type are two instances
+too.  Every reader of a key — the emitter's identifier, the display name, the stack trace — goes
+through one decoder, so a new key kind cannot be half-read.
+
 ### Scope — compile-time polymorphism only (decided boundaries)
 
 ```
@@ -137,6 +186,17 @@ deviations, are in the companion [interfaces-history.md](interfaces-history.md).
 
 - **Declare + structurally satisfy (`G-Iface` / `G-Sat`)** — `interface Sizable { fn size(self:
   Self) -> integer }` with `fn size(self: Box) -> integer` makes `Box ⊨ Sizable` — no `impl`.
+- **An instance has a key of its own (`G-Key`)** — `an-instance-is-not-a-method-on-its-bound-type`,
+  `a-generic-declares-several-type-variables` (two instances at swapped types),
+  `a-narrower-pattern-is-the-more-specific-generic` (two templates at one type).
+- **A generic in an overload set (`G-Select`)** — `a-template-takes-the-calls-no-concrete-member-of-its-set-takes`,
+  `a-conversion-and-an-instantiation-are-not-ranked`, `a-generic-and-a-method-of-one-name-are-one-set`,
+  `a-stronger-bound-is-the-more-specific-generic`, `two-bound-sets-neither-containing-the-other-are-not-ranked`,
+  `a-narrower-pattern-is-the-more-specific-generic`, `two-patterns-neither-an-instance-are-not-ranked`,
+  `a-set-called-inside-a-generic-is-decided-per-instance`,
+  `a-set-member-reached-in-an-instance-returns-what-the-body-was-typed-with`,
+  `a-concrete-set-is-not-called-at-a-type-variable`, `a-variant-decision-reaches-a-generic-at-the-variant`
+  (`tests/scripts/`), and the `Disp-Match-Equiv` pair `tests/oracle/36-dispatch-set-with-a-generic*`.
 - **Bounded generic dispatch (`G-Gen` / `G-Mono`)** — `fn total<T: Sizable>(xs: vector<T>) ->
   integer { s=0; for x in xs { s += x.size() } s }` over `[Box{2,3}, Box{4,5}]` is `26`, identical
   on both backends.

@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// STEPS.md A5.  `count_of<T>(v: vector<T>)` at `T = Cat` is keyed `t_3Cat_count_of` —
+// which is ALSO the key of a method `count_of` on `Cat`.  The instantiation asks "does
+// this key exist?" and takes the method as its own instance.
+// Measured 9f5cf6a96, in both declaration orders: `expected Cat, got vector<Cat>` —
+// two definitions that are each legal, refused together.  Expected after A5: `3|107`.
+fn count_of<T>(v: vector<T>) -> integer { return len(v); }
+struct Cat { n: integer }
+fn count_of(self: Cat) -> integer { return 100 + self.n; }
+fn main() {
+  cats: vector<Cat> = [Cat { n: 1 }, Cat { n: 2 }, Cat { n: 3 }];
+  c = Cat { n: 7 };
+  print("{count_of(cats)}|{c.count_of()}");
+}

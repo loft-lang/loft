@@ -1,0 +1,111 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A lambda written inside a generic function is instantiated with it: each instance of the
+// generic has its own instance of the lambda, bound as the generic is, and answers what a
+// concrete twin's lambda answers (`interfaces.md (G-Mono)`).
+//
+// The lambda was a single definition typed by the template's own variable, shared by every
+// instance: its parameters, its return and its closure record were the placeholder's, and a
+// `-> T` lambda was even given a record return buffer.  So an instance passed it where its
+// callee expected `fn(integer) -> integer`: on the interpreter `x * x` answered
+// `[null,null,null]` for `[1,4,9]` and `[NaN]` for `[2.25]` with no diagnostic; a capture typed
+// by the variable panicked on a record of no width; two instances of one generic crashed on the
+// shared lambda; `--native` panicked on "invalid fn-ref" or did not compile.  A lambda inside a
+// template is now a template itself, its instance named after the instance that owns it, its
+// closure record re-laid for the instance's types, and its capture reads re-lowered against
+// that record.
+//
+// A lambda that mentions no variable (`inc_all`'s) is the control: it was right before.
+//
+// @falsified-at: cbd66d269 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-lambda-inside-a-generic-is-instantiated-with-it.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control panics (interpreter) or refuses the crate
+//     (native) before the asserts that would read the wrong values run.
+//   ARMED: nothing.
+//   WITNESS: on the control `sq([1, 2, 3])` answers `[null,null,null]` on the interpreter, with
+//     no diagnostic, and `--native` panics "invalid fn-ref" on `same(a)`.
+//   HOLDS: the control cell (`count_plus`), whose lambda names no variable.
+
+struct Pt { x: integer, y: integer }
+
+fn my_map<T>(v: vector<T>, f: fn(T) -> T) -> vector<T> {
+  out: vector<T> = [];
+  for x in v { out += [f(x)]; }
+  out
+}
+
+fn each<T>(v: vector<T>, f: fn(T)) { for x in v { f(x); } }
+
+fn same<T>(v: vector<T>) -> vector<T> { my_map(v, |x| { x }) }
+
+fn sq<T: Numeric>(v: vector<T>) -> vector<T> { my_map(v, |x| { x * x }) }
+
+fn add_all<T: Addable>(v: vector<T>, d: T) -> vector<T> { my_map(v, |x| { x + d }) }
+
+fn g<T>(x: T) -> T { f = fn(y: T) -> T { y }; f(x) }
+
+fn tags<T: Printable>(v: vector<T>) -> vector<text> {
+  out: vector<text> = [];
+  f = fn(x: T) -> text { "<{x}>" };
+  for e in v { out += [f(e)]; }
+  out
+}
+
+fn keep<T>(v: vector<T>) -> vector<T> {
+  k = 10;
+  my_map(v, |x| { if k > 100 { x } else { x } })
+}
+
+fn twice_each<T: Addable>(v: vector<T>) -> vector<T> {
+  my_map(v, |x| { h = fn(y: T) -> T { y + y }; h(x) })
+}
+
+fn count_all<T>(v: vector<T>) -> integer {
+  n = 0;
+  each(v, |x| { n += 1; });
+  n
+}
+
+fn inc_all(v: vector<integer>, f: fn(integer) -> integer) -> integer {
+  n = 0;
+  for x in v { n += f(x); }
+  n
+}
+
+fn count_plus<T>(v: vector<T>) -> integer { inc_all([0, 0], |x| { x + 1 }) + len(v) - 2 }
+
+fn test_a_lambda_without_a_capture() {
+  a: vector<integer> = [1, 2, 3];
+  assert("{same(a)}" == "[1,2,3]", "same at integer: {same(a)}");
+  t: vector<text> = ["p", "q"];
+  assert("{same(t)}" == "[\"p\",\"q\"]", "same at text: {same(t)}");
+  ps = [Pt { x: 2, y: 7 }, Pt { x: 4, y: 8 }];
+  q = same(ps);
+  assert(len(q) == 2 && q[0].x == 2 && q[1].x == 4 && q[0].y == 7, "same at Pt: {q[1].x}");
+}
+
+fn test_a_lambda_using_the_bound() {
+  a: vector<integer> = [1, 2, 3];
+  f: vector<float> = [1.5];
+  assert("{sq(a)}" == "[1,4,9]", "sq at integer: {sq(a)}");
+  assert("{sq(f)}" == "[2.25]", "sq at float: {sq(f)}");
+  assert("{twice_each(a)}" == "[2,4,6]", "a nested lambda: {twice_each(a)}");
+}
+
+fn test_a_lambda_that_captures() {
+  a: vector<integer> = [1, 2, 3];
+  assert("{add_all(a, 10)}" == "[11,12,13]", "a capture typed T: {add_all(a, 10)}");
+  assert("{keep(["a", "b"])}" == "[\"a\",\"b\"]", "a concrete capture, text return: {keep(["a", "b"])}");
+  assert(count_all([4, 5, 6]) == 3 && count_all(["a", "b"]) == 2, "a written capture: {count_all([4, 5, 6])}");
+}
+
+fn test_a_lambda_called_directly() {
+  assert(g(5) == 5 && g("s") == "s", "long form: {g(5)} {g("s")}");
+  a: vector<integer> = [1, 2];
+  assert("{tags(a)}" == "[\"<1>\",\"<2>\"]", "text return: {tags(a)}");
+}
+
+fn test_a_lambda_mentioning_no_variable() {
+  assert(count_plus([7, 8]) == 2 && count_plus(["a", "b", "c"]) == 3, "control: {count_plus([7, 8])}");
+}

@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// STEPS.md B2–B3.  A free generic beside a free concrete definition of its name.
+// Measured 9f5cf6a96: `Cannot redefine 'first'`.  Expected after B3: `999|p`.
+fn first<T>(v: vector<T>) -> T { return v[0]; }
+fn first(v: vector<integer>) -> integer { return 999; }
+fn main() {
+  a: vector<integer> = [1, 2, 3];
+  b: vector<text> = ["p", "q"];
+  print("{first(a)}|{first(b)}");
+}

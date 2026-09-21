@@ -1,0 +1,11 @@
+--- a/src/parser/dispatch.rs
++++ b/src/parser/dispatch.rs
+@@ -545,7 +545,7 @@
+             (true, true) => Some(Ordering::Equal),
+             (true, false) => Some(Ordering::Less),
+             (false, true) => Some(Ordering::Greater),
+-            (false, false) => None,
++            (false, false) => Some(if ba.len() >= bb.len() { Ordering::Less } else { Ordering::Greater }),
+         }
+     }
+ 

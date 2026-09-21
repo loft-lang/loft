@@ -1,0 +1,8 @@
+// C2 — `V: Named` refused at a text, the first variable's bound holding.
+interface Named { fn tag(self: Self) -> text }
+struct Cat { n: integer }
+fn tag(self: Cat) -> text { "cat {self.n}" }
+fn label<K: Named, V: Named>(k: K, v: V) -> text { "{k.tag()} {v.tag()}" }
+fn main() {
+  println(label(Cat{n:1}, "x"));
+}

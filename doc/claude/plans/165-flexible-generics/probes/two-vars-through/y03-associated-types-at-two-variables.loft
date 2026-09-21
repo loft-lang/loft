@@ -1,0 +1,25 @@
+// C3 — @PLN125's associated types, one per variable: `S.Rows` and `K.Item`.
+// @EXPECT: 3|12|6
+interface Cursor { fn width(self: Self) -> integer }
+interface Source { type Rows: Cursor
+  fn open(self: Self) -> Self.Rows }
+interface Sink { type Item: Cursor
+  fn make(self: Self) -> Self.Item
+  fn take(self: Self, it: Self.Item) -> integer }
+struct FileRows { w: integer }
+struct DbRows { cols: integer }
+fn width(self: FileRows) -> integer { self.w }
+fn width(self: DbRows) -> integer { self.cols }
+struct FileSource { path: text }
+struct DbSink { cols: integer }
+fn open(self: FileSource) -> FileRows { FileRows { w: len(self.path) } }
+fn make(self: DbSink) -> DbRows { DbRows { cols: self.cols } }
+fn take(self: DbSink, it: DbRows) -> integer { it.cols + self.cols }
+fn cross<S: Source, K: Sink>(s: S, k: K) -> integer { s.open().width() }
+fn cross_k<S: Source, K: Sink>(s: S, k: K) -> integer { k.take(k.make()) }
+fn cross_w<S: Source, K: Sink>(s: S, k: K) -> integer { k.make().width() }
+fn main() {
+  f = FileSource { path: "abc" };
+  d = DbSink { cols: 6 };
+  println("{cross(f, d)}|{cross_k(f, d)}|{cross_w(f, d)}");
+}

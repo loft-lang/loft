@@ -1,0 +1,11 @@
+// B4 — two receivers' methods and one generic of the name: each receiver reaches its own
+// method, any other type the generic.
+// @EXPECT: sq 1|tri 2|any 3|any x
+struct Sq { s: integer }
+struct Tri { s: integer }
+fn label(self: Sq) -> text { "sq {self.s}" }
+fn label(self: Tri) -> text { "tri {self.s}" }
+fn label<T: Printable>(x: T) -> text { "any {x}" }
+fn main() {
+  println("{label(Sq{s:1})}|{label(Tri{s:2})}|{label(3)}|{label("x")}");
+}

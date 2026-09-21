@@ -402,3 +402,44 @@ fn a_new_name_is_still_skipped() {
         assert_eq!(cell(&l, "A"), "any-any 12", "{l}");
     }
 }
+
+/// @PLN165 B7 — `Disp-World`'s stated limit: a set that holds a GENERIC keeps its static calls
+/// direct (no per-spelling stub — `stub_admissible` declines), so an overload added mid-run
+/// could reach the dynamic sites and not the static ones.  The add is refused whole and every
+/// site keeps answering in the world it started in: the static (Slime, IceWall) site and the
+/// dynamic one both keep reaching the generic's instance, the concrete member keeps (Fireball,
+/// IceWall).
+#[test]
+fn an_add_to_a_set_holding_a_generic_is_refused() {
+    const SET_G: &str = "fn hit(f: Fireball, w: IceWall) -> text {\n  \"fire-wall {f.n}{w.n}\"\n}\n\nfn hit<T>(a: T, b: Entity) -> text {\n  \"gen {b.n}\"\n}\n";
+    let mut s = Session::start("generic", &program(SET_G));
+    for l in s.rounds(2) {
+        assert_eq!(
+            cell(&l, "A"),
+            "gen 2",
+            "static site at (Slime, IceWall): {l}"
+        );
+        assert_eq!(
+            cell(&l, "B"),
+            "gen 5",
+            "dynamic site at (Slime, IceWall): {l}"
+        );
+        assert_eq!(
+            cell(&l, "C"),
+            "gen 4",
+            "dynamic site at (Fireball, Slime): {l}"
+        );
+        assert_eq!(cell(&l, "D"), "fire-wall 32", "the concrete member: {l}");
+    }
+    s.edit(&format!("{}{ADDED}", program(SET_G)));
+    let report = s.report("is refused");
+    assert!(
+        report.contains("holds a generic"),
+        "the refusal names the limit: {report}"
+    );
+    for l in s.rounds(4) {
+        assert_eq!(cell(&l, "A"), "gen 2", "the world is unchanged: {l}");
+        assert_eq!(cell(&l, "B"), "gen 5", "the world is unchanged: {l}");
+        assert_eq!(cell(&l, "D"), "fire-wall 32", "{l}");
+    }
+}

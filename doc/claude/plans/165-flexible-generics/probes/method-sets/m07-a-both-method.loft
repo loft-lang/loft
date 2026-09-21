@@ -1,0 +1,7 @@
+// B4 — a `both` method beside a generic of its name.
+// @EXPECT: both 3|gen s
+fn pick(both: integer) -> text { "both {both}" }
+fn pick<T: Printable>(x: T) -> text { "gen {x}" }
+fn main() {
+  println("{pick(3)}|{pick("s")}");
+}

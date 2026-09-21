@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// STEPS.md B4.  b4 with the method taking a SECOND parameter.  `describe(Sq{…})` with one
+// argument is not applicable to the method (`Disp-Applicable`: arity) and IS applicable
+// to the generic — but the ladder picks the method by its receiver key and never asks.
+// Measured 9f5cf6a96: `missing argument for parameter 'n' of describe` — a wrong REFUSAL.
+// Expected after B4: `some square 1|SQUARE 1 x3`.
+interface Shape { fn kind(self: Self) -> text }
+struct Sq { s: integer }
+fn kind(self: Sq) -> text { return "square {self.s}"; }
+fn describe(self: Sq, n: integer) -> text { return "SQUARE {self.s} x{n}"; }
+fn describe<T: Shape>(x: T) -> text { return "some {x.kind()}"; }
+fn main() {
+  print("{describe(Sq{s:1})}|{describe(Sq{s:1}, 3)}");
+}

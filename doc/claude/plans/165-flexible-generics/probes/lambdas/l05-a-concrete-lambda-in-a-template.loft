@@ -1,0 +1,11 @@
+// A lambda inside a template that mentions no type variable.
+// @EXPECT: 2 3
+fn inc_all(v: vector<integer>, f: fn(integer) -> integer) -> integer {
+  n = 0;
+  for x in v { n += f(x); }
+  n
+}
+fn count_plus<T>(v: vector<T>) -> integer { inc_all([0, 0], |x| { x + 1 }) + len(v) - 2 }
+fn main() {
+  println("{count_plus([7, 8])} {count_plus(["a", "b", "c"])}");
+}

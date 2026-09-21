@@ -1,0 +1,12 @@
+// B6 + B5 — a pattern instance AND a stronger bound agree: `vector<T: Named>` beats `T`.
+// A bound and a pattern that point opposite ways stay incomparable (sets-refused/r10).
+// @EXPECT: vn 1|any
+interface Named { fn tag(self: Self) -> text }
+struct C { n: integer }
+fn tag(self: C) -> text { "c" }
+fn f<T: Named>(v: vector<T>) -> text { "vn {len(v)}" }
+fn f<T>(x: T) -> text { "any" }
+fn main() {
+  a: vector<C> = [C { n: 1 }];
+  println("{f(a)}|{f(3)}");
+}

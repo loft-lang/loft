@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A bounded generic may call another bounded generic with a value typed by its OWN variable,
+// whatever the two variables are spelled (`(G-Sat)` at a variable: a variable satisfies what
+// its bounds declare).  `outer<U: Named>` calling `inner<T: Named>(x)` is what its concrete
+// twin `outer(x: Cat)` calling `inner(x)` is.
+//
+// The call binds `inner`'s variable to `U`, and `U` is judged against `Named` through the
+// stubs its bound minted.  A text-returning interface method's stub carries the hidden
+// `&text` buffer the concrete method carries — and did not MARK it hidden, so the arity
+// check `(G-Sat)` makes read the stub as one parameter too many and refused `U` as
+// "missing tag".  Spelled the same (`<T: Named>` twice) the two headers share one variable
+// and nothing was asked, which is why it went unseen.
+//
+// @falsified-at: 546140d03 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-bounded-generic-calls-a-bounded-generic-at-its-own-variable.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the program.
+//   ARMED: nothing.
+//   WITNESS: on the control "'U' does not satisfy interface 'Named': missing tag", and for
+//     `Printable` "missing to_text".
+//   HOLDS: the same pair spelled alike, which compiled on the control.
+
+interface Named { fn tag(self: Self) -> text }
+struct Cat { n: integer }
+fn tag(self: Cat) -> text { "cat {self.n}" }
+
+fn inner<T: Named>(x: T) -> text { "<{x.tag()}>" }
+fn outer<U: Named>(x: U) -> text { inner(x) }
+fn alike<T: Named>(x: T) -> text { inner(x) }
+
+fn show<T: Printable>(x: T) -> text { "[{x}]" }
+fn relay<U: Printable>(x: U) -> text { show(x) }
+
+fn test_a_user_bound_at_two_spellings() {
+  c = Cat { n: 1 };
+  assert(outer(c) == "<cat 1>", "{outer(c)}");
+  assert(alike(c) == "<cat 1>", "{alike(c)}");
+}
+
+fn test_a_stdlib_bound_at_two_spellings() {
+  assert(relay(3) == "[3]", "{relay(3)}");
+  assert(relay("a") == "[a]", "{relay("a")}");
+  assert(relay(2.5) == "[2.5]", "{relay(2.5)}");
+}

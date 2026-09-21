@@ -1,0 +1,9 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// STEPS.md D1.  The same leak, reaching LAYOUT.
+// Measured 9f5cf6a96: `type layout: Holder(size=0,align=0){[0]v:__typevar_T@?..?}` —
+// an internal name, reported at the LAST line of the file.
+// Expected after D1: refused at the field, in the author's words.
+struct Holder { v: T }
+fn get<T>(h: vector<T>) -> T { return h[0]; }
+fn main() { print("x"); }

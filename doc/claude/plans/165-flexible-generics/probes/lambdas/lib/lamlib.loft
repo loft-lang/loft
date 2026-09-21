@@ -1,0 +1,7 @@
+// A library template whose body writes a lambda.
+pub fn scaled<T: Numeric>(v: vector<T>, k: T) -> vector<T> {
+  out: vector<T> = [];
+  f = fn(x: T) -> T { x * k };
+  for e in v { out += [f(e)]; }
+  out
+}

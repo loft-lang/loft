@@ -1,0 +1,11 @@
+// B3b — g01 without bounds: the instance at Cat reaches the concrete member, at Dog the
+// template's instance.
+// @EXPECT: special 1|any
+struct Cat { n: integer }
+struct Dog { n: integer }
+fn show<T>(x: T) -> text { "any" }
+fn show(x: Cat) -> text { "special {x.n}" }
+fn wrap<U>(x: U) -> text { show(x) }
+fn main() {
+  println("{wrap(Cat{n:1})}|{wrap(Dog{n:2})}");
+}

@@ -1,0 +1,37 @@
+// A6 — a short lambda handed to a generic takes its parameter type from what the earlier
+// arguments bound, as the built-in `map` and a concrete twin do: an integer, a text and a
+// record element, a named argument, and both spellings of a generic METHOD (the dot
+// spelling typed no short lambda at all, not even for a concrete method).
+// @EXPECT: [10,20,30]=[10,20,30]|["a!","b!"]=["a!","b!"]|2,4=2,4|[2,3,4]=[2,3,4]|[5,10]=[5,10]|[5,10]=[5,10]
+struct Pt { x: integer, y: integer }
+fn my_map<T>(v: vector<T>, f: fn(T) -> T) -> vector<T> {
+  out: vector<T> = [];
+  for x in v { out += [f(x)]; }
+  out
+}
+fn twice_i(v: vector<integer>, f: fn(integer) -> integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for x in v { out += [f(x)]; }
+  out
+}
+fn twice_t(v: vector<text>, f: fn(text) -> text) -> vector<text> {
+  out: vector<text> = [];
+  for x in v { out += [f(x)]; }
+  out
+}
+fn twice_p(v: vector<Pt>, f: fn(Pt) -> Pt) -> vector<Pt> {
+  out: vector<Pt> = [];
+  for x in v { out += [f(x)]; }
+  out
+}
+fn apply<T>(self: vector<T>, f: fn(T) -> T) -> vector<T> { my_map(self, f) }
+fn apply_i(self: vector<integer>, f: fn(integer) -> integer) -> vector<integer> { twice_i(self, f) }
+fn main() {
+  a: vector<integer> = [1, 2, 3];
+  t: vector<text> = ["a", "b"];
+  b: vector<integer> = [1, 2];
+  ps = [Pt { x: 1, y: 0 }, Pt { x: 2, y: 0 }];
+  gp = my_map(ps, |p| { Pt { x: p.x * 2, y: p.y } });
+  cp = twice_p(ps, |p| { Pt { x: p.x * 2, y: p.y } });
+  println("{my_map(a, |x| { x * 10 })}={twice_i(a, |x| { x * 10 })}|{my_map(t, |s| { s + "!" })}={twice_t(t, |s| { s + "!" })}|{gp[0].x},{gp[1].x}={cp[0].x},{cp[1].x}|{my_map(a, f: |x| { x + 1 })}={twice_i(a, f: |x| { x + 1 })}|{b.apply(|x| { x * 5 })}={b.apply_i(|x| { x * 5 })}|{apply(b, |x| { x * 5 })}={apply_i(b, |x| { x * 5 })}");
+}

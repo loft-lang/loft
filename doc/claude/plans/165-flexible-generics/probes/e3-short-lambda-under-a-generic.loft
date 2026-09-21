@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// STEPS.md A6.  A short lambda takes its parameter type from the parameter it is passed
+// to.  The built-in `map` hands it the vector's element type, and so does a CONCRETE
+// function (`twice`).  A generic hands it the template's own `T` — the variable, not the
+// type an earlier argument already bound it to.
+// Measured 9f5cf6a96: `No matching operator '*' on 'T' and 'integer'`, for the last call
+// alone; without that line the file prints `[10,20,30] [10,20,30]`.
+// Expected after A6: `[10,20,30] [10,20,30] [10,20,30]`.
+fn my_map<T>(v: vector<T>, f: fn(T) -> T) -> vector<T> {
+  out: vector<T> = [];
+  for x in v { out += [f(x)]; }
+  return out;
+}
+fn twice(v: vector<integer>, f: fn(integer) -> integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for x in v { out += [f(x)]; }
+  return out;
+}
+fn main() {
+  a: vector<integer> = [1, 2, 3];
+  builtin = map(a, |x| { x * 10 });
+  concrete = twice(a, |x| { x * 10 });
+  generic = my_map(a, |x| { x * 10 });
+  print("{builtin} {concrete} {generic}");
+}

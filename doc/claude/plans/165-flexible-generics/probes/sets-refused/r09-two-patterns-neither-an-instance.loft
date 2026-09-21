@@ -1,0 +1,7 @@
+// B6 — `(T, integer)` and `(integer, T)` at `(1, 2)`: neither pattern is an instance of the
+// other, so the call is refused naming both.
+fn g<T>(p: (T, integer)) -> text { "a" }
+fn g<T>(p: (integer, T)) -> text { "b" }
+fn main() {
+  println("{g((1, 2))}");
+}

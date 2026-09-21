@@ -1,0 +1,19 @@
+// A template lambda capturing a local that is NOT typed by the variable.
+// @EXPECT: [11,12] ["a","b"]
+fn my_map<T>(v: vector<T>, f: fn(T) -> T) -> vector<T> {
+  out: vector<T> = [];
+  for x in v { out += [f(x)]; }
+  out
+}
+fn keep<T>(v: vector<T>) -> vector<T> {
+  k = 10;
+  my_map(v, |x| { if k > 100 { x } else { x } })
+}
+fn plus<T: Addable>(v: vector<T>, one: T) -> vector<T> {
+  k = 1;
+  my_map(v, |x| { if k > 0 { x + one } else { x } })
+}
+fn main() {
+  a: vector<integer> = [10, 11];
+  println("{plus(a, 1)} {keep(["a", "b"])}");
+}

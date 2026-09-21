@@ -1389,9 +1389,11 @@ The sub-generator type is `Box<dyn LoftCoroutine>` (to handle heterogeneous inne
 ### Current state
 
 Generic functions (`fn f<T>`) are **monomorphized at the bytecode IR phase** in
-`src/parser/mod.rs::try_generic_instantiation()`.  Each call site with a concrete type
-produces a `DefType::Function` named `t_<len><type>_<name>`
-(e.g. `t_7integer_identity`, `t_4text_identity`).
+`src/parser/mod.rs::try_generic_instantiation()`.  Each distinct binding produces a
+`DefType::Function` keyed `i_<len><types>_<template key>` (`D-Key`, @PLN165 — e.g.
+`i_7integer_n_identity`, `i_4text_n_identity`); the native emitter flattens a key's
+non-identifier characters and refuses two keys that flatten to one identifier.
+`LOFT_NO_INSTANCE_KEY=1` restores the older method-shaped `t_<len><type>_<name>` key.
 
 By the time native codegen runs, all generic functions have been replaced by concrete
 functions.  Native codegen does not need to implement polymorphism — it only needs to
@@ -1409,18 +1411,18 @@ Instantiations created by the test:
 
 | Call | Monomorphized name | Return type | Expected issue |
 |---|---|---|---|
-| `identity(42)` | `t_7integer_identity` | `integer` | Likely OK |
-| `identity(3.14)` | `t_5float_identity` | `float` | Likely OK |
-| `identity("hello")` | `t_4text_identity` | `text` | **Likely fails** — text-return wrapping |
-| `identity(true)` | `t_7boolean_identity` | `boolean` | Likely OK |
-| `pick_second(1, 99)` | `t_7integer_pick_second` | `integer` | Likely OK |
-| `pick_second("a", "b")` | `t_4text_pick_second` | `text` | **Likely fails** — same |
+| `identity(42)` | `i_7integer_n_identity` | `integer` | Likely OK |
+| `identity(3.14)` | `i_5float_n_identity` | `float` | Likely OK |
+| `identity("hello")` | `i_4text_n_identity` | `text` | **Likely fails** — text-return wrapping |
+| `identity(true)` | `i_7boolean_n_identity` | `boolean` | Likely OK |
+| `pick_second(1, 99)` | `i_7integer_n_pick_second` | `integer` | Likely OK |
+| `pick_second("a", "b")` | `i_4text_n_pick_second` | `text` | **Likely fails** — same |
 
 **Audit procedure:**
 1. Temporarily remove `"48-generics.loft"` from `SCRIPTS_NATIVE_SKIP`.
 2. Run `cargo test --test native 2>&1 | head -80` to capture compile errors.
 3. Open the generated `.rs` file for the failing test and inspect the emitted bodies of
-   `t_4text_identity` and `t_4text_pick_second`.
+   `i_4text_n_identity` and `i_4text_n_pick_second`.
 4. Compare with a hand-written native text-returning function to identify the difference.
 
 **Expected finding:** Text-returning monomorphized functions lack the `Str::new(...)` return

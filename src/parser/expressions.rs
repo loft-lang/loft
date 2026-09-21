@@ -770,26 +770,7 @@ impl Parser {
                         self.vars.is_caller_hidden_buf(r),
                     );
                 }
-                // @FR-O-Proxy asks alloc — this decides which work-refs get a null-init in
-                // the preamble, which is the opposite direction from a free: it puts a slot
-                // in a known-absent state, and releases nothing.
-                if !self.vars.is_argument(r)
-                    && !self.vars.is_inline_ref(r)
-                    // @PLAN51 Cluster IV: also null-init caller-side hidden-
-                    // buffer work-refs even when their typedef carries a
-                    // non-empty dep list (e.g. Reference(td, [arg_idx]) for
-                    // if-tail / recursion / explicit-return-in-if shapes).
-                    // Without it, the slot allocator skips them ("no
-                    // first_def") and codegen panics at codegen.rs:2529.
-                    // Empty-dep refs still take this path (the original
-                    // arm); caller_hidden_buf is the additional gate.
-                    // #319: `__ncc_N` heap-DbRef temps likewise — their only
-                    // Set is inside the ncc block, so they need the preamble
-                    // init regardless of their dep list.
-                    && (self.vars.tp(r).depend().is_empty()
-                        || self.vars.is_caller_hidden_buf(r)
-                        || self.vars.name(r).starts_with("__ncc_"))
-                {
+                if self.work_ref_takes_preamble(r) {
                     ls.insert(0, v_set(r, Value::Null));
                 }
             }
@@ -6226,7 +6207,7 @@ use a separate collection or add after the loop"
         // `substitute_type`).  Rewriting here would bury T inside `__nullable<T>`
         // and break the "T appears in the first parameter" check + the return
         // type unification.
-        if struct_d == self.cur_type_var {
+        if self.is_header_type_var(struct_d) {
             return elem;
         }
         // The eligibility (non-stdlib, non-synthetic struct) and the synth-enum

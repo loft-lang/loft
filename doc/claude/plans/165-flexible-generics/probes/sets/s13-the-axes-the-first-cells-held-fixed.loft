@@ -1,0 +1,25 @@
+// B3/B4 — the argument spellings and element types s03–s12 and m01–m10 held fixed: a FIELD,
+// an ELEMENT, a coalesce result, a callee-returned container, a nullable, a narrow integer, a
+// boolean, an enum element, a keyed collection bound to `T`, and a call in an `if` condition.
+// @EXPECT: 999|e|int 3|999|int null|int 7|gen true|Green|1 h|yes
+enum Color { Red, Green }
+struct Row { id: integer }
+struct Box { v: vector<integer> }
+fn first<T>(v: vector<T>) -> T { v[0] }
+fn first(v: vector<integer>) -> integer { 999 }
+fn tag<T: Printable>(x: T) -> text { "gen {x}" }
+fn tag(x: integer) -> text { "int {x}" }
+fn cnt<T>(x: T) -> text { "1 h" }
+fn cnt(x: integer) -> text { "int" }
+fn mk() -> vector<integer> { [4, 5] }
+fn maybe(k: integer) -> integer? { if k > 0 { k } else { null } }
+fn main() {
+  b = Box { v: [1] };
+  vv: vector<vector<text>> = [["e"]];
+  nv: integer? = null;
+  n: u8 = 7;
+  cs: vector<Color> = [Color.Green];
+  h: hash<Row[id]> = [Row { id: 1 }];
+  yes = if tag(1) == "int 1" { "yes" } else { "no" };
+  println("{first(b.v)}|{first(vv[0])}|{tag(maybe(0) ?? 3)}|{first(mk())}|{tag(nv)}|{tag(n)}|{tag(true)}|{first(cs)}|{cnt(h)}|{yes}");
+}

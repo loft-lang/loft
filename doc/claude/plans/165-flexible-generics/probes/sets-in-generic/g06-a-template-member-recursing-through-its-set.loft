@@ -1,0 +1,11 @@
+// B3b — a template member calling its own name at its own variable: each instance re-decides,
+// so the recursion stays in the instance where no concrete member takes the type, and a text
+// vector reaches the concrete member at once.
+// @EXPECT: 3|-100
+fn count<T>(v: vector<T>, n: integer) -> integer { if n == 0 { 0 } else { 1 + count(v, n - 1) } }
+fn count(v: vector<text>, n: integer) -> integer { -100 }
+fn main() {
+  a: vector<integer> = [1];
+  b: vector<text> = ["p"];
+  println("{count(a, 3)}|{count(b, 3)}");
+}

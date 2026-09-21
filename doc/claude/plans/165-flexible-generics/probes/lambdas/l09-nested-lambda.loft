@@ -1,0 +1,14 @@
+// A lambda inside a lambda inside a template.
+// @EXPECT: [2,4]
+fn my_map<T>(v: vector<T>, f: fn(T) -> T) -> vector<T> {
+  out: vector<T> = [];
+  for x in v { out += [f(x)]; }
+  out
+}
+fn twice_each<T: Addable>(v: vector<T>) -> vector<T> {
+  my_map(v, |x| { h = fn(y: T) -> T { y + y }; h(x) })
+}
+fn main() {
+  a: vector<integer> = [1, 2];
+  println("{twice_each(a)}");
+}

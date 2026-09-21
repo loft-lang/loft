@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Two type variables carried through everything a generic's instance derives (@PLN165 C3):
+// a nested call whose variables CROSS (`inner(b, a)` inside `outer<A, B>`), bound methods of
+// both variables in one body, an associated type per variable (`S.Rows`, `K.Item`), a
+// template declared below its caller, and a nested call whose first argument is an
+// expression of the second variable's type.  Each answers what its concrete twin answers.
+//
+// Two of these answered WRONG, silently, on the way here: the nested call bound `inner` from
+// the FIRST variable's type when its first argument was not a plain variable (`z/7` read as
+// `1/7`), and the second variable's associated type was never bound, so a call through its
+// bound read garbage.  Associated types are inferred per variable now, and a nested
+// argument takes the callee's parameter under the instance's bindings.
+//
+// @falsified-at: d4d52261d — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/two-type-variables-reach-every-instance-of-a-nested-call.patch — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: assertions on the interpreter, exit on native — the control (C2) compiles
+//     every cell and answers two of them wrong.
+//   ARMED: nothing.
+//   WITNESS: on the control `outer_last(7, v)` is `1/7` and `cross(f, d)` reads garbage
+//     through `K.Item`'s bound.
+//   HOLDS: the crossing, the bound methods, `cross_take` and the template declared below.
+
+interface Named { fn tag(self: Self) -> text }
+struct Cat { n: integer }
+struct Dog { n: integer }
+fn tag(self: Cat) -> text { "cat {self.n}" }
+fn tag(self: Dog) -> text { "dog {self.n}" }
+
+interface Cursor { fn width(self: Self) -> integer }
+interface Source { type Rows: Cursor
+  fn open(self: Self) -> Self.Rows }
+interface Sink { type Item: Cursor
+  fn make(self: Self) -> Self.Item
+  fn take(self: Self, it: Self.Item) -> integer }
+struct FileRows { w: integer }
+struct DbRows { cols: integer }
+fn width(self: FileRows) -> integer { self.w }
+fn width(self: DbRows) -> integer { self.cols }
+struct FileSource { path: text }
+struct DbSink { cols: integer }
+fn open(self: FileSource) -> FileRows { FileRows { w: len(self.path) } }
+fn make(self: DbSink) -> DbRows { DbRows { cols: self.cols } }
+fn take(self: DbSink, it: DbRows) -> integer { it.cols + self.cols }
+
+fn inner<P: Printable, Q: Printable>(p: P, q: Q) -> text { "{p}/{q}" }
+fn outer<A: Printable, B: Printable>(a: A, b: B) -> text { inner(b, a) }
+fn outer_twin(a: integer, b: text) -> text { inner(b, a) }
+fn outer_last<A: Printable, B: Printable>(a: A, bs: vector<B>) -> text { inner(bs[len(bs) - 1], a) }
+fn both_tags<K: Named, V: Named>(k: K, v: V) -> text { k.tag() + "+" + v.tag() }
+fn cross<S: Source, K: Sink>(s: S, k: K) -> integer { s.open().width() + k.make().width() }
+fn cross_take<S: Source, K: Sink>(s: S, k: K) -> integer { k.take(k.make()) }
+
+fn test_the_variables_cross() {
+  assert(outer(1, "x") == outer_twin(1, "x") && outer(1, "x") == "x/1", "{outer(1, "x")}");
+  assert(outer("y", 2.5) == "2.5/y", "{outer("y", 2.5)}");
+  v: vector<text> = ["y", "z"];
+  assert(outer_last(7, v) == "z/7", "{outer_last(7, v)}");
+}
+
+fn test_bound_methods_on_both() {
+  assert(both_tags(Cat { n: 1 }, Dog { n: 2 }) == "cat 1+dog 2", "{both_tags(Cat { n: 1 }, Dog { n: 2 })}");
+  assert(both_tags(Dog { n: 3 }, Cat { n: 4 }) == "dog 3+cat 4", "{both_tags(Dog { n: 3 }, Cat { n: 4 })}");
+}
+
+fn test_an_associated_type_per_variable() {
+  f = FileSource { path: "abc" };
+  d = DbSink { cols: 6 };
+  assert(cross(f, d) == 9, "{cross(f, d)}");
+  assert(cross_take(f, d) == 12, "{cross_take(f, d)}");
+}
+
+fn test_declared_below() {
+  assert("{later(5, "v")}|{later("w", 6)}" == "5:v|w:6", "{later(5, "v")}");
+}
+
+fn later<A: Printable, B: Printable>(a: A, b: B) -> text { "{a}:{b}" }

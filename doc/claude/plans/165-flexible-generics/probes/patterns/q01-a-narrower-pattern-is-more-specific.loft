@@ -1,0 +1,9 @@
+// B6 — b6: `vector<T>` is a substitution instance of `T`, not the reverse, so it is more
+// specific for a vector argument; a scalar binds only `T`.
+// @EXPECT: vec 1|any
+fn f<T>(v: vector<T>) -> text { "vec {len(v)}" }
+fn f<T>(x: T) -> text { "any" }
+fn main() {
+  a: vector<integer> = [1];
+  println("{f(a)}|{f(3)}");
+}

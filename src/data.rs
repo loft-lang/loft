@@ -4191,6 +4191,30 @@ pub enum ImpureCategory {
     ParCall,
 }
 
+/// Which length-counted key form a definition name has ([`Data::split_key`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KeyKind {
+    /// `t_<LEN><spelling>_<method>` — a method, keyed on its receiver's spelling.
+    Method,
+    /// `f_<LEN><spelling>_<name>` — a free member of an overload set, keyed on the spelling
+    /// of every declared parameter.
+    FreeOverload,
+    /// `i_<LEN><spelling>_<template key>` — an INSTANCE of a generic: the identity spelling
+    /// of every type it binds, joined with `#`, then the key of the template it was made from
+    /// (`D-Key`, @PLN165).
+    Instance,
+}
+
+/// A length-counted definition key read back into its parts by [`Data::split_key`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct KeyParts<'a> {
+    pub kind: KeyKind,
+    /// The length-counted part: a receiver's spelling, or a full parameter spelling.
+    pub spelling: &'a str,
+    /// What follows the `_` separator — the name the source wrote.
+    pub rest: &'a str,
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum DefType {
     // Not yet known, must be filled in after the first parse pass.
@@ -4607,14 +4631,8 @@ impl Definition {
     /// `text` method); `None` for a free fn (`n_…`) or operator (`Op…`).
     #[must_use]
     pub fn method_type_prefix(&self) -> Option<&str> {
-        let rest = self.name.strip_prefix("t_")?;
-        let nd = rest.chars().take_while(char::is_ascii_digit).count();
-        let len: usize = rest.get(..nd)?.parse().ok()?;
-        // `t_`(2) + digits(nd) + type(len) + `_`(1) + method. The byte AFTER the type name
-        // must be the `_` separator — the other four manglers (`api_surface::method_name`,
-        // `generation::is_t_param_stub`, `parser::h5_names_a_generic_template`) require it; a
-        // longer `rest` alone is not enough, so `t_4textX…` must NOT be read as a method.
-        (rest.as_bytes().get(nd + len) == Some(&b'_')).then_some(&self.name[..=2 + nd + len])
+        let key = Data::split_key(&self.name).filter(|k| k.kind == KeyKind::Method)?;
+        Some(&self.name[..self.name.len() - key.rest.len()])
     }
 
     /// The user-facing name of this definition — the internal `n_` (free fn) or
@@ -4622,9 +4640,14 @@ impl Definition {
     /// `contains`.  Used by diagnostics (the @PLN102 arc-C steer + fold lint).
     #[must_use]
     pub fn display_name(&self) -> &str {
-        match self.method_type_prefix() {
-            Some(p) => &self.name[p.len()..],
-            None => self.name.strip_prefix("n_").unwrap_or(&self.name),
+        let mut name = self.name.as_str();
+        // An instance displays as its template.
+        while let Some(parts) = Data::split_key(name).filter(|k| k.kind == KeyKind::Instance) {
+            name = parts.rest;
+        }
+        match Data::split_key(name).filter(|k| k.kind == KeyKind::Method) {
+            Some(parts) => parts.rest,
+            None => name.strip_prefix("n_").unwrap_or(name),
         }
     }
 
@@ -5062,7 +5085,26 @@ impl Definition {
     /// question that reaches them.
     #[must_use]
     pub fn is_loft_defined(&self) -> bool {
-        (self.name.starts_with("n_") || self.name.starts_with("t_")) && self.code != Value::Null
+        (self.name.starts_with("n_")
+            || self.name.starts_with("t_")
+            || self.is_instance()
+            || self.is_free_overload())
+            && self.code != Value::Null
+    }
+
+    /// Is this a FREE member of an overload set — keyed `f_<LEN><τ₁#τ₂…>_<name>` (`Disp-Key`,
+    /// @PLN162)?  A free function in every respect but its key.
+    #[must_use]
+    pub fn is_free_overload(&self) -> bool {
+        Data::split_key(&self.name).is_some_and(|k| k.kind == KeyKind::FreeOverload)
+    }
+
+    /// Is this an INSTANCE of a generic — keyed `i_<LEN><types>_<template>` (`D-Key`)?  Asked
+    /// of the key's shape, not of its prefix: the runtime's own `i_parse_*` helpers share the
+    /// letter and are no instance.
+    #[must_use]
+    pub fn is_instance(&self) -> bool {
+        Data::split_key(&self.name).is_some_and(|k| k.kind == KeyKind::Instance)
     }
 
     /// Cluster-A.3 (OWNERSHIP_MODEL row 102) — THE adopt-vs-copy answer for a
@@ -5223,20 +5265,20 @@ impl Definition {
             .find(|g| matches!(g.kind, LinkedFieldKind::Tuple))
     }
 
+    /// The name the source wrote for the function keyed `key`: a method's or a free
+    /// overload's `rest`, an instance's TEMPLATE's name, a plain `n_<name>`'s `<name>`.
+    fn source_name_of_key(key: &str) -> String {
+        match Data::split_key(key) {
+            Some(parts) if parts.kind == KeyKind::Instance => Self::source_name_of_key(parts.rest),
+            Some(parts) => parts.rest.to_string(),
+            None => key.get(2..).unwrap_or(key).to_string(),
+        }
+    }
+
     #[must_use]
     pub fn original_name(&self) -> String {
         if self.def_type == DefType::Function {
-            if self.name.starts_with("t_") || self.name.starts_with("f_") {
-                if let Ok(nr) = self.name[2..4].parse::<u8>() {
-                    self.name[5 + nr as usize..].to_string()
-                } else if let Ok(nr) = self.name[2..3].parse::<u8>() {
-                    self.name[4 + nr as usize..].to_string()
-                } else {
-                    self.name[2..].to_string()
-                }
-            } else {
-                self.name[2..].to_string()
-            }
+            Self::source_name_of_key(&self.name)
         } else {
             self.name.clone()
         }
@@ -5433,6 +5475,12 @@ pub struct Data {
     /// aliased via a DbRef, non-null. A thin marker (a set, not a Definition field — those
     /// serialize) consulted by the few value-semantics chokepoints.
     pub value_structs: HashSet<u32>,
+    /// @PLN165 B2 — the bound set each type-variable placeholder stands for, as its sorted
+    /// interface names joined with `+` (`"Ordered+Printable"`; `""` unbounded).  A placeholder
+    /// is minted per (spelling, bound set), so this is what tells two variables of one bound set
+    /// apart from two of different sets when a TEMPLATE is keyed up to renaming
+    /// ([`Data::full_spelling`]).  A thin marker, like `value_structs`.
+    pub type_var_bound_keys: HashMap<u32, String>,
     used_definitions: HashSet<u32>,
     used_attributes: HashSet<(u32, usize)>,
     /// This definition is referenced by a specific definition, the code is used to update this
@@ -6025,6 +6073,7 @@ impl Data {
             adopted_stubs: Vec::new(),
             source: STD_SOURCE,
             value_structs: HashSet::new(),
+            type_var_bound_keys: HashMap::new(),
             used_definitions: HashSet::new(),
             used_attributes: HashSet::new(),
             referenced: HashMap::new(),
@@ -7215,25 +7264,10 @@ impl Data {
         if let Some(rest) = name.strip_prefix("n_") {
             return rest.to_string();
         }
-        let Some(rest) = name.strip_prefix("t_") else {
-            return name.to_string();
-        };
-        // `<LEN><Type>_<method>`: the length prefix is what makes a type name containing
-        // `_` unambiguous, so it is what the split has to read.
-        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-        if digits == 0 {
-            return name.to_string();
-        }
-        let Ok(len) = rest[..digits].parse::<usize>() else {
-            return name.to_string();
-        };
-        let after = &rest[digits..];
-        if after.len() <= len || !after.is_char_boundary(len) {
-            return name.to_string();
-        }
-        let (tp, tail) = after.split_at(len);
-        match tail.strip_prefix('_') {
-            Some(method) if !method.is_empty() => format!("{tp}.{method}"),
+        match Self::split_key(name) {
+            Some(key) if key.kind == KeyKind::Method && !key.rest.is_empty() => {
+                format!("{}.{}", key.spelling, key.rest)
+            }
             _ => name.to_string(),
         }
     }
@@ -7295,21 +7329,61 @@ impl Data {
         (tn != u32::MAX).then(|| Self::sig_type_name(&self.key_type_name(tn), tp))
     }
 
+    /// The one answer to *"which type is this, for a key or a rank?"* — [`Self::identity_spelling`],
+    /// or with `LOFT_NO_ELEMENT_KEY=1` the erasing [`Self::type_spelling`] (@PLN165 B1).  `None`
+    /// only in the erasing form, for a type with no def to name.
+    #[must_use]
+    pub(crate) fn key_identity(&self, tp: &Type) -> Option<String> {
+        if crate::keys::element_key_enabled() {
+            Some(self.identity_spelling(tp))
+        } else {
+            self.type_spelling(tp)
+        }
+    }
+
     /// Every DECLARED parameter's spelling joined with `#` — the FULL spelling a definition
     /// is keyed by when its name has several (`Disp-Key`, @PLN162).  `#` is the separator
     /// [`Self::bound_stub_name`] already relies on: no identifier can contain it, and the
-    /// native emitter maps it to `__`.  Hidden parameters (a return buffer) are not part of a
-    /// signature and are skipped.  `None` when a parameter has no spelling, which keeps such
-    /// a definition on today's keys.  Two `vector<τ>` spell alike — the element type is not
-    /// in a key today either.
+    /// native emitter flattens it.  Hidden parameters (a return buffer) are not part of a
+    /// signature and are skipped.  Each type is its [`Self::key_identity`], so
+    /// `vector<integer>` and `vector<text>` are two keys, as `u8` and `u16` are (@PLN165 B1);
+    /// `None` only under `LOFT_NO_ELEMENT_KEY=1`, for a parameter with no spelling.
     #[must_use]
     pub(crate) fn full_spelling<'a>(
         &self,
         params: impl Iterator<Item = &'a Type>,
     ) -> Option<String> {
+        let params: Vec<&Type> = params.collect();
+        // @PLN165 B2 — a TEMPLATE's parameters are keyed up to renaming its variables: each is
+        // written as its position among the variables in order of first appearance, with its
+        // bound set (`$0:Ordered`), so `f<T>(v: vector<T>)` and `f<U>(v: vector<U>)` are one key
+        // — the redefinition they are — while `f<T: A>` and `f<T: B>` are two.
+        let mut vars: Vec<(u32, String)> = Vec::new();
+        for tp in &params {
+            tp.any_node(&mut |t| {
+                if let Type::Reference(d, _) = t.base()
+                    && (*d as usize) < self.definitions.len()
+                    && self.is_type_var_placeholder(*d)
+                    && !vars.iter().any(|(v, _)| v == d)
+                {
+                    let bounds = self.type_var_bound_keys.get(d).cloned().unwrap_or_default();
+                    let label = if bounds.is_empty() {
+                        format!("${}", vars.len())
+                    } else {
+                        format!("${}:{bounds}", vars.len())
+                    };
+                    vars.push((*d, label));
+                }
+                false
+            });
+        }
         let mut parts = Vec::new();
         for tp in params {
-            parts.push(self.type_spelling(tp)?);
+            if vars.is_empty() {
+                parts.push(self.key_identity(tp)?);
+            } else {
+                parts.push(self.identity_with_vars(tp, &vars));
+            }
         }
         Some(parts.join("#"))
     }
@@ -7363,6 +7437,25 @@ impl Data {
     /// attribute labelled by its spelling.  A free incumbent is re-keyed from `n_<name>` to
     /// its full spelling, so the name offers no parse hint (`Disp-Hint`) and the sites that
     /// read `n_<name>` as THE definition find none, exactly as they do for a `both` name.
+    /// The `self`/`both` METHODS named `fn_name` that source `source` declares, on any
+    /// receiver — what a free generic of the name joins in one overload set (@PLN165 B4).
+    fn methods_named(&self, fn_name: &str, source: u16) -> Vec<u32> {
+        (0..self.definitions.len() as u32)
+            .filter(|&d| {
+                let def = &self.definitions[d as usize];
+                def.source == source
+                    && matches!(def.def_type, DefType::Function | DefType::Generic)
+                    && def
+                        .attributes
+                        .first()
+                        .is_some_and(|a| a.name == "self" || a.name == "both")
+                    && Self::split_key(&def.name)
+                        .is_some_and(|k| k.kind == KeyKind::Method && k.rest == fn_name)
+                    && !Self::is_bound_stub_name(&def.name)
+            })
+            .collect()
+    }
+
     pub(crate) fn admit_overload_set(&mut self, lexer: &mut Lexer, fn_name: &str, incumbent: u32) {
         let mut main = self.def_nr(fn_name);
         if main == u32::MAX {
@@ -7433,7 +7526,36 @@ impl Data {
             .filter(|p| !p.hidden)
             .map(|p| p.typedef.source_name(self))
             .collect();
-        format!("{fn_name}({})", params.join(", "))
+        // A TEMPLATE member (@PLN165 B3) is named with its header, the way its author wrote
+        // it — `show<T: Named>(T)` — so a refusal naming it says which definition it means.
+        let mut vars: Vec<String> = Vec::new();
+        if self.def_type(r) == DefType::Generic {
+            for p in self.def(r).attributes.iter().filter(|p| !p.hidden) {
+                p.typedef.any_node(&mut |t| {
+                    if let Type::Reference(d, _) = t.base()
+                        && (*d as usize) < self.definitions.len()
+                        && self.is_type_var_placeholder(*d)
+                    {
+                        let spelled = Self::type_var_spelling(self.def(*d).name());
+                        let bounds = self.type_var_bound_keys.get(d).cloned().unwrap_or_default();
+                        let label = if bounds.is_empty() {
+                            spelled.to_string()
+                        } else {
+                            format!("{spelled}: {}", bounds.replace('+', " + "))
+                        };
+                        if !vars.contains(&label) {
+                            vars.push(label);
+                        }
+                    }
+                    false
+                });
+            }
+        }
+        if vars.is_empty() {
+            format!("{fn_name}({})", params.join(", "))
+        } else {
+            format!("{fn_name}<{}>({})", vars.join(", "), params.join(", "))
+        }
     }
 
     #[must_use]
@@ -7483,7 +7605,49 @@ impl Data {
     /// than name one: the `t_4Self_` scan in `parser/mod.rs` and the REPL's completion prefix.
     #[must_use]
     pub fn mangle_method(spelling: &str, method: &str) -> String {
+        Self::assert_spelling_decodes(spelling);
         format!("t_{}{}_{method}", spelling.len(), spelling)
+    }
+
+    /// What [`Self::split_key`] relies on to find where `LEN` ends: the length-counted part
+    /// never begins with a digit.  A real `assert!`, because `debug_assert!` is compiled out of
+    /// this crate — a spelling that broke it would decode to the wrong name in silence.
+    fn assert_spelling_decodes(spelling: &str) {
+        assert!(
+            !spelling.starts_with(|c: char| c.is_ascii_digit()),
+            "a definition key's spelling may not begin with a digit: {spelling:?}"
+        );
+    }
+
+    /// The ONE decoder of a length-counted definition key (@FR-G-Key) — `t_<LEN><spelling>_<rest>` (a
+    /// method), `f_<LEN><spelling>_<rest>` (a free member of an overload set) or
+    /// `i_<LEN><spelling>_<rest>` (an instance of a generic) — and the inverse of
+    /// [`Self::mangle_method`], [`Self::mangle_free_overload`] and [`Self::mangle_instance`].  `LEN` is read as
+    /// EVERY leading digit, so a spelling of 100 characters or more decodes like a short one.
+    /// `None` for a key of any other shape (`n_…`, an operator, a type), for a `LEN` that runs
+    /// past the key, and for a spelling not followed by the `_` separator.
+    #[must_use]
+    pub fn split_key(name: &str) -> Option<KeyParts<'_>> {
+        let (kind, body) = if let Some(body) = name.strip_prefix("t_") {
+            (KeyKind::Method, body)
+        } else if let Some(body) = name.strip_prefix("i_") {
+            (KeyKind::Instance, body)
+        } else {
+            (KeyKind::FreeOverload, name.strip_prefix("f_")?)
+        };
+        let digits = body.bytes().take_while(u8::is_ascii_digit).count();
+        if digits == 0 {
+            return None;
+        }
+        let len: usize = body[..digits].parse().ok()?;
+        let after = &body[digits..];
+        let spelling = after.get(..len)?;
+        let rest = after.get(len..)?.strip_prefix('_')?;
+        Some(KeyParts {
+            kind,
+            spelling,
+            rest,
+        })
     }
 
     /// The key of a FREE definition that belongs to an overload set (`Disp-Key`, @PLN162):
@@ -7492,7 +7656,127 @@ impl Data {
     /// rule — and a free overload is not one: it has no receiver and no `x.f(…)` spelling.
     #[must_use]
     pub fn mangle_free_overload(spelling: &str, name: &str) -> String {
+        Self::assert_spelling_decodes(spelling);
         format!("f_{}{}_{name}", spelling.len(), spelling)
+    }
+
+    /// The key of an INSTANCE of a generic (`D-Key`, @PLN165, @FR-G-Key): `i_<LEN><spelling>_<template>`,
+    /// `spelling` every bound type's [`Self::identity_spelling`] joined with `#` in the order the
+    /// template's variables first appear, `template` the template's own key.  Its own kind,
+    /// because an instance is not a method on its first bound type — keyed as one
+    /// (`t_3Cat_count_of`), it took a real method `count_of` on `Cat` for itself — and the
+    /// template's key in it keeps two templates of one name from sharing an instance.  The key
+    /// keeps its readable characters; the native emitter makes it an identifier.
+    #[must_use]
+    pub fn mangle_instance(spelling: &str, template: &str) -> String {
+        Self::assert_spelling_decodes(spelling);
+        format!("i_{}{}_{template}", spelling.len(), spelling)
+    }
+
+    /// What distinguishes one binding of a type variable from another in an instance's key.
+    ///
+    /// A collection keeps its element (a `vector`'s type def is the bare `vector`, which
+    /// erases it — loft#1024); an integer keeps its range and a forced width (every
+    /// `Integer(_)` resolves to the one `integer` def — loft#1383, loft#1418); any other type
+    /// is its def's name.  `(C-Int)` admits a widening for CONVERSION, which is why this is not
+    /// the conversion predicate: identity is exactly what one instance per distinct
+    /// instantiation (`@FR-G-Mono`) is keyed by.
+    #[must_use]
+    pub fn identity_spelling(&self, tp: &Type) -> String {
+        if !crate::keys::element_key_enabled() {
+            return self.identity_spelling_erasing(tp);
+        }
+        // @PLN165 B1 — the whole type, all the way down: a width inside a vector, the `?`
+        // of a nullable binding (`Pt` and `Pt?` are two instantiations), a function type's
+        // signature (its type DEF is the `i32` its value is stored as, so a function type
+        // shared a key with `i32`).
+        let rec = |t: &Type| self.identity_spelling(t);
+        match tp {
+            Type::Integer(spec) => {
+                // schema-key — the width is part of which type this is (loft#1418).
+                let named = tp.name(self);
+                match spec.forced_size {
+                    Some(n) => format!("{named}s{n}"),
+                    None => named,
+                }
+            }
+            Type::Optional(inner) => format!("{}?", rec(inner)),
+            Type::Rewritten(inner) => rec(inner),
+            Type::RefVar(inner) => format!("&{}", rec(inner)),
+            Type::Vector(elm, _) if !matches!(elm.base(), Type::Unknown(_)) => {
+                format!("vector<{}>", rec(elm))
+            }
+            Type::Iterator(elm, _) => format!("iterator<{}>", rec(elm)),
+            // A tuple keeps its synthetic struct's name (`__tuple<integer,text>`), the one
+            // spelling a boxed and an unboxed tuple share.
+            Type::Function(params, ret, _, consts) => {
+                let p: Vec<String> = params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| {
+                        if consts.is(i) {
+                            format!("const {}", rec(t))
+                        } else {
+                            rec(t)
+                        }
+                    })
+                    .collect();
+                format!("fn({}) -> {}", p.join(", "), rec(ret))
+            }
+            _ => self.identity_spelling_erasing(tp),
+        }
+    }
+
+    /// [`Self::identity_spelling`] with each of a template's type variables written as its
+    /// label in `vars` (`$0:Ordered`) — a template's key up to renaming (@PLN165 B2).
+    fn identity_with_vars(&self, tp: &Type, vars: &[(u32, String)]) -> String {
+        let rec = |t: &Type| self.identity_with_vars(t, vars);
+        match tp {
+            Type::Reference(d, _) | Type::Enum(d, _, _) => {
+                if let Some((_, label)) = vars.iter().find(|(v, _)| v == d) {
+                    return label.clone();
+                }
+                self.identity_spelling(tp)
+            }
+            Type::Optional(inner) => format!("{}?", rec(inner)),
+            Type::Rewritten(inner) => rec(inner),
+            Type::RefVar(inner) => format!("&{}", rec(inner)),
+            Type::Vector(elm, _) if !matches!(elm.base(), Type::Unknown(_)) => {
+                format!("vector<{}>", rec(elm))
+            }
+            Type::Iterator(elm, _) => format!("iterator<{}>", rec(elm)),
+            Type::Tuple(elems) => {
+                format!("({})", elems.iter().map(rec).collect::<Vec<_>>().join(", "))
+            }
+            Type::Function(params, ret, _, _) => format!(
+                "fn({}) -> {}",
+                params.iter().map(rec).collect::<Vec<_>>().join(", "),
+                rec(ret)
+            ),
+            _ => self.identity_spelling(tp),
+        }
+    }
+
+    /// The identity spelling before @PLN165 B1 — an instance's key as A5 minted it, which
+    /// erased a `τ?`'s nullability and a function type's signature.  `LOFT_NO_ELEMENT_KEY=1`.
+    fn identity_spelling_erasing(&self, tp: &Type) -> String {
+        if crate::parser::Parser::is_collection_type(tp.base()) {
+            tp.name(self) // schema-key — the instance's identity; @FR-G-Mono wants the element
+        } else if let Type::Integer(spec) = tp.base() {
+            // schema-key — loft#1418's forced WIDTH is part of which instance this is.
+            let named = tp.name(self);
+            match spec.forced_size {
+                Some(n) => format!("{named}s{n}"),
+                None => named,
+            }
+        } else {
+            let nr = self.type_def_nr(tp);
+            if nr == u32::MAX {
+                tp.name(self)
+            } else {
+                self.def(nr).name().to_string()
+            }
+        }
     }
 
     /// The internal name of a BOUND-METHOD STUB for `holder` — a generic's type variable, or an
@@ -7821,8 +8105,19 @@ impl Data {
         // a stdlib name stays the refusal below (C95), and a library's names stay module-scoped
         // (C97).  The same spelling twice is the redefinition it always was.
         let mut overload_label: Option<String> = None;
+        // @PLN165 B4 — a `self` method that joins a free generic's set after registering.
+        let mut join_as_method = false;
+        // @PLN165 B2 — a TEMPLATE is a member too: an incumbent that is one (`Generic`, set
+        // right after it registered), or a newcomer whose parameters name a type variable.
+        let generic_members = crate::keys::generic_member_enabled();
+        let newcomer_is_template = arguments.iter().any(|a| self.mentions_type_var(&a.typedef));
+        let incumbent_joins = |data: &Self, d: u32| match data.def(d).def_type {
+            DefType::Function => generic_members || !newcomer_is_template,
+            DefType::Generic => generic_members,
+            _ => false,
+        };
         if d_nr != u32::MAX
-            && self.def(d_nr).def_type == DefType::Function
+            && incumbent_joins(self, d_nr)
             && self.def(d_nr).source == self.source
             && let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
             && self.def_full_spelling(d_nr).as_ref() != Some(&full)
@@ -7864,6 +8159,46 @@ impl Data {
             if own(self, &key) == u32::MAX {
                 name = key;
                 overload_label = Some(full);
+            }
+        } else if d_nr == u32::MAX
+            && generic_members
+            && crate::keys::method_in_set_enabled()
+            && !crate::portable_path::is_stdlib_source(&lexer.pos().file)
+            && (o_nr == u32::MAX
+                || (self.def(o_nr).def_type == DefType::Dynamic
+                    && self.def(o_nr).source == self.source))
+        {
+            // @PLN165 B4 — a free GENERIC beside a same-named `self`/`both` METHOD of this
+            // source is one overload set, in either declaration order: before, the method was
+            // found by its receiver key and the generic never asked, so `describe(sq)` reached
+            // a two-parameter method and was refused for its missing argument while the
+            // one-parameter generic took it.  The method keeps its `t_` key (both spellings of
+            // a call still reach it — `(F-OneBody)`); the generic joins under its full
+            // spelling.  A method on the generic's own pattern stays `(F-OneBody)`'s refusal,
+            // reported above.
+            if !(is_self || is_both) && newcomer_is_template {
+                let methods = self.methods_named(fn_name, self.source);
+                if !methods.is_empty()
+                    && let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
+                {
+                    let key = Self::mangle_free_overload(&full, fn_name);
+                    if own(self, &key) == u32::MAX {
+                        for m in methods {
+                            self.admit_overload_set(lexer, fn_name, m);
+                        }
+                        name = key;
+                        overload_label = Some(full);
+                    }
+                }
+            } else if is_self || is_both {
+                let t = own(self, &format!("n_{fn_name}"));
+                if t != u32::MAX
+                    && self.def(t).def_type == DefType::Generic
+                    && self.def(t).source == self.source
+                {
+                    self.admit_overload_set(lexer, fn_name, t);
+                    join_as_method = is_self;
+                }
             }
         }
         if d_nr != u32::MAX {
@@ -7988,6 +8323,9 @@ impl Data {
                 self.definitions[type_nr as usize].attributes[a_nr].mutable = false;
                 self.definitions[type_nr as usize].attributes[a_nr].constant = true;
             }
+        }
+        if join_as_method {
+            self.admit_overload_set(lexer, fn_name, d_nr);
         }
         if is_both || overload_label.is_some() {
             let mut main = self.def_nr(fn_name);
@@ -9026,6 +9364,15 @@ impl Data {
         self.definitions[v_nr as usize].known_type = vec_tp;
         v_nr
     }
+    /// Does `tp` mention a type-variable placeholder anywhere — is it still a template's type
+    /// rather than a type?
+    #[must_use]
+    pub fn mentions_type_var(&self, tp: &Type) -> bool {
+        tp.any_node(&mut |t| {
+            matches!(t.base(), Type::Reference(d, _) if (*d as usize) < self.definitions.len()
+                && self.is_type_var_placeholder(*d))
+        })
+    }
 
     /// A generic type-variable placeholder: the attribute-less, self-referential
     /// `Struct` the parser registers for a `<T>` type parameter (e.g. stdlib
@@ -9920,10 +10267,9 @@ impl Data {
     /// The method a `t_<LEN><Type>_<method>` key files, or `None` for a key of any other
     /// shape — a free function, a type, a bound stub.
     fn method_name_of_key(key: &str) -> Option<&str> {
-        let rest = key.strip_prefix("t_")?;
-        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-        let len: usize = rest[..digits].parse().ok()?;
-        rest.get(digits + len..)?.strip_prefix('_')
+        Self::split_key(key)
+            .filter(|k| k.kind == KeyKind::Method)
+            .map(|k| k.rest)
     }
 
     /// Variant of [`import_all`] that **overwrites** forward-reference stubs
@@ -11551,5 +11897,65 @@ mod type_name_user_facing_tests {
         assert_eq!(Type::optional(Type::Never), Type::Never); // normalise non-values
         assert_eq!(Type::optional(Type::Null), Type::Null);
         assert!(!txt.peel_optional().1); // a plain type is not optional
+    }
+}
+
+#[cfg(test)]
+mod key_decoder_tests {
+    use super::{Data, DefType, KeyKind};
+    use crate::lexer::Position;
+
+    fn def_named(key: &str) -> String {
+        let mut d = Data::new();
+        let pos = Position {
+            file: String::new(),
+            line: 0,
+            pos: 0,
+        };
+        let nr = d.add_def(key, &pos, DefType::Function);
+        d.def(nr).original_name()
+    }
+
+    /// A key whose spelling is 100 characters or more decodes like a short one — the free
+    /// overload of @PLN165 probe a1 is 121 characters, and the two-digit reader answered
+    /// part of its spelling for the name.
+    #[test]
+    fn a_key_over_ninety_nine_characters_decodes_to_its_name() {
+        let spelling = [
+            "AVeryLongStructureNameNumberOneForTheKey",
+            "AVeryLongStructureNameNumberTwoForTheKey",
+            "AVeryLongStructureNameNumberThreeForKey",
+        ]
+        .join("#");
+        assert!(spelling.len() >= 100);
+        let key = Data::mangle_free_overload(&spelling, "pick");
+        assert_eq!(def_named(&key), "pick");
+        let parts = Data::split_key(&key).expect("a minted key decodes");
+        assert_eq!(parts.kind, KeyKind::FreeOverload);
+        assert_eq!(parts.spelling, spelling);
+        assert_eq!(parts.rest, "pick");
+        let method = Data::mangle_method(&spelling, "go_far");
+        assert_eq!(def_named(&method), "go_far");
+    }
+
+    /// The short forms, a spelling that holds the separator, and the shapes that are no
+    /// length-counted key at all.
+    #[test]
+    fn every_key_form_decodes_through_one_reader() {
+        assert_eq!(def_named("t_4text_starts_with"), "starts_with");
+        assert_eq!(def_named("t_11main_vector_len"), "len");
+        assert_eq!(def_named("f_10Rock#Paper_beat"), "beat");
+        assert_eq!(def_named("n_plain"), "plain");
+        assert!(Data::split_key("n_plain").is_none());
+        assert!(Data::split_key("t_x_nolen").is_none());
+        assert!(Data::split_key("t_9short_x").is_none());
+        assert!(Data::split_key("t_4textXlen").is_none());
+    }
+
+    /// The encoder refuses the one spelling the decoder cannot read back.
+    #[test]
+    #[should_panic(expected = "may not begin with a digit")]
+    fn a_spelling_that_begins_with_a_digit_is_refused_at_the_encoder() {
+        let _ = Data::mangle_method("9lives", "x");
     }
 }

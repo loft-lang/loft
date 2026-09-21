@@ -1,0 +1,13 @@
+// One template with an inner lambda, instantiated at integer AND at text.
+// @EXPECT: [1,2,3] ["p","q"]
+fn my_map<T>(v: vector<T>, f: fn(T) -> T) -> vector<T> {
+  out: vector<T> = [];
+  for x in v { out += [f(x)]; }
+  out
+}
+fn same<T>(v: vector<T>) -> vector<T> { my_map(v, |x| { x }) }
+fn main() {
+  a: vector<integer> = [1, 2, 3];
+  t: vector<text> = ["p", "q"];
+  println("{same(a)} {same(t)}");
+}

@@ -1,0 +1,5 @@
+pub interface Shape { fn kind(self: Self) -> text }
+pub struct Sq { s: integer }
+pub fn kind(self: Sq) -> text { "square {self.s}" }
+pub fn describe(self: Sq, n: integer) -> text { "SQUARE {self.s} x{n}" }
+pub fn describe<T: Shape>(x: T) -> text { "some {x.kind()}" }

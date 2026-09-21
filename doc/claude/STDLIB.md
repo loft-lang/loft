@@ -346,7 +346,7 @@ with a message that says so.
 
 | Function | Description |
 |----------|-------------|
-| `sum<T: Addable>(v: vector<T>, init: T? = null) -> T` | Sum of all elements. `init` is the identity to start from; leave it out and the element type's own zero is used (`0`, `0.0`, `""`). |
+| `sum<T: Addable>(v: vector<T>, init: T? = null) -> T` | Sum of all elements. `init` is the identity to start from; leave it out and the element type's own zero is used (`0`, `0.0`) — `text` is not `Addable`. |
 | `sum_of(v: vector<integer>) -> integer` | Superseded by `sum` — kept working. Sum of all elements; returns 0 for an empty vector. |
 **A bound declares the MINIMUM, and the rest derives.** `Ordered` declares `op <` alone and
 `Equatable` declares `op ==` alone, so a user type satisfies either by defining one method —

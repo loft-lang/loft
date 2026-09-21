@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// STEPS.md A1.  An overload key whose full spelling is 121 characters.
+// Measured 9f5cf6a96, both backends: `123|213` — DISPATCH is right.
+// What is wrong is not visible here: `Definition::original_name` reads a 2-digit
+// LEN, so it answers garbage for this key (the unit test in A1 is what goes red).
+struct AVeryLongStructureNameNumberOneForTheKey { a: integer }
+struct AVeryLongStructureNameNumberTwoForTheKey { a: integer }
+struct AVeryLongStructureNameNumberThreeForKey { a: integer }
+fn pick(x: AVeryLongStructureNameNumberOneForTheKey, y: AVeryLongStructureNameNumberTwoForTheKey, z: AVeryLongStructureNameNumberThreeForKey) -> text { return "123"; }
+fn pick(x: AVeryLongStructureNameNumberTwoForTheKey, y: AVeryLongStructureNameNumberOneForTheKey, z: AVeryLongStructureNameNumberThreeForKey) -> text { return "213"; }
+fn main() {
+  a = AVeryLongStructureNameNumberOneForTheKey { a: 1 };
+  b = AVeryLongStructureNameNumberTwoForTheKey { a: 2 };
+  c = AVeryLongStructureNameNumberThreeForKey { a: 3 };
+  print("{pick(a, b, c)}|{pick(b, a, c)}");
+}

@@ -1158,10 +1158,10 @@ impl Parser {
                     // separate decision (it needs its own method, and a decision about
                     // whether `x[i] += 1` may then read-modify-write), so this is a
                     // refusal, not a gap left silent.
-                    if let Some(tp) = name.strip_suffix("_OpIndex").and_then(|n| {
-                        n.strip_prefix("t_")
-                            .map(|r| r.trim_start_matches(|c: char| c.is_ascii_digit()))
-                    }) {
+                    if let Some(tp) = crate::data::Data::split_key(name)
+                        .filter(|k| k.kind == crate::data::KeyKind::Method && k.rest == "OpIndex")
+                        .map(|k| k.spelling)
+                    {
                         diagnostic!(
                             self.lexer,
                             Level::Error,
@@ -1586,7 +1586,9 @@ impl Parser {
                 // bare name, so naming one where a VALUE is wanted reported that the file's
                 // own function does not exist. Say what it is instead.
                 let receivers = self.method_receivers_named(&name);
-                if receivers.is_empty() {
+                if let Some(msg) = self.generic_value_refusal(&name) {
+                    diagnostic!(self.lexer, Level::Error, "{msg}");
+                } else if receivers.is_empty() {
                     diagnostic!(self.lexer, Level::Error, "Unknown variable '{name}'");
                 } else {
                     let on = receivers.join("`, `");
@@ -3981,16 +3983,14 @@ impl Parser {
                 let d_nr = *d_nr;
                 let name =
                     crate::data::Data::type_var_spelling(self.data.def(d_nr).name()).to_string();
-                let saved = (
-                    self.cur_type_var,
-                    std::mem::take(&mut self.cur_type_var_name),
-                );
-                self.cur_type_var = d_nr;
-                self.cur_type_var_name.clone_from(&name);
+                let saved = std::mem::replace(&mut self.cur_type_vars, vec![(name.clone(), d_nr)]);
                 let (v, t) = self.subparse_default(&format!("{name} {{}}"), tp);
-                self.cur_type_var = saved.0;
-                self.cur_type_var_name = saved.1;
-                Some((v_block(vec![v], t.clone(), Self::TV_DEFAULT_BLOCK), t))
+                self.cur_type_vars = saved;
+                // The marker's `result` is the type the default is FOR, which substitution
+                // turns into the concrete type the monomorph answers — the sub-parse's own
+                // type is not that on pass 1, where a template declared below its caller
+                // is first instantiated from (loft#1023).
+                Some((v_block(vec![v], tp.clone(), Self::TV_DEFAULT_BLOCK), t))
             }
             // A record defaults to `S{}` — every field defaulted, exactly the value a
             // bare `S{}` literal builds (`has_default` has already verified each field

@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(G-Sat)`: a type satisfies an interface exactly when the required methods are VISIBLE for
+// it.  A struct-enum VARIANT's methods are visible for it — `c.tag()` compiles on a `Cat` —
+// so `greet<T: Named>(Cat { … })` is satisfied by `fn tag(self: Cat)` even though its sibling
+// variant has none.  The judgement read the variant as its parent enum (a variant's
+// `returned` IS the enum) and refused it "missing tag"; the enum's own methods stay visible
+// for every variant, as before.
+//
+// @falsified-at: 8e22a0cf6 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-variant-satisfies-a-bound-with-its-own-methods.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the program.
+//   ARMED: nothing.
+//   WITNESS: on the control "'Cat' does not satisfy interface 'Named': missing tag".
+//   HOLDS: a method declared on the ENUM, which satisfied the bound at a variant already.
+
+interface Named { fn tag(self: Self) -> text }
+
+enum Pet {
+  Cat { n: integer },
+  Dog { n: integer },
+}
+fn tag(self: Cat) -> text { "cat {self.n}" }
+
+enum Toy {
+  Ball { n: integer },
+  Kite { n: integer },
+}
+fn tag(self: Toy) -> text { "toy {self.n}" }
+
+fn greet<T: Named>(x: T) -> text { "hello {x.tag()}" }
+
+fn test_a_method_on_the_variant() {
+  assert(greet(Cat { n: 1 }) == "hello cat 1", "{greet(Cat { n: 1 })}");
+  c = Cat { n: 2 };
+  assert(c.tag() == "cat 2", "{c.tag()}");
+}
+
+fn test_a_method_on_the_enum_still_serves_its_variants() {
+  assert(greet(Kite { n: 3 }) == "hello toy 3", "{greet(Kite { n: 3 })}");
+}

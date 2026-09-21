@@ -1,0 +1,12 @@
+// B3 — the template member's return is PREDICTED on the first pass, so a binding from it
+// is typed there and a text operation on it compiles.
+// @EXPECT: pz|999
+fn first<T>(v: vector<T>) -> T { v[0] }
+fn first(v: vector<integer>) -> integer { 999 }
+fn main() {
+  b: vector<text> = ["p", "q"];
+  r = first(b);
+  a: vector<integer> = [7];
+  n = first(a);
+  println("{r + "z"}|{n}");
+}

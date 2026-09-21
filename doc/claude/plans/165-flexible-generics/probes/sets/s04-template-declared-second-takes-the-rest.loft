@@ -1,0 +1,10 @@
+// B3 — s03 with the template declared SECOND: selection is order-free.
+// @EXPECT: 999|p|2.5
+fn first(v: vector<integer>) -> integer { 999 }
+fn first<T>(v: vector<T>) -> T { v[0] }
+fn main() {
+  a: vector<integer> = [1, 2, 3];
+  b: vector<text> = ["p", "q"];
+  c: vector<float> = [2.5];
+  println("{first(a)}|{first(b)}|{first(c)}");
+}

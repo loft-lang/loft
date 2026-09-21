@@ -1,0 +1,11 @@
+// C2 — a set: the two-variable template beside a concrete member; each variable's bound is
+// checked on its own binding.
+// @EXPECT: int 1 2|gen cat 1 x
+interface Named { fn tag(self: Self) -> text }
+struct Cat { n: integer }
+fn tag(self: Cat) -> text { "cat {self.n}" }
+fn show(a: integer, b: integer) -> text { "int {a} {b}" }
+fn show<K: Named, V: Printable>(a: K, b: V) -> text { "gen {a.tag()} {b}" }
+fn main() {
+  println("{show(1, 2)}|{show(Cat{n:1}, "x")}");
+}

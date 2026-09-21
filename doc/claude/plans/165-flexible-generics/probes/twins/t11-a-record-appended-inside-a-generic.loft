@@ -1,0 +1,44 @@
+// A2 — a write the template lowered for an ORDINARY record keeps that record's row.  The
+// element-write rewrite read the template's one variable for every write in the body, so an
+// append of `Pt` inside `g<T>` was lowered as a `T` write: at `T = integer` the interpreter
+// panicked on a corrupt reference and `--native` did not compile.
+// @EXPECT: 344=344|244=244|46=46
+struct Pt { x: integer, y: integer }
+fn g<T>(v: vector<T>, p: Pt) -> integer {
+  w: vector<Pt> = [];
+  w += [p];
+  w += [p];
+  u = v;
+  u += [v[0]];
+  w[1].y + len(u) * 100
+}
+fn g_i(v: vector<integer>, p: Pt) -> integer {
+  w: vector<Pt> = [];
+  w += [p];
+  w += [p];
+  u = v;
+  u += [v[0]];
+  w[1].y + len(u) * 100
+}
+fn g_t(v: vector<text>, p: Pt) -> integer {
+  w: vector<Pt> = [];
+  w += [p];
+  w += [p];
+  u = v;
+  u += [v[0]];
+  w[1].y + len(u) * 100
+}
+fn h<T>(v: vector<T>, p: Pt) -> integer {
+  w: vector<Pt> = [Pt { x: 1, y: 2 }];
+  w[0] = p;
+  w[0].y + len(v)
+}
+fn h_i(v: vector<integer>, p: Pt) -> integer {
+  w: vector<Pt> = [Pt { x: 1, y: 2 }];
+  w[0] = p;
+  w[0].y + len(v)
+}
+fn main() {
+  p = Pt { x: 3, y: 44 };
+  println("{g([7, 8], p)}={g_i([7, 8], p)}|{g(["a"], p)}={g_t(["a"], p)}|{h([7, 8], p)}={h_i([7, 8], p)}");
+}

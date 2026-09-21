@@ -1,0 +1,9 @@
+// B3 — `D-Rank`: LOSSY (a nullable into a dense parameter) beats GENERIC, so a nullable
+// integer reaches the concrete member.  A text reaches the template.
+// @EXPECT: int 5|gen x
+fn pick(x: integer) -> text { "int {x}" }
+fn pick<T: Printable>(x: T) -> text { "gen {x}" }
+fn maybe(k: integer) -> integer? { if k > 0 { k } else { null } }
+fn main() {
+  println("{pick(maybe(5))}|{pick("x")}");
+}

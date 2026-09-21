@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `D-Specific` (@PLN165 B5): between two generics of one name whose parameters are the same
+// pattern, the one with the STRICTLY LARGER bound set admits fewer types and takes the call.
+// A type with both bounds reaches `<T: Named + Sized>`, one with `Named` alone `<T: Named>`,
+// one with neither `<T>`; in either declaration order, and again in each instance of a
+// generic that calls the set at its own variable.  Two bound sets neither of which contains
+// the other are not ranked, and a call both take is refused naming both.
+//
+// @falsified-at: d98606dd7 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-stronger-bound-is-the-more-specific-generic.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses every call two templates take.
+//   ARMED: nothing.
+//   WITNESS: on the control `show(Both{n:1})` is "ambiguous — it is taken by
+//     show<T: Named + Sized>(T) and show<T: Named>(T) and show<T>(T)".
+//   HOLDS: the calls only `<T>` takes, which answered on the control too.
+
+interface Named { fn tag(self: Self) -> text }
+interface Sized { fn size(self: Self) -> integer }
+struct Both { n: integer }
+struct OnlyNamed { n: integer }
+struct Neither { n: integer }
+fn tag(self: Both) -> text { "both" }
+fn size(self: Both) -> integer { 2 }
+fn tag(self: OnlyNamed) -> text { "named" }
+
+fn show<T: Named + Sized>(x: T) -> text { "NS {x.tag()} {x.size()}" }
+fn show<T: Named>(x: T) -> text { "N {x.tag()}" }
+fn show<T>(x: T) -> text { "any" }
+
+fn weak<T>(x: T) -> text { "any" }
+fn weak<T: Named>(x: T) -> text { "N {x.tag()}" }
+
+fn wrap<U: Named>(x: U) -> text { show(x) }
+
+fn h<T: Named>(x: T, k: integer) -> text { "N {x.tag()} {k}" }
+fn h<T>(x: T, k: integer) -> text { "any {k}" }
+
+fn test_the_largest_bound_set_that_holds() {
+  assert(show(Both { n: 1 }) == "NS both 2", "{show(Both { n: 1 })}");
+  assert(show(OnlyNamed { n: 1 }) == "N named", "{show(OnlyNamed { n: 1 })}");
+  assert(show(Neither { n: 1 }) == "any", "{show(Neither { n: 1 })}");
+  assert(show(3) == "any", "{show(3)}");
+}
+
+fn test_declaration_order_does_not_matter() {
+  assert(weak(OnlyNamed { n: 1 }) == "N named", "{weak(OnlyNamed { n: 1 })}");
+  assert(weak(2.5) == "any", "{weak(2.5)}");
+}
+
+fn test_re_decided_in_each_instance() {
+  assert(wrap(Both { n: 1 }) == "NS both 2", "{wrap(Both { n: 1 })}");
+  assert(wrap(OnlyNamed { n: 1 }) == "N named", "{wrap(OnlyNamed { n: 1 })}");
+}
+
+fn test_a_concrete_second_parameter() {
+  assert(h(OnlyNamed { n: 1 }, 4) == "N named 4", "{h(OnlyNamed { n: 1 }, 4)}");
+  assert(h(true, 4) == "any 4", "{h(true, 4)}");
+}

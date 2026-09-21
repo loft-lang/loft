@@ -14345,6 +14345,16 @@ impl Parser {
     fn backward_ref_defnr(&self, op: u32) -> u32 {
         if (op as usize) < self.data.definitions.len() {
             let def = self.data.def(op);
+            // `D-Key` — an instance's key names its template outright.
+            if def.def_type() == DefType::Function
+                && let Some(key) = crate::data::Data::split_key(def.name())
+                    .filter(|k| k.kind == crate::data::KeyKind::Instance)
+            {
+                let tmpl = self.data.def_nr(key.rest);
+                if tmpl != u32::MAX && self.data.def_type(tmpl) == DefType::Generic {
+                    return tmpl;
+                }
+            }
             if def.def_type() == DefType::Function && def.name().starts_with("t_") {
                 let tmpl = self.data.def_nr(&format!("n_{}", def.original_name()));
                 if tmpl != u32::MAX && self.data.def_type(tmpl) == DefType::Generic {
@@ -17215,11 +17225,11 @@ impl Parser {
                 // #432 — a named vector-literal argument (`f(v: [10, 255, 20])`)
                 // builds at the parameter's element width too.  Map the name to its
                 // parameter to seed the hint, then clear it after parsing.
-                let hint_d_nr = self.data.def_nr(&format!("n_{name}"));
+                let hint_d_nr = self.free_call_hint(name, &types);
                 if hint_d_nr != u32::MAX {
                     for a in 0..self.data.attributes(hint_d_nr) {
                         if self.data.attr_name(hint_d_nr, a) == arg_name {
-                            let expected = self.data.attr_type(hint_d_nr, a);
+                            let expected = self.callee_param_hint(hint_d_nr, a, &types);
                             // loft#1067 — `takes(f: |x| { x * 2 })` names the same
                             // parameter the positional form does, so it must infer the
                             // same way; the spelling of the argument is not the axis.
@@ -17284,9 +17294,9 @@ impl Parser {
                 // IDENTICAL declared parameter type, with a message whose cure ("give the
                 // target an enum type") the target already satisfied (loft#1280).  It is
                 // the fn-ref call-site position of loft#1122's family.
-                let hint_d_nr = self.data.def_nr(&format!("n_{name}"));
+                let hint_d_nr = self.free_call_hint(name, &types);
                 let hinted = if hint_d_nr != u32::MAX && arg_idx < self.data.attributes(hint_d_nr) {
-                    Some(self.data.attr_type(hint_d_nr, arg_idx))
+                    Some(self.callee_param_hint(hint_d_nr, arg_idx, &types))
                 } else {
                     self.fnref_param_hint(name, arg_idx)
                 };
@@ -17343,7 +17353,15 @@ impl Parser {
             // parameter 'e'"*, *"Unknown variable 'e'"*, *"Field of unknown variable"*, and only
             // then *"map: first argument must be a vector"*.  The author was sent to annotate a
             // parameter the dense spelling infers fine (loft#1453).
-            if fn_def_nr.is_none()
+            // A program definition of the name steers the argument where it has a `fn(…)`
+            // parameter here.  Where it has none — it takes another arity, or another type at
+            // this position — and the argument IS a lambda, the program's definition cannot be
+            // what the call reaches with it, so the builtin's hint stands: withholding it
+            // refused `count_if(v, |x| …)` beside an unrelated three-parameter `count_if`.
+            let lambda_unsteered = fn_def_nr.is_none()
+                || (!Self::seeds_lambda_hint(&self.expected)
+                    && (self.lexer.peek_token("|") || self.lexer.peek_token("||")));
+            if lambda_unsteered
                 && !types.is_empty()
                 && let Type::Vector(elm, _) = types[0].base()
             {
@@ -18030,7 +18048,7 @@ impl Parser {
             {
                 let f_nr = self.data.attr(closure_rec_d, name);
                 if f_nr != usize::MAX {
-                    let load = self.get_field(closure_rec_d, f_nr, Value::Var(self.closure_param));
+                    let load = self.closure_capture_read(closure_rec_d, f_nr);
                     *val = v_block(
                         vec![crate::data::v_set(v_nr, load), call_ir],
                         *ret_type.clone(),
@@ -18550,6 +18568,24 @@ impl Parser {
         Self::seeds_vector_hint(expected) || crate::parser::vectors::is_keyed(expected)
     }
 
+    /// The definition a FREE call's arguments parse under: the free function `n_<name>`, or
+    /// — for the free spelling of a method (`m(x, …)`, `@FR-F-Recv`) — the one method of
+    /// that name at the first argument's type, the candidate the dot spelling parses under
+    /// (`Disp-Hint`).  `u32::MAX` when neither names one definition.
+    pub(crate) fn free_call_hint(&self, name: &str, types: &[Type]) -> u32 {
+        let free = self.data.def_nr(&format!("n_{name}"));
+        if free != u32::MAX {
+            return free;
+        }
+        let Some(receiver) = types.first().filter(|t| !t.is_unknown()) else {
+            return u32::MAX;
+        };
+        match self.data.candidates(u16::MAX, name, receiver).as_slice() {
+            [one] if self.data.def(*one).name().starts_with("t_") => *one,
+            _ => u32::MAX,
+        }
+    }
+
     // <call> ::= [ <expression> { ',' <expression> } ] ')'
     /// Parse a method call's `(arg, …)` and emit it, the definition FIXED by the caller (a
     /// bound's stub, an enum variant's method).  See [`Self::parse_method_selecting`].
@@ -18640,13 +18676,9 @@ impl Parser {
     /// The method a `t_<LEN><type>_<method>` key names — the spelling a call wrote.  A key of
     /// any other shape is answered whole.
     pub(crate) fn method_spelling(key: &str) -> String {
-        key.strip_prefix("t_")
-            .and_then(|rest| {
-                let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-                let len: usize = rest[..digits].parse().ok()?;
-                rest.get(digits + len + 1..)
-            })
-            .map_or_else(|| key.to_string(), str::to_string)
+        crate::data::Data::split_key(key)
+            .filter(|k| k.kind == crate::data::KeyKind::Method)
+            .map_or_else(|| key.to_string(), |k| k.rest.to_string())
     }
 
     /// Parse a method call's `(arg, …)` and emit it.  `hint_nr` steers how the arguments
@@ -18699,9 +18731,10 @@ impl Parser {
                 if hint_nr != u32::MAX {
                     let a = self.data.attr(hint_nr, &arg_name);
                     if a != usize::MAX {
-                        let expected = self.data.attr_type(hint_nr, a);
+                        let expected = self.callee_param_hint(hint_nr, a, &types);
                         if Self::seeds_collection_hint(&expected)
                             || self.interpolation_target(&expected) != u32::MAX
+                            || Self::seeds_lambda_hint(&expected)
                         {
                             self.expected = expected;
                         }
@@ -18732,12 +18765,14 @@ impl Parser {
             // so a nested call does not inherit the enclosing one's expectation.
             self.expected = Type::Unknown(0);
             if hint_nr != u32::MAX && list.len() < self.data.attributes(hint_nr) {
-                let expected = self.data.attr_type(hint_nr, list.len());
+                let expected = self.callee_param_hint(hint_nr, list.len(), &types);
                 // @PLN124 — a format-string argument to a METHOD builds the
                 // parameter's type too (`db.run("… {id} …")`), which is the shape a
-                // library API actually presents.
+                // library API actually presents.  A `fn(…)` parameter types a short
+                // lambda, as it does for the free spelling of the same call.
                 if Self::seeds_collection_hint(&expected)
                     || self.interpolation_target(&expected) != u32::MAX
+                    || Self::seeds_lambda_hint(&expected)
                 {
                     self.expected = expected;
                 }

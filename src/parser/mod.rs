@@ -919,6 +919,9 @@ pub struct Parser {
     /// Set by `dynamic_dispatcher` when it refused a leaf, so the call site returns rather
     /// than falling to the ladder and reporting the same site a second way.
     pub(crate) reported_dynamic_refusal: bool,
+    /// A call refused because two parameters bind one type variable to two types (@PLN165
+    /// C1, F9): the refusal names both, and `call` answers nothing further for it.
+    pub(crate) reported_binding_clash: bool,
     /// How many functions of each name each program source FILE declares, by a lexical scan —
     /// pass 1's answer to "is a definition of this name still below the call?"
     /// (`Parser::file_has_pending_fn`).
@@ -974,21 +977,27 @@ pub struct Parser {
     /// Variable number of the __closure parameter inside a lambda body (second pass).
     /// `u16::MAX` when not inside a capturing lambda.
     pub(crate) closure_param: u16,
-    /// @PLN25 E2 — def_nr of the generic type-variable stub (`T`) currently in
-    /// scope while parsing a `fn f<T>(…)` signature/body; `u32::MAX` outside a
-    /// generic function.  Consulted ONLY by `e2_nullable_elem` so a generic
-    /// `vector<T>` is NOT rewritten to `vector<__nullable<T>>` (T is opaque at
-    /// definition time — nullability is decided at instantiation by whatever
-    /// concrete element type the caller's vector carries).  Reset per function.
-    pub(crate) cur_type_var: u32,
-    /// The SOURCE spelling of the type variable [`Self::cur_type_var`] holds — `"T"` for
-    /// `fn f<T: …>`, empty outside a generic function.
+    /// The type variables the enclosing generic header declares, each as its SOURCE spelling
+    /// (`"T"` for `fn f<T: …>`) and the placeholder definition it binds; empty outside a
+    /// generic function.
     ///
-    /// `formal/interfaces.md` `(G-Gen)`: a generic header *introduces* its type variable, so
-    /// the binding is per-header.  Two functions that both write `T` name two different
-    /// variables, and `parse_type` therefore resolves the spelling against THIS header
-    /// before it asks the global definition table (loft#1300, loft#1301).
-    pub(crate) cur_type_var_name: String,
+    /// `formal/interfaces.md` `(G-Gen)`: a generic header *introduces* its variables, so the
+    /// binding is per-header.  Two functions that both write `T` name two different
+    /// variables, and `parse_type` therefore resolves a spelling against THIS header before
+    /// it asks the global definition table (loft#1300, loft#1301) —
+    /// [`Self::def_nr_in_scope`].  @PLN25 E2 reads it too: a `vector<T>` over a header's
+    /// variable stays dense, since nullability is decided by whatever the instantiation
+    /// binds.  Reset per function.
+    pub(crate) cur_type_vars: Vec<(String, u32)>,
+    /// The bindings of the instance whose body is being filled — every type variable and
+    /// associated type it binds — read where a deferred site needs them and has no argument
+    /// to carry them: a template LAMBDA is instantiated with its enclosing instance's
+    /// bindings ([`Self::instantiate_template_lambda`]).  Empty outside an instantiation.
+    pub(crate) instance_bindings: Vec<(u32, Type)>,
+    /// The work-refs a [`Parser::TV_SELECT`] lowering minted in the instance being filled —
+    /// the return buffers of the calls it made, which [`Parser::fill_monomorph_body`] declares
+    /// at the instance's top level as the function parse declares its own (@PLN165 B3b).
+    pub(crate) set_call_refs: Vec<u16>,
     /// The placeholder definition standing for a `(type-variable spelling, bound set)` pair.
     ///
     /// Sharing one placeholder across generic functions is what lets the stdlib's many
@@ -1108,9 +1117,9 @@ pub struct Parser {
     /// the pass-1 body; [`Parser::rebuild_stale_monomorphs`] redoes those at the end of
     /// the pass, when every template body exists.
     pub(crate) pass2_bodies: std::collections::HashSet<u32>,
-    /// loft#1023 — `(monomorph, template, bindings, concrete)` for each monomorph built
+    /// loft#1023 — `(monomorph, template, bindings)` for each monomorph built
     /// from a template whose pass-2 body had not been parsed yet.
-    pub(crate) stale_monomorphs: Vec<(u32, u32, Vec<(u32, Type)>, Type)>,
+    pub(crate) stale_monomorphs: Vec<(u32, u32, Vec<(u32, Type)>)>,
     /// Generic templates refused at their own declaration (loft#1538): a call to one is
     /// already an error the declaration names, so the call adds no second message.
     pub(crate) refused_templates: std::collections::HashSet<u32>,
@@ -1540,6 +1549,7 @@ impl Parser {
             lambda_counter: 0,
             expected: Type::Unknown(0),
             reported_dynamic_refusal: false,
+            reported_binding_clash: false,
             declared_fn_names: HashMap::new(),
             positionless_loops: HashSet::new(),
             fields_of: u32::MAX,
@@ -1552,8 +1562,9 @@ impl Parser {
             branch_sunk_vectors: std::collections::HashSet::new(),
             fn_lambdas: std::collections::HashMap::new(),
             closure_param: u16::MAX,
-            cur_type_var: u32::MAX,
-            cur_type_var_name: String::new(),
+            cur_type_vars: Vec::new(),
+            instance_bindings: Vec::new(),
+            set_call_refs: Vec::new(),
             type_var_holders: std::collections::HashMap::new(),
             type_var_bounds: std::collections::HashMap::new(),
             closure_vars: std::collections::HashMap::new(),
@@ -2963,12 +2974,19 @@ impl Parser {
             // same append shape too — name-keyed, idempotent, at the end.
             let lazy_dispatcher = matches!(dt, DefType::Function)
                 && self.data.def(d as u32).synthetic() == Some("dynamic_dispatcher");
+            // The sixth: a template LAMBDA's instance and its closure record, minted with the
+            // instance that owns them — pass-2-only for the reason an instantiation is.
+            let lazy_lambda_instance = matches!(
+                self.data.def(d as u32).synthetic(),
+                Some("lambda_instance" | "closure_instance")
+            );
             assert!(
                 lazy_wrapper
                     || lazy_instantiation
                     || lazy_bound_stub
                     || lazy_tuple
-                    || lazy_dispatcher,
+                    || lazy_dispatcher
+                    || lazy_lambda_instance,
                 "H5: pass-2-only definition `{name}` (#{d}, {dt:?}) is not a lazy vector \
                  wrapper or generic instantiation — a real cross-pass divergence \
                  (pass1={}, pass2={})",
@@ -3073,6 +3091,13 @@ impl Parser {
     /// `t_6vector_head`, rather than as `n_head`, and instantiates on pass 2 the same way
     /// (loft#1539) — so a template of either spelling makes the name legal.
     fn h5_names_a_generic_template(&self, name: &str) -> bool {
+        // `D-Key` — an instance's key names its template outright.
+        if let Some(key) =
+            Data::split_key(name).filter(|k| k.kind == crate::data::KeyKind::Instance)
+        {
+            let g = self.data.def_nr(key.rest);
+            return g != u32::MAX && matches!(self.data.def_type(g), DefType::Generic);
+        }
         let Some((_, fn_name)) = Self::h5_split_mangled(name) else {
             return false;
         };
@@ -3089,15 +3114,9 @@ impl Parser {
 
     /// Split `t_<LEN><Type>_<fn>` into its type name and function name.
     fn h5_split_mangled(name: &str) -> Option<(&str, &str)> {
-        let rest = name.strip_prefix("t_")?;
-        let digits = rest.chars().take_while(char::is_ascii_digit).count();
-        let type_len = rest[..digits].parse::<usize>().ok()?;
-        let after = &rest[digits..];
-        if after.len() <= type_len || !after.is_char_boundary(type_len) {
-            return None;
-        }
-        let fn_name = after[type_len..].strip_prefix('_')?;
-        Some((&after[..type_len], fn_name))
+        Data::split_key(name)
+            .filter(|k| k.kind == crate::data::KeyKind::Method)
+            .map(|k| (k.spelling, k.rest))
     }
 
     /// loft#763 — does `name` mangle a method on a generic's TYPE VARIABLE?
@@ -3140,9 +3159,7 @@ impl Parser {
         }
         (0..self.data.definitions()).any(|g| {
             matches!(self.data.def_type(g), DefType::Generic)
-                && !self.data.def(g).attributes().is_empty()
-                && Self::extract_type_var(&self.data, &self.data.def(g).attributes()[0].typedef)
-                    == type_nr
+                && Self::template_vars(&self.data, g).contains(&type_nr)
         })
     }
 
@@ -6159,13 +6176,15 @@ impl Parser {
     /// One home, because a spelling that resolves one way in a type position and another in a
     /// value position is two variables wearing one name.
     pub(crate) fn def_nr_in_scope(&self, name: &str) -> u32 {
-        if !self.cur_type_var_name.is_empty()
-            && name == self.cur_type_var_name
-            && self.cur_type_var != u32::MAX
-        {
-            return self.cur_type_var;
+        if let Some((_, holder)) = self.cur_type_vars.iter().find(|(n, _)| n == name) {
+            return *holder;
         }
         self.data.def_nr(name)
+    }
+
+    /// Is `d_nr` one of the variables the enclosing generic header declares?
+    pub(crate) fn is_header_type_var(&self, d_nr: u32) -> bool {
+        self.cur_type_vars.iter().any(|(_, h)| *h == d_nr)
     }
 
     /// Check if a type is a generic type variable (a dummy struct used as T).
@@ -6293,16 +6312,26 @@ impl Parser {
             let routed = self.data.routed_types(types);
             let d = match self.select_overload(source, name, &routed) {
                 crate::parser::dispatch::Selection::One(d) => {
+                    // A call inside a generic at the generic's own variable is decided again
+                    // in each instance (@PLN165 B3b).
+                    if let Some(tp) =
+                        self.defer_set_call(code, source, name, list, types, named_args, &routed, d)
+                    {
+                        return tp;
+                    }
                     // `Disp-Dynamic`: a position held at the enum where the set decides by
                     // variant calls the synthesised dispatcher instead.
                     self.dynamic_dispatcher(source, name, &routed, Some(d))
                         .unwrap_or(d)
                 }
                 sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
-                    if !self.first_pass {
-                        self.report_selection(name, &routed, &sel, Some(name_pos));
+                    if self.first_pass {
+                        return Type::Unknown(0);
                     }
-                    return Type::Unknown(0);
+                    self.report_selection(name, &routed, &sel, Some(name_pos));
+                    // @P376 — a reported expression is poisoned to `never`, so the call it is
+                    // an argument of does not report it a second time as "missing".
+                    return Type::Never;
                 }
                 crate::parser::dispatch::Selection::NoneApplicable => {
                     // `Disp-Exhaustive` over the closed enum: no definition takes the static
@@ -6314,7 +6343,7 @@ impl Parser {
                         Some(dd) => dd,
                         None if !self.first_pass && self.reported_dynamic_refusal => {
                             self.reported_dynamic_refusal = false;
-                            return Type::Unknown(0);
+                            return Type::Never;
                         }
                         None => self.data.select_fn(source, name, types),
                     }
@@ -6359,10 +6388,14 @@ impl Parser {
         // bare lookup found (`fn head<T>(self: vector<T>)` for `head(a)`) is kept aside and
         // instantiated: a bare call reaches a method template exactly as it reaches a concrete
         // `self` method ((F-Recv)), and a free template of that name on that receiver type
-        // cannot also exist ((F-OneBody)) (loft#1539).
+        // cannot also exist ((F-OneBody)) (loft#1539).  So is a template that SELECTION chose
+        // from its name's overload set (@PLN165 B3, `D-Rank`): the set is what named it, so
+        // no lookup by the bare name can find it again.
         let mut method_template = u32::MAX;
         if d_nr != u32::MAX && self.data.def(d_nr).def_type() == DefType::Generic {
-            if self.data.def(d_nr).name().starts_with("t_") {
+            if self.data.def(d_nr).name().starts_with("t_")
+                || self.data.def(d_nr).is_free_overload()
+            {
                 method_template = d_nr;
             }
             d_nr = u32::MAX;
@@ -6431,7 +6464,16 @@ impl Parser {
                 // the declaration already says why; "Unknown function" here would point the
                 // author at the call instead.  Answer the declared return, so the rest of the
                 // expression types as written.
-                let g_nr = self.data.def_nr(&format!("n_{name}"));
+                let g_nr = if method_template == u32::MAX {
+                    self.data.def_nr(&format!("n_{name}"))
+                } else {
+                    method_template
+                };
+                // F9 — refused naming both parameters; nothing further to say about the call.
+                if d_nr == u32::MAX && self.reported_binding_clash {
+                    self.reported_binding_clash = false;
+                    return Type::Never;
+                }
                 if d_nr == u32::MAX && self.refused_templates.contains(&g_nr) {
                     *code = Value::Null;
                     return self.data.def(g_nr).returned().clone();
@@ -6724,9 +6766,28 @@ impl Parser {
                 }
             }
             Type::Unknown(0)
+        } else if self.vars.name_exists(name)
+            && matches!(self.vars.tp(self.vars.var(name)), Type::Never)
+        {
+            // A local whose binding already failed holds no value (its type is poisoned
+            // `never`, the way an errored assignment's is): the binding's diagnostic names
+            // the cause, and "Unknown function" for calling it would name a second one.
+            Type::Unknown(0)
         } else {
-            // generic-specific error for method calls on T.
-            if let Some(tv_name) = types.first().and_then(|t| self.generic_type_name(t)) {
+            // A name with an overload set, called at a generic's type VARIABLE, where no member
+            // takes it (@PLN165 B3b: only a template member can take a variable, through its
+            // bounds): the set's refusal names what was passed and what is declared, which a
+            // "method call" message about a free call would not.
+            let routed = self.data.routed_types(types);
+            let set_refuses = types.iter().any(|t| self.data.mentions_type_var(t))
+                && self
+                    .select_overload(source, name, &routed)
+                    .is_none_applicable();
+            if set_refuses {
+                let sel = crate::parser::dispatch::Selection::NoneApplicable;
+                self.report_selection(name, &routed, &sel, Some(name_pos));
+            } else if let Some(tv_name) = types.first().and_then(|t| self.generic_type_name(t)) {
+                // generic-specific error for method calls on T.
                 let tv_name = crate::data::Data::type_var_spelling(tv_name);
                 diagnostic_at!(
                     self.lexer,
@@ -7142,32 +7203,16 @@ impl Parser {
     /// already holding one of. The qualified name says which package's, and
     /// is also what they would have to type to reach it.
     fn find_method_receivers(&self, name: &str) -> (Vec<String>, bool) {
-        let suffix = format!("_{name}");
         let mut all_stdlib = true;
         let mut receivers: Vec<String> = Vec::new();
         for d_nr in 0..self.data.definitions() {
-            let def_name = self.data.def(d_nr).name();
-            let Some(rest) = def_name.strip_prefix("t_") else {
+            let Some(key) = Data::split_key(self.data.def(d_nr).name()) else {
                 continue;
             };
-            if !rest.ends_with(&suffix) {
+            if key.kind != crate::data::KeyKind::Method || key.rest != name {
                 continue;
             }
-            let digit_end = rest.bytes().take_while(u8::is_ascii_digit).count();
-            if digit_end == 0 {
-                continue;
-            }
-            let Ok(type_len) = rest[..digit_end].parse::<usize>() else {
-                continue;
-            };
-            let type_start = digit_end;
-            let Some(type_end) = type_start.checked_add(type_len) else {
-                continue;
-            };
-            if rest.len() != type_end + suffix.len() || !rest.is_char_boundary(type_end) {
-                continue;
-            }
-            let type_name = &rest[type_start..type_end];
+            let type_name = key.spelling;
             if type_name.is_empty() {
                 continue;
             }
@@ -7225,18 +7270,14 @@ impl Parser {
     /// param in `definitions.rs`, the body rewrite + `ref_return` in `block_result`)
     /// run for a concrete-return generic template so the monomorph inherits it.
     /// Keying the guards on this (not on `is_generic_template`) collapses the 4
-    /// re-assertion sites onto the one existing non-generic flow.  The type variable
-    /// is the template's own (`extract_type_var` of its first attribute) — NOT any
-    /// `DefType::Generic` def (that is the FUNCTION, not the type param).
+    /// re-assertion sites onto the one existing non-generic flow.  The type variables
+    /// are the template's own ([`Self::template_vars`]) — NOT any `DefType::Generic` def
+    /// (that is the FUNCTION, not a type parameter).
     fn return_shape_depends_on_type_var(&self, t: &Type) -> bool {
         if self.context == u32::MAX || self.data.def_type(self.context) != DefType::Generic {
             return false;
         }
-        let attrs = self.data.def(self.context).attributes();
-        if attrs.is_empty() {
-            return false;
-        }
-        let tv_nr = Self::extract_type_var(&self.data, &attrs[0].typedef);
+        let tvs = Self::template_vars(&self.data, self.context);
         // `Type::contains_def` is the keystone-backed answer to "does this type mention
         // `d_nr`?" — `any_node` over `Type::for_each_child`, so it descends every
         // child-bearing variant and a new one extends ONE match.  The hand-rolled
@@ -7245,7 +7286,7 @@ impl Parser {
         // `Function`, a `RefVar` or a keyed collection read as "no type variable here".
         // `contains_def`'s own doc records being unified from two earlier copies with
         // exactly that drift; this was a third, two hundred lines from a call to it.
-        tv_nr != u32::MAX && t.contains_def(tv_nr)
+        tvs.iter().any(|tv| t.contains_def(*tv))
     }
 
     /// Is the template's declared return the type VARIABLE itself, however it is wrapped?
@@ -7339,37 +7380,30 @@ impl Parser {
     /// found by its `n_` name, or a METHOD template (`t_6vector_head`) that a method call
     /// selected (loft#1539).  `name` is the spelling the call wrote.
     fn predict_template_return(&mut self, g_nr: u32, name: &str, types: &[Type]) -> Type {
-        if types.is_empty() || types[0].is_unknown() {
+        if types.is_empty() || (self.first_param_binds(g_nr) && types[0].is_unknown()) {
             return Type::Unknown(0);
         }
-        let tv_nr =
-            Self::extract_type_var(&self.data, &self.data.def(g_nr).attributes()[0].typedef);
-        if tv_nr == u32::MAX {
+        let Some(bindings) = Self::bind_template(&self.data, g_nr, types) else {
             return Type::Unknown(0);
-        }
-        let concrete = Self::resolve_type_var(
-            &self.data.def(g_nr).attributes()[0].typedef,
-            tv_nr,
-            &types[0],
-        );
-        if concrete.is_unknown() {
+        };
+        if bindings.iter().any(|(_, b)| b.is_unknown()) {
             return Type::Unknown(0);
         }
         let tmpl_returned = self.data.definitions[g_nr as usize].returned.clone();
-        let from_tv = Self::return_is_the_type_var(&tmpl_returned, tv_nr);
-        let predicted = self.tuple_return_rewrite(
-            Self::substitute_type(tmpl_returned, tv_nr, &concrete),
-            from_tv,
-        );
+        let from_tv = bindings
+            .iter()
+            .any(|(tv, _)| Self::return_is_the_type_var(&tmpl_returned, *tv));
+        let predicted =
+            self.tuple_return_rewrite(Self::substitute_all(tmpl_returned, &bindings), from_tv);
         // Trace point: predicted return type for first-pass type
         // inference of generic call sites.  Used during plan-17 (A)
         // debugging.  Enable with `LOFT_TRACE=generic`.
         crate::loft_trace!(
             generic,
-            "predict name={} types={:?} concrete={:?} → {:?}",
+            "predict name={} types={:?} bindings={:?} → {:?}",
             name,
             types,
-            concrete,
+            bindings,
             predicted,
         );
         predicted
@@ -7398,6 +7432,15 @@ impl Parser {
             }
             _ => false,
         }
+    }
+
+    /// The stride an element read of `vector<V>` bakes while `V` is a type VARIABLE: it has no
+    /// width yet, so the read carries a marker naming the variable — negative, which no real
+    /// stride is — and each instance rewrites the reads whose marker names the variable it
+    /// binds (`substitute_type_in_value`).  A plain `0` could not say which of two variables a
+    /// read was over, and the first binding's pass took every one (@PLN165 C2).
+    pub(crate) fn type_var_stride(tv_nr: u32) -> i32 {
+        -1 - i32::try_from(tv_nr).unwrap_or(i32::MAX - 1)
     }
 
     /// The `Block` name [`build_default`](Parser::build_default) stamps on an `x?`
@@ -7442,6 +7485,21 @@ impl Parser {
     /// A `reverse(v)` whose element type is still a TYPE VARIABLE: the width it walks is the
     /// element's, so it is lowered per monomorph like [`TV_INSERT`](Parser::TV_INSERT).
     pub(crate) const TV_REVERSE: &'static str = "tvreverse";
+    /// A capture READ inside a template lambda: `[Var(__closure), Text(name), read]`.  The
+    /// template's closure record lays a capture typed by a type variable out at no width, so
+    /// the read is re-lowered by NAME against the instance's own record
+    /// ([`Parser::closure_capture_read`]).
+    pub(crate) const TV_CAPTURE: &'static str = "tvcapture";
+    /// @PLN165 B3b — a call to an overload set whose argument is typed by a TYPE VARIABLE:
+    /// `[Int(source), Int(home source), Text(name), TV_SELECT_ARG…, TV_SELECT_NAMED…]`, its
+    /// `result` the type the generic body was typed with.  Each instance lowers it through
+    /// [`Parser::call`] with its own argument types ([`Parser::defer_set_call`]).
+    pub(crate) const TV_SELECT: &'static str = "tvselect";
+    /// One positional argument of a [`Parser::TV_SELECT`] site: the value, its `result` the
+    /// argument's static type, which substitution rewrites to the instance's.
+    pub(crate) const TV_SELECT_ARG: &'static str = "tvselectarg";
+    /// One named argument of a [`Parser::TV_SELECT`] site: `[Text(parameter), value]`.
+    pub(crate) const TV_SELECT_NAMED: &'static str = "tvselectnamed";
 
     /// Specialise a generic `name` for the concrete argument types `types`, returning the
     /// monomorph's def_nr (or `u32::MAX` when `name` names no generic).
@@ -7463,65 +7521,17 @@ impl Parser {
         self.instantiate_template(g_nr, name, types)
     }
 
-    /// [`Self::try_generic_instantiation`] for the template `g_nr` itself: a free generic
-    /// found by its `n_` name, or a METHOD template (`t_6vector_head`) that a method call
-    /// selected (loft#1539).  `name` is the spelling the call wrote, and the monomorph is
-    /// named from it exactly as a free generic's is.
-    fn instantiate_template(&mut self, g_nr: u32, name: &str, types: &[Type]) -> u32 {
-        if types.is_empty() || types[0].is_unknown() {
-            // First-pass argument types may be incomplete; defer the diagnostic
-            // to second pass when types are stable.  Returning MAX here is the
-            // same effect; it just doesn't emit a noisy first-pass error.
-            if !self.first_pass {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Cannot infer type for generic parameter — provide an explicit type annotation"
-                );
-            }
-            return u32::MAX;
-        }
-        // Find the type variable def_nr and resolve the concrete type T maps to.
-        let tv_nr =
-            Self::extract_type_var(&self.data, &self.data.def(g_nr).attributes()[0].typedef);
-        if tv_nr == u32::MAX {
-            return u32::MAX;
-        }
-        let concrete = Self::resolve_type_var(
-            &self.data.def(g_nr).attributes()[0].typedef,
-            tv_nr,
-            &types[0],
-        );
-        // loft#761 — a SELF-recursive generic arrives here while its own template is
-        // still being parsed, and the argument type is the type VARIABLE, so `concrete`
-        // resolves to that variable rather than to any type. Instantiating against it
-        // built a def by cloning the template's variable table — which the parser has
-        // not written back yet, so the clone was EMPTY. That def is a plain `Function`,
-        // so codegen emitted it and indexed a table of length 0: "index out of bounds:
-        // the len is 0 but the index is 1", before any of the program ran.
-        //
-        // There is nothing to instantiate at this point, and nothing to diagnose
-        // either: the call is perfectly good, it just has no concrete type YET. Answer
-        // the TEMPLATE. A real caller then instantiates for its own concrete type, and
-        // `instantiate_nested_generics` retargets this call at that monomorph while
-        // building it — the same path any other call to a generic takes from inside a
-        // template. Self-recursion terminates there on the `existing` check.
-        if concrete.contains_def(tv_nr) {
-            return g_nr;
-        }
-        if concrete.is_unknown() {
-            if !self.first_pass {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Cannot resolve generic type parameter from argument type"
-                );
-            }
-            return u32::MAX;
-        }
-        // Build the mangled name for the instantiated function.
-        let type_nr = self.data.type_def_nr(&concrete);
-        let mangled = if type_nr == u32::MAX {
+    /// The instance key before `D-Key` — `t_<LEN><first bound type>_<name>`, the spelling of a
+    /// METHOD on that type — kept for `LOFT_NO_INSTANCE_KEY=1` and for the rename map
+    /// `LOFT_TRACE_INSTANCE_KEY=1` prints (old key -> new key).
+    fn method_shaped_instance_key(
+        &self,
+        g_nr: u32,
+        name: &str,
+        concrete: &Type,
+        type_nr: u32,
+    ) -> String {
+        if type_nr == u32::MAX {
             format!("n_{name}")
         } else {
             // @PLN25 E2 — this mangled name becomes a Rust function identifier in
@@ -7594,7 +7604,109 @@ impl Parser {
                 safe
             };
             crate::data::Data::mangle_method(&safe, name)
+        }
+    }
+
+    /// [`Self::try_generic_instantiation`] for the template `g_nr` itself: a free generic
+    /// found by its `n_` name, or a METHOD template (`t_6vector_head`) that a method call
+    /// selected (loft#1539).  `name` is the spelling the call wrote, and the monomorph is
+    /// named from it exactly as a free generic's is.
+    /// Does the template `g_nr`'s FIRST parameter name one of its type variables?  Until
+    /// `D-Every-Var` (@PLN165 C1) it always did, and an unknown first argument meant nothing
+    /// could bind yet; a variable elsewhere is bound by its own argument, and a missing one is
+    /// then [`Self::bind_template`]'s to report.
+    fn first_param_binds(&self, g_nr: u32) -> bool {
+        self.data
+            .def(g_nr)
+            .attributes
+            .iter()
+            .find(|a| !a.hidden)
+            .is_some_and(|a| self.data.mentions_type_var(&a.typedef))
+    }
+
+    fn instantiate_template(&mut self, g_nr: u32, name: &str, types: &[Type]) -> u32 {
+        if types.is_empty() || (self.first_param_binds(g_nr) && types[0].is_unknown()) {
+            // First-pass argument types may be incomplete; defer the diagnostic
+            // to second pass when types are stable.  Returning MAX here is the
+            // same effect; it just doesn't emit a noisy first-pass error.
+            if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Cannot infer type for generic parameter — provide an explicit type annotation"
+                );
+            }
+            return u32::MAX;
+        }
+        // loft#1538 — a template refused at its declaration has no instance; the refusal
+        // already names why, and the call site answers its declared return.
+        if self.refused_templates.contains(&g_nr) {
+            return u32::MAX;
+        }
+        // What each of the template's variables binds to at this call.
+        let Some(var_bindings) = Self::bind_template(&self.data, g_nr, types) else {
+            return u32::MAX;
         };
+        if !self.first_pass && self.binding_clash(g_nr, name, types, &var_bindings) {
+            self.reported_binding_clash = true;
+            return u32::MAX;
+        }
+        let tvs: Vec<u32> = var_bindings.iter().map(|(tv, _)| *tv).collect();
+        // loft#761 — a SELF-recursive generic arrives here while its own template is
+        // still being parsed, and the argument type is the type VARIABLE, so `concrete`
+        // resolves to that variable rather than to any type. Instantiating against it
+        // built a def by cloning the template's variable table — which the parser has
+        // not written back yet, so the clone was EMPTY. That def is a plain `Function`,
+        // so codegen emitted it and indexed a table of length 0: "index out of bounds:
+        // the len is 0 but the index is 1", before any of the program ran.
+        //
+        // There is nothing to instantiate at this point, and nothing to diagnose
+        // either: the call is perfectly good, it just has no concrete type YET. Answer
+        // the TEMPLATE. A real caller then instantiates for its own concrete type, and
+        // `instantiate_nested_generics` retargets this call at that monomorph while
+        // building it — the same path any other call to a generic takes from inside a
+        // template. Self-recursion terminates there on the `existing` check.
+        if var_bindings
+            .iter()
+            .any(|(_, b)| tvs.iter().any(|tv| b.contains_def(*tv)))
+        {
+            return g_nr;
+        }
+        if var_bindings.iter().any(|(_, b)| b.is_unknown()) {
+            if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Cannot resolve generic type parameter from argument type"
+                );
+            }
+            return u32::MAX;
+        }
+        // `concrete` is the first variable's binding: what the associated types and the
+        // bound check are read against (C3 carries them per variable).
+        let concrete = var_bindings[0].1.clone();
+        let type_nr = self.data.type_def_nr(&concrete);
+        // `D-Key` (@FR-G-Key) — the instance's key names its template and every bound type.
+        let mangled = if crate::keys::instance_key_enabled() {
+            let spelling: Vec<String> = var_bindings
+                .iter()
+                .map(|(_, b)| self.data.identity_spelling(b))
+                .collect();
+            crate::data::Data::mangle_instance(&spelling.join("#"), self.data.def(g_nr).name())
+        } else {
+            self.method_shaped_instance_key(g_nr, name, &concrete, type_nr)
+        };
+        if std::env::var_os("LOFT_TRACE_INSTANCE_KEY").is_some() {
+            let spelling: Vec<String> = var_bindings
+                .iter()
+                .map(|(_, b)| self.data.identity_spelling(b))
+                .collect();
+            eprintln!(
+                "[instance-key] {} -> {}",
+                self.method_shaped_instance_key(g_nr, name, &concrete, type_nr),
+                crate::data::Data::mangle_instance(&spelling.join("#"), self.data.def(g_nr).name())
+            );
+        }
         // Return existing instantiation if already created.
         let existing = self.data.def_nr(&mangled);
         if existing != u32::MAX {
@@ -7612,8 +7724,8 @@ impl Parser {
         // template holds `Source.Rows` wherever the interface wrote `Self.Rows`, and this
         // is where that name becomes the implementor's own companion.  With no associated
         // types the list is one long and every step below reads exactly as it did.
-        let mut bindings: Vec<(u32, Type)> = vec![(tv_nr, concrete.clone())];
-        bindings.extend(self.associated_bindings(g_nr, type_nr));
+        let mut bindings: Vec<(u32, Type)> = var_bindings.clone();
+        bindings.extend(self.associated_bindings(g_nr, &var_bindings));
         // Clone the template data before mutating self.data.
         let tmpl_code = self.data.definitions[g_nr as usize].code.clone();
         let tmpl_returned = self.data.definitions[g_nr as usize].returned.clone();
@@ -7633,6 +7745,13 @@ impl Parser {
                 ref_pos: (0, 0),
                 const_pos: (0, 0),
             })
+            .collect();
+        // Which parameters are HIDDEN (a record return's `__retbuf`, a text return's buffer):
+        // `Argument` carries no such flag, so it rides beside the list and is set below.
+        let tmpl_hidden: Vec<bool> = self.data.definitions[g_nr as usize]
+            .attributes
+            .iter()
+            .map(|a| a.hidden)
             .collect();
         let tmpl_vars = self.data.definitions[g_nr as usize].variables.clone();
         let tmpl_pos = self.data.definitions[g_nr as usize].position.clone();
@@ -7655,7 +7774,9 @@ impl Parser {
         // `from_tv` computed on the PRE-substitution template return, identically to
         // `predict_generic_return_type`, so the second-pass instantiated return type
         // matches the first-pass prediction (the cross-pass H5 contract).
-        let from_tv = Self::return_is_the_type_var(&tmpl_returned, tv_nr);
+        let from_tv = tvs
+            .iter()
+            .any(|tv| Self::return_is_the_type_var(&tmpl_returned, *tv));
         let tmpl_ret_deps: Vec<u16> = tmpl_returned.depend();
         let mut new_returned =
             self.tuple_return_rewrite(Self::substitute_all(tmpl_returned, &bindings), from_tv);
@@ -7688,7 +7809,7 @@ impl Parser {
         }
         // Register the new definition.
         let d_nr = self.data.add_def(&mangled, &tmpl_pos, DefType::Function);
-        for a in &tmpl_attrs {
+        for (a, hidden) in tmpl_attrs.iter().zip(&tmpl_hidden) {
             let a_nr = self
                 .data
                 .add_attribute(&mut self.lexer, d_nr, &a.name, a.typedef.clone());
@@ -7696,6 +7817,11 @@ impl Parser {
             // C124 — registered here and not through `Data::add_fn`, so the template's
             // `const` has to be carried by hand, or the instance answers a plain parameter.
             self.data.definitions[d_nr as usize].attributes[a_nr].value_const = a.constant;
+            // `(G-Mono)` — and so does HIDDEN: an instance whose `__retbuf` read as a declared
+            // parameter was not its twin's signature.  Native kept the buffer where the twin's
+            // value record drops it, and a variant decision that forwards its leaves' hidden
+            // buffers minted an undeclared one for the instance (@PLN165 B7).
+            self.data.definitions[d_nr as usize].attributes[a_nr].hidden = *hidden;
         }
         self.data.set_returned(d_nr, new_returned.clone());
         // Trace point: full instantiation result.  Used during plan-17
@@ -7711,7 +7837,7 @@ impl Parser {
             concrete,
             new_returned,
         );
-        self.fill_monomorph_body(d_nr, new_code, &tmpl_vars, &bindings, &concrete);
+        self.fill_monomorph_body(d_nr, new_code, &tmpl_vars, &bindings);
         // @FR-F-Ret / @FR-O-Oracle — a template's `-> T` record return carries NO deps: its
         // `ref_return` is skipped (the promotion is deferred to instantiation), so the
         // `MergeAttr` that writes `-> Ctr["x"]` on a concrete twin never ran, and the instance
@@ -7765,10 +7891,9 @@ impl Parser {
         // parsed yet when the call instantiates, so the monomorph above was built from the
         // PASS-1 body.  Record it and re-derive once the whole file is through.
         if !self.first_pass && !self.pass2_bodies.contains(&g_nr) {
-            self.stale_monomorphs
-                .push((d_nr, g_nr, bindings.clone(), concrete.clone()));
+            self.stale_monomorphs.push((d_nr, g_nr, bindings.clone()));
         }
-        self.instantiate_nested_generics(d_nr, &concrete);
+        self.instantiate_nested_generics(d_nr, &bindings);
         // The body's text-return promotion ran while its tail call still named the nested
         // TEMPLATE (`inner(s, c)` in `outer<S>(s: S) -> S?`): not a text call, nothing to
         // promote.  Now that the call names `inner`'s monomorph, ask again — a `-> text?`
@@ -7780,12 +7905,267 @@ impl Parser {
         }
         // I6: verify the concrete type satisfies every declared bound.
         // Emit a diagnostic and return u32::MAX if any required method is missing.
-        if !self.check_satisfaction(g_nr, type_nr, &bindings[1..]) {
+        if !self.check_satisfaction(g_nr, &var_bindings, &bindings[var_bindings.len()..]) {
             // Return d_nr (not u32::MAX) so `call` doesn't emit a redundant
             // "Unknown function" error — the satisfaction error is sufficient.
             // The function won't execute because parsing will halt on errors.
         }
         d_nr
+    }
+
+    /// F9 (@PLN165 C1): does one type variable take two types from two parameters at this
+    /// call — `same(1, "x")` for `same<T>(a: T, b: T)`?  The variable is bound by the first
+    /// parameter that relates to its argument; a later one whose argument cannot take the
+    /// parameter AS BOUND is the clash, refused naming both parameters.  The predicate is the
+    /// argument check's own (`convert_admitting`, as an overload trial asks it), so this
+    /// refuses exactly what the check after instantiation would, and says why.
+    fn binding_clash(
+        &mut self,
+        g_nr: u32,
+        name: &str,
+        types: &[Type],
+        var_bindings: &[(u32, Type)],
+    ) -> bool {
+        let params: Vec<(String, Type)> = self
+            .data
+            .def(g_nr)
+            .attributes
+            .iter()
+            .filter(|a| !a.hidden)
+            .map(|a| (a.name.clone(), a.typedef.clone()))
+            .collect();
+        for (v, bound) in var_bindings {
+            if bound.is_unknown() || self.data.mentions_type_var(bound) {
+                continue;
+            }
+            let binders: Vec<usize> = params
+                .iter()
+                .zip(types)
+                .enumerate()
+                .filter(|(_, ((_, p), a))| {
+                    p.contains_def(*v) && !Self::resolve_type_var(p, *v, a).is_unknown()
+                })
+                .map(|(i, _)| i)
+                .collect();
+            let Some(&first) = binders.first() else {
+                continue;
+            };
+            for &i in &binders[1..] {
+                let expected = Self::substitute_all(params[i].1.clone(), var_bindings);
+                let mut trial = Value::Null;
+                if self.convert_admitting(&mut trial, &types[i], &expected) {
+                    continue;
+                }
+                let spelled = Data::type_var_spelling(self.data.def(*v).name()).to_string();
+                let other = Self::resolve_type_var(&params[i].1, *v, &types[i]);
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{name}` binds {spelled} to {} through `{}` and to {} through `{}` — a type \
+                     variable is one type at a call; pass `{}` a value of the same type, or give \
+                     the two parameters a variable each",
+                    bound.source_name(&self.data),
+                    params[first].0,
+                    other.source_name(&self.data),
+                    params[i].0,
+                    params[i].0
+                );
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Is `d` a lambda written inside a template ([`Parser::mark_template_lambda`])?
+    pub(crate) fn is_template_lambda(&self, d: u32) -> bool {
+        (d as usize) < self.data.definitions.len()
+            && self.data.def_type(d) == DefType::Generic
+            && self.data.def(d).name().starts_with("n___lambda_")
+    }
+
+    /// The instance of the template lambda `d` that belongs to the instance being filled
+    /// (`self.context`), bound with that instance's bindings — `(G-Mono)` for a lambda: an
+    /// instance's lambda is the lambda its concrete twin would have written.  Named after the
+    /// enclosing instance (`n___lambda_3_in_t_7integer_f`), so each instance owns its own
+    /// and a re-derivation finds it again.  Its closure record is instantiated beside it,
+    /// because a capture typed by a variable has no width in the template's.
+    pub(crate) fn instantiate_template_lambda(&mut self, d: u32) -> u32 {
+        let bindings = self.instance_bindings.clone();
+        let owner = self.data.def(self.context).name().to_string();
+        let name = format!("{}_in_{owner}", self.data.def(d).name());
+        let mut inst = self.data.def_nr(&name);
+        let rec = self.data.def(d).closure_record();
+        if inst == u32::MAX {
+            let pos = self.data.definitions[d as usize].position.clone();
+            let attrs: Vec<(String, Type, Value, bool, bool)> = self.data.definitions[d as usize]
+                .attributes
+                .iter()
+                .map(|a| {
+                    (
+                        a.name.clone(),
+                        Self::substitute_all(a.typedef.clone(), &bindings),
+                        a.value.clone(),
+                        a.value_const,
+                        a.hidden,
+                    )
+                })
+                .collect();
+            let tmpl_returned = self.data.definitions[d as usize].returned.clone();
+            let ret_deps = tmpl_returned.depend();
+            let mut returned = Self::substitute_all(tmpl_returned, &bindings);
+            if !matches!(returned.base(), Type::Tuple(_)) {
+                returned = returned.with_deps(&crate::data::Deps::attrs(ret_deps));
+            }
+            inst = self.data.add_def(&name, &pos, DefType::Function);
+            self.data.definitions[inst as usize].synthetic = Some("lambda_instance");
+            let rec_inst = if rec == u32::MAX {
+                u32::MAX
+            } else {
+                self.instantiate_closure_record(rec, &owner, &bindings)
+            };
+            self.data.definitions[inst as usize].closure_record = rec_inst;
+            for (a_name, a_tp, a_value, a_const, a_hidden) in attrs {
+                let a_tp = match a_tp.base() {
+                    Type::Reference(r, _) if *r == rec && rec != u32::MAX => {
+                        Type::Reference(rec_inst, crate::data::Deps::none())
+                    }
+                    _ => a_tp,
+                };
+                let a_nr = self
+                    .data
+                    .add_attribute(&mut self.lexer, inst, &a_name, a_tp);
+                self.data.set_attr_value(inst, a_nr, a_value);
+                self.data.definitions[inst as usize].attributes[a_nr].value_const = a_const;
+                self.data.definitions[inst as usize].attributes[a_nr].hidden = a_hidden;
+            }
+            self.data.set_returned(inst, returned);
+        }
+        let rec_inst = self.data.def(inst).closure_record();
+        let tmpl_code = self.data.definitions[d as usize].code.clone();
+        let tmpl_vars = self.data.definitions[d as usize].variables.clone();
+        let mut code = tmpl_code;
+        for (holder, bound_to) in &bindings {
+            let iter_stride = i32::from(self.vector_elem_iter_stride(bound_to));
+            code = Self::substitute_type_in_value(code, *holder, bound_to, iter_stride, &self.data);
+        }
+        self.fill_monomorph_body(inst, code, &tmpl_vars, &bindings);
+        // The `__closure` parameter names the TEMPLATE's record in the copied table; the
+        // instance reads its own.
+        if rec != u32::MAX {
+            let vars = &mut self.data.definitions[inst as usize].variables;
+            for v in 0..vars.count() {
+                if matches!(vars.tp(v).base(), Type::Reference(r, _) if *r == rec) {
+                    vars.set_type(v, Type::Reference(rec_inst, crate::data::Deps::none()));
+                }
+            }
+            self.closure_parameter_last(inst);
+        }
+        if !bindings.is_empty() {
+            self.instantiate_nested_generics(inst, &bindings);
+        }
+        inst
+    }
+
+    /// Keep a lambda's `__closure` parameter LAST.  A closure call hands the record over after
+    /// every other argument, work buffers included, so it must be the last attribute and the
+    /// last argument variable.  A template lambda's instance gains a text-return buffer only
+    /// once its return is known to be `text` — after the closure parameter it copied from the
+    /// template — so the two are swapped back: the attributes, the return's attribute-space
+    /// deps, and the argument variables with every reference to them (the 3-way renumbering
+    /// `av_renumber_retbuf` uses for a late return buffer).
+    fn closure_parameter_last(&mut self, d: u32) {
+        loop {
+            let def = &self.data.definitions[d as usize];
+            let n = def.attributes.len();
+            let Some(ci) = def.attributes.iter().position(|a| a.name == "__closure") else {
+                return;
+            };
+            if ci + 1 >= n {
+                return;
+            }
+            let args = def.variables.arguments();
+            let (Some(&a), Some(&b)) = (args.get(ci), args.get(ci + 1)) else {
+                return;
+            };
+            self.data.definitions[d as usize]
+                .attributes
+                .swap(ci, ci + 1);
+            // The name index answers the same question as the list, so it moves with it.
+            for i in [ci, ci + 1] {
+                let n = self.data.definitions[d as usize].attributes[i].name.clone();
+                self.data.definitions[d as usize].attr_names.insert(n, i);
+            }
+            let ret = self.data.definitions[d as usize].returned.clone();
+            let deps: Vec<u16> = ret
+                .depend()
+                .into_iter()
+                .map(|x| {
+                    if x as usize == ci {
+                        (ci + 1) as u16
+                    } else if x as usize == ci + 1 {
+                        ci as u16
+                    } else {
+                        x
+                    }
+                })
+                .collect();
+            if !ret.depend().is_empty() {
+                self.data.definitions[d as usize].returned =
+                    ret.with_deps(&crate::data::Deps::attrs(deps));
+            }
+            let mut code =
+                std::mem::replace(&mut self.data.definitions[d as usize].code, Value::Null);
+            let vars = &mut self.data.definitions[d as usize].variables;
+            let tmp = vars.count();
+            Self::renumber_frame_var(&mut code, a, tmp);
+            Self::renumber_frame_var(&mut code, b, a);
+            Self::renumber_frame_var(&mut code, tmp, b);
+            vars.renumber_frame_in_types(a, tmp);
+            vars.renumber_frame_in_types(b, a);
+            vars.renumber_frame_in_types(tmp, b);
+            vars.swap_variables(a, b);
+            self.data.definitions[d as usize].code = code;
+        }
+    }
+
+    /// The closure record of a template lambda's instance: the template's record with every
+    /// capture's type bound, stored the way a concrete capture of that type is
+    /// ([`Parser::closure_attr_type`]), and laid out now — the instance's closure is built
+    /// before the pass ends.
+    fn instantiate_closure_record(
+        &mut self,
+        rec: u32,
+        owner: &str,
+        bindings: &[(u32, Type)],
+    ) -> u32 {
+        let name = format!("{}_in_{owner}", self.data.def(rec).name());
+        let existing = self.data.def_nr(&name);
+        if existing != u32::MAX {
+            return existing;
+        }
+        let pos = self.data.definitions[rec as usize].position.clone();
+        let fields: Vec<(String, Type, bool)> = self.data.definitions[rec as usize]
+            .attributes
+            .iter()
+            .map(|a| {
+                (
+                    a.name.clone(),
+                    Self::substitute_all(a.typedef.clone(), bindings),
+                    a.value_const,
+                )
+            })
+            .collect();
+        let r = self.data.add_def(&name, &pos, DefType::Struct);
+        self.data.definitions[r as usize].synthetic = Some("closure_instance");
+        self.data.definitions[r as usize].returned = Type::Reference(r, crate::data::Deps::none());
+        for (f_name, f_tp, f_const) in fields {
+            let stored = self.closure_attr_type(&f_tp);
+            let a = self.data.add_attribute(&mut self.lexer, r, &f_name, stored);
+            self.data.definitions[r as usize].attributes[a].value_const = f_const;
+        }
+        crate::typedef::fill_database(&mut self.data, &mut self.database, r);
+        self.database.lay_out_record(self.data.def(r).known_type());
+        r
     }
 
     /// Substitute a template's body + variable table into the monomorph `d_nr`.
@@ -7800,7 +8180,6 @@ impl Parser {
         code: Value,
         tmpl_vars: &Function,
         bindings: &[(u32, Type)],
-        concrete: &Type,
     ) {
         // Copy the variable table with substituted types.
         let mut vars = Function::copy(tmpl_vars);
@@ -7816,7 +8195,7 @@ impl Parser {
         // primitive value).  See `rewrite_generic_vector_writes`.
         let code = Self::rewrite_generic_vector_writes(
             code,
-            concrete,
+            bindings,
             &mut vars,
             &self.data,
             &mut self.database,
@@ -7829,20 +8208,44 @@ impl Parser {
         let outer_vars = std::mem::replace(&mut self.vars, vars);
         let outer_context = self.context;
         self.context = d_nr;
+        // The frame a template lambda is re-lowered in: this instance's bindings, and — for a
+        // lambda instance — its own `__closure` parameter, which its capture reads go through.
+        let outer_bindings = std::mem::replace(&mut self.instance_bindings, bindings.to_vec());
+        let outer_closure_param = self.closure_param;
+        self.closure_param = if self.data.def(d_nr).closure_record() == u32::MAX {
+            u16::MAX
+        } else {
+            self.vars.var("__closure")
+        };
+        let outer_assign_target = std::mem::replace(&mut self.assign_target, u16::MAX);
         let before_work: std::collections::HashSet<u16> =
             self.vars.work_texts().into_iter().collect();
-        let mut code = self.rewrite_generic_type_defaults(code, concrete);
+        let outer_set_call_refs = std::mem::take(&mut self.set_call_refs);
+        let mut code = self.rewrite_generic_type_defaults(code);
+        let set_call_refs = std::mem::replace(&mut self.set_call_refs, outer_set_call_refs);
+        self.instance_bindings = outer_bindings;
+        self.closure_param = outer_closure_param;
+        self.assign_target = outer_assign_target;
         // loft#1175 — a work buffer minted by the rewrite above is not declared at the top
         // level, so `scopes::check` would scope it to the ARGUMENT block it appears in and
         // free it there, before the callee fills it.  Hoisting a top-level `Set` is the same
         // replay `patch_tret_callers` and `retarget_parametric_*` already do for a buffer
         // minted after the parse; without it `--native` declared the `String` inside the
         // argument block and emitted an empty `OpCreateStack`, which does not compile.
+        // A call a deferred set-call site lowered here (`TV_SELECT`, @PLN165 B3b) mints its
+        // return buffer the same way, and takes the null-init the function parse gives every
+        // work-ref — the one predicate, `work_ref_takes_preamble`.  Only those: a buffer
+        // another deferred site mints is declared where that site's lowering sets it.
         if let Value::Block(bl) = &mut code {
             for wt in self.vars.work_texts() {
                 if !before_work.contains(&wt) {
                     bl.operators
                         .insert(0, v_set(wt, Value::Text(String::new())));
+                }
+            }
+            for r in set_call_refs {
+                if self.work_ref_takes_preamble(r) {
+                    bl.operators.insert(0, v_set(r, Value::Null));
                 }
             }
         }
@@ -8035,7 +8438,7 @@ impl Parser {
         let mut rounds = 0;
         while !self.stale_monomorphs.is_empty() && rounds < 16 {
             rounds += 1;
-            for (d_nr, g_nr, bindings, concrete) in std::mem::take(&mut self.stale_monomorphs) {
+            for (d_nr, g_nr, bindings) in std::mem::take(&mut self.stale_monomorphs) {
                 let tmpl_code = self.data.definitions[g_nr as usize].code.clone();
                 if tmpl_code == Value::Null {
                     continue;
@@ -8052,10 +8455,10 @@ impl Parser {
                         &self.data,
                     );
                 }
-                self.fill_monomorph_body(d_nr, code, &tmpl_vars, &bindings, &concrete);
+                self.fill_monomorph_body(d_nr, code, &tmpl_vars, &bindings);
                 // The body is fresh, so every call it makes to ANOTHER generic has to be
                 // retargeted at that one's monomorph again.
-                self.instantiate_nested_generics(d_nr, &concrete);
+                self.instantiate_nested_generics(d_nr, &bindings);
                 // And the text-return promotion has to be asked again: the first
                 // instantiation asked it of the pass-1 body, whose tail call still named
                 // the nested TEMPLATE (`-> S?` — not text, so nothing to promote), and the
@@ -8089,13 +8492,53 @@ impl Parser {
     /// answer depend on declaration order.  Disagreement is a compile error naming both
     /// types, because the alternative is a monomorph typed against a companion the author
     /// never chose.
-    fn associated_bindings(&mut self, g_nr: u32, concrete_nr: u32) -> Vec<(u32, Type)> {
-        let bounds = self.data.definitions[g_nr as usize].bounds.clone();
+    fn associated_bindings(&mut self, g_nr: u32, var_bindings: &[(u32, Type)]) -> Vec<(u32, Type)> {
+        let (out, clashes) = self.infer_associated(g_nr, var_bindings);
+        for text in clashes {
+            let msg = crate::diagnostics::diagnostic_format(Level::Error, format_args!("{text}"));
+            let peek_pos = self.lexer.peek().position.clone();
+            self.lexer.pos_diagnostic(Level::Error, &peek_pos, &msg);
+        }
+        out
+    }
+
+    /// [`Self::associated_bindings`] without its diagnostic: the pairs it infers, and one
+    /// message per associated type the implementor names two different companions for.
+    /// Asked on its own by [`Self::satisfies`], which must answer without reporting.
+    fn infer_associated(
+        &self,
+        g_nr: u32,
+        var_bindings: &[(u32, Type)],
+    ) -> (Vec<(u32, Type)>, Vec<String>) {
+        // Per VARIABLE (@PLN165 C3, F13): each variable's bounds name the associated types
+        // its binding supplies — `<S: Source, K: Sink>` binds `S.Rows` from `S`'s type and
+        // `K.Item` from `K`'s.  Reading only the first left `K.Item` unbound, and a call
+        // through its bound read garbage.
+        let mut out: Vec<(u32, Type)> = Vec::new();
+        let mut clashes: Vec<String> = Vec::new();
+        for (i, (holder, bound)) in var_bindings.iter().enumerate() {
+            let concrete_nr = self.data.type_def_nr(bound);
+            let (o, c) =
+                self.infer_associated_for(self.var_bounds(g_nr, *holder, i == 0), concrete_nr);
+            out.extend(o);
+            clashes.extend(c);
+        }
+        (out, clashes)
+    }
+
+    /// [`Self::infer_associated`] for one variable: the companions its `bounds` declare, read
+    /// off the implementor `concrete_nr`'s own signatures.
+    fn infer_associated_for(
+        &self,
+        bounds: Vec<u32>,
+        concrete_nr: u32,
+    ) -> (Vec<(u32, Type)>, Vec<String>) {
         if bounds.is_empty() || concrete_nr == u32::MAX {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
         let concrete_type = self.data.def(concrete_nr).returned().clone();
         let mut out: Vec<(u32, Type)> = Vec::new();
+        let mut clashes: Vec<String> = Vec::new();
         for iface_nr in bounds {
             let children: Vec<u32> = self.data.children_of(iface_nr).collect();
             // The placeholders this interface declares — its non-method children.
@@ -8157,15 +8600,10 @@ impl Parser {
                 if let Some((first, second)) = clash {
                     let ph_name = self.data.def(ph).name().to_string();
                     let concrete_name = self.data.def(concrete_nr).name().to_string();
-                    let msg = crate::diagnostics::diagnostic_format(
-                        Level::Error,
-                        format_args!(
-                            "'{concrete_name}' does not agree with itself about '{ph_name}': \
-                             '{first}' and '{second}' name different types for it",
-                        ),
-                    );
-                    let peek_pos = self.lexer.peek().position.clone();
-                    self.lexer.pos_diagnostic(Level::Error, &peek_pos, &msg);
+                    clashes.push(format!(
+                        "'{concrete_name}' does not agree with itself about '{ph_name}': \
+                         '{first}' and '{second}' name different types for it",
+                    ));
                     continue;
                 }
                 if let Some((companion, _)) = found {
@@ -8173,7 +8611,7 @@ impl Parser {
                 }
             }
         }
-        out
+        (out, clashes)
     }
 
     /// The definition a type NAMES, for a struct, a vector element or a struct-enum —
@@ -8212,6 +8650,13 @@ impl Parser {
     fn satisfaction_failures(&self, iface_nr: u32, concrete_nr: u32) -> Vec<String> {
         let concrete_name = self.data.def(concrete_nr).name().to_string();
         let concrete_type = self.data.def(concrete_nr).returned().clone();
+        // A struct-enum VARIANT's `returned` is its parent ENUM, so a method declared on the
+        // variant itself (`fn tag(self: Cat)`) was never seen: `greet<T: Named>(Cat {…})` was
+        // "'Cat' does not satisfy interface 'Named': missing tag" while `c.tag()` compiled —
+        // `(G-Sat)` says the methods VISIBLE for the type decide.  The variant's own type is
+        // asked first; the enum's methods, visible for every variant, stay the fallback.
+        let variant_type = (self.data.def_type(concrete_nr) == DefType::EnumValue)
+            .then(|| Type::Reference(concrete_nr, crate::data::Deps::none()));
         let mut out = Vec::new();
         for child_nr in self.data.children_of(iface_nr).collect::<Vec<u32>>() {
             // Only the METHODS are structural satisfaction; a companion type is matched
@@ -8223,7 +8668,11 @@ impl Parser {
             };
             // I9-prim: use find_fn which checks both the method-style convention
             // (t_7integer_OpLt) and the add_op convention (OpLtInt via possible map).
-            let mut found = self.data.find_fn(u16::MAX, &method_suffix, &concrete_type);
+            let mut found = variant_type
+                .as_ref()
+                .map(|v| self.data.find_fn(u16::MAX, &method_suffix, v))
+                .filter(|d| *d != u32::MAX)
+                .unwrap_or_else(|| self.data.find_fn(u16::MAX, &method_suffix, &concrete_type));
             // @PLN25 E2 — a synth `__nullable<S>` delegates method/interface
             // resolution to its underlying `S` (a method call on a nullable
             // element unwraps through `Some` to call `S`'s method), so satisfy
@@ -8280,29 +8729,107 @@ impl Parser {
     /// Enforces @FR-G-Sat: satisfaction is STRUCTURAL and judged at the point of use — a
     /// type satisfies an interface exactly when the required methods are VISIBLE there.
     /// No `impl` declaration exists to consult, so having the methods IS satisfying, and
-    /// this function is the only thing that decides it.
+    /// [`Self::satisfaction_messages`] is the only thing that decides it.
     ///
     /// `assoc` is what [`Self::try_generic_instantiation`] already inferred for this
     /// monomorph — passed in rather than recomputed, so a companion the implementor cannot
     /// agree on is reported once, not once per place that asks.
-    fn check_satisfaction(&mut self, g_nr: u32, concrete_nr: u32, assoc: &[(u32, Type)]) -> bool {
-        let bounds = self.data.definitions[g_nr as usize].bounds.clone();
-        if bounds.is_empty() {
-            return true;
+    fn check_satisfaction(
+        &mut self,
+        g_nr: u32,
+        var_bindings: &[(u32, Type)],
+        assoc: &[(u32, Type)],
+    ) -> bool {
+        let messages = self.satisfaction_messages(g_nr, var_bindings, assoc);
+        for message in &messages {
+            let msg =
+                crate::diagnostics::diagnostic_format(Level::Error, format_args!("{message}"));
+            let peek_pos = self.lexer.peek().position.clone();
+            self.lexer.pos_diagnostic(Level::Error, &peek_pos, &msg);
         }
-        if concrete_nr == u32::MAX {
-            return true; // can't check without a concrete type def_nr
+        messages.is_empty()
+    }
+
+    /// Does the type `concrete_nr` satisfy every bound of the template `g_nr` — the question
+    /// [`Self::check_satisfaction`] reports on, answered without reporting.  Selection asks it
+    /// of each template member of an overload set (`D-Rank`: a template takes a call where its
+    /// variables bind AND its bounds hold), and a template whose bounds fail is simply not a
+    /// candidate there; the diagnostic belongs to the instantiation that goes ahead anyway.
+    pub(crate) fn satisfies(&self, g_nr: u32, var_bindings: &[(u32, Type)]) -> bool {
+        let (assoc, clashes) = self.infer_associated(g_nr, var_bindings);
+        clashes.is_empty()
+            && self
+                .satisfaction_messages(g_nr, var_bindings, &assoc)
+                .is_empty()
+    }
+
+    /// The bounds of the template `g_nr`'s variable `holder`: the variable's own, recorded on
+    /// its placeholder (@PLN165 C2), or — for the first variable of a template whose
+    /// placeholder carries none (`LOFT_NO_SEVERAL_VARS=1`, an image cached before) — the
+    /// template's list, which is the first variable's.
+    fn var_bounds(&self, g_nr: u32, holder: u32, first: bool) -> Vec<u32> {
+        let own = &self.data.definitions[holder as usize].bounds;
+        if !own.is_empty() {
+            own.clone()
+        } else if first {
+            self.data.definitions[g_nr as usize].bounds.clone()
+        } else {
+            Vec::new()
         }
-        let concrete_name = self.data.def(concrete_nr).name().to_string();
+    }
+
+    /// Every reason `concrete_nr` fails `g_nr`'s bounds and its associated types' bounds, as
+    /// the words a diagnostic prints — empty when it satisfies them.  The one home of the
+    /// judgement [`Self::check_satisfaction`] and [`Self::satisfies`] both read.
+    fn satisfaction_messages(
+        &self,
+        g_nr: u32,
+        var_bindings: &[(u32, Type)],
+        assoc: &[(u32, Type)],
+    ) -> Vec<String> {
         let mut messages: Vec<String> = Vec::new();
-        for iface_nr in bounds {
-            let iface_name = self.data.def(iface_nr).name().to_string();
-            for why in self.satisfaction_failures(iface_nr, concrete_nr) {
-                messages.push(format!(
-                    "'{concrete_name}' does not satisfy interface '{iface_name}': {why}"
-                ));
+        // Each variable's binding against ITS OWN bounds (@PLN165 C2): `<K: Named, V: Named>`
+        // judges `V`'s type too, where the template's list held `K`'s alone and a `text`
+        // bound to `V` passed unchecked — its stub then resolved to nothing and answered
+        // empty, silently.
+        let mut first_concrete = u32::MAX;
+        for (i, (holder, bound)) in var_bindings.iter().enumerate() {
+            let concrete_nr = self.data.type_def_nr(bound);
+            if i == 0 {
+                first_concrete = concrete_nr;
+            }
+            if concrete_nr == u32::MAX {
+                continue; // can't check without a concrete type def_nr
+            }
+            let concrete_name = self.data.def(concrete_nr).name().to_string();
+            for iface_nr in self.var_bounds(g_nr, *holder, i == 0) {
+                let iface_name = self.data.def(iface_nr).name().to_string();
+                for why in self.satisfaction_failures(iface_nr, concrete_nr) {
+                    messages.push(format!(
+                        "'{concrete_name}' does not satisfy interface '{iface_name}': {why}"
+                    ));
+                }
             }
         }
+        if first_concrete == u32::MAX {
+            return messages;
+        }
+        // The implementor an associated type was read off: the variable whose bounds declare
+        // the interface that owns it (@PLN165 C3), the first variable's where none does.
+        let implementor_of = |ph: u32| -> String {
+            let iface = self.data.def(ph).parent;
+            let owner = var_bindings
+                .iter()
+                .enumerate()
+                .find(|(i, (holder, _))| self.var_bounds(g_nr, *holder, *i == 0).contains(&iface));
+            let concrete = owner.map_or(first_concrete, |(_, (_, b))| self.data.type_def_nr(b));
+            let concrete = if concrete == u32::MAX {
+                first_concrete
+            } else {
+                concrete
+            };
+            self.data.def(concrete).name().to_string()
+        };
         // @PLN125 A2c — the bound declared on an associated type is a promise about the
         // COMPANION, and this is the only place it can be kept: `type Rows: Cursor` says a
         // generic may call `Cursor`'s methods on whatever `open` returns, and the template
@@ -8318,6 +8845,7 @@ impl Parser {
             };
             let ph_name = self.data.def(*ph).name().to_string();
             let companion_name = self.data.def(companion_nr).name().to_string();
+            let concrete_name = implementor_of(*ph);
             for bound_nr in self.data.definitions[*ph as usize].bounds.clone() {
                 let bound_name = self.data.def(bound_nr).name().to_string();
                 for why in self.satisfaction_failures(bound_nr, companion_nr) {
@@ -8328,13 +8856,7 @@ impl Parser {
                 }
             }
         }
-        for message in &messages {
-            let msg =
-                crate::diagnostics::diagnostic_format(Level::Error, format_args!("{message}"));
-            let peek_pos = self.lexer.peek().position.clone();
-            self.lexer.pos_diagnostic(Level::Error, &peek_pos, &msg);
-        }
-        messages.is_empty()
+        messages
     }
 
     /// @PLN125 A2a — does the implementor's method return a DIFFERENT named type
@@ -8412,37 +8934,88 @@ impl Parser {
         ))
     }
 
-    /// The type VARIABLE a type mentions — the `def_nr` of the first type-var
-    /// placeholder anywhere in the tree, or `u32::MAX` when it names none.
-    ///
-    /// Enforces @FR-G-Gen's `fn f<T>(x: …T…)` ellipsis: `T` may sit anywhere inside a
-    /// parameter type, so this descends every former the keystone knows.
-    ///
-    /// The read half of the question the DECLARATION already answers with
-    /// `arguments[0].typedef.contains_def(tv_nr)`: *"does the first parameter carry
-    /// the type variable?"*.  Both descend through [`Type::for_each_child`], so a
-    /// declaration the parser accepts is one an instantiation can reach.  Asked with a
-    /// hand-rolled descent that knew only `vector<T>`, the two disagreed on five
-    /// formers — a legal `fn f<T>(x: T?, …)` was accepted at its declaration and
-    /// reported as *"Unknown function"* at every call.
-    ///
-    /// The leaf is a type-var PLACEHOLDER, not any `Reference`, so a first parameter
-    /// that also names a concrete struct — `(P, T)` — answers with `T` rather than
-    /// with whichever the walk reached first.
-    pub(crate) fn type_var_of(data: &Data, tp: &Type) -> u32 {
-        Self::extract_type_var(data, tp)
+    /// The type a call's argument at `arg` is checked against — the callee's declared
+    /// parameter — with, for a GENERIC callee, every type variable the arguments parsed so far
+    /// (`types`) have bound replaced by what it bound to.  A short lambda takes its parameter
+    /// types from this, so `my_map(a, |x| { x * 10 })` hands `x` the element type of `a`, as
+    /// the built-in `map` and a concrete twin do; a variable no earlier argument binds stays
+    /// as declared, and the lambda says it cannot infer it.
+    pub(crate) fn callee_param_hint(&self, d_nr: u32, arg: usize, types: &[Type]) -> Type {
+        let declared = self.data.attr_type(d_nr, arg);
+        if self.data.def_type(d_nr) != DefType::Generic {
+            return declared;
+        }
+        let Some(bindings) = Self::bind_template(&self.data, d_nr, types) else {
+            return declared;
+        };
+        let known: Vec<(u32, Type)> = bindings
+            .into_iter()
+            .filter(|(_, b)| !b.is_unknown())
+            .collect();
+        Self::substitute_all(declared, &known)
     }
 
-    fn extract_type_var(data: &Data, tp: &Type) -> u32 {
-        let mut found = u32::MAX;
-        tp.any_node(&mut |t| match t {
-            Type::Reference(d, _) if data.is_type_var_placeholder(*d) => {
-                found = *d;
-                true
-            }
-            _ => false,
-        });
-        found
+    /// The type variables of the template `g_nr`: the distinct placeholders its declared
+    /// parameters mention, in the order they FIRST appear.  An interface's associated type
+    /// (a placeholder whose parent is the interface) is not one — it is bound from the
+    /// implementor, not from an argument ([`Self::associated_bindings`]).
+    ///
+    /// Read off the parameters rather than off the header, so a template loaded from a
+    /// cached image answers the same as one parsed here.  Enforces @FR-G-Gen's
+    /// `fn f<T>(x: …T…)` ellipsis: a variable may sit anywhere inside a parameter type, so
+    /// the walk descends every former the keystone knows ([`Type::for_each_child`]) — a
+    /// hand-rolled descent that knew only `vector<T>` once accepted `fn f<T>(x: T?, …)` at
+    /// its declaration and reported it as *"Unknown function"* at every call.  The leaf is a
+    /// type-var PLACEHOLDER, not any `Reference`, so a parameter that also names a concrete
+    /// struct — `(P, T)` — answers with `T`.
+    pub(crate) fn template_vars(data: &Data, g_nr: u32) -> Vec<u32> {
+        let mut out: Vec<u32> = Vec::new();
+        for a in data.def(g_nr).attributes().iter().filter(|a| !a.hidden) {
+            a.typedef.any_node(&mut |t| {
+                if let Type::Reference(d, _) = t.base()
+                    && data.is_type_var_placeholder(*d)
+                    && !out.contains(d)
+                {
+                    let parent = data.def(*d).parent;
+                    let associated = (parent as usize) < data.definitions.len()
+                        && data.def_type(parent) == DefType::Interface;
+                    if !associated {
+                        out.push(*d);
+                    }
+                }
+                false
+            });
+        }
+        out
+    }
+
+    /// What each of `g_nr`'s type variables binds to at a call whose argument types are
+    /// `types` — [`Self::resolve_type_var`] over every (declared parameter, argument) pair,
+    /// the first pair that relates deciding.  A variable no argument binds answers
+    /// `Type::Unknown(0)`; `None` when the template has no variable at all.
+    pub(crate) fn bind_template(
+        data: &Data,
+        g_nr: u32,
+        types: &[Type],
+    ) -> Option<Vec<(u32, Type)>> {
+        let vars = Self::template_vars(data, g_nr);
+        if vars.is_empty() {
+            return None;
+        }
+        let params = data.def(g_nr).attributes();
+        Some(
+            vars.into_iter()
+                .map(|v| {
+                    let bound = params
+                        .iter()
+                        .zip(types)
+                        .map(|(p, t)| Self::resolve_type_var(&p.typedef, v, t))
+                        .find(|r| !r.is_unknown())
+                        .unwrap_or(Type::Unknown(0));
+                    (v, bound)
+                })
+                .collect(),
+        )
     }
 
     /// Unify a template parameter type with a concrete argument type to extract
@@ -8536,13 +9109,8 @@ impl Parser {
         // Extract the user-facing function name from the mangled definition name.
         // Mangled names: "t_<LEN><Type>_<name>" or "n_<name>" or operator names.
         let name = def.name();
-        let fn_name = if let Some(rest) = name.strip_prefix("t_") {
-            // Skip the LEN digits and type name, extract name after the underscore.
-            if let Some(idx) = rest.find('_') {
-                &rest[idx + 1..]
-            } else {
-                name
-            }
+        let fn_name = if name.starts_with("t_") {
+            Data::split_key(name).map_or(name, |k| k.rest)
         } else if let Some(rest) = name.strip_prefix("n_") {
             rest
         } else {
@@ -8808,16 +9376,27 @@ impl Parser {
                 row_arg.insert(i as u32, at);
             }
         }
+        // `OpCopyRecord` carries two flag bits beside the row in its `tp`
+        // ([`crate::keys::COPY_TP_MASK`]): the row is looked up with them masked off and
+        // written back with them kept, or a flagged copy of a type built over the variable
+        // kept the template's row.
+        let copy_record = self.data.def_nr("OpCopyRecord");
+        let mask = i32::from(crate::keys::COPY_TP_MASK);
         let mut code = self.data.definitions[d_nr as usize].code.clone();
         code.map_nodes(&mut |v| {
             if let Value::Call(d, args) = v
                 && let Some(at) = row_arg.get(d)
             {
                 for &k in at {
-                    if let Some(Value::Int(row)) = args.get(k)
-                        && let Some((_, fresh)) = rows.iter().find(|(stale, _)| stale == row)
-                    {
-                        args[k] = Value::Int(*fresh);
+                    if let Some(Value::Int(row)) = args.get(k) {
+                        let (bare, flags) = if *d == copy_record {
+                            (row & mask, row & !mask)
+                        } else {
+                            (*row, 0)
+                        };
+                        if let Some((_, fresh)) = rows.iter().find(|(stale, _)| *stale == bare) {
+                            args[k] = Value::Int(*fresh | flags);
+                        }
                     }
                 }
             }
@@ -8992,6 +9571,26 @@ impl Parser {
         });
         self.data.definitions[d_nr as usize].code = code;
     }
+    /// The template of `d` when `d` is an instance bound to a type VARIABLE — minted while
+    /// another template's body was parsed (`i_1S_n_inner`) — else `u32::MAX`.  An instance
+    /// at a real type is its own answer; one at a variable stands for its template.
+    fn placeholder_instance_template(&self, d: u32) -> u32 {
+        let def = self.data.def(d);
+        let Some(key) =
+            Data::split_key(def.name()).filter(|k| k.kind == crate::data::KeyKind::Instance)
+        else {
+            return u32::MAX;
+        };
+        let template = self.data.def_nr(key.rest);
+        if template == u32::MAX || self.data.def_type(template) != DefType::Generic {
+            return u32::MAX;
+        }
+        let at_a_variable = def
+            .attributes()
+            .iter()
+            .any(|a| self.data.mentions_type_var(&a.typedef));
+        if at_a_variable { template } else { u32::MAX }
+    }
 
     /// The half of [`re_resolve_call`] that has to CREATE rather than look up.
     ///
@@ -9017,7 +9616,10 @@ impl Parser {
     /// Called after `add_def` has registered THIS monomorph, so a self-recursive generic
     /// (`fn f<T>(t: T) { f(t) }`) finds itself in the `existing` check and stops, rather
     /// than instantiating forever.
-    fn instantiate_nested_generics(&mut self, d_nr: u32, concrete: &Type) {
+    fn instantiate_nested_generics(&mut self, d_nr: u32, bindings: &[(u32, Type)]) {
+        let concrete = &bindings
+            .first()
+            .map_or(Type::Unknown(0), |(_, b)| b.clone());
         // The nested call's own FIRST ARGUMENT type, not the outer binding.
         //
         // This used to instantiate every nested generic at `concrete` — the type the OUTER
@@ -9033,17 +9635,46 @@ impl Parser {
         // call really passes.  Anything that is not a plain variable falls back to
         // `concrete`, which is what every caller got before.
         let mut targets: Vec<(u32, Type)> = Vec::new();
+        // `(instance called, its template)` for a call the template aimed at an instance of
+        // ANOTHER generic bound to one of its own type variables (`outer<S>` calling `inner(s)`
+        // binds `inner`'s variable to `S`).  That instance is keyed by `S`, so no lookup by
+        // the outer binding finds it; its call is aimed through the template it names.
+        let mut via_template: Vec<(u32, u32)> = Vec::new();
         let mono_vars = self.data.def(d_nr).variables.clone();
         self.data.def(d_nr).code.walk(&mut |v| {
             if let Value::Call(d, args) = v
                 && *d != u32::MAX
                 && (*d as usize) < self.data.definitions.len()
-                && self.data.def(*d).def_type() == DefType::Generic
                 && !targets.iter().any(|(t, _)| t == d)
             {
+                let template = if self.data.def(*d).def_type() == DefType::Generic {
+                    *d
+                } else {
+                    self.placeholder_instance_template(*d)
+                };
+                if template == u32::MAX {
+                    return;
+                }
+                if template != *d {
+                    via_template.push((*d, template));
+                }
+                // A first argument that is not a plain variable takes the callee's first
+                // parameter under this instance's bindings — the callee is the template or an
+                // instance bound to this template's variables, so that is the argument's type
+                // at a variable position.  The FIRST binding is only the last resort: with two
+                // variables it is often the other one's (`inner(bs[i], a)` inside
+                // `outer<A, B>` bound `inner` at `A`, and read a text as an integer).
+                let from_param = self
+                    .data
+                    .def(*d)
+                    .attributes
+                    .iter()
+                    .find(|a| !a.hidden)
+                    .map(|a| Self::substitute_all(a.typedef.clone(), bindings))
+                    .filter(|t| !t.is_unknown() && !self.data.mentions_type_var(t));
                 let arg_tp = match args.first().map(Value::unspan) {
                     Some(Value::Var(a)) if *a < mono_vars.count() => mono_vars.tp(*a).clone(),
-                    _ => concrete.clone(),
+                    _ => from_param.unwrap_or_else(|| concrete.clone()),
                 };
                 targets.push((*d, arg_tp));
             }
@@ -9093,7 +9724,11 @@ impl Parser {
         // parses against `self.vars` / `self.context`, and it must see the ordinary
         // ones, not this monomorph's.
         let mut remap: HashMap<u32, u32> = HashMap::new();
-        for (t, arg_tp) in targets {
+        for (callee, arg_tp) in targets {
+            let t = via_template
+                .iter()
+                .find(|(c, _)| *c == callee)
+                .map_or(callee, |(_, tmpl)| *tmpl);
             // A free template is stored `n_<name>`; a METHOD template under its receiver's
             // key, `t_6vector_head` (loft#1539).  Both instantiate from the template itself.
             let key = self.data.def(t).name().to_string();
@@ -9102,9 +9737,23 @@ impl Parser {
                 None if key.starts_with("t_") => Self::method_spelling(&key),
                 None => continue,
             };
-            let inst = self.instantiate_template(t, &name, std::slice::from_ref(&arg_tp));
-            if inst != u32::MAX && inst != t {
-                remap.insert(t, inst);
+            // The call's own first argument, and — for a variable named in a LATER parameter
+            // (`D-Every-Var`) — the callee's parameters with this instance's bindings: the
+            // callee is the template or an instance bound to this template's variables, so
+            // its parameter types are the arguments' static types at every variable position.
+            let mut arg_types = vec![arg_tp];
+            arg_types.extend(
+                self.data
+                    .def(callee)
+                    .attributes
+                    .iter()
+                    .filter(|a| !a.hidden)
+                    .skip(1)
+                    .map(|a| Self::substitute_all(a.typedef.clone(), bindings)),
+            );
+            let inst = self.instantiate_template(t, &name, &arg_types);
+            if inst != u32::MAX && inst != t && inst != callee {
+                remap.insert(callee, inst);
             }
         }
         // Repair the ARG LISTS too, and not only for the calls remapped above:
@@ -9291,12 +9940,16 @@ impl Parser {
                 // and anything wider reads garbage from element 1 onward, while
                 // `len()` and the same vector passed to a NON-generic helper stay
                 // correct (loft#791).
+                // @PLN165 C2 — with several variables the stride names WHICH variable's element
+                // it reads (`type_var_stride`), so this pass rewrites only its own; a legacy `0`
+                // (a cached one-variable template) is still that one variable's.
                 if new_d != u32::MAX
                     && (new_d as usize) < data.definitions.len()
                     && (data.def(new_d).name() == "OpGetVector"
                         || data.def(new_d).name() == "OpGetVectorNullable")
                     && new_args.len() == 3
-                    && matches!(&new_args[1], Value::Int(0))
+                    && matches!(&new_args[1], Value::Int(n)
+                        if *n == 0 || *n == Self::type_var_stride(tv_nr))
                 {
                     let cur_size = if let Value::Int(n) = &new_args[1] {
                         *n
@@ -9612,7 +10265,7 @@ impl Parser {
         self.push_fnref_text_buffers(args, &work_vars);
     }
 
-    fn rewrite_generic_type_defaults(&mut self, val: Value, concrete: &Type) -> Value {
+    fn rewrite_generic_type_defaults(&mut self, val: Value) -> Value {
         match val {
             // loft#1020 — the deferred `== null` / `!= null`.  `bl.result` came through
             // type substitution, so it is the CONCRETE operand type by now, and
@@ -9624,7 +10277,7 @@ impl Parser {
             {
                 let negate = bl.name == Self::TV_NULLTEST_NE;
                 let mut bl = *bl;
-                let operand = self.rewrite_generic_type_defaults(bl.operators.remove(0), concrete);
+                let operand = self.rewrite_generic_type_defaults(bl.operators.remove(0));
                 let tp = bl.result.clone();
                 if let Some(test) = self.null_test(operand.clone(), &tp, negate) {
                     return test;
@@ -9646,7 +10299,7 @@ impl Parser {
             // call and stays deferred until an outer instantiation names a real type.
             Value::Block(bl) if bl.name == Self::TV_NULLCHECK => {
                 let mut bl = *bl;
-                let subject = self.rewrite_generic_type_defaults(bl.operators.remove(0), concrete);
+                let subject = self.rewrite_generic_type_defaults(bl.operators.remove(0));
                 let tp = bl.result.clone();
                 self.coalesce_not_null(&subject, &tp)
             }
@@ -9680,7 +10333,7 @@ impl Parser {
                 let list: Vec<Value> = bl
                     .operators
                     .into_iter()
-                    .map(|a| self.rewrite_generic_type_defaults(a, concrete))
+                    .map(|a| self.rewrite_generic_type_defaults(a))
                     .collect();
                 let types = [bl.result.clone()];
                 let mut out = Value::Null;
@@ -9691,8 +10344,58 @@ impl Parser {
                 }
                 out
             }
+            // @PLN165 B3b — a set call at a type variable, decided again with this instance's
+            // argument types: the call the instance's concrete twin makes.  Resolved in the
+            // source the generic was written in, as its other calls were.  A member returning
+            // another type than the body was typed with is refused naming it; a nested
+            // generic (a type still a variable) re-stamps through the same call.
+            Value::Block(bl) if bl.name == Self::TV_SELECT => self.lower_set_call(&bl),
+            // A template lambda, non-capturing: the instance calls its own instance of it.
+            Value::FnRef(d, w, _)
+                if w == u16::MAX && d >= 0 && self.is_template_lambda(d as u32) =>
+            {
+                Value::Int(self.instantiate_template_lambda(d as u32) as i32)
+            }
+            // A template lambda that captures: its record is re-built for the instance, whose
+            // captured values may have a width the template's record could not give them.
+            Value::Block(bl)
+                if bl.name == "fn_ref_with_closure"
+                    && matches!(bl.operators.last().map(Value::unspan),
+                        Some(Value::FnRef(d, _, _)) if *d >= 0 && self.is_template_lambda(*d as u32)) =>
+            {
+                let Some(Value::FnRef(d, w, _)) = bl.operators.last().map(Value::unspan).cloned()
+                else {
+                    return Value::Block(bl);
+                };
+                let inst = self.instantiate_template_lambda(d as u32);
+                let mut out = Value::Null;
+                self.emit_lambda_code_in(&mut out, inst, Some(w));
+                out
+            }
+            // A capture read inside a template lambda, re-lowered against this instance's
+            // record by the capture's name.
+            Value::Block(bl) if bl.name == Self::TV_CAPTURE => {
+                let rec = self.data.def(self.context).closure_record();
+                let name = match bl.operators.get(1).map(Value::unspan) {
+                    Some(Value::Text(n)) => n.clone(),
+                    _ => String::new(),
+                };
+                let fnr = if rec == u32::MAX {
+                    usize::MAX
+                } else {
+                    self.data.attr(rec, &name)
+                };
+                if fnr == usize::MAX || self.closure_param == u16::MAX {
+                    return Value::Block(bl);
+                }
+                self.closure_capture_read(rec, fnr)
+            }
+            // loft#1016 — the deferred `x?` default.  `bl.result` came through type
+            // substitution, so it is the CONCRETE operand type by now, the way each sibling
+            // above reads its own.
             Value::Block(bl) if bl.name == Self::TV_DEFAULT_BLOCK => {
-                match self.monomorph_default(concrete) {
+                let tp = bl.result.clone();
+                match self.monomorph_default(&tp) {
                     Some((v, _)) => v,
                     // No default for this `T` — `has_default` refuses a bare reference,
                     // and the template could not have known.  Leave the site as parsed
@@ -9711,7 +10414,7 @@ impl Parser {
             Value::CallRef(v_nr, args) => {
                 let mut args: Vec<Value> = args
                     .into_iter()
-                    .map(|a| self.rewrite_generic_type_defaults(a, concrete))
+                    .map(|a| self.rewrite_generic_type_defaults(a))
                     .collect();
                 self.push_deferred_fnref_buffers(v_nr, &mut args);
                 Value::CallRef(v_nr, args)
@@ -9731,11 +10434,111 @@ impl Parser {
             mut other => {
                 other.for_each_child_mut(&mut |child| {
                     let taken = std::mem::replace(child, Value::Null);
-                    *child = self.rewrite_generic_type_defaults(taken, concrete);
+                    *child = self.rewrite_generic_type_defaults(taken);
                 });
                 other
             }
         }
+    }
+
+    /// Does the work-ref `r` take a null-init in its function's preamble?  The one answer for
+    /// the function parse and for a monomorph whose deferred sites minted a buffer after it.
+    ///
+    /// @FR-O-Proxy asks alloc — this decides which work-refs get a null-init in the preamble,
+    /// which is the opposite direction from a free: it puts a slot in a known-absent state, and
+    /// releases nothing.
+    pub(crate) fn work_ref_takes_preamble(&self, r: u16) -> bool {
+        !self.vars.is_argument(r)
+            && !self.vars.is_inline_ref(r)
+            // @PLAN51 Cluster IV: also null-init caller-side hidden-buffer work-refs even when
+            // their typedef carries a non-empty dep list (e.g. Reference(td, [arg_idx]) for
+            // if-tail / recursion / explicit-return-in-if shapes).  Without it, the slot
+            // allocator skips them ("no first_def") and codegen panics at codegen.rs:2529.
+            // Empty-dep refs still take this path (the original arm); caller_hidden_buf is
+            // the additional gate.  #319: `__ncc_N` heap-DbRef temps likewise — their only
+            // Set is inside the ncc block, so they need the preamble init regardless of their
+            // dep list.
+            && (self.vars.tp(r).depend().is_empty()
+                || self.vars.is_caller_hidden_buf(r)
+                || self.vars.name(r).starts_with("__ncc_"))
+    }
+
+    /// The [`Parser::TV_SELECT`] arm of [`Parser::rewrite_generic_type_defaults`].
+    fn lower_set_call(&mut self, bl: &crate::data::Block) -> Value {
+        let expected = bl.result.clone();
+        let mut source = u16::MAX;
+        let mut home = self.data.source;
+        let mut name = String::new();
+        let mut list: Vec<Value> = Vec::new();
+        let mut types: Vec<Type> = Vec::new();
+        let mut named: Vec<(String, Value, Type)> = Vec::new();
+        for (i, op) in bl.operators.iter().enumerate() {
+            match (i, op.unspan().clone()) {
+                (0, Value::Int(s)) => source = u16::try_from(s).unwrap_or(u16::MAX),
+                (1, Value::Int(s)) => home = u16::try_from(s).unwrap_or(home),
+                (2, Value::Text(n)) => name = n,
+                (_, Value::Block(a)) if a.name == Self::TV_SELECT_ARG => {
+                    let a = *a;
+                    let v = a.operators.into_iter().next().unwrap_or(Value::Null);
+                    list.push(self.rewrite_generic_type_defaults(v));
+                    types.push(a.result);
+                }
+                (_, Value::Block(a)) if a.name == Self::TV_SELECT_NAMED => {
+                    let a = *a;
+                    let mut ops = a.operators.into_iter();
+                    let param = match ops.next() {
+                        Some(Value::Text(p)) => p,
+                        _ => String::new(),
+                    };
+                    let v = ops.next().unwrap_or(Value::Null);
+                    let v = self.rewrite_generic_type_defaults(v);
+                    named.push((param, v, a.result));
+                }
+                _ => {}
+            }
+        }
+        let pos = self.lexer.pos().clone();
+        let arg_pos = vec![pos.clone(); list.len()];
+        let saved = self.data.source;
+        self.data.source = home;
+        let before_refs: std::collections::HashSet<u16> =
+            self.vars.work_references().into_iter().collect();
+        let mut out = Value::Null;
+        let got = self.call(
+            &mut out, source, &name, &list, &types, &named, &arg_pos, &pos,
+        );
+        for r in self.vars.work_references() {
+            if !before_refs.contains(&r) {
+                self.set_call_refs.push(r);
+            }
+        }
+        self.data.source = saved;
+        let differs = !got.is_unknown()
+            && !expected.is_unknown()
+            && !self.data.mentions_type_var(&got)
+            && self.data.key_identity(&got) != self.data.key_identity(&expected);
+        if differs {
+            let shown: Vec<String> = types.iter().map(|t| t.source_name(&self.data)).collect();
+            let routed = self.data.routed_types(&types);
+            self.data.source = home;
+            let reached = match self.select_overload(source, &name, &routed) {
+                crate::parser::dispatch::Selection::One(d) => {
+                    self.data.overload_signature(&name, d)
+                }
+                _ => format!("{name}({})", shown.join(", ")),
+            };
+            self.data.source = saved;
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "inside `{}`, the call `{name}` reaches {reached} at ({}), which returns {} — the generic body was typed with {}; give {reached} that return type, or make the call outside the generic",
+                self.data.def(self.context).display_name(),
+                shown.join(", "),
+                got.source_name(&self.data),
+                expected.source_name(&self.data)
+            );
+        }
+        out
     }
 
     /// `construct_default(concrete)` as a VALUE, for a monomorph's deferred `x?`.
@@ -9902,8 +10705,8 @@ impl Parser {
     }
 
     pub(crate) fn rewrite_generic_vector_writes(
-        val: Value,
-        concrete: &Type,
+        mut val: Value,
+        bindings: &[(u32, Type)],
         vars: &mut crate::variables::Function,
         data: &Data,
         database: &mut Stores,
@@ -9916,86 +10719,58 @@ impl Parser {
         // OpFinishRecord parent_tp args must be patched from the
         // parametric T type-id to the concrete struct's type-ids,
         // otherwise the runtime reads the wrong record size.
-        if !Self::is_rewritable_vector_element_target(concrete) {
-            return val;
-        }
+        //
+        // Each write is rewritten against the binding of the type variable IT was lowered
+        // for ([`Self::element_write_binding`]), so a write of an ordinary record inside the
+        // template keeps its own row, and with several variables each write takes its own.  The walk is total (`for_each_child_mut`), and the
+        // operator lists of a block or loop are searched for triplets once their children
+        // are done.
+        val.for_each_child_mut(&mut |child| {
+            let taken = std::mem::replace(child, Value::Null);
+            *child = Self::rewrite_generic_vector_writes(taken, bindings, vars, data, database);
+        });
         match val {
-            Value::Block(bl) => {
-                let recursed: Vec<Value> = bl
-                    .operators
-                    .into_iter()
-                    .map(|v| Self::rewrite_generic_vector_writes(v, concrete, vars, data, database))
-                    .collect();
-                let rewritten =
-                    Self::rewrite_vector_write_triplets(recursed, concrete, vars, data, database);
-                Value::Block(Box::new(crate::data::Block {
-                    operators: rewritten,
-                    result: bl.result,
-                    name: bl.name,
-                    scope: bl.scope,
-                    var_size: bl.var_size,
-                }))
+            // A `Span` wraps one statement, and the walk above has already rewritten it.
+            span @ Value::Span(_) => span,
+            Value::Block(mut bl) => {
+                let ops = std::mem::take(&mut bl.operators);
+                bl.operators =
+                    Self::rewrite_vector_write_triplets(ops, bindings, vars, data, database);
+                Value::Block(bl)
             }
-            Value::Loop(lp) => {
-                let recursed: Vec<Value> = lp
-                    .operators
-                    .into_iter()
-                    .map(|v| Self::rewrite_generic_vector_writes(v, concrete, vars, data, database))
-                    .collect();
-                let rewritten =
-                    Self::rewrite_vector_write_triplets(recursed, concrete, vars, data, database);
-                Value::Loop(Box::new(crate::data::Block {
-                    operators: rewritten,
-                    result: lp.result,
-                    name: lp.name,
-                    scope: lp.scope,
-                    var_size: lp.var_size,
-                }))
-            }
-            Value::If(c, t, f) => Value::If(
-                Box::new(Self::rewrite_generic_vector_writes(
-                    *c, concrete, vars, data, database,
-                )),
-                Box::new(Self::rewrite_generic_vector_writes(
-                    *t, concrete, vars, data, database,
-                )),
-                Box::new(Self::rewrite_generic_vector_writes(
-                    *f, concrete, vars, data, database,
-                )),
-            ),
-            Value::Set(v, expr) => Value::Set(
-                v,
-                Box::new(Self::rewrite_generic_vector_writes(
-                    *expr, concrete, vars, data, database,
-                )),
-            ),
-            Value::Return(expr) => Value::Return(Box::new(Self::rewrite_generic_vector_writes(
-                *expr, concrete, vars, data, database,
-            ))),
-            Value::Drop(expr) => Value::Drop(Box::new(Self::rewrite_generic_vector_writes(
-                *expr, concrete, vars, data, database,
-            ))),
-            Value::Span(b) => {
-                let (pos, inner) = *b;
-                Value::Span(Box::new((
-                    pos,
-                    Self::rewrite_generic_vector_writes(inner, concrete, vars, data, database),
-                )))
+            Value::Loop(mut lp) => {
+                let ops = std::mem::take(&mut lp.operators);
+                lp.operators =
+                    Self::rewrite_vector_write_triplets(ops, bindings, vars, data, database);
+                Value::Loop(lp)
             }
             Value::Call(d, args) => {
-                let recursed: Vec<Value> = args
-                    .into_iter()
-                    .map(|a| Self::rewrite_generic_vector_writes(a, concrete, vars, data, database))
-                    .collect();
-                Self::rewrite_indexed_element_write(d, recursed, concrete, data, database)
+                Self::rewrite_indexed_element_write(d, args, bindings, data, database)
             }
-            Value::Insert(ops) => Value::Insert(
-                ops.into_iter()
-                    .map(|v| Self::rewrite_generic_vector_writes(v, concrete, vars, data, database))
-                    .collect(),
-            ),
             other => other,
         }
+    }
+
+    /// The binding a parametric element write stands for: the type variable whose record
+    /// row the write's `OpCopyRecord` was lowered against (`tp`, its flag bits masked off —
+    /// [`crate::keys::COPY_TP_MASK`]).  `None` for a write of anything else, so a record
+    /// appended or assigned inside the template keeps its own row, a `vector<T>` element of
+    /// a `vector<vector<T>>` (a row of its own) is not taken for `T`, and each of several
+    /// variables finds its own binding.  A variable with no row yet (`u16::MAX`) matches
+    /// nothing: the sentinel is shared by every unresolved row.
+    fn element_write_binding<'b>(
+        tp: i32,
+        bindings: &'b [(u32, Type)],
+        data: &Data,
+    ) -> Option<&'b Type> {
+        let mask = i32::from(crate::keys::COPY_TP_MASK);
+        bindings
+            .iter()
+            .find(|(holder, _)| {
+                let row = data.def(*holder).known_type();
+                row != u16::MAX && i32::from(row) & mask == tp & mask
+            })
+            .map(|(_, bound)| bound)
     }
 
     /// P241 fix (2026-05-11) — slice 2: integer-only.  Walks a Block's
@@ -10039,19 +10814,27 @@ impl Parser {
     /// independently — each triplet rewrites once.
     fn rewrite_vector_write_triplets(
         ops: Vec<Value>,
-        concrete: &Type,
+        bindings: &[(u32, Type)],
         vars: &mut crate::variables::Function,
         data: &Data,
         database: &mut Stores,
     ) -> Vec<Value> {
-        // Slice 3 covers all primitive vector-element targets
-        // (Integer/Text/Float/Single/Boolean/Character/Enum/Function +
-        // narrow-int variants).  P255 extends to struct T (Reference)
-        // by keeping OpCopyRecord and patching its tp arg.
-        if !Self::is_rewritable_vector_element_target(concrete) {
-            return ops;
+        // Register the element rows of each of the template's own variables up front, before
+        // any triplet is looked for — the order type rows are minted in is observable
+        // (native's `init()` replays it), and this is where they have always been minted.  An
+        // interface's associated type (a placeholder whose parent is the interface) mints its
+        // rows where a write of it is rewritten.
+        for (holder, bound) in bindings {
+            let parent = data.def(*holder).parent;
+            let associated = (parent as usize) < data.definitions.len()
+                && data.def_type(parent) == DefType::Interface;
+            if !associated && Self::is_rewritable_vector_element_target(bound) {
+                let content = data
+                    .vector_element_type(bound, database)
+                    .unwrap_or_else(|| database.db_type(bound, data));
+                database.vector(content);
+            }
         }
-        let is_struct_target = matches!(concrete, Type::Reference(_, _));
         // Resolve op def_nrs once — re-resolution per-triplet would
         // cost N lookups for a long Block.
         let new_record_d = data.def_nr("OpNewRecord");
@@ -10065,25 +10848,6 @@ impl Parser {
         {
             return ops; // missing op definitions — bail safely
         }
-        // Look up the concrete vector-element record type-id.
-        // Mirrors `vectors.rs:1532-1535` — `database.vector(content_db_type)`
-        // returns the synthetic vector<concrete> type id (registers
-        // it on first use; idempotent on subsequent calls).
-        // The element's STORAGE type from the one home every writer and reader of a vector
-        // element routes through — `Data::vector_element_type`, which the concrete `+=`
-        // append asks too (a narrow integer keeps its width, a struct is its record) — and
-        // the stride from the store that owns the layout, exactly as the concrete path sizes
-        // its `OpPreAllocVector` (`vectors.rs`: `database.size(known)`).  This used to
-        // re-derive the stride from the Type alone (`type_element_size`), summing a struct's
-        // fields and descending into a field of the struct's own type without end, and it
-        // was computed before any triplet was looked for — so EVERY generic instantiated at
-        // a self-referential struct died in the parser with a bare SIGSEGV, `fn id<T>(v: T)
-        // -> T? { v }` at `struct Node { …, next: reference<Node>? }` included (loft#1378).
-        let content_db_type = data
-            .vector_element_type(concrete, database)
-            .unwrap_or_else(|| database.db_type(concrete, data));
-        let concrete_vec_tp = i32::from(database.vector(content_db_type));
-        let elem_size = i32::from(database.size(content_db_type));
         // Walk operators looking for the triplet.  Build a new vec
         // with rewrites applied; copy unchanged ops verbatim.
         // Drain `ops` into a deque-like cursor so we can take owned
@@ -10113,9 +10877,69 @@ impl Parser {
                 copy_record_d,
                 finish_record_d,
             );
-            if let Some((elm_var, out_var, src_value)) = matched {
-                // Consume the matched triplet.
+            // Slice 3 covers all primitive vector-element targets
+            // (Integer/Text/Float/Single/Boolean/Character/Enum/Function +
+            // narrow-int variants).  P255 extends to struct T (Reference)
+            // by keeping OpCopyRecord and patching its tp arg.  The element type is the
+            // binding of the variable this triplet was lowered for — never the template's
+            // first variable by default.
+            let site = matched.as_ref().and_then(|(_, _, _, copy_tp)| {
+                Self::element_write_binding(*copy_tp, bindings, data)
+                    .filter(|bound| Self::is_rewritable_vector_element_target(bound))
+                    .cloned()
+            });
+            if let (Some((elm_var, out_var, src_value, _)), Some(concrete)) = (matched, site) {
                 buf.drain(0..3);
+                Self::emit_rewritten_triplet(
+                    &mut out,
+                    (elm_var, out_var, src_value),
+                    &concrete,
+                    vars,
+                    data,
+                    database,
+                    (new_record_d, copy_record_d, finish_record_d, pre_alloc_d),
+                );
+            } else {
+                // No triplet at this position — emit one op and slide.
+                out.push(buf.remove(0));
+            }
+        }
+        out
+    }
+
+    /// Emit the concrete shape of one matched parametric element-write triplet at the type
+    /// `concrete` — the four-op sequence documented on [`Self::rewrite_vector_write_triplets`].
+    fn emit_rewritten_triplet(
+        out: &mut Vec<Value>,
+        (elm_var, out_var, src_value): (u16, u16, Value),
+        concrete: &Type,
+        vars: &mut crate::variables::Function,
+        data: &Data,
+        database: &mut Stores,
+        (new_record_d, copy_record_d, finish_record_d, pre_alloc_d): (u32, u32, u32, u32),
+    ) {
+        let is_struct_target = matches!(concrete, Type::Reference(_, _));
+        // Look up the concrete vector-element record type-id.
+        // Mirrors `vectors.rs:1532-1535` — `database.vector(content_db_type)`
+        // returns the synthetic vector<concrete> type id (registers
+        // it on first use; idempotent on subsequent calls).
+        // The element's STORAGE type from the one home every writer and reader of a vector
+        // element routes through — `Data::vector_element_type`, which the concrete `+=`
+        // append asks too (a narrow integer keeps its width, a struct is its record) — and
+        // the stride from the store that owns the layout, exactly as the concrete path sizes
+        // its `OpPreAllocVector` (`vectors.rs`: `database.size(known)`).  This used to
+        // re-derive the stride from the Type alone (`type_element_size`), summing a struct's
+        // fields and descending into a field of the struct's own type without end, and it
+        // was computed before any triplet was looked for — so EVERY generic instantiated at
+        // a self-referential struct died in the parser with a bare SIGSEGV, `fn id<T>(v: T)
+        // -> T? { v }` at `struct Node { …, next: reference<Node>? }` included (loft#1378).
+        let content_db_type = data
+            .vector_element_type(concrete, database)
+            .unwrap_or_else(|| database.db_type(concrete, data));
+        let concrete_vec_tp = i32::from(database.vector(content_db_type));
+        let elem_size = i32::from(database.size(content_db_type));
+        {
+            {
                 // Patch the elm var's type back to `Reference(content_def_nr, [out_var])`.
                 // After `vars.substitute_type`, `Reference(T_d_nr, deps)` became
                 // `Type::<concrete>` (deps lost — primitive types don't carry deps).
@@ -10190,12 +11014,8 @@ impl Parser {
                         Value::Int(i32::from(u16::MAX)),
                     ],
                 ));
-            } else {
-                // No triplet at this position — emit one op and slide.
-                out.push(buf.remove(0));
             }
         }
-        out
     }
 
     /// P241 fix slice 2 — pattern-matches the parametric vector-element
@@ -10233,7 +11053,7 @@ impl Parser {
     fn rewrite_indexed_element_write(
         d: u32,
         args: Vec<Value>,
-        concrete: &Type,
+        bindings: &[(u32, Type)],
         data: &Data,
         database: &mut Stores,
     ) -> Value {
@@ -10244,6 +11064,16 @@ impl Parser {
         let Some(elem) = Self::element_write_destination(&args[1], data) else {
             return Value::Call(d, args);
         };
+        let Value::Int(copy_tp) = args[2].unspan() else {
+            return Value::Call(d, args);
+        };
+        let Some(concrete) = Self::element_write_binding(*copy_tp, bindings, data)
+            .filter(|bound| Self::is_rewritable_vector_element_target(bound))
+            .cloned()
+        else {
+            return Value::Call(d, args);
+        };
+        let concrete = &concrete;
         if Self::is_primitive_vector_element_target(concrete) {
             // The element's VALUE wrapper is stripped by `element_write_destination`: the
             // substitution wraps every rewritten element read for value use, and a write
@@ -10297,7 +11127,7 @@ impl Parser {
         new_record_d: u32,
         copy_record_d: u32,
         finish_record_d: u32,
-    ) -> Option<(u16, u16, Value)> {
+    ) -> Option<(u16, u16, Value, i32)> {
         // op0: Set(elm_var, Call(OpNewRecord, [Var(out_var), Int(_), Int(MAX)]))
         let (elm_var_set, out_var, _new_record_tp) = match op0.unspan() {
             Value::Set(elm, set_val) => {
@@ -10317,15 +11147,16 @@ impl Parser {
             }
             _ => return None,
         };
-        // op1: Call(OpCopyRecord, [src_value, Var(elm_var), Int(_)])
-        let src_value = match op1.unspan() {
+        // op1: Call(OpCopyRecord, [src_value, Var(elm_var), Int(copy_tp)])
+        let (src_value, copy_tp) = match op1.unspan() {
             Value::Call(d, args) => {
                 if *d == copy_record_d
                     && args.len() == 3
                     && let Value::Var(elm_in_copy) = args[1].unspan()
                     && *elm_in_copy == elm_var_set
+                    && let Value::Int(copy_tp) = args[2].unspan()
                 {
-                    args[0].clone()
+                    (args[0].clone(), *copy_tp)
                 } else {
                     return None;
                 }
@@ -10345,7 +11176,7 @@ impl Parser {
                     && *elm_in_finish == elm_var_set
                     && *fld == i32::from(u16::MAX)
                 {
-                    Some((elm_var_set, out_var, src_value))
+                    Some((elm_var_set, out_var, src_value, copy_tp))
                 } else {
                     None
                 }

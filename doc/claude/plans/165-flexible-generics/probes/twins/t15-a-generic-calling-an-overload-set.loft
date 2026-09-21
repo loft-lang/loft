@@ -1,0 +1,29 @@
+// B3b — a generic whose body calls an overload set at its own variable answers, per instance,
+// what its hand-written twin answers: the twin at Cat calls `show(x: Cat)`, the twin at Dog
+// calls the template's instance, and a record-returning member is copied out the same way.
+// @EXPECT: special cat 1=special cat 1|any dog 2=any dog 2|3 4=3 4|7 7=7 7
+interface Named { fn tag(self: Self) -> text }
+struct Cat { n: integer }
+struct Dog { n: integer }
+struct Pt { x: integer, y: integer }
+fn tag(self: Cat) -> text { "cat {self.n}" }
+fn tag(self: Dog) -> text { "dog {self.n}" }
+fn show<T: Named>(x: T) -> text { "any {x.tag()}" }
+fn show(x: Cat) -> text { "special {x.tag()}" }
+fn wrap<U: Named>(x: U) -> text { show(x) }
+fn wrap_cat_twin(x: Cat) -> text { show(x) }
+fn wrap_dog_twin(x: Dog) -> text { show(x) }
+fn mk<T>(v: T) -> Pt { Pt { x: 7, y: 7 } }
+fn mk(v: Pt) -> Pt { Pt { x: v.x, y: v.y } }
+fn relay<U>(v: U) -> Pt { mk(v) }
+fn relay_pt_twin(v: Pt) -> Pt { mk(v) }
+fn relay_int_twin(v: integer) -> Pt { mk(v) }
+fn main() {
+  c = Cat { n: 1 };
+  d = Dog { n: 2 };
+  p = relay(Pt { x: 3, y: 4 });
+  pt = relay_pt_twin(Pt { x: 3, y: 4 });
+  q = relay(5);
+  qt = relay_int_twin(5);
+  println("{wrap(c)}={wrap_cat_twin(c)}|{wrap(d)}={wrap_dog_twin(d)}|{p.x} {p.y}={pt.x} {pt.y}|{q.x} {q.y}={qt.x} {qt.y}");
+}

@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// F9 (@PLN165 C1): a type variable is one type at a call.  `same<T>(a: T, b: T)` called with
+// an integer and a text binds T through `a` and cannot take `b` — refused naming both
+// parameters, where the argument check after instantiation named only the second argument
+// against a type the reader never wrote.  The predicate is that check's own, so nothing it
+// accepted is refused.  A refused call poisons its expression, so the `println` around it
+// reports nothing further.
+//
+// @falsified-at: f5a2b3801 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/one-type-variable-bound-to-two-types-names-both-parameters.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — refused on both trees; only the message moves.
+//   ARMED: nothing.
+//   WITNESS: on the control "expected integer, got text on argument 2 of call to same".
+//   HOLDS: the program is refused on both trees.
+// @EXPECT_ERROR: `same` binds T to integer through `a` and to text through `b`
+
+fn same<T: Printable>(a: T, b: T) -> text { "{a}{b}" }
+
+fn main() {
+  println(same(1, "x"));
+}

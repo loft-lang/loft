@@ -1,0 +1,7 @@
+// @CONTROL
+// @EXPECT: 1/x
+fn inner<P: Printable, Q: Printable>(p: P, q: Q) -> text { "{p}/{q}" }
+fn outer<A: Printable, B: Printable>(a: A, b: B) -> text { inner(b, a) }
+fn main() {
+  println(outer(1, "x"));
+}

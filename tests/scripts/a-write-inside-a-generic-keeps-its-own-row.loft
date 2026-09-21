@@ -1,0 +1,94 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Every element write in a generic's body is lowered for the type IT writes, and an instance
+// answers what its concrete twin answers (`interfaces.md (G-Mono)`).
+//
+// A template lowers a vector element write while the element is still the type variable, and
+// the instance re-lowers it once the variable is bound.  That re-lowering read the template's
+// ONE variable for every write in the body, so a write of an ordinary record — `w += [p]` or
+// `w[0] = p` with `p: Pt` — was re-lowered as a write of `T`: at `T = integer` the interpreter
+// panicked on a corrupt reference and `--native` refused the emitted setter.  Each write now
+// finds its own variable by the row it was lowered against, and a write of anything else
+// keeps its row.
+//
+// A `vector<vector<T>>` copied and appended to is the second half: the element copy carries a
+// flag beside its row, the row retargeting compared the flagged operand whole and kept the
+// template's `vector<T>` row, and the copy walked the inner vector at the placeholder's width;
+// before that the template's own parse sized a content row that did not exist yet (an internal
+// compiler error).
+//
+// A write of `T` itself — `u += [v[0]]`, `[x]`, `v[i] = x` — is the control, at every kind.
+//
+// @falsified-at: 40925cf35 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-write-inside-a-generic-keeps-its-own-row.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the nested-vector template is an internal compiler error
+//     on the control, which stops the file before any assertion runs.
+//   ARMED: nothing.
+//   WITNESS: on the control `appends_a_record([7, 8], p)` panics the interpreter on a corrupt
+//     reference and `--native` refuses the emitted integer setter on a `DbRef` (E0308).
+//   HOLDS: the writes of the variable itself.
+
+struct Pt { x: integer, y: integer }
+
+fn appends_a_record<T>(v: vector<T>, p: Pt) -> integer {
+  w: vector<Pt> = [];
+  w += [p];
+  w += [p];
+  u = v;
+  u += [v[0]];
+  w[1].y + len(u) * 100
+}
+
+fn assigns_a_record<T>(v: vector<T>, p: Pt) -> integer {
+  w: vector<Pt> = [Pt { x: 1, y: 2 }];
+  w[0] = p;
+  w[0].y + len(v)
+}
+
+fn appends_an_inner_vector<T>(vv: vector<vector<T>>) -> integer {
+  w = vv;
+  w += [vv[0]];
+  len(w) * 10 + len(w[2])
+}
+
+fn wraps<T>(x: T) -> vector<T> { [x] }
+
+fn sets<T>(v: vector<T>, i: integer, x: T) { v[i] = x; }
+
+fn test_a_record_appended_inside_a_generic() {
+  p = Pt { x: 3, y: 44 };
+  assert(appends_a_record([7, 8], p) == 344, "at integer: {appends_a_record([7, 8], p)}");
+  assert(appends_a_record(["a"], p) == 244, "at text: {appends_a_record([\"a\"], p)}");
+  assert(appends_a_record([1.5], p) == 244, "at float: {appends_a_record([1.5], p)}");
+  assert(appends_a_record([p], p) == 244, "at Pt itself: {appends_a_record([p], p)}");
+}
+
+fn test_a_record_assigned_inside_a_generic() {
+  p = Pt { x: 3, y: 44 };
+  assert(assigns_a_record([7, 8], p) == 46, "at integer: {assigns_a_record([7, 8], p)}");
+  assert(assigns_a_record(["a"], p) == 45, "at text: {assigns_a_record([\"a\"], p)}");
+}
+
+fn test_a_nested_vector_appended_inside_a_generic() {
+  a: vector<vector<integer>> = [[1, 2], [3]];
+  b: vector<vector<text>> = [["p"]];
+  assert(appends_an_inner_vector(a) == 32, "at integer: {appends_an_inner_vector(a)}");
+  // `b`'s copy holds two elements, so `w[2]` reads past its end: null, whose length is 0.
+  assert(appends_an_inner_vector(b) == 20, "at text: {appends_an_inner_vector(b)}");
+}
+
+fn test_a_write_of_the_variable_itself() {
+  n = wraps(5);
+  assert(len(n) == 1 && n[0] == 5, "wraps at integer: {n}");
+  t = wraps("x");
+  assert(len(t) == 1 && t[0] == "x", "wraps at text: {t}");
+  p = wraps(Pt { x: 1, y: 9 });
+  assert(len(p) == 1 && p[0].y == 9, "wraps at Pt: {p[0].y}");
+  v = [1, 2, 3];
+  sets(v, 1, 20);
+  assert("{v}" == "[1,20,3]", "sets at integer: {v}");
+  w = [Pt { x: 1, y: 1 }, Pt { x: 2, y: 2 }];
+  sets(w, 0, Pt { x: 7, y: 70 });
+  assert(w[0].y == 70 && w[1].y == 2, "sets at Pt: {w[0].y} {w[1].y}");
+}

@@ -1,0 +1,75 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic beside a concrete definition of its name is one overload set, and selection
+// ranks the template too (@PLN165 B3, `D-Rank`): a parameter that names a type variable
+// ranks GENERIC where the variable binds and the bounds hold — worse than an exact, widened
+// or nullable-discharging match, so the concrete member takes the calls it declares, and
+// incomparable with a conversion, so an argument one member takes by converting and the other
+// by instantiating is refused naming both.  The template takes every other call, and its
+// instance answers what a hand-written twin would.
+//
+// Before, the second definition was "Cannot redefine 'first'"; after B2 the pair was one set
+// but only its concrete member was ever asked, so a `vector<text>` found no definition.
+//
+// @falsified-at: 2d74218d8 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-template-takes-the-calls-no-concrete-member-of-its-set-takes.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses every call only the template takes.
+//   ARMED: nothing.
+//   WITNESS: on the control `first(b)` is "no definition of `first` takes (vector<text>)".
+//   HOLDS: the calls the concrete member takes, which answered 999 on the control too.
+
+interface Named { fn tag(self: Self) -> text }
+struct Cat { n: integer }
+struct Dog { n: integer }
+struct Pt { x: integer, y: integer }
+fn tag(self: Cat) -> text { "cat {self.n}" }
+fn tag(self: Dog) -> text { "dog {self.n}" }
+
+fn first<T>(v: vector<T>) -> T { v[0] }
+fn first(v: vector<integer>) -> integer { 999 }
+
+fn show<T: Named>(x: T) -> text { "any {x.tag()}" }
+fn show(x: Cat) -> text { "special {x.tag()}" }
+
+fn pick(x: integer) -> text { "int {x}" }
+fn pick<T: Printable>(x: T) -> text { "gen {x}" }
+
+fn keep<T>(v: T) -> T { v }
+fn keep(v: integer) -> Pt { Pt { x: 0, y: 0 } }
+
+fn maybe(k: integer) -> integer? { if k > 0 { k } else { null } }
+
+fn test_the_concrete_member_takes_its_own_type() {
+  a: vector<integer> = [1, 2, 3];
+  assert(first(a) == 999, "{first(a)}");
+}
+
+fn test_the_template_takes_every_other_type() {
+  b: vector<text> = ["p", "q"];
+  c: vector<float> = [2.5];
+  ps: vector<Pt> = [Pt { x: 3, y: 4 }];
+  assert(first(b) == "p", "{first(b)}");
+  assert(first(c) == 2.5, "{first(c)}");
+  assert(first(ps).y == 4, "{first(ps).y}");
+  // Typed on the first pass: the binding is a text there.
+  r = first(b);
+  assert(r + "z" == "pz", "{r}");
+}
+
+fn test_a_bounded_template_beside_a_member_of_one_bound_type() {
+  assert(show(Cat { n: 1 }) == "special cat 1", "{show(Cat { n: 1 })}");
+  assert(show(Dog { n: 2 }) == "any dog 2", "{show(Dog { n: 2 })}");
+}
+
+fn test_a_nullable_discharge_outranks_an_instantiation() {
+  assert(pick(maybe(5)) == "int 5", "{pick(maybe(5))}");
+  assert(pick("x") == "gen x", "{pick("x")}");
+}
+
+fn test_a_member_and_the_template_may_return_different_types() {
+  p = keep(Pt { x: 3, y: 4 });
+  q = keep(7);
+  assert(p.x == 3 && p.y == 4, "{p.x} {p.y}");
+  assert(q.x == 0 && q.y == 0, "{q.x} {q.y}");
+}

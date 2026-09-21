@@ -564,6 +564,15 @@ impl Parser {
                     let vec_tp = self.data.type_def_nr(vtp);
                     let db_tp = self.data.def(vec_tp).known_type();
                     let size = self.vector_elem_iter_stride(vtp);
+                    // A type variable's element names its variable (@PLN165 C2).
+                    let stride = match vtp.base() {
+                        Type::Reference(tv, _)
+                            if size == 0 && self.data.is_type_var_placeholder(*tv) =>
+                        {
+                            Self::type_var_stride(*tv)
+                        }
+                        _ => i32::from(size),
+                    };
                     // Plan-07 phase 4 step 4.6 — for-loop iteration uses
                     // the *Nullable* peers; OOB returns a null DbRef which
                     // the loop's pre-body null-check
@@ -572,7 +581,7 @@ impl Parser {
                     // keeps the raising OpGetVector / OpVectorRef.
                     let mut ref_expr = self.cl(
                         "OpGetVectorNullable",
-                        &[code.clone(), Value::Int(i32::from(size)), i.clone()],
+                        &[code.clone(), Value::Int(stride), i.clone()],
                     );
                     // @PLN25 E2 — a `__nullable<S>` element is `Enum(synth,true)`,
                     // not `Reference`, but in a LINKED collection (an array of
@@ -4659,16 +4668,9 @@ use #count instead"
         if self.data.def_type(self.context) != DefType::Generic {
             return false;
         }
-        let attrs = self.data.def(self.context).attributes();
-        let tv = attrs
+        Self::template_vars(&self.data, self.context)
             .iter()
-            .map(|a| Self::type_var_of(&self.data, &a.typedef))
-            .find(|t| *t != u32::MAX)
-            .unwrap_or(u32::MAX);
-        if tv == u32::MAX {
-            return false;
-        }
-        ret_type.contains_def(tv) || elem_tp.contains_def(tv)
+            .any(|tv| ret_type.contains_def(*tv) || elem_tp.contains_def(*tv))
     }
 
     /// The definition a deferred `par` marker calls.  It is a placeholder, never emitted:

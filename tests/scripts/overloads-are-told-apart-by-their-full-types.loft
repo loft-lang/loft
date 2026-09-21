@@ -1,0 +1,85 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Two definitions of one name that differ only INSIDE a type — a vector's element, an
+// integer's width, a function type against the `i32` its value is stored as — are two
+// overloads, and a call reaches the one its argument types name (@PLN165 B1; @PLN162
+// `Disp-Key`, `Disp-Specific`).
+//
+// A key and a rank read a type by its def's name, and a collection's def is the bare
+// `vector`, every integer's is `integer`, a function type's is `i32`: so `first(v:
+// vector<integer>)` beside `first(v: vector<text>)` was refused "Cannot redefine 'first'", as
+// was `w(x: u8)` beside `w(x: u16)` and `app(f: fn(integer) -> integer)` beside `app(n: i32)`.
+// They now read the type's full identity (`Data::identity_spelling`).  Across widths the
+// integer lattice's widening ranks above a conversion, so a narrow value still reaches an
+// `integer` definition before a `float` one, as it did when the two shared a spelling.  The
+// same identity keys a generic's instance, so one bound at `Pt` and at `Pt?` is two.
+//
+// @falsified-at: 474e4e771 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/overloads-are-told-apart-by-their-full-types.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the second `first` at the parse.
+//   ARMED: nothing.
+//   WITNESS: on the control `fn first(v: vector<text>)` is "Cannot redefine 'first'".
+//   HOLDS: the widening cell and the nullable instance, which answered right before.
+
+struct Pt { x: integer }
+
+fn first(v: vector<integer>) -> text { "ints" }
+fn first(v: vector<text>) -> text { "texts" }
+
+fn w(x: u8) -> text { "u8" }
+fn w(x: u16) -> text { "u16" }
+
+fn k(x: i32) -> text { "i32" }
+fn k(x: integer) -> text { "integer" }
+
+fn dbl(n: integer) -> integer { n * 2 }
+fn app(f: fn(integer) -> integer) -> text { "fn {f(4)}" }
+fn app(n: i32) -> text { "i32 {n}" }
+
+fn f(x: integer) -> text { "integer" }
+fn f(x: float) -> text { "float" }
+
+fn s(v: vector<u8>) -> text { "u8 {len(v)}" }
+fn s(v: vector<u16>) -> text { "u16 {len(v)}" }
+
+fn idf<T>(x: T) -> T { x }
+
+fn test_a_vector_element() {
+  a: vector<integer> = [1];
+  b: vector<text> = ["p"];
+  assert(first(a) == "ints" && first(b) == "texts", "{first(a)} {first(b)}");
+  c: vector<u8> = [1, 2];
+  d: vector<u16> = [300];
+  assert(s(c) == "u8 2" && s(d) == "u16 1", "{s(c)} {s(d)}");
+}
+
+fn test_an_integer_width() {
+  a: u8 = 1;
+  b: u16 = 300;
+  assert(w(a) == "u8" && w(b) == "u16", "{w(a)} {w(b)}");
+  c: i32 = 1;
+  e = 2;
+  assert(k(c) == "i32" && k(e) == "integer", "{k(c)} {k(e)}");
+}
+
+fn test_a_function_type_is_not_i32() {
+  m: i32 = 5;
+  assert(app(dbl) == "fn 8" && app(m) == "i32 5", "{app(dbl)} {app(m)}");
+}
+
+fn test_the_widening_still_ranks_first() {
+  a: u8 = 3;
+  b: i32 = 4;
+  assert(f(a) == "integer" && f(b) == "integer", "{f(a)} {f(b)}");
+}
+
+fn test_a_nullable_binding_is_its_own_instance() {
+  p = Pt { x: 3 };
+  q: Pt? = null;
+  r: Pt? = Pt { x: 3 };
+  a = idf(p);
+  b = idf(q);
+  c = idf(r);
+  assert(a.x == 3 && !b && c.x == 3, "{a.x} {c.x}");
+}

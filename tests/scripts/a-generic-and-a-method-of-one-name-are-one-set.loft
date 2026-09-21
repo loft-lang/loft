@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A free generic beside a same-named `self`/`both` METHOD is one overload set (@PLN165 B4):
+// both join the name's dispatcher, so a call is decided over arity and every parameter
+// (`Disp-Applicable`) and by rank (`D-Rank`), not by the receiver's key alone.  Before, the
+// method was found by its key and the generic never asked: `describe(sq)` reached the
+// two-parameter `describe(self: Sq, n: integer)` and was refused for its missing argument
+// while the one-parameter generic took it — a wrong refusal, in either declaration order.
+// The method keeps its `t_` key, so both spellings of a call reach one definition
+// (`(F-OneBody)`), and the generic's instances are keyed under its `f_` member key.
+//
+// @falsified-at: c243bd4e6 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-generic-and-a-method-of-one-name-are-one-set.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the one-argument call.
+//   ARMED: nothing.
+//   WITNESS: on the control `describe(Sq{s:1})` is "missing argument for parameter 'n' of
+//     `describe`".
+//   HOLDS: every cell a method takes by its receiver, which the control answered too.
+
+interface Shape { fn kind(self: Self) -> text }
+struct Sq { s: integer }
+struct Tri { s: integer }
+struct Pt { x: integer, y: integer }
+fn kind(self: Sq) -> text { "square {self.s}" }
+fn kind(self: Tri) -> text { "tri {self.s}" }
+
+fn describe<T: Shape>(x: T) -> text { "some {x.kind()}" }
+fn describe(self: Sq, n: integer) -> text { "SQUARE {self.s} x{n}" }
+
+fn outline(self: Tri, n: integer) -> text { "TRI {self.s} x{n}" }
+fn outline<T: Shape>(x: T) -> text { "any {x.kind()}" }
+
+fn label(self: Sq) -> text { "sq {self.s}" }
+fn label(self: Tri) -> text { "tri {self.s}" }
+fn label<T: Printable>(x: T) -> text { "any {x}" }
+
+fn pick(both: integer) -> text { "both {both}" }
+fn pick<T: Printable>(x: T) -> text { "gen {x}" }
+
+fn corner(self: Sq) -> Pt { Pt { x: self.s * 10, y: self.s } }
+fn corner<T>(x: T) -> Pt { Pt { x: 7, y: 7 } }
+
+fn wrap<U: Printable>(x: U) -> text { label(x) }
+
+fn test_arity_decides_in_both_orders() {
+  q = Sq { s: 1 };
+  assert(describe(q) == "some square 1", "{describe(q)}");
+  assert(describe(q, 3) == "SQUARE 1 x3", "{describe(q, 3)}");
+  t = Tri { s: 2 };
+  assert(outline(t) == "any tri 2", "{outline(t)}");
+  assert(outline(t, 4) == "TRI 2 x4", "{outline(t, 4)}");
+}
+
+fn test_both_spellings_reach_one_definition() {
+  q = Sq { s: 1 };
+  assert(q.describe(3) == describe(q, 3), "{q.describe(3)}");
+  assert(q.describe() == describe(q), "{q.describe()}");
+}
+
+fn test_rank_decides_across_receivers() {
+  assert(label(Sq { s: 1 }) == "sq 1", "{label(Sq { s: 1 })}");
+  assert(label(Tri { s: 2 }) == "tri 2", "{label(Tri { s: 2 })}");
+  assert(label(3) == "any 3", "{label(3)}");
+  assert(pick(3) == "both 3" && pick("s") == "gen s", "{pick(3)} {pick("s")}");
+}
+
+fn test_a_record_returning_method_and_a_generic_caller() {
+  a = corner(Sq { s: 1 });
+  b = corner(3);
+  assert(a.x == 10 && a.y == 1, "{a.x} {a.y}");
+  assert(b.x == 7 && b.y == 7, "{b.x} {b.y}");
+  assert(wrap(3) == "any 3", "{wrap(3)}");
+}

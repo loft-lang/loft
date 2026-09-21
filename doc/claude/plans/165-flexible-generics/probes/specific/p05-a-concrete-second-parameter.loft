@@ -1,0 +1,11 @@
+// B5 — the bound decides at the generic position; the concrete second position is EXACT for
+// both.
+// @EXPECT: N named 4|any 4
+interface Named { fn tag(self: Self) -> text }
+struct OnlyNamed { n: integer }
+fn tag(self: OnlyNamed) -> text { "named" }
+fn h<T: Named>(x: T, k: integer) -> text { "N {x.tag()} {k}" }
+fn h<T>(x: T, k: integer) -> text { "any {k}" }
+fn main() {
+  println("{h(OnlyNamed{n:1}, 4)}|{h(true, 4)}");
+}

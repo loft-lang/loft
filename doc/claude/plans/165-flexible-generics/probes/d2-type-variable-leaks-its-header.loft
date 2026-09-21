@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// STEPS.md D1.  `T` is declared by `idf`'s header and nowhere else, yet `g` compiles:
+// the placeholder is a GLOBAL definition, so any later signature may name it.
+// Measured 9f5cf6a96: `g` is accepted; each call is refused `expected T, got Keep`.
+// Expected after D1: `g`'s own declaration is refused — `T` is not a type here.
+fn idf<T>(x: T) -> T { return x; }
+struct Keep { v: integer }
+fn g(x: T) -> integer { return 7; }
+fn main() {
+  k = Keep { v: 1 };
+  print("{idf(3)} {g(k)}");
+}

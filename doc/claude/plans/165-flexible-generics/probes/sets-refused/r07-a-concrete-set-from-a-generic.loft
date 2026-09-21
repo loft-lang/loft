@@ -1,0 +1,9 @@
+// B3b — a set of CONCRETE members called at a variable: nothing at the variable's bounds
+// says the call applies (no member is a template), so it stays refused — a variable's
+// capabilities are its bounds, not whatever its instances happen to find.
+fn f(x: integer) -> text { "int" }
+fn f(x: text) -> text { "text" }
+fn g<T>(x: T) -> text { f(x) }
+fn main() {
+  println("{g(1)}|{g("a")}");
+}

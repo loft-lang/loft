@@ -1,0 +1,10 @@
+// C1 + B3 — a template whose variable is in the second parameter, in a set beside a concrete
+// member: a variable bound to two types by two parameters makes it inapplicable.
+// @EXPECT: int 1 5|gen 1 x|gen 2 3
+fn put(n: integer, v: integer) -> text { "int {n} {v}" }
+fn put<T: Printable>(n: integer, v: T) -> text { "gen {n} {v}" }
+fn two<T: Printable>(a: T, b: T) -> text { "gen {a} {b}" }
+fn two(a: integer, b: text) -> text { "mixed" }
+fn main() {
+  println("{put(1, 5)}|{put(1, "x")}|{two(2, 3)}");
+}

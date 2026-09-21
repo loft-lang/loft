@@ -1,0 +1,10 @@
+// @CONTROL
+// @EXPECT: -1
+// @EXPECT: -1
+enum Shape { Circle { r: integer }, Square { s: integer } }
+fn area(x: Circle) -> integer { 3 * x.r * x.r }
+fn area<T>(x: T) -> integer { -1 }
+fn main() {
+  v: vector<Shape> = [Circle { r: 2 }, Square { s: 3 }];
+  for s in v { println("{area(s)}"); }
+}

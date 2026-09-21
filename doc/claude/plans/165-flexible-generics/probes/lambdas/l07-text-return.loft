@@ -1,0 +1,13 @@
+// A lambda over a bounded T that returns text.
+// @EXPECT: ["<1>","<2>"] ["<a>"]
+fn tags<T: Printable>(v: vector<T>) -> vector<text> {
+  out: vector<text> = [];
+  f = fn(x: T) -> text { "<{x}>" };
+  for e in v { out += [f(e)]; }
+  out
+}
+fn main() {
+  a: vector<integer> = [1, 2];
+  t: vector<text> = ["a"];
+  println("{tags(a)} {tags(t)}");
+}

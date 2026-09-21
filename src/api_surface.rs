@@ -241,17 +241,12 @@ pub fn classify(data: &Data, d: u32) -> Option<(&'static str, String)> {
 
 /// `t_<LEN><Type>_<method>` → `<Type>.<method>` (best-effort; falls back to the raw name).
 fn method_name(raw: &str) -> String {
-    let body = raw.strip_prefix("t_").unwrap_or(raw);
-    let digits: String = body.chars().take_while(char::is_ascii_digit).collect();
-    if let Ok(len) = digits.parse::<usize>() {
-        let rest = &body[digits.len()..];
-        if rest.len() >= len {
-            let ty = &rest[..len];
-            let method = rest[len..].strip_prefix('_').unwrap_or(&rest[len..]);
-            return format!("{ty}.{method}");
+    match Data::split_key(raw) {
+        Some(key) if key.kind == crate::data::KeyKind::Method => {
+            format!("{}.{}", key.spelling, key.rest)
         }
+        _ => raw.to_string(),
     }
-    raw.to_string()
 }
 
 /// The resolved signature of a member, in the clean user-facing type spelling

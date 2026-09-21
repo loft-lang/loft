@@ -1,0 +1,12 @@
+// B4 — b4: the method on Sq is EXACT, the generic GENERIC; Tri has no method.
+// @EXPECT: SQUARE 1|some tri 2
+interface Shape { fn kind(self: Self) -> text }
+struct Sq { s: integer }
+struct Tri { s: integer }
+fn kind(self: Sq) -> text { "square {self.s}" }
+fn kind(self: Tri) -> text { "tri {self.s}" }
+fn describe(self: Sq) -> text { "SQUARE {self.s}" }
+fn describe<T: Shape>(x: T) -> text { "some {x.kind()}" }
+fn main() {
+  println("{describe(Sq{s:1})}|{describe(Tri{s:2})}");
+}

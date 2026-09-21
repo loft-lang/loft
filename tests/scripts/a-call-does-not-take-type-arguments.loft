@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A call does not take type arguments: `first<integer>(a)` is refused, saying that the call
+// infers them and naming the cure where an argument does not fix one (@PLN165 `D-Infer`).
+//
+// Type arguments are written in TYPE position only (`p: Pair<integer, text>`, where `<`
+// already means what it means in `vector<integer>`); in an expression `<` is a comparison, so
+// the call read as the chain `first < integer > (a)` and was refused as "comparison operators
+// do not chain".  A local variable keeps the comparison reading.
+// @falsified-at: 04f5791cf — exit 1 -> 0, expectations FAIL/1 -> 0/1
+//   CHANNEL: expectations (the refusal is what moves; the program is refused on both trees).
+//   ARMED: nothing.
+//   WITNESS: on the control the program is refused "comparison operators do not chain".
+//   HOLDS: the program is refused on both trees; only the message moves.
+// @EXPECT_ERROR: a call does not take type arguments — `first(…)` infers them from its arguments; where an argument does not fix one, give the value a declared type (`a: vector<integer> = []`)
+
+fn first<T>(v: vector<T>) -> T { v[0] }
+
+fn main() {
+  a: vector<integer> = [1, 2];
+  println("{first<integer>(a)}");
+}

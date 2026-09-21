@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The WORKING SIBLING (@PLN162): every parameter's type decides, statically where the
+// types are concrete (`f_10Rock#Paper_beat`), through a synthesised dispatcher where a
+// position is held at an enum (`n_hit__dyn_Shot#Rock`).
+// Measured 9f5cf6a96: paper covers rock / paper covers rock (swapped) / tie /
+// rock vs scissors / FAST hits rock / shot hits rock.
+struct Rock { w: integer }
+struct Paper { w: integer }
+enum Shot { Fast { v: integer }, Slow { v: integer } }
+fn beat(a: Rock,  b: Paper) -> text { return "paper covers rock"; }
+fn beat(a: Paper, b: Rock)  -> text { return "paper covers rock (swapped)"; }
+fn beat(a: Rock,  b: Rock)  -> text { return "tie"; }
+fn beat(a: Rock,  b: text)  -> text { return "rock vs {b}"; }
+fn hit(s: Shot, r: Rock) -> text { return "shot hits rock"; }
+fn hit(s: Fast, r: Rock) -> text { return "FAST hits rock"; }
+fn main() {
+  r = Rock { w: 1 };
+  p = Paper { w: 2 };
+  println("{beat(r, p)}");
+  println("{beat(p, r)}");
+  println("{beat(r, r)}");
+  println("{beat(r, "scissors")}");
+  f: Shot = Fast { v: 9 };
+  s: Shot = Slow { v: 1 };
+  println("{hit(f, r)}");
+  println("{hit(s, r)}");
+}

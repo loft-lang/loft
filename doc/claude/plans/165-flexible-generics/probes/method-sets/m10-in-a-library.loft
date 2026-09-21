@@ -1,0 +1,6 @@
+// B4 — the set lives in a library.
+// @EXPECT: some square 1|SQUARE 1 x3
+use methlib;
+fn main() {
+  println("{describe(Sq{s:1})}|{describe(Sq{s:1}, 3)}");
+}

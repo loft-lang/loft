@@ -97,7 +97,10 @@ pub(crate) fn yield_slot_read(kind: YieldSlot, slot: usize) -> String {
 /// Derive the generator struct name from the loft function name.
 /// `n_count` → `NCountGen`, `n_gen_len` → `NGenLenGen`.
 fn gen_struct_name(fn_name: &str) -> String {
-    let base = fn_name.strip_prefix("n_").unwrap_or(fn_name);
+    // A key may keep non-identifier characters (an instance's `i_15vector<integer>_…`); the
+    // one flattening the function's own identifier goes through applies here too.
+    let flat = super::rust_fn_ident(fn_name);
+    let base = flat.strip_prefix("n_").unwrap_or(&flat);
     let capitalized: String = base
         .split('_')
         .map(|part| {

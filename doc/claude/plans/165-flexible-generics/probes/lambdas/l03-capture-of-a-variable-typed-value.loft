@@ -1,0 +1,13 @@
+// A lambda capturing a template parameter typed T.
+// @EXPECT: [11,12,13] ["ab","cb"]
+fn my_map<T>(v: vector<T>, f: fn(T) -> T) -> vector<T> {
+  out: vector<T> = [];
+  for x in v { out += [f(x)]; }
+  out
+}
+fn add_all<T: Addable>(v: vector<T>, d: T) -> vector<T> { my_map(v, |x| { x + d }) }
+fn main() {
+  a: vector<integer> = [1, 2, 3];
+  println("{add_all(a, 10)} {tail_all(["a", "c"], "b")}");
+}
+fn tail_all(v: vector<text>, d: text) -> vector<text> { my_map(v, |x| { x + d }) }

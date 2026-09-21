@@ -1049,6 +1049,66 @@ pub fn value_return_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VALUE_RETURN"))
 }
 
+/// @PLN165 B2/B3 — a generic is a member of its name's overload set, beside concrete
+/// definitions and other generics.  **DEFAULT ON.**  `LOFT_NO_GENERIC_MEMBER=1` restores the
+/// `Function`-only admission (a generic beside a same-named definition is "Cannot redefine") —
+/// the rollback, and the first bisect step for a call that reaches the wrong definition where
+/// a generic shares the name.
+pub fn generic_member_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_GENERIC_MEMBER"))
+}
+
+/// @PLN165 B4 — a free generic beside a same-named `self`/`both` METHOD is one overload set:
+/// both join the name's bare dispatcher, so a call is decided by rank over arity and every
+/// parameter rather than by the receiver's key alone.  **DEFAULT ON.**
+/// `LOFT_NO_METHOD_IN_SET=1` leaves the pair apart, the method found by its receiver key — the
+/// rollback, and the first bisect step for a call that reaches the wrong one of a method and a
+/// generic of one name.
+pub fn method_in_set_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_METHOD_IN_SET"))
+}
+
+/// @PLN165 C2 — a generic's header declares a LIST of type variables (`<K, V>`), each with its
+/// own bounds.  **DEFAULT ON.**  `LOFT_NO_SEVERAL_VARS=1` refuses a header with more than one
+/// again and keeps a variable's bounds on its function alone — the rollback, and the first
+/// bisect step for a generic with several variables that binds or checks the wrong one.
+pub fn several_vars_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_SEVERAL_VARS"))
+}
+
+/// @PLN165 B3b — a call written inside a generic, whose argument is typed by the generic's own
+/// variable, is lowered again in each instance with the instance's argument types, so it
+/// reaches the member of its name's overload set the instance's concrete twin reaches.
+/// **DEFAULT ON.**  `LOFT_NO_SET_RESELECT=1` refuses such a call again, as naming no member
+/// of the set — the rollback, and the first bisect step for a set call inside a generic that
+/// reaches the wrong definition.
+pub fn set_reselect_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_SET_RESELECT"))
+}
+
+/// @PLN165 B1 — a definition key and an overload's rank read a type's FULL identity: a
+/// collection's element, an integer's width, a `τ?`'s nullability, a function type's
+/// signature.  **DEFAULT ON.**  `LOFT_NO_ELEMENT_KEY=1` restores the spelling that erased them
+/// (`vector` for every vector, `integer` for every width, `i32` for a function) — the rollback,
+/// and the first bisect step for a call that reaches the wrong member of an overload set.
+pub fn element_key_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_ELEMENT_KEY"))
+}
+
+/// @PLN165 A5 (`D-Key`) — an instance of a generic is keyed `i_<LEN><bound types>_<template
+/// key>`: its own key kind, naming its template and every bound type.  **DEFAULT ON.**
+/// `LOFT_NO_INSTANCE_KEY=1` mints the method-shaped `t_<LEN><type>_<name>` key again — the
+/// rollback, and the first bisect step for a generic call that reaches the wrong definition.
+pub fn instance_key_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_INSTANCE_KEY"))
+}
+
 /// `LOFT_NO_LITERAL_EXIT_BUFFER=1` keeps a mid-body `return S { … }` building its record in
 /// a store of its own (@PLN164 B2, `@FR-R-Place`'s callee clause: a callee that on some exit
 /// answers a store other than the buffer it was handed cannot be placed) — the bisect step

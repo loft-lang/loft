@@ -1,0 +1,9 @@
+// A function type is stored as the `i32` its value is, but it is not `i32`.
+// @EXPECT: fn 8|i32 5
+fn dbl(n: integer) -> integer { n * 2 }
+fn app(f: fn(integer) -> integer) -> text { "fn {f(4)}" }
+fn app(n: i32) -> text { "i32 {n}" }
+fn main() {
+  m: i32 = 5;
+  println("{app(dbl)}|{app(m)}");
+}

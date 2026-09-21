@@ -1,0 +1,10 @@
+// B3 — two calls at one bound type share ONE instance; a call at another type gets its own.
+// @EXPECT: 9|8|1.5
+fn last<T>(v: vector<T>) -> T { v[len(v) - 1] }
+fn last(v: vector<text>) -> text { "never" }
+fn main() {
+  a: vector<integer> = [1, 9];
+  b: vector<integer> = [7, 8];
+  c: vector<float> = [0.5, 1.5];
+  println("{last(a)}|{last(b)}|{last(c)}");
+}

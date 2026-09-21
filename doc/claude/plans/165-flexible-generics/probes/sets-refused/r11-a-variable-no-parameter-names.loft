@@ -1,0 +1,6 @@
+// C1 — `D-Every-Var`: a variable no parameter names cannot be inferred by any call; refused
+// at the declaration.
+fn bad<T>(n: integer) -> T { n }
+fn main() {
+  println("{bad(1)}");
+}

@@ -1,0 +1,9 @@
+// `i32` and `integer` share a range; the declared width tells them apart.
+// @EXPECT: i32|integer
+fn k(x: i32) -> text { "i32" }
+fn k(x: integer) -> text { "integer" }
+fn main() {
+  a: i32 = 1;
+  b = 2;
+  println("{k(a)}|{k(b)}");
+}

@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `D-Rank` (@PLN165 B3): a plain enum CONVERTS to an integer, and a generic INSTANTIATES at
+// the enum.  One member needs an implicit conversion, the other an instantiation, and neither
+// is derivable as more specific from the signatures — so the call is refused naming both,
+// the template by the header its author wrote.  Picking either would be a choice a later
+// rule could not take back without moving a program.
+//
+// @falsified-at: 2d74218d8 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-conversion-and-an-instantiation-are-not-ranked.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — the control compiles the program, so the refusal never comes.
+//   ARMED: nothing.
+//   WITNESS: on the control the template is never asked, and the integer member takes the
+//     call by converting: it prints `int 1`.
+//   HOLDS: nothing else — the file is the one refusal.
+// @EXPECT_ERROR: `f(Color)` is ambiguous — it is taken by f(integer) and f<T>(T) and nothing ranks them
+
+enum Color { Red, Green }
+
+fn f(x: integer) -> text { "int {x}" }
+fn f<T>(x: T) -> text { "gen" }
+
+fn main() {
+  c = Color.Red;
+  println("{f(c)}");
+}

@@ -84,27 +84,9 @@ const NATIVE_STRICT_STORE_TAIL: &str = "    #[cfg(not(target_arch = \"wasm32\"))
 /// the standard package native path instead of a hardcoded list in the
 /// compiler crate.
 fn is_t_param_stub(name: &str) -> bool {
-    let Some(rest) = name.strip_prefix("t_") else {
+    let Some(key) = Data::split_key(name).filter(|k| k.kind == crate::data::KeyKind::Method) else {
         return false;
     };
-    // Parse the leading length digits.
-    let len_end = rest.bytes().position(|b| !b.is_ascii_digit()).unwrap_or(0);
-    if len_end == 0 {
-        return false;
-    }
-    let Ok(type_len) = rest[..len_end].parse::<usize>() else {
-        return false;
-    };
-    let after_len = &rest[len_end..];
-    if after_len.len() < type_len + 1 {
-        return false;
-    }
-    // The next `type_len` chars are the type name; then `_` then method.
-    let type_name = &after_len[..type_len];
-    let after_type = &after_len[type_len..];
-    if !after_type.starts_with('_') {
-        return false;
-    }
     // Heuristic: a generic type variable is a single ASCII identifier
     // (mostly UPPERCASE single letter or short PascalCase).  Concrete
     // builtins use lowercase type names (`text`, `integer`, `single`,
@@ -122,7 +104,7 @@ fn is_t_param_stub(name: &str) -> bool {
     // labeled "T-stub" — but in that case the right behaviour is
     // identical (emit `todo!()` instead of compile_error since the
     // function is genuinely unimplemented).
-    type_name
+    key.spelling
         .chars()
         .next()
         .is_some_and(|c| c.is_ascii_uppercase())
@@ -421,10 +403,20 @@ pub fn reachable_functions(data: &Data, entry_defs: &[u32]) -> HashSet<u32> {
 /// may export the same `pub fn` name — `Data` scopes defs by `(name, source)`,
 /// but emitted Rust is one flat namespace, so such names need a disambiguated
 /// identifier (#305: rustc E0428 "defined multiple times").
+///
+/// # Panics
+/// When two DIFFERENT keys flatten to one Rust identifier — a compiler defect, since the
+/// emitted crate would define one symbol twice.
 #[must_use]
 pub fn duplicate_fn_names(data: &Data) -> HashSet<String> {
     let mut seen: HashSet<&str> = HashSet::new();
     let mut dups = HashSet::new();
+    // Two DIFFERENT keys that flatten to one Rust identifier ([`rust_fn_ident`]) would be two
+    // definitions under one symbol — a key keeps its readable characters (`i_15vector<text>_…`,
+    // `f_10Rock#Paper_…`) and this is the one place that makes it an identifier, so it is the
+    // one place that can refuse the collision.  Two definitions of the SAME key from two
+    // modules are the ordinary duplicate, disambiguated below.
+    let mut flat: HashMap<String, &str> = HashMap::new();
     for d in 0..data.definitions() {
         let def = data.def(d);
         if !matches!(def.def_type(), DefType::Function | DefType::Dynamic) {
@@ -432,6 +424,15 @@ pub fn duplicate_fn_names(data: &Data) -> HashSet<String> {
         }
         if !seen.insert(def.name()) {
             dups.insert(def.name().to_string());
+        }
+        let ident = rust_fn_ident(def.name());
+        if let Some(prev) = flat.insert(ident.clone(), def.name()) {
+            assert!(
+                prev == def.name(),
+                "native emission: the definitions `{prev}` and `{}` flatten to one Rust \
+                 identifier `{ident}`",
+                def.name()
+            );
         }
     }
     dups
@@ -499,13 +500,30 @@ pub fn disambiguated_fn_ident(dups: &HashSet<String>, def: &crate::data::Definit
     rust_fn_ident(&base)
 }
 
+/// Is `def` a free function in all but its key — a free overload member (`f_…`, @PLN162) or
+/// an instance of a FREE generic (`i_<…>_n_<name>` / `i_<…>_f_<…>`, @PLN165 `D-Key`)?  Its
+/// `n_` twin is the definition it must behave as.
+fn is_free_in_all_but_key(def: &crate::data::Definition) -> bool {
+    if def.is_free_overload() {
+        return true;
+    }
+    let mut name = def.name();
+    while let Some(key) = Data::split_key(name).filter(|k| k.kind == crate::data::KeyKind::Instance)
+    {
+        name = key.rest;
+    }
+    name != def.name()
+        && (name.starts_with("n_")
+            || Data::split_key(name).is_some_and(|k| k.kind == crate::data::KeyKind::FreeOverload))
+}
+
 /// Flatten a loft def name into a valid Rust identifier.  Most names already are
 /// (`n_foo`, `t_4Pair_first`), but a generic instantiated over a TUPLE carries the
 /// synthetic tuple struct's schema name verbatim — `t_24__tuple<integer,integer>_first`
 /// — and `<`, `>`, `,`, and spaces are not valid in a Rust identifier (#395).  Every
 /// emission of a fn name (definition AND every call) routes through `fn_ident`, so
 /// flattening at this one chokepoint keeps the definition and its callers in sync.
-fn rust_fn_ident(name: &str) -> String {
+pub(crate) fn rust_fn_ident(name: &str) -> String {
     if name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
         return name.to_string();
     }
@@ -4503,8 +4521,11 @@ impl Output<'_> {
             Value::Call(d, _) => {
                 let callee = data.def(*d);
                 let name = callee.name();
+                // A free overload member (`f_…`) is a free function in all but its key.
                 name.starts_with("n_")
-                    || (name.starts_with("t_") && matches!(callee.code(), Value::Block(_)))
+                    || callee.is_free_overload()
+                    || ((name.starts_with("t_") || callee.is_instance())
+                        && matches!(callee.code(), Value::Block(_)))
             }
             Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
             _ => false,
@@ -4543,11 +4564,12 @@ impl Output<'_> {
                 let callee = data.def(*d);
                 let name = callee.name();
                 let loft_bodied = matches!(callee.code(), Value::Block(_));
-                if name.starts_with("n_") && !loft_bodied {
+                let free = name.starts_with("n_") || callee.is_free_overload();
+                if free && !loft_bodied {
                     // a native user-level function: what it reaches is not visible here
                     return true;
                 }
-                if (name.starts_with("n_") || name.starts_with("t_"))
+                if (free || name.starts_with("t_") || callee.is_instance())
                     && loft_bodied
                     && !callees.contains(d)
                 {
@@ -8262,12 +8284,21 @@ extern crate loft;"
                 self.declared.insert(v);
             }
         }
-        // Determine the user-visible loft name for the shadow call stack.
-        let loft_name = def.name().strip_prefix("n_").unwrap_or(def.name());
+        // Only instrument user-defined FREE functions (Block body): an `n_` function, and what
+        // is one in all but its key — a free overload member (`f_…`) and an instance of a free
+        // generic (`i_…_n_…`) — so each carries the depth cap and the shadow-stack frame its
+        // `n_` twin carries.
+        let free = def.name().starts_with("n_") || is_free_in_all_but_key(def);
+        let instrument = matches!(def.code(), Value::Block(_)) && free;
+        // The user-visible loft name for the shadow call stack.
+        let source_name = def.original_name();
+        let loft_name = if def.name().starts_with("n_") || !free {
+            def.name().strip_prefix("n_").unwrap_or(def.name())
+        } else {
+            source_name.as_str()
+        };
         let loft_file = &def.position().file;
         let loft_line = def.position().line;
-        // Only instrument user-defined functions (Block body, n_ prefix).
-        let instrument = matches!(def.code(), Value::Block(_)) && def.name().starts_with("n_");
         let returns_text = matches!(def.returned(), Type::Text(_));
         if let Value::Block(bl) = def.code() {
             // An empty-body loft function (explicit stub) has no operators and result Void,
