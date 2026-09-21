@@ -17643,7 +17643,9 @@ impl Parser {
                 // rather than an error, which is the silent under-delivery this
                 // API exists to avoid. Say so where the author can see it.
                 if let Some(tv) = self.generic_type_name(&types[0]) {
-                    let tv = tv.to_string();
+                    // The spelling the header wrote, not the placeholder's key (`T#4` where
+                    // a prepared stdlib already holds a `T`).
+                    let tv = crate::data::Data::type_var_spelling(tv).to_string();
                     diagnostic!(
                         self.lexer,
                         Level::Error,

@@ -6192,6 +6192,9 @@ impl Parser {
                 && self.context != u32::MAX
                 && self.data.definitions[self.context as usize].def_type == DefType::Generic
             {
+                // The placeholder's KEY (`T#2` for a second variable spelled alike) — a caller
+                // may look the definition up by it; a message respells it with
+                // `Data::type_var_spelling`.
                 return Some(&self.data.definitions[d].name);
             }
         }
@@ -8757,6 +8760,17 @@ impl Parser {
                 .is_empty()
     }
 
+    /// A type's name as a message shows it: a type-variable placeholder by the spelling its
+    /// header wrote (`T`, not the `T#4` key a second variable spelled alike is minted under).
+    fn shown_type_name(&self, d_nr: u32) -> String {
+        let name = self.data.def(d_nr).name();
+        if self.data.is_type_var_placeholder(d_nr) {
+            Data::type_var_spelling(name).to_string()
+        } else {
+            name.to_string()
+        }
+    }
+
     /// The bounds of the template `g_nr`'s variable `holder`: the variable's own, recorded on
     /// its placeholder (@PLN165 C2), or — for the first variable of a template whose
     /// placeholder carries none (`LOFT_NO_SEVERAL_VARS=1`, an image cached before) — the
@@ -8795,7 +8809,7 @@ impl Parser {
             if concrete_nr == u32::MAX {
                 continue; // can't check without a concrete type def_nr
             }
-            let concrete_name = self.data.def(concrete_nr).name().to_string();
+            let concrete_name = self.shown_type_name(concrete_nr);
             for iface_nr in self.var_bounds(g_nr, *holder, i == 0) {
                 let iface_name = self.data.def(iface_nr).name().to_string();
                 for why in self.satisfaction_failures(iface_nr, concrete_nr) {
@@ -8822,7 +8836,7 @@ impl Parser {
             } else {
                 concrete
             };
-            self.data.def(concrete).name().to_string()
+            self.shown_type_name(concrete)
         };
         // @PLN125 A2c — the bound declared on an associated type is a promise about the
         // COMPANION, and this is the only place it can be kept: `type Rows: Cursor` says a
