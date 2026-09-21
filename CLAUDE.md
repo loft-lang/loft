@@ -901,7 +901,12 @@ in `0..=u32::MAX`, a byte, a counted range's counter, a one-expression callee su
 no fault can occur — and is the first bisect step for a wrong integer value on native where
 the range proof admitted a plain operator; `LOFT_HOIST_VERIFY=1` compares the plain answer
 with the checked one at every such operator.  It is C120's admissible successor for
-straight-line arithmetic; a parameter or a record/element read is never ranged.
+straight-line arithmetic; a parameter or a record/element read is never ranged.  ⚠ Its
+counted-range-counter clause was INERT until 2026-09-21 (loft#1558): the seeding looked for
+the counter's seed INSIDE the loop and the parser emits it as the statement before, so no
+counted loop was ever ranged.  Nothing showed it, because the pin that should have
+(`range_arith` a4) was recording a plain form the CHAIN GUARD supplied — a pin can borrow
+another rewrite's evidence and read as proof of its own clause.
 **`LOFT_NO_GUARDED_CHAIN=1`** (`@FR-R-GuardedChain`, default-ON, generation time, `--native`
 only) makes a counted loop's index chains keep their checked operators — with it off, chains
 of `+ - *` and negation over literals, the loop's and nested loops' counters, integer locals

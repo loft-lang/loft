@@ -130,7 +130,98 @@ fn a9() {
   assert(z == null, "a9");
 }
 
+// ── The counted-range counter clause (loft#1558) ────────────────────────────
+//
+// `(R-Range)` always listed "a counted range's counters from ranged ends", and until
+// 2026-09-21 no counted loop ever got a range: the seeding looked for the counter's SEED
+// inside the loop, and the parser emits `index = <start>` as the statement BEFORE it.  The
+// clause read as implemented and was inert.  These cells hold it live, and b3/b4 hold it at
+// the exact boundary where being wrong is a WRONG ANSWER rather than a lost optimisation.
+
+// b1 — an exclusive literal range: `i` is 0..=9, so `i * i` cannot fault and runs plain.
+// sum i^2 for i in 0..9 = 285.
+fn b1() {
+  acc = 0;
+  for i in 0..10 { acc = acc + i * i; }
+  println("b1 {acc}");
+  assert(acc == 285, "b1");
+}
+
+// b2 — the INCLUSIVE form reaches its end: `i` is 0..=10, sum i^2 = 385.  An inclusive range
+// whose top were taken as `end - 1` would still answer 385 here (the range is only used to
+// prove the bound), which is why b3 exists.
+fn b2() {
+  acc = 0;
+  for i in 0..=10 { acc = acc + i * i; }
+  println("b2 {acc}");
+  assert(acc == 385, "b2");
+}
+
+// b3 — THE boundary, and the cell that makes the top bound load-bearing.  With `i` up to 9,
+// `i * 1e18` peaks at 9e18 and fits; at 10 it is 1e19 and does not (i64::MAX is 9.223e18).
+// ONE operator, so the chain guard declines the loop on profitability and what this cell
+// pins is the range proof alone.  The inclusive range REACHES 10, so the proof must decline the whole chain and
+// the checked template must answer null on that pass.
+//
+// Under a top bound taken one too LOW (`end - 1` for an inclusive range) the proof would see
+// a maximum of 9e18, admit the multiply, and the plain `wrapping_mul` would answer a wrapped
+// number where the language answers null — so this cell goes red exactly on the
+// under-estimate, which is the only direction that is unsound.
+//
+// The bound is reached by multiplying a SMALL counter by a large constant rather than by
+// squaring a large one, because a counted range whose start LITERAL exceeds i32 is broken on
+// both backends (loft#1559): positive it iterates without end, negative it runs zero times.
+fn b3() {
+  hit = false;
+  for i in 0..=10 {
+    t = i * 1000000000000000000;
+    if t == null { hit = true; }
+  }
+  println("b3 {hit}");
+  assert(hit, "b3");
+}
+
+// b4 — b3's twin one step down: with `i` up to 9 the product peaks at exactly 9e18, fits,
+// and the multiply IS admitted, so nothing is null.  It is the VALUE control for b3; that
+// the clause is live at all is pinned on the EMISSION in tests/range_arith.rs, which is
+// where a dead clause shows.
+fn b4() {
+  hit = false;
+  for i in 0..=9 {
+    t = i * 1000000000000000000;
+    if t == null { hit = true; }
+  }
+  println("b4 {hit}");
+  assert(!hit, "b4");
+}
+
+// b5 — an end that is a `size`, not a literal: `k` is 0..=u32::MAX-1, so `k + 1` fits and
+// runs plain while `k * k` (bound ~1.8e19) would not and keeps its template.  The end is
+// ranged at SEED time, before the fixpoint, which is why a `size` call works here and a
+// local holding one does not.  s = "abcde": sum(k+1) for k in 0..4 = 15.
+fn b5(s: text) -> integer {
+  acc = 0;
+  for k in 0..size(s) { acc = acc + (k + 1); }
+  acc
+}
+
+// b6 — a NESTED loop: both counters are seeded, so `a * b` is plain.
+// sum over a in 0..3, b in 0..2 of a*b = 6 * 3 = 18.
+fn b6() {
+  acc = 0;
+  for a in 0..4 {
+    for b in 0..3 { acc = acc + a * b; }
+  }
+  println("b6 {acc}");
+  assert(acc == 18, "b6");
+}
+
 fn main() {
   a1(); a2(); a3(); a4(); a5(); a6(); a7(); a8(); a9();
+  b1(); b2(); b3(); b4();
+  r5 = b5("abcde");
+  println("b5 {r5}");
+  assert(r5 == 15, "b5");
+  b6();
   println("range arith ok");
 }

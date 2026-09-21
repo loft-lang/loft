@@ -25,16 +25,14 @@ const EXPECTED: &[(&str, [usize; 10])] = &[
     ("n_a2", [0, 0, 2, 3, 0, 0, 0, 0, 0, 1]),
     // a3: the product of two 31-bit masks fits — plain.
     ("n_a3", [0, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
-    // a4: NOTHING here is plain, and the row records a gap rather than a success.  `s + …`
-    // self-steps `s`, so both adds stay checked — that part was always the intent.  But
-    // `i * i` is not plain either: it reads `ops::op_mul_long_nn`, the non-sentinel helper.
-    // `(R-Range)`'s counted-range-counter clause never reaches this loop, because the
-    // seeding asks `hoist::range_counters`, a shape matcher written for the HOIST — it
-    // refuses this loop on statement count, and over this corpus it admits 2 loops of 19.
-    // Until 2026-09-21 the row read a `wrapping_mul` that came from the CHAIN GUARD's plain
-    // copy, not from the range proof, so the pin looked like the clause worked.  The
-    // profitability gate declines this one-operator loop and the borrowed evidence with it.
-    ("n_a4", [0, 0, 0, 0, 2, 0, 0, 0, 0, 0]),
+    // a4: `i * i` over the literal-ended counter is plain, and the counter's own `+ 1` step
+    // with it (its index is ranged -1..=1000); `s + …` self-steps `s`, so both of ITS adds
+    // stay checked.  This row is the one that exposed loft#1558: until 2026-09-21 the
+    // `wrapping_mul` here came from the CHAIN GUARD's plain copy, not from the range proof,
+    // because the counted-counter clause was inert — it looked for the counter's SEED inside
+    // the loop and the parser emits it as the statement BEFORE.  The profitability gate took
+    // the guard away and the borrowed evidence with it, which is how the gap surfaced.
+    ("n_a4", [1, 0, 1, 0, 2, 0, 0, 0, 0, 0]),
     // a5: a parameter is not trusted — both operators keep their templates.
     ("n_a5_f", [0, 0, 0, 0, 1, 1, 0, 0, 0, 0]),
     // a6: the one-expression callees over a non-sentinel argument range: all plain.
@@ -45,6 +43,25 @@ const EXPECTED: &[(&str, [usize; 10])] = &[
     ("n_a8", [1, 0, 0, 0, 0, 1, 0, 0, 0, 0]),
     // a9: the mask of a null keeps its template — the mask rule needs a non-sentinel operand.
     ("n_a9", [0, 0, 0, 0, 1, 0, 0, 0, 0, 0]),
+    // ── the counted-range counter clause (loft#1558) ──
+    // b1: `i` is 0..=9, so `i * i` is plain and so is the counter's own step; `acc + …`
+    // self-steps and stays checked.
+    ("n_b1", [1, 0, 1, 0, 1, 0, 0, 0, 0, 0]),
+    // b2: the same for the INCLUSIVE form, whose end is the counter's top rather than its
+    // top minus one.
+    ("n_b2", [1, 0, 1, 0, 1, 0, 0, 0, 0, 0]),
+    // b3/b4 are the BOUNDARY PAIR and differ only in the range's end, so the multiply's
+    // verdict is a claim about the counter's top bound and nothing else.  b3 reaches 10,
+    // `10 * 1e18` is 1e19 and does not fit, so the multiply DECLINES to its nullable twin —
+    // the plain column is the counter step alone.
+    ("n_b3", [1, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
+    // b4 stops at 9, `9 * 1e18` is exactly 9e18 and fits, so the multiply is ADMITTED.
+    ("n_b4", [1, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
+    // b5: an end that is a `size`, ranged at seed time — `k + 1` is plain beside the
+    // counter's step (two), while `acc + …` self-steps and stays checked.
+    ("n_b5", [2, 0, 0, 0, 1, 0, 0, 0, 0, 0]),
+    // b6: a NESTED loop — both counters are seeded (two plain steps) and `a * b` is plain.
+    ("n_b6", [2, 0, 1, 0, 1, 0, 0, 0, 0, 0]),
 ];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {

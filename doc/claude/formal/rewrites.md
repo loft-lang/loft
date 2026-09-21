@@ -772,6 +772,25 @@ those (class split: those six −35 %, the counters −5 %, the divisions −3 %
 `(R-GuardedChain)` is for.  Switch `LOFT_NO_RANGE_ARITH`; falsifier `LOFT_HOIST_VERIFY=1`
 (`ops::range_verify` compares the plain answer with the checked one at every admitted
 operator).  Cells `tests/scripts/157-range-arith.loft` a1–a9, pins `tests/range_arith.rs`.
+
+**The counted-counter clause was INERT until 2026-09-21** (loft#1558).  It is listed above
+and was written, but no counted loop ever got a range: the seeding looked for the counter's
+SEED inside the loop, and the parser emits `index = <start>` as the statement BEFORE it, so
+`seeds` was always 0.  The seed is now looked for in the whole FUNCTION, which is what makes
+it sound rather than merely wider — `v_seed` counts every non-step `Set` to that counter
+anywhere, so a counter written from a second place declines on `seeds != 1` instead of taking
+the first value it meets.  Nothing made the gap visible, because the one pin that would have
+shown it (a4's `wrapping_mul` on `i * i`) was recording a plain form supplied by
+`(R-GuardedChain)`'s duplicated copy, not by this proof: **a pin can borrow another
+rewrite's evidence and read as proof that its own clause works.**  It surfaced only when the
+guard's profitability gate declined that loop and took the borrowed evidence with it.
+Measured against the clause inert, same lane and invocation: `smooth` +12.9 %, `fill_circle`
++2.9 %, `hash` +1.8 %, `render_marks` +1.5 %, `resize` +1.1 %, every other row within its
+swing.  Cells b1–b6, of which b3/b4 are the BOUNDARY PAIR: they differ only in the range's
+end (`0..=10` against `0..=9`, `i * 1e18` crossing i64::MAX between them), so the multiply's
+verdict is a claim about the counter's top bound and nothing else — a top taken one too LOW
+is the only unsound direction, and it turns b3 red and makes `LOFT_HOIST_VERIFY=1` panic
+naming the operator.
 Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range arm in
 `ops::int_arith`, `Output::op_range`, `non_sentinel::callee_returns_non_sentinel`.
 

@@ -300,7 +300,7 @@ pub fn range_vars(data: &Data, code: &Value, nn: &HashMap<u16, bool>) -> HashMap
     let mut rv: HashMap<u16, Range> = HashMap::new();
     // Counters first: their step names themselves, which the fixpoint below refuses.
     let mut counters: std::collections::HashSet<u16> = std::collections::HashSet::new();
-    seed_counters(data, code, nn, &mut rv, &mut counters);
+    seed_counters(data, code, code, nn, &mut rv, &mut counters);
     loop {
         let mut round: HashMap<u16, Option<Range>> = HashMap::new();
         scan_sets(code, data, nn, &rv, &counters, &mut round);
@@ -359,8 +359,17 @@ fn scan_sets(
 /// form seeds its index one BELOW the start, the two-counter form seeds `next` AT it.  A
 /// counter whose seed or end is unranged is left out, and named in `counters` either way
 /// so the fixpoint never reads its self-step.
+///
+/// `root` is the whole function body and `v` the node being walked.  The seed is looked for
+/// in `root`, NOT in the loop: the parser emits `index = <start>` as the statement BEFORE the
+/// loop, so searching the loop found nothing and every counted loop went unranged — the
+/// clause read as implemented and was inert (loft#1558).  Searching the function is what
+/// makes it sound rather than merely wider: `v_seed` counts EVERY non-step `Set` to that
+/// counter anywhere in the function, so a counter written from a second place declines on
+/// `seeds != 1` instead of taking the first value it meets.
 fn seed_counters(
     data: &Data,
+    root: &Value,
     v: &Value,
     nn: &HashMap<u16, bool>,
     rv: &mut HashMap<u16, Range>,
@@ -378,7 +387,7 @@ fn seed_counters(
         // The seed: the one `Set` to the stepped counter that is not its own step.
         let mut seed: Option<Range> = None;
         let mut seeds = 0usize;
-        v_seed(data, nn, rv, v, stepped, &mut seed, &mut seeds);
+        v_seed(data, nn, rv, root, stepped, &mut seed, &mut seeds);
         if seeds == 1
             && let Some(s) = seed
             && let Some(h) = range(data, nn, rv, rc.hi, 0)
@@ -403,7 +412,7 @@ fn seed_counters(
             rv.insert(rc.loop_var, (lo_var, hi_var.max(lo_var)));
         }
     }
-    v.for_each_child(&mut |c| seed_counters(data, c, nn, rv, counters));
+    v.for_each_child(&mut |c| seed_counters(data, root, c, nn, rv, counters));
 }
 
 /// Find the seed `Set` of a counter: every `Set(counter, e)` whose `e` is not the step

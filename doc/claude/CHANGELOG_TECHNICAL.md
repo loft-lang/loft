@@ -9,6 +9,48 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `(R-Range)`'s counted-counter clause was inert and now is not (2026-09-21)
+
+`--native`, generation time.  The rule has always listed *"a counted range's counters from
+ranged ends"* and the code for it was written, but **no counted loop was ever ranged**: the
+seeding looked for the counter's SEED inside the loop, and the parser emits `index = <start>`
+as the statement BEFORE it, so the count of seeds was always 0 and the clause always declined
+(loft#1558).  The seed is now looked for in the whole FUNCTION.  That is sound rather than
+merely wider: `v_seed` counts EVERY non-step `Set` to that counter anywhere in the function,
+so a counter written from a second place declines on `seeds != 1` instead of taking the first
+value it meets.
+
+**Why nothing saw it.**  The pin that should have — `range_arith` a4's `wrapping_mul` on
+`i * i` — was recording a plain form supplied by `(R-GuardedChain)`'s duplicated copy, not by
+this proof.  A pin can borrow another rewrite's evidence and read as proof that its own clause
+works.  It surfaced only when the guard's profitability gate declined that one-operator loop
+and took the borrowed evidence away.
+
+Measured against the clause inert (drawing lane, best of 3, 500 calls): `smooth` **+12.9 %**,
+`fill_circle` +2.9 %, `hash` +1.8 %, `render_marks` +1.5 %, `resize` +1.1 %; `composite`
+−2.1 % and the rest inside the run-to-run swing.  `parse` does not move, and that is expected:
+its hot chain is `i + k` in a byte comparison where `i` is a PARAMETER, which is never ranged.
+
+Cells b1–b6.  **b3/b4 are the boundary pair** and carry the soundness claim: they differ only
+in the range's end (`0..=10` against `0..=9`, with `i * 1e18` crossing i64::MAX between them),
+so the multiply's verdict is a claim about the counter's top bound and nothing else.  A top
+taken one too low — the only unsound direction — turns b3 red and makes `LOFT_HOIST_VERIFY=1`
+panic naming the operator and both answers.  Both sabotages were run.  The whole 1392-file
+native corpus passes under `LOFT_HOIST_VERIFY=1`, which compares the plain answer against the
+checked one at every admitted operator.
+
+Six pins re-derived, each hand-counted rather than accepted: `range_arith` a4 and b1–b6,
+`guarded_chain` c3/c4/c5 (their counters and, in c4, the whole chain are now plain by the
+RANGE proof in both arms, so the guard converts nothing there), `vector_base` b7/b8 (the
+counter step is the processor's operator, where the non-null helper it asserted would now be
+a regression), and `release_pass_probe`, which loses its second narrow claim: *"l1's multiply
+is a checked helper"* was true only while this clause was inert.
+
+**Found while writing the cells, filed not fixed: loft#1559** — a counted range whose START
+literal exceeds i32 iterates unbounded when positive and **zero times** when negative, on both
+backends, silently.  The boundary cells were reshaped to multiply a small counter by a large
+constant so they do not depend on it.
+
 ### The chain guard declines a one-operator loop (2026-09-21)
 
 `--native`, generation time.  `(R-GuardedChain)` shipped with a cost model that said a short

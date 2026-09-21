@@ -31,11 +31,28 @@ const EXPECTED: &[(&str, [usize; 10])] = &[
     // multiply), checked in the arm (the guard declines at RUN time, so the arm is what
     // runs).  Two operators on purpose: with one it would decline at COMPILE time on
     // profitability and stop testing the run-time decline.
-    ("n_c3", [1, 2, 0, 1, 0, 1, 0, 1, 0, 0]),
-    // c4: `-(a * i) - b` — negation, a product and a subtraction in one chain.
-    ("n_c4", [1, 2, 0, 0, 1, 1, 3, 2, 1, 0]),
+    // Counts rose 2026-09-21 with loft#1558, and each new plain form is hand-checked: the
+    // counter's `index + 1` is now ranged and plain, and the iterator sits INSIDE the loop
+    // so it is duplicated with the body (two), while `2 * i` is plain by the RANGE proof in
+    // both arms (two) rather than by the guard.  The guard's own contribution is unchanged:
+    // `y + (2 * i)` plain in the copy (the third add) and `ops::op_add_int` in the else arm,
+    // which is the checked form this cell exists to reach at run time.
+    ("n_c3", [1, 2, 0, 3, 0, 2, 0, 1, 0, 0]),
+    // c4: `-(a * i) - b` — negation, a product and a subtraction in one chain.  Since
+    // loft#1558 the RANGE proof reaches all of it (`a` and `b` are literal-assigned locals,
+    // `i` runs -3..=2), so every operator is plain in BOTH arms and nothing is left for the
+    // guard to convert.  Hand-counted: 2 arms x (mul, neg, sub) = 2/2/2, plus the two
+    // negated literals emitted once each (`-3`, the range start, and `-579` in the assert)
+    // for 4 negations; the two `_next_1 + 1` steps are the adds; `acc + …` self-steps and
+    // keeps its checked helper in both arms.  The `op_min_int` that stood here is gone
+    // because `- b` is now plain.
+    ("n_c4", [1, 2, 0, 2, 2, 2, 4, 2, 0, 0]),
     // c5: `2 * i + 1` plain; `w + i` keeps its template (w is written in the loop).
-    ("n_c5", [1, 2, 0, 1, 0, 1, 0, 5, 0, 0]),
+    // Hand-counted after loft#1558: 2 arms x (`2 * i` mul, `+ 1` add) plus the 2 counter
+    // steps = 4 adds and 2 multiplies, and 2 arms x (`w + i`, `acc + …`) = 4 checked adds.
+    // The cell's point is unchanged and is the checked column: `w` self-steps, so `w + i`
+    // is still not a leaf and still keeps its helper in both arms.
+    ("n_c5", [1, 2, 0, 4, 0, 2, 0, 4, 0, 0]),
     // c6: `base + 2 * i` with the parameter as the invariant leaf.
     ("n_c6_run", [1, 2, 0, 1, 0, 1, 0, 3, 0, 0]),
     // c7: c6 with the `2 *` removed — ONE admitted operator, so the profitability gate

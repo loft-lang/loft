@@ -126,9 +126,13 @@ fn the_switch_restores_the_header_only_form() {
 fn a_counted_range_steps_non_null_and_a_literal_division_is_one_test() {
     let rust = emit("range", &[]);
     let b7 = body(&rust, "n_b7");
+    // The step was `ops::op_add_long_nn` until loft#1558 made counted-range counters
+    // ranged: `b7`'s index runs -1..=4, so `+ 1` cannot fault and the step is the
+    // processor's operator with no sentinel test at all.  Strictly better than the
+    // non-null helper this asserted, and the helper would now be a REGRESSION here.
     assert!(
-        b7.contains("var_i__index = ops::op_add_long_nn((var_i__index), (1_i64));"),
-        "the counter steps through the non-null add"
+        b7.contains("var_i__index = ((var_i__index).wrapping_add(1_i64));"),
+        "the counter steps through the plain add: {b7}"
     );
     assert!(
         b7.contains("if _d == i64::MIN { i64::MIN } else { _d / (255_i64) }"),
@@ -139,9 +143,11 @@ fn a_counted_range_steps_non_null_and_a_literal_division_is_one_test() {
         "the guarded template is gone"
     );
     let b8 = body(&rust, "n_b8");
+    // As with b7, the step is plain since loft#1558 ranged counted-range counters; the
+    // non-null helper here would now be a regression.
     assert!(
-        b8.contains("var_i__index = ops::op_add_long_nn((var_i__index), (1_i64));"),
-        "an inclusive range to a literal end is admitted"
+        b8.contains("var_i__index = ((var_i__index).wrapping_add(1_i64));"),
+        "an inclusive range to a literal end steps through the plain add: {b8}"
     );
     let off = emit("range_off", &[("LOFT_NO_NN_FAST", "1")]);
     assert!(
