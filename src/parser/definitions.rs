@@ -1685,11 +1685,17 @@ impl Parser {
         // stands for the same bound set — a second bound set is a second variable
         // and needs a placeholder of its own, because the placeholder is what keys
         // the bound-method stubs (loft#1300, loft#1301).
+        // Where this parser has no record of the placeholder — it was minted by another parse
+        // whose Data this one continues (a prepared or cached stdlib) — the placeholder's OWN
+        // recorded bounds decide: reused blind, a `<T>` took a stdlib `<T: Ordered>`'s
+        // placeholder and, once a variable's bounds live on its placeholder (@PLN165 C2), its
+        // bound as well — an unbounded `a == b` compiled and a `boolean` was refused as not
+        // `Ordered`.
         let reusable = existing != u32::MAX
-            && self
-                .type_var_bounds
-                .get(&existing)
-                .is_none_or(|b| *b == bounds_key);
+            && self.type_var_bounds.get(&existing).map_or_else(
+                || self.placeholder_bounds_key(existing) == bounds_key,
+                |b| *b == bounds_key,
+            );
         let holder = if reusable {
             existing
         } else if !self.first_pass {
@@ -1729,6 +1735,18 @@ impl Parser {
             self.type_var_bounds.insert(holder, bounds_key);
         }
         Some(holder)
+    }
+
+    /// The bound-set key (`Parser::type_var_bounds_key`'s spelling) of the bounds a type-variable
+    /// placeholder carries on its own definition — the record that travels with the Data
+    /// (@PLN165 C2), where this parser's own map may not.
+    fn placeholder_bounds_key(&self, holder: u32) -> String {
+        let names: Vec<String> = self.data.definitions[holder as usize]
+            .bounds
+            .iter()
+            .map(|b| self.data.def(*b).name().to_string())
+            .collect();
+        Self::type_var_bounds_key(&names)
     }
 
     #[allow(clippy::too_many_lines)]

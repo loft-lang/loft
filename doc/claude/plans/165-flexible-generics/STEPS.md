@@ -515,6 +515,20 @@ Two variables in a `use`d library, as a member of an overload set (arc B),
 `cargo test --release --test ir_schema_roundtrip`, `--native-release`.  Closes the arc:
 cells graduate, `G-Key` is written into `formal/interfaces.md`.
 
+- **Built** (2026-09-21).  The library cell ([boundary/](probes/boundary/), and
+  `tests/lib/genericlib.loft` behind `a-library-carries-generics-across-the-boundary`) answers
+  on the interpreter, native and `--native-release`; `ir_schema_roundtrip` 8/8.  The GitHub
+  gate on C2 found what the local runs could not: the test HARNESS starts each program from
+  a prepared stdlib, with a parser that has no record of the stdlib's type-variable
+  placeholders, and `bind_header_var` then reused a placeholder by its spelling alone — a
+  `<T>` took a stdlib `<T: Ordered>`'s `T`.  Harmless while bounds lived on the template;
+  once C2 put them on the placeholder, an unbounded `a == b` compiled and a `boolean` was
+  refused as not `Ordered` (`parse_errors`, `issues`, `tests/docs/25-generics` in CI).  Where
+  the parser has no record, the placeholder's own recorded bounds now decide reuse
+  (`placeholder_bounds_key` — the `bounds` field travels with the Data and through the IR
+  codec).  Corpus: IDENTICAL 1646/1646 against C3 (the CLI parse keeps its record).
+  `G-Key` is written into `formal/interfaces.md` and cited at the key's mint and decoder.
+
 ---
 
 ## Arc D — generic structs and enums

@@ -1,0 +1,6 @@
+// @CONTROL
+// @EXPECT: 1:b
+use twolib;
+fn main() {
+  println(pair_up(1, "a"));
+}

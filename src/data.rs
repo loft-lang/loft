@@ -7619,7 +7619,7 @@ impl Data {
         );
     }
 
-    /// The ONE decoder of a length-counted definition key — `t_<LEN><spelling>_<rest>` (a
+    /// The ONE decoder of a length-counted definition key (@FR-G-Key) — `t_<LEN><spelling>_<rest>` (a
     /// method), `f_<LEN><spelling>_<rest>` (a free member of an overload set) or
     /// `i_<LEN><spelling>_<rest>` (an instance of a generic) — and the inverse of
     /// [`Self::mangle_method`], [`Self::mangle_free_overload`] and [`Self::mangle_instance`].  `LEN` is read as
@@ -7660,7 +7660,7 @@ impl Data {
         format!("f_{}{}_{name}", spelling.len(), spelling)
     }
 
-    /// The key of an INSTANCE of a generic (`D-Key`, @PLN165): `i_<LEN><spelling>_<template>`,
+    /// The key of an INSTANCE of a generic (`D-Key`, @PLN165, @FR-G-Key): `i_<LEN><spelling>_<template>`,
     /// `spelling` every bound type's [`Self::identity_spelling`] joined with `#` in the order the
     /// template's variables first appear, `template` the template's own key.  Its own kind,
     /// because an instance is not a method on its first bound type — keyed as one

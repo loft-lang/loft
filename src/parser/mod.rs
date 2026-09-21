@@ -7676,7 +7676,7 @@ impl Parser {
         // bound check are read against (C3 carries them per variable).
         let concrete = var_bindings[0].1.clone();
         let type_nr = self.data.type_def_nr(&concrete);
-        // `D-Key` — the instance's key names its template and every bound type.
+        // `D-Key` (@FR-G-Key) — the instance's key names its template and every bound type.
         let mangled = if crate::keys::instance_key_enabled() {
             let spelling: Vec<String> = var_bindings
                 .iter()

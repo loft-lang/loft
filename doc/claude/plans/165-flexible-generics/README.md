@@ -11,7 +11,8 @@ Tracker: [loft-lang/plans#165](https://github.com/loft-lang/plans/issues/165) (@
 
 **Phase 0 DONE (loft#1536–#1539, on `main`).  Arcs A and B BUILT on branch
 `tuxedo-165-generics` (2026-09-21): A0–A7, B1–B7 and the added B3b, each measured against the
-previous step's binary over the corpus; `G-Select` is in `formal/interfaces.md`.  Arc C next.**
+previous step's binary over the corpus; `G-Select` is in `formal/interfaces.md`.  Arc C
+BUILT too (C1–C4; `G-Key` written).  Arc D next.**
 The design is [DESIGN.md](DESIGN.md) and the ordered work is [STEPS.md](STEPS.md); both were
 written against `9f5cf6a96` with every claim about today's compiler run, and the programs are
 in [`probes/`](probes/), each with the answer it gave at the top.
@@ -21,7 +22,7 @@ in [`probes/`](probes/), each with the answer it gave at the top.
 | phase 0 | today's generics hold `G-Mono` | DONE | no |
 | **A** groundwork | one key decoder, one home for a template's variables, an instance key of its own, a lambda typed under its bindings | BUILT | no |
 | **B** overload sets | a generic beside concrete definitions of its name, ranked | BUILT | no |
-| **C** several variables | a variable in any parameter; `<T, U>` | designed | **all of it** |
+| **C** several variables | a variable in any parameter; `<T, U>` | BUILT | **all of it** |
 | **D** generic types | `struct Grid<T>`, `enum Shape<T>`, methods, the goal program | designed | D9 (several variables on a type) and D11 only |
 | **E** built-ins | `insert` / `sort` / `reverse` / `reserve` / `filter`, then `map` / `reduce`, as library generics | designed | E6–E7 only (`map`, `reduce`) |
 

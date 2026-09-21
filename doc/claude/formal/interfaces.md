@@ -141,6 +141,24 @@ refusal can be broadened later, a choice cannot.  `<T: A + B>` beats `<T: A>`, `
 but a call in it that depends on the variable is decided per instance, so `wrap<U>` calling
 `show(x)` reaches `show(x: Cat)` in the instance at `Cat`.
 
+### Instances — a key of their own, naming the template and every bound type
+
+```
+  (G-Key)   a specialisation of the template g with its variables bound to τ₁ … τₙ — in the
+            order the variables FIRST APPEAR in g's parameters — is keyed
+                i_<LEN><τ₁#τ₂#…#τₙ>_<key of g>
+            each τᵢ spelled by its full identity (a collection's element, an integer's width,
+            a `τ?`'s nullability, a function type's signature).  One key per (template, bound
+            types): two templates of one name, or one template at two types, are two keys;
+            an instance is never keyed as a METHOD on a bound type.
+```
+
+**In words.** `pair_up<K, V>` called at `(integer, text)` and at `(text, integer)` is two
+functions, `i_12integer#text_n_pair_up` and `i_12text#integer_n_pair_up`; the template's own key
+closes the name, so `f<T>(v: vector<T>)` and `f<T>(x: T)` bound at one type are two instances
+too.  Every reader of a key — the emitter's identifier, the display name, the stack trace — goes
+through one decoder, so a new key kind cannot be half-read.
+
 ### Scope — compile-time polymorphism only (decided boundaries)
 
 ```
@@ -168,6 +186,9 @@ deviations, are in the companion [interfaces-history.md](interfaces-history.md).
 
 - **Declare + structurally satisfy (`G-Iface` / `G-Sat`)** — `interface Sizable { fn size(self:
   Self) -> integer }` with `fn size(self: Box) -> integer` makes `Box ⊨ Sizable` — no `impl`.
+- **An instance has a key of its own (`G-Key`)** — `an-instance-is-not-a-method-on-its-bound-type`,
+  `a-generic-declares-several-type-variables` (two instances at swapped types),
+  `a-narrower-pattern-is-the-more-specific-generic` (two templates at one type).
 - **A generic in an overload set (`G-Select`)** — `a-template-takes-the-calls-no-concrete-member-of-its-set-takes`,
   `a-conversion-and-an-instantiation-are-not-ranked`, `a-generic-and-a-method-of-one-name-are-one-set`,
   `a-stronger-bound-is-the-more-specific-generic`, `two-bound-sets-neither-containing-the-other-are-not-ranked`,

@@ -1,0 +1,5 @@
+pub fn pair_up<K: Printable, V: Printable>(k: K, v: V) -> text { "{k}:{v}" }
+pub fn show(a: integer, b: integer) -> text { "int {a} {b}" }
+pub fn show<K: Printable, V: Printable>(a: K, b: V) -> text { "gen {a} {b}" }
+pub fn swap_last<A: Printable, B: Printable>(a: A, bs: vector<B>) -> text { pair_up(bs[len(bs) - 1], a) }
+pub fn keep_both<A, B>(a: A, b: B) -> (A, B) { (a, b) }
