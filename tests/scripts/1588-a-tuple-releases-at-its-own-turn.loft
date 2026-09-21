@@ -17,6 +17,18 @@
 // one structure's members in reverse member order, as a struct's fields are.  The last three
 // cells are controls that were right before: tuples bound without a whole-tuple bind, a local
 // declared after the copy, and the same program with a struct.
+//
+// @falsified-at: a17b2e40a — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1588-a-tuple-releases-at-its-own-turn.patch — interpret exit 1 -> 0,
+//   interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends; every count is
+//   right on both trees, and only the trace's ORDER moves.
+// ARMED: no instrument — each read and hook call is written to this guard's own trace file.
+// WITNESS: on the control all twelve fault cells release out of order and the three controls
+//   hold, on both backends, scored with the assertion replaced by a print: `g1` `R1211,11,12`,
+//   `g9` `…,R9196,96,out,91` (the last pass's member after the loop), `g11` `R1,out,111`.
+// HOLDS: leak, panic, refusals and expectations are unmoved on both trees.
 
 fn trace_path() -> text { return "loft_tuple_own_turn_trace.tmp"; }
 
