@@ -44,31 +44,64 @@ done
 # ns_op and hash per routine from a program's TSV output, keeping the MEDIAN
 # ns_op over $RUNS runs (a loaded box makes any single run — and min-of-runs —
 # swing ~3×; the median is what moves least) and requiring the hash stable
-# across them.  Populates <prefix>_ns and <prefix>_hash by name.
+# across them.  Writes `$LANE_DIR/<prefix>.tsv`, one `routine<TAB>median_ns<TAB>hash`
+# row per routine, read back by `lane_ns` / `lane_hash`.
+#
+# A FILE rather than an associative array on purpose: `declare -A` is bash 4, and
+# stock macOS ships bash 3.2, where this script died at its `declare` line with
+# `declare: -A: invalid option` and produced no measurement at all — on the box
+# the owner works from.  Keying by name in awk needs no shell feature at all.
 run_lane() {
-  local bin="$1" prefix="$2" run name ns hash key
-  local -A samples=()
+  local bin="$1" prefix="$2" run
+  local raw="$LANE_DIR/$prefix.raw"
+  : > "$raw"
   for ((run = 0; run < RUNS; run++)); do
-    while IFS=$'\t' read -r name _ _ ns _ _ hash; do
-      [[ "$name" == "routine" || -z "$hash" ]] && continue
-      samples[$name]="${samples[$name]:-} $ns"
-      local prev="${prefix}_hash[$name]"
-      if [[ -n "${!prev:-}" && "${!prev}" != "$hash" ]]; then
-        echo "FAIL $name: hash unstable across runs of $bin (${!prev} vs $hash)"
+    "$bin" --n "$N" >> "$raw"
+  done
+  awk -F'\t' -v bin="$bin" '
+    $1 == "routine" || $7 == "" { next }
+    {
+      name = $1
+      if (name in seen && hash[name] != $7) {
+        # stderr, not stdout: the stdout of this awk IS the lane TSV, so a FAIL
+        # printed there is swallowed into the file and the run dies with no message.
+        # (No apostrophe in this comment: it would close the awk quote.)
+        printf "FAIL %s: hash unstable across runs of %s (%s vs %s)\n", name, bin, hash[name], $7 > "/dev/stderr"
+        bad = 1
         exit 1
-      fi
-      printf -v "${prefix}_hash[$name]" '%s' "$hash"
-    done < <("$bin" --n "$N")
-  done
-  for key in "${!samples[@]}"; do
-    ns=$(printf '%s\n' ${samples[$key]} | sort -n | awk '{ a[NR] = $1 } END { print a[int((NR + 1) / 2)] }')
-    printf -v "${prefix}_ns[$key]" '%s' "$ns"
-  done
+      }
+      seen[name] = 1
+      hash[name] = $7
+      n[name]++
+      ns[name, n[name]] = $4
+      if (!(name in order)) { order[name] = ++count; byrank[count] = name }
+    }
+    END {
+      if (bad) { exit 1 }
+      for (r = 1; r <= count; r++) {
+        name = byrank[r]
+        # median of this routine sample, insertion sort over a handful of runs
+        for (i = 1; i <= n[name]; i++) { v[i] = ns[name, i] + 0 }
+        for (i = 2; i <= n[name]; i++) {
+          key = v[i]; j = i - 1
+          while (j > 0 && v[j] > key) { v[j + 1] = v[j]; j-- }
+          v[j + 1] = key
+        }
+        printf "%s\t%s\t%s\n", name, v[int((n[name] + 1) / 2)], hash[name]
+      }
+    }
+  ' "$raw" > "$LANE_DIR/$prefix.tsv" || exit 1
 }
+
+# The median ns_op / the hash for one routine of one lane, empty when the lane has
+# no such row (a hash assert inside the program aborts its rows).
+lane_ns()   { awk -F'\t' -v r="$2" '$1 == r { print $2 }' "$LANE_DIR/$1.tsv"; }
+lane_hash() { awk -F'\t' -v r="$2" '$1 == r { print $3 }' "$LANE_DIR/$1.tsv"; }
 
 fail=0
 current_dir=""
-declare -A nat_ns nat_hash rs_ns rs_hash
+LANE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/loft_native_ratio.XXXXXX")"
+trap 'rm -rf "$LANE_DIR"' EXIT
 
 build_and_run() {
   local dir="$ROOT/bench/$1" build
@@ -84,7 +117,6 @@ build_and_run() {
   rm -f "$build/ratio_native.rs"
   # Rust reference lane.
   rustc -O -o "$build/ratio_rs" "$dir/bench.rs"
-  nat_ns=(); nat_hash=(); rs_ns=(); rs_hash=()
   run_lane "$build/ratio_native" nat
   run_lane "$build/ratio_rs" rs
 }
@@ -96,15 +128,17 @@ while IFS=$'\t' read -r dir routine bar; do
     build_and_run "$dir"
     current_dir="$dir"
   fi
-  n_ns="${nat_ns[$routine]:-}"
-  r_ns="${rs_ns[$routine]:-}"
+  n_ns="$(lane_ns nat "$routine")"
+  r_ns="$(lane_ns rs "$routine")"
   if [[ -z "$n_ns" || -z "$r_ns" ]]; then
     echo "FAIL $dir/$routine: missing row (native='${n_ns:-none}' rust='${r_ns:-none}') — a hash assert inside the program aborts its rows"
     fail=1
     continue
   fi
-  if [[ "${nat_hash[$routine]}" != "${rs_hash[$routine]}" ]]; then
-    echo "FAIL $dir/$routine: hash mismatch — native ${nat_hash[$routine]} vs rust ${rs_hash[$routine]}"
+  n_hash="$(lane_hash nat "$routine")"
+  r_hash="$(lane_hash rs "$routine")"
+  if [[ "$n_hash" != "$r_hash" ]]; then
+    echo "FAIL $dir/$routine: hash mismatch — native $n_hash vs rust $r_hash"
     fail=1
     continue
   fi
