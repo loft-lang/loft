@@ -11,11 +11,18 @@
 //
 // Predictions (tests/nested_field.rs pins them): n1-n5 and n12 read or write through the
 // address; n6 reads the sentinel through a null address and drops the write; n8 has no
-// binding, so no address; n9's middle step is an element, which forms no path; n11's
-// whole-record copy is a store writer and declines the view.
+// binding, so no address; n9's `items[1]` step is an element, which forms no path, while
+// `h.bag.n` beside it does; n11's literal assignment is in-place field sets through the
+// address, and its whole-record COPY is a store writer that declines the view.
 //
-// @falsified-at: hand-measured (sabotage, 2026-09-21) — see the receipt below the cells'
-// first run; recorded as MEASURED.
+// @falsified-at: hand-measured (sabotage, 2026-09-21) — the summed offset made 8 too
+// large for every nested access: n1 answers `0 57 0 15` for `5 21 15 15` on --native (its
+// assert fails).  `rec_get`'s own check could NOT see it — it re-reads the store at the
+// offset it is given — so LOFT_HOIST_VERIFY=1 printed the same wrong line; the checking
+// form now walks the path the unrewritten way and compares, and the same sabotage panics
+// "record view read through a field path disagrees with the path walked (through the
+// address 0.0, walked 10.0)".  Restored byte-identically: interpret / native / every
+// switch / every falsifier green.
 
 struct V3 { x: float, y: float, z: float }
 struct Vertex { id: integer, pos: V3, nrm: V3 }

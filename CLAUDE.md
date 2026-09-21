@@ -878,6 +878,15 @@ add (`record_walk` −49 %, 2.98× → 1.50× of Rust; `tuple_kernel` −20 %; `
 variable on native; `LOFT_HOIST_VERIFY=1` compares the address with a fresh `rec_ptr` at
 every use.  An address derived from the element's `DbRef` instead of the index measured
 +46 % SLOWER and is not what ships.
+**`LOFT_NO_NESTED_FIELD=1`** (`@FR-R-RecPtr`'s path clause, default-ON, generation time,
+`--native` only) makes a scalar field reached through INLINE sub-records (`v.pos.x`) rebuild
+its `DbRef` and resolve the store again — with it off, such a field of a record view is read
+and written through the view's address at the summed offset, and a view whose only accesses
+are nested binds an address at all (`mesh_aabb` −47 %, 9.2× → 4.7× of Rust) — and is the
+first bisect step for a wrong value read or written through a nested field path on native;
+`LOFT_HOIST_VERIFY=1` compares every such read with the path walked the unrewritten way.
+Emitter-local on purpose: folded in the parser, the read would become an `(R-Scalar)`
+candidate typed by the PARENT record, which a write through a sub-record view never evicts.
 **`LOFT_NO_LOOP_BUFFER_REUSE=1`** (@PLN157 § V-al, `@FR-R-LoopBuffer`, default-ON,
 generation time) makes a vector local declared `[]` INSIDE a loop re-mint its per-site
 buffer every iteration again — with it off, the buffer's store and its vector survive the

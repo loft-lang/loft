@@ -449,7 +449,13 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  holds (R-Base), the address is `base + idx * size` when `idx` is
                  in range of the header's length, and null past the end (the null
                  record that ends the loop): no DbRef is consulted and no store is
-                 resolved.
+                 resolved.  THE PATH CLAUSE: a scalar field of r reached through
+                 INLINE sub-records — `r.pos.x`, OpGet<K>(OpGetField(r, off(pos), _),
+                 off(x)) — is r's field at the SUMMED offset, a fusable read or
+                 write like a direct one: OpGetField adds a constant to the DbRef's
+                 position and leaves its record alone.  The clause serves the
+                 ADDRESS only; (R-Scalar)'s hoisted scalars keep their
+                 bare-variable key.
 ```
 
 **In words.** 2026-09-18, the drawing library's crossing loop (`pg_cur = pg_table[i]?`,
@@ -500,6 +506,27 @@ answers `0 0 162 135 243` for `0 -7 155 135 250` without it).  Cells
 `tests/scripts/158-iteration-base.loft`, pins `tests/iteration_base.rs`.  Sites:
 `hoist::iteration_head`, `Output::held_iteration_base`, `Output::bind_record_ptr`, the
 `BIND_RECPTR_BASE` rule in `scripts/emission_audit.py`.
+
+*The path clause (2026-09-21, @PLN158 R3).*  Only a DIRECT field of a view counted as a
+fusable access, so a loop over records of records — `for v in m.verts { … v.pos.x … }` —
+bound no address at all, and each of its reads rebuilt a `DbRef` with two offset additions
+and resolved the store (`mesh_aabb`: twelve per vertex, 9.2× the Rust reference).  Priced
+first by hand-binding the sub-record (`p = v.pos`, −52 %); built, 70.3 → 37.4 µs (−47 %),
+4.7×.  What is left there is the null-aware float comparison, which is the language's
+semantics on operands no proof says are non-null.  **Emitter-local by design:** the fold
+is sound for an ADDRESS, which loads the bytes where they are each time.  Done in the
+parser it would turn `v.pos.x` into `OpGetFloat(v, 8)`, a `(R-Scalar)` candidate typed
+`(Vertex, 8)` — and a write through a sub-record view (`p = v.pos; p.x = …`) is typed
+`(V3, 0)`, which never evicts that key: a stale hoisted value, silently (the cell n4 is
+that program).  The falsifier had a hole the sabotage found: `rec_get`'s own check re-reads
+the store at the offset it is given, so an offset summed wrongly (`n1` answering
+`0 57 0 15` for `5 21 15 15`) passed `LOFT_HOIST_VERIFY=1` untouched; the checking form of
+a nested read now walks the path the unrewritten way and compares
+(`vector::path_read_verify`), and the same sabotage panics naming both values.  Switch
+`LOFT_NO_NESTED_FIELD`.  Cells `tests/scripts/158-nested-field.loft`, pins
+`tests/nested_field.rs`.  Sites: `hoist::view_field`, `hoist::record_view_ptr` (the fusable
+use), `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`,
+`vector::path_read_verify`.
 
 ### A stdlib one-op wrapper is its op
 

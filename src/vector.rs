@@ -1157,7 +1157,8 @@ pub fn hoisted_scalar_verify<T: HoistEq>(hoisted: T, fresh: T) -> T {
 pub fn path_read_verify<T: HoistEq>(through: T, walked: T) -> T {
     assert!(
         through.same(walked),
-        "record view read through a field path disagrees with the path walked          (through the address {through:?}, walked {walked:?})"
+        "record view read through a field path disagrees with the path walked \
+         (through the address {through:?}, walked {walked:?})"
     );
     through
 }
