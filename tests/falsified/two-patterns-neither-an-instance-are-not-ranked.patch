@@ -1,0 +1,11 @@
+--- a/src/parser/dispatch.rs
++++ b/src/parser/dispatch.rs
+@@ -555,7 +555,7 @@
+         match (pattern, bounds) {
+             (Ordering::Equal, either) | (either, Ordering::Equal) => Some(either),
+             (by_pattern, by_bounds) if by_pattern == by_bounds => Some(by_pattern),
+-            _ => None,
++            (by_pattern, _) => Some(by_pattern),
+         }
+     }
+ 
