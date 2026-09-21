@@ -575,10 +575,17 @@ and `PreAllocEmitter`, `Stores::push_hoisted`.  Shipped: the consumer's `lock_cu
 
 ```
   (R-Mint)       in a loop admitted under (R-InPlace), the record MINT group over a
-                 pure bare-variable path P that TYPES as a plain vector —
-                 OpPreAllocVector(P) · e = OpNewRecord(P) · writes into e ·
-                 OpFinishRecord(P, e) — is a MOVER like a push, admitted beside
-                 other holders under (R-Alias); P itself earns no holder.  A write
+                 plain vector P — OpPreAllocVector(P) · e = OpNewRecord(P) · writes
+                 into e · OpFinishRecord(P, e) — is a MOVER like a push, admitted
+                 beside other holders under (R-Alias); P itself earns no holder.  P
+                 has two spellings and both are this one notion: a BARE variable that
+                 types as a plain vector (OpNewRecord(v, vector_tp, MAX)), and a vector
+                 FIELD of a plain record (OpNewRecord(R, parent_tp, fld)) — R a pure
+                 path to a variable that types as a plain struct, parent_tp a plain
+                 struct, fld a plain vector no sibling collection shares — whose key is
+                 R's path extended by the field's position: the key a read of R.fld
+                 (OpGetField(R, pos, tp)) already has, so the append and the reads
+                 share ONE holder (R-State).  A write
                  whose target is the FRESH variable e — the literal element's
                  in-place sets, and § V-d's OpCopyRecord delivery of a builder's
                  result into e (its source-free included) — contributes nothing to
@@ -633,6 +640,31 @@ element's field is `(R-Mint)`'s own exemption.  `fronds`' outer loop then reads 
 parameter's twelve fields once per activation: 69.8 → 64.9 µs per call (`tests/scripts/
 157-group-push.loft` g11, g12; trace `LOFT_TRACE_HOIST_DECLINE=1` now also names the node
 that left a write set untyped).  Sites: the owned arms in `hoist::body_writes`.
+*The field clause (2026-09-21, @PLN158 R1):* every builder a consumer writes appends to a
+vector that is a FIELD — `m.verts += […]`, `sc.ops += […]`, `world.items += […]` — and that
+append names the PARENT record and a field number, so the gate, which asked whether the
+operand typed as a vector, never admitted it: the loop held no header, and every element
+paid `record_new` and `record_finish`, each a walk of the type table (`mesh_emit`, the
+portal's worst row: ~1,500 of 2,314 instructions per vertex).  For a plain, unlinked vector
+field those two calls ARE `vector_append` and `vector_finish` on the field's `DbRef` — the
+calls the push header wraps — so the clause changes the gate and the operand the emitters
+write, and nothing in the runtime.  The schema is asked (`Stores::plain_vector_field`): an
+`array` member of a linked group and every keyed kind keep the general append, a struct-enum
+variant's field and a nullable element's payload form no plain parent.  Two things the
+matrix found: the § V-z element-first early mint looked its header up by the bare-variable
+key, so a field-form element would have been minted by its template and finished through
+the header — `0` elements for `20`, silently; both halves now resolve the holder through
+`hoist::mint_target`.  And a NULL root handed to a parameter (`fill(h.ms[5], 3)`) is a
+dropped append on the general path, where the header's finish indexed store 65535:
+`Stores::push_record_finish` returns on an absent owner, as `vector_finish` does.
+Measured: `mesh_emit` 708.7 → 189.5 µs per call (−73 %, the figure its paired-variant
+probe priced), 18.3× → 4.9× of the Rust reference, hashes unchanged.  A field-form group
+OUTSIDE a held header keeps its templates: the parser reserves only for a local vector, and
+`(R-GroupPush)` starts at the reservation.  Switch `LOFT_NO_FIELD_MINT`; falsifier
+`LOFT_HOIST_VERIFY=1`.  Cells `tests/scripts/158-field-mint.loft`, pins
+`tests/field_mint.rs`.  Sites: `hoist::mint_target`, `Stores::plain_vector_field`, the
+registry's `NewRecordEmitter` and `FinishRecordEmitter`, `Output::write_elem_first_mint`,
+`Stores::push_record_finish`.
 
 ### A record append emits through its push header
 

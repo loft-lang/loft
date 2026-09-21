@@ -590,8 +590,11 @@ impl Stores {
     /// `__nullable<S>` redirects to its payload), the field a `Parts::Vector` (an `array`
     /// holds record handles, a keyed kind places records), and no sibling collection
     /// sharing its records — `record_finish` hands a linked group's record to every other
-    /// member, which moves records this field does not name.  Everything else is `None`,
-    /// and the caller keeps the general append, which is always right.
+    /// member, which moves records this field does not name.  A linked group's vector
+    /// member is registered as an `array`, so the kind test already declines it; the
+    /// sibling list is asked as well because it is the fact `record_finish` itself reads.
+    /// Everything else is `None`, and the caller keeps the general append, which is
+    /// always right.
     #[must_use]
     pub fn plain_vector_field(&self, parent_tp: u16, field: u16) -> Option<(u16, u16)> {
         let Parts::Struct(fields) = &self.types.get(parent_tp as usize)?.parts else {

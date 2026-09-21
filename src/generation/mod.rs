@@ -708,6 +708,10 @@ pub struct Output<'a> {
     /// `LOFT_NO_RECORD_PTR=1` — no record view carries its address; every field read and
     /// write resolves the store again.
     pub record_ptr_disabled: bool,
+    /// `LOFT_NO_BASE_RECPTR=1` — a record view bound from an element of a vector whose BASE
+    /// the loop holds resolves the store for its address again (`@FR-R-RecPtr`'s base
+    /// clause off).
+    pub base_rec_ptr_disabled: bool,
     /// `LOFT_TRACE_RECPTR=1` — name every record view bound to an address and every
     /// declined binding with its reason.
     pub recptr_trace: bool,
@@ -1981,6 +1985,7 @@ impl<'a> Output<'a> {
             // One rule: `LOFT_NO_VECTOR_BASE` switches its record clause off with it.
             record_ptr_disabled: std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0")
                 || !crate::keys::vector_base_enabled(),
+            base_rec_ptr_disabled: std::env::var("LOFT_NO_BASE_RECPTR").is_ok_and(|v| v != "0"),
             recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
@@ -3869,10 +3874,21 @@ impl Output<'_> {
         self.output_code_inner(&mut operand, &Value::Var(r))?;
         let operand = String::from_utf8_lossy(&operand).into_owned();
         self.indent(w)?;
-        writeln!(
-            w,
-            "let {name}: *const u8 = vector::rec_ptr(&({operand}), &stores.allocations); //@FR-R-RecPtr record view address for {operand}"
-        )?;
+        // `@FR-R-RecPtr`'s base clause — the binding is the head of `for e in v` over a
+        // vector whose header and element BASE this loop holds: the element is at the base
+        // plus index times size, with no `DbRef` consulted and no store resolved; past the
+        // end the element is the null record, whose address is null.
+        if let Some((header, base, index, size)) = self.held_iteration_base(&stmts[at]) {
+            writeln!(
+                w,
+                "let {name}: *const u8 = if (var_{index} as u64) < u64::from({header}.len) {{ unsafe {{ {base}.add(var_{index} as usize * {size}) }} }} else {{ std::ptr::null() }}; //@FR-R-RecPtr record view address for {operand}, from the held base"
+            )?;
+        } else {
+            writeln!(
+                w,
+                "let {name}: *const u8 = vector::rec_ptr(&({operand}), &stores.allocations); //@FR-R-RecPtr record view address for {operand}"
+            )?;
+        }
         if self.recptr_trace {
             eprintln!(
                 "recptr: {} binds {name} for `{}`",
@@ -3882,6 +3898,24 @@ impl Output<'_> {
         }
         self.rec_ptrs.push(HashMap::from([(r, name)]));
         Ok(true)
+    }
+
+    /// `@FR-R-RecPtr`'s base clause — for a statement that is the head of a vector iteration
+    /// ([`hoist::iteration_head`]) over a path whose header AND element base an enclosing
+    /// frame holds: those two locals, the index variable's name and the element size.
+    fn held_iteration_base(&self, stmt: &Value) -> Option<(String, String, String, u32)> {
+        if self.base_rec_ptr_disabled {
+            return None;
+        }
+        let it = hoist::iteration_head(stmt, self.data)?;
+        let path = hoist::vector_path(self.data, it.vector)?;
+        let header = self.active_vec_header(&path)?.to_owned();
+        let base = self.active_vec_base(&path)?.to_owned();
+        if self.coroutine_persistent_fields.contains_key(&it.index) {
+            return None;
+        }
+        let index = sanitize(self.data.def(self.def_nr).variables().name(it.index));
+        Some((header, base, index, it.size))
     }
 
     /// The tiers the loop hoist runs under, as [`Self::begin_vector_hoist`] passes them —

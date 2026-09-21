@@ -1,0 +1,370 @@
+// @PLN158 R1 — a record append to a vector FIELD of a plain record takes the push header
+// (`@FR-R-Mint`'s field clause, `@FR-R-PushRec`).  `m.verts += [Vertex { … }]` lowers to
+// `OpNewRecord(m, parent_tp, fld)` — the PARENT record and a field number, not a vector —
+// so the mint gate, which asked whether its operand typed as a vector, never admitted it:
+// the loop held no header, and every element paid `record_new` and `record_finish`, each a
+// walk of the runtime's type table.  That was the portal's worst row (`mesh_emit`, 18.3x
+// the Rust reference); with the clause 708.7 -> 189.5 us per call (-73 %), ~4.9x.
+// The interpreter keeps the mint-group ops and is the oracle; every cell prints its values
+// so the two backends can be diffed, and asserts them.  `LOFT_NO_FIELD_MINT=1`,
+// `LOFT_NO_RECORD_PUSH=1`, `LOFT_NO_HEAP_RECORD_PUSH=1`, `LOFT_NO_ELEMENT_FIRST=1` and
+// `LOFT_HOIST_VERIFY=1` must all answer identically.
+//
+// Predictions (tests/field_mint.rs pins them): f1 one header, no template; f2 two headers
+// on ONE root, shared by the nested loop; f4 a parameter root holds a header alone and
+// declines beside another header (`@FR-R-Alias`); f5 a text-field element declines as the
+// bare form does; f6 nested literals land in the fresh slot; f7 a two-field path; f8 a
+// linked group and f9 a keyed field keep the general append; f10 a rebound root declines;
+// f11/f12 a view of the field reads through the runtime beside the header; f13 a callee
+// sees every append; f14 a loop variable as root; f17 the root's own scalar; f18 a prefilled
+// field; f20 under a branch; f21 two per pass; f22 a call's result; f24 a variant's field
+// keeps the general append; f26 a NULL root drops the append; f27 the element-first early
+// mint and its finish share the header; f28/f29 a call-filled element declines whole.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-21) — (a) the element-first early mint
+// made to look its header up by the bare-variable key alone (the form before this clause):
+// f27 answers `0 20 0 0` for `20 20 440 190` on --native — the template mint claims the
+// record behind the header and the finish bumps nothing — and LOFT_HOIST_VERIFY=1 panics
+// "hoisted record-push header is stale at the finish"; (b) before `push_record_finish`
+// returned on an absent owner, f26 panicked on --native indexing store 65535 where the
+// interpreter answers `3 0 3`.  Restored: interpret / native / every switch / every
+// falsifier (LOFT_HOIST_VERIFY, LOFT_POISON_CLAIM, LOFT_POISON, LOFT_STRICT_STORES) green.
+
+struct P { x: integer, y: integer }
+struct M { n: integer, ps: vector<P> }
+struct V { a: integer, b: integer, c: integer }
+struct T { p: integer, q: integer }
+struct Mesh2 { tag: integer, vs: vector<V>, ts: vector<T> }
+struct Named { nm: text, xs: vector<integer>, k: integer }
+struct Reg { items: vector<Named>, cnt: integer }
+struct V3 { vx: float, vy: float, vz: float }
+struct V2 { u: float, v: float }
+struct Vertex { pos: V3, nrm: V3, uv: V2 }
+struct Geo { verts: vector<Vertex>, id: integer }
+struct W { id: integer, m: M }
+struct E { id: integer, v: integer }
+struct G { es: vector<E>, by_id: hash<E[id]> }
+struct S9 { items: sorted<E[id]>, n9: integer }
+struct Hex { h: integer }
+struct Chunk { cx: integer, hexes: vector<Hex> }
+struct Map { chunks: vector<Chunk> }
+enum Shape {
+  Circle { r: integer, limbs: vector<P> },
+  Dot { d: integer }
+}
+
+fn sum_x(v: const vector<P>) -> integer { s = 0; for p in v { s += p.x; } s }
+fn sum_y(v: const vector<P>) -> integer { s = 0; for p in v { s += p.y; } s }
+
+// f1 — a local record root, one vector field, a no-heap element.
+fn f1() {
+  m = M { n: 7, ps: [] };
+  for i in 0..10 { m.ps += [P { x: i, y: i * 2 }]; }
+  println("f1 {len(m.ps)} {sum_x(m.ps)} {sum_y(m.ps)} {m.n}");
+  assert(len(m.ps) == 10 && sum_x(m.ps) == 45 && sum_y(m.ps) == 90 && m.n == 7, "f1");
+}
+
+// f2 — two vector fields of ONE root appended in nested loops, the length of one read
+// inside the loop, an owned vector read beside them; 200 + 150 elements cross several
+// growth steps.  The record is the function's result.
+fn f2_build(n: integer) -> Mesh2 {
+  ox: vector<integer> = [0, 1, 2];
+  m = Mesh2 { tag: 5, vs: [], ts: [] };
+  for i in 0..n {
+    base = len(m.vs);
+    m.vs += [V { a: i, b: base, c: 1 }];
+    for k in 0..3 {
+      m.vs += [V { a: i + ox[k]?, b: base, c: 2 }];
+      m.ts += [T { p: base, q: base + 1 + k }];
+    }
+  }
+  m
+}
+fn f2() {
+  m = f2_build(50);
+  sa = 0; sb = 0; sc = 0;
+  for v in m.vs { sa += v.a; sb += v.b; sc += v.c; }
+  sp = 0; sq = 0;
+  for t in m.ts { sp += t.p; sq += t.q; }
+  println("f2 {len(m.vs)} {len(m.ts)} {sa} {sb} {sc} {sp} {sq} {m.tag}");
+  assert(len(m.vs) == 200 && len(m.ts) == 150, "f2 len");
+  assert(sa == 5050 && sb == 19600 && sc == 350 && sp == 14700 && sq == 15000 && m.tag == 5, "f2 sums");
+  // f16 — a second build is independent of the first.
+  m2 = f2_build(3);
+  println("f2b {len(m2.vs)} {len(m2.ts)} {m2.vs[11]?.b} {len(m.vs)}");
+  assert(len(m2.vs) == 12 && len(m2.ts) == 9 && m2.vs[11]?.b == 8 && len(m.vs) == 200, "f2b");
+}
+
+// f4 — a PARAMETER root: alone it holds the header; beside another header it declines.
+fn f4_fill(m: Mesh2, n: integer) { for i in 0..n { m.ts += [T { p: i, q: i * i }]; } }
+fn f4_copy(m: Mesh2, src: const vector<integer>) {
+  for i in 0..len(src) { m.ts += [T { p: src[i]?, q: i }]; }
+}
+fn f4() {
+  m = Mesh2 { tag: 1, vs: [], ts: [] };
+  f4_fill(m, 40);
+  sp = 0; sq = 0;
+  for t in m.ts { sp += t.p; sq += t.q; }
+  println("f4a {len(m.ts)} {sp} {sq}");
+  assert(len(m.ts) == 40 && sp == 780 && sq == 20540, "f4a");
+  f4_copy(m, [3, 1, 4, 1, 5]);
+  sp = 0; sq = 0;
+  for t in m.ts { sp += t.p; sq += t.q; }
+  println("f4b {len(m.ts)} {sp} {sq}");
+  assert(len(m.ts) == 45 && sp == 794 && sq == 20550, "f4b");
+}
+
+// f5 — an element with a TEXT field: the text set claims a record, so the loop declines
+// (as the bare-variable form does) and both halves keep their templates; built twice.
+fn f5_build(n: integer) -> Reg {
+  r = Reg { items: [], cnt: 0 };
+  for i in 0..n {
+    r.items += [Named { nm: "n{i}", xs: [i, i + 1], k: i }];
+    r.cnt += 1;
+  }
+  r
+}
+fn f5() {
+  acc = 0;
+  for round in 0..2 {
+    r = f5_build(6 + round);
+    ln = 0; s1 = 0; sk = 0;
+    for it in r.items { ln += len(it.nm); s1 += it.xs[1] ?? 0; sk += it.k + len(it.xs); }
+    println("f5 {round} {len(r.items)} {r.cnt} {ln} {s1} {sk}");
+    acc += ln * 1000 + s1 * 10 + r.cnt;
+  }
+  assert(acc == 12216 + 14287, "f5 {acc}");
+}
+
+// f6 — a nested-record element whose inner literals are written into the fresh slot.
+fn f6() {
+  g = Geo { verts: [], id: 9 };
+  for i in 0..8 {
+    f = i as float;
+    g.verts += [Vertex { pos: V3 { vx: f, vy: f * 2.0, vz: f + 0.5 }, nrm: V3 { vx: 0.0, vy: 1.0, vz: 0.0 },
+                         uv: V2 { u: f * 0.25, v: 0.5 } }];
+  }
+  sx = 0.0; sz = 0.0; sn = 0.0; su = 0.0;
+  for v in g.verts { sx += v.pos.vx; sz += v.pos.vz; sn += v.nrm.vy; su += v.uv.u + v.uv.v; }
+  println("f6 {len(g.verts)} {sx} {sz} {sn} {su} {g.id}");
+  assert(len(g.verts) == 8 && sx == 28.0 && sz == 32.0 && sn == 8.0 && su == 11.0 && g.id == 9, "f6");
+}
+
+// f7 — the root is an INLINE sub-record: the path is two fields deep.
+fn f7() {
+  w = W { id: 1, m: M { n: 2, ps: [] } };
+  for i in 0..12 { w.m.ps += [P { x: i, y: 1 }]; }
+  println("f7 {len(w.m.ps)} {sum_x(w.m.ps)} {sum_y(w.m.ps)} {w.id} {w.m.n}");
+  assert(len(w.m.ps) == 12 && sum_x(w.m.ps) == 66 && sum_y(w.m.ps) == 12 && w.id == 1 && w.m.n == 2, "f7");
+}
+
+// f8 — a LINKED group: the append hands every record to the hash too, so it keeps the
+// general path and the keyed view must answer every record.
+fn f8() {
+  g = G { es: [], by_id: [] };
+  for i in 0..9 { g.es += [E { id: i * 3, v: i + 100 }]; }
+  hit = 0;
+  for i in 0..9 { f = g.by_id[i * 3]; if f != null { hit += f.v; } }
+  println("f8 {len(g.es)} {hit} {g.es[8]?.id}");
+  assert(len(g.es) == 9 && hit == 936 && g.es[8]?.id == 24, "f8");
+}
+
+// f9 — a KEYED field: a keyed insert, never a tail append.
+fn f9() {
+  s = S9 { items: [], n9: 4 };
+  for i in 0..7 { s.items += [E { id: (i * 5) % 7, v: i }]; }
+  ord = 0;
+  for e in s.items { ord = ord * 10 + e.id; }
+  println("f9 {len(s.items)} {ord} {s.n9}");
+  assert(len(s.items) == 7 && ord == 123456 && s.n9 == 4, "f9");
+}
+
+// f10 — the root is REBOUND inside the loop: a header would describe the old record.
+fn f10() {
+  t = 0;
+  m = M { n: 0, ps: [] };
+  for i in 0..5 {
+    m = M { n: i, ps: [] };
+    m.ps += [P { x: i, y: 2 }];
+    m.ps += [P { x: i, y: 3 }];
+    t += len(m.ps) + m.ps[1]?.y;
+  }
+  println("f10 {t} {m.n} {len(m.ps)}");
+  assert(t == 25 && m.n == 4 && len(m.ps) == 2, "f10");
+}
+
+// f11 — a VIEW of the field read beside the append: the view's length must follow.
+fn f11() {
+  m = M { n: 0, ps: [] };
+  d = &m.ps;
+  t = 0;
+  for i in 0..10 { m.ps += [P { x: i, y: 0 }]; t += len(d); }
+  println("f11 {t} {len(d)} {d[9]?.x}");
+  assert(t == 55 && len(d) == 10 && d[9]?.x == 9, "f11");
+}
+
+// f13 — a CALLEE reads the length inside the loop: every append is visible to it.
+fn count(m: const M) -> integer { len(m.ps) }
+fn f13() {
+  m = M { n: 0, ps: [] };
+  t = 0;
+  for i in 0..10 { m.ps += [P { x: i, y: 0 }]; t += count(m); }
+  println("f13 {t} {len(m.ps)}");
+  assert(t == 55 && len(m.ps) == 10, "f13");
+}
+
+// f14 — the root is a LOOP VARIABLE (a nullable view of an element).
+fn f14() {
+  mp = Map { chunks: [] };
+  for c in 0..3 { mp.chunks += [Chunk { cx: c, hexes: [] }]; }
+  for c in mp.chunks { for i in 0..4 { c.hexes += [Hex { h: c.cx * 10 + i }]; } }
+  t = 0;
+  for c in mp.chunks { for h in c.hexes { t += h.h; } t += len(c.hexes) * 1000; }
+  println("f14 {t}");
+  assert(t == 12138, "f14");
+}
+
+// f17 — a scalar of the ROOT read in the loop, and written in it.
+fn f17() {
+  m = M { n: 3, ps: [] };
+  for i in 0..10 {
+    m.ps += [P { x: m.n, y: i }];
+    if i == 4 { m.n = 10; }
+  }
+  println("f17 {sum_x(m.ps)} {sum_y(m.ps)} {m.n}");
+  assert(sum_x(m.ps) == 65 && sum_y(m.ps) == 45 && m.n == 10, "f17");
+}
+
+// f18 — the field already holds elements when the loop starts.
+fn f18() {
+  m = M { n: 0, ps: [P { x: 100, y: 0 }] };
+  for i in 0..9 { m.ps += [P { x: i, y: 1 }]; }
+  println("f18 {len(m.ps)} {sum_x(m.ps)} {m.ps[0]?.x} {m.ps[9]?.x}");
+  assert(len(m.ps) == 10 && sum_x(m.ps) == 136 && m.ps[0]?.x == 100 && m.ps[9]?.x == 8, "f18");
+}
+
+// f20 — the append stands under a branch.
+fn f20() {
+  m = M { n: 0, ps: [] };
+  for i in 0..10 { if i % 2 == 0 { m.ps += [P { x: i, y: 1 }]; } }
+  println("f20 {len(m.ps)} {sum_x(m.ps)}");
+  assert(len(m.ps) == 5 && sum_x(m.ps) == 20, "f20");
+}
+
+// f21 — a two-element literal per pass.
+fn f21() {
+  m = M { n: 0, ps: [] };
+  for i in 0..10 { m.ps += [P { x: i, y: 0 }, P { x: i, y: 1 }]; }
+  println("f21 {len(m.ps)} {sum_x(m.ps)} {sum_y(m.ps)}");
+  assert(len(m.ps) == 20 && sum_x(m.ps) == 90 && sum_y(m.ps) == 10, "f21");
+}
+
+// f22 — the element is a CALL's result, delivered into the fresh slot.
+fn mkp(i: integer) -> P { P { x: i, y: i + 1 } }
+fn f22() {
+  m = M { n: 0, ps: [] };
+  for i in 0..10 { m.ps += [mkp(i)]; }
+  println("f22 {len(m.ps)} {sum_x(m.ps)} {sum_y(m.ps)}");
+  assert(len(m.ps) == 10 && sum_x(m.ps) == 45 && sum_y(m.ps) == 55, "f22");
+}
+
+// f24 — the parent is a struct-enum VARIANT: its fields sit behind a tag.
+fn f24() {
+  c = Circle { r: 2, limbs: [] };
+  for i in 0..6 { c.limbs += [P { x: i, y: 7 }]; }
+  t = 0;
+  match c {
+    Circle { r, limbs } => { t = r * 1000 + len(limbs) * 100 + sum_x(limbs); },
+    Dot { d } => { t = d; }
+  }
+  println("f24 {t}");
+  assert(t == 2615, "f24");
+}
+
+
+// f12 — the view is INDEXED inside the appending loop: no header may describe it.
+fn f12() {
+  m = M { n: 0, ps: [P { x: 4, y: 0 }] };
+  d = &m.ps;
+  t = 0;
+  for i in 0..40 { m.ps += [P { x: i, y: 0 }]; t += d[i]?.x + d[0]?.x; }
+  println("f12 {t} {len(d)}");
+  assert(t == 905 && len(d) == 41, "f12");
+}
+
+// f26 — the root is NULL: the append is dropped, exactly as the general path drops it.
+struct Hold { ms: vector<M> }
+fn f26_fill(m: M, k: integer) -> integer { for i in 0..k { m.ps += [P { x: i, y: i }]; } len(m.ps) }
+fn f26() {
+  h = Hold { ms: [M { n: 1, ps: [] }] };
+  a = f26_fill(h.ms[0], 3);
+  b = f26_fill(h.ms[5], 3);
+  println("f26 {a} {b} {len(h.ms[0]?.ps)}");
+  assert(a == 3 && b == 0 && len(h.ms[0]?.ps) == 3, "f26");
+}
+
+// f27 — a heap-owning element whose vector is a per-pass local, built IN the element.
+struct Fr { pts: vector<P>, k: integer }
+struct Reg2 { items: vector<Fr>, cnt: integer }
+fn f27_build(n: integer) -> Reg2 {
+  r = Reg2 { items: [], cnt: 0 };
+  for i in 0..n {
+    pts: vector<P> = [];
+    pts += [P { x: i, y: 1 }, P { x: i + 1, y: 2 }];
+    r.items += [Fr { pts: pts, k: i }];
+    r.cnt += 1;
+  }
+  r
+}
+fn f27() {
+  acc = 0;
+  for round in 0..2 {
+    r = f27_build(20 + round);
+    sx = 0; sk = 0;
+    for it in r.items { sx += sum_x(it.pts) + len(it.pts); sk += it.k; }
+    println("f27 {round} {len(r.items)} {r.cnt} {sx} {sk}");
+    acc += sx * 1000 + sk + r.cnt;
+  }
+  assert(acc == 440210 + 483231, "f27 {acc}");
+}
+
+// f28 — the element's vector is a CALL's result, handed the element's field as its buffer.
+fn mkpts(i: integer) -> vector<P> { out: vector<P> = []; out += [P { x: i, y: 1 }, P { x: i * 2, y: 2 }]; out }
+fn f28_build(n: integer) -> Reg2 {
+  r = Reg2 { items: [], cnt: 7 };
+  for i in 0..n {
+    p = mkpts(i);
+    r.items += [Fr { pts: p, k: i }];
+  }
+  r
+}
+fn f28() {
+  r = f28_build(15);
+  sx = 0;
+  for it in r.items { sx += sum_x(it.pts) + len(it.pts) * 100; }
+  println("f28 {len(r.items)} {sx} {r.cnt}");
+  assert(len(r.items) == 15 && sx == 3315 && r.cnt == 7, "f28");
+}
+
+// f29 — an append in EACH arm of an `if`, one early element shared by both.
+fn f29_build(n: integer) -> Reg2 {
+  r = Reg2 { items: [], cnt: 0 };
+  for i in 0..n {
+    p = mkpts(i);
+    if i % 2 == 0 { r.items += [Fr { pts: p, k: 1 }]; } else { r.items += [Fr { pts: p, k: 100 }]; }
+  }
+  r
+}
+fn f29() {
+  r = f29_build(12);
+  sx = 0; sk = 0;
+  for it in r.items { sx += sum_x(it.pts); sk += it.k; }
+  println("f29 {len(r.items)} {sx} {sk}");
+  assert(len(r.items) == 12 && sx == 198 && sk == 606, "f29");
+}
+
+fn main() {
+  f1(); f2(); f4(); f5(); f6(); f7(); f8(); f9(); f10(); f11(); f13(); f14(); f17(); f18();
+  f20(); f21(); f22(); f24(); f12(); f26(); f27(); f28(); f29();
+  println("field mint ok");
+}

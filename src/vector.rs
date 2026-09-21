@@ -851,7 +851,11 @@ pub fn vec_base(h: &VecHeader, stores: &[Store]) -> *const u8 {
 /// the read through it answers the getter's own sentinel.  Valid exactly while no store
 /// is reallocated and the record is not freed — the block condition the emitter proves
 /// (`hoist::record_view_ptr`); `LOFT_HOIST_VERIFY=1` re-derives it at every use.
+// `#[inline]`: a non-generic `pub fn` is a real call from a `--native` program, which is a
+// separate crate built without LTO — and this one runs once per record view, which for a
+// `for e in v` loop is once per element.
 #[must_use]
+#[inline]
 pub fn rec_ptr(db: &DbRef, stores: &[Store]) -> *const u8 {
     if db.rec == 0 {
         std::ptr::null()

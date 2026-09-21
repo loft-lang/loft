@@ -787,6 +787,14 @@ mint-group templates — with it on, a no-heap struct element is built IN the pu
 next slot (no `record_new` dispatch, no default prefill: the group's writes fill every field
 explicitly) and the finish is the length bump — and is the bisect step for a wrong element,
 default value or length out of a record-appending loop.
+**`LOFT_NO_FIELD_MINT=1`** (`@FR-R-Mint`'s field clause, default-ON, generation time,
+`--native` only) keeps a record append to a vector FIELD (`m.verts += [Vertex { … }]`) on
+its templates — with it off, such an append in a loop holds the push header a bare-variable
+append holds, keyed by the path a read of the field already has (`mesh_emit` −73 %, 18.3× →
+4.9× of Rust); a linked group's member, a keyed field, a variant's field and a nullable
+element's payload keep the general append — and is the first bisect step for a wrong, missing
+or extra element out of a loop that appends records to a record's vector field;
+`LOFT_HOIST_VERIFY=1` re-derives the header at the slot and the finish.
 **`LOFT_NO_GROUP_PUSH=1`** (`@FR-R-GroupPush`, default-ON, generation time, `--native` only)
 makes a record append OUTSIDE any held header keep its templates again — with it off, a
 literal group `v += [pt(a, b), pt(c, d)]` that no enclosing loop holds a header for (a group
