@@ -39,7 +39,7 @@ false FAILs (A7, B5, C8, F2).
 | A3 variable not in first param | FAIL | same — arc C |
 | A4 generic struct | FAIL | `struct Pair<` does not parse — @PLN165 arc D |
 | A5 generic recursive enum | FAIL | arc D, and see A5b |
-| A5b recursive enum, monomorphic | FAIL | refused: *"Enum 'Expr' contains itself … use reference<Expr> to break the cycle"* — and a `reference<Expr>` field then refuses an `Expr` value (**defect 3**) |
+| A5b recursive enum, monomorphic | FAIL | refused: *"Enum 'Expr' contains itself … use reference<Expr> to break the cycle"* — and a `reference<Expr>` field then refuses `&e` (**defect 3**, loft#1579). A `struct Box { e: Expr }` pointed at through `reference<Box>` builds and evaluates a tree on both backends |
 | A6 user `Result` | FAIL | arcs C + D |
 | A7 user-declared interface | **PASS** | the spelling is `fn area(self: Self) -> float` (INTERFACES.md); the probe's `fn area(self)` was the defect |
 | A8 associated type | PARTIAL | the companion works inside a generic (`type Rows: Cursor`, `Self.Rows`, @PLN125 — PASS); naming it in the generic's OWN signature (`-> S.Rows`) does not parse, as INTERFACES.md documents |
@@ -52,7 +52,7 @@ false FAILs (A7, B5, C8, F2).
 | C1 nested constructor pattern | **PASS** | `W { i: A { v: 0 }, k } => …` over a NON-recursive nesting, both backends; the recursive shape is blocked on A5b only |
 | C2 literal in field position | **PASS** | `Circle { r: 0.0 } => "point"` works (the reference page does not show it) |
 | C3 field rename + as-binding | FAIL | `Rect { w: width, h }` → *"Unknown variable 'width'"*; `whole @ Rect {…}` → *"'whole' is not a variant"* |
-| C4 tuple of variants | FAIL | *"expected '_' or a tuple pattern '(...)' in tuple match"* |
+| C4 tuple of variants | **PASS** | `(Playing { hp }, Damage { amount }) if hp <= amount => …` works on both backends; the probe failed only on its arm BODY `Playing { hp }` — field-init shorthand, which loft does not have (`Playing { hp: hp }`) |
 | C5 or-pattern with bindings | FAIL | `Circle { r } \| Sphere { r }` does not parse |
 | C6 exhaustiveness through nesting | PARTIAL | over a non-recursive nesting the hole IS refused, but named by its outer variant (*"not exhaustive — missing: W"*), not as `W { i: B }` |
 | C7 scalar-match hole diagnosed | FAIL | silent, both backends |
@@ -64,18 +64,24 @@ false FAILs (A7, B5, C8, F2).
 | F2 enum-level fallback | FAIL — **defect 1** | on a PLAIN enum every one of the nine combinations answers the fallback, silently; the same program over struct-enum variants dispatches correctly (`R>S`, `P>R`, `S>P`) |
 | G1–G13 regression floor | covered | every cited page IS a test: `tests/docs/*.loft` generate the reference pages and run in `make ci`, so the floor is already gated |
 
-**Score (capability, both backends):** A 1/8 + 1 partial · B 1/6 · C 3/8 + 1 partial · D 0/2 ·
+**Score (capability, both backends):** A 1/8 + 1 partial · B 1/6 · C 4/8 + 1 partial · D 0/2 ·
 E blocked · F 0/2 + 1 partial.
 
-### Defects the measurement surfaced (not yet filed)
+### Defects the measurement surfaced (filed)
 
-1. **Multiple dispatch ignores per-value definitions on a plain enum** — `silent-wrong`. `fn beats(a: Rock, b: Scissors)` on `enum Hand { Rock, Paper, Scissors }` is accepted and never chosen: with an enum-level `beats(a: Hand, b: Hand)` all nine combinations take it; without one, the call is refused although definitions match the runtime values. Struct-enum variants are unaffected. Either the declaration is refused or the dispatcher reads the value.
-2. **A self-referencing lambda is an ICE** — `go = fn(acc: integer, i: integer) -> integer { … go(…) }` inside a function: *"var_pos underflow in fn 'n___lambda_0': variable 'go' … has no assigned slot"*.
-3. **The cycle refusal's own cure does not work** — the refusal says *use reference<Expr>*, and `Add { l: a }` with `a: Expr` into `l: reference<Expr>` is refused as *"Cannot assign ref(Expr)["a"] to field Add.l of type ref(Expr)["??"]"*. So no recursive struct-enum is buildable the way the compiler suggests, which blocks A5, the recursive forms of C1 and C6, and tier E.
+1. **loft#1577 — multiple dispatch ignores per-value definitions on a plain enum** — `silent-wrong`. `fn beats(a: Rock, b: Scissors)` on `enum Hand { Rock, Paper, Scissors }` is accepted and never chosen: with an enum-level `beats(a: Hand, b: Hand)` all nine combinations take it; without one, the call is refused although definitions match the runtime values. Struct-enum variants are unaffected. Either the declaration is refused or the dispatcher reads the value.
+2. **loft#1578 — a self-referencing lambda is an ICE** — `go = fn(acc: integer, i: integer) -> integer { … go(…) }` inside a function: *"var_pos underflow in fn 'n___lambda_0': variable 'go' … has no assigned slot"*.
+3. **loft#1579 — the cycle refusal's own cure does not work.** The real boundary is wider than recursion: ANY struct or variant field typed `reference<E>` over an ENUM refuses `&x` (*"Cannot assign ref(Shape)["c"] to field SH.s of type ref(Shape)["??"]"*), while a reference to a struct works everywhere and a LOCAL `reference<E>` works. So no recursive struct-enum is buildable the way the compiler suggests, which blocks A5, the recursive forms of C1 and C6, and tier E; the struct-wrapper above is the workaround.
+
+Two more surfaced while correcting the reference pages against these results: **loft#1580** —
+`==` on a `value struct` compares identity, not content (DESIGN_DECISIONS C91); **loft#1581** — a
+concrete `!=` ignores a user-defined `OpEq`, so `a == b` and `a != b` are both true. Both
+`silent-wrong`.
 
 ### The document's own claims, corrected
 
-- **Doc bugs 1 and 2 hold** (`stdlib-interfaces.html` renders only its heading; `09-enum` teaches `opposite()` as an if-chain). **3 changes**: D1 is a decided edge, so the page should cite (N-Index) and C80 rather than a tracking issue. **4** is a naming nit. **5 is new**: `26-closures` says *"A '&' parameter cannot be captured at all, in any shape"*, and it can.
+- **Doc bugs 1 and 2 held and are fixed** (`stdlib-interfaces.html` rendered only its heading because the renderer skipped every interface; `09-enum`'s `opposite()` is now a `match`). **3 changed**: D1 is a decided edge, and `25-generics` already states the behaviour and both remedies accurately, so it needs no change. **4 is fixed** ("Match inside an arm"), and `29-match` now also shows the patterns C1, C2 and C4 measured working. **5 was new and is fixed**: `26-closures` said *"A '&' parameter cannot be captured at all, in any shape"*; it now documents (L-CapRef).
+- **There is no `loop` keyword** (LUA_BAR's erratum, measured): A8's probe uses `loop { … }`, so rewrite it with `while true` — and note that a `while` GENERATOR runs eagerly on `--native` (COROUTINE.md CL-9).
 - **The expectation line cannot be `# bar: …`.** `#` opens a loft annotation (`#rust`, `#cwd`), not a comment. Use `// @BAR: pass` / `// @BAR: refuse "…"` / `// @BAR: measure …`, or reuse the corpus's `@EXPECT_ERROR:` and `@EXPECT_WARNING:` (C7's "a warning counts" is exactly `@EXPECT_WARNING`).
 - **A parse failure is a FAIL only when no current spelling expresses the capability.** Rewrite a probe into the existing spelling first (A7, B5, C8, F2 above) — the "syntax is a placeholder" rule cuts both ways.
 - **WONTFIX belongs in DESIGN_DECISIONS.md**, the declined-features register. COMPATIBILITY.md is the breaking-change policy; it is the right home only for the separate decision to make a tier a promise.
@@ -666,7 +672,7 @@ fn main() {
 }
 ```
 
-Measured 2026-09-21: FAIL — *"expected '_' or a tuple pattern"*.
+Measured 2026-09-21: **PASS** both backends in the real spelling — the probe's arm body `Playing { hp }` uses field-init shorthand, which loft does not have; `Playing { hp: hp }` passes every assertion.
 
 Documented 2026-09-21 (before measuring): **FAIL** (tuple elements documented as scalars/`_` only).
 Note @F122 multiple dispatch covers the *dispatch* half of this; it does not
