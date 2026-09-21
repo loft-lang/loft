@@ -50,6 +50,10 @@ pub(crate) struct FieldSinks {
     /// the literal fills — and a member later in the same literal is not known yet when an
     /// earlier one is handled.
     group_fills: Vec<Value>,
+    /// loft#1574 — a collection member of a literal rebuilt into a whole local reads that local,
+    /// or runs code that must precede the release the rebuild makes: the literal is parsed
+    /// again, built apart and bound (`parse_object`'s retry).
+    build_apart: bool,
 }
 
 impl Parser {
@@ -3632,6 +3636,28 @@ impl Parser {
         hits_destination || occurrences > disjoint
     }
 
+    /// Does rebuilding the place `(root, off)` release a record, through a hook, that the
+    /// literal's initialisers must be computed BEFORE?
+    ///
+    /// `(H-Drop)` releases a displaced record *"after the new value has been computed"*.  A
+    /// literal rebuilt into a whole local re-initialises the record first and writes its fields
+    /// after, and the release follows the re-init — so an initialiser that runs code the
+    /// program can observe (a call: a constructor, a logger) ran after the release.  Such a
+    /// literal is built apart and bound, so the release follows the `Set`.
+    ///
+    /// Only a WHOLE local releases here: an element or field destination's old value is the
+    /// author's to release (`H-Drop-Not`).  And only a type that owns a droppable, since for
+    /// any other the order is not observable and the temp would buy nothing.  Asked of the
+    /// type's MEMBERS (`Data::owns_droppable`), not of its cascade, which is synthesized after
+    /// the parse and so cannot answer here.
+    fn rebuild_releases(&self, root: u16, off: u32) -> bool {
+        off == crate::use_analysis::ANY_FIELD
+            && matches!(
+                self.vars.tp(root).base(),
+                Type::Reference(d, _) | Type::Enum(d, true, _) if self.data.owns_droppable(*d)
+            )
+    }
+
     /// @PLN164 C1 step 2 (@FR-R-InPlaceLiteral) — may a record literal be written straight into
     /// this vector ELEMENT place, the way one assigned to a FIELD already is?
     ///
@@ -3990,7 +4016,34 @@ impl Parser {
                 if Self::seeds_lambda_hint(&td) {
                     self.expected = td.clone();
                 }
+                // A COLLECTION member of a literal rebuilt into a whole local is written through
+                // its field after the re-init, so the #330 hoist below cannot reach it: watch
+                // for the author naming the local inside it (see `Parser::rebuild_watch`).
+                let watch = match self_read_root {
+                    Some((xv, off))
+                        if primed
+                            && off == crate::use_analysis::ANY_FIELD
+                            && crate::parser::vectors::is_collection(&td_base)
+                            && matches!(self.vars.tp(xv).base(), Type::Reference(d, _) if *d == td_nr) =>
+                    {
+                        Some(xv)
+                    }
+                    _ => None,
+                };
+                let outer_watch = watch.map(|xv| {
+                    (
+                        std::mem::replace(&mut self.rebuild_watch, xv),
+                        std::mem::replace(&mut self.rebuild_watch_hit, false),
+                    )
+                });
                 let mut t = self.parse_operators(&td, &mut value, &mut parent_tp, 0);
+                if let Some((w, hit)) = outer_watch {
+                    if self.rebuild_watch_hit {
+                        sinks.build_apart = true;
+                    }
+                    self.rebuild_watch = w;
+                    self.rebuild_watch_hit = hit;
+                }
                 // A nested literal primed with its field place must have been parsed WHOLE:
                 // the literal alone, written into the place (`Value::Insert`), and nothing
                 // after it but the next field or the end of the body.  Anything else — a
@@ -4028,6 +4081,18 @@ impl Parser {
             // to alias costs a stack temp, where missing one costs the value: `o.f = S { a:
             // o.f.b, b: o.f.a }` answered `2,2` for `2,1` on both backends, and so did the
             // same swap with the second field read through a call (@PLN164 C1).
+            // `(H-Drop)`'s order: where rebuilding the whole local releases a record, an
+            // initialiser whose evaluation the program can see must run before that release,
+            // which follows the re-init.  Lifting it into a temp is not safe for every value —
+            // a `??` join with a call, copied out of the temp, released twice — so the literal
+            // is built apart and bound instead, on the construction road every value takes.
+            if let Some((xv, xoff)) = self_read_root
+                && self.rebuild_releases(xv, xoff)
+                && matches!(self.vars.tp(xv).base(), Type::Reference(d, _) | Type::Enum(d, true, _) if *d == td_nr)
+                && self.ir_has_user_call(&value)
+            {
+                sinks.build_apart = true;
+            }
             if let Some((xv, xoff)) = self_read_root
                 && !primed
                 && self.reads_place(&value, xv, xoff)
@@ -4437,10 +4502,11 @@ impl Parser {
         // derived from the in-place construction.
         if let Some(v_nr) = in_place_var
             && !self.inplace_hint_declined
-            && !(self.lexer.peek_token(";")
-                || self.lexer.peek_token("}")
-                || self.lexer.peek_token(",")
-                || self.lexer.peek_token(")"))
+            && (sinks.build_apart
+                || !(self.lexer.peek_token(";")
+                    || self.lexer.peek_token("}")
+                    || self.lexer.peek_token(",")
+                    || self.lexer.peek_token(")")))
         {
             self.lexer.revert(link);
             self.vars.clean_work_refs(work);

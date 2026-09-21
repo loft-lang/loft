@@ -427,7 +427,11 @@ drift apart; verified both backends —
 
 ## Deviations
 
-**OPEN: 2.**
+**OPEN: 3.**
+- **D-op-11 (loft#1575)** — a literal handed straight to a call that returns its parameter,
+  bound back in a loop to the local the literal reads, reads the cleared record: the work-ref
+  it is built in keeps naming the binding's store for reuse, and the next pass re-initialises
+  it before the literal reads.
 - **D-op-1** — there is no shared operational semantics — the interpreter is the spec.  Not
   resolvable in a release: two implementations, and nothing links them into one executable
   semantics outside the tests that run both; @PLN89's differential oracle narrows it, and each

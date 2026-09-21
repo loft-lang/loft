@@ -6,7 +6,7 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **2** (D-op-1/2 — both NOT resolvable in a release, below; D-op-5, opened 2026-08-25 — two
+OPEN: **3** (D-op-11, opened 2026-09-21, loft#1575; D-op-1/2 — both NOT resolvable in a release, below; D-op-5, opened 2026-08-25 — two
 spellings of a following null-check still reported, the sibling of a wrapper-list drift fixed the
 same day — CLOSED 2026-09-02; the null-model keystone deviations D-op-null-1/2 both CLOSED 2026-07-10 by
 keystone steps 2–3, D-op-6 opened AND closed 2026-08-29 by the first `@FR-E-NullArg` walk,
@@ -233,6 +233,26 @@ only as strong as the rules above it, not only as strong as its oracle.
   identical on interp and native, before AND after the fix.  So D-op-1 closing would not have
   found this, and the shared front end needs its own oracle rather than a differential one.
   Related: the reference-route discipline in [DEBUG.md](../DEBUG.md).
+
+### D-op-11 — OPEN (2026-09-21, loft#1575): a literal passed to a call that returns it, rebound in a loop to the local it reads, reads the cleared record
+
+- **Violates:** `(E-Asgn)` — the right-hand side reduces to a value before the store updates
+  the binding.
+- **Where:** a literal handed to a call is built in a work-ref, and a call that returns its
+  parameter hands the binding that work-ref's own store.  On the next pass the work-ref
+  rebuilds that store in place (loft#1513's reuse, which `value_struct_alloc` measures) before
+  the literal's read of the binding runs.  `Scopes::scan_set` gives the reuse up for a
+  construction that reads its binding, but `construction_work_ref` sees only a construction
+  bound DIRECTLY, not one that reaches the binding through a call whose return borrows it.
+- **Effect:** `for i in 0..2 { s = me(Bx { v: [i], n: s.n + 1 }) }` with `fn me(self: Bx) ->
+  Bx { self }` answers `n` = 1 for 7 on both backends, silently; so does the method spelling
+  `Bx { … }.me()`.  Right: the literal bound to a local first, a method returning a fresh
+  record, a literal that does not read `s`, and the same statement outside a loop.
+- **Status:** OPEN — found 2026-09-21 while closing `D-rw-5` (rewrites.md), whose own shape
+  binds the construction directly.
+- **Removal:** `(H-Drop-Not)`'s text says `return p` of a parameter hands the caller a copy,
+  so the binding adopting the argument's store is the first question — either the copy is
+  owed, or the adoption must give the reuse up as the direct construction does.
 
 ### D-op-10 — CLOSED (2026-09-17, loft#1548): an appended record literal minted its element before its field expressions ran
 

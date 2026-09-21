@@ -1,0 +1,94 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1573, `@FR-H-Drop` — A REBUILT LOCAL RELEASES WHAT IT DISPLACES AFTER THE NEW VALUE.
+// A reassignment releases the record it displaces *"after the new value has been computed"*.
+// A literal rebuilt into a live local re-initialises the record first and writes its fields
+// after, and the release followed the re-init, so `s = Hold { h: mk(21) }` released 20 before
+// `mk(21)` ran.  Where the type owns a droppable and an initialiser calls a function, the
+// literal is now built apart and bound, so the release follows the new value.
+//
+// Mints (`M<id>`), initialiser effects (`T<id>`), reads (`R<id>`) and releases (`<id>`) are
+// traced in the order they happen, and every expected trace is worked out by hand.  The last
+// three cells are controls that were right before: a rebind from a call, a literal that reads
+// the local, and a nullable local.
+//
+// @falsified-at: 273ebfb0a — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1573-a-rebuilt-local-releases-what-it-displaces-after-the-new-value.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion
+//   failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends; the stores are
+//   right on both trees, and only the trace shows the release running before the new value.
+// ARMED: no instrument — each mint, effect and hook call is written to this guard's own trace file.
+// WITNESS: on the control all eight fault cells release too early and the three controls hold, on
+//   both backends, scored with the assertions replaced by prints: `g1` `M20,20,M21,R21,21`, `g2`
+//   `20,T21,R21,21`, `g4` `M19,19,M20,20,M21,R21,21`.
+// HOLDS: leak, panic, refusals and expectations are unmoved on both trees.
+
+fn trace_path() -> text { return "loft_rebuild_release_order_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct Oh { id: integer }
+fn OpDrop(self: Oh) { note("{self.id}"); }
+struct Ohold { h: Oh }
+struct Obag { v: vector<Oh>, tag: integer }
+struct Onest { inner: Ohold, k: integer }
+enum Oev { Oa { h: Oh }, Ob { n: integer } }
+fn omk(id: integer) -> Oh { note("M{id}"); return Oh { id: id }; }
+fn otick(n: integer) -> integer { note("T{n}"); n }
+fn omkh(id: integer) -> Ohold { return Ohold { h: omk(id) }; }
+
+fn g1() { s = Ohold { h: omk(20) }; s = Ohold { h: omk(21) }; note("R{s.h.id}"); }
+fn g2() { s = Oh { id: 20 }; s = Oh { id: otick(21) }; note("R{s.id}"); }
+fn g3_f() -> Ohold { s = Ohold { h: omk(20) }; s = Ohold { h: omk(21) }; return s; }
+fn g3() { r = g3_f(); note("R{r.h.id}"); }
+fn g4() { s = Ohold { h: omk(19) }; for i in 0..2 { s = Ohold { h: omk(20 + i) }; } note("R{s.h.id}"); }
+fn g5() {
+  e = Oa { h: omk(20) };
+  e = Oa { h: omk(21) };
+  match e { Oa { h } => note("R{h.id}"), _ => {} }
+}
+fn g6() { s = Onest { inner: Ohold { h: omk(20) }, k: 1 }; s = Onest { inner: Ohold { h: omk(21) }, k: 2 }; note("R{s.inner.h.id}"); }
+fn g7() { s = Ohold { h: omk(20) }; if s.h.id > 0 { s = Ohold { h: omk(21) }; } note("R{s.h.id}"); }
+fn g8() { s = Obag { v: [omk(20)], tag: 1 }; s = Obag { v: [omk(21)], tag: 2 }; note("R{s.v[0].id}"); }
+fn c1() { s = Ohold { h: omk(20) }; s = omkh(21); note("R{s.h.id}"); }
+fn c2() { s = Ohold { h: omk(20) }; s = Ohold { h: omk(s.h.id + 1) }; note("R{s.h.id}"); }
+fn c3() { s: Ohold? = Ohold { h: omk(20) }; s = Ohold { h: omk(21) }; note("R{s.h.id}"); }
+
+fn check(nm: text, want: text) {
+  got = drain();
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+fn main() {
+  drain();
+  g1(); check("g1 a member built by a call", "M20,M21,20,R21,21");
+  g2(); check("g2 a bare droppable        ", "T21,20,R21,21");
+  g3(); check("g3 a returned local        ", "M20,M21,20,R21,21");
+  g4(); check("g4 in a loop               ", "M19,M20,19,M21,20,R21,21");
+  g5(); check("g5 an enum variant         ", "M20,M21,20,R21,21");
+  g6(); check("g6 a nested literal        ", "M20,M21,20,R21,21");
+  g7(); check("g7 in an if arm            ", "M20,M21,20,R21,21");
+  g8(); check("g8 a vector member         ", "M20,M21,20,R21,21");
+  c1(); check("c1 control: a call         ", "M20,M21,20,R21,21");
+  c2(); check("c2 control: reads itself   ", "M20,M21,20,R21,21");
+  c3(); check("c3 control: nullable local ", "M20,M21,20,R21,21");
+  println("a rebuilt local releases what it displaces after the new value: every cell holds");
+}

@@ -292,6 +292,14 @@ pub struct Parser {
     ///
     /// One retry, never two: the flag both requests the second parse and stops it asking again.
     pub(crate) inplace_hint_declined: bool,
+    /// The local a literal is being rebuilt into, while one of its COLLECTION members is
+    /// parsed, or `u16::MAX`.  Such a member is written through its field after the record is
+    /// re-initialised, so a read of the local inside it would read the cleared record
+    /// (`(E-Asgn)`: the right-hand side is computed before the store).  `var_usages` sets
+    /// [`Self::rebuild_watch_hit`] when the author names it, and the literal is then built
+    /// apart and bound instead (loft#1574).
+    pub(crate) rebuild_watch: u16,
+    pub(crate) rebuild_watch_hit: bool,
     /// True while parsing the LHS of a tuple destructuring — `(a, b) = expr`.
     /// The names there are BINDINGS, exactly like the `x` in `x = expr`, so a
     /// name that also belongs to a definition must still mint a variable
@@ -1433,6 +1441,8 @@ impl Parser {
             in_format_expr: false,
             prefix_operand: false,
             inplace_hint_declined: false,
+            rebuild_watch: u16::MAX,
+            rebuild_watch_hit: false,
             in_tuple_lhs: false,
             sandbox: crate::sandbox::SandboxConfig::default(),
             def_sandbox: HashMap::new(),
@@ -17116,6 +17126,9 @@ impl Parser {
         }
         if plus {
             self.vars.in_use(vnr, true);
+            if vnr == self.rebuild_watch {
+                self.rebuild_watch_hit = true;
+            }
         } else if self.vars.uses(vnr) > 0 {
             self.vars.in_use(vnr, false);
         }

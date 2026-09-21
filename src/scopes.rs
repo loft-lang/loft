@@ -10296,7 +10296,16 @@ impl Scopes<'_> {
                 self.construction_backing.insert(v, w);
             }
             Some(w) if w != v => {
-                if drop_hook(function, v, data).is_some() {
+                // …and where the construction READS the binding: the reuse rebuilds the
+                // work-ref's store in place on the next pass, and after this `Set` that store
+                // IS the binding's, so a literal computed from the binding would read the
+                // record its own re-init just cleared (`(E-Asgn)`: `s = S { n: s.n + 1 }.f()`
+                // in a loop answered 1 for 7).  Only a self-reading construction gives the
+                // reuse up.
+                if drop_hook(function, v, data).is_some()
+                    || value.reads_var(v)
+                    || value.reads_var(ov)
+                {
                     handoff_disarm.push(v_set(
                         w,
                         Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),

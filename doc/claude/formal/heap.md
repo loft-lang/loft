@@ -597,8 +597,8 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-22` and `D-heap-25` (`D-heap-24`
-closed 2026-09-21, and `D-heap-25` found in its controls; `D-heap-13`
+OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-15` and `D-heap-22` (`D-heap-24` closed
+2026-09-21, and `D-heap-25`, found in its controls, opened and closed the same day; `D-heap-13`
 closed 2026-09-20; `D-heap-16` closed 2026-09-21 together with the three it uncovered,
 `D-heap-18`, `D-heap-19` and `D-heap-20`, each opened and closed that day; `D-heap-14` closed the
 same day, and `D-heap-21` and `D-heap-23` opened and closed with it; `D-heap-22`, `D-heap-21`'s
@@ -674,23 +674,29 @@ CLOSED 2026-09-17, below.
   (`p_v2`).  `p_v1` retired from `D-heap-15`.  Guard
   `tests/scripts/a-moved-collection-releases-its-elements-once.loft`.
 
-### D-heap-25 — OPEN (2026-09-21, loft#1573): a literal rebuilt into a local releases the record it displaces before the new value is computed
+### D-heap-25 — OPENED AND CLOSED (2026-09-21, loft#1573): a literal rebuilt into a local released the record it displaced before the new value was computed
 
 - **Violates:** (H-Drop), its reassignment clause — the release runs *"after the new value has
   been computed"*.
 - **Where:** a literal into a live record local is REBUILT in place: the re-init
   (`OpDatabase(s, tp)`) is a statement of its own and the field writes are the statements after
   it, and `Scopes::in_place_rebuild` places the release right after the re-init.  A literal
-  whose fields read `s` itself is built apart and bound (#330), which is why it is right.
+  whose fields read `s` itself had its initialisers lifted above the re-init (#330), which is
+  why it was right.
 - **Effect:** measured on both backends, identical: `s = Hold { h: mk(20) }; s = Hold { h:
-  mk(21) }` makes 20, releases 20, then makes 21.  The rule's order is make 20, make 21, release
-  20.  The same for a bare droppable (`s = H { id: tick(21) }` releases before `tick` runs), for
-  a local renamed onto the return buffer, and inside a loop.  A rebind from a call, a literal
-  that reads `s`, and a nullable local are in the rule's order.
-- **Status:** OPEN — found 2026-09-21 in `D-heap-24`'s controls.
-- **Removal:** evaluate the field initialisers before the re-init wherever a release follows it
-  — build apart, as the self-reading literal already does, or stage them the way
-  `(R-InPlaceLiteral)` stages a projection's.
+  mk(21) }` made 20, released 20, then made 21.  The rule's order is make 20, make 21, release
+  20.  The same for a bare droppable (`s = H { id: tick(21) }` released before `tick` ran), for
+  a local renamed onto the return buffer, inside a loop, for an enum variant, a nested literal
+  and a rebuild in an `if` arm.  A rebind from a call, a literal that reads `s`, and a nullable
+  local were in the rule's order.
+- **Closed:** where the rebuilt type owns a droppable (`Data::owns_droppable` — its cascade is
+  synthesized only after the parse) and an initialiser calls a user function
+  (`ir_has_user_call`), the literal is built apart and bound (`D-rw-5`'s road), so the release
+  follows the `Set`.  Lifting just that initialiser above the re-init, as #330 lifts a
+  self-reading one, was built first and measured wrong: a `??` join with a call, copied out of
+  its temp, released twice (the drop gate's `q_default_field_*_field`).  On a first bind the
+  road costs nothing, since the binding adopts the work-ref's store.  Guard
+  `tests/scripts/1573-a-rebuilt-local-releases-what-it-displaces-after-the-new-value.loft`.
 
 ### D-heap-24 — OPENED AND CLOSED (2026-09-21, loft#1564): a local lost a record it held when its binding ran more than once, or when it was renamed onto the return buffer
 

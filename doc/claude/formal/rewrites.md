@@ -1444,6 +1444,27 @@ Two instruments check the assumptions, and the chapter is not complete without b
 
 **OPEN: 0** (2026-09-21).
 
+- **D-rw-5 — OPENED AND CLOSED 2026-09-21 (loft#1574).**  `(R-InPlaceLiteral)` rebuilds a
+  literal into a whole local in place, and `(E-Asgn)` says its right-hand side is computed
+  before the store.  The re-init comes first, and #330 lifts an initialiser that reads the
+  local above it.  A COLLECTION member cannot be lifted: it is primed with its field place and
+  its literal writes through the field, after the re-init.  So `s = Bx { v: [s.n + 1], n: 2 }`
+  read the cleared record: `1` for `6`, an element `null`, a comprehension over the local's own
+  vector an empty vector, and with `n` written first, the NEW `n`.  Silent, on both backends,
+  and older than @PLN164.  Found while probing `D-heap-25`'s vector-member cell.  Closed: the
+  parser watches for the author naming the local while such a member is parsed
+  (`Parser::rebuild_watch`, set in `var_usages`).  If it does, the literal is parsed again with
+  the in-place hint declined, built apart and bound — the retry the parser already took for a
+  postfix.  Two defects on that road were fixed with it.  The lexer's interpolation state was
+  not replayed with the tokens, so a literal parsed twice refused every `"…{x}…"` inside it
+  (guard `tests/scripts/a-literal-parsed-twice-keeps-its-interpolations.loft`).  And the
+  work-ref the literal builds into keeps naming the binding's store for reuse on the next pass
+  (loft#1513), so in a loop the re-init cleared the record the literal was about to read:
+  `Scopes::scan_set` now gives that reuse up for a construction that reads its binding.
+  Guard `tests/scripts/1574-a-literal-rebuilt-into-a-local-is-computed-from-the-old-record.loft`.
+  The same read through a call that returns its argument (`s = me(Bx { … s.n … })` in a loop)
+  is `D-op-11`, open.
+
 - **D-rw-4 — OPENED AND CLOSED 2026-09-21 (loft#1571).**  `(R-InPlaceLiteral)` stages every
   field expression that may read the place, and the staging asked whether an expression NAMED
   the destination.  It missed three other names a place has.  For an ELEMENT destination the

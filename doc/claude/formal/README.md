@@ -145,13 +145,14 @@ not duplicate: a deviation entry links to the lens analysis instead of re-explai
 
 ## Areas
 
-**Four deviations are open, in three chapters:** operational.md 2, layout.md 1 and performance.md 1. Every
-other chapter is at 0, and each zero is a claim to re-measure against the oracle line its
-chapter names. The two in operational.md are the **meta** entry, `D-op-1`/`D-op-2` — there
-being no shared operational semantics, the interpreter is the spec and a backend divergence
-is test-caught rather than definition-caught (@PLN89's differential oracle, an open-ended
-instrument and not a one-shot close); every operational chapter below inherits them. The one
-in layout.md is `D-layout-1`: the load-time layout gate refuses a stale store in `store_load`
+**Eleven deviations are open, in five chapters:** heap.md 4, operational.md 3, binding.md 2,
+layout.md 1 and performance.md 1. Every other chapter is at 0, and each zero is a claim to
+re-measure against the oracle line its chapter names. Two of the three in operational.md are
+the **meta** entry, `D-op-1`/`D-op-2` — there being no shared operational semantics, the
+interpreter is the spec and a backend divergence is test-caught rather than
+definition-caught (@PLN89's differential oracle, an open-ended instrument and not a one-shot
+close); every operational chapter below inherits them.  The third is `D-op-11` (loft#1575), a
+literal handed to a call that returns it and read back in a loop. The one in layout.md is `D-layout-1`: the load-time layout gate refuses a stale store in `store_load`
 and the paged loaders, and the durable `store_persist_bind` does not ask it, so it misreads
 (loft#1562). No open row is a rule that
 needs changing. What closed, when, and what it cost is each chapter's `<area>-history.md`;
@@ -180,8 +181,8 @@ chapters do not.
 | [types.md](types.md) | type system + conversion relation (incl. integer width) | **0 open** — the value/null model (DN1–DN6), null-flow (`N-Prop`/`N-Domain`/`N-Cast`/`N-Store`, DN3-Float) and the narrowing rules; register in [types-history.md](types-history.md) |
 | [binding.md](binding.md) | reference types & `&` (the bind-site link law) + the `const` immutability axis | **2 open** (D-bind-38 and D-bind-39, both `(B-Ref-Lvalue)`: a link to a TEXT place is refused, and so is one to an integer place stored in fewer than 8 bytes — the rule says both link) — `&` is a type annotation (`B-Ref-*`), the bind-site link law, `B-Ref-Reshape` (disturbing a container under a live `&` is refused), the two-level `const` model; register in [binding-history.md](binding-history.md) |
 | [grammar.md](grammar.md) | concrete grammar + operator precedence | **0 open** — the 12-level precedence ladder; the prefix-`&`/infix-`&` overload and the non-CFG surface are decided edges (C81/C82) |
-| [operational.md](operational.md) | small-step semantics — the scalar core | **2 open** — the META pair `D-op-1`/`D-op-2` (conformance is differential, not definitional), inherited by every operational chapter below; the rules are complete for the scalar core; register in [operational-history.md](operational-history.md) |
-| [heap.md](heap.md) | store steps — alloc / read / write / **copy** / free / **drop** | **3 open** (D-heap-8, D-heap-9, D-heap-11 — the copy-lease rules `H-Copy-Refuse` / `H-Copy-Lease` / `H-View-Drop`, written 2026-09-15 ahead of their implementation, @PLN163; the revision that judges a copy by its own line reclassified `D-heap-1` and `D-heap-7` into them) — the `DbRef`/`Store` model, the whole-value COPY (C86), `H-Materialise`, the LIFO free discipline whose soundness is ownership.md, the drop hook's one-release-per-resource rule (`H-Drop`: owner's scope end, reassignment, container cascade; a copy moves the responsibility); conformance via the oracle (D-op-1) |
+| [operational.md](operational.md) | small-step semantics — the scalar core | **3 open** — the META pair `D-op-1`/`D-op-2` (conformance is differential, not definitional), inherited by every operational chapter below, and `D-op-11` (loft#1575: a literal passed to a call that returns it, rebound in a loop to the local it reads, reads the cleared record); the rules are complete for the scalar core; register in [operational-history.md](operational-history.md) |
+| [heap.md](heap.md) | store steps — alloc / read / write / **copy** / free / **drop** | **4 open** (D-heap-8 and D-heap-9 — the copy-lease rules `H-Copy-Refuse` / `H-Copy-Lease`, written 2026-09-15 ahead of their implementation, @PLN163; D-heap-15, a value the rules MOVE still copied; D-heap-22, a loop body's vector released a pass late) — the `DbRef`/`Store` model, the whole-value COPY (C86), `H-Materialise`, the LIFO free discipline whose soundness is ownership.md, the drop hook's one-release-per-resource rule (`H-Drop`: owner's scope end, reassignment, container cascade; a copy moves the responsibility); conformance via the oracle (D-op-1) |
 | [layout.md](layout.md) | the store BYTE layout — `layout(τ)` (widths, offsets, packing, the reference encoding) | **1 open** — `D-layout-1` (loft#1562): the durable `store_persist_bind` does not ask the load-time layout gate, so a store written with an older layout is bound and misread; `store_load` and the paged loaders refuse it (@PLN97, loft#700). One format (RAM = disk); nullability is a sentinel, not a layout (`L-Null`); register in [layout-history.md](layout-history.md) |
 | [iteration.md](iteration.md) | `for`, ranges, text iteration, the map/filter/reduce/comprehension combinators | **0 own** — index-cursor `for`, deterministic combinator order, fresh result vector; conformance via the oracle; register in [iteration-history.md](iteration-history.md) |
 | [coroutines.md](coroutines.md) | generators — `yield` / `next`, stackful suspension | **0 own** — lazy one-value-per-advance; a loop body with a SECOND statement is eager on native (a decided edge, loft#836); conformance via the oracle; register in [coroutines-history.md](coroutines-history.md) |

@@ -1,0 +1,154 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1574, `@FR-E-Asgn` over `@FR-R-InPlaceLiteral` — A LITERAL REBUILT INTO A LOCAL IS
+// COMPUTED FROM THE OLD RECORD.  `s = Bx { v: [s.n + 1], n: 2 }` computes its right-hand side
+// before the store, so `s.n` is the old 5 and `v[0]` is 6.  The literal is rebuilt in place:
+// the record is re-initialised first and the fields are written after it.  An initialiser
+// that reads `s` is lifted above the re-init, but a COLLECTION member is written through its
+// field and was not.  So it read the cleared record: `1` for `6`, an element read `null`, a
+// comprehension over the local's own vector an empty vector, and with the field order
+// swapped the NEW `n`.  Such a literal is now built apart and bound.
+//
+// Every expected value is worked out by hand from the old record.  The last four cells are
+// controls that were right before: a read bound to a local first, a local the function
+// returns, a nested literal's vector member, and a member that does not read the local.
+//
+// @falsified-at: 273ebfb0a — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1574-a-literal-rebuilt-into-a-local-is-computed-from-the-old-record.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion
+//   failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends — a wrong value,
+//   with no diagnostic.
+// WITNESS: on the control all eleven fault cells answer wrong and the four controls hold, on both
+//   backends, scored with the assertions replaced by prints: `g1` `1,2,1`, `g2` `null,0,2`, `g5`
+//   `3,2,1` (the NEW `n`), `g7` `0,-1,-1` (an empty vector), `g9` `null(oob),null(oob),0`.
+// HOLDS: leak, panic, refusals and expectations are unmoved on both trees.
+
+struct Bx { v: vector<integer>, n: integer }
+struct Pt { x: integer, y: integer }
+struct Bp { ps: vector<Pt>, n: integer }
+struct Bt { ts: vector<text>, n: integer }
+struct Kv { k: integer, w: integer }
+struct Hb { h: hash<Kv[k]>, n: integer }
+struct Nn { b: Bx, n: integer }
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+/// g1 — a scalar read.
+fn g1() -> text {
+  s = Bx { v: [1], n: 5 };
+  s = Bx { v: [s.n + 1], n: 2 };
+  "{s.v[0]},{s.n},{len(s.v)}"
+}
+/// g2 — an element read and a scalar read.
+fn g2() -> text {
+  s = Bx { v: [1], n: 5 };
+  s = Bx { v: [s.v[0] + 10, s.n], n: 2 };
+  "{s.v[0]},{s.v[1]},{len(s.v)}"
+}
+/// g3 — a struct element built from the local.
+fn g3() -> text {
+  s = Bp { ps: [Pt { x: 1, y: 2 }], n: 5 };
+  s = Bp { ps: [Pt { x: s.n, y: s.ps[0].x }], n: 2 };
+  "{s.ps[0].x},{s.ps[0].y}"
+}
+/// g4 — a text vector: an interpolation and an element read.
+fn g4() -> text {
+  s = Bt { ts: ["a"], n: 5 };
+  s = Bt { ts: ["{s.n}", s.ts[0]], n: 2 };
+  "{s.ts[0]},{s.ts[1]},{len(s.ts)}"
+}
+/// g5 — the scalar field written BEFORE the member: the member still reads the old `n`.
+fn g5() -> text {
+  s = Bx { v: [1], n: 5 };
+  s = Bx { n: 2, v: [s.n + 1] };
+  "{s.v[0]},{s.n},{len(s.v)}"
+}
+/// g6 — in a loop, two passes: n 5 -> 6 -> 7.
+fn g6() -> text {
+  s = Bx { v: [1], n: 5 };
+  for _ in 0..2 { s = Bx { v: [s.n + 1], n: s.n + 1 }; }
+  "{s.v[0]},{s.n}"
+}
+/// g7 — a comprehension over the local's own vector.
+fn g7() -> text {
+  s = Bx { v: [1, 2, 3], n: 5 };
+  s = Bx { v: [for x in s.v { x * 10 }], n: 2 };
+  "{len(s.v)},{s.v[0] ?? -1},{s.v[2] ?? -1}"
+}
+/// g8 — a keyed member.
+fn g8() -> text {
+  s = Hb { h: [Kv { k: 1, w: 3 }], n: 5 };
+  s = Hb { h: [Kv { k: 1, w: s.n }], n: 2 };
+  "{s.h[1].w},{s.n}"
+}
+/// g9 — a comprehension building structs from the local's own vector.
+fn g9() -> text {
+  s = Bp { ps: [Pt { x: 1, y: 2 }], n: 5 };
+  s = Bp { ps: [for p in s.ps { Pt { x: p.y, y: p.x } }], n: 2 };
+  "{s.ps[0].x},{s.ps[0].y},{len(s.ps)}"
+}
+/// g10 — the rebuild in an `if` arm.
+fn g10() -> text {
+  s = Bx { v: [1], n: 5 };
+  if s.n > 0 { s = Bx { v: [s.n + 1], n: 2 }; }
+  "{s.v[0]},{s.n}"
+}
+/// g11 — a length and an element of the local's own vector.
+fn g11() -> text {
+  s = Bx { v: [1, 2], n: 5 };
+  s = Bx { v: [len(s.v), s.v[1]], n: 2 };
+  "{s.v[0]},{s.v[1]}"
+}
+/// c1 — control: the read bound to a local first.
+fn c1() -> text {
+  s = Bx { v: [1], n: 5 };
+  k = s.n;
+  s = Bx { v: [k + 1], n: 2 };
+  "{s.v[0]},{s.n}"
+}
+/// c2 — control: a local the function returns.
+fn c2_f() -> Bx {
+  s = Bx { v: [1], n: 5 };
+  s = Bx { v: [s.n + 1], n: 2 };
+  return s;
+}
+fn c2() -> text {
+  s = c2_f();
+  "{s.v[0]},{s.n},{len(s.v)}"
+}
+/// c3 — control: a nested literal's vector member.
+fn c3() -> text {
+  s = Nn { b: Bx { v: [7], n: 1 }, n: 5 };
+  s = Nn { b: Bx { v: [s.n + 1], n: s.b.n }, n: 2 };
+  "{s.b.v[0]},{s.b.n},{s.n}"
+}
+/// c4 — control: a member that does not read the local.
+fn c4() -> text {
+  k = 9;
+  s = Bx { v: [1], n: 5 };
+  s = Bx { v: [k + 1], n: 2 };
+  "{s.v[0]},{s.n}"
+}
+
+fn main() {
+  ok("g1 scalar read          ", g1(), "6,2,1");
+  ok("g2 element read         ", g2(), "11,5,2");
+  ok("g3 struct element       ", g3(), "5,1");
+  ok("g4 text vector          ", g4(), "5,a,2");
+  ok("g5 field order          ", g5(), "6,2,1");
+  ok("g6 in a loop            ", g6(), "7,7");
+  ok("g7 comprehension        ", g7(), "3,10,30");
+  ok("g8 keyed member         ", g8(), "5,2");
+  ok("g9 struct comprehension ", g9(), "2,1,1");
+  ok("g10 if arm              ", g10(), "6,2");
+  ok("g11 length and element  ", g11(), "2,2");
+  ok("c1 read into a local    ", c1(), "6,2");
+  ok("c2 returned local       ", c2(), "6,2,1");
+  ok("c3 nested literal       ", c3(), "6,1,2");
+  ok("c4 no read of the local ", c4(), "10,2");
+  println("a literal rebuilt into a local is computed from the old record: every cell holds");
+}

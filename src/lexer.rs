@@ -127,6 +127,9 @@ pub struct Lexer {
     peek: LexResult,
     /// Keep the scanned items in memory when a Link is created to return when reverted to this link.
     memory: Vec<LexResult>,
+    /// The string-interpolation state each token in `memory` was scanned in, index for
+    /// index — see [`ScanState`].  A replay restores it with the token.
+    memory_state: Vec<ScanState>,
     /// Keep track of the number of currently in use links
     links: Rc<RefCell<u32>>,
     /// Keep track of where we are in the current memory structure
@@ -189,6 +192,22 @@ pub struct Lexer {
     /// again with nothing of its own to remember.
     backtick_strip: Vec<Option<usize>>,
     diagnostics: Diagnostics,
+}
+
+/// The lexer's string-interpolation state as it stood after a token was scanned: what a
+/// `"…{` opened, and what the `}` that closes it must resume.
+///
+/// It is lexer state and not token content, so the replay buffer has to carry it beside the
+/// tokens.  A literal the parser reads a SECOND time (after a `revert`) is handed its tokens
+/// back from the buffer while these fields still describe wherever the live scan had got to,
+/// and the parser reads them to decide whether a string has a hole: every interpolation in
+/// a re-read literal was refused (`Expect token ]`).
+#[derive(Clone)]
+struct ScanState {
+    mode: Mode,
+    in_format_expr: bool,
+    open_strings: Vec<StrKind>,
+    backtick_strip: Vec<Option<usize>>,
 }
 
 /// The string a `}` returns to when it closes a format expression.
@@ -427,6 +446,7 @@ impl Default for Lexer {
                 pos: 0,
             },
             memory: Vec::new(),
+            memory_state: Vec::new(),
             link: 0,
             links: Rc::new(RefCell::new(0)),
             seek_return: None,
@@ -498,6 +518,7 @@ impl Lexer {
                 pos: 0,
             },
             memory: Vec::new(),
+            memory_state: Vec::new(),
             link: 0,
             links: Rc::new(RefCell::new(0)),
             seek_return: None,
@@ -562,6 +583,9 @@ impl Lexer {
     fn next(&mut self) -> Option<LexResult> {
         if self.link < self.memory.len() {
             let n = self.memory[self.link].clone();
+            if let Some(st) = self.memory_state.get(self.link).cloned() {
+                self.restore_scan_state(st);
+            }
             self.link += 1;
             lex_trace(format_args!(
                 "replay {:?} @ {}:{} (cursor stays {}:{})",
@@ -899,10 +923,36 @@ impl Lexer {
         )
     }
 
+    fn scan_state(&self) -> ScanState {
+        ScanState {
+            mode: self.mode.clone(),
+            in_format_expr: self.in_format_expr,
+            open_strings: self.open_strings.clone(),
+            backtick_strip: self.backtick_strip.clone(),
+        }
+    }
+
+    fn restore_scan_state(&mut self, st: ScanState) {
+        self.mode = st.mode;
+        self.in_format_expr = st.in_format_expr;
+        self.open_strings = st.open_strings;
+        self.backtick_strip = st.backtick_strip;
+    }
+
     pub fn set_mode(&mut self, mode: Mode) {
         if mode == Mode::Formatting && self.peek_token("}") {
             self.mode = mode;
             self.peek = self.resume_string();
+            // The rest of the string is read straight from the source, not through `cont()`,
+            // so the replay buffer still holds the `}` it replaces.  A revert past this point
+            // replayed that `}`, and resuming again read from wherever the live scan had got
+            // to: a literal parsed a second time refused every interpolation inside it
+            // (`Expect token ]`).  The resumed string takes the `}`'s slot, so a replay hands
+            // back what was read.
+            if self.count_links() > 0 && self.link > 0 && self.link <= self.memory.len() {
+                self.memory[self.link - 1] = self.peek.clone();
+                self.memory_state[self.link - 1] = self.scan_state();
+            }
         } else {
             self.mode = mode;
         }
@@ -1727,6 +1777,7 @@ impl Lexer {
             if let Some('.') = self.iter.peek() {
                 self.next_char();
                 self.link = self.memory.len();
+                self.memory_state.push(self.scan_state());
                 self.memory.push(LexResult::new(
                     LexItem::Token("..".to_string()),
                     pos.clone(),
@@ -1765,6 +1816,7 @@ impl Lexer {
                 // the following token (digit, identifier, or whatever)
                 // re-lexes fresh.
                 self.link = self.memory.len();
+                self.memory_state.push(self.scan_state());
                 self.memory.push(LexResult::new(
                     LexItem::Token(".".to_string()),
                     self.position.clone(),
@@ -1984,6 +2036,7 @@ impl Lexer {
             position: self.position.clone(),
         };
         self.memory.clear();
+        self.memory_state.clear();
         self.link = 0;
         self.links = Rc::new(RefCell::new(0));
         self.iter = LINE.chars().collect::<Vec<_>>().into_iter().peekable();
@@ -2204,9 +2257,11 @@ impl Lexer {
         if at_edge && self.link == self.memory.len() {
             if self.count_links() > 0 {
                 self.memory.push(res.clone());
+                self.memory_state.push(self.scan_state());
                 self.link += 1;
             } else {
                 self.memory.clear();
+                self.memory_state.clear();
                 self.link = 0;
             }
         } else if at_edge && self.link < self.memory.len() && self.count_links() > 0 {
@@ -2221,6 +2276,7 @@ impl Lexer {
             // sequence unchanged — the next `cont()` still replays the follow-up — and
             // makes the buffer say what was actually read.
             self.memory.insert(self.link, res.clone());
+            self.memory_state.insert(self.link, self.scan_state());
             self.link += 1;
         }
         self.peek = res;
@@ -2233,6 +2289,7 @@ impl Lexer {
         self.links.replace(cur + 1);
         if self.memory.is_empty() {
             self.memory.push(self.peek.clone());
+            self.memory_state.push(self.scan_state());
             self.link += 1;
         }
         Link {
