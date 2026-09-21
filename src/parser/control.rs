@@ -15827,9 +15827,21 @@ impl Parser {
         ) && !is_literal_backing
             && !self.vars.tp(v).base().is_unknown()
             && !self.vars.tp(v).base().is_equal(ctx.ret.ret_promo_base());
+        // A local DECLARED in a loop body is a new structure on every pass, and each pass's
+        // record dies at that pass's end (`(H-Drop)`, its scope-end clause) — except on the
+        // one path that returns it.  Renamed onto the return buffer it is a parameter by slot,
+        // which the scope end never releases, and every pass refills the same buffer: a search
+        // loop that returned on its third pass, or never, lost every other pass's record, on
+        // both backends.  Unrenamed it is an ordinary loop-body local, released at each pass's
+        // end, and its `return` takes the `Bind` rung below, which copies it into the buffer.
+        // A local declared BEFORE the loop and rebound in it keeps the rename: its rebinds
+        // release what they displace.  A work-ref's lifetime is the buffer pool's to decide,
+        // so only a local the program declared is asked.
+        let declared_in_loop = !is_work_ref && self.vars.created_in_loop(v) != u16::MAX;
         let allow_rename = !(bound_already
             || wrong_shape_for_buffer
             || reassigned
+            || declared_in_loop
             || returns_own_field
             || bound_to_vector_join
             || views_local

@@ -1,0 +1,176 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 9649e6729..1fab39d6b 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -15827,21 +15827,9 @@ impl Parser {
+         ) && !is_literal_backing
+             && !self.vars.tp(v).base().is_unknown()
+             && !self.vars.tp(v).base().is_equal(ctx.ret.ret_promo_base());
+-        // A local DECLARED in a loop body is a new structure on every pass, and each pass's
+-        // record dies at that pass's end (`(H-Drop)`, its scope-end clause) — except on the
+-        // one path that returns it.  Renamed onto the return buffer it is a parameter by slot,
+-        // which the scope end never releases, and every pass refills the same buffer: a search
+-        // loop that returned on its third pass, or never, lost every other pass's record, on
+-        // both backends.  Unrenamed it is an ordinary loop-body local, released at each pass's
+-        // end, and its `return` takes the `Bind` rung below, which copies it into the buffer.
+-        // A local declared BEFORE the loop and rebound in it keeps the rename: its rebinds
+-        // release what they displace.  A work-ref's lifetime is the buffer pool's to decide,
+-        // so only a local the program declared is asked.
+-        let declared_in_loop = !is_work_ref && self.vars.created_in_loop(v) != u16::MAX;
+         let allow_rename = !(bound_already
+             || wrong_shape_for_buffer
+             || reassigned
+-            || declared_in_loop
+             || returns_own_field
+             || bound_to_vector_join
+             || views_local
+diff --git b/src/scopes.rs a/src/scopes.rs
+index a054df571..1848e6c44 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -9448,15 +9448,8 @@ impl Scopes<'_> {
+                     self.drop_transferred.extend(early);
+                 }
+                 let ls = self.convert(lp, function, data, false);
+-                // A local owned on entry to the loop AND at the end of its body is owned after
+-                // it, whether the body ran no passes or many, so it keeps its entry — at the
+-                // depth it had on entry.  Dropped for a body that REBOUND it (a changed depth),
+-                // a rebind after the loop released nothing for the last pass's record.  A local
+-                // whose body assignments mix owning and viewing releases through its owner
+-                // witness instead (loft#1336), which `displaced_drop` asks first.
+-                let owned_after_body = std::mem::replace(&mut self.owned_refs, owned_before);
+                 self.owned_refs
+-                    .retain(|k, _| owned_after_body.contains_key(k));
++                    .retain(|k, depth| owned_before.get(k) == Some(depth));
+                 self.view_backing
+                     .retain(|k, b| views_before.get(k) == Some(b));
+                 self.construction_backing
+@@ -11559,18 +11552,6 @@ impl Scopes<'_> {
+         if self.var_scope.get(&v) == Some(&self.scope) {
+             self.drop_transferred.remove(&v);
+         }
+-        // …and what it built is the latest assignment's record, so the next reassignment
+-        // displaces a record this frame owns (@FR-O-Latest).  A plain local records this at
+-        // its first `Set`; a local promoted onto the return buffer is first built by this
+-        // guarded statement instead, and without the record `s = S {…}; s = S {…}` released
+-        // nothing for the record it displaced.  Recorded AFTER the snapshot above, which is
+-        // what keeps the caller's offered record at entry untouched.
+-        if matches!(
+-            function.tp(v).base(),
+-            Type::Reference(_, _) | Type::Enum(_, true, _)
+-        ) {
+-            self.owned_refs.insert(v, self.loops.len());
+-        }
+         // What the rebuilt store holds from here on is its own to release again, whatever an
+         // earlier copy moved out of it — `@FR-O-Latest` for a store rebuilt in place, which is
+         // no `Set` for `scan_set` to retire.  After the snapshot, which read the flag.
+@@ -11918,18 +11899,6 @@ impl Scopes<'_> {
+             for &h in &hoist {
+                 self.put_scope(h);
+                 self.var_order.push(h);
+-                // The pre-init holds nothing, and every later pass of the loop reaches the
+-                // local's binding holding what the pass before bound — so that binding displaces
+-                // a record this frame owns.  Recorded as owned for the reason a first `Set`
+-                // records it (@FR-O-Latest): without it the binding released nothing, and every
+-                // pass but the last lost its record.  The release is guarded on the record being
+-                // live, so the first pass, which displaces the null, releases nothing.
+-                if matches!(
+-                    function.tp(h).base(),
+-                    Type::Reference(_, _) | Type::Enum(_, true, _)
+-                ) {
+-                    self.owned_refs.insert(h, self.loops.len());
+-                }
+                 ls.push(if matches!(function.tp(h), Type::Text(_)) {
+                     v_set(h, Value::Text(String::new()))
+                 } else {
+diff --git b/src/use_analysis.rs a/src/use_analysis.rs
+index d566b65cc..2aeade55e 100644
+--- b/src/use_analysis.rs
++++ a/src/use_analysis.rs
+@@ -244,10 +244,6 @@ pub(crate) struct OpSets {
+     pub(crate) conditional_ref_frees: std::sync::Arc<HashSet<u32>>,
+     /// `OpFreeText` — the text release, or `u32::MAX` where the table has none.
+     pub(crate) text_free: u32,
+-    /// The functions a drop site calls — a type's `OpDrop` hook and its cascades
+-    /// ([`Data::is_drop_function`]).  A release, like the frees above, and never a use of what
+-    /// it releases.
+-    pub(crate) drop_functions: std::sync::Arc<HashSet<u32>>,
+ }
+ 
+ impl OpSets {
+@@ -256,7 +252,6 @@ impl OpSets {
+     pub(crate) fn build(data: &Data) -> Self {
+         let mut write_first_arg = HashSet::new();
+         let mut lengths = HashSet::new();
+-        let mut drop_functions = HashSet::new();
+         for d in 0..data.definitions() {
+             let n = data.def(d).name();
+             if is_first_arg_write_name(n) {
+@@ -265,9 +260,6 @@ impl OpSets {
+             if is_length_op_name(n) {
+                 lengths.insert(d);
+             }
+-            if data.is_drop_function(d) {
+-                drop_functions.insert(d);
+-            }
+         }
+         let nrs = |names: &[&str]| -> HashSet<u32> {
+             names
+@@ -300,7 +292,6 @@ impl OpSets {
+             unconditional_ref_frees: std::sync::Arc::new(unconditional_ref_frees),
+             conditional_ref_frees: std::sync::Arc::new(conditional_ref_frees),
+             text_free,
+-            drop_functions: std::sync::Arc::new(drop_functions),
+         }
+     }
+ }
+@@ -518,11 +509,7 @@ struct Uses {
+     get_field: u32,
+     op_append: u32,
+     op_database: u32,
+-    /// Every op that RELEASES its first argument ([`OpSets::frees`]) — scope machinery, never a
+-    /// use of what it releases.
+-    frees: std::sync::Arc<HashSet<u32>>,
+-    /// The drop hooks and cascades ([`OpSets::drop_functions`]) — scope machinery too.
+-    drop_functions: std::sync::Arc<HashSet<u32>>,
++    op_free: u32,
+     /// @PLN90 — `OpCopyRecord` def_nr: a record deep-copy (`v[i] = e`, a `?? E{…}` default
+     /// element, a struct copy). Not append-based, so the var-buffer / construction /
+     /// return-buffer branches never see it; recorded here so the decision covers it.
+@@ -762,21 +749,11 @@ impl Uses {
+                 }
+                 self.loop_depth -= 1;
+             }
+-            // Scope machinery, not a user mutation: a free of `x` or `Drop(x)` must not
+-            // count as a use of `x` (a free placed AFTER the last read is exactly what we
+-            // want; the scope pass repositions it post-elision anyway). Visit nothing —
+-            // recursing would mark the arg `Other`.  Every spelling of a free, not the plain
+-            // one alone: a `return x` of a loop-body local ends with `OpFreeRefIfDistinct(x,
+-            // …)`, and read as a later use it turned the move into a copy advice claiming
+-            // `x` was "still used after this point".  The release through the type's hook is
+-            // the same machinery — `if OpConvBoolFromRef(x) hook(x) else null`, liveness test
+-            // included — and the scope pass puts a loop-body local's at the pass end, AFTER a
+-            // `return x` in the pass in program order although no path reaches both.
+-            Value::Call(d, _) if self.frees.contains(d) || self.drop_functions.contains(d) => {}
+-            Value::If(_, t, e)
+-                if matches!(e.unspan(), Value::Null)
+-                    && matches!(t.unspan(), Value::Call(d, _) if self.drop_functions.contains(d)) =>
+-                {}
++            // Scope machinery, not a user mutation: `OpFreeRef(x)` / `Drop(x)` must
++            // not count as a non-reader use of `x` (a free placed AFTER the last
++            // read is exactly what we want; the scope pass repositions it post-
++            // elision anyway). Visit nothing — recursing would mark the arg `Other`.
++            Value::Call(d, _) if *d == self.op_free => {}
+             Value::Drop(_) => {}
+             Value::Set(v, rhs) => {
+                 *self.def_count.entry(*v).or_insert(0) += 1;
+@@ -933,8 +910,7 @@ fn collect_uses(code: &Value, data: &Data, survival_on: bool) -> Uses {
+         get_field: data.def_nr("OpGetField"),
+         op_append: data.def_nr("OpAppendVector"),
+         op_database: data.def_nr("OpDatabase"),
+-        frees: std::sync::Arc::clone(&ops.frees),
+-        drop_functions: std::sync::Arc::clone(&ops.drop_functions),
++        op_free: data.def_nr("OpFreeRef"),
+         op_copy_record: data.def_nr("OpCopyRecord"),
+         projections: std::sync::Arc::clone(&ops.projections),
+         value_readers: std::sync::Arc::clone(&ops.value_readers),

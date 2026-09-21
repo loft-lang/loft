@@ -9448,8 +9448,15 @@ impl Scopes<'_> {
                     self.drop_transferred.extend(early);
                 }
                 let ls = self.convert(lp, function, data, false);
+                // A local owned on entry to the loop AND at the end of its body is owned after
+                // it, whether the body ran no passes or many, so it keeps its entry — at the
+                // depth it had on entry.  Dropped for a body that REBOUND it (a changed depth),
+                // a rebind after the loop released nothing for the last pass's record.  A local
+                // whose body assignments mix owning and viewing releases through its owner
+                // witness instead (loft#1336), which `displaced_drop` asks first.
+                let owned_after_body = std::mem::replace(&mut self.owned_refs, owned_before);
                 self.owned_refs
-                    .retain(|k, depth| owned_before.get(k) == Some(depth));
+                    .retain(|k, _| owned_after_body.contains_key(k));
                 self.view_backing
                     .retain(|k, b| views_before.get(k) == Some(b));
                 self.construction_backing
@@ -11552,6 +11559,18 @@ impl Scopes<'_> {
         if self.var_scope.get(&v) == Some(&self.scope) {
             self.drop_transferred.remove(&v);
         }
+        // …and what it built is the latest assignment's record, so the next reassignment
+        // displaces a record this frame owns (@FR-O-Latest).  A plain local records this at
+        // its first `Set`; a local promoted onto the return buffer is first built by this
+        // guarded statement instead, and without the record `s = S {…}; s = S {…}` released
+        // nothing for the record it displaced.  Recorded AFTER the snapshot above, which is
+        // what keeps the caller's offered record at entry untouched.
+        if matches!(
+            function.tp(v).base(),
+            Type::Reference(_, _) | Type::Enum(_, true, _)
+        ) {
+            self.owned_refs.insert(v, self.loops.len());
+        }
         // What the rebuilt store holds from here on is its own to release again, whatever an
         // earlier copy moved out of it — `@FR-O-Latest` for a store rebuilt in place, which is
         // no `Set` for `scan_set` to retire.  After the snapshot, which read the flag.
@@ -11899,6 +11918,18 @@ impl Scopes<'_> {
             for &h in &hoist {
                 self.put_scope(h);
                 self.var_order.push(h);
+                // The pre-init holds nothing, and every later pass of the loop reaches the
+                // local's binding holding what the pass before bound — so that binding displaces
+                // a record this frame owns.  Recorded as owned for the reason a first `Set`
+                // records it (@FR-O-Latest): without it the binding released nothing, and every
+                // pass but the last lost its record.  The release is guarded on the record being
+                // live, so the first pass, which displaces the null, releases nothing.
+                if matches!(
+                    function.tp(h).base(),
+                    Type::Reference(_, _) | Type::Enum(_, true, _)
+                ) {
+                    self.owned_refs.insert(h, self.loops.len());
+                }
                 ls.push(if matches!(function.tp(h), Type::Text(_)) {
                     v_set(h, Value::Text(String::new()))
                 } else {

@@ -597,7 +597,8 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-22` and `D-heap-24` (`D-heap-13`
+OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-22` and `D-heap-25` (`D-heap-24`
+closed 2026-09-21, and `D-heap-25` found in its controls; `D-heap-13`
 closed 2026-09-20; `D-heap-16` closed 2026-09-21 together with the three it uncovered,
 `D-heap-18`, `D-heap-19` and `D-heap-20`, each opened and closed that day; `D-heap-14` closed the
 same day, and `D-heap-21` and `D-heap-23` opened and closed with it; `D-heap-22`, `D-heap-21`'s
@@ -673,20 +674,63 @@ CLOSED 2026-09-17, below.
   (`p_v2`).  `p_v1` retired from `D-heap-15`.  Guard
   `tests/scripts/a-moved-collection-releases-its-elements-once.loft`.
 
-### D-heap-24 — OPEN (2026-09-21, loft#1564): a local returned on one path loses the record it held on a path that did not return
+### D-heap-25 — OPEN (2026-09-21, loft#1573): a literal rebuilt into a local releases the record it displaces before the new value is computed
+
+- **Violates:** (H-Drop), its reassignment clause — the release runs *"after the new value has
+  been computed"*.
+- **Where:** a literal into a live record local is REBUILT in place: the re-init
+  (`OpDatabase(s, tp)`) is a statement of its own and the field writes are the statements after
+  it, and `Scopes::in_place_rebuild` places the release right after the re-init.  A literal
+  whose fields read `s` itself is built apart and bound (#330), which is why it is right.
+- **Effect:** measured on both backends, identical: `s = Hold { h: mk(20) }; s = Hold { h:
+  mk(21) }` makes 20, releases 20, then makes 21.  The rule's order is make 20, make 21, release
+  20.  The same for a bare droppable (`s = H { id: tick(21) }` releases before `tick` runs), for
+  a local renamed onto the return buffer, and inside a loop.  A rebind from a call, a literal
+  that reads `s`, and a nullable local are in the rule's order.
+- **Status:** OPEN — found 2026-09-21 in `D-heap-24`'s controls.
+- **Removal:** evaluate the field initialisers before the re-init wherever a release follows it
+  — build apart, as the self-reading literal already does, or stage them the way
+  `(R-InPlaceLiteral)` stages a projection's.
+
+### D-heap-24 — OPENED AND CLOSED (2026-09-21, loft#1564): a local lost a record it held when its binding ran more than once, or when it was renamed onto the return buffer
 
 - **Violates:** (H-Drop), its reassignment and scope-end clauses.
-- **Where:** not established.  The shape is `(H-Move)`'s promoted return local — the local a
-  `return` names is renamed onto the caller's buffer (`D-heap-19`, `D-heap-20`) — together with a
-  path on which that return does not run.
-- **Effect:** measured on both backends, identical to the tree before this entry's day:
-  `s = Hold { h: mk(20) }; if c { return s; } s = Hold { h: mk(21) }; return s` with `c` false
-  never releases `20`; so does a record, or a bare droppable, declared in a loop body and returned
-  on a LATER pass (`for i … { s = mk(20 + i); if i == 1 { return s; } }` loses `20`).  Returned on
-  the FIRST pass, and with no return in the loop, both are clean.
-- **Status:** OPEN — found 2026-09-21 while measuring `D-heap-23`'s return cells.
-- **Removal:** the record a promoted return local displaces released on every path that does not
-  return it, as a plain local's is.
+- **Where:** three facts the scope pass reads to release a displaced record were missing, and
+  one rename should not have happened.
+  - A local renamed onto the return buffer is first BUILT, not bound, when its first value is a
+    literal: the guarded in-place write (`parse_object`, @PLN157 § V-d).  `in_place_rebuild`
+    never recorded that the local then owns what it built, so the next reassignment released
+    nothing.
+  - A local first bound in a loop body and read after the loop has its scope moved out to the
+    function, with a null before the loop (loft#1156).  That null recorded no ownership, so the
+    binding in the loop released nothing on the passes after the first.
+  - A local owned on entry to a loop and rebound in it lost its ownership record at the loop's
+    end, because the merge kept only entries the body left UNCHANGED.  A rebind after the loop
+    then released nothing for the last pass's record.
+  - A local DECLARED in a loop body and returned was renamed onto the return buffer.  As a
+    parameter by slot, it was never released at a pass end, and every pass refilled the same
+    buffer.
+- **Effect:** measured on both backends, identical: `s = Hold { h: mk(20) }; s = Hold { h:
+  mk(21) }; return s` never released 20, with or without an early return between the two, and
+  for a record owning a vector or a nullable member too.  `for i in 0..3 { s = mk(20 + i); if i
+  == k { return s; } } return mk(99)` lost every pass it did not return on, all three when it
+  never returned.  `for … { s = mk(20 + i) } use(s)` lost 20 and 21 in a function returning
+  nothing: no rename is needed for that shape.  The entry as first written named only the
+  returned-local shape.
+- **Closed:** the in-place rebuild records the local as owning what it built, after its snapshot,
+  so the caller's record at entry stays untouched.  The loop pre-init records the null as owned;
+  the release is guarded on the record being live, so the first pass releases nothing.  The loop
+  merge keeps an entry that is owned both on entry and at the body's end, at its entry depth; a
+  local whose body mixes owning and viewing releases through its owner witness instead
+  (loft#1336).  The promotion ladder declines the rename for a local the program declared in a
+  loop (`Function::created_in_loop`), so it is an ordinary loop-body local and its `return` copies
+  into the buffer.  The copy advice then claimed that copy was avoidable because `s` was "still
+  used after this point".  The uses it counted were the pass-end release and a guarded free,
+  which no path from the return reaches.  The collector now skips every free
+  (`OpSets::frees`) and every drop hook (`OpSets::drop_functions`) as scope machinery.  Before,
+  it skipped only `OpFreeRef`, and the notice was false on the tree before this entry too, for
+  a second loop local.  Guard
+  `tests/scripts/1564-a-local-releases-every-record-it-held-across-passes-and-returns.loft`.
 
 ### D-heap-21 — OPENED AND CLOSED (2026-09-21): a collection local was released after every other local at its scope's end
 
