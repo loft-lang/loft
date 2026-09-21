@@ -1,0 +1,142 @@
+// @PLN158 R5 — a flag-free copy of a record that owns NO heap is an in-place write
+// (`@FR-R-InPlace`'s copy clause), so the write-back idiom no longer costs a loop its
+// hoists: `e = ents[i]?; …; ents[i] = e`.  In loft `e` is a VIEW of `ents[i]`, so the last
+// statement copies the element onto itself — which the runtime already makes a no-op — but
+// that whole-record copy was an unclassified store writer: the loop held no header, and
+// `e` no address, so each of the ~20 field accesses per pass resolved the store.  A
+// consumer writes this idiom because it is what a Rust or C author writes.  Priced by
+// deleting the write-back (-26 %), then built: `entity_tick` 205.4 -> 157.7 us (-23 %),
+// 3.19x -> 2.45x of the Rust reference.  The copy itself stays: statically eliding it would
+// also drop the fault note an out-of-range `v[i] = e` raises, which is not a rewrite's to
+// decide.  The interpreter applies no rewrite and is the oracle; every cell prints its
+// values and asserts them.  `LOFT_NO_COPY_IN_PLACE=1`, `LOFT_NO_RECORD_PTR=1`,
+// `LOFT_NO_SCALAR_HOIST=1` and `LOFT_HOIST_VERIFY=1` must all answer identically.
+//
+// Predictions (tests/copy_in_place.rs pins them): c1, c3, c6, c7, c8 hoist across the
+// copy; c3's hoisted scalar of the copied TYPE is evicted (the copy writes the type whole);
+// c4 and c9 copy a heap-owning record, c5 a call's result (its source is freed) and c11 an
+// enum value — each still a store writer, so their loops hoist nothing.
+//
+// @falsified-at: pending — recorded as MEASURED once the sabotage has run.
+
+struct Ent { id: integer, q: integer, energy: integer, speed: integer }
+struct V3 { x: float, y: float, z: float }
+struct Vtx { id: integer, pos: V3, nrm: V3 }
+struct Named { nm: text, k: integer }
+struct Bag { xs: vector<integer>, k: integer }
+struct Pair { a: Ent, b: Ent, n: integer }
+enum Kind { Dot { d: integer }, Box { w: integer, h: integer } }
+
+fn ents(n: integer) -> vector<Ent> {
+  v: vector<Ent> = [];
+  for i in 0..n { v += [Ent { id: i, q: 0, energy: 0, speed: 30 + i * 10 }]; }
+  v
+}
+fn score(v: const vector<Ent>) -> integer { t = 0; for d in v { t += d.q * 1000 + d.energy; } t }
+
+// c1 — the write-back idiom, three passes.
+fn c1_tick(v: vector<Ent>) {
+  for i in 0..len(v) {
+    e = v[i]?;
+    e.energy += e.speed;
+    if e.energy >= 100 { e.energy -= 100; e.q += 1; }
+    v[i] = e;
+  }
+}
+fn c1() {
+  v = ents(6);
+  c1_tick(v); a = score(v);
+  c1_tick(v); b = score(v);
+  c1_tick(v); c = score(v);
+  println("c1 {a} {b} {c}");
+  assert(a == 330 && b == 4260 && c == 7290, "c1");
+}
+
+// c2 — the index runs past the end: the read discharges to a default, the write is dropped.
+fn c2() {
+  v = ents(3);
+  seen = 0;
+  for i in 0..5 { e = v[i]?; e.q = e.q + 7; seen += e.q; v[i] = e; }
+  println("c2 {seen} {len(v)} {score(v)}");
+  assert(seen == 35 && len(v) == 3 && score(v) == 21000, "c2");
+}
+
+// c3 — a real copy onto ANOTHER element, read back through a view bound outside the loop:
+// nothing of the copied type may be cached across the copy.
+fn c3() {
+  v = ents(8);
+  first = v[0]?;
+  t = 0;
+  for i in 1..8 { e = v[i]?; e.q = i * 2; v[0] = e; t += first.q + first.speed; }
+  println("c3 {t} {v[0]?.id} {first.id}");
+  assert(t == 546 && v[0]?.id == 7 && first.id == 7, "c3");
+}
+
+// c4 — a heap-owning record: the copy walks claims, so the loop keeps the general path.
+fn c4() {
+  v: vector<Named> = [];
+  for i in 0..5 { v += [Named { nm: "n{i}", k: i }]; }
+  for i in 0..len(v) { e = v[i]?; e.k = e.k * 10 + len(e.nm); v[i] = e; }
+  t = 0; for n in v { t += n.k + len(n.nm) * 1000; }
+  println("c4 {t}");
+  assert(t == 10110, "c4");
+}
+
+// c5 — the source is a call's result, freed by the copy.
+fn c5_mk(i: integer) -> Ent { Ent { id: i, q: i * 3, energy: 1, speed: 2 } }
+fn c5() {
+  v = ents(6);
+  for i in 0..len(v) { v[i] = c5_mk(i + 10); }
+  println("c5 {score(v)} {v[5]?.id}");
+  assert(score(v) == 225006 && v[5]?.id == 15, "c5");
+}
+
+// c6 — from one vector's element into another's: two headers held across the copy.
+fn c6() {
+  a = ents(10); b = ents(10);
+  for i in 0..len(a) { e = a[i]?; e.q = i + 1; b[9 - i] = e; }
+  t = 0; for d in b { t = t * 3 + d.q + d.id; }
+  println("c6 {t} {b[0]?.id} {b[9]?.q}");
+  assert(t == 531442 && b[0]?.id == 9 && b[9]?.q == 1, "c6");
+}
+
+// c7 — into an INLINE sub-record of a record; c8 — a record of records, written back.
+fn c7() {
+  v = ents(4);
+  p = Pair { a: v[0]?, b: v[1]?, n: 0 };
+  for i in 0..4 { e = v[i]?; e.q = i * 5; p.b = e; p.n += p.b.q + p.a.id; }
+  println("c7 {p.n} {p.b.id} {p.a.speed}");
+  assert(p.n == 30 && p.b.id == 3 && p.a.speed == 30, "c7");
+}
+fn c8() {
+  vs: vector<Vtx> = [];
+  for i in 0..6 { f = i as float; vs += [Vtx { id: i, pos: V3 { x: f, y: 1.0, z: 2.0 }, nrm: V3 { x: 0.0, y: 0.0, z: 1.0 } }]; }
+  for i in 0..len(vs) { v = vs[i]?; v.pos.x = v.pos.x * 2.0 + v.nrm.z; v.id += 100; vs[i] = v; }
+  sx = 0.0; ids = 0; for w in vs { sx += w.pos.x; ids += w.id; }
+  println("c8 {sx} {ids}");
+  assert(sx == 36.0 && ids == 615, "c8");
+}
+
+// c9 — a record holding a vector; c11 — a struct-enum value.
+fn c9() {
+  v: vector<Bag> = [];
+  for i in 0..4 { v += [Bag { xs: [i, i + 1], k: i }]; }
+  for i in 0..len(v) { e = v[i]?; e.k = e.k + (e.xs[1] ?? 0); v[i] = e; }
+  t = 0; for b in v { t += b.k * 10 + len(b.xs); }
+  println("c9 {t}");
+  assert(t == 168, "c9");
+}
+fn c11() {
+  v: vector<Kind> = [];
+  for i in 0..6 { if i % 2 == 0 { v += [Dot { d: i }]; } else { v += [Box { w: i, h: 3 }]; } }
+  for i in 0..len(v) { k = v[i]?; v[5 - i] = k; }
+  t = 0;
+  for g in v { match g { Dot { d } => { t = t * 10 + d; }, Box { w, h } => { t = t * 10 + w + h; } } }
+  println("c11 {t}");
+  assert(t == 42240, "c11 {t}");
+}
+
+fn main() {
+  c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c11();
+  println("copy in place ok");
+}

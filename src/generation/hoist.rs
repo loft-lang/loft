@@ -130,6 +130,38 @@ pub const IN_PLACE_SET_OPS: [&str; 12] = [
     "OpSetEnum",
 ];
 
+/// `@FR-R-InPlace`'s copy clause — `OpCopyRecord(src, dst, tp)` with no flag set, over a
+/// record type that owns NO heap: `size(tp)` bytes stored at the address of `dst`, which is
+/// what an in-place scalar set is at a larger width.  Nothing is claimed, released or moved
+/// — the claim walks a heap-owning type needs (`remove_claims`, `copy_claims`) are exactly
+/// what `owns_heap` rules out — so every header, base and record address a loop holds stays
+/// valid across it.  A flagged copy frees its source store (`COPY_FREE_SOURCE`) or marks a
+/// fresh destination, and stays a store writer.  Answers the record type, which a hoisted
+/// scalar's write set takes WHOLE.  The write-back idiom is this op: `e = v[i]?; …;
+/// v[i] = e` copies the view onto the place it views, which the runtime makes a no-op.
+#[must_use]
+pub fn in_place_copy(stores: Option<&Stores>, op: &str, args: &[Value]) -> Option<u16> {
+    if op != "OpCopyRecord" || args.len() != 3 || !in_place_copy_enabled() {
+        return None;
+    }
+    let Value::Int(tp) = args[2].unspan() else {
+        return None;
+    };
+    let tp = u16::try_from(*tp).ok()?;
+    if tp & !crate::keys::COPY_TP_MASK != 0 {
+        return None;
+    }
+    let stores = stores?;
+    (stores.is_struct(tp) && !stores.owns_heap(tp)).then_some(tp)
+}
+
+/// `LOFT_NO_COPY_IN_PLACE=1` — a no-heap record copy is a store writer again
+/// (`@FR-R-Switch`).  Read at generation time.
+fn in_place_copy_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_COPY_IN_PLACE").is_ok_and(|v| v != "0"))
+}
+
 /// A hoist key (@PLN157 P4d): a vector reached from a local through zero or more CONST
 /// field offsets — `v` is `(var, [])`, `lay.best` is `(var, [8])`.  Pure by
 /// construction (`OpGetField` is a reader), so the prelude may evaluate the path once
@@ -1060,6 +1092,10 @@ fn body_writes(
                 // § V-d's delivery tail into a fresh mint variable (`@FR-R-Mint`): the copy
                 // writes the fresh element, and its source-free releases the builder's own
                 // this-iteration buffer — neither is a record a hoisted scalar can name.
+            } else if let Some(tp) = in_place_copy(Some(stores), name, args) {
+                // `@FR-R-InPlace`'s copy clause — every field of the destination is written,
+                // whichever record of that type it is.
+                set.whole.insert(tp);
             } else if let Some(tp) = null_buffer_alloc(name, args, Some(vars), data) {
                 // § V-ad — the discharge buffer is re-initialised whole; only a scalar hoisted
                 // off ITS type could observe that, and the buffer's view is rebound per use.
@@ -1552,6 +1588,7 @@ pub fn record_view_ptr(
     stmts: &[Value],
     at: usize,
     data: &Data,
+    stores: &Stores,
     def_nr: u32,
     cache: &mut HashMap<u32, bool>,
     allow_in_place: bool,
@@ -1584,6 +1621,7 @@ pub fn record_view_ptr(
         &stmts[at + 1..],
         *r,
         data,
+        stores,
         def_nr,
         cache,
         allow_in_place,
@@ -1617,6 +1655,7 @@ pub fn mint_window(
     stmts: &[Value],
     at: usize,
     data: &Data,
+    stores: &Stores,
     def_nr: u32,
     cache: &mut HashMap<u32, bool>,
     allow_in_place: bool,
@@ -1647,6 +1686,7 @@ pub fn mint_window(
         &stmts[at + 1..finish],
         *e,
         data,
+        stores,
         def_nr,
         cache,
         allow_in_place,
@@ -1659,10 +1699,15 @@ pub fn mint_window(
 /// ([`record_view_ptr`]) or a mint's window ([`mint_window`]) — judged under ONE definition:
 /// none may grow a store, free a record before a use of `r`, or rebind `r`, and at least one
 /// must read or write a fusable scalar field of `r` or hand it to a twin.
+// The eight parameters are the extent, the view, the two things that type it, the
+// function, the memo, the write tier and the twin parameters; a struct would put a name
+// between each and the two call sites without removing anything.
+#[allow(clippy::too_many_arguments)]
 fn view_extent_verdict(
     rest: &[Value],
     r: u16,
     data: &Data,
+    stores: &Stores,
     def_nr: u32,
     cache: &mut HashMap<u32, bool>,
     allow_in_place: bool,
@@ -1674,7 +1719,7 @@ fn view_extent_verdict(
         blocks_header_hoist(
             op,
             data,
-            None,
+            Some(stores),
             cache,
             &mut HashSet::new(),
             Some(vars),
@@ -1719,10 +1764,12 @@ fn view_extent_verdict(
                     // write in place (`(R-Callee)`).
                     let native = matches!(data.def(*g).code(), Value::Null)
                         || !data.def(*g).rust().is_empty();
+                    // `OpCopyRecord(r, dst, tp)` has the view as its SOURCE: a read of r.
                     if on_r
                         && native
                         && !name.starts_with("OpGet")
                         && !IN_PLACE_SET_OPS.contains(&name)
+                        && name != "OpCopyRecord"
                     {
                         rebound = true;
                     }
@@ -3423,6 +3470,11 @@ fn blocks_header_hoist(
                 && data.def(*d).name() == "OpCopyRecord"
                 && args.len() == 3
                 && matches!(args[1].unspan(), Value::Var(e) if fresh.contains(e));
+            // `@FR-R-InPlace`'s copy clause — a flag-free copy of a no-heap record is an
+            // in-place write at a larger width; its operands still walk below this node.
+            let record_copy = known
+                && tiers.in_place
+                && in_place_copy(stores, data.def(*d).name(), args).is_some();
             if record_mint
                 && data.def(*d).name() == "OpFinishRecord"
                 && let Some(Value::Var(e)) = args.get(1).map(Value::unspan)
@@ -3436,6 +3488,7 @@ fn blocks_header_hoist(
                 || fusable_push
                 || record_mint
                 || fresh_delivery
+                || record_copy
             {
                 false
             } else if call_writes_store(*d, data, cache, active) {
