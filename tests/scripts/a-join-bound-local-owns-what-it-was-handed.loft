@@ -16,24 +16,25 @@
 // name, and a copy into it moved no release (D-heap-19) while a literal rebuilding it released
 // nothing it displaced (D-heap-20).
 //
-// The store cells need the leak check, which runs on `--interpret`; the release cells read a
-// trace file of this guard's own.
+// The same missing owner leaked the STORE for every record type; that half fails only through
+// the leak channel, so it has a file of its own, `a-call-default-over-a-local-has-an-owner.loft`.
+// The cells here read a trace file of this guard's own.
 
-struct JoP { id: integer }
-fn jo_mkp(id: integer) -> JoP { return JoP { id: id }; }
-
-fn jo_store_default(n: integer) -> integer {
-  a: JoP? = null;
-  x = a ?? jo_mkp(n);
-  x.id
-}
-
-fn jo_store_placed(n: integer) -> integer {
-  a: JoP? = null;
-  x = a ?? jo_mkp(n);
-  y = x;
-  y.id + 1
-}
+// @falsified-at: 9f5cf6a96 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-join-bound-local-owns-what-it-was-handed.patch — interpret exit 1 -> 0,
+//   interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends.  A hook that
+//   runs twice or never is visible only on its own trace; the stores are freed either way.
+// ARMED: no instrument — each hook call is written to this guard's own trace file.
+// WITNESS: on the control jo1 drains `alive1` (minted, read, never released) where the fix
+//   drains `alive1,1`; the run stops there, so every cell was also scored with the assertions
+//   replaced by prints, identically on both backends: jo2 `alive2,alive3`, jo3 `alive4,4,4`,
+//   jo5 `alive7,7,7`, jo6 `8,alive8,8` (released before the caller read it, then again), jo7
+//   `was11,11,10,alive10,10` and jo8 `was12,alive13,13` — seven of the eight move.
+// HOLDS: leak, panic, free-refusal and expectations are unmoved on both trees.  jo4 holds on
+//   the hook channel too (`alive6,6`), and holding is its point: on the control its STORE leaked
+//   while its hook ran once, and the fix's first cut turned exactly that cell into two releases.
 
 fn trace_path() -> text { return "loft_join_owner_trace.tmp"; }
 
@@ -79,10 +80,6 @@ fn jo8m() -> JoH { x = jo_mk(12); note("was{x.id}"); x = JoH { id: 13 }; return 
 fn jo8() { r = jo8m(); note("alive{r.id}"); }
 
 fn main() {
-  t = 0;
-  for i in 0..64 { t += jo_store_default(i) + jo_store_placed(i); }
-  assert(t == 4096, "store cells computed {t}");
-
   empty: vector<u8> = [];
   if !write_bytes(trace_path(), empty) { println("trace init failed"); }
 

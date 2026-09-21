@@ -16,6 +16,20 @@
 // A scalar local was never affected — its slot is function-wide already — and neither was the
 // `if` spelling, whose pre-init already declares the local where it is read.
 
+// @falsified-at: 9f5cf6a96 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-local-a-match-arm-binds-lives-past-the-match.patch — interpret exit 1 -> 0,
+//   interpret 1 assertion failures -> 0, native exit 1 -> 0
+// CHANNEL: two channels, one decision.  The interpreter fails an ASSERTION (it ran and answered
+//   wrong); native fails to COMPILE (`E0425`) and has no assertion to fail.
+// ARMED: no instrument — the churn between the bind and the read is what makes the freed slot
+//   visible on an ordinary build.
+// WITNESS: on the control the interpreter answers the churned bytes for the enum, boolean and
+//   integer matches (`100`, `3`, `3`, `3`; `-2401053088876216593` under `LOFT_POISON=1`), and
+//   native refuses `var_t`, `var_u`, `var_w` and `var_vs` with `E0425`.
+// HOLDS: the payload match, the text local, the match inside a loop (which loft#1156's hoist
+//   already reached) and both CONTROLs answer the same on both trees and both backends; leak,
+//   panic, free-refusal and expectations are unmoved.
+
 struct MaP { ma_v: integer }
 struct MaJunk { ma_w: integer, ma_x: integer, ma_y: integer }
 enum MaE { MaA, MaB }

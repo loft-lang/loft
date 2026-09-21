@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The store a `??` default's CALL makes is released exactly once, when the subject is a
+// nullable LOCAL, for a record type with no drop hook at all.
+//
+// `x = a ?? mk(n)` is typed as `a`'s own type, so the join reads as owned and the call arm is
+// left for `x` to own.  The scope pass's arm lift then turned `x` into a borrow of per-arm temps
+// and gave a temp only to the `a` arm, so the store the call made had no owner: one leaked
+// record per evaluation, unbounded in a loop, on both backends, with the right answer every
+// time.  The hook half of the same defect is `formal/heap.md` D-heap-16, pinned by
+// `a-join-bound-local-owns-what-it-was-handed.loft`; this file is the store half, which only the
+// leak check sees, so it asserts values alone and fails through the leak channel.
+
+// @falsified-at: 9f5cf6a96 — interpret exit 1 -> 0, interpret leaked kt=85 CdP×128 -> clean, native exit 1 -> 0,
+//   native leaked kt=85 CdP×128 -> clean
+// @falsified-by: tests/falsified/a-call-default-over-a-local-has-an-owner.patch — interpret exit 1 -> 0,
+//   interpret leaked kt=85 CdP×128 -> clean, native exit 1 -> 0, native leaked kt=85 CdP×128 -> clean
+// CHANNEL: the leak channel, and the exit code it sets — every value is right on both trees.
+// ARMED: `LOFT_STRICT_STORES=1`, which makes the leaked stores a failing exit; the measurement
+//   was taken with it, on both backends.
+// WITNESS: `CdP×128` on the control: 64 from `cd_default` and 64 from `cd_placed`, one per
+//   evaluation.
+// HOLDS: the assertion passes on both trees, and `cd_present`, the path where the call never
+//   runs, leaks nothing on either — it is the control.
+
+struct CdP { cd_id: integer }
+fn cd_mk(id: integer) -> CdP { return CdP { cd_id: id }; }
+
+fn cd_default(n: integer) -> integer {
+  a: CdP? = null;
+  x = a ?? cd_mk(n);
+  x.cd_id
+}
+
+fn cd_placed(n: integer) -> integer {
+  a: CdP? = null;
+  x = a ?? cd_mk(n);
+  y = x;
+  y.cd_id + 1
+}
+
+fn cd_present(n: integer) -> integer {
+  a: CdP? = cd_mk(n);
+  x = a ?? cd_mk(n + 1000);
+  x.cd_id
+}
+
+fn main() {
+  t = 0;
+  for i in 0..64 { t += cd_default(i) + cd_placed(i) + cd_present(i); }
+  assert(t == 6112, "the three cells computed {t}");
+  println("call default ok");
+}
