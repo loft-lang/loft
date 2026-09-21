@@ -7424,6 +7424,15 @@ impl Parser {
         }
     }
 
+    /// The stride an element read of `vector<V>` bakes while `V` is a type VARIABLE: it has no
+    /// width yet, so the read carries a marker naming the variable — negative, which no real
+    /// stride is — and each instance rewrites the reads whose marker names the variable it
+    /// binds (`substitute_type_in_value`).  A plain `0` could not say which of two variables a
+    /// read was over, and the first binding's pass took every one (@PLN165 C2).
+    pub(crate) fn type_var_stride(tv_nr: u32) -> i32 {
+        -1 - i32::try_from(tv_nr).unwrap_or(i32::MAX - 1)
+    }
+
     /// The `Block` name [`build_default`](Parser::build_default) stamps on an `x?`
     /// default it could not decide — the operand's type is a type VARIABLE, so the
     /// answer belongs to the monomorph.  [`rewrite_generic_type_defaults`] finds it by
@@ -7886,7 +7895,7 @@ impl Parser {
         }
         // I6: verify the concrete type satisfies every declared bound.
         // Emit a diagnostic and return u32::MAX if any required method is missing.
-        if !self.check_satisfaction(g_nr, type_nr, &bindings[1..]) {
+        if !self.check_satisfaction(g_nr, &var_bindings, &bindings[var_bindings.len()..]) {
             // Return d_nr (not u32::MAX) so `call` doesn't emit a redundant
             // "Unknown function" error — the satisfaction error is sufficient.
             // The function won't execute because parsing will halt on errors.
@@ -8689,8 +8698,13 @@ impl Parser {
     /// `assoc` is what [`Self::try_generic_instantiation`] already inferred for this
     /// monomorph — passed in rather than recomputed, so a companion the implementor cannot
     /// agree on is reported once, not once per place that asks.
-    fn check_satisfaction(&mut self, g_nr: u32, concrete_nr: u32, assoc: &[(u32, Type)]) -> bool {
-        let messages = self.satisfaction_messages(g_nr, concrete_nr, assoc);
+    fn check_satisfaction(
+        &mut self,
+        g_nr: u32,
+        var_bindings: &[(u32, Type)],
+        assoc: &[(u32, Type)],
+    ) -> bool {
+        let messages = self.satisfaction_messages(g_nr, var_bindings, assoc);
         for message in &messages {
             let msg =
                 crate::diagnostics::diagnostic_format(Level::Error, format_args!("{message}"));
@@ -8705,12 +8719,30 @@ impl Parser {
     /// of each template member of an overload set (`D-Rank`: a template takes a call where its
     /// variables bind AND its bounds hold), and a template whose bounds fail is simply not a
     /// candidate there; the diagnostic belongs to the instantiation that goes ahead anyway.
-    pub(crate) fn satisfies(&self, g_nr: u32, concrete_nr: u32) -> bool {
-        let (assoc, clashes) = self.infer_associated(g_nr, concrete_nr);
+    pub(crate) fn satisfies(&self, g_nr: u32, var_bindings: &[(u32, Type)]) -> bool {
+        let first = var_bindings
+            .first()
+            .map_or(u32::MAX, |(_, b)| self.data.type_def_nr(b));
+        let (assoc, clashes) = self.infer_associated(g_nr, first);
         clashes.is_empty()
             && self
-                .satisfaction_messages(g_nr, concrete_nr, &assoc)
+                .satisfaction_messages(g_nr, var_bindings, &assoc)
                 .is_empty()
+    }
+
+    /// The bounds of the template `g_nr`'s variable `holder`: the variable's own, recorded on
+    /// its placeholder (@PLN165 C2), or — for the first variable of a template whose
+    /// placeholder carries none (`LOFT_NO_SEVERAL_VARS=1`, an image cached before) — the
+    /// template's list, which is the first variable's.
+    fn var_bounds(&self, g_nr: u32, holder: u32, first: bool) -> Vec<u32> {
+        let own = &self.data.definitions[holder as usize].bounds;
+        if !own.is_empty() {
+            own.clone()
+        } else if first {
+            self.data.definitions[g_nr as usize].bounds.clone()
+        } else {
+            Vec::new()
+        }
     }
 
     /// Every reason `concrete_nr` fails `g_nr`'s bounds and its associated types' bounds, as
@@ -8719,26 +8751,37 @@ impl Parser {
     fn satisfaction_messages(
         &self,
         g_nr: u32,
-        concrete_nr: u32,
+        var_bindings: &[(u32, Type)],
         assoc: &[(u32, Type)],
     ) -> Vec<String> {
-        let bounds = self.data.definitions[g_nr as usize].bounds.clone();
-        if bounds.is_empty() {
-            return Vec::new();
-        }
-        if concrete_nr == u32::MAX {
-            return Vec::new(); // can't check without a concrete type def_nr
-        }
-        let concrete_name = self.data.def(concrete_nr).name().to_string();
         let mut messages: Vec<String> = Vec::new();
-        for iface_nr in bounds {
-            let iface_name = self.data.def(iface_nr).name().to_string();
-            for why in self.satisfaction_failures(iface_nr, concrete_nr) {
-                messages.push(format!(
-                    "'{concrete_name}' does not satisfy interface '{iface_name}': {why}"
-                ));
+        // Each variable's binding against ITS OWN bounds (@PLN165 C2): `<K: Named, V: Named>`
+        // judges `V`'s type too, where the template's list held `K`'s alone and a `text`
+        // bound to `V` passed unchecked — its stub then resolved to nothing and answered
+        // empty, silently.
+        let mut first_concrete = u32::MAX;
+        for (i, (holder, bound)) in var_bindings.iter().enumerate() {
+            let concrete_nr = self.data.type_def_nr(bound);
+            if i == 0 {
+                first_concrete = concrete_nr;
+            }
+            if concrete_nr == u32::MAX {
+                continue; // can't check without a concrete type def_nr
+            }
+            let concrete_name = self.data.def(concrete_nr).name().to_string();
+            for iface_nr in self.var_bounds(g_nr, *holder, i == 0) {
+                let iface_name = self.data.def(iface_nr).name().to_string();
+                for why in self.satisfaction_failures(iface_nr, concrete_nr) {
+                    messages.push(format!(
+                        "'{concrete_name}' does not satisfy interface '{iface_name}': {why}"
+                    ));
+                }
             }
         }
+        if first_concrete == u32::MAX {
+            return messages;
+        }
+        let concrete_name = self.data.def(first_concrete).name().to_string();
         // @PLN125 A2c — the bound declared on an associated type is a promise about the
         // COMPANION, and this is the only place it can be kept: `type Rows: Cursor` says a
         // generic may call `Cursor`'s methods on whatever `open` returns, and the template
@@ -9834,12 +9877,16 @@ impl Parser {
                 // and anything wider reads garbage from element 1 onward, while
                 // `len()` and the same vector passed to a NON-generic helper stay
                 // correct (loft#791).
+                // @PLN165 C2 — with several variables the stride names WHICH variable's element
+                // it reads (`type_var_stride`), so this pass rewrites only its own; a legacy `0`
+                // (a cached one-variable template) is still that one variable's.
                 if new_d != u32::MAX
                     && (new_d as usize) < data.definitions.len()
                     && (data.def(new_d).name() == "OpGetVector"
                         || data.def(new_d).name() == "OpGetVectorNullable")
                     && new_args.len() == 3
-                    && matches!(&new_args[1], Value::Int(0))
+                    && matches!(&new_args[1], Value::Int(n)
+                        if *n == 0 || *n == Self::type_var_stride(tv_nr))
                 {
                     let cur_size = if let Value::Int(n) = &new_args[1] {
                         *n

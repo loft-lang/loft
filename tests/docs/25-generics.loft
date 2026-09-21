@@ -9,8 +9,9 @@
 // Place a single type variable in angle brackets after the function name.
 // The type variable must appear in a parameter (directly or as a container
 // element like vector<T>) — any parameter; a T that appears only in the return
-// type is refused, since a call infers T from its arguments.  ONE type
-// variable: `<T, U>` is refused.
+// type is refused, since a call infers T from its arguments.  A header may
+// declare several variables — `<K: Printable, V: Printable>` — each with its
+// own bounds, each inferred from the parameters that name it.
 //
 // Generic STRUCTS are a separate thing and loft does not have them — `struct
 // Box<T>` is a parse error.  A generic FUNCTION over `vector<T>` covers most of

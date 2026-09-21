@@ -2765,7 +2765,9 @@ fn pick_second<T>(a: T, b: T) -> T { _x = a; b }
 **Rules:**
 - T must appear in a parameter (directly or as `vector<T>`, etc.) — any parameter; one it
   appears in nowhere is refused, since a call has nothing to infer it from.
-- Only one type variable is allowed.
+- A header may declare several type variables, each with its own bounds —
+  `fn pair_up<K: Printable, V: Printable>(k: K, v: V) -> text`; each is inferred from the
+  parameters that name it, and each binding is checked against its own variable's bounds.
 - At the call site, T is inferred from the arguments; two parameters naming T must receive
   one type (`same<T>(a: T, b: T)` called with an integer and a text is refused, naming both).
 - A generic may share its name with other definitions — concrete ones, other generics, a
@@ -3246,10 +3248,11 @@ even straight after `c = null` — **test emptiness with `len(c) == 0`**
 `?` makes no difference here: only the SCALAR default flips to non-null, so `vector<T>`
 and `vector<T>?` are one type with one layout and take the same clear.
 
-### Generics: single type variable
+### Generics: type variables
 
-Only one type variable `<T>` is allowed, inferred from the first argument.
-Multiple type variables (`<T, U>`) are not supported.
+A header declares one or more type variables (`<T>`, `<K: Ordered, V: Printable>`), each
+inferred from the parameters that name it — any parameter, not only the first.  A variable no
+parameter names is refused at the declaration.
 
 **Without bounds:** only assign, return, and store are allowed on `T`.
 **With bounds (`<T: Interface>`):** method calls and operators declared

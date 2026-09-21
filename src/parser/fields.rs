@@ -1948,6 +1948,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // change (`known` / is_base / is_linked / deref type are untouched).
         let elm_size = if matches!(elm_type, Type::Vector(_, _)) {
             elm_size_raw.max(4)
+        } else if let Type::Reference(tv, _) = elm_type.base()
+            && elm_size_raw == 0
+            && self.data.is_type_var_placeholder(*tv)
+        {
+            // A type variable's element has no width until an instance binds it: the read
+            // names the variable instead (`Parser::type_var_stride`, @PLN165 C2).
+            Self::type_var_stride(*tv)
         } else {
             elm_size_raw
         };

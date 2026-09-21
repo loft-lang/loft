@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// With several type variables (@PLN165 C2) each binding is checked against ITS OWN
+// variable's bounds.  `label<K: Named, V: Named>` at `(Cat, text)` is refused for `V`: the
+// judgement read the template's bound list, which is the first variable's, and a `text`
+// bound to `V` went unchecked — its `tag` stub then resolved to nothing and the call
+// answered "cat 1" with no diagnostic.
+//
+// @falsified-at: 7e1e85c0a — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/each-type-variable-is-checked-against-its-own-bound.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — refused on both trees; the reason moves.
+//   ARMED: nothing.
+//   WITNESS: on the control the header is refused ("declares 2 type variables").
+//   HOLDS: the program is refused on both trees.
+// @EXPECT_ERROR: 'text' does not satisfy interface 'Named': missing tag
+
+interface Named { fn tag(self: Self) -> text }
+struct Cat { n: integer }
+fn tag(self: Cat) -> text { "cat {self.n}" }
+fn label<K: Named, V: Named>(k: K, v: V) -> text { "{k.tag()} {v.tag()}" }
+
+fn main() {
+  println(label(Cat { n: 1 }, "x"));
+}

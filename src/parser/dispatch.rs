@@ -193,8 +193,7 @@ impl Parser {
         }) {
             return None;
         }
-        let first = bindings[0].1.clone();
-        if !self.satisfies(r, self.data.type_def_nr(&first)) {
+        if !self.satisfies(r, &bindings) {
             return None;
         }
         let declared: Vec<Type> = self

@@ -1,0 +1,7 @@
+// C2 + B6 — `(T, integer)` is an instance of `(T, U)`, so it wins for `(text, integer)`.
+// @EXPECT: ti x 2|tu 1.5
+fn g<T: Printable>(p: (T, integer)) -> text { "ti {p.0} {p.1}" }
+fn g<T: Printable, U: Printable>(p: (T, U)) -> text { "tu {p.0}" }
+fn main() {
+  println("{g(("x", 2))}|{g((1.5, "y"))}");
+}

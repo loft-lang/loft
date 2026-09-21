@@ -466,6 +466,24 @@ written over a list and have been running with one element since.
 - **Compared against:** IDENTICAL over every file that compiles today.
 - **The alarm:** if this step needs more than the parser, A3 or A5 missed a single-variable
   assumption.  Find it and fix it there, not here.
+- **Built** (2026-09-21).  The alarm rang twice, both in the parser, each fixed where it
+  lives: (1) a template bakes an element read of `vector<V>` with stride `0` (no width yet),
+  and instantiation rewrote EVERY stride-0 read with the binding it was substituting — with
+  two variables `K`'s pass took `V`'s reads and the program read `text` at `integer`'s width
+  (a store-bounds panic).  The read now bakes a marker naming its variable
+  (`Parser::type_var_stride`, negative, which no width is), rewritten only by that variable's
+  pass; a legacy `0` stays the one variable's.  (2) Satisfaction read the TEMPLATE's bound
+  list, which is its first variable's: `V: Named` at a `text` passed unchecked, the stub
+  resolved to nothing and the call answered `cat 1` with no diagnostic — a silent wrong
+  answer on this branch, never on `main` (a second variable could not be declared there).
+  Each variable's bounds are now on its placeholder (`has_bound_for_method` already read
+  them there) and `satisfaction_messages` judges every binding against its own
+  (`var_bounds`), for the instantiation and for selection's `satisfies` alike.  F8 read off
+  `loft introspect`: `i_12integer#text_n_pair_up` and `i_12text#integer_n_pair_up`.  Switch
+  `LOFT_NO_SEVERAL_VARS=1`.  Cells [two-vars/](probes/two-vars/) w01–w06 (w06: a
+  two-variable tuple pattern in a set) green on both backends under `LOFT_STRICT_STORES` +
+  `LOFT_POISON`, and every earlier matrix unchanged; A4's refusal guard is replaced by the
+  positive one.  Corpus against `7e1e85c0a`: only the two new guards differ (refused there).
 
 ### C3 — two variables through everything that assumed one  ·  S
 

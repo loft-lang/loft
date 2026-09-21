@@ -1,0 +1,8 @@
+// C2 — the second variable inside a vector, the return typed by it.
+// @EXPECT: z|4
+fn last_with<K, V>(k: K, v: vector<V>) -> V { v[len(v) - 1] }
+fn main() {
+  a: vector<text> = ["x", "z"];
+  b: vector<integer> = [3, 4];
+  println("{last_with(1, a)}|{last_with("k", b)}");
+}

@@ -1759,9 +1759,10 @@ impl Parser {
         let header = self.parse_type_var_header();
         let mut is_generic = !header.is_empty();
         let type_var_name = header.first().map(|v| v.name.clone()).unwrap_or_default();
-        // A generic function declares ONE type variable; a header with more is refused where
-        // the second is written, and its template never instantiates.
-        let several = header.len() > 1;
+        // @PLN165 C2 — a header declares a LIST of variables (`<K, V>`); each is bound on its
+        // own, carries its own bounds, and is inferred from the parameters that name it.
+        // `LOFT_NO_SEVERAL_VARS=1` refuses a header with more than one again.
+        let several = header.len() > 1 && !crate::keys::several_vars_enabled();
         if several && !self.first_pass {
             let names: Vec<&str> = header.iter().map(|v| v.name.as_str()).collect();
             diagnostic_at!(
@@ -1973,7 +1974,10 @@ impl Parser {
         // again on second pass with all defs visible) but still install
         // any bounds we CAN resolve so the body can dispatch.
         // I4: resolve each variable's bound names to interface def_nrs.  The definition's
-        // `bounds` are its first variable's (a header with more is refused above).
+        // `bounds` are its FIRST variable's (what a one-variable reader has always asked);
+        // every variable's own are on its placeholder (@PLN165 C2), which is where
+        // `has_bound_for_method` and satisfaction read them — a placeholder stands for one
+        // (spelling, bound set) pair, so the two never disagree.
         for (i, var) in header.iter().enumerate() {
             if var.bounds.is_empty() {
                 continue;
@@ -1988,6 +1992,11 @@ impl Parser {
             // the body parser can emit `Value::Call(t_stub_nr, ...)` for method/op calls on T.
             // `re_resolve_call` then substitutes these with the concrete type's implementation.
             if let Some(&(_, holder)) = self.cur_type_vars.iter().find(|(n, _)| *n == var.name) {
+                if holder != u32::MAX && crate::keys::several_vars_enabled() {
+                    self.data.definitions[holder as usize]
+                        .bounds
+                        .clone_from(&bounds);
+                }
                 self.create_bound_method_stubs(holder, &bounds);
             }
         }
