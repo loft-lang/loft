@@ -606,6 +606,50 @@ impl Stores {
         crate::hash::reserve(data, count, stride, &mut self.allocations, &keys);
     }
 
+    /// `LOFT_KEYED_VERIFY`'s check of one `hash::probe_for_insert` answer against the
+    /// lookup `dedup_keyed` runs: the same duplicate, or none on both sides.
+    fn verify_probe(&self, data: &DbRef, rec: &DbRef, tp: u16, probed: &hash::Probed) {
+        let key = keys::get_key(rec, &self.allocations, &self.types[tp as usize].keys);
+        let looked = self.find(data, tp, &key);
+        let looked = (looked.rec != 0 && (looked.rec, looked.pos) != (rec.rec, rec.pos))
+            .then_some((looked.rec, looked.pos));
+        let walked = match probed {
+            hash::Probed::Unknown => return,
+            hash::Probed::Free { .. } => None,
+            hash::Probed::Present(e) => Some((e.rec, e.pos)),
+        };
+        assert!(
+            walked == looked,
+            "LOFT_KEYED_VERIFY: the one-probe insert found duplicate {walked:?} where the \
+             lookup finds {looked:?}"
+        );
+    }
+
+    /// `LOFT_KEYED_VERIFY`'s check of the duplicate `tree::add` reports, taken BEFORE the
+    /// add on a throwaway descent: the record `dedup_keyed`'s lookup names, or none.
+    fn verify_tree_duplicate(&self, data: &DbRef, rec: &DbRef, tp: u16, left: u16) {
+        let key = keys::get_key(rec, &self.allocations, &self.types[tp as usize].keys);
+        let looked = self.find(data, tp, &key);
+        let looked = if looked.rec != 0 && looked.rec != rec.rec {
+            looked.rec
+        } else {
+            0
+        };
+        let walked = tree::find_exact(
+            data,
+            left,
+            &self.allocations,
+            &self.types[tp as usize].keys,
+            &key,
+        );
+        let walked = if walked == rec.rec { 0 } else { walked };
+        assert!(
+            walked == looked,
+            "LOFT_KEYED_VERIFY: the insert's descent meets duplicate {walked} where the \
+             lookup finds {looked}"
+        );
+    }
+
     pub(super) fn insert_record(&mut self, data: &DbRef, rec: &DbRef, tp: u16, secondary: bool) {
         // The kind and its content id are two words; cloning the whole `Parts` (a
         // `Struct`'s field list included) per insert was 1.5 % of the `lock` row
@@ -632,18 +676,96 @@ impl Stores {
                 vector::vector_finish(data, &mut self.allocations);
             }
             InsertKind::Hash(c) => {
-                // @P306 — replace any existing record with this key (dedup).
-                self.dedup_keyed(data, rec, tp, c, secondary);
-                let keys = self.types[tp as usize].keys.clone();
-                hash::add(data, rec, &mut self.allocations, &keys);
+                // @P306, @FR-Col-Insert — replace any existing record with this key
+                // (dedup), then file the new one.  ONE walk answers both where it can
+                // (`hash::probe_for_insert`); the two-walk form below is what it falls
+                // back to, and what `LOFT_NO_ONE_PROBE_INSERT=1` restores.
+                let probed = if keys::one_probe_insert_enabled() {
+                    hash::probe_for_insert(
+                        data,
+                        rec,
+                        &self.allocations,
+                        &self.types[tp as usize].keys,
+                    )
+                } else {
+                    hash::Probed::Unknown
+                };
+                if keys::keyed_verify() {
+                    self.verify_probe(data, rec, tp, &probed);
+                }
+                match probed {
+                    hash::Probed::Free { bucket, index } => hash::add_at(
+                        data,
+                        rec,
+                        bucket,
+                        index,
+                        &mut self.allocations,
+                        &self.types[tp as usize].keys,
+                    ),
+                    hash::Probed::Present(existing) => {
+                        self.displace_keyed(data, &existing, tp, c, secondary);
+                        hash::add(
+                            data,
+                            rec,
+                            &mut self.allocations,
+                            &self.types[tp as usize].keys,
+                        );
+                    }
+                    hash::Probed::Unknown => {
+                        self.dedup_keyed(data, rec, tp, c, secondary);
+                        hash::add(
+                            data,
+                            rec,
+                            &mut self.allocations,
+                            &self.types[tp as usize].keys,
+                        );
+                    }
+                }
             }
             InsertKind::Index(c) => {
-                // @P306 — replace any existing record with this key (dedup);
-                // tree::add otherwise rejects the duplicate and keeps the old.
-                self.dedup_keyed(data, rec, tp, c, secondary);
+                // @P306, @FR-Col-Insert — replace any existing record with this key
+                // (dedup); tree::add otherwise rejects the duplicate and keeps the old.
                 let left = self.fields(tp);
-                let keys = self.types[tp as usize].keys.clone();
-                tree::add(data, rec, left, &mut self.allocations, &keys);
+                if !keys::fast_order_enabled() {
+                    self.dedup_keyed(data, rec, tp, c, secondary);
+                    tree::add(
+                        data,
+                        rec,
+                        left,
+                        &mut self.allocations,
+                        &self.types[tp as usize].keys,
+                    );
+                    return;
+                }
+                // The insert's OWN descent finds the duplicate: a refused `tree::add`
+                // names it and leaves the tree as it was, so the lookup that used to run
+                // first — a second full descent per insert — is only ever the rare
+                // displacement's.
+                if keys::keyed_verify() {
+                    self.verify_tree_duplicate(data, rec, tp, left);
+                }
+                let duplicate = tree::add(
+                    data,
+                    rec,
+                    left,
+                    &mut self.allocations,
+                    &self.types[tp as usize].keys,
+                );
+                if duplicate != 0 {
+                    let existing = DbRef {
+                        store_nr: data.store_nr,
+                        rec: duplicate,
+                        pos: 8,
+                    };
+                    self.displace_keyed(data, &existing, tp, c, secondary);
+                    tree::add(
+                        data,
+                        rec,
+                        left,
+                        &mut self.allocations,
+                        &self.types[tp as usize].keys,
+                    );
+                }
             }
             InsertKind::Ordered => {
                 vector::ordered_finish(

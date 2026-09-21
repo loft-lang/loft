@@ -5632,6 +5632,27 @@ impl Stores {
             .is_some()
     }
 
+    /// Is a lazy source bound to this collection at all?
+    ///
+    /// The question a MISS asks first (@FR-Col-Lookup: an absent key is the type's null).
+    /// Everything the miss path does after it — naming the element type, asking for a
+    /// driver, reading the source, the drift check — only matters for a bound collection,
+    /// and a program that binds none still paid all of it on every absent key: a `String`,
+    /// two locks and two of these lookups per miss on `--native`, 30 % of a lookup loop
+    /// that misses half the time.  An unbound collection's miss is final, so both
+    /// backends' `get_record` ask this and answer at once.
+    ///
+    /// The emptiness test is the whole cost for such a program; `contains_key` on an empty
+    /// map would hash the address first.
+    #[must_use]
+    #[inline]
+    pub fn lazy_bound(&self, coll: &DbRef) -> bool {
+        !self.lazy_sources.is_empty()
+            && self
+                .lazy_sources
+                .contains_key(&(coll.store_nr, coll.rec, coll.pos))
+    }
+
     /// The lazy source bound to this collection, if any.
     #[must_use]
     pub fn lazy_source(&self, coll: &DbRef) -> Option<String> {

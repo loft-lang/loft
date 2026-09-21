@@ -1,9 +1,12 @@
 # The keyed class — why it is 4–8× Rust
 
 Analysis of the portal's slowest complete class (`hash`, `sorted`, `index`; every row over
-the ceiling), taken 2026-09-21 on x86-64 from `bench/15_stdlib_keyed`.  An ANALYSIS: it
-names the mechanisms, prices what could be priced, and ranks what to build.  Nothing here
-is built yet.
+the ceiling), taken 2026-09-21 on x86-64 from `bench/15_stdlib_keyed`.  It names the
+mechanisms, prices what could be priced, and ranks what to build.
+
+**L1–L4 are BUILT (2026-09-21)** — see [§ What L1–L4 bought](#what-l1l4-bought): the class
+median went 6.02× → 4.31×, no row is within the bar yet, and L5–L7 are what is left.  The
+sections before it describe the tree those four levers were built against.
 
 ## The regime: instruction-bound, not memory-bound
 
@@ -139,6 +142,76 @@ Estimated together they take lookups from ~6× to ~3.5× and the fills to ~4×; 
 needs L5 and L6, because after them the remaining distance IS the generic entry path.
 The estimates are instruction ledgers, not measurements; only L1, L2 and the C half of L4
 were run.
+
+## What L1–L4 bought
+
+Same box, same lane, seven pinned samples a row, spreads under 2 %:
+
+| routine | before | after | | × Rust |
+|---|---:|---:|---:|---|
+| `hash_fill` | 1,130 µs | 711 µs | **−37 %** | 6.10 → 3.87 |
+| `hash_find` | 620 | 418 | **−33 %** | 5.94 → 4.03 |
+| `index_fill_find` | 2,928 | 1,961 | **−33 %** | 4.90 → 3.31 |
+| `grouped_fill_find` | 1,527 | 1,035 | −32 % | 6.69 → 4.59 |
+| `composite_hash` (consumer lane) | 1,006 | 696 | −31 % | 8.12 → 5.30 |
+| `hash_remove` | 1,813 | 1,289 | −29 % | 6.44 → 4.62 |
+| `hash_text_keys` | 1,019 | 758 | −26 % | 7.61 → 5.62 |
+| `sorted_fill_walk` | 1,813 | 1,636 | −10 % | 5.59 → 5.07 |
+| `hash_update` | 218 | 199 | −9 % | 4.18 → 3.85 |
+| `word_count` (engine lane) | 20.96 ms | 19.94 ms | −5 % | 4.68 → 4.47 |
+
+What was built, and where:
+
+* **L1** — `Stores::lazy_bound`, asked first by both backends' `get_record`
+  (`codegen_runtime::get_record_lookup`, `State::get_record`).  The interpreter's miss was
+  paying for a walk of the program's definitions (`has_lazy_driver`) the same way.
+* **L2** — `SipHasher13::write_u64` takes a whole word on a word boundary as one inline
+  round; a word after a text still takes `write`.  The digest is pinned by
+  `tests/siphash_std_parity.rs`, whose compound cells cross both arms.
+* **L3** — `hash::probe_for_insert` answers the duplicate AND the free bucket on one walk,
+  `hash::add_at` files the entry; the key is compared through `keys::fast_key_of` (no
+  descriptor clone, no `Vec<Content>`), record against record for a compound key.  A found
+  duplicate, a missing table and an already-filed record keep the two-walk form.
+* **L4** — `keys::FastOrder` (the order half of `FastKey`, direction applied once) resolved
+  per search in `tree::find`, `vector::sorted_find` / `ordered_find` and their new
+  record-keyed fronts; `tree::find_exact` stops a FULL-key lookup at the equal node; a
+  refused `tree::add` names the duplicate and leaves the tree unchanged, so an `index`
+  insert no longer looks its key up first.  A text key cannot be held across `tree::put`
+  (it rebalances the store the text lives in), so a text-keyed `index` insert still orders
+  generally.
+
+`sorted` moved least, as priced: its insert is the `memmove` (8), which no comparator
+touches.  `hash_fill` moved more than the ledger said — the ledger counted the second hash
+and walk, and the descriptor clone, the key `Vec` and two of the three allocations went
+with them.
+
+**Bisecting and falsifying.**  `LOFT_NO_FAST_ORDER=1` and `LOFT_NO_ONE_PROBE_INSERT=1`
+restore the general forms at run time, on both backends.  `LOFT_KEYED_VERIFY=1` checks
+every pre-resolved comparison, every exact lookup and every one-probe insert against the
+general form as it is made.  The guard is `tests/scripts/158-keyed-fast-paths.loft` (14
+cells, every answer by hand; three sabotaged fast paths each fail five of them) with
+`tests/keyed_fast_paths.rs` running it on the general paths and under verification; the
+interpreter's whole script corpus passes under `LOFT_KEYED_VERIFY=1`.  That sweep found one
+defect, in the check itself — `find_exact` read an ABSENT collection's reserved id as a
+root (loft#1213's shape); a root is now a link like any other, and a negative one is no
+node.
+
+**Found on the way, not built:** an `ordered` (a `sorted` over an element type some
+`index` or `hash` also holds) does NOT displace a duplicate key — `ordered_finish` ignores
+what its search found — while the inline `sorted` replaces in place.  So declaring an
+unrelated `index<T[…]>` changes what `sorted<T[…]>` does with a repeated key
+(`2:2 5:3 5:1 9:4`, length 4, where the inline form holds three).  It predates this pass
+and the general paths answer the same; the cells here pin neither.  Filed as loft#1572,
+with a verified workaround (remove the key first).
+
+## What is left
+
+| | lever | now |
+|---|---|---|
+| L5 | the probe loop: maximum load → ~0.55, the compare inlined per key kind, no `div` | the largest remaining term of a lookup: 5.4 compares per miss at the lane's load |
+| L6 | `--native` typed entry points for a statically known `hash<T[integer]>` | the `Content` slice, `Stores::find`'s dispatch, the type-table walk of every append (~900 instr) |
+| L7 | removal carries the home bucket | `hash_remove` still re-hashes its cluster |
+| — | `sorted`'s insert | a gap buffer or a chunked layout; the `memmove` is the row |
 
 ## Two findings about the measurement itself
 

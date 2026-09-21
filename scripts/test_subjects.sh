@@ -84,7 +84,7 @@ subject_patterns() {
     (scopes)    echo '~slot ~leak ~ownership ~use_analysis ~uaf ~frame_vars ~closure ~callarg ~alias ~borrow ~branch_join ~join_witness ~copy_advice ~double_move ~loop_binding ~own_ ~owns_ ~ref_param ~redundant_free ~returned_text ~value_struct ~text_buffer ~text_return ~early_text ~nullable_ret ~generic_discharged ~link_ ~callee_disturb ~buffer_is_place =lease_refuse' ;;
     (codegen)   echo '~codegen ~copy_fresh_dest ~inplace_callee_hoist ~fused_append ~scalar_hoist ~mint_hoist ~record_push ~move_append ~retbuf_adopt ~selfread_literal ~literal_hoist ~complete_write ~element_first ~view_header ~wrapper_op ~callee_inputs ~push_hoist ~next_counter ~leaf_chain ~lazy_buffer ~nested_in_place ~emission_audit ~native ~n2_ ~n3_ ~g2_ ~ir_ ~introspect ~slots ~entry_signature ~differential ~hoist ~vector_base ~loop_buffer ~push_fill ~lazy_split ~invariant_arith ~bounded_nest ~repeat_fill ~twin_base ~record_ptr ~loop_record ~group_push ~range_arith ~guarded_chain ~release_pass ~e1_ ~n0_ ~behavior_golden ~compile_scaling ~windows ~append_in_place ~retbuf ~view_elision ~adopt_first_bind ~adopt_buffer_reuse ~one_of_several_args ~literal_exit_buffer ~place_result ~view_field' ;;
     (runtime)   echo '~wrap ~issues ~thread ~par_ ~parallel ~parity ~coroutine ~runtime ~dispatch ~panic ~exit_codes ~crash ~error_path ~soft_halt ~log ~math ~format_width ~profiling ~sandbox ~script_mode ~self_append ~timeout ~json_corpus ~test ~env_' ;;
-    (store)     echo '~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io ~heap_free ~clear_release ~reset_capacity ~poison_claim ~value_record ~prefill_image ~pooled_buffer' ;;
+    (store)     echo '~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io ~heap_free ~clear_release ~reset_capacity ~poison_claim ~value_record ~prefill_image ~pooled_buffer ~keyed_fast ~siphash ~data_structures' ;;
     (wasm)      echo '~wasm ~html ~deliver ~browser ~gl_ ~android' ;;
     (packages)  echo '~registry ~package =imports ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_' ;;
     (lsp)       echo '~lsp ~dap ~debugger ~repl' ;;
@@ -119,7 +119,7 @@ subject_paths() {
     (scopes)   echo '^src/scopes\.rs|^src/use_analysis\.rs|^src/ownership_cfg\.rs|^src/copy_manifest\.rs' ;;
     (codegen)  echo '^src/generation/|^src/compile\.rs|^src/state/codegen\.rs|^src/codegen_runtime\.rs|^src/fill\.rs' ;;
     (runtime)  echo '^src/state/|^src/parallel\.rs|^src/fill\.rs' ;;
-    (store)    echo '^src/store\.rs|^src/store_budget\.rs|^src/database/|^src/keys\.rs' ;;
+    (store)    echo '^src/store\.rs|^src/store_budget\.rs|^src/database/|^src/keys\.rs|^src/hash\.rs|^src/tree\.rs|^src/siphash\.rs' ;;
     (wasm)     echo '^src/wasm|^src/html|^src/ffi_deliver\.rs' ;;
     (packages) echo '^src/manifest\.rs|^src/registry|^src/cache\.rs|^src/api_' ;;
     (lsp)      echo '^src/lsp\.rs|^src/lsp/|^src/bin/loft-lsp\.rs' ;;

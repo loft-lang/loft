@@ -187,12 +187,31 @@ impl SipHasher13 {
 
     /// Feed a `u64` exactly as `<u64 as Hash>::hash` does — the default
     /// `Hasher::write_u64`, since SipHasher13 specialises no integer method.
+    ///
+    /// A whole word arriving on a word boundary IS one compression round, which is all
+    /// [`Self::write`] does with it after its tail bookkeeping — and that is the shape of
+    /// every integer key: the seed, then the key, each eight bytes with nothing buffered.
+    /// Taking it here keeps the round inline at the call (the general `write` is 62
+    /// instructions for a word whose round is 14, and was a fifth of a cache-resident
+    /// lookup).  The digest is the same by construction; `tests/siphash_std_parity.rs`
+    /// crosses both arms (a word after a text leaves a tail and takes `write`).
+    #[inline]
     pub fn write_u64(&mut self, i: u64) {
+        if self.ntail == 0 {
+            // `write` reads the word little-endian out of the native bytes.
+            let mi = u64::from_le_bytes(i.to_ne_bytes());
+            self.length += 8;
+            self.state.v3 ^= mi;
+            compress!(self.state);
+            self.state.v0 ^= mi;
+            return;
+        }
         self.write(&i.to_ne_bytes());
     }
 
     /// Feed an `i64` exactly as `<i64 as Hash>::hash` does: `write_i64`'s default is
     /// `write_u64(i as u64)`.
+    #[inline]
     pub fn write_i64(&mut self, i: i64) {
         self.write_u64(i as u64);
     }

@@ -968,6 +968,26 @@ also what fixed the heap-owning case: the claims walk read the source through a 
 captured before the growth relocated it — a freed block).  The doubling fill a canvas is
 built with is this shape run to a ladder; `render_marks` −8 %.  First bisect step for a
 wrong element out of a self-append.
+**`LOFT_NO_FAST_ORDER=1`** (@PLN158 keyed class, runtime, BOTH backends) makes every search
+that ORDERS — an `index` descent, a `sorted` / `ordered` binary search — compare through the
+general `key_compare` / `compare` again, an exact `index` lookup take the boundary descent,
+and an `index` insert look its duplicate up before it descends — with it off, the key is
+resolved once per search (`keys::FastOrder`), a full-key lookup stops at the equal node
+(`tree::find_exact`), and a refused `tree::add` names the duplicate its own descent met
+(`index` fill-and-find −33 %) — and is the first bisect step for a wrong element, order or
+lookup out of a `sorted`, `ordered` or `index`.  **`LOFT_NO_ONE_PROBE_INSERT=1`** makes a
+`hash` insert look its duplicate up and then file the entry as two hash-and-probe walks again
+— with it off, one walk answers both (`hash::probe_for_insert`; a 5,000-key fill −37 %) — and
+is the first bisect step for a lost, duplicated or unfindable `hash` entry.
+**`LOFT_KEYED_VERIFY=1`** is the falsifier for both: every pre-resolved comparison, every
+exact lookup and every one-probe insert is checked against the general form as it is made,
+and a disagreement panics naming both answers — run the keyed cells or the script corpus
+under it after touching `keys.rs`, `hash.rs`, `tree.rs` or the `sorted` searches.  Two more
+levers of the same pass carry no switch because they have no second answer to bisect to: a
+miss on a collection with no lazy binding answers at once (`Stores::lazy_bound`, a lookup
+loop that misses half the time −20 %), and a whole word fed to the hasher on a word boundary
+is one inline round (`SipHasher13::write_u64`, digest pinned by `siphash_std_parity`).
+`bench/portal/analysis/keyed.md` has the ledger and what is left (L5–L7).
 **`LOFT_RELEASE_PASS_PROBE=1`** (generation time) is a MEASUREMENT INSTRUMENT, never a
 build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal
 division emits the processor's wrapping operator and every float comparison the plain

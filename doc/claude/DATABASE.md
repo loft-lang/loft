@@ -839,6 +839,28 @@ Zero-copy string reference into store memory. Lifetime is tied to the store; no 
 | `store(db_ref) -> &Store` | Resolve a `DbRef` to a `&Store` (shared borrow) |
 | `mut_store(db_ref) -> &mut Store` | Resolve a `DbRef` to a `&mut Store` |
 
+### The key resolved once: `FastKey` and `FastOrder`
+
+`key_compare` and `compare` decide a key's KIND per call — a `(Content, type_nr)` match, a
+bounds-checked store lookup, a validated read: 90–100 instructions for what is one load and
+one compare.  A search asks about the same key every step, so the keyed searches resolve it
+once and compare with a read:
+
+| Form | Asks | Used by |
+|---|---|---|
+| `fast_key(keys, key) -> Option<FastKey>` | equal or not (`matches`) | the `hash::find` probe loop (@PLN135 arc B) |
+| `fast_key_of(rec, stores, keys)` | the same, for a RECORD's own key | `hash::probe_for_insert` |
+| `fast_order(keys, key) -> Option<FastOrder>` | how it ORDERS (`compare`), direction applied once (@FR-Col-Order-Sign) | `tree::find`, `tree::find_exact`, `vector::sorted_find`, `vector::ordered_find` |
+| `fast_order_of(rec, stores, keys)` | the same, for a record's own key | `tree::add`, `sorted_finish`, `ordered_finish` |
+
+All four answer `None` for a compound or partial key and for a width they do not list
+(`u8`, `u16`, `single`, `float`), and the search then takes the general comparator
+unchanged.  Every search calls ONE of `keys::order_key` / `keys::order_record`, which is
+also where `LOFT_KEYED_VERIFY=1` checks the fast answer against the general one.  A text
+key cannot be held across `tree::put` (it rebalances the store the text lives in), so
+`FastOrder::detached` drops it there and a text-keyed `index` INSERT orders generally.
+`LOFT_NO_FAST_ORDER=1` makes the order forms answer `None` everywhere.
+
 ---
 
 ## Vector Operations (`src/vector.rs`)
@@ -981,8 +1003,9 @@ Maximum tree depth of 30 is sufficient for up to ~2^15 nodes in a balanced red-b
 
 | Function | Description |
 |---|---|
-| `find(store, root, keys, vals) -> (u32, bool)` | Search; returns (rec, found) |
-| `add(store, root, rec, keys) -> u32` | Insert `rec`; rebalances; returns new root |
+| `find(data, before, fields, stores, keys, key) -> u32` | The BOUNDARY below / above `key`: never stops at an equal key, so it serves a range's ends and a partial key |
+| `find_exact(data, fields, stores, keys, key) -> u32` | The point lookup for a FULL key: the descent stops at the equal node (a full key matches at most one record — an insert displaces its duplicate) |
+| `add(data, rec, fields, stores, keys) -> u32` | Insert `rec` and rebalance; answers 0, or the record that already carries `rec`'s key with the tree UNCHANGED — so the caller displaces it and adds again, and no insert looks its key up first |
 | `remove(store, root, rec, keys) -> u32` | Delete `rec`; rebalances; returns new root |
 | `first(store, root) -> u32` | Leftmost node (minimum key) |
 | `last(store, root) -> u32` | Rightmost node (maximum key) |
@@ -1017,6 +1040,19 @@ byte 32: BUCKET0    — slots, 4 bytes each (0 = empty)
 ```
 
 `elms = (room - RESERVED_WORDS) * 2`, with `RESERVED_WORDS = 4`.
+
+### An insert is one hash and one probe walk
+
+`Stores::insert_record` asks `hash::probe_for_insert` two things at once: is the record's
+key already here (@FR-Col-Insert — the latest insert displaces it), and if not, which
+bucket takes it.  Both answers lie on the walk from the key's home bucket to the first
+empty one, so the insert hashes once and files the entry with `hash::add_at`.  It used to
+look the duplicate up first (`dedup_keyed`: the key copied into a `Vec<Content>`, hashed,
+probed) and then run `hash::add`, which hashed the key again and walked again.  A found
+duplicate, a table not yet created and a record that is already filed all take that
+two-walk form still — it owns those answers — and `LOFT_NO_ONE_PROBE_INSERT=1` restores it
+for every insert.  Measured on 5,000 integer keys: a fill −37 %
+(`bench/portal/analysis/keyed.md`).
 
 ### Entries live in a chunked arena, not one record each (@PLN135 arc H)
 

@@ -2555,6 +2555,227 @@ impl FastKey<'_> {
     }
 }
 
+impl FastKey<'_> {
+    /// How this key ORDERS against the value at `(rec, base)`, in ascending sense — the
+    /// direction is [`FastOrder`]'s to apply.
+    ///
+    /// Each arm is the identically-numbered arm of [`compare_key`] with its match taken
+    /// outside the search that repeats it; keep the two together when either changes.
+    #[inline]
+    #[must_use]
+    pub fn order(&self, s: &Store, rec: u32, base: u32) -> Ordering {
+        match self {
+            FastKey::Int(pos, v) => v.cmp(&s.get_int(rec, base + pos)),
+            FastKey::Long(pos, v) => v.cmp(&s.get_long(rec, base + pos)),
+            FastKey::I32(pos, v) => v.cmp(&i64::from(s.get_i32_raw(rec, base + pos))),
+            FastKey::U32(pos, v) => v.cmp(&i64::from(s.get_u32_raw(rec, base + pos))),
+            FastKey::ShortRaw(pos, start, v) => {
+                v.cmp(&i64::from(s.get_short_full(rec, base + pos, *start)))
+            }
+            FastKey::Str(pos, v) => (*v).cmp(s.get_str(s.get_u32_raw(rec, base + pos))),
+        }
+    }
+
+    /// The same key with nothing borrowed, or `None` for a text key — for a walk that
+    /// MUTATES the stores it compares against (`tree::put` rebalances as it unwinds), where
+    /// a `&str` out of a store cannot be held.
+    #[must_use]
+    pub fn detached(&self) -> Option<FastKey<'static>> {
+        Some(match *self {
+            FastKey::Int(p, v) => FastKey::Int(p, v),
+            FastKey::Long(p, v) => FastKey::Long(p, v),
+            FastKey::I32(p, v) => FastKey::I32(p, v),
+            FastKey::U32(p, v) => FastKey::U32(p, v),
+            FastKey::ShortRaw(p, st, v) => FastKey::ShortRaw(p, st, v),
+            FastKey::Str(..) => return None,
+        })
+    }
+}
+
+/// A one-field key whose ORDER test is pre-resolved: [`FastKey`] plus the key's declared
+/// direction (@FR-Col-Order-Sign — direction lives in the comparator and is applied once).
+///
+/// What [`fast_key`] did for a hash probe's equality (@PLN135 arc B), for the searches
+/// that ORDER: a tree descent, a binary search.  [`key_compare`] re-runs its
+/// `(Content, type_nr)` match, a bounds-checked store lookup and a call per comparison —
+/// 90–100 instructions where the comparison itself is a load and a compare, and a third
+/// of an `index` insert-and-find (`bench/portal/analysis/keyed.md`).  Resolved once per
+/// search and inlined into it, the loop body is the read.
+///
+/// `LOFT_NO_FAST_ORDER=1` makes both constructors answer `None`, so every search takes
+/// [`key_compare`] / [`compare`] again; `LOFT_KEYED_VERIFY=1` checks every answer against
+/// them ([`FastOrder::compare`]).
+pub struct FastOrder<'a> {
+    key: FastKey<'a>,
+    descending: bool,
+    /// `LOFT_KEYED_VERIFY`, read once where the comparator is resolved so the search's
+    /// loop tests a field and not a `OnceLock`.
+    verify: bool,
+}
+
+/// `LOFT_NO_FAST_ORDER=1` — the first bisect step for a wrong element, order or lookup
+/// out of a `sorted`, `ordered` or `index` collection: every search uses the general
+/// comparator, an exact `index` lookup takes the boundary descent, and an `index` insert
+/// looks its duplicate up before it descends.
+#[must_use]
+pub fn fast_order_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FAST_ORDER"))
+}
+
+/// `LOFT_NO_ONE_PROBE_INSERT=1` — the first bisect step for a lost, duplicated or
+/// unfindable entry out of a `hash` insert: the insert looks its duplicate up and then
+/// files the entry as two separate hash-and-probe walks again (`Stores::insert_record`).
+#[must_use]
+pub fn one_probe_insert_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_ONE_PROBE_INSERT"))
+}
+
+/// `LOFT_KEYED_VERIFY=1` — the falsifier for the keyed fast paths: every pre-resolved
+/// comparison is checked against the general comparator, every exact `index` lookup
+/// against the boundary descent, and every one-probe `hash` insert against the slot and
+/// the duplicate the two-walk form finds.  A disagreement panics, naming both answers.
+#[must_use]
+pub fn keyed_verify() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_KEYED_VERIFY"))
+}
+
+/// Resolve a lookup key to its [`FastOrder`], or `None` when the search must keep using
+/// [`key_compare`] — a compound or partial key, a width [`fast_key`] does not list.
+#[must_use]
+pub fn fast_order<'a>(keys: &[Key], key: &'a [Content]) -> Option<FastOrder<'a>> {
+    if !fast_order_enabled() {
+        return None;
+    }
+    Some(FastOrder {
+        key: fast_key(keys, key)?,
+        descending: keys[0].type_nr < 0,
+        verify: keyed_verify(),
+    })
+}
+
+/// The [`FastKey`] a RECORD's own key resolves to — what [`get_key`] followed by
+/// [`fast_key`] answers, without the `Vec<Content>` in between (and, for a text key,
+/// without the copy `get_key` makes of it).
+#[must_use]
+pub fn fast_key_of<'a>(rec: &DbRef, stores: &'a [Store], keys: &[Key]) -> Option<FastKey<'a>> {
+    let [k] = keys else { return None };
+    let s = store(rec, stores);
+    let pos = u32::from(k.position);
+    let at = rec.pos + pos;
+    Some(match k.type_nr.abs() {
+        1 => FastKey::Int(pos, s.get_int(rec.rec, at)),
+        2 => FastKey::Long(pos, s.get_long(rec.rec, at)),
+        8 => FastKey::I32(pos, i64::from(s.get_i32_raw(rec.rec, at))),
+        12 => FastKey::U32(pos, i64::from(s.get_u32_raw(rec.rec, at))),
+        11 => FastKey::ShortRaw(
+            pos,
+            k.start,
+            i64::from(s.get_short_full(rec.rec, at, k.start)),
+        ),
+        6 => FastKey::Str(pos, s.get_str(s.get_u32_raw(rec.rec, at))),
+        _ => return None,
+    })
+}
+
+/// [`fast_order`] for a record's own key: the comparator an INSERT searches with.
+#[must_use]
+pub fn fast_order_of<'a>(rec: &DbRef, stores: &'a [Store], keys: &[Key]) -> Option<FastOrder<'a>> {
+    if !fast_order_enabled() {
+        return None;
+    }
+    Some(FastOrder {
+        key: fast_key_of(rec, stores, keys)?,
+        descending: keys[0].type_nr < 0,
+        verify: keyed_verify(),
+    })
+}
+
+impl FastOrder<'_> {
+    /// How the key orders against the record at `(rec, base)` of `s` — the answer
+    /// [`key_compare`] gives for the same pair.
+    #[inline]
+    #[must_use]
+    pub fn compare(&self, s: &Store, rec: u32, base: u32) -> Ordering {
+        let c = self.key.order(s, rec, base);
+        if self.descending { c.reverse() } else { c }
+    }
+
+    /// The same comparator with nothing borrowed, or `None` for a text key
+    /// ([`FastKey::detached`]).
+    #[must_use]
+    pub fn detached(&self) -> Option<FastOrder<'static>> {
+        Some(FastOrder {
+            key: self.key.detached()?,
+            descending: self.descending,
+            verify: self.verify,
+        })
+    }
+}
+
+/// How lookup `key` orders against `record`: through `fast` where the search resolved one,
+/// through [`key_compare`] otherwise — the ONE comparison a keyed search makes, so the
+/// pre-resolved form and its verification cannot be spelled differently per search.
+#[inline]
+#[must_use]
+pub fn order_key(
+    fast: Option<&FastOrder>,
+    key: &[Content],
+    record: &DbRef,
+    stores: &[Store],
+    keys: &[Key],
+) -> Ordering {
+    let Some(f) = fast else {
+        return key_compare(key, record, stores, keys);
+    };
+    let c = f.compare(store(record, stores), record.rec, record.pos);
+    if f.verify {
+        verify_order(c, key_compare(key, record, stores, keys), record);
+    }
+    c
+}
+
+/// [`order_key`] for an INSERT, whose key is the new record's own: how `rec` orders
+/// against `other`, through `fast` (resolved from `rec` by [`fast_order_of`]) or through
+/// [`compare`].
+#[inline]
+#[must_use]
+pub fn order_record(
+    fast: Option<&FastOrder>,
+    rec: &DbRef,
+    other: &DbRef,
+    stores: &[Store],
+    keys: &[Key],
+) -> Ordering {
+    let Some(f) = fast else {
+        return compare(rec, other, stores, keys);
+    };
+    let c = f.compare(store(other, stores), other.rec, other.pos);
+    if f.verify {
+        verify_order(c, compare(rec, other, stores, keys), other);
+    }
+    c
+}
+
+/// `LOFT_KEYED_VERIFY`'s check of one pre-resolved comparison: `fast` is what
+/// [`FastOrder::compare`] answered for `record`, `general` what the general comparator
+/// answers for the same pair.
+///
+/// # Panics
+/// When the two disagree — the fast path would have ordered a collection differently.
+pub fn verify_order(fast: Ordering, general: Ordering, record: &DbRef) {
+    assert!(
+        fast == general,
+        "LOFT_KEYED_VERIFY: the pre-resolved comparator answered {fast:?} where the general \
+         one answers {general:?} (record {}:{}+{})",
+        record.store_nr,
+        record.rec,
+        record.pos,
+    );
+}
+
 fn compare_ref(r1: &DbRef, r2: &DbRef, stores: &[Store], key: &Key, p1: u32, p2: u32) -> Ordering {
     let s = store(r1, stores);
     let c = match key.type_nr.abs() {

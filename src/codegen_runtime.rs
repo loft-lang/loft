@@ -745,7 +745,10 @@ fn get_record_lookup(
         // nothing (generated code is Rust calling Rust), and it keeps the two
         // backends reading the same two calls in the same order.
         let found = stores.find(&data, db_tp as u16, key);
-        if found.rec != 0 {
+        // Resident, or a miss on a collection nothing is bound to: either way the
+        // collection has answered (`Stores::lazy_bound`).  The interpreter's twin asks
+        // the same question at the same point.
+        if found.rec != 0 || !stores.lazy_bound(&data) {
             return found;
         }
         // @PLN133 S8 — a source served by a LOFT driver. Same shape as the

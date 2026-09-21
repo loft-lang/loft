@@ -272,6 +272,31 @@ impl Stores {
         // `__nullable<S>` element keeps them in the `Some` record, and recomputing the
         // offset here from the enum's own (absent) field list read `u16::MAX`.
         let left = self.fields(db);
+        // A FULL key names at most one record, so its descent stops there
+        // (`tree::find_exact`); a partial key keeps the boundary walk below, which
+        // answers the LOWEST of the records it matches.
+        if keys::fast_order_enabled() && key.len() == self.keys(db).len() {
+            let rec = tree::find_exact(data, left, &self.allocations, self.keys(db), key);
+            if keys::keyed_verify() {
+                let walked = self.find_index_boundary(data, db, key, left).rec;
+                assert!(
+                    walked == rec,
+                    "LOFT_KEYED_VERIFY: the exact descent answers record {rec} where the \
+                     boundary walk answers {walked}"
+                );
+            }
+            return DbRef {
+                store_nr: data.store_nr,
+                rec,
+                pos: if rec == 0 { 0 } else { 8 },
+            };
+        }
+        self.find_index_boundary(data, db, key, left)
+    }
+
+    /// [`Self::find_index`]'s general form: the boundary below `key`, one step forward,
+    /// and one comparison to say whether that record matches.
+    fn find_index_boundary(&self, data: &DbRef, db: u16, key: &[Content], left: u16) -> DbRef {
         let rec = tree::find(data, true, left, &self.allocations, self.keys(db), key);
         let mut result = DbRef {
             store_nr: data.store_nr,
@@ -712,22 +737,39 @@ impl Stores {
         content_tp: u16,
         secondary: bool,
     ) {
-        let keys = self.types[db as usize].keys.clone();
-        let key = keys::get_key(rec, &self.allocations, &keys);
+        let key = keys::get_key(rec, &self.allocations, &self.types[db as usize].keys);
         let existing = self.find(data, db, &key);
         // @PLN135 arc H — two entries of the same hash now share a chunk RECORD, so
         // "is this the same entry" is `(rec, pos)`, not `rec` alone.  Comparing only
         // the record number would read a neighbouring slot in the same chunk as the
         // entry being inserted and skip the dedup.
         if existing.rec != 0 && (existing.rec, existing.pos) != (rec.rec, rec.pos) {
-            self.remove(data, &existing, db);
-            if !secondary {
-                self.remove_claims(&existing, content_tp);
-                if matches!(self.types[db as usize].parts, Parts::Hash(_, _)) {
-                    hash::free_entry(data, &existing, &mut self.allocations);
-                } else {
-                    self.store_mut(data).delete(existing.rec);
-                }
+            self.displace_keyed(data, &existing, db, content_tp, secondary);
+        }
+    }
+
+    /// Take `existing` out of the collection for the insert that displaces it — the
+    /// second half of [`Self::dedup_keyed`], for an insert that found its duplicate on
+    /// its own walk (`hash::probe_for_insert`, `tree::add`) and so never looked it up.
+    ///
+    /// Unlink first, then release: see [`Self::remove_owned`] for why that order is
+    /// load-bearing.  A `secondary` index only unlinks — the primary still holds the
+    /// record.
+    pub(crate) fn displace_keyed(
+        &mut self,
+        data: &DbRef,
+        existing: &DbRef,
+        db: u16,
+        content_tp: u16,
+        secondary: bool,
+    ) {
+        self.remove(data, existing, db);
+        if !secondary {
+            self.remove_claims(existing, content_tp);
+            if matches!(self.types[db as usize].parts, Parts::Hash(_, _)) {
+                hash::free_entry(data, existing, &mut self.allocations);
+            } else {
+                self.store_mut(data).delete(existing.rec);
             }
         }
     }

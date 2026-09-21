@@ -232,19 +232,139 @@ pub fn add(hash: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
         rec.rec,
         rec.pos,
     );
-    let room = keys::store(hash, stores).record_words(claim);
-    // Grow at load factor 0.75 (= 0.75·elms).  The `+ RESERVED_WORDS` counts the words
-    // before the bucket array: rehash when `length >= 1.5·(room - 4) = 0.75·elms`.
-    if (length * 2 / 3) + RESERVED_WORDS >= room {
-        let new_claim = keys::mut_store(hash, stores).claim(room * 2 - 1);
-        keys::mut_store(hash, stores).zero_fill(new_claim);
-        rehash_into(hash, claim, new_claim, stores, keys);
-        install_table(hash, claim, new_claim, stores);
-        claim = new_claim;
+    if let Some(grown) = grow_if_full(hash, claim, length, stores, keys) {
+        claim = grown;
     }
     hash_set(claim, index, rec, stores, keys);
     keys::mut_store(rec, stores).set_u32_raw(claim, LEN_FLD, length + 1);
     // hash_validate(hash, key, stores, keys);
+}
+
+/// Rebuild table `claim` at twice its size when one more entry would cross the load
+/// factor, answering the new table — the growth half of [`add`], shared with [`add_at`].
+///
+/// Grow at load factor 0.75 (= 0.75·elms).  The `+ RESERVED_WORDS` counts the words before
+/// the bucket array: rehash when `length >= 1.5·(room - 4) = 0.75·elms`.
+fn grow_if_full(
+    hash: &DbRef,
+    claim: u32,
+    length: u32,
+    stores: &mut [Store],
+    keys: &[Key],
+) -> Option<u32> {
+    let room = keys::store(hash, stores).record_words(claim);
+    if (length * 2 / 3) + RESERVED_WORDS < room {
+        return None;
+    }
+    let new_claim = keys::mut_store(hash, stores).claim(room * 2 - 1);
+    keys::mut_store(hash, stores).zero_fill(new_claim);
+    rehash_into(hash, claim, new_claim, stores, keys);
+    install_table(hash, claim, new_claim, stores);
+    Some(new_claim)
+}
+
+/// What ONE probe walk from a record's home bucket established about inserting it
+/// ([`probe_for_insert`]).
+pub enum Probed {
+    /// No entry carries the record's key.  The walk ended on the empty bucket at byte
+    /// offset `bucket` of the table — the one [`add`] would file it in — and `index` is
+    /// the slot value that names the record.
+    Free { bucket: u32, index: u32 },
+    /// Another entry already carries the record's key: the one an insert displaces
+    /// (@FR-Col-Insert — latest insert wins).
+    Present(DbRef),
+    /// Nothing established: no table yet, or the record is already filed in it.  The
+    /// caller takes the two-walk form, which owns both answers.
+    Unknown,
+}
+
+/// One hash and one probe walk for an insert: is `rec`'s key already here, and if not,
+/// which bucket takes it.
+///
+/// An insert used to ask those as two separate walks — the duplicate lookup
+/// (`Stores::dedup_keyed`: the key copied out into a `Vec<Content>`, hashed, probed) and
+/// then [`add`] (the key re-read from the record, hashed AGAIN, probed again for the
+/// empty bucket).  They are the same walk: both start at the key's home bucket, and the
+/// duplicate — if there is one — lies before the first empty bucket, which is where the
+/// second walk stops.  A quarter of a cache-resident insert was the repeat
+/// (`bench/portal/analysis/keyed.md`).
+///
+/// The key is compared through [`keys::fast_key_of`] where it has one field of a listed
+/// width, and record against record otherwise, so a compound key takes this path too.
+#[must_use]
+pub fn probe_for_insert(hash: &DbRef, rec: &DbRef, stores: &[Store], keys: &[Key]) -> Probed {
+    let store = keys::store(hash, stores);
+    let claim = store.collection_rec(hash.rec, hash.pos);
+    if claim == 0 || store.record_words(claim) <= RESERVED_WORDS {
+        return Probed::Unknown;
+    }
+    let count = elms(store, claim);
+    let width = stride(store, claim);
+    let own = slot_value(store, claim, rec, width);
+    let hash_val = keys::hash(rec, stores, keys, read_seed(store, claim));
+    let mut at = (hash_val % u64::from(count)) as u32;
+    let fast = keys::fast_key_of(rec, stores, keys);
+    for _ in 0..count {
+        let slot = store.get_u32_raw(claim, BUCKET0 + at * SLOT_BYTES);
+        if slot == 0 {
+            return Probed::Free {
+                bucket: BUCKET0 + at * SLOT_BYTES,
+                index: own,
+            };
+        }
+        if slot == own {
+            return Probed::Unknown;
+        }
+        let entry = entry_ref(store, claim, slot, hash.store_nr, width);
+        let same = match &fast {
+            Some(f) => f.matches(store, entry.rec, entry.pos),
+            None => keys::compare(rec, &entry, stores, keys) == Ordering::Equal,
+        };
+        if same {
+            return Probed::Present(entry);
+        }
+        at += 1;
+        if at >= count {
+            at = 0;
+        }
+    }
+    Probed::Unknown
+}
+
+/// File `rec` in the bucket [`probe_for_insert`] found free — [`add`] without its walk.
+///
+/// A table that must grow first is rebuilt exactly as [`add`] rebuilds it, and the
+/// record is then filed by a walk of the NEW table: the bucket named an offset in the
+/// old one.
+///
+/// # Panics
+/// Under `LOFT_KEYED_VERIFY=1`, when `bucket` is not the one the free-slot walk chooses.
+pub fn add_at(
+    hash: &DbRef,
+    rec: &DbRef,
+    bucket: u32,
+    index: u32,
+    stores: &mut [Store],
+    keys: &[Key],
+) {
+    let claim = keys::store(hash, stores).collection_rec(hash.rec, hash.pos);
+    let length = keys::store(hash, stores).get_u32_raw(claim, LEN_FLD);
+    if keys::keyed_verify() {
+        let walked = hash_free_pos(claim, rec, stores, keys);
+        assert!(
+            walked == bucket,
+            "LOFT_KEYED_VERIFY: the one-probe insert chose bucket {bucket} where the \
+             free-slot walk chooses {walked}"
+        );
+    }
+    if let Some(grown) = grow_if_full(hash, claim, length, stores, keys) {
+        hash_set(grown, index, rec, stores, keys);
+        keys::mut_store(rec, stores).set_u32_raw(grown, LEN_FLD, length + 1);
+        return;
+    }
+    let store = keys::mut_store(rec, stores);
+    store.set_u32_raw(claim, bucket, index);
+    store.set_u32_raw(claim, LEN_FLD, length + 1);
 }
 
 /// Give `hash` a bucket table large enough to hold `count` entries without rehashing,
