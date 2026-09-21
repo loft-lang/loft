@@ -1,0 +1,117 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1565, `@FR-H-Drop` — A LOOP BODY'S VECTOR RELEASES ITS ELEMENTS AT THE END OF ITS OWN PASS.
+// The owner of a loop-body local dies at the end of each pass, and the owner's scope end releases
+// in reverse declaration order.  A vector's elements live in a backing store minted at the
+// function's head and reused across passes.  So they were released at the NEXT pass's re-mint of
+// that store, after whatever that pass did first, and the last pass's only after the loop.  A
+// vector a call delivered was never released at all.  A `break` let the elements outlive the
+// loop.  The vector is now released at its own scope's end, and emptied so the re-mint finds
+// nothing to release again.
+//
+// Mints (`M<id>`), reads (`R<n>`, the length) and releases (`<id>`) are traced in the order they
+// happen, and every expected trace is worked out by hand.  The last two cells are controls that
+// were right before: a vector whose elements are moved into an outer one each pass, and a vector
+// returned from the loop.  A vector read AFTER the loop is rebound each pass instead of dying at
+// its end, and that rebind's release is loft#1582's.
+//
+// @falsified-at: a2e99e782 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1565-a-loop-body-vector-releases-its-elements-at-the-end-of-its-own-pass.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion
+//   failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends; the stores are
+//   right on both trees, and only the trace shows when each release runs.
+// ARMED: no instrument — each mint and hook call is written to this guard's own trace file.
+// WITNESS: on the control all seven fault cells release late and the two controls hold, on both
+//   backends, scored with the assertions replaced by prints: `g1` `M10,M20,R1,10,M11,20,M21,R1,11,
+//   out,21`, `g3` `M10,M20,R1,10,M11,M21,R1,11,out` (20 and 21 never released), `g4` with 21
+//   after `out`.
+// HOLDS: leak, panic, refusals and expectations are unmoved on both trees.
+
+fn trace_path() -> text { return "loft_loop_vector_pass_end_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct Lv { id: integer }
+fn OpDrop(self: Lv) { note("{self.id}"); }
+fn lmk(id: integer) -> Lv { note("M{id}"); return Lv { id: id }; }
+fn lmkv(id: integer) -> vector<Lv> { r: vector<Lv> = [lmk(id)]; return r; }
+
+/// g1 — a local declared before the vector: the vector goes first, at the pass end.
+fn g1() { for i in 0..2 { b = lmk(10 + i); v: vector<Lv> = [lmk(20 + i)]; note("R{len(v)}"); } note("out"); }
+/// g2 — the vector declared first: it goes last.
+fn g2() { for i in 0..2 { v: vector<Lv> = [lmk(20 + i)]; b = lmk(10 + i); note("R{len(v)}"); } note("out"); }
+/// g3 — a vector a call delivered.
+fn g3() { for i in 0..2 { b = lmk(10 + i); v = lmkv(20 + i); note("R{len(v)}"); } note("out"); }
+/// g4 — `break`: the pass that breaks releases before the loop's successor runs.
+fn g4() {
+  for i in 0..3 {
+    b = lmk(10 + i);
+    v: vector<Lv> = [lmk(20 + i)];
+    note("R{len(v)}");
+    if i == 1 { break; }
+  }
+  note("out");
+}
+/// g5 — `continue`: the skipped pass still releases at its end.
+fn g5() {
+  for i in 0..2 {
+    b = lmk(10 + i);
+    v: vector<Lv> = [lmk(20 + i)];
+    if i == 0 { continue; }
+    note("R{len(v)}");
+  }
+  note("out");
+}
+/// g6 — several elements, one appended later.
+fn g6() { for i in 0..2 { v: vector<Lv> = [lmk(20 + i), lmk(30 + i)]; v += [lmk(40 + i)]; note("R{len(v)}"); } note("out"); }
+/// g7 — nested loops.
+fn g7() { for i in 0..2 { for j in 0..2 { v: vector<Lv> = [lmk(20 + 2 * i + j)]; note("R{len(v)}"); } } note("out"); }
+/// c1 — control: the elements are moved into an outer vector, which releases them at its end.
+fn c1() {
+  w: vector<Lv> = [];
+  for i in 0..2 {
+    v: vector<Lv> = [lmk(20 + i)];
+    w += v;
+  }
+  note("R{len(w)}");
+}
+/// c2 — control: a vector returned from the loop's second pass.
+fn c2_m() -> vector<Lv> { for i in 0..3 { v: vector<Lv> = [lmk(20 + i)]; if i == 1 { return v; } } return []; }
+fn c2() { r = c2_m(); note("R{len(r)}"); }
+
+fn check(nm: text, want: text) {
+  got = drain();
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+fn main() {
+  drain();
+  g1(); check("g1 declared after a local ", "M10,M20,R1,20,10,M11,M21,R1,21,11,out");
+  g2(); check("g2 declared first         ", "M20,M10,R1,10,20,M21,M11,R1,11,21,out");
+  g3(); check("g3 delivered by a call    ", "M10,M20,R1,20,10,M11,M21,R1,21,11,out");
+  g4(); check("g4 break                  ", "M10,M20,R1,20,10,M11,M21,R1,21,11,out");
+  g5(); check("g5 continue               ", "M10,M20,20,10,M11,M21,R1,21,11,out");
+  g6(); check("g6 several elements       ", "M20,M30,M40,R3,20,30,40,M21,M31,M41,R3,21,31,41,out");
+  g7(); check("g7 nested loops           ", "M20,R1,20,M21,R1,21,M22,R1,22,M23,R1,23,out");
+  c1(); check("c1 control: moved out     ", "M20,M21,R2,20,21");
+  c2(); check("c2 control: returned      ", "M20,20,M21,R1,21");
+  println("a loop body's vector releases its elements at the end of its own pass: every cell holds");
+}

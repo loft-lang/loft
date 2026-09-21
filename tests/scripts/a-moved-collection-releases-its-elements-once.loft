@@ -10,9 +10,9 @@
 // function's top level did it in the callee, before the caller had read the result.  The source
 // store now takes a per-path flag, set right after the copy and reset where the store is rebuilt.
 //
-// The loop cells assert each release happens exactly once rather than the order: a collection
-// declared in a loop body still releases a pass late (D-heap-22), and this guard is not about
-// that.  The trace file is this guard's own.
+// The loop cells assert each release happens exactly once rather than the order: when a loop
+// body's collection is released is loft#1565's guard, and this guard is not about that.  The
+// trace file is this guard's own.
 
 // @falsified-at: 0d17cb1b7 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
 //   native 1 assertion failures -> 0

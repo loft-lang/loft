@@ -9,7 +9,7 @@
 // ahead of them.  A collection local is a view of the store that holds its elements, and that
 // store was registered at the head of the function, so its elements were released after every
 // other local whatever the order of declaration (D-heap-21).  A loop body's collection is a
-// further case, still open (D-heap-22), so no cell here declares one in a loop.
+// further case with a guard of its own (loft#1565), so no cell here declares one in a loop.
 //
 // The trace file is this guard's own.
 

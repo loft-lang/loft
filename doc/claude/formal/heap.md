@@ -597,8 +597,9 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-15` and `D-heap-22` (`D-heap-24` closed
-2026-09-21, and `D-heap-25`, found in its controls, opened and closed the same day; `D-heap-13`
+OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-15` and `D-heap-26` (`D-heap-22` and `D-heap-24`
+closed 2026-09-21, `D-heap-25`, found in D-heap-24's controls, and `D-heap-26`, found in
+D-heap-22's, both opened that day and the first closed; `D-heap-13`
 closed 2026-09-20; `D-heap-16` closed 2026-09-21 together with the three it uncovered,
 `D-heap-18`, `D-heap-19` and `D-heap-20`, each opened and closed that day; `D-heap-14` closed the
 same day, and `D-heap-21` and `D-heap-23` opened and closed with it; `D-heap-22`, `D-heap-21`'s
@@ -759,23 +760,50 @@ CLOSED 2026-09-17, below.
   through itself and its buffer's free is identity-guarded, so a record buffer keeps its place.
   Guard `tests/scripts/a-collection-local-releases-in-declaration-order.loft`.
 
-### D-heap-22 — OPEN (2026-09-21, loft#1565): a collection declared in a loop body releases its elements at the NEXT pass, not at the end of its own
+### D-heap-26 — OPEN (2026-09-21, loft#1582): a vector local reassigned releases the elements it displaces at scope end, or before the new ones are built
+
+- **Violates:** (H-Drop), its reassignment clause — the displaced record is released *"after the
+  new value has been computed and before anything after the statement runs"*.
+- **Where:** outside a loop, a rebind of a vector local mints a new `__vdb_N` backing, and the
+  displaced one is released only by its own scope-end sweep.  Inside a loop, on a vector declared
+  before it or read after it, the same backing is re-minted each pass, and
+  `Scopes::in_place_rebuild` releases its snapshot right after the re-init — the vector twin of
+  `D-heap-25`.
+- **Effect:** measured on both backends, identical: `v = [mk(20)]; v = [mk(21)]` makes 20 and 21,
+  reads, and releases 21 and then 20 at the scope's end.  The rule's order is make 21, release 20,
+  read.  The same for a call (`v = mkv(21)`), a copy (`v = w`) and `v = []` followed by an append.
+  In a loop the displaced elements go before the new ones are made.  The count is right.
+- **Status:** OPEN — found 2026-09-21 in `D-heap-22`'s guard, whose hoisted-vector control it is.
+- **Removal:** release the displaced elements at the rebind, after the new value — for a new
+  backing, the old one's hook at the `Set`; for a re-mint, after the literal, as `D-heap-25` did
+  for a record.
+
+### D-heap-22 — OPENED AND CLOSED (2026-09-21, loft#1565): a vector declared in a loop body released its elements during the NEXT pass, not at the end of its own
 
 - **Violates:** (H-Drop), its scope-end clause — the owner of a loop-body local dies at the end
-  of each pass.
-- **Where:** the collection's `__vdb_N` backing is registered at FUNCTION scope, so the store
-  survives the pass and is re-minted by the next one; the elements are released by that re-mint's
-  displaced release (`__disp_N`), and the last pass's at the function's end.  Keeping the store
-  across passes is deliberate (it is reused); releasing its elements with it is not what the
-  rule says.
-- **Effect:** `for i in 0..2 { b = mk(10 + i); v: vector<H> = [mk(20 + i)]; }` releases
-  `10 20 11 21` on both backends for the rule's `20 10 21 11`: every pass's resources are held
-  one pass longer, and out of order with the pass's other locals.  The count is right.
-- **Status:** OPEN — found while closing `D-heap-21`, whose fix moves the backing's turn in a
-  sweep but cannot move it into a scope it is not registered in.
-- **Removal:** release a loop-body collection's elements at the end of the pass that declared it,
-  keeping the store for reuse — the clear `(H-ClearRelease)` already performs for a reused
-  store-root vector is the shape to reach for.
+  of each pass, in reverse declaration order.
+- **Where:** the vector's backing — its `__vdb_N`, or the `__ref_N` buffer a call delivered it
+  through — is registered at FUNCTION scope so the store is reused across passes, and nothing
+  released the elements at the pass end.  A literal's were released by the next pass's re-mint
+  (its displaced snapshot), the last pass's at the function's end.  A call-delivered vector's were
+  never released: D-heap-13's release runs over the BINDING, which is out of scope by the time the
+  backing is swept.
+- **Effect:** measured on both backends, identical: `for i in 0..2 { b = mk(10 + i); v: vector<H>
+  = [mk(20 + i)]; }` released `10 20 11 21` for the rule's `20 10 21 11`.  A `break` released the
+  vector after the loop's successor ran.  `v = mkv(20 + i)` in a loop never released 20 or 21.
+  Where the vector was the pass's first statement the order came out right by accident.
+- **Closed:** `get_free_vars` releases a vector local whose one dep is a backing registered in an
+  outer scope (`outer_collection_backing`) at the local's own scope exit: normal end, `break` and
+  `continue` alike, in its declaration turn.  Only a local the program declared, and never an
+  argument backing — measured wrong both ways: a compiler temp with that dep is an INNER vector
+  of a nested literal, owned by the outer one, and clearing it emptied `t[0..2][0]`; a literal
+  backing renamed onto the return buffer is the caller's, and releasing it emptied the vector
+  being returned.  And only where the release runs a hook: for any other element type nothing
+  observable is late.
+  The release is the backing's `scope_end_drop`, so a hand-off that stopped it still stops it.
+  The vector is then emptied (`OpClearVector` runs no hooks, `H-Drop-Not`), so the re-mint and the
+  backing's own release find nothing to release a second time; the store is still reused.  Guard
+  `tests/scripts/1565-a-loop-body-vector-releases-its-elements-at-the-end-of-its-own-pass.loft`.
 
 ### D-heap-18 — OPENED AND CLOSED (2026-09-21): a local bound from a join, placed again, released twice
 
