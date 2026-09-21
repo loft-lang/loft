@@ -965,6 +965,18 @@ push, but CANNOT see what the admission exists to prevent — a runtime reader m
 lagging length changes no held fact — so there the interpreter is the falsifier.  The form
 is load-bearing: the window is three scalars whose address never reaches a call, because a
 counter whose address escaped to the growth arm lived on the stack and cost half the gain.
+**`LOFT_NO_JOIN_READ=1`** (`@FR-R-Base`'s join clause, default-ON, generation time, `--native`
+only) makes `v[i]?.f` run its join on every pass and read the result through the store again
+— with it off, a scalar field of a `?`-discharged element (`i` a variable) in a loop that
+holds the vector's header and element base is one range test and one load through the base,
+the join written once in the fallback arm for every index that test refuses (`record_update`
+34.9 → 12 µs, 4.62× → 1.60× of Rust, pinned) — and is the first bisect step for a wrong field out of
+`v[i]?.f` inside a loop on native.  The fallback is never a constant: a negative index
+addresses from the end there and an absent element answers its default RECORD's field, which
+a declared field default makes non-zero — `LOFT_HOIST_VERIFY=1` cannot see a mistake in that
+arm, the interpreter can.  ⚠ Built at TWO sites through one recogniser
+(`hoist::fused_join_read`): the pre-eval collector lifts every `Block` argument, so an
+emitter arm it does not know about never fires — and only a pin shows that, no value does.
 **`LOFT_NO_INVARIANT_HOIST=1`** (@PLN157 § V-ao, `@FR-R-Invariant`, default-ON, generation
 time) makes every invariant integer chain evaluate at every use again — with it off, a
 chain of `+ - * neg & | ^` over literals and variables a loop neither rebinds nor lets

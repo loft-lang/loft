@@ -16,7 +16,21 @@
 //
 // Predictions (tests/join_read.rs pins them).  ONE LOAD: j1 j2 (three kinds) j3 j4 j6 (three
 // joins in one condition, over a field path) j9 j10.  THE JOIN KEPT: j7 (the loop pushes, so
-// it holds no base), j8 (no loop, no header), j11 (a computed index).
+// it holds no base), j8 (no loop, no header), j11 (a computed index), j12 (inside a callee:
+// see the cell — the twin this was written to reach is not emitted).
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-22) — the fallback arm made a CONSTANT (the
+// getter's own null) instead of the join, which is the form a first reading of "out of range
+// answers absent" would build: j3 answers `null null null` for `80 57.5 52.5` on --native and
+// its assert fails.  The absent arm is the default RECORD's field, and `Q` declares defaults
+// of 7, 2.5 and 1.5, so no constant can stand in for it.  LOFT_HOIST_VERIFY=1 does NOT see
+// this — it prints the same wrong values and no panic, because it compares the header and the
+// base with a fresh derivation and the absent arm holds neither; the interpreter is the
+// falsifier, through this cell.  NOT falsifiable from loft source, and not claimed: that the
+// join's temp is still assigned in range — nothing a program can write reads that temp, which
+// is why the form keeps the assignment (measured free) instead of proving it dead.  Restored
+// byte-identically (`git diff` empty against the pre-sabotage commit): interpret / native /
+// every switch / every falsifier green.
 
 struct P { x: float, y: float, id: integer }
 struct Q { a: integer = 7, b: float = 2.5, c: single = 1.5f }
@@ -137,7 +151,32 @@ fn j11() {
   assert(t == 4950, "j11");
 }
 
+// j12 — the join inside a CALLEE of a loop.  Written to reach the join read through a callee
+// twin (`__inv`, which takes the vector's header and base as inputs) — and MEASURED not to:
+// no twin is emitted.  The join's absent arm mints a discharge buffer, the callee admission
+// reads that as a store write, so `j12_at` is no admitted callee, the calling loop hoists
+// nothing, and both joins keep their general form.  Correct, and not fast: the values are
+// what this cell guards, and its pin stands at zero join reads so that the day the callee
+// admission learns what the LOOP admission already knows (a discharge buffer's mint moves no
+// held vector — § V-ad), the pin moves and the twin path gets its verification.
+// cx = i % 5, cy = i % 7 over 20 elements: 10 * 40 + 57 = 457; the two reads past the end
+// answer the DECLARED defaults (3, 4): + 2 * 34.
+struct D { cx: integer = 3, cy: integer = 4 }
+struct MD { chunks: vector<D>, n: integer }
+fn j12_at(m: MD, i: integer) -> integer { m.chunks[i]?.cx * 10 + m.chunks[i]?.cy }
+fn j12_scan(m: MD) -> integer {
+  t = 0;
+  for i in 0..m.n + 2 { t += j12_at(m, i); }
+  t
+}
+fn j12() {
+  m = MD { chunks: [], n: 20 };
+  for i in 0..20 { m.chunks += [D { cx: i % 5, cy: i % 7 }]; }
+  println("j12 {j12_scan(m)} {j12_at(m, 3)} {j12_at(m, 99)}");
+  assert(j12_scan(m) == 525 && j12_at(m, 3) == 33 && j12_at(m, 99) == 34, "j12");
+}
+
 fn main() {
-  j1(); j2(); j3(); j4(); j6(); j7(); j8(); j9(); j10(); j11();
+  j1(); j2(); j3(); j4(); j6(); j7(); j8(); j9(); j10(); j11(); j12();
   println("join read ok");
 }

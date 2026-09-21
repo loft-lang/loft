@@ -185,7 +185,20 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  inside the twin, a view of the path (R-View) included, goes through
                  it: an admitted callee (R-Callee) is store-free or writes only in
                  place, so no store reallocates for the call's duration, which is the
-                 same condition the loop's base rests on.
+                 same condition the loop's base rests on.  THE JOIN CLAUSE: a scalar
+                 field of a `?`-DISCHARGED element, `v[i]?.f` with `i` a variable, is
+                 served the same way.  Its getter's operand is not the element
+                 address but the JOIN the `?` lowers to — the element where it is
+                 present, a default record minted into a discharge buffer where it
+                 is not — and where the loop holds P's header and base the field is
+                 one range test and one load through the base, the join run ONLY for
+                 an index that test refuses, written once, in that fallback arm, its
+                 result read by the runtime's one general typed read.  The join's
+                 temp is assigned in range as well — the very element address the
+                 join would have given it — so the rewrite drops no effect of the
+                 join.  The fallback is never a constant: a negative index addresses
+                 from the end there, and an absent element answers its default
+                 RECORD's field, which a declared field default makes non-zero.
 
   (R-Counter)    a counted range's counters — its `#index`, the `next` counter of a
                  computed start, and the loop variable — are never the sentinel: an
@@ -386,6 +399,37 @@ Sites: `hoist::range_counters`, `hoist::plain_for_body`, `hoist::push_loop`,
 `push_window_grow` / `push_window_close`.  Cells `tests/scripts/158-push-window.loft`
 (w1–w12 a window; d1–d8 the declines; a1–b1 the aliasing cases; r1 the growth condition),
 pins `tests/push_window.rs`.
+
+**(R-Base)'s join clause, in words.** 2026-09-22, @PLN158 F1
+(`bench/portal/analysis/vector-build.md`).  `v[i].f` was already one load — the scalar
+getter sits on the element address and the two fuse — but with the `?` the getter's operand
+is a `Block`, so the fused read answered `None`, the join ran on every pass and its result was
+read through the store again, in a loop holding the base.  Hand-priced in four forms before
+any emitter code, `record_update`, hash unchanged: today 34.9 µs; the join KEPT and its result
+identity-tested against the header 21.4 (−39 %); the index tested first 12.1 (−65 %); that,
+with the join's temp still assigned in range, 12.2; and that through an `inline(always)`
+helper answering `Option<(DbRef, T)>`, 12.0–12.4 — the one built, measured 11.6–12.3
+(pinned: 4.62× → 1.60× of Rust, range 1.59–1.61).  The
+result-identity form looked better on paper (it re-evaluates nothing and drops no effect) and
+loses 40 % of the gain: the join stays in the loop, and with it a cold `OpDatabaseNP(cell, …)`
+call that holds the whole body back.  Assigning the temp in range costs NOTHING, so the form
+owes no proof that the temp is unread — a walker that did not have to be written.
+⚠ TWO SITES, ONE RECOGNISER.  An emitter arm alone compiles, passes every value test and never
+fires: the pre-eval collector lifts every `Block` argument into a `let _pre_N`, so the getter's
+operand is a local by the time its emitter runs.  `hoist::fused_join_read` is asked by both
+(as `fused_element_read` is), the collector leaving the join where it stands and the emitter
+folding it; only a PIN can show they agree (`a_folded_join_is_written_once…`), no value can.
+The index is a VARIABLE in this build: a computed one is evaluated for the range test and
+again inside the fallback's join, and the second evaluation of a CHECKED operator can note
+one overflow twice.  Switch `LOFT_NO_JOIN_READ` (and `LOFT_NO_ELEM_FUSE` / `LOFT_NO_VECTOR_BASE`,
+one rule); falsifier `LOFT_HOIST_VERIFY=1` re-derives the header and the base at every such
+read — and CANNOT see the defect this clause's design avoids: sabotaged to answer a constant
+off the fast path, j3 reads `null null null` for `80 57.5 52.5` with no panic, because the
+absent arm holds no fact the verifier compares.  The interpreter is the falsifier there.
+Sites: `hoist::fused_join_read`, `Output::fused_join_read`, `pre_eval::collect_pre_evals_inner`
+(the arm that leaves the join in place), `ops::vector_ops::emit_join_read` inside
+`FusedElementReadEmitter`, `vector::elem_field_at`, `vector::field_of`.  Cells
+`tests/scripts/158-join-read.loft` j1–j11, pins `tests/join_read.rs`.
 
 **(R-Base)'s growth condition, in words.** 2026-09-21, found while building the window.
 `growth_free` counted a loop's pushes and its MINT PUSHES — the mints that earned a push

@@ -3,8 +3,8 @@
 Taken 2026-09-21 on x86-64, right after the record shapes (`records.md` § Built), from the
 portal's 24 rows still over 3×.  An ANALYSIS: every figure below is a HAND-PRICE — the
 emitted Rust of the routine edited to the form a rewrite would emit, compiled with the
-`--native-release` flags, run in-process with the result hash unchanged.  **V1–V3 are BUILT
-(§ Built); F1, T1 and C1 are priced and not built.**  Two candidates priced NEGATIVE or not at all are listed as such; they are not
+`--native-release` flags, run in-process with the result hash unchanged.  **V1–V3 and F1 are BUILT
+(§ Built, § F1 built); T1 and C1 are priced and not built.**  Two candidates priced NEGATIVE or not at all are listed as such; they are not
 work.
 
 | # | lever | rows it moves | hand-priced |
@@ -12,7 +12,7 @@ work.
 | **V1** | a reserved counted push loop holds the element BASE and writes the length ONCE | `push`, `comprehension`, `grid`, `f32_build`, every `[for …]` | **−78 %**, **−78 %**, **−76 %** on the three rows priced |
 | **V2** | the comprehension's loop is the counted push loop it spells | `comprehension`, `grid`, `drain`'s build, every `[for …]` | −27 % (its share of V1's total) |
 | **V3** | the reservation is emitted in the arm that RUNS | `push`, every counted push loop behind a chain guard | −8 % |
-| **F1** | a field of a `?`-discharged element — `v[i]?.f` — is one bounds test and one load | `record_update`, `chunk_lookup`'s `map_set`, the idiom everywhere | **−65 %** |
+| **F1** | a field of a `?`-discharged element — `v[i]?.f` — is one bounds test and one load | `record_update`, the idiom everywhere (NOT `chunk_lookup` — § F1 built) | **−65 %** |
 | **T1** | the loop variable of `for p in vector<text>` borrows the element | `join`, `word_count`, every walk of texts | **−47 %** |
 | **C1** | a function no fn-ref can reach constructs no fn-ref buffer guard | `fibonacci`, every recursive function | **−27 %** |
 
@@ -72,7 +72,7 @@ Priced on `record_update` (`v[i].x = v[i]?.y + …`, whose WRITE is already fuse
 existing fused element read (`hoist::fused_element_read`) serves a SCALAR vector's `v[i]?`;
 this is its record-field twin.
 
-### F1 priced to the form it will be EMITTED in (2026-09-22, not built)
+### F1 priced to the form it will be EMITTED in (2026-09-22) — and BUILT, see below
 
 The IR is `OpGetFloat( Block "ncc" { Set(t, OpGetVectorNullable(v, size, i)); If(OpConvBoolFromRef(t),
 t, Object { OpDatabase(buf, tp); …the default record's fields…; buf }) }, fld )` — the scalar
@@ -113,6 +113,50 @@ fused read, with a re-entrancy flag for the fallback's own emission as `nest_raw
 The index is a `Var` in the first build: a computed index would re-run CHECKED arithmetic
 on the fallback path and could note one overflow twice.  Needs a held header AND base
 (`active_vec_base`) — the priced form is the load through the base.
+
+### F1 built (2026-09-22)
+
+`(R-Base)`'s join clause (`formal/rewrites.md`), switch `LOFT_NO_JOIN_READ`, cells
+`tests/scripts/158-join-read.loft` j1–j11, pins `tests/join_read.rs`.  `record_update`
+34.9 → 11.6–12.3 µs, hash unchanged — the hand-price, to the microsecond.  Pinned (`bench/stats.py`,
+±0.8 %): **4.62× → 1.60×** of Rust (range 1.59–1.61); lane 14 now 8 of 12 within 2×, median
+1.86×.
+
+⚠ **`chunk_lookup` does NOT move, and the analysis above was wrong to name it** — measured,
+pinned, through the switch: 1 097 524 → 1 101 111 ns (±0.2 %).  The shape is `map_set`'s, three
+times over, exactly as cell j6 folds it; but `map_set`'s loop HOISTS NOTHING
+(`LOFT_TRACE_HOIST_DECLINE=1`: declined by the block holding
+`m.chunks[i].hexes[k].h_material = mat; return`), so there is no base to read through.
+`map_get` walks `for c in m.chunks` and has no such join; its one `?` is over `c.hexes`, a
+field of the loop ELEMENT, which is no loop-invariant path.  What would move the row is that
+loop's admission — an in-place scalar set through a vector INSIDE an element grows nothing —
+which is a lever of its own, unpriced.  Right about the shape, wrong about the row: a
+prediction about a ROW is a claim about every gate between the shape and the emission.
+
+What the building found:
+
+- **Pricing the forms BEFORE building chose the design.**  The form that looked best on paper
+  lost 40 % of the gain, and the one question that would have cost a walker and a proof —
+  *is the join's temp read anywhere else?* — was answered by a measurement instead: assigning
+  it in range is free, so keep the assignment and owe no proof.
+- **The absent arm is never a constant.**  j3 declares field defaults of 7, 2.5 and 1.5; the
+  sabotage that answers the getter's null off the fast path reads `null null null` for
+  `80 57.5 52.5`.  `LOFT_HOIST_VERIFY=1` is blind to it (no held fact is wrong), so the
+  interpreter is the falsifier.  A negative index addresses from the end (j4) and lands in the
+  same arm.
+- **A pin can be wrong where the emission is right.**  The first "no join is lifted" check
+  matched ` = { //ncc_`, which is also the text of the fallback arm this rewrite emits — it
+  could never pass.  A lifted join is exactly `let _pre_<digits> = { //ncc_`.
+- **A callee that holds a `?` is never twinned.**  j12 was written to reach the join read
+  through a callee twin and measured not to: the join's absent arm mints a discharge buffer,
+  the CALLEE admission reads that as a store write, and the calling loop hoists nothing.  The
+  loop admission already knows better (§ V-ad: that mint moves no held vector).  Pinned at zero
+  join reads on purpose, so the row moves when that admission widens.
+- NOT built: a COMPUTED index (`v[i + 1]?.f`, j11) — evaluated twice on the fallback path, and
+  a checked operator's second evaluation can note one overflow twice; binding it once needs
+  the fallback's join to read the bound local instead of the expression.  And a loop that
+  GROWS a store holds no base, so `out += [v[i]?.id]` (j7) keeps its join — the same loop the
+  push window declines, because the join's absent arm mints a store.
 
 ## T1: a walk of texts allocates a `String` per element
 

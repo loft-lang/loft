@@ -8,7 +8,7 @@ The files here say WHY, price what could be done about it, and record what was b
 |---|---|---|
 | `keyed.md` | keyed (3.5×) | L1–L7 BUILT; what is left is store-format and data-structure work, priced there |
 | `records.md` | record-field, record-build | analysed and **R1–R7 BUILT** (§ Built has the table and what the building found) |
-| `vector-build.md` | vector-build (7.5×, the worst class) + four levers beside it | **V1–V3 BUILT** (§ Built: push 0.47×, comprehension 1.70×, grid 2.81×, f32_build 1.49×); F1, T1, C1 priced, not built — the next work, in that order |
+| `vector-build.md` | vector-build (7.5×, the worst class) + four levers beside it | **V1–V3 BUILT** (§ Built: push 0.47×, comprehension 1.70×, grid 2.81×, f32_build 1.49×) and **F1 BUILT** (record_update 4.62× → 1.60×; NOT chunk_lookup, whose loop hoists nothing); T1, C1 priced, not built — the next work, in that order |
 
 ## Where to resume (2026-09-21, branch `157-native-4x`)
 
