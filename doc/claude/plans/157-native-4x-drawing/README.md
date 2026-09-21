@@ -66,6 +66,27 @@ rewrites are now sources of one, and what separates the builds is that every UNP
 keeps its checked helper) and `push_hoist` n_c7 (1, 1, 1) → (1, 2, 1) (its inner loop is
 innermost, so the one hoisted push appears in each of the two arms).
 
+**The chain guard's profitability gate, 2026-09-21.**  `(R-GuardedChain)` shipped costing
+four rows what it gained on one.  A loop with ONE admitted operator now declines: the guard is
+a fixed cost per loop ENTRY against a saving of one null test per operator per ITERATION, and
+the innermost form is emitted twice, which in a small hot function costs the inline.  Measured
+against the guard off: `fill_circle` 1.88× → **0.90×**, `fill_star` 1.97× → **0.92×**,
+`wide_line` 2.34× → **1.73×**, `parse` 3.03× → **2.52×** (the one-operator loops in
+`pil_hline`, per scanline, and `matches_at`, ~2 000 calls per parse), while six-operator
+`composite_layer` keeps its 89.0 → 62.1 µs.  Found with `LOFT_GUARDED_CHAIN_ONLY=<fn>`, which
+attributes a moved row to ONE admitted loop where a whole-program A/B cannot.  Residual stated
+in the rule: `hair` is ~8 % down at every threshold up to 6, because `hair_brush` has the same
+six operators as `composite_layer` — trip count separates them and is not a compile-time fact.
+Two levers measured and NOT taken: `#[inline]` on `text_byte_at_native` is a wash (13.84 vs
+13.69 µs), and `(R-Range)`'s counted-counter clause turned out inert (loft#1558) rather than
+weak.
+
+**Lane, 2026-09-21** (same invocation; 14/14 hashes, **median 1.65×, three rows under 1×**):
+`hash` 1.03×, `fill_circle` 0.91×, `fill_star` 0.91×, `render_marks` 1.50×, `fronds` 1.55×,
+`composite` 1.62×, `hair` 1.65×, `render_lock` 1.69×, `wide_line` 1.73×, `lock` 1.74×,
+`smooth` 1.80×, `resize` 1.39×, `lock_curved` 2.06×, `parse` **2.52×** — still the one row
+over 2.1×, and its remaining cost is the scanner, not a compiler lever this family reaches.
+
 **Lane, 2026-09-20 late** (`compare.py --loft <this build> --skip-interp --repeat 3 --n-ref 500
 --n-native 500`, arm64; 14/14 hashes agree, **every judged row under the 4× bar, median ≈1.71×**):
 `hash` 1.04×, `resize` 1.37×, `render_marks` 1.53×, `fronds` 1.55×, `composite` 1.62×,
