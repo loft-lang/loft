@@ -84,27 +84,9 @@ const NATIVE_STRICT_STORE_TAIL: &str = "    #[cfg(not(target_arch = \"wasm32\"))
 /// the standard package native path instead of a hardcoded list in the
 /// compiler crate.
 fn is_t_param_stub(name: &str) -> bool {
-    let Some(rest) = name.strip_prefix("t_") else {
+    let Some(key) = Data::split_key(name).filter(|k| k.kind == crate::data::KeyKind::Method) else {
         return false;
     };
-    // Parse the leading length digits.
-    let len_end = rest.bytes().position(|b| !b.is_ascii_digit()).unwrap_or(0);
-    if len_end == 0 {
-        return false;
-    }
-    let Ok(type_len) = rest[..len_end].parse::<usize>() else {
-        return false;
-    };
-    let after_len = &rest[len_end..];
-    if after_len.len() < type_len + 1 {
-        return false;
-    }
-    // The next `type_len` chars are the type name; then `_` then method.
-    let type_name = &after_len[..type_len];
-    let after_type = &after_len[type_len..];
-    if !after_type.starts_with('_') {
-        return false;
-    }
     // Heuristic: a generic type variable is a single ASCII identifier
     // (mostly UPPERCASE single letter or short PascalCase).  Concrete
     // builtins use lowercase type names (`text`, `integer`, `single`,
@@ -122,7 +104,7 @@ fn is_t_param_stub(name: &str) -> bool {
     // labeled "T-stub" — but in that case the right behaviour is
     // identical (emit `todo!()` instead of compile_error since the
     // function is genuinely unimplemented).
-    type_name
+    key.spelling
         .chars()
         .next()
         .is_some_and(|c| c.is_ascii_uppercase())

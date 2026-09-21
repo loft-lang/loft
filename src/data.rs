@@ -4191,6 +4191,26 @@ pub enum ImpureCategory {
     ParCall,
 }
 
+/// Which length-counted key form a definition name has ([`Data::split_key`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KeyKind {
+    /// `t_<LEN><spelling>_<method>` — a method, keyed on its receiver's spelling.
+    Method,
+    /// `f_<LEN><spelling>_<name>` — a free member of an overload set, keyed on the spelling
+    /// of every declared parameter.
+    FreeOverload,
+}
+
+/// A length-counted definition key read back into its parts by [`Data::split_key`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct KeyParts<'a> {
+    pub kind: KeyKind,
+    /// The length-counted part: a receiver's spelling, or a full parameter spelling.
+    pub spelling: &'a str,
+    /// What follows the `_` separator — the name the source wrote.
+    pub rest: &'a str,
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum DefType {
     // Not yet known, must be filled in after the first parse pass.
@@ -4607,14 +4627,8 @@ impl Definition {
     /// `text` method); `None` for a free fn (`n_…`) or operator (`Op…`).
     #[must_use]
     pub fn method_type_prefix(&self) -> Option<&str> {
-        let rest = self.name.strip_prefix("t_")?;
-        let nd = rest.chars().take_while(char::is_ascii_digit).count();
-        let len: usize = rest.get(..nd)?.parse().ok()?;
-        // `t_`(2) + digits(nd) + type(len) + `_`(1) + method. The byte AFTER the type name
-        // must be the `_` separator — the other four manglers (`api_surface::method_name`,
-        // `generation::is_t_param_stub`, `parser::h5_names_a_generic_template`) require it; a
-        // longer `rest` alone is not enough, so `t_4textX…` must NOT be read as a method.
-        (rest.as_bytes().get(nd + len) == Some(&b'_')).then_some(&self.name[..=2 + nd + len])
+        let key = Data::split_key(&self.name).filter(|k| k.kind == KeyKind::Method)?;
+        Some(&self.name[..self.name.len() - key.rest.len()])
     }
 
     /// The user-facing name of this definition — the internal `n_` (free fn) or
@@ -5226,16 +5240,9 @@ impl Definition {
     #[must_use]
     pub fn original_name(&self) -> String {
         if self.def_type == DefType::Function {
-            if self.name.starts_with("t_") || self.name.starts_with("f_") {
-                if let Ok(nr) = self.name[2..4].parse::<u8>() {
-                    self.name[5 + nr as usize..].to_string()
-                } else if let Ok(nr) = self.name[2..3].parse::<u8>() {
-                    self.name[4 + nr as usize..].to_string()
-                } else {
-                    self.name[2..].to_string()
-                }
-            } else {
-                self.name[2..].to_string()
+            match Data::split_key(&self.name) {
+                Some(key) => key.rest.to_string(),
+                None => self.name[2..].to_string(),
             }
         } else {
             self.name.clone()
@@ -7215,25 +7222,10 @@ impl Data {
         if let Some(rest) = name.strip_prefix("n_") {
             return rest.to_string();
         }
-        let Some(rest) = name.strip_prefix("t_") else {
-            return name.to_string();
-        };
-        // `<LEN><Type>_<method>`: the length prefix is what makes a type name containing
-        // `_` unambiguous, so it is what the split has to read.
-        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-        if digits == 0 {
-            return name.to_string();
-        }
-        let Ok(len) = rest[..digits].parse::<usize>() else {
-            return name.to_string();
-        };
-        let after = &rest[digits..];
-        if after.len() <= len || !after.is_char_boundary(len) {
-            return name.to_string();
-        }
-        let (tp, tail) = after.split_at(len);
-        match tail.strip_prefix('_') {
-            Some(method) if !method.is_empty() => format!("{tp}.{method}"),
+        match Self::split_key(name) {
+            Some(key) if key.kind == KeyKind::Method && !key.rest.is_empty() => {
+                format!("{}.{}", key.spelling, key.rest)
+            }
             _ => name.to_string(),
         }
     }
@@ -7483,7 +7475,48 @@ impl Data {
     /// than name one: the `t_4Self_` scan in `parser/mod.rs` and the REPL's completion prefix.
     #[must_use]
     pub fn mangle_method(spelling: &str, method: &str) -> String {
+        Self::assert_spelling_decodes(spelling);
         format!("t_{}{}_{method}", spelling.len(), spelling)
+    }
+
+    /// What [`Self::split_key`] relies on to find where `LEN` ends: the length-counted part
+    /// never begins with a digit.  A real `assert!`, because `debug_assert!` is compiled out of
+    /// this crate — a spelling that broke it would decode to the wrong name in silence.
+    fn assert_spelling_decodes(spelling: &str) {
+        assert!(
+            !spelling.starts_with(|c: char| c.is_ascii_digit()),
+            "a definition key's spelling may not begin with a digit: {spelling:?}"
+        );
+    }
+
+    /// The ONE decoder of a length-counted definition key — `t_<LEN><spelling>_<rest>` (a
+    /// method) or `f_<LEN><spelling>_<rest>` (a free member of an overload set) — and the
+    /// inverse of [`Self::mangle_method`] and [`Self::mangle_free_overload`].  `LEN` is read as
+    /// EVERY leading digit, so a spelling of 100 characters or more decodes like a short one.
+    /// `None` for a key of any other shape (`n_…`, an operator, a type), for a `LEN` that runs
+    /// past the key, and for a spelling not followed by the `_` separator.
+    #[must_use]
+    pub fn split_key(name: &str) -> Option<KeyParts<'_>> {
+        let (kind, body) = if let Some(body) = name.strip_prefix("t_") {
+            (KeyKind::Method, body)
+        } else if let Some(body) = name.strip_prefix("f_") {
+            (KeyKind::FreeOverload, body)
+        } else {
+            return None;
+        };
+        let digits = body.bytes().take_while(u8::is_ascii_digit).count();
+        if digits == 0 {
+            return None;
+        }
+        let len: usize = body[..digits].parse().ok()?;
+        let after = &body[digits..];
+        let spelling = after.get(..len)?;
+        let rest = after.get(len..)?.strip_prefix('_')?;
+        Some(KeyParts {
+            kind,
+            spelling,
+            rest,
+        })
     }
 
     /// The key of a FREE definition that belongs to an overload set (`Disp-Key`, @PLN162):
@@ -7492,6 +7525,7 @@ impl Data {
     /// rule — and a free overload is not one: it has no receiver and no `x.f(…)` spelling.
     #[must_use]
     pub fn mangle_free_overload(spelling: &str, name: &str) -> String {
+        Self::assert_spelling_decodes(spelling);
         format!("f_{}{}_{name}", spelling.len(), spelling)
     }
 
@@ -9920,10 +9954,9 @@ impl Data {
     /// The method a `t_<LEN><Type>_<method>` key files, or `None` for a key of any other
     /// shape — a free function, a type, a bound stub.
     fn method_name_of_key(key: &str) -> Option<&str> {
-        let rest = key.strip_prefix("t_")?;
-        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-        let len: usize = rest[..digits].parse().ok()?;
-        rest.get(digits + len..)?.strip_prefix('_')
+        Self::split_key(key)
+            .filter(|k| k.kind == KeyKind::Method)
+            .map(|k| k.rest)
     }
 
     /// Variant of [`import_all`] that **overwrites** forward-reference stubs
@@ -11551,5 +11584,65 @@ mod type_name_user_facing_tests {
         assert_eq!(Type::optional(Type::Never), Type::Never); // normalise non-values
         assert_eq!(Type::optional(Type::Null), Type::Null);
         assert!(!txt.peel_optional().1); // a plain type is not optional
+    }
+}
+
+#[cfg(test)]
+mod key_decoder_tests {
+    use super::{Data, DefType, KeyKind};
+    use crate::lexer::Position;
+
+    fn def_named(key: &str) -> String {
+        let mut d = Data::new();
+        let pos = Position {
+            file: String::new(),
+            line: 0,
+            pos: 0,
+        };
+        let nr = d.add_def(key, &pos, DefType::Function);
+        d.def(nr).original_name()
+    }
+
+    /// A key whose spelling is 100 characters or more decodes like a short one — the free
+    /// overload of @PLN165 probe a1 is 121 characters, and the two-digit reader answered
+    /// part of its spelling for the name.
+    #[test]
+    fn a_key_over_ninety_nine_characters_decodes_to_its_name() {
+        let spelling = [
+            "AVeryLongStructureNameNumberOneForTheKey",
+            "AVeryLongStructureNameNumberTwoForTheKey",
+            "AVeryLongStructureNameNumberThreeForKey",
+        ]
+        .join("#");
+        assert!(spelling.len() >= 100);
+        let key = Data::mangle_free_overload(&spelling, "pick");
+        assert_eq!(def_named(&key), "pick");
+        let parts = Data::split_key(&key).expect("a minted key decodes");
+        assert_eq!(parts.kind, KeyKind::FreeOverload);
+        assert_eq!(parts.spelling, spelling);
+        assert_eq!(parts.rest, "pick");
+        let method = Data::mangle_method(&spelling, "go_far");
+        assert_eq!(def_named(&method), "go_far");
+    }
+
+    /// The short forms, a spelling that holds the separator, and the shapes that are no
+    /// length-counted key at all.
+    #[test]
+    fn every_key_form_decodes_through_one_reader() {
+        assert_eq!(def_named("t_4text_starts_with"), "starts_with");
+        assert_eq!(def_named("t_11main_vector_len"), "len");
+        assert_eq!(def_named("f_10Rock#Paper_beat"), "beat");
+        assert_eq!(def_named("n_plain"), "plain");
+        assert!(Data::split_key("n_plain").is_none());
+        assert!(Data::split_key("t_x_nolen").is_none());
+        assert!(Data::split_key("t_9short_x").is_none());
+        assert!(Data::split_key("t_4textXlen").is_none());
+    }
+
+    /// The encoder refuses the one spelling the decoder cannot read back.
+    #[test]
+    #[should_panic(expected = "may not begin with a digit")]
+    fn a_spelling_that_begins_with_a_digit_is_refused_at_the_encoder() {
+        let _ = Data::mangle_method("9lives", "x");
     }
 }

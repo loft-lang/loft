@@ -18628,13 +18628,9 @@ impl Parser {
     /// The method a `t_<LEN><type>_<method>` key names — the spelling a call wrote.  A key of
     /// any other shape is answered whole.
     pub(crate) fn method_spelling(key: &str) -> String {
-        key.strip_prefix("t_")
-            .and_then(|rest| {
-                let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-                let len: usize = rest[..digits].parse().ok()?;
-                rest.get(digits + len + 1..)
-            })
-            .map_or_else(|| key.to_string(), str::to_string)
+        crate::data::Data::split_key(key)
+            .filter(|k| k.kind == crate::data::KeyKind::Method)
+            .map_or_else(|| key.to_string(), |k| k.rest.to_string())
     }
 
     /// Parse a method call's `(arg, …)` and emit it.  `hint_nr` steers how the arguments

@@ -3079,15 +3079,9 @@ impl Parser {
 
     /// Split `t_<LEN><Type>_<fn>` into its type name and function name.
     fn h5_split_mangled(name: &str) -> Option<(&str, &str)> {
-        let rest = name.strip_prefix("t_")?;
-        let digits = rest.chars().take_while(char::is_ascii_digit).count();
-        let type_len = rest[..digits].parse::<usize>().ok()?;
-        let after = &rest[digits..];
-        if after.len() <= type_len || !after.is_char_boundary(type_len) {
-            return None;
-        }
-        let fn_name = after[type_len..].strip_prefix('_')?;
-        Some((&after[..type_len], fn_name))
+        Data::split_key(name)
+            .filter(|k| k.kind == crate::data::KeyKind::Method)
+            .map(|k| (k.spelling, k.rest))
     }
 
     /// loft#763 — does `name` mangle a method on a generic's TYPE VARIABLE?
@@ -7132,32 +7126,16 @@ impl Parser {
     /// already holding one of. The qualified name says which package's, and
     /// is also what they would have to type to reach it.
     fn find_method_receivers(&self, name: &str) -> (Vec<String>, bool) {
-        let suffix = format!("_{name}");
         let mut all_stdlib = true;
         let mut receivers: Vec<String> = Vec::new();
         for d_nr in 0..self.data.definitions() {
-            let def_name = self.data.def(d_nr).name();
-            let Some(rest) = def_name.strip_prefix("t_") else {
+            let Some(key) = Data::split_key(self.data.def(d_nr).name()) else {
                 continue;
             };
-            if !rest.ends_with(&suffix) {
+            if key.kind != crate::data::KeyKind::Method || key.rest != name {
                 continue;
             }
-            let digit_end = rest.bytes().take_while(u8::is_ascii_digit).count();
-            if digit_end == 0 {
-                continue;
-            }
-            let Ok(type_len) = rest[..digit_end].parse::<usize>() else {
-                continue;
-            };
-            let type_start = digit_end;
-            let Some(type_end) = type_start.checked_add(type_len) else {
-                continue;
-            };
-            if rest.len() != type_end + suffix.len() || !rest.is_char_boundary(type_end) {
-                continue;
-            }
-            let type_name = &rest[type_start..type_end];
+            let type_name = key.spelling;
             if type_name.is_empty() {
                 continue;
             }
@@ -8526,13 +8504,8 @@ impl Parser {
         // Extract the user-facing function name from the mangled definition name.
         // Mangled names: "t_<LEN><Type>_<name>" or "n_<name>" or operator names.
         let name = def.name();
-        let fn_name = if let Some(rest) = name.strip_prefix("t_") {
-            // Skip the LEN digits and type name, extract name after the underscore.
-            if let Some(idx) = rest.find('_') {
-                &rest[idx + 1..]
-            } else {
-                name
-            }
+        let fn_name = if name.starts_with("t_") {
+            Data::split_key(name).map_or(name, |k| k.rest)
         } else if let Some(rest) = name.strip_prefix("n_") {
             rest
         } else {

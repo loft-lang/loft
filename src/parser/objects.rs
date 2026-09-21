@@ -64,21 +64,11 @@ impl Parser {
     pub(crate) fn method_receivers_named(&self, name: &str) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         for d in 0..self.data.definitions() {
-            let raw = self.data.def(d).name();
-            let Some(body) = raw.strip_prefix("t_") else {
-                continue;
-            };
-            let digits: String = body.chars().take_while(char::is_ascii_digit).collect();
-            let Ok(len) = digits.parse::<usize>() else {
-                continue;
-            };
-            let rest = &body[digits.len()..];
-            if rest.len() < len {
-                continue;
-            }
-            let (ty, tail) = rest.split_at(len);
-            if tail.strip_prefix('_') == Some(name) {
-                out.push(ty.to_string());
+            if let Some(key) = crate::data::Data::split_key(self.data.def(d).name())
+                && key.kind == crate::data::KeyKind::Method
+                && key.rest == name
+            {
+                out.push(key.spelling.to_string());
             }
         }
         out.sort_unstable();

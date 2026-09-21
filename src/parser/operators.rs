@@ -1158,10 +1158,10 @@ impl Parser {
                     // separate decision (it needs its own method, and a decision about
                     // whether `x[i] += 1` may then read-modify-write), so this is a
                     // refusal, not a gap left silent.
-                    if let Some(tp) = name.strip_suffix("_OpIndex").and_then(|n| {
-                        n.strip_prefix("t_")
-                            .map(|r| r.trim_start_matches(|c: char| c.is_ascii_digit()))
-                    }) {
+                    if let Some(tp) = crate::data::Data::split_key(&name)
+                        .filter(|k| k.kind == crate::data::KeyKind::Method && k.rest == "OpIndex")
+                        .map(|k| k.spelling)
+                    {
                         diagnostic!(
                             self.lexer,
                             Level::Error,
