@@ -1,11 +1,44 @@
 // Benchmark 1: Fibonacci (recursive)
+//
+// One OP is `fib(30)` or `fib(31)`, alternating.  The timed loop runs `--n` ops, each on an input that differs by
+// the repetition number — in VALUE, never in the amount of work — so no optimiser can
+// hoist or collapse the kernel across repetitions, and folds every result into `sink`.
+// The `hash` column is one canonical op's result: every lane must print the same one,
+// or the lanes are not computing the same thing and their times do not compare.
 fn fib(n: integer) -> integer {
   if n <= 1 { n } else { fib(n - 1) + fib(n - 2) }
 }
 
+/// `--n N`: how many ops the timed loop runs (the harness calibrates it per lane).
+fn arg_n(dflt: integer) -> integer {
+  an_args = arguments();
+  an_n = dflt;
+  an_i = 0;
+  while an_i < len(an_args) {
+    if an_args[an_i]? == "--n" && an_i + 1 < len(an_args) {
+      an_n = (an_args[an_i + 1]? as integer?)?;
+      an_i += 1;
+    }
+    an_i += 1;
+  }
+  if an_n < 2 { an_n = 2; }
+  an_n
+}
+
+/// One measured routine, in the row format every lane prints (bench/README.md).
+fn row(name: text, iters: integer, us: integer, items: integer, result: integer, sink: integer) {
+  rw_ns = ((us * 1000) / iters) ?? 0;
+  rw_it = (((us * 1000) as float) / ((iters * items) as float)) ?? 0.0;
+  println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+  println("{name}\t{iters}\t{us}\t{rw_ns}\t{items}\t{rw_it:.3}\t{result:x}");
+  println("time: {us / 1000}ms sink={sink}");
+}
+
 fn main() {
+  n = arg_n(20);
   t0 = ticks();
-  r = fib(38);
-  ms = (ticks() - t0) / 1000;
-  println("result: {r}  time: {ms}ms");
+  sink = 0;
+  for r in 0..n { sink += fib(30 + (r & 1)); }
+  us = ticks() - t0;
+  row("fibonacci", n, us, 1, fib(30), sink);
 }

@@ -83,6 +83,13 @@ make falsify GUARD=<guard.loft> REF=<commit>   # does this guard FAIL on the bui
                                          #   Every new tests/scripts file records its answer
                                          #   (`@falsified-at:`, gated) — TESTING.md
 make speed                               # what got slower/faster — a REPORT, never a gate
+python3 bench/stats.py                   # native vs the Rust reference per bench routine, as
+                                         #   STATISTICS: --n calibrated per lane, a warm-up
+                                         #   round dropped, 7 interleaved samples pinned to the
+                                         #   fastest core, the ratio with its RANGE and an
+                                         #   ok / OVER / unclear verdict against --bar (2.0);
+                                         #   hashes must agree across lanes.  `--tsv` keeps a
+                                         #   run to diff against the next — bench/README.md
 make ops-census                          # which bytecode operators anything still EMITS:
                                          #   live / unexercised (a site emits it, no program
                                          #   does — a test gap) / orphan (nothing emits it and
