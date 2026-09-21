@@ -745,6 +745,27 @@ fn persistent_field_names(
     out
 }
 
+/// Bind every parameter under its local spelling at the top of a state arm — `var_x` for
+/// `self.var_x`, a `&str` view for a text slot — so a statement emitted in any state names a
+/// parameter the way the function body does.  Every state arm needs it, the TAIL included: the
+/// tail had none, so a generator whose statements after its loop read a parameter did not
+/// build (E0425) once the loop was lowered lazily.
+fn write_param_shadows(
+    w: &mut dyn Write,
+    attrs: &[crate::data::Attribute],
+    indent: &str,
+) -> std::io::Result<()> {
+    for attr in attrs {
+        let aname = sanitize(&attr.name);
+        if is_text_slot(&attr.typedef) {
+            writeln!(w, "{indent}let var_{aname}: &str = &self.var_{aname};")?;
+        } else {
+            writeln!(w, "{indent}let var_{aname} = self.var_{aname};")?;
+        }
+    }
+    Ok(())
+}
+
 /// Emit `drop_stores` — release the heap locals a generator still owns when its handle is
 /// freed without the generator having exhausted.
 ///
@@ -1378,18 +1399,7 @@ impl Output<'_> {
         for (seg_idx, segment) in segments.iter().enumerate() {
             let state_idx = state_of[seg_idx];
             writeln!(w, "            {state_idx} => {{")?;
-            // Shadow-bind parameters.
-            for attr in attrs {
-                let aname = sanitize(&attr.name);
-                if is_text_slot(&attr.typedef) {
-                    writeln!(
-                        w,
-                        "                let var_{aname}: &str = &self.var_{aname};"
-                    )?;
-                } else {
-                    writeln!(w, "                let var_{aname} = self.var_{aname};")?;
-                }
-            }
+            write_param_shadows(w, attrs, "                ")?;
             match segment {
                 YieldSegment::Simple { pre, val } => {
                     for stmt in pre {
@@ -1530,17 +1540,7 @@ impl Output<'_> {
                     } else {
                         writeln!(w, "            {} | {resume_state} => {{", state_idx + 1)?;
                     }
-                    for attr in attrs {
-                        let aname = sanitize(&attr.name);
-                        if is_text_slot(&attr.typedef) {
-                            writeln!(
-                                w,
-                                "                let var_{aname}: &str = &self.var_{aname};"
-                            )?;
-                        } else {
-                            writeln!(w, "                let var_{aname} = self.var_{aname};")?;
-                        }
-                    }
+                    write_param_shadows(w, attrs, "                ")?;
                     writeln!(w, "                let mut __exhausted = true;")?;
                     writeln!(
                         w,
@@ -1628,6 +1628,7 @@ impl Output<'_> {
         if !tail.is_empty() {
             let tail_state = after_segments;
             writeln!(w, "            {tail_state} => {{")?;
+            write_param_shadows(w, attrs, "                ")?;
             for op in tail {
                 write!(w, "                ")?;
                 self.output_code_inner(w, op)?;
