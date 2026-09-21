@@ -66,6 +66,21 @@ rewrites are now sources of one, and what separates the builds is that every UNP
 keeps its checked helper) and `push_hoist` n_c7 (1, 1, 1) → (1, 2, 1) (its inner loop is
 innermost, so the one hoisted push appears in each of the two arms).
 
+**Next unit, MEASURED and not built — the guard should skip what `(R-Range)` already proved
+(2026-09-21).**  Making the counted-counter clause live (loft#1558) left `(R-GuardedChain)`
+guarding chains that are plain in BOTH arms, so the guard evaluates and — for an innermost
+loop — duplicates the body for nothing: `157-guarded-chain.loft`'s c4 is the clear case, where
+the range proof now reaches the whole chain and the guard converts not one operator.  Built as
+a probe (collect the range-proved chain nodes before the closures take their borrows, skip them
+in the collection, so the profitability count sees only what the guard actually converts) it
+took the drawing bench's admitted loops from **29 to 13** with every cell green on both
+backends, and the lane moved **`wide_line` +4.3 %, `lock_curved` +4.0 %, `lock` +3.1 %,
+`parse` +2.7 %, `render_lock` +1.0 %, `hair` +1.0 %**, the rest inside the swing.  Reverted
+unbuilt because it churns four more emission pins (`guarded_chain`, `invariant_arith`,
+`complete_write`, `callee_inputs`) on top of the six loft#1558 already re-derived, and that is
+its own arc with its own cells and falsification.  The probe is the cheap part; the pins are
+the unit.
+
 **The chain guard's profitability gate, 2026-09-21.**  `(R-GuardedChain)` shipped costing
 four rows what it gained on one.  A loop with ONE admitted operator now declines: the guard is
 a fixed cost per loop ENTRY against a saving of one null test per operator per ITERATION, and
