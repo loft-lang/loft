@@ -907,6 +907,9 @@ impl Parser {
     // @F14 — polymorphic struct-enums (per-variant fields)
     // @F15 — enum-scoped variant names + context inference
     pub(crate) fn parse_enum(&mut self) -> bool {
+        // `D-Scope` — the previous function's header does not reach this declaration.
+        self.cur_type_vars.clear();
+        self.refused_header_vars.clear();
         if !self.lexer.has_token("enum") {
             return false;
         }
@@ -975,6 +978,9 @@ impl Parser {
     // <typedef> ::= 'type' <identifier> '=' <type_def> [ 'size' '(' <integer> ')' ] ';'
     // @F46 — type aliases (type X = …)
     pub(crate) fn parse_typedef(&mut self) -> bool {
+        // `D-Scope` — the previous function's header does not reach this declaration.
+        self.cur_type_vars.clear();
+        self.refused_header_vars.clear();
         if !self.lexer.has_token("type") {
             return false;
         }
@@ -1622,6 +1628,9 @@ impl Parser {
         }
         let at = self.lexer.peek_pos().clone();
         let header = self.parse_type_var_header();
+        // The declaration's fields may name what its refused header declared: that is this
+        // refusal's to report, not `D-Scope`'s a second time.
+        self.refused_header_vars = header.iter().map(|v| v.name.clone()).collect();
         if self.first_pass && !header.is_empty() {
             let names: Vec<&str> = header.iter().map(|v| v.name.as_str()).collect();
             diagnostic_at!(
@@ -3293,6 +3302,25 @@ impl Parser {
                 }));
             }
         }
+        // `D-Scope` (@PLN165 D1): a type variable is a type only inside the definition whose
+        // header declares it.  Its placeholder is a global definition, so without this any
+        // later signature or struct field could name it — `fn g(x: T)` compiled and refused
+        // every call, and `struct Holder { v: T }` reached layout as `__typevar_T`, reported at
+        // the file's last line.  Refused where the name is written, in the author's words.
+        if tp_nr != u32::MAX
+            && self.data.type_var_bound_keys.contains_key(&tp_nr)
+            && !self.is_header_type_var(tp_nr)
+            && !self.refused_header_vars.iter().any(|n| n == type_name)
+        {
+            let spelled = crate::data::Data::type_var_spelling(type_name);
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`{spelled}` is not a type here — a type variable is a type only inside the \
+                 definition whose header declares it; declare it on this one \
+                 (`fn f<{spelled}>(x: {spelled})`) or name a type"
+            );
+        }
         let dt = self.data.def_type(tp_nr);
         if tp_nr != u32::MAX
             && matches!(
@@ -4183,6 +4211,9 @@ impl Parser {
 
     // @F12 — struct records (fields, `= default`, `computed`, `limit`/`not null`/`assert`)
     pub(crate) fn parse_struct(&mut self) -> bool {
+        // `D-Scope` — the previous function's header does not reach this declaration.
+        self.cur_type_vars.clear();
+        self.refused_header_vars.clear();
         // @PLN101 — optional `value` modifier: `value struct T {…}` marks T a value (copy,
         // inline, non-null) type. `value` is a plain IDENTIFIER (not a keyword), so peek it
         // (`has_token` only matches Token lexemes) and consume only the `value struct` prefix.
@@ -4821,6 +4852,9 @@ impl Parser {
     #[allow(clippy::too_many_lines)]
     // @F26 — interfaces & bounded generics (<T: A + B>, operator interfaces)
     pub(crate) fn parse_interface(&mut self) -> bool {
+        // `D-Scope` — the previous function's header does not reach this declaration.
+        self.cur_type_vars.clear();
+        self.refused_header_vars.clear();
         if !self.lexer.has_token("interface") {
             return false;
         }

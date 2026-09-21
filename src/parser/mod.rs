@@ -990,6 +990,9 @@ pub struct Parser {
     /// the return buffers of the calls it made, which [`Parser::fill_monomorph_body`] declares
     /// at the instance's top level as the function parse declares its own (@PLN165 B3b).
     pub(crate) set_call_refs: Vec<u16>,
+    /// The variables a `struct` / `enum` header wrote where the language refuses one: its
+    /// fields may name them, and the header's refusal already covers that.
+    pub(crate) refused_header_vars: Vec<String>,
     /// The placeholder definition standing for a `(type-variable spelling, bound set)` pair.
     ///
     /// Sharing one placeholder across generic functions is what lets the stdlib's many
@@ -1555,6 +1558,7 @@ impl Parser {
             cur_type_vars: Vec::new(),
             instance_bindings: Vec::new(),
             set_call_refs: Vec::new(),
+            refused_header_vars: Vec::new(),
             type_var_holders: std::collections::HashMap::new(),
             type_var_bounds: std::collections::HashMap::new(),
             closure_vars: std::collections::HashMap::new(),

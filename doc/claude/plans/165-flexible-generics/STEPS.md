@@ -546,6 +546,18 @@ One variable throughout, until D9.  A one-variable generic struct is declined no
 - **Compared against:** first COUNT the `.loft` files anywhere in the repository — corpus,
   docs, probes, fixture libraries — that name a leaked variable.  The expected count is zero;
   any hit is a program this step newly refuses, and is looked at by hand.
+- **Built** (2026-09-21).  The check sits where a type name has resolved
+  (`parse_type_inner`): a definition in `Data::type_var_bound_keys` — every header variable is
+  recorded there, which `Self`, an interface's associated types and an empty user
+  `struct Marker {}` (a placeholder's shape) are not — that is not one of the current
+  header's variables is refused where it is written, on either pass (a struct's fields are
+  laid out at the end of pass 1).  `parse_struct` / `parse_enum` / `parse_typedef` /
+  `parse_interface` clear the previous function's header, which a struct declared after a
+  generic function otherwise still saw.  A4's refused `struct Box<T>` header lets its own
+  fields name `T` (`refused_header_vars`), so the one refusal stands alone.  Count, with
+  `loft --check` over all 7 101 `.loft` files in the repository: four hits — the plan's d1,
+  d2, d3 probes and A4's guard (the cascade just named) — none unexpected.  Corpus: only
+  the two new guards differ from C4.
 
 ### D2 — a struct may declare a variable  ·  M  ·  pre-freeze
 
