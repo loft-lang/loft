@@ -1,0 +1,95 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1581, `@FR-E-Eq` — A CONCRETE `!=` DERIVES FROM A USER `OpEq`.  `!=` is the exact
+// complement of `==` for every type, a type's own `OpEq` included.  Inside a `<T: Equatable>`
+// body it was; at a concrete site `a != b` fell through to the built-in reference comparison, so
+// for two equal values `a == b` and `a != b` were both true.  It is now `!(a == b)` through the
+// type's `OpEq`, each operand evaluated once, and a type's own `OpNe` still wins.
+//
+// Every expected value is worked out by hand.  The last four cells are controls that were right
+// before: a type with its own `OpNe`, a struct with no `OpEq` (identity), a null test, and the
+// generic spelling.
+//
+// @falsified-at: 3cc05bd5e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1581-a-concrete-not-equal-derives-from-a-user-op-eq.patch — interpret exit 1 -> 0,
+//   interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends — a wrong value,
+//   with no diagnostic.
+// WITNESS: on the control all three fault cells answer `!=` by identity and the four controls
+//   hold, on both backends, scored with the assertions replaced by prints: `g1` `true true true`
+//   (`a == b` and `a != b` both true), `g3` `true 2`.
+// HOLDS: leak, panic, refusals and expectations are unmoved on both trees.
+
+struct V2 { x: integer, y: integer }
+fn OpEq(self: V2, o: V2) -> boolean { self.x == o.x && self.y == o.y }
+value struct W2 { x: integer, y: integer }
+fn OpEq(self: W2, o: W2) -> boolean { self.x == o.x }
+struct V3 { x: integer }
+fn OpEq(self: V3, o: V3) -> boolean { self.x == o.x }
+fn OpNe(self: V3, o: V3) -> boolean { true }
+struct Plain { x: integer }
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+fn counted(n: integer, log: vector<integer>) -> V2 { log += [n]; V2 { x: n, y: 1 } }
+fn differs<X: Equatable>(a: X, b: X) -> boolean { a != b }
+
+/// g1 — a struct with `OpEq`: equal, unequal, and `==` beside it.
+fn g1() -> text {
+  a = V2 { x: 1, y: 2 };
+  b = V2 { x: 1, y: 2 };
+  d = V2 { x: 3, y: 2 };
+  "{a != b} {a != d} {a == b}"
+}
+/// g2 — a value struct with an `OpEq` that reads `x` alone: `y` differs, and they are equal.
+fn g2() -> text {
+  a = W2 { x: 1, y: 2 };
+  b = W2 { x: 1, y: 9 };
+  d = W2 { x: 3, y: 2 };
+  "{a != b} {a != d}"
+}
+/// g3 — operands that run code: each runs once.
+fn g3() -> text {
+  log: vector<integer> = [];
+  r = counted(5, log) != counted(5, log);
+  "{r} {len(log)}"
+}
+/// c1 — control: a type's own `OpNe` wins over the derivation.
+fn c1() -> text {
+  a = V3 { x: 1 };
+  b = V3 { x: 1 };
+  "{a != b} {a == b}"
+}
+/// c2 — control: a struct with no `OpEq` compares identity, and `c = a` copies.
+fn c2() -> text {
+  a = Plain { x: 1 };
+  b = Plain { x: 1 };
+  c = a;
+  "{a != b} {a != c} {a == a}"
+}
+/// c3 — control: `!= null` stays the null test.
+fn c3() -> text {
+  a: V2? = null;
+  b = V2 { x: 1, y: 2 };
+  "{a != null} {b != null}"
+}
+/// c4 — control: the generic spelling.
+fn c4() -> text {
+  a = V2 { x: 1, y: 2 };
+  b = V2 { x: 1, y: 2 };
+  "{differs(a, b)}"
+}
+
+fn main() {
+  ok("g1 struct with OpEq     ", g1(), "false true true");
+  ok("g2 value struct with it ", g2(), "false true");
+  ok("g3 operands run once    ", g3(), "false 2");
+  ok("c1 own OpNe wins        ", c1(), "true true");
+  ok("c2 no OpEq: identity    ", c2(), "true true true");
+  ok("c3 null test            ", c3(), "false true");
+  ok("c4 generic              ", c4(), "false");
+  println("a concrete != derives from a user OpEq: every cell holds");
+}

@@ -1679,7 +1679,9 @@ pub fn mint_window(
     // offsets the literal's lowering resolved, so the address asks no layout.  (A
     // struct-enum element's variable is typed by a placeholder record, not by the enum.)
     let e_tp = data.def(def_nr).variables().tp(*e);
-    let is_record = matches!(e_tp, Type::Reference(_, _) | Type::Enum(_, true, _));
+    // A nullable element is not a fresh record's type, and is refused by name (@FR-N-Shape).
+    let is_record = !matches!(e_tp, Type::Optional(_))
+        && matches!(e_tp.base(), Type::Reference(_, _) | Type::Enum(_, true, _));
     if !is_record || (plain_record_type(data, e_tp).is_none() && !enum_record_enabled()) {
         return Err("not a record element");
     }

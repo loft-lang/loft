@@ -1,0 +1,120 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1580, `@FR-E-Eq` — A VALUE STRUCT COMPARES BY CONTENT.  `==` compares a value by value and
+// a reference by identity (DESIGN_DECISIONS C91).  A `value struct` is a value, so two with the
+// same fields are equal and a copy equals its source.  It was compared as a reference, by
+// identity, so a copy was unequal to the value it was copied from.  Now every field is compared
+// with its own type's `==`, a nested value struct by its own content, never following a
+// reference.
+//
+// Every expected value is worked out by hand.  The last two cells are controls that were right
+// before: a value struct with its own `OpEq`, and a plain `struct`, which stays identity.
+//
+// @falsified-at: 3cc05bd5e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1580-a-value-struct-compares-by-content.patch — interpret exit 1 -> 0,
+//   interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends — a wrong value,
+//   with no diagnostic.
+// WITNESS: on the control all eight fault cells answer identity and the two controls hold, on
+//   both backends, scored with the assertions replaced by prints: `g1` `false false true false
+//   true` (a copy unequal to its source), `g3` `false false`, `g7` `false 2`.
+// HOLDS: leak, panic, refusals and expectations are unmoved on both trees.
+
+value struct P { x: integer, y: integer }
+value struct F { a: float, b: single }
+value struct T { s: text, n: integer }
+value struct O { p: P, k: integer }
+enum Col { Red, Blue }
+value struct E { c: Col, n: integer }
+value struct U { a: u8, b: i16, ch: character, f: boolean }
+value struct W { x: integer, y: integer }
+fn OpEq(self: W, o: W) -> boolean { self.x == o.x }
+struct Plain { x: integer }
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+fn made(n: integer, log: vector<integer>) -> P { log += [n]; P { x: n, y: 1 } }
+
+/// g1 — equal content, a copy, and a difference, with both spellings.
+fn g1() -> text {
+  a = P { x: 1, y: 2 };
+  b = P { x: 1, y: 2 };
+  c = a;
+  d = P { x: 9, y: 2 };
+  "{a == b} {a == c} {a != d} {a == d} {a != b}"
+}
+/// g2 — float fields compare as floats: 0.0 equals -0.0.
+fn g2() -> text {
+  a = F { a: 0.0, b: 1.5f };
+  b = F { a: -0.0, b: 1.5f };
+  d = F { a: 0.0, b: 2.5f };
+  "{a == b} {a == d}"
+}
+/// g3 — a text field compares its characters.
+fn g3() -> text {
+  a = T { s: "ab", n: 1 };
+  b = T { s: "ab", n: 1 };
+  d = T { s: "ac", n: 1 };
+  "{a == b} {a == d}"
+}
+/// g4 — a nested value struct compares by its own content.
+fn g4() -> text {
+  a = O { p: P { x: 1, y: 2 }, k: 3 };
+  b = O { p: P { x: 1, y: 2 }, k: 3 };
+  d = O { p: P { x: 1, y: 5 }, k: 3 };
+  "{a == b} {a == d}"
+}
+/// g5 — an enum field.
+fn g5() -> text {
+  a = E { c: Blue, n: 1 };
+  b = E { c: Blue, n: 1 };
+  d = E { c: Red, n: 1 };
+  "{a == b} {a == d}"
+}
+/// g6 — vector elements.
+fn g6() -> text {
+  v: vector<P> = [P { x: 1, y: 2 }, P { x: 1, y: 2 }, P { x: 3, y: 2 }];
+  "{v[0] == v[1]} {v[0] == v[2]}"
+}
+/// g7 — operands that run code: each runs once.
+fn g7() -> text {
+  log: vector<integer> = [];
+  r = made(4, log) == made(4, log);
+  "{r} {len(log)}"
+}
+/// g8 — narrow integer, character and boolean fields.
+fn g8() -> text {
+  a = U { a: 200, b: -3, ch: 'q', f: true };
+  b = U { a: 200, b: -3, ch: 'q', f: true };
+  d = U { a: 200, b: -3, ch: 'q', f: false };
+  "{a == b} {a == d}"
+}
+/// c1 — control: a value struct's own `OpEq` replaces the content comparison.
+fn c1() -> text {
+  a = W { x: 1, y: 2 };
+  b = W { x: 1, y: 9 };
+  "{a == b}"
+}
+/// c2 — control: a plain `struct` compares identity.
+fn c2() -> text {
+  a = Plain { x: 1 };
+  b = Plain { x: 1 };
+  "{a == b} {a == a}"
+}
+
+fn main() {
+  ok("g1 content and a copy ", g1(), "true true true false false");
+  ok("g2 float fields       ", g2(), "true false");
+  ok("g3 text field         ", g3(), "true false");
+  ok("g4 nested value struct", g4(), "true false");
+  ok("g5 enum field         ", g5(), "true false");
+  ok("g6 vector elements    ", g6(), "true false");
+  ok("g7 operands run once  ", g7(), "true 2");
+  ok("g8 narrow and bool    ", g8(), "true false");
+  ok("c1 own OpEq wins      ", c1(), "true");
+  ok("c2 plain struct       ", c2(), "false true");
+  println("a value struct compares by content: every cell holds");
+}
