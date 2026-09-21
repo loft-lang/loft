@@ -7322,13 +7322,25 @@ impl Data {
         (tn != u32::MAX).then(|| Self::sig_type_name(&self.key_type_name(tn), tp))
     }
 
+    /// The one answer to *"which type is this, for a key or a rank?"* — [`Self::identity_spelling`],
+    /// or with `LOFT_NO_ELEMENT_KEY=1` the erasing [`Self::type_spelling`] (@PLN165 B1).  `None`
+    /// only in the erasing form, for a type with no def to name.
+    #[must_use]
+    pub(crate) fn key_identity(&self, tp: &Type) -> Option<String> {
+        if crate::keys::element_key_enabled() {
+            Some(self.identity_spelling(tp))
+        } else {
+            self.type_spelling(tp)
+        }
+    }
+
     /// Every DECLARED parameter's spelling joined with `#` — the FULL spelling a definition
     /// is keyed by when its name has several (`Disp-Key`, @PLN162).  `#` is the separator
     /// [`Self::bound_stub_name`] already relies on: no identifier can contain it, and the
-    /// native emitter maps it to `__`.  Hidden parameters (a return buffer) are not part of a
-    /// signature and are skipped.  `None` when a parameter has no spelling, which keeps such
-    /// a definition on today's keys.  Two `vector<τ>` spell alike — the element type is not
-    /// in a key today either.
+    /// native emitter flattens it.  Hidden parameters (a return buffer) are not part of a
+    /// signature and are skipped.  Each type is its [`Self::key_identity`], so
+    /// `vector<integer>` and `vector<text>` are two keys, as `u8` and `u16` are (@PLN165 B1);
+    /// `None` only under `LOFT_NO_ELEMENT_KEY=1`, for a parameter with no spelling.
     #[must_use]
     pub(crate) fn full_spelling<'a>(
         &self,
@@ -7336,7 +7348,7 @@ impl Data {
     ) -> Option<String> {
         let mut parts = Vec::new();
         for tp in params {
-            parts.push(self.type_spelling(tp)?);
+            parts.push(self.key_identity(tp)?);
         }
         Some(parts.join("#"))
     }
@@ -7588,6 +7600,53 @@ impl Data {
     /// instantiation (`@FR-G-Mono`) is keyed by.
     #[must_use]
     pub fn identity_spelling(&self, tp: &Type) -> String {
+        if !crate::keys::element_key_enabled() {
+            return self.identity_spelling_erasing(tp);
+        }
+        // @PLN165 B1 — the whole type, all the way down: a width inside a vector, the `?`
+        // of a nullable binding (`Pt` and `Pt?` are two instantiations), a function type's
+        // signature (its type DEF is the `i32` its value is stored as, so a function type
+        // shared a key with `i32`).
+        let rec = |t: &Type| self.identity_spelling(t);
+        match tp {
+            Type::Integer(spec) => {
+                // schema-key — the width is part of which type this is (loft#1418).
+                let named = tp.name(self);
+                match spec.forced_size {
+                    Some(n) => format!("{named}s{n}"),
+                    None => named,
+                }
+            }
+            Type::Optional(inner) => format!("{}?", rec(inner)),
+            Type::Rewritten(inner) => rec(inner),
+            Type::RefVar(inner) => format!("&{}", rec(inner)),
+            Type::Vector(elm, _) if !matches!(elm.as_ref(), Type::Unknown(_)) => {
+                format!("vector<{}>", rec(elm))
+            }
+            Type::Iterator(elm, _) => format!("iterator<{}>", rec(elm)),
+            // A tuple keeps its synthetic struct's name (`__tuple<integer,text>`), the one
+            // spelling a boxed and an unboxed tuple share.
+            Type::Function(params, ret, _, consts) => {
+                let p: Vec<String> = params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| {
+                        if consts.is(i) {
+                            format!("const {}", rec(t))
+                        } else {
+                            rec(t)
+                        }
+                    })
+                    .collect();
+                format!("fn({}) -> {}", p.join(", "), rec(ret))
+            }
+            _ => self.identity_spelling_erasing(tp),
+        }
+    }
+
+    /// The identity spelling before @PLN165 B1 — an instance's key as A5 minted it, which
+    /// erased a `τ?`'s nullability and a function type's signature.  `LOFT_NO_ELEMENT_KEY=1`.
+    fn identity_spelling_erasing(&self, tp: &Type) -> String {
         if crate::parser::Parser::is_collection_type(tp.base()) {
             tp.name(self) // schema-key — the instance's identity; @FR-G-Mono wants the element
         } else if let Type::Integer(spec) = tp.base() {

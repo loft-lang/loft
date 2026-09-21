@@ -1,0 +1,10 @@
+// Two overloads that differ only in an integer's width, called with values of each width.
+// @EXPECT: u8|u16|u8
+fn w(x: u8) -> text { "u8" }
+fn w(x: u16) -> text { "u16" }
+fn main() {
+  a: u8 = 1;
+  b: u16 = 300;
+  c: u8 = 250;
+  println("{w(a)}|{w(b)}|{w(c)}");
+}

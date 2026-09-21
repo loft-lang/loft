@@ -1052,6 +1052,16 @@ pub fn value_return_enabled() -> bool {
 /// a store of its own (@PLN164 B2, `@FR-R-Place`'s callee clause: a callee that on some exit
 /// answers a store other than the buffer it was handed cannot be placed) — the bisect step
 /// for a wrong record out of a callee with more than one literal exit.
+/// @PLN165 B1 — a definition key and an overload's rank read a type's FULL identity: a
+/// collection's element, an integer's width, a `τ?`'s nullability, a function type's
+/// signature.  **DEFAULT ON.**  `LOFT_NO_ELEMENT_KEY=1` restores the spelling that erased them
+/// (`vector` for every vector, `integer` for every width, `i32` for a function) — the rollback,
+/// and the first bisect step for a call that reaches the wrong member of an overload set.
+pub fn element_key_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_ELEMENT_KEY"))
+}
+
 /// @PLN165 A5 (`D-Key`) — an instance of a generic is keyed `i_<LEN><bound types>_<template
 /// key>`: its own key kind, naming its template and every bound type.  **DEFAULT ON.**
 /// `LOFT_NO_INSTANCE_KEY=1` mints the method-shaped `t_<LEN><type>_<name>` key again — the

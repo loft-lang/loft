@@ -53,11 +53,20 @@ impl Parser {
             matches!(param, Type::Optional(_)),
         );
         let (a, p) = (arg.base(), param.base());
-        let same = self.data.type_spelling(a).is_some()
-            && self.data.type_spelling(a) == self.data.type_spelling(p);
+        let same = self.data.key_identity(a).is_some()
+            && self.data.key_identity(a) == self.data.key_identity(p);
         // The base relation first, then the nullability step on top of it.
         let base: Rank = if same {
             EXACT
+        } else if let (Type::Integer(from), Type::Integer(to)) = (a, p)
+            && crate::keys::element_key_enabled()
+            && to.min <= from.min
+            && from.max <= to.max
+        {
+            // `(C-Int)` — an integer into a range that holds all of it is the widening the
+            // integer lattice has, as a variant into its enum is below: two widths are two
+            // types (@PLN165 B1), and the wider one takes the narrower without loss.
+            WIDENED
         } else if let (Type::Reference(v_nr, _), Type::Enum(e_nr, _, _)) =
             (arg.base(), param.base())
             && self.data.def_type(*v_nr) == DefType::EnumValue
@@ -90,7 +99,7 @@ impl Parser {
         if main == u32::MAX || self.data.def_type(main) != DefType::Dynamic {
             return None;
         }
-        if routed.iter().any(|t| self.data.type_spelling(t).is_none()) {
+        if routed.iter().any(|t| self.data.key_identity(t).is_none()) {
             return None;
         }
         let routines: Vec<u32> = self
@@ -609,8 +618,7 @@ impl Parser {
             .map(|(_, d, _)| *d)
             .chain(null_leaf)
             .find(|d| {
-                self.data.type_spelling(self.data.def(*d).returned())
-                    != self.data.type_spelling(&ret)
+                self.data.key_identity(self.data.def(*d).returned()) != self.data.key_identity(&ret)
             });
         if let Some(other) = differs {
             self.report_mixed_returns(name, routed, leaves[0].1, other);

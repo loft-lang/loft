@@ -208,6 +208,15 @@ keeps `__closure` the last parameter after an instance's text return gains its b
   argument check after it.
 - **Why before B2:** finding 1.  Without it `first<T>(v: vector<T>)` and
   `first(v: vector<integer>)` are one key, and B2 would refuse them for a new reason.
+- **Built** (2026-09-21).  `Data::identity_spelling` is the one answer, read through
+  `key_identity` by the free-overload key, the rank's `same`, the set-admission guard and
+  both one-return-type checks.  Two more collisions than the plan named: a FUNCTION type
+  keyed as the `i32` its value is stored as (`app(f: fn(…))` beside `app(n: i32)`), and a
+  binding at `Pt?` sharing `Pt`'s instance.  Across widths an integer into a range that holds
+  it ranks WIDENED (`(C-Int)`), or `u8` into `integer` would have dropped from EXACT to a
+  conversion and tied with `float`.  A tuple keeps its synthetic struct's name, the one
+  spelling a boxed and an unboxed tuple share.  Corpus with the switch: IDENTICAL; without:
+  three files — two `f_` renames and the predicted wording change.
 
 ### B2 — a template may be a member  ·  S
 

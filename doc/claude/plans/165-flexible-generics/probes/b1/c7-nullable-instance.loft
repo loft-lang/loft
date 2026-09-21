@@ -1,0 +1,13 @@
+// A generic bound at `Pt` and at `Pt?` — two instantiations, each its twin.
+// @EXPECT: 3|null|3
+struct Pt { x: integer }
+fn idf<T>(x: T) -> T { x }
+fn main() {
+  p = Pt { x: 3 };
+  q: Pt? = null;
+  r: Pt? = Pt { x: 3 };
+  a = idf(p);
+  b = idf(q);
+  c = idf(r);
+  println("{a.x}|{if b { "some" } else { "null" }}|{c.x}");
+}

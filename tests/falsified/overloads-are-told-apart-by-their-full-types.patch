@@ -1,0 +1,178 @@
+diff --git b/src/data.rs a/src/data.rs
+index d66f9ab91..9ab8183a8 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -7322,25 +7322,13 @@ impl Data {
+         (tn != u32::MAX).then(|| Self::sig_type_name(&self.key_type_name(tn), tp))
+     }
+ 
+-    /// The one answer to *"which type is this, for a key or a rank?"* — [`Self::identity_spelling`],
+-    /// or with `LOFT_NO_ELEMENT_KEY=1` the erasing [`Self::type_spelling`] (@PLN165 B1).  `None`
+-    /// only in the erasing form, for a type with no def to name.
+-    #[must_use]
+-    pub(crate) fn key_identity(&self, tp: &Type) -> Option<String> {
+-        if crate::keys::element_key_enabled() {
+-            Some(self.identity_spelling(tp))
+-        } else {
+-            self.type_spelling(tp)
+-        }
+-    }
+-
+     /// Every DECLARED parameter's spelling joined with `#` — the FULL spelling a definition
+     /// is keyed by when its name has several (`Disp-Key`, @PLN162).  `#` is the separator
+     /// [`Self::bound_stub_name`] already relies on: no identifier can contain it, and the
+-    /// native emitter flattens it.  Hidden parameters (a return buffer) are not part of a
+-    /// signature and are skipped.  Each type is its [`Self::key_identity`], so
+-    /// `vector<integer>` and `vector<text>` are two keys, as `u8` and `u16` are (@PLN165 B1);
+-    /// `None` only under `LOFT_NO_ELEMENT_KEY=1`, for a parameter with no spelling.
++    /// native emitter maps it to `__`.  Hidden parameters (a return buffer) are not part of a
++    /// signature and are skipped.  `None` when a parameter has no spelling, which keeps such
++    /// a definition on today's keys.  Two `vector<τ>` spell alike — the element type is not
++    /// in a key today either.
+     #[must_use]
+     pub(crate) fn full_spelling<'a>(
+         &self,
+@@ -7348,7 +7336,7 @@ impl Data {
+     ) -> Option<String> {
+         let mut parts = Vec::new();
+         for tp in params {
+-            parts.push(self.key_identity(tp)?);
++            parts.push(self.type_spelling(tp)?);
+         }
+         Some(parts.join("#"))
+     }
+@@ -7600,53 +7588,6 @@ impl Data {
+     /// instantiation (`@FR-G-Mono`) is keyed by.
+     #[must_use]
+     pub fn identity_spelling(&self, tp: &Type) -> String {
+-        if !crate::keys::element_key_enabled() {
+-            return self.identity_spelling_erasing(tp);
+-        }
+-        // @PLN165 B1 — the whole type, all the way down: a width inside a vector, the `?`
+-        // of a nullable binding (`Pt` and `Pt?` are two instantiations), a function type's
+-        // signature (its type DEF is the `i32` its value is stored as, so a function type
+-        // shared a key with `i32`).
+-        let rec = |t: &Type| self.identity_spelling(t);
+-        match tp {
+-            Type::Integer(spec) => {
+-                // schema-key — the width is part of which type this is (loft#1418).
+-                let named = tp.name(self);
+-                match spec.forced_size {
+-                    Some(n) => format!("{named}s{n}"),
+-                    None => named,
+-                }
+-            }
+-            Type::Optional(inner) => format!("{}?", rec(inner)),
+-            Type::Rewritten(inner) => rec(inner),
+-            Type::RefVar(inner) => format!("&{}", rec(inner)),
+-            Type::Vector(elm, _) if !matches!(elm.as_ref(), Type::Unknown(_)) => {
+-                format!("vector<{}>", rec(elm))
+-            }
+-            Type::Iterator(elm, _) => format!("iterator<{}>", rec(elm)),
+-            // A tuple keeps its synthetic struct's name (`__tuple<integer,text>`), the one
+-            // spelling a boxed and an unboxed tuple share.
+-            Type::Function(params, ret, _, consts) => {
+-                let p: Vec<String> = params
+-                    .iter()
+-                    .enumerate()
+-                    .map(|(i, t)| {
+-                        if consts.is(i) {
+-                            format!("const {}", rec(t))
+-                        } else {
+-                            rec(t)
+-                        }
+-                    })
+-                    .collect();
+-                format!("fn({}) -> {}", p.join(", "), rec(ret))
+-            }
+-            _ => self.identity_spelling_erasing(tp),
+-        }
+-    }
+-
+-    /// The identity spelling before @PLN165 B1 — an instance's key as A5 minted it, which
+-    /// erased a `τ?`'s nullability and a function type's signature.  `LOFT_NO_ELEMENT_KEY=1`.
+-    fn identity_spelling_erasing(&self, tp: &Type) -> String {
+         if crate::parser::Parser::is_collection_type(tp.base()) {
+             tp.name(self) // schema-key — the instance's identity; @FR-G-Mono wants the element
+         } else if let Type::Integer(spec) = tp.base() {
+diff --git b/src/keys.rs a/src/keys.rs
+index 2eb9acc53..53780c47c 100644
+--- b/src/keys.rs
++++ a/src/keys.rs
+@@ -1052,16 +1052,6 @@ pub fn value_return_enabled() -> bool {
+ /// a store of its own (@PLN164 B2, `@FR-R-Place`'s callee clause: a callee that on some exit
+ /// answers a store other than the buffer it was handed cannot be placed) — the bisect step
+ /// for a wrong record out of a callee with more than one literal exit.
+-/// @PLN165 B1 — a definition key and an overload's rank read a type's FULL identity: a
+-/// collection's element, an integer's width, a `τ?`'s nullability, a function type's
+-/// signature.  **DEFAULT ON.**  `LOFT_NO_ELEMENT_KEY=1` restores the spelling that erased them
+-/// (`vector` for every vector, `integer` for every width, `i32` for a function) — the rollback,
+-/// and the first bisect step for a call that reaches the wrong member of an overload set.
+-pub fn element_key_enabled() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_ELEMENT_KEY"))
+-}
+-
+ /// @PLN165 A5 (`D-Key`) — an instance of a generic is keyed `i_<LEN><bound types>_<template
+ /// key>`: its own key kind, naming its template and every bound type.  **DEFAULT ON.**
+ /// `LOFT_NO_INSTANCE_KEY=1` mints the method-shaped `t_<LEN><type>_<name>` key again — the
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index 9ce73c2a2..32b24c286 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -223,7 +223,7 @@ impl Parser {
+             })
+             .collect();
+         let spelling =
+-            |data: &crate::data::Data, d: u32| data.key_identity(data.def(d).returned());
++            |data: &crate::data::Data, d: u32| data.type_spelling(data.def(d).returned());
+         if let Some(((first, _), rest)) = impls.split_first()
+             && let Some((other, _)) = rest
+                 .iter()
+diff --git b/src/parser/dispatch.rs a/src/parser/dispatch.rs
+index 7dc080c04..08e742e45 100644
+--- b/src/parser/dispatch.rs
++++ a/src/parser/dispatch.rs
+@@ -53,20 +53,11 @@ impl Parser {
+             matches!(param, Type::Optional(_)),
+         );
+         let (a, p) = (arg.base(), param.base());
+-        let same = self.data.key_identity(a).is_some()
+-            && self.data.key_identity(a) == self.data.key_identity(p);
++        let same = self.data.type_spelling(a).is_some()
++            && self.data.type_spelling(a) == self.data.type_spelling(p);
+         // The base relation first, then the nullability step on top of it.
+         let base: Rank = if same {
+             EXACT
+-        } else if let (Type::Integer(from), Type::Integer(to)) = (a, p)
+-            && crate::keys::element_key_enabled()
+-            && to.min <= from.min
+-            && from.max <= to.max
+-        {
+-            // `(C-Int)` — an integer into a range that holds all of it is the widening the
+-            // integer lattice has, as a variant into its enum is below: two widths are two
+-            // types (@PLN165 B1), and the wider one takes the narrower without loss.
+-            WIDENED
+         } else if let (Type::Reference(v_nr, _), Type::Enum(e_nr, _, _)) =
+             (arg.base(), param.base())
+             && self.data.def_type(*v_nr) == DefType::EnumValue
+@@ -99,7 +90,7 @@ impl Parser {
+         if main == u32::MAX || self.data.def_type(main) != DefType::Dynamic {
+             return None;
+         }
+-        if routed.iter().any(|t| self.data.key_identity(t).is_none()) {
++        if routed.iter().any(|t| self.data.type_spelling(t).is_none()) {
+             return None;
+         }
+         let routines: Vec<u32> = self
+@@ -618,8 +609,8 @@ impl Parser {
+             .map(|(_, d, _)| *d)
+             .chain(null_leaf)
+             .find(|d| {
+-                self.data.key_identity(self.data.def(*d).returned())
+-                    != self.data.key_identity(&ret)
++                self.data.type_spelling(self.data.def(*d).returned())
++                    != self.data.type_spelling(&ret)
+             });
+         if let Some(other) = differs {
+             self.report_mixed_returns(name, routed, leaves[0].1, other);

@@ -222,8 +222,7 @@ impl Parser {
                     && self.data.def(*v).parent == e_nr
             })
             .collect();
-        let spelling =
-            |data: &crate::data::Data, d: u32| data.type_spelling(data.def(d).returned());
+        let spelling = |data: &crate::data::Data, d: u32| data.key_identity(data.def(d).returned());
         if let Some(((first, _), rest)) = impls.split_first()
             && let Some((other, _)) = rest
                 .iter()
