@@ -435,8 +435,23 @@ impl OpEmitter for HoistedPushEmitter {
         };
         let (ty, size) = (fused.rust_type, fused.size);
         let verify = verify(ctx);
+        // `@FR-R-PushFill`'s window clause — the loop being emitted opened a push window
+        // for this path: the push is a comparison, one store through the held base and a
+        // bump of the window's length.
+        let window = ctx
+            .output
+            .active_push_window(&fused.path)
+            .map(str::to_owned);
         write!(ctx.w, "{{ let __pv = (")?;
         ctx.emit(fused.val)?;
+        if let Some(win) = window {
+            write!(
+                ctx.w,
+                "); unsafe {{ stores.push_windowed::<{ty}, {verify}>(&mut {header}, &mut {win}, &("
+            )?;
+            ctx.emit(fused.vector)?;
+            return write!(ctx.w, "), {size}, __pv) }} }}");
+        }
         write!(
             ctx.w,
             "); stores.push_hoisted::<{ty}, {verify}>(&mut {header}, &("

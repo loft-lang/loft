@@ -895,6 +895,15 @@ pub struct Output<'a> {
     /// `LOFT_NO_PUSH_FILL` (generation time): a counted push loop reserves nothing and
     /// fills nothing — the per-push ladder and the per-element loop again (§ V-am).
     pub push_fill_disabled: bool,
+    /// `LOFT_NO_PUSH_WINDOW` (generation time): a reserved counted push loop pushes through
+    /// its push header again, the length written back per push (`@FR-R-PushFill`'s window
+    /// clause).
+    pub push_window_disabled: bool,
+    /// `@FR-R-PushFill`'s window clause — the push WINDOWS open while a loop's statements
+    /// are emitted: the pushed path and the `vector::PushWindow` local its pushes go
+    /// through.  Opened by [`Self::push_reserve`] before the loop (and before any guarded
+    /// copy of it, so both arms push through the one window) and closed after it.
+    pub push_windows: Vec<(hoist::PathKey, String)>,
     /// @PLN157 § V-u (`@FR-R-RetAdopt`) — the function being emitted whose result local
     /// ADOPTS the hidden return buffer ([`hoist::ret_adopt`]); `None` for every other.
     pub ret_adopt: Option<hoist::RetAdopt>,
@@ -2046,6 +2055,8 @@ impl<'a> Output<'a> {
             loop_record_disabled: std::env::var("LOFT_NO_LOOP_RECORD").is_ok_and(|v| v != "0")
                 || !crate::keys::loop_buffer_reuse_enabled(),
             push_fill_disabled: !crate::keys::push_fill_enabled(),
+            push_window_disabled: !crate::keys::push_window_enabled(),
+            push_windows: Vec::new(),
             ret_adopt: None,
             retbuf_adopt_disabled: std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0"),
             in_adopt_delivery: 0,
@@ -2414,6 +2425,7 @@ impl Output<'_> {
         self.scalar_hoists.clear();
         self.push_headers.clear();
         self.mint_push_headers.clear();
+        self.push_windows.clear();
         self.hoist_counter = 0;
     }
 
@@ -3124,14 +3136,124 @@ impl Output<'_> {
         }
     }
 
+    /// The trip count of the counted push loop `p`, as the expression its reservation and
+    /// its fill take: the range's end less its start (the `next` counter's current value,
+    /// § V-ab, or `#index + 1`, P3b), plus one for an inclusive range.
+    fn push_trip_count(&mut self, p: &hoist::PushLoop) -> std::io::Result<String> {
+        let variables = self.data.def(self.def_nr).variables();
+        let idx = format!("var_{}", sanitize(variables.name(p.index_var)));
+        let lo = match p.next_var {
+            Some(nx) => format!("var_{}", sanitize(variables.name(nx))),
+            None if self.release_pass_probe => format!("(({idx}).wrapping_add(1_i64))"),
+            None => format!("ops::op_add_int(({idx}), (1_i64))"),
+        };
+        let hi = self.expr_string(p.hi)?;
+        let incl = if p.inclusive { "1_i64" } else { "0_i64" };
+        Ok(format!(
+            "(({hi}) as i64).saturating_sub(({lo}) as i64).saturating_add({incl})"
+        ))
+    }
+
     /// @PLN157 § V-am (`@FR-R-PushFill`) — when `lp` is a counted push loop over a path a
     /// push header is held for, RESERVE its pushes times its trip count before it runs
-    /// (and re-derive the header, since the reserve may move the record); when the loop
-    /// is one push of an invariant, emit the guarded `let __pf_N = stores.push_fill(…)`
-    /// instead and answer `true` — the caller then emits the per-element loop under
-    /// `if !__pf_N` and [`Self::push_fast_path_tail`] leaves the counters as the loop
-    /// would.  The trip count is the range's end less its start (the `next` counter's
-    /// current value, § V-ab, or `#index + 1`, P3b), plus one for an inclusive range.
+    /// (and re-derive the header, since the reserve may move the record).  Emitted BEFORE
+    /// any guarded copy of the loop (`@FR-R-BoundedNest`, `@FR-R-GuardedChain`): a
+    /// reservation is capacity, observably nothing, and one written after the guard stands
+    /// in its `else` arm — the arm that does not run.
+    ///
+    /// THE WINDOW CLAUSE — where [`hoist::push_window_ok`] admits the loop, a
+    /// `vector::PushWindow` is opened on the reserved header here, every push of the path
+    /// in the loop goes through it ([`Self::active_push_window`]), and the caller closes
+    /// it after the loop with what this answers: the window local, the header it closes
+    /// onto, and the vector operand.
+    fn push_reserve(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<Option<(String, String, String)>> {
+        if self.push_fill_disabled {
+            return Ok(None);
+        }
+        let Some(p) = hoist::push_loop(lp, self.data) else {
+            return Ok(None);
+        };
+        if p.fill.is_some() {
+            return Ok(None);
+        }
+        let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) else {
+            return Ok(None);
+        };
+        let count = self.push_trip_count(&p)?;
+        let vec = self.expr_string(p.vector)?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "{{ let _pn = {count}; if _pn > 0 {{ vector::reserve_more(&({vec}), _pn.saturating_mul({}_i64), {}_u32, &mut stores.allocations); {hdr} = vector::push_header(&({vec}), &stores.allocations); }} }} //@PLN157 § V-am push reserve",
+            p.pushes, p.size
+        )?;
+        if self.push_window_disabled
+            || self.in_coroutine_body
+            || self.coroutine_persistent_fields.contains_key(&p.path.0)
+        {
+            return Ok(None);
+        }
+        if let Err(why) =
+            hoist::push_window_ok(lp, &p, self.data, self.def_nr, &mut self.hoist_cache)
+        {
+            if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
+                eprintln!(
+                    "push-fill: {} loop {} keeps its header pushes — {why}",
+                    self.data.def(self.def_nr).name(),
+                    lp.scope
+                );
+            }
+            return Ok(None);
+        }
+        self.hoist_counter += 1;
+        let win = format!("__pw_{}", self.hoist_counter);
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let mut {win} = vector::push_window(&{hdr}, {}_u32, &stores.allocations); //@FR-R-PushFill push window",
+            p.size
+        )?;
+        self.push_windows.push((p.path.clone(), win.clone()));
+        Ok(Some((win, hdr, vec)))
+    }
+
+    /// Close the window [`Self::push_reserve`] opened, after the loop and every guarded
+    /// copy of it: the length the loop reached is written to the header and the record.
+    fn push_window_close(
+        &mut self,
+        w: &mut dyn Write,
+        window: &(String, String, String),
+    ) -> std::io::Result<()> {
+        let (win, hdr, vec) = window;
+        let verify = if self.hoist_verify { "true" } else { "false" };
+        self.push_windows.pop();
+        writeln!(w, ";")?;
+        self.indent(w)?;
+        write!(
+            w,
+            "stores.push_window_close::<{verify}>(&mut {hdr}, {win}.len, &({vec})) /*@FR-R-PushFill window closed*/"
+        )
+    }
+
+    /// The window open for `path`, when the loop being emitted pushes through one.
+    #[must_use]
+    pub fn active_push_window(&self, path: &hoist::PathKey) -> Option<&str> {
+        self.push_windows
+            .iter()
+            .rev()
+            .find(|(p, _)| p == path)
+            .map(|(_, w)| w.as_str())
+    }
+
+    /// @PLN157 § V-am (`@FR-R-PushFill`) — when `lp` is ONE push of an invariant over a
+    /// path a push header is held for, emit the guarded `let __pf_N = stores.push_fill(…)`
+    /// and answer `true` — the caller then emits the per-element loop under `if !__pf_N`
+    /// and [`Self::push_fast_path_tail`] leaves the counters as the loop would.  Every
+    /// other counted push loop is [`Self::push_reserve`]'s.
     fn push_fast_path(
         &mut self,
         w: &mut dyn Write,
@@ -3143,37 +3265,23 @@ impl Output<'_> {
         let Some(p) = hoist::push_loop(lp, self.data) else {
             return Ok(false);
         };
+        let Some(val) = p.fill else {
+            return Ok(false);
+        };
         let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) else {
             return Ok(false);
         };
-        let variables = self.data.def(self.def_nr).variables();
-        let idx = format!("var_{}", sanitize(variables.name(p.index_var)));
-        let lo = match p.next_var {
-            Some(nx) => format!("var_{}", sanitize(variables.name(nx))),
-            None if self.release_pass_probe => format!("(({idx}).wrapping_add(1_i64))"),
-            None => format!("ops::op_add_int(({idx}), (1_i64))"),
-        };
+        let count = self.push_trip_count(&p)?;
         let vec = self.expr_string(p.vector)?;
-        let hi = self.expr_string(p.hi)?;
-        let incl = if p.inclusive { "1_i64" } else { "0_i64" };
-        let count = format!("(({hi}) as i64).saturating_sub(({lo}) as i64).saturating_add({incl})");
+        let val = self.expr_string(val)?;
         let verify = if self.hoist_verify { "true" } else { "false" };
         self.indent(w)?;
-        if let Some(val) = p.fill {
-            let val = self.expr_string(val)?;
-            writeln!(
-                w,
-                "let __pf_{} = stores.push_fill::<{}, {verify}>(&mut {hdr}, &({vec}), {}_u32, {count}, ({val})); //@PLN157 § V-am push fill",
-                lp.scope, p.rust_type, p.size
-            )?;
-            return Ok(true);
-        }
         writeln!(
             w,
-            "{{ let _pn = {count}; if _pn > 0 {{ vector::reserve_more(&({vec}), _pn.saturating_mul({}_i64), {}_u32, &mut stores.allocations); {hdr} = vector::push_header(&({vec}), &stores.allocations); }} }} //@PLN157 § V-am push reserve",
-            p.pushes, p.size
+            "let __pf_{} = stores.push_fill::<{}, {verify}>(&mut {hdr}, &({vec}), {}_u32, {count}, ({val})); //@PLN157 § V-am push fill",
+            lp.scope, p.rust_type, p.size
         )?;
-        Ok(false)
+        Ok(true)
     }
 
     /// The `else` arm of the push fill's guard — [`Self::range_tail`] over the push loop.

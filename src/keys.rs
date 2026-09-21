@@ -1311,6 +1311,19 @@ pub fn push_fill_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_PUSH_FILL"))
 }
 
+/// `@FR-R-PushFill`'s window clause: a reserved counted push loop whose body reaches its
+/// vector through the pushes alone, and grows no other store, pushes through a held
+/// element base and a local length, and writes the record's length once when it ends —
+/// **DEFAULT ON**.  Opt OUT with `LOFT_NO_PUSH_WINDOW` (read at GENERATION time): every
+/// push goes through its push header again, the length written back per push — the first
+/// bisect step for a wrong element or length out of a counted push loop or a
+/// comprehension on native.  `LOFT_HOIST_VERIFY=1` checks the frozen header and the base
+/// at every push and the closed header after the loop.
+pub fn push_window_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PUSH_WINDOW"))
+}
+
 /// @PLN157 § V-d: a vector-literal element that is a buffer-returning call is built IN the
 /// element's record, and a promoted return buffer honours an offered record — **DEFAULT
 /// ON**.  Opt OUT with `LOFT_NO_APPEND_IN_PLACE`: the before-half of the A/B on one binary

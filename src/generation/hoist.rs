@@ -531,7 +531,8 @@ pub struct LoopHoist {
     /// through (the slot from the header, the length bump at the finish).  A mint that does
     /// not qualify stays a plain mover (§ V-s: admitted, no holder, templates per element).
     pub mint_pushes: Vec<(PathKey, Value)>,
-    /// @PLN157 § V-ak (`@FR-R-Base`) — the loop GROWS no store: no push, no mint push.
+    /// @PLN157 § V-ak (`@FR-R-Base`) — the loop GROWS no store: no push and no mint,
+    /// whether or not the mint emits through a push header.
     /// Everything else the admission lets through — in-place sets, store-free ops,
     /// store-free or in-place-only callees, a free, and a null-discharge buffer's mint
     /// (§ V-ad: a FRESH store, or a clear of the buffer's own, which no header names —
@@ -760,7 +761,11 @@ pub fn hoistable(
     // `@FR-R-Base` — decided here, before either early return below: a loop with no
     // record scalars to hoist is exactly the shape a pixel loop has.
     let null_buf = mints_null_buffer(body, data, vars);
-    out.growth_free = out.pushes.is_empty() && out.mint_pushes.is_empty() && !dropped_mover;
+    // EVERY mint counts, not only the ones that earned a push header: a mint left on its
+    // templates (an element that is no struct — a vector of vectors — or a tier switched
+    // off) appends through the runtime and grows its store all the same, and a base bound
+    // for a sibling field of the same record would address the buffer that growth freed.
+    out.growth_free = out.pushes.is_empty() && mints.is_empty() && !dropped_mover;
     if std::env::var("LOFT_TRACE_BASE").is_ok() {
         eprintln!(
             "base: {} loop {} growth_free={} (pushes {}, mint pushes {}, null buffer {}, headers {})",
@@ -2318,18 +2323,23 @@ pub struct RangeCounters<'a> {
     pub hi: &'a Value,
 }
 
-/// Parse a `For loop` block's iterator into its counters, or say which part of the shape
-/// it is not.
+/// Parse a loop's iterator — its FIRST statement — into its counters, or say which part of
+/// the shape it is not.  The statement alone is read, because the counters are a fact about
+/// the iterator and not about what follows it: a `for` statement is `[iterator, body]`, with
+/// a filter (`for … if c`) or a `#count` step it carries more, and a comprehension
+/// `[for i in a..b { e }]` is `[iterator, element value, append]`.  All of them step the
+/// same counters under the same test, so all of them are counted ranges; a rewrite that
+/// also reads the BODY as one block asks [`plain_for_body`] for that shape itself.
 ///
 /// # Errors
 ///
 /// The reason the block is not a counted range — the trace the fill rewrite prints.
 pub fn range_counters<'a>(lp: &'a Block, data: &Data) -> Result<RangeCounters<'a>, String> {
     let decline = |why: &str| -> Result<RangeCounters<'a>, String> { Err(why.to_string()) };
-    if lp.operators.len() != 2 {
-        return decline(&format!("loop has {} statements", lp.operators.len()));
-    }
-    let Value::Set(loop_var, iter) = lp.operators[0].unspan() else {
+    let Some(first) = lp.operators.first() else {
+        return decline("loop has no statements");
+    };
+    let Value::Set(loop_var, iter) = first.unspan() else {
         return decline("first statement is not the loop variable's Set");
     };
     let Value::Block(it) = iter.unspan() else {
@@ -2421,6 +2431,22 @@ pub fn range_counters<'a>(lp: &'a Block, data: &Data) -> Result<RangeCounters<'a
         inclusive,
         hi: &cargs[0],
     })
+}
+
+/// The body of a PLAIN `for` statement — a loop that is exactly `[iterator, body block]`.
+/// A filter (`for … if c`) and a `#count` step add statements beside the body, and a
+/// comprehension has no body block at all; a rewrite that replaces or re-runs "the body"
+/// as one unit (the fill, the bounded nest) is written for this shape alone, and `None`
+/// keeps every other loop on its general emission.
+#[must_use]
+pub fn plain_for_body(lp: &Block) -> Option<&Block> {
+    if lp.name != "For loop" || lp.operators.len() != 2 {
+        return None;
+    }
+    match lp.operators[1].unspan() {
+        Value::Block(body) => Some(body),
+        _ => None,
+    }
 }
 
 /// The head of a vector iteration, as the parser lowers `for e in v`: the loop variable,
@@ -2600,8 +2626,8 @@ pub fn bounded_nest<'a>(lp: &'a Block, data: &Data) -> Result<BoundedNest<'a>, S
     if !matches!(counters.hi.unspan(), Value::Var(_) | Value::Int(_)) {
         return Err("the range's end is not a variable or a literal".to_string());
     }
-    let Value::Block(body) = lp.operators[1].unspan() else {
-        return Err("the body is not a block".to_string());
+    let Some(body) = plain_for_body(lp) else {
+        return Err("the loop is not `[iterator, body block]`".to_string());
     };
     // A statement carries its `Value::Line` marker beside it; only the statement counts.
     let stmts: Vec<&Value> = body
@@ -2839,8 +2865,8 @@ pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
     let (loop_var, seed_index, next_var, inclusive, hi) =
         (rc.loop_var, rc.index, rc.next, rc.inclusive, rc.hi);
     // The body: one fusable scalar set over the loop variable's index.
-    let Value::Block(body) = lp.operators[1].unspan() else {
-        return decline("the body is not a block");
+    let Some(body) = plain_for_body(lp) else {
+        return decline("the loop is not `[iterator, body block]`");
     };
     // A source-line marker is not a statement (a library module's body carries one).
     let stmts: Vec<&Value> = body
@@ -2956,7 +2982,9 @@ pub struct PushLoop<'a> {
     pub fill: Option<&'a Value>,
 }
 
-/// Recognise the counted push loop (`@FR-R-PushFill`).  Declines, and says why under
+/// Recognise the counted push loop (`@FR-R-PushFill`) in either spelling — the statement
+/// `for i in a..b { v += [e] }` and the comprehension `[for i in a..b { e }]`
+/// ([`push_loop_body`]).  Declines, and says why under
 /// `LOFT_TRACE_PUSH_FILL=1`, whenever the trip count cannot be known before the loop runs
 /// or the pushes per iteration cannot be counted: a `break`, a `return`, a `continue`, an
 /// inner loop, a push under a branch, a push to a second path, an append or any other
@@ -2971,19 +2999,14 @@ pub fn push_loop<'a>(lp: &'a Block, data: &Data) -> Option<PushLoop<'a>> {
         }
         None
     };
-    if lp.name != "For loop" {
-        return None;
-    }
+    let body = push_loop_body(lp)?;
     let rc = match range_counters(lp, data) {
         Ok(rc) => rc,
         Err(why) => return decline(&why),
     };
-    let Value::Block(body) = lp.operators[1].unspan() else {
-        return decline("the body is not a block");
-    };
     let stmts: Vec<&Value> = body
-        .operators
         .iter()
+        .copied()
         .filter(|o| !matches!(o.unspan(), Value::Line(_)))
         .collect();
     let push_kind = |d: &u32| -> Option<(&'static str, u32)> {
@@ -3036,21 +3059,18 @@ pub fn push_loop<'a>(lp: &'a Block, data: &Data) -> Option<PushLoop<'a>> {
                     && a.first().and_then(|f| vector_path(data, f)).as_ref() == Some(&path))
         })
         .count();
-    let mut early = false;
-    lp.operators[1].any_node(&mut |n| {
-        if matches!(
-            n,
-            Value::Break(_)
-                | Value::Return(_)
-                | Value::Continue(_)
-                | Value::Loop(_)
-                | Value::Yield(_)
-                | Value::Parallel(_)
-        ) {
-            early = true;
-            return true;
-        }
-        false
+    let early = body.iter().any(|s| {
+        s.any_node(&mut |n| {
+            matches!(
+                n,
+                Value::Break(_)
+                    | Value::Return(_)
+                    | Value::Continue(_)
+                    | Value::Loop(_)
+                    | Value::Yield(_)
+                    | Value::Parallel(_)
+            )
+        })
     });
     if early {
         return decline("the body can leave early, or loops");
@@ -3058,24 +3078,26 @@ pub fn push_loop<'a>(lp: &'a Block, data: &Data) -> Option<PushLoop<'a>> {
     // Every push to the path is one of the counted ones, and nothing else writes it.
     let mut all = 0usize;
     let mut other = false;
-    lp.operators[1].any_node(&mut |n| {
-        if let Value::Call(d, args) = n
-            && (*d as usize) < data.definitions.len()
-            && let Some(first) = args.first()
-            && vector_path(data, first).as_ref() == Some(&path)
-        {
-            let name = data.def(*d).name();
-            if push_kind(d).is_some() {
-                all += 1;
-            } else if !(name == "OpPreAllocVector"
-                || name.starts_with("OpGet")
-                || name.starts_with("OpLength"))
+    for s in &body {
+        s.any_node(&mut |n| {
+            if let Value::Call(d, args) = n
+                && (*d as usize) < data.definitions.len()
+                && let Some(first) = args.first()
+                && vector_path(data, first).as_ref() == Some(&path)
             {
-                other = true;
+                let name = data.def(*d).name();
+                if push_kind(d).is_some() {
+                    all += 1;
+                } else if !(name == "OpPreAllocVector"
+                    || name.starts_with("OpGet")
+                    || name.starts_with("OpLength"))
+                {
+                    other = true;
+                }
             }
-        }
-        false
-    });
+            false
+        });
+    }
     if other {
         return decline("another write reaches the path");
     }
@@ -3107,6 +3129,109 @@ pub fn push_loop<'a>(lp: &'a Block, data: &Data) -> Option<PushLoop<'a>> {
         pushes,
         fill,
     })
+}
+
+/// The statements a counted push loop runs once per iteration beside its iterator: the
+/// body block of a plain `for` statement, or — a comprehension `[for i in a..b { e }]`
+/// having no body block — everything after its iterator (the element's value, then the
+/// append).  The two spell ONE loop, so `(R-PushFill)` reads them through one home; a
+/// filtered loop of either kind is declined by its `continue`, a `#count` loop by shape.
+fn push_loop_body(lp: &Block) -> Option<Vec<&Value>> {
+    if let Some(body) = plain_for_body(lp) {
+        Some(body.operators.iter().collect())
+    } else if lp.name == "For comprehension" {
+        Some(lp.operators.iter().skip(1).collect())
+    } else {
+        None
+    }
+}
+
+/// `@FR-R-PushFill`'s window clause — may the counted push loop `lp`, which [`push_loop`]
+/// answered `p` for, run its pushes through a [`crate::vector::PushWindow`]: a held element
+/// base, a local length, and the record's own length written once when the loop ends?
+///
+/// While a window is open the record's length lags the pushes and the window's base
+/// addresses the store's buffer, so two things must hold for the loop's whole extent.
+/// NOTHING BUT THESE PUSHES REACHES THE VECTOR: its root is exclusive (`@FR-R-Alias` — an
+/// owned local or the return buffer), the body never names the root outside a counted
+/// push's own vector operand — no read, no length, no call handed it — and every OTHER
+/// variable the body names cannot name the root's store either, by the ownership test
+/// `(R-Alias)` keeps a read candidate under: a scalar or a text, a local that owns its own
+/// store, or a parameter while the root is no return buffer.  A view taken before the loop
+/// (`d = &v`) fails it, which is the point: `len(d)` in the body would go through the
+/// runtime and meet the lagging length.  And NOTHING ELSE GROWS A STORE: every other
+/// statement, and every pushed value, writes no store at all ([`may_write_store`]), so no
+/// buffer is reallocated under the base.  [`push_loop`] already secured the single exit
+/// (no `break`, `return`, `continue` or inner loop), so the close that follows the loop
+/// runs on every path out of it.
+///
+/// # Errors
+///
+/// The condition that does not hold — what `LOFT_TRACE_PUSH_FILL=1` prints.  The caller
+/// keeps the header push, which costs the window and never a value.
+pub fn push_window_ok(
+    lp: &Block,
+    p: &PushLoop,
+    data: &Data,
+    def_nr: u32,
+    cache: &mut HashMap<u32, bool>,
+) -> Result<(), String> {
+    if p.fill.is_some() {
+        return Err("the loop is one fill".to_string());
+    }
+    let vars = data.def(def_nr).variables();
+    let root = p.path.0;
+    let root_is_retbuf = retbuf_var(data, def_nr) == Some(root);
+    if root >= vars.count() || !(owned_local(vars, root) || root_is_retbuf) {
+        return Err("the pushed vector's root is not exclusive".to_string());
+    }
+    let Some(body) = push_loop_body(lp) else {
+        return Err("not a counted push loop".to_string());
+    };
+    // The variables that COULD name the root's store: asked per variable through the one
+    // naming predicate (`Value::reads_var`), so every spelling of a mention is covered.
+    let may_view: Vec<u16> = (0..vars.count())
+        .filter(|&x| {
+            x != root
+                && !is_scalar(vars.tp(x))
+                && !matches!(vars.tp(x).base(), Type::Text(_))
+                && !owned_local(vars, x)
+                && !(vars.is_argument(x) && !root_is_retbuf)
+        })
+        .collect();
+    for s in body {
+        // A counted push contributes its VALUE operand alone, and the path's own
+        // reservation its count: the vector operand of either is the window's business.
+        let parts: Vec<&Value> = match s.unspan() {
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && args.first().and_then(|f| vector_path(data, f)).as_ref()
+                        == Some(&p.path)
+                    && (FUSABLE_PUSHES
+                        .iter()
+                        .any(|(n, _, _)| *n == data.def(*d).name())
+                        || data.def(*d).name() == "OpPreAllocVector") =>
+            {
+                args.iter().skip(1).collect()
+            }
+            _ => vec![s],
+        };
+        for part in parts {
+            if part.reads_var(root) {
+                return Err("the body names the pushed vector outside its pushes".to_string());
+            }
+            if let Some(x) = may_view.iter().find(|&&x| part.reads_var(x)) {
+                return Err(format!(
+                    "the body names `{}`, which may view the pushed vector",
+                    vars.name(*x)
+                ));
+            }
+            if may_write_store(part, data, cache) {
+                return Err("the body writes a store beside its pushes".to_string());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Recognise `OpPreAllocVector(path, count, size)` over a pure path (@PLN157 § V-q): the

@@ -756,6 +756,45 @@ pub fn push_header(db: &DbRef, stores: &[Store]) -> PushHeader {
     PushHeader { h, cap }
 }
 
+/// `@FR-R-PushFill`'s window clause — the hot state of a RESERVED counted push loop: the
+/// address of element 0, the length the loop has reached and the capacity in elements.  A
+/// push that fits is one comparison, one store through `base` and a bump of `len`; the
+/// record's own length is written when the window closes ([`Stores::push_window_close`])
+/// or grows, because nothing the loop runs can read it in between — the emitter's proof.
+///
+/// Three scalars whose address never reaches a call: the cold growth arm takes `len` by
+/// value and answers a fresh window by value, so the loop keeps all three in registers.
+/// Measured on `v += [i * 3 + salt]` over 20 000 elements: with the header's own `len` as
+/// the counter — its address handed to the growth arm — every push loaded and stored the
+/// length through the stack, 22.8 µs; with this form 10–13 µs.
+///
+/// [`Stores::push_window_close`]: crate::database::Stores::push_window_close
+#[derive(Clone, Copy, Debug)]
+pub struct PushWindow {
+    /// Element 0 of the pushed vector; null for an absent one (whose `cap` is 0).
+    pub base: *mut u8,
+    /// Elements written so far — the vector's length as the loop sees it.
+    pub len: u32,
+    /// Elements the record holds before it must grow.
+    pub cap: u32,
+}
+
+/// Open a [`PushWindow`] over the vector `p` describes, for elements `size` bytes wide.
+#[must_use]
+#[inline]
+pub fn push_window(p: &PushHeader, size: u32, stores: &[Store]) -> PushWindow {
+    PushWindow {
+        base: vec_base(&p.h, stores).cast_mut(),
+        len: p.h.len,
+        // `p.cap` is in BYTES (see [`push_header`]); an absent vector has none.
+        cap: if p.h.rec == 0 || size == 0 {
+            0
+        } else {
+            p.cap / size
+        },
+    }
+}
+
 /// Derive [`VecHeader`] for the vector `db` points at.
 ///
 /// A null, unallocated or empty vector answers `len: 0`, which makes every fast-path
