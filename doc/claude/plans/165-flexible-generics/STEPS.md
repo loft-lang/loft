@@ -494,6 +494,20 @@ a list.
 - **Red on its own:** `outer<A, B>(a, b)` calling `inner(b, a)` — the variables cross; bound
   methods called on both variables; @PLN125's associated-type generic at two variables; a
   template declared BELOW its caller.  All with twins.
+- **Built** (2026-09-21).  Two silent wrong answers, both on this branch only: (1)
+  `associated_bindings` read the template's bounds (the first variable's) against the first
+  binding (F13), so `K.Item` of `<S: Source, K: Sink>` was never bound and a call through its
+  bound read garbage — `infer_associated` now walks every variable, its own bounds against
+  its own binding, and the companion-bound message names that variable's implementor; (2)
+  `instantiate_nested_generics` fell back to the FIRST binding for a nested call whose first
+  argument is not a plain variable (`inner(bs[i], a)` inside `outer<A, B>` bound `inner` at
+  `A` and read a text as an integer) — such an argument takes the callee's parameter under the
+  instance's bindings.  `re_resolve_call` needed nothing: substitution runs per binding, and
+  a bound stub's receiver is its first parameter.  The stale re-derivation already carried
+  the list (C1).  Cells [two-vars-through/](probes/two-vars-through/) y01–y05 with twins,
+  green on both backends under `LOFT_STRICT_STORES` + `LOFT_POISON`;
+  [sets-refused/r14](probes/sets-refused/) names the right implementor.  Corpus: IDENTICAL
+  1644/1644 against C2.
 
 ### C4 — across the boundary  ·  S
 

@@ -1,0 +1,9 @@
+// C3 — `outer<A, B>(a, b)` calling `inner(b, a)`: the variables cross.
+// @EXPECT: x/1=x/1|2.5/y=2.5/y
+fn inner<P: Printable, Q: Printable>(p: P, q: Q) -> text { "{p}/{q}" }
+fn outer<A: Printable, B: Printable>(a: A, b: B) -> text { inner(b, a) }
+fn outer_twin(a: integer, b: text) -> text { inner(b, a) }
+fn outer_twin2(a: text, b: float) -> text { inner(b, a) }
+fn main() {
+  println("{outer(1, "x")}={outer_twin(1, "x")}|{outer("y", 2.5)}={outer_twin2("y", 2.5)}");
+}
