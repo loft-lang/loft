@@ -581,6 +581,27 @@ impl Stores {
         tp != u16::MAX && matches!(self.types[tp as usize].parts, Parts::Vector(_))
     }
 
+    /// The plain vector that FIELD `field` of the plain struct `parent_tp` holds, as
+    /// `(the field's byte position, the vector's type)` — the container a record append
+    /// spelled `OpNewRecord(R, parent_tp, field)` grows (`@FR-R-Mint`'s field clause).
+    ///
+    /// Answers only where that append is a plain vector's and nothing more: the parent a
+    /// `Parts::Struct` (a variant's fields sit behind its tag, and a synthetic
+    /// `__nullable<S>` redirects to its payload), the field a `Parts::Vector` (an `array`
+    /// holds record handles, a keyed kind places records), and no sibling collection
+    /// sharing its records — `record_finish` hands a linked group's record to every other
+    /// member, which moves records this field does not name.  Everything else is `None`,
+    /// and the caller keeps the general append, which is always right.
+    #[must_use]
+    pub fn plain_vector_field(&self, parent_tp: u16, field: u16) -> Option<(u16, u16)> {
+        let Parts::Struct(fields) = &self.types.get(parent_tp as usize)?.parts else {
+            return None;
+        };
+        let f = fields.get(field as usize)?;
+        (f.other_indexes.is_empty() && self.is_plain_vector(f.content))
+            .then_some((f.position, f.content))
+    }
+
     /// Can a value of `tp` own a heap record?  The @PLN157 § V-f fact
     /// ([`Stores::heap_facts`]), exposed for the native emitters: a record element that
     /// owns no heap can be built in a raw slot, because no field of it is a handle whose

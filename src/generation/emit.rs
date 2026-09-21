@@ -3367,15 +3367,17 @@ impl Output<'_> {
         let (size, tp, fld) = (pair.prealloc_size, pair.out_tp, pair.out_fld);
         self.indent(w)?;
         // `@FR-R-PushRec` — the early mint emits through the record-push header an enclosing
-        // loop holds for the container, exactly as the append site's mint would have.
-        if fld == 65535
-            && !self.record_push_disabled
-            && let Some(header) = self
-                .active_mint_push(&(pair.out, Vec::new()))
-                .map(str::to_owned)
+        // loop holds for the container, exactly as the append site's mint would have.  The
+        // header is looked up the way the append site's FINISH looks it up — `mint_target`
+        // over the mint's own operands, either spelling — so the two halves of one element
+        // cannot land on different holders.
+        let mint_args = [Value::Var(pair.out), Value::Int(tp), Value::Int(fld)];
+        if !self.record_push_disabled
+            && let Some(target) =
+                super::hoist::mint_target(self.data, self.stores, "OpNewRecord", &mint_args, dvars)
+            && let Some(header) = self.active_mint_push(&target.path).map(str::to_owned)
         {
-            let ptp = u16::try_from(tp).unwrap_or(u16::MAX);
-            let elem = self.stores.content(ptp);
+            let elem = self.stores.content(target.vector_tp);
             let esize = self.stores.size(elem);
             let zero = if self.stores.owns_heap(elem) {
                 "_zero"
@@ -3383,9 +3385,12 @@ impl Output<'_> {
                 ""
             };
             let verify = if self.hoist_verify { "true" } else { "false" };
+            let mut operand: Vec<u8> = Vec::new();
+            self.output_code_inner(&mut operand, &target.vector)?;
+            let operand = String::from_utf8_lossy(&operand).into_owned();
             return writeln!(
                 w,
-                "var_{elmn} = stores.push_record_hoisted{zero}::<{verify}>(&mut {header}, &(var_{outn}), {esize}); //@PLN157 § V-z element minted at the declaration, through the held header"
+                "var_{elmn} = stores.push_record_hoisted{zero}::<{verify}>(&mut {header}, &({operand}), {esize}); //@PLN157 § V-z element minted at the declaration, through the held header"
             );
         }
         if fld == 65535 {

@@ -438,11 +438,21 @@ impl OpEmitter for NewRecordEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         let out = &ctx.output;
         let vars = out.data.def(out.def_nr).variables();
-        let Some(header) = (!out.record_push_disabled)
-            .then(|| crate::generation::hoist::mint_path(out.data, "OpNewRecord", args, vars))
+        let Some((target, header)) = (!out.record_push_disabled)
+            .then(|| {
+                crate::generation::hoist::mint_target(
+                    out.data,
+                    out.stores,
+                    "OpNewRecord",
+                    args,
+                    vars,
+                )
+            })
             .flatten()
-            .and_then(|path| out.active_mint_push(&path))
-            .map(str::to_owned)
+            .and_then(|t| {
+                let header = out.active_mint_push(&t.path)?.to_owned();
+                Some((t, header))
+            })
         else {
             // @PLN157 § V-y (`@FR-R-CompleteWrite`) — an UNFUSED mint whose every group
             // in this function covers the element type calls the no-prefill twin; the
@@ -462,13 +472,7 @@ impl OpEmitter for NewRecordEmitter {
             }
             return super::default::DefaultEmitter.emit(ctx, args);
         };
-        let Some(Value::Int(tp)) = args.get(1).map(Value::unspan) else {
-            return super::default::DefaultEmitter.emit(ctx, args);
-        };
-        let Ok(tp) = u16::try_from(*tp) else {
-            return super::default::DefaultEmitter.emit(ctx, args);
-        };
-        let elem = out.stores.content(tp);
+        let elem = out.stores.content(target.vector_tp);
         let size = out.stores.size(elem);
         let verify = verify(ctx);
         // `@FR-R-PushRec` heap clause — a heap-owning element's slot is zeroed at the mint.
@@ -481,7 +485,7 @@ impl OpEmitter for NewRecordEmitter {
             ctx.w,
             "stores.push_record_hoisted{zero}::<{verify}>(&mut {header}, &("
         )?;
-        ctx.emit(&args[0])?;
+        ctx.emit(&target.vector)?;
         write!(ctx.w, "), {size})")
     }
 }
@@ -495,11 +499,21 @@ impl OpEmitter for FinishRecordEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         let out = &ctx.output;
         let vars = out.data.def(out.def_nr).variables();
-        let Some(header) = (!out.record_push_disabled)
-            .then(|| crate::generation::hoist::mint_path(out.data, "OpFinishRecord", args, vars))
+        let Some((target, header)) = (!out.record_push_disabled)
+            .then(|| {
+                crate::generation::hoist::mint_target(
+                    out.data,
+                    out.stores,
+                    "OpFinishRecord",
+                    args,
+                    vars,
+                )
+            })
             .flatten()
-            .and_then(|path| out.active_mint_push(&path))
-            .map(str::to_owned)
+            .and_then(|t| {
+                let header = out.active_mint_push(&t.path)?.to_owned();
+                Some((t, header))
+            })
         else {
             return super::default::DefaultEmitter.emit(ctx, args);
         };
@@ -508,7 +522,7 @@ impl OpEmitter for FinishRecordEmitter {
             ctx.w,
             "stores.push_record_finish::<{verify}>(&mut {header}, &("
         )?;
-        ctx.emit(&args[0])?;
+        ctx.emit(&target.vector)?;
         write!(ctx.w, "))")
     }
 }

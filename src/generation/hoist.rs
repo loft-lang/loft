@@ -179,7 +179,7 @@ pub fn hoistable_vectors(
         in_place: allow_in_place,
         ..HoistTiers::default()
     };
-    if body_blocks_hoist(body, data, def_nr, cache, tiers, None) {
+    if body_blocks_hoist(body, data, None, def_nr, cache, tiers, None) {
         return Vec::new();
     }
     vector_candidates(body, data, def_nr)
@@ -239,6 +239,7 @@ pub struct HoistTiers {
 fn body_blocks_hoist(
     body: &Block,
     data: &Data,
+    stores: Option<&Stores>,
     def_nr: u32,
     cache: &mut HashMap<u32, bool>,
     tiers: HoistTiers,
@@ -250,6 +251,7 @@ fn body_blocks_hoist(
         let blocks = blocks_header_hoist(
             op,
             data,
+            stores,
             cache,
             &mut HashSet::new(),
             Some(data.def(def_nr).variables()),
@@ -513,7 +515,7 @@ pub fn hoistable(
     inputs: Option<&mut InputCache>,
     owned: Option<&HoistOwned>,
 ) -> LoopHoist {
-    if body_blocks_hoist(body, data, def_nr, cache, tiers, owned) {
+    if body_blocks_hoist(body, data, Some(stores), def_nr, cache, tiers, owned) {
         return LoopHoist::default();
     }
     let mut out = LoopHoist {
@@ -625,14 +627,15 @@ pub fn hoistable(
                 if let Value::Call(d, args) = n
                     && (*d as usize) < data.definitions.len()
                     && data.def(*d).name() == "OpNewRecord"
-                    && let Some(path) = mint_path(data, "OpNewRecord", args, vars)
+                    && let Some(target) = mint_target(data, stores, "OpNewRecord", args, vars)
                 {
-                    let q = tiers.record_push && mint_push_qualifies(stores, args, tiers.heap_push);
-                    if let Some(row) = mint_fused.iter_mut().find(|(p, _, _)| *p == path) {
+                    let q = tiers.record_push
+                        && mint_push_qualifies(stores, target.vector_tp, tiers.heap_push);
+                    if let Some(row) = mint_fused.iter_mut().find(|(p, _, _)| *p == target.path) {
                         row.2 &= q;
                     } else {
-                        mints.push(path.clone());
-                        mint_fused.push((path, args[0].clone(), q));
+                        mints.push(target.path.clone());
+                        mint_fused.push((target.path, target.vector, q));
                     }
                 }
                 false
@@ -967,7 +970,7 @@ fn body_writes(
             if matches!(inner.unspan(), Value::Call(d, args)
                 if (*d as usize) < data.definitions.len()
                     && data.def(*d).name() == "OpNewRecord"
-                    && mint_path(data, "OpNewRecord", args, vars).is_some())
+                    && mint_path(data, stores, "OpNewRecord", args, vars).is_some())
             {
                 fresh.insert(*v);
             } else {
@@ -1017,7 +1020,7 @@ fn body_writes(
                 // @PLN157 § V-q — a push (or the reservation before one) grows a vector and
                 // rewrites its handle slot, which no scalar getter reads; the container
                 // record itself does not move.
-            } else if mint_path(data, name, args, vars).is_some() {
+            } else if mint_path(data, stores, name, args, vars).is_some() {
                 // @PLN157 § V-s (`@FR-R-Mint`) — the mint's growth moves the pushed
                 // vector's record without changing any value, and its element defaults land
                 // in the fresh record only.  The close of the group ends the variable's
@@ -1442,6 +1445,7 @@ pub fn view_def_header(
         blocks_header_hoist(
             op,
             data,
+            None,
             cache,
             &mut HashSet::new(),
             Some(vars),
@@ -1558,6 +1562,7 @@ pub fn record_view_ptr(
         blocks_header_hoist(
             op,
             data,
+            None,
             cache,
             &mut HashSet::new(),
             Some(vars),
@@ -2623,24 +2628,45 @@ pub fn fused_push<'a>(data: &Data, op: &str, args: &'a [Value]) -> Option<FusedP
     })
 }
 
+/// The plain vector one op of a record MINT group appends to (`@FR-R-Mint`): the path its
+/// holder is keyed on, the operand expression that names the vector's `DbRef`, and the
+/// vector's schema type (whose content is the element).
+pub struct MintTarget {
+    pub path: PathKey,
+    pub vector: Value,
+    pub vector_tp: u16,
+}
+
 /// Recognise one op of the record MINT group — `OpNewRecord(P, tp, fld)` /
-/// `OpFinishRecord(P, elm, tp, fld)` appending one element to a PLAIN vector named by a
-/// bare variable (@PLN157 § V-s, `@FR-R-Mint`) — the ONE definition of the admissible
-/// mint, asked by the gate, the collector and the write-set walk.
+/// `OpFinishRecord(P, elm, tp, fld)` appending one element to a PLAIN vector (@PLN157
+/// § V-s, `@FR-R-Mint`) — the ONE definition of the admissible mint, asked by the gate,
+/// the collector, the write-set walk and the emitters.  The append has two spellings and
+/// both are one notion:
 ///
-/// The container must TYPE as `Type::Vector` (the V-m lesson: ask the type, not the op
+/// - a vector named by a BARE variable — `v += […]` is `OpNewRecord(v, vector_tp, MAX)`;
+/// - a vector that is a FIELD of a plain record — `m.verts += […]` is
+///   `OpNewRecord(m, parent_tp, fld)`, the parent a pure path to the record and `fld` the
+///   field that holds the vector.  Its path is the parent's extended by the field's
+///   position, which is the key a read of `m.verts` (`OpGetField(m, pos, tp)`) already
+///   has, so the append and the reads share ONE holder (`@FR-R-State`).
+///
+/// The container must TYPE as a plain vector (the V-m lesson: ask the type, not the op
 /// shape) — on a keyed collection (`sorted`, `index`, `hash`, …) the same op names are a
-/// KEYED INSERT, a mover of OTHER records, and stay blocking.  `peel_link` and not
-/// `base()`: a nullable vector's append is not this unit's shape, so `τ?` stays out.  A
-/// FIELD path (`h.pts += […]`) also answers `None` — this unit admits the bare-variable
-/// root the raster loops use; widening to field paths is a measured decision for later.
+/// KEYED INSERT, a mover of OTHER records, and stay blocking; a field form asks the
+/// SCHEMA ([`Stores::plain_vector_field`]), which also declines a linked group's member,
+/// whose finish hands the record to its siblings.  `peel_link` and not `base()`: a nullable
+/// vector's append is not this unit's shape, so `τ?` stays out — and the field form's root
+/// must name a plain record for the same reason (a nullable element's payload is reached
+/// through an op that forms no path).  Everything else answers `None`: the mint keeps its
+/// template and blocks the loop, as every unclassified store writer does.
 #[must_use]
-pub fn mint_path(
+pub fn mint_target(
     data: &Data,
+    stores: &Stores,
     op: &str,
     args: &[Value],
     vars: &crate::variables::Function,
-) -> Option<PathKey> {
+) -> Option<MintTarget> {
     let arity = match op {
         "OpNewRecord" => 3,
         "OpFinishRecord" => 4,
@@ -2649,11 +2675,62 @@ pub fn mint_path(
     if args.len() != arity {
         return None;
     }
-    let path = vector_path(data, &args[0])?;
-    if !path.1.is_empty() || path.0 >= vars.count() {
+    let (Some(Value::Int(tp)), Some(Value::Int(fld))) = (
+        args.get(arity - 2).map(Value::unspan),
+        args.get(arity - 1).map(Value::unspan),
+    ) else {
+        return None;
+    };
+    let tp = u16::try_from(*tp).ok()?;
+    let (root, mut offs) = vector_path(data, &args[0])?;
+    if root >= vars.count() {
         return None;
     }
-    matches!(vars.tp(path.0).peel_link(), Type::Vector(_, _)).then_some(path)
+    if offs.is_empty() && matches!(vars.tp(root).peel_link(), Type::Vector(_, _)) {
+        return Some(MintTarget {
+            path: (root, offs),
+            vector: args[0].clone(),
+            vector_tp: tp,
+        });
+    }
+    if *fld == i32::from(u16::MAX) || !mint_field_enabled() {
+        return None;
+    }
+    plain_record_type(data, vars.tp(root))?;
+    let (pos, vector_tp) = stores.plain_vector_field(tp, u16::try_from(*fld).ok()?)?;
+    offs.push(i64::from(pos));
+    let get_field = data.def_nr("OpGetField");
+    (get_field != u32::MAX).then(|| MintTarget {
+        path: (root, offs),
+        vector: Value::Call(
+            get_field,
+            vec![
+                args[0].clone(),
+                Value::Int(i32::from(pos)),
+                Value::Int(i32::from(vector_tp)),
+            ],
+        ),
+        vector_tp,
+    })
+}
+
+/// [`mint_target`]'s path alone — what the gate and the write-set walk ask.
+#[must_use]
+pub fn mint_path(
+    data: &Data,
+    stores: &Stores,
+    op: &str,
+    args: &[Value],
+    vars: &crate::variables::Function,
+) -> Option<PathKey> {
+    mint_target(data, stores, op, args, vars).map(|t| t.path)
+}
+
+/// `@FR-R-Mint`'s field clause is on — `LOFT_NO_FIELD_MINT=1` keeps a record append to a
+/// vector FIELD on its template (`@FR-R-Switch`).  Read at generation time.
+fn mint_field_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_FIELD_MINT").is_ok_and(|v| v != "0"))
 }
 
 /// `(R-Mint)`'s rebound clause — is every `Set(root, rhs)` in `body` alias-free: a null, or
@@ -2732,13 +2809,14 @@ pub fn mint_group(
     fn group_mint<'v>(
         inner: &'v Value,
         data: &Data,
+        stores: &Stores,
         vars: &crate::variables::Function,
         path: &PathKey,
     ) -> Option<&'v [Value]> {
         if let Value::Call(md, margs) = inner.unspan()
             && (*md as usize) < data.definitions.len()
             && data.def(*md).name() == "OpNewRecord"
-            && mint_path(data, "OpNewRecord", margs, vars).as_ref() == Some(path)
+            && mint_path(data, stores, "OpNewRecord", margs, vars).as_ref() == Some(path)
         {
             Some(margs)
         } else {
@@ -2750,9 +2828,11 @@ pub fn mint_group(
             continue;
         }
         if let Value::Set(e, inner) = op.unspan()
-            && let Some(margs) = group_mint(inner, data, vars, &path)
+            && let Some(margs) = group_mint(inner, data, stores, vars, &path)
         {
-            if !mint_push_qualifies(stores, margs, tiers.heap_push) {
+            if !mint_target(data, stores, "OpNewRecord", margs, vars)
+                .is_some_and(|t| mint_push_qualifies(stores, t.vector_tp, tiers.heap_push))
+            {
                 return None;
             }
             mints += 1;
@@ -2766,7 +2846,8 @@ pub fn mint_group(
             Value::Call(fd, fargs)
                 if (*fd as usize) < data.definitions.len()
                     && data.def(*fd).name() == "OpFinishRecord"
-                    && mint_path(data, "OpFinishRecord", fargs, vars).as_ref() == Some(&path) =>
+                    && mint_path(data, stores, "OpFinishRecord", fargs, vars).as_ref()
+                        == Some(&path) =>
             {
                 finishes += 1;
                 if let Some(Value::Var(e)) = fargs.get(1).map(Value::unspan) {
@@ -2783,7 +2864,17 @@ pub fn mint_group(
         // A statement of the group that is not one of its mints or finishes: admitted on
         // the same terms as a loop body's — and a mint or finish on P NESTED in it (inside an
         // `if`) is one the count above cannot see, so it declines.
-        if blocks_header_hoist(op, data, cache, &mut HashSet::new(), Some(vars), tiers, &mut fresh, owned)
+        if blocks_header_hoist(
+            op,
+            data,
+            Some(stores),
+            cache,
+            &mut HashSet::new(),
+            Some(vars),
+            tiers,
+            &mut fresh,
+            owned,
+        )
             || op.any_node(&mut |x| matches!(x, Value::Call(xd, xargs)
                 if (*xd as usize) < data.definitions.len()
                     && matches!(data.def(*xd).name(), "OpNewRecord" | "OpFinishRecord" | "OpPreAllocVector")
@@ -2796,32 +2887,20 @@ pub fn mint_group(
 }
 
 /// @PLN157 § V-t (`@FR-R-PushRec`) — may this mint group EMIT through a push header?  The
-/// schema is asked, not the op shape: the parent must be a plain inline-element vector
-/// (`Parts::Vector` — an `array`/`ordered` conversion holds 4-byte handles, and a keyed
-/// container's same-named ops place records), the form the tail-slot append (`fld ==
-/// u16::MAX`), and the element a plain struct that owns no heap — a raw slot carries stale
+/// schema is asked, not the op shape: `vector_tp` — the type [`mint_target`] resolved, from
+/// either spelling of the append — must be a plain inline-element vector (`Parts::Vector`
+/// — an `array`/`ordered` conversion holds 4-byte handles, and a keyed container's
+/// same-named ops place records), and the element a plain struct that owns no heap — a raw slot carries stale
 /// bytes, and a heap handle is the one field kind whose stale bytes something could walk
 /// before the group's writes land.  The group's writes cover every scalar field explicitly
 /// (the IR's literal lowering emits omitted fields' defaults and sentinels itself; a
 /// declined delivery is a whole-record copy), so no prefill is owed.
 #[must_use]
-pub fn mint_push_qualifies(stores: &Stores, args: &[Value], heap: bool) -> bool {
-    let (Some(Value::Int(tp)), Some(Value::Int(fld))) = (
-        args.get(1).map(Value::unspan),
-        args.get(2).map(Value::unspan),
-    ) else {
-        return false;
-    };
-    if *fld != i32::from(u16::MAX) {
+pub fn mint_push_qualifies(stores: &Stores, vector_tp: u16, heap: bool) -> bool {
+    if !stores.is_plain_vector(vector_tp) {
         return false;
     }
-    let Ok(tp) = u16::try_from(*tp) else {
-        return false;
-    };
-    if !stores.is_plain_vector(tp) {
-        return false;
-    }
-    let elem = stores.content(tp);
+    let elem = stores.content(vector_tp);
     // `@FR-R-PushRec` heap clause — a heap-owning element's slot is ZEROED at the mint
     // (the handles' prefill, one range write), so the stale-bytes objection no longer
     // holds; `heap` is the switch that keeps such an element on its templates.
@@ -2930,6 +3009,7 @@ fn writes_store(
     blocks_header_hoist(
         node,
         data,
+        None,
         cache,
         active,
         vars,
@@ -3014,6 +3094,7 @@ fn frees_a_record(name: &str, args: &[Value], vars: Option<&crate::variables::Fu
 fn blocks_header_hoist(
     node: &Value,
     data: &Data,
+    stores: Option<&Stores>,
     cache: &mut HashMap<u32, bool>,
     active: &mut HashSet<u32>,
     vars: Option<&crate::variables::Function>,
@@ -3030,7 +3111,9 @@ fn blocks_header_hoist(
                 && matches!(inner.unspan(), Value::Call(d, args)
                     if (*d as usize) < data.definitions.len()
                         && data.def(*d).name() == "OpNewRecord"
-                        && vars.is_some_and(|vs| mint_path(data, "OpNewRecord", args, vs).is_some()))
+                        && vars.zip(stores).is_some_and(|(vs, st)| {
+                            mint_path(data, st, "OpNewRecord", args, vs).is_some()
+                        }))
             {
                 fresh.insert(*v);
             } else {
@@ -3088,7 +3171,9 @@ fn blocks_header_hoist(
             // admitted only while its DESTINATION is a fresh mint variable.
             let record_mint = known
                 && tiers.mint
-                && vars.is_some_and(|v| mint_path(data, data.def(*d).name(), args, v).is_some());
+                && vars.zip(stores).is_some_and(|(v, st)| {
+                    mint_path(data, st, data.def(*d).name(), args, v).is_some()
+                });
             let fresh_delivery = known
                 && tiers.mint
                 && data.def(*d).name() == "OpCopyRecord"
