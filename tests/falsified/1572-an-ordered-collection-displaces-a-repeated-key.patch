@@ -1,0 +1,131 @@
+diff --git b/src/database/search.rs a/src/database/search.rs
+index afc9f1f3a..f44c719a4 100644
+--- b/src/database/search.rs
++++ a/src/database/search.rs
+@@ -690,9 +690,9 @@ impl Stores {
+     /// `coll += [entry]` on a keyed collection dedups instead of stacking a
+     /// shadowed duplicate).  For hash / index the records are SEPARATE store
+     /// claims, so free the old one's nested heap, unlink it, and reclaim its
+-    /// slot.  (Sorted / ordered collections are not deduplicated here: their
+-    /// `*_finish` search finds the older record and puts the new one in its slot,
+-    /// and `insert_record` releases what an `ordered` slot displaced.)
++    /// slot.  (Sorted / ordered records are inline in the vector and the new
++    /// one is already appended at the end when their `*_finish` runs, so they
++    /// dedup by overwriting the found slot in place there, not here.)
+     /// Replace any record already stored under `rec`'s key.
+     ///
+     /// `secondary` distinguishes a PRIMARY keyed collection (this index OWNS its
+diff --git b/src/database/structures.rs a/src/database/structures.rs
+index c5185d93f..6f477a9f8 100644
+--- b/src/database/structures.rs
++++ a/src/database/structures.rs
+@@ -26,7 +26,7 @@ fn vadd_trace_enabled() -> bool {
+     *ON.get_or_init(|| std::env::var("LOFT_TRACE_VADD").is_ok())
+ }
+ use crate::keys::DbRef;
+-use crate::store::{RECORD_PAYLOAD, Store};
++use crate::store::Store;
+ use crate::vector;
+ use crate::{hash, keys, tree};
+ use std::collections::HashSet;
+@@ -93,7 +93,7 @@ enum InsertKind {
+     Array,
+     Hash(u16),
+     Index(u16),
+-    Ordered(u16),
++    Ordered,
+     Trie,
+     Radix,
+     Other,
+@@ -107,7 +107,7 @@ impl InsertKind {
+             Parts::Array(_) => Self::Array,
+             Parts::Hash(c, _) => Self::Hash(*c),
+             Parts::Index(c, _, _) => Self::Index(*c),
+-            Parts::Ordered(c, _) => Self::Ordered(*c),
++            Parts::Ordered(_, _) => Self::Ordered,
+             Parts::Trie(_, _) => Self::Trie,
+             Parts::Radix(_, _) => Self::Radix,
+             _ => Self::Other,
+@@ -645,28 +645,13 @@ impl Stores {
+                 let keys = self.types[tp as usize].keys.clone();
+                 tree::add(data, rec, left, &mut self.allocations, &keys);
+             }
+-            InsertKind::Ordered(c) => {
+-                // @P306, @FR-Col-Insert — the insert's own search finds the record this key
+-                // already held and puts the new one in its slot; releasing it is the part
+-                // `dedup_keyed` does for a hash / index.  An `ordered` element is a record of
+-                // its own, so it owns its block as well as its claims — except in a linked
+-                // group, where a sibling still holds it and the displacement only unlinks
+-                // (@FR-Col-Group-Dup, `secondary`).
+-                let displaced = vector::ordered_finish(
++            InsertKind::Ordered => {
++                vector::ordered_finish(
+                     data,
+                     rec,
+                     &self.types[tp as usize].keys,
+                     &mut self.allocations,
+                 );
+-                if displaced != 0 && !secondary {
+-                    let old = DbRef {
+-                        store_nr: data.store_nr,
+-                        rec: displaced,
+-                        pos: RECORD_PAYLOAD,
+-                    };
+-                    self.remove_claims(&old, c);
+-                    self.store_mut(data).delete(displaced);
+-                }
+             }
+             InsertKind::Trie => {
+                 // Same no-dedup contract as the spatial side: two records may share a
+diff --git b/src/vector.rs a/src/vector.rs
+index 97321b03e..ad5c99b84 100644
+--- b/src/vector.rs
++++ a/src/vector.rs
+@@ -481,16 +481,7 @@ pub fn sorted_finish(sorted: &DbRef, size: u32, keys: &[Key], stores: &mut [Stor
+     store.set_u32_raw(sorted_rec, 4, length + 1);
+ }
+ 
+-/// Place the record `rec` in the `ordered` collection at `sorted` by its key, and answer the
+-/// record it DISPLACED — the one already held under that key — or 0 when the key was new.
+-///
+-/// @FR-Col-Insert: a key names one record, so a record entering under a key the collection
+-/// already holds takes the older record's slot (latest insert wins) and the length does not
+-/// grow, exactly as the by-value twin [`sorted_finish`] replaces in place.  The displaced
+-/// record is only UNLINKED here.  Whether it is also released is the caller's question,
+-/// because a member of a linked group shares it with a sibling (`Stores::insert_record`).
+-#[must_use]
+-pub fn ordered_finish(sorted: &DbRef, rec: &DbRef, keys: &[Key], stores: &mut [Store]) -> u32 {
++pub fn ordered_finish(sorted: &DbRef, rec: &DbRef, keys: &[Key], stores: &mut [Store]) {
+     let rec_ref = sorted_new(sorted, 4, stores);
+     let sorted_rec = keys::store(sorted, stores).get_u32_raw(sorted.rec, sorted.pos);
+     let length = keys::store(sorted, stores).get_u32_raw(sorted_rec, 4);
+@@ -498,19 +489,10 @@ pub fn ordered_finish(sorted: &DbRef, rec: &DbRef, keys: &[Key], stores: &mut [S
+         // we do not have to reorder the first inserted record, set length to 1
+         keys::mut_store(sorted, stores).set_u32_raw(sorted_rec, 4, 1);
+         keys::mut_store(sorted, stores).set_u32_raw(sorted_rec, rec_ref.pos, rec.rec);
+-        return 0;
++        return;
+     }
+     let key = keys::get_key(rec, stores, keys);
+-    let (pos, found) = ordered_find(sorted, true, stores, keys, &key);
+-    if found {
+-        // A search placing BEFORE its equals lands on the first record holding the key.
+-        // Relinking the record that is already there (a group re-indexing one it holds)
+-        // displaces nothing.
+-        let slot = 8 + pos * 4;
+-        let displaced = keys::store(sorted, stores).get_u32_raw(sorted_rec, slot);
+-        keys::mut_store(sorted, stores).set_u32_raw(sorted_rec, slot, rec.rec);
+-        return if displaced == rec.rec { 0 } else { displaced };
+-    }
++    let pos = ordered_find(sorted, true, stores, keys, &key).0;
+     // Shift the tail up one slot to open a gap at `pos` — the same three lines
+     // `sorted_finish` runs for the by-value case, with the element size fixed at
+     // the 4-byte rec-id an `ordered` array holds.
+@@ -532,7 +514,6 @@ pub fn ordered_finish(sorted: &DbRef, rec: &DbRef, keys: &[Key], stores: &mut [S
+     }
+     keys::mut_store(&rec_ref, stores).set_u32_raw(sorted_rec, 8 + pos * 4, rec.rec);
+     keys::mut_store(sorted, stores).set_u32_raw(sorted_rec, 4, 1 + length);
+-    0
+ }
+ 
+ /// Is this collection ABSENT — a declared `?` that holds no collection (loft#917)?

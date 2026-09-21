@@ -481,7 +481,16 @@ pub fn sorted_finish(sorted: &DbRef, size: u32, keys: &[Key], stores: &mut [Stor
     store.set_u32_raw(sorted_rec, 4, length + 1);
 }
 
-pub fn ordered_finish(sorted: &DbRef, rec: &DbRef, keys: &[Key], stores: &mut [Store]) {
+/// Place the record `rec` in the `ordered` collection at `sorted` by its key, and answer the
+/// record it DISPLACED — the one already held under that key — or 0 when the key was new.
+///
+/// @FR-Col-Insert: a key names one record, so a record entering under a key the collection
+/// already holds takes the older record's slot (latest insert wins) and the length does not
+/// grow, exactly as the by-value twin [`sorted_finish`] replaces in place.  The displaced
+/// record is only UNLINKED here.  Whether it is also released is the caller's question,
+/// because a member of a linked group shares it with a sibling (`Stores::insert_record`).
+#[must_use]
+pub fn ordered_finish(sorted: &DbRef, rec: &DbRef, keys: &[Key], stores: &mut [Store]) -> u32 {
     let rec_ref = sorted_new(sorted, 4, stores);
     let sorted_rec = keys::store(sorted, stores).get_u32_raw(sorted.rec, sorted.pos);
     let length = keys::store(sorted, stores).get_u32_raw(sorted_rec, 4);
@@ -489,10 +498,19 @@ pub fn ordered_finish(sorted: &DbRef, rec: &DbRef, keys: &[Key], stores: &mut [S
         // we do not have to reorder the first inserted record, set length to 1
         keys::mut_store(sorted, stores).set_u32_raw(sorted_rec, 4, 1);
         keys::mut_store(sorted, stores).set_u32_raw(sorted_rec, rec_ref.pos, rec.rec);
-        return;
+        return 0;
     }
     let key = keys::get_key(rec, stores, keys);
-    let pos = ordered_find(sorted, true, stores, keys, &key).0;
+    let (pos, found) = ordered_find(sorted, true, stores, keys, &key);
+    if found {
+        // A search placing BEFORE its equals lands on the first record holding the key.
+        // Relinking the record that is already there (a group re-indexing one it holds)
+        // displaces nothing.
+        let slot = 8 + pos * 4;
+        let displaced = keys::store(sorted, stores).get_u32_raw(sorted_rec, slot);
+        keys::mut_store(sorted, stores).set_u32_raw(sorted_rec, slot, rec.rec);
+        return if displaced == rec.rec { 0 } else { displaced };
+    }
     // Shift the tail up one slot to open a gap at `pos` — the same three lines
     // `sorted_finish` runs for the by-value case, with the element size fixed at
     // the 4-byte rec-id an `ordered` array holds.
@@ -514,6 +532,7 @@ pub fn ordered_finish(sorted: &DbRef, rec: &DbRef, keys: &[Key], stores: &mut [S
     }
     keys::mut_store(&rec_ref, stores).set_u32_raw(sorted_rec, 8 + pos * 4, rec.rec);
     keys::mut_store(sorted, stores).set_u32_raw(sorted_rec, 4, 1 + length);
+    0
 }
 
 /// Is this collection ABSENT — a declared `?` that holds no collection (loft#917)?

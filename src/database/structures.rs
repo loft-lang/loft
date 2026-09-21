@@ -26,7 +26,7 @@ fn vadd_trace_enabled() -> bool {
     *ON.get_or_init(|| std::env::var("LOFT_TRACE_VADD").is_ok())
 }
 use crate::keys::DbRef;
-use crate::store::Store;
+use crate::store::{RECORD_PAYLOAD, Store};
 use crate::vector;
 use crate::{hash, keys, tree};
 use std::collections::HashSet;
@@ -93,7 +93,7 @@ enum InsertKind {
     Array,
     Hash(u16),
     Index(u16),
-    Ordered,
+    Ordered(u16),
     Trie,
     Radix,
     Other,
@@ -107,7 +107,7 @@ impl InsertKind {
             Parts::Array(_) => Self::Array,
             Parts::Hash(c, _) => Self::Hash(*c),
             Parts::Index(c, _, _) => Self::Index(*c),
-            Parts::Ordered(_, _) => Self::Ordered,
+            Parts::Ordered(c, _) => Self::Ordered(*c),
             Parts::Trie(_, _) => Self::Trie,
             Parts::Radix(_, _) => Self::Radix,
             _ => Self::Other,
@@ -645,13 +645,28 @@ impl Stores {
                 let keys = self.types[tp as usize].keys.clone();
                 tree::add(data, rec, left, &mut self.allocations, &keys);
             }
-            InsertKind::Ordered => {
-                vector::ordered_finish(
+            InsertKind::Ordered(c) => {
+                // @P306, @FR-Col-Insert — the insert's own search finds the record this key
+                // already held and puts the new one in its slot; releasing it is the part
+                // `dedup_keyed` does for a hash / index.  An `ordered` element is a record of
+                // its own, so it owns its block as well as its claims — except in a linked
+                // group, where a sibling still holds it and the displacement only unlinks
+                // (@FR-Col-Group-Dup, `secondary`).
+                let displaced = vector::ordered_finish(
                     data,
                     rec,
                     &self.types[tp as usize].keys,
                     &mut self.allocations,
                 );
+                if displaced != 0 && !secondary {
+                    let old = DbRef {
+                        store_nr: data.store_nr,
+                        rec: displaced,
+                        pos: RECORD_PAYLOAD,
+                    };
+                    self.remove_claims(&old, c);
+                    self.store_mut(data).delete(displaced);
+                }
             }
             InsertKind::Trie => {
                 // Same no-dedup contract as the spatial side: two records may share a

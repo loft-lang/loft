@@ -690,9 +690,9 @@ impl Stores {
     /// `coll += [entry]` on a keyed collection dedups instead of stacking a
     /// shadowed duplicate).  For hash / index the records are SEPARATE store
     /// claims, so free the old one's nested heap, unlink it, and reclaim its
-    /// slot.  (Sorted / ordered records are inline in the vector and the new
-    /// one is already appended at the end when their `*_finish` runs, so they
-    /// dedup by overwriting the found slot in place there, not here.)
+    /// slot.  (Sorted / ordered collections are not deduplicated here: their
+    /// `*_finish` search finds the older record and puts the new one in its slot,
+    /// and `insert_record` releases what an `ordered` slot displaced.)
     /// Replace any record already stored under `rec`'s key.
     ///
     /// `secondary` distinguishes a PRIMARY keyed collection (this index OWNS its
