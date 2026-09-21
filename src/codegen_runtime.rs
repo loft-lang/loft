@@ -4791,6 +4791,30 @@ pub fn coroutine_drop_local(stores: &mut Stores, db: DbRef, name: &str) {
     }
 }
 
+/// [`coroutine_drop_local`] for a generator that owns more than one heap local: two of them
+/// can hold ONE store — a lazily-lowered loop's record buffer (`__ref_*`) and the local that
+/// adopted the record the call built in it — and releasing that store twice frees a slot
+/// another record may already hold.  `seen` collects the stores this `drop_stores` has
+/// released; a nested generator handle is keyed by its table slot as well, because every
+/// handle shares the one coroutine store number.
+pub fn coroutine_drop_local_once(
+    stores: &mut Stores,
+    db: DbRef,
+    name: &str,
+    seen: &mut Vec<(u16, u32)>,
+) {
+    let key = if db.store_nr == NATIVE_COROUTINE_STORE {
+        (db.store_nr, db.rec)
+    } else {
+        (db.store_nr, 0)
+    };
+    if seen.contains(&key) {
+        return;
+    }
+    seen.push(key);
+    coroutine_drop_local(stores, db, name);
+}
+
 /// Copy the `tp` record `src` into the generator's snapshot store `snap` and answer the
 /// copy's handle.  An eager factory runs its whole loop before the consumer reads a
 /// value, so a pushed handle to a per-iteration local would alias the local's FINAL
