@@ -15,7 +15,16 @@
 //                        returns (nothing from a `void` function, a value from a `text` one).
 // Axes it HOLDS FIXED:   one record type with a text field; every value hand-computed.
 //
-// @falsified-at: 7d9bb3e5d — see the receipt written by `make falsify` below.
+// @falsified-at: 7d9bb3e5d — native exit 1 -> 0; interpret INERT.
+//   CHANNEL: exit, native — rustc refused the control (`E0425: cannot find value var_lvl`).
+//   ARMED: scored plain and again under LOFT_STRICT_STORES=1; the interpreter reads INERT both
+//   ways, because its half of the fault is a free the runtime REFUSES and reports as a warning
+//   (`BUG (#405): refused free of out-of-range store …`), which no scored channel reads.
+//   WITNESS: native `error[E0425]: cannot find value var_lvl in this scope`; interpreter a
+//   `BUG (#306)` / `BUG (#405)` refused-free line on the absent path.
+//   HOLDS: assertions, leak and panic are equal on both trees on the interpreter.
+// @falsified-by: tests/falsified/1584-a-record-bound-with-an-early-return-builds-on-native.patch —
+//   the net source change of the #1584 commits reversed; the same channels.
 
 struct Level1584 { name: text }
 

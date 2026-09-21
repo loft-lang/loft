@@ -1,0 +1,55 @@
+diff --git a/src/scopes.rs b/src/scopes.rs
+index fd890231f..4d9962daa 100644
+--- a/src/scopes.rs
++++ b/src/scopes.rs
+@@ -50,10 +50,6 @@ struct Scopes<'s> {
+     /// Used by `variables()` to emit `OpFreeRef` in reverse-allocation order so that
+     /// `database::free()` LIFO invariant is satisfied.
+     var_order: Vec<u16>,
+-    /// Variables whose FIRST binding's right-hand side is being scanned.  They are registered
+-    /// before that scan, but hold nothing until it completes, so an exit inside it — the
+-    /// `return` of `x = e ?? return` — must not release them.
+-    binding_now: Vec<u16>,
+     /// Variables that are redefined after running out-of-scope get copied with this mapping.
+     var_mapping: HashMap<u16, u16>,
+     /// Plan-57 cluster-I two-phase scan: confined `__vdb`/local var → the block
+@@ -4386,7 +4382,6 @@ fn run_scan_phase(
+         stack: Vec::new(),
+         var_scope: BTreeMap::new(),
+         var_order: Vec::new(),
+-        binding_now: Vec::new(),
+         var_mapping: HashMap::new(),
+         confined: confined.clone(),
+         loops: vec![],
+@@ -9986,8 +9981,7 @@ impl Scopes<'_> {
+                 self.var_order.push(d);
+             }
+         }
+-        let first_binding = !self.var_scope.contains_key(&v);
+-        if first_binding {
++        if !self.var_scope.contains_key(&v) {
+             self.put_scope(v);
+             self.var_order.push(v);
+         }
+@@ -10641,13 +10635,7 @@ impl Scopes<'_> {
+                 }
+             }
+         }
+-        if first_binding {
+-            self.binding_now.push(v);
+-        }
+         let scanned = self.scan(value, function, data);
+-        if first_binding {
+-            self.binding_now.pop();
+-        }
+         // Flatten: if the scanned value is Insert([preamble..., final_call]),
+         // hoist the preamble out so the IR becomes
+         // Insert([preamble..., Set(v, final_call)]) instead of
+@@ -11697,7 +11685,6 @@ impl Scopes<'_> {
+         for &v_nr in self.var_order.iter().rev() {
+             if let Some(sc) = self.var_scope.get(&v_nr)
+                 && scopes.contains(sc)
+-                && !self.binding_now.contains(&v_nr)
+             {
+                 res.push(v_nr);
+             }
