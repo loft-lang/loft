@@ -3310,7 +3310,10 @@ impl Parser {
                 // once its values are parsed, so this is asked on the second pass.
                 if !self.first_pass && dt == DefType::EnumValue {
                     let parent = self.data.def(tp_nr).parent();
-                    if matches!(self.data.def(parent).returned(), Type::Enum(_, false, _)) {
+                    if matches!(
+                        self.data.def(parent).returned().base(),
+                        Type::Enum(_, false, _)
+                    ) {
                         let enum_name = self.data.def(parent).name.clone();
                         diagnostic!(
                             self.lexer,

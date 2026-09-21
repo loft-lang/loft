@@ -5171,7 +5171,10 @@ impl Parser {
         // to its own record — the relation a struct value already has with `reference<S>`,
         // where both sides are `Reference(S)`.  A PLAIN enum's value is a discriminant with no
         // record to point at, so it is not admitted.
-        if let (Type::Enum(e, true, _), Type::Reference(r, _)) = (is_type, should)
+        // A nullable side is left to the `?` arms below, which peel both and ask again.
+        if !matches!(is_type, Type::Optional(_))
+            && !matches!(should, Type::Optional(_))
+            && let (Type::Enum(e, true, _), Type::Reference(r, _)) = (is_type.base(), should.base())
             && e == r
         {
             return true;
