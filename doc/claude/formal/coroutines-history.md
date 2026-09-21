@@ -6,10 +6,10 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **1** (2026-09-21) — **D-cor-3** (loft#1586, below).  D-cor-2 opened and closed the same
-day (2026-08-28); D-cor-1 likewise on 2026-08-23.
+OPEN: **0** (2026-09-22).  D-cor-3 opened 2026-09-21 and closed the next day; D-cor-2 opened and
+closed the same day (2026-08-28); D-cor-1 likewise on 2026-08-23.
 
-> **D-cor-3 — OPEN (2026-09-21, loft#1586) — an endless `while` generator never yields on
+> **D-cor-3 — CLOSED (2026-09-22, loft#1586) — an endless `while` generator never yielded on
 > `--native`.**
 > `(G-Next)` says an advance runs to the next `yield` and produces one value.  Native loop
 > generators outside CL-9 slice 1 (a `for` whose body ends in one unconditional `yield`) run the
@@ -21,6 +21,18 @@ day (2026-08-28); D-cor-1 likewise on 2026-08-23.
 > range is lazy on both backends and is the workaround.  Closes with CL-9 slice 3 (COROUTINE.md
 > § Design: lazy loop yields, axis A5).  Found by the Lua expressiveness measurement (LUA_BAR
 > LB3 / LB4).
+>
+> **Closed** by lowering a `while` (a bare `Loop` in the generator body) exactly as slice 1 lowers
+> a `for`, and by ROTATING a loop whose yield has statements after it: they run at the start of
+> the next advance, before the header.  Three defects of the existing lazy `for` path surfaced
+> once `while` loops reached it, and closed with it: a hidden record buffer (`__ref_*`) was
+> re-declared on every advance, so a loop that built a record through a call leaked its last
+> store; a local that adopted such a record was reset by its bare name (E0425); and the tail
+> state bound no parameters (E0425 for a statement after the loop that read one).  A closure in
+> the loop body keeps the eager buffer.  Guard:
+> `tests/scripts/1586-a-while-loop-generator-yields-before-its-next-iteration.loft`, whose cells
+> are all FINITE and assert the ORDER of side effects, so a regression fails an assertion rather
+> than exhausting the machine.  Re-measured: LUA_BAR LB3 and LB4 pass on both backends.
 
 > **D-cor-2 — CLOSED (2026-08-28, loft#1132) — a native transport channel was chosen for
 > types it could not carry.**
