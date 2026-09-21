@@ -36,13 +36,19 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     rust
 }
 
-/// The emitted body of one function, up to the next top-level `fn`.
+/// The emitted body of one function, up to the next top-level item.  Not only the next `fn`:
+/// a lazy generator is emitted as a `struct` and its `impl` (loft#1586), and a body sliced to
+/// the next `fn` took in the generator declared after it.
 fn body<'a>(rust: &'a str, name: &str) -> &'a str {
     let start = rust
         .find(&format!("\nfn {name}("))
         .unwrap_or_else(|| panic!("{name} was not emitted"));
     let rest = &rust[start + 1..];
-    let end = rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3);
+    let end = ["\nfn ", "\nstruct ", "\nimpl ", "\nenum "]
+        .iter()
+        .filter_map(|item| rest[3..].find(item))
+        .min()
+        .map_or(rest.len(), |i| i + 3);
     &rest[..end]
 }
 

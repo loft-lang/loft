@@ -2769,12 +2769,19 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **334** |
+| **332** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-22, the join of `tuxedo-1562-layout-gate`, `157-native-4x` and `tuxedo-165-generics` into
+../loft2, re-measured at its end: **876 · 539 · 5 · 332**, and `--check-ratchet` pinned lower —
+opaque 332, opaque tests 1313.  The sides read 333 (../loft2) and 334 (the 157 line and the
+generics line), each true of its own base.  The joined tree read 333 · 1314 with
+`output_coroutine`'s closure test bare, as loft#1586 brought it in; it peels, because a nullable
+fn-ref still captures, and the join reads 332 · 1313.)
 
 (2026-09-17, the SECOND join, re-measured at its end: **847 · 507 · 6 · 334**, and
 `--check-ratchet` reports *at baseline* — opaque 334, opaque tests 1314.  The opaque column is
