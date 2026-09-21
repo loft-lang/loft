@@ -1371,6 +1371,31 @@ pub fn push_fill_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_PUSH_FILL"))
 }
 
+/// `@FR-R-PushFill`'s window clause: a reserved counted push loop whose body reaches its
+/// vector through the pushes alone, and grows no other store, pushes through a held
+/// element base and a local length, and writes the record's length once when it ends —
+/// **DEFAULT ON**.  Opt OUT with `LOFT_NO_PUSH_WINDOW` (read at GENERATION time): every
+/// push goes through its push header again, the length written back per push — the first
+/// bisect step for a wrong element or length out of a counted push loop or a
+/// comprehension on native.  `LOFT_HOIST_VERIFY=1` checks the frozen header and the base
+/// at every push and the closed header after the loop.
+pub fn push_window_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PUSH_WINDOW"))
+}
+
+/// `@FR-R-Base`'s join clause: a scalar field of a `?`-discharged element, `v[i]?.f`, in a
+/// loop that holds the vector's header and element base is one range test and one load
+/// through the base, the join it lowers to run only for an index that test refuses —
+/// **DEFAULT ON**.  Opt OUT with `LOFT_NO_JOIN_READ` (read at GENERATION time): the join
+/// runs on every pass and its result is read through the store again — the first bisect
+/// step for a wrong field out of `v[i]?.f` inside a loop on native.
+/// `LOFT_HOIST_VERIFY=1` re-derives the header and the base at every such read.
+pub fn join_read_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_JOIN_READ"))
+}
+
 /// @PLN157 § V-d: a vector-literal element that is a buffer-returning call is built IN the
 /// element's record, and a promoted return buffer honours an offered record — **DEFAULT
 /// ON**.  Opt OUT with `LOFT_NO_APPEND_IN_PLACE`: the before-half of the A/B on one binary

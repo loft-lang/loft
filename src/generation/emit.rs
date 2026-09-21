@@ -663,6 +663,13 @@ impl Output<'_> {
                         self.declared.insert(v);
                     }
                 }
+                // @PLN157 § V-am (`@FR-R-PushFill`) — a counted push loop reserves its
+                // pushes times its trip count first, and where its body reaches the vector
+                // through those pushes alone it opens a push window.  BEFORE the guards
+                // below: each emits a whole copy of the loop ahead of its `else`, so a
+                // reservation written after them stands in the arm that does not run, and
+                // a window must be one local both copies push through.
+                let window = self.push_reserve(w, lp)?;
                 // `@FR-R-BoundedNest` — a nest whose guard proves its arithmetic cannot
                 // fault runs with plain operators; the checked loop below is its `else` arm.
                 let nested = self.nest_fast_path(w, lp)?;
@@ -683,8 +690,7 @@ impl Output<'_> {
                     self.indent(w)?;
                     writeln!(w, "if !__fill_{} {{", lp.scope)?;
                 }
-                // @PLN157 § V-am (`@FR-R-PushFill`) — a counted push loop reserves its
-                // pushes times its trip count first; one push of an invariant is one fill
+                // @PLN157 § V-am (`@FR-R-PushFill`) — one push of an invariant is one fill
                 // of the tail, the per-element loop its fallback exactly as the fill's.
                 let pushed = self.push_fast_path(w, lp)?;
                 if pushed {
@@ -731,6 +737,11 @@ impl Output<'_> {
                         write!(w, "\n}} /* checked chains */")?;
                     }
                     super::ChainGuard::None => {}
+                }
+                // The window closes after EVERY copy of the loop: the record's length is
+                // written once, whichever arm ran.
+                if let Some(window) = &window {
+                    self.push_window_close(w, window)?;
                 }
                 for &v in &loop_recs {
                     let name = sanitize(self.data.def(self.def_nr).variables().name(v));

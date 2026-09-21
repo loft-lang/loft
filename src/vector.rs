@@ -777,6 +777,45 @@ pub fn push_header(db: &DbRef, stores: &[Store]) -> PushHeader {
     PushHeader { h, cap }
 }
 
+/// `@FR-R-PushFill`'s window clause — the hot state of a RESERVED counted push loop: the
+/// address of element 0, the length the loop has reached and the capacity in elements.  A
+/// push that fits is one comparison, one store through `base` and a bump of `len`; the
+/// record's own length is written when the window closes ([`Stores::push_window_close`])
+/// or grows, because nothing the loop runs can read it in between — the emitter's proof.
+///
+/// Three scalars whose address never reaches a call: the cold growth arm takes `len` by
+/// value and answers a fresh window by value, so the loop keeps all three in registers.
+/// Measured on `v += [i * 3 + salt]` over 20 000 elements: with the header's own `len` as
+/// the counter — its address handed to the growth arm — every push loaded and stored the
+/// length through the stack, 22.8 µs; with this form 10–13 µs.
+///
+/// [`Stores::push_window_close`]: crate::database::Stores::push_window_close
+#[derive(Clone, Copy, Debug)]
+pub struct PushWindow {
+    /// Element 0 of the pushed vector; null for an absent one (whose `cap` is 0).
+    pub base: *mut u8,
+    /// Elements written so far — the vector's length as the loop sees it.
+    pub len: u32,
+    /// Elements the record holds before it must grow.
+    pub cap: u32,
+}
+
+/// Open a [`PushWindow`] over the vector `p` describes, for elements `size` bytes wide.
+#[must_use]
+#[inline]
+pub fn push_window(p: &PushHeader, size: u32, stores: &[Store]) -> PushWindow {
+    PushWindow {
+        base: vec_base(&p.h, stores).cast_mut(),
+        len: p.h.len,
+        // `p.cap` is in BYTES (see [`push_header`]); an absent vector has none.
+        cap: if p.h.rec == 0 || size == 0 {
+            0
+        } else {
+            p.cap / size
+        },
+    }
+}
+
 /// Derive [`VecHeader`] for the vector `db` points at.
 ///
 /// A null, unallocated or empty vector answers `len: 0`, which makes every fast-path
@@ -1049,6 +1088,81 @@ pub unsafe fn get_elem_at<T: Copy, const VERIFY: bool>(
         };
     }
     get_elem_hoisted_cold::<T>(db, size, from, fld, absent, stores)
+}
+
+/// `@FR-R-Base`'s join clause — the in-range half of `v[i]?.field`: element `from` of the
+/// vector `h` describes and the scalar at `fld` inside it, or `None` for any index the fast
+/// path refuses, which hands the caller to the join it would have run anyway (a negative
+/// index addresses from the end there, an absent element discharges to its default record).
+///
+/// The element comes back beside the value because the join ASSIGNS it to its temp, and the
+/// caller keeps that assignment: it is exactly the `DbRef` [`get_vector_hoisted`] answers in
+/// range, so nothing that reads the temp later can tell the two forms apart.  Measured: the
+/// assignment costs nothing (the store is dead wherever the temp is, and LLVM drops it), and
+/// keeping it means the rewrite owes no proof that the temp is unread.
+///
+/// # Safety
+///
+/// As [`get_elem_at`]: `base` is [`vec_base`] of `h`, taken while `h` described `db`, in a
+/// loop that grows no store.
+///
+/// # Panics
+///
+/// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header or the base no longer matches a
+/// fresh derivation.  Never in the emitted default.
+#[allow(clippy::inline_always)] // an `Option` that is not inlined is a real return slot
+#[must_use]
+#[inline(always)]
+pub unsafe fn elem_field_at<T: Copy, const VERIFY: bool>(
+    h: &VecHeader,
+    base: *const u8,
+    db: &DbRef,
+    size: u32,
+    from: i64,
+    fld: u32,
+    stores: &[Store],
+) -> Option<(DbRef, T)> {
+    if from < 0 || from >= i64::from(h.len) {
+        return None;
+    }
+    if VERIFY {
+        assert_eq!(
+            *h,
+            vec_header(db, stores),
+            "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
+        );
+        assert!(
+            std::ptr::eq(base, vec_base(h, stores)),
+            "hoisted vector base is stale — a store grew or moved under the loop"
+        );
+    }
+    let elem = DbRef {
+        store_nr: h.store_nr,
+        rec: h.rec,
+        pos: checked_vec_pos(from as u32, size),
+    };
+    // SAFETY: as `get_elem_at` — element 0 of a live record in a store the loop cannot grow,
+    // `from < len` inside the record's claim; unaligned because an element offset need not
+    // be aligned for `T` (loft#1481).
+    let val = unsafe {
+        base.add(from as usize * size as usize + fld as usize)
+            .cast::<T>()
+            .read_unaligned()
+    };
+    Some((elem, val))
+}
+
+/// The general typed read of a record's scalar field — `absent` for the null record, else
+/// the load: what a fused read answers off its fast path ([`get_elem_hoisted_cold`]), for a
+/// record already in hand.  The fallback of [`elem_field_at`], applied to the join's result.
+#[must_use]
+#[inline]
+pub fn field_of<T: Copy>(db: &DbRef, fld: u32, absent: T, stores: &[Store]) -> T {
+    if db.rec == 0 {
+        absent
+    } else {
+        keys::store(db, stores).read::<T>(db.rec, db.pos + fld)
+    }
 }
 
 /// One indexed element read against an already-derived [`VecHeader`]: the bounds test and

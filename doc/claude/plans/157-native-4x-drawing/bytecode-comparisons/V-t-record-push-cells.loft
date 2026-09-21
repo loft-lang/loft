@@ -152,7 +152,8 @@ fn m13(a: Pt, b: Pt) -> float {
 }
 fn c13() { println("c13 {m13(Pt { ptx: 2.0, pty: 0.0 }, Pt { ptx: 0.0, pty: 7.0 })}"); }
 
-// c14 — a FIELD-PATH mint (`h.pts`): outside the bare-variable admission, unchanged.  Values right.
+// c14 — a FIELD-PATH mint (`h.pts`): holds the push header since `(R-Mint)`'s field clause
+// (@PLN158 R1), keyed by the path a read of the field has.  Values right.
 fn m14(a: Pt) -> H {
   h = H { pts: [] };
   for _ in 0..3 { h.pts += [Pt { ptx: a.ptx, pty: 0.0 }]; }

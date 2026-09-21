@@ -13,23 +13,25 @@ use std::process::{Command, Output};
 const CELLS: &str = "tests/scripts/158-iteration-base.loft";
 
 /// Per function: `(addresses from a held base, addresses from rec_ptr, unchecked index
-/// steps, checked index steps)`.
+/// steps, checked index steps)`.  A `rec_ptr` beside a base address is the mint window of
+/// an append the cell makes itself (`@FR-R-RecPtr`'s mint clause), not an iteration.
 const EXPECTED: &[(&str, usize, usize, usize, usize)] = &[
     ("n_w1_sum", 1, 0, 1, 0),
     // The twin shares the caller's header and base, and takes the address from them.
     ("n_w1_sum__inv", 1, 0, 1, 0),
     ("n_w1", 2, 0, 2, 0),
-    ("n_w2", 1, 0, 1, 0),
+    // …and the one `rec_ptr` is the mint window of the cell's own append.
+    ("n_w2", 1, 1, 1, 0),
     // Two indexes over ONE base.
     ("n_w3", 2, 0, 2, 0),
     // The write-through walk and the read walk.
     ("n_w4", 2, 0, 2, 0),
     // The chunk walk that appends holds no address; the two read walks do.
-    ("n_w5", 2, 0, 3, 0),
+    ("n_w5", 2, 2, 3, 0),
     // A callee grows the walked vector: no address, the index still bounded.
     ("n_w6", 0, 0, 1, 0),
     // The walk that appends elsewhere holds none; the read walk after it does.
-    ("n_w7", 1, 0, 2, 0),
+    ("n_w7", 1, 1, 2, 0),
     ("n_w8", 1, 0, 1, 0),
     ("n_w9", 1, 0, 1, 0),
     // Heap-owning elements: the reads are not fused, so no address is bound.

@@ -159,7 +159,10 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
 ### A vector reached by a pure path has one header for a loop that cannot move it
 
 ```
-  (R-Base)       in a loop that GROWS no store — no push, no mint push; in-place
+  (R-Base)       in a loop that GROWS no store — no push and no mint, WHETHER OR NOT
+                 the mint emits through a push header (one left on its templates,
+                 an element that is no struct or a tier switched off, appends
+                 through the runtime and grows its store all the same); in-place
                  sets, store-free ops, store-free or in-place-only callees, frees
                  and a null-discharge buffer's mint (a FRESH store, or a clear of
                  the buffer's own — neither moves an element any header names;
@@ -182,7 +185,20 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  inside the twin, a view of the path (R-View) included, goes through
                  it: an admitted callee (R-Callee) is store-free or writes only in
                  place, so no store reallocates for the call's duration, which is the
-                 same condition the loop's base rests on.
+                 same condition the loop's base rests on.  THE JOIN CLAUSE: a scalar
+                 field of a `?`-DISCHARGED element, `v[i]?.f` with `i` a variable, is
+                 served the same way.  Its getter's operand is not the element
+                 address but the JOIN the `?` lowers to — the element where it is
+                 present, a default record minted into a discharge buffer where it
+                 is not — and where the loop holds P's header and base the field is
+                 one range test and one load through the base, the join run ONLY for
+                 an index that test refuses, written once, in that fallback arm, its
+                 result read by the runtime's one general typed read.  The join's
+                 temp is assigned in range as well — the very element address the
+                 join would have given it — so the rewrite drops no effect of the
+                 join.  The fallback is never a constant: a negative index addresses
+                 from the end there, and an absent element answers its default
+                 RECORD's field, which a declared field default makes non-zero.
 
   (R-Counter)    a counted range's counters — its `#index`, the `next` counter of a
                  computed start, and the loop variable — are never the sentinel: an
@@ -191,7 +207,15 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  a literal below the type's maximum.  The counters are seeded into
                  the non-sentinel proof from the one parser that reads a range's
                  shape, so the step emits as the non-null checked add and every
-                 index built from the counter alone loses its operand pre-tests.  The
+                 index built from the counter alone loses its operand pre-tests.
+                 That parser reads the loop's ITERATOR — its first statement — and
+                 nothing after it, because the counters are a fact about the
+                 iterator: a `for` statement, one with a filter or a `#count`
+                 step, and a comprehension `[for i in a..b { e }]` all step the
+                 same counters under the same test, and all are counted ranges.
+                 A rewrite that also reads the BODY as one block (R-Fill,
+                 R-BoundedNest) asks for the plain `[iterator, body]` shape
+                 itself.  The
                  INTEGER CLOSURE — the result of `+`/`-`/`*` over non-sentinel
                  operands counted non-sentinel — is deliberately NOT taken: C85 makes
                  an overflow's sentinel propagate onward as null on both backends,
@@ -252,7 +276,36 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  per-element loop instead, and the counters are left as that loop
                  would leave them (`R-Fill`'s own tail).  The trip count is the range's
                  end less its start — the `next` counter's current value or `#index +
-                 1` — plus one for an inclusive range, taken at loop entry.
+                 1` — plus one for an inclusive range, taken at loop entry.  The loop
+                 is read in EITHER spelling — the statement `for i in a..b { v += [e] }`
+                 and the comprehension `[for i in a..b { e }]` build one vector — and
+                 the reservation is emitted IN FRONT of every guarded copy of the loop
+                 (R-BoundedNest, R-GuardedChain): each emits a whole copy ahead of its
+                 `else`, so a reservation written after the guard stands in the arm
+                 that does not run.  THE WINDOW CLAUSE: once the trip count is
+                 reserved nothing in the loop can grow that vector, so where NOTHING
+                 BUT THESE PUSHES REACHES IT the pushes go through a WINDOW — the
+                 address of element 0, the length reached and the capacity in
+                 elements, three scalars whose address never reaches a call — and a
+                 push that fits is one comparison, one store through the held address
+                 and a bump of the window's length.  The record's own length is
+                 written when the window CLOSES, after every copy of the loop, and
+                 before the runtime's append on the growth arm, which answers a fresh
+                 window; between those the push header is frozen and still describes
+                 the record exactly.  (R-Refresh) asks that a push's refresh reach the
+                 RECORD so that a runtime reader inside the loop sees every push; the
+                 window is admitted exactly where there is no such reader: the pushed
+                 root is exclusive (R-Alias), the body never names it outside a counted
+                 push's own vector operand, every other variable the body names cannot
+                 name its store either by the ownership test (R-Alias) keeps a read
+                 candidate under — a scalar or a text, a local that owns its own
+                 store, a parameter while the root is no return buffer; a view taken
+                 before the loop fails it — and every other statement, and every
+                 pushed value, writes no store at all, so no buffer is reallocated
+                 under the held address.  The single exit is the counted loop's own
+                 (no `break`, `return`, `continue` or inner loop), so the close runs
+                 on every path out.  A body that fails any of these keeps the header
+                 push, which costs the window and never a value.
 
   (R-Invariant)  an integer chain — `+`, `-`, `*`, negation, `&`, `|`, `^` (their
                  `Nullable` twins included) over literals and variables — that a loop
@@ -295,6 +348,98 @@ the element read unfused); falsifier `LOFT_HOIST_VERIFY=1`, whose checking form
 re-derives the header at every access.  Sites: `hoist::vector_path`,
 `hoist::vector_candidates`, `Output::begin_vector_hoist`, the registry's
 `FusedElementReadEmitter`, `FusedElementWriteEmitter` and `HoistedLengthEmitter`.
+
+**(R-PushFill)'s window clause, in words.** 2026-09-21, @PLN158 V1–V3
+(`bench/portal/analysis/vector-build.md`).  A push through the header cost a capacity test in
+bytes, a store resolved through `allocations[store_nr]`, the element, the length bumped in
+the header AND written back to the record — 2.3–3.1 ns an element against a Rust `Vec`'s
+0.3–0.75 — in a loop that, once reserved, cannot grow.  Three things were true and unused:
+the comprehension was no counted range to any rewrite (its loop has three statements and the
+range parser asked for two, so its step stayed the null-aware add, its arithmetic fully
+checked, and it reserved nothing); the reservation stood in the guard's `else` arm; and the
+push resolved a store it could have held.  Measured, hashes unchanged — on
+`bench/stats.py` (7 samples pinned to the fastest core, each ±0.5 % or tighter): `push`
+48.8 → 8.0 µs (0.47× its Rust twin), `comprehension` 62.1 → 11.0 µs (9.53× → 1.70×), `grid`
+69.6 → 23.9 µs (8.10× → 2.81×); and `f32_build`, A/B on one build through the switch,
+739 → 147 µs (−80 %, eighteen pushes a pass through one window).  Every other row of both
+lanes within noise, and the one that read slower in an UNPINNED loop — `record_append`,
+bimodal at 69k / 76–79k — is byte-identical in its emission and reads 68.4–69.5k (±0.4 %)
+pinned: not reproduced, and its cause not established.
+THE FORM IS LOAD-BEARING: the first hand-price kept the header's own `len` as the counter
+and handed the header to the growth arm by reference — its address escaped, LLVM kept it on
+the stack, and every push loaded and stored the length through memory: 22.8 µs.  The window
+is three scalars, the growth arm takes the length BY VALUE and answers a fresh window by
+value: 10–13 µs.  Switch `LOFT_NO_PUSH_WINDOW` (and `LOFT_NO_PUSH_FILL`, one rule); trace
+`LOFT_TRACE_PUSH_FILL=1` names the clause that declined a window; falsifiers
+`LOFT_HOIST_VERIFY=1` (every windowed push checks the frozen header against a fresh
+derivation and the window's base and capacity against that header, and the close checks the
+header it leaves) and `LOFT_STRICT_STORES` / `LOFT_POISON` / `LOFT_POISON_CLAIM` /
+`LOFT_NATIVE_LEAK_CHECK`.  ⚠ `LOFT_HOIST_VERIFY` CANNOT see the defect this clause exists to
+prevent: a runtime READER meeting the lagging length changes nothing, so there is no stale
+fact to compare — the interpreter is the falsifier, through the cells.  Sabotage, measured
+(each admission clause off in turn): "names the pushed vector" — d1 answers `51 102` for
+`51 2601`; "names a variable that may view it" — d4 answers 780 for 2340; "writes a store" —
+NOTHING CHANGED, so no cell guards that clause and none is claimed to: every second grower
+that could be built declines the loop's whole hoist before this admission is asked, which
+makes the clause a second fence behind the push header's own gate, kept because it can only
+decline.  ⚠ A prediction that failed and was measured rather than explained: a result
+vector's pushed root depends on a store witness (`__vdb_1`) that is the hidden return buffer
+the CALLER handed in, and `hoist::owned_local` reads any `__vdb*` dep as "the store it owns"
+— so such a root passes as an exclusive owned local and the window is admitted beside a
+parameter read.  Whether a caller can make the two one store was built both ways — the
+result replacing its own source (once, twice, in a loop) and the result built in an element
+slot of the container its source is an element of, that store reallocating under the call —
+and every one holds under the verifier: the window needs no reader of the vector's LENGTH
+and no store growth, and neither needs the parameter to live in another store.  The looser
+reading of `owned_local` is (R-Alias)'s own and is recorded here, not narrowed on suspicion.
+Sites: `hoist::range_counters`, `hoist::plain_for_body`, `hoist::push_loop`,
+`hoist::push_window_ok`, `Output::push_reserve` / `push_window_close` /
+`active_push_window`, the `Value::Loop` emission in `emit.rs` (the order), the registry's
+`HoistedPushEmitter`, `vector::PushWindow` / `push_window`, `Stores::push_windowed` /
+`push_window_grow` / `push_window_close`.  Cells `tests/scripts/158-push-window.loft`
+(w1–w12 a window; d1–d8 the declines; a1–b1 the aliasing cases; r1 the growth condition),
+pins `tests/push_window.rs`.
+
+**(R-Base)'s join clause, in words.** 2026-09-22, @PLN158 F1
+(`bench/portal/analysis/vector-build.md`).  `v[i].f` was already one load — the scalar
+getter sits on the element address and the two fuse — but with the `?` the getter's operand
+is a `Block`, so the fused read answered `None`, the join ran on every pass and its result was
+read through the store again, in a loop holding the base.  Hand-priced in four forms before
+any emitter code, `record_update`, hash unchanged: today 34.9 µs; the join KEPT and its result
+identity-tested against the header 21.4 (−39 %); the index tested first 12.1 (−65 %); that,
+with the join's temp still assigned in range, 12.2; and that through an `inline(always)`
+helper answering `Option<(DbRef, T)>`, 12.0–12.4 — the one built, measured 11.6–12.3
+(pinned: 4.62× → 1.60× of Rust, range 1.59–1.61).  The
+result-identity form looked better on paper (it re-evaluates nothing and drops no effect) and
+loses 40 % of the gain: the join stays in the loop, and with it a cold `OpDatabaseNP(cell, …)`
+call that holds the whole body back.  Assigning the temp in range costs NOTHING, so the form
+owes no proof that the temp is unread — a walker that did not have to be written.
+⚠ TWO SITES, ONE RECOGNISER.  An emitter arm alone compiles, passes every value test and never
+fires: the pre-eval collector lifts every `Block` argument into a `let _pre_N`, so the getter's
+operand is a local by the time its emitter runs.  `hoist::fused_join_read` is asked by both
+(as `fused_element_read` is), the collector leaving the join where it stands and the emitter
+folding it; only a PIN can show they agree (`a_folded_join_is_written_once…`), no value can.
+The index is a VARIABLE in this build: a computed one is evaluated for the range test and
+again inside the fallback's join, and the second evaluation of a CHECKED operator can note
+one overflow twice.  Switch `LOFT_NO_JOIN_READ` (and `LOFT_NO_ELEM_FUSE` / `LOFT_NO_VECTOR_BASE`,
+one rule); falsifier `LOFT_HOIST_VERIFY=1` re-derives the header and the base at every such
+read — and CANNOT see the defect this clause's design avoids: sabotaged to answer a constant
+off the fast path, j3 reads `null null null` for `80 57.5 52.5` with no panic, because the
+absent arm holds no fact the verifier compares.  The interpreter is the falsifier there.
+Sites: `hoist::fused_join_read`, `Output::fused_join_read`, `pre_eval::collect_pre_evals_inner`
+(the arm that leaves the join in place), `ops::vector_ops::emit_join_read` inside
+`FusedElementReadEmitter`, `vector::elem_field_at`, `vector::field_of`.  Cells
+`tests/scripts/158-join-read.loft` j1–j11, pins `tests/join_read.rs`.
+
+**(R-Base)'s growth condition, in words.** 2026-09-21, found while building the window.
+`growth_free` counted a loop's pushes and its MINT PUSHES — the mints that earned a push
+header — so a mint left on its templates read as no growth, and a base was bound for a
+sibling field of the record whose store that mint was growing.  Reachable in the default
+configuration: `o.rows += [seed]` with `rows: vector<vector<integer>>` (an element that is no
+struct never earns a header) beside `o.vals[i % 4]?` answered `null` on --native for
+1 425 000, and `LOFT_HOIST_VERIFY=1` panicked "hoisted vector base is stale"; under
+`LOFT_NO_RECORD_PUSH=1` a plain struct element answered 3 200 425 for it.  Every mint counts
+now.  Cell r1, pin `a_mint_left_on_its_templates_is_still_a_growth`.
 
 ### A record local declared in a loop keeps its store
 

@@ -37,8 +37,10 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     // The element is the callee's buffer: the caller has no write to serve.
     ("n_m12", 0, 0),
     ("n_m13", 0, 0),
-    // A struct-enum element is not a plain record.
-    ("n_m14", 0, 0),
+    // A struct-enum element is a record too (`@FR-R-RecPtr`'s enum clause): two variants,
+    // two windows, their three `integer` fields through the address; the tag keeps its
+    // store write.
+    ("n_m14", 2, 3),
 ];
 
 const SWITCHES: [&str; 5] = [

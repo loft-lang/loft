@@ -77,7 +77,10 @@ fn counts(rust: &str) -> HashMap<String, (usize, usize, usize)> {
         if line.contains("V-q push header") {
             e.0 += 1;
         }
-        if line.contains("push_hoisted::<") {
+        // A push through the held header, by either route: the header push, or a push
+        // through a WINDOW opened on that header (`@FR-R-PushFill`'s window clause — which of
+        // the two a loop takes is `tests/push_window.rs`'s to pin, not this table's).
+        if line.contains("push_hoisted::<") || line.contains("push_windowed::<") {
             e.1 += 1;
         }
         if line.contains("vector::vec_header(") {
@@ -114,8 +117,11 @@ fn the_switch_hoists_no_push() {
     let out = std::env::temp_dir().join("loft_push_hoist_off.rs");
     let rust = emit(&cells(), &out, &[("LOFT_NO_PUSH_HOIST", "1")]);
     assert!(
-        !rust.contains("push_header(") && !rust.contains("push_hoisted::<"),
-        "LOFT_NO_PUSH_HOIST=1 must bind no push header and route every push through its template"
+        !rust.contains("push_header(")
+            && !rust.contains("push_hoisted::<")
+            && !rust.contains("push_windowed::<")
+            && !rust.contains("vector::push_window("),
+        "LOFT_NO_PUSH_HOIST=1 must bind no push header, open no window on one, and route every push through its template"
     );
     let _ = std::fs::remove_file(&out);
 }

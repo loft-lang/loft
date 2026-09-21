@@ -37,7 +37,7 @@ const EXPECTED: &[(&str, usize)] = &[
     //                  mover takes no holder and `a.ptx` hoists; before, the loop declined
     ("n_mint12", 0), // c12: the `v[i]?` discharge's default-record OpDatabase blocks
     ("n_mint13", 2), // c13: same-type local survives the mint's own element writes
-    ("n_mint14", 0), // c14: a field-path mint is outside this unit's admission
+    ("n_mint14", 1), // c14: a field-path mint is admitted (`(R-Mint)`'s field clause): `a.ptx` hoists
     ("n_mint16", 1), // c16: outer mints and hoists a.ptx; a.pty evicted by the element write
 ];
 

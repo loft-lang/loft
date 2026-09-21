@@ -659,6 +659,18 @@ impl Output<'_> {
                 self.collect_pre_evals_inner(fused.index, result)?;
                 return self.collect_pre_evals_inner(fused.fld, result);
             }
+            // `@FR-R-Base`'s join clause — `v[i]?.f` folds its JOIN block: in range the field
+            // is one load and the block never runs, and the emitter writes the block itself
+            // in the fallback arm.  Lifted into a `let _pre_N` it would run on every pass and
+            // the getter's operand would be a local the emitter cannot see through.  Both
+            // sides ask `fused_join_read`; the index is a variable and the field a constant,
+            // so nothing in it can still hold work.
+            if self
+                .fused_join_read(self.data.def(*d_nr).name(), vals)
+                .is_some()
+            {
+                return Ok(());
+            }
             // `@FR-R-LazySplit` — the element read of a loop over a lazy split emits as the
             // iterator's next piece, so its inner `OpGetVectorNullable` must not be lifted:
             // the binding would name a vector the lazy form never declares.  The emitter

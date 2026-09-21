@@ -43,7 +43,7 @@ const EXPECTED: &[(&str, usize, usize, usize, usize)] = &[
     //                        and the bump lands at the finish
     ("n_m12", 2, 0, 4, 0), // c12: two minted paths, one header each
     ("n_m13", 1, 0, 2, 0), // c13: a mint and a scalar push, both fused
-    ("n_m14", 0, 0, 0, 1), // c14: a field-path mint is outside the bare-variable admission
+    ("n_m14", 1, 0, 2, 0), // c14: a field-path mint holds the header too (`(R-Mint)`'s field clause)
     ("n_m15", 0, 2, 4, 0), // c15: the two singleton appends outside any loop — one GROUP
     //                        header each (the reservation gives it its capacity)
     ("n_m16", 1, 0, 4, 0), // c16: mints in opposite arms share the loop's one header

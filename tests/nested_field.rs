@@ -17,18 +17,20 @@ const CELLS: &str = "tests/scripts/158-nested-field.loft";
 const EXPECTED: &[(&str, Row, Row)] = &[
     ("n_n1", (1, 7, 0), (1, 1, 0)),
     ("n_n2", (2, 6, 3), (0, 0, 0)),
-    ("n_n3", (2, 6, 2), (1, 1, 0)),
+    // Its own append is a mint window: five more writes through an address, per arm.
+    ("n_n3", (4, 6, 12), (3, 1, 4)),
     // The sub-record view `p = v.pos` had its own address before; `v` gains one.
     ("n_n4", (2, 2, 1), (1, 0, 1)),
-    ("n_n5", (2, 4, 1), (1, 1, 0)),
+    ("n_n5", (3, 4, 4), (2, 1, 1)),
     // A nullable view: the null address answers the sentinel and drops the write.
     ("n_n6", (1, 1, 1), (0, 0, 0)),
     // A parameter is bound by no statement: no address either way.
     ("n_n8_len2", (0, 0, 0), (0, 0, 0)),
     // `h.bag.items[1]` forms no path; `h.bag.n` and `h.id` beside it do.
-    ("n_n9", (2, 4, 1), (1, 1, 0)),
-    // The literal assignment is three in-place sets; the whole-record copy declines.
-    ("n_n11", (1, 4, 3), (0, 0, 0)),
+    ("n_n9", (4, 4, 5), (3, 1, 4)),
+    // The literal assignment is three in-place sets; the whole-record copy of a no-heap
+    // `V3` is an in-place write too (`@FR-R-InPlace`'s copy clause), so both walks hold one.
+    ("n_n11", (2, 6, 3), (0, 0, 0)),
     ("n_n12", (1, 2, 1), (0, 0, 0)),
 ];
 

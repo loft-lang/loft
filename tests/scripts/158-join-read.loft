@@ -1,0 +1,182 @@
+// @PLN158 F1 — a scalar field of a `?`-discharged element, `v[i]?.f`, is one range test and
+// one load where the loop holds the vector's element base (`@FR-R-Base`'s join clause).
+//
+// `v[i].f` already was: the scalar getter sits directly on the element address and the two
+// fuse.  With the `?` the getter's operand is the JOIN the `?` lowers to — the element when
+// it is present, a default record minted into a discharge buffer when it is not — so the
+// fused read did not see it, the join ran on every pass, and its result was read through the
+// store again, in a loop holding the base that read could have gone through.  Hand-priced in
+// four forms before it was built (`bench/portal/analysis/vector-build.md`); the one built:
+// `record_update` 34.9 -> 11.6-12.3 us, hash unchanged.
+//
+// The interpreter applies no rewrite and is the oracle; every cell prints its values and
+// asserts them, each expectation computed by the formula in its comment.
+// `LOFT_NO_JOIN_READ=1`, `LOFT_NO_ELEM_FUSE=1`, `LOFT_NO_VECTOR_BASE=1`,
+// `LOFT_NO_VECTOR_HOIST=1` and `LOFT_HOIST_VERIFY=1` must all answer identically.
+//
+// Predictions (tests/join_read.rs pins them).  ONE LOAD: j1 j2 (three kinds) j3 j4 j6 (three
+// joins in one condition, over a field path) j9 j10.  THE JOIN KEPT: j7 (the loop pushes, so
+// it holds no base), j8 (no loop, no header), j11 (a computed index), j12 (inside a callee:
+// see the cell — the twin this was written to reach is not emitted).
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-22) — the fallback arm made a CONSTANT (the
+// getter's own null) instead of the join, which is the form a first reading of "out of range
+// answers absent" would build: j3 answers `null null null` for `80 57.5 52.5` on --native and
+// its assert fails.  The absent arm is the default RECORD's field, and `Q` declares defaults
+// of 7, 2.5 and 1.5, so no constant can stand in for it.  LOFT_HOIST_VERIFY=1 does NOT see
+// this — it prints the same wrong values and no panic, because it compares the header and the
+// base with a fresh derivation and the absent arm holds neither; the interpreter is the
+// falsifier, through this cell.  NOT falsifiable from loft source, and not claimed: that the
+// join's temp is still assigned in range — nothing a program can write reads that temp, which
+// is why the form keeps the assignment (measured free) instead of proving it dead.  Restored
+// byte-identically (`git diff` empty against the pre-sabotage commit): interpret / native /
+// every switch / every falsifier green.
+
+struct P { x: float, y: float, id: integer }
+struct Q { a: integer = 7, b: float = 2.5, c: single = 1.5f }
+struct C { cx: integer, cy: integer, cz: integer }
+struct M { chunks: vector<C>, n: integer }
+
+fn pts(n: integer) -> vector<P> {
+  out: vector<P> = [];
+  for i in 0..n { out += [P { x: i as float * 0.5, y: i as float, id: i }]; }
+  out
+}
+
+// j1 — the update idiom: a fused in-place write fed by the join read.
+// x_i = y_i + (i + 3) = 2i + 3: 2 * 4950 + 300.
+fn j1() {
+  v = pts(100);
+  for i in 0..len(v) { v[i].x = v[i]?.y + (i + 3) as float; }
+  t = 0.0; for p in v { t += p.x; }
+  println("j1 {t} {v[99]?.x}");
+  assert(t == 10200.0 && v[99]?.x == 201.0, "j1");
+}
+
+// j2 — the three scalar kinds a load serves, all in range.  ids sum 4950; b sums 45.0; c 45.0.
+fn j2() {
+  v = pts(100);
+  w: vector<Q> = [];
+  for i in 0..10 { w += [Q { a: i, b: i as float, c: i as single }]; }
+  ti = 0; for i in 0..len(v) { ti += v[i]?.id; }
+  tb = 0.0; tc = 0.0f;
+  for i in 0..len(w) { tb += w[i]?.b; tc += w[i]?.c; }
+  println("j2 {ti} {tb} {tc}");
+  assert(ti == 4950 && tb == 45.0 && tc == 45.0f, "j2");
+}
+
+// j3 — PAST THE END, with declared field defaults: the absent arm answers the default
+// RECORD's field, never a constant.  Ten elements read over 0..15:
+// a = 45 + 5 * 7, b = 45.0 + 5 * 2.5, c = 45.0 + 5 * 1.5.
+fn j3() {
+  w: vector<Q> = [];
+  for i in 0..10 { w += [Q { a: i, b: i as float, c: i as single }]; }
+  sa = 0; sb = 0.0; sc = 0.0f;
+  for i in 0..15 { sa += w[i]?.a; sb += w[i]?.b; sc += w[i]?.c; }
+  println("j3 {sa} {sb} {sc}");
+  assert(sa == 80 && sb == 57.5 && sc == 52.5f, "j3");
+}
+
+// j4 — a NEGATIVE index addresses from the end: the range test refuses it and the join
+// answers.  ids 0..99: v[-1] + v[-2] + v[-3] = 99 + 98 + 97.
+fn j4() {
+  v = pts(100);
+  t = 0;
+  for k in 1..4 { n = 0 - k; t += v[n]?.id; }
+  println("j4 {t}");
+  assert(t == 294, "j4");
+}
+
+// j6 — a FIELD path and three joins in one short-circuit condition (the map-lookup shape),
+// scanned three past the end.  cx = i % 5, cy = i % 7: (3, 3) matches i = 3, 38.  (0, 0)
+// matches i = 0, 35 AND the three absent elements, whose default record is (0, 0, 0): 5.
+fn j6_count(m: M, a: integer, b: integer) -> integer {
+  hits = 0;
+  for i in 0..m.n + 3 {
+    if m.chunks[i]?.cx == a && m.chunks[i]?.cy == b && m.chunks[i]?.cz == 0 { hits += 1; }
+  }
+  hits
+}
+fn j6() {
+  m = M { chunks: [], n: 50 };
+  for i in 0..50 { m.chunks += [C { cx: i % 5, cy: i % 7, cz: 0 }]; }
+  println("j6 {j6_count(m, 3, 3)} {j6_count(m, 0, 0)}");
+  assert(j6_count(m, 3, 3) == 2 && j6_count(m, 0, 0) == 5, "j6");
+}
+
+// j7 — the loop PUSHES, so it holds no element base and the join is kept.  Two past the end
+// read the default record's id, 0: 2 * 4950, 102 elements.
+fn j7() {
+  v = pts(100);
+  out: vector<integer> = [];
+  for i in 0..102 { out += [v[i]?.id * 2]; }
+  t = 0; for x in out { t += x; }
+  println("j7 {len(out)} {t}");
+  assert(len(out) == 102 && t == 9900, "j7");
+}
+
+// j8 — no loop, so no header at all.
+fn j8() {
+  v = pts(10);
+  println("j8 {v[5]?.y} {v[50]?.y}");
+  assert(v[5]?.y == 5.0 && v[50]?.y == 0.0, "j8");
+}
+
+// j9 — the index is a variable that is NOT the loop's: j = 2i is in range for i < 50
+// (2 * 1225) and past the end after.
+fn j9() {
+  v = pts(100);
+  t = 0;
+  for i in 0..60 { j = i * 2; t += v[j]?.id; }
+  println("j9 {t}");
+  assert(t == 2450, "j9");
+}
+
+// j10 — an EMPTY vector: every index is past the end.  Three default ids of 0, plus 1 each.
+fn j10() {
+  e: vector<P> = [];
+  t = 0;
+  for i in 0..3 { t += e[i]?.id + 1; }
+  println("j10 {t}");
+  assert(t == 3, "j10");
+}
+
+// j11 — a COMPUTED index keeps the join: i + 1 over 0..100 reads ids 1..99 and one past
+// the end.  4950 - 0 = 4950.
+fn j11() {
+  v = pts(100);
+  t = 0;
+  for i in 0..100 { t += v[i + 1]?.id; }
+  println("j11 {t}");
+  assert(t == 4950, "j11");
+}
+
+// j12 — the join inside a CALLEE of a loop.  Written to reach the join read through a callee
+// twin (`__inv`, which takes the vector's header and base as inputs) — and MEASURED not to:
+// no twin is emitted.  The join's absent arm mints a discharge buffer, the callee admission
+// reads that as a store write, so `j12_at` is no admitted callee, the calling loop hoists
+// nothing, and both joins keep their general form.  Correct, and not fast: the values are
+// what this cell guards, and its pin stands at zero join reads so that the day the callee
+// admission learns what the LOOP admission already knows (a discharge buffer's mint moves no
+// held vector — § V-ad), the pin moves and the twin path gets its verification.
+// cx = i % 5, cy = i % 7 over 20 elements: 10 * 40 + 57 = 457; the two reads past the end
+// answer the DECLARED defaults (3, 4): + 2 * 34.
+struct D { cx: integer = 3, cy: integer = 4 }
+struct MD { chunks: vector<D>, n: integer }
+fn j12_at(m: MD, i: integer) -> integer { m.chunks[i]?.cx * 10 + m.chunks[i]?.cy }
+fn j12_scan(m: MD) -> integer {
+  t = 0;
+  for i in 0..m.n + 2 { t += j12_at(m, i); }
+  t
+}
+fn j12() {
+  m = MD { chunks: [], n: 20 };
+  for i in 0..20 { m.chunks += [D { cx: i % 5, cy: i % 7 }]; }
+  println("j12 {j12_scan(m)} {j12_at(m, 3)} {j12_at(m, 99)}");
+  assert(j12_scan(m) == 525 && j12_at(m, 3) == 33 && j12_at(m, 99) == 34, "j12");
+}
+
+fn main() {
+  j1(); j2(); j3(); j4(); j6(); j7(); j8(); j9(); j10(); j11(); j12();
+  println("join read ok");
+}
