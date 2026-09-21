@@ -4838,9 +4838,9 @@ Naming some fields and omitting others is legal, and each omitted field takes it
 
 Enum payloads are named fields you read straight — `shape.radius`. Where several variants declare the same name and type it is ONE slot and each variant reads its own value. Where only SOME declare it, the access resolves at compile time to the first variant that has it, and a value of any other variant reads that slot anyway: the tag is never consulted, so the read answers another variant's bytes typed as this one's. loft warns (`warning\[variant-field-unchecked\]`); bind the field in a `match` arm, which is per-variant and cannot reach the wrong one.
 
-=== A `while` generator runs eagerly on --native
+=== A conditional `yield` in a loop runs eagerly on --native
 
-A generator is suspended at each `yield` on the interpreter.  On --native only a `for` loop whose body ends in one unconditional `yield` is; a `while` loop, a yield inside an `if` or `match`, a statement after the yield, a nested loop or a `continue` runs the whole loop before the first value is handed out.  The values agree, the side effects do not — and an endless `while true { …; yield x; }` never hands out a value on --native, it runs until memory runs out.  Write an endless behaviour as `for \_ in 0..1000000000 { …; yield x; }`, with the yield last.
+A generator is suspended at each `yield` on the interpreter.  On --native a `for` or `while` loop is too when its one `yield` sits on the body's straight line; a yield inside an `if` or `match`, two yields in one iteration, a nested loop or a `continue` runs the whole loop before the first value is handed out.  The values agree, the side effects do not — and an endless `while true { if ready { yield x; } }` never hands out a value on --native, it runs until memory runs out.  Keep the yield unconditional: `while true { …; yield x; }` is lazy on both backends.
 
 === XOR is `^`, not exponentiation
 
@@ -5764,7 +5764,7 @@ Squares via for loop with index tracking.
 
 'counted' is asked for a thousand values and the loop breaks after six. Its step counter shows the body ran six times, not a thousand — the work for the values nobody asked for was never done.
 
-⚠ That holds on BOTH backends for the shape written here: a loop whose body ends in one unconditional 'yield'.  Other shapes — a statement after the yield, a yield inside an 'if' or 'match', a nested loop, a 'continue', and any 'while' loop — still run the whole loop eagerly on --native, so their side effects happen for values the consumer never asks for (measured: 1000 steps where the interpreter does 5).  The VALUES are the same either way; it is the side effects that differ.  An ENDLESS eager loop never hands out a value at all: a 'while true' generator on --native runs until memory runs out.  Keep the yield last in a 'for' loop — for an endless behaviour, a 'for' over a large range — or do not put observable work in a generator body. COROUTINE.md tracks this as CL-9.
+⚠ That holds on BOTH backends for the shape written here: a 'for' or 'while' loop with one 'yield' on its body's straight line, statements after it included.  Other shapes — a yield inside an 'if' or 'match', two yields in one iteration, a nested loop, a 'continue' — still run the whole loop eagerly on --native, so their side effects happen for values the consumer never asks for.  The VALUES are the same either way; it is the side effects that differ.  An ENDLESS eager loop never hands out a value at all: on --native it runs until memory runs out.  Keep the yield out of an 'if' in a generator loop, or do not put observable work in a generator body. COROUTINE.md tracks this as CL-9.
 
 ```rust
   trace = Trace { steps: 0 };

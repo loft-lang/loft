@@ -29,6 +29,24 @@ use std::io;
 ///     reset when the operand is a variable.
 pub struct OpFreeRefEmitter;
 
+/// The debug LABEL and the reset LVALUE of a freed local: `("var_x", "var_x")`, or
+/// `("var_x", "self.var_<field>")` for a coroutine-persistent local, whose place is the
+/// state-machine FIELD.  One home for every free-and-reset emitter: `OpFreeRef` had it and
+/// `OpFreeRefIfDistinct` spelled the reset from the label, so a lazily-lowered generator
+/// whose loop built a record through a call — `p = mk(i); …; yield t` — reset a `var_p` no
+/// scope declared (E0425).
+fn free_label_lvalue(ctx: &EmitCtx<'_, '_>, v: u16) -> (String, String) {
+    let n = super::super::sanitize(ctx.output.data.def(ctx.output.def_nr).variables().name(v));
+    let label = format!("var_{n}");
+    let lvalue = match ctx.output.coroutine_persistent_fields.get(&v) {
+        // The struct's spelling, which is the variable's own name only where no other field
+        // claimed it first (loft#928).
+        Some(field) => format!("self.var_{field}"),
+        None => label.clone(),
+    };
+    (label, lvalue)
+}
+
 impl OpEmitter for OpFreeRefEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         // @PLN157 § V-aa (`@FR-R-ValueRecord`) — a local holding a value-returned record
@@ -160,17 +178,7 @@ impl OpEmitter for OpFreeRefEmitter {
             // how emitting a generator's tail — where its scope-exit frees live — produced
             // `cannot find value var_s in this scope` for every heap local a generator owns.
             let (label, lvalue) = if let Value::Var(v) = db_val {
-                let n = super::super::sanitize(
-                    ctx.output.data.def(ctx.output.def_nr).variables().name(*v),
-                );
-                let label = format!("var_{n}");
-                let lvalue = match ctx.output.coroutine_persistent_fields.get(v) {
-                    // The struct's spelling, which is the variable's own name only where no
-                    // other field claimed it first (loft#928).
-                    Some(field) => format!("self.var_{field}"),
-                    None => label.clone(),
-                };
-                (label, lvalue)
+                free_label_lvalue(ctx, *v)
             } else {
                 (String::new(), String::new())
             };
@@ -248,12 +256,7 @@ impl OpEmitter for OpFreeRefTagEmitter {
                 return Ok(());
             }
             let var_name = if let Value::Var(v) = db_val {
-                format!(
-                    "var_{}",
-                    super::super::sanitize(
-                        ctx.output.data.def(ctx.output.def_nr).variables().name(*v)
-                    )
-                )
+                free_label_lvalue(ctx, *v).1
             } else {
                 String::new()
             };
@@ -300,15 +303,10 @@ impl OpEmitter for OpFreeRefIfDistinctEmitter {
             return super::emit_op(ctx, "OpFreeRef", &args[..1]);
         }
         if let [ph_val, wit_val] = args {
-            let ph_name = if let Value::Var(v) = ph_val {
-                format!(
-                    "var_{}",
-                    super::super::sanitize(
-                        ctx.output.data.def(ctx.output.def_nr).variables().name(*v)
-                    )
-                )
+            let (ph_name, ph_place) = if let Value::Var(v) = ph_val {
+                free_label_lvalue(ctx, *v)
             } else {
-                String::new()
+                (String::new(), String::new())
             };
             // Parenthesise both operands: a witness that is a `&` PARAMETER
             // (loft#759) emits as `*var_b`, and `*var_b.store_nr` binds as
@@ -322,7 +320,7 @@ impl OpEmitter for OpFreeRefIfDistinctEmitter {
             ctx.emit(ph_val)?;
             write!(ctx.w, ", \"{ph_name}\")")?;
             if let Value::Var(_) = ph_val {
-                write!(ctx.w, "; {ph_name}.store_nr = u16::MAX")?;
+                write!(ctx.w, "; {ph_place}.store_nr = u16::MAX")?;
             }
             write!(ctx.w, " }}")?;
         }
@@ -343,15 +341,10 @@ pub struct OpFreeRefOrHandUpEmitter;
 impl OpEmitter for OpFreeRefOrHandUpEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         if let [ph_val, wit_val] = args {
-            let ph_name = if let Value::Var(v) = ph_val {
-                format!(
-                    "var_{}",
-                    super::super::sanitize(
-                        ctx.output.data.def(ctx.output.def_nr).variables().name(*v)
-                    )
-                )
+            let (ph_name, ph_place) = if let Value::Var(v) = ph_val {
+                free_label_lvalue(ctx, *v)
             } else {
-                String::new()
+                (String::new(), String::new())
             };
             // Both operands parenthesised for the reason `OpFreeRefIfDistinctEmitter` gives.
             write!(ctx.w, "if (")?;
@@ -362,7 +355,7 @@ impl OpEmitter for OpFreeRefOrHandUpEmitter {
             ctx.emit(ph_val)?;
             write!(ctx.w, ", \"{ph_name}\")")?;
             if let Value::Var(_) = ph_val {
-                write!(ctx.w, "; {ph_name}.store_nr = u16::MAX")?;
+                write!(ctx.w, "; {ph_place}.store_nr = u16::MAX")?;
             }
             write!(ctx.w, " }} else {{ codegen_runtime::cr_fnref_buf(cell, ")?;
             ctx.emit(wit_val)?;

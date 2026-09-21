@@ -42,8 +42,8 @@ No probe file or harness is committed yet.
 | LA3 mixed literal | FAIL | LA2's root cause |
 | LB1 generators in a vector | FAIL — **loft#1585** | *"Fatal: cannot build this record — its type never resolved"*; a struct field holding one fails too. No scheduler can be written, so tier B's scheduler half is blocked |
 | LB2 cutscene | interpreter PASS · native FAIL | after the first `next` the trace already reads `hello;hurt;walk;` — the documented CL-9 eager path (a yield inside `if`, a statement after a yield) |
-| LB3 per-tick value | interpreter PASS · native **runs away** | the `while` loop is eager on native and `dt` is 0 when it runs, so it never ends: OOM-killed at the 2 GB cap |
-| LB4 infinite generator | interpreter PASS · native **runs away** | OOM-killed at the 2 GB cap. `while` is not covered by CL-9 slice 1; `for _ in 0..2000000000 { …; yield n; }` IS lazy (`1 2`). COROUTINE.md's CL-9 row omitted `while` — corrected |
+| LB3 per-tick value | **PASS** both (2026-09-22, loft#1586) | was: native runs away — the `while` loop was eager on native and `dt` was 0 when it ran, so it never ended (OOM-killed at the 2 GB cap) |
+| LB4 infinite generator | **PASS** both (2026-09-22, loft#1586) | was: native runs away, OOM-killed at the 2 GB cap — `while` was outside CL-9 slice 1 |
 | LB5 abandon frees | **PASS** both | |
 | LC1 action table of fn-refs | **PASS** both | real keyed form: `struct Action { name: text, f: fn(Player) }` in `hash<Action[name]>`, use site `(actions[cmd] ?? noop).f(p)` — one line |
 | LC2 with captures | FAIL | named refusal: *"collection of a struct type that holds a capturing closure is not supported"* (OCAML_BAR B1's root) |
@@ -76,9 +76,10 @@ No probe file or harness is committed yet.
 - **loft#1585** — a generator cannot be held in a vector or a struct field, and the refusal reads as
   a compiler internal (LB1; `needs-design`).
 
-The `while`-generator runaway (LB3, LB4) is CL-9's open slice 3, not a new defect; what was wrong
-was its documentation, which listed the eager shapes without `while`. COROUTINE.md, the Coroutines
-page and a new Safety-page trap now name it and its memory consequence.
+The `while`-generator runaway (LB3, LB4) was CL-9's open slice 3; filed as loft#1586 and closed
+2026-09-22 — a `while` with its `yield` on the body's straight line is lazy on `--native`, with
+statements after the yield. LB2 still fails on native: its yield is under an `if`, which is slice 2.
+The Safety-page trap now names that remaining shape.
 
 ### The document's own claims, corrected
 
@@ -388,6 +389,7 @@ fn main() {
 ```
 
 Measured 2026-09-21: interpreter PASS; native runs away — OOM-killed at a 2 GB cap. Run only as a capped unit.
+Re-measured 2026-09-22 (loft#1586): PASS on both backends.
 
 Documented 2026-09-21 (before measuring): UNKNOWN — the shared-struct pattern is documented for reads (`Trace.steps`);
 the `while` loop with a statement before the yield is a CL-9 eager shape on native, so this
@@ -417,6 +419,7 @@ fn main() {
 ```
 
 Measured 2026-09-21: interpreter PASS; native runs away — OOM-killed at a 2 GB cap (`while` is eager; a `for` over a large range is lazy). Run only as a capped unit.
+Re-measured 2026-09-22 (loft#1586): PASS on both backends.
 
 Documented 2026-09-21 (before measuring): FAIL on `--native` (CL-9 slice 3: `while`/`loop` and a statement before the
 yield). The interpreter passes. Note: the reference pages avoid `while true` — `00-vs-python.html`

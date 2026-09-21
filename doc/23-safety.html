@@ -210,8 +210,8 @@
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tile.palette_pick == -<span class="nm">1</span>, <span class="st">"a declared default answers instead: {tile.palette_pick}"</span>);</code></pre>
 <h2 id="a-field-only-some-variants-declare-reads-another-variant-s-bytes">A field only some variants declare reads another variant's bytes</h2>
 <p>Enum payloads are named fields you read straight — <code>shape.radius</code>. Where several variants declare the same name and type it is ONE slot and each variant reads its own value. Where only SOME declare it, the access resolves at compile time to the first variant that has it, and a value of any other variant reads that slot anyway: the tag is never consulted, so the read answers another variant's bytes typed as this one's. loft warns (<code>warning[variant-field-unchecked]</code>); bind the field in a <code>match</code> arm, which is per-variant and cannot reach the wrong one.</p>
-<h2 id="a-while-generator-runs-eagerly-on-native">A <code>while</code> generator runs eagerly on --native</h2>
-<p>A generator is suspended at each <code>yield</code> on the interpreter.  On --native only a <code>for</code> loop whose body ends in one unconditional <code>yield</code> is; a <code>while</code> loop, a yield inside an <code>if</code> or <code>match</code>, a statement after the yield, a nested loop or a <code>continue</code> runs the whole loop before the first value is handed out.  The values agree, the side effects do not — and an endless <code>while true { …; yield x; }</code> never hands out a value on --native, it runs until memory runs out.  Write an endless behaviour as <code>for _ in 0..1000000000 { …; yield x; }</code>, with the yield last.</p>
+<h2 id="a-conditional-yield-in-a-loop-runs-eagerly-on-native">A conditional <code>yield</code> in a loop runs eagerly on --native</h2>
+<p>A generator is suspended at each <code>yield</code> on the interpreter.  On --native a <code>for</code> or <code>while</code> loop is too when its one <code>yield</code> sits on the body's straight line; a yield inside an <code>if</code> or <code>match</code>, two yields in one iteration, a nested loop or a <code>continue</code> runs the whole loop before the first value is handed out.  The values agree, the side effects do not — and an endless <code>while true { if ready { yield x; } }</code> never hands out a value on --native, it runs until memory runs out.  Keep the yield unconditional: <code>while true { …; yield x; }</code> is lazy on both backends.</p>
 <h2 id="xor-is-not-exponentiation">XOR is <code>^</code>, not exponentiation</h2>
 <p>Unlike some languages where <code>^</code> means "power", in loft <code>^</code> is bitwise XOR. For exponentiation use the <code>**</code> operator (<code>2 ** 10 == 1024</code>, <code>2.0 ** 3.0 == 8.0</code>) or the <code>pow()</code> function. Watch one precedence footgun: a leading <code>-</code> binds TIGHTER than <code>**</code>, so <code>-x ** y</code> raises the NEGATED BASE. loft warns on the bare spelling; write the parentheses for whichever of the two you mean.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((<span class="nm">0b1010</span>^<span class="nm">0b1100</span>) == <span class="nm">0b0110</span>, <span class="st">"^ is XOR"</span>);
@@ -557,15 +557,15 @@ fn main() {
   // (`warning[variant-field-unchecked]`); bind the field in a `match` arm,
   // which is per-variant and cannot reach the wrong one.
 
-  // ## A `while` generator runs eagerly on --native
+  // ## A conditional `yield` in a loop runs eagerly on --native
   // A generator is suspended at each `yield` on the interpreter.  On --native
-  // only a `for` loop whose body ends in one unconditional `yield` is; a
-  // `while` loop, a yield inside an `if` or `match`, a statement after the
-  // yield, a nested loop or a `continue` runs the whole loop before the first
-  // value is handed out.  The values agree, the side effects do not — and an
-  // endless `while true { …; yield x; }` never hands out a value on --native,
-  // it runs until memory runs out.  Write an endless behaviour as
-  // `for _ in 0..1000000000 { …; yield x; }`, with the yield last.
+  // a `for` or `while` loop is too when its one `yield` sits on the body's
+  // straight line; a yield inside an `if` or `match`, two yields in one
+  // iteration, a nested loop or a `continue` runs the whole loop before the
+  // first value is handed out.  The values agree, the side effects do not —
+  // and an endless `while true { if ready { yield x; } }` never hands out a
+  // value on --native, it runs until memory runs out.  Keep the yield
+  // unconditional: `while true { …; yield x; }` is lazy on both backends.
 
   // ## XOR is `^`, not exponentiation
   // Unlike some languages where `^` means "power", in loft `^` is bitwise

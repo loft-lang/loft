@@ -114,22 +114,23 @@ computed lazily, on demand, rather than read from a store.
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 0.**
 
-- **`D-cor-3`** — OPEN (loft#1586): an endless `while` generator never yields on `--native` — it
-  runs eagerly until memory is exhausted, against `(G-Next)`.  Record:
-  [coroutines-history.md](coroutines-history.md).
-
-Every other deviation this doc has carried is closed; the record is in the companion
+Every deviation this doc has carried is closed; the record is in the companion
 [coroutines-history.md](coroutines-history.md).
 
 ## Conformance
 
 - **Lazy, one-per-advance (`G-Call` / `G-Next`)** — a generator's side effects interleave with the
   consumer's, one value per advance. STRAIGHT-LINE yields obey this on both backends
-  (`print("a"); yield 1; print("b"); yield 2` → `a g1 b g2`). LOOP-based yields interleave on the
-  interpreter (`y0 g0 y1 g1`) but run EAGERLY on native (`y0 y1 g0 g1`) — the decided edge above,
-  not a divergence to fix.
+  (`print("a"); yield 1; print("b"); yield 2` → `a g1 b g2`). A LOOP with one yield on its body's
+  straight line — `for` or `while`, statements after the yield included — does too (`y0 g0 y1 g1`),
+  so an endless one hands out each value as it is asked for.  The loop shapes CL-9 has not reached
+  (more than one yield per iteration, a yield under an `if`/`match`, a nested loop, a `continue`,
+  a closure in the body, a tuple or record yield) still run EAGERLY on native (`y0 y1 g0 g1`):
+  the values agree and the side effects do not, an interleaving difference COROUTINE.md § CL-9
+  records rather than a divergence of values — and an ENDLESS loop of one of those shapes never
+  hands out a value on native, so write it with the yield on the straight line.
 - **Stackful (`G-YieldDepth`)** — a `yield` inside a helper called from the generator produces
   the value and resumes correctly past the helper — the same sequence on both backends.
 - **Exhaustion (`G-Done`)** — a finite generator produces its sequence then reports done; further

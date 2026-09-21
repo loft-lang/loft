@@ -19,8 +19,9 @@
 //
 // The shapes this file does NOT make lazy are here too, because their VALUES must keep
 // working through the eager fallback: more than one yield per iteration, a yield inside an
-// `if`, a nested loop, a `continue`, and a statement after the yield (a resume point one
-// state cannot encode).  Each is an axis in COROUTINE.md § Design: lazy loop yields.
+// `if`, a nested loop and a `continue`.  Each is an axis in COROUTINE.md § Design: lazy loop
+// yields.  A statement after the yield is lazy since loft#1586 (the loop is rotated); its
+// cell below still checks the values, and `1586-a-while-loop-generator-…` checks its order.
 
 struct Log { n: integer }
 
