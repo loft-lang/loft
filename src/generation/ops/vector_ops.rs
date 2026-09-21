@@ -203,6 +203,23 @@ fn emit_hoisted_scalar_or_default(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> 
         {
             return write!(ctx.w, "{expr}");
         }
+        // …and so is a field reached through INLINE sub-records (`v.pos.x`): the same
+        // address, at the summed offset (`hoist::view_field`, the path clause).
+        if crate::generation::hoist::nested_field_enabled()
+            && let [base, fld, ..] = args
+            && !matches!(base.unspan(), Value::Var(_))
+            && let Some((v, off)) = crate::generation::hoist::view_field(ctx.output.data, base, fld)
+            && let Some(expr) = ctx.output.rec_ptr_read(v, off, ctx.def_fn.name())
+        {
+            // The checking form walks the path the unrewritten way and compares: `rec_get`
+            // re-reads at the offset it is given, so only this can see one summed wrongly.
+            if ctx.output.hoist_verify {
+                write!(ctx.w, "vector::path_read_verify({expr}, ")?;
+                super::default::DefaultEmitter.emit(ctx, args)?;
+                return write!(ctx.w, ")");
+            }
+            return write!(ctx.w, "{expr}");
+        }
         return super::default::DefaultEmitter.emit(ctx, args);
     };
     if ctx.output.hoist_verify {
@@ -253,6 +270,29 @@ impl OpEmitter for HoistedLengthEmitter {
     }
 }
 
+/// `OpGetText` — the text of an element a loop over a lazy split reads is the iterator's
+/// next piece (`@FR-R-LazySplit`): `OpGetText(OpGetVectorNullable(vec, …), 0)` with `vec`
+/// a vector the function's lazy loops replaced.  Running out of pieces raises the loop's
+/// `__ls_done_N`, which its length test reads, and answers the null text the vector form
+/// reads past its last element — the loop leaves before anything looks at it.
+///
+/// Every other `OpGetText` emits the `#rust` template unchanged.
+pub struct LazySplitNextEmitter;
+
+impl OpEmitter for LazySplitNextEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        if let Some(elem) = args.first()
+            && let Some(vec) = ctx.output.lazy_split_reader(elem, "OpGetVectorNullable")
+        {
+            return write!(
+                ctx.w,
+                "(match __ls_{vec}.next() {{ Some(__piece) => __piece, None => {{ __ls_done_{vec} = true; loft::state::STRING_NULL }} }})"
+            );
+        }
+        super::default::DefaultEmitter.emit(ctx, args)
+    }
+}
+
 /// Emits `@FR-R-Header` (the fused element write) under `@FR-R-InPlace`.
 pub struct FusedElementWriteEmitter;
 
@@ -260,17 +300,21 @@ impl OpEmitter for FusedElementWriteEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         // `@FR-R-RecPtr` — an in-place field write of a record VIEW whose address the block
         // holds is one store through it (the setter's `rec != 0` test is the null address).
+        // The field is the view's own, or one reached through INLINE sub-records
+        // (`v.pos.x = …`) at the summed offset (`hoist::view_field`, the path clause); the
+        // `DbRef` handed to the checking form is the VIEW's, which the offset counts from.
         if let [base, fld, val] = args
-            && let Value::Var(v) = base.unspan()
-            && let Value::Int(off) = fld.unspan()
+            && (matches!(base.unspan(), Value::Var(_))
+                || crate::generation::hoist::nested_field_enabled())
+            && let Some((v, off)) = crate::generation::hoist::view_field(ctx.output.data, base, fld)
             && let Some(ty) = crate::generation::hoist::setter_kind(ctx.def_fn.name())
-            && let Some(ptr) = ctx.output.active_rec_ptr(*v).map(str::to_owned)
+            && let Some(ptr) = ctx.output.active_rec_ptr(v).map(str::to_owned)
         {
             let verify = ctx.output.hoist_verify;
             write!(ctx.w, "{{ let __wv = (")?;
             ctx.emit(val)?;
             write!(ctx.w, "); unsafe {{ vector::rec_set::<{ty}>({ptr}, &(")?;
-            ctx.emit(base)?;
+            ctx.emit(&Value::Var(v))?;
             return write!(
                 ctx.w,
                 "), ({off}_i64) as u32, __wv, &stores.allocations, {verify}) }} }}"
@@ -415,11 +459,21 @@ impl OpEmitter for NewRecordEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         let out = &ctx.output;
         let vars = out.data.def(out.def_nr).variables();
-        let Some(header) = (!out.record_push_disabled)
-            .then(|| crate::generation::hoist::mint_path(out.data, "OpNewRecord", args, vars))
+        let Some((target, header)) = (!out.record_push_disabled)
+            .then(|| {
+                crate::generation::hoist::mint_target(
+                    out.data,
+                    out.stores,
+                    "OpNewRecord",
+                    args,
+                    vars,
+                )
+            })
             .flatten()
-            .and_then(|path| out.active_mint_push(&path))
-            .map(str::to_owned)
+            .and_then(|t| {
+                let header = out.active_mint_push(&t.path)?.to_owned();
+                Some((t, header))
+            })
         else {
             // @PLN157 § V-y (`@FR-R-CompleteWrite`) — an UNFUSED mint whose every group
             // in this function covers the element type calls the no-prefill twin; the
@@ -439,17 +493,12 @@ impl OpEmitter for NewRecordEmitter {
             }
             return super::default::DefaultEmitter.emit(ctx, args);
         };
-        let Some(Value::Int(tp)) = args.get(1).map(Value::unspan) else {
-            return super::default::DefaultEmitter.emit(ctx, args);
-        };
-        let Ok(tp) = u16::try_from(*tp) else {
-            return super::default::DefaultEmitter.emit(ctx, args);
-        };
-        let elem = out.stores.content(tp);
+        let elem = out.stores.content(target.vector_tp);
         let size = out.stores.size(elem);
         let verify = verify(ctx);
-        // `@FR-R-PushRec` heap clause — a heap-owning element's slot is zeroed at the mint.
-        let zero = if out.stores.owns_heap(elem) {
+        // `@FR-R-PushRec` heap clause — a heap-owning element's slot is zeroed at the mint;
+        // so is a struct-enum's, whose narrower variants leave a wider one's tail unwritten.
+        let zero = if out.stores.owns_heap(elem) || !out.stores.is_struct(elem) {
             "_zero"
         } else {
             ""
@@ -458,7 +507,7 @@ impl OpEmitter for NewRecordEmitter {
             ctx.w,
             "stores.push_record_hoisted{zero}::<{verify}>(&mut {header}, &("
         )?;
-        ctx.emit(&args[0])?;
+        ctx.emit(&target.vector)?;
         write!(ctx.w, "), {size})")
     }
 }
@@ -472,11 +521,21 @@ impl OpEmitter for FinishRecordEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         let out = &ctx.output;
         let vars = out.data.def(out.def_nr).variables();
-        let Some(header) = (!out.record_push_disabled)
-            .then(|| crate::generation::hoist::mint_path(out.data, "OpFinishRecord", args, vars))
+        let Some((target, header)) = (!out.record_push_disabled)
+            .then(|| {
+                crate::generation::hoist::mint_target(
+                    out.data,
+                    out.stores,
+                    "OpFinishRecord",
+                    args,
+                    vars,
+                )
+            })
             .flatten()
-            .and_then(|path| out.active_mint_push(&path))
-            .map(str::to_owned)
+            .and_then(|t| {
+                let header = out.active_mint_push(&t.path)?.to_owned();
+                Some((t, header))
+            })
         else {
             return super::default::DefaultEmitter.emit(ctx, args);
         };
@@ -485,7 +544,7 @@ impl OpEmitter for FinishRecordEmitter {
             ctx.w,
             "stores.push_record_finish::<{verify}>(&mut {header}, &("
         )?;
-        ctx.emit(&args[0])?;
+        ctx.emit(&target.vector)?;
         write!(ctx.w, "))")
     }
 }

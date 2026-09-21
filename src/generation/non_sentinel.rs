@@ -216,6 +216,7 @@ pub fn non_sentinel_vars(data: &Data, code: &Value) -> HashMap<u16, bool> {
     // shape is read from the one parser the fill rewrite reads it from
     // (`hoist::range_counters`), so the two cannot disagree about what a range is.
     seed_range_counters(data, code, &mut vars);
+    seed_iteration_indexes(data, code, &escaped, &mut vars);
     loop {
         let mut round: HashMap<u16, bool> = HashMap::new();
         scan_sets(code, data, &vars, &mut round);
@@ -250,6 +251,54 @@ fn seed_range_counters(data: &Data, v: &Value, vars: &mut HashMap<u16, bool>) {
         }
     }
     v.for_each_child(&mut |c| seed_range_counters(data, c, vars));
+}
+
+/// `@FR-R-Counter`'s iteration clause — seed the `#index` of every `for e in v` loop whose
+/// own bound proves its step cannot overflow ([`super::hoist::bounded_iteration_index`]),
+/// when every OTHER assignment to it in the function is a literal (the parser's `-1` seed)
+/// and its address is never taken.  The step names itself, so the fixpoint below could
+/// never show it; the bound is the fact.
+fn seed_iteration_indexes(
+    data: &Data,
+    code: &Value,
+    escaped: &std::collections::HashSet<u16>,
+    vars: &mut HashMap<u16, bool>,
+) {
+    let mut bounded: Vec<u16> = Vec::new();
+    fn collect(data: &Data, v: &Value, out: &mut Vec<u16>) {
+        if let Value::Loop(lp) = v.unspan()
+            && let Some(ix) = super::hoist::bounded_iteration_index(lp, data)
+        {
+            out.push(ix);
+        }
+        v.for_each_child(&mut |c| collect(data, c, out));
+    }
+    collect(data, code, &mut bounded);
+    for ix in bounded {
+        if escaped.contains(&ix) {
+            continue;
+        }
+        // One step (the loop's own, counted by `bounded_iteration_index`) and any number
+        // of literal seeds; a second loop re-using the variable would be a second step.
+        let (mut steps, mut other) = (0usize, false);
+        fn scan(v: &Value, ix: u16, steps: &mut usize, other: &mut bool) {
+            if let Value::Set(nr, expr) = v.unspan()
+                && *nr == ix
+            {
+                match expr.unspan() {
+                    Value::Int(_) => {}
+                    Value::Long(k) if *k != i64::MIN => {}
+                    Value::Call(_, _) => *steps += 1,
+                    _ => *other = true,
+                }
+            }
+            v.for_each_child(&mut |c| scan(c, ix, steps, other));
+        }
+        scan(code, ix, &mut steps, &mut other);
+        if steps == 1 && !other {
+            vars.insert(ix, true);
+        }
+    }
 }
 
 /// One round: fold every `Set(var, expr)`'s verdict under the current map

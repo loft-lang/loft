@@ -153,6 +153,13 @@ impl Output<'_> {
         }
     }
 
+    /// One integer key as the `i64` a typed keyed entry takes (`@FR-R-TypedKeyed`) — what
+    /// [`Self::emit_content`] wraps in `Content::Long(…)` for the same widths.
+    pub(super) fn emit_long_key(&mut self, w: &mut dyn Write, v: &Value) -> std::io::Result<()> {
+        let expr = self.generate_expr_buf(v)?;
+        write!(w, "({expr}) as i64")
+    }
+
     /// Use this to emit `OpClearStackText` as a `.clear()` call on the target string variable.
     ///
     /// O7: when the block lookahead (`next_format_count`) indicates ≥ 2 format/append ops

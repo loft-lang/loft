@@ -1,0 +1,176 @@
+// @PLN158 R7 — a USER struct-enum value is a record to the hoist family (`@FR-R-PushRec`'s
+// and `@FR-R-RecPtr`'s enum clauses).  `plain_record_type` excludes every enum, for a reason
+// that belongs to `(R-Scalar)` alone — a hoisted scalar is keyed by (type, offset), and two
+// variants put different fields at one offset — but the exclusion was read by every rewrite,
+// so a `vector<Edit>` got no push header on append and no address in the `match` that walks
+// it: each element paid `record_new` and `record_finish`, and each arm re-read the TAG and
+// then its fields through the store.  A struct-enum's literal writes its own tag
+// (`OpSetEnum(e, 0, variant)`) beside the variant's fields, and the parser resolves each
+// arm's offsets behind that arm's tag test, so neither the slot nor the address asks a
+// layout.  `enum_match` 111.6 -> 40.4 us (-64 %), 12.4x -> 4.5x of the Rust reference.
+// The interpreter applies no rewrite and is the oracle; every cell prints its values and
+// asserts them.  `LOFT_NO_ENUM_RECORD=1`, `LOFT_NO_RECORD_PUSH=1`, `LOFT_NO_MINT_WINDOW=1`,
+// `LOFT_NO_RECORD_PTR=1` and `LOFT_HOIST_VERIFY=1` must all answer identically.
+//
+// Predictions (tests/enum_record.rs pins them): e1, e2, e4, e5 append through the header
+// with a zeroed slot and e1, e5, e6, e9 match through the address; in e3 the arm whose
+// variant holds a text keeps the general append (the text set grows a store) while the
+// arm beside it takes a self-contained group header — sound, since a group's header is
+// derived after its own reservation and dies at its finish; e8 reads the tag through a
+// nested path; e9 matches a null view; e11 (a plain enumerate) and e12 (a nullable
+// element) are not struct-enum records and keep their form.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-21) — the tag read through a NULL
+// address made to answer `1` (the first variant) for `0` (no variant): e9 answers `null 0`
+// for `120 2` on --native — both views past the end match `SetH`, whose fields read the
+// sentinel through the null address — and its assert fails.  LOFT_HOIST_VERIFY=1 prints the
+// same wrong line: the checking form compares an ADDRESS with a fresh derivation and has
+// nothing to compare an absent answer with, so the oracle is this clause's falsifier.
+// The slot's zero is not falsifiable by a program — a narrower variant's unwritten tail is
+// bytes no arm reads, and a release walks a slot by its TAG — and is kept as the prefill it
+// replaces.  Restored byte-identically: interpret / native / every switch / every
+// falsifier green.
+
+enum Edit {
+  SetH { eq: integer, er: integer, eh: integer },
+  Paint { pq: integer, pmat: integer = 7 },
+  Wall { wq: integer, wr: integer, wedge: integer }
+}
+enum Tok { End, Num { v: integer }, Op { c: integer, prec: integer } }
+enum Note { Plain { n: integer }, Said { who: text, n: integer } }
+enum Color { Red, Green, Blue }
+struct Holder { st: Edit, n: integer }
+struct P { x: integer, y: integer }
+
+fn score(v: const vector<Edit>) -> integer {
+  t = 0;
+  for e in v {
+    match e {
+      SetH { eq, er, eh } => { t += eq + er * 10 + eh; },
+      Paint { pq, pmat } => { t += pq * 2 + pmat; },
+      Wall { wq, wr, wedge } => { t += wedge + wq - wr; }
+    }
+  }
+  t
+}
+
+// e1 — three variants appended in a loop, across several growth steps, then matched.
+fn e1_build(n: integer) -> vector<Edit> {
+  v: vector<Edit> = [];
+  for i in 0..n {
+    if i % 3 == 0 { v += [SetH { eq: i, er: 2, eh: i % 19 }]; }
+    else if i % 3 == 1 { v += [Paint { pq: i, pmat: i % 5 }]; }
+    else { v += [Wall { wq: i, wr: 1, wedge: i % 6 }]; }
+  }
+  v
+}
+fn e1() {
+  a = score(e1_build(12)); b = score(e1_build(300)); c = score(e1_build(0));
+  println("e1 {a} {b} {c}");
+  assert(a == 203 && b == 63135 && c == 0, "e1");
+}
+
+// e2 — a NARROW variant lands in a slot a WIDE one used: the buffer is reused across calls,
+// so the second fill's slots carry the first fill's bytes.
+fn e2_fill(wide: boolean) -> vector<Edit> {
+  v: vector<Edit> = [];
+  for i in 0..20 { if wide { v += [Wall { wq: 90 + i, wr: 80, wedge: 70 }]; } else { v += [Paint { pq: i }]; } }
+  v
+}
+fn e2() {
+  acc = 0;
+  for round in 0..4 { acc += score(e2_fill(round % 2 == 0)); }
+  println("e2 {acc}");
+  assert(acc == 4620, "e2");
+}
+
+// e3 — a variant that OWNS heap, in a reused buffer.
+fn e3_fill(k: integer) -> vector<Note> {
+  v: vector<Note> = [];
+  for i in 0..6 { if i % 2 == 0 { v += [Said { who: "w{i + k}", n: i }]; } else { v += [Plain { n: i * 10 }]; } }
+  v
+}
+fn e3() {
+  acc = 0;
+  for round in 0..3 {
+    for nt in e3_fill(round * 100) {
+      match nt { Plain { n } => { acc += n; }, Said { who, n } => { acc += len(who) * 1000 + n; } }
+    }
+  }
+  println("e3 {acc}");
+  assert(acc == 30288, "e3");
+}
+
+// e4 — a literal that OMITS a field with a declared default; e5 — unit variants between
+// struct ones, whose literal writes the tag alone.
+fn e4() {
+  v: vector<Edit> = [];
+  for i in 0..5 { v += [Paint { pq: i }]; }
+  println("e4 {score(v)}");
+  assert(score(v) == 55, "e4");
+}
+fn e5() {
+  v: vector<Tok> = [];
+  for i in 0..9 { if i % 3 == 0 { v += [Num { v: i }]; } else if i % 3 == 1 { v += [Op { c: i, prec: 2 }]; } else { v += [End]; } }
+  t = 0; ends = 0;
+  for k in v { match k { End => { ends += 1; }, Num { v } => { t += v; }, Op { c, prec } => { t += c * prec; } } }
+  println("e5 {t} {ends}");
+  assert(t == 33 && ends == 3, "e5");
+}
+
+// e6 — `is` beside `match`, and a catch-all arm.
+fn e6() {
+  v = e1_build(30);
+  walls = 0; rest = 0;
+  for e in v {
+    if e is Wall { walls += 1; }
+    match e { Paint { pq, pmat } => { rest += pq + pmat; }, _ => { rest += 1; } }
+  }
+  println("e6 {walls} {rest}");
+  assert(walls == 10 && rest == 185, "e6");
+}
+
+// e8 — the enum is an INLINE field of the element: the tag is reached through a path.
+fn e8() {
+  hs: vector<Holder> = [];
+  for i in 0..8 { if i % 2 == 0 { hs += [Holder { st: SetH { eq: i, er: 1, eh: 2 }, n: i }]; } else { hs += [Holder { st: Paint { pq: i, pmat: 3 }, n: i * 10 }]; } }
+  t = 0;
+  for h in hs { match h.st { SetH { eq, er, eh } => { t += eq + er + eh + h.n; }, Paint { pq, pmat } => { t += pq * pmat + h.n; }, _ => { t += 100000; } } }
+  println("e8 {t}");
+  assert(t == 244, "e8");
+}
+
+// e9 — a view bound past the end: the null record matches no variant.
+fn e9() {
+  v = e1_build(3);
+  hit = 0; none = 0;
+  for i in 0..5 {
+    e = v[i];
+    match e { SetH { eq, er, eh } => { hit += 1 + eq + er + eh; }, Paint { pq, pmat } => { hit += 10 + pq + pmat; }, Wall { wq, wr, wedge } => { hit += 100 + wq + wr + wedge; }, _ => { none += 1; } }
+  }
+  println("e9 {hit} {none}");
+  assert(hit == 120 && none == 2, "e9");
+}
+
+// e11 — a plain enumerate; e12 — a vector of nullable records.
+fn e11() {
+  cs: vector<Color> = [];
+  for i in 0..9 { if i % 3 == 0 { cs += [Red]; } else if i % 3 == 1 { cs += [Green]; } else { cs += [Blue]; } }
+  t = 0;
+  for c in cs { t = t * 3 + if c == Red { 0 } else if c == Green { 1 } else { 2 }; }
+  println("e11 {t} {len(cs)}");
+  assert(t == 3785 && len(cs) == 9, "e11");
+}
+fn e12() {
+  ps: vector<P?> = [];
+  for i in 0..6 { if i % 2 == 0 { ps += [P { x: i, y: 1 }]; } else { ps += [null]; } }
+  t = 0; nulls = 0;
+  for p in ps { if p == null { nulls += 1; } else { t += p.x + p.y; } }
+  println("e12 {t} {nulls} {len(ps)}");
+  assert(t == 9 && nulls == 3 && len(ps) == 6, "e12");
+}
+
+fn main() {
+  e1(); e2(); e3(); e4(); e5(); e6(); e8(); e9(); e11(); e12();
+  println("enum record ok");
+}

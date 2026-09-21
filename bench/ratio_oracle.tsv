@@ -8,3 +8,18 @@
 # and the script additionally requires the two lanes' hash columns to agree.
 12_drawing	hash	7
 12_drawing	lock	8
+# The eleven suite rows joined 2026-09-21, when they moved onto the row protocol
+# (README.md): each bar is that day's measured ratio on x86-64 (bench/stats.py, seven
+# pinned samples, spread under 3 %) plus a quarter of headroom, to be ratcheted DOWN
+# pass by pass toward 2 — the owner's goal for every row.
+01_fibonacci	fibonacci	5
+02_sum_loop	sum_loop	2.3
+03_sieve	sieve	1.3
+04_collatz	collatz	2.5
+05_mandelbrot	mandelbrot	1.3
+06_newton_sqrt	newton_sqrt	2.8
+07_string_build	string_build	3.2
+08_word_count	word_count	5.9
+09_matrix_mul	dot_product	1.4
+10_sort	sort	3.1
+11_par	par	6.6

@@ -1372,7 +1372,7 @@ fn OpSizeHash(r: hash) -> integer;
 // 4-byte record-id (an empty slot is a hole and still counts, because open
 // addressing's spare capacity IS the format).  Allocation-local: the entry
 // records live in separate allocations and are not counted.  Grows in steps as
-// the table rehashes (load factor 0.75).  0 for an empty (unallocated) hash.
+// the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.
 pub fn size(self: const hash) -> integer {
   OpSizeHash(self)
 }

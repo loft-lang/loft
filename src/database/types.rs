@@ -573,12 +573,48 @@ impl Stores {
         tp != u16::MAX && matches!(self.types[tp as usize].parts, Parts::EnumValue(_, _))
     }
 
+    /// True if `tp` is a USER struct-enum — an enum at least one of whose variants carries
+    /// fields — as opposed to a plain enumerate (one byte, no record) and to the synthetic
+    /// `__nullable<S>`, whose discriminant no literal writes (`@FR-R-PushRec`).  A value of
+    /// one is a record: the tag byte at 0, the variant's fields behind it.
+    #[must_use]
+    pub fn is_struct_enum(&self, tp: u16) -> bool {
+        tp != u16::MAX
+            && matches!(&self.types[tp as usize].parts, Parts::Enum(values)
+                if values.iter().any(|(v, _)| *v != u16::MAX))
+            && self.nullable_some_variant(tp).is_none()
+    }
+
     /// True if `tp` is a plain inline-element vector (`Parts::Vector`) — the container
     /// whose append is a slot at the tail, as opposed to the keyed and handle-holding
     /// kinds (`Sorted`, `Array`, `Ordered`, …) whose same-named ops place records.
     #[must_use]
     pub fn is_plain_vector(&self, tp: u16) -> bool {
         tp != u16::MAX && matches!(self.types[tp as usize].parts, Parts::Vector(_))
+    }
+
+    /// The plain vector that FIELD `field` of the plain struct `parent_tp` holds, as
+    /// `(the field's byte position, the vector's type)` — the container a record append
+    /// spelled `OpNewRecord(R, parent_tp, field)` grows (`@FR-R-Mint`'s field clause).
+    ///
+    /// Answers only where that append is a plain vector's and nothing more: the parent a
+    /// `Parts::Struct` (a variant's fields sit behind its tag, and a synthetic
+    /// `__nullable<S>` redirects to its payload), the field a `Parts::Vector` (an `array`
+    /// holds record handles, a keyed kind places records), and no sibling collection
+    /// sharing its records — `record_finish` hands a linked group's record to every other
+    /// member, which moves records this field does not name.  A linked group's vector
+    /// member is registered as an `array`, so the kind test already declines it; the
+    /// sibling list is asked as well because it is the fact `record_finish` itself reads.
+    /// Everything else is `None`, and the caller keeps the general append, which is
+    /// always right.
+    #[must_use]
+    pub fn plain_vector_field(&self, parent_tp: u16, field: u16) -> Option<(u16, u16)> {
+        let Parts::Struct(fields) = &self.types.get(parent_tp as usize)?.parts else {
+            return None;
+        };
+        let f = fields.get(field as usize)?;
+        (f.other_indexes.is_empty() && self.is_plain_vector(f.content))
+            .then_some((f.position, f.content))
     }
 
     /// Can a value of `tp` own a heap record?  The @PLN157 § V-f fact

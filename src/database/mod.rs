@@ -2258,6 +2258,14 @@ impl Stores {
                 "hoisted record-push header is stale at the finish — the element's builder moved the vector"
             );
         }
+        // An ABSENT owner — the append answered the null element, because the record that
+        // holds the vector field is itself null (`m.ps += […]` through a null `m`) — has no
+        // length to bump: `vector_finish` returns on it, and so does this.  A header whose
+        // record is 0 here can be nothing else, since a growth step that claimed a record
+        // re-derived the header with it.
+        if p.h.rec == 0 {
+            return;
+        }
         p.h.len += 1;
         self.allocations[p.h.store_nr as usize].write::<u32>(p.h.rec, 4, p.h.len);
     }

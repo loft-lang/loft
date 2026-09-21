@@ -705,9 +705,21 @@ pub struct Output<'a> {
     /// bound in it, keyed by the view variable; a field read or in-place write of that
     /// variable goes through it ([`Self::bind_record_ptr`]).
     pub rec_ptrs: Vec<HashMap<u16, String>>,
+    /// `@FR-R-RecPtr`'s mint clause — the open mint WINDOWS, innermost last: `(block serial,
+    /// the index of the element's finish, the element variable)`.  A window's address frame
+    /// is dropped once the statement at that index has been emitted
+    /// ([`Self::close_ptr_windows_before`]), by the element it serves rather than by
+    /// position, since an ordinary view bound inside the window sits above it.
+    pub ptr_windows: Vec<(usize, usize, u16)>,
+    /// `LOFT_NO_MINT_WINDOW=1` — a minted element's field writes resolve the store again.
+    pub mint_window_disabled: bool,
     /// `LOFT_NO_RECORD_PTR=1` — no record view carries its address; every field read and
     /// write resolves the store again.
     pub record_ptr_disabled: bool,
+    /// `LOFT_NO_BASE_RECPTR=1` — a record view bound from an element of a vector whose BASE
+    /// the loop holds resolves the store for its address again (`@FR-R-RecPtr`'s base
+    /// clause off).
+    pub base_rec_ptr_disabled: bool,
     /// `LOFT_TRACE_RECPTR=1` — name every record view bound to an address and every
     /// declined binding with its reason.
     pub recptr_trace: bool,
@@ -812,6 +824,13 @@ pub struct Output<'a> {
     /// § V-j; the bisect step for a wrong element, a leak or a double free out of a
     /// `for f in call(…) {{ v += [f] }}` loop.
     pub move_append_disabled: bool,
+    /// `@FR-R-LazySplit` — the `for piece in text.split(c)` loops of the function being
+    /// emitted that take their pieces straight from the text, keyed by the hidden vector
+    /// variable the lazy form never declares ([`hoist::lazy_splits`]); rebuilt per function.
+    pub lazy_splits: BTreeMap<u16, hoist::LazySplit>,
+    /// `LOFT_NO_LAZY_SPLIT=1` — every such loop builds and walks its `vector<text>` again;
+    /// the bisect step for a wrong or missing piece out of a loop over a `split`.
+    pub lazy_split_disabled: bool,
     /// @PLN157 § V-x (`@FR-R-LitHoist`) — the loop-body vector literals of the CURRENT
     /// function that build once per activation ([`hoist::invariant_literals`]): each is
     /// pre-declared at function top and its declaration statement wrapped in an
@@ -950,6 +969,10 @@ pub struct Output<'a> {
     /// `@FR-R-Range` — the per-definition range facts ([`range::range_vars`]), computed on
     /// the first integer op a function emits and cached beside the non-sentinel ones.
     range_cache: HashMap<u32, std::rc::Rc<HashMap<u16, range::Range>>>,
+    /// `LOFT_NO_TYPED_KEYED=1` — a lookup in a `hash` with one integer key is emitted as the
+    /// general `OpGetRecord` again instead of `OpGetHashLong` (`@FR-R-TypedKeyed`); the
+    /// bisect step for a wrong or missing record out of such a lookup on native.
+    pub typed_keyed_disabled: bool,
     /// `LOFT_NO_RANGE_ARITH=1` — every integer operator keeps its checked template, as
     /// before `@FR-R-Range`; the bisect step for a wrong integer value on native where the
     /// range proof admitted a plain operator.  `LOFT_HOIST_VERIFY=1` is the falsifier.
@@ -1967,9 +1990,12 @@ impl<'a> Output<'a> {
             twin_base_disabled: std::env::var("LOFT_NO_TWIN_BASE").is_ok_and(|v| v != "0")
                 || !crate::keys::vector_base_enabled(),
             rec_ptrs: Vec::new(),
+            ptr_windows: Vec::new(),
+            mint_window_disabled: std::env::var("LOFT_NO_MINT_WINDOW").is_ok_and(|v| v != "0"),
             // One rule: `LOFT_NO_VECTOR_BASE` switches its record clause off with it.
             record_ptr_disabled: std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0")
                 || !crate::keys::vector_base_enabled(),
+            base_rec_ptr_disabled: std::env::var("LOFT_NO_BASE_RECPTR").is_ok_and(|v| v != "0"),
             recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
@@ -1999,6 +2025,8 @@ impl<'a> Output<'a> {
             move_by_loopvar: HashMap::new(),
             active_move_vars: Vec::new(),
             move_append_disabled: std::env::var("LOFT_NO_MOVE_APPEND").is_ok_and(|v| v != "0"),
+            lazy_splits: BTreeMap::new(),
+            lazy_split_disabled: std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0"),
             invariant_lits: hoist::LitHoist::default(),
             literal_hoist_disabled: std::env::var("LOFT_NO_LITERAL_HOIST").is_ok_and(|v| v != "0"),
             complete_writes: hoist::CompleteWrites::default(),
@@ -2035,6 +2063,7 @@ impl<'a> Output<'a> {
             release_pass_probe: std::env::var("LOFT_RELEASE_PASS_PROBE").is_ok_and(|v| v != "0"),
             nn_cache: HashMap::new(),
             range_cache: HashMap::new(),
+            typed_keyed_disabled: std::env::var("LOFT_NO_TYPED_KEYED").is_ok_and(|v| v != "0"),
             range_arith_disabled: std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0"),
             range_suspended: 0,
             leaf_cache: HashMap::new(),
@@ -2322,6 +2351,11 @@ impl Output<'_> {
             .values()
             .map(|p| (p.loop_var, p.clone()))
             .collect();
+        self.lazy_splits = if self.lazy_split_disabled {
+            BTreeMap::new()
+        } else {
+            hoist::lazy_splits(self.data, def_nr)
+        };
         self.active_move_vars.clear();
         self.in_adopt_delivery = 0;
         // @PLN157 § V-u — does this function's result local adopt the return buffer?
@@ -3780,6 +3814,7 @@ impl Output<'_> {
         w: &mut dyn Write,
         stmts: &[Value],
         at: usize,
+        block: Option<usize>,
     ) -> std::io::Result<bool> {
         if self.hoist_disabled || self.record_ptr_disabled {
             return Ok(false);
@@ -3825,11 +3860,37 @@ impl Output<'_> {
             stmts,
             at,
             self.data,
+            self.stores,
             self.def_nr,
             &mut self.hoist_cache,
             !self.write_hoist_disabled,
             &twin_params,
         );
+        // `@FR-R-RecPtr`'s mint clause — a minted element the remainder declines (the next
+        // append grows a store) may still hold its address for its own WINDOW, up to its
+        // finish.  Only in a block whose statements this emitter walks by index.
+        let mut window: Option<usize> = None;
+        let verdict = match (verdict, block) {
+            (Err(_), Some(_)) if !self.mint_window_disabled => {
+                match hoist::mint_window(
+                    stmts,
+                    at,
+                    self.data,
+                    self.stores,
+                    self.def_nr,
+                    &mut self.hoist_cache,
+                    !self.write_hoist_disabled,
+                ) {
+                    Ok((e, finish)) => {
+                        window = Some(finish);
+                        Ok(e)
+                    }
+                    Err("not a mint") => verdict,
+                    Err(why) => Err(why),
+                }
+            }
+            (v, _) => v,
+        };
         let r = match verdict {
             Ok(r) => r,
             Err(why) => {
@@ -3850,10 +3911,26 @@ impl Output<'_> {
         self.output_code_inner(&mut operand, &Value::Var(r))?;
         let operand = String::from_utf8_lossy(&operand).into_owned();
         self.indent(w)?;
-        writeln!(
-            w,
-            "let {name}: *const u8 = vector::rec_ptr(&({operand}), &stores.allocations); //@FR-R-RecPtr record view address for {operand}"
-        )?;
+        // `@FR-R-RecPtr`'s base clause — the binding is the head of `for e in v` over a
+        // vector whose header and element BASE this loop holds: the element is at the base
+        // plus index times size, with no `DbRef` consulted and no store resolved; past the
+        // end the element is the null record, whose address is null.
+        if let Some((header, base, index, size, offset)) = self.held_iteration_base(&stmts[at]) {
+            let plus = if offset == 0 {
+                String::new()
+            } else {
+                format!(" + {offset}")
+            };
+            writeln!(
+                w,
+                "let {name}: *const u8 = if (var_{index} as u64) < u64::from({header}.len) {{ unsafe {{ {base}.add(var_{index} as usize * {size}{plus}) }} }} else {{ std::ptr::null() }}; //@FR-R-RecPtr record view address for {operand}, from the held base"
+            )?;
+        } else {
+            writeln!(
+                w,
+                "let {name}: *const u8 = vector::rec_ptr(&({operand}), &stores.allocations); //@FR-R-RecPtr record view address for {operand}"
+            )?;
+        }
         if self.recptr_trace {
             eprintln!(
                 "recptr: {} binds {name} for `{}`",
@@ -3862,7 +3939,47 @@ impl Output<'_> {
             );
         }
         self.rec_ptrs.push(HashMap::from([(r, name)]));
+        if let (Some(finish), Some(block)) = (window, block) {
+            // A window's frame is closed at its finish, not with the block: the caller
+            // must not count it among the frames it pops.
+            self.ptr_windows.push((block, finish, r));
+            return Ok(false);
+        }
         Ok(true)
+    }
+
+    /// `@FR-R-RecPtr`'s mint clause — drop the address of every mint window of `block`
+    /// whose finish (statement `end`) has been emitted: `end < at`.  The frame is found by
+    /// the element it serves, since a view bound inside the window sits above it.
+    pub(super) fn close_ptr_windows_before(&mut self, block: usize, at: usize) {
+        while self
+            .ptr_windows
+            .last()
+            .is_some_and(|&(b, end, _)| b == block && end < at)
+        {
+            let (_, _, e) = self.ptr_windows.pop().expect("tested above");
+            if let Some(i) = self.rec_ptrs.iter().rposition(|f| f.contains_key(&e)) {
+                self.rec_ptrs.remove(i);
+            }
+        }
+    }
+
+    /// `@FR-R-RecPtr`'s base clause — for a statement that is the head of a vector iteration
+    /// ([`hoist::iteration_head`]) over a path whose header AND element base an enclosing
+    /// frame holds: those two locals, the index variable's name and the element size.
+    fn held_iteration_base(&self, stmt: &Value) -> Option<(String, String, String, u32, u32)> {
+        if self.base_rec_ptr_disabled {
+            return None;
+        }
+        let it = hoist::iteration_head(stmt, self.data)?;
+        let path = hoist::vector_path(self.data, it.vector)?;
+        let header = self.active_vec_header(&path)?.to_owned();
+        let base = self.active_vec_base(&path)?.to_owned();
+        if self.coroutine_persistent_fields.contains_key(&it.index) {
+            return None;
+        }
+        let index = sanitize(self.data.def(self.def_nr).variables().name(it.index));
+        Some((header, base, index, it.size, it.offset))
     }
 
     /// The tiers the loop hoist runs under, as [`Self::begin_vector_hoist`] passes them —
@@ -4166,6 +4283,64 @@ impl Output<'_> {
             return None;
         }
         Some(slots)
+    }
+
+    /// `@FR-R-LazySplit` — the lazy split whose hidden vector `v` reads through the op
+    /// `reader`, or `None`: `v` must be `reader(Var(vec), …)` with `vec` a vector the
+    /// function's lazy loops replaced.  The two readers are the element read
+    /// (`OpGetVectorNullable`) and the length test (`OpLengthVector`); the analysis proved
+    /// they are the vector's only mentions, so answering them is answering every use.
+    #[must_use]
+    pub fn lazy_split_reader(&self, v: &Value, reader: &str) -> Option<u16> {
+        if self.lazy_splits.is_empty() || self.in_coroutine_body {
+            return None;
+        }
+        let Value::Call(d, args) = v.unspan() else {
+            return None;
+        };
+        if (*d as usize) >= self.data.definitions.len() || self.data.def(*d).name() != reader {
+            return None;
+        }
+        let Value::Var(vec) = args.first()?.unspan() else {
+            return None;
+        };
+        self.lazy_splits.contains_key(vec).then_some(*vec)
+    }
+
+    /// `@FR-R-LazySplit` — whether the lazy form may BORROW its source text `src` for the
+    /// whole loop: a plain text parameter nothing in the function writes.  Such a parameter
+    /// is a `&str` of the caller's, which no statement of the body can move or change.
+    /// Every other source — a local, a field, a call's result, a by-reference text — is
+    /// iterated as a copy taken where the call stood, which no later write can reach.
+    #[must_use]
+    pub fn lazy_split_borrows(&self, src: &Value) -> bool {
+        let Value::Var(s) = src.unspan() else {
+            return false;
+        };
+        let def = self.data.def(self.def_nr);
+        let vars = def.variables();
+        // `@FR-N-Shape` — `.base()`: a `text?` parameter is the same borrowed text, its null
+        // the sentinel an empty walk answers.  A by-reference text is a `RefVar` and is not.
+        if !vars.is_argument(*s) || !matches!(vars.tp(*s).base(), Type::Text(_)) {
+            return false;
+        }
+        // A write is a `Set`, a by-reference hand-off, or the variable as the DESTINATION
+        // (first operand) of a text-building op.  Anything this does not recognise as a
+        // write is a read of an immutable `&str`, which the borrow permits.
+        !def.code().any_node(&mut |n| match n {
+            Value::Set(v, _) => v == s,
+            Value::Call(d, args) if (*d as usize) < self.data.definitions.len() => {
+                let name = self.data.def(*d).name();
+                let first =
+                    matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if v == s);
+                first
+                    && (name == "OpCreateStack"
+                        || name.starts_with("OpAppend")
+                        || name.starts_with("OpClear")
+                        || name.starts_with("OpFormat"))
+            }
+            _ => false,
+        })
     }
 
     pub fn move_pair_for_block(&self, bl: &crate::data::Block) -> Option<&hoist::MoveAppend> {

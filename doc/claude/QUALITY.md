@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites a `Span` hides the shape from — must not grow |
 |---:|
-| **23** |
+| **22** |
 
 (2026-09-17, `R-BoundedNest`: three sites added, all peeling — the nest's matcher
 `hoist::bounded_nest` and `hoist::nest_chain`, and the guard's bound spelling

@@ -45,6 +45,34 @@ impl Output<'_> {
                 "let mut var_{name}: {tp_str} = {{ if var_{buf}.store_nr == u16::MAX || var_{buf}.rec == 0 {{ var_{buf} = OpDatabase(cell, var_{buf}, {db_tp}_i32); }} else {{ stores.clear_vector_release(&var_{buf}); }} var_{buf} }}"
             );
         }
+        // `@FR-R-LazySplit` — the bind of a lazy split's vector is the iterator's: the
+        // source text is evaluated here, once, exactly where the call stood.  A parameter
+        // nothing writes is borrowed; any other source is iterated as a copy, so no write
+        // in the loop body can reach what is being walked.  `__ls_done_N` is what the
+        // loop's length test reads once the element read has run out of pieces.
+        if !self.in_coroutine_body
+            && let Some(ls) = self.lazy_splits.get(&var).cloned()
+            && let Value::Call(_, cargs) = to.unspan()
+            && let Some(src) = cargs.first()
+        {
+            let sep = ls.separator;
+            if self.lazy_split_borrows(src) {
+                write!(
+                    w,
+                    "let mut __ls_{var} = loft::codegen_runtime::lazy_split(&*("
+                )?;
+                self.output_code_inner(w, src)?;
+                write!(w, "), {sep:?})")?;
+            } else {
+                write!(w, "let __ls_src_{var}: String = (")?;
+                self.output_code_inner(w, src)?;
+                write!(
+                    w,
+                    ").to_string(); let mut __ls_{var} = loft::codegen_runtime::lazy_split(&__ls_src_{var}, {sep:?})"
+                )?;
+            }
+            return write!(w, "; let mut __ls_done_{var} = false /* @FR-R-LazySplit */");
+        }
         if crate::keys::join_own_enabled() && self.witness_vars.contains(&var) {
             return self.output_set_witnessed(w, var, to);
         }
@@ -1911,6 +1939,13 @@ impl Output<'_> {
         // the destination's `__vdb` does not exist yet at this declaration.  The
         // `null_named` slot the ordinary path mints would be orphaned by the placement.
         if self.move_pairs.contains_key(&var) {
+            write!(w, "DbRef::NULL")?;
+            return Ok(());
+        }
+        // `@FR-R-LazySplit` — the buffer of a `split` whose loop takes its pieces from the
+        // text is handed to no call: it stays the null sentinel, and its frees release
+        // nothing.
+        if self.lazy_splits.values().any(|ls| ls.dead_buf == Some(var)) {
             write!(w, "DbRef::NULL")?;
             return Ok(());
         }

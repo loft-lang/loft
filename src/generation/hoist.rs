@@ -130,6 +130,38 @@ pub const IN_PLACE_SET_OPS: [&str; 12] = [
     "OpSetEnum",
 ];
 
+/// `@FR-R-InPlace`'s copy clause — `OpCopyRecord(src, dst, tp)` with no flag set, over a
+/// record type that owns NO heap: `size(tp)` bytes stored at the address of `dst`, which is
+/// what an in-place scalar set is at a larger width.  Nothing is claimed, released or moved
+/// — the claim walks a heap-owning type needs (`remove_claims`, `copy_claims`) are exactly
+/// what `owns_heap` rules out — so every header, base and record address a loop holds stays
+/// valid across it.  A flagged copy frees its source store (`COPY_FREE_SOURCE`) or marks a
+/// fresh destination, and stays a store writer.  Answers the record type, which a hoisted
+/// scalar's write set takes WHOLE.  The write-back idiom is this op: `e = v[i]?; …;
+/// v[i] = e` copies the view onto the place it views, which the runtime makes a no-op.
+#[must_use]
+pub fn in_place_copy(stores: Option<&Stores>, op: &str, args: &[Value]) -> Option<u16> {
+    if op != "OpCopyRecord" || args.len() != 3 || !in_place_copy_enabled() {
+        return None;
+    }
+    let Value::Int(tp) = args[2].unspan() else {
+        return None;
+    };
+    let tp = u16::try_from(*tp).ok()?;
+    if tp & !crate::keys::COPY_TP_MASK != 0 {
+        return None;
+    }
+    let stores = stores?;
+    (stores.is_struct(tp) && !stores.owns_heap(tp)).then_some(tp)
+}
+
+/// `LOFT_NO_COPY_IN_PLACE=1` — a no-heap record copy is a store writer again
+/// (`@FR-R-Switch`).  Read at generation time.
+fn in_place_copy_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_COPY_IN_PLACE").is_ok_and(|v| v != "0"))
+}
+
 /// A hoist key (@PLN157 P4d): a vector reached from a local through zero or more CONST
 /// field offsets — `v` is `(var, [])`, `lay.best` is `(var, [8])`.  Pure by
 /// construction (`OpGetField` is a reader), so the prelude may evaluate the path once
@@ -179,7 +211,7 @@ pub fn hoistable_vectors(
         in_place: allow_in_place,
         ..HoistTiers::default()
     };
-    if body_blocks_hoist(body, data, def_nr, cache, tiers, None) {
+    if body_blocks_hoist(body, data, None, def_nr, cache, tiers, None) {
         return Vec::new();
     }
     vector_candidates(body, data, def_nr)
@@ -239,6 +271,7 @@ pub struct HoistTiers {
 fn body_blocks_hoist(
     body: &Block,
     data: &Data,
+    stores: Option<&Stores>,
     def_nr: u32,
     cache: &mut HashMap<u32, bool>,
     tiers: HoistTiers,
@@ -250,6 +283,7 @@ fn body_blocks_hoist(
         let blocks = blocks_header_hoist(
             op,
             data,
+            stores,
             cache,
             &mut HashSet::new(),
             Some(data.def(def_nr).variables()),
@@ -424,6 +458,29 @@ pub fn scalar_read(getter: &str, args: &[Value]) -> Option<ScalarKey> {
     Some((*v, i64::from(*fld)))
 }
 
+/// `@FR-R-RecPtr`'s path clause — the record VIEW a scalar field access goes through and the
+/// byte offset of the field from the view's first byte.  The access has two spellings and
+/// both are one notion: `r.f` is `OpGet<K>(Var(r), f)`, and `r.pos.x` — a field reached
+/// through INLINE sub-records — is `OpGet<K>(OpGetField(Var(r), off(pos), _), off(x))`.
+/// `OpGetField` adds a constant to the `DbRef`'s position and leaves its record alone, so
+/// the field is the view's at `off(pos) + off(x)`, and the null view stays null through
+/// the chain.  A base that is anything else — an element address, a pointer field
+/// (`OpGetDbRef`), a call — forms no path and answers `None`.
+///
+/// For the record ADDRESS only: a read through it loads the bytes where they are each
+/// time, so no aliasing question arises.  `(R-Scalar)`'s hoisted scalars keep
+/// [`scalar_read`]'s bare-variable key on purpose — a hoist CACHES a value keyed by
+/// (record type, offset), and a write through a sub-record view (`p = v.pos; p.x = …`)
+/// is typed by the sub-record, which would never evict a key typed by the parent.
+#[must_use]
+pub fn view_field(data: &Data, base: &Value, fld: &Value) -> Option<(u16, i64)> {
+    let Value::Int(fld) = fld.unspan() else {
+        return None;
+    };
+    let (root, offs) = vector_path(data, base)?;
+    Some((root, offs.iter().sum::<i64>() + i64::from(*fld)))
+}
+
 /// What a loop body writes in place, by RECORD TYPE (a schema type number) and offset
 /// (@PLN157 P4c).  A hoisted scalar `(v, fld)` of a record typed `tp` is stale after a
 /// write at `(tp, fld)` through ANY route — the variable itself, a `&`-bound alias, an
@@ -513,7 +570,7 @@ pub fn hoistable(
     inputs: Option<&mut InputCache>,
     owned: Option<&HoistOwned>,
 ) -> LoopHoist {
-    if body_blocks_hoist(body, data, def_nr, cache, tiers, owned) {
+    if body_blocks_hoist(body, data, Some(stores), def_nr, cache, tiers, owned) {
         return LoopHoist::default();
     }
     let mut out = LoopHoist {
@@ -625,14 +682,15 @@ pub fn hoistable(
                 if let Value::Call(d, args) = n
                     && (*d as usize) < data.definitions.len()
                     && data.def(*d).name() == "OpNewRecord"
-                    && let Some(path) = mint_path(data, "OpNewRecord", args, vars)
+                    && let Some(target) = mint_target(data, stores, "OpNewRecord", args, vars)
                 {
-                    let q = tiers.record_push && mint_push_qualifies(stores, args, tiers.heap_push);
-                    if let Some(row) = mint_fused.iter_mut().find(|(p, _, _)| *p == path) {
+                    let q = tiers.record_push
+                        && mint_push_qualifies(stores, target.vector_tp, tiers.heap_push);
+                    if let Some(row) = mint_fused.iter_mut().find(|(p, _, _)| *p == target.path) {
                         row.2 &= q;
                     } else {
-                        mints.push(path.clone());
-                        mint_fused.push((path, args[0].clone(), q));
+                        mints.push(target.path.clone());
+                        mint_fused.push((target.path, target.vector, q));
                     }
                 }
                 false
@@ -967,7 +1025,7 @@ fn body_writes(
             if matches!(inner.unspan(), Value::Call(d, args)
                 if (*d as usize) < data.definitions.len()
                     && data.def(*d).name() == "OpNewRecord"
-                    && mint_path(data, "OpNewRecord", args, vars).is_some())
+                    && mint_path(data, stores, "OpNewRecord", args, vars).is_some())
             {
                 fresh.insert(*v);
             } else {
@@ -1017,7 +1075,7 @@ fn body_writes(
                 // @PLN157 § V-q — a push (or the reservation before one) grows a vector and
                 // rewrites its handle slot, which no scalar getter reads; the container
                 // record itself does not move.
-            } else if mint_path(data, name, args, vars).is_some() {
+            } else if mint_path(data, stores, name, args, vars).is_some() {
                 // @PLN157 § V-s (`@FR-R-Mint`) — the mint's growth moves the pushed
                 // vector's record without changing any value, and its element defaults land
                 // in the fresh record only.  The close of the group ends the variable's
@@ -1034,6 +1092,10 @@ fn body_writes(
                 // § V-d's delivery tail into a fresh mint variable (`@FR-R-Mint`): the copy
                 // writes the fresh element, and its source-free releases the builder's own
                 // this-iteration buffer — neither is a record a hoisted scalar can name.
+            } else if let Some(tp) = in_place_copy(Some(stores), name, args) {
+                // `@FR-R-InPlace`'s copy clause — every field of the destination is written,
+                // whichever record of that type it is.
+                set.whole.insert(tp);
             } else if let Some(tp) = null_buffer_alloc(name, args, Some(vars), data) {
                 // § V-ad — the discharge buffer is re-initialised whole; only a scalar hoisted
                 // off ITS type could observe that, and the buffer's view is rebound per use.
@@ -1442,6 +1504,7 @@ pub fn view_def_header(
         blocks_header_hoist(
             op,
             data,
+            None,
             cache,
             &mut HashSet::new(),
             Some(vars),
@@ -1482,6 +1545,7 @@ pub fn view_def_header(
 pub fn scalar_kind(getter: &str) -> Option<(&'static str, &'static str)> {
     FUSABLE_GETTERS
         .iter()
+        .chain(enum_record_enabled().then_some(&TAG_GETTER))
         .find(|(name, _, _)| *name == getter)
         .map(|(_, ty, absent)| (*ty, *absent))
 }
@@ -1521,10 +1585,15 @@ pub fn setter_kind(setter: &str) -> Option<&'static str> {
 /// The reason the statement declines, in the words `LOFT_TRACE_RECPTR=1` prints: not a
 /// binding, not a plain record, a remainder that may grow a store, one that frees a
 /// record before a use of the view, one that rebinds it, or no fusable use at all.
+// The eight parameters are the block and the statement, the two things that type it, the
+// function, the memo, the write tier and the twin parameters; a struct would put a name
+// between each and the one call site without removing anything.
+#[allow(clippy::too_many_arguments)]
 pub fn record_view_ptr(
     stmts: &[Value],
     at: usize,
     data: &Data,
+    stores: &Stores,
     def_nr: u32,
     cache: &mut HashMap<u32, bool>,
     allow_in_place: bool,
@@ -1543,7 +1612,7 @@ pub fn record_view_ptr(
         Type::Optional(inner) => inner.as_ref(),
         tp => tp,
     };
-    if plain_record_type(data, view_tp).is_none() {
+    if plain_record_type(data, view_tp).is_none() && !struct_enum_view(data, view_tp) {
         return Err("not a plain record");
     }
     // A buffer's pre-init (`__ref_p2_N = null`, then a mint into it): no place yet, so no
@@ -1553,11 +1622,308 @@ pub fn record_view_ptr(
     if matches!(rhs.unspan(), Value::Null) {
         return Err("bound null");
     }
-    let rest = &stmts[at + 1..];
+    view_extent_verdict(
+        &stmts[at + 1..],
+        *r,
+        data,
+        stores,
+        def_nr,
+        cache,
+        allow_in_place,
+        twin_params,
+    )?;
+    Ok(*r)
+}
+
+/// `@FR-R-RecPtr`'s MINT clause — does statement `at` of `stmts` mint a plain-record
+/// element (`e = OpNewRecord(…)`) whose ADDRESS may serve the group's writes, from the mint
+/// up to its own `OpFinishRecord(…, e, …)`?
+///
+/// [`record_view_ptr`] promises an address for the whole REMAINDER of a block, and a mint
+/// group never gets one: the remainder holds the next append, which grows a store.  The
+/// element needs the address only while it is being filled, and that WINDOW — the
+/// statements between the mint and its finish — is the literal's field writes and the
+/// expressions they store.  The window is judged exactly as a remainder is
+/// ([`view_extent_verdict`]): nothing in it grows a store (a nested mint, a builder that
+/// appends, a delivery copy all decline), frees a record before a use, or rebinds `e`, and
+/// at least one write is fusable.  The address is taken right after the mint — after its
+/// growth step, if it had one — so the window cannot start stale.  Any mint form
+/// qualifies (a vector's tail slot, a keyed collection's claimed record): each answers one
+/// `DbRef` whose bytes stay put until a store grows.
+///
+/// Answers the element variable and the index of its finish, where the address dies.
+///
+/// # Errors
+///
+/// The reason the statement declines, as `LOFT_TRACE_RECPTR=1` prints it.
+pub fn mint_window(
+    stmts: &[Value],
+    at: usize,
+    data: &Data,
+    stores: &Stores,
+    def_nr: u32,
+    cache: &mut HashMap<u32, bool>,
+    allow_in_place: bool,
+) -> Result<(u16, usize), &'static str> {
+    let Some(Value::Set(e, rhs)) = stmts.get(at).map(Value::unspan) else {
+        return Err("not a binding");
+    };
+    let minted = matches!(rhs.unspan(), Value::Call(d, args)
+        if (*d as usize) < data.definitions.len()
+            && data.def(*d).name() == "OpNewRecord"
+            && args.len() == 3);
+    if !minted {
+        return Err("not a mint");
+    }
+    // The element is a fresh record whatever its type: the window's writes carry the
+    // offsets the literal's lowering resolved, so the address asks no layout.  (A
+    // struct-enum element's variable is typed by a placeholder record, not by the enum.)
+    let e_tp = data.def(def_nr).variables().tp(*e);
+    let is_record = matches!(e_tp, Type::Reference(_, _) | Type::Enum(_, true, _));
+    if !is_record || (plain_record_type(data, e_tp).is_none() && !enum_record_enabled()) {
+        return Err("not a record element");
+    }
+    let finish = stmts[at + 1..].iter().position(|op| {
+        matches!(op.unspan(), Value::Call(d, args)
+            if (*d as usize) < data.definitions.len()
+                && data.def(*d).name() == "OpFinishRecord"
+                && matches!(args.get(1).map(Value::unspan), Some(Value::Var(v)) if v == e))
+    });
+    let Some(finish) = finish.map(|i| at + 1 + i) else {
+        return Err("the mint's finish is not in this block");
+    };
+    view_extent_verdict(
+        &stmts[at + 1..finish],
+        *e,
+        data,
+        stores,
+        def_nr,
+        cache,
+        allow_in_place,
+        &HashSet::new(),
+    )?;
+    Ok((*e, finish))
+}
+
+/// The statements a record view's address must stay good for — a block's remainder
+/// ([`record_view_ptr`]) or a mint's window ([`mint_window`]) — judged under ONE definition:
+/// none may grow a store, free a record before a use of `r`, or rebind `r`, and at least one
+/// must read or write a fusable scalar field of `r` or hand it to a twin.
+/// `@FR-R-RecPtr` — may a use of view `r` run AFTER a record free, anywhere in `stmts`?
+///
+/// Through the store a freed record answers the sentinel; through an address it would
+/// answer stale bytes — so an address is held only where every free follows the last use.
+/// The walk is in EXECUTION order, down through the structure the statements have: a block
+/// is its statements in sequence, an `if` its condition and then either arm, a loop its body
+/// — twice when the body itself frees, since a free at the end of one pass precedes a use
+/// at the start of the next.  Everything else is a leaf, and a leaf that both uses `r` and
+/// frees is refused without asking its inner order.
+///
+/// A block whose last statement is a `return`, and which holds no `break` or `continue`,
+/// leaves the FUNCTION on every path that reaches a free in it, so its frees precede no
+/// later use and are not carried past it.  That is the shape of every find-and-answer
+/// helper — `for c in m.chunks { if … { return c.hexes[i]?.h } }`, where the `return`
+/// releases the `?` discharge buffer after the last read of `c`.  A `break` or `continue`
+/// keeps running code of this function, so a block holding one carries its frees on.
+fn free_before_use(
+    stmts: &[Value],
+    r: u16,
+    data: &Data,
+    vars: &crate::variables::Function,
+) -> bool {
+    free_before_use_by(stmts, &mut |leaf| {
+        let (mut uses, mut releases) = (false, false);
+        leaf.any_node(&mut |n| {
+            match n {
+                Value::Var(x) if *x == r => uses = true,
+                Value::Call(g, args)
+                    if (*g as usize) < data.definitions.len()
+                        && frees_a_record(data.def(*g).name(), args, Some(vars)) =>
+                {
+                    releases = true;
+                }
+                _ => {}
+            }
+            false
+        });
+        (uses, releases)
+    })
+}
+
+/// [`free_before_use`]'s ORDER walk, over any leaf classifier answering `(uses the view,
+/// frees a record)` — the structure is the claim, so it is what the unit tests drive.
+fn free_before_use_by(stmts: &[Value], leaf_of: &mut dyn FnMut(&Value) -> (bool, bool)) -> bool {
+    /// `Err(())` — a use after a free; `Ok(released)` — whether a free may have run by
+    /// the end of `v`, given whether one may have run before it.
+    fn scan(
+        v: &Value,
+        released: bool,
+        leaf_of: &mut dyn FnMut(&Value) -> (bool, bool),
+    ) -> Result<bool, ()> {
+        match v.unspan() {
+            Value::Block(b) => {
+                let mut now = released;
+                for op in &b.operators {
+                    now = scan(op, now, leaf_of)?;
+                }
+                let returns = b
+                    .operators
+                    .iter()
+                    .rev()
+                    .find(|o| !matches!(o, Value::Line(_)))
+                    .is_some_and(|o| matches!(o.unspan(), Value::Return(_)));
+                let jumps = v.any_node(&mut |n| matches!(n, Value::Break(_) | Value::Continue(_)));
+                Ok(if returns && !jumps { released } else { now })
+            }
+            Value::If(cond, on_true, on_false) => {
+                let after = scan(cond, released, leaf_of)?;
+                let a = scan(on_true, after, leaf_of)?;
+                let b = scan(on_false, after, leaf_of)?;
+                Ok(a || b)
+            }
+            Value::Loop(lp) => {
+                let mut now = released;
+                for op in &lp.operators {
+                    now = scan(op, now, leaf_of)?;
+                }
+                if now && !released {
+                    // A free in one pass precedes every use in the next.
+                    let mut again = true;
+                    for op in &lp.operators {
+                        again = scan(op, again, leaf_of)?;
+                    }
+                }
+                Ok(now)
+            }
+            leaf => {
+                let (uses, frees) = leaf_of(leaf);
+                if uses && (released || frees) {
+                    return Err(());
+                }
+                Ok(released || frees)
+            }
+        }
+    }
+    let mut released = false;
+    for op in stmts {
+        match scan(op, released, leaf_of) {
+            Ok(now) => released = now,
+            Err(()) => return true,
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod free_order_tests {
+    use super::*;
+
+    // `Var(1)` stands for a use of the view, `Var(2)` for a record free; everything else is
+    // neither.  The walk's claim is about ORDER and STRUCTURE, which is all these drive.
+    fn leaf(v: &Value) -> (bool, bool) {
+        (
+            v.any_node(&mut |n| matches!(n, Value::Var(1))),
+            v.any_node(&mut |n| matches!(n, Value::Var(2))),
+        )
+    }
+    fn verdict(stmts: &[Value]) -> bool {
+        free_before_use_by(stmts, &mut leaf)
+    }
+    fn block(ops: Vec<Value>) -> Value {
+        Value::Block(Box::new(Block {
+            name: "block",
+            operators: ops,
+            result: Type::Void,
+            scope: 0,
+            var_size: 0,
+        }))
+    }
+    fn when(then: Value) -> Value {
+        Value::If(
+            Box::new(Value::Boolean(true)),
+            Box::new(then),
+            Box::new(Value::Null),
+        )
+    }
+    fn lp(ops: Vec<Value>) -> Value {
+        let Value::Block(b) = block(ops) else {
+            unreachable!()
+        };
+        Value::Loop(b)
+    }
+    const USE: Value = Value::Var(1);
+    const FREE: Value = Value::Var(2);
+    fn ret() -> Value {
+        Value::Return(Box::new(Value::Int(0)))
+    }
+
+    #[test]
+    fn a_free_after_the_last_use_is_fine_and_one_before_a_use_is_not() {
+        assert!(!verdict(&[USE, FREE]));
+        assert!(verdict(&[FREE, USE]));
+        assert!(
+            verdict(&[USE, block(vec![FREE]), USE]),
+            "a nested block runs in sequence"
+        );
+    }
+
+    #[test]
+    fn a_returning_block_carries_no_free_past_itself() {
+        // `for c in v { if … { use; free; return } use }` — the lookup helper.
+        let body = vec![when(block(vec![USE, FREE, ret()])), USE];
+        assert!(!verdict(&[lp(body)]));
+        // …but a use AFTER the free inside that block is still a use after a free.
+        assert!(verdict(&[when(block(vec![FREE, USE, ret()]))]));
+    }
+
+    #[test]
+    fn a_break_or_continue_keeps_running_this_function() {
+        // The free stands before a `break`, and the view is used after the loop.
+        let body = vec![when(block(vec![FREE, Value::Break(0)]))];
+        assert!(verdict(&[lp(body), USE]));
+        // A returning block that also holds a `break` carries its free on.
+        let mixed = block(vec![when(Value::Break(0)), FREE, ret()]);
+        assert!(verdict(&[lp(vec![USE, when(mixed)])]));
+    }
+
+    #[test]
+    fn a_free_at_the_end_of_one_pass_precedes_a_use_in_the_next() {
+        assert!(verdict(&[lp(vec![USE, FREE])]));
+        assert!(!verdict(&[lp(vec![USE]), FREE]));
+    }
+
+    #[test]
+    fn either_arm_of_an_if_may_have_freed() {
+        let v = Value::If(
+            Box::new(Value::Boolean(true)),
+            Box::new(block(vec![FREE])),
+            Box::new(Value::Null),
+        );
+        assert!(verdict(&[v, USE]));
+    }
+}
+
+// The eight parameters are the extent, the view, the two things that type it, the
+// function, the memo, the write tier and the twin parameters; a struct would put a name
+// between each and the two call sites without removing anything.
+#[allow(clippy::too_many_arguments)]
+fn view_extent_verdict(
+    rest: &[Value],
+    r: u16,
+    data: &Data,
+    stores: &Stores,
+    def_nr: u32,
+    cache: &mut HashMap<u32, bool>,
+    allow_in_place: bool,
+    twin_params: &HashSet<(u32, u16)>,
+) -> Result<(), &'static str> {
+    let vars = data.def(def_nr).variables();
+    let r = &r;
     if rest.iter().any(|op| {
         blocks_header_hoist(
             op,
             data,
+            Some(stores),
             cache,
             &mut HashSet::new(),
             Some(vars),
@@ -1578,35 +1944,42 @@ pub fn record_view_ptr(
     // container is `(B-Disturb)`'s case and is materialised by the parser before this runs.
     let mut rebound = false;
     let mut touched = false;
-    let mut released_before = false;
+    if free_before_use(rest, *r, data, vars) {
+        return Err("the remainder frees a record before a use of the view");
+    }
     for op in rest {
-        let mut uses = false;
-        let mut releases = false;
         op.any_node(&mut |n| {
             match n {
                 Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == *r => rebound = true,
-                Value::Var(v) if *v == *r => uses = true,
                 Value::Call(g, args) if (*g as usize) < data.definitions.len() => {
                     let name = data.def(*g).name();
-                    if frees_a_record(name, args, Some(vars)) {
-                        releases = true;
-                    }
                     let on_r =
                         matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == *r);
                     // A NATIVE op with the view as its first operand that is not a read
-                    // (`OpGet…`) or a fusable scalar set re-seats or releases the place —
-                    // `OpDatabaseNP(buf, tp)` mints into it, `OpNewRecord`, a copy into it, a
-                    // free — so it is a rebind; a loft-bodied callee can only write in place
-                    // (`(R-Callee)`).
+                    // (`OpGet…`) or an in-place scalar set (`IN_PLACE_SET_OPS`: a fixed-width
+                    // value stored at the address it is given — a kind the address does not
+                    // serve keeps its store write, to the same bytes) re-seats or releases
+                    // the place — `OpDatabaseNP(buf, tp)` mints into it, `OpNewRecord`, a
+                    // copy into it, a free — so it is a rebind; a loft-bodied callee can only
+                    // write in place (`(R-Callee)`).
                     let native = matches!(data.def(*g).code(), Value::Null)
                         || !data.def(*g).rust().is_empty();
-                    if on_r && native && !name.starts_with("OpGet") && setter_kind(name).is_none() {
+                    // `OpCopyRecord(r, dst, tp)` has the view as its SOURCE: a read of r.
+                    if on_r
+                        && native
+                        && !name.starts_with("OpGet")
+                        && !IN_PLACE_SET_OPS.contains(&name)
+                        && name != "OpCopyRecord"
+                    {
                         rebound = true;
                     }
-                    if on_r
-                        && ((scalar_kind(name).is_some() && scalar_read(name, args).is_some())
-                            || (setter_kind(name).is_some()
-                                && matches!(args.get(1).map(Value::unspan), Some(Value::Int(_)))))
+                    // A fusable scalar field read or in-place write of the view, by either
+                    // spelling of the field (`view_field`): direct, or through inline
+                    // sub-records.
+                    if (scalar_kind(name).is_some() || setter_kind(name).is_some())
+                        && args.len() >= 2
+                        && view_field(data, &args[0], &args[1]).is_some_and(|(v, _)| v == *r)
+                        && (on_r || nested_field_enabled())
                     {
                         touched = true;
                     }
@@ -1621,10 +1994,6 @@ pub fn record_view_ptr(
             }
             false
         });
-        if uses && (released_before || releases) {
-            return Err("the remainder frees a record before a use of the view");
-        }
-        released_before |= releases;
     }
     if rebound {
         return Err("the remainder rebinds the view");
@@ -1632,7 +2001,16 @@ pub fn record_view_ptr(
     if !touched {
         return Err("no fusable field read or write of the view");
     }
-    Ok(*r)
+    Ok(())
+}
+
+/// `@FR-R-RecPtr`'s path clause is on — `LOFT_NO_NESTED_FIELD=1` keeps a field reached
+/// through an inline sub-record (`v.pos.x`) on its store read (`@FR-R-Switch`).  Read at
+/// generation time.
+#[must_use]
+pub fn nested_field_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_NESTED_FIELD").is_ok_and(|v| v != "0"))
 }
 
 /// @PLN157 § V-o — is `d_nr` a stdlib ONE-OP wrapper: a loft function whose whole body is
@@ -1736,6 +2114,12 @@ pub enum WrapperOperand {
 /// is what makes one fused load able to stand for the pair. A getter with a different shape
 /// — `OpGetBoolean` masks, `OpGetByte` re-bases, `OpGetCharacter` decodes — is left out
 /// rather than approximated; it keeps the unfused emission.
+/// `@FR-R-RecPtr`'s enum clause — `OpGetEnum(r, fld)`, a struct-enum's TAG, read through a
+/// record address: one byte, and `0` (no variant) for the null record, which is the
+/// getter's own answer there.  For the address only — an element read through a header
+/// keeps [`FUSABLE_GETTERS`], whose cold path has no one-byte form.
+const TAG_GETTER: (&str, &str, &str) = ("OpGetEnum", "u8", "0u8");
+
 const FUSABLE_GETTERS: [(&str, &str, &str); 3] = [
     ("OpGetInt", "i64", "i64::MIN"),
     ("OpGetSingle", "f32", "f32::NAN"),
@@ -2036,6 +2420,139 @@ pub fn range_counters<'a>(lp: &'a Block, data: &Data) -> Result<RangeCounters<'a
         inclusive,
         hi: &cargs[0],
     })
+}
+
+/// The head of a vector iteration, as the parser lowers `for e in v`: the loop variable,
+/// the `#index` it steps, the vector operand and the element size.  ONE home — the record
+/// address (`@FR-R-RecPtr`'s base clause) reads the shape here and so does the non-sentinel
+/// pass, which seeds the index as never-null off the loop's own bound (`@FR-R-Counter`).
+pub struct VectorIteration<'a> {
+    pub loop_var: u16,
+    pub index: u16,
+    pub vector: &'a Value,
+    pub size: u32,
+    /// The constant the head adds to the element's position: 0 for a plain element, and
+    /// whatever `OpGetField(element, off, _)` wrappers sum to — a struct-enum element is
+    /// bound through one at offset 0.
+    pub offset: u32,
+}
+
+/// Parse the binding `e = { idx = idx + 1; OpGetVectorNullable(vec, size, idx) }` — the
+/// first statement of a `for e in v` loop.  Shape only: anything else (a reversed or
+/// filtered walk, a keyed collection's cursor, a text or range iterator) answers `None`,
+/// and the caller keeps the general emission.
+#[must_use]
+pub fn iteration_head<'a>(stmt: &'a Value, data: &Data) -> Option<VectorIteration<'a>> {
+    let Value::Set(loop_var, iter) = stmt.unspan() else {
+        return None;
+    };
+    let Value::Block(it) = iter.unspan() else {
+        return None;
+    };
+    let ops: Vec<&Value> = it
+        .operators
+        .iter()
+        .filter(|o| !matches!(o, Value::Line(_)))
+        .collect();
+    let [step, read] = ops[..] else {
+        return None;
+    };
+    let Value::Set(index, stepped) = step.unspan() else {
+        return None;
+    };
+    let Value::Call(sd, sargs) = stepped.unspan() else {
+        return None;
+    };
+    if (*sd as usize) >= data.definitions.len()
+        || data.def(*sd).name() != "OpAddInt"
+        || sargs.len() != 2
+        || !matches!(sargs[0].unspan(), Value::Var(c) if c == index)
+        || !matches!(sargs[1].unspan(), Value::Int(1))
+    {
+        return None;
+    }
+    // The element, possibly behind `OpGetField(element, const off, _)` wrappers: each adds a
+    // constant to the element's position and leaves its record alone (a struct-enum
+    // element is bound through one at offset 0).
+    let mut read: &Value = read;
+    let mut offset: i64 = 0;
+    while let Value::Call(gd, gargs) = read.unspan()
+        && (*gd as usize) < data.definitions.len()
+        && data.def(*gd).name() == "OpGetField"
+        && gargs.len() == 3
+        && let Value::Int(off) = gargs[1].unspan()
+    {
+        offset += i64::from(*off);
+        read = &gargs[0];
+    }
+    let Value::Call(rd, rargs) = read.unspan() else {
+        return None;
+    };
+    if (*rd as usize) >= data.definitions.len()
+        || data.def(*rd).name() != "OpGetVectorNullable"
+        || rargs.len() != 3
+        || !matches!(rargs[2].unspan(), Value::Var(c) if c == index)
+    {
+        return None;
+    }
+    let Value::Int(size) = rargs[1].unspan() else {
+        return None;
+    };
+    Some(VectorIteration {
+        loop_var: *loop_var,
+        index: *index,
+        vector: &rargs[0],
+        size: u32::try_from(*size).ok()?,
+        offset: u32::try_from(offset).ok()?,
+    })
+}
+
+/// `@FR-R-Counter`'s iteration clause — the `#index` of a `for e in v` loop whose step
+/// cannot overflow: the loop's first statement is the [`iteration_head`], its second the
+/// parser's own bound `if len(vec) <= index { break }` over the SAME vector operand, and
+/// nothing else in the loop assigns the index.  The index is then at most one past a
+/// vector's length — a `u32` — whatever the body does to the vector, since the bound runs
+/// between every two steps.  Answers the index variable; the caller owns the rest of the
+/// proof (every OTHER assignment in the function, and escapes).
+#[must_use]
+pub fn bounded_iteration_index(lp: &Block, data: &Data) -> Option<u16> {
+    let mut stmts = lp.operators.iter().filter(|o| !matches!(o, Value::Line(_)));
+    let head = iteration_head(stmts.next()?, data)?;
+    let Value::If(cond, on_true, _) = stmts.next()?.unspan() else {
+        return None;
+    };
+    let Value::Call(cd, cargs) = cond.unspan() else {
+        return None;
+    };
+    if !is_break_block(on_true)
+        || (*cd as usize) >= data.definitions.len()
+        || data.def(*cd).name() != "OpLeInt"
+        || cargs.len() != 2
+        || !matches!(cargs[1].unspan(), Value::Var(c) if *c == head.index)
+    {
+        return None;
+    }
+    let Value::Call(ld, largs) = cargs[0].unspan() else {
+        return None;
+    };
+    if (*ld as usize) >= data.definitions.len()
+        || data.def(*ld).name() != "OpLengthVector"
+        || largs.len() != 1
+        || largs[0].unspan() != head.vector.unspan()
+    {
+        return None;
+    }
+    // Any assignment to the index besides the head's own step voids the bound.
+    let mut sets = 0usize;
+    for op in &lp.operators {
+        op.any_node(&mut |n| {
+            if matches!(n, Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == head.index) {
+                sets += 1;
+            }
+            false
+        });
+    }
+    (sets == 1).then_some(head.index)
 }
 
 /// `@FR-R-BoundedNest` — an innermost counted loop whose body is ONE accumulate over
@@ -2623,24 +3140,45 @@ pub fn fused_push<'a>(data: &Data, op: &str, args: &'a [Value]) -> Option<FusedP
     })
 }
 
+/// The plain vector one op of a record MINT group appends to (`@FR-R-Mint`): the path its
+/// holder is keyed on, the operand expression that names the vector's `DbRef`, and the
+/// vector's schema type (whose content is the element).
+pub struct MintTarget {
+    pub path: PathKey,
+    pub vector: Value,
+    pub vector_tp: u16,
+}
+
 /// Recognise one op of the record MINT group — `OpNewRecord(P, tp, fld)` /
-/// `OpFinishRecord(P, elm, tp, fld)` appending one element to a PLAIN vector named by a
-/// bare variable (@PLN157 § V-s, `@FR-R-Mint`) — the ONE definition of the admissible
-/// mint, asked by the gate, the collector and the write-set walk.
+/// `OpFinishRecord(P, elm, tp, fld)` appending one element to a PLAIN vector (@PLN157
+/// § V-s, `@FR-R-Mint`) — the ONE definition of the admissible mint, asked by the gate,
+/// the collector, the write-set walk and the emitters.  The append has two spellings and
+/// both are one notion:
 ///
-/// The container must TYPE as `Type::Vector` (the V-m lesson: ask the type, not the op
+/// - a vector named by a BARE variable — `v += […]` is `OpNewRecord(v, vector_tp, MAX)`;
+/// - a vector that is a FIELD of a plain record — `m.verts += […]` is
+///   `OpNewRecord(m, parent_tp, fld)`, the parent a pure path to the record and `fld` the
+///   field that holds the vector.  Its path is the parent's extended by the field's
+///   position, which is the key a read of `m.verts` (`OpGetField(m, pos, tp)`) already
+///   has, so the append and the reads share ONE holder (`@FR-R-State`).
+///
+/// The container must TYPE as a plain vector (the V-m lesson: ask the type, not the op
 /// shape) — on a keyed collection (`sorted`, `index`, `hash`, …) the same op names are a
-/// KEYED INSERT, a mover of OTHER records, and stay blocking.  `peel_link` and not
-/// `base()`: a nullable vector's append is not this unit's shape, so `τ?` stays out.  A
-/// FIELD path (`h.pts += […]`) also answers `None` — this unit admits the bare-variable
-/// root the raster loops use; widening to field paths is a measured decision for later.
+/// KEYED INSERT, a mover of OTHER records, and stay blocking; a field form asks the
+/// SCHEMA ([`Stores::plain_vector_field`]), which also declines a linked group's member,
+/// whose finish hands the record to its siblings.  `peel_link` and not `base()`: a nullable
+/// vector's append is not this unit's shape, so `τ?` stays out — and the field form's root
+/// must name a plain record for the same reason (a nullable element's payload is reached
+/// through an op that forms no path).  Everything else answers `None`: the mint keeps its
+/// template and blocks the loop, as every unclassified store writer does.
 #[must_use]
-pub fn mint_path(
+pub fn mint_target(
     data: &Data,
+    stores: &Stores,
     op: &str,
     args: &[Value],
     vars: &crate::variables::Function,
-) -> Option<PathKey> {
+) -> Option<MintTarget> {
     let arity = match op {
         "OpNewRecord" => 3,
         "OpFinishRecord" => 4,
@@ -2649,11 +3187,62 @@ pub fn mint_path(
     if args.len() != arity {
         return None;
     }
-    let path = vector_path(data, &args[0])?;
-    if !path.1.is_empty() || path.0 >= vars.count() {
+    let (Some(Value::Int(tp)), Some(Value::Int(fld))) = (
+        args.get(arity - 2).map(Value::unspan),
+        args.get(arity - 1).map(Value::unspan),
+    ) else {
+        return None;
+    };
+    let tp = u16::try_from(*tp).ok()?;
+    let (root, mut offs) = vector_path(data, &args[0])?;
+    if root >= vars.count() {
         return None;
     }
-    matches!(vars.tp(path.0).peel_link(), Type::Vector(_, _)).then_some(path)
+    if offs.is_empty() && matches!(vars.tp(root).peel_link(), Type::Vector(_, _)) {
+        return Some(MintTarget {
+            path: (root, offs),
+            vector: args[0].clone(),
+            vector_tp: tp,
+        });
+    }
+    if *fld == i32::from(u16::MAX) || !mint_field_enabled() {
+        return None;
+    }
+    plain_record_type(data, vars.tp(root))?;
+    let (pos, vector_tp) = stores.plain_vector_field(tp, u16::try_from(*fld).ok()?)?;
+    offs.push(i64::from(pos));
+    let get_field = data.def_nr("OpGetField");
+    (get_field != u32::MAX).then(|| MintTarget {
+        path: (root, offs),
+        vector: Value::Call(
+            get_field,
+            vec![
+                args[0].clone(),
+                Value::Int(i32::from(pos)),
+                Value::Int(i32::from(vector_tp)),
+            ],
+        ),
+        vector_tp,
+    })
+}
+
+/// [`mint_target`]'s path alone — what the gate and the write-set walk ask.
+#[must_use]
+pub fn mint_path(
+    data: &Data,
+    stores: &Stores,
+    op: &str,
+    args: &[Value],
+    vars: &crate::variables::Function,
+) -> Option<PathKey> {
+    mint_target(data, stores, op, args, vars).map(|t| t.path)
+}
+
+/// `@FR-R-Mint`'s field clause is on — `LOFT_NO_FIELD_MINT=1` keeps a record append to a
+/// vector FIELD on its template (`@FR-R-Switch`).  Read at generation time.
+fn mint_field_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_FIELD_MINT").is_ok_and(|v| v != "0"))
 }
 
 /// `(R-Mint)`'s rebound clause — is every `Set(root, rhs)` in `body` alias-free: a null, or
@@ -2732,13 +3321,14 @@ pub fn mint_group(
     fn group_mint<'v>(
         inner: &'v Value,
         data: &Data,
+        stores: &Stores,
         vars: &crate::variables::Function,
         path: &PathKey,
     ) -> Option<&'v [Value]> {
         if let Value::Call(md, margs) = inner.unspan()
             && (*md as usize) < data.definitions.len()
             && data.def(*md).name() == "OpNewRecord"
-            && mint_path(data, "OpNewRecord", margs, vars).as_ref() == Some(path)
+            && mint_path(data, stores, "OpNewRecord", margs, vars).as_ref() == Some(path)
         {
             Some(margs)
         } else {
@@ -2750,9 +3340,11 @@ pub fn mint_group(
             continue;
         }
         if let Value::Set(e, inner) = op.unspan()
-            && let Some(margs) = group_mint(inner, data, vars, &path)
+            && let Some(margs) = group_mint(inner, data, stores, vars, &path)
         {
-            if !mint_push_qualifies(stores, margs, tiers.heap_push) {
+            if !mint_target(data, stores, "OpNewRecord", margs, vars)
+                .is_some_and(|t| mint_push_qualifies(stores, t.vector_tp, tiers.heap_push))
+            {
                 return None;
             }
             mints += 1;
@@ -2766,7 +3358,8 @@ pub fn mint_group(
             Value::Call(fd, fargs)
                 if (*fd as usize) < data.definitions.len()
                     && data.def(*fd).name() == "OpFinishRecord"
-                    && mint_path(data, "OpFinishRecord", fargs, vars).as_ref() == Some(&path) =>
+                    && mint_path(data, stores, "OpFinishRecord", fargs, vars).as_ref()
+                        == Some(&path) =>
             {
                 finishes += 1;
                 if let Some(Value::Var(e)) = fargs.get(1).map(Value::unspan) {
@@ -2783,7 +3376,17 @@ pub fn mint_group(
         // A statement of the group that is not one of its mints or finishes: admitted on
         // the same terms as a loop body's — and a mint or finish on P NESTED in it (inside an
         // `if`) is one the count above cannot see, so it declines.
-        if blocks_header_hoist(op, data, cache, &mut HashSet::new(), Some(vars), tiers, &mut fresh, owned)
+        if blocks_header_hoist(
+            op,
+            data,
+            Some(stores),
+            cache,
+            &mut HashSet::new(),
+            Some(vars),
+            tiers,
+            &mut fresh,
+            owned,
+        )
             || op.any_node(&mut |x| matches!(x, Value::Call(xd, xargs)
                 if (*xd as usize) < data.definitions.len()
                     && matches!(data.def(*xd).name(), "OpNewRecord" | "OpFinishRecord" | "OpPreAllocVector")
@@ -2796,36 +3399,56 @@ pub fn mint_group(
 }
 
 /// @PLN157 § V-t (`@FR-R-PushRec`) — may this mint group EMIT through a push header?  The
-/// schema is asked, not the op shape: the parent must be a plain inline-element vector
-/// (`Parts::Vector` — an `array`/`ordered` conversion holds 4-byte handles, and a keyed
-/// container's same-named ops place records), the form the tail-slot append (`fld ==
-/// u16::MAX`), and the element a plain struct that owns no heap — a raw slot carries stale
+/// schema is asked, not the op shape: `vector_tp` — the type [`mint_target`] resolved, from
+/// either spelling of the append — must be a plain inline-element vector (`Parts::Vector`
+/// — an `array`/`ordered` conversion holds 4-byte handles, and a keyed container's
+/// same-named ops place records), and the element a plain struct that owns no heap — a raw slot carries stale
 /// bytes, and a heap handle is the one field kind whose stale bytes something could walk
 /// before the group's writes land.  The group's writes cover every scalar field explicitly
 /// (the IR's literal lowering emits omitted fields' defaults and sentinels itself; a
 /// declined delivery is a whole-record copy), so no prefill is owed.
 #[must_use]
-pub fn mint_push_qualifies(stores: &Stores, args: &[Value], heap: bool) -> bool {
-    let (Some(Value::Int(tp)), Some(Value::Int(fld))) = (
-        args.get(1).map(Value::unspan),
-        args.get(2).map(Value::unspan),
-    ) else {
-        return false;
-    };
-    if *fld != i32::from(u16::MAX) {
+pub fn mint_push_qualifies(stores: &Stores, vector_tp: u16, heap: bool) -> bool {
+    if !stores.is_plain_vector(vector_tp) {
         return false;
     }
-    let Ok(tp) = u16::try_from(*tp) else {
-        return false;
-    };
-    if !stores.is_plain_vector(tp) {
-        return false;
-    }
-    let elem = stores.content(tp);
+    let elem = stores.content(vector_tp);
     // `@FR-R-PushRec` heap clause — a heap-owning element's slot is ZEROED at the mint
     // (the handles' prefill, one range write), so the stale-bytes objection no longer
     // holds; `heap` is the switch that keeps such an element on its templates.
-    elem != u16::MAX && stores.is_struct(elem) && (heap || !stores.owns_heap(elem))
+    // The enum clause — a USER struct-enum element is a record too: its literal writes the
+    // tag (`OpSetEnum(e, 0, variant)`) beside the variant's fields, and its slot is always
+    // zeroed, since a narrower variant leaves the tail of a wider one's slot unwritten.
+    elem != u16::MAX
+        && (stores.is_struct(elem) || (enum_record_enabled() && stores.is_struct_enum(elem)))
+        && (heap || !stores.owns_heap(elem))
+}
+
+/// `LOFT_NO_ENUM_RECORD=1` — a struct-enum value is no record to the hoist family again: no
+/// push header for a vector of them, no address for a view of one (`@FR-R-Switch`).  Read
+/// at generation time.
+#[must_use]
+pub fn enum_record_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_ENUM_RECORD").is_ok_and(|v| v != "0"))
+}
+
+/// A USER struct-enum view, for the record ADDRESS (`@FR-R-RecPtr`'s enum clause): the tag
+/// byte at 0 and the variant's fields behind it, each read at the offset the parser
+/// resolved for the arm that reads it — so the address needs no layout of its own.
+/// `(R-Scalar)`'s hoisted scalars keep [`plain_record_type`]: a key of (type, offset)
+/// cannot tell one variant's field from another's at the same offset.  The synthetic
+/// `__nullable<S>` stays out — its absence is a discriminant, not a null record.
+fn struct_enum_view(data: &Data, tp: &Type) -> bool {
+    if !enum_record_enabled() {
+        return false;
+    }
+    let d = match tp.peel_link() {
+        Type::Enum(d, true, _) => *d,
+        Type::Reference(d, _) if data.def_type(*d) == DefType::Enum => *d,
+        _ => return false,
+    };
+    !data.def(d).name().starts_with("__nullable<")
 }
 
 const FUSABLE_SETTERS: [(&str, &str); 3] = [
@@ -2930,6 +3553,7 @@ fn writes_store(
     blocks_header_hoist(
         node,
         data,
+        None,
         cache,
         active,
         vars,
@@ -3014,6 +3638,7 @@ fn frees_a_record(name: &str, args: &[Value], vars: Option<&crate::variables::Fu
 fn blocks_header_hoist(
     node: &Value,
     data: &Data,
+    stores: Option<&Stores>,
     cache: &mut HashMap<u32, bool>,
     active: &mut HashSet<u32>,
     vars: Option<&crate::variables::Function>,
@@ -3030,7 +3655,9 @@ fn blocks_header_hoist(
                 && matches!(inner.unspan(), Value::Call(d, args)
                     if (*d as usize) < data.definitions.len()
                         && data.def(*d).name() == "OpNewRecord"
-                        && vars.is_some_and(|vs| mint_path(data, "OpNewRecord", args, vs).is_some()))
+                        && vars.zip(stores).is_some_and(|(vs, st)| {
+                            mint_path(data, st, "OpNewRecord", args, vs).is_some()
+                        }))
             {
                 fresh.insert(*v);
             } else {
@@ -3088,12 +3715,19 @@ fn blocks_header_hoist(
             // admitted only while its DESTINATION is a fresh mint variable.
             let record_mint = known
                 && tiers.mint
-                && vars.is_some_and(|v| mint_path(data, data.def(*d).name(), args, v).is_some());
+                && vars.zip(stores).is_some_and(|(v, st)| {
+                    mint_path(data, st, data.def(*d).name(), args, v).is_some()
+                });
             let fresh_delivery = known
                 && tiers.mint
                 && data.def(*d).name() == "OpCopyRecord"
                 && args.len() == 3
                 && matches!(args[1].unspan(), Value::Var(e) if fresh.contains(e));
+            // `@FR-R-InPlace`'s copy clause — a flag-free copy of a no-heap record is an
+            // in-place write at a larger width; its operands still walk below this node.
+            let record_copy = known
+                && tiers.in_place
+                && in_place_copy(stores, data.def(*d).name(), args).is_some();
             if record_mint
                 && data.def(*d).name() == "OpFinishRecord"
                 && let Some(Value::Var(e)) = args.get(1).map(Value::unspan)
@@ -3107,6 +3741,7 @@ fn blocks_header_hoist(
                 || fusable_push
                 || record_mint
                 || fresh_delivery
+                || record_copy
             {
                 false
             } else if call_writes_store(*d, data, cache, active) {
@@ -3312,6 +3947,242 @@ fn is_scalar(tp: &Type) -> bool {
             | Type::Character
             | Type::Enum(_, false, _)
     )
+}
+
+/// `@FR-R-LazySplit` — one `for piece in text.split(c)` loop that takes its pieces straight
+/// from the text instead of reading them back out of a `vector<text>`.
+#[derive(Clone, Debug)]
+pub struct LazySplit {
+    /// The hidden `__ref` buffer the call would have filled, when it serves this call
+    /// alone: it is then never minted.  A buffer another call shares keeps its mint.
+    pub dead_buf: Option<u16>,
+    /// The separator: a character constant that is not the null character.
+    pub separator: char,
+}
+
+/// The lazy split loops of `def_nr`'s body, keyed by the hidden `_vector_N` variable the
+/// `For` block binds the call's result to (`@FR-R-LazySplit`).
+///
+/// `for piece in text.split(c)` lowers to a call that builds a `vector<text>` and a loop
+/// that reads it back one element at a time.  Nothing but that loop can name the vector,
+/// so the loop takes each piece from the text itself: the same pieces in the same order,
+/// with no vector and no record per piece.  Every gate is an under-approximation — a
+/// declined loop keeps the vector, which is always correct:
+///
+/// - the call is the STANDARD LIBRARY's `split(self: text, separator: character)`, whose
+///   pieces `codegen_runtime::lazy_split` reproduces;
+/// - the separator is a character CONSTANT other than the null character — a null
+///   separator compares equal to a NUL inside the text, which the iterator does not model;
+/// - the `For` block and its loop have exactly the shape the parser gives a forward walk of
+///   a text vector, and the vector is mentioned by its element read and its length test and
+///   NOWHERE else — those two expressions are what the emitter replaces;
+/// - the function is not a generator: its loops are re-entered across a `next` call, and
+///   the iterator is a local of the activation, not of the state machine.
+///
+/// The source text needs no gate: the emitter borrows it where nothing can write it and
+/// iterates a copy of it everywhere else (`Output::lazy_split_source`).
+#[must_use]
+pub fn lazy_splits(data: &Data, def_nr: u32) -> BTreeMap<u16, LazySplit> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    let trace = std::env::var("LOFT_TRACE_LAZY_SPLIT").is_ok();
+    let mut out: BTreeMap<u16, LazySplit> = BTreeMap::new();
+    let mut bufs: BTreeMap<u16, u16> = BTreeMap::new();
+    if body.any_node(&mut |n| matches!(n, Value::Yield(_))) {
+        return out;
+    }
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n
+            && bl.name == "For block"
+        {
+            match lazy_split_block(bl, data, vars) {
+                Ok((vec, buf, separator)) => {
+                    bufs.insert(vec, buf);
+                    out.insert(
+                        vec,
+                        LazySplit {
+                            dead_buf: None,
+                            separator,
+                        },
+                    );
+                }
+                Err(why) if trace && !why.is_empty() => {
+                    eprintln!("[lazy-split] {}: declined — {why}", def.name());
+                }
+                Err(_) => {}
+            }
+        }
+        false
+    });
+    // The vector is the emitter's to replace only when its two readers are its ONLY
+    // mentions and the call its only value: a third mention would read a vector the lazy
+    // form never fills.  Its `= null` declaration — hoisted to the function's top when
+    // another text depends on it — binds nothing.
+    out.retain(|vec, _| {
+        let mut mentions = 0u32;
+        let mut binds = 0u32;
+        body.any_node(&mut |n| {
+            match n {
+                Value::Var(v) if v == vec => mentions += 1,
+                Value::Set(v, to) if v == vec && !matches!(to.unspan(), Value::Null) => {
+                    binds += 1;
+                }
+                _ => {}
+            }
+            false
+        });
+        let ok = mentions == 2 && binds == 1;
+        if !ok && trace {
+            eprintln!(
+                "[lazy-split] {}: declined — {} is mentioned {mentions} times and bound {binds}",
+                def.name(),
+                vars.name(*vec)
+            );
+        }
+        ok
+    });
+    // A buffer that serves this call alone is never minted.  Its every mention must be
+    // accounted for — the one call argument, its frees, its null declaration, and the null
+    // test that guards a mint at first use (`@FR-O-LazyBuffer`) — as `move_appends`
+    // reconciles a placed buffer; a buffer with any other use keeps its mint, and the loop
+    // is lazy all the same.
+    for (vec, ls) in &mut out {
+        let buf = bufs[vec];
+        let mut total = 0u32;
+        let mut call_args = 0u32;
+        let mut benign = 0u32;
+        let mut rebound = false;
+        body.any_node(&mut |n| {
+            match n {
+                Value::Var(v) if *v == buf => total += 1,
+                Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                    let hits = args
+                        .iter()
+                        .filter(|a| matches!(a.unspan(), Value::Var(v) if *v == buf))
+                        .count() as u32;
+                    let name = data.def(*d).name();
+                    if name == "OpFreeRef" || name == "OpFreeRefTag" || name == "OpRefIsNull" {
+                        benign += hits;
+                    } else {
+                        call_args += hits;
+                    }
+                }
+                Value::Set(v, to) if *v == buf && !matches!(to.unspan(), Value::Null) => {
+                    rebound = true;
+                }
+                _ => {}
+            }
+            false
+        });
+        if call_args == 1 && total == call_args + benign && !rebound {
+            ls.dead_buf = Some(buf);
+        }
+        if trace {
+            eprintln!(
+                "[lazy-split] {}: {} is lazy, separator {:?}, buffer {} {}",
+                def.name(),
+                vars.name(*vec),
+                ls.separator,
+                vars.name(buf),
+                if ls.dead_buf.is_some() {
+                    "never minted"
+                } else {
+                    "shared, keeps its mint"
+                }
+            );
+        }
+    }
+    out
+}
+
+/// The vector, the buffer and the separator of ONE `For` block that walks a `split`, or
+/// the reason it is not one — empty for a `For` over anything else, which is no decline.
+fn lazy_split_block(
+    bl: &Block,
+    data: &Data,
+    vars: &crate::variables::Function,
+) -> Result<(u16, u16, char), &'static str> {
+    // ops = [.., Set(_vector, t_4text_split(src, sep, buf)), Set(idx, -1), Loop(..)]
+    // The bind, the index seed and the loop are consecutive and close the block.  What may
+    // stand before them — a `#count` seed, the buffer's mint at first use — is left alone:
+    // none of it can name the vector, which the mention count in `lazy_splits` holds it to.
+    let Some(at) = bl.operators.iter().position(|op| {
+        matches!(op.unspan(), Value::Set(_, call)
+            if call_named(call, data, "t_4text_split").is_some())
+    }) else {
+        return Err("");
+    };
+    let [bind, seed, walk] = &bl.operators[at..] else {
+        return Err("the bind, the index seed and the loop do not close the block");
+    };
+    let Value::Set(vec, call) = bind.unspan() else {
+        return Err("");
+    };
+    let Some([_src, sep, buf]) = call_named(call, data, "t_4text_split") else {
+        return Err("");
+    };
+    let Value::Call(d, _) = call.unspan() else {
+        return Err("");
+    };
+    if !crate::portable_path::is_stdlib_source(&data.def(*d).position.file) {
+        return Err("`split` is not the standard library's");
+    }
+    let Some(code) = call_named(sep, data, "OpConvCharacterFromInt")
+        .and_then(|a| a.first())
+        .and_then(|a| match a.unspan() {
+            Value::Int(k) => u32::try_from(*k).ok(),
+            _ => None,
+        })
+    else {
+        return Err("the separator is not a character constant");
+    };
+    let Some(separator) = char::from_u32(code).filter(|c| *c != '\0') else {
+        return Err("the separator is the null character");
+    };
+    let Some(buf) = as_var(Some(buf)) else {
+        return Err("the call's buffer is not a variable");
+    };
+    if buf >= vars.count() || !vars.name(buf).starts_with("__ref") {
+        return Err("the call's buffer is not a hidden return buffer");
+    }
+    let Value::Set(idx, start) = seed.unspan() else {
+        return Err("the block does not seed an index");
+    };
+    if !matches!(start.unspan(), Value::Int(-1)) {
+        return Err("the index does not start before the first element");
+    }
+    let Value::Loop(lp) = walk.unspan() else {
+        return Err("the block's third statement is not its loop");
+    };
+    // loop[0] = Set(piece, iter next { idx += 1; OpGetText(OpGetVectorNullable(vec, 4, idx), 0) })
+    let Some(Value::Set(_, next)) = lp.operators.first().map(Value::unspan) else {
+        return Err("the loop does not open by binding its variable");
+    };
+    let Value::Block(next) = next.unspan() else {
+        return Err("the loop variable is not bound from an iterator step");
+    };
+    let reads_vec = next.name.contains("iter next")
+        && next.operators.len() == 2
+        && call_named(&next.operators[1], data, "OpGetText")
+            .and_then(|a| a.first())
+            .and_then(|elem| call_named(elem, data, "OpGetVectorNullable"))
+            .is_some_and(|a| as_var(a.first()) == Some(*vec) && as_var(a.get(2)) == Some(*idx));
+    if !reads_vec {
+        return Err("the iterator step is not a plain element read");
+    }
+    // loop[1] = If(OpLeInt(OpLengthVector(vec), idx), break, _)
+    let ends_on_len = matches!(lp.operators.get(1).map(Value::unspan), Some(Value::If(test, _, _))
+    if call_named(test, data, "OpLeInt").is_some_and(|a| {
+        as_var(a.get(1)) == Some(*idx)
+            && a.first()
+                .and_then(|len| call_named(len, data, "OpLengthVector"))
+                .is_some_and(|l| as_var(l.first()) == Some(*vec))
+    }));
+    if !ends_on_len {
+        return Err("the loop does not end on the vector's length");
+    }
+    Ok((*vec, buf, separator))
 }
 
 /// @PLN157 § V-j (`@FR-R-MoveAppend`) — one paired move-append: a `for f in call(…)` whose

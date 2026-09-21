@@ -930,7 +930,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate file-sizes reference-review skills-review clippy-review
+.PHONY: perf-portal perf-portal-render perf-libs work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate file-sizes reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -2416,6 +2416,25 @@ gtest:
 bench:
 	cargo build --release -q
 	bash bench/run_bench.sh --warmup
+
+# The performance portal (@PLN158): every measured routine against its Rust twin, grouped
+# by mechanism CLASS, on one generated page — doc/claude/PERF_PORTAL.md.
+#   make perf-libs                        # the library checkouts it measures from (once, then to update)
+#   make perf-portal                      # measure everything on this machine, then render
+#   make perf-portal ARGS="--only 13,15"  # re-measure some lanes; the rest of the run is kept
+#   make perf-portal-render               # render from the saved runs only
+# A REPORT, never a gate.  The run is saved per machine under bench/portal/results/.
+perf-portal:
+	python3 bench/portal/portal.py measure $(ARGS)
+	python3 bench/portal/portal.py render
+
+# The library checkouts the portal measures from: normal clones under $$LOFT_PERF_LIBS
+# (default ../loft-bench-libs), cloned when missing and fast-forwarded when clean.
+perf-libs:
+	bash bench/portal/checkout_libs.sh
+
+perf-portal-render:
+	python3 bench/portal/portal.py render
 
 # Per-routine loft-native vs plain-Rust ratios with asserted output hashes
 # (@PLN157 P0, loft#1426).  A REPORT by default; `--gate` (the plan's phases

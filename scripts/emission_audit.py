@@ -21,6 +21,9 @@ rewrites make about the loop they sit in (doc/claude/formal/rewrites.md):
             (`let __vb_N = __ib_k; //@FR-R-Base view base for …`) is derived from a live one.
   R-RecPtr  a record view's address (`let __pa_N: *const u8 = vector::rec_ptr(…)`) is a holder
             for the rest of its block, and every `rec_get`/`rec_set` through one names a live one.
+            (base clause) an address taken from a held element base — `if (idx as u64) <
+            u64::from(H.len) { B.add(idx * size) }` — names a live header H and a live base B
+            of the SAME path.
 
 A runtime read on a held path (`vec_get_or_raise_runtime`, `length_vector`) is reported as a
 NOTE — a missed hoist, never a wrong answer.  Textual by design: the emitter spells a path
@@ -40,10 +43,13 @@ BIND_VIEW = re.compile(r"^\s*let (__vh_\d+) = .*//@PLN157 § V-n view header for
 BIND_BASE = re.compile(r"^\s*let (__vb_\d+): \*const u8 = vector::vec_base\(&([\w.]+), &stores\.allocations\);")
 # R-Base's twin clause: a view inside a twin SHARES the twin's base input (`__ib_k`) — or a
 # loop's base — under its own name; the source must be live here.
-BIND_VIEW_BASE = re.compile(r"^\s*let (__vb_\d+) = (__[iv]b_\d+); //@FR-R-Base view base for")
+BIND_VIEW_BASE = re.compile(r"^\s*let (__vb_\d+) = (__[iv]b_\d+); //@FR-R-Base view base for (\S+?)(?:,| |$)")
 # R-RecPtr: a record VIEW's address, bound right after the binding and live to the block's
 # end; every `rec_get`/`rec_set` through it must name a live one.
 BIND_RECPTR = re.compile(r"^\s*let (__pa_\d+): \*const u8 = vector::rec_ptr\(&\((\S+?)\), &stores\.allocations\); //@FR-R-RecPtr record view address for")
+# R-RecPtr's base clause: the loop variable of `for e in v` takes its address from the element
+# base the loop holds — the header and the base it names must both be live, on one path.
+BIND_RECPTR_BASE = re.compile(r"^\s*let (__pa_\d+): \*const u8 = if \(var_\w+ as u64\) < u64::from\(([\w.]+)\.len\) \{ unsafe \{ (__vb_\d+)\.add\(var_\w+ as usize \* \d+(?: \+ \d+)?\) \} \} else \{ std::ptr::null\(\) \}; //@FR-R-RecPtr record view address for (\S+?),")
 USE_RECPTR = re.compile(r"vector::rec_(get|set)::<[^>]*>\((__pa_\d+), ")
 BIND_SCALAR = re.compile(r"^\s*let (__vs_\d+) = (.*);")
 SCALAR_KEY = re.compile(r"let db = \((var_\w+)\);.*db\.pos \+ \((\d+)_i64\)")
@@ -108,6 +114,18 @@ def audit(text, quiet=False):
         mp = BIND_PUSH.match(line)
         mv = BIND_VIEW.match(line)
         ms = BIND_SCALAR.match(line)
+        mrb = BIND_RECPTR_BASE.match(line)
+        if mrb:
+            hdr, base = live(mrb.group(2)), live(mrb.group(3))
+            if hdr is None or base is None:
+                violations.append(f"{fn}:{nr}: R-RecPtr — {mrb.group(1)} takes its address from {mrb.group(2)} / {mrb.group(3)}, which is not live here")
+            elif hdr.path != base.path:
+                violations.append(f"{fn}:{nr}: R-RecPtr — {mrb.group(1)} pairs header {mrb.group(2)} (`{hdr.path}`) with base {mrb.group(3)} (`{base.path}`)")
+            holders.append(Holder(mrb.group(1), "recptr", f"rec:{mrb.group(4)}", depth, nr))
+            bound_total += 1
+            depth += code.count("{") - code.count("}")
+            holders = [h for h in holders if h.depth <= depth]
+            continue
         mr = BIND_RECPTR.match(line)
         if mr:
             holders.append(Holder(mr.group(1), "recptr", f"rec:{mr.group(2)}", depth, nr))
@@ -124,7 +142,12 @@ def audit(text, quiet=False):
             src = live(mb.group(2))
             if src is None:
                 violations.append(f"{fn}:{nr}: R-Base — {mb.group(1)} derives a base from {mb.group(2)}, which is not live here")
-            holders.append(Holder(mb.group(1), "base", src.path if src else None, depth, nr))
+            # A view's shared base names the view it serves; a twin's base INPUT carries no
+            # path of its own, so the view's name is the path there.
+            path = src.path if src else None
+            if path is None and mb.re is BIND_VIEW_BASE:
+                path = mb.group(3)
+            holders.append(Holder(mb.group(1), "base", path, depth, nr))
             bound_total += 1
             depth += code.count("{") - code.count("}")
             holders = [h for h in holders if h.depth <= depth]

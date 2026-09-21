@@ -1,8 +1,11 @@
-// Benchmark 10: Insertion sort (3000 integers)
+// Benchmark 10: Insertion sort (3,000 integers, built and sorted per op)
+//
+// One OP is 3,000 pseudo-random integers built from `salt` and insertion-sorted in place.  The timed loop runs `--n` ops, each on an input that differs by
+// the repetition number — in VALUE, never in the amount of work — so no optimiser can
+// hoist or collapse the kernel across repetitions, and folds every result into `sink`.
+// The `hash` column is one canonical op's result: every lane must print the same one,
+// or the lanes are not computing the same thing and their times do not compare.
 // In-place sort: element mutations are visible to the caller without '&'.
-// Avoids issue 84 (for loop in helper called from recursive function)
-// by using a non-recursive sort with no vector-returning helper functions.
-
 fn insertion_sort(arr: vector<integer>) {
   n = len(arr);
   for is_i in 1..n {
@@ -20,18 +23,46 @@ fn insertion_sort(arr: vector<integer>) {
   }
 }
 
-fn main() {
-  total = 3000;
-  data = [for sort_i in 0..total { (sort_i * 31337 + 17) % 100000 }];
-  t0 = ticks();
+fn sorted_sum(total: integer, salt: integer) -> integer {
+  data = [for sort_i in 0..total { (sort_i * 31337 + 17 + salt) % 100000 }];
   insertion_sort(data);
-  ms = (ticks() - t0) / 1000;
-  checksum = data[0] + data[total - 1] + data[total / 2];
-  ok = true;
   for sort_j in 1..total {
-    if data[sort_j] < data[sort_j - 1] {
-      ok = false;
-    }
+    if data[sort_j] < data[sort_j - 1] { return -1 }
   }
-  println("result: {checksum} sorted={ok}  time: {ms}ms");
+  data[0] + data[total - 1] + data[total / 2]
+}
+
+/// `--n N`: how many ops the timed loop runs (the harness calibrates it per lane).
+fn arg_n(dflt: integer) -> integer {
+  an_args = arguments();
+  an_n = dflt;
+  an_i = 0;
+  while an_i < len(an_args) {
+    if an_args[an_i]? == "--n" && an_i + 1 < len(an_args) {
+      an_n = (an_args[an_i + 1]? as integer?)?;
+      an_i += 1;
+    }
+    an_i += 1;
+  }
+  if an_n < 2 { an_n = 2; }
+  an_n
+}
+
+/// One measured routine, in the row format every lane prints (bench/README.md).
+fn row(name: text, iters: integer, us: integer, items: integer, result: integer, sink: integer) {
+  rw_ns = ((us * 1000) / iters) ?? 0;
+  rw_it = (((us * 1000) as float) / ((iters * items) as float)) ?? 0.0;
+  println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+  println("{name}\t{iters}\t{us}\t{rw_ns}\t{items}\t{rw_it:.3}\t{result:x}");
+  println("time: {us / 1000}ms sink={sink}");
+}
+
+fn main() {
+  n = arg_n(20);
+  total = 3000;
+  t0 = ticks();
+  sink = 0;
+  for r in 0..n { sink += sorted_sum(total, r & 1); }
+  us = ticks() - t0;
+  row("sort", n, us, total, sorted_sum(total, 0), sink);
 }

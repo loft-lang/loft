@@ -727,6 +727,50 @@ pub fn OpGetRecord(
     get_record_lookup(cell, data, db_tp, key).or_null()
 }
 
+/// [`OpGetRecord`] for a `hash<T[k]>` whose ONE key is an integer, the key handed over as
+/// the value (`@FR-R-TypedKeyed`): what `--native` emits where the collection's kind and
+/// its key's are read off the schema at generation time.
+///
+/// The general entry learns both again per lookup — a `Content` built to be matched
+/// apart, the collection's type row dispatched on, a `FastKey` chosen and re-dispatched —
+/// which after the probe walk itself was cut to ~1.2 buckets had become most of a lookup.
+/// This one goes straight to `hash::find_long`.  Everything that is not the plain answer
+/// — no record, an absent collection, a width `find_long` does not list, a miss on a
+/// collection a lazy source is bound to — is the general entry's, reached with the same
+/// key, so the two cannot answer differently.
+///
+/// # Panics
+/// Under `LOFT_KEYED_VERIFY=1`, when the typed lookup and the general one disagree.
+pub fn OpGetHashLong(
+    cell: &std::cell::UnsafeCell<Stores>,
+    data: DbRef,
+    db_tp: i32,
+    key: i64,
+) -> DbRef {
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    if data.rec != 0
+        && !vector::is_absent_collection(&data, &stores.allocations)
+        && let [k] = stores.keys(db_tp as u16)
+        && let Some(found) = crate::hash::find_long(&data, &stores.allocations, k, key)
+        && (found.rec != 0 || !stores.lazy_bound(&data))
+    {
+        if crate::keys::keyed_verify() {
+            let general = stores.find(&data, db_tp as u16, &[crate::keys::Content::Long(key)]);
+            assert!(
+                (general.rec, general.pos) == (found.rec, found.pos),
+                "LOFT_KEYED_VERIFY: the typed lookup answers {}+{} where the general one \
+                 answers {}+{}",
+                found.rec,
+                found.pos,
+                general.rec,
+                general.pos,
+            );
+        }
+        return found.or_null();
+    }
+    OpGetRecord(cell, data, db_tp, &[crate::keys::Content::Long(key)])
+}
+
 /// [`OpGetRecord`]'s lookup: resident first, then the lazy source.  Every miss arm answers
 /// a reference with no record and the caller spells it as a value.
 fn get_record_lookup(
@@ -745,7 +789,10 @@ fn get_record_lookup(
         // nothing (generated code is Rust calling Rust), and it keeps the two
         // backends reading the same two calls in the same order.
         let found = stores.find(&data, db_tp as u16, key);
-        if found.rec != 0 {
+        // Resident, or a miss on a collection nothing is bound to: either way the
+        // collection has answered (`Stores::lazy_bound`).  The interpreter's twin asks
+        // the same question at the same point.
+        if found.rec != 0 || !stores.lazy_bound(&data) {
             return found;
         }
         // @PLN133 S8 — a source served by a LOFT driver. Same shape as the
@@ -857,6 +904,45 @@ fn get_record_lookup(
         }
         stores.fetch_missing(&data, db_tp as u16, key)
     }
+}
+
+/// The pieces of `text.split(separator)`, one at a time and in order, as slices of `text`
+/// (`@FR-R-LazySplit`): what a `for piece in text.split(c)` loop iterates when nothing
+/// else can reach the vector the call would have built.
+///
+/// It yields exactly the elements `split` in `default/02_files.loft` returns: none for an
+/// empty text, and otherwise one piece per separator plus the trailing piece, which is
+/// empty when the text ends in a separator.  A NULL text is not empty — it is the one
+/// character of the null sentinel — so it answers itself as its only piece, as `split`
+/// does.  The separator is a character, so a multi-byte one splits on the whole character
+/// and never inside another.
+pub struct LazySplit<'a> {
+    rest: Option<&'a str>,
+    separator: char,
+}
+
+impl<'a> Iterator for LazySplit<'a> {
+    type Item = &'a str;
+
+    #[inline]
+    fn next(&mut self) -> Option<&'a str> {
+        let text = self.rest?;
+        if let Some(at) = text.find(self.separator) {
+            self.rest = Some(&text[at + self.separator.len_utf8()..]);
+            Some(&text[..at])
+        } else {
+            self.rest = None;
+            Some(text)
+        }
+    }
+}
+
+/// Start a [`LazySplit`] over `text`.
+#[inline]
+#[must_use]
+pub fn lazy_split(text: &str, separator: char) -> LazySplit<'_> {
+    let rest = if text.is_empty() { None } else { Some(text) };
+    LazySplit { rest, separator }
 }
 
 /// Extract a substring from a text value.

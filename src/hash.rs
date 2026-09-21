@@ -60,6 +60,21 @@ pub fn stride_for(size: u32) -> u32 {
     size.max(8).next_multiple_of(8)
 }
 
+/// The bucket a key's walk starts at — the ONE place a digest becomes a bucket number.
+///
+/// Part of the on-disk placement contract (`crate::placement::HASH`): a reader that
+/// derives it differently looks in the wrong bucket.  That is also why it is still a
+/// 64-bit `%` by a count that is not a power of two — a division on every lookup's
+/// critical path, priced at 7–10 % of a cache-resident lookup
+/// (`bench/portal/analysis/keyed.md`).  A multiply-shift range reduction would remove it
+/// and move every entry of every stored hash, and an exact reciprocal needs a per-table
+/// magic number the table's header has no word for; both are a format break, so neither
+/// is taken here.
+#[inline]
+fn home_bucket(digest: u64, count: u32) -> u32 {
+    (digest % u64::from(count)) as u32
+}
+
 /// Bucket slots in table record `claim`.
 fn elms(store: &Store, claim: u32) -> u32 {
     (store.record_words(claim) - RESERVED_WORDS) * 2
@@ -123,6 +138,85 @@ fn entry_ref(store: &Store, claim: u32, index: u32, store_nr: u16, stride: u32) 
             rec: 0,
             pos: 0,
         },
+    }
+}
+
+/// The loop-invariant half of [`entry_ref`], read ONCE for a walk over a table's buckets.
+///
+/// Decoding a slot re-read the arena's directory field, the directory's size header and
+/// its bounds for every bucket probed — all facts of the TABLE, not of the slot.  A walk
+/// holds them here and [`Entries::at`] is then the chunk arithmetic and one read.  At a
+/// million entries that repetition hides behind two cache misses (@PLN135 measured the
+/// hoist as nothing there); in a table that fits the cache it was a tenth of a lookup
+/// and an eighth of an insert (`bench/portal/analysis/keyed.md`).
+///
+/// Valid only while nothing appends a chunk to the arena — a lookup, the duplicate walk
+/// of an insert, a rebuild of the buckets, a removal's back-shift: none of them does.
+#[derive(Clone, Copy)]
+struct Entries {
+    store_nr: u16,
+    stride: u32,
+    dir: u32,
+    cap: u32,
+}
+
+impl Entries {
+    fn of(store: &Store, claim: u32, store_nr: u16) -> Entries {
+        let stride = stride(store, claim);
+        let dir = if stride == 0 {
+            0
+        } else {
+            store.get_u32_raw(claim, arena::DIR_FLD)
+        };
+        Entries {
+            store_nr,
+            stride,
+            dir,
+            cap: arena::dir_capacity(store, dir),
+        }
+    }
+
+    /// `(record, payload offset)` of the entry bucket value `slot` names, record 0 when
+    /// it names nothing — [`entry_ref`]'s answer, arm for arm.
+    #[inline]
+    fn at(&self, store: &Store, slot: u32) -> (u32, u32) {
+        if self.stride == 0 || slot & SLOT_RECORD != 0 {
+            return (slot & !SLOT_RECORD, crate::store::RECORD_PAYLOAD);
+        }
+        let (k, off) = arena::locate(slot, self.stride);
+        if k >= self.cap {
+            return (0, 0);
+        }
+        match store.get_u32_raw(self.dir, arena::DIR0 + 4 * k) {
+            0 => (0, 0),
+            rec => (rec, off),
+        }
+    }
+
+    /// Does bucket value `slot` name the entry at `rec`?  What `slot == slot_value(rec)`
+    /// asked, answered from the slot's side: a record slot names its record whatever
+    /// `rec.pos` is, an arena slot the chunk and the stride-wide slot `rec.pos` falls in —
+    /// the two tolerances `slot_value` and `arena::index_of` have — with no scan of the
+    /// chunk directory for the index.
+    #[inline]
+    fn names(&self, store: &Store, slot: u32, rec: &DbRef) -> bool {
+        if self.stride == 0 || slot & SLOT_RECORD != 0 {
+            return slot & !SLOT_RECORD == rec.rec;
+        }
+        let (chunk, off) = self.at(store, slot);
+        chunk == rec.rec
+            && rec.pos >= arena::SLOT0
+            && (rec.pos - arena::SLOT0) / self.stride == (off - arena::SLOT0) / self.stride
+    }
+
+    #[inline]
+    fn entry(&self, store: &Store, slot: u32) -> DbRef {
+        let (rec, pos) = self.at(store, slot);
+        DbRef {
+            store_nr: self.store_nr,
+            rec,
+            pos,
+        }
     }
 }
 
@@ -232,19 +326,167 @@ pub fn add(hash: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
         rec.rec,
         rec.pos,
     );
-    let room = keys::store(hash, stores).record_words(claim);
-    // Grow at load factor 0.75 (= 0.75·elms).  The `+ RESERVED_WORDS` counts the words
-    // before the bucket array: rehash when `length >= 1.5·(room - 4) = 0.75·elms`.
-    if (length * 2 / 3) + RESERVED_WORDS >= room {
-        let new_claim = keys::mut_store(hash, stores).claim(room * 2 - 1);
-        keys::mut_store(hash, stores).zero_fill(new_claim);
-        rehash_into(hash, claim, new_claim, stores, keys);
-        install_table(hash, claim, new_claim, stores);
-        claim = new_claim;
+    if let Some(grown) = grow_if_full(hash, claim, length, stores, keys) {
+        claim = grown;
     }
     hash_set(claim, index, rec, stores, keys);
     keys::mut_store(rec, stores).set_u32_raw(claim, LEN_FLD, length + 1);
     // hash_validate(hash, key, stores, keys);
+}
+
+/// `LOFT_NO_HALF_LOAD=1` — a table is rebuilt at three quarters full again instead of at
+/// half.  A writer's policy, read once: no reader assumes a load, so stores written under
+/// either setting read under both.
+fn half_load() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !keys::env_set("LOFT_NO_HALF_LOAD"))
+}
+
+/// Is a table of `room` words holding `length` entries due a rebuild before the next?
+///
+/// `elms = 2·(room - RESERVED_WORDS)`, so `length + RESERVED_WORDS >= room` is
+/// `length >= elms / 2`: the table is rebuilt at HALF full.  It was three quarters
+/// (`length * 2 / 3` in the same test), which is where linear probing turns: a probe here
+/// is a dependent read of the entry, with no fingerprint to reject on, and a miss walks
+/// to the first empty bucket — 8.5 buckets at 0.75 against 2.5 at 0.5.  A table filled
+/// to just under the old threshold measured 2.30 key compares a hit and 5.36 a miss
+/// (`bench/portal/analysis/keyed.md`).  The price is the bucket array, 4 bytes a slot:
+/// ~10.7 bytes an entry averaged over a doubling instead of ~7.1.
+fn is_full(length: u32, room: u32) -> bool {
+    let weighed = if half_load() { length } else { length * 2 / 3 };
+    weighed + RESERVED_WORDS >= room
+}
+
+/// The words a table must have to take `count` entries without a rebuild: one past
+/// [`is_full`]'s trigger for `length == count`.
+fn words_for(count: u64) -> u64 {
+    let weighed = if half_load() { count } else { count * 2 / 3 };
+    weighed + u64::from(RESERVED_WORDS) + 1
+}
+
+/// Rebuild table `claim` at twice its size when one more entry would cross the load
+/// factor ([`is_full`]), answering the new table — the growth half of [`add`], shared
+/// with [`add_at`].
+fn grow_if_full(
+    hash: &DbRef,
+    claim: u32,
+    length: u32,
+    stores: &mut [Store],
+    keys: &[Key],
+) -> Option<u32> {
+    let room = keys::store(hash, stores).record_words(claim);
+    if !is_full(length, room) {
+        return None;
+    }
+    let new_claim = keys::mut_store(hash, stores).claim(room * 2 - 1);
+    keys::mut_store(hash, stores).zero_fill(new_claim);
+    rehash_into(hash, claim, new_claim, stores, keys);
+    install_table(hash, claim, new_claim, stores);
+    Some(new_claim)
+}
+
+/// What ONE probe walk from a record's home bucket established about inserting it
+/// ([`probe_for_insert`]).
+pub enum Probed {
+    /// No entry carries the record's key.  The walk ended on the empty bucket at byte
+    /// offset `bucket` of the table — the one [`add`] would file it in — and `index` is
+    /// the slot value that names the record.
+    Free { bucket: u32, index: u32 },
+    /// Another entry already carries the record's key: the one an insert displaces
+    /// (@FR-Col-Insert — latest insert wins).
+    Present(DbRef),
+    /// Nothing established: no table yet, or the record is already filed in it.  The
+    /// caller takes the two-walk form, which owns both answers.
+    Unknown,
+}
+
+/// One hash and one probe walk for an insert: is `rec`'s key already here, and if not,
+/// which bucket takes it.
+///
+/// An insert used to ask those as two separate walks — the duplicate lookup
+/// (`Stores::dedup_keyed`: the key copied out into a `Vec<Content>`, hashed, probed) and
+/// then [`add`] (the key re-read from the record, hashed AGAIN, probed again for the
+/// empty bucket).  They are the same walk: both start at the key's home bucket, and the
+/// duplicate — if there is one — lies before the first empty bucket, which is where the
+/// second walk stops.  A quarter of a cache-resident insert was the repeat
+/// (`bench/portal/analysis/keyed.md`).
+///
+/// The key is compared through [`keys::fast_key_of`] where it has one field of a listed
+/// width, and record against record otherwise, so a compound key takes this path too.
+#[must_use]
+pub fn probe_for_insert(hash: &DbRef, rec: &DbRef, stores: &[Store], keys: &[Key]) -> Probed {
+    let store = keys::store(hash, stores);
+    let claim = store.collection_rec(hash.rec, hash.pos);
+    if claim == 0 || store.record_words(claim) <= RESERVED_WORDS {
+        return Probed::Unknown;
+    }
+    let count = elms(store, claim);
+    let entries = Entries::of(store, claim, hash.store_nr);
+    let own = slot_value(store, claim, rec, entries.stride);
+    let hash_val = keys::hash(rec, stores, keys, read_seed(store, claim));
+    let mut at = home_bucket(hash_val, count);
+    let fast = keys::fast_key_of(rec, stores, keys);
+    for _ in 0..count {
+        let slot = store.get_u32_raw(claim, BUCKET0 + at * SLOT_BYTES);
+        if slot == 0 {
+            return Probed::Free {
+                bucket: BUCKET0 + at * SLOT_BYTES,
+                index: own,
+            };
+        }
+        if slot == own {
+            return Probed::Unknown;
+        }
+        let entry = entries.entry(store, slot);
+        let same = match &fast {
+            Some(f) => f.matches(store, entry.rec, entry.pos),
+            None => keys::compare(rec, &entry, stores, keys) == Ordering::Equal,
+        };
+        if same {
+            return Probed::Present(entry);
+        }
+        at += 1;
+        if at >= count {
+            at = 0;
+        }
+    }
+    Probed::Unknown
+}
+
+/// File `rec` in the bucket [`probe_for_insert`] found free — [`add`] without its walk.
+///
+/// A table that must grow first is rebuilt exactly as [`add`] rebuilds it, and the
+/// record is then filed by a walk of the NEW table: the bucket named an offset in the
+/// old one.
+///
+/// # Panics
+/// Under `LOFT_KEYED_VERIFY=1`, when `bucket` is not the one the free-slot walk chooses.
+pub fn add_at(
+    hash: &DbRef,
+    rec: &DbRef,
+    bucket: u32,
+    index: u32,
+    stores: &mut [Store],
+    keys: &[Key],
+) {
+    let claim = keys::store(hash, stores).collection_rec(hash.rec, hash.pos);
+    let length = keys::store(hash, stores).get_u32_raw(claim, LEN_FLD);
+    if keys::keyed_verify() {
+        let walked = hash_free_pos(claim, rec, stores, keys);
+        assert!(
+            walked == bucket,
+            "LOFT_KEYED_VERIFY: the one-probe insert chose bucket {bucket} where the \
+             free-slot walk chooses {walked}"
+        );
+    }
+    if let Some(grown) = grow_if_full(hash, claim, length, stores, keys) {
+        hash_set(grown, index, rec, stores, keys);
+        keys::mut_store(rec, stores).set_u32_raw(grown, LEN_FLD, length + 1);
+        return;
+    }
+    let store = keys::mut_store(rec, stores);
+    store.set_u32_raw(claim, bucket, index);
+    store.set_u32_raw(claim, LEN_FLD, length + 1);
 }
 
 /// Give `hash` a bucket table large enough to hold `count` entries without rehashing,
@@ -256,8 +498,8 @@ pub fn add(hash: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
 /// A `count` the current table already covers does nothing, so calling it twice, or
 /// with too small a number, is safe.
 ///
-/// The size solves [`add`]'s own growth condition: `add` rebuilds when
-/// `(length * 2 / 3) + 2 >= room`, so `room` must exceed that for `length == count`.
+/// The size solves [`add`]'s own growth condition ([`is_full`]): `room` must exceed the
+/// trigger for `length == count` ([`words_for`]).
 pub fn reserve(hash: &DbRef, count: i64, stride: u32, stores: &mut [Store], keys: &[Key]) {
     // A negative or absurd count asks for nothing; a table so large its word count
     // overflows a `u32` cannot be claimed at all.  Both mean "leave it alone" — this
@@ -265,12 +507,11 @@ pub fn reserve(hash: &DbRef, count: i64, stride: u32, stores: &mut [Store], keys
     let Ok(count) = u64::try_from(count) else {
         return;
     };
-    // `+ 1` past the reserved words is the whole point: `add` rebuilds when
-    // `(length * 2 / 3) + RESERVED_WORDS >= room`, so `room` must EXCEED that for
-    // `length == count` — sized to exactly the trigger, the last insert grows the
-    // table and the reservation buys nothing but a doubling (measured: a 1M table
-    // reserved at the trigger ended up 10.7 MB at load 0.37 instead of 5.3 MB at 0.75).
-    let Ok(want) = u32::try_from((count * 2 / 3) + u64::from(RESERVED_WORDS) + 1) else {
+    // `+ 1` past the trigger is the whole point: `room` must EXCEED it for
+    // `length == count` — sized to exactly the trigger, the last insert grows the table
+    // and the reservation buys nothing but a doubling (measured under the 0.75 rule: a
+    // 1M table reserved at the trigger ended up 10.7 MB at load 0.37 instead of 5.3 MB).
+    let Ok(want) = u32::try_from(words_for(count)) else {
         return;
     };
     // Create the table if it is not there yet, so the seed, the stride and the arena
@@ -322,7 +563,7 @@ fn rehash_into(hash: &DbRef, from: u32, into: u32, stores: &mut [Store], keys: &
     // loses the ENTRIES, so the next insert would hand out index 1 again on top of a
     // live entry.  These four fields plus the seed are the whole of the table's
     // identity; the buckets are re-derived below.
-    let width = stride(keys::store(hash, stores), from);
+    let entries = Entries::of(keys::store(hash, stores), from, hash.store_nr);
     for fld in [arena::DIR_FLD, arena::NEXT_FLD, arena::FREE_FLD, STRIDE_FLD] {
         let v = keys::store(hash, stores).get_u32_raw(from, fld);
         keys::mut_store(hash, stores).set_u32_raw(into, fld, v);
@@ -334,7 +575,7 @@ fn rehash_into(hash: &DbRef, from: u32, into: u32, stores: &mut [Store], keys: &
         if index == 0 {
             continue;
         }
-        let entry = entry_ref(keys::store(hash, stores), from, index, hash.store_nr, width);
+        let entry = entries.entry(keys::store(hash, stores), index);
         hash_set(into, index, &entry, stores, keys);
     }
     keys::mut_store(hash, stores).set_u32_raw(into, LEN_FLD, length);
@@ -350,7 +591,7 @@ fn hash_free_pos(claim: u32, rec: &DbRef, stores: &[Store], keys: &[Key]) -> u32
     let count = elms(keys::store(rec, stores), claim);
     let seed = read_seed(keys::store(rec, stores), claim);
     let hash_val = keys::hash(rec, stores, keys, seed);
-    let mut index = (hash_val % u64::from(count)) as u32;
+    let mut index = home_bucket(hash_val, count);
     for _ in 0..count {
         if keys::store(rec, stores).get_u32_raw(claim, BUCKET0 + index * SLOT_BYTES) == 0 {
             break;
@@ -363,7 +604,10 @@ fn hash_free_pos(claim: u32, rec: &DbRef, stores: &[Store], keys: &[Key]) -> u32
     BUCKET0 + index * SLOT_BYTES
 }
 
-/// The 0-based bucket that currently holds arena index `want`, or `None` when no bucket does.
+/// The 0-based bucket that currently holds the entry at `rec`, with the slot value it
+/// holds, or `None` when no bucket does.  The entry is recognised by DECODING each slot on
+/// the chain (`Entries::names`), so a removal never maps its record back to an arena index
+/// — a scan of the chunk directory it used to make twice, once here and once to free.
 ///
 /// Probes from the key's home bucket and stops at the first EMPTY slot, which ends every probe
 /// chain (deletion shifts entries back, so there are no tombstones to step over) — a record
@@ -372,18 +616,24 @@ fn hash_free_pos(claim: u32, rec: &DbRef, stores: &[Store], keys: &[Key]) -> u32
 /// zeroed: a null element of a linked group handed to the unlink loop — a record whose key
 /// reads as zero and that no view holds — took a live entry with it under every seed whose
 /// zero-key bucket happened to be occupied, one run in twenty.
-fn hash_rec_pos(claim: u32, want: u32, rec: &DbRef, stores: &[Store], keys: &[Key]) -> Option<u32> {
-    let count = elms(keys::store(rec, stores), claim);
-    let seed = read_seed(keys::store(rec, stores), claim);
-    let hash_val = keys::hash(rec, stores, keys, seed);
-    let mut index = (hash_val % u64::from(count)) as u32;
+fn hash_rec_pos(
+    claim: u32,
+    entries: &Entries,
+    rec: &DbRef,
+    stores: &[Store],
+    keys: &[Key],
+) -> Option<(u32, u32)> {
+    let store = keys::store(rec, stores);
+    let count = elms(store, claim);
+    let hash_val = keys::hash(rec, stores, keys, read_seed(store, claim));
+    let mut index = home_bucket(hash_val, count);
     for _ in 0..count {
-        let val = keys::store(rec, stores).get_u32_raw(claim, BUCKET0 + index * SLOT_BYTES);
-        if val == want {
-            return Some(index);
-        }
+        let val = store.get_u32_raw(claim, BUCKET0 + index * SLOT_BYTES);
         if val == 0 {
             return None;
+        }
+        if entries.names(store, val, rec) {
+            return Some((index, val));
         }
         index += 1;
         if index >= count {
@@ -410,45 +660,27 @@ pub fn find(hash_ref: &DbRef, stores: &[Store], keys: &[Key], key: &[Content]) -
         return record;
     }
     let count = elms(store, claim);
-    let width = stride(store, claim);
     let seed = read_seed(store, claim);
     let hash_val = keys::key_hash(key, seed);
-    let mut index = (hash_val % u64::from(count)) as u32;
-    let mut slot = store.get_u32_raw(claim, BUCKET0 + index * SLOT_BYTES);
+    let mut index = home_bucket(hash_val, count);
     // @PLN135 arc B — a probe asks only *is this the key*, about the SAME key every
     // time, so the `(Content, type_nr)` match belongs outside the loop.  `fast_key`
     // resolves the field offset and the value once; the loop then reads the field
     // directly.  Same hash, same bucket order, same answer — measured at ~10 ns of a
-    // ~33 ns cache-resident lookup on 1M `integer` keys, and it pays on INSERT too
-    // (dedup runs one `find` per insert).  A compound key, or a width `fast_key` does
-    // not list, answers `None` and takes the general loop below.
+    // ~33 ns cache-resident lookup on 1M `integer` keys.  A compound key, or a width
+    // `fast_key` does not list, answers `None` and takes the general loop below.
     if let Some(fast) = keys::fast_key(keys, key) {
-        for _ in 0..count {
-            if slot == 0 {
-                record.rec = 0;
-                record.pos = 0;
-                break;
-            }
-            let entry = entry_ref(store, claim, slot, hash_ref.store_nr, width);
-            if fast.matches(store, entry.rec, entry.pos) {
-                record = entry;
-                break;
-            }
-            index += 1;
-            if index >= count {
-                index = 0;
-            }
-            slot = store.get_u32_raw(claim, BUCKET0 + index * SLOT_BYTES);
-        }
-        return record;
+        return find_fast(hash_ref, store, claim, count, index, &fast);
     }
+    let entries = Entries::of(store, claim, hash_ref.store_nr);
+    let mut slot = store.get_u32_raw(claim, BUCKET0 + index * SLOT_BYTES);
     'Record: for _ in 0..count {
         if slot == 0 {
             record.rec = 0;
             record.pos = 0;
             break;
         }
-        record = entry_ref(store, claim, slot, hash_ref.store_nr, width);
+        record = entries.entry(store, slot);
         if keys::key_compare(key, &record, stores, keys) != Ordering::Equal {
             index += 1;
             if index >= count {
@@ -462,57 +694,244 @@ pub fn find(hash_ref: &DbRef, stores: &[Store], keys: &[Key], key: &[Content]) -
     record
 }
 
-pub fn remove(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
+/// `@FR-R-TypedKeyed` — [`find`] for a key of ONE integer field, handed over as the value
+/// itself: the entry point of a caller that already knows the collection's kind and its key's
+/// (`codegen_runtime::OpGetHashLong`, which `--native` emits for a `hash<T[k]>` whose one
+/// key is an integer).  Nothing is built to be taken apart again — no `Content`, no
+/// `FastKey` chosen and then re-dispatched — so it is the table's three header reads, the
+/// hash, and the walk.  `None` when `key` is not one of the integer widths
+/// [`keys::fast_key`] lists; the caller then takes [`find`].
+///
+/// The answer is [`find`]'s for `[Content::Long(value)]`: same digest
+/// ([`keys::long_hash`]), same home bucket, same walk ([`probe`]), same comparison
+/// ([`keys::FastKey::matches`]).
+#[must_use]
+pub fn find_long(hash_ref: &DbRef, stores: &[Store], key: &Key, value: i64) -> Option<DbRef> {
+    use keys::FastKey;
+    let kind = key.type_nr.unsigned_abs();
+    if !matches!(kind, 1 | 2 | 8 | 12) {
+        return None;
+    }
+    let store = &stores[hash_ref.store_nr as usize];
+    let claim = store.get_u32_raw(hash_ref.rec, hash_ref.pos);
+    let mut found = DbRef {
+        store_nr: hash_ref.store_nr,
+        rec: 0,
+        pos: 0,
+    };
+    if claim == 0 || store.record_words(claim) == 0 {
+        return Some(found);
+    }
+    let count = elms(store, claim);
+    let home = home_bucket(keys::long_hash(value, read_seed(store, claim)), count);
+    let entries = Entries::of(store, claim, hash_ref.store_nr);
+    let p = u32::from(key.position);
+    (found.rec, found.pos) = match kind {
+        1 => {
+            let k = FastKey::Int(p, value);
+            probe(store, claim, count, home, &entries, |r, b| {
+                k.matches(store, r, b)
+            })
+        }
+        2 => {
+            let k = FastKey::Long(p, value);
+            probe(store, claim, count, home, &entries, |r, b| {
+                k.matches(store, r, b)
+            })
+        }
+        8 => {
+            let k = FastKey::I32(p, value);
+            probe(store, claim, count, home, &entries, |r, b| {
+                k.matches(store, r, b)
+            })
+        }
+        _ => {
+            let k = FastKey::U32(p, value);
+            probe(store, claim, count, home, &entries, |r, b| {
+                k.matches(store, r, b)
+            })
+        }
+    };
+    Some(found)
+}
+
+/// The probe walk for a pre-resolved key, compiled once per key KIND.
+///
+/// The kind is the table's, not the probe's: inside one arm the test the walk repeats is
+/// a read and a compare with nothing left to decide, where a `fast.matches(…)` call per
+/// bucket re-dispatched on the kind and paid a call for it (a quarter of a lookup's probe
+/// cost, `bench/portal/analysis/keyed.md`).  Each arm rebuilds its own variant as a
+/// constant so the comparison stays [`FastKey::matches`] — one home for what "the same
+/// key" means — and folds to its one arm.
+fn find_fast(
+    hash_ref: &DbRef,
+    store: &Store,
+    claim: u32,
+    count: u32,
+    home: u32,
+    fast: &keys::FastKey,
+) -> DbRef {
+    use keys::FastKey;
+    let entries = Entries::of(store, claim, hash_ref.store_nr);
+    let (rec, pos) = match *fast {
+        FastKey::Int(p, v) => {
+            let k = FastKey::Int(p, v);
+            probe(store, claim, count, home, &entries, |r, b| {
+                k.matches(store, r, b)
+            })
+        }
+        FastKey::Long(p, v) => {
+            let k = FastKey::Long(p, v);
+            probe(store, claim, count, home, &entries, |r, b| {
+                k.matches(store, r, b)
+            })
+        }
+        FastKey::I32(p, v) => {
+            let k = FastKey::I32(p, v);
+            probe(store, claim, count, home, &entries, |r, b| {
+                k.matches(store, r, b)
+            })
+        }
+        FastKey::U32(p, v) => {
+            let k = FastKey::U32(p, v);
+            probe(store, claim, count, home, &entries, |r, b| {
+                k.matches(store, r, b)
+            })
+        }
+        FastKey::ShortRaw(p, st, v) => {
+            let k = FastKey::ShortRaw(p, st, v);
+            probe(store, claim, count, home, &entries, |r, b| {
+                k.matches(store, r, b)
+            })
+        }
+        FastKey::Str(p, v) => {
+            let k = FastKey::Str(p, v);
+            probe(store, claim, count, home, &entries, |r, b| {
+                k.matches(store, r, b)
+            })
+        }
+    };
+    DbRef {
+        store_nr: hash_ref.store_nr,
+        rec,
+        pos,
+    }
+}
+
+/// Walk from bucket `at` to the entry `same` accepts, or to the first empty bucket —
+/// which ends every probe chain, since a removal shifts entries back and leaves no
+/// tombstone.  Answers the entry's `(record, payload offset)`, record 0 for a miss.
+// Measured, not assumed: the walk must be compiled INTO each key kind's arm, or the
+// per-bucket test is a call again (`bench/portal/analysis/keyed.md`, L5).
+#[allow(clippy::inline_always)]
+#[inline(always)]
+fn probe(
+    store: &Store,
+    claim: u32,
+    count: u32,
+    mut at: u32,
+    entries: &Entries,
+    same: impl Fn(u32, u32) -> bool,
+) -> (u32, u32) {
+    for _ in 0..count {
+        let slot = store.get_u32_raw(claim, BUCKET0 + at * SLOT_BYTES);
+        if slot == 0 {
+            break;
+        }
+        let (rec, pos) = entries.at(store, slot);
+        if same(rec, pos) {
+            return (rec, pos);
+        }
+        at += 1;
+        if at >= count {
+            at = 0;
+        }
+    }
+    (0, 0)
+}
+
+/// Unlink `rec` from the table, answering the bucket value that named it — 0 when the
+/// table did not hold it.  [`free_slot`] takes that value to release an owned entry
+/// without looking its arena index up again.
+///
+/// # Panics
+/// Under `LOFT_KEYED_VERIFY=1`, when the slot recognised by decoding is not the one the
+/// entry's arena index maps to.
+pub fn remove(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) -> u32 {
     if rec.rec == 0 {
-        return;
+        return 0;
     }
     let claim = keys::store(hash_ref, stores).get_u32_raw(hash_ref.rec, hash_ref.pos);
     let length = keys::store(hash_ref, stores).get_u32_raw(claim, LEN_FLD);
     if length == 0 {
-        return;
+        return 0;
     }
     let count = elms(keys::store(hash_ref, stores), claim);
-    let width = stride(keys::store(hash_ref, stores), claim);
+    let entries = Entries::of(keys::store(hash_ref, stores), claim, hash_ref.store_nr);
     let seed = read_seed(keys::store(hash_ref, stores), claim);
-    let gone = slot_value(keys::store(hash_ref, stores), claim, rec, width);
-    if gone == 0 {
-        return;
-    }
     // Find the slot holding the entry and zero it (create the hole).  A record the table
     // does not hold leaves nothing — a remove of an absent record is a no-op, never a hole
     // where some other entry sat.
-    let Some(mut hole) = hash_rec_pos(claim, gone, rec, stores, keys) else {
-        return;
+    let Some((mut hole, gone)) = hash_rec_pos(claim, &entries, rec, stores, keys) else {
+        return 0;
     };
+    if keys::keyed_verify() {
+        let mapped = slot_value(keys::store(hash_ref, stores), claim, rec, entries.stride);
+        assert!(
+            mapped == gone,
+            "LOFT_KEYED_VERIFY: the removal recognised bucket value {gone} where the \
+             entry's own index maps to {mapped}"
+        );
+    }
     keys::mut_store(hash_ref, stores).set_u32_raw(claim, BUCKET0 + hole * SLOT_BYTES, 0);
     // Walk forward from hole+1 and pull each element back if its probe distance
     // to the hole is shorter than its probe distance to its current slot.
     // Stop at the first empty slot (all probe chains end at one).
-    let mut idx = (hole + 1) % count;
+    //
+    // Every bucket number here is below `count`, so a distance round the table is one
+    // conditional add and the step one conditional reset: the `%` each of the three used
+    // to be is a division per entry walked, for an answer a compare already has.
+    let round = |to: u32, from: u32| {
+        if to >= from {
+            to - from
+        } else {
+            to + count - from
+        }
+    };
+    let step = |at: u32| if at + 1 >= count { 0 } else { at + 1 };
+    let mut idx = step(hole);
     for _ in 0..count {
         let val = keys::store(hash_ref, stores).get_u32_raw(claim, BUCKET0 + idx * SLOT_BYTES);
         if val == 0 {
             break;
         }
-        let next = entry_ref(
-            keys::store(hash_ref, stores),
-            claim,
-            val,
-            hash_ref.store_nr,
-            width,
-        );
-        let ideal = (keys::hash(&next, stores, keys, seed) % u64::from(count)) as u32;
+        let next = entries.entry(keys::store(hash_ref, stores), val);
+        let ideal = home_bucket(keys::hash(&next, stores, keys, seed), count);
         // Move if probe distance to hole is shorter than probe distance to idx.
-        let d_hole = (hole + count - ideal) % count;
-        let d_idx = (idx + count - ideal) % count;
-        if d_hole < d_idx {
+        if round(hole, ideal) < round(idx, ideal) {
             keys::mut_store(hash_ref, stores).set_u32_raw(claim, BUCKET0 + hole * SLOT_BYTES, val);
             keys::mut_store(hash_ref, stores).set_u32_raw(claim, BUCKET0 + idx * SLOT_BYTES, 0);
             hole = idx;
         }
-        idx = (idx + 1) % count;
+        idx = step(idx);
     }
     keys::mut_store(hash_ref, stores).set_u32_raw(claim, LEN_FLD, length - 1);
+    gone
+}
+
+/// Give back the entry bucket value `slot` named — [`free_entry`] for a caller that still
+/// holds what [`remove`] answered.  A record slot is somebody else's record and a
+/// borrowing table owns nothing, so both release nothing, as [`free_entry`] decides too.
+pub fn free_slot(hash_ref: &DbRef, slot: u32, stores: &mut [Store]) {
+    let claim = keys::store(hash_ref, stores).get_u32_raw(hash_ref.rec, hash_ref.pos);
+    if claim == 0 || slot == 0 || slot & SLOT_RECORD != 0 {
+        return;
+    }
+    let width = stride(keys::store(hash_ref, stores), claim);
+    if width == 0 {
+        return;
+    }
+    arena::free(keys::mut_store(hash_ref, stores), claim, slot, width);
 }
 
 /// Give an entry's slot back to the arena — the counterpart of the `Store::delete`

@@ -63,6 +63,14 @@ impl OpEmitter for IntCompareEmitter {
             return super::default::DefaultEmitter.emit(ctx, args);
         }
 
+        // `@FR-R-LazySplit` — the loop over a lazy split ends where its element read ran
+        // out of pieces; the vector whose length this test compared is never built.
+        if op == "<="
+            && let Some(vec) = ctx.output.lazy_split_reader(&args[0], "OpLengthVector")
+        {
+            return write!(ctx.w, "__ls_done_{vec}");
+        }
+
         write!(ctx.w, "((")?;
         ctx.emit(&args[0])?;
         write!(ctx.w, ") as i64) {op} ((")?;

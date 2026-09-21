@@ -3852,6 +3852,245 @@ fn b_ref_reshape_callee_local_removal_still_compiles() {
     .result(Value::Int(154));
 }
 
+/// loft#1554 — the CALL-SITE half of `(B-Ref-Reshape)` reads the callee's DISTURBANCE
+/// (@PLN164 C3's fact), not only a removal through a bare `&vector` parameter.  The rule names
+/// four events and exempts no parameter spelling: *"A plain PARAMETER is NOT exempt"*.  Each
+/// cell below compiled and read or wrote the element that moved, on both backends, with nothing
+/// said.  (1) a PLAIN vector container.
+#[test]
+fn b_ref_reshape_call_site_removal_through_a_plain_vector_is_error() {
+    code!(
+        "struct Box { n: integer } \
+         fn shift(target: Box, all: vector<Box>) { all.remove(0); target.n = 99; } \
+         fn test() { v = [Box { n: 11 }, Box { n: 22 }, Box { n: 33 }]; \
+           shift(v[2], v); print(\"{v[1].n}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `v` and a reference into it to `shift` — `shift` removes from `all`, \
+         which renumbers the remaining elements while `target` still references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the removal at b_ref_reshape_call_site_removal_through_a_plain_vector_is_error:1:1",
+    );
+}
+
+/// loft#1554 (2) — the container is a FIELD of a struct parameter.
+#[test]
+fn b_ref_reshape_call_site_removal_from_a_field_is_error() {
+    code!(
+        "struct Box { n: integer } struct Bag { items: vector<Box>, spare: vector<Box> } \
+         fn shift(target: Box, bag: Bag) { bag.items.remove(0); target.n = 99; } \
+         fn test() { b = Bag { items: [Box { n: 11 }, Box { n: 22 }, Box { n: 33 }] }; \
+           shift(b.items[2], b); print(\"{b.items[1].n}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `b` and a reference into it to `shift` — `shift` removes from `bag`, \
+         which renumbers the remaining elements while `target` still references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the removal at b_ref_reshape_call_site_removal_from_a_field_is_error:1:1",
+    );
+}
+
+/// loft#1554 (3) — a GROWTH, one of `(B-Disturb)`'s four events: a container that outgrows its
+/// allocation moves every element, so the reference names freed space.
+#[test]
+fn b_ref_reshape_call_site_growth_of_a_field_is_error() {
+    code!(
+        "struct Box { n: integer } struct Bag { items: vector<Box>, spare: vector<Box> } \
+         fn stash(target: Box, bag: Bag) { bag.items += [Box { n: 44 }]; target.n = 99; } \
+         fn test() { b = Bag { items: [Box { n: 11 }, Box { n: 22 }] }; \
+           stash(b.items[0], b); print(\"{b.items[0].n}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `b` and a reference into it to `stash` — `stash` grows `bag`, and a \
+         container that outgrows its allocation moves every element while `target` still \
+         references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the growth at b_ref_reshape_call_site_growth_of_a_field_is_error:1:1",
+    );
+}
+
+/// loft#1554 (4) — the growth TWO frames down, through a plain vector parameter.
+#[test]
+fn b_ref_reshape_call_site_growth_two_frames_down_is_error() {
+    code!(
+        "struct Box { n: integer } \
+         fn more(all: vector<Box>) { all += [Box { n: 44 }]; } \
+         fn stash(target: Box, all: vector<Box>) { more(all); target.n = 99; } \
+         fn test() { v = [Box { n: 11 }, Box { n: 22 }]; \
+           stash(v[1], v); print(\"{v[1].n}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `v` and a reference into it to `stash` — `stash` grows `all`, and a \
+         container that outgrows its allocation moves every element while `target` still \
+         references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the growth at b_ref_reshape_call_site_growth_two_frames_down_is_error:1:1",
+    );
+}
+
+/// loft#1554 (5) — the CALL CONTEXT: inside a format string the element argument stays a
+/// NULLABLE read (`OpGetVectorNullable`), the second spelling of the projection.  Refused as a
+/// statement and as a binding before, this one printed the moved element's stale bytes.
+#[test]
+fn b_ref_reshape_call_site_inside_a_format_string_is_error() {
+    code!(
+        "struct Box { n: integer } \
+         fn shift(target: Box, all: &vector<Box>) -> integer { all.remove(0); target.n } \
+         fn test() { v = [Box { n: 11 }, Box { n: 22 }, Box { n: 33 }]; \
+           print(\"{shift(v[2], v)}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `v` and a reference into it to `shift` — `shift` removes from `all`, \
+         which renumbers the remaining elements while `target` still references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the removal at b_ref_reshape_call_site_inside_a_format_string_is_error:1:1",
+    );
+}
+
+/// loft#1554 (6) — a `?`-DISCHARGED element argument is the same projection: its present arm
+/// hands the callee the element.
+#[test]
+fn b_ref_reshape_call_site_discharged_element_is_error() {
+    code!(
+        "struct Box { n: integer } struct Bag { items: vector<Box>, spare: vector<Box> } \
+         fn shift(target: Box, bag: Bag) { bag.items.remove(0); target.n = 99; } \
+         fn test() { b = Bag { items: [Box { n: 11 }, Box { n: 22 }, Box { n: 33 }] }; \
+           shift(b.items[2]?, b); print(\"{b.items[1].n}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `b` and a reference into it to `shift` — `shift` removes from `bag`, \
+         which renumbers the remaining elements while `target` still references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the removal at b_ref_reshape_call_site_discharged_element_is_error:1:1",
+    );
+}
+
+/// loft#1554 (7) — the element BOUND EARLIER to a plain local: the local's deps name only the
+/// variable, so its own binding says which field it views.
+#[test]
+fn b_ref_reshape_call_site_element_bound_earlier_from_a_field_is_error() {
+    code!(
+        "struct Box { n: integer } struct Bag { items: vector<Box>, spare: vector<Box> } \
+         fn shift(target: Box, bag: Bag) { bag.items.remove(0); target.n = 99; } \
+         fn test() { b = Bag { items: [Box { n: 11 }, Box { n: 22 }, Box { n: 33 }] }; \
+           t = b.items[2]; shift(t, b); print(\"{b.items[1].n}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `b` and a reference into it to `shift` — `shift` removes from `bag`, \
+         which renumbers the remaining elements while `target` still references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the removal at b_ref_reshape_call_site_element_bound_earlier_from_a_field_is_error:1:1",
+    );
+}
+
+/// loft#1554 (8) — the FIELD itself handed in as the container, beside an element of it.
+#[test]
+fn b_ref_reshape_call_site_field_passed_as_the_container_is_error() {
+    code!(
+        "struct Box { n: integer } struct Bag { items: vector<Box>, spare: vector<Box> } \
+         fn shift(target: Box, all: vector<Box>) { all.remove(0); target.n = 99; } \
+         fn test() { b = Bag { items: [Box { n: 11 }, Box { n: 22 }, Box { n: 33 }] }; \
+           shift(b.items[2], b.items); print(\"{b.items[1].n}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `b` and a reference into it to `shift` — `shift` removes from `all`, \
+         which renumbers the remaining elements while `target` still references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the removal at b_ref_reshape_call_site_field_passed_as_the_container_is_error:1:1",
+    );
+}
+
+/// loft#1554 (9) — a reference INTO an element (a struct field of it) is a place inside the
+/// container as much as the element is.
+#[test]
+fn b_ref_reshape_call_site_reference_into_an_element_is_error() {
+    code!(
+        "struct In { k: integer } struct Out { inner: In, n: integer } \
+         fn shift(target: In, all: vector<Out>) { all.remove(0); target.k = 99; } \
+         fn test() { v = [Out { inner: In { k: 1 }, n: 11 }, Out { inner: In { k: 2 }, n: 22 }]; \
+           shift(v[1].inner, v); print(\"{v[0].inner.k}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `v` and a reference into it to `shift` — `shift` removes from `all`, \
+         which renumbers the remaining elements while `target` still references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the removal at b_ref_reshape_call_site_reference_into_an_element_is_error:1:1",
+    );
+}
+
+/// loft#1554 (10) — a STRUCT-ENUM element aliases its record exactly as a struct does.
+#[test]
+fn b_ref_reshape_call_site_struct_enum_element_is_error() {
+    code!(
+        "enum Shape { Dot { r: integer }, Bar { w: integer, h: integer } } \
+         fn shift(target: Shape, all: vector<Shape>) -> integer { all.remove(0); \
+           match target { Dot { r } => r, Bar { w, h } => w + h } } \
+         fn test() { v = [Dot { r: 1 }, Bar { w: 2, h: 3 }, Dot { r: 7 }]; \
+           print(\"{shift(v[2], v)}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `v` and a reference into it to `shift` — `shift` removes from `all`, \
+         which renumbers the remaining elements while `target` still references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the removal at b_ref_reshape_call_site_struct_enum_element_is_error:1:1",
+    );
+}
+
+/// loft#1554 — what the wider refusal must NOT take.  A callee growing a SIBLING field moves
+/// nothing the element argument names: the call compiles and writes through.
+#[test]
+fn b_ref_reshape_call_site_growth_of_a_sibling_field_compiles() {
+    code!(
+        "struct Box { n: integer } struct Bag { items: vector<Box>, spare: vector<Box> } \
+         fn stash(target: Box, bag: Bag) { bag.spare += [Box { n: 44 }]; target.n = 99; } \
+         fn check() -> integer { b = Bag { items: [Box { n: 11 }, Box { n: 22 }] }; \
+           stash(b.items[1], b); b.items[1].n + len(b.spare) }"
+    )
+    .expr("check()")
+    .result(Value::Int(100));
+}
+
+/// loft#1554 — …nor a callee that disturbs a DIFFERENT container parameter than the one the
+/// element lives in…
+#[test]
+fn b_ref_reshape_call_site_another_parameter_disturbed_compiles() {
+    code!(
+        "struct Box { n: integer } \
+         fn stash(target: Box, a: vector<Box>, b: vector<Box>) { b += [Box { n: 5 }]; \
+           target.n = 90 + len(a); } \
+         fn check() -> integer { v = [Box { n: 11 }, Box { n: 22 }]; w = [Box { n: 1 }]; \
+           stash(v[0], v, w); v[0].n + len(w) }"
+    )
+    .expr("check()")
+    .result(Value::Int(94));
+}
+
+/// loft#1554 — …nor a SCALAR read out of an element, which copies and names no place…
+#[test]
+fn b_ref_reshape_call_site_scalar_of_an_element_compiles() {
+    code!(
+        "struct Box { n: integer } \
+         fn shift(n: integer, all: vector<Box>) -> integer { all.remove(0); n } \
+         fn check() -> integer { v = [Box { n: 11 }, Box { n: 22 }, Box { n: 33 }]; \
+           shift(v[2].n, v) + len(v) }"
+    )
+    .expr("check()")
+    .result(Value::Int(35));
+}
+
+/// loft#1554 — …nor an element of ANOTHER container, whatever the callee does to this one.
+#[test]
+fn b_ref_reshape_call_site_element_of_another_container_compiles() {
+    code!(
+        "struct Box { n: integer } \
+         fn shift(target: Box, all: vector<Box>) { all.remove(0); target.n = 99; } \
+         fn check() -> integer { v = [Box { n: 11 }, Box { n: 22 }, Box { n: 33 }]; \
+           w = [Box { n: 1 }]; shift(w[0], v); w[0].n + v[0].n + len(v) }"
+    )
+    .expr("check()")
+    .result(Value::Int(123));
+}
+
 /// The POSITIVE cell the refusal must not swallow: a link that is DEAD before the removal is
 /// no conflict.  Liveness is the condition, not existence — the rustc rule.
 ///

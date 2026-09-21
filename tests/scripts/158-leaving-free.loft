@@ -1,0 +1,171 @@
+// @PLN158 R6 — a record free on a path that LEAVES THE FUNCTION is not a free "before a use
+// of the view" (`@FR-R-RecPtr`'s order clause).  A view's address is held only where every
+// free follows the last use, and that was asked per top-level STATEMENT: a lookup loop's
+// whole body is one statement, so `for c in m.chunks { if … { return c.hexes[i]?.h } }` —
+// where the `return` releases the `?` discharge buffer after the last read of `c` — read as
+// "frees and uses in one statement" and `c` got no address.  It is the shape of every
+// find-and-answer helper.  The walk now runs in execution order through blocks, `if` arms
+// and loops; a block that ends in `return` and holds no `break`/`continue` carries no free
+// past itself.  `chunk_lookup` 1,417 -> 1,097 us (-23 %), 3.67x -> 2.84x of the Rust
+// reference.  The interpreter applies no rewrite and is the oracle; every cell prints its
+// values and asserts them.  `LOFT_NO_RECORD_PTR=1`, `LOFT_NO_BASE_RECPTR=1` and
+// `LOFT_HOIST_VERIFY=1` must all answer identically.
+//
+// Predictions (tests/leaving_free.rs pins them): q1, q4, q5, q6 and q8 hold the address
+// across a returning block — and so does q9, whose returning block also holds a `break`:
+// its free IS carried on, but a loop variable's extent is one pass (it is rebound, and its
+// address re-derived, at the top of the next), every use in that pass precedes the free,
+// and the `break` leaves to code where `c` no longer exists; q2, q3 and q7 free a record local on a
+// path that goes on — but they decline EARLIER, as a store growth (the literal that mints
+// the local), and never reach the order rule: they are value cells for those shapes.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-21) — no PROGRAM can make this rule
+// answer wrong: the only frees that reach it are discharge-buffer frees, which the scope
+// pass places after the last use on every path, so a free-before-use in an extent is what
+// a scope bug would produce, not what a test can write.  The walk is therefore falsified
+// where it lives — `hoist::free_order_tests`, five tests over synthetic IR: with a
+// returning block made to drop its frees even when it holds a `break`, and the second pass
+// of a loop body removed, exactly the two tests that state those facts fail
+// (`a_break_or_continue_keeps_running_this_function`,
+// `a_free_at_the_end_of_one_pass_precedes_a_use_in_the_next`) and the other three pass.
+// Restored byte-identically: 5/5, and these cells green on interpret / native / every
+// switch / every falsifier.
+
+struct Hex { h: integer, mat: integer }
+struct Chunk { cx: integer, cy: integer, hexes: vector<Hex> }
+struct Map { chunks: vector<Chunk> }
+struct Ent { id: integer, q: integer }
+
+fn make_map() -> Map {
+  m = Map { chunks: [] };
+  for cy in 0..3 { for cx in 0..3 {
+    ck = Chunk { cx: cx, cy: cy, hexes: [] };
+    for i in 0..16 { ck.hexes += [Hex { h: cx * 100 + cy * 10 + i, mat: i % 3 }]; }
+    m.chunks += [ck];
+  } }
+  m
+}
+
+// q1 — find the record and answer a field of an element in it.
+fn q1_get(m: const Map, q: integer, r: integer) -> integer {
+  cx = q / 4; cy = r / 4;
+  for c in m.chunks {
+    if c.cx == cx && c.cy == cy { return c.hexes[(r % 4) * 4 + q % 4]?.h }
+  }
+  -1
+}
+fn q1(m: const Map) {
+  a = q1_get(m, 5, 9); b = q1_get(m, 0, 0); c = q1_get(m, 50, 0); d = q1_get(m, 11, 11);
+  println("q1 {a} {b} {c} {d}");
+  assert(a == 125 && b == 0 && c == -1 && d == 235, "q1");
+}
+
+// q2 — a record local is freed in an inner block and the view is used AFTER it, on the
+// path that goes on: the address may not be held.
+fn q2(m: const Map) {
+  t = 0;
+  for c in m.chunks {
+    if c.cx == 1 { tmp = Hex { h: c.cy, mat: 7 }; t += tmp.h * 1000 + tmp.mat; }
+    t += c.cx + c.cy * 10;
+  }
+  println("q2 {t}");
+  assert(t == 3120, "q2");
+}
+
+// q3 — the free stands before a `break`, and a view bound outside the loop is used after it.
+fn q3(m: const Map) {
+  first = m.chunks[4]?;
+  t = 0;
+  for c in m.chunks {
+    tmp = Hex { h: c.cx + c.cy, mat: 1 };
+    if tmp.h == 3 { t += first.cx * 50; break }
+    t += tmp.h + first.cy;
+  }
+  t += first.cx + first.cy * 7;
+  println("q3 {t}");
+  assert(t == 69, "q3");
+}
+
+// q4 — the returning block is followed by more uses of the view on the path that stays.
+fn q4_get(m: const Map, want: integer) -> integer {
+  t = 0;
+  for c in m.chunks {
+    if c.cx * 3 + c.cy == want { return c.hexes[2]?.h + t }
+    t += c.cx + c.cy;
+  }
+  -t
+}
+fn q4(m: const Map) {
+  a = q4_get(m, 5); b = q4_get(m, 0); c = q4_get(m, 99);
+  println("q4 {a} {b} {c}");
+  assert(a == 133 && b == 2 && c == -18, "q4");
+}
+
+// q5 — two returns, two discharge sites; q6 — a return from a loop nested in the walk.
+fn q5_get(m: const Map, k: integer) -> integer {
+  for c in m.chunks {
+    if c.cx == k && c.cy == 0 { return c.hexes[1]?.h }
+    if c.cy == k && c.cx == 2 { return c.hexes[99]?.h + c.hexes[3]?.mat + 5 }
+  }
+  -7
+}
+fn q6_find(m: const Map, key: integer) -> integer {
+  for c in m.chunks {
+    for x in c.hexes { if x.h == key { return x.mat * 100 + c.cx * 10 + c.cy } }
+  }
+  -1
+}
+fn q56(m: const Map) {
+  a = q5_get(m, 1); b = q5_get(m, 2); c = q5_get(m, 9);
+  d = q6_find(m, 214); e = q6_find(m, 5); f = q6_find(m, 999);
+  println("q56 {a} {b} {c} {d} {e} {f}");
+  assert(a == 101 && b == 201 && c == -7 && d == 220 && e == 200 && f == -1, "q56");
+}
+
+// q7 — the free stands before a `continue`: the next pass uses the view after it.
+fn q7(m: const Map) {
+  t = 0;
+  for c in m.chunks {
+    tmp = Hex { h: c.cx, mat: c.cy };
+    if tmp.h == 0 { continue }
+    t += c.cx * 10 + c.cy + tmp.mat;
+  }
+  println("q7 {t}");
+  assert(t == 102, "q7");
+}
+
+// q9 — the returning block also holds a `break`.  A `break` keeps running this function, so
+// the block's free is carried on — past the rest of THIS pass, which does not use `c`.
+fn q9_get(m: const Map, want: integer, stop: integer) -> integer {
+  for c in m.chunks {
+    if c.cx + c.cy * 3 == want { if c.cx == stop { break } return c.hexes[1]?.h }
+  }
+  -2
+}
+fn q9(m: const Map) {
+  a = q9_get(m, 4, 9); b = q9_get(m, 4, 1); c = q9_get(m, 50, 0);
+  println("q9 {a} {b} {c}");
+  assert(a == 111 && b == -2 && c == -2, "q9");
+}
+
+// q8 — at function level: the view may name the discharge buffer the `return` frees, and
+// the path that stays uses it afterwards.
+fn q8_pick(v: const vector<Ent>, i: integer) -> integer {
+  e = v[i]?;
+  if e.q > 5 { return e.id * 100 + e.q }
+  t = e.q * 2 + e.id;
+  t
+}
+fn q8() {
+  v: vector<Ent> = [];
+  for i in 0..6 { v += [Ent { id: i, q: i * 2 }]; }
+  a = q8_pick(v, 1); b = q8_pick(v, 4); c = q8_pick(v, 40);
+  println("q8 {a} {b} {c}");
+  assert(a == 5 && b == 408 && c == 0, "q8");
+}
+
+fn main() {
+  m = make_map();
+  q1(m); q2(m); q3(m); q4(m); q56(m); q7(m); q8(); q9(m);
+  println("leaving free ok");
+}

@@ -1,0 +1,352 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The keyed fast paths answer what the general paths answer (@PLN158, the keyed class).
+//
+// A keyed insert and a keyed search each had a general form that re-derived per step what
+// it could know once, and four changes took that work out
+// (`bench/portal/analysis/keyed.md`, levers L1-L4):
+//
+//   * a MISS on a collection nothing is bound to answers at once (`Stores::lazy_bound`);
+//   * a `hash` insert finds its duplicate AND its free bucket on one probe walk
+//     (`hash::probe_for_insert`), where it used to hash and walk twice;
+//   * the searches that ORDER — an `index` descent, a `sorted` / `ordered` binary search —
+//     compare through a comparator resolved once (`keys::FastOrder`);
+//   * an `index` point lookup stops at the equal key (`tree::find_exact`), and an `index`
+//     insert finds its duplicate on the descent it makes anyway (`tree::add`);
+//   * (L5-L7) a table is rebuilt at half full and walked through a slot decoder read once
+//     (`hash::Entries`, `hash::probe`); `--native` emits a lookup by one integer key as the
+//     typed `OpGetHashLong` (`@FR-R-TypedKeyed`); a removal recognises its entry by decoding
+//     its chain and clones nothing (`Entries::names`, `hash::free_slot`).
+//
+// None of that may change a value, a length or an order, so every cell states the answer by
+// hand and the file is run three ways by `tests/keyed_fast_paths.rs`: as built, with every
+// switch of the pass set (`LOFT_NO_FAST_ORDER`, `LOFT_NO_ONE_PROBE_INSERT`,
+// `LOFT_NO_HALF_LOAD`, `LOFT_NO_TYPED_KEYED` — the general paths), and with
+// `LOFT_KEYED_VERIFY=1`, which checks every fast answer against the general one as it is
+// made and panics on a disagreement.
+//
+// The axes, one per cell family: collection kind (`hash` with arena entries, `hash` in a
+// `vector` group whose entries are records, `index`, inline `sorted`, by-reference
+// `ordered`) x key kind (`integer`, `text`, `i32`, `u8` — a width the fast forms do not
+// list, a descending key, a compound key) x operation (insert, a DUPLICATE insert that
+// displaces, a growth across several table rebuilds, find hit, find miss, remove and
+// re-insert, a range).
+//
+// @falsified-at: hand-measured (2026-09-21), by sabotage, because the general paths were
+//   never wrong — the falsifier has to be a fast path MADE wrong.  Each failed on both
+//   backends (the interpreter names the cells; the native run fails whole) and was undone:
+//   * `FastKey::order`'s integer arm answering `Equal` for every pair -> 5 cells fail:
+//     `test_158_index_integer` ("30 distinct keys: len 1"), `_index_ranges`,
+//     `_index_descending`, `_sorted_inline` ("len 1"), `_ordered_by_reference` ("8 of 20");
+//   * `hash::probe_for_insert` never answering `Present` -> 5 cells fail:
+//     `_hash_duplicate_displaces` ("len 23"), `_hash_text_find_or_insert`,
+//     `_hash_compound_key`, `_hash_narrow_keys` ("len 26"), `_hash_in_a_group` ("21");
+//   * `tree::find_exact` descending the wrong way -> 5 cells fail: `_index_integer`
+//     ("1 of 30"), `_index_descending`, `_index_text`, `_index_compound`, and
+//     `_hash_narrow_keys` through the index beside its hash.
+//   * (L7) `hash::hash_rec_pos` never recognising its entry -> 6 cells fail:
+//     `_hash_remove_reinsert` ("ten removed: len 30") and the five displacement cells,
+//     which unlink through the same walk;
+//   * (L6) `hash::find_long` hashing the wrong value -> the native run fails, the
+//     interpreter is untouched, and `LOFT_NO_TYPED_KEYED=1` passes — the switch isolates it.
+//   Under `LOFT_KEYED_VERIFY=1` each panics at its first disagreement instead, naming both
+//   answers.  The fourth lever is guarded elsewhere: `Stores::lazy_bound`
+//   answering "unbound" for every collection fails the three `lazy_*` tests of
+//   `tests/store_persist_loft.rs`, which bind a real source — no cell here can, and a
+//   miss on an UNBOUND collection is what every cell below already asserts.
+
+struct E { id: integer, val: integer, tag: text }
+struct ByHash { rows: hash<E[id]> }
+
+struct W { word: text, count: integer }
+struct ByWord { rows: hash<W[word]> }
+
+struct C { q: integer, r: integer, v: integer }
+struct ByPair { rows: hash<C[q, r]> }
+
+struct N { w: u8, v: integer }
+struct ByNarrow { rows: hash<N[w]> }
+
+struct F { k: i32, v: integer }
+struct ByFour { rows: hash<F[k]>, tree: index<F[k]> }
+
+struct G { id: integer, v: integer }
+struct Grp { all: vector<G>, by_id: hash<G[id]> }
+
+struct I { id: integer, v: integer, tag: text }
+struct ByIndex { rows: index<I[id]> }
+
+struct D { id: integer, v: integer }
+struct ByDesc { rows: index<D[-id]> }
+
+struct T { name: text, v: integer }
+struct ByName { rows: index<T[name]> }
+
+struct P { a: integer, b: integer, v: integer }
+struct ByTwo { rows: index<P[a, b]> }
+
+struct S { id: integer, v: integer }
+struct Inline { rows: sorted<S[id]> }
+struct InlineDesc { rows: sorted<S[-id]> }
+
+struct ST { name: text, v: integer }
+struct InlineText { rows: sorted<ST[name]> }
+
+// `O` is held by an `index` too, so the `sorted` over it is the by-reference `ordered`.
+struct O { id: integer, v: integer }
+struct ByRef { rows: sorted<O[id]> }
+struct ByRefIx { tree: index<O[id]> }
+
+fn hv(db: ByHash, k: integer) -> integer { e = db.rows[k]; if e != null { e.val } else { -1 } }
+fn iv(db: ByIndex, k: integer) -> integer { e = db.rows[k]; if e != null { e.v } else { -1 } }
+
+// 40 keys, so the table is rebuilt several times on the way: every key found with its
+// own value, every absent key null, the length exact.
+fn test_158_hash_insert_find_miss() {
+  db = ByHash { rows: [] };
+  for i in 0..40 { db.rows += [E { id: (i * 7) % 101, val: i + 1000, tag: "t{i}" }]; }
+  assert(len(db.rows) == 40, "40 distinct keys: len {len(db.rows)}");
+  hits = 0; sum = 0;
+  for i in 0..40 {
+    v = hv(db, (i * 7) % 101);
+    if v == i + 1000 { hits += 1; }
+    sum += v;
+  }
+  assert(hits == 40, "every key answers its own value: {hits} of 40");
+  assert(sum == 40780, "sum of 1000..1039 is 40780, got {sum}");
+  misses = 0;
+  for i in 0..40 { if db.rows[(i * 7) % 101 + 200] == null { misses += 1; } }
+  assert(misses == 40, "every absent key is null: {misses} of 40");
+  e = db.rows[35];
+  assert(e != null && e.tag == "t5", "key 35 is i=5: its text field reads back");
+}
+
+// A duplicate key DISPLACES (latest insert wins): the length stays, the value and the
+// text are the new record's, the neighbours are untouched.
+fn test_158_hash_duplicate_displaces() {
+  db = ByHash { rows: [] };
+  for i in 1..21 { db.rows += [E { id: i, val: i, tag: "old{i}" }]; }
+  for i in [5, 10, 15] { db.rows += [E { id: i, val: 1000 + i, tag: "new{i}" }]; }
+  assert(len(db.rows) == 20, "three duplicates displace: len {len(db.rows)}");
+  assert(hv(db, 5) == 1005 && hv(db, 10) == 1010 && hv(db, 15) == 1015, "the latest insert wins");
+  assert(hv(db, 4) == 4 && hv(db, 6) == 6 && hv(db, 20) == 20, "the neighbours are untouched");
+  e = db.rows[10];
+  assert(e != null && e.tag == "new10", "the displaced record's text is gone with it");
+  total = 0; for i in 1..21 { total += hv(db, i); }
+  assert(total == 3210, "1..20 is 210, plus 3 x 1000: {total}");
+}
+
+// Remove, miss, re-insert under the same key, find.
+fn test_158_hash_remove_reinsert() {
+  db = ByHash { rows: [] };
+  for i in 0..30 { db.rows += [E { id: i, val: i * 2, tag: "" }]; }
+  for i in 0..30 { if i % 3 == 0 { db.rows[i] = null; } }
+  assert(len(db.rows) == 20, "ten removed: len {len(db.rows)}");
+  assert(hv(db, 9) == -1 && hv(db, 10) == 20, "a removed key misses, its neighbour hits");
+  db.rows += [E { id: 9, val: 99, tag: "back" }];
+  assert(hv(db, 9) == 99 && len(db.rows) == 21, "re-inserted under the same key");
+  left = 0; for i in 0..30 { if db.rows[i] != null { left += 1; } }
+  assert(left == 21, "21 keys answer: {left}");
+}
+
+// The find-or-insert loop a word count is: every first sight is a MISS, then an insert.
+fn test_158_hash_text_find_or_insert() {
+  db = ByWord { rows: [] };
+  words = ["pear", "fig", "pear", "plum", "fig", "pear", "kiwi", "plum", "pear"];
+  for w in words {
+    found = db.rows[w];
+    if found == null { db.rows += [W { word: w, count: 1 }]; } else { found.count += 1; }
+  }
+  assert(len(db.rows) == 4, "four distinct words: len {len(db.rows)}");
+  p = db.rows["pear"]; f = db.rows["fig"]; k = db.rows["kiwi"];
+  assert(p != null && p.count == 4, "pear x4");
+  assert(f != null && f.count == 2, "fig x2");
+  assert(k != null && k.count == 1, "kiwi x1");
+  assert(db.rows["lime"] == null, "an absent word is null");
+  db.rows += [W { word: "fig", count: 70 }];
+  f2 = db.rows["fig"];
+  assert(f2 != null && f2.count == 70 && len(db.rows) == 4, "a duplicate text key displaces");
+}
+
+// A compound key has no one-field form: the probe compares record against record.
+fn test_158_hash_compound_key() {
+  db = ByPair { rows: [] };
+  for q in 0..6 { for r in 0..5 { db.rows += [C { q: q, r: r, v: q * 10 + r }]; } }
+  assert(len(db.rows) == 30, "30 pairs: len {len(db.rows)}");
+  a = db.rows[4, 3]; b = db.rows[3, 4];
+  assert(a != null && a.v == 43, "(4,3) is 43");
+  assert(b != null && b.v == 34, "(3,4) is 34 — the fields are not interchangeable");
+  assert(db.rows[6, 0] == null && db.rows[0, 5] == null, "absent pairs are null");
+  db.rows += [C { q: 4, r: 3, v: 999 }];
+  a2 = db.rows[4, 3];
+  assert(a2 != null && a2.v == 999 && len(db.rows) == 30, "a duplicate pair displaces");
+}
+
+// `u8` is a width the one-field forms do not list, `i32` is one they do.
+fn test_158_hash_narrow_keys() {
+  n = ByNarrow { rows: [] };
+  for i in 0..25 { n.rows += [N { w: (i * 5 + 3) & 127, v: i }]; }
+  n.rows += [N { w: 8, v: 500 }];
+  one = n.rows[8]; none = n.rows[9];
+  assert(one != null && one.v == 500 && len(n.rows) == 25, "u8 key 8 (i=1) displaced: len {len(n.rows)}");
+  assert(none == null, "u8 key 9 is absent");
+
+  f = ByFour { rows: [], tree: [] };
+  for i in 0..25 { f.rows += [F { k: ((i * 1000003 - 12000000) as i32?) ?? 0, v: i }]; }
+  f.rows += [F { k: -12000000, v: 700 }];
+  lo = f.rows[-12000000]; hi = f.rows[12000072];
+  assert(lo != null && lo.v == 700, "i32 key of i=0 displaced");
+  assert(hi != null && hi.v == 24, "i32 key of i=24");
+  assert(f.rows[5] == null, "an absent i32 key is null");
+  assert(len(f.rows) == 25, "25 i32 keys: len {len(f.rows)}");
+  tw = f.tree[-12000000];
+  assert(tw != null && tw.v == 700, "the index beside the hash holds the same record");
+  walk = 0; prev = -2000000000;
+  for e in f.tree { if e.k > prev { walk += 1; } prev = e.k; }
+  assert(walk == 25, "the i32 index walks ascending: {walk} of 25");
+}
+
+// A `vector` + `hash` group: entries are records, the hash only indexes them, and a
+// duplicate key leaves the vector holding both while the hash names the latest.
+fn test_158_hash_in_a_group() {
+  g = Grp { all: [], by_id: [] };
+  for i in 0..20 { g.all += [G { id: i * 3, v: i }]; }
+  g.all += [G { id: 6, v: 600 }];
+  assert(len(g.all) == 21, "the vector keeps every record: {len(g.all)}");
+  assert(len(g.by_id) == 20, "the hash keeps one per key: {len(g.by_id)}");
+  e = g.by_id[6];
+  assert(e != null && e.v == 600, "the hash names the latest record under key 6");
+  assert(g.by_id[7] == null, "key 7 is absent");
+  z = g.by_id[57];
+  assert(z != null && z.v == 19, "key 57 is i=19");
+}
+
+// 30 keys out of order: the walk is ascending, every key is found, every absent key is
+// null, a duplicate displaces, a removed key misses and comes back.
+fn test_158_index_integer() {
+  db = ByIndex { rows: [] };
+  for i in 0..30 { db.rows += [I { id: (i * 11) % 31, v: i, tag: "i{i}" }]; }
+  assert(len(db.rows) == 30, "30 distinct keys: len {len(db.rows)}");
+  order = 0; prev = -1;
+  for e in db.rows { if e.id > prev { order += 1; } prev = e.id; }
+  assert(order == 30, "the walk is strictly ascending: {order} of 30");
+  found = 0;
+  for i in 0..30 { if iv(db, (i * 11) % 31) == i { found += 1; } }
+  assert(found == 30, "every key answers its own value: {found} of 30");
+  assert(iv(db, 31) == -1 && iv(db, 100) == -1 && iv(db, -4) == -1, "absent keys are null");
+  db.rows += [I { id: 22, v: 2222, tag: "again" }];
+  assert(len(db.rows) == 30 && iv(db, 22) == 2222, "a duplicate displaces: len {len(db.rows)}");
+  hit = db.rows[22];
+  assert(hit != null && hit.tag == "again", "the displacing record's text");
+  order = 0; prev = -1;
+  for x in db.rows { if x.id > prev { order += 1; } prev = x.id; }
+  assert(order == 30, "still strictly ascending after the displacement: {order}");
+  db.rows[22] = null;
+  assert(iv(db, 22) == -1 && len(db.rows) == 29, "removed");
+  db.rows += [I { id: 22, v: 3, tag: "" }];
+  assert(iv(db, 22) == 3 && len(db.rows) == 30, "and back");
+}
+
+// A range's two ends are boundary descents through the same comparator.
+fn test_158_index_ranges() {
+  db = ByIndex { rows: [] };
+  for i in 0..20 { db.rows += [I { id: i * 2, v: i, tag: "" }]; }
+  a = ""; for e in db.rows[6..12] { a += "{e.id} "; }
+  assert(a == "6 8 10 ", "[6..12): {a}");
+  b = ""; for e in db.rows[6..=12] { b += "{e.id} "; }
+  assert(b == "6 8 10 12 ", "[6..=12]: {b}");
+  c = ""; for e in db.rows[7..11] { c += "{e.id} "; }
+  assert(c == "8 10 ", "bounds between keys: {c}");
+  d = ""; for e in rev(db.rows[30..=36]) { d += "{e.id} "; }
+  assert(d == "36 34 32 30 ", "reverse: {d}");
+  n = 0; for e in db.rows[100..200] { n += 1 + e.v * 0; }
+  assert(n == 0, "a range past the end is empty: {n}");
+}
+
+// A descending key: the comparator carries the direction, once.
+fn test_158_index_descending() {
+  db = ByDesc { rows: [] };
+  for i in 0..12 { db.rows += [D { id: (i * 5) % 13, v: i }]; }
+  line = ""; for e in db.rows { line += "{e.id} "; }
+  assert(line == "12 11 10 9 7 6 5 4 3 2 1 0 ", "descending walk, 8 never inserted: {line}");
+  ten = db.rows[10]; m = db.rows[8];
+  assert(ten != null && ten.v == 2, "key 10 is i=2");
+  assert(m == null, "key 8 was never inserted");
+  db.rows += [D { id: 10, v: 77 }];
+  ten2 = db.rows[10];
+  assert(ten2 != null && ten2.v == 77 && len(db.rows) == 12, "a duplicate displaces");
+}
+
+// A text key: the lookup compares through the pre-resolved form, the insert through the
+// general one (its descent rebalances the store it would have borrowed the text from).
+fn test_158_index_text() {
+  db = ByName { rows: [] };
+  for n in ["mole", "ant", "yak", "bee", "emu", "cat", "owl", "eel"] {
+    db.rows += [T { name: n, v: len(n) }];
+  }
+  line = ""; for e in db.rows { line += "{e.name} "; }
+  assert(line == "ant bee cat eel emu mole owl yak ", "sorted by name: {line}");
+  m = db.rows["mole"]; none = db.rows["mol"];
+  assert(m != null && m.v == 4, "mole");
+  assert(none == null, "a prefix of a key is not the key");
+  db.rows += [T { name: "emu", v: 50 }];
+  emu = db.rows["emu"];
+  assert(emu != null && emu.v == 50 && len(db.rows) == 8, "a duplicate name displaces");
+}
+
+// A compound index: the full key is a point lookup, a partial key an iterator.
+fn test_158_index_compound() {
+  db = ByTwo { rows: [] };
+  for a in [3, 1, 2] { for b in [9, 2, 4] { db.rows += [P { a: a, b: b, v: a * 100 + b }]; } }
+  full = db.rows[3, 4]; none = db.rows[3, 5];
+  assert(full != null && full.v == 304, "(3,4)");
+  assert(none == null, "(3,5) is absent");
+  part = ""; for e in db.rows[2] { part += "{e.b} "; }
+  assert(part == "2 4 9 ", "the partial key walks its matches in order: {part}");
+  db.rows += [P { a: 2, b: 4, v: 1 }];
+  again = db.rows[2, 4];
+  assert(again != null && again.v == 1 && len(db.rows) == 9, "a duplicate pair displaces");
+}
+
+// An inline `sorted`: a duplicate is replaced in place.
+fn test_158_sorted_inline() {
+  db = Inline { rows: [] };
+  for i in 0..25 { db.rows += [S { id: (i * 7) % 29, v: i }]; }
+  db.rows += [S { id: 14, v: 1400 }];
+  assert(len(db.rows) == 25, "a duplicate replaces in place: len {len(db.rows)}");
+  order = 0; prev = -1;
+  for e in db.rows { if e.id > prev { order += 1; } prev = e.id; }
+  assert(order == 25, "strictly ascending: {order} of 25");
+  k14 = db.rows[14]; k21 = db.rows[21]; none = db.rows[15];
+  assert(k14 != null && k14.v == 1400, "key 14 (i=2) replaced");
+  assert(k21 != null && k21.v == 3, "key 21 is i=3");
+  assert(none == null, "key 15 is absent");
+
+  d = InlineDesc { rows: [] };
+  for i in 0..6 { d.rows += [S { id: (i * 4) % 7, v: i }]; }
+  line = ""; for x in d.rows { line += "{x.id} "; }
+  assert(line == "6 5 4 2 1 0 ", "descending sorted, 3 never inserted: {line}");
+  g = d.rows[5];
+  assert(g != null && g.v == 3, "key 5 is i=3");
+
+  t = InlineText { rows: [] };
+  for n in ["pit", "arc", "dew", "arc", "oak"] { t.rows += [ST { name: n, v: len(t.rows) }]; }
+  names = ""; for x in t.rows { names += "{x.name}:{x.v} "; }
+  assert(names == "arc:3 dew:2 oak:3 pit:0 ", "text keys, the second arc replacing: {names}");
+}
+
+// `ordered`, the by-reference twin: searched through the same comparator.
+fn test_158_ordered_by_reference() {
+  db = ByRef { rows: [] };
+  ix = ByRefIx { tree: [] };
+  for i in 0..20 { db.rows += [O { id: (i * 9) % 23, v: i }]; }
+  order = 0; prev = -1;
+  for e in db.rows { if e.id > prev { order += 1; } prev = e.id; }
+  assert(order == 20 && len(db.rows) == 20, "strictly ascending: {order} of 20");
+  k18 = db.rows[18]; none = db.rows[19];
+  assert(k18 != null && k18.v == 2, "key 18 is i=2");
+  assert(none == null, "key 19 is absent");
+  ix.tree += [O { id: 4, v: 1 }];
+  assert(len(ix.tree) == 1, "the index that makes `O` record-backed is its own collection");
+}

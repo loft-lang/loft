@@ -440,8 +440,7 @@ pub fn sorted_finish(sorted: &DbRef, size: u32, keys: &[Key], stores: &mut [Stor
         rec: sorted_rec,
         pos: latest_pos,
     };
-    let key = keys::get_key(&rec, stores, keys);
-    let (pos, found) = sorted_find(sorted, true, size as u16, stores, keys, &key);
+    let (pos, found) = sorted_find_record(sorted, true, size as u16, stores, keys, &rec);
     let store = keys::mut_store(sorted, stores);
     // @P306 — a record with this key already exists: replace it in place
     // (latest insert wins) and do NOT grow.  The just-appended record at
@@ -500,8 +499,9 @@ pub fn ordered_finish(sorted: &DbRef, rec: &DbRef, keys: &[Key], stores: &mut [S
         keys::mut_store(sorted, stores).set_u32_raw(sorted_rec, rec_ref.pos, rec.rec);
         return 0;
     }
-    let key = keys::get_key(rec, stores, keys);
-    let (pos, found) = ordered_find(sorted, true, stores, keys, &key);
+    // Searched by the RECORD rather than a key built from it — the same search with the same
+    // `(slot, found)` answer, without collecting the key first.
+    let (pos, found) = ordered_find_record(sorted, true, stores, keys, rec);
     if found {
         // A search placing BEFORE its equals lands on the first record holding the key.
         // Relinking the record that is already there (a group re-indexing one it holds)
@@ -872,7 +872,11 @@ pub fn vec_base(h: &VecHeader, stores: &[Store]) -> *const u8 {
 /// the read through it answers the getter's own sentinel.  Valid exactly while no store
 /// is reallocated and the record is not freed — the block condition the emitter proves
 /// (`hoist::record_view_ptr`); `LOFT_HOIST_VERIFY=1` re-derives it at every use.
+// `#[inline]`: a non-generic `pub fn` is a real call from a `--native` program, which is a
+// separate crate built without LTO — and this one runs once per record view, which for a
+// `for e in v` loop is once per element.
 #[must_use]
+#[inline]
 pub fn rec_ptr(db: &DbRef, stores: &[Store]) -> *const u8 {
     if db.rec == 0 {
         std::ptr::null()
@@ -1161,6 +1165,25 @@ pub fn hoisted_scalar_verify<T: HoistEq>(hoisted: T, fresh: T) -> T {
     hoisted
 }
 
+/// `@FR-R-RecPtr`'s path clause under `LOFT_HOIST_VERIFY=1` — a field read through a record
+/// address at a SUMMED offset (`v.pos.x`), compared with the unrewritten read that walks the
+/// path.  [`rec_get`]'s own check re-reads the store at the offset it was given, so it
+/// cannot see an offset summed wrongly; this one can.
+///
+/// # Panics
+///
+/// When the two reads disagree.  Never in the emitted default.
+#[must_use]
+#[inline]
+pub fn path_read_verify<T: HoistEq>(through: T, walked: T) -> T {
+    assert!(
+        through.same(walked),
+        "record view read through a field path disagrees with the path walked \
+         (through the address {through:?}, walked {walked:?})"
+    );
+    through
+}
+
 /// @FR-Col-RemoveDense — a vector stays DENSE: removing index `i` shifts every later
 /// element down one, so there are no holes and no tombstones and index `j > i` now names what
 /// was at `j+1`.  That renumbering is what ends the place a view names (@FR-B-Disturb), so it
@@ -1207,6 +1230,40 @@ pub fn sorted_find(
     keys: &[Key],
     key: &[Content],
 ) -> (u32, bool) {
+    // The comparator is resolved ONCE for the search (`keys::fast_order`), so the loop
+    // below compares with a read rather than re-deciding the key's kind per probe.
+    let fast = keys::fast_order(keys, key);
+    sorted_search(sorted, before, size, stores, |at| {
+        keys::order_key(fast.as_ref(), key, at, stores, keys)
+    })
+}
+
+/// [`sorted_find`] for an INSERT: the key searched for is `rec`'s own, read through
+/// [`keys::fast_order_of`] instead of being copied out into a `Vec<Content>` first.
+#[must_use]
+pub fn sorted_find_record(
+    sorted: &DbRef,
+    before: bool,
+    size: u16,
+    stores: &[Store],
+    keys: &[Key],
+    rec: &DbRef,
+) -> (u32, bool) {
+    let fast = keys::fast_order_of(rec, stores, keys);
+    sorted_search(sorted, before, size, stores, |at| {
+        keys::order_record(fast.as_ref(), rec, at, stores, keys)
+    })
+}
+
+/// The binary search both fronts share; `order` answers how the searched key orders
+/// against the element at the `DbRef` it is handed.
+fn sorted_search(
+    sorted: &DbRef,
+    before: bool,
+    size: u16,
+    stores: &[Store],
+    order: impl Fn(&DbRef) -> Ordering,
+) -> (u32, bool) {
     if sorted.rec == 0 {
         return (0, false);
     }
@@ -1230,7 +1287,7 @@ pub fn sorted_find(
     loop {
         let mid = left + (right - left) / 2;
         result.pos = 8 + mid * u32::from(size);
-        let cmp = keys::key_compare(key, &result, stores, keys);
+        let cmp = order(&result);
         let action = if cmp == Ordering::Equal {
             found = true;
             if before {
@@ -1272,6 +1329,34 @@ pub fn ordered_find(
     keys: &[Key],
     key: &[Content],
 ) -> (u32, bool) {
+    let fast = keys::fast_order(keys, key);
+    ordered_search(sorted, before, stores, |at| {
+        keys::order_key(fast.as_ref(), key, at, stores, keys)
+    })
+}
+
+/// [`ordered_find`] for an INSERT — see [`sorted_find_record`].
+#[must_use]
+pub fn ordered_find_record(
+    sorted: &DbRef,
+    before: bool,
+    stores: &[Store],
+    keys: &[Key],
+    rec: &DbRef,
+) -> (u32, bool) {
+    let fast = keys::fast_order_of(rec, stores, keys);
+    ordered_search(sorted, before, stores, |at| {
+        keys::order_record(fast.as_ref(), rec, at, stores, keys)
+    })
+}
+
+/// The binary search both fronts share — see [`sorted_search`].
+fn ordered_search(
+    sorted: &DbRef,
+    before: bool,
+    stores: &[Store],
+    order: impl Fn(&DbRef) -> Ordering,
+) -> (u32, bool) {
     let store = keys::store(sorted, stores);
     let sorted_rec = store.get_u32_raw(sorted.rec, sorted.pos);
     let length = store.get_u32_raw(sorted_rec, 4);
@@ -1294,7 +1379,7 @@ pub fn ordered_find(
         let mid = (left + right + 1) >> 1;
         result.rec = store.get_u32_raw(sorted_rec, 8 + mid * 4);
         result.pos = 8;
-        let cmp = keys::key_compare(key, &result, stores, keys);
+        let cmp = order(&result);
         let action = if cmp == Ordering::Equal {
             found = true;
             if before {
