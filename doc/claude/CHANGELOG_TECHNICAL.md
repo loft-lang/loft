@@ -9,6 +9,36 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A range literal wider than i32 keeps its value (2026-09-21)
+
+Both backends, lexer.  `for i in 3000000000..3000000002` started at **-1294967296** and ran
+unbounded; `for i in -3000000000..-2999999998` ran **zero times** in silence.  Neither said
+anything (loft#1559).
+
+The lexer splits an integer literal at `i32::MAX` — up to it `Integer(u32)`, above it
+`Long(u64)` — and `ret_number` is the one home for that split.  Two short-circuit paths
+bypassed it with a bare `val.parse::<u32>()`: the one taken when a number is followed by `..`,
+and the tuple-index one.  So the START of a range lexed narrow while its END, parsed after the
+short-circuit, lexed wide — the asymmetry that made it look like a loop bug.  The parser then
+read `3000000000u32` as `Value::Int(-1294967296)`, the same bits as i32.  A negative start
+flipped sign, rose above the end, and the loop ran not at all.  Both sites now go through
+`ret_number`.
+
+Two diagnostics improve with it, because both short-circuits reported their own parse failure:
+a range bound above i64::MAX said *"Problem parsing float"* and now says it is out of range,
+and `t.2147483648` reaches the tuple's own *"index out of range — tuple has 2 elements"*
+instead of being wrapped into a small index (the three projection sites already read the index
+with `has_long`, so the wide token was always the one they wanted).
+
+Guard `tests/scripts/1559-a-range-literal-wider-than-i32-keeps-its-value.loft`, fifteen cells:
+the four broken shapes, the `i32::MAX` boundary either side of the split, the same bounds
+through PARAMETERS (which always worked, so the literal and the variable must now agree), four
+ranges inside i32, and the neighbouring constructs the two patched paths also feed — a slice,
+a tuple index, a float, and the hex/octal/binary forms.  Falsified by sabotage and recorded
+cell by cell as MEASURED rather than predicted, including the part that is awkward: with the
+pre-fix lexer the `4294967296` cell fails at PARSE and aborts the file, so the value
+observations were taken with that one cell shrunk, and the receipt says so.
+
 ### `(R-Range)`'s counted-counter clause was inert and now is not (2026-09-21)
 
 `--native`, generation time.  The rule has always listed *"a counted range's counters from

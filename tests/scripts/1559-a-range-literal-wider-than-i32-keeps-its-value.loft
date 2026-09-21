@@ -1,0 +1,115 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A counted range's LITERAL bounds keep their value above i32 (loft#1559).
+//
+// The lexer splits an integer literal at `i32::MAX` — up to it the token is `Integer(u32)`,
+// above it `Long(u64)` — and `ret_number` is the one home for that split.  Two short-circuit
+// paths bypassed it with a bare `val.parse::<u32>()`: the one taken when a number is followed
+// by `..`, and the tuple-index one.  So `3000000000..` lexed as `Integer(3000000000u32)`, the
+// parser narrowed it to `Value::Int(-1294967296)` — the same bits read as i32 — and the loop
+// started 2^32 below where it says.  Positive it then ran unbounded (counting 4294967298 for a
+// two-element range); NEGATIVE the sign flipped, the start rose above the end, and the loop ran
+// ZERO times with no diagnostic.  Both backends, because the fault is in the token.
+//
+// Every counter here is bounded by a `break` so the pre-fix build FINISHES rather than hanging:
+// a guard that only hangs cannot say which cell failed, and `make falsify` reads an exit code.
+//
+// @falsified-at: hand-run (sabotage, 2026-09-21) — the lexer's `..` short-circuit put back to
+// its `val.parse::<u32>()` form.  MEASURED, cell by cell, not predicted:
+//
+//   a5 fails at PARSE ("Problem parsing float"), because 4294967296 does not fit a `u32` at
+//      all, and that aborts the file before any cell runs.  So the observations below were
+//      taken with a5's bounds shrunk inside u32 — noted because it is the reason this guard
+//      cannot be falsified in one run, not a caveat about the fix.
+//   a1 prints `10 -1294967296` and fails its assert: the start is the literal's low 32 bits
+//      read as i32, and the loop is unbounded (10 is where the `break` stops it).
+//   a4 prints `0 0`: the sign flipped, the start rose above the end, and the loop ran ZERO
+//      times with no diagnostic — the shape a reader cannot see.
+//   a6, a7, a8, a9, b1, b3 all print their expected values unchanged.
+//
+// The controls are what make it score: the small ranges and the neighbouring constructs
+// passing beside the wide ones failing is what says the fault is the literal's WIDTH and not
+// the loop, the slice or the float.
+
+fn count_from(lo: integer, hi: integer) -> integer {
+  cf_n = 0;
+  for i in lo..hi { cf_n = cf_n + 1; if cf_n > 9 { break } }
+  cf_n
+}
+
+// a1 — 3e9, the filed shape: two iterations starting AT the literal.
+fn a1() {
+  n = 0; first = 0;
+  for i in 3000000000..3000000002 { if n == 0 { first = i; } n = n + 1; if n > 9 { break } }
+  println("a1 {n} {first}");
+  assert(n == 2 && first == 3000000000, "a1");
+}
+
+// a2 — the boundary itself: a start of exactly `i32::MAX` still takes the narrow token and was
+// always correct, so it is the control that says the split point is where the rule says.
+fn a2() {
+  n = 0; first = 0;
+  for i in 2147483646..2147483648 { if n == 0 { first = i; } n = n + 1; if n > 9 { break } }
+  println("a2 {n} {first}");
+  assert(n == 2 && first == 2147483646, "a2");
+}
+
+// a3 — one past it: the first start that needs the wide token.
+fn a3() {
+  n = 0; first = 0;
+  for i in 2147483648..2147483650 { if n == 0 { first = i; } n = n + 1; if n > 9 { break } }
+  println("a3 {n} {first}");
+  assert(n == 2 && first == 2147483648, "a3");
+}
+
+// a4 — the NEGATIVE half, and the sharp one: pre-fix this ran zero times in silence, where the
+// positive half at least announced itself by not terminating.
+fn a4() {
+  n = 0; first = 0;
+  for i in -3000000000..-2999999998 { if n == 0 { first = i; } n = n + 1; if n > 9 { break } }
+  println("a4 {n} {first}");
+  assert(n == 2 && first == -3000000000, "a4");
+}
+
+// a5 — past u32 as well, so the token cannot be a `u32` under any reading, and INCLUSIVE, whose
+// end carries the extra stop guard.
+fn a5() {
+  n = 0; first = 0;
+  for i in 4294967296..=4294967297 { if n == 0 { first = i; } n = n + 1; if n > 9 { break } }
+  println("a5 {n} {first}");
+  assert(n == 2 && first == 4294967296, "a5");
+}
+
+// a6..a9 — every bound inside i32, the shapes that were never broken.  They are the half that
+// makes the sabotage non-vacuous: a build that lexed EVERY literal wide would still pass a1..a5.
+fn a6() { n = 0; for i in 0..3 { n = n + 1; } println("a6 {n}"); assert(n == 3, "a6"); }
+fn a7() { n = 0; for i in 0..=3 { n = n + 1; } println("a7 {n}"); assert(n == 4, "a7"); }
+fn a8() { n = 0; for i in -2..2 { n = n + 1; } println("a8 {n}"); assert(n == 4, "a8"); }
+fn a9() { n = 0; for i in 5..5 { n = n + 1; } println("a9 {n}"); assert(n == 0, "a9"); }
+
+// a10 — the same bounds as a1 through PARAMETERS, which took the ordinary token path and were
+// correct before the fix: the literal and the variable must now agree.
+fn a10() {
+  r = count_from(3000000000, 3000000002);
+  println("a10 {r}");
+  assert(r == 2, "a10");
+}
+
+// b1..b4 — the neighbours the two patched lexer paths also feed.  A fix that routed the `..`
+// short-circuit somewhere wrong would show here first.
+fn b1() {
+  v: vector<integer> = [10, 20, 30, 40, 50];
+  s = v[1..3];
+  println("b1 {len(s)} {s[0]}");
+  assert(len(s) == 2 && s[0] == 20, "b1");
+}
+fn b2() { t = (7, "hi", 2.5); println("b2 {t.0} {t.2}"); assert(t.0 == 7 && t.2 == 2.5, "b2"); }
+fn b3() { f = 1.5; g = 0.25; println("b3 {f} {g}"); assert(f == 1.5 && g == 0.25, "b3"); }
+fn b4() { println("b4 {0xFF} {0o17} {0b1010}"); assert(0xFF == 255 && 0o17 == 15 && 0b1010 == 10, "b4"); }
+
+fn main() {
+  a1(); a2(); a3(); a4(); a5(); a6(); a7(); a8(); a9(); a10();
+  b1(); b2(); b3(); b4();
+  println("1559 ok");
+}

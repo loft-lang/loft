@@ -1731,11 +1731,21 @@ impl Lexer {
                     LexItem::Token("..".to_string()),
                     pos.clone(),
                 ));
-                return if let Ok(r) = val.parse::<u32>() {
-                    LexResult::new(LexItem::Integer(r, val.starts_with('0')), pos)
+                // Through `ret_number`, NOT a bare `u32` parse (loft#1559).  This
+                // short-circuit is taken when a number is followed by `..`, and parsing it
+                // as `u32` skipped the width split every other integer literal goes
+                // through: `3000000000..` became `Integer(3000000000u32)`, which the
+                // parser narrowed to `Value::Int(-1294967296)`, so `for i in 3000000000..N`
+                // started 2^32 below where it says and ran unbounded, while a NEGATIVE
+                // start flipped sign and ran zero times.  Both silent, on both backends.
+                return if let Ok(r) = val.parse::<u64>() {
+                    self.ret_number(r, pos, val.starts_with('0'))
                 } else {
-                    self.err(Level::Error, "Problem parsing float");
-                    Lexer::none()
+                    self.err(
+                        Level::Error,
+                        "Integer literal out of range (exceeds i64::MAX)",
+                    );
+                    self.ret_number(0, pos, false)
                 };
             }
             if prev_was_field_dot {
@@ -1759,11 +1769,19 @@ impl Lexer {
                     LexItem::Token(".".to_string()),
                     self.position.clone(),
                 ));
-                return if let Ok(r) = val.parse::<u32>() {
-                    LexResult::new(LexItem::Integer(r, val.starts_with('0')), pos)
+                // Through `ret_number` for the same reason as the `..` site above: one
+                // home for what an integer literal's token is.  A tuple index this large is
+                // out of range for every tuple, and the three projection sites read it with
+                // `has_long`, which matches both widths — so it reaches the out-of-range
+                // refusal instead of being silently wrapped into a small index.
+                return if let Ok(r) = val.parse::<u64>() {
+                    self.ret_number(r, pos, val.starts_with('0'))
                 } else {
-                    self.err(Level::Error, "Problem parsing tuple index");
-                    Lexer::none()
+                    self.err(
+                        Level::Error,
+                        "Integer literal out of range (exceeds i64::MAX)",
+                    );
+                    self.ret_number(0, pos, false)
                 };
             }
             val.push('.');
