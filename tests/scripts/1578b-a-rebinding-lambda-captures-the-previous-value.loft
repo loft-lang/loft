@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1578 — the shapes the first-binding refusal must leave alone.
+//
+// Only a lambda on the right-hand side of its variable's FIRST binding is refused.  A REBINDING
+// captures the value the variable holds before the statement — the previous closure — so
+// `go = fn(i) { go(i) + 1 }` after an earlier `go = …` calls the earlier one.  Recursion is a
+// file-scope `fn`, which may also be held as a fn-ref; and a lambda captures a scalar at its
+// creation, so a later reassignment of that scalar does not reach it.  Every value hand-computed.
+//
+// @falsified-at: none — a LOCK.  Every cell passed before the refusal existed and passes after
+//   it; the change may only remove the first-binding call.  Run it against a build whose refusal
+//   also fires for a rebinding (drop the `first_bind_at` position test in `parse_assign_inner`)
+//   and `rebind1578b` stops compiling — that is the direction it fails in.
+//   CHANNEL: exit and assertions.  ARMED: none needed (no leak-class claim).
+//   WITNESS: the rebinding reads 2, the file-scope recursion 3, the capture 2.
+//   HOLDS: leak, panic and free-refusal are clean on both backends.
+
+fn count1578b(i: integer) -> integer { if i == 0 { 0 } else { count1578b(i - 1) + 1 } }
+
+fn rebind1578b() -> integer {
+  go = fn(i: integer) -> integer { i };
+  go = fn(i: integer) -> integer { go(i) + 1 };
+  go(1)
+}
+
+fn main() {
+  assert(rebind1578b() == 2, "a rebinding captures the previous closure: {rebind1578b()}");
+  f = count1578b;
+  assert(f(3) == 3, "a file-scope fn recurses, held as a fn-ref: {f(3)}");
+  z = 1;
+  g = fn() -> integer { z + 1 };
+  z = 5;
+  assert(g() == 2, "a scalar is captured at creation: {g()}");
+}
