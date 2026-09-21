@@ -5475,6 +5475,12 @@ pub struct Data {
     /// aliased via a DbRef, non-null. A thin marker (a set, not a Definition field — those
     /// serialize) consulted by the few value-semantics chokepoints.
     pub value_structs: HashSet<u32>,
+    /// @PLN165 B2 — the bound set each type-variable placeholder stands for, as its sorted
+    /// interface names joined with `+` (`"Ordered+Printable"`; `""` unbounded).  A placeholder
+    /// is minted per (spelling, bound set), so this is what tells two variables of one bound set
+    /// apart from two of different sets when a TEMPLATE is keyed up to renaming
+    /// ([`Data::full_spelling`]).  A thin marker, like `value_structs`.
+    pub type_var_bound_keys: HashMap<u32, String>,
     used_definitions: HashSet<u32>,
     used_attributes: HashSet<(u32, usize)>,
     /// This definition is referenced by a specific definition, the code is used to update this
@@ -6067,6 +6073,7 @@ impl Data {
             adopted_stubs: Vec::new(),
             source: STD_SOURCE,
             value_structs: HashSet::new(),
+            type_var_bound_keys: HashMap::new(),
             used_definitions: HashSet::new(),
             used_attributes: HashSet::new(),
             referenced: HashMap::new(),
@@ -7346,9 +7353,37 @@ impl Data {
         &self,
         params: impl Iterator<Item = &'a Type>,
     ) -> Option<String> {
+        let params: Vec<&Type> = params.collect();
+        // @PLN165 B2 — a TEMPLATE's parameters are keyed up to renaming its variables: each is
+        // written as its position among the variables in order of first appearance, with its
+        // bound set (`$0:Ordered`), so `f<T>(v: vector<T>)` and `f<U>(v: vector<U>)` are one key
+        // — the redefinition they are — while `f<T: A>` and `f<T: B>` are two.
+        let mut vars: Vec<(u32, String)> = Vec::new();
+        for tp in &params {
+            tp.any_node(&mut |t| {
+                if let Type::Reference(d, _) = t
+                    && (*d as usize) < self.definitions.len()
+                    && self.is_type_var_placeholder(*d)
+                    && !vars.iter().any(|(v, _)| v == d)
+                {
+                    let bounds = self.type_var_bound_keys.get(d).cloned().unwrap_or_default();
+                    let label = if bounds.is_empty() {
+                        format!("${}", vars.len())
+                    } else {
+                        format!("${}:{bounds}", vars.len())
+                    };
+                    vars.push((*d, label));
+                }
+                false
+            });
+        }
         let mut parts = Vec::new();
         for tp in params {
-            parts.push(self.key_identity(tp)?);
+            if vars.is_empty() {
+                parts.push(self.key_identity(tp)?);
+            } else {
+                parts.push(self.identity_with_vars(tp, &vars));
+            }
         }
         Some(parts.join("#"))
     }
@@ -7641,6 +7676,36 @@ impl Data {
                 format!("fn({}) -> {}", p.join(", "), rec(ret))
             }
             _ => self.identity_spelling_erasing(tp),
+        }
+    }
+
+    /// [`Self::identity_spelling`] with each of a template's type variables written as its
+    /// label in `vars` (`$0:Ordered`) — a template's key up to renaming (@PLN165 B2).
+    fn identity_with_vars(&self, tp: &Type, vars: &[(u32, String)]) -> String {
+        let rec = |t: &Type| self.identity_with_vars(t, vars);
+        match tp {
+            Type::Reference(d, _) | Type::Enum(d, _, _) => {
+                if let Some((_, label)) = vars.iter().find(|(v, _)| v == d) {
+                    return label.clone();
+                }
+                self.identity_spelling(tp)
+            }
+            Type::Optional(inner) => format!("{}?", rec(inner)),
+            Type::Rewritten(inner) => rec(inner),
+            Type::RefVar(inner) => format!("&{}", rec(inner)),
+            Type::Vector(elm, _) if !matches!(elm.as_ref(), Type::Unknown(_)) => {
+                format!("vector<{}>", rec(elm))
+            }
+            Type::Iterator(elm, _) => format!("iterator<{}>", rec(elm)),
+            Type::Tuple(elems) => {
+                format!("({})", elems.iter().map(rec).collect::<Vec<_>>().join(", "))
+            }
+            Type::Function(params, ret, _, _) => format!(
+                "fn({}) -> {}",
+                params.iter().map(rec).collect::<Vec<_>>().join(", "),
+                rec(ret)
+            ),
+            _ => self.identity_spelling(tp),
         }
     }
 
@@ -7992,8 +8057,17 @@ impl Data {
         // a stdlib name stays the refusal below (C95), and a library's names stay module-scoped
         // (C97).  The same spelling twice is the redefinition it always was.
         let mut overload_label: Option<String> = None;
+        // @PLN165 B2 — a TEMPLATE is a member too: an incumbent that is one (`Generic`, set
+        // right after it registered), or a newcomer whose parameters name a type variable.
+        let generic_members = crate::keys::generic_member_enabled();
+        let newcomer_is_template = arguments.iter().any(|a| self.mentions_type_var(&a.typedef));
+        let incumbent_joins = |data: &Self, d: u32| match data.def(d).def_type {
+            DefType::Function => generic_members || !newcomer_is_template,
+            DefType::Generic => generic_members,
+            _ => false,
+        };
         if d_nr != u32::MAX
-            && self.def(d_nr).def_type == DefType::Function
+            && incumbent_joins(self, d_nr)
             && self.def(d_nr).source == self.source
             && let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
             && self.def_full_spelling(d_nr).as_ref() != Some(&full)

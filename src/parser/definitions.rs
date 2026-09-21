@@ -1677,6 +1677,7 @@ impl Parser {
         if let Some(holder) = claimed {
             // This exact `(spelling, bounds)` header has been seen — on the other
             // pass, or in another function declaring the same variable the same way.
+            self.data.type_var_bound_keys.insert(holder, bounds_key);
             return Some(holder);
         }
         // `(G-Gen)`: this header INTRODUCES the variable.  It may reuse the
@@ -1722,6 +1723,9 @@ impl Parser {
         if holder != u32::MAX {
             self.type_var_holders
                 .insert((type_var_name.clone(), bounds_key.clone()), holder);
+            self.data
+                .type_var_bound_keys
+                .insert(holder, bounds_key.clone());
             self.type_var_bounds.insert(holder, bounds_key);
         }
         Some(holder)

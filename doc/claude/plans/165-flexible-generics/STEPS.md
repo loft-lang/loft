@@ -232,6 +232,12 @@ iterates functions only.  Selection still skips templates in this step.
   template (F5).
 - **Compared against:** IDENTICAL over every file that compiles today — a template beside a
   same-named definition is refused today, so no compiling file has one.
+- **Built** (2026-09-21): measured IDENTICAL 1626/1626.  The alpha-normalised key needs each
+  variable's bound set where `Data` can read it: a placeholder is minted per (spelling, bound
+  set), and `Data::type_var_bound_keys` records the set beside it.  No emitter enumerates a
+  set's members — every `Type::Routine` reader in `generation/` is type-level — so the
+  accessor the plan named was not needed: selection is the one route to a member, and it
+  skips a template until B3.
 
 ### B3 — selection ranks a template, and instantiates what it selects  ·  M
 

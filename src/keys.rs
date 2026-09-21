@@ -1052,6 +1052,16 @@ pub fn value_return_enabled() -> bool {
 /// a store of its own (@PLN164 B2, `@FR-R-Place`'s callee clause: a callee that on some exit
 /// answers a store other than the buffer it was handed cannot be placed) — the bisect step
 /// for a wrong record out of a callee with more than one literal exit.
+/// @PLN165 B2/B3 — a generic is a member of its name's overload set, beside concrete
+/// definitions and other generics.  **DEFAULT ON.**  `LOFT_NO_GENERIC_MEMBER=1` restores the
+/// `Function`-only admission (a generic beside a same-named definition is "Cannot redefine") —
+/// the rollback, and the first bisect step for a call that reaches the wrong definition where
+/// a generic shares the name.
+pub fn generic_member_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_GENERIC_MEMBER"))
+}
+
 /// @PLN165 B1 — a definition key and an overload's rank read a type's FULL identity: a
 /// collection's element, an integer's width, a `τ?`'s nullability, a function type's
 /// signature.  **DEFAULT ON.**  `LOFT_NO_ELEMENT_KEY=1` restores the spelling that erased them

@@ -125,6 +125,10 @@ impl Parser {
     /// does not take the call (`Disp-Applicable`): more arguments than parameters, a trailing
     /// parameter with no default, or an argument its parameter cannot accept.
     fn definition_ranks(&mut self, r: u32, routed: &[Type]) -> Option<Vec<Rank>> {
+        // @PLN165 B2 — a template member is not ranked yet: it takes no call in this step.
+        if self.data.def_type(r) == DefType::Generic {
+            return None;
+        }
         let declared: Vec<Type> = self
             .data
             .def(r)
