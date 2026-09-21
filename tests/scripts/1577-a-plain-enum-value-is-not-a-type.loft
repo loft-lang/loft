@@ -18,12 +18,14 @@
 //                        A result or field type was refused before the fix and is not the
 //                        silent shape, so it is not a cell here.
 //
-// @falsified-at: bce473128 — interpret expectations FAIL -> 3/3, native the same.
+// @falsified-at: bce473128 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 3/3, native
+//   exit 1 -> 0, native expectations FAIL/3 -> 3/3 (the suite's verdict, not a count of matches).
 //   CHANNEL: expectations.  On the control every cell COMPILES — the three definitions are
 //   accepted and the calls run the enum-level fallback — so none of the three refusals is emitted.
 //   WITNESS: on the control `beats1577(Rock, Hand1577)` beside `beats1577(Hand1577, Hand1577)`
 //   compiles and the call answers the fallback.
 //   HOLDS: leak, panic and free-refusal are equal on both trees (a refused file runs nothing).
+// @falsified-by: tests/falsified/1577-a-plain-enum-value-is-not-a-type.patch — the same channels.
 
 enum Hand1577 { Rock, Paper, Scissors }
 
