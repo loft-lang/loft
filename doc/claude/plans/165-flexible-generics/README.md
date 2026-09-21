@@ -23,10 +23,11 @@ in [`probes/`](probes/), each with the answer it gave at the top.
 | **D** generic types | `struct Grid<T>`, `enum Shape<T>`, methods, the goal program | designed | D9 (several variables on a type) and D11 only |
 | **E** built-ins | `insert` / `sort` / `reverse` / `reserve` / `filter`, then `map` / `reduce`, as library generics | designed | E6–E7 only (`map`, `reduce`) |
 
-Arcs A and B, D1–D8 and E1–E5 can start now.  The rest waits on step C0 — the owner revising
-`DESIGN_DECISIONS.md` C110.  DESIGN.md § C110, evaluated measured each of C110's reasons
-against the tree: two no longer hold, one stands on narrower ground, one holds in full — and
-the consumer it asked for turned out to be the language's own `map` and `reduce`.
+Every arc can start: step C0 is done.  The owner revised C110 as
+[C126](../../DESIGN_DECISIONS.md) on 2026-09-21, after DESIGN.md § C110, evaluated measured
+each of its reasons against the tree — two no longer held, one stood on narrower ground, one
+held in full, and the consumer it asked for turned out to be the language's own `map` and
+`reduce`.
 
 **Why now** (owner, 2026-09-21): loft carries no restriction a reader cannot derive, and the
 work under this one is better done before loft is called stable.  DESIGN.md § Why before
@@ -91,7 +92,7 @@ A6), and the method that captures a generic's call
 
 | Question (plans#165) | Answer | Where |
 |---|---|---|
-| 1. Is this the C110 revisit? | The owner's call, now with each of C110's reasons measured: lift (a) and (b) for functions, keep "no `hash<K, V>`" and `hole_*` per-kind.  One-variable generic structs were never C110's to gate | DESIGN.md § C110, evaluated |
+| 1. Is this the C110 revisit? | Yes — recorded as C126: both restrictions lifted, for functions and types; "no `hash<K, V>`" and `hole_*` per-kind kept | `DESIGN_DECISIONS.md` C126 |
 | 2. Explicit type arguments? | In TYPE position only; inferred everywhere else | `D-Infer` |
 | 3. Bound versus enum? | Incomparable, so ambiguous — RULES.md already decided it | `D-Kind` |
 | 4. Keyed collections over `T`? | Stay refused at the definition; no `hash<K, V>` | `D-Keyed` |
@@ -104,4 +105,4 @@ A6), and the method that captures a generic's call
   takes from it.
 - [`../../formal/interfaces.md`](../../formal/interfaces.md) — `G-Gen`, `G-Mono`, `G-Sat`;
   `G-Key` and `G-Select` join it as their arcs close.
-- [`../../DESIGN_DECISIONS.md`](../../DESIGN_DECISIONS.md) C110.
+- [`../../DESIGN_DECISIONS.md`](../../DESIGN_DECISIONS.md) C110 and C126, which revises it.

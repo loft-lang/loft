@@ -21,9 +21,9 @@ means `--interpret` and `--native`, with `LOFT_STRICT_STORES=1` and `LOFT_POISON
 
 ## The arcs
 
-Five arcs, each a PR that closes on its own.  What waits for step C0 — the owner revising
-C110 — is narrower than the plan's issue says: DESIGN.md § C110, evaluated measured each of
-its reasons, and a one-variable generic struct was never declined at all.
+Five arcs, each a PR that closes on its own.  Step C0 — the owner revising C110 — is done
+(C126, 2026-09-21), so nothing below waits on a decision; the "Waits for C0" column records
+which steps the revision unblocked.
 
 | Arc | What a program can write afterwards | Steps | Waits for C0 |
 |---|---|---|---|
@@ -259,12 +259,12 @@ keeps declining the open profile's stub for a set with a template member — a s
 
 ## Arc C — several variables, in any parameter
 
-### C0 — the owner revises C110
+### C0 — the owner revises C110  ·  DONE 2026-09-21
 
-No code.  DESIGN.md § C110, evaluated holds each of C110's reasons measured against the tree,
-the consumer it asked for (`map` and `reduce`, two-variable generics the language ships as
-special forms), what stays decided (no `hash<K, V>`; `hole_*` per-kind), and a proposed
-wording.  It gates arc C, step D9 and steps E6–E7 — and nothing else.
+Recorded as [C126](../../DESIGN_DECISIONS.md) — *a generic's type variables are
+unrestricted; a keyed collection stays a record set* — with C110 carrying a revision note at
+its top.  Arc C, step D9 and steps E6–E7 are unblocked.  What stays decided: no
+`hash<K, V>`, and the `hole_*` family stays per-kind.
 
 ### C1 — one variable, any parameter  ·  S
 

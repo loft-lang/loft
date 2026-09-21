@@ -218,9 +218,9 @@ lookup is what a record set is for.  That answers open question 4.
 
 ## C110, evaluated
 
-Step C0 is the owner revising `DESIGN_DECISIONS.md` C110.  A plan cannot supersede a register
-entry, so this section is the material for that revision: each of C110's reasons, measured
-against `9f5cf6a96`, and what the measurement leaves standing.
+The material for step C0, which is done: the owner revised C110 as C126 on 2026-09-21, and
+the register entry is the decision — this section is the measurement it rests on.  Each of
+C110's reasons, run against `9f5cf6a96`, and what the measurement leaves standing.
 
 | C110's reason | Verdict | Measured |
 |---|---|---|
@@ -270,15 +270,8 @@ above says nothing in the compiler needs it any more.  (2) *Before stable*: the 
 allowed later, the work under it is not — § Why before contract 1 says which steps.
 (3) *The fallout must not become a long-lived branch* — § How it lands.
 
-**Proposed wording** — *"Revised by @PLN165, on the owner's direction: loft carries no
-restriction a reader cannot derive, and this one's reasons no longer hold.  (a) A type variable may appear in any parameter:
-the monomorph's key is built from its bindings, not from the first argument, and since
-@PLN162 a key carries several types.  (b) A generic function may declare several type
-variables — `map` and `reduce` are two-variable generics the language ships as special forms,
-which the no-observable-special-names rule cannot retire otherwise.  A generic type may too,
-admitted with one-variable generic structs rather than argued for on its own.  Unchanged:
-keyed collections stay record sets — no `hash<K, V>` — and the `hole_*` family stays per-kind,
-because a bound would move ownership of the opt-in list from the target's author to anyone."*
+**The decision** is [C126](../../DESIGN_DECISIONS.md) — its text lives in the register and
+nowhere here, so the two cannot disagree.
 
 ## Why before contract 1
 

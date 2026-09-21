@@ -3091,6 +3091,18 @@ can just be correct.  That is the trade C107 had already declined for arguments.
 
 **Catalogue:** @F26 (interfaces & bounded generics) · @F94 (type-directed interpolation)
 
+> **Revised by [C126](#c126--a-generics-type-variables-are-unrestricted-a-keyed-collection-stays-a-record-set)
+> (2026-09-21, owner).**  Both restrictions on a type variable are LIFTED: it may appear in any
+> parameter, and a generic may declare several.  The new evidence: the monomorph's key is
+> built from what `T` binds to and not from the first argument, three of the four readers named
+> below never read its content, and @PLN162 has since put several types in every overload key
+> — so the cost this entry priced is paid; a BOUNDED generic refuses a type that has not opted
+> in, naming the method to add, so *"accepts every type by construction"* is true of an
+> unbounded one only; and `map` and `reduce` are two-variable generics the language itself
+> ships as special forms.  **Still holds:** keyed collections stay record sets — no
+> `hash<K, V>` — and the `hole_*` family stays per-kind.  The text below is the decision as it
+> was made.
+
 ### Context
 
 Two proposals arrived together and were evaluated together, because they had been filed as one
@@ -4162,3 +4174,85 @@ keeps the record form; it is the values oracle, not the performance lane.
 
 A row shows a class of temporaries that cannot be removed or reused and costs more than a few
 percent — measured on the release binary with `perf`, not from a count.
+
+---
+
+## C126 — a generic's type variables are unrestricted; a keyed collection stays a record set
+
+**Catalogue:** @F25 (generics) · @F26 (interfaces & bounded generics) · @F94 (type-directed
+interpolation) · @PLN165 · revises C110
+
+### Question
+
+C110 kept a generic to ONE type variable, in its FIRST parameter, and kept keyed collections
+record sets.  Do its reasons still hold?
+
+### Context
+
+The owner asked on 2026-09-21, with three reasons of their own, none of which is the consumer
+C110's revisit clause asked for:
+
+1. **loft carries no random-feeling restriction.**  *"One type variable, and only in the first
+   parameter"* is a rule a reader meets with no way to derive it.
+2. **The work under it is better done before loft is called stable.**  The change itself only
+   admits programs and could land later; what it stands on cannot (below).
+3. **The fallout must not become a long-lived branch.**
+
+Each of C110's reasons was then run against `main` (`9f5cf6a96`).  The programs, with the
+answer each gave, are in
+[plans/165-flexible-generics/probes/](plans/165-flexible-generics/probes/); the full
+measurement is [DESIGN.md § C110, evaluated](plans/165-flexible-generics/DESIGN.md#c110-evaluated).
+
+### Evaluation
+
+| C110's reason | Verdict | Measured |
+|---|---|---|
+| The monomorph's name is its identity, built *"from the FIRST argument's type"*, and four readers must follow a second type | **no longer holds** | The name is built from what `T` BINDS to: `first<T>(v: vector<T>)` at `integer` is `t_7integer_first`.  `find_fn` looks under the first argument (`vector`) and never finds it — both calls of `first(a)` resolve through the template, as they do for all three stdlib generics.  The H5 splitter reads only the function-name half, and native emits whatever the key is.  Where `find_fn` DOES find an instance it is a defect: `count_of<T>(v: vector<T>)` at `Cat` is keyed as the method `count_of` on `Cat`, takes that method for its own instance, and two definitions that are legal together are refused |
+| *"The cost is understood — it has simply never been worth paying"* | **overtaken** | @PLN162 extended mangling beyond the first parameter on 2026-09-14, for another reason: every overload key carries every parameter's type (`f_10Rock#Paper_beat`) |
+| The sole consumer is harmed: *"a generic `hole<T>` accepts every type by construction"* | **false as stated; stands on narrower ground** | `hole<T: SqlHole>(v: T)` called with a type that has not opted in is refused *"'Raw' does not satisfy interface 'SqlHole': missing sql_hole"* — the compile error naming the method to add.  A BOUND is a per-kind opt-in.  What it changes is who owns the list: the target's author today, anyone who implements the interface under a bound |
+| `hash<K, V>` would be a second spelling of a keyed collection, and a worse one | **holds in full** | nothing has changed |
+
+**The consumer C110 asked for is the language itself.**  `map` is
+`vector<T> × fn(T) -> U → vector<U>` and `reduce` is `vector<T> × U × fn(U, T) -> U`: two type
+variables each, shipped as compiler special forms because a library cannot say `U`.  A program
+can write the `T → T` half as a library generic today and cannot write `T → U`.  Under the
+rule *no observable special names* (2026-09-15) these two cannot be retired without a second
+variable.  No LIBRARY consumer exists: the published libraries declare no generic at all.
+
+**What C110 never decided.**  Its reasons against several variables are all about keyed
+collections, and its decision set multi-parameter generics aside (*"must argue for itself"*)
+rather than weighing them.  A generic struct with one variable is named nowhere in this
+register: it was unbuilt, never declined.
+
+**Why before contract 1.**  Lifting the rule stands on changes a freeze would pin: the keys
+definitions are found by (they are native symbols, and the library path decodes them), the IR
+schema (a type template; an instance recording its template and arguments), which definition
+a call reaches where a generic shares a name with a method, and new refusals — C95's rule is
+that the error surface can only shrink after contract 1.  Measured window: the published
+libraries declare 0 generics and 0 free overload sets, so today the fallout is this
+repository's corpus alone.
+
+### Decision
+
+- **Revised 2026-09-21, owner.**  A type variable may appear in **any parameter**, and a
+  generic may declare **several** — on a function, and on a struct or enum, which may
+  themselves be generic.  Every declared variable must appear in a parameter (a function) or
+  a field (a type); one that appears nowhere cannot be inferred and is refused where it is
+  declared.
+- **Several variables on a TYPE are admitted on reason 1 alone.**  No use was found that a
+  tuple, `τ?` or a record set does not already cover; they are admitted because the mechanism
+  takes an argument list, and a rule that stops at the second variable is one no reader could
+  derive.
+- **Unchanged — keyed collections stay record sets.**  No `hash<K, V>`, no `sorted<K, V>`;
+  C110's three counts stand, and a keyed collection over a type variable stays refused at its
+  declaration.
+- **Unchanged — the `hole_*` family stays per-kind,** on the narrower ground above: a bound
+  would keep the compile error and hand the opt-in list to every implementor, and the audit
+  of a surface such as SQL is *read one target's method list*.
+- **Lifted as a decision, not yet as a fact.**  The compiler refuses these shapes until
+  @PLN165's steps land; they are now unbuilt work with a plan, no longer a declined feature.
+  The fallout is worked on `main` behind switches, never on a long-lived branch
+  ([DESIGN.md § How it lands](plans/165-flexible-generics/DESIGN.md#how-it-lands--never-a-long-lived-branch)).
+- **Revisit when** — for what stands: a keyed type has a use a record set genuinely cannot
+  express (C110's own trigger, unchanged); or a target wants an OPEN set of hole kinds, with
+  third parties opting their own types in, and says so.
