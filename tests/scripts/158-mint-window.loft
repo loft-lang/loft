@@ -19,7 +19,8 @@
 // the container, so it is evaluated BEFORE the mint (loft#1548) and the window is clean;
 // m7 is a keyed insert, whose claimed record takes the address too; m12 and m13 hand the
 // element to the callee as its buffer, so the caller has no write to serve; m14 is a
-// struct-enum element, which is not a plain record.
+// struct-enum element, a record like any other once the enum clause admits it: its
+// fields go through the address and its tag keeps its store write.
 //
 // @falsified-at: hand-measured (sabotage, 2026-09-21) — the window's verdict shown only the
 // element's own writes, so a nested mint inside it was admitted.  The FIRST run of that
@@ -170,7 +171,7 @@ fn m13() {
   assert(t == 11295, "m13");
 }
 
-// m14 — a struct-enum element.
+// m14 — a struct-enum element: a window per variant.
 fn m14() {
   v: vector<Shape> = [];
   for i in 0..8 { if i % 2 == 0 { v += [Dot { d: i }]; } else { v += [Box { w: i, h: 2 }]; } }

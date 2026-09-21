@@ -28,9 +28,10 @@ const EXPECTED: &[(&str, Row, Row)] = &[
     ("n_c6", (2, 3, 0), (1, 1, 0)),
     ("n_c7", (1, 1, 0), (0, 0, 0)),
     ("n_c8", (2, 3, 0), (2, 2, 0)),
-    // A record holding a vector, and a struct-enum value: unchanged by the clause.
+    // A record holding a vector, and a struct-enum value: unchanged by THIS clause (the
+    // enum cell's addresses are `@FR-R-RecPtr`'s enum clause at work).
     ("n_c9", (1, 1, 0), (1, 1, 0)),
-    ("n_c11", (1, 0, 0), (1, 0, 0)),
+    ("n_c11", (2, 3, 0), (2, 3, 0)),
 ];
 
 const SWITCHES: [&str; 4] = [
