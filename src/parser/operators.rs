@@ -3981,15 +3981,9 @@ impl Parser {
                 let d_nr = *d_nr;
                 let name =
                     crate::data::Data::type_var_spelling(self.data.def(d_nr).name()).to_string();
-                let saved = (
-                    self.cur_type_var,
-                    std::mem::take(&mut self.cur_type_var_name),
-                );
-                self.cur_type_var = d_nr;
-                self.cur_type_var_name.clone_from(&name);
+                let saved = std::mem::replace(&mut self.cur_type_vars, vec![(name.clone(), d_nr)]);
                 let (v, t) = self.subparse_default(&format!("{name} {{}}"), tp);
-                self.cur_type_var = saved.0;
-                self.cur_type_var_name = saved.1;
+                self.cur_type_vars = saved;
                 // The marker's `result` is the type the default is FOR, which substitution
                 // turns into the concrete type the monomorph answers — the sub-parse's own
                 // type is not that on pass 1, where a template declared below its caller

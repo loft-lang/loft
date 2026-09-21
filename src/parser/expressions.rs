@@ -6226,7 +6226,7 @@ use a separate collection or add after the loop"
         // `substitute_type`).  Rewriting here would bury T inside `__nullable<T>`
         // and break the "T appears in the first parameter" check + the return
         // type unification.
-        if struct_d == self.cur_type_var {
+        if self.is_header_type_var(struct_d) {
             return elem;
         }
         // The eligibility (non-stdlib, non-synthetic struct) and the synth-enum

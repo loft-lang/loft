@@ -966,21 +966,18 @@ pub struct Parser {
     /// Variable number of the __closure parameter inside a lambda body (second pass).
     /// `u16::MAX` when not inside a capturing lambda.
     pub(crate) closure_param: u16,
-    /// @PLN25 E2 — def_nr of the generic type-variable stub (`T`) currently in
-    /// scope while parsing a `fn f<T>(…)` signature/body; `u32::MAX` outside a
-    /// generic function.  Consulted ONLY by `e2_nullable_elem` so a generic
-    /// `vector<T>` is NOT rewritten to `vector<__nullable<T>>` (T is opaque at
-    /// definition time — nullability is decided at instantiation by whatever
-    /// concrete element type the caller's vector carries).  Reset per function.
-    pub(crate) cur_type_var: u32,
-    /// The SOURCE spelling of the type variable [`Self::cur_type_var`] holds — `"T"` for
-    /// `fn f<T: …>`, empty outside a generic function.
+    /// The type variables the enclosing generic header declares, each as its SOURCE spelling
+    /// (`"T"` for `fn f<T: …>`) and the placeholder definition it binds; empty outside a
+    /// generic function.
     ///
-    /// `formal/interfaces.md` `(G-Gen)`: a generic header *introduces* its type variable, so
-    /// the binding is per-header.  Two functions that both write `T` name two different
-    /// variables, and `parse_type` therefore resolves the spelling against THIS header
-    /// before it asks the global definition table (loft#1300, loft#1301).
-    pub(crate) cur_type_var_name: String,
+    /// `formal/interfaces.md` `(G-Gen)`: a generic header *introduces* its variables, so the
+    /// binding is per-header.  Two functions that both write `T` name two different
+    /// variables, and `parse_type` therefore resolves a spelling against THIS header before
+    /// it asks the global definition table (loft#1300, loft#1301) —
+    /// [`Self::def_nr_in_scope`].  @PLN25 E2 reads it too: a `vector<T>` over a header's
+    /// variable stays dense, since nullability is decided by whatever the instantiation
+    /// binds.  Reset per function.
+    pub(crate) cur_type_vars: Vec<(String, u32)>,
     /// The placeholder definition standing for a `(type-variable spelling, bound set)` pair.
     ///
     /// Sharing one placeholder across generic functions is what lets the stdlib's many
@@ -1542,8 +1539,7 @@ impl Parser {
             branch_sunk_vectors: std::collections::HashSet::new(),
             fn_lambdas: std::collections::HashMap::new(),
             closure_param: u16::MAX,
-            cur_type_var: u32::MAX,
-            cur_type_var_name: String::new(),
+            cur_type_vars: Vec::new(),
             type_var_holders: std::collections::HashMap::new(),
             type_var_bounds: std::collections::HashMap::new(),
             closure_vars: std::collections::HashMap::new(),
@@ -3124,9 +3120,7 @@ impl Parser {
         }
         (0..self.data.definitions()).any(|g| {
             matches!(self.data.def_type(g), DefType::Generic)
-                && !self.data.def(g).attributes().is_empty()
-                && Self::extract_type_var(&self.data, &self.data.def(g).attributes()[0].typedef)
-                    == type_nr
+                && Self::template_vars(&self.data, g).contains(&type_nr)
         })
     }
 
@@ -6143,13 +6137,15 @@ impl Parser {
     /// One home, because a spelling that resolves one way in a type position and another in a
     /// value position is two variables wearing one name.
     pub(crate) fn def_nr_in_scope(&self, name: &str) -> u32 {
-        if !self.cur_type_var_name.is_empty()
-            && name == self.cur_type_var_name
-            && self.cur_type_var != u32::MAX
-        {
-            return self.cur_type_var;
+        if let Some((_, holder)) = self.cur_type_vars.iter().find(|(n, _)| n == name) {
+            return *holder;
         }
         self.data.def_nr(name)
+    }
+
+    /// Is `d_nr` one of the variables the enclosing generic header declares?
+    pub(crate) fn is_header_type_var(&self, d_nr: u32) -> bool {
+        self.cur_type_vars.iter().any(|(_, h)| *h == d_nr)
     }
 
     /// Check if a type is a generic type variable (a dummy struct used as T).
@@ -7193,18 +7189,14 @@ impl Parser {
     /// param in `definitions.rs`, the body rewrite + `ref_return` in `block_result`)
     /// run for a concrete-return generic template so the monomorph inherits it.
     /// Keying the guards on this (not on `is_generic_template`) collapses the 4
-    /// re-assertion sites onto the one existing non-generic flow.  The type variable
-    /// is the template's own (`extract_type_var` of its first attribute) — NOT any
-    /// `DefType::Generic` def (that is the FUNCTION, not the type param).
+    /// re-assertion sites onto the one existing non-generic flow.  The type variables
+    /// are the template's own ([`Self::template_vars`]) — NOT any `DefType::Generic` def
+    /// (that is the FUNCTION, not a type parameter).
     fn return_shape_depends_on_type_var(&self, t: &Type) -> bool {
         if self.context == u32::MAX || self.data.def_type(self.context) != DefType::Generic {
             return false;
         }
-        let attrs = self.data.def(self.context).attributes();
-        if attrs.is_empty() {
-            return false;
-        }
-        let tv_nr = Self::extract_type_var(&self.data, &attrs[0].typedef);
+        let tvs = Self::template_vars(&self.data, self.context);
         // `Type::contains_def` is the keystone-backed answer to "does this type mention
         // `d_nr`?" — `any_node` over `Type::for_each_child`, so it descends every
         // child-bearing variant and a new one extends ONE match.  The hand-rolled
@@ -7213,7 +7205,7 @@ impl Parser {
         // `Function`, a `RefVar` or a keyed collection read as "no type variable here".
         // `contains_def`'s own doc records being unified from two earlier copies with
         // exactly that drift; this was a third, two hundred lines from a call to it.
-        tv_nr != u32::MAX && t.contains_def(tv_nr)
+        tvs.iter().any(|tv| t.contains_def(*tv))
     }
 
     /// Is the template's declared return the type VARIABLE itself, however it is wrapped?
@@ -7310,34 +7302,27 @@ impl Parser {
         if types.is_empty() || types[0].is_unknown() {
             return Type::Unknown(0);
         }
-        let tv_nr =
-            Self::extract_type_var(&self.data, &self.data.def(g_nr).attributes()[0].typedef);
-        if tv_nr == u32::MAX {
+        let Some(bindings) = Self::bind_template(&self.data, g_nr, types) else {
             return Type::Unknown(0);
-        }
-        let concrete = Self::resolve_type_var(
-            &self.data.def(g_nr).attributes()[0].typedef,
-            tv_nr,
-            &types[0],
-        );
-        if concrete.is_unknown() {
+        };
+        if bindings.iter().any(|(_, b)| b.is_unknown()) {
             return Type::Unknown(0);
         }
         let tmpl_returned = self.data.definitions[g_nr as usize].returned.clone();
-        let from_tv = Self::return_is_the_type_var(&tmpl_returned, tv_nr);
-        let predicted = self.tuple_return_rewrite(
-            Self::substitute_type(tmpl_returned, tv_nr, &concrete),
-            from_tv,
-        );
+        let from_tv = bindings
+            .iter()
+            .any(|(tv, _)| Self::return_is_the_type_var(&tmpl_returned, *tv));
+        let predicted =
+            self.tuple_return_rewrite(Self::substitute_all(tmpl_returned, &bindings), from_tv);
         // Trace point: predicted return type for first-pass type
         // inference of generic call sites.  Used during plan-17 (A)
         // debugging.  Enable with `LOFT_TRACE=generic`.
         crate::loft_trace!(
             generic,
-            "predict name={} types={:?} concrete={:?} → {:?}",
+            "predict name={} types={:?} bindings={:?} → {:?}",
             name,
             types,
-            concrete,
+            bindings,
             predicted,
         );
         predicted
@@ -7449,17 +7434,16 @@ impl Parser {
             }
             return u32::MAX;
         }
-        // Find the type variable def_nr and resolve the concrete type T maps to.
-        let tv_nr =
-            Self::extract_type_var(&self.data, &self.data.def(g_nr).attributes()[0].typedef);
-        if tv_nr == u32::MAX {
+        // loft#1538 — a template refused at its declaration has no instance; the refusal
+        // already names why, and the call site answers its declared return.
+        if self.refused_templates.contains(&g_nr) {
             return u32::MAX;
         }
-        let concrete = Self::resolve_type_var(
-            &self.data.def(g_nr).attributes()[0].typedef,
-            tv_nr,
-            &types[0],
-        );
+        // What each of the template's variables binds to at this call.
+        let Some(var_bindings) = Self::bind_template(&self.data, g_nr, types) else {
+            return u32::MAX;
+        };
+        let tvs: Vec<u32> = var_bindings.iter().map(|(tv, _)| *tv).collect();
         // loft#761 — a SELF-recursive generic arrives here while its own template is
         // still being parsed, and the argument type is the type VARIABLE, so `concrete`
         // resolves to that variable rather than to any type. Instantiating against it
@@ -7474,10 +7458,13 @@ impl Parser {
         // `instantiate_nested_generics` retargets this call at that monomorph while
         // building it — the same path any other call to a generic takes from inside a
         // template. Self-recursion terminates there on the `existing` check.
-        if concrete.contains_def(tv_nr) {
+        if var_bindings
+            .iter()
+            .any(|(_, b)| tvs.iter().any(|tv| b.contains_def(*tv)))
+        {
             return g_nr;
         }
-        if concrete.is_unknown() {
+        if var_bindings.iter().any(|(_, b)| b.is_unknown()) {
             if !self.first_pass {
                 diagnostic!(
                     self.lexer,
@@ -7487,6 +7474,9 @@ impl Parser {
             }
             return u32::MAX;
         }
+        // The instance is named from the first variable's binding, which with one variable
+        // is the whole of it.
+        let concrete = var_bindings[0].1.clone();
         // Build the mangled name for the instantiated function.
         let type_nr = self.data.type_def_nr(&concrete);
         let mangled = if type_nr == u32::MAX {
@@ -7580,7 +7570,7 @@ impl Parser {
         // template holds `Source.Rows` wherever the interface wrote `Self.Rows`, and this
         // is where that name becomes the implementor's own companion.  With no associated
         // types the list is one long and every step below reads exactly as it did.
-        let mut bindings: Vec<(u32, Type)> = vec![(tv_nr, concrete.clone())];
+        let mut bindings: Vec<(u32, Type)> = var_bindings.clone();
         bindings.extend(self.associated_bindings(g_nr, type_nr));
         // Clone the template data before mutating self.data.
         let tmpl_code = self.data.definitions[g_nr as usize].code.clone();
@@ -7623,7 +7613,9 @@ impl Parser {
         // `from_tv` computed on the PRE-substitution template return, identically to
         // `predict_generic_return_type`, so the second-pass instantiated return type
         // matches the first-pass prediction (the cross-pass H5 contract).
-        let from_tv = Self::return_is_the_type_var(&tmpl_returned, tv_nr);
+        let from_tv = tvs
+            .iter()
+            .any(|tv| Self::return_is_the_type_var(&tmpl_returned, *tv));
         let tmpl_ret_deps: Vec<u16> = tmpl_returned.depend();
         let mut new_returned =
             self.tuple_return_rewrite(Self::substitute_all(tmpl_returned, &bindings), from_tv);
@@ -8379,37 +8371,67 @@ impl Parser {
         ))
     }
 
-    /// The type VARIABLE a type mentions — the `def_nr` of the first type-var
-    /// placeholder anywhere in the tree, or `u32::MAX` when it names none.
+    /// The type variables of the template `g_nr`: the distinct placeholders its declared
+    /// parameters mention, in the order they FIRST appear.  An interface's associated type
+    /// (a placeholder whose parent is the interface) is not one — it is bound from the
+    /// implementor, not from an argument ([`Self::associated_bindings`]).
     ///
-    /// Enforces @FR-G-Gen's `fn f<T>(x: …T…)` ellipsis: `T` may sit anywhere inside a
-    /// parameter type, so this descends every former the keystone knows.
-    ///
-    /// The read half of the question the DECLARATION already answers with
-    /// `arguments[0].typedef.contains_def(tv_nr)`: *"does the first parameter carry
-    /// the type variable?"*.  Both descend through [`Type::for_each_child`], so a
-    /// declaration the parser accepts is one an instantiation can reach.  Asked with a
-    /// hand-rolled descent that knew only `vector<T>`, the two disagreed on five
-    /// formers — a legal `fn f<T>(x: T?, …)` was accepted at its declaration and
-    /// reported as *"Unknown function"* at every call.
-    ///
-    /// The leaf is a type-var PLACEHOLDER, not any `Reference`, so a first parameter
-    /// that also names a concrete struct — `(P, T)` — answers with `T` rather than
-    /// with whichever the walk reached first.
-    pub(crate) fn type_var_of(data: &Data, tp: &Type) -> u32 {
-        Self::extract_type_var(data, tp)
+    /// Read off the parameters rather than off the header, so a template loaded from a
+    /// cached image answers the same as one parsed here.  Enforces @FR-G-Gen's
+    /// `fn f<T>(x: …T…)` ellipsis: a variable may sit anywhere inside a parameter type, so
+    /// the walk descends every former the keystone knows ([`Type::for_each_child`]) — a
+    /// hand-rolled descent that knew only `vector<T>` once accepted `fn f<T>(x: T?, …)` at
+    /// its declaration and reported it as *"Unknown function"* at every call.  The leaf is a
+    /// type-var PLACEHOLDER, not any `Reference`, so a parameter that also names a concrete
+    /// struct — `(P, T)` — answers with `T`.
+    pub(crate) fn template_vars(data: &Data, g_nr: u32) -> Vec<u32> {
+        let mut out: Vec<u32> = Vec::new();
+        for a in data.def(g_nr).attributes().iter().filter(|a| !a.hidden) {
+            a.typedef.any_node(&mut |t| {
+                if let Type::Reference(d, _) = t
+                    && data.is_type_var_placeholder(*d)
+                    && !out.contains(d)
+                {
+                    let parent = data.def(*d).parent;
+                    let associated = (parent as usize) < data.definitions.len()
+                        && data.def_type(parent) == DefType::Interface;
+                    if !associated {
+                        out.push(*d);
+                    }
+                }
+                false
+            });
+        }
+        out
     }
 
-    fn extract_type_var(data: &Data, tp: &Type) -> u32 {
-        let mut found = u32::MAX;
-        tp.any_node(&mut |t| match t {
-            Type::Reference(d, _) if data.is_type_var_placeholder(*d) => {
-                found = *d;
-                true
-            }
-            _ => false,
-        });
-        found
+    /// What each of `g_nr`'s type variables binds to at a call whose argument types are
+    /// `types` — [`Self::resolve_type_var`] over every (declared parameter, argument) pair,
+    /// the first pair that relates deciding.  A variable no argument binds answers
+    /// `Type::Unknown(0)`; `None` when the template has no variable at all.
+    pub(crate) fn bind_template(
+        data: &Data,
+        g_nr: u32,
+        types: &[Type],
+    ) -> Option<Vec<(u32, Type)>> {
+        let vars = Self::template_vars(data, g_nr);
+        if vars.is_empty() {
+            return None;
+        }
+        let params = data.def(g_nr).attributes();
+        Some(
+            vars.into_iter()
+                .map(|v| {
+                    let bound = params
+                        .iter()
+                        .zip(types)
+                        .map(|(p, t)| Self::resolve_type_var(&p.typedef, v, t))
+                        .find(|r| !r.is_unknown())
+                        .unwrap_or(Type::Unknown(0));
+                    (v, bound)
+                })
+                .collect(),
+        )
     }
 
     /// Unify a template parameter type with a concrete argument type to extract

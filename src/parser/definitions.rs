@@ -1534,8 +1534,7 @@ impl Parser {
         self.len_bound_locals.clear();
         // @PLN25 E2 — clear any type-var from a previous function before parsing
         // this one; set below if this function is generic.
-        self.cur_type_var = u32::MAX;
-        self.cur_type_var_name.clear();
+        self.cur_type_vars.clear();
         if !self.default && !is_lower(&fn_name) && !is_op(&fn_name) {
             diagnostic!(
                 self.lexer,
@@ -1593,6 +1592,7 @@ impl Parser {
             // resolves it to Reference(d, []).  The definition is never
             // compiled — it only exists for the template's type resolution.
             if is_generic {
+                let mut bound_holder = u32::MAX;
                 let bounds_key = Self::type_var_bounds_key(&pending_bounds);
                 let claimed = self
                     .type_var_holders
@@ -1629,7 +1629,7 @@ impl Parser {
                 } else if let Some(holder) = claimed {
                     // This exact `(spelling, bounds)` header has been seen — on the other
                     // pass, or in another function declaring the same variable the same way.
-                    self.cur_type_var = holder;
+                    bound_holder = holder;
                 } else {
                     // `(G-Gen)`: this header INTRODUCES the variable.  It may reuse the
                     // placeholder the spelling already names, but only while that placeholder
@@ -1676,16 +1676,17 @@ impl Parser {
                             .insert((type_var_name.clone(), bounds_key.clone()), holder);
                         self.type_var_bounds.insert(holder, bounds_key);
                     }
-                    self.cur_type_var = holder;
+                    bound_holder = holder;
                 }
-            }
-            // @PLN25 E2 — the type-var def_nr is recorded above (valid in both passes: the
-            // placeholder is added on the first and found again on the second) so
-            // `e2_nullable_elem` leaves a generic `vector<T>` dense.  It is also what
-            // `parse_type` resolves the spelling to from here on, which is what keeps two
-            // headers writing `T` apart.
-            if is_generic {
-                self.cur_type_var_name.clone_from(&type_var_name);
+                // @PLN25 E2 — the placeholder is recorded here (valid in both passes: it is
+                // added on the first and found again on the second) so `e2_nullable_elem`
+                // leaves a generic `vector<T>` dense.  It is also what `parse_type` resolves
+                // the spelling to from here on, which is what keeps two headers writing `T`
+                // apart.  A header the first pass refused binds nothing.
+                if bound_holder != u32::MAX {
+                    self.cur_type_vars
+                        .push((type_var_name.clone(), bound_holder));
+                }
             }
             if !self.parse_arguments(&fn_name, &mut arguments) {
                 return true;
@@ -1728,7 +1729,11 @@ impl Parser {
             // The HEADER's variable, not whatever the spelling names globally: two headers
             // writing `T` bind two placeholders, and the parameter was resolved against
             // this one.
-            let has_tv = arguments[0].typedef.contains_def(self.cur_type_var);
+            let has_tv = !self.cur_type_vars.is_empty()
+                && self
+                    .cur_type_vars
+                    .iter()
+                    .all(|(_, h)| arguments[0].typedef.contains_def(*h));
             if !has_tv && !self.first_pass {
                 diagnostic!(
                     self.lexer,
@@ -1873,7 +1878,10 @@ impl Parser {
             // the body parser can emit `Value::Call(t_stub_nr, ...)` for method/op calls on T.
             // `re_resolve_call` then substitutes these with the concrete type's implementation.
             let iface_nrs: Vec<u32> = self.data.definitions[self.context as usize].bounds.clone();
-            self.create_bound_method_stubs(self.cur_type_var, &iface_nrs);
+            let holders: Vec<u32> = self.cur_type_vars.iter().map(|(_, h)| *h).collect();
+            for holder in holders {
+                self.create_bound_method_stubs(holder, &iface_nrs);
+            }
         }
         let mut returned_not_null = false;
         let mut result = if self.lexer.has_token("->") {
@@ -1895,8 +1903,8 @@ impl Parser {
         // monomorph can resolve it.  Refused here, where it is written: the definition used to
         // compile and drop out of every call's candidates, so each call reported the function
         // as unknown and nothing pointed at the declaration (loft#1538).
-        if is_generic && !self.first_pass && self.cur_type_var != u32::MAX {
-            let tv = self.cur_type_var;
+        if is_generic && !self.first_pass && !self.cur_type_vars.is_empty() {
+            let tvs: Vec<u32> = self.cur_type_vars.iter().map(|(_, h)| *h).collect();
             let keyed_over_tv = |t: &Type| {
                 t.any_node(&mut |n| {
                     // `@FR-N-Shape` — a keyed collection is a SHAPE, alike for `τ` and `τ?`.
@@ -1905,7 +1913,7 @@ impl Parser {
                         | Type::Sorted(d, _, _)
                         | Type::Index(d, _, _)
                         | Type::Radix(d, _, _)
-                        | Type::Trie(d, _, _) if *d == tv)
+                        | Type::Trie(d, _, _) if tvs.contains(d))
                 })
             };
             let at = arguments
@@ -1930,14 +1938,10 @@ impl Parser {
         // up on the RECEIVER's type, so no call can ever reach it: each call reported an
         // unknown field of whatever it was called on.  Refused where it is written.  A
         // receiver built over the variable (`self: vector<T>`) is keyed on `vector` and works.
-        let tv = self.cur_type_var;
-        if is_generic
-            && !self.first_pass
-            && tv != u32::MAX
-            && arguments.first().is_some_and(|a| {
-                a.name == "self" && matches!(a.typedef.base(), Type::Reference(d, _) if *d == tv)
-            })
-        {
+        if is_generic && !self.first_pass && arguments.first().is_some_and(|a| {
+            a.name == "self"
+                && matches!(a.typedef.base(), Type::Reference(d, _) if self.is_header_type_var(*d))
+        }) {
             self.refused_templates.insert(self.context);
             diagnostic!(
                 self.lexer,
