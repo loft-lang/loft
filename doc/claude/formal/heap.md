@@ -597,9 +597,9 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-14` and `D-heap-15` (`D-heap-13` closed
-2026-09-20, `D-heap-16` closed 2026-09-21 together with the three it uncovered, `D-heap-18`,
-`D-heap-19` and `D-heap-20`, each opened and closed that day).  The
+OPEN: **3** — `D-heap-8`, `D-heap-9` and `D-heap-15` (`D-heap-13` closed 2026-09-20;
+`D-heap-16` closed 2026-09-21 together with the three it uncovered, `D-heap-18`, `D-heap-19` and
+`D-heap-20`, each opened and closed that day; `D-heap-14` closed the same day).  The
 first two are the copy-lease rules `(H-Copy-Refuse)` and `(H-Copy-Lease)`, written 2026-09-15
 before their implementation (@PLN163); `D-heap-8` was NARROWED 2026-09-17 when the owner ruled that
 a value the function owns MOVES, which makes 156 of its 227 measured sites legal and leaves the 71
@@ -1013,7 +1013,7 @@ CLOSED 2026-09-17, below.
   to cascade over.  `p_v5`–`p_v7` are clean on both baselines and `p_v8`/`p_v9` still read one
   release each.
 
-### D-heap-14 — OPEN (2026-09-17): a hand-over written under a branch leaks the source on the path that does not run
+### D-heap-14 — OPENED 2026-09-17, CLOSED 2026-09-21: a hand-over written under a branch leaks the source on the path that does not run
 
 - **Violates:** (H-Drop), and (H-Spent)'s per-path clause.
 - **Where:** `Scopes::mint_handoff_flag` arms a per-path `__hoff_` flag only for a conditional bind
@@ -1034,13 +1034,19 @@ CLOSED 2026-09-17, below.
   control either, so their silence is not a verdict.  What is skipped is the HOOK while the
   record's memory is still freed, which is the blindness `D-heap-13` already records.  The hook
   trace is the only channel that shows it.
-- **Status:** OPEN — found while measuring `D-heap-8`'s population.  No corpus guard exercises the
-  shape: the only conditional appends among the 38 hook-declaring files are
+- **Status:** CLOSED 2026-09-21 — found while measuring `D-heap-8`'s population.  No corpus guard
+  exercised the shape: the only conditional appends among the 38 hook-declaring files are
   `bytes += [c as u8 ?? 0]` in the trace helper, which appends bytes rather than a droppable.
-- **Removal:** the per-path flag armed for every destination a hand-over can have, not only a bind
-  to a local.  `(H-Spent)` makes that a rule rather than an implementation detail: a name spent on
-  one path is live on the other, and the release must run on exactly the paths that did not move
-  it.
+- **Closed:** the per-path flag is armed for every destination a hand-over can have.  A user
+  variable whose type owns a droppable, handed to a field, an element, a literal or a return
+  buffer by a copy inside a branch arm (`arm_container_handoffs`), gets loft#1515's flag; the
+  collector keeps it out of the static set (the pair `(u16::MAX, source)`), and the scan sets the
+  flag right after the copy runs.  Which copies stop what is one question with one home,
+  `copy_record_handoff`, read by the collector and by the flag write alike.  Measured on the new
+  `handover` family of `ownership_drop_gate` (`k_*`: eight destinations × `if`, `if`/`else` and a
+  `match` arm × taken and skipped, a `return` from an arm, a loop that moves on some passes): 24
+  of its 56 cells lost the source on the tree before, on both backends, and none does after.
+  Guard `tests/scripts/a-move-in-one-arm-leaves-the-other-path-releasing.loft`.
 
 ### D-heap-15 — OPEN (2026-09-17): a value the rules MOVE is still copied, and both structures release it
 

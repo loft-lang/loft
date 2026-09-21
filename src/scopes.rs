@@ -2943,6 +2943,46 @@ fn per_path_stops(function: &Function, data: &Data, dst: u16, src: u16) -> Optio
     copy_moves_drop_from(function, data, dst, src, false)
 }
 
+/// The user variables a copy hands to a CONTAINER inside a branch ARM, whose type owns a
+/// droppable — a field or element write, an append, a literal's field, a return buffer
+/// ([`copy_record_handoff`]).
+///
+/// Such a copy runs on some paths only, so the source's release cannot stop statically: on the
+/// path that did not take the arm the source still owns its record and must release it
+/// (`heap.md (H-Spent)`'s per-path clause, D-heap-14).  A compiler temp is left to the static
+/// answer — a construction's work-ref, a call's buffer — because it holds nothing on the paths
+/// that did not fill it; a parameter is the caller's to release in the first place.
+fn arm_container_handoffs(code: &Value, function: &Function, data: &Data) -> Vec<u16> {
+    let copy_d = data.def_nr("OpCopyRecord");
+    let mut out: Vec<u16> = Vec::new();
+    if copy_d == u32::MAX {
+        return out;
+    }
+    let arm = |a: &Value, out: &mut Vec<u16>| {
+        a.walk(&mut |m| {
+            if let Value::Call(d, args) = m.unspan()
+                && *d == copy_d
+                && args.len() >= 3
+                && let Some(src) = copy_record_handoff(args, function, data)
+                && !function.is_compiler_generated(src)
+                && !function.is_argument(src)
+                && data.type_owns_droppable_anywhere(function.tp(src))
+                && !out.contains(&src)
+            {
+                out.push(src);
+            }
+        });
+    };
+    code.walk(&mut |n| {
+        if let Value::If(_, t, e) = n.unspan() {
+            arm(t, &mut out);
+            arm(e, &mut out);
+        }
+    });
+    out.sort_unstable();
+    out
+}
+
 /// The locals that hold the CALLER's record on every path ([`Function::mark_caller_record`]).
 ///
 /// A heap local qualifies when each assignment that binds a store is a whole-value copy off a
@@ -3192,6 +3232,46 @@ fn collect_drop_transferred(
     out
 }
 
+/// The variable whose RELEASE a whole-value `OpCopyRecord(src, dest, tp)` hands over, or `None`
+/// where the copy moves no release — the one answer [`drop_handoff_node`]'s collector and the
+/// scan's per-path flag write both read, so the two cannot disagree about which copies stop
+/// what.
+fn copy_record_handoff(args: &[Value], function: &Function, data: &Data) -> Option<u16> {
+    // A whole-value copy into a compiler BUFFER — the per-arm `__ref_p2_N` a
+    // materialised branch arm is copied into, the `__ref_N` a return delivers
+    // through — is the same move as `t = s`: the buffer is freed with its cascade
+    // (or adopted by a caller who runs it), so the source stops dropping.  The
+    // spelling is a parser `OpCopyRecord` rather than a `Set`, which is why the
+    // arm below does not see it.
+    if let Some(src) = drop_bearing_source(&args[0], function)
+        && let Value::Var(dst) = args[1].unspan()
+        && function.name(*dst).starts_with("__ref")
+        && let Some(moved) = copy_moves_drop_from(function, data, *dst, src, true)
+    {
+        return Some(moved);
+    }
+    // `(H-Drop)`'s closing clause: a copy off a PARAMETER moves nothing, the
+    // CALLER owns.  The branch above cannot reach it — a tuple argument's member
+    // has no backing variable in this frame, so `drop_bearing_source` declines
+    // rather than guess one — and the rule wants the DESTINATION suppressed, which
+    // is the same answer `copy_moves_drop_from` gives a plain struct parameter.
+    if let Some(leaf) = tuple_argument_member(&args[0], function)
+        && let Value::Var(dst) = args[1].unspan()
+        && function.name(*dst).starts_with("__ref")
+        && copy_carries_drop(function, data, *dst, leaf)
+    {
+        return Some(*dst);
+    }
+    let moved = matches!(args[2].unspan(), Value::Int(tp) if tp & 0x8000 != 0);
+    if !moved
+        && !copy_hands_off(&args[1], function, data)
+        && !appends_to_element(&args[1], function, data)
+    {
+        return None;
+    }
+    drop_bearing_source(&args[0], function)
+}
+
 /// The hand-offs ONE node makes, added to `out` — the body of [`collect_drop_transferred`],
 /// which the scan re-applies statement by statement so a variable handed off AFTER a
 /// reassignment retired it is armed again in scan order (the fact belongs to the
@@ -3211,42 +3291,13 @@ fn drop_handoff_node(
     {
         match n {
             Value::Call(d, args) if *d == copy_d && args.len() >= 3 => {
-                // A whole-value copy into a compiler BUFFER — the per-arm `__ref_p2_N` a
-                // materialised branch arm is copied into, the `__ref_N` a return delivers
-                // through — is the same move as `t = s`: the buffer is freed with its cascade
-                // (or adopted by a caller who runs it), so the source stops dropping.  The
-                // spelling is a parser `OpCopyRecord` rather than a `Set`, which is why the
-                // arm below does not see it.
-                if let Some(src) = drop_bearing_source(&args[0], function)
-                    && let Value::Var(dst) = args[1].unspan()
-                    && function.name(*dst).starts_with("__ref")
-                    && let Some(moved) = copy_moves_drop_from(function, data, *dst, src, true)
+                // A copy written in a branch ARM (`pairs` holds `(u16::MAX, source)`, D-heap-14)
+                // stops its source only on the path that ran it — the source's flag, set right
+                // after the copy by the scan — so it never enters this set.
+                if let Some(stopped) = copy_record_handoff(args, function, data)
+                    && !pairs.contains(&(u16::MAX, stopped))
                 {
-                    out.insert(moved);
-                    return;
-                }
-                // `(H-Drop)`'s closing clause: a copy off a PARAMETER moves nothing, the
-                // CALLER owns.  The branch above cannot reach it — a tuple argument's member
-                // has no backing variable in this frame, so `drop_bearing_source` declines
-                // rather than guess one — and the rule wants the DESTINATION suppressed, which
-                // is the same answer `copy_moves_drop_from` gives a plain struct parameter.
-                if let Some(leaf) = tuple_argument_member(&args[0], function)
-                    && let Value::Var(dst) = args[1].unspan()
-                    && function.name(*dst).starts_with("__ref")
-                    && copy_carries_drop(function, data, *dst, leaf)
-                {
-                    out.insert(*dst);
-                    return;
-                }
-                let moved = matches!(args[2].unspan(), Value::Int(tp) if tp & 0x8000 != 0);
-                if !moved
-                    && !copy_hands_off(&args[1], function, data)
-                    && !appends_to_element(&args[1], function, data)
-                {
-                    return;
-                }
-                if let Some(src) = drop_bearing_source(&args[0], function) {
-                    out.insert(src);
+                    out.insert(stopped);
                 }
             }
             // A CONSTRUCTION block delivers its work-ref's record to the binding rather than
@@ -4574,6 +4625,14 @@ fn run_scan_phase(
     stopped.dedup();
     for var in stopped {
         scopes.mint_handoff_flag(&mut function, var);
+    }
+    // D-heap-14 — the same per-path fact for a copy that hands a droppable to a CONTAINER inside
+    // a branch arm: a field, an element, a construction or a return buffer.  Recorded as the pair
+    // `(u16::MAX, source)` beside the `Set` pairs above, so the collector keeps the source out of
+    // the static set, and the scan sets the source's flag where the copy runs.
+    for src in arm_container_handoffs(orig_code, &function, data) {
+        scopes.per_path_pairs.insert((u16::MAX, src));
+        scopes.mint_handoff_flag(&mut function, src);
     }
     // loft#1336 / `(H-Drop)` — a witnessed local assigned a copy off a PARAMETER, anywhere in the
     // body: the witness releases the store the copy is and must skip its hook, so the local gets
@@ -8850,6 +8909,25 @@ fn check_arg_ref_allocs(ir: &Value, function: &Function, fn_name: &str) {
 }
 
 impl Scopes<'_> {
+    /// The per-path flag an `OpCopyRecord` sets when it runs, or `None` where the copy is not a
+    /// hand-over written in a branch arm (`arm_container_handoffs`, D-heap-14).
+    fn arm_handoff_flag(
+        &self,
+        d_nr: u32,
+        args: &[Value],
+        function: &Function,
+        data: &Data,
+    ) -> Option<u16> {
+        if d_nr != data.def_nr("OpCopyRecord") || args.len() < 3 {
+            return None;
+        }
+        let stopped = copy_record_handoff(args, function, data)?;
+        if !self.per_path_pairs.contains(&(u16::MAX, stopped)) {
+            return None;
+        }
+        self.handed_off.get(&stopped).copied()
+    }
+
     /// The per-path flag of `var` (loft#1515): `false` at function entry, set where a copy that
     /// stops `var` runs, read at `var`'s scope-end release and at a rebind of it.  One per
     /// variable however many copies share it — a source handed out by one arm and a destination
@@ -9327,6 +9405,16 @@ impl Scopes<'_> {
                 }
                 let (preamble, ls, postamble) = self.scan_args(args, function, data, *d_nr);
                 let call = Value::Call(*d_nr, ls);
+                // D-heap-14 — a copy that hands a droppable over inside a branch ARM records that
+                // it RAN on the source's per-path flag (loft#1515), right after it: the source
+                // keeps its release on every path where this copy did not run.
+                if let Some(flag) = self.arm_handoff_flag(*d_nr, args, function, data) {
+                    let mut ops = preamble;
+                    ops.push(call);
+                    ops.extend(postamble);
+                    ops.push(v_set(flag, Value::Boolean(true)));
+                    return Value::Insert(ops);
+                }
                 if preamble.is_empty() && postamble.is_empty() {
                     call
                 } else if postamble.is_empty() {

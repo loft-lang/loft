@@ -726,11 +726,127 @@ fn bound_cells() -> Vec<Cell> {
     out
 }
 
+// ── the HANDOVER family: a move written inside a branch arm ────────────────────────────────
+
+/// `(name, setup before the branch, the arm's move of `cc`, what reads the destination after)`.
+const HANDOVER_DEST: &[(&str, &str, &str, &str)] = &[
+    ("local", "", r#"x = cc; println("R{x.id}");"#, ""),
+    (
+        "literal",
+        "",
+        r#"s = S { h: cc }; println("R{s.h.id}");"#,
+        "",
+    ),
+    (
+        "rebuild",
+        "s = S { h: mk(@K) };",
+        "s = S { h: cc };",
+        r#"println("R{s.h.id}");"#,
+    ),
+    (
+        "fieldwrite",
+        "s = S { h: mk(@K) };",
+        r#"s.h = cc; println("X@K");"#,
+        r#"println("R{s.h.id}");"#,
+    ),
+    (
+        "push",
+        "v: vector<H> = [];",
+        "v += [cc];",
+        r#"println("R{len(v)}");"#,
+    ),
+    (
+        "veclit",
+        "v: vector<H> = [];",
+        "v = [cc];",
+        r#"println("R{len(v)}");"#,
+    ),
+    (
+        "enum",
+        "w: W = WNone;",
+        "w = WH { h: cc };",
+        r#"match w { WH { h } => println("R{h.id}"), WNone => {} }"#,
+    ),
+    ("tuplem", "", r#"t = (cc, 1); println("R{t.0.id}");"#, ""),
+];
+/// How the arm is written: an `if` alone, an `if` whose other arm READS the source, a `match` arm.
+const HANDOVER_FORM: &[(&str, &str)] = &[
+    ("if", "if c { @A }"),
+    ("ifelse", r#"if c { @A } else { println("R{cc.id}"); }"#),
+    ("match", "match c { true => { @A }, false => {} }"),
+];
+
+/// A local the function owns, `cc`, moved into a destination inside ONE arm of a branch.  The
+/// field write's overwritten `@K` is `(H-Drop-Not)`'s and carries its `X`; the whole-local
+/// rebuild releases what it displaces.  On the
+/// path that runs the arm the destination owns it; on the other `cc` still does, and releases it
+/// at its own scope end — `(H-Spent)`'s per-path clause.  A `return` from the arm and a loop body
+/// are here too.  The overwritten field of a loop's field write is `(H-Drop-Not)`'s, the author's
+/// to release, so the loop family writes into a collection instead.
+fn handover_cells() -> Vec<Cell> {
+    let mut out = Vec::new();
+    let mut idx = 0u32;
+    for &(dname, setup, arm, after) in HANDOVER_DEST {
+        for &(fname, form) in HANDOVER_FORM {
+            for (pname, taken) in [("taken", "true"), ("skipped", "false")] {
+                idx += 1;
+                let name = format!("k_{dname}_{fname}_{pname}");
+                let branch = form.replace("@A", arm);
+                let text = format!(
+                    "fn {name}_b(c: boolean) {{ cc = mk(@I); {setup} {branch} {after} }}\n\
+                     fn {name}() {{ {name}_b({taken}); }}\n"
+                );
+                out.push(Cell {
+                    text: with_ids(&text, 800_000 + 1000 * idx),
+                    name,
+                });
+            }
+        }
+    }
+    for (pname, taken) in [("taken", "true"), ("skipped", "false")] {
+        idx += 1;
+        let name = format!("k_ret_if_{pname}");
+        let text = format!(
+            "fn {name}_m(c: boolean) -> S {{ cc = mk(@I); if c {{ return S {{ h: cc }}; }} \
+             S {{ h: mk(@J) }} }}\n\
+             fn {name}() {{ r = {name}_m({taken}); println(\"R{{r.h.id}}\"); }}\n"
+        );
+        out.push(Cell {
+            text: with_ids(&text, 800_000 + 1000 * idx),
+            name,
+        });
+    }
+    for &(dname, outer, arm, after) in &[
+        ("local", "", r#"x = cc; println("R{x.id}");"#, ""),
+        (
+            "push",
+            "v: vector<H> = [];",
+            "v += [cc];",
+            r#"println("R{len(v)}");"#,
+        ),
+    ] {
+        for (pname, cond) in [("taken", "true"), ("skipped", "false"), ("first", "i == 0")] {
+            idx += 1;
+            let name = format!("k_loop_{dname}_{pname}");
+            let text = format!(
+                "fn {name}() {{ {outer} for i in 0..2 {{ cc = mk(@I + i); if {cond} {{ {arm} }} }} \
+                 {after} }}\n"
+            );
+            out.push(Cell {
+                text: with_ids(&text, 800_000 + 1000 * idx),
+                name,
+            });
+        }
+    }
+    out
+}
+
 fn all_cells() -> Vec<Cell> {
     let mut cells = pilot_cells();
     cells.extend(cross_cells());
     cells.extend(coalesce_cells());
     cells.extend(bound_cells());
+    cells.extend(handover_cells());
     cells
 }
 
@@ -1382,8 +1498,9 @@ fn lease_verdict(name: &str) -> Lease {
         ["q", _, "local", ..] => Lease::Once,
         ["q", _, "field", _, dest] if VIEWING.contains(dest) => Lease::Once,
         ["q", ..] => Lease::Refused,
-        // Every source of a bound cell is a local the function made, so each placement moves.
-        ["b", ..] => Lease::Once,
+        // Every source of a bound cell is a local the function made, so each placement moves,
+        // and so does the one local a handover cell moves inside an arm.
+        ["b" | "k", ..] => Lease::Once,
         _ => panic!("{name} has no lease verdict: classify it under formal/heap.md § Drop"),
     }
 }
