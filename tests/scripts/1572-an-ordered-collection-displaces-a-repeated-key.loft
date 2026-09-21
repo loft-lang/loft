@@ -26,7 +26,9 @@
 //   `2:2 5:3` and 2 — the duplicate stacked BEHIND the new record, both backends alike.
 //   HOLDS: leak, panic and free-refusal are equal on both trees; the defect is the value, and
 //   the record-count cell turns it into an assertion rather than a leaked store.
-// @falsified-by: tests/falsified/1572-an-ordered-collection-displaces-a-repeated-key.patch
+// @falsified-by: tests/falsified/1572-an-ordered-collection-displaces-a-repeated-key.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1
+//   assertion failures -> 0: the same channels as the ref control.
 
 struct T1572 { id: integer, s: text }
 struct N1572 { nm: text, v: integer }
