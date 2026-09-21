@@ -25,9 +25,16 @@ const EXPECTED: &[(&str, [usize; 10])] = &[
     ("n_a2", [0, 0, 2, 3, 0, 0, 0, 0, 0, 1]),
     // a3: the product of two 31-bit masks fits — plain.
     ("n_a3", [0, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
-    // a4: `i * i` over the literal-ended counter is plain; `s + …` self-steps `s` and the
-    // adds stay checked (`(s + i*i) + i` is left-associated on the unranged `s`).
-    ("n_a4", [0, 0, 1, 0, 4, 0, 0, 0, 0, 0]),
+    // a4: NOTHING here is plain, and the row records a gap rather than a success.  `s + …`
+    // self-steps `s`, so both adds stay checked — that part was always the intent.  But
+    // `i * i` is not plain either: it reads `ops::op_mul_long_nn`, the non-sentinel helper.
+    // `(R-Range)`'s counted-range-counter clause never reaches this loop, because the
+    // seeding asks `hoist::range_counters`, a shape matcher written for the HOIST — it
+    // refuses this loop on statement count, and over this corpus it admits 2 loops of 19.
+    // Until 2026-09-21 the row read a `wrapping_mul` that came from the CHAIN GUARD's plain
+    // copy, not from the range proof, so the pin looked like the clause worked.  The
+    // profitability gate declines this one-operator loop and the borrowed evidence with it.
+    ("n_a4", [0, 0, 0, 0, 2, 0, 0, 0, 0, 0]),
     // a5: a parameter is not trusted — both operators keep their templates.
     ("n_a5_f", [0, 0, 0, 0, 1, 1, 0, 0, 0, 0]),
     // a6: the one-expression callees over a non-sentinel argument range: all plain.
@@ -172,10 +179,10 @@ fn the_switch_restores_every_template() {
     let got = counts(&rust);
     for (name, _) in EXPECTED {
         let row = got[*name];
-        // No plain arithmetic anywhere (the guarded-chain loops in a4 are the one other
-        // source of a wrapping form, and a4's `i * i` is inside one: allow it there alone).
-        let plain =
-            row[0] + row[1] + row[3] + row[6] + row[7] + if *name == "n_a4" { 0 } else { row[2] };
+        // No plain arithmetic anywhere.  a4 no longer needs its exemption: its loop has one
+        // admitted operator, so the chain guard declines it and the `wrapping_mul` the
+        // exemption existed for is gone.
+        let plain = row[0] + row[1] + row[2] + row[3] + row[6] + row[7];
         assert_eq!(
             plain, 0,
             "{name}: LOFT_NO_RANGE_ARITH=1 leaves a plain operator: {row:?}"

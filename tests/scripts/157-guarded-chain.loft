@@ -16,7 +16,8 @@
 // c3 a null invariant (a read past a vector's end) declines at run time the same way; c4
 // negative ranges and negation; c5 a local the loop WRITES is not a leaf (its chain stays
 // checked, the others still plain); c6 the same shape with an integer parameter as the
-// invariant — a parameter is a fine LEAF here, because the guard tests its value at entry.
+// invariant — a parameter is a fine LEAF here, because the guard tests its value at entry;
+// c7 is c6 with one operator instead of two and declines on PROFITABILITY at compile time.
 //
 // @falsified-at: hand-measured (sabotage, 2026-09-20) — the guard's `checked_abs()?` on an
 // invariant leaf replaced by `wrapping_abs()` turns c3 red on --native (`true` → `false`: the
@@ -67,17 +68,22 @@ fn c2() {
   assert(s == 28 && r == null, "c2");
 }
 
-// c3 — a null invariant: `v[9]` past the end is null, so `y + i` is null on every pass and
-// the guard declines the loop (a sentinel leaf fails its `checked_abs`).  The FIRST term is
-// kept apart from the accumulator on purpose: an accumulator turns null whichever form ran
-// (a plain `MIN + 1` is a number the checked `acc +` then propagates as null), while the
-// first term alone is null under the checked form and `MIN + 1` under a plain one.
+// c3 — a null invariant: `v[9]` past the end is null, so `y + 2 * i` is null on every pass
+// and the guard declines the loop AT RUN TIME (a sentinel leaf fails its `checked_abs`).
+// The FIRST term is kept apart from the accumulator on purpose: an accumulator turns null
+// whichever form ran (a plain `MIN + 2` is a number the checked `acc +` then propagates as
+// null), while the first term alone is null under the checked form and `MIN + 2` under a
+// plain one.
+//
+// `2 * i` rather than a bare `i` so the loop has TWO admitted operators and reaches the
+// guard at all: with one it would decline at COMPILE time on profitability and this cell
+// would silently stop testing the run-time decline it exists for.
 fn c3() {
   v: vector<integer> = [1, 2];
   y = v[9];
   first = 0;
   for i in 1..4 {
-    t = y + i;
+    t = y + 2 * i;
     if i == 1 { first = t; }
   }
   println("c3 {first == null}");
@@ -114,7 +120,24 @@ fn c6_run(base: integer, n: integer) -> integer {
 }
 fn c6() { r = c6_run(1000, 5); println("c6 {r}"); assert(r == 5020, "c6"); }
 
+// c7 — the PROFITABILITY gate, and c6's twin: the same loop with the `2 *` removed has ONE
+// admitted operator, so it declines at COMPILE time and keeps its checked form.  A guard is
+// a fixed cost per loop ENTRY against a saving of one null test per operator per ITERATION,
+// and an innermost loop is emitted twice — in a small hot function that doubling costs the
+// inline, which is what a one-operator loop cannot pay for (`pil_hline`, `matches_at`).
+// base 1000, n 5: sum(base + i) = 5000 + (0+1+2+3+4) = 5010.
+//
+// The PAIR is the point: c6 and c7 differ by one operator and nothing else, so the pin can
+// say c6 carries a guard and c7 carries none without either being a claim about some other
+// property of the two loops.
+fn c7_run(base: integer, n: integer) -> integer {
+  acc = 0;
+  for i in 0..n { acc = acc + (base + i); }
+  acc
+}
+fn c7() { r = c7_run(1000, 5); println("c7 {r}"); assert(r == 5010, "c7"); }
+
 fn main() {
-  c1(); c2(); c3(); c4(); c5(); c6();
+  c1(); c2(); c3(); c4(); c5(); c6(); c7();
   println("guarded chain ok");
 }

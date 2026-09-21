@@ -806,7 +806,18 @@ Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range
                  exist, and the machine RE-ENTERS its loop across a `next_*`
                  call, so a fact proved once at entry is not proved for the
                  resumes after it (`R-BoundedNest`'s guard declines there for the
-                 same second reason).  The
+                 same second reason).  A loop with ONE admitted operator declines on
+                 PROFITABILITY: the guard is a fixed cost per loop ENTRY and the
+                 saving is one null test per operator per ITERATION, and an
+                 innermost loop is emitted twice — in a small hot function that
+                 doubling costs the inline.  Measured against the guard off, the
+                 one-operator loops in `pil_hline` and `matches_at` cost
+                 `fill_circle` and `fill_star` ~50 %, `wide_line` 22 % and `parse`
+                 18 %, while six-operator `composite_layer` gains 30 %.  An
+                 UNDER-approximation, and the residual is stated rather than hidden:
+                 `hair_brush` has the same six operators as `composite_layer` and
+                 LOSES ~8 %, so operator count does not separate them — trip count
+                 does, and that is not a compile-time fact here.  The
                  `*Nullable` twins of `+ - *` are chain operators too: a chain the
                  guard admits has no fault for them to be silent about.  A chain any
                  of whose leaves is not one of these is declined whole and its

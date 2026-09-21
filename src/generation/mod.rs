@@ -2828,6 +2828,35 @@ impl Output<'_> {
         if chains.is_empty() {
             return Ok(ChainGuard::None);
         }
+        // `@FR-R-GuardedChain` profitability — a loop with ONE admitted operator declines.
+        //
+        // The guard is a fixed cost paid once per loop ENTRY and the saving is one null
+        // test per admitted operator per ITERATION, so the model the rewrite shipped with
+        // said a short loop still breaks even.  It does not, and the term the model was
+        // missing is not arithmetic at all: an innermost loop is emitted TWICE, and in a
+        // small function that doubling is what stops rustc inlining it into its caller.
+        // A one-operator loop saves the least it can save and pays that in full.
+        //
+        // Measured on the drawing lane against the guard switched off (ns/op, 500 calls,
+        // best of 3): `pil_hline` and `matches_at` are one-operator loops in per-scanline
+        // and per-byte helpers, and declining them took `fill_circle` 23.7k -> 23.1k
+        // (1.88x -> 0.90x of Rust), `fill_star` 1.97x -> 0.92x, `wide_line` 2.34x -> 1.73x
+        // and `parse` 3.03x -> 2.52x.  `composite_layer` has six operators, keeps its
+        // guard and keeps the whole reason the rewrite exists: 89.0 -> 62.1 us (+30 %).
+        // Thresholds 3 and 5 measured identical to 2 lane-wide, so 2 is taken as the
+        // lowest that removes the loss — a higher one only withholds the rewrite from
+        // loops this lane does not have.
+        //
+        // ⚠ An UNDER-approximation, and the residual is recorded rather than hidden: the
+        // `hair` row is ~8 % slower with the guard than without at EVERY threshold up to
+        // 6, because `hair_brush` has six admitted operators — the same count as
+        // `composite_layer`, which gains 30 %.  Operator count cannot separate them; what
+        // separates them is trip count, which is not a compile-time fact here.  Closing
+        // that wants a model of the DUPLICATION cost (is this function small and hot
+        // enough that a doubled body loses an inline?), not a larger constant.
+        if admitted.len() < 2 {
+            return Ok(ChainGuard::None);
+        }
         // The nested loops' seeds and ends, bounded over the same leaves (no counters).
         let mut nested_bounds: Vec<(String, String)> = Vec::new();
         for (n, seed) in &nested {
@@ -2909,8 +2938,9 @@ impl Output<'_> {
         writeln!(w, "{g}")?;
         if self.chain_trace {
             eprintln!(
-                "chain: {fn_name} loop {} admitted — {} chain(s), {} invariant(s), {} hoisted scalar(s), {} nested loop(s)",
+                "chain: {fn_name} loop {} admitted — {} operator(s) in {} chain(s), {} invariant(s), {} hoisted scalar(s), {} nested loop(s)",
                 lp.scope,
+                admitted.len(),
                 chains.len(),
                 invariants.len(),
                 scalars.len(),

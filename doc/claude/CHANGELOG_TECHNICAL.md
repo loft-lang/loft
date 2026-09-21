@@ -9,6 +9,48 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The chain guard declines a one-operator loop (2026-09-21)
+
+`--native`, generation time.  `(R-GuardedChain)` shipped with a cost model that said a short
+loop still breaks even: the guard is a fixed cost paid once per loop ENTRY and the saving is
+one null test per admitted operator per ITERATION.  The term the model was missing is not
+arithmetic — an innermost loop is emitted TWICE, and in a small function that doubling is what
+stops rustc inlining it into its caller.  A one-operator loop saves the least it can save and
+pays that in full.
+
+Measured on the drawing lane against the guard switched off (best of 3, 500 calls): the
+one-operator loops in `pil_hline` (per scanline) and `matches_at` (per byte, ~2 000 calls per
+parse) were costing **`fill_circle` 1.88× → 0.90× of Rust, `fill_star` 1.97× → 0.92×,
+`wide_line` 2.34× → 1.73× and `parse` 3.03× → 2.52×** — the first two a straight halving.
+`composite_layer` has six operators, keeps its guard, and keeps the whole reason the rewrite
+exists: 89.0 → 62.1 µs (+30 %).  Thresholds 3 and 5 measured identical to 2 lane-wide, so 2 is
+taken as the lowest that removes the loss.
+
+An UNDER-approximation, recorded rather than hidden: the `hair` row is ~8 % slower with the
+guard than without at every threshold up to 6, because `hair_brush` has the same six operators
+as `composite_layer`, which gains 30 %.  Operator count cannot separate them; trip count can,
+and it is not a compile-time fact here.  Closing that wants a model of the DUPLICATION cost,
+not a larger constant.
+
+Cells `157-guarded-chain.loft` gain the c6/c7 PAIR — the same loop with two operators and with
+one — so the pin is a claim about the operator count and nothing else; c3 gained a second
+operator so it still reaches the guard and still tests the RUN-time decline it exists for.
+Falsified by sabotage (the threshold back to 1 turns exactly
+`each_cell_emits_exactly_the_forms_predicted` and
+`a_one_operator_loop_declines_on_profitability` red).  Nine pin suites re-derived: every value
+re-pinned on 2026-09-20 for the duplication returns to its pre-guard number, except
+`complete_write` n_c1 and `callee_inputs` n_k7b, whose loops have two operators and still
+duplicate.
+
+Found with `LOFT_GUARDED_CHAIN_ONLY=<fn>`, added the same day: a whole-program A/B says a row
+moved, not which of six admitted loops moved it.
+
+**A gap the re-pin exposed** (filed, not fixed here): `range_arith` a4 pinned a `wrapping_mul`
+for `i * i` that came from the chain guard's plain copy, not from `(R-Range)`.  The rule's
+counted-range-counter clause is INERT — its seeding asks `hoist::range_counters`, a shape
+matcher written for the hoist, which admits 2 loops of 19 over that corpus.  The borrowed
+evidence made the clause look live.
+
 ### A collection a call answers releases its elements — D-heap-13 closed (2026-09-20)
 
 Both backends, parse + scope pass.  `(H-Move)` makes `d = mkv()` a move, so the local owns the

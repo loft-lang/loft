@@ -19,12 +19,13 @@ const CELLS: &str =
 
 /// `(function, no-prefill sites, prefilled sites)` — predictions written beside the cells.
 const EXPECTED: &[(&str, usize, usize)] = &[
-    ("n_c1", 2, 0), // every field named; the loop body is emitted twice under its chain
-    //                 guard (`@FR-R-GuardedChain`, 2026-09-20), so the one site counts twice
+    // c1: every field named.  TWO no-prefill sites for one mint: c1's loop has two admitted
+    // chain operators, clears the profitability gate, and its body is emitted twice under
+    // the chain guard.  `LOFT_NO_GUARDED_CHAIN=1` gives (1, 0) again.
+    ("n_c1", 2, 0),
     ("n_c2", 1, 0), // omitted fields: the parser writes them explicitly
     ("n_c3", 1, 0), // a variant literal writes its own tag
-    ("n_c4", 3, 0), // the S mint AND the vector store (×2 for the S mint: its loop body is emitted
-    // twice under its chain guard, `@FR-R-GuardedChain`) (its group's own OpSetInt4 is
+    ("n_c4", 2, 0), // the S mint AND the vector store (its group's own OpSetInt4 is
     // exactly the one-u32 prefill, width-equal) both skip
     ("n_c5", 1, 0), // the FALLBACK literal skips; the cast path is not an emitter site
     ("n_c6", 1, 1), // the inner N literal skips; O (nested by OpCopyRecord) declines

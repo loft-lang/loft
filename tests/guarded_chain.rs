@@ -4,6 +4,9 @@
 //! behind a guard evaluated once at the loop's entry (`//@FR-R-GuardedChain guard`): an
 //! innermost loop is emitted twice (`plain chains` copy + checked `else` arm), a loop with
 //! loops inside once with each admitted op branching on the guard (`(if __gc_N {`).
+//! A loop with ONE admitted operator declines on PROFITABILITY: the guard is a fixed cost
+//! per loop ENTRY against a saving of one null test per operator per ITERATION, and an
+//! innermost loop is emitted twice, which in a small hot function costs the inline.
 //! `LOFT_NO_GUARDED_CHAIN=1` restores the checked loops.  The cell corpus
 //! (`tests/scripts/157-guarded-chain.loft`) says the VALUES hold on both backends, in every
 //! switch state and under the falsifiers; this pins what is emitted.
@@ -24,15 +27,21 @@ const EXPECTED: &[(&str, [usize; 10])] = &[
     // c2: `base + i` is the nullable twin (the `??` operand) — admitted, plain in the copy,
     // its checked template in the else arm; the two `- base` and `-1` stay as they are.
     ("n_c2_run", [1, 2, 0, 1, 0, 0, 2, 2, 2, 1]),
-    // c3: `y + i` over the null invariant — guarded, plain in the copy, checked in the arm
-    // (the guard declines at run time, so the arm is what runs).
-    ("n_c3", [1, 2, 0, 1, 0, 0, 0, 1, 0, 0]),
+    // c3: `y + 2 * i` over the null invariant — guarded, plain in the copy (one add, one
+    // multiply), checked in the arm (the guard declines at RUN time, so the arm is what
+    // runs).  Two operators on purpose: with one it would decline at COMPILE time on
+    // profitability and stop testing the run-time decline.
+    ("n_c3", [1, 2, 0, 1, 0, 1, 0, 1, 0, 0]),
     // c4: `-(a * i) - b` — negation, a product and a subtraction in one chain.
     ("n_c4", [1, 2, 0, 0, 1, 1, 3, 2, 1, 0]),
     // c5: `2 * i + 1` plain; `w + i` keeps its template (w is written in the loop).
     ("n_c5", [1, 2, 0, 1, 0, 1, 0, 5, 0, 0]),
     // c6: `base + 2 * i` with the parameter as the invariant leaf.
     ("n_c6_run", [1, 2, 0, 1, 0, 1, 0, 3, 0, 0]),
+    // c7: c6 with the `2 *` removed — ONE admitted operator, so the profitability gate
+    // declines it at compile time.  No guard, no copy, no plain operator, and BOTH its
+    // additions (`base + i` and the accumulator's) keep their checked helper.
+    ("n_c7_run", [0, 0, 0, 0, 0, 0, 0, 2, 0, 0]),
 ];
 
 const KEYS: [&str; 10] = [
@@ -241,5 +250,37 @@ fn a_coroutine_body_carries_no_loop_entry_guard_and_still_compiles() {
         "the generator corpus runs on native: exit {:?}\nstdout: {stdout}\nstderr: {}",
         ran.status,
         String::from_utf8_lossy(&ran.stderr)
+    );
+}
+
+/// `@FR-R-GuardedChain` profitability — the c6/c7 PAIR, which is what makes this a claim
+/// about the operator count and not about some other difference between two loops: the two
+/// loops are `acc + (base + 2 * i)` and `acc + (base + i)`, identical but for one operator.
+///
+/// Measured on the drawing lane against the guard off: the one-operator loops in
+/// `pil_hline` and `matches_at` cost `fill_circle` and `fill_star` ~50 %, `wide_line` 22 %
+/// and `parse` 18 %, while six-operator `composite_layer` gains 30 %.  Thresholds 3 and 5
+/// measured identical to 2 lane-wide, so 2 is the lowest that removes the loss.
+#[test]
+fn a_one_operator_loop_declines_on_profitability() {
+    let got = counts(&emit("profit", &[]));
+    let two = got["n_c6_run"];
+    let one = got["n_c7_run"];
+    assert!(
+        two[0] == 1 && two[1] == 2,
+        "c6's two-operator loop is guarded and copied: {two:?}"
+    );
+    assert_eq!(
+        (one[0], one[1], one[2]),
+        (0, 0, 0),
+        "c7's one-operator loop takes no guard, no copy and no per-op branch: {one:?}"
+    );
+    assert!(
+        one[3..7].iter().all(|&n| n == 0),
+        "c7 emits no plain operator at all: {one:?}"
+    );
+    assert!(
+        one[7] >= 2,
+        "c7 keeps a checked helper for BOTH its additions: {one:?}"
     );
 }
