@@ -312,8 +312,10 @@ impl Stores {
                 Parts::Struct(fields) | Parts::EnumValue(_, fields)
                     if fields.get(field as usize).is_some_and(|f| !f.other_indexes.is_empty())
             );
-        self.insert_record(&d, rec, tp, shares_records);
-        self.link_siblings(data, rec, parent_tp, field);
+        let mut displaced: Vec<DbRef> = Vec::new();
+        displaced.extend(self.insert_record(&d, rec, tp, shares_records));
+        self.link_siblings(data, rec, parent_tp, field, &mut displaced);
+        self.settle_displaced(data, rec, parent_tp, field, &displaced);
     }
 
     /// Put a record ONE member of a linked group already holds into every OTHER member —
@@ -335,13 +337,22 @@ impl Stores {
             return;
         }
         let (parent_tp, data_owned) = self.nullable_field_parent(data, parent_tp, field);
-        self.link_siblings(&data_owned, rec, parent_tp, field);
+        let mut displaced: Vec<DbRef> = Vec::new();
+        self.link_siblings(&data_owned, rec, parent_tp, field, &mut displaced);
+        self.settle_displaced(&data_owned, rec, parent_tp, field, &displaced);
     }
 
     /// The sibling walk itself, over a parent already redirected through
     /// [`Self::nullable_field_parent`]: every field named by `other_indexes` is handed
     /// the record as a SECONDARY insert (index-only, never freeing what it displaces).
-    fn link_siblings(&mut self, data: &DbRef, rec: &DbRef, parent_tp: u16, field: u16) {
+    fn link_siblings(
+        &mut self,
+        data: &DbRef,
+        rec: &DbRef,
+        parent_tp: u16,
+        field: u16,
+        displaced: &mut Vec<DbRef>,
+    ) {
         if field == u16::MAX {
             return;
         }
@@ -392,8 +403,79 @@ impl Stores {
             }
             let o = self.field_ref(data, parent_tp, fld_nr);
             // Secondary index for a sibling field — index-only, never
-            // delete the displaced record (the primary collection owns it).
-            self.insert_record(&o, rec, sibling_content, true);
+            // delete the displaced record here: `settle_displaced` decides it for the group.
+            displaced.extend(self.insert_record(&o, rec, sibling_content, true));
+        }
+    }
+
+    /// `@FR-Col-Group-Dup` — a record a repeated key displaced from ONE member of a linked
+    /// group leaves EVERY keyed member, and is released when no vector member still holds it.
+    ///
+    /// Displacement is decided per member, inside each member's insert, and inside a group
+    /// every one of those only UNLINKS (`secondary`), because a vector member may still hold
+    /// the record (loft#1226).  Nothing took it out of the members where its key did NOT
+    /// collide, and nothing asked whether any member still held it — so members keyed on
+    /// different fields disagreed about the record set (`hash<B[bar]>` + `index<B[note]>`
+    /// kept `1:x` in the index after `1:y` replaced it in the hash), and a group with no
+    /// vector member stranded the record and its heap on every repeated key (loft#1576).
+    ///
+    /// Each keyed member is asked for the record under the record's OWN key and unlinks it
+    /// only where the answer IS that record: the member where the key collided now answers
+    /// the new record there, and an `index` asserts on removing what it does not hold.  A
+    /// `trie` / `radix` allows duplicate keys, so a lookup names one of several; their
+    /// removal is by identity and a no-op for a record they do not hold.  The vector member
+    /// keeps the record — it has no key to refuse on — and is what decides the release.
+    fn settle_displaced(
+        &mut self,
+        data: &DbRef,
+        rec: &DbRef,
+        parent_tp: u16,
+        field: u16,
+        displaced: &[DbRef],
+    ) {
+        if displaced.is_empty() || field == u16::MAX {
+            return;
+        }
+        let members: Vec<(u16, u16)> = {
+            let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+                &self.types[parent_tp as usize].parts
+            else {
+                return;
+            };
+            std::iter::once(field)
+                .chain(fields[field as usize].other_indexes.iter().copied())
+                .filter(|m| *m != u16::MAX)
+                .map(|m| (m, fields[m as usize].content))
+                .collect()
+        };
+        let held_by_vector = members
+            .iter()
+            .any(|(_, tp)| matches!(self.types[*tp as usize].parts, Parts::Array(_)));
+        let mut settled: Vec<u32> = Vec::new();
+        for d in displaced {
+            if d.rec == 0 || d.rec == rec.rec || settled.contains(&d.rec) {
+                continue;
+            }
+            settled.push(d.rec);
+            for &(m, m_tp) in &members {
+                let o = self.field_ref(data, parent_tp, m);
+                match self.types[m_tp as usize].parts {
+                    Parts::Hash(..) | Parts::Index(..) | Parts::Ordered(..) => {
+                        let key =
+                            keys::get_key(d, &self.allocations, &self.types[m_tp as usize].keys);
+                        if self.find(&o, m_tp, &key).rec == d.rec {
+                            self.remove(&o, d, m_tp);
+                        }
+                    }
+                    Parts::Trie(..) | Parts::Radix(..) => self.remove(&o, d, m_tp),
+                    _ => {}
+                }
+            }
+            if !held_by_vector {
+                let content = self.content(members[0].1);
+                self.remove_claims(d, content);
+                self.store_mut(d).delete(d.rec);
+            }
         }
     }
 
@@ -460,7 +542,14 @@ impl Stores {
     /// type is promoted to `Parts::Array` (a u32 rec-id per slot) by `finish_type`, and on an
     /// UNPROMOTED vector those same bytes are inline payload, so walking them as ids would
     /// hand `insert_record` addresses built out of field data.
-    pub fn index_group_records(&mut self, primary: &DbRef, view: &DbRef, view_tp: u16) {
+    pub fn index_group_records(
+        &mut self,
+        primary: &DbRef,
+        view: &DbRef,
+        view_tp: u16,
+        parent_tp: u16,
+        fld: u16,
+    ) {
         if (view_tp as usize) >= self.types.len() {
             return;
         }
@@ -488,7 +577,105 @@ impl Stores {
                 rec,
                 pos: 8,
             };
-            self.insert_record(view, &elem_ref, view_tp, true);
+            // A displaced record is settled across the whole group below, once this view
+            // holds everything it will.
+            let _ = self.insert_record(view, &elem_ref, view_tp, true);
+        }
+        self.settle_group(primary, parent_tp, fld);
+    }
+
+    /// `@FR-Col-Group-Dup` for a WHOLE-VECTOR write — the bulk twin of
+    /// [`Self::settle_displaced`].
+    ///
+    /// The records reach the views one view at a time (one `OpIndexGroup` per member), so a
+    /// record displaced from one view by a later record with its key is still in every view
+    /// indexed before it, and is filed again in every view indexed after — the vector still
+    /// holds it.  Keys are unique per keyed member, so the per-record rule settles to one
+    /// statement about the final state: a record stays in the keyed members exactly when no
+    /// LATER record in the vector shares one of its keys.  Once every view is indexed, each
+    /// keyed member answers the LAST record under each of its keys, so a record some member
+    /// answers a DIFFERENT record for is displaced and leaves every keyed member.  Run after
+    /// each view, the pass the last view runs is the one that sees them all; a member not
+    /// indexed yet answers nothing and says nothing.  The vector keeps every record, so
+    /// nothing is released here.
+    fn settle_group(&mut self, primary: &DbRef, parent_tp: u16, fld: u16) {
+        if fld == u16::MAX || (parent_tp as usize) >= self.types.len() {
+            return;
+        }
+        let (members, elem, base) = {
+            let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+                &self.types[parent_tp as usize].parts
+            else {
+                return;
+            };
+            let Some(f) = fields.get(fld as usize) else {
+                return;
+            };
+            let Parts::Array(elem) = self.types[f.content as usize].parts else {
+                return;
+            };
+            let position = u32::from(f.position);
+            if primary.pos < position {
+                return;
+            }
+            let members: Vec<(u16, u16)> = f
+                .other_indexes
+                .iter()
+                .copied()
+                .filter(|m| *m != u16::MAX)
+                .map(|m| (m, fields[m as usize].content))
+                .collect();
+            (members, elem, primary.pos - position)
+        };
+        let data = DbRef {
+            store_nr: primary.store_nr,
+            rec: primary.rec,
+            pos: base,
+        };
+        let length = vector::length_vector(primary, &self.allocations);
+        let arr = keys::store(primary, &self.allocations).get_u32_raw(primary.rec, primary.pos);
+        if length == 0 || arr == 0 {
+            return;
+        }
+        for i in 0..length {
+            let id = keys::store(primary, &self.allocations).get_u32_raw(arr, 8 + 4 * i);
+            let r = DbRef {
+                store_nr: primary.store_nr,
+                rec: id,
+                pos: 8,
+            };
+            if id == 0 || self.absent_nullable_record(elem, &r) {
+                continue;
+            }
+            let answers = |s: &Self, m: u16, m_tp: u16| -> Option<u32> {
+                if !matches!(
+                    s.types[m_tp as usize].parts,
+                    Parts::Hash(..) | Parts::Index(..) | Parts::Ordered(..)
+                ) {
+                    return None;
+                }
+                let o = s.field_ref(&data, parent_tp, m);
+                let key = keys::get_key(&r, &s.allocations, &s.types[m_tp as usize].keys);
+                Some(s.find(&o, m_tp, &key).rec)
+            };
+            let displaced = members
+                .iter()
+                .any(|&(m, m_tp)| answers(self, m, m_tp).is_some_and(|got| got != 0 && got != id));
+            if !displaced {
+                continue;
+            }
+            for &(m, m_tp) in &members {
+                let o = self.field_ref(&data, parent_tp, m);
+                match self.types[m_tp as usize].parts {
+                    Parts::Hash(..) | Parts::Index(..) | Parts::Ordered(..) => {
+                        if answers(self, m, m_tp) == Some(id) {
+                            self.remove(&o, &r, m_tp);
+                        }
+                    }
+                    Parts::Trie(..) | Parts::Radix(..) => self.remove(&o, &r, m_tp),
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -650,12 +837,24 @@ impl Stores {
         );
     }
 
-    pub(super) fn insert_record(&mut self, data: &DbRef, rec: &DbRef, tp: u16, secondary: bool) {
+    /// File `rec` in the collection at `data`.  A keyed kind first displaces any record already
+    /// under `rec`'s key; with `secondary` that record is only UNLINKED — a group member, whose
+    /// records another member may still hold — and it is answered, so the caller can settle it
+    /// across the whole group ([`Self::settle_displaced`]).  Without `secondary` the displaced
+    /// record is released here and `None` is answered.
+    pub(super) fn insert_record(
+        &mut self,
+        data: &DbRef,
+        rec: &DbRef,
+        tp: u16,
+        secondary: bool,
+    ) -> Option<DbRef> {
         // The kind and its content id are two words; cloning the whole `Parts` (a
         // `Struct`'s field list included) per insert was 1.5 % of the `lock` row
         // (@PLN157 § V-k).  The arms borrow `self` mutably, so the match is on a copy of
         // exactly what they read.
         let kind = InsertKind::of(&self.types[tp as usize].parts);
+        let mut displaced = None;
         match kind {
             InsertKind::Vector => {
                 vector::vector_finish(data, &mut self.allocations);
@@ -704,6 +903,7 @@ impl Stores {
                     ),
                     hash::Probed::Present(existing) => {
                         self.displace_keyed(data, &existing, tp, c, secondary);
+                        displaced = Some(existing);
                         hash::add(
                             data,
                             rec,
@@ -712,7 +912,7 @@ impl Stores {
                         );
                     }
                     hash::Probed::Unknown => {
-                        self.dedup_keyed(data, rec, tp, c, secondary);
+                        displaced = self.dedup_keyed(data, rec, tp, c, secondary);
                         hash::add(
                             data,
                             rec,
@@ -727,7 +927,7 @@ impl Stores {
                 // (dedup); tree::add otherwise rejects the duplicate and keeps the old.
                 let left = self.fields(tp);
                 if !keys::fast_order_enabled() {
-                    self.dedup_keyed(data, rec, tp, c, secondary);
+                    let gone = self.dedup_keyed(data, rec, tp, c, secondary);
                     tree::add(
                         data,
                         rec,
@@ -735,7 +935,7 @@ impl Stores {
                         &mut self.allocations,
                         &self.types[tp as usize].keys,
                     );
-                    return;
+                    return if secondary { gone } else { None };
                 }
                 // The insert's OWN descent finds the duplicate: a refused `tree::add`
                 // names it and leaves the tree as it was, so the lookup that used to run
@@ -758,6 +958,7 @@ impl Stores {
                         pos: 8,
                     };
                     self.displace_keyed(data, &existing, tp, c, secondary);
+                    displaced = Some(existing);
                     tree::add(
                         data,
                         rec,
@@ -774,20 +975,24 @@ impl Stores {
                 // its own, so it owns its block as well as its claims — except in a linked
                 // group, where a sibling still holds it and the displacement only unlinks
                 // (@FR-Col-Group-Dup, `secondary`).
-                let displaced = vector::ordered_finish(
+                let gone = vector::ordered_finish(
                     data,
                     rec,
                     &self.types[tp as usize].keys,
                     &mut self.allocations,
                 );
-                if displaced != 0 && !secondary {
+                if gone != 0 {
                     let old = DbRef {
                         store_nr: data.store_nr,
-                        rec: displaced,
+                        rec: gone,
                         pos: RECORD_PAYLOAD,
                     };
-                    self.remove_claims(&old, c);
-                    self.store_mut(data).delete(displaced);
+                    if secondary {
+                        displaced = Some(old);
+                    } else {
+                        self.remove_claims(&old, c);
+                        self.store_mut(data).delete(gone);
+                    }
                 }
             }
             InsertKind::Trie => {
@@ -805,6 +1010,7 @@ impl Stores {
             }
             InsertKind::Other => (),
         }
+        if secondary { displaced } else { None }
     }
 
     /// @PLAN53 cluster 3: sound cross-store byte copy.  Copies `len` bytes from

@@ -1520,9 +1520,11 @@ fn OpClearKeyed(dest: reference, tp: const u16);
 //
 // Emitted per VIEW member beside the reset `OpClearKeyed` already emits (loft#898), so
 // the parser names the members — which it can, they are known at emit time — and the
-// per-RECORD loop lives here, where the records exist.
-fn OpIndexGroup(primary: reference, view: reference, tp: const u16);
-#rust"s.database.index_group_records(&@primary, &@view, @tp);"
+// per-RECORD loop lives here, where the records exist.  `parent_tp` / `fld` name the struct
+// and the primary's field, so a repeated key among the written records leaves every keyed
+// member, not only the one it collided in (loft#1576, `(Col-Group-Dup)`).
+fn OpIndexGroup(primary: reference, view: reference, tp: const u16, parent_tp: const u16, fld: const u16);
+#rust"s.database.index_group_records(&@primary, &@view, @tp, @parent_tp, @fld);"
 // A record that field `fld` of the struct at `data` ALREADY holds is put into every OTHER
 // member of that field's linked group — the sibling half of `Stores::record_finish` on its
 // own.  An element-level write through the vector member (`w.es[i] = e`) keeps the record's
