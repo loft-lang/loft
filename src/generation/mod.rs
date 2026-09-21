@@ -899,6 +899,9 @@ pub struct Output<'a> {
     /// its push header again, the length written back per push (`@FR-R-PushFill`'s window
     /// clause).
     pub push_window_disabled: bool,
+    /// `LOFT_NO_JOIN_READ` (generation time): `v[i]?.f` runs its join on every pass and
+    /// reads the result through the store again (`@FR-R-Base`'s join clause).
+    pub join_read_disabled: bool,
     /// `@FR-R-PushFill`'s window clause — the push WINDOWS open while a loop's statements
     /// are emitted: the pushed path and the `vector::PushWindow` local its pushes go
     /// through.  Opened by [`Self::push_reserve`] before the loop (and before any guarded
@@ -2056,6 +2059,7 @@ impl<'a> Output<'a> {
                 || !crate::keys::loop_buffer_reuse_enabled(),
             push_fill_disabled: !crate::keys::push_fill_enabled(),
             push_window_disabled: !crate::keys::push_window_enabled(),
+            join_read_disabled: !crate::keys::join_read_enabled(),
             push_windows: Vec::new(),
             ret_adopt: None,
             retbuf_adopt_disabled: std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0"),
@@ -4516,6 +4520,25 @@ impl Output<'_> {
         let fused = hoist::fused_element_read(self.data, getter, args)?;
         self.active_vec_header(&fused.path)?;
         Some(fused)
+    }
+
+    /// `@FR-R-Base`'s join clause — `v[i]?.f` as one range test and one load: the shape
+    /// qualifies ([`hoist::fused_join_read`]) and the loop holds BOTH a header and an element
+    /// base for the path (the load goes through the base; a loop that grows a store holds
+    /// none, and keeps the join).  Asked by the pre-eval collector and the emitter both.
+    #[must_use]
+    pub fn fused_join_read<'a>(
+        &self,
+        getter: &str,
+        args: &'a [Value],
+    ) -> Option<hoist::JoinRead<'a>> {
+        if self.elem_fuse_disabled || self.join_read_disabled || self.in_coroutine_body {
+            return None;
+        }
+        let join = hoist::fused_join_read(self.data, getter, args)?;
+        self.active_vec_header(&join.path)?;
+        self.active_vec_base(&join.path)?;
+        Some(join)
     }
 
     /// Whether this call is emitted as ONE fused element WRITE (@PLN157 P4b) — the

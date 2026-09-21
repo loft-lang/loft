@@ -1324,6 +1324,18 @@ pub fn push_window_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_PUSH_WINDOW"))
 }
 
+/// `@FR-R-Base`'s join clause: a scalar field of a `?`-discharged element, `v[i]?.f`, in a
+/// loop that holds the vector's header and element base is one range test and one load
+/// through the base, the join it lowers to run only for an index that test refuses —
+/// **DEFAULT ON**.  Opt OUT with `LOFT_NO_JOIN_READ` (read at GENERATION time): the join
+/// runs on every pass and its result is read through the store again — the first bisect
+/// step for a wrong field out of `v[i]?.f` inside a loop on native.
+/// `LOFT_HOIST_VERIFY=1` re-derives the header and the base at every such read.
+pub fn join_read_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_JOIN_READ"))
+}
+
 /// @PLN157 § V-d: a vector-literal element that is a buffer-returning call is built IN the
 /// element's record, and a promoted return buffer honours an offered record — **DEFAULT
 /// ON**.  Opt OUT with `LOFT_NO_APPEND_IN_PLACE`: the before-half of the A/B on one binary

@@ -2188,6 +2188,107 @@ pub fn fused_element_read<'a>(
     })
 }
 
+/// `@FR-R-Base`'s join clause — a scalar field of a `?`-DISCHARGED element, `v[i]?.f`: the
+/// getter's operand is not the element address [`fused_element_read`] wants but the JOIN
+/// the `?` lowers to, which answers the element when it is present and a default record
+/// minted into a discharge buffer when it is not.
+pub struct JoinRead<'a> {
+    /// The join's temp — assigned the element address on every path, so the fused form
+    /// assigns it too.
+    pub temp: u16,
+    /// The join block itself: emitted whole, as the fallback, for every index the fast
+    /// path refuses.
+    pub join: &'a Value,
+    pub vector: &'a Value,
+    pub path: PathKey,
+    pub size: &'a Value,
+    /// The index VARIABLE.  A computed index is declined: it would be evaluated for the
+    /// range test and again inside the fallback's join, and the second evaluation of a
+    /// CHECKED operator can note one overflow twice.
+    pub index: u16,
+    pub fld: &'a Value,
+    pub rust_type: &'static str,
+    pub absent: &'static str,
+}
+
+/// Recognise `OpGet<scalar>(Block "ncc" { Set(t, OpGetVector*(path, size, Var(i)));
+/// If(OpConvBoolFromRef(Var(t)), Var(t), <absent arm>) }, fld)` — the ONE definition of the
+/// fused join read, asked by the pre-eval collector (which then leaves the join block where
+/// it stands instead of lifting it into a `let _pre_N`) and by the emitter (which folds it),
+/// so the two cannot disagree; an arm in the emitter alone would never fire, because the
+/// collector lifts every `Block` argument.  Shape only: the caller confirms the path holds
+/// a header AND an element base.
+///
+/// The fallback is `None` and that is the safe side: every shape not named here — a second
+/// statement in the join, a present arm that is not the temp, a test that is not the ref
+/// conversion, a computed index — keeps the general emission, which costs the fused load and
+/// never a value.  The ABSENT arm is deliberately not inspected: it is emitted verbatim on
+/// the fallback path, so whatever it mints, this rewrite runs it exactly as it stood.
+#[must_use]
+pub fn fused_join_read<'a>(data: &Data, getter: &str, args: &'a [Value]) -> Option<JoinRead<'a>> {
+    let [join, fld] = args else { return None };
+    let (_, rust_type, absent) = FUSABLE_GETTERS
+        .iter()
+        .find(|(name, _, _)| *name == getter)?;
+    let Value::Block(bl) = join.unspan() else {
+        return None;
+    };
+    let stmts: Vec<&Value> = bl
+        .operators
+        .iter()
+        .filter(|o| !matches!(o.unspan(), Value::Line(_)))
+        .collect();
+    let [bind, select] = stmts[..] else {
+        return None;
+    };
+    let Value::Set(temp, elem) = bind.unspan() else {
+        return None;
+    };
+    let Value::Call(elem_op, elem_args) = elem.unspan() else {
+        return None;
+    };
+    if !is_element_address(data, *elem_op) {
+        return None;
+    }
+    let [vector, size, index] = &elem_args[..] else {
+        return None;
+    };
+    let Value::Var(index) = index.unspan() else {
+        return None;
+    };
+    // The select: `if <temp is present> { temp } else { … }`.
+    let Value::If(test, present, _absent) = select.unspan() else {
+        return None;
+    };
+    let Value::Call(conv, conv_args) = test.unspan() else {
+        return None;
+    };
+    if (*conv as usize) >= data.definitions.len()
+        || data.def(*conv).name() != "OpConvBoolFromRef"
+        || !matches!(conv_args.as_slice(), [a] if matches!(a.unspan(), Value::Var(t) if t == temp))
+        || !matches!(present.unspan(), Value::Var(t) if t == temp)
+    {
+        return None;
+    }
+    // The index must not be the temp, and the join must not rebind it: the range test reads
+    // it before the join runs.
+    if index == temp {
+        return None;
+    }
+    let path = vector_path(data, vector)?;
+    Some(JoinRead {
+        temp: *temp,
+        join,
+        vector,
+        path,
+        size,
+        index: *index,
+        fld,
+        rust_type,
+        absent,
+    })
+}
+
 /// The typed setters an element write can be fused INTO (@PLN157 P4b), with the Rust
 /// type each stores.  The write twins of [`FUSABLE_GETTERS`], excluded for the same
 /// reasons: a setter that re-bases (`OpSetByte`/`OpSetShort`), masks or translates

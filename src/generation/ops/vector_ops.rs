@@ -115,6 +115,9 @@ impl OpEmitter for FusedElementReadEmitter {
         }
 
         let Some(fused) = ctx.output.fused_element_read(ctx.def_fn.name(), args) else {
+            if emit_join_read(ctx, args)? {
+                return Ok(());
+            }
             return emit_hoisted_scalar_or_default(ctx, args);
         };
         let Some(header) = ctx.output.active_vec_header(&fused.path) else {
@@ -180,6 +183,56 @@ impl OpEmitter for FusedElementReadEmitter {
         }
         Ok(())
     }
+}
+
+/// `@FR-R-Base`'s join clause — `v[i]?.f` where the loop holds `v`'s header and element
+/// base: one range test and one load through the base, with the join the `?` lowers to run
+/// only for an index that test refuses.  Answers whether it emitted.
+///
+/// In range the join's temp is still assigned — the very `DbRef` the join would have given
+/// it — so the rewrite drops no effect of the join and owes no proof that the temp is
+/// unread.  Off the fast path the JOIN BLOCK is emitted whole, as it stood, and its result
+/// read by the runtime's one general typed read (`vector::field_of`): a negative index
+/// addresses from the end there, and an absent element answers its default RECORD's field,
+/// which a declared field default can make non-zero — so that arm is never a constant.
+/// The join is bound to a local before the read for the templates' own reason: it takes
+/// `stores` mutably, and the read borrows it.
+fn emit_join_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool> {
+    let Some(join) = ctx.output.fused_join_read(ctx.def_fn.name(), args) else {
+        return Ok(false);
+    };
+    let (Some(header), Some(base)) = (
+        ctx.output.active_vec_header(&join.path).map(str::to_owned),
+        ctx.output.active_vec_base(&join.path).map(str::to_owned),
+    ) else {
+        return Ok(false);
+    };
+    let (ty, absent) = (join.rust_type, join.absent);
+    let verify = verify(ctx);
+    let vars = ctx.output.data.def(ctx.output.def_nr).variables();
+    let temp = super::super::sanitize(vars.name(join.temp));
+    let index = super::super::sanitize(vars.name(join.index));
+    write!(
+        ctx.w,
+        "{{ match unsafe {{ vector::elem_field_at::<{ty}, {verify}>(&{header}, {base}, &("
+    )?;
+    ctx.emit(join.vector)?;
+    write!(ctx.w, "), (")?;
+    ctx.emit(join.size)?;
+    write!(ctx.w, ") as u32, var_{index}, (")?;
+    ctx.emit(join.fld)?;
+    write!(
+        ctx.w,
+        ") as u32, &stores.allocations) }} {{ Some((__je, __jv)) => {{ var_{temp} = __je; __jv }} None => {{ let __jr: DbRef = "
+    )?;
+    ctx.emit(join.join)?;
+    write!(ctx.w, "; vector::field_of::<{ty}>(&__jr, (")?;
+    ctx.emit(join.fld)?;
+    write!(
+        ctx.w,
+        ") as u32, {absent}, &stores.allocations) }} }} }} /*@FR-R-Base join read*/"
+    )?;
+    Ok(true)
 }
 
 /// A record scalar read (`lay.x0`, any getter in [`crate::generation::hoist::SCALAR_GETTERS`])
