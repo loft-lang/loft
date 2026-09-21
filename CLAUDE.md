@@ -801,6 +801,17 @@ append relocates the element's bytes (heap handles included — they never chang
 zeroes the source, and the buffer's free is record-level — and is the bisect step for a
 wrong element, a leak or a double free out of a loop that appends a dying temporary's
 elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
+**`LOFT_NO_LAZY_SPLIT=1`** (`@FR-R-LazySplit`, default-ON, generation time, `--native`
+only) makes `for p in t.split(c)` build and walk its `vector<text>` again — with it off, a
+loop over the standard library's `split` with a CONSTANT separator takes each piece
+straight from the text (a parameter nothing writes is borrowed; any other source is
+iterated as a copy taken where the call stood, so a write in the body cannot reach it),
+the vector and its per-piece records are never built, and the call's hidden buffer is
+never minted (the drawing bench's `parse` row −9 %: its outer loop is
+`for raw in src.split('\n')`) — and is the first bisect step for a wrong, missing or
+extra piece out of a loop over a `split` on native.  A variable separator, a `rev`, a
+split bound to a name first and a generator keep the vector.  `LOFT_TRACE_LAZY_SPLIT=1`
+names each loop admitted and each declined with its reason.
 **`LOFT_NO_VECTOR_BASE=1`** (@PLN157 § V-ak, `@FR-R-Base`, default-ON) makes a
 growth-free loop's fused element reads and writes resolve the store per element again —
 with it off, a loop that grows no store (no push, no mint push — a null-discharge

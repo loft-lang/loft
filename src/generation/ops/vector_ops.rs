@@ -253,6 +253,29 @@ impl OpEmitter for HoistedLengthEmitter {
     }
 }
 
+/// `OpGetText` — the text of an element a loop over a lazy split reads is the iterator's
+/// next piece (`@FR-R-LazySplit`): `OpGetText(OpGetVectorNullable(vec, …), 0)` with `vec`
+/// a vector the function's lazy loops replaced.  Running out of pieces raises the loop's
+/// `__ls_done_N`, which its length test reads, and answers the null text the vector form
+/// reads past its last element — the loop leaves before anything looks at it.
+///
+/// Every other `OpGetText` emits the `#rust` template unchanged.
+pub struct LazySplitNextEmitter;
+
+impl OpEmitter for LazySplitNextEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        if let Some(elem) = args.first()
+            && let Some(vec) = ctx.output.lazy_split_reader(elem, "OpGetVectorNullable")
+        {
+            return write!(
+                ctx.w,
+                "(match __ls_{vec}.next() {{ Some(__piece) => __piece, None => {{ __ls_done_{vec} = true; loft::state::STRING_NULL }} }})"
+            );
+        }
+        super::default::DefaultEmitter.emit(ctx, args)
+    }
+}
+
 /// Emits `@FR-R-Header` (the fused element write) under `@FR-R-InPlace`.
 pub struct FusedElementWriteEmitter;
 

@@ -812,6 +812,13 @@ pub struct Output<'a> {
     /// § V-j; the bisect step for a wrong element, a leak or a double free out of a
     /// `for f in call(…) {{ v += [f] }}` loop.
     pub move_append_disabled: bool,
+    /// `@FR-R-LazySplit` — the `for piece in text.split(c)` loops of the function being
+    /// emitted that take their pieces straight from the text, keyed by the hidden vector
+    /// variable the lazy form never declares ([`hoist::lazy_splits`]); rebuilt per function.
+    pub lazy_splits: BTreeMap<u16, hoist::LazySplit>,
+    /// `LOFT_NO_LAZY_SPLIT=1` — every such loop builds and walks its `vector<text>` again;
+    /// the bisect step for a wrong or missing piece out of a loop over a `split`.
+    pub lazy_split_disabled: bool,
     /// @PLN157 § V-x (`@FR-R-LitHoist`) — the loop-body vector literals of the CURRENT
     /// function that build once per activation ([`hoist::invariant_literals`]): each is
     /// pre-declared at function top and its declaration statement wrapped in an
@@ -1999,6 +2006,8 @@ impl<'a> Output<'a> {
             move_by_loopvar: HashMap::new(),
             active_move_vars: Vec::new(),
             move_append_disabled: std::env::var("LOFT_NO_MOVE_APPEND").is_ok_and(|v| v != "0"),
+            lazy_splits: BTreeMap::new(),
+            lazy_split_disabled: std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0"),
             invariant_lits: hoist::LitHoist::default(),
             literal_hoist_disabled: std::env::var("LOFT_NO_LITERAL_HOIST").is_ok_and(|v| v != "0"),
             complete_writes: hoist::CompleteWrites::default(),
@@ -2322,6 +2331,11 @@ impl Output<'_> {
             .values()
             .map(|p| (p.loop_var, p.clone()))
             .collect();
+        self.lazy_splits = if self.lazy_split_disabled {
+            BTreeMap::new()
+        } else {
+            hoist::lazy_splits(self.data, def_nr)
+        };
         self.active_move_vars.clear();
         self.in_adopt_delivery = 0;
         // @PLN157 § V-u — does this function's result local adopt the return buffer?
@@ -4166,6 +4180,64 @@ impl Output<'_> {
             return None;
         }
         Some(slots)
+    }
+
+    /// `@FR-R-LazySplit` — the lazy split whose hidden vector `v` reads through the op
+    /// `reader`, or `None`: `v` must be `reader(Var(vec), …)` with `vec` a vector the
+    /// function's lazy loops replaced.  The two readers are the element read
+    /// (`OpGetVectorNullable`) and the length test (`OpLengthVector`); the analysis proved
+    /// they are the vector's only mentions, so answering them is answering every use.
+    #[must_use]
+    pub fn lazy_split_reader(&self, v: &Value, reader: &str) -> Option<u16> {
+        if self.lazy_splits.is_empty() || self.in_coroutine_body {
+            return None;
+        }
+        let Value::Call(d, args) = v.unspan() else {
+            return None;
+        };
+        if (*d as usize) >= self.data.definitions.len() || self.data.def(*d).name() != reader {
+            return None;
+        }
+        let Value::Var(vec) = args.first()?.unspan() else {
+            return None;
+        };
+        self.lazy_splits.contains_key(vec).then_some(*vec)
+    }
+
+    /// `@FR-R-LazySplit` — whether the lazy form may BORROW its source text `src` for the
+    /// whole loop: a plain text parameter nothing in the function writes.  Such a parameter
+    /// is a `&str` of the caller's, which no statement of the body can move or change.
+    /// Every other source — a local, a field, a call's result, a by-reference text — is
+    /// iterated as a copy taken where the call stood, which no later write can reach.
+    #[must_use]
+    pub fn lazy_split_borrows(&self, src: &Value) -> bool {
+        let Value::Var(s) = src.unspan() else {
+            return false;
+        };
+        let def = self.data.def(self.def_nr);
+        let vars = def.variables();
+        // `@FR-N-Shape` — `.base()`: a `text?` parameter is the same borrowed text, its null
+        // the sentinel an empty walk answers.  A by-reference text is a `RefVar` and is not.
+        if !vars.is_argument(*s) || !matches!(vars.tp(*s).base(), Type::Text(_)) {
+            return false;
+        }
+        // A write is a `Set`, a by-reference hand-off, or the variable as the DESTINATION
+        // (first operand) of a text-building op.  Anything this does not recognise as a
+        // write is a read of an immutable `&str`, which the borrow permits.
+        !def.code().any_node(&mut |n| match n {
+            Value::Set(v, _) => v == s,
+            Value::Call(d, args) if (*d as usize) < self.data.definitions.len() => {
+                let name = self.data.def(*d).name();
+                let first =
+                    matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if v == s);
+                first
+                    && (name == "OpCreateStack"
+                        || name.starts_with("OpAppend")
+                        || name.starts_with("OpClear")
+                        || name.starts_with("OpFormat"))
+            }
+            _ => false,
+        })
     }
 
     pub fn move_pair_for_block(&self, bl: &crate::data::Block) -> Option<&hoist::MoveAppend> {

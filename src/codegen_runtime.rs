@@ -859,6 +859,45 @@ fn get_record_lookup(
     }
 }
 
+/// The pieces of `text.split(separator)`, one at a time and in order, as slices of `text`
+/// (`@FR-R-LazySplit`): what a `for piece in text.split(c)` loop iterates when nothing
+/// else can reach the vector the call would have built.
+///
+/// It yields exactly the elements `split` in `default/02_files.loft` returns: none for an
+/// empty text, and otherwise one piece per separator plus the trailing piece, which is
+/// empty when the text ends in a separator.  A NULL text is not empty — it is the one
+/// character of the null sentinel — so it answers itself as its only piece, as `split`
+/// does.  The separator is a character, so a multi-byte one splits on the whole character
+/// and never inside another.
+pub struct LazySplit<'a> {
+    rest: Option<&'a str>,
+    separator: char,
+}
+
+impl<'a> Iterator for LazySplit<'a> {
+    type Item = &'a str;
+
+    #[inline]
+    fn next(&mut self) -> Option<&'a str> {
+        let text = self.rest?;
+        if let Some(at) = text.find(self.separator) {
+            self.rest = Some(&text[at + self.separator.len_utf8()..]);
+            Some(&text[..at])
+        } else {
+            self.rest = None;
+            Some(text)
+        }
+    }
+}
+
+/// Start a [`LazySplit`] over `text`.
+#[inline]
+#[must_use]
+pub fn lazy_split(text: &str, separator: char) -> LazySplit<'_> {
+    let rest = if text.is_empty() { None } else { Some(text) };
+    LazySplit { rest, separator }
+}
+
 /// Extract a substring from a text value.
 ///
 /// `from` and `till` are **byte** indices into the UTF-8 string (matching the

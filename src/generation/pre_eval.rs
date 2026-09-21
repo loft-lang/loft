@@ -659,6 +659,19 @@ impl Output<'_> {
                 self.collect_pre_evals_inner(fused.index, result)?;
                 return self.collect_pre_evals_inner(fused.fld, result);
             }
+            // `@FR-R-LazySplit` — the element read of a loop over a lazy split emits as the
+            // iterator's next piece, so its inner `OpGetVectorNullable` must not be lifted:
+            // the binding would name a vector the lazy form never declares.  The emitter
+            // asks the same `lazy_split_reader`, so the two cannot disagree; the read's
+            // other operands are the loop's own index variable and a constant.
+            if self.data.def(*d_nr).name() == "OpGetText"
+                && let Some(elem) = vals.first()
+                && self
+                    .lazy_split_reader(elem, "OpGetVectorNullable")
+                    .is_some()
+            {
+                return Ok(());
+            }
             // @PLN157 P4b — the write twin: a fused element WRITE also folds its inner
             // element address away, so that address must not be lifted either.  Both
             // sides ask `fused_element_write`, so they cannot disagree.

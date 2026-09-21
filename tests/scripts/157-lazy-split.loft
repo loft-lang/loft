@@ -1,0 +1,327 @@
+// `@FR-R-LazySplit` — a `for piece in text.split(c)` loop takes its pieces straight from
+// the text on `--native`: the `vector<text>` the call builds has no reader but the loop,
+// so it is never built.  Every cell hand-computes its pieces, their count and their
+// order; the interpreter keeps the vector form and is the oracle.  The cells walk the
+// axes the rewrite has: what the pieces ARE (empty, NULL, leading / trailing / doubled
+// separators, multi-byte), what the SOURCE is (a parameter, a local, a written local, a
+// by-reference text, a field, a call, a slice, a format string, the enclosing loop's own
+// piece), what the BODY does (index, mutate the piece, break, continue, return, nest),
+// and the shapes that must DECLINE and still answer right (a variable separator, a
+// vector bound first, a filter, `rev`, a generator).  `LOFT_NO_LAZY_SPLIT=1`,
+// `LOFT_POISON=1`, `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1` must answer
+// identically.
+//
+// @falsified-at: hand-measured (2026-09-21) — `codegen_runtime::LazySplit::next` sabotaged
+// to drop the trailing piece: native `assertion failed: s1 3 7 ab|cde|` for `s1 4 6
+// ab|cde||f` — the VALUE channel sees it at the first cell; the interpreter and
+// `LOFT_NO_LAZY_SPLIT=1` answer `s1 4 6 ab|cde||f` on the same build.  Restored, every
+// cell is exact on both backends under LOFT_POISON, LOFT_POISON_CLAIM, LOFT_STRICT_STORES
+// and LOFT_NATIVE_LEAK_CHECK.
+
+struct Named { name: text, nr: integer }
+
+// s1 — a parameter source: the borrowed form.  Four pieces, one of them empty.
+fn join_of(src: text, sep: text) -> text {
+  out = "";
+  n = 0;
+  for raw in src.split('\n') {
+    if n > 0 { out += sep; }
+    out += raw;
+    n += 1;
+  }
+  "{n} {size(src) - n + 1} {out}"
+}
+
+fn s1() {
+  r = join_of("ab\ncde\n\nf", "|");
+  assert(r == "4 6 ab|cde||f", "s1 {r}");
+  println("s1 {r}");
+}
+
+// s2 — an EMPTY text has no pieces.  A NULL text is not empty: it is the one character of
+// the null sentinel, so `split` answers it as its only piece — and so must the loop.  (A
+// null reaches a `text` parameter only past the compiler's null-into-non-null warning,
+// which this cell draws on purpose.)
+fn count_of(src: text) -> integer {
+  n = 0;
+  for _p in src.split(',') { n += 1; }
+  n
+}
+
+fn null_piece(src: text) -> text {
+  out = "";
+  for p in src.split(',') { out += "[{p}|{size(p)}]"; }
+  out
+}
+
+fn s2() {
+  nothing: text? = null as text?;
+  a = count_of("");
+  b = count_of(nothing);
+  c = null_piece(nothing);
+  assert(a == 0 && b == 1 && c == "[null|1]", "s2 {a} {b} {c}");
+  println("s2 {a} {b} {c}");
+}
+
+// s3 — where the separators sit: trailing, leading, doubled, only separators, none.
+fn shape_of(src: text) -> text {
+  out = "";
+  for p in src.split(',') { out += "[{p}]"; }
+  out
+}
+
+fn s3() {
+  a = shape_of("a,b,");
+  b = shape_of(",a");
+  c = shape_of("a,,b");
+  d = shape_of(",,");
+  e = shape_of("abc");
+  assert(a == "[a][b][]" && b == "[][a]" && c == "[a][][b]" && d == "[][][]" && e == "[abc]",
+         "s3 {a} {b} {c} {d} {e}");
+  println("s3 {a} {b} {c} {d} {e}");
+}
+
+// s4 — a MULTI-BYTE separator, and multi-byte pieces around a one-byte separator.
+fn s4() {
+  wide = "";
+  for p in "xéyéz".split('é') { wide += "<{p}>"; }
+  bytes = 0;
+  chars = 0;
+  for q in "añ,ño,".split(',') { bytes += size(q); chars += len(q); }
+  assert(wide == "<x><y><z>" && bytes == 6 && chars == 4, "s4 {wide} {bytes} {chars}");
+  println("s4 {wide} {bytes} {chars}");
+}
+
+// s5 — `#index`, `#first` and `#count` of the piece.
+fn s5() {
+  weighted = 0;
+  firsts = 0;
+  last_count = 0;
+  for p in "a,bb,ccc".split(',') {
+    weighted += p#index * size(p);
+    if p#first { firsts += 1; }
+    last_count = p#count;
+  }
+  assert(weighted == 8 && firsts == 1 && last_count == 2, "s5 {weighted} {firsts} {last_count}");
+  println("s5 {weighted} {firsts} {last_count}");
+}
+
+// s6 — `continue` and `break`: the pieces after the break are never asked for.
+fn s6() {
+  out = "";
+  seen = 0;
+  for p in "a,b,STOP,c,d".split(',') {
+    seen += 1;
+    if p == "b" { continue }
+    if p == "STOP" { break }
+    out += p;
+  }
+  assert(out == "a" && seen == 3, "s6 {out} {seen}");
+  println("s6 {out} {seen}");
+}
+
+// s7 — a `return` out of the loop, and the fall-through when nothing matches.
+fn first_long(src: text, at_least: integer) -> text {
+  for p in src.split(',') {
+    if size(p) >= at_least { return p }
+  }
+  "none"
+}
+
+fn s7() {
+  a = first_long("a,bb,ccc,dddd", 3);
+  b = first_long("a,bb", 3);
+  assert(a == "ccc" && b == "none", "s7 {a} {b}");
+  println("s7 {a} {b}");
+}
+
+// s8 — NESTED: the inner source is the outer loop's own piece.
+fn s8() {
+  lines = 0;
+  fields = 0;
+  total = 0;
+  for line in "1,2\n3,4,5\n\n6".split('\n') {
+    lines += 1;
+    for f in line.split(',') {
+      fields += 1;
+      total += (f as integer?) ?? 0;
+    }
+  }
+  assert(lines == 4 && fields == 6 && total == 21, "s8 {lines} {fields} {total}");
+  println("s8 {lines} {fields} {total}");
+}
+
+// s9 — a LOCAL source the body WRITES: the pieces are those of the text as it was.
+fn s9() {
+  s = "a,b,c";
+  n = 0;
+  for p in s.split(',') {
+    s += p;
+    n += 1;
+  }
+  assert(n == 3 && s == "a,b,cabc", "s9 {n} {s}");
+  println("s9 {n} {s}");
+}
+
+// s10 — a BY-REFERENCE text the body writes, seen by the caller afterwards.
+fn grow(s: &text) -> integer {
+  n = 0;
+  for p in s.split(';') {
+    s += "+{p}";
+    n += 1;
+  }
+  n
+}
+
+fn s10() {
+  t = "x;y";
+  n = grow(t);
+  assert(n == 2 && t == "x;y+x+y", "s10 {n} {t}");
+  println("s10 {n} {t}");
+}
+
+// s11 — sources that are EXPRESSIONS: a call, a field, a slice, a format string, `trim`.
+fn mk_text() -> text { "p q r" }
+
+fn s11() {
+  o = Named { name: "u v", nr: 7 };
+  a = 0; for _w in mk_text().split(' ') { a += 1; }
+  b = ""; for w in o.name.split(' ') { b += w; }
+  full = "k=1,2,3";
+  c = 0; for w in full[2..].split(',') { c += (w as integer?) ?? 0; }
+  d = ""; for w in "{o.nr}-{a}-z".split('-') { d += "({w})"; }
+  e = 0; for w in "  m n  ".trim().split(' ') { e += size(w); }
+  assert(a == 3 && b == "uv" && c == 6 && d == "(7)(3)(z)" && e == 2, "s11 {a} {b} {c} {d} {e}");
+  println("s11 {a} {b} {c} {d} {e}");
+}
+
+// s12 — the piece is MUTATED in the body and kept: it is the loop's own text.
+fn s12() {
+  kept: vector<text> = [];
+  for p in "a,b".split(',') {
+    p += "!";
+    kept += [p];
+  }
+  assert(len(kept) == 2 && kept[0]? == "a!" && kept[1]? == "b!", "s12 {len(kept)} {kept[0]?} {kept[1]?}");
+  println("s12 {len(kept)} {kept[0]?} {kept[1]?}");
+}
+
+// s13 — a VARIABLE separator keeps the vector, and answers the same.
+fn by(src: text, sep: character) -> integer {
+  n = 0;
+  for p in src.split(sep) { n += size(p) + 1; }
+  n
+}
+
+fn s13() {
+  a = by("a;bb;ccc", ';');
+  b = by("a;bb;ccc", ',');
+  assert(a == 9 && b == 9, "s13 {a} {b}");
+  println("s13 {a} {b}");
+}
+
+// s14 — the vector BOUND FIRST is a vector: it has a length and an index.
+fn s14() {
+  parts = "a,b,c".split(',');
+  out = "";
+  for p in parts { out += p; }
+  assert(len(parts) == 3 && parts[1]? == "b" && out == "abc", "s14 {len(parts)} {parts[1]?} {out}");
+  println("s14 {len(parts)} {parts[1]?} {out}");
+}
+
+// s15 — the same function entered again and again: nothing is carried between calls.
+fn s15() {
+  total = 0;
+  for _k in 0..4 {
+    total += count_of("a,b,c");
+    total += count_of("");
+    total += count_of("z");
+  }
+  assert(total == 16, "s15 {total}");
+  println("s15 {total}");
+}
+
+// s16 — TWO loops over splits in one function, and a third nested in the second.
+fn s16() {
+  a = 0; for p in "1,2,3".split(',') { a += (p as integer?) ?? 0; }
+  b = 0; c = 0;
+  for p in "4;5 6;7".split(';') {
+    b += 1;
+    for q in p.split(' ') { c += (q as integer?) ?? 0; }
+  }
+  assert(a == 6 && b == 3 && c == 22, "s16 {a} {b} {c}");
+  println("s16 {a} {b} {c}");
+}
+
+// s17 — a FILTER on the loop and a `rev` over the vector: both keep the vector.
+fn s17() {
+  kept = "";
+  for p in "a,,b,,c".split(',') if p != "" { kept += p; }
+  back = "";
+  for p in rev("a,b,c".split(',')) { back += p; }
+  assert(kept == "abc" && back == "cba", "s17 {kept} {back}");
+  println("s17 {kept} {back}");
+}
+
+// s18 — a GENERATOR over a split: its loop is re-entered across `next`, so it keeps the vector.
+fn pieces(src: text) -> iterator<text> { for p in src.split(',') { yield p; } }
+
+fn s18() {
+  out = "";
+  n = 0;
+  for p in pieces("a,bb,,c") { out += "{p}."; n += 1; }
+  assert(out == "a.bb..c." && n == 4, "s18 {out} {n}");
+  println("s18 {out} {n}");
+}
+
+// s19 — MANY pieces: a thousand separators are a thousand and one pieces, the last empty.
+fn s19() {
+  long = "";
+  for k in 0..1000 { long += "{k},"; }
+  n = 0;
+  sum = 0;
+  empties = 0;
+  for p in long.split(',') {
+    n += 1;
+    sum += (p as integer?) ?? 0;
+    if p == "" { empties += 1; }
+  }
+  assert(n == 1001 && sum == 499500 && empties == 1, "s19 {n} {sum} {empties}");
+  println("s19 {n} {sum} {empties}");
+}
+
+// s20 — the piece OUTLIVES the loop: the last one bound is still readable after it.
+fn s20() {
+  last = "";
+  for p in "a,b,last".split(',') { last = p; }
+  src = "k,v";
+  keep = "";
+  for p in src.split(',') { keep = p; src = "gone"; }
+  assert(last == "last" && keep == "v" && src == "gone", "s20 {last} {keep} {src}");
+  println("s20 {last} {keep} {src}");
+}
+
+// s21 — a NULLABLE text parameter, discharged both ways the language offers: a default
+// for the text (an empty text: no pieces), and the type's default for the vector (the
+// call still runs on the null text, which answers itself: one piece).
+fn opt_shape(src: text?) -> text {
+  out = "";
+  n = 0;
+  for p in (src ?? "").split(',') { out += "[{p}]"; n += 1; }
+  m = 0;
+  for _q in src.split(',')? { m += 1; }
+  "{n}{out}{m}"
+}
+
+fn s21() {
+  a = opt_shape(null as text?);
+  b = opt_shape("x,,y");
+  assert(a == "01" && b == "3[x][][y]3", "s21 {a} {b}");
+  println("s21 {a} {b}");
+}
+
+fn main() {
+  s1(); s2(); s3(); s4(); s5(); s6(); s7(); s8(); s9(); s10();
+  s11(); s12(); s13(); s14(); s15(); s16(); s17(); s18(); s19(); s20();
+  s21();
+}

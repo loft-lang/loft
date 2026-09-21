@@ -428,6 +428,9 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
         "OpGetVectorNullable",
         Box::new(vector_ops::OpGetVectorNullableEmitter),
     );
+    // `@FR-R-LazySplit` — the element read of a loop over a lazy split is the iterator's
+    // next piece; every other `OpGetText` is its template.
+    r.insert("OpGetText", Box::new(vector_ops::LazySplitNextEmitter));
 
     // Phase 10 step 10.3 — integer comparison emitter family.
     // Closes P200 read-side: the default `@v1 == @v2` template
@@ -551,8 +554,11 @@ mod tests {
         // `@FR-R-GuardedChain` add three, the `*Nullable` twins of `+ - *` into
         // `IntArithEmitter`: a defended site's silent-fault twin is the same arithmetic, so a
         // result the range proof bounds (or a chain the guard admits) emits plain there too.
+        // `@FR-R-LazySplit` adds one, `LazySplitNextEmitter` for `OpGetText`: the element
+        // read of a loop over a lazy split is the iterator's next piece, and every other
+        // `OpGetText` falls through to the template unchanged.
         assert!(
-            count <= 121,
+            count <= 122,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

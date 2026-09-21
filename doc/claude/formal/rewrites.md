@@ -927,6 +927,67 @@ free in `OpFreeRefEmitter`, the null decl in `Output::emit_null_dbref`,
 Shipped: standalone `fronds` −11 % (396–400k → 354–359k ns/op), the hand-measured
 ceiling reached exactly; hash `ebcfd875` on every run.
 
+### A loop over a split takes its pieces from the text
+
+```
+  (R-LazySplit)  in `for p in T.split(c) { … }` where `split` is the standard library's
+                 `split(self: text, separator: character)`, `c` is a character CONSTANT
+                 other than the null character, and the loop is the plain forward
+                 walk the parser gives a text vector — the hidden vector the call's
+                 result is bound to is read by the loop's element read and by its
+                 length test and by NOTHING else (a `rev`, a vector bound to a name
+                 first, a third mention all decline) — the vector is never built:
+                 the loop iterates the pieces of T as slices, in the order and with
+                 the content `split` answers (none for an empty text; otherwise one
+                 per separator plus the trailing piece, empty when T ends in a
+                 separator; a NULL text is its sentinel's one character and answers
+                 itself as its only piece), and binds each to `p` exactly as the element
+                 read did, so `p` is still the loop's own text.  T is evaluated
+                 ONCE, where the call stood.  A plain text PARAMETER the function
+                 never writes is borrowed for the loop; every other T — a local, a
+                 by-reference text, a field, a call, a slice — is iterated as a COPY
+                 taken at that point, so no write in the body can reach what is
+                 being walked: the pieces are those of T as it was, which is what
+                 the vector held.  The call's hidden buffer, when it serves that
+                 call alone, is never minted, and its frees release nothing.  A
+                 generator declines whole: its loops are re-entered across `next`,
+                 and the iterator is a local of the activation.
+```
+
+**In words.** A parser's outer loop is `for line in src.split('\n')`, and the vector it
+walks has no other reader: `split` claimed a record and a text per line, the loop copied
+each out again, and the buffer was freed at exit — the drawing bench's `parse` row spent
+2.1 µs of 19.4 there, where its Rust reference's lazy `split` spends none.  `(R-Escape)`
+is the licence: the vector never leaves the `For` block, so how many stores its pieces
+take is the compiler's to change.  The conditions are the vector's TWO mentions (counted
+over the whole function, so a shape this rule has not met declines rather than compiles to
+a read of a vector nobody filled) and the separator's constancy — a null separator
+compares equal to a NUL inside the text, which the iterator does not model.  The NULL
+text is the edge the first build got wrong: it answered no pieces, by analogy with the
+empty text, where `split` answers one — `len(null)` is 1, so its trailing-piece rule
+fires — and lazy native disagreed with the interpreter AND with its own switch-off form
+(`count=0` for `count=1`).  The cell that found it passes a real null (s2, s21); the
+first s2 passed `nothing ?? ""`, an empty text, and saw nothing.  The source
+needs no gate because the copy is always sound; the borrow is the one case where the
+copy is provably unnecessary.  Priced by hand patch first (−1.85 µs), then built: `parse`
+19.21 → **17.44 µs (−9 %), 298k → 268k instructions per parse**, 2.93× → 2.63× its
+reference on x86-64, hash `33f6d2b8`; with the switch set the bench's emission is
+byte-identical to the build before the rule.  Two spellings of the `For` block reach it —
+the buffer minted at function entry, and minted at first use inside the block
+(`(O-LazyBuffer)`), where a `#count` seed may also stand before the bind — and both are
+one shape to the matcher, which finds the bind and requires it, the index seed and the
+loop to close the block.  Switch `LOFT_NO_LAZY_SPLIT`; trace `LOFT_TRACE_LAZY_SPLIT`
+(each loop admitted, each declined with its reason, and whether the buffer is minted).
+The falsifier is the emission pin with the value cells beside it — there is no assumption
+to re-derive at run time, so `(R-Switch)`'s second form applies: cells
+`tests/scripts/157-lazy-split.loft` s1–s21 (falsified by dropping the trailing piece:
+`s1 3 7 ab|cde|` for `s1 4 6 ab|cde||f`), pins `tests/lazy_split.rs`.  Sites:
+`hoist::lazy_splits`, `hoist::lazy_split_block`, `Output::lazy_split_reader`,
+`Output::lazy_split_borrows`, the bind in `Output::output_set`, the element read in
+`LazySplitNextEmitter`, the length test in `IntCompareEmitter`, the pre-eval exemption
+in `Output::collect_pre_evals_inner`, the null decl in `Output::emit_null_dbref`,
+`codegen_runtime::lazy_split`.
+
 ### A result vector adopts the return buffer
 
 ```
@@ -1300,7 +1361,10 @@ still cross the rlib boundary as calls) and `scripts/inline_audit.py` (which
 symbol and self time is the candidate).  Sites: `vector::get_elem_hoisted_cold`,
 `Stores::vec_set_hoisted_cold`, `Stores::note_format_fault`'s split,
 `Store::raise_out_of_bounds`, `Store::shadow_write`, `State::verify_slot`,
-`State::mark_stale_handles`, `Stores::watch_oob_text_report`.
+`State::mark_stale_handles`, `Stores::watch_oob_text_report`, and `ops::text_character`
+(the ASCII byte is answered inline; the multi-byte snap-back and decode are
+`text_character_wide` — a `for c in text` walk paid a call per character, 580 per parse
+on the drawing bench).
 
 ### A result is built where it will live, moved at its last use, and written over a place
 
