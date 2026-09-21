@@ -1144,6 +1144,24 @@ pub fn hoisted_scalar_verify<T: HoistEq>(hoisted: T, fresh: T) -> T {
     hoisted
 }
 
+/// `@FR-R-RecPtr`'s path clause under `LOFT_HOIST_VERIFY=1` — a field read through a record
+/// address at a SUMMED offset (`v.pos.x`), compared with the unrewritten read that walks the
+/// path.  [`rec_get`]'s own check re-reads the store at the offset it was given, so it
+/// cannot see an offset summed wrongly; this one can.
+///
+/// # Panics
+///
+/// When the two reads disagree.  Never in the emitted default.
+#[must_use]
+#[inline]
+pub fn path_read_verify<T: HoistEq>(through: T, walked: T) -> T {
+    assert!(
+        through.same(walked),
+        "record view read through a field path disagrees with the path walked          (through the address {through:?}, walked {walked:?})"
+    );
+    through
+}
+
 /// @FR-Col-RemoveDense — a vector stays DENSE: removing index `i` shifts every later
 /// element down one, so there are no holes and no tombstones and index `j > i` now names what
 /// was at `j+1`.  That renumbering is what ends the place a view names (@FR-B-Disturb), so it

@@ -211,6 +211,13 @@ fn emit_hoisted_scalar_or_default(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> 
             && let Some((v, off)) = crate::generation::hoist::view_field(ctx.output.data, base, fld)
             && let Some(expr) = ctx.output.rec_ptr_read(v, off, ctx.def_fn.name())
         {
+            // The checking form walks the path the unrewritten way and compares: `rec_get`
+            // re-reads at the offset it is given, so only this can see one summed wrongly.
+            if ctx.output.hoist_verify {
+                write!(ctx.w, "vector::path_read_verify({expr}, ")?;
+                super::default::DefaultEmitter.emit(ctx, args)?;
+                return write!(ctx.w, ")");
+            }
             return write!(ctx.w, "{expr}");
         }
         return super::default::DefaultEmitter.emit(ctx, args);
