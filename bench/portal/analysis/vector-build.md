@@ -4,7 +4,8 @@ Taken 2026-09-21 on x86-64, right after the record shapes (`records.md` § Built
 portal's 24 rows still over 3×.  An ANALYSIS: every figure below is a HAND-PRICE — the
 emitted Rust of the routine edited to the form a rewrite would emit, compiled with the
 `--native-release` flags, run in-process with the result hash unchanged.  **V1–V3 and F1 are BUILT
-(§ Built, § F1 built); T1 and C1 are priced and not built.**  Two candidates priced NEGATIVE or not at all are listed as such; they are not
+(§ Built, § F1 built); T1 is re-sized (it needs a refactor first — § T1 re-priced) and C1
+is priced; neither is built.**  Two candidates priced NEGATIVE or not at all are listed as such; they are not
 work.
 
 | # | lever | rows it moves | hand-priced |
@@ -169,6 +170,34 @@ stores` in the body.  Where the body writes no store the borrow is sound, which 
 `(R-Header)`'s own condition and what `(R-LazySplit)` already does for a parameter nothing
 writes.  Priced on the stdlib's `join`: **31.4 → 16.7 µs, 5.36× → ~2.9×**, before hoisting
 the walk.
+
+### T1 re-priced in its emitted form, and re-SIZED (2026-09-22, not built)
+
+The price holds: `let var_p: &str = { …get_str… };` for `let mut var_p = { … }.to_string();`
+and `&*(var_p)` for `&*(&var_p)` at its one use — `join` 30.8 → 16.8–17.6 µs (−45 %), hash
+`2df9` unchanged, three runs.  It compiles because `join`'s body touches only its `&mut String`
+result, never `stores`.
+
+The COST is not what this page said.  "A text variable is a `&str`" is a notion with NO HOME:
+it is spelled inline as `vars.is_argument(v) && matches!(vars.tp(v).base(), Type::Text(_))` at
+six sites and more (`dispatch.rs` ×2, `emit.rs` ×3, `mod.rs`; a ±3-line grep, so a lower
+bound), it decides the use-site spelling (`&*(var_sep)` for a parameter, `&*(&var_p)` for a
+local), and the sites have already disagreed three times in shipped code (loft#1004, loft#1006,
+loft#1278 — *"the two spellings of the same write disagreed about the same source"*).  T1 adds
+a THIRD class, a LOCAL that is a `&str`, to every one of them.  Patching the sites that can be
+found is how loft#1278 happened; the failure is loud (rustc refuses the emitted program) but
+it is a program that compiled yesterday refusing today, on one backend.
+
+So T1 is two units, in this order: **(1)** one predicate for "this text variable is borrowed"
+asked by every site — a behaviour-preserving refactor whose proof is an EMPTY
+`scripts/introspect_diff.sh` over the corpus (the loft-codegen skill's Mode B); **(2)** the
+loop variable of `for p in vector<text>` joins that class where the body writes no store.
+The second condition is the emitter's to PROVE and not rustc's to catch: a user call is handed
+the raw `cell` and takes its own `&mut Stores` from it, so a callee reallocating the store
+under a live `&str` is invisible to the borrow checker (`hoist::may_write_store`, as
+`(R-Header)` and the push window use it).  The walk itself is a third, separate piece: a text
+element's head is `OpGetText(OpGetVectorNullable(…), 0)`, which `hoist::iteration_head` does
+not read, so the loop holds no header either.
 
 ## C1: every call constructs a guard for fn-ref buffers it cannot have
 
