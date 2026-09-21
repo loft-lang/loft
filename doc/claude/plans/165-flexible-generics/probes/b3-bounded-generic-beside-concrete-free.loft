@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// STEPS.md B2–B3.  The same pair with a BOUND.
+// Measured 9f5cf6a96: `Cannot redefine 'show'`.
+// Expected after B3: `special cat 1|any dog 2`.
+interface Named { fn tag(self: Self) -> text }
+struct Cat { n: integer }
+struct Dog { n: integer }
+fn tag(self: Cat) -> text { return "cat {self.n}"; }
+fn tag(self: Dog) -> text { return "dog {self.n}"; }
+fn show<T: Named>(x: T) -> text { return "any {x.tag()}"; }
+fn show(x: Cat) -> text { return "special {x.tag()}"; }
+fn main() {
+  print("{show(Cat{n:1})}|{show(Dog{n:2})}");
+}

@@ -1,0 +1,9 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// STEPS.md C1.  ONE type variable, in the second parameter.
+// Measured 9f5cf6a96: `Type variable T must appear in the first parameter`.
+// Expected after C1: `1:a|2:7`.
+fn hole<T: Printable>(n: integer, v: T) -> text { return "{n}:{v}"; }
+fn main() {
+  print("{hole(1, "a")}|{hole(2, 7)}");
+}

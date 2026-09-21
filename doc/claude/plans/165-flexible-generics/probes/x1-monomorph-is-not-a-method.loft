@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A falsified worry, kept so it stays falsified.  A monomorph is keyed
+// `t_7integer_idf`, which is the spelling of a METHOD `idf` on `integer` — so could
+// `n.idf()` reach it once a free call has instantiated it?
+// Measured 9f5cf6a96, in all three orders (method call after, before, and without the
+// free call): `Unknown field integer.idf`.  It must stay refused, and stay ORDER-FREE.
+fn idf<T>(x: T) -> T { return x; }
+fn main() {
+  n = 4;
+  a = idf(3);
+  b = n.idf();
+  print("{a} {b}");
+}

@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// STEPS.md B6.  Two generics of one name; `vector<T>` admits strictly fewer types than
+// `T`, so it is the more specific of the two for a vector argument.
+// Measured 9f5cf6a96: `Cannot redefine 'f'`.  Expected after B6: `vec|any`.
+fn f<T>(v: vector<T>) -> text { return "vec"; }
+fn f<T>(x: T) -> text { return "any"; }
+fn main() {
+  a: vector<integer> = [1];
+  print("{f(a)}|{f(3)}");
+}

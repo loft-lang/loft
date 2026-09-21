@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A variable named by TWO parameters must bind consistently.  Works today, because the
+// second argument is checked against the monomorph's substituted signature.
+// Measured 9f5cf6a96: `expected integer, got text on argument 2 of call to same`.
+// Must still be refused after C1, where binding reads every parameter.
+fn same<T: Printable>(a: T, b: T) -> text { return "{a}{b}"; }
+fn main() {
+  print(same(1, 2));
+  print(same(1, "x"));
+}

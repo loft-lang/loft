@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The edge that WORKS today, and why: the concrete definition is a `self` METHOD, keyed
+// `t_2Sq_describe`, so it never meets the generic's `n_describe`.  The ladder finds the
+// method by the receiver alone — by KEY, not by rank.  b5 is what that costs.
+// Measured 9f5cf6a96: `SQUARE|some tri`.  Must still answer that after every step.
+interface Shape { fn kind(self: Self) -> text }
+struct Sq { s: integer }
+struct Tri { s: integer }
+fn kind(self: Sq) -> text { return "square {self.s}"; }
+fn kind(self: Tri) -> text { return "tri {self.s}"; }
+fn describe(self: Sq) -> text { return "SQUARE {self.s}"; }
+fn describe<T: Shape>(x: T) -> text { return "some {x.kind()}"; }
+fn main() {
+  print("{describe(Sq{s:1})}|{describe(Tri{s:2})}");
+}
