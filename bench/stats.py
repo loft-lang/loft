@@ -5,6 +5,7 @@
 
     python3 bench/stats.py [--only 01,08] [--lanes native,rust] [--samples 7]
                            [--target-ms 400] [--bar 2.0] [--tsv out.tsv] [--no-pin]
+                           [--package DIR[=NAME]]...
 
 `run_bench.sh` prints one wall time per lane, which for a routine that finishes in a few
 milliseconds is mostly the timer's resolution.  This tool makes the same programs answer
@@ -31,6 +32,12 @@ Lanes: `native` (loft `--native-emit --lean`, rustc opt-level 3, one codegen uni
 `--native-release` ships), `rust` (the reference, `rustc -O` unless `--ref-flags` says
 otherwise), `interp` (the loft interpreter) and `python`.  The ratio column is
 native / rust; the other lanes are reported beside it.
+
+`--package DIR` measures a LIBRARY's own bench — `DIR/bench/bench.loft` beside its twin
+`DIR/bench/bench.rs`, the layout the drawing library set (@PLN158).  A package has
+dependencies, so its native lane is built by loft itself (`--native-release`, what a consumer
+gets) and sampled from the binary loft cached.  Point it at a SCRATCH CLONE, never at the
+library's working tree: the build writes caches beside the source.
 
 A REPORT, never a gate: timings are machine-bound.  Exit 1 on a hash disagreement or a
 lane that fails to build or run; exit 0 otherwise, whatever the ratios say.
@@ -120,9 +127,38 @@ def build(bench, lanes, loft, lib_dir, ref_flags):
     return cmds
 
 
+def build_package(pkg_dir, lanes, loft, ref_flags):
+    """The lanes of a library's own bench.  The native lane is what `loft --native-release`
+    builds and caches for `bench/bench.loft`; the newest file in that cache IS the binary."""
+    bench_dir = os.path.join(pkg_dir, "bench")
+    src = os.path.join(bench_dir, "bench.loft")
+    if not os.path.exists(src):
+        fail(f"{pkg_dir}: no bench/bench.loft")
+    cmds = {}
+    if "native" in lanes:
+        run_checked([loft, "--native-release", "bench/bench.loft", "--n", "2"],
+                    f"{pkg_dir}: loft --native-release", cwd=pkg_dir)
+        cache = os.path.join(bench_dir, ".loft", "cache")
+        built = [os.path.join(cache, f) for f in os.listdir(cache) if f.startswith("bench-")] \
+            if os.path.isdir(cache) else []
+        if not built:
+            fail(f"{pkg_dir}: loft left no cached native binary under bench/.loft/cache")
+        cmds["native"] = [max(built, key=os.path.getmtime)]
+    if "rust" in lanes and os.path.exists(os.path.join(bench_dir, "bench.rs")):
+        out = os.path.join(bench_dir, ".build")
+        os.makedirs(out, exist_ok=True)
+        exe = os.path.join(out, "stats_rs")
+        run_checked(["rustc", *ref_flags, "--edition=2021", "-o", exe,
+                     os.path.join(bench_dir, "bench.rs")], f"{pkg_dir}: rustc (reference)")
+        cmds["rust"] = [exe]
+    if "interp" in lanes:
+        cmds["interp"] = [loft, "--interpret", "bench/bench.loft"]
+    return cmds
+
+
 # ── running ──────────────────────────────────────────────────────────────────────────────
-def rows_of(cmd, n, pin, what):
-    p = subprocess.run([*pin, *cmd, "--n", str(n)], capture_output=True, text=True)
+def rows_of(cmd, n, pin, what, cwd=None):
+    p = subprocess.run([*pin, *cmd, "--n", str(n)], capture_output=True, text=True, cwd=cwd)
     if p.returncode != 0:
         fail(f"{what} failed ({p.returncode}):\n{(p.stderr or p.stdout)[-3000:]}")
     rows = {}
@@ -137,13 +173,13 @@ def rows_of(cmd, n, pin, what):
     return rows
 
 
-def calibrate(cmd, pin, target_us, what):
+def calibrate(cmd, pin, target_us, what, cwd=None):
     """The even `--n` at which the SLOWEST routine of this lane runs for about the target.
     Two probe runs: the first finds the scale, the second corrects a first op that carried
     one-time costs (a buffer's growth, a cold cache)."""
     n = 2
     for _ in range(2):
-        rows = rows_of(cmd, n, pin, what)
+        rows = rows_of(cmd, n, pin, what, cwd)
         per_op = max(max(r["us"], 1) / r["iters"] for r in rows.values())
         want = int(target_us / per_op)
         n = max(2, min(want - want % 2, 2_000_000))
@@ -166,6 +202,30 @@ def spread(xs):
     return (q3 - q1) / m * 100.0 if m else 0.0
 
 
+def run_metadata(a):
+    """What a reader of a saved run needs to know about where it came from: the machine is
+    part of every row (a ratio is between two lanes on ONE machine)."""
+    import datetime
+    import platform
+
+    def git(*args):
+        p = subprocess.run(["git", "-C", ROOT, *args], capture_output=True, text=True)
+        return p.stdout.strip()
+
+    return {
+        "host": platform.node(),
+        "arch": f"{platform.machine()}-{platform.system().lower()}",
+        "date": datetime.date.today().isoformat(),
+        "commit": git("rev-parse", "--short", "HEAD"),
+        "dirty": "yes" if git("status", "--porcelain", "--untracked-files=no") else "no",
+        "rustc": subprocess.run(["rustc", "--version"], capture_output=True, text=True).stdout.strip(),
+        "samples": a.samples,
+        "target_ms": a.target_ms,
+        "ref_flags": a.ref_flags,
+        "pinned": "no" if a.no_pin or not pin_prefix(1, True) else "yes",
+    }
+
+
 def threads_of(bench):
     return 4 if bench.startswith("11_") else 1
 
@@ -179,7 +239,16 @@ def main():
     ap.add_argument("--bar", type=float, default=2.0)
     ap.add_argument("--noisy", type=float, default=5.0, help="spread %% above which a row is flagged")
     ap.add_argument("--ref-flags", default="-O", help="rustc flags for the reference lane")
+    ap.add_argument("--package-target-ms", type=float, default=4000.0,
+                    help="the run length a --package lane is calibrated to: a library's bench "
+                         "prints routines a thousand times apart in cost under ONE --n, so its "
+                         "slowest routine has to run long for its fastest to be resolved")
+    ap.add_argument("--coarse-us", type=float, default=200.0,
+                    help="a row timed over fewer microseconds than this is flagged coarse")
     ap.add_argument("--tsv", default="")
+    ap.add_argument("--package", action="append", default=[], metavar="DIR[=NAME]",
+                    help="a library's own bench (DIR/bench/bench.loft + bench.rs); repeatable")
+    ap.add_argument("--no-suite", action="store_true", help="measure only the --package lanes")
     ap.add_argument("--no-pin", action="store_true")
     ap.add_argument("--show-samples", action="store_true", help="print every sample under its row")
     ap.add_argument("--loft", default=os.environ.get("LOFT_BIN", os.path.join(ROOT, "target/release/loft")))
@@ -198,8 +267,15 @@ def main():
         want = [w.strip() for w in a.only.split(",")]
         benches = [b for b in benches
                    if any(b == w or b.split("_")[0].lstrip("0") == w.lstrip("0") for w in want)]
-    if not benches:
+    if a.no_suite:
+        benches = []
+    elif not benches:
         fail("no benchmark matches --only")
+    packages = []
+    for spec in a.package:
+        pkg_dir, _, name = spec.partition("=")
+        pkg_dir = os.path.abspath(pkg_dir)
+        packages.append((name or os.path.basename(pkg_dir.rstrip("/")), pkg_dir))
 
     target_us = a.target_ms * 1000.0
     pinned = bool(pin_prefix(1, not a.no_pin))
@@ -213,23 +289,32 @@ def main():
         head += f" {'nat/rust':>9} {'range':>13}  verdict"
     print(head)
 
+    stamp = run_metadata(a)
     out_rows = []
     ratios = []
     verdicts = {"ok": 0, "OVER": 0, "unclear": 0}
-    for bench in benches:
-        cmds = build(bench, lanes, a.loft, a.lib_dir, a.ref_flags.split())
+    units = [(b, None) for b in benches] + packages
+    for bench, pkg_dir in units:
+        if pkg_dir is None:
+            cmds = build(bench, lanes, a.loft, a.lib_dir, a.ref_flags.split())
+        else:
+            cmds = build_package(pkg_dir, lanes, a.loft, a.ref_flags.split())
+        cwd = pkg_dir
         pin = pin_prefix(threads_of(bench), not a.no_pin)
-        n_of = {lane: calibrate(cmd, pin, target_us, f"{bench} [{lane}]") for lane, cmd in cmds.items()}
+        unit_target = target_us if pkg_dir is None else max(target_us, a.package_target_ms * 1000.0)
+        n_of = {lane: calibrate(cmd, pin, unit_target, f"{bench} [{lane}]", cwd) for lane, cmd in cmds.items()}
         samples = {lane: {} for lane in cmds}
+        regions = {lane: {} for lane in cmds}
         hashes = {lane: {} for lane in cmds}
         # One discarded round first: the first run of a lane after the OTHER lane's
         # calibration reads 5–8 % slow (caches, frequency ramp), every later one does not.
         for cmd_lane, cmd in cmds.items():
-            rows_of(cmd, n_of[cmd_lane], pin, f"{bench} [{cmd_lane}] warm-up")
+            rows_of(cmd, n_of[cmd_lane], pin, f"{bench} [{cmd_lane}] warm-up", cwd)
         for _ in range(a.samples):
             for lane, cmd in cmds.items():
-                for name, r in rows_of(cmd, n_of[lane], pin, f"{bench} [{lane}]").items():
+                for name, r in rows_of(cmd, n_of[lane], pin, f"{bench} [{lane}]", cwd).items():
                     samples[lane].setdefault(name, []).append(r["ns"])
+                    regions[lane].setdefault(name, []).append(r["us"])
                     prev = hashes[lane].setdefault(name, r["hash"])
                     if prev != r["hash"]:
                         fail(f"{bench}/{name} [{lane}]: the hash changed between runs ({prev} vs {r['hash']})")
@@ -239,7 +324,8 @@ def main():
             if len(set(seen.values())) != 1:
                 fail(f"{bench}/{name}: the lanes compute different results — {seen}")
             line = f"{bench:15} {name:13}"
-            rec = dict(bench=bench, routine=name, hash=next(iter(seen.values())))
+            rec = dict(bench=bench, routine=name, hash=next(iter(seen.values())),
+                       commit=stamp["commit"], date=stamp["date"])
             for lane in lanes:
                 xs = samples.get(lane, {}).get(name)
                 if not xs:
@@ -263,8 +349,15 @@ def main():
                 verdicts[verdict] += 1
                 ratios.append(ratio)
                 noisy = max(spread(nat), spread(ref)) > a.noisy
-                line += f" {ratio:>9.2f} {f'{lo:.2f}–{hi:.2f}':>13}  {verdict}{'  (noisy)' if noisy else ''}"
-                rec.update(ratio=ratio, ratio_lo=lo, ratio_hi=hi, verdict=verdict)
+                # A program runs every routine `--n` times, calibrated on its SLOWEST one, so a
+                # routine a thousand times faster is timed over a region of a few microseconds
+                # of a microsecond clock.  Such a row is COARSE: its figure is real but blunt.
+                coarse = min(statistics.median(regions["native"][name]),
+                             statistics.median(regions["rust"][name])) < a.coarse_us
+                flags = ("  (noisy)" if noisy else "") + ("  (coarse)" if coarse else "")
+                line += f" {ratio:>9.2f} {f'{lo:.2f}–{hi:.2f}':>13}  {verdict}{flags}"
+                rec.update(ratio=ratio, ratio_lo=lo, ratio_hi=hi, verdict=verdict,
+                           flags=(("noisy " if noisy else "") + ("coarse" if coarse else "")).strip())
             print(line, flush=True)
             if a.show_samples:
                 for lane in lanes:
@@ -281,6 +374,8 @@ def main():
         keys = sorted({k for r in out_rows for k in r})
         keys = ["bench", "routine"] + [k for k in keys if k not in ("bench", "routine")]
         with open(a.tsv, "w") as f:
+            for k, v in run_metadata(a).items():
+                f.write(f"# {k}={v}\n")
             f.write("\t".join(keys) + "\n")
             for r in out_rows:
                 f.write("\t".join(f"{r.get(k, ''):.2f}" if isinstance(r.get(k), float) else str(r.get(k, ""))

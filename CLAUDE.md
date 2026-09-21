@@ -83,6 +83,15 @@ make falsify GUARD=<guard.loft> REF=<commit>   # does this guard FAIL on the bui
                                          #   Every new tests/scripts file records its answer
                                          #   (`@falsified-at:`, gated) — TESTING.md
 make speed                               # what got slower/faster — a REPORT, never a gate
+make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY CLASS: measures
+                                         #   every bench lane here and renders ONE page,
+                                         #   doc/claude/PERF_PORTAL.md — a median per mechanism
+                                         #   class (keyed, vector-build, call, record-field, …),
+                                         #   every routine under its class, and the surveyed
+                                         #   library routines still waiting for a row (@PLN158).
+                                         #   `perf-portal-render` re-renders from saved runs;
+                                         #   PACKAGES="--package <scratch clone>/drawing=drawing"
+                                         #   adds a library's own bench.  A REPORT, never a gate
 python3 bench/stats.py                   # native vs the Rust reference per bench routine, as
                                          #   STATISTICS: --n calibrated per lane, a warm-up
                                          #   round dropped, 7 interleaved samples pinned to the
@@ -453,7 +462,7 @@ report says so rather than printing nothing (loft#1088). PERFORMANCE.md § LOFT_
 
 **Testing / debug:** [TESTING.md](doc/claude/TESTING.md) framework/`LOFT_LOG`/LogConfig ·
 [DEBUG.md](doc/claude/DEBUG.md) tools + boundary-matrix runner · [CAVEATS.md](doc/claude/CAVEATS.md) edge cases ·
-[PERFORMANCE.md](doc/claude/PERFORMANCE.md) benchmarks + profiling (its oracle: [PROFILE_ORACLE.md](doc/claude/PROFILE_ORACLE.md)) · [CI_BUDGET.md](doc/claude/CI_BUDGET.md) what runs
+[PERFORMANCE.md](doc/claude/PERFORMANCE.md) benchmarks + profiling (its oracle: [PROFILE_ORACLE.md](doc/claude/PROFILE_ORACLE.md)) · [PERF_PORTAL.md](doc/claude/PERF_PORTAL.md) (GENERATED: every measured routine against its Rust twin, by mechanism class — `make perf-portal`) · [CI_BUDGET.md](doc/claude/CI_BUDGET.md) what runs
 when + the 20-min PR rule.
 
 **Quality / stability / formal:** [CODE.md](doc/claude/CODE.md) · [DOC_QUALITY.md](doc/claude/DOC_QUALITY.md) ·

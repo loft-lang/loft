@@ -1,0 +1,16 @@
+# The library repositories the performance pass measures from, and the package benches in them.
+# Columns: repository <TAB> branch <TAB> packages
+#   packages  comma-separated `name=subdir` for each library that carries its OWN bench
+#             (`<subdir>/bench/bench.loft` beside `<subdir>/bench/bench.rs`), or `-` for none yet.
+# `checkout_libs.sh` clones each one as a NORMAL checkout under $LOFT_PERF_LIBS (default: the
+# directory `loft-bench-libs` beside this repository) and fast-forwards it when it is clean.
+# These are the bench's OWN checkouts: a run writes build caches into them, which is why the
+# pass never measures from a library author's working tree.
+loft-libs-graphics	drawing-lock	drawing=drawing
+loft-libs-core	main	-
+loft-libs-docs	main	-
+loft-libs-game	main	-
+loft-libs-net	main	-
+loft-libs-assets	main	-
+loft-libs-plugins	main	-
+loft-libs-world	main	-

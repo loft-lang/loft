@@ -1,0 +1,168 @@
+// Benchmark 15: KEYED collections — hash, sorted and index — one row each
+//
+// Filling a table, finding in it (hits and misses), updating what was found, removing, and
+// walking a sorted collection in key order; integer keys and text keys.  Every op's keys
+// differ by the repetition's salt in VALUE only; the `hash` column is one canonical op's
+// result, which the Rust twin (`HashMap`, `BTreeMap`) must print the same.
+
+struct E { id: integer, val: integer }
+struct W { word: text, count: integer }
+struct ByHash { rows: hash<E[id]> }
+struct BySorted { rows: sorted<E[id]> }
+struct ByIndex { rows: index<E[id]> }
+struct ByWord { rows: hash<W[word]> }
+
+fn key_of(i: integer, salt: integer) -> integer { (i * 7919 + salt) % 1000003 }
+
+fn make_words(count: integer) -> vector<text> {
+  out: vector<text> = [];
+  for i in 0..count { out += ["key-{(i * 7919) % 100003}-{i % 7}"]; }
+  out
+}
+
+fn fill_hash(db: ByHash, count: integer, salt: integer) {
+  for i in 0..count { db.rows += [E { id: key_of(i, salt), val: i }]; }
+}
+
+// a hash FILLED from empty, integer keys.
+fn k_hash_fill(count: integer, salt: integer) -> integer {
+  db = ByHash { rows: [] };
+  fill_hash(db, count, salt);
+  (db.rows[key_of(count / 2, salt)]?.val) + (db.rows[key_of(7, salt)]?.val)
+}
+
+// lookups in a standing hash: half of them hits, half misses.
+fn k_hash_find(db: const ByHash, count: integer, salt: integer) -> integer {
+  acc = 0;
+  for i in 0..count {
+    e = db.rows[key_of(i, 0)];
+    if e != null { acc += e.val & 1023; }
+    m = db.rows[key_of(i, 0) + 1000003 + salt];
+    if m != null { acc += 1000000; }
+  }
+  acc
+}
+
+// found and WRITTEN: a lookup followed by a field store.
+fn k_hash_update(db: ByHash, count: integer, salt: integer) -> integer {
+  for i in 0..count {
+    e = db.rows[key_of(i, 0)];
+    if e != null { e.val = i + salt; }
+  }
+  (db.rows[key_of(count - 1, 0)]?.val) + (db.rows[key_of(3, 0)]?.val)
+}
+
+// filled, then every second key REMOVED, then counted by lookup.
+fn k_hash_remove(count: integer, salt: integer) -> integer {
+  db = ByHash { rows: [] };
+  fill_hash(db, count, salt);
+  for i in 0..count {
+    if i % 2 == 0 { db.rows[key_of(i, salt)] = null; }
+  }
+  left = 0;
+  for i in 0..count {
+    if db.rows[key_of(i, salt)] != null { left += 1; }
+  }
+  left
+}
+
+// a hash with TEXT keys: filled, then every key looked up.
+fn k_text_keys(words: const vector<text>, salt: integer) -> integer {
+  db = ByWord { rows: [] };
+  for i in 0..len(words) {
+    w = words[i]?;
+    found = db.rows[w];
+    if found == null { db.rows += [W { word: w, count: 1 + salt }]; }
+    else { found.count += 1; }
+  }
+  acc = 0;
+  for i in 0..len(words) { acc += db.rows[words[i]?]?.count; }
+  acc
+}
+
+// a SORTED collection filled out of order and walked in key order.
+fn k_sorted(count: integer, salt: integer) -> integer {
+  db = BySorted { rows: [] };
+  for i in 0..count { db.rows += [E { id: key_of(i, salt), val: i }]; }
+  acc = 0;
+  prev = -1;
+  for e in db.rows {
+    if e.id < prev { return -1 }
+    prev = e.id;
+    acc = ((acc ^ e.val) + (e.id & 7)) & 16777215;
+  }
+  acc
+}
+
+// an INDEX filled out of order, then found in.
+fn k_index(count: integer, salt: integer) -> integer {
+  db = ByIndex { rows: [] };
+  for i in 0..count { db.rows += [E { id: key_of(i, salt), val: i }]; }
+  acc = 0;
+  for i in 0..count {
+    e = db.rows[key_of(i, salt)];
+    if e != null { acc += e.val & 255; }
+  }
+  acc
+}
+
+fn arg_n(dflt: integer) -> integer {
+  an_args = arguments();
+  an_n = dflt;
+  an_i = 0;
+  while an_i < len(an_args) {
+    if an_args[an_i]? == "--n" && an_i + 1 < len(an_args) {
+      an_n = (an_args[an_i + 1]? as integer?)?;
+      an_i += 1;
+    }
+    an_i += 1;
+  }
+  if an_n < 2 { an_n = 2; }
+  an_n
+}
+
+fn row(name: text, iters: integer, us: integer, items: integer, result: integer) {
+  rw_ns = ((us * 1000) / iters) ?? 0;
+  rw_it = (((us * 1000) as float) / ((iters * items) as float)) ?? 0.0;
+  println("{name}\t{iters}\t{us}\t{rw_ns}\t{items}\t{rw_it:.3}\t{result:x}");
+}
+
+fn main() {
+  n = arg_n(40);
+  count = 5000;
+  standing = ByHash { rows: [] };
+  fill_hash(standing, count, 0);
+  words = make_words(2000);
+  println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+  sink = 0;
+
+  t0 = ticks();
+  for r in 0..n { sink += k_hash_fill(count, r & 1); }
+  row("hash_fill", n, ticks() - t0, count, k_hash_fill(count, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += k_hash_find(standing, count, r & 1); }
+  row("hash_find", n, ticks() - t0, count * 2, k_hash_find(standing, count, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += k_hash_update(standing, count, r & 1); }
+  row("hash_update", n, ticks() - t0, count, k_hash_update(standing, count, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += k_hash_remove(count, r & 1); }
+  row("hash_remove", n, ticks() - t0, count, k_hash_remove(count, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += k_text_keys(words, r & 1); }
+  row("hash_text_keys", n, ticks() - t0, 2000, k_text_keys(words, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += k_sorted(count, r & 1); }
+  row("sorted_fill_walk", n, ticks() - t0, count, k_sorted(count, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += k_index(count, r & 1); }
+  row("index_fill_find", n, ticks() - t0, count, k_index(count, 0));
+
+  println("time: 0ms sink={sink}");
+}

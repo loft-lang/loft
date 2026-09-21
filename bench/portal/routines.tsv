@@ -1,0 +1,64 @@
+# The ROUTINE registry — every routine the portal knows, measured or not yet.
+# Columns: lane <TAB> routine <TAB> class <TAB> population <TAB> exercises
+#   lane        the bench directory (bench/<lane>) or package lane that prints the row
+#   population  engine  — a synthetic program that measures the ENGINE (informational)
+#               stdlib  — a routine of the standard library, on a workload a program runs
+#               library:<name> — a `pub fn` of a shipped library
+#   exercises   what a reader should know the row stands for
+# A routine a lane prints and this file lacks is reported by the portal as UNCLASSIFIED.
+01_fibonacci	fibonacci	call	engine	recursive calls, two per frame
+02_sum_loop	sum_loop	int-loop	engine	a loop-carried integer mix, 5M steps
+03_sieve	sieve	int-loop	engine	trial division: `%`, `*`, compare, a call per candidate
+04_collatz	collatz	int-loop	engine	`%`, `/`, `*` on a data-dependent branch
+05_mandelbrot	mandelbrot	float-kernel	engine	float multiply-add with an escape test
+06_newton_sqrt	newton_sqrt	float-kernel	engine	float division, with the nullable quotient discharged
+07_string_build	string_build	text-build	engine	200k formatted appends to one text
+08_word_count	word_count	keyed	engine	a text-keyed hash: find-or-insert on an 18-word cycle
+09_matrix_mul	dot_product	vector-read	engine	a float dot product over two vectors
+10_sort	sort	vector-write	engine	insertion sort: indexed read, compare, indexed write
+11_par	par	parallel	engine	`par` over 100k records, four threads
+12_drawing	hash	float-kernel	engine	the drawing library's seeded noise hash
+12_drawing	lock	vector-write	engine	the drawing library's brush-lock raster
+13_stdlib_text	split	text-build	stdlib	`split` with its pieces collected into a vector
+13_stdlib_text	split_walk	text-scan	stdlib	`for line in text.split(c)`
+13_stdlib_text	find_contains	text-scan	stdlib	`contains` and `find`, per line
+13_stdlib_text	replace	text-build	stdlib	`replace` of every occurrence
+13_stdlib_text	trim_lower	text-build	stdlib	`trim` + `to_lowercase` + `starts_with`, per line
+13_stdlib_text	char_walk	text-scan	stdlib	`for c in text`
+13_stdlib_text	byte_walk	text-scan	stdlib	`byte_at` over `0..size`
+13_stdlib_text	format_num	text-build	stdlib	integers and floats formatted into a text
+13_stdlib_text	parse_num	text-parse	stdlib	`as float?` over 2,000 tokens
+13_stdlib_text	join	text-build	stdlib	`join` of 2,000 texts
+14_stdlib_vector	push	vector-build	stdlib	`v += [x]` from empty, 20k
+14_stdlib_vector	comprehension	vector-build	stdlib	`[for i in 0..n { … }]`, 20k
+14_stdlib_vector	index_read	vector-read	stdlib	`v[i]` with a loop-carried result
+14_stdlib_vector	sum	vector-read	stdlib	the `sum` aggregate (a reduction the reference vectorises)
+14_stdlib_vector	min_max_of	vector-read	stdlib	the generic `min_of` / `max_of`
+14_stdlib_vector	index_write	vector-write	stdlib	`v[i] = …` over 20k
+14_stdlib_vector	copy	vector-build	stdlib	`w = v` of 20k integers
+14_stdlib_vector	remove_front	vector-write	stdlib	`v.remove(0)` until empty, 1,024
+14_stdlib_vector	grid	vector-build	stdlib	a 128x128 vector of vectors by nested comprehension
+14_stdlib_vector	record_append	record-build	stdlib	`v += [P {…}]`, 20k
+14_stdlib_vector	record_walk	record-field	stdlib	`for p in v` reading three fields
+14_stdlib_vector	record_update	record-field	stdlib	`v[i].x = …` over 20k
+15_stdlib_keyed	hash_fill	keyed	stdlib	`hash<E[id]>` filled from empty, 5k integer keys
+15_stdlib_keyed	hash_find	keyed	stdlib	10k lookups, half of them misses
+15_stdlib_keyed	hash_update	keyed	stdlib	a lookup followed by a field write
+15_stdlib_keyed	hash_remove	keyed	stdlib	fill, remove every second key, count
+15_stdlib_keyed	hash_text_keys	keyed	stdlib	find-or-insert and lookup on 2,000 text keys
+15_stdlib_keyed	sorted_fill_walk	keyed	stdlib	`sorted<E[id]>` filled out of order, walked in order
+15_stdlib_keyed	index_fill_find	keyed	stdlib	`index<E[id]>` filled out of order, then found in
+drawing	hash	float-kernel	library:drawing	seeded noise hash, 100k samples
+drawing	hair	vector-write	library:drawing	hair brush footprint
+drawing	smooth	record-build	library:drawing	Catmull-Rom smoothing of a point list
+drawing	fronds	record-build	library:drawing	fractal fronds: records with vector fields appended
+drawing	lock	vector-write	library:drawing	brush-lock raster
+drawing	lock_curved	vector-write	library:drawing	brush-lock raster along a curve
+drawing	composite	vector-write	library:drawing	layer compositing: read, blend, write per pixel
+drawing	fill_circle	vector-write	library:drawing	polygon scanline fill
+drawing	fill_star	vector-write	library:drawing	polygon scanline fill, concave
+drawing	wide_line	record-field	library:drawing	wide line through the polygon crossing table
+drawing	parse	alloc-temp	library:drawing	scene text to records: scan, split, records handed between helpers
+drawing	render_lock	vector-read	library:drawing	render + Lanczos resample
+drawing	render_marks	vector-read	library:drawing	render + Lanczos resample
+drawing	resize	vector-read	library:drawing	Lanczos resample 1024 to 256

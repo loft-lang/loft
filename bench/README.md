@@ -68,6 +68,43 @@ every ratio to within about 1 % (the threaded row to about 4 %).  A spread above
 bars in `ratio_oracle.tsv`; `--gate` fails a ratio over its bar.  The bars are ratcheted
 DOWN as the ratios fall.
 
+## The portal: where we stand, by class
+
+`bench/portal/` turns the measurements into ONE page —
+[doc/claude/PERF_PORTAL.md](../doc/claude/PERF_PORTAL.md) — that leads with the question a
+performance pass starts from: **which KINDS of routine are still too slow?**
+
+```bash
+make perf-portal                                                  # measure here, then render
+make perf-portal PACKAGES="--package <scratch clone>/drawing=drawing"
+make perf-portal-render                                           # render from the saved runs
+```
+
+| file | what it holds |
+|---|---|
+| `portal/classes.tsv` | the mechanism classes: what bounds a routine of each |
+| `portal/routines.tsv` | every measured routine -> its class and its POPULATION (`engine`, `stdlib`, `library:<name>`) |
+| `portal/census.tsv` | library and consumer routines worth a row and not measured yet, each with its workload and its twin |
+| `portal/results/<host>.tsv` | the latest run per machine, stamped with its commit, compiler and settings |
+
+A CLASS names the mechanism a routine's cost is made of — the per-call frame, a checked
+integer operator, a record appended to a vector, a hash probe — so a slow class points at one
+part of the compiler or the runtime rather than at one program.  The page gives each class
+its median, its best and its worst row, then every routine under its class, then coverage:
+which libraries have a lane and which surveyed routines are waiting.
+
+**Adding a row.**  Write the routine in a lane's `bench.loft` and its twin in `bench.rs` (the
+four rules below), confirm the hashes agree (`python3 bench/stats.py --only <lane>`), and
+give it a line in `routines.tsv`; a routine a lane prints and the registry lacks is reported
+on the page as UNCLASSIFIED.  If it came off the census, delete its census line.
+
+**Lanes.**  `01`–`12` are ENGINE programs (informational).  `13_stdlib_text`,
+`14_stdlib_vector` and `15_stdlib_keyed` are the STANDARD LIBRARY as a program calls it, one
+row per routine.  A library's own bench (the drawing library's `bench/`) joins through
+`--package`, measured from a scratch clone.  Routines of other libraries and of consumer
+programs are MODELLED here as further lanes rather than run in their own trees, which the
+bench never writes to.
+
 ## The row protocol
 
 Every lane of every bench prints one tab-separated row per routine, after a header:
