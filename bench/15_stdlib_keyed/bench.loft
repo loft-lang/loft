@@ -4,12 +4,23 @@
 // walking a sorted collection in key order; integer keys and text keys.  Every op's keys
 // differ by the repetition's salt in VALUE only; the `hash` column is one canonical op's
 // result, which the Rust twin (`HashMap`, `BTreeMap`) must print the same.
+//
+// ONE ELEMENT TYPE PER COLLECTION KIND, on purpose.  An element type that any `hash` or
+// `index` field holds is record-backed everywhere: a `sorted` over it becomes an `ordered`
+// and a `hash` over it takes one store record per entry instead of an arena slot
+// (`Stores::finish`).  Sharing `E` between the three structs — as this file first did —
+// therefore measured that mode in every row without saying so.  `grouped_fill_find` is
+// the row that measures it deliberately: the `vector` + `hash` group a consumer writes.
 
 struct E { id: integer, val: integer }
+struct ES { id: integer, val: integer }
+struct EI { id: integer, val: integer }
+struct G { id: integer, val: integer }
 struct W { word: text, count: integer }
 struct ByHash { rows: hash<E[id]> }
-struct BySorted { rows: sorted<E[id]> }
-struct ByIndex { rows: index<E[id]> }
+struct BySorted { rows: sorted<ES[id]> }
+struct ByIndex { rows: index<EI[id]> }
+struct Grouped { all: vector<G>, by_id: hash<G[id]> }
 struct ByWord { rows: hash<W[word]> }
 
 fn key_of(i: integer, salt: integer) -> integer { (i * 7919 + salt) % 1000003 }
@@ -83,7 +94,7 @@ fn k_text_keys(words: const vector<text>, salt: integer) -> integer {
 // a SORTED collection filled out of order and walked in key order.
 fn k_sorted(count: integer, salt: integer) -> integer {
   db = BySorted { rows: [] };
-  for i in 0..count { db.rows += [E { id: key_of(i, salt), val: i }]; }
+  for i in 0..count { db.rows += [ES { id: key_of(i, salt), val: i }]; }
   acc = 0;
   prev = -1;
   for e in db.rows {
@@ -97,13 +108,26 @@ fn k_sorted(count: integer, salt: integer) -> integer {
 // an INDEX filled out of order, then found in.
 fn k_index(count: integer, salt: integer) -> integer {
   db = ByIndex { rows: [] };
-  for i in 0..count { db.rows += [E { id: key_of(i, salt), val: i }]; }
+  for i in 0..count { db.rows += [EI { id: key_of(i, salt), val: i }]; }
   acc = 0;
   for i in 0..count {
     e = db.rows[key_of(i, salt)];
     if e != null { acc += e.val & 255; }
   }
   acc
+}
+
+// the consumer's group: a `vector` and a `hash` over ONE record set, filled through the
+// vector and found through the hash.
+fn k_grouped(count: integer, salt: integer) -> integer {
+  db = Grouped { all: [], by_id: [] };
+  for i in 0..count { db.all += [G { id: key_of(i, salt), val: i }]; }
+  acc = 0;
+  for i in 0..count {
+    e = db.by_id[key_of(i, salt)];
+    if e != null { acc += e.val & 255; }
+  }
+  acc + len(db.all)
 }
 
 fn arg_n(dflt: integer) -> integer {
@@ -163,6 +187,10 @@ fn main() {
   t0 = ticks();
   for r in 0..n { sink += k_index(count, r & 1); }
   row("index_fill_find", n, ticks() - t0, count, k_index(count, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += k_grouped(count, r & 1); }
+  row("grouped_fill_find", n, ticks() - t0, count, k_grouped(count, 0));
 
   println("time: 0ms sink={sink}");
 }

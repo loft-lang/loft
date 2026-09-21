@@ -48,8 +48,9 @@
 15_stdlib_keyed	hash_update	keyed	stdlib	a lookup followed by a field write
 15_stdlib_keyed	hash_remove	keyed	stdlib	fill, remove every second key, count
 15_stdlib_keyed	hash_text_keys	keyed	stdlib	find-or-insert and lookup on 2,000 text keys
-15_stdlib_keyed	sorted_fill_walk	keyed	stdlib	`sorted<E[id]>` filled out of order, walked in order
-15_stdlib_keyed	index_fill_find	keyed	stdlib	`index<E[id]>` filled out of order, then found in
+15_stdlib_keyed	sorted_fill_walk	keyed	stdlib	`sorted<ES[id]>` (inline elements) filled out of order, walked in order
+15_stdlib_keyed	index_fill_find	keyed	stdlib	`index<EI[id]>` filled out of order, then found in
+15_stdlib_keyed	grouped_fill_find	keyed	stdlib	a `vector` + `hash` group over one record set: filled through the vector, found through the hash
 drawing	hash	float-kernel	library:drawing	seeded noise hash, 100k samples
 drawing	hair	vector-write	library:drawing	hair brush footprint
 drawing	smooth	record-build	library:drawing	Catmull-Rom smoothing of a point list

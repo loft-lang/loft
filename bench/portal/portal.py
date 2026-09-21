@@ -242,6 +242,9 @@ def render():
         w("### Every routine, under its class\n")
         for cls, rs in ranked:
             w(f"#### {cls} — {class_what[cls]}\n")
+            if os.path.exists(os.path.join(HERE, "analysis", f"{cls}.md")):
+                w(f"Why it is slow, priced, and what to build: "
+                  f"[analysis/{cls}.md](../../bench/portal/analysis/{cls}.md)\n")
             w("| routine | lane | population | × Rust | range | native | Rust | | what it stands for |")
             w("|---|---|---|---:|---|---:|---:|---|---|")
             for r in sorted(rs, key=lambda r: -r["ratio_f"]):

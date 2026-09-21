@@ -114,6 +114,27 @@ fn k_index(count: i64, salt: i64) -> i64 {
     acc
 }
 
+// the consumer's group: one record set reached by position and by key.
+struct G {
+    val: i64,
+}
+
+fn k_grouped(count: i64, salt: i64) -> i64 {
+    let mut all: Vec<G> = Vec::new();
+    let mut by_id: HashMap<i64, usize> = HashMap::new();
+    for i in 0..count {
+        by_id.insert(key_of(i, salt), all.len());
+        all.push(G { val: i });
+    }
+    let mut acc = 0i64;
+    for i in 0..count {
+        if let Some(&at) = by_id.get(&key_of(i, salt)) {
+            acc += all[at].val & 255;
+        }
+    }
+    acc + all.len() as i64
+}
+
 fn arg_n(dflt: i64) -> i64 {
     let args: Vec<String> = std::env::args().collect();
     let mut n = dflt;
@@ -172,6 +193,9 @@ fn main() {
     let (us, s) = timed(n, |r| k_index(black_box(count), r & 1));
     sink = sink.wrapping_add(s);
     row("index_fill_find", n, us, count, k_index(count, 0));
+    let (us, s) = timed(n, |r| k_grouped(black_box(count), r & 1));
+    sink = sink.wrapping_add(s);
+    row("grouped_fill_find", n, us, count, k_grouped(count, 0));
 
     println!("time: 0ms sink={}", black_box(sink));
 }
