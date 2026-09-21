@@ -2630,6 +2630,16 @@ impl Output<'_> {
         }
         let data = self.data;
         let fn_name = data.def(self.def_nr).name().to_string();
+        // `LOFT_GUARDED_CHAIN_ONLY=<fn>[,<fn>…]` — a BISECT instrument, never a tuning
+        // knob: admit the guard in the named functions alone, so a row that moved under
+        // `LOFT_NO_GUARDED_CHAIN` can be attributed to ONE loop by timing (the drawing
+        // `parse` row lost 15 % to the rewrite while the standalone scanner lost nothing,
+        // and there is no cheaper way to ask which of its six admitted loops paid).
+        if let Ok(only) = std::env::var("LOFT_GUARDED_CHAIN_ONLY")
+            && !only.split(',').any(|f| f.trim() == fn_name)
+        {
+            return Ok(ChainGuard::None);
+        }
         let Ok(rc) = hoist::range_counters(lp, data) else {
             return Ok(ChainGuard::None);
         };

@@ -909,8 +909,12 @@ the loop never writes and hoisted record scalars run PLAIN behind a guard evalua
 the loop's entry (every leaf not the sentinel, every chain's magnitude bound fits), the
 checked loop being the `else` arm (`composite` 103 → 68 µs: `j * lw + i`, `x0 + i`, `y0 + j`
 over record scalars no static proof can bound) — and is the first bisect step for a wrong
-index or accumulate in a counted loop on native; `LOFT_HOIST_VERIFY=1` is the falsifier and
-`LOFT_TRACE_CHAIN=1` names every loop admitted and declined.
+index or accumulate in a counted loop on native; `LOFT_HOIST_VERIFY=1` is the falsifier,
+`LOFT_TRACE_CHAIN=1` names every loop admitted and declined, and
+**`LOFT_GUARDED_CHAIN_ONLY=<fn>[,<fn>…]`** admits the guard in the named functions ALONE — the
+bisect step for a row that moved under `LOFT_NO_GUARDED_CHAIN`, because a whole-program A/B
+cannot say which admitted loop paid (the drawing `parse` row lost 18 % to ONE of six: a 3–8
+trip loop in a per-byte helper, whose doubled body stopped inlining into its caller).
 **`LOFT_NO_BLOCK_REPEAT=1`** (runtime, BOTH backends) makes `[x; n]` fill one element at a
 time again — a `copy_block` and a `copy_claims` call each — where with it off
 `Stores::fill_from_template` doubles block copies and walks claims only for a heap-owning
