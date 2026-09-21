@@ -12,13 +12,24 @@
 // asserts them.  `LOFT_NO_ENUM_RECORD=1`, `LOFT_NO_RECORD_PUSH=1`, `LOFT_NO_MINT_WINDOW=1`,
 // `LOFT_NO_RECORD_PTR=1` and `LOFT_HOIST_VERIFY=1` must all answer identically.
 //
-// Predictions (tests/enum_record.rs pins them): e1, e4, e5, e6 append through the header
-// with a zeroed slot and match through the address; e3's heap-owning variant keeps the
-// general append (its text set grows a store) but matches through the address; e8 reads
-// the tag through a nested path; e9 matches a null view; e11 (a plain enumerate) and e12
-// (a nullable element) are not struct-enum records and keep their form.
+// Predictions (tests/enum_record.rs pins them): e1, e2, e4, e5 append through the header
+// with a zeroed slot and e1, e5, e6, e9 match through the address; in e3 the arm whose
+// variant holds a text keeps the general append (the text set grows a store) while the
+// arm beside it takes a self-contained group header — sound, since a group's header is
+// derived after its own reservation and dies at its finish; e8 reads the tag through a
+// nested path; e9 matches a null view; e11 (a plain enumerate) and e12 (a nullable
+// element) are not struct-enum records and keep their form.
 //
-// @falsified-at: pending — recorded as MEASURED once the sabotage has run.
+// @falsified-at: hand-measured (sabotage, 2026-09-21) — the tag read through a NULL
+// address made to answer `1` (the first variant) for `0` (no variant): e9 answers `null 0`
+// for `120 2` on --native — both views past the end match `SetH`, whose fields read the
+// sentinel through the null address — and its assert fails.  LOFT_HOIST_VERIFY=1 prints the
+// same wrong line: the checking form compares an ADDRESS with a fresh derivation and has
+// nothing to compare an absent answer with, so the oracle is this clause's falsifier.
+// The slot's zero is not falsifiable by a program — a narrower variant's unwritten tail is
+// bytes no arm reads, and a release walks a slot by its TAG — and is kept as the prefill it
+// replaces.  Restored byte-identically: interpret / native / every switch / every
+// falsifier green.
 
 enum Edit {
   SetH { eq: integer, er: integer, eh: integer },

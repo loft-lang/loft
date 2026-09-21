@@ -908,6 +908,16 @@ element or a field; `LOFT_HOIST_VERIFY=1` is the falsifier (the copy writes its 
 for the scalar hoist).  A heap-owning type and a call's freed result keep the store-writer
 verdict.  The copy is not elided: on the absent-element path it is an out-of-range store
 with a fault note of its own.
+**`LOFT_NO_ENUM_RECORD=1`** (`@FR-R-PushRec`'s and `@FR-R-RecPtr`'s enum clauses, default-ON,
+generation time, `--native` only) makes a USER struct-enum value no record to the hoist
+family again — with it off, a `vector<Edit>` appends through a push header (the slot zeroed,
+the literal writing its own tag), a minted element of any record type holds its window
+address, a struct-enum view holds its address and its TAG is one byte read through it, and
+`for e in edits` is seen through the `OpGetField` its element is bound behind (`enum_match`
+−64 %, 12.4× → 4.5× of Rust) — and is the first bisect step for a wrong variant, a wrong
+payload field or a lost element out of a vector of struct-enum values on native.  The
+exclusion of enum payloads belongs to `(R-Scalar)`'s (type, offset) key and stays there; the
+synthetic `__nullable<S>` stays out of all of it.
 **`LOFT_NO_LOOP_BUFFER_REUSE=1`** (@PLN157 § V-al, `@FR-R-LoopBuffer`, default-ON,
 generation time) makes a vector local declared `[]` INSIDE a loop re-mint its per-site
 buffer every iteration again — with it off, the buffer's store and its vector survive the

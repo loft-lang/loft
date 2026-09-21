@@ -494,7 +494,15 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  either arm, a loop its body twice when the body frees — and a
                  block that ends in `return` and holds no `break` or `continue`
                  leaves the function on every path that reaches a free in it, so
-                 it carries none past itself.
+                 it carries none past itself.  THE ENUM CLAUSE: a view of a USER
+                 struct-enum value is a record view too — the tag byte at 0, read
+                 through the address as one byte (0, no variant, for the null
+                 record), and the variant's fields behind it at the offsets the
+                 parser resolved for the arm that reads them.  The exclusion of
+                 enum payloads is (R-Scalar)'s: a hoisted scalar is keyed by (type,
+                 offset), and two variants put different fields at one offset.  The
+                 synthetic `__nullable<S>` stays out: its absence is a discriminant,
+                 not a null record.
 ```
 
 **In words.** 2026-09-18, the drawing library's crossing loop (`pg_cur = pg_table[i]?`,
@@ -618,6 +626,30 @@ state those facts fail.  No switch of its own — it refines `(R-RecPtr)`'s admi
 `LOFT_NO_RECORD_PTR` turns off whole.  Cells `tests/scripts/158-leaving-free.loft`, pins
 `tests/leaving_free.rs`.  Sites: `hoist::free_before_use`, `hoist::free_before_use_by`,
 `hoist::view_extent_verdict`.
+
+*The enum clause (2026-09-21, @PLN158 R7).*  `hoist::plain_record_type` answers `None` for
+every enum, and its reason — *"their payload offsets are a layout question this key does not
+model"* — is `(R-Scalar)`'s: a hoisted scalar is keyed by (type, offset), and two variants
+put different fields at one offset.  But the predicate was read by every rewrite, so a
+`vector<Edit>` got no push header on append and no address in the `match` that walks it:
+each element paid `record_new` and `record_finish` (~420 of 969 instructions per edit), and
+each arm re-read the TAG and then its fields through the store.  Neither question needs a
+layout: the literal's lowering writes the tag and the variant's fields at explicit offsets,
+and the parser resolves each arm's reads behind that arm's own tag test.  A minted element's
+WINDOW (the mint clause) therefore asks only that the element be a record — a struct-enum
+element's variable is typed by a placeholder record, not by the enum — and the iteration
+head is seen through the `OpGetField(element, 0, _)` a struct-enum element is bound behind.
+`enum_match` 111.6 → 40.4 µs (−64 %), 12.4× → 4.5× of the Rust reference.  The tag's answer
+for the null record is falsified by the ORACLE, not the checking form — flipped to the first
+variant, a view bound past the end matches it and the cell answers `null 0` for `120 2`
+under `LOFT_HOIST_VERIFY=1` as without it, since that form compares an address with a fresh
+derivation and has nothing to compare an absent answer with.  The slot's zero is not
+falsifiable by a program (an unwritten tail is bytes no arm reads, and a release walks a
+slot by its tag); it is kept as the prefill it replaces.  Switch `LOFT_NO_ENUM_RECORD`.
+Cells `tests/scripts/158-enum-record.loft`, pins `tests/enum_record.rs`.  Sites:
+`Stores::is_struct_enum`, `hoist::mint_push_qualifies`, `hoist::struct_enum_view`,
+`hoist::TAG_GETTER`, `hoist::iteration_head` (the wrapper), `hoist::mint_window`, the
+registry's `NewRecordEmitter`, `Output::write_elem_first_mint`.
 
 ### A stdlib one-op wrapper is its op
 
@@ -844,7 +876,11 @@ registry's `NewRecordEmitter` and `FinishRecordEmitter`, `Output::write_elem_fir
                  whole of what the prefill did for its handles, and a raw slot's
                  stale handle is exactly what a reused buffer's slot carries.  The
                  § V-z element minted at its temp's declaration emits through the
-                 same header when the container holds one.
+                 same header when the container holds one.  THE ENUM CLAUSE: a USER
+                 struct-enum element qualifies as a plain struct does — its literal
+                 writes its own tag (OpSetEnum(e, 0, variant)) beside the variant's
+                 fields — with its slot always zeroed, a narrower variant leaving a
+                 wider one's tail unwritten.
 ```
 
 **In words.** @PLN157 § V-t.  Before it, an admitted mint still paid per element a
