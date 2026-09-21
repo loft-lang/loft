@@ -413,7 +413,8 @@ the bug-filing policy above). It never blocks.
 
 **Language / stdlib:** [LOFT.md](doc/claude/LOFT.md) syntax · [STDLIB.md](doc/claude/STDLIB.md) stdlib API ·
 [INTERFACES.md](doc/claude/INTERFACES.md) traits/generics · [TUPLES.md](doc/claude/TUPLES.md) ·
-[COROUTINE.md](doc/claude/COROUTINE.md) (1.1+) · [INCONSISTENCIES.md](doc/claude/INCONSISTENCIES.md).
+[COROUTINE.md](doc/claude/COROUTINE.md) (1.1+) · [INCONSISTENCIES.md](doc/claude/INCONSISTENCIES.md) ·
+[OCAML_BAR.md](doc/claude/OCAML_BAR.md) expressiveness probes against OCaml, measured (a report, never a gate).
 
 **Compiler / internals:** [COMPILER.md](doc/claude/COMPILER.md) parser/two-pass/types ·
 [INTERMEDIATE.md](doc/claude/INTERMEDIATE.md) Value/Type/opcodes/State · [INTERNALS.md](doc/claude/INTERNALS.md) ·
