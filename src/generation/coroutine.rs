@@ -675,7 +675,13 @@ fn coroutine_persistent_locals(data: &crate::data::Data, def_nr: u32) -> Vec<(u1
         // eager-collect factory) own no store and keep their own emission paths.
         // One home: `variables::owns_literal_backing_store` — the keyed twin `__kvb_*` was
         // missing here and at the pre-declaration below (loft#1130).
-        if name.starts_with("__") && !crate::variables::owns_literal_backing_store(name) {
+        // A closure's record (`___clos_*`) is the third: a fn-ref local names it, and both
+        // have to outlive the advance that built them when the closure is called after a
+        // `yield` (loft#1587).
+        if name.starts_with("__")
+            && !crate::variables::owns_literal_backing_store(name)
+            && !name.starts_with("___clos")
+        {
             continue;
         }
         let tp = var_table.tp(v);
@@ -697,6 +703,7 @@ fn coroutine_persistent_locals(data: &crate::data::Data, def_nr: u32) -> Vec<(u1
                 | Type::Radix(_, _, _)
                 | Type::Trie(_, _, _)
                 | Type::Index(_, _, _)
+                | Type::Function(..)
         );
         if !suitable {
             continue;
@@ -1005,6 +1012,9 @@ fn persistent_default(tp: &Type) -> String {
         | Type::Index(_, _, _)
         | Type::Enum(_, true, _)
         | Type::Iterator(_, _) => "DbRef::NULL".to_string(),
+        // A fn-ref is the `(definition, closure record)` pair `rust_type` lowers it to; the
+        // null closure is what a non-capturing lambda carries.
+        Type::Function(..) => "(0_u32, DbRef::NULL)".to_string(),
         // Every remaining field type lowers to a Rust NUMBER, so the zero of whatever
         // `rust_type` decided is a value of exactly that type.  Asking it, rather than
         // listing the types a second time here, is the point: the second list had drifted
@@ -1833,39 +1843,10 @@ impl Output<'_> {
                     || !elsewhere.contains(v)
             })
         };
-        // A closure in the loop — a fn-ref local and the `___clos_*` record it captures into —
-        // is neither a struct field nor declared at `next_*` scope, so the iteration state
-        // named a record no scope declared (E0425).  The eager factory is an ordinary function
-        // body that declares both, so such a loop keeps the buffer.
-        let names_a_closure = |seg: &YieldSegment| {
-            let YieldSegment::ForLoopLazy {
-                setup,
-                body,
-                resume,
-                post,
-                ..
-            } = seg
-            else {
-                return false;
-            };
-            let vars = self.data.def(def_nr).variables();
-            let mut found = false;
-            for op in setup.iter().chain(body).chain(resume).chain(post) {
-                op.walk(&mut |n| {
-                    if let Value::Var(v) | Value::Set(v, _) | Value::CallRef(v, _) = n
-                        && (matches!(vars.tp(*v).base(), Type::Function(..))
-                            || vars.name(*v).starts_with("___clos"))
-                    {
-                        found = true;
-                    }
-                });
-            }
-            found
-        };
         let keep_lazy = channel_can_suspend
             && segments.iter().all(|s| match s {
                 YieldSegment::ForLoopLazy { setup, .. } => {
-                    setup_is_carried(setup) && resume_is_carried(s) && !names_a_closure(s)
+                    setup_is_carried(setup) && resume_is_carried(s)
                 }
                 _ => true,
             });

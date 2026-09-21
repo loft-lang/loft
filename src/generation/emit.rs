@@ -220,15 +220,11 @@ impl Output<'_> {
             // a null sentinel when non-capturing.
             ValueType::FnRef => {
                 let clos_var = node.fnref_clos_var();
-                let clos_name = if clos_var == u16::MAX {
-                    None
-                } else {
-                    let variables = self.data.def(self.def_nr).variables();
-                    Some(sanitize(variables.name(clos_var)))
-                };
                 let d_nr = node.fnref_dnr();
-                if let Some(name) = clos_name {
-                    return write!(w, "({d_nr}_u32, var_{name})");
+                if clos_var != u16::MAX {
+                    // The closure record's PLACE — a struct field in a generator (loft#1587).
+                    let place = self.var_place(clos_var);
+                    return write!(w, "({d_nr}_u32, {place})");
                 }
                 return write!(w, "({d_nr}_u32, loft::keys::DbRef::NULL)");
             }
@@ -298,14 +294,10 @@ impl Output<'_> {
                 return write!(w, "])");
             }
             ValueType::FnRefDnr => {
-                // P215: project the d_nr from a fn-ref var's (u32, DbRef) tuple.
-                let var_name = sanitize(
-                    self.data
-                        .def(self.def_nr)
-                        .variables
-                        .name(node.fnref_dnr_var()),
-                );
-                return write!(w, "(var_{var_name}.0 as i64)");
+                // P215: project the d_nr from a fn-ref var's (u32, DbRef) tuple — through
+                // the slot's place, which is a struct field in a generator (loft#1587).
+                let place = self.var_place(node.fnref_dnr_var());
+                return write!(w, "({place}.0 as i64)");
             }
             // Plan-07 — Span is transparent in native emit.
             ValueType::Span => return self.output_code_node(w, node.span_inner()),
@@ -1142,6 +1134,10 @@ impl Output<'_> {
     ) -> std::io::Result<()> {
         let variables = self.data.def(self.def_nr).variables();
         let var_name = sanitize(variables.name(v_nr));
+        // The slot's PLACE: `self.var_<field>` for a generator's persistent fn-ref, which has
+        // no local of its own — spelling the local named a Rust identifier no state declared
+        // (loft#1587).  Outside a coroutine this is the bare local, as before.
+        let place = self.var_place(v_nr);
         let fn_type = variables.tp(v_nr).clone();
         let (param_types, ret_type) = if let Type::Function(p, r, ..) = &fn_type {
             (p.clone(), *r.clone())
@@ -1271,7 +1267,7 @@ impl Output<'_> {
         // loft#1443's ten cells, all pinned to a non-capturing initial value, never moved it
         // (`D-bind-29`).
         let _ = closure_var_nr;
-        let closure_expr: String = format!("var_{var_name}.1");
+        let closure_expr: String = format!("{place}.1");
         let work_buf_expr: String = if let Some(idx) = work_buf_idx {
             format!("_farg_{idx}")
         } else {
@@ -1320,7 +1316,7 @@ impl Output<'_> {
         if heap_return {
             write!(w, "let __vc_out = ")?;
         }
-        write!(w, "match var_{var_name}.0 {{")?;
+        write!(w, "match {place}.0 {{")?;
         for super::fnref::Arm {
             d_nr, has_closure, ..
         } in &candidates
@@ -1470,7 +1466,7 @@ impl Output<'_> {
         }
         write!(
             w,
-            " _ => unreachable!(\"invalid fn-ref: {{}} in {var_name}\", var_{var_name}.0) }}"
+            " _ => unreachable!(\"invalid fn-ref: {{}} in {var_name}\", {place}.0) }}"
         )?;
         if heap_return {
             // The match is the block's value; bind it so the store can be asked about, then
