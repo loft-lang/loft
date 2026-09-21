@@ -1,0 +1,186 @@
+diff --git b/src/generation/coroutine.rs a/src/generation/coroutine.rs
+index 3fb495a79..51b4d304b 100644
+--- b/src/generation/coroutine.rs
++++ a/src/generation/coroutine.rs
+@@ -675,22 +675,12 @@ fn coroutine_persistent_locals(data: &crate::data::Data, def_nr: u32) -> Vec<(u1
+         // eager-collect factory) own no store and keep their own emission paths.
+         // One home: `variables::owns_literal_backing_store` — the keyed twin `__kvb_*` was
+         // missing here and at the pre-declaration below (loft#1130).
+-        // And so is every other compiler HEAP temp — a call's return buffer `__ref_*`, a lift
+-        // `__lift_*`, a closure's record `___clos_*` (loft#1587), an owner witness `__own_*`.
+-        // The interpreter serialises the WHOLE frame at a `yield`, temps included, so each one
+-        // outlives the advance that set it; as a `next_*`-scope local it was re-declared NULL
+-        // on every advance instead.  Two defects came of that: a temp whose null initialiser
+-        // sits at the top of the body is DECLARED in the first state and filled in a later one
+-        // (E0425 — a variant literal built from a call, `yield A { h: mk(1) }`), and a buffer
+-        // minted in one state was freed by the tail as the NULL of another, so every record a
+-        // generator yielded or built through a call leaked (loft#1586's lazy loop, and every
+-        // straight-line record yield).  Keyed off the lowered type, as the list below is.
+-        let heap_temp = name.starts_with("__")
+-            && !name.starts_with("__yf_")
+-            && rust_type(var_table.tp(v), &Context::Variable) == "DbRef";
++        // A closure's record (`___clos_*`) is the third: a fn-ref local names it, and both
++        // have to outlive the advance that built them when the closure is called after a
++        // `yield` (loft#1587).
+         if name.starts_with("__")
+             && !crate::variables::owns_literal_backing_store(name)
+-            && !heap_temp
++            && !name.starts_with("___clos")
+         {
+             continue;
+         }
+@@ -1491,25 +1481,10 @@ impl Output<'_> {
+                         writeln!(w, "                return true;")?;
+                     } else {
+                         let yield_code = self.generate_expr_buf(val)?;
+-                        // A record built in a compiler temp and yielded is HANDED to the
+-                        // consumer: `first = next(g)` owns it, so the generator forgets the
+-                        // temp after the hand-over rather than releasing it at its tail or
+-                        // when it is dropped.  The temp was a per-advance local before it
+-                        // became a field, and forgetting is what that local did; releasing it
+-                        // instead made a record returned past the generator's life read null.
+-                        if let Some(field) = self.handed_yield_field(val) {
+-                            writeln!(
+-                                w,
+-                                "                let __yv = {wrap_open}{yield_code}{wrap_close};"
+-                            )?;
+-                            writeln!(w, "                self.var_{field}.store_nr = u16::MAX;")?;
+-                            writeln!(w, "                return __yv;")?;
+-                        } else {
+-                            writeln!(
+-                                w,
+-                                "                return {wrap_open}{yield_code}{wrap_close};"
+-                            )?;
+-                        }
++                        writeln!(
++                            w,
++                            "                return {wrap_open}{yield_code}{wrap_close};"
++                        )?;
+                     }
+                 }
+                 YieldSegment::YieldFrom { pre, init } => {
+@@ -1693,24 +1668,6 @@ impl Output<'_> {
+         writeln!(w, "    }}")
+     }
+ 
+-    /// The struct field of the compiler temp a straight-line `yield` hands over — the local
+-    /// its value ends in, when that is a persistent `__`-prefixed DbRef temp — or `None`.
+-    fn handed_yield_field(&self, val: &Value) -> Option<String> {
+-        fn tail(v: &Value) -> Option<u16> {
+-            match v.unspan() {
+-                Value::Var(nr) => Some(*nr),
+-                Value::Block(bl) => bl.operators.last().and_then(tail),
+-                _ => None,
+-            }
+-        }
+-        let v = tail(val)?;
+-        let vars = self.data.def(self.def_nr).variables();
+-        if !vars.name(v).starts_with("__") || rust_type(vars.tp(v), &Context::Variable) != "DbRef" {
+-            return None;
+-        }
+-        self.coroutine_persistent_fields.get(&v).cloned()
+-    }
+-
+     /// Emit a loft generator function as a Rust state-machine struct.
+     pub(super) fn output_coroutine(
+         &mut self,
+@@ -1751,7 +1708,51 @@ impl Output<'_> {
+         };
+ 
+         // P224: compute persistent locals once, share across struct + impl + factory.
+-        let persistent = coroutine_persistent_locals(self.data, def_nr);
++        let mut persistent = coroutine_persistent_locals(self.data, def_nr);
++        // A lazily-lowered loop's hidden record buffers (`__ref_*`) are the FRAME's, minted
++        // once at first use (`@FR-O-LazyBuffer`) and released once after the loop.  As
++        // function-scope locals of `next_*` they were re-declared NULL on every advance: each
++        // iteration minted a fresh store, a local that adopted it carried it into the next,
++        // and the post-loop free released the exhausting advance's NULL — so a loop that
++        // built a record through a call leaked the last store it minted.  They persist
++        // exactly when a lazy loop survives the verdict below.
++        let lazy_refs: Vec<u16> = {
++            let vars = self.data.def(def_nr).variables();
++            let mut out: Vec<u16> = Vec::new();
++            for seg in &segments {
++                let YieldSegment::ForLoopLazy {
++                    pre,
++                    setup,
++                    body,
++                    resume,
++                    post,
++                    ..
++                } = seg
++                else {
++                    continue;
++                };
++                for op in pre
++                    .iter()
++                    .chain(setup)
++                    .chain(body)
++                    .chain(resume)
++                    .chain(post)
++                {
++                    op.walk(&mut |n| {
++                        if let Value::Var(v) | Value::Set(v, _) = n
++                            && !vars.is_argument(*v)
++                            && vars.name(*v).starts_with("__ref")
++                            && !persistent.iter().any(|(p, _)| p == v)
++                            && !out.contains(v)
++                        {
++                            out.push(*v);
++                        }
++                    });
++                }
++            }
++            out
++        };
++
+         // Two reasons a loop that `detect_lazy_for` accepted still cannot be lowered lazily.
+         //
+         // The unified `next_into` channel (a tuple or fn-ref yield) writes its value into the
+@@ -1761,10 +1762,11 @@ impl Output<'_> {
+         // A DbRef yield (struct / vector / struct-enum) is held back for a different reason.
+         // Lowering it lazily makes the VALUES right — the eager collector's aliasing, which
+         // the loud `compile_error!` in the yield-collect path names, cannot happen when each
+-        // yield returns immediately — but the record is built into a `__ref_*` temp, and one
+-        // temp per SITE serves every iteration of a loop: the next iteration refills the
+-        // record the consumer was handed.  The temp is a struct field now (every compiler
+-        // heap temp is); what remains is who owns a yielded record, which loft#1589 records.
++        // yield returns immediately — but the record is built into a `__ref_*` work local that
++        // is re-declared on every advance and is not a struct field, so nothing frees it: a
++        // three-yield generator run to exhaustion leaked all three records.  Persisting the
++        // work-ref is what unlocks this, and it is its own change; refusing to compile is
++        // better than building and leaking.
+         //
+         // And a lazy loop runs its setup in one state and its body in the next, so anything
+         // the setup binds has to outlive the advance that bound it, which only a struct FIELD
+@@ -1776,8 +1778,11 @@ impl Output<'_> {
+         // `collect_segments` decides it that way: one eager segment makes the factory collect
+         // EVERY yield and `next()` collapse to a pop-from-buffer arm, which would run a
+         // surviving lazy segment's states a second time.
+-        let persistent_vars: std::collections::HashSet<u16> =
+-            persistent.iter().map(|(v, _)| *v).collect();
++        let persistent_vars: std::collections::HashSet<u16> = persistent
++            .iter()
++            .map(|(v, _)| *v)
++            .chain(lazy_refs.iter().copied())
++            .collect();
+         let channel_can_suspend = tuple_kinds(&yield_tp).is_none()
+             && !matches!(
+                 yield_tp,
+@@ -1856,6 +1861,16 @@ impl Output<'_> {
+             }
+         }
+         let segments = segments;
++        if segments
++            .iter()
++            .any(|s| matches!(s, YieldSegment::ForLoopLazy { .. }))
++        {
++            let vars = self.data.def(def_nr).variables();
++            for v in &lazy_refs {
++                persistent.push((*v, vars.tp(*v).clone()));
++            }
++        }
++        let persistent = persistent;
+         // loft#928: and their field names with them, so every emitter spells a field the
+         // same way.  Derived here rather than at each site because a name is only unique
+         // relative to the OTHER fields on the struct.
