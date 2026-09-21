@@ -847,6 +847,133 @@ pub fn vec_base(h: &VecHeader, stores: &[Store]) -> *const u8 {
     }
 }
 
+/// `@FR-R-RecPtr` — the address of a record's first byte: what every scalar field read
+/// and in-place write of a record VIEW (`e = tbl[i]?`, `s = o.inner`) may go through for
+/// the rest of its block, derived ONCE after the binding.  Null for the null record, so
+/// the read through it answers the getter's own sentinel.  Valid exactly while no store
+/// is reallocated and the record is not freed — the block condition the emitter proves
+/// (`hoist::record_view_ptr`); `LOFT_HOIST_VERIFY=1` re-derives it at every use.
+#[must_use]
+pub fn rec_ptr(db: &DbRef, stores: &[Store]) -> *const u8 {
+    if db.rec == 0 {
+        std::ptr::null()
+    } else {
+        // SAFETY: `rec` is a claimed record and `pos` a field offset inside it, so the
+        // offset stays within the allocation `base_ptr` was made for.
+        unsafe {
+            stores[db.store_nr as usize]
+                .base_ptr()
+                .add(db.rec as usize * 8 + db.pos as usize)
+        }
+    }
+}
+
+/// `@FR-R-RecPtr` — one scalar field read through a record address: `absent` for the null
+/// record (the getter's own sentinel), else one unaligned load.
+///
+/// # Safety
+///
+/// `ptr` must be [`rec_ptr`] of `db`, taken while no store has been reallocated since and
+/// the record still lives — the emitter's block proof.  Under `VERIFY` both are checked.
+///
+/// # Panics
+///
+/// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the address or the value no longer agrees
+/// with a fresh store read.  Never in the emitted default.
+#[must_use]
+#[inline]
+pub unsafe fn rec_get<T: Copy + PartialEq + std::fmt::Debug>(
+    ptr: *const u8,
+    db: &DbRef,
+    fld: u32,
+    absent: T,
+    stores: &[Store],
+    verify: bool,
+) -> T {
+    if ptr.is_null() {
+        return absent;
+    }
+    // SAFETY: the caller's block proof — `ptr` addresses a live record whose store has not
+    // moved, and `fld` is a field offset the record's type declares.
+    let v = unsafe { ptr.add(fld as usize).cast::<T>().read_unaligned() };
+    if verify {
+        assert!(
+            std::ptr::eq(ptr, rec_ptr(db, stores)),
+            "record view address is stale — a store grew or moved under the block"
+        );
+        let fresh: T = stores[db.store_nr as usize].read(db.rec, db.pos + fld);
+        assert!(
+            v == fresh || (format!("{v:?}") == "NaN" && format!("{fresh:?}") == "NaN"),
+            "record view read {v:?} disagrees with the store's {fresh:?}"
+        );
+    }
+    v
+}
+
+/// `@FR-R-RecPtr` — one in-place scalar field write through a record address: nothing for
+/// the null record (the setter's own `rec != 0` test), else one unaligned store.
+///
+/// # Safety
+///
+/// As [`rec_get`]: `ptr` must be [`rec_ptr`] of `db` with no store reallocated since.
+///
+/// # Panics
+///
+/// Under `VERIFY`, when the address no longer agrees with a fresh derivation.
+#[inline]
+pub unsafe fn rec_set<T: Copy>(
+    ptr: *const u8,
+    db: &DbRef,
+    fld: u32,
+    val: T,
+    stores: &[Store],
+    verify: bool,
+) {
+    if ptr.is_null() {
+        return;
+    }
+    if verify {
+        assert!(
+            std::ptr::eq(ptr, rec_ptr(db, stores)),
+            "record view address is stale — a store grew or moved under the block"
+        );
+    }
+    // SAFETY: the caller's block proof, as for `rec_get`; the record's bytes are the
+    // store's own allocation, written through a pointer derived from its `base_ptr`.
+    unsafe {
+        ptr.add(fld as usize)
+            .cast_mut()
+            .cast::<T>()
+            .write_unaligned(val)
+    };
+}
+
+/// `@FR-R-BoundedNest` — the largest magnitude among a vector's `integer` elements, or
+/// `None` when any element is the null sentinel.  A guarded plain nest is admitted against
+/// this bound, taken once where the vector's header is derived and held beside it, so a nest
+/// that reads the vector pays one linear pass per header derivation and nothing per tap.
+/// An absent or empty vector bounds at 0.
+#[must_use]
+pub fn abs_bound_i64(h: &VecHeader, stores: &[Store]) -> Option<i64> {
+    if h.rec == 0 || h.len == 0 {
+        return Some(0);
+    }
+    let base = vec_base(h, stores);
+    // One max over the magnitudes, no branch in the loop: the sentinel's magnitude is 2^63,
+    // above every other value's, so a null element shows as a bound the type cannot hold and
+    // the test runs once at the end.  Written this way the loop vectorises; with an early exit
+    // on the sentinel it did not, and the scan itself was 5.6 % of a resample-bound row.
+    let mut bound: u64 = 0;
+    for i in 0..h.len as usize {
+        // SAFETY: `base` is element 0 of a live vector record of `len` eight-byte elements
+        // (the header was derived from it in this same prelude); `read_unaligned` because an
+        // element offset need not be aligned for `i64` (loft#1481).
+        let v = unsafe { base.add(i * 8).cast::<i64>().read_unaligned() };
+        bound = bound.max(v.unsigned_abs());
+    }
+    i64::try_from(bound).ok()
+}
+
 /// [`get_elem_hoisted`]'s twin through a hoisted BASE (`@FR-R-Base`): the same bounds test
 /// against the header's length, then a single unaligned load at `base + from * size + fld`.
 /// The cold path — an index outside the vector — is the same one.

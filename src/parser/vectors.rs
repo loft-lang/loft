@@ -3059,20 +3059,46 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // `Pair { a: [0; 3], b: [0; 3] }` built `a` with seven elements and `b` with
         // one), and `new_record` now derives one container for all three append ops.
         //
-        // The restriction stays because the remaining question is a different one and
-        // is unmeasured: a captured target may be a KEYED collection, where "append n
-        // copies of one element" is not the same operation as n inserts — a hash or a
-        // sorted set dedups them.  Widening this to addressed containers is worth
-        // doing, but it needs that case decided and timed on its own, not inherited
-        // from a bug fix.
-        if is_plain_local_target
+        // A struct FIELD whose collection is a plain inline-element vector takes the fill
+        // too — `Lay { best: [for _ in 0..n { 2.0 }], … }`, seven planes of a raster layer,
+        // built one push at a time before this: the field's own handle is the container
+        // (loft#892's fix), and `is_plain_vector` is the answer to the question that kept
+        // the restriction — a KEYED collection, where "append n copies of one element" is
+        // not n inserts because a hash or a sorted set dedups them, is not a `Parts::Vector`
+        // and stays on the loop.  A captured or indexed target still does too, unmeasured.
+        let plain_vector_field = is_field
+            && std::env::var_os("LOFT_NO_FIELD_FILL").is_none()
+            && matches!(val.unspan(), Value::Call(d, ps)
+                if (*d as usize) < self.data.definitions.len()
+                    && self.data.def(*d).name() == "OpGetField"
+                    && ps.len() >= 3
+                    && matches!(ps[2].unspan(), Value::Int(k)
+                        if u16::try_from(*k).is_ok_and(|k| self.database.is_plain_vector(k))));
+        if (is_plain_local_target || plain_vector_field)
             && !self_read
             && let Some(fill) =
                 self.try_const_fill_comprehension(range_bounds.as_ref(), &body, &if_step)
         {
-            let parent_tp = &Type::Vector(Box::new(in_t.clone()), Deps::frame(parent_tp.depend()));
-            let (tp, ls) =
-                self.build_vector_list(val, parent_tp, elm, vec, &fill, in_t, tp, is_var, is_field);
+            // A FIELD keeps its struct as the parent: `new_record` reads a `Vector` parent as
+            // "the destination is an element of a nested vector" and appends into the record
+            // the field read projects from — `Pair { a: [0; 3] }` built through `Pair`, not
+            // through `a` (loft#892's shape, reached from this path for the first time).
+            let fill_parent = if is_field {
+                parent_tp.clone()
+            } else {
+                Type::Vector(Box::new(in_t.clone()), Deps::frame(parent_tp.depend()))
+            };
+            let (tp, ls) = self.build_vector_list(
+                val,
+                &fill_parent,
+                elm,
+                vec,
+                &fill,
+                in_t,
+                tp,
+                is_var,
+                is_field,
+            );
             *val = if !is_var && !is_field {
                 v_block(ls, tp.clone(), "Const fill comprehension")
             } else {
@@ -3093,9 +3119,22 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 in_t,
             )
         {
-            let parent_tp = &Type::Vector(Box::new(in_t.clone()), Deps::frame(parent_tp.depend()));
+            // The same parent question as the fill above: a field's parent is its struct.
+            let unroll_parent = if is_field {
+                parent_tp.clone()
+            } else {
+                Type::Vector(Box::new(in_t.clone()), Deps::frame(parent_tp.depend()))
+            };
             let (tp, ls) = self.build_vector_list(
-                val, parent_tp, elm, vec, &unrolled, in_t, tp, is_var, is_field,
+                val,
+                &unroll_parent,
+                elm,
+                vec,
+                &unrolled,
+                in_t,
+                tp,
+                is_var,
+                is_field,
             );
             *val = if !is_var && !is_field {
                 v_block(ls, tp.clone(), "Const comprehension")

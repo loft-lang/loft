@@ -1,0 +1,67 @@
+// A record local whose NAME is re-used in a later sibling scope is copied, never moved.
+//
+// `r = Lr {…}` in one loop and `r = Lr {…}; c = r` in a later loop are two variables under
+// one name: the scopes pass splits the second into a fresh variable (`Function::copy_variable`)
+// after the parser counted every use of the name on the first.  The copy used to start with a
+// use count of 1, and the interpreter's last-use MOVE reads exactly that as "used once, by
+// this bind": `c = r` handed `c` the source's DbRef instead of a copy, the block's stack
+// bookkeeping drifted by one ref per iteration, and every value read after the loop was
+// garbage (`w=1 x=4294967298`, then a `Store access out of bounds` abort) — on `--interpret`
+// only, `--native` was right throughout.  `(B-Copy)`: a plain bind copies; the split variable
+// now carries the original's count, which can only withhold a move.  Every value is
+// hand-computed.
+//
+// @falsified-at: hand-measured (build before the `copy_variable` fix, 2026-09-18) — on
+//   --interpret n2 answered `w=1 x=4294967298` for 100100 and the program aborted at
+//   `store.rs` (`Store access out of bounds`); n1/n3/n4 crashed the same way in one program.
+//   --native answered every cell right on that build.  Fixed, n1–n4 hold on both backends
+//   under LOFT_STRICT_STORES=1, LOFT_POISON=1 and LOFT_NATIVE_LEAK_CHECK=1.
+
+struct Lr { a: integer, b: integer }
+
+/// n1 — sibling `if` blocks re-declaring `r`; the second is copied and the copy WRITTEN:
+///      an alias would show 100 through `r`.  1 + 7 * 1000 + 100 = 7101.
+fn n1_reuse_if() -> integer {
+  t = 0;
+  if t == 0 { r = Lr { a: 1, b: 2 }; t += r.a; }
+  if t == 1 { r = Lr { a: 7, b: 8 }; c = r; c.a = 100; t += r.a * 1000 + c.a; }
+  t
+}
+
+/// n2 — the found shape: two loops, the second copies the re-declared `r`.  100 * 1000 + 100.
+fn n2_reuse_loops() -> integer {
+  w = 0;
+  for i in 0..5 { r = Lr { a: i * 10, b: i }; w += r.a; }
+  x = 0;
+  for i in 0..5 { r = Lr { a: i * 10, b: i }; c4 = r; x += c4.a; }
+  w * 1000 + x
+}
+
+/// n3 — three sibling scopes, the last two copying: 3 + 30 + 300.
+fn n3_reuse_three() -> integer {
+  w = 0;
+  for i in 0..3 { r = Lr { a: i, b: 0 }; w += r.a; }
+  for i in 0..3 { r = Lr { a: i * 10, b: 0 }; c = r; w += c.a; }
+  for i in 0..3 { r = Lr { a: i * 100, b: 0 }; d = r; w += d.a; }
+  w
+}
+
+/// n4 — the copy is written and the source read after: 3 + (0 + 1 + 2) + 3 * 50 = 156.
+fn n4_reuse_written() -> integer {
+  s = 0;
+  for i in 0..3 { r = Lr { a: i, b: 0 }; s += r.a; }
+  for i in 0..3 { r = Lr { a: i, b: 0 }; c = r; c.a = 50; s += r.a + c.a; }
+  s
+}
+
+fn main() {
+  n1 = n1_reuse_if();
+  n2 = n2_reuse_loops();
+  n3 = n3_reuse_three();
+  n4 = n4_reuse_written();
+  assert(n1 == 7101, "n1: {n1}");
+  assert(n2 == 100100, "n2: {n2}");
+  assert(n3 == 333, "n3: {n3}");
+  assert(n4 == 156, "n4: {n4}");
+  println("ok");
+}

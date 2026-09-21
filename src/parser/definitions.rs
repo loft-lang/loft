@@ -5749,6 +5749,13 @@ impl Parser {
                 }
                 // An ENUM releases through whichever variant it currently holds.
                 DefType::Enum => !self.cascade_variants(d_nr).is_empty(),
+                // `@FR-H-Drop` / D-heap-13 (loft#1551) — a bare `vector<T>` gets a cascade of its own, for
+                // the binding whose backing is a call's return buffer rather than a wrapper
+                // record.  The WRAPPER's cascade cannot serve it: reaching the elements
+                // through `main_vector<T>` needs the wrapper's address, which a collection
+                // binding holds on native alone.  This one walks `self`, so the same IR
+                // releases on both backends.
+                DefType::Vector => self.collection_elem_cascade(d_nr).is_some(),
                 _ => false,
             };
             if wanted {
@@ -5825,10 +5832,14 @@ impl Parser {
     /// The `self` parameter type of a type's cascade — a struct-enum carries its
     /// discriminator, so its cascade must be typed as the ENUM and not as a bare record.
     fn cascade_self_type(&self, t: u32) -> Type {
-        if self.data.def_type(t) == DefType::Enum {
-            Type::Enum(t, true, crate::data::Deps::none())
-        } else {
-            Type::Reference(t, crate::data::Deps::none())
+        match self.data.def_type(t) {
+            DefType::Enum => Type::Enum(t, true, crate::data::Deps::none()),
+            // D-heap-13 — a COLLECTION's cascade takes the collection itself, so the call
+            // names no wrapper record: a `vector<T>` binding's address IS the wrapper's on
+            // native and is not on the interpreter (`@1,8` against `@1,12`), and one IR has
+            // to serve both.
+            DefType::Vector => self.data.def(t).returned().without_deps(),
+            _ => Type::Reference(t, crate::data::Deps::none()),
         }
     }
 
@@ -6041,12 +6052,14 @@ impl Parser {
     /// The element variable is `skip_free`: it is a VIEW into the container's own storage, and
     /// the container's cascade runs immediately before the free that releases that storage.
     /// Freeing it here would release the container's block one element at a time.
+    /// The walk a cascade runs over one collection: `field` is the collection itself — a
+    /// vector FIELD of the record for a struct's cascade, and `self` for a collection's own
+    /// (D-heap-13).  Taking the value rather than an offset is what lets the two share this
+    /// body: a collection cascade has no record to offset from.
     fn drop_elements_loop(
         &mut self,
-        self_var: u16,
+        field: &Value,
         idx: usize,
-        off: u16,
-        vec_tp: &Type,
         elem_tp: &Type,
         target: u32,
     ) -> Value {
@@ -6062,15 +6075,7 @@ impl Parser {
             .vars
             .add_variable(&format!("__dc_e{idx}"), elem_tp, &mut self.lexer);
         self.vars.set_skip_free(e_var);
-        let field = self.get_val(
-            vec_tp,
-            false,
-            u32::from(off),
-            Value::Var(self_var),
-            u32::MAX,
-        );
-
-        let len = self.cl("OpLengthVector", std::slice::from_ref(&field));
+        let len = self.cl("OpLengthVector", std::slice::from_ref(field));
         let past_end = self.cl("OpLeInt", &[len, Value::Var(i_var)]);
         let stride = self.vector_elem_iter_stride(elem_tp);
         let vec_def = self.data.type_def_nr(elem_tp);
@@ -6120,6 +6125,20 @@ impl Parser {
     /// field's byte offset, and each FIELD release is additionally guarded by `skip != off` —
     /// the member whose responsibility a copy-out took. The type's own hook and its
     /// collection fields are unconditional in both forms: a copy-out never takes those over.
+    /// `@FR-H-Drop` / D-heap-13 — the element type of the `vector<T>` def `d_nr`, when that element owns a
+    /// droppable and so gives the collection something to release.  `None` for every other
+    /// def, which is what keeps a `vector<integer>` from earning a cascade.
+    fn collection_elem_cascade(&self, d_nr: u32) -> Option<Type> {
+        let Type::Vector(elm, _) = self.data.def(d_nr).returned().base() else {
+            return None;
+        };
+        let elm = (**elm).clone();
+        let (Type::Reference(ed, _) | Type::Enum(ed, true, _)) = elm.base() else {
+            return None;
+        };
+        self.data.owns_droppable(*ed).then_some(elm)
+    }
+
     fn fill_drop_cascade(&mut self, t: u32, c_nr: u32, with_skip: bool) {
         let name = if with_skip {
             Self::drop_cascade_except_name(&self.data, t)
@@ -6128,7 +6147,9 @@ impl Parser {
         };
         let file = self.data.def(t).position().file.clone();
         let mut vars = Function::new(&name, &file);
-        let self_tp = Type::Reference(t, crate::data::Deps::none());
+        // The declaration's own answer, so the body and the signature cannot disagree about
+        // what `self` is — a collection's cascade takes the collection (D-heap-13).
+        let self_tp = self.cascade_self_type(t);
         let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
         vars.become_argument(self_var);
         vars.defined(self_var);
@@ -6153,6 +6174,21 @@ impl Parser {
         self.context = c_nr;
 
         let mut ops: Vec<Value> = Vec::new();
+        // D-heap-13 — a COLLECTION's cascade is one walk of `self`: no own hook (a vector
+        // type declares none), no fields, and the element read starts from the collection
+        // rather than from a field of a record.
+        if let Some(elem_tp) = self.collection_elem_cascade(t) {
+            let ed = match elem_tp.base() {
+                Type::Reference(ed, _) | Type::Enum(ed, true, _) => *ed,
+                _ => u32::MAX,
+            };
+            let target = self.data.drop_cascade_nr(ed);
+            if target != u32::MAX {
+                ops.push(self.drop_elements_loop(&Value::Var(self_var), 0, &elem_tp, target));
+            }
+            self.finish_drop_cascade(c_nr, ops, outer_vars, outer_context);
+            return;
+        }
         let own = self.data.drop_hook_nr(t);
         if own != u32::MAX {
             ops.push(Value::Call(own, vec![Value::Var(self_var)]));
@@ -6163,7 +6199,14 @@ impl Parser {
             if target == u32::MAX {
                 continue;
             }
-            let loop_code = self.drop_elements_loop(self_var, n, off, &vec_tp, &elem_tp, target);
+            let field = self.get_val(
+                &vec_tp,
+                false,
+                u32::from(off),
+                Value::Var(self_var),
+                u32::MAX,
+            );
+            let loop_code = self.drop_elements_loop(&field, n, &elem_tp, target);
             ops.push(loop_code);
         }
         for (off, ftype, fd) in self.cascade_fields(t).into_iter().rev() {
@@ -6221,6 +6264,18 @@ impl Parser {
             ops.push(release);
         }
 
+        self.finish_drop_cascade(c_nr, ops, outer_vars, outer_context);
+    }
+
+    /// Install a cascade's built body and restore the parser's table — the tail both shapes
+    /// of [`Self::fill_drop_cascade`] end with (a record's, and a collection's).
+    fn finish_drop_cascade(
+        &mut self,
+        c_nr: u32,
+        ops: Vec<Value>,
+        outer_vars: Function,
+        outer_context: u32,
+    ) {
         let body = v_block(ops, Type::Void, "drop_cascade");
         let built = std::mem::replace(&mut self.vars, outer_vars);
         self.context = outer_context;

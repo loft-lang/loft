@@ -1,0 +1,171 @@
+// `@FR-R-RecPtr` — a plain-record VIEW carries its address: `e = v[i]?`, `s = o.inner` or a copy
+// of another view fixes the binding's DbRef `(B-View)`, so the record's first byte is one
+// address for as long as the place lives, and every scalar field read and in-place field write
+// of the view in the rest of its block is one load or store through that address (`__pa_N`)
+// instead of a store resolution each.  Admitted where the remainder grows no store, frees no
+// record and never rebinds the view.  A callee's scalar input (`@FR-R-Inputs`) that the caller
+// holds no value for but whose record address it holds is read through the address at the
+// call.  The interpreter takes no address and is the oracle; every value is hand-computed.
+//
+// v has 12 elements: a = 10 i, b = i + 1, s = 0.5 i, f = 2 i.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-18) — with `vector::rec_ptr` skewed by one
+//   word, r1 fails on --native (`r1: 78 null`: every field reads its neighbour) and
+//   LOFT_HOIST_VERIFY=1 panics at the first read (`record view read 1 disagrees with the
+//   store's 0`).  r14 fails on the build before the null-bind and native-op-rebind clauses
+//   (`r14: 6 0.0`: the literal's writes went through a null address).  Restored, r1–r16 hold
+//   on both backends, in all three switch states
+//   (default, LOFT_NO_RECORD_PTR=1, LOFT_NO_VECTOR_BASE=1), under LOFT_STRICT_STORES=1,
+//   LOFT_POISON=1, LOFT_POISON_CLAIM=1, LOFT_NATIVE_LEAK_CHECK=1 and LOFT_HOIST_VERIFY=1.
+
+struct RpE { a: integer, b: integer, s: single, f: float }
+struct RpO { inner: RpE, k: integer }
+struct RpT { name: text, n: integer }
+
+fn rp_mk() -> vector<RpE> {
+  out: vector<RpE> = [];
+  for i in 0..12 { out += [RpE { a: i * 10, b: i + 1, s: (i as single) * 0.5f, f: (i as float) * 2.0 }]; }
+  out
+}
+
+/// The `edge_x` shape: a callee reading the view's fields.
+fn rp_ex(e: const RpE, y: integer) -> integer { (y - e.b) * e.a }
+
+/// r4 — a field projection view: reads 7 + 8, a write through it lands in the container.
+/// (In a function of its own: `main`'s top-level remainder grows stores, so a view bound
+/// there declines by design.)
+/// Answers `1000 * (a + b) + inner.b after the write` = 15020; the assert stays in `main`
+/// because a message's formatting is a store write the remainder gate must decline.
+fn rp_r4() -> integer {
+  o4 = RpO { inner: RpE { a: 7, b: 8, s: 1.5f, f: 2.5 }, k: 3 };
+  s4 = o4.inner;
+  r4 = s4.a + s4.b;
+  s4.b = 20;
+  r4 * 1000 + o4.inner.b
+}
+
+/// r11 — an in-place write through ANOTHER route (the element address) lands in the same
+/// bytes the view reads: 999, then the view's own write reads back through the vector.
+/// r14/r15 — a record RETURNED by literal: the callee's buffer is pre-initialised null and
+/// minted by the literal, which must never be taken as a view (measured: the field writes
+/// went through a null address and the record read as zeros — the 47 golden, the #672 parity
+/// test).  The caller's local bound from the call IS a view.
+fn rp_mkone() -> RpE { return RpE { a: 5, b: 6, s: 0.5f, f: 1.5 }; }
+
+/// Answers `1000 * a + b` read back through the vector = 999077.
+fn rp_r11(v11: vector<RpE>) -> integer {
+  e11 = v11[3]?;
+  v11[3].a = 999;
+  r11 = e11.a;
+  e11.b = 77;
+  r11 * 1000 + v11[3].b
+}
+
+fn main() {
+  // r1 — reads through the view in a counted loop: 10 * 66 = 660; b: 1 + … + 12 = 78.
+  v1 = rp_mk();
+  r1a = 0;
+  r1b = 0;
+  for i in 0..12 { e = v1[i]?; r1a += e.a; r1b += e.b; }
+  assert(r1a == 660 && r1b == 78, "r1: {r1a} {r1b}");
+
+  // r2 — writes through the view: a = 100 i → sum 6600, last 1100, b untouched.
+  v2 = rp_mk();
+  for i in 0..12 { e = v2[i]?; e.a = i * 100; }
+  r2 = 0;
+  for el2 in v2 { r2 += el2.a; }
+  assert(r2 == 6600 && v2[11].a == 1100 && v2[11].b == 12, "r2: {r2} {v2[11].a} {v2[11].b}");
+
+  // r3 — two views in nested loops (the crossing loop's `pg_cur`/`pg_oth`):
+  //      sum over i > k of (a_i - a_k) = 10 * C(13, 3) = 2860.
+  v3 = rp_mk();
+  r3 = 0;
+  for i in 0..12 { c = v3[i]?; for k in 0..i { o = v3[k]?; r3 += c.a - o.a; } }
+  assert(r3 == 2860, "r3: {r3}");
+
+  // r4 — a field projection view (see `rp_r4`): 15.
+  r4 = rp_r4();
+  assert(r4 == 15020, "r4: {r4}");
+
+  // r5 — the callee reads the view's fields (a twin input through the address):
+  //      sum (100 - (i + 1)) * 10 i = 10 * (99 * 66 - 506) = 60280.
+  v5 = rp_mk();
+  r5 = 0;
+  for i in 0..12 { e = v5[i]?; r5 += rp_ex(e, 100); }
+  assert(r5 == 60280, "r5: {r5}");
+
+  // r6 — the view is REBOUND inside the block (declines; the values are unchanged): 660 + 660.
+  v6 = rp_mk();
+  r6 = 0;
+  for i in 0..12 { e = v6[i]?; x = e.a; e = v6[(i + 1) % 12]?; r6 += x + e.a; }
+  assert(r6 == 1320, "r6: {r6}");
+
+  // r7 — a PUSH in the remainder (declines): 12 elements, 660.
+  v7 = rp_mk();
+  acc7: vector<integer> = [];
+  for i in 0..12 { e = v7[i]?; acc7 += [e.a]; }
+  r7 = 0;
+  for el7 in acc7 { r7 += el7; }
+  assert(len(acc7) == 12 && r7 == 660, "r7: {len(acc7)} {r7}");
+
+  // r8 — a NULLABLE view (no `?`): admitted as its record, the reads unchanged, 660.
+  v8 = rp_mk();
+  r8 = 0;
+  for i in 0..12 { e = v8[i]; r8 += e.a; }
+  assert(r8 == 660, "r8: {r8}");
+
+  // r9 — an index past the end discharges into the buffer record: its fields read 0, so the
+  //      sum over 0..14 is still 660 and the two absent views add 0 + 0.
+  v9 = rp_mk();
+  r9 = 0;
+  for i in 0..14 { e = v9[i]?; r9 += e.a + e.b; }
+  assert(r9 == 660 + 78, "r9: {r9}");
+  e9 = v9[20]?;
+  assert(e9.a == 0 && e9.b == 0, "r9 absent: {e9.a} {e9.b}");
+
+  // r10 — single and float fields: 0.5 * 66 = 33, 2 * 66 = 132.
+  v10 = rp_mk();
+  r10s = 0.0f;
+  r10f = 0.0;
+  for i in 0..12 { e = v10[i]?; r10s += e.s; r10f += e.f; }
+  assert(r10s == 33.0f && r10f == 132.0, "r10: {r10s} {r10f}");
+
+  // r11 — an in-place write through ANOTHER route (see `rp_r11`): 999.
+  v11 = rp_mk();
+  r11 = rp_r11(v11);
+  assert(r11 == 999077 && v11[3].a == 999, "r11: {r11} {v11[3].a}");
+
+  // r12 — a copy of a view is a view of the same place: 660 through the second binding.
+  v12 = rp_mk();
+  r12 = 0;
+  for i in 0..12 { e = v12[i]?; e2 = e; r12 += e2.a; }
+  assert(r12 == 660, "r12: {r12}");
+
+  // r13 — a record with a TEXT field beside the scalar: the scalar reads through the address.
+  v13: vector<RpT> = [];
+  for i in 0..5 { v13 += [RpT { name: "n{i}", n: i * 3 }]; }
+  r13 = 0;
+  for i in 0..5 { e = v13[i]?; r13 += e.n; }
+  assert(r13 == 30 && v13[4].name == "n4", "r13: {r13} {v13[4].name}");
+
+  // r14 — the caller's local bound from a literal-returning call: 5 * 10 + 6 = 56.
+  x14 = rp_mkone();
+  r14 = x14.a * 10 + x14.b;
+  assert(r14 == 56 && x14.f == 1.5, "r14: {r14} {x14.f}");
+
+  // r15 — the lifted form, the field read straight off the call: 5 and 6.
+  r15 = rp_mkone().a * 10 + rp_mkone().b;
+  assert(r15 == 56, "r15: {r15}");
+
+  // r16 — the `for e in v` loop variable (nullable: its null ends the loop) is a view per
+  //       iteration: sum of 2a + b = 1320 + 78 = 1398; and a write through it lands: a = 7 → 84.
+  v16 = rp_mk();
+  r16 = 0;
+  for e16 in v16 { r16 += e16.a * 2 + e16.b; }
+  for f16 in v16 { f16.a = 7; }
+  r16b = 0;
+  for g16 in v16 { r16b += g16.a; }
+  assert(r16 == 1398 && r16b == 84, "r16: {r16} {r16b}");
+
+  println("ok");
+}

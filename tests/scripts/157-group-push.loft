@@ -1,0 +1,239 @@
+// @PLN157 — the record append outside a held header (`@FR-R-GroupPush`), the heap-owning
+// element through a push header (`@FR-R-PushRec`'s heap clause) and the loop whose body
+// REBINDS a mover to a fresh buffer or element slot (`@FR-R-Mint`'s rebound clause).
+// Measured on the drawing library's `fronds`: every append there paid a `record_new`
+// dispatch, a default prefill and a `record_finish` dispatch per element because the side
+// loop declares its point vector per pass (a rebound mover declined the whole loop) and a
+// Frond owns heap (excluded from the record push) — 102 → 70 µs per call with the three
+// clauses, hash exact.  The interpreter keeps the mint-group ops and is the oracle; every
+// cell prints its values so the two backends can be diffed, and asserts them.
+// `LOFT_NO_GROUP_PUSH=1`, `LOFT_NO_HEAP_RECORD_PUSH=1`, `LOFT_NO_REBOUND_MOVER=1`,
+// `LOFT_NO_RECORD_PUSH=1` and `LOFT_HOIST_VERIFY=1` must all answer identically.
+//
+// Predictions (tests/group_push.rs pins them): g1 two group headers, no template;
+// g2's loop hoists (its point vector is rebound to the element slot) — the Frond mint
+// through the loop's header with a zeroed slot, the point group through its own header;
+// g3 a heap-owning element through a GROUP header, its slot zeroed — the reused return
+// buffer is what makes the zero load-bearing; g4 a builder that writes a store declines
+// the group (templates kept); g5 the self-reading group reads the store's length; g6 the
+// group grows the vector mid-group (the header refresh); g7 a mover rebound to a VIEW of a
+// held vector declines the loop (the alias the clause exists to refuse); g8 a loop buffer
+// (`sides`) rebound per pass keeps the outer loop hoisting; g9 the fractal move into a
+// heap-element vector through the loop's header; g10 a group in each arm of an `if`;
+// g11 the outer loop past a per-pass loop buffer hoists the parameter's scalars (the buffer's
+// mint is typed by the write-set walk, not declined); g12 a loop record beside a held vector
+// keeps the header, and the record's mint evicts the scalars of its own type.  g11/g12 run
+// under LOFT_HOIST_VERIFY=1, which re-reads every hoisted scalar and re-derives the header.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-18) — `push_record_hoisted_zero` made
+// to skip its `zero_range` turns g3 red on --native under LOFT_POISON_CLAIM=1 (the
+// reused slot's poisoned handle is read as the `xs` vector: a store guard panic naming
+// it) while every other switch state stays green; restored, interpret / native / every
+// switch / every falsifier all green.
+
+struct Pt { ptx: float, pty: float }
+struct Frond { fpts: vector<Pt>, fwid: vector<float> }
+struct VecE { xs: vector<integer>, n: integer }
+
+fn pt(px: float, py: float) -> Pt { Pt { ptx: px, pty: py } }
+fn sum_ptx(v: const vector<Pt>) -> float { s = 0.0; for p in v { s = (s + p.ptx) ?? 0.0; } s }
+
+// g1 — literal groups of value-record calls, outside any loop.
+fn g1() {
+  v: vector<Pt> = [];
+  v += [pt(1.5, 2.5), pt(3.5, 4.5)];
+  v += [pt(5.5, 6.5)];
+  println("g1 {len(v)} {v[2]?.ptx} {sum_ptx(v)}");
+  assert(len(v) == 3 && v[2]?.ptx == 5.5 && sum_ptx(v) == 10.5, "g1");
+}
+
+// g2 — fronds' side loop: the point vector is declared per pass and consumed by the one
+// append (the element-first bind), the Frond owns heap.
+fn g2_build(n: integer) -> vector<Frond> {
+  out: vector<Frond> = [];
+  for i in 0..n {
+    pts: vector<Pt> = [];
+    wid: vector<float> = [];
+    pts += [pt(i as float, 1.0), pt((i + 1) as float, 2.0)];
+    wid += [3.0, 0.5];
+    out += [Frond { fpts: pts, fwid: wid }];
+  }
+  out
+}
+fn g2() {
+  r = g2_build(4);
+  t = 0.0;
+  for f in r { t = (t + sum_ptx(f.fpts)) ?? 0.0; }
+  println("g2 {len(r)} {r[3]?.fpts[1]?.ptx} {len(r[3]?.fwid)} {t}");
+  assert(len(r) == 4 && r[3]?.fpts[1]?.ptx == 4.0 && len(r[3]?.fwid) == 2 && t == 16.0, "g2");
+}
+
+// g3 — a heap-owning element appended outside a loop, into a RETURN BUFFER the caller
+// reuses: the second call's slot carries the first call's released handle, and the zero
+// at the mint is what keeps the new `xs` from being read through it.
+fn g3_mk(k: integer) -> vector<VecE> {
+  out: vector<VecE> = [];
+  out += [VecE { xs: [k, k + 1], n: k }];
+  out
+}
+fn g3() {
+  acc = 0;
+  for i in 0..3 {
+    r = g3_mk(i * 10);
+    e = r[0]?;
+    acc += e.xs[1]? + e.n;
+  }
+  println("g3 {acc}");
+  assert(acc == 63, "g3");
+}
+
+// g4 — a builder that WRITES a store (it grows another vector) declines the group: the
+// templates stay, and the values are the interpreter's.
+fn g4_side(w: vector<Pt>) -> Pt { w += [pt(2.0, 2.0)]; pt(len(w) as float, 0.0) }
+fn g4() {
+  w: vector<Pt> = [];
+  v: vector<Pt> = [];
+  v += [pt(1.0, 1.0), g4_side(w), g4_side(w)];
+  println("g4 {len(v)} {v[1]?.ptx} {v[2]?.ptx} {len(w)}");
+  assert(len(v) == 3 && v[1]?.ptx == 1.0 && v[2]?.ptx == 2.0 && len(w) == 2, "g4");
+}
+
+// g5 — the group reads its own vector's length.  `(E-Asgn-Compound)` stages every field
+// expression of an appended literal BEFORE the append (loft#1548), so both elements read
+// the length the group started with — the interpreter says 1 and 1, and so must the header
+// form, whose bump lands at each finish.
+fn g5() {
+  v: vector<Pt> = [];
+  v += [pt(9.0, 9.0)];
+  v += [pt(len(v) as float, 0.0), pt(len(v) as float, 1.0)];
+  println("g5 {len(v)} {v[1]?.ptx} {v[2]?.ptx}");
+  assert(len(v) == 3 && v[1]?.ptx == 1.0 && v[2]?.ptx == 1.0, "g5");
+}
+
+// g6 — the group GROWS the vector: eleven fit the first reservation, the twelfth takes the
+// runtime's append and a fresh header, the thirteenth lands in the moved record.
+fn g6() {
+  v: vector<Pt> = [];
+  v += [pt(0.0, 0.0), pt(1.0, 0.0), pt(2.0, 0.0), pt(3.0, 0.0), pt(4.0, 0.0),
+        pt(5.0, 0.0), pt(6.0, 0.0), pt(7.0, 0.0), pt(8.0, 0.0), pt(9.0, 0.0)];
+  v += [pt(10.0, 1.0), pt(11.0, 1.0), pt(12.0, 1.0)];
+  println("g6 {len(v)} {v[10]?.ptx} {v[12]?.ptx} {sum_ptx(v)}");
+  assert(len(v) == 13 && v[10]?.ptx == 10.0 && v[12]?.ptx == 12.0 && sum_ptx(v) == 78.0, "g6");
+}
+
+// g7 — a mover rebound to a VIEW of a vector the loop reads: the push through the view grows
+// the read vector, so the clause refuses the rebind and the loop hoists nothing.
+fn g7() {
+  big: vector<Pt> = [pt(0.5, 0.0)];
+  acc = 0.0;
+  for i in 0..3 {
+    w = &big;
+    w += [pt(i as float, 0.0)];
+    acc = (acc + big[0]?.ptx + (len(big) as float)) ?? 0.0;
+  }
+  println("g7 {len(big)} {acc}");
+  assert(len(big) == 4 && acc == 10.5, "g7");
+}
+
+// g8 — fronds' outer loop: a loop buffer (`sides`) declared and filled per pass, and an
+// element-first point vector in the inner loop, around a read of a held vector.
+fn g8_build(n: integer, mirror: boolean) -> vector<Frond> {
+  out: vector<Frond> = [];
+  base: vector<Pt> = [pt(0.25, 0.0), pt(0.5, 0.0), pt(0.75, 0.0)];
+  for i in 0..n {
+    sides: vector<float> = if mirror { [1.0, -1.0] } else { [1.0] };
+    for s in sides {
+      pts: vector<Pt> = [];
+      pts += [pt(s * (base[i]?.ptx), 0.0), pt(s * 2.0, 1.0)];
+      wid: vector<float> = [s];
+      out += [Frond { fpts: pts, fwid: wid }];
+    }
+  }
+  out
+}
+fn g8() {
+  r = g8_build(3, true);
+  t = 0.0;
+  for f in r { t = (t + sum_ptx(f.fpts)) ?? 0.0; }
+  println("g8 {len(r)} {r[1]?.fpts[0]?.ptx} {r[5]?.fwid[0]?} {t}");
+  assert(len(r) == 6 && r[1]?.fpts[0]?.ptx == -0.25 && r[5]?.fwid[0]? == -1.0 && t == 0.0, "g8");
+}
+
+// g9 — the fractal move: a callee's heap-element result appended element by element into
+// the caller's heap-element vector, through the loop's header.
+fn g9() {
+  out: vector<Frond> = [];
+  for k in 0..3 {
+    for f in g2_build(k + 1) { out += [f]; }
+  }
+  t = 0.0;
+  for f in out { t = (t + sum_ptx(f.fpts)) ?? 0.0; }
+  // 1 + 2 + 3 fronds; frond i of a build sums to 2i + 1, so the builds sum to 1, 4 and 9.
+  println("g9 {len(out)} {out[5]?.fpts[1]?.ptx} {t}");
+  assert(len(out) == 6 && out[5]?.fpts[1]?.ptx == 3.0 && t == 14.0, "g9");
+}
+
+// g10 — a group in each arm of an `if` on the same per-pass vector (fronds' bow arms).
+fn g10_build(n: integer) -> vector<Frond> {
+  out: vector<Frond> = [];
+  for i in 0..n {
+    pts: vector<Pt> = [];
+    if i % 2 == 0 {
+      pts += [pt(i as float, 0.0), pt(1.0, 0.0), pt(2.0, 0.0)];
+    } else {
+      pts += [pt(i as float, 0.0), pt(10.0, 0.0)];
+    }
+    wid: vector<float> = [1.0];
+    out += [Frond { fpts: pts, fwid: wid }];
+  }
+  out
+}
+fn g10() {
+  r = g10_build(4);
+  println("g10 {len(r)} {len(r[0]?.fpts)} {len(r[1]?.fpts)} {r[3]?.fpts[1]?.ptx}");
+  assert(len(r) == 4 && len(r[0]?.fpts) == 3 && len(r[1]?.fpts) == 2 && r[3]?.fpts[1]?.ptx == 10.0, "g10");
+}
+
+// g11 — fronds' outer loop proper: a const record parameter read in a loop whose body
+// declares a vector per pass (a loop buffer) — the buffer's own mint is an emitter-owned
+// one, so the scalar write-set walk types it and `sp`'s fields hoist.  Values: per i,
+// (sp.a + sp.b) * sum(sides) with sides = [1, -1] for odd i, [1] for even i → i=0: 3,
+// i=1: 0, i=2: 3, i=3: 0 → 6; and the loop buffer's length is what its literal says.
+struct Spec { a: float, b: float = 2.0, n: integer }
+fn g11_run(sp: const Spec) -> float {
+  acc = 0.0;
+  for i in 0..sp.n {
+    sides: vector<float> = if i % 2 == 1 { [1.0, -1.0] } else { [1.0] };
+    for s in sides { acc = (acc + (sp.a + sp.b) * s) ?? 0.0; }
+    acc = (acc + (len(sides) as float) * 0.0) ?? 0.0;
+  }
+  acc
+}
+fn g11() {
+  r = g11_run(Spec { a: 1.0, n: 4 });
+  println("g11 {r}");
+  assert(r == 6.0, "g11");
+}
+
+// g12 — a LOOP RECORD beside a held vector: the record's per-pass mint is a write of its
+// own type only, so the vector's header and the OTHER record's scalars stand.  Reads of the
+// loop record itself never hoist (it is rebound per pass).  Values: k=0..3, sub.a = k*10,
+// v[k] = k+1 → sum(sub.a * v[k]) = 0 + 20 + 60 + 120 = 200, plus sp.a (1.0) per pass = 204.
+fn g12_run(sp: const Spec, v: const vector<float>) -> float {
+  acc = 0.0;
+  for k in 0..4 {
+    sub = Spec { a: (k * 10) as float, n: k };
+    acc = (acc + sub.a * (v[k] ?? 0.0) + sp.a) ?? 0.0;
+  }
+  acc
+}
+fn g12() {
+  r = g12_run(Spec { a: 1.0, n: 0 }, [1.0, 2.0, 3.0, 4.0]);
+  println("g12 {r}");
+  assert(r == 204.0, "g12");
+}
+
+fn main() {
+  g1(); g2(); g3(); g4(); g5(); g6(); g7(); g8(); g9(); g10(); g11(); g12();
+  println("group push ok");
+}

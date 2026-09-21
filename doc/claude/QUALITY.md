@@ -482,6 +482,12 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 |---:|
 | **23** |
 
+(2026-09-17, `R-BoundedNest`: three sites added, all peeling — the nest's matcher
+`hoist::bounded_nest` and `hoist::nest_chain`, and the guard's bound spelling
+`nest_bound_expr`, each reading every node through `.unspan()`; the write filter's root walk
+`hoist::projection_root` and `hoist::nest_read_paths` peel the same way.  The opaque column
+is unmoved.)
+
 **Only the ratchet is pinned here.**  The full census — how many sites discriminate on 2+
 `Value` variants, how many peel, and the queue of the ones that do not — is one command away and
 is always true of the tree you are standing on: `python3 scripts/ir_walker_audit.py unspan`.
@@ -517,6 +523,11 @@ a seventh, `namings_avoid_place`, the per-naming disturbance walk, matching on `
 step.  The opaque column is unmoved.  ../loft2's branch reports the same two units as 522 · 499 and
 523 · 500 against ITS base, and both are right about what they add; the totals differ because the
 bases do, which is why this row is measured here and never accumulated.)
+
+(2026-09-17, @PLN164 E-2: three sites added, all peeling — `hoist::lazy_buffer_guard` reads a
+lazy buffer's guard and its arm, `hoist::jumps_out` a statement's jumps, and the buffer-use count
+inside `hoist::element_first` its nodes, each through `.unspan()` or `any_node`, which peels.
+The opaque column is unmoved.)
 
 (2026-09-17, loft#1549: one site fewer, and not a behaviour change — the null-init test moved
 out of `scopes::reuse_record_buffers` into the one-line `scopes::null_init_at`, after which
@@ -1697,7 +1708,9 @@ and the function's fallback for any destination it does not recognise is exactly
 into a frame-owned place, a READ of the local that the view never names.  And one more the
 same day — `Output::write_tuple_fields` names `OpGetField` to BUILD the field place of the
 record a tuple is written into.  CHECKED: that destination is a record by construction (a
-return buffer or a copy's destination), never a tuple member.)
+return buffer or a copy's destination), never a tuple member.  And @PLN164 E-2 one more: the
+`walk` nested in `hoist::element_first` (the audit charges the function's later `OpGetField`
+matches to it) reads the fields of an element being appended, which a tuple member never is.)
 
 (2026-09-16, @PLN164 C5 step 2: one more on the call-only side — `namings_avoid_place` resolves
 what a naming of a container REACHES by op name, and `TupleGet` names a stack tuple member,

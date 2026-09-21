@@ -243,6 +243,18 @@ impl Output<'_> {
                 write!(w, ", ")?;
             }
             first_arg = false;
+            // @PLN164 E-2 — a call-filled temp's buffer is the element's field: the call
+            // builds there, and the buffer itself is never minted.
+            if let Value::Var(b) = v.unspan()
+                && let Some(&(elm, off)) = self.elem_first.buf_place.get(b)
+            {
+                let elmn = super::sanitize(self.data.def(self.def_nr).variables().name(elm));
+                write!(
+                    w,
+                    "DbRef {{ store_nr: var_{elmn}.store_nr, rec: var_{elmn}.rec, pos: var_{elmn}.pos + {off} }}"
+                )?;
+                continue;
+            }
             self.emit_call_arg(w, def_fn, idx, v)?;
         }
         if let Some(extra) = &twin_args {

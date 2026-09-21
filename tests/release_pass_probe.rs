@@ -54,16 +54,20 @@ fn body<'a>(rust: &'a str, name: &str) -> &'a str {
 fn the_default_build_keeps_every_checked_helper() {
     let rust = emit("off", &[]);
     let l1 = body(&rust, "n_l1");
-    // `10 * i + j` over a loop variable and a counter: the proof gives the checked
-    // helper, never the wrapping operator.
+    // What separates the two builds is that by DEFAULT every operator no proof reaches
+    // keeps its checked helper, and under the probe none does — which is exactly the claim
+    // the probe's own test inverts, so the pair still fails on a build that lost the switch.
     assert!(
-        l1.contains("ops::op_mul_long_nn(") || l1.contains("ops::op_mul_int("),
-        "l1's multiply is a checked helper by default"
+        l1.contains("ops::op_add_int(") || l1.contains("ops::op_add_long_nn("),
+        "the unproven additions keep their checked helpers by default: {l1}"
     );
-    assert!(
-        !l1.contains(".wrapping_mul(") && !l1.contains(".wrapping_add("),
-        "no wrapping operator is emitted without the probe"
-    );
+    // Two narrower claims stood here and BOTH were retired by measurement, so neither is
+    // worth restoring.  "No wrapping operator without the probe" was true only while the
+    // probe was the sole source of one, until `(R-Range)` and `(R-GuardedChain)` became
+    // sources too.  "l1's multiply is a checked helper" was true only while `(R-Range)`'s
+    // counted-counter clause was inert (loft#1558): l1's multiply is over a loop variable
+    // and a counter, so with the clause live the range proof bounds it and it is plain by
+    // default.  Asserting either again would be asserting that a rewrite is switched off.
 }
 
 #[test]

@@ -7,6 +7,20 @@ use crate::database::{Field, Parts, Stores};
 
 /// `LOFT_TRACE_VADD=1` — trace `vector_add` stride resolution (read once;
 /// `vector_add` is runtime-hot, a per-call `env::var` lookup is not).
+/// `LOFT_NO_SELF_APPEND_BLOCK=1` — a self-append copies through a pre-growth byte snapshot
+/// again instead of one block copy inside the grown record (the first bisect step for a wrong
+/// element out of `v += v`).
+/// `LOFT_NO_BLOCK_REPEAT=1` — `[x; n]` fills one element at a time again, a copy and a claims
+/// walk each, instead of doubling block copies (the first bisect step for a wrong element out
+/// of a repeat literal or a constant comprehension).
+fn block_repeat_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_NO_BLOCK_REPEAT").is_none())
+}
+fn self_append_block_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_NO_SELF_APPEND_BLOCK").is_none())
+}
 fn vadd_trace_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("LOFT_TRACE_VADD").is_ok())
@@ -847,6 +861,84 @@ impl Stores {
         }
     }
 
+    /// The fill behind `[x; n]` (and the comprehension of a constant, which lowers to it):
+    /// `extra` more copies of the TEMPLATE — the vector's last element, at `length - 1` —
+    /// written into the `extra` slots that follow it, which `vector_set_size` has already
+    /// claimed.  The bytes go as block copies that DOUBLE: the run copied so far is the source
+    /// of the next copy, so a plane of 38 250 floats is sixteen `copy_block`s instead of
+    /// 38 249, and the claims walk — one per copy, because every copy of a text, a record
+    /// owning text or a nested vector needs its own claim — runs only for a template that owns
+    /// heap.  `v_rec` is the backing record read AFTER the growth.  One home for both
+    /// backends (`OpAppendCopy`, `State::append_copy`), so they cannot disagree on a
+    /// heap-corrupting count.
+    pub fn fill_from_template(
+        &mut self,
+        data: &DbRef,
+        v_rec: u32,
+        length: u32,
+        extra: u32,
+        size: u32,
+        ctp: u16,
+    ) {
+        let from_pos = 8 + (length - 1) * size;
+        if !block_repeat_enabled() {
+            // The earlier form: one copy and one claims walk per element.  The first bisect
+            // step for a wrong element out of `[x; n]`.
+            let from = DbRef {
+                store_nr: data.store_nr,
+                rec: v_rec,
+                pos: from_pos,
+            };
+            for i in 1..=extra {
+                let to = DbRef {
+                    store_nr: data.store_nr,
+                    rec: v_rec,
+                    pos: from_pos + i * size,
+                };
+                self.copy_block(&from, &to, size);
+                self.copy_claims(&from, &to, ctp);
+                self.watch_oob_text(&to, ctp, Some(data), "append_copy");
+            }
+            return;
+        }
+        {
+            let store = keys::mut_store(data, &mut self.allocations);
+            // Copied so far, in elements, the template included; the next copy takes as many
+            // as exist, capped at what is still missing.
+            let mut done: u32 = 1;
+            let total = extra + 1;
+            while done < total {
+                let n = done.min(total - done);
+                store.copy_block(
+                    v_rec,
+                    from_pos as isize,
+                    v_rec,
+                    (from_pos + done * size) as isize,
+                    (n * size) as isize,
+                );
+                done += n;
+            }
+        }
+        if !self.type_owns_heap(ctp) {
+            return;
+        }
+        let from = DbRef {
+            store_nr: data.store_nr,
+            rec: v_rec,
+            pos: from_pos,
+        };
+        for i in 1..=extra {
+            let to = DbRef {
+                store_nr: data.store_nr,
+                rec: v_rec,
+                pos: from_pos + i * size,
+            };
+            // The claim source is the TEMPLATE element, not the vector handle.
+            self.copy_claims(&from, &to, ctp);
+            self.watch_oob_text(&to, ctp, Some(data), "append_copy");
+        }
+    }
+
     pub fn vector_add(&mut self, db: &DbRef, o_db: &DbRef, known: u16) {
         // `LOFT_TRACE_VADD=1` prints one line per vector concat/append-copy
         // with the resolved stride — the instrument that settled the nested
@@ -888,11 +980,12 @@ impl Stores {
             self.vector_add_array(db, o_db, known, o_length);
             return;
         }
-        // Snapshot the source record number BEFORE any resize: if `db` and `o_db` share the
-        // same backing store the resize inside `vector_append` / `vector_set_size` may
-        // reallocate the vector and invalidate `o_rec`.  Reading it after the resize would
-        // reference freed memory, silently producing corrupt data.
-        let o_rec = keys::store(o_db, &self.allocations).get_u32_raw(o_db.rec, o_db.pos);
+        // The source record, read BEFORE the growth.  A source in another store cannot move
+        // under the growth and keeps this number; a source in the SAME store is re-read from
+        // its field slot after the growth below, because a self-append (`v += v`) grows the
+        // very record the source elements live in and may relocate it — the slot is the one
+        // authority on where the record is now, and this number is then a freed block.
+        let mut o_rec = keys::store(o_db, &self.allocations).get_u32_raw(o_db.rec, o_db.pos);
         // Element stride — the element type's own size, for every row shape.
         // A VECTOR-typed row (`vector<vector<T>>`) is the inner vector's 4-byte
         // handle, which is exactly `size(known)` now that the element type
@@ -901,13 +994,19 @@ impl Stores {
         // `size(content(known)).max(4)` reproduced the READ path's own
         // mis-derivation; both now read this one fact.
         let size = u32::from(self.size(known));
-        // If source and destination share the same backing vector record, copy source elements
-        // to a local buffer first so the resize cannot invalidate the source pointer.
+        // A self-append — source and destination are ONE backing record (`v += v`, the
+        // doubling fill's step).  The growth carries the original elements along, so after
+        // it they sit at the front of the current record and the new slots follow them
+        // without overlap: the same-store block copy below serves this shape once the source
+        // rec is re-read.  `LOFT_NO_SELF_APPEND_BLOCK=1` restores the earlier form, a byte
+        // snapshot taken before the growth and written back byte by byte — the first bisect
+        // step for a wrong element out of a self-append.
         let same_vec = db.store_nr == o_db.store_nr && o_rec != 0 && {
             let dest_rec = keys::store(db, &self.allocations).get_u32_raw(db.rec, db.pos);
             dest_rec == o_rec
         };
-        let snapshot: Vec<u8> = if same_vec {
+        let snapshot_form = same_vec && !self_append_block_enabled();
+        let snapshot: Vec<u8> = if snapshot_form {
             let store = keys::store(o_db, &self.allocations);
             let byte_len = o_length as usize * size as usize;
             (0..byte_len)
@@ -931,16 +1030,21 @@ impl Stores {
             rec: dest_rec,
             pos: append_pos,
         };
-        if same_vec {
-            // Write from the pre-resize snapshot; `new_db.rec` is already the correct
-            // (possibly reallocated) destination record after `vector_set_size`.
+        if db.store_nr == o_db.store_nr {
+            // The source may have moved with the growth (it did whenever it IS the
+            // destination); the field slot names where it is now, for this copy and for
+            // the claims walk below alike.
+            o_rec = keys::store(o_db, &self.allocations).get_u32_raw(o_db.rec, o_db.pos);
+        }
+        if snapshot_form {
+            // The earlier form: write the pre-growth snapshot back, a byte at a time.
             let store = keys::mut_store(db, &mut self.allocations);
             for (i, &byte) in snapshot.iter().enumerate() {
                 store.write::<u8>(new_db.rec, new_db.pos + i as u32, byte);
             }
         } else if db.store_nr == o_db.store_nr {
-            // Re-read o_rec after resize in case it moved (non-self-append same-store case).
-            let o_rec = keys::store(o_db, &self.allocations).get_u32_raw(o_db.rec, o_db.pos);
+            // One block copy — for a self-append the source range is the record's own
+            // front, [8, 8 + len), and the destination its new tail; they do not overlap.
             keys::mut_store(db, &mut self.allocations).copy_block(
                 o_rec,
                 8,

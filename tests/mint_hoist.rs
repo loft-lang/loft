@@ -32,7 +32,9 @@ const EXPECTED: &[(&str, usize)] = &[
     ("n_mint8", 0),  // c8: index of one-field records — keyed, and a field path
     ("n_mint9", 0),  // c9: the loop writes the field through the parameter
     ("n_mint10", 0), // c10: the write arrives through a `&` alias — evicted by type
-    ("n_mint11", 0), // c11: the pushed vector is rebound — the loop declines
+    ("n_mint11", 1), // c11: the pushed vector is rebound — from its own loop buffer's
+    //                  projection, which `(R-Mint)`'s rebound clause (2026-09-18) admits: the
+    //                  mover takes no holder and `a.ptx` hoists; before, the loop declined
     ("n_mint12", 0), // c12: the `v[i]?` discharge's default-record OpDatabase blocks
     ("n_mint13", 2), // c13: same-type local survives the mint's own element writes
     ("n_mint14", 0), // c14: a field-path mint is outside this unit's admission

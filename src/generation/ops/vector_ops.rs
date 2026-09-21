@@ -125,6 +125,37 @@ impl OpEmitter for FusedElementReadEmitter {
         // @PLN157 § V-ak (`@FR-R-Base`) — a growth-free loop holds the element base too;
         // the read through it is `unsafe` at the call, which is where the proof lives.
         let base = ctx.output.active_vec_base(&fused.path).map(str::to_owned);
+        // `@FR-R-BoundedNest` step 2 — inside the raw arm of an admitted nest the guard has
+        // proved this index in range and the element not null, so the read is one load
+        // through the held base.  Under `LOFT_HOIST_VERIFY=1` the checked read is emitted
+        // beside it and the two compared at the read.
+        if ctx.output.nest_raw_arm
+            && let Some(base) = &base
+        {
+            let raw_verify = ctx.output.hoist_verify;
+            if raw_verify {
+                write!(ctx.w, "{{ let _raw: {ty} = ")?;
+            }
+            write!(ctx.w, "unsafe {{ {base}.add(((")?;
+            ctx.emit(fused.index)?;
+            write!(ctx.w, ") as usize) * ((")?;
+            ctx.emit(fused.size)?;
+            write!(ctx.w, ") as usize) + ((")?;
+            ctx.emit(fused.fld)?;
+            write!(ctx.w, ") as usize)).cast::<{ty}>().read_unaligned() }}")?;
+            if raw_verify {
+                write!(ctx.w, "; let _chk: {ty} = ")?;
+                ctx.output.nest_raw_arm = false;
+                let r = self.emit(ctx, args);
+                ctx.output.nest_raw_arm = true;
+                r?;
+                write!(
+                    ctx.w,
+                    "; assert!(_raw == _chk, \"bounded nest: a raw read disagrees with the checked read — the guard admitted an index out of range or a null element\"); _raw }}"
+                )?;
+            }
+            return Ok(());
+        }
         if let Some(base) = &base {
             write!(
                 ctx.w,
@@ -165,6 +196,13 @@ fn emit_hoisted_scalar_or_default(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> 
         .hoisted_scalar_read(ctx.def_fn.name(), args)
         .map(str::to_owned)
     else {
+        // `@FR-R-RecPtr` — a field read off a record VIEW whose address the block holds is
+        // one load through it; `unsafe` at the call, where the block's proof lives.
+        if let Some((v, fld)) = crate::generation::hoist::scalar_read(ctx.def_fn.name(), args)
+            && let Some(expr) = ctx.output.rec_ptr_read(v, fld, ctx.def_fn.name())
+        {
+            return write!(ctx.w, "{expr}");
+        }
         return super::default::DefaultEmitter.emit(ctx, args);
     };
     if ctx.output.hoist_verify {
@@ -220,6 +258,24 @@ pub struct FusedElementWriteEmitter;
 
 impl OpEmitter for FusedElementWriteEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        // `@FR-R-RecPtr` — an in-place field write of a record VIEW whose address the block
+        // holds is one store through it (the setter's `rec != 0` test is the null address).
+        if let [base, fld, val] = args
+            && let Value::Var(v) = base.unspan()
+            && let Value::Int(off) = fld.unspan()
+            && let Some(ty) = crate::generation::hoist::setter_kind(ctx.def_fn.name())
+            && let Some(ptr) = ctx.output.active_rec_ptr(*v).map(str::to_owned)
+        {
+            let verify = ctx.output.hoist_verify;
+            write!(ctx.w, "{{ let __wv = (")?;
+            ctx.emit(val)?;
+            write!(ctx.w, "); unsafe {{ vector::rec_set::<{ty}>({ptr}, &(")?;
+            ctx.emit(base)?;
+            return write!(
+                ctx.w,
+                "), ({off}_i64) as u32, __wv, &stores.allocations, {verify}) }} }}"
+            );
+        }
         let Some(fused) = ctx.output.fused_element_write(ctx.def_fn.name(), args) else {
             return super::default::DefaultEmitter.emit(ctx, args);
         };
@@ -389,11 +445,18 @@ impl OpEmitter for NewRecordEmitter {
         let Ok(tp) = u16::try_from(*tp) else {
             return super::default::DefaultEmitter.emit(ctx, args);
         };
-        let size = out.stores.size(out.stores.content(tp));
+        let elem = out.stores.content(tp);
+        let size = out.stores.size(elem);
         let verify = verify(ctx);
+        // `@FR-R-PushRec` heap clause — a heap-owning element's slot is zeroed at the mint.
+        let zero = if out.stores.owns_heap(elem) {
+            "_zero"
+        } else {
+            ""
+        };
         write!(
             ctx.w,
-            "stores.push_record_hoisted::<{verify}>(&mut {header}, &("
+            "stores.push_record_hoisted{zero}::<{verify}>(&mut {header}, &("
         )?;
         ctx.emit(&args[0])?;
         write!(ctx.w, "), {size})")

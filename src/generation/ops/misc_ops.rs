@@ -60,6 +60,40 @@ impl OpEmitter for OpDatabaseEmitter {
             {
                 return write!(ctx.w, "()");
             }
+            // `@FR-R-LoopRecord` — a LOOP RECORD: a plain no-heap record local minted by a
+            // literal inside a loop keeps its store and its record across iterations.  The
+            // first pass mints; every later pass finds the record where the previous pass
+            // left it, so a complete-write literal (`OpDatabaseNP`: every field written by the
+            // statements that follow) needs nothing, and a partial literal (`OpDatabase`) needs
+            // only the prefill that re-establishes the omitted fields' defaults — never the
+            // clear, claim, zero and tag the mint would repeat on the same record.
+            if let Value::Var(w) = var_val.unspan()
+                && ctx.output.loop_records.contains_key(w)
+            {
+                let name = super::super::sanitize(
+                    ctx.output.data.def(ctx.output.def_nr).variables().name(*w),
+                );
+                let complete = ctx.output.complete_writes.db_vars.contains(w);
+                let mint = if complete {
+                    "OpDatabaseNP"
+                } else {
+                    "OpDatabase"
+                };
+                write!(
+                    ctx.w,
+                    "if var_{name}.store_nr == u16::MAX || var_{name}.rec == 0 {{ var_{name} = {mint}(cell,var_{name}, "
+                )?;
+                ctx.emit_i32_slot(tp_val)?;
+                if complete {
+                    return write!(ctx.w, ") }} /* @FR-R-LoopRecord kept record */");
+                }
+                write!(ctx.w, ") }} else {{ stores.set_default_value(")?;
+                ctx.emit_i32_slot(tp_val)?;
+                return write!(
+                    ctx.w,
+                    " as u16, &var_{name}) }} /* @FR-R-LoopRecord kept record, defaults re-established */"
+                );
+            }
             // @PLN157 § V-al (`@FR-R-LoopBuffer`) — a LOOP BUFFER: a per-site vector buffer
             // minted inside a loop keeps its store and its vector across iterations.  The
             // first pass mints; every later pass resets the vector's length and keeps its

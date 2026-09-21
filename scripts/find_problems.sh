@@ -552,6 +552,15 @@ while [[ $# -gt 0 ]]; do
       un="$(unmatched_binaries | tr '\n' ' ')"
       [[ -n "${un// /}" ]] && { echo; echo "matched by no subject (still in the default run): $un"; }
       exit 0 ;;
+    -h|--help)
+      sed -n '/^# Usage:/,/^# The selection flags/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    # The run modes, read below from the positional list.
+    --peek|--stop|--wait|--bg) _args+=("$1"); shift ;;
+    # Any other flag is a typo or a flag this script does not have.  It used to fall
+    # through to the positional list and become the LOG PATH — `--help` started a curated
+    # run teeing into a file named `--help` — so it is refused instead.
+    -*) echo "find_problems.sh: unknown flag '$1' (try --help)" >&2; exit 2 ;;
     *) _args+=("$1"); shift ;;
   esac
 done

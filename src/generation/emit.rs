@@ -639,6 +639,41 @@ impl Output<'_> {
             Value::Block(bl) => self.output_block(w, IrBlock::Native(bl), false, false)?,
             Value::Loop(lp) => {
                 let hoisted = self.begin_vector_hoist(w, lp)?;
+                // `@FR-R-LoopRecord` — a record local declared inside this loop is declared
+                // here instead, so its store survives the iteration: the per-pass mint takes
+                // `OpDatabase`'s clear arm, and the one free follows the loop.  Declared
+                // BEFORE any guarded arm (`@FR-R-BoundedNest`, `@FR-R-GuardedChain`) so both
+                // copies of the loop see it, and freed after both arms close.
+                let mut loop_recs: Vec<u16> = self
+                    .loop_records
+                    .iter()
+                    .filter(|(_, r)| r.loop_scope == lp.scope)
+                    .map(|(v, _)| *v)
+                    .collect();
+                loop_recs.sort_unstable();
+                let variables = self.data.def(self.def_nr).variables();
+                for &v in &loop_recs {
+                    if !self.declared.contains(&v) {
+                        let name = sanitize(variables.name(v));
+                        self.indent(w)?;
+                        writeln!(
+                            w,
+                            "let mut var_{name}: DbRef = DbRef::NULL; //@FR-R-LoopRecord kept across iterations"
+                        )?;
+                        self.declared.insert(v);
+                    }
+                }
+                // `@FR-R-BoundedNest` — a nest whose guard proves its arithmetic cannot
+                // fault runs with plain operators; the checked loop below is its `else` arm.
+                let nested = self.nest_fast_path(w, lp)?;
+                // `@FR-R-GuardedChain` — a counted loop whose index chains a guard proves
+                // cannot fault runs them plain under that guard; the frame is popped after
+                // the loop.
+                let chained = if nested {
+                    super::ChainGuard::None
+                } else {
+                    self.chain_fast_path(w, lp)?
+                };
                 // @PLN157 § V-ae (`@FR-R-Fill`) — a loop that is one fill over a held header
                 // runs the slice fill first; the per-element loop below is its fallback for
                 // every range the fill declines (a negative or partial index, an overflow,
@@ -658,12 +693,23 @@ impl Output<'_> {
                 }
                 self.loop_stack.push(lp.scope);
                 writeln!(w, "'l{}: loop {{ //{}_{}", lp.scope, lp.name, lp.scope)?;
-                for v in &lp.operators {
+                // `@FR-R-RecPtr` — the loop's own statements are emitted here, not through
+                // `output_block`, so the record-view hook runs here too: a `for e in v`
+                // binds its element view (`Set(e, iter-next)`) as the loop's first statement,
+                // and its address serves the body once per iteration.
+                let mut ptr_frames = 0usize;
+                for (at, v) in lp.operators.iter().enumerate() {
                     self.indent(w)?;
                     self.indent += 1;
                     self.output_code_inner(w, v)?;
                     self.indent -= 1;
                     writeln!(w, ";")?;
+                    if self.bind_record_ptr(w, &lp.operators, at)? {
+                        ptr_frames += 1;
+                    }
+                }
+                for _ in 0..ptr_frames {
+                    self.rec_ptrs.pop();
                 }
                 self.indent(w)?;
                 write!(w, "}} /*{}_{}*/", lp.name, lp.scope)?;
@@ -673,6 +719,27 @@ impl Output<'_> {
                 }
                 if fill {
                     self.fill_fast_path_tail(w, lp)?;
+                }
+                if nested {
+                    write!(w, "\n}} /* checked nest */")?;
+                }
+                match chained {
+                    super::ChainGuard::Branch => {
+                        self.plain_chains.pop();
+                    }
+                    super::ChainGuard::Arms => {
+                        write!(w, "\n}} /* checked chains */")?;
+                    }
+                    super::ChainGuard::None => {}
+                }
+                for &v in &loop_recs {
+                    let name = sanitize(self.data.def(self.def_nr).variables().name(v));
+                    writeln!(w, ";")?;
+                    self.indent(w)?;
+                    write!(
+                        w,
+                        "OpFreeRef(cell,var_{name}, \"var_{name}\"); var_{name}.store_nr = u16::MAX /*@FR-R-LoopRecord freed after the loop*/"
+                    )?;
                 }
                 self.end_vector_hoist(w, hoisted)?;
             }
@@ -1685,6 +1752,22 @@ impl Output<'_> {
         // that hides an `Insert` or a `Block` does not change what the branch is, only what
         // this function can see of it.  Measured over the 863-program native corpus: 4 193 of
         // 110 157 arrivals carry one.
+        // `@FR-R-BoundedNest` step 2 — the discharge's `if __ncc != null { __ncc } else { 0 }`
+        // inside the raw arm of an admitted nest: the element bound the guard read is `None` on
+        // any stored null, so the select is the element itself.  Kept under `LOFT_HOIST_VERIFY=1`,
+        // where the raw read beside it is already compared with the checked one.
+        if self.nest_raw_arm
+            && !self.hoist_verify
+            && let Value::Call(d, cargs) = test.unspan()
+            && (*d as usize) < self.data.definitions.len()
+            && self.data.def(*d).name() == "OpConvBoolFromInt"
+            && cargs.len() == 1
+            && let Value::Var(t) = cargs[0].unspan()
+            && matches!(true_v.unspan(), Value::Var(s) if s == t)
+            && matches!(false_v.unspan(), Value::Int(0))
+        {
+            return self.output_code_inner(w, true_v);
+        }
         let wrap_block = matches!(test.unspan(), Value::Insert(ops) if ops.len() >= 2);
         if wrap_block {
             write!(w, "{{")?;
@@ -2607,9 +2690,16 @@ impl Output<'_> {
         // @PLN157 § V-n — the header frames this block's view bindings pushed, popped
         // before the block closes.
         let mut view_frames = 0usize;
+        // `@FR-R-RecPtr` — the record-address frames this block's view bindings pushed.
+        let mut ptr_frames = 0usize;
         // @PLN157 § V-x — the open FLAT literal group, if any: `(local, witness)`.
         let mut flat_lit_open: Option<(u16, u16)> = None;
+        // `@FR-R-GroupPush` — the groups this block opens are closed by index; a nested
+        // block's statements are emitted inside a group's range and never reach here.
+        self.block_serial += 1;
+        let block_serial = self.block_serial;
         for (vnr, v) in operators.iter().enumerate() {
+            self.close_groups_before(w, block_serial, vnr)?;
             // DX-source-map: surface line comments at the
             // statement-list level so rustc errors map back to .loft
             // source.  Without this, only Value::Line nodes inside an
@@ -2691,23 +2781,35 @@ impl Output<'_> {
                                 .iter()
                                 .find(|b| b.vdb == vdb)
                                 .expect("by_vdb names a bind");
-                            let outn = sanitize(dvars.name(pair.out));
-                            let elmn = sanitize(dvars.name(pair.elm));
                             let tmpn = sanitize(dvars.name(b.tmp));
+                            let elmn = sanitize(dvars.name(pair.elm));
+                            let (first, field_off) = (b.first, b.field_off);
+                            self.write_elem_first_mint(w, pi, first)?;
                             self.indent(w)?;
-                            if b.first {
-                                writeln!(
-                                    w,
-                                    "{{vector::pre_alloc_vector(&(var_{outn}), (1_i64) as u32, ({}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, var_{outn}, {}_i32, 65535_i32); //@PLN157 § V-z element minted at the declaration",
-                                    pair.prealloc_size, pair.out_tp
-                                )?;
-                                self.indent(w)?;
-                            }
                             writeln!(
                                 w,
-                                "var_{tmpn} = DbRef {{ store_nr: var_{elmn}.store_nr, rec: var_{elmn}.rec, pos: var_{elmn}.pos + {} }}; //@PLN157 § V-z field-slot bind",
-                                b.field_off
+                                "var_{tmpn} = DbRef {{ store_nr: var_{elmn}.store_nr, rec: var_{elmn}.rec, pos: var_{elmn}.pos + {field_off} }}; //@PLN157 § V-z field-slot bind"
                             )?;
+                            handled = true;
+                        }
+                    }
+                    // @PLN164 E-2 — a call-filled temp's lazy buffer guard: the buffer is
+                    // never minted, and the element is, when this temp carries the mint.
+                    Value::If(cond, _, _)
+                        if matches!(cond.unspan(), Value::Call(d, cargs)
+                            if named(d, "OpRefIsNull")
+                                && uv(cargs.first())
+                                    .is_some_and(|u| self.elem_first.buf_place.contains_key(&u))) =>
+                    {
+                        if let Value::Call(_, cargs) = cond.unspan()
+                            && let Some(buf) = uv(cargs.first())
+                            && let Some(&pi) = self.elem_first.by_vdb.get(&buf)
+                        {
+                            let first = self.elem_first.pairs[pi]
+                                .binds
+                                .iter()
+                                .any(|b| b.vdb == buf && b.first);
+                            self.write_elem_first_mint(w, pi, first)?;
                             handled = true;
                         }
                     }
@@ -2743,11 +2845,32 @@ impl Output<'_> {
                             handled = true;
                         }
                     }
-                    // The append site's mint.
+                    // An element's null pre-init (the parser writes one per arm in front of an
+                    // `if` whose arms each append): the element is bound by its early mint, and
+                    // the pre-init would otherwise reset it between the mint and the arms.
+                    Value::Set(e2, x)
+                        if self.elem_first.elms.contains(e2)
+                            && matches!(x.unspan(), Value::Null) =>
+                    {
+                        handled = true;
+                    }
+                    // The append site's mint — or, in another arm of a joined append
+                    // (@PLN164 E-2b), the alias of the element minted at the declaration.
                     Value::Set(e2, m2)
                         if self.elem_first.by_elm.contains_key(e2)
                             && matches!(m2.unspan(), Value::Call(md, _) if named(md, "OpNewRecord")) =>
                     {
+                        let pi = self.elem_first.by_elm[e2];
+                        let first = self.elem_first.pairs[pi].elm;
+                        if first != *e2 {
+                            let aliasn = sanitize(dvars.name(*e2));
+                            let firstn = sanitize(dvars.name(first));
+                            self.indent(w)?;
+                            writeln!(
+                                w,
+                                "var_{aliasn} = var_{firstn}; //@PLN164 E-2b the arm's element is the one minted at the declaration"
+                            )?;
+                        }
                         handled = true;
                     }
                     // Paired handle-zeros and paired copies on the element.
@@ -2786,6 +2909,32 @@ impl Output<'_> {
                     _ => {}
                 }
                 if handled {
+                    continue;
+                }
+            }
+            // `@FR-R-LoopRecord` — a loop record's per-pass declaration (`Set(v, null)`) and
+            // its end-of-body free are not emitted from the block that declares it: the local
+            // was declared at the loop's prelude and is freed once after the loop.  A free on
+            // a `return`/`continue` path sits in an `Insert`, not here, and stays.
+            if !self.loop_records.is_empty() {
+                let dropped = match v.unspan() {
+                    Value::Set(lv, rhs) if matches!(rhs.unspan(), Value::Null) => self
+                        .loop_records
+                        .get(lv)
+                        .is_some_and(|r| r.decl_block == bl.scope),
+                    Value::Call(d, args)
+                        if (*d as usize) < self.data.definitions.len()
+                            && matches!(
+                                self.data.def(*d).name(),
+                                "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefTag"
+                            ) =>
+                    {
+                        matches!(args.first().map(Value::unspan), Some(Value::Var(lv))
+                            if self.loop_records.get(lv).is_some_and(|r| r.decl_block == bl.scope))
+                    }
+                    _ => false,
+                };
+                if dropped {
                     continue;
                 }
             }
@@ -3120,7 +3269,12 @@ impl Output<'_> {
             if self.bind_view_header(w, operators, vnr)? {
                 view_frames += 1;
             }
+            if self.bind_record_ptr(w, operators, vnr)? {
+                ptr_frames += 1;
+            }
+            self.bind_group_push(w, operators, vnr, block_serial)?;
         }
+        self.close_groups_before(w, block_serial, usize::MAX)?;
         if flat_lit_open.is_some() {
             self.indent -= 1;
             self.indent(w)?;
@@ -3128,6 +3282,10 @@ impl Output<'_> {
         }
         for _ in 0..view_frames {
             self.vec_headers.pop();
+            self.vec_bases.pop();
+        }
+        for _ in 0..ptr_frames {
+            self.rec_ptrs.pop();
         }
         if has_trailing_void && !return_value_is_return {
             self.indent(w)?;
@@ -3184,5 +3342,62 @@ impl Output<'_> {
                 .show(self.data, self.data.def(self.def_nr).variables())
         )?;
         Ok(())
+    }
+}
+
+impl Output<'_> {
+    /// The element-first MINT at a temp's declaration site (@PLN157 § V-z, @PLN164 E-2): the
+    /// element is claimed where the first temp is declared, so every paired temp can be built in
+    /// its field; the length bump stays at the append's finish.  A local vector is reserved
+    /// first, as its append would have; a record's collection field is not.  Writes nothing for
+    /// a temp that does not carry the mint.
+    fn write_elem_first_mint(
+        &mut self,
+        w: &mut dyn Write,
+        pi: usize,
+        first: bool,
+    ) -> std::io::Result<()> {
+        if !first {
+            return Ok(());
+        }
+        let pair = &self.elem_first.pairs[pi];
+        let dvars = self.data.def(self.def_nr).variables();
+        let outn = sanitize(dvars.name(pair.out));
+        let elmn = sanitize(dvars.name(pair.elm));
+        let (size, tp, fld) = (pair.prealloc_size, pair.out_tp, pair.out_fld);
+        self.indent(w)?;
+        // `@FR-R-PushRec` — the early mint emits through the record-push header an enclosing
+        // loop holds for the container, exactly as the append site's mint would have.
+        if fld == 65535
+            && !self.record_push_disabled
+            && let Some(header) = self
+                .active_mint_push(&(pair.out, Vec::new()))
+                .map(str::to_owned)
+        {
+            let ptp = u16::try_from(tp).unwrap_or(u16::MAX);
+            let elem = self.stores.content(ptp);
+            let esize = self.stores.size(elem);
+            let zero = if self.stores.owns_heap(elem) {
+                "_zero"
+            } else {
+                ""
+            };
+            let verify = if self.hoist_verify { "true" } else { "false" };
+            return writeln!(
+                w,
+                "var_{elmn} = stores.push_record_hoisted{zero}::<{verify}>(&mut {header}, &(var_{outn}), {esize}); //@PLN157 § V-z element minted at the declaration, through the held header"
+            );
+        }
+        if fld == 65535 {
+            writeln!(
+                w,
+                "{{vector::pre_alloc_vector(&(var_{outn}), (1_i64) as u32, ({size}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, var_{outn}, {tp}_i32, 65535_i32); //@PLN157 § V-z element minted at the declaration"
+            )
+        } else {
+            writeln!(
+                w,
+                "var_{elmn} = OpNewRecord(cell, var_{outn}, {tp}_i32, {fld}_i32); //@PLN164 E-2 element minted at the declaration"
+            )
+        }
     }
 }

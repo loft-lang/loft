@@ -597,14 +597,16 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **6** — `D-heap-8`, `D-heap-9`, `D-heap-13`, `D-heap-14`, `D-heap-15` and `D-heap-16`.  The
+OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-14`, `D-heap-15` and `D-heap-16` (`D-heap-13`
+closed 2026-09-20).  The
 first two are the copy-lease rules `(H-Copy-Refuse)` and `(H-Copy-Lease)`, written 2026-09-15
 before their implementation (@PLN163); `D-heap-8` was NARROWED 2026-09-17 when the owner ruled that
 a value the function owns MOVES, which makes 156 of its 227 measured sites legal and leaves the 71
-that are not the function's.  `D-heap-13` and `D-heap-14` are separate and were both found while
-measuring that population — a collection a CALL answers, bound to a local, never releases its
-elements (loft#1551), and a hand-over written under a BRANCH leaks the source on the path that does
-not run, for every destination except a bind to a local.  `D-heap-15` and `D-heap-16` were EXPOSED
+that are not the function's.  `D-heap-13` and `D-heap-14` were both found while measuring that
+population — a collection a CALL answers, bound to a local, never releases its elements
+(loft#1551, CLOSED 2026-09-20: a cascade of the collection's own, run over the binding the
+buffer delivered to), and a hand-over written under a BRANCH leaks the source on the path that
+does not run, for every destination except a bind to a local.  `D-heap-15` and `D-heap-16` were EXPOSED
 by the ruling rather than found beside it: narrowing the verdict to what the rules move turned 23
 gate cells from `Refused`, which asks nothing of a release, into `Once`, which asks for exactly
 one — 21 of them run two and 2 run none.  A cell the rules refuse is a cell whose releases nothing
@@ -641,7 +643,56 @@ been re-cut twice as it was measured — a shape closed, a shape that turned out
 opposite fault, and a shape found by widening one cell — so the three named there are what is
 open TODAY and not the original filing.  `D-heap-4` (a mixed own/view local's owned record
 freed without its hook) opened and CLOSED 2026-09-10, below.  `D-heap-12` (a refilled record
-buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.
+buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.  `D-heap-17` (a self-append's claims walk
+read the source record through a number captured before the growth relocated it) opened and
+CLOSED 2026-09-17, below.
+
+### D-heap-17 — OPENED AND CLOSED (2026-09-17): a self-append read its source through the record number captured before the growth moved it
+
+- **Violates:** (H-Move) — the elements of a vector appended to itself are the vector's own
+  values; `Stores::vector_add` answered them through a freed block.
+- **Where:** `Stores::vector_add` captured the source record's number BEFORE growing the
+  destination, and for a self-append (`v += v`) the source IS the record the growth
+  relocates.  The byte copy took a pre-growth snapshot (a `Vec<u8>` filled and written back a
+  byte at a time — 8.6 % of the drawing lane's `render_marks` row), but the CLAIMS walk that
+  follows it for heap-owning elements read the source through the stale number: for a `text`
+  vector of 200 the run stopped with `Store access out of bounds … the reference is corrupt`
+  on both backends, and under `LOFT_POISON=1` the copied texts mismatched.  A no-heap
+  self-append was right by luck — the snapshot had already left the freed block.
+- **Closed:** the source record is re-read from its field slot after the growth whenever it
+  shares the destination's store, and the self-append is the same-store block copy every
+  other append already took (source range at the record's front, destination at its new tail,
+  no overlap).  `LOFT_NO_SELF_APPEND_BLOCK=1` keeps the snapshot form of the copy — with the
+  re-read, since the switch is a bisect step for the copy, not a way back to the fault.
+  Guard `tests/scripts/a-self-append-is-one-block-copy.loft` (twelve cells: scalars, a
+  relocating growth, text, records, nested vectors, a field, the doubling fill), falsified
+  against 48d49e24 (both backends panicked → clean).
+
+### D-heap-13 — CLOSED (2026-09-20): a collection returned from a call and bound to a local never releases its elements (loft#1551)
+
+- **Violates:** (H-Drop), reached through (H-Move) and (H-Lease) — `d = mkv()` is a legal move of
+  a fresh call result, so `d` is the owner, the owner has its own lease, and the hook runs at the
+  owner's scope end.
+- **Where:** the local's backing is the callee's return buffer, a bare `vec<ref(T)>`, where a
+  local vector's is the wrapper record that carries the generated `OpDropAll` cascade; scope exit
+  emits `OpFreeRef` with no cascade call.  WHICH site decides to omit it is not established —
+  the candidates all read `Data::drop_cascade_nr` — and establishing it is the first step of a
+  fix, not an assumption to build on.
+- **Effect:** the resource stays open for the life of the process, both backends, byte-identical,
+  with no diagnostic.  `d = mkv(); d += […]` and `take(d)` leak too, and so does a
+  `vector<vector<H>>`; the same call into a FIELD (`b.v = mkv()`), a struct from a call, a struct
+  CONTAINING a vector and a plain local vector are all clean, which is what bounds it to a bare
+  collection from a call into a local.
+- **Why nothing caught it:** the MEMORY is freed correctly and only the hook is skipped, so
+  `LOFT_STRICT_STORES` and `LOFT_POISON` are structurally blind; `ownership_drop_gate`'s CROSS
+  family has no collection source and no collection destination, so no generated cell writes the
+  shape.
+- **Status:** OPEN — the drop-cascade family (@PLN163).  `d = mkv(); e = d` releases exactly once
+  today because `D-heap-8`'s second structure supplies the release this entry loses, so that
+  shape is not a control and curing either entry alone changes its answer.
+- **Removal:** give the bound local the cascade its wrapper-backed twin has.  `(H-Drop)`'s own
+  warning applies — a drop has no safe direction, and turning a lost hook into a doubled one must
+  not land as an improvement.
 
 ### D-heap-12 — OPENED AND CLOSED (2026-09-17): a refilled record buffer stranded its previous occupant's heap (loft#1549)
 
@@ -763,7 +814,7 @@ buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17,
 - **Removal:** the signature check, the synthesized copy cascade, and a call at every copy site
   on both backends; the moved release removed wherever a copy leases.
 
-### D-heap-13 — OPEN (2026-09-17): a collection returned from a call and bound to a local never releases its elements
+### D-heap-13 — CLOSED (2026-09-20): a collection returned from a call and bound to a local never releases its elements
 
 - **Violates:** (H-Drop), and through it (H-Move) and (H-Lease).
 - **Where:** the release a local's scope end runs is the cascade of the WRAPPER RECORD its backing
@@ -859,18 +910,57 @@ buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17,
     the liveness guard read `rec == 0` and declined silently; `--native`, where a `DbRef` is a
     `DbRef` either way, ran them.  Wrapping the subject in `OpRefAlias` does NOT fix it — the
     argument is still loaded by `OpVarVector` (measured).
-- **Status:** OPEN — loft#1551.  Recorded rather than cured on purpose: `(H-Drop)`'s own ⚠ clause
-  says a drop has no safe direction, so the cure has to be right on every path before it lands,
-  and a change that turns this lost hook into a doubled one is not progress.  The attempt above
-  is the evidence for that sentence rather than a counter-example to it.
+- **Status: CLOSED 2026-09-20.**  The cure is two facts, and the attempt above had the first
+  one wrong in a way its own ⚠ predicted.
+  - **The cascade is the COLLECTION's own, not the wrapper record's.**  `vector<τ>` already has
+    a def (`DefType::Vector`, minted beside the wrapper by `Data::vector_def`), so it can carry a
+    cascade whose `self` IS the collection: one walk of `self`, no own hook, no fields
+    (`synth_drop_cascades`' `DefType::Vector` target, `cascade_self_type`, and
+    `drop_elements_loop` now taking the collection VALUE so a record's cascade and a
+    collection's share one body).  That is what makes the two backends agree, and it is why the
+    wrapper route could not: handing the WRAPPER's cascade a collection binding releases on
+    `--native` and silently does nothing on `--interpret`.
+  - **It runs over the BINDING the buffer delivered to, and only where there is one**
+    (`delivered_binding`: the single local whose type borrows the buffer and is itself a
+    collection).  `(H-Drop)` names the owner and `(H-Move)` says that is the author's local.  It
+    is also the only subject that works on the interpreter, measured: `OpDatabase`'s reuse arm
+    claims a FRESH record in the cleared store there while native re-establishes record 1, so
+    after the callee fills it the caller's buffer still names the record it held before the
+    call — empty.  Requiring a binding is what keeps `b.v = mkv()` single: that buffer has no
+    binding, its value was handed to a field that already releases it, and cascading over the
+    buffer as well is exactly the `D7 D7` the attempt above measured.
+- ⚠ **The `d = mkv(); e = d` "double" was a misreading, and its ORACLE settles it.**  The bind
+  COPIES — measured: `e += [mk()]` leaves `d` at length 1 — so there are two structures and
+  `(H-Drop)` owes two releases.  The no-call twin `f: vector<H> = [mk(30)]; g = f` releases
+  TWICE on both backends, before this fix and after; it is the shape the language already
+  answers and this entry's cell now matches it.  The entry above read the second release as a
+  defect because the pre-cure shape released once; what cancelled was a lost hook against a
+  correct one.
+- **What this does NOT reach, measured against the same oracle, and both are pre-existing:**
+  a local REASSIGNED in a loop through a call releases only the last (`d = mkv(11); for … { d
+  = mkv(12+i) }` gives one where the no-call twin gives three), and a NESTED
+  `vector<vector<τ>>` releases nothing — but its no-call twin releases nothing either, so that
+  is a separate defect of the nested cascade and not of this one.  `collection_elem_cascade`
+  admits only a `Reference`/`Enum` element for that reason, which is also what keeps the
+  attempt's EARLY release in the nested cell from happening at all.
+- **Guard** `tests/scripts/1551-a-collection-a-call-answers-releases-its-elements.loft`: eleven
+  cells asserting the exact drop TRACE (a file, for the reason `139-drop-cascade.loft` gives),
+  each with its no-call oracle beside it, byte-identical on both backends.  Falsified by
+  sabotage — the collection arm made to answer `u32::MAX` fails `a1` first on both backends
+  (`r1` where `r1,1` is owed) and the drop gate reports `p_v5`–`p_v7` `clean -> LOST`
+  (`released 0x, want 1`).  The gate's own verdict on the cure: exactly those three lines GONE,
+  **no NEW line on either baseline**, and the controls `p_v8`/`p_v9` unmoved.
 - **Removal:** the fact belongs in the TYPE, not in the gate.  The callee already retypes its
   buffer — `n_mkv`'s `__vdb_1` loads as `ref(main_vector<H>)` under `OpVarRef` while the
   caller's `__ref_1` for the same store keeps `vector<τ>` and loads under `OpVarVector` — so
   the caller-side return buffer carrying the wrapper's record type is what makes the existing
   `Reference` arm fire, both backends agree, and no new spelling is added at the 148-site
-  predicate's expense.  Then the hand-off half above, so a buffer whose elements were copied
-  out stops dropping.  The pinning cells `p_v5`–`p_v7` go clean and leave this entry's list
-  only when BOTH halves are in and `p_v8`/`p_v9` still read one release each.
+  predicate's expense.  *Superseded by the closure above*: the fact went into a cascade of the
+  COLLECTION's own rather than into the buffer's type, which needed no retyping and no new
+  spelling of the 148-site predicate, and the hand-off half turned out to be unnecessary once
+  the subject is the BINDING — a buffer whose value was handed to a field simply has no binding
+  to cascade over.  `p_v5`–`p_v7` are clean on both baselines and `p_v8`/`p_v9` still read one
+  release each.
 
 ### D-heap-14 — OPEN (2026-09-17): a hand-over written under a branch leaks the source on the path that does not run
 

@@ -1,0 +1,131 @@
+// `@FR-R-Base`'s twin clause — a callee twin takes the element BASE of each header it is handed,
+// so a read or write of that vector inside it is one bounds test and one load or store through
+// the base, where before each one resolved the store again (`get_elem_hoisted`).  The base is
+// valid for the whole call because an admitted callee is store-free or writes only in place:
+// nothing reallocates while it runs.  A caller whose loop holds a base passes it; one whose
+// loop does not (it grows another store) derives a base from the held header AT THE CALL.
+//
+// The shape is a pixel accessor pair — the drawing library's `get_pixel`/`set_pixel` — called
+// per pixel from a loop.  Every value is hand-computed; the interpreter takes no twin and is
+// the oracle.  Cells past the end (t6) and outside the canvas (t5) never reach the base — the
+// callee's own tests answer first — and so read exactly as before.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-18) — with the caller's held base passed
+//   skewed by one element (`__vb_N.add(8)` in `twin_call_inputs`), t2 fails on --native
+//   (`t2: 66 11` reads the writes one slot over: `c2.data[0]` is 1); t1 holds by accident on
+//   that build, the slot past the plane's end reading 0.  Restored, t1–t10 hold on both
+//   backends, both switch states (`LOFT_NO_TWIN_BASE=1`), under LOFT_STRICT_STORES=1,
+//   LOFT_POISON=1, LOFT_POISON_CLAIM=1, LOFT_NATIVE_LEAK_CHECK=1 and LOFT_HOIST_VERIFY=1.
+
+struct TbCv { w: integer, h: integer, data: vector<integer>, mask: vector<integer>, f: vector<float> }
+
+fn tb_get(self: const TbCv, x: integer, y: integer) -> integer {
+  if x < 0 or x >= self.w or y < 0 or y >= self.h { 0 }
+  else {
+    i = y * self.w + x;
+    d = &self.data;
+    if i < len(d) { d[i] ?? 0 } else { 0 }
+  }
+}
+
+fn tb_set(self: TbCv, x: integer, y: integer, c: integer) {
+  if x >= 0 and x < self.w and y >= 0 and y < self.h {
+    i = y * self.w + x;
+    d = &self.data;
+    if i < len(d) { d[i] = c; }
+  }
+}
+
+/// Two headers in one callee: data and mask.
+fn tb_masked(self: const TbCv, x: integer, y: integer) -> integer {
+  i = y * self.w + x;
+  d = &self.data;
+  m = &self.mask;
+  if i < len(d) and i < len(m) { (d[i] ?? 0) * (m[i] ?? 0) } else { 0 }
+}
+
+/// A twin calling a twin: the inner one is handed the outer's base.
+fn tb_twice(self: const TbCv, x: integer, y: integer) -> integer { tb_get(self, x, y) * 2 }
+
+/// A float plane.
+fn tb_getf(self: const TbCv, x: integer, y: integer) -> float {
+  i = y * self.w + x;
+  d = &self.f;
+  if i < len(d) { d[i] ?? 0.0 } else { 0.0 }
+}
+
+fn tb_fresh() -> TbCv {
+  cv = TbCv { w: 4, h: 3, data: [], mask: [], f: [] };
+  for i in 0..12 { cv.data += [i * 10]; cv.mask += [i % 2]; cv.f += [(i as float) * 0.5]; }
+  cv
+}
+
+fn main() {
+  // t1 — reads in a loop: 10 * (0 + 1 + … + 11) = 660.
+  c1 = tb_fresh();
+  t1 = 0;
+  for y in 0..3 { for x in 0..4 { t1 += tb_get(c1, x, y); } }
+  assert(t1 == 660, "t1: {t1}");
+
+  // t2 — writes in a loop: data[i] = x + y*4 = i, so the sum is 0 + … + 11 = 66.
+  c2 = tb_fresh();
+  for y in 0..3 { for x in 0..4 { tb_set(c2, x, y, x + y * 4); } }
+  t2 = 0;
+  for v in c2.data { t2 += v; }
+  assert(t2 == 66 && c2.data[11] == 11 && c2.data[0] == 0, "t2: {t2} {c2.data[11]}");
+
+  // t3 — read AND write per pixel (the composite shape): data[i] = data[i] + 1 → 660 + 12.
+  c3 = tb_fresh();
+  for y in 0..3 { for x in 0..4 { tb_set(c3, x, y, tb_get(c3, x, y) + 1); } }
+  t3 = 0;
+  for v in c3.data { t3 += v; }
+  assert(t3 == 672 && c3.data[5] == 51, "t3: {t3} {c3.data[5]}");
+
+  // t4 — the caller's loop GROWS another store (it appends what it read), so it holds no
+  //      base: the call derives one from the held header.  Same values, 12 of them.
+  c4 = tb_fresh();
+  acc4: vector<integer> = [];
+  for y in 0..3 { for x in 0..4 { acc4 += [tb_get(c4, x, y)]; } }
+  t4 = 0;
+  for v in acc4 { t4 += v; }
+  assert(len(acc4) == 12 && t4 == 660 && acc4[7] == 70, "t4: {len(acc4)} {t4}");
+
+  // t5 — outside any loop, and outside the canvas: (1,1) is 50; (9,9) and (-1,0) are 0.
+  c5 = tb_fresh();
+  assert(tb_get(c5, 1, 1) == 50 && tb_get(c5, 9, 9) == 0 && tb_get(c5, -1, 0) == 0,
+         "t5: {tb_get(c5, 1, 1)} {tb_get(c5, 9, 9)}");
+
+  // t6 — a canvas whose plane is SHORTER than w*h: the callee's length test answers 0 past
+  //      the end, before any base is read.  data has 5 elements: 0,10,20,30,40 → 100.
+  c6 = TbCv { w: 4, h: 3, data: [0, 10, 20, 30, 40], mask: [], f: [] };
+  t6 = 0;
+  for y in 0..3 { for x in 0..4 { t6 += tb_get(c6, x, y); } }
+  assert(t6 == 100, "t6: {t6}");
+
+  // t7 — two headers, two bases: sum of data[i] * mask[i] over odd i = 10+30+50+70+90+110 = 360.
+  c7 = tb_fresh();
+  t7 = 0;
+  for y in 0..3 { for x in 0..4 { t7 += tb_masked(c7, x, y); } }
+  assert(t7 == 360, "t7: {t7}");
+
+  // t8 — a twin calling a twin: 2 * 660.
+  c8 = tb_fresh();
+  t8 = 0;
+  for y in 0..3 { for x in 0..4 { t8 += tb_twice(c8, x, y); } }
+  assert(t8 == 1320, "t8: {t8}");
+
+  // t9 — a float plane: 0.5 * (0 + … + 11) = 33.
+  c9 = tb_fresh();
+  t9 = 0.0;
+  for y in 0..3 { for x in 0..4 { t9 += tb_getf(c9, x, y); } }
+  assert(t9 == 33.0, "t9: {t9}");
+
+  // t10 — the write then the read through two different twins in one iteration, and the
+  //       plane read back through the caller's own loop: data[i] = 100 + i, read = 1200 + 66.
+  c10 = tb_fresh();
+  t10 = 0;
+  for y in 0..3 { for x in 0..4 { tb_set(c10, x, y, 100 + x + y * 4); t10 += tb_get(c10, x, y); } }
+  assert(t10 == 1266 && c10.data[11] == 111, "t10: {t10} {c10.data[11]}");
+
+  println("ok");
+}

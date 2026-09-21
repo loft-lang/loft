@@ -51,8 +51,10 @@ fn b3() {
   println("b3 {t}");
 }
 
-// b4 — a `?`-discharged RECORD element mints its discharge buffer (§ V-ad): a growth,
-// so no base in that loop.
+// b4 — a `?`-discharged RECORD element mints its discharge buffer (§ V-ad).  Until
+// 2026-09-18 that counted as a growth and the loop held headers alone; the mint takes a
+// FRESH store (or clears the buffer's own), which moves no element a base addresses, so
+// the loop binds its base now — the values are the same either way.
 struct Pt { px: integer, py: integer }
 fn b4() {
   pts: vector<Pt> = [Pt { px: 1, py: 2 }, Pt { px: 3, py: 4 }];

@@ -107,14 +107,19 @@ const NO_TWIN_AC: &[&str] = &[
 
 /// `(caller, twin calls in its body)`.
 const CALLS_AC: &[(&str, usize)] = &[
-    ("n_k1", 1),      // the brush shape through `br.img`
-    ("n_k2", 0),      // rb_copy has no twin
-    ("n_k3", 0),      // grow has no twin, and the loop hoists nothing
-    ("n_k4", 2),      // two paths, two headers
-    ("n_k5", 2),      // an empty and an omitted vector: headers of length 0
-    ("n_k6", 0),      // a conditional as the argument
-    ("n_k7a", 1),     // an in-place element write beside the call
-    ("n_k7b", 1),     // the path held by a PUSH header, handed at the call
+    ("n_k1", 1),  // the brush shape through `br.img`
+    ("n_k2", 0),  // rb_copy has no twin
+    ("n_k3", 0),  // grow has no twin, and the loop hoists nothing
+    ("n_k4", 2),  // two paths, two headers
+    ("n_k5", 2),  // an empty and an omitted vector: headers of length 0
+    ("n_k6", 0),  // a conditional as the argument
+    ("n_k7a", 1), // an in-place element write beside the call
+    // k7b: the path held by a PUSH header, handed at the call.  TWO twin calls for one
+    // site: its loop has two admitted chain operators, so it clears the profitability gate
+    // and its body is emitted twice — the guarded plain copy and the checked `else` arm.
+    // `LOFT_NO_GUARDED_CHAIN=1` gives 1 again.  (k7a's loop has one operator and declines,
+    // which is why it reads 1 beside this.)
+    ("n_k7b", 2),
     ("n_k8", 0),      // the root is a `&` view rebound in the loop
     ("n_k9", 1),      // a record parameter's field through the path `h.cv`
     ("n_k10", 0),     // cnt
@@ -170,6 +175,25 @@ fn functions(rust: &str) -> HashMap<String, (String, usize)> {
     map
 }
 
+/// The signature with the `@FR-R-Base` twin-clause bases (`, __ib_k: *const u8`) removed:
+/// these pins state the INPUTS, and a base accompanies every header input by construction
+/// (`tests/twin_base.rs` pins the bases themselves).
+fn without_bases(sig: &str) -> String {
+    let mut out = String::new();
+    let mut rest = sig;
+    while let Some(i) = rest.find(", __ib_") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 2..];
+        let end = after
+            .find(": *const u8")
+            .expect("a base input is `*const u8`")
+            + ": *const u8".len();
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 fn cells() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS)
 }
@@ -184,7 +208,7 @@ fn each_callee_earns_exactly_the_twin_predicted_and_each_call_takes_it() {
             .get(&twin)
             .unwrap_or_else(|| panic!("{twin} was not emitted"));
         assert!(
-            sig.contains(&format!(", {params})")),
+            without_bases(sig).contains(&format!(", {params})")),
             "{twin}: the inputs must be `{params}`, got:\n{sig}"
         );
     }
@@ -215,7 +239,7 @@ fn a_path_argument_hands_its_header_to_the_twin() {
             .get(&twin)
             .unwrap_or_else(|| panic!("{twin} was not emitted"));
         assert!(
-            sig.contains(", __ih_0: vector::VecHeader)"),
+            without_bases(sig).contains(", __ih_0: vector::VecHeader)"),
             "{twin}: one header input, got:\n{sig}"
         );
     }

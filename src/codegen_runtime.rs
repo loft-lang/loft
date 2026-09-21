@@ -2620,25 +2620,9 @@ pub fn OpAppendCopy(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, count: i6
     vector::vector_append(&data, size, &mut stores.allocations);
     stores.vector_set_size(&data, extra, size);
     // Re-read the backing record AFTER the resize: growing the vector can move it, and
-    // BOTH ends of the copy live inside it. Only the destination was re-read here, so
-    // the template `from` still named the record's old home.
+    // BOTH ends of the copy live inside it.
     let v_rec = crate::keys::store(&data, &stores.allocations).get_u32_raw(data.rec, data.pos);
-    let from = DbRef {
-        store_nr: data.store_nr,
-        rec: v_rec,
-        pos: 8 + (length * size - size),
-    };
-    for i in 0..extra {
-        let to = DbRef {
-            store_nr: data.store_nr,
-            rec: v_rec,
-            pos: 8 + (length + i) * size,
-        };
-        stores.copy_block(&from, &to, size);
-        // The claim source is the TEMPLATE element, not the vector handle — see the
-        // twin in `State::append_copy`.
-        stores.copy_claims(&from, &to, ctp);
-    }
+    stores.fill_from_template(&data, v_rec, length, extra, size, ctp);
 }
 
 // @PLAN12 phase 3.5a (2026-05-24) — cr_rand_seed / cr_rand_int /

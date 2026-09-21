@@ -1038,6 +1038,34 @@ serving a program whose temporaries are born and die inside one activation. No L
 annotation reaches that. A region freed whole, or an element layout with no per-element
 record at all, does.
 
+**The parse row is the second proof, and a sharper one, because its temporaries are gone
+(@PLN164, closed 2026-09-17).** That plan took the drawing library's `parse` row from 7.6× its
+Rust reference to **3.11×** by removing the objects a record-returning style mints — the hidden
+buffer on a path that never uses it, the copy at a first bind, the store behind a literal exit, a
+nested literal's own store, a returned record's vector field, a single-consumer vector's store —
+with no line of the consumer changing. What is left is therefore not temporaries. Profiled on
+the release binary (self time, grouped by the runtime function's own name; Rust's row = 1.00,
+loft's = 3.11):
+
+| group | share of loft's row | in Rust units | Rust's own |
+|---|---:|---|---|
+| emitted loft code (`find_option` 13 %, `parse_scene_at` 7 %, `acc_pts` 4 %, `fronds` 3 %) | 41 % | 1.26 | ≈ 0.80 (its parser functions) |
+| store claim/free (`claim_block`, `claim`, `set_free_header`, `record_new`/`finish`) | 18 % | 0.56 | ≈ 0.09 (`malloc`/`free`/`memmove`) |
+| vector and field ops (`vector_append`, `append_f64`, `get_vector`, `vector_add`) | 14 % | 0.44 | inlined |
+| store helpers in the append path (`heap_facts`, `nullable_field_parent`, `vector_set_size`, …) | ≈ 10 % | ≈ 0.3 | — |
+| text and number (`text_character`, `OpGetTextSub`, float parse) | 7 % | 0.22 | in its functions |
+| store lookup (`store_mut`) | 4 % | 0.12 | — |
+
+About **1.2 of the 2.1 units the row is over Rust is the per-RECORD and per-PUSH work every KEPT
+object pays** — claim and free, the append pair, the append path's `heap_facts` and
+`nullable_field_parent` tests, `store_mut`. It is the same gap `fronds` names, measured in a row
+whose temporaries have already been removed, which is what makes it the next lever rather than a
+further elimination: it is a RUNTIME one, on both backends, and it reads on the four facts above
+— the role a store plays, the type its elements have, how long the activation keeps it, and
+whether a vector of no-heap records needs a per-element record at all. Price it the way this arc
+priced every unit: a hand patch in the runtime first, `perf` on the release binary, all fourteen
+rows before a unit is cut.
+
 **What loft knows and does not yet spend:**
 
 - **Role.** A return buffer, a discharge default, a comprehension accumulator, a worker's

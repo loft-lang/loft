@@ -366,6 +366,99 @@ holds that variant.  A grouped destination is admitted: the group maintenance br
 `LOFT_NO_BUFFER_IS_PLACE=1` restores the copy; `tests/scripts/164-buffer-is-the-place.loft` and
 `tests/buffer_is_place.rs` are the receipts.
 
+**A hidden return buffer is minted at its first use, not at function entry (@PLN164 A0,
+`@FR-O-LazyBuffer`).**  A function that hands a callee a buffer on one path minted that store in
+its preamble whatever the path did, so a scanner that tries twenty rules and matches one paid for
+the other nineteen.  The preamble writes the non-allocating sentinel instead
+(`OpInitRefSentinel`, `DbRef::NULL` on native), and `scopes::lazy_buffer_mints` — after the scan,
+so every exit free is already in the body and can be told apart from a use — puts
+`if OpRefIsNull(b) { b = null }` in front of the innermost statement that names the buffer.  A
+use in an `if` condition or a bare arm takes the guard in front of the whole `if`, and a guard
+inside a loop mints once, because a re-mint clears the store the previous iteration's result
+local still reads.  A free is not a use: `OpFreeRef`, `OpFreeRefIfDistinct`,
+`OpFreeRefOrHandUp`, the tag ops and `OpDistinctStore` name a buffer without needing one, so the
+null-tolerant exit frees stand unchanged and a path that never mints frees nothing.  Both
+backends read one fact, `Variable::lazy_buffer` (IR schema, store and JSON codecs): a vector
+buffer's null-init writes the sentinel and the later `Set(b, Null)` is the mint, which native's
+reassignment arm already emitted as `OpDatabase`.  Declined for a body that yields or runs `par`,
+for a buffer with a second assignment, and for a null-init that is not a top-level statement.
+`LOFT_NO_LAZY_BUFFER=1` mints at entry again;
+`plans/164-activation-arena/bytecode-comparisons/A0-lazy-buffer-cells.loft` and
+`tests/lazy_buffer.rs` are the receipts.
+
+**Every literal exit of a record function writes the buffer the caller handed (@PLN164 B2 unit 1,
+`@FR-R-Place`'s callee clause).**  A mid-body `return S { … }` built its record in a store of its
+own and copied it into `__retbuf` at the exit, where the TAIL literal has minted through the
+buffer since @PLN157 § V; every literal exit now takes that same null-guarded mint, so a callee
+with several literal exits answers ONE store.  A buffer a CHAIN renamed counts as the buffer
+(`return no_mk()` beside `return Mk { … }`, and a literal tail beside chain exits), because the
+chain's local and the buffer are one store.  `LOFT_NO_LITERAL_EXIT_BUFFER=1` restores the
+per-exit store; `tests/scripts/164-a-literal-exit-writes-its-chains-buffer.loft` and
+`tests/literal_exit_buffer.rs` are the receipts.
+
+**A nested record literal is written into the field it initialises (@PLN164 C6,
+`@FR-R-InPlaceLiteral`).**  `sc.ops += [Op { paint: Paint { … } }]` writes `Paint`'s fields into
+the element's own `paint` field instead of building a store of its own and copying it in.
+`Parser::nested_literal_place` primes an embedded record field's value with the field's place
+(`OpGetField(outer, pos, kt)`) when the value opens with the field type's name and `{`, so
+`parse_object` takes the field road it already has and an omitted field takes its declared
+default through `object_init`; a value that turns out to be more than the literal (a postfix) is
+parsed again the ordinary way.  Admitted only where the outer record is FRESH — an appended
+element, a construction temporary — so nothing can read the place while it is written: a
+destination the program can still read (`x = S { … }`, `o.f = S { … }`, `v[i] = S { … }`), a
+`reference<T>` field and a nullable field all decline.  `(E-Asgn-Compound)` evaluates a literal's
+field values before the assignment stores, so `Parser::stage_append_fields` runs every field
+value that reads the container's root — a scalar, a text, a nested construction — ahead of the
+element's mint.  `LOFT_NO_NESTED_IN_PLACE=1` builds and copies again and
+`LOFT_NO_APPEND_STAGING=1` restores the unstaged order;
+`plans/164-activation-arena/bytecode-comparisons/C6-nested-literal-cells.loft`,
+`tests/nested_in_place.rs` and
+`tests/scripts/1548-an-appended-literal-reads-its-own-container.loft` are the receipts.
+
+**A returned record's vector field is a VIEW of the place the value already lives in (@PLN164
+E-1, `@FR-O-ViewField`, `@FR-R-ValueRecord`; `--native`).**  A function that answers
+`Mark { matched, bad, pts }` built from a local it appended into a parameter's collection returns
+a TUPLE whose vector element references that element's field, so the call costs no buffer store
+and no deep copy; an exit with an empty literal delivers a null view, which reads as the empty
+vector it replaces.  The interpreter keeps the record form and is the values oracle.  The
+callee's half is a per-PATH proof (`hoist::fresh_leaf`, a forward walk that joins `if` arms and
+runs loops to a fixpoint): on every path to the exit the last change to the container is the
+append of the local's copy, and neither the local, a store it views, nor that element changes
+afterwards.  Where the arms append through different element temps no temp names the place on
+both paths and the container's LAST element does, so the leaf is `get_vector(<container>,
+<stride>, -1)` plus the field offset.  The site's half is that the leaf's place outlives the
+frame and every call site only READS it: a `?`-discharged element (its ownership is a join), an
+element read or an iteration at the site, a disturbance between the bind and the last read, and a
+`pub` function whole (`(R-Escape)`) all decline.  A forward — `return g(…)`, or the call arm of a
+value branch whose other arm is a record — keeps an admitted callee by writing its tuple into the
+buffer at the site: minted where absent, every scalar set, a view part's vector copied
+(`Output::write_tuple_fields`, which the copy from a value local uses too).
+`LOFT_NO_VIEW_FIELD=1` and `LOFT_NO_FORWARD_TUPLE=1` restore the record form,
+`LOFT_TRACE_VALUEREC=1` names every admission and decline;
+`tests/scripts/164-view-field.loft`, `tests/scripts/164-forward-tuple.loft` and
+`tests/view_field.rs` are the receipts.
+
+**A single-consumer vector is built inside the element it is appended into (@PLN164 E-2,
+`@FR-R-ElemFirst`; `--native`).**  @PLN157 § V-z built a local vector consumed by exactly one
+append inside that appended element; the destination may now also be a record's COLLECTION FIELD
+(`sc.ops += [Op { pts: p }]`, elements stored inline) and the local may be filled by a CALL
+(`p = smooth(raw)`), which is handed the early element's field as its return buffer — provided
+the callee fills its buffer and never mints into it, no other argument names the container, and
+the buffer serves that call alone.  An append in EACH arm of an `if` shares one early element,
+the second arm's mint an alias of the first's.  The window between the declaration and the
+append is what the gates read: the declaration must be the local's only binding, no statement may
+jump out of the window (a stranded early element holds the call's vector inside the container's
+store, where only a record census sees it), no statement may name the container unless the naming
+reaches only ANOTHER field, and no statement may read a VIEW the early mint could move — the mint
+is the append's growth brought forward, so a local viewing the container's element, or any heap
+parameter where the container is a caller's, declines.  `LOFT_NO_ELEMENT_PLACE=1` keeps the build
+to @PLN157's local vectors and `LOFT_NO_ELEMENT_FIRST=1` restores the temp store and the copy,
+`LOFT_TRACE_ELEMFIRST=1` names every admission and decline;
+`tests/scripts/164-element-place.loft`, `tests/element_first.rs` and the two guards
+`tests/scripts/a-rebound-element-first-temp-keeps-its-copy.loft` and
+`tests/scripts/an-element-view-read-before-an-element-first-append-is-not-moved.loft` are the
+receipts.
+
 **A branch join carries what EITHER arm borrows (loft#978).**  `it = if fresh { Item {
 … } } else { b.items["one"]? }` delivers a fresh record on one path and a view into `b`
 on the other, and which one ran is a run-time fact — so the local's type has to admit it

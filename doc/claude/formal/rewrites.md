@@ -159,9 +159,12 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
 ### A vector reached by a pure path has one header for a loop that cannot move it
 
 ```
-  (R-Base)       in a loop that GROWS no store — no push, no mint push, no
-                 null-discharge buffer minted in its body; in-place sets, store-free
-                 ops, store-free or in-place-only callees and frees may run — a
+  (R-Base)       in a loop that GROWS no store — no push, no mint push; in-place
+                 sets, store-free ops, store-free or in-place-only callees, frees
+                 and a null-discharge buffer's mint (a FRESH store, or a clear of
+                 the buffer's own — neither moves an element any header names;
+                 admitted 2026-09-18, the crossing loop's `pg_table[i]?` had kept
+                 its loop on headers alone) may run — a
                  hoisted header (R-Header) is accompanied by the address of its
                  vector's element 0, derived once beside it, and every fused element
                  read and write of the path in the loop is one bounds test against
@@ -172,7 +175,14 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  for the inner loop's extent alone: the enclosing loop's growth
                  happens outside it.  A base is valid exactly while no store's buffer
                  is reallocated, which is what "grows no store" secures; the verify
-                 form re-derives it at every use.
+                 form re-derives it at every use.  A callee TWIN (R-Inputs) takes,
+                 beside each header input, that header's base — the caller's held
+                 base where its loop holds one, else a base derived from the held
+                 header at the call — and every fused read and write of the path
+                 inside the twin, a view of the path (R-View) included, goes through
+                 it: an admitted callee (R-Callee) is store-free or writes only in
+                 place, so no store reallocates for the call's duration, which is the
+                 same condition the loop's base rests on.
 
   (R-Counter)    a counted range's counters — its `#index`, the `next` counter of a
                  computed start, and the loop variable — are never the sentinel: an
@@ -277,6 +287,43 @@ re-derives the header at every access.  Sites: `hoist::vector_path`,
 `hoist::vector_candidates`, `Output::begin_vector_hoist`, the registry's
 `FusedElementReadEmitter`, `FusedElementWriteEmitter` and `HoistedLengthEmitter`.
 
+### A record local declared in a loop keeps its store
+
+```
+  (R-LoopRecord) a plain no-heap record local declared by a statement INSIDE a
+                 loop and minted by a literal (`sub = Spec {…}` per pass) keeps
+                 its store and its record across the loop's iterations: it is
+                 declared at the loop's prelude, the per-pass mint is taken only
+                 where the local holds no store (the first pass), a complete
+                 literal writes every field over the kept record, a partial one
+                 re-establishes the omitted fields' defaults first, and one free
+                 follows the loop.  Observably the same record as a fresh one.
+                 Admitted where the local's every mention is its init family —
+                 the declaration, the mint, a fusable scalar field read or
+                 in-place write, a free — or a hand-off to a loft callee whose
+                 return does not borrow THAT parameter (O-Borrow: a callee keeps
+                 a caller's record only by copy or through its return's deps,
+                 which name the parameters they alias by index; a record
+                 function's hidden buffer is named there too and is no borrow of
+                 the argument); a heap-owning
+                 or nullable type, a second binding, a copy to another local, a
+                 return, a capture, a native op taking it otherwise, `par` and
+                 `yield` decline.  A free on a `return`/`continue` path stays.
+```
+
+**In words.** 2026-09-18, the `(R-LoopBuffer)` shape for a record.  A record literal
+bound inside a loop cost the free of its store at the body's end and a fresh store next
+pass — `free_named`, the free-slot search, the re-init, the claim, the zero, the tag: 39 ns
+per pass against 10 ns for a vector loop buffer's reset — where a local declared outside
+the loop already kept its store through `OpDatabase`'s clear arm.  Measured on the probe
+(`s = S1 { a: k }; t += s.a`, 200 000 passes): 7 600–8 500 → 480–540 µs per 200 000 passes, 39 → 2.4 ns per pass (the kept record's field write and read no longer resolve a store per pass either), value unchanged.  Switch `LOFT_NO_LOOP_RECORD`
+(and `LOFT_NO_LOOP_BUFFER_REUSE`, one family); trace `LOFT_TRACE_LOOP_RECORD=1`; falsifiers
+`LOFT_STRICT_STORES` / `LOFT_POISON` / `LOFT_POISON_CLAIM` / `LOFT_NATIVE_LEAK_CHECK` (a kept
+store must still be freed exactly once).  Sites: `hoist::loop_records`, the `Value::Loop`
+emission in `emit.rs` (prelude and postlude), `output_block` (the two dropped statements),
+`ops::misc_ops` (the kept-record mint).  Cells `tests/scripts/157-loop-record.loft` l1–l15,
+pins `tests/loop_record.rs`.
+
 ### An in-place scalar set disturbs no header
 
 ```
@@ -365,6 +412,58 @@ after a `Set(d, P)` instead of a loop body.  A length read alone earns no header
 is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
 `LOFT_HOIST_VERIFY=1`.  Sites: `hoist::view_def_header`, `Output::bind_view_header`.
 
+### A record view carries its address
+
+```
+  (R-RecPtr)     a plain-record local r bound by a statement — `e = tbl[i]?`,
+                 `s = o.inner`, a copy of another view — has its DbRef FIXED at
+                 the bind (B-View), so the address of r's first byte is one
+                 address for as long as the place lives.  It may be derived once,
+                 right after the binding, and serve every fusable scalar field
+                 read and in-place field write of r in the rest of the block —
+                 and the scalar inputs of a twin (R-Inputs) r is handed to, read
+                 through it at the call — when the remainder grows no store
+                 (R-Base's condition; a null-discharge buffer's mint is not a
+                 growth), frees no record before a later use of r, never
+                 rebinds r — a `Set`, and a NATIVE op taking r as its first
+                 operand that is not a read (`OpGet…`) or a fusable scalar set:
+                 a mint into it, a copy into it, a free — and reads, writes or
+                 hands r at least once.  A binding to null (a buffer's pre-init,
+                 minted later) is never a view.  A NULLABLE view — `e = v[i]`
+                 without `?`, the loop variable of `for e in v`, whose null is the
+                 loop's end signal — is admitted as its inner record: the null
+                 record keeps its sentinel, the address is null and every read
+                 tests it.  An enum payload and a synthetic `__nullable<S>` are
+                 not plain records and are never bound.
+```
+
+**In words.** 2026-09-18, the drawing library's crossing loop (`pg_cur = pg_table[i]?`,
+then six field reads of `pg_cur` and three more inside `edge_x` per edge per row): each
+read resolved the store — `stores.store(&db).get_int(db.rec, db.pos + off)` — where the
+Rust reference's `let cur = table[i]` reads registers.  (R-View) hoists the HEADER of a
+vector view; this is the same promise for a RECORD view, whose derivation is an address
+rather than a header.  Sound for the reason (R-Base) is: nothing in the remainder can move
+the record's bytes, and a freed record's read is excluded by order (the releases a block
+ends with follow the last use).  Measured on the `wide_line` probe: 7 800 → 5 060 ns/op
+(−35 %), 2.9× → 1.9× the reference; hand-priced first at −25 % for the reads and −15 % for
+the callee's inputs.  The first build admitted a return BUFFER's null pre-init
+(`__ref_p2_N = null`) as a binding and did not read the literal's mint into it
+(`OpDatabaseNP(buf, tp)`, a native op writing its first operand, not a `Set`) as a rebind,
+so the literal's field writes went through a null address and were dropped — a library's
+`mk()` answered a record of zeros; the suite caught it the same day (the 47 golden, the
+#672 parity test) and the two clauses above are its receipt, with cells r14/r15.  Switch
+`LOFT_NO_RECORD_PTR` (and `LOFT_NO_VECTOR_BASE`, one rule);
+falsifier `LOFT_HOIST_VERIFY=1` (`vector::rec_get` re-derives the address and re-reads
+the store at every use); trace `LOFT_TRACE_RECPTR=1`.  Sites: `hoist::record_view_ptr`,
+`Output::bind_record_ptr`, `Output::rec_ptr_read` (the twin input),
+`ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`
+(the read and the write), `vector::rec_ptr` / `rec_get` / `rec_set`.  Cells
+`tests/scripts/157-record-ptr.loft`, pins `tests/record_ptr.rs`.  The `for e in v` loop
+variable is a `Set(e, Iter…)` of the NULLABLE element type (its null ends the loop), so
+the same gate admits it once the `Optional` is peeled — the loop body reads every field of
+`e` through one address per iteration (`polygon_generic`'s first loop, `thin_line`; the
+`forview` probe — `for e in v { t += e.a * 2 + e.b - (e.f as integer) }` over 100 000 records — 562–584 → 389–405 µs per pass, −31 %, the value hand-checked).  No lane row moved: the one such loop on the drawing bench (`polygon_generic`'s `for e in edges`) appends to `pg_table` and so declines by design.
+
 ### A stdlib one-op wrapper is its op
 
 ```
@@ -427,6 +526,24 @@ replacement, whose variable numbers are the caller's), the key by
 call ask.  A scalar input still needs a leaf variable — its key carries a variable,
 not a path.  A return-buffer writer (R-Callee's second half) is admitted like any
 other: its write set is its buffer's type whole, which no parameter's field shares.
+**The address half** (2026-09-18, (R-RecPtr)): a scalar input the caller holds no VALUE
+for — the record changes per iteration — but whose record ADDRESS the caller's block holds
+is read through that address at the call (`Output::rec_ptr_read`), so `edge_x(pg_cur, y)`
+takes its twin with three loads for arguments where the plain call read three store
+resolutions inside; and handing `r` to such a twin counts as a use of `r`'s address for
+(R-RecPtr)'s admission.
+**The base half** (2026-09-18, (R-Base)'s twin clause): a header input alone left the
+twin resolving the store per element — `composite`'s `get_pixel`/`set_pixel` twins ran
+`get_elem_hoisted` through `allocations[k].ptr` on every pixel, and LLVM cannot hoist that
+load (the pointer is loaded from memory the twin's own writes may alias; LTO and a
+`noalias` ABI were both measured as no gain).  So the twin's signature carries `__ib_k:
+*const u8` after its headers, `twin_call_inputs` passes the loop's `__vb_N` or
+`vector::vec_base(&hdr, …)` at the call, `push_twin_frames` binds each base under the
+header's key, and `bind_view_header` shares a held base with the view it binds
+(`__vb_N = __ib_k`), so `ops::vector_ops`' fused read and write take `get_elem_at` /
+`vec_set_at` through the base exactly as inside a growth-free loop.  Switch
+`LOFT_NO_TWIN_BASE`; falsifier `LOFT_HOIST_VERIFY=1` (the base re-derived at every use);
+cells `tests/scripts/157-twin-base.loft`, pins `tests/twin_base.rs`.
 
 ### A push keeps its own header current
 
@@ -469,7 +586,18 @@ and `PreAllocEmitter`, `Stores::push_hoisted`.  Shipped: the consumer's `lock_cu
                  named by a variable whose getter the prelude already ran.  The
                  same op names over a KEYED collection are a keyed insert — a mover
                  of OTHER records — and stay blocking: admission asks the TYPE,
-                 never the op shape.
+                 never the op shape.  A mover whose ROOT the body REBINDS takes no
+                 holder (a holder describes what the root named on the way in);
+                 it declines the loop unless every rebind is alias-free — a null,
+                 or the projection OpGetField(b, …) of a buffer var b the EMITTER
+                 owns the mint of (a § V-al loop buffer, a § V-z element-first
+                 witness), which names a fresh store's root or a fresh element's
+                 field slot that no kept header can describe.  Such a mover's ops
+                 keep their templates or take a GROUP header (R-GroupPush), and the
+                 loop is not growth-free.  The same clause admits OpDatabase(b, …)
+                 on such a b (a fresh store, a length reset of its own, or nothing
+                 at all) and the § V-z paired copy into the element's field slot
+                 (emitted as nothing) as statements that move no held record.
 ```
 
 **In words.** @PLN157 § V-s.  Before it, `OpNewRecord`/`OpFinishRecord` were
@@ -483,6 +611,28 @@ the sabotage turns the write-through-parameter and write-through-alias cells red
 `LOFT_HOIST_VERIFY=1` panics naming the stale scalar.  Switch `LOFT_NO_MINT_HOIST`;
 falsifier `LOFT_HOIST_VERIFY=1`.  Sites: `hoist::mint_path`,
 `hoist::blocks_header_hoist`, `hoist::body_writes`, the mint arm in `hoist::hoistable`.
+*The rebound clause (2026-09-18):* the drawing library's `fronds` declares its point and width
+vectors per pass of the side loop, and every rebound mover declined the WHOLE loop — so
+neither the side loop nor the `for i` around it hoisted anything (the `for i` was declined a
+second way, by its per-pass `fd_sides` loop buffer's `OpDatabase`).  A rebind from the
+emitter's own buffer is the one rebind that cannot alias a held vector, so it costs the mover
+its holder and nothing else.  Falsified on the alias the clause refuses: a mover rebound to a
+VIEW of a held vector (`w = &big; w += [...]` beside `len(big)`) must still decline the loop,
+or the hoisted length answers the pre-push count (`tests/scripts/157-group-push.loft` g7).
+Switch `LOFT_NO_REBOUND_MOVER`; trace `LOFT_TRACE_HOIST_DECLINE=1` names the first statement
+that declines a loop.  Sites: `hoist::HoistOwned`, `hoist::rebinds_alias_free`, the
+`buffer_alloc`/`elided_copy` arms in `hoist::blocks_header_hoist`, the rebound arm in
+`hoist::hoistable`, `Output::hoist_owned`.  *The same clause reaches `(R-Scalar)`'s write set
+(the same day):* the loop the clause admitted still hoisted no scalar, because the write-set
+walk answered "untyped" at the very statements the admission let through — the loop buffer's
+`OpDatabase`, the `(R-LoopRecord)` local's mint, and the element-first copy into a fresh
+element's field.  Each is now typed: a vector buffer's mint writes no record a hoisted scalar
+can name, a loop record's mint is a write of its whole TYPE (evicting scalars hoisted off that
+type — the type-keyed conservatism `(R-Scalar)` already has), and a copy into a fresh
+element's field is `(R-Mint)`'s own exemption.  `fronds`' outer loop then reads its `sp`
+parameter's twelve fields once per activation: 69.8 → 64.9 µs per call (`tests/scripts/
+157-group-push.loft` g11, g12; trace `LOFT_TRACE_HOIST_DECLINE=1` now also names the node
+that left a write set untyped).  Sites: the owned arms in `hoist::body_writes`.
 
 ### A record append emits through its push header
 
@@ -500,10 +650,14 @@ falsifier `LOFT_HOIST_VERIFY=1`.  Sites: `hoist::mint_path`,
                  vector_finish was.  A growth step is the runtime's own append
                  followed by a fresh header (R-Refresh), taken BEFORE the element's
                  writes so they land in the moved record.  Admission asks the TYPE:
-                 an element owning heap (text, a nested collection) keeps the
-                 templates, because a raw slot carries stale bytes where a heap
-                 handle's zero matters; a __nullable element's discriminant is not
-                 a field the literal writes.
+                 the element must be a plain struct — a __nullable element's
+                 discriminant is not a field the literal writes.  An element that
+                 OWNS heap (text, a nested collection) takes the header too, its
+                 slot ZEROED at the mint (push_record_hoisted_zero): the zero is the
+                 whole of what the prefill did for its handles, and a raw slot's
+                 stale handle is exactly what a reused buffer's slot carries.  The
+                 § V-z element minted at its temp's declaration emits through the
+                 same header when the container holds one.
 ```
 
 **In words.** @PLN157 § V-t.  Before it, an admitted mint still paid per element a
@@ -523,6 +677,195 @@ the finish).  Sites: `hoist::mint_push_qualifies`, the mint arm in `hoist::hoist
 `Stores::push_record_hoisted`, `Stores::push_record_finish`.  Shipped: standalone
 `smooth` −32 % (3 070 → 2 090 ns/op), consumer `smooth` 11.0× → 4.6× and `fronds` 11.1× →
 8.4× of Rust on the measuring box, 14/14 hashes unchanged.
+*The heap clause (2026-09-18):* `fronds`' element is `Frond { fpts, fwid }`, two vector
+handles, so every one of its 1 272 mints per call paid the dispatch and a `set_default_value`
+walk whose whole effect was two zero words.  Falsified by sabotage: `push_record_hoisted_zero`
+made to skip its `zero_range` turns the reused-buffer cell red on `--native` under
+`LOFT_POISON_CLAIM=1` — the slot's poisoned handle is read as the element's `xs` vector, a
+store guard panic naming record `3735928559` — while the plain run (zero-on-claim) stays
+green, which is why that falsifier and not the plain run guards the clause.  Switch
+`LOFT_NO_HEAP_RECORD_PUSH`; cells `tests/scripts/157-group-push.loft` g2, g3, g8–g10; pins
+`tests/group_push.rs`.  Sites: `hoist::mint_push_qualifies` (`heap`), `NewRecordEmitter`,
+`Output::write_elem_first_mint`, `Stores::push_record_hoisted_zero`.
+
+### A mint group outside any held header binds its own
+
+```
+  (R-GroupPush)  a mint GROUP — OpPreAllocVector(P, n, size) · n × (e = OpNewRecord(P)
+                 · writes into e · OpFinishRecord(P, e)) — over a bare-variable plain
+                 vector P (the (R-Mint) shape) whose path holds NO record-push header
+                 where it stands, whose every mint qualifies under (R-PushRec), and
+                 whose every OTHER statement up to the n-th finish is one the header
+                 admission lets through (an in-place set, a store-free builder, a
+                 § V-d fresh delivery, a nested mint on another path) with P never
+                 rebound and never minted or reserved outside the count, binds a
+                 push header of its own right after its reservation and emits its
+                 mints and finishes through it (R-PushRec), the header dying at the
+                 n-th finish; every read of P inside the group stays a store read.
+                 The reservation STAYS — it is what gives the header its capacity —
+                 and a growth inside the group is (R-Refresh)'s.  A builder that may
+                 write a store, a mint or finish on P nested where the count cannot
+                 see it, and a group that runs out before its n-th finish each keep
+                 the templates, which resolve per element and are always right.
+```
+
+**In words.** @PLN157 (2026-09-18).  `(R-PushRec)` gave the header to a mint INSIDE a loop
+that holds one; every other append — a literal group at function level, a group inside a
+loop that declined, a group on a per-pass local — paid the `record_new` dispatch, the prefill
+and the `record_finish` dispatch per element: the drawing library's `fronds` built its 1 296
+points per call that way (`fd_pts += [pt(…), pt(…)]`, `fd_pts` declared per pass), 15 µs of a
+102 µs call.  The group's own reservation already guarantees the slots, so the header derived
+after it is exact for the whole group, and the group is straight-line code the parser emits —
+the same producer `(R-Mint)` trusts.  Hand-priced first on the lean emission (H7 −15 µs, H8
+the heap clause −12 µs, together −33 µs), then built: `fronds` 101.7 → 69.6 µs per call
+(2.71× → 1.86× of the Rust reference), hash `ebcfd875` on every run, the hand ceiling met.
+The audit reads the group's close marker (`// @FR-R-GroupPush group __ph_N closed`) because
+the header's Rust binding outlives the group.  Switch `LOFT_NO_GROUP_PUSH`; falsifier
+`LOFT_HOIST_VERIFY=1` (the header re-derived at the slot and the finish; the growth cell g6
+is the one that moves the record mid-group).  Cells `tests/scripts/157-group-push.loft`
+g1, g3–g7, g10; pins `tests/group_push.rs`, and `tests/record_push.rs` re-derived where the
+group reaches a cell the loop declined (c8, c11, c15).  Sites: `hoist::mint_group`,
+`Output::bind_group_push`, `Output::close_groups_before`, `Output::hoist_tiers`, the
+`GROUP_CLOSE` rule in `scripts/emission_audit.py`.
+
+### An integer operator whose result provably fits emits the plain operator
+
+```
+  (R-Range)      an integer `+`, `-`, `*`, negation, `/` or `%` whose RESULT lies in a
+                 range the emitter can prove — a literal by its value; `a & lit` (a
+                 non-negative literal) in `0 ..= lit` when `a` is NON-SENTINEL; `&`
+                 and `|` over two non-negative ranges; `>> k` of a range; `+ - *` and
+                 negation by interval arithmetic over ranged operands whose result
+                 fits `(i64::MIN, i64::MAX]`; `/` and `%` by a ranged divisor whose
+                 range excludes zero; a text's size and a vector's length in `0 ..=
+                 u32::MAX` (the store's length word); a text byte in `0 ..= 255`; an
+                 `if` merge as the union of its arms; a counted range's counters from
+                 ranged ends; a LOCAL whose every assignment is ranged, never handed
+                 out by reference and never a self-step; a ONE-EXPRESSION callee
+                 evaluated over its arguments' facts, three calls deep at most —
+                 emits the processor's operator (`wrapping_*`, bare `/` `%`): no
+                 operation can fault, so the plain answer IS the checked template's.
+                 A range implies non-sentinel: the sentinel is never inside one, and
+                 a parameter or a record/element read is never ranged (C80).  The
+                 fallback is the checked template, always right.
+```
+
+**In words.** 2026-09-20.  C120 declined the CLOSURE of the non-sentinel proof over
+arithmetic — an overflow's null must propagate on both backends — and named the admissible
+successor: *"a PROOF, not a policy: arithmetic whose operands carry ranges such that the
+result CANNOT overflow may emit the plain operator, because no fault can occur and no value
+can differ."*  `(R-BoundedNest)` built it for one loop shape with a run-time guard; this is
+the same proof for straight-line arithmetic, decided at generation time
+(`generation::range`, mirroring the non-sentinel proof's per-function fixpoint).  The one
+rule that needed its own falsifier is the mask: `null & 255` is null
+(`op_logical_and_int` propagates the sentinel), so `a & lit` is ranged only over a
+non-sentinel `a` — the a9 cell holds a null read from past a vector's end, and the mask
+rule without that requirement answers `1` for null.  Beside it the non-sentinel proof gained
+a callee's RETURN summary (`callee_returns_non_sentinel`: every exit non-sentinel under the
+callee's own facts, parameters trusted for nothing), which is what lets `color_a(get_pixel(…))`
+range at all — the pixel is any integer, the accessor's `?? 0` makes it non-null, the mask
+makes it a byte.  Measured on `composite_layer`: 24 of its 36 checked operators take the
+plain form and the row does NOT move — the twelve that remain (`j * lw + i`, `x0 + i`,
+`y0 + j`, the accessors' `by * width + bx`) have record-scalar or parameter operands no
+static proof can bound, and the ceiling (every operator plain, −33 %) is carried by exactly
+those (class split: those six −35 %, the counters −5 %, the divisions −3 %).  That is what
+`(R-GuardedChain)` is for.  Switch `LOFT_NO_RANGE_ARITH`; falsifier `LOFT_HOIST_VERIFY=1`
+(`ops::range_verify` compares the plain answer with the checked one at every admitted
+operator).  Cells `tests/scripts/157-range-arith.loft` a1–a9, pins `tests/range_arith.rs`.
+
+**The counted-counter clause was INERT until 2026-09-21** (loft#1558).  It is listed above
+and was written, but no counted loop ever got a range: the seeding looked for the counter's
+SEED inside the loop, and the parser emits `index = <start>` as the statement BEFORE it, so
+`seeds` was always 0.  The seed is now looked for in the whole FUNCTION, which is what makes
+it sound rather than merely wider — `v_seed` counts every non-step `Set` to that counter
+anywhere, so a counter written from a second place declines on `seeds != 1` instead of taking
+the first value it meets.  Nothing made the gap visible, because the one pin that would have
+shown it (a4's `wrapping_mul` on `i * i`) was recording a plain form supplied by
+`(R-GuardedChain)`'s duplicated copy, not by this proof: **a pin can borrow another
+rewrite's evidence and read as proof that its own clause works.**  It surfaced only when the
+guard's profitability gate declined that loop and took the borrowed evidence with it.
+Measured against the clause inert, same lane and invocation: `smooth` +12.9 %, `fill_circle`
++2.9 %, `hash` +1.8 %, `render_marks` +1.5 %, `resize` +1.1 %, every other row within its
+swing.  Cells b1–b6, of which b3/b4 are the BOUNDARY PAIR: they differ only in the range's
+end (`0..=10` against `0..=9`, `i * 1e18` crossing i64::MAX between them), so the multiply's
+verdict is a claim about the counter's top bound and nothing else — a top taken one too LOW
+is the only unsound direction, and it turns b3 red and makes `LOFT_HOIST_VERIFY=1` panic
+naming the operator.
+Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range arm in
+`ops::int_arith`, `Output::op_range`, `non_sentinel::callee_returns_non_sentinel`.
+
+### A counted loop's index chains run plain behind a guard
+
+```
+  (R-GuardedChain) a counted loop whose body holds CHAINS of `+`, `-`, `*` and negation
+                 over literals, the loop's own counters, the counters of a counted loop
+                 NESTED in it, integer locals the loop never writes (nor takes the
+                 address of) and record scalars an enclosing frame hoisted, runs those
+                 chains with the processor's PLAIN operators when a guard, evaluated
+                 once at the loop's entry, proves that none can fault: the range's
+                 ends are not the sentinel; every invariant leaf is not the sentinel
+                 (`checked_abs` fails on `i64::MIN`); every nested loop's seed and end
+                 are bounded over the same leaves; and the MAGNITUDE BOUND of every
+                 chain — a literal by its value, a counter by the larger of its
+                 range's ends plus one, an invariant by its absolute value, `+`/`-`
+                 summing and `*` multiplying, each step checked — fits the type.  A
+                 bound that fits means every true intermediate fits, so the plain
+                 operator answers exactly what the checked template would; every
+                 OTHER operator of the body is untouched.  An INNERMOST loop (no
+                 loop inside it) is emitted twice, the guarded copy plain and the
+                 checked loop as the `else` arm; a loop with loops inside is emitted
+                 once, each admitted operator branching on the guard, so nothing below
+                 it is duplicated — its nested loops guard their own chains.  A body
+                 carrying a `Yield`, a `Parallel` or a `CallRef` is never copied: it
+                 is not this rewrite's to run twice, and a generator's loop body
+                 carries the native collector's REFUSAL, which copied reaches the
+                 author twice.  Inside a COROUTINE's state machine the guard is
+                 not emitted at all: a persistent local is spelled `self.var_…`
+                 there, so a guard naming one emits an identifier that does not
+                 exist, and the machine RE-ENTERS its loop across a `next_*`
+                 call, so a fact proved once at entry is not proved for the
+                 resumes after it (`R-BoundedNest`'s guard declines there for the
+                 same second reason).  A loop with ONE admitted operator declines on
+                 PROFITABILITY: the guard is a fixed cost per loop ENTRY and the
+                 saving is one null test per operator per ITERATION, and an
+                 innermost loop is emitted twice — in a small hot function that
+                 doubling costs the inline.  Measured against the guard off, the
+                 one-operator loops in `pil_hline` and `matches_at` cost
+                 `fill_circle` and `fill_star` ~50 %, `wide_line` 22 % and `parse`
+                 18 %, while six-operator `composite_layer` gains 30 %.  An
+                 UNDER-approximation, and the residual is stated rather than hidden:
+                 `hair_brush` has the same six operators as `composite_layer` and
+                 LOSES ~8 %, so operator count does not separate them — trip count
+                 does, and that is not a compile-time fact here.  The
+                 `*Nullable` twins of `+ - *` are chain operators too: a chain the
+                 guard admits has no fault for them to be silent about.  A chain any
+                 of whose leaves is not one of these is declined whole and its
+                 sub-chains asked again.  A loop already admitted as a bounded nest is
+                 not guarded twice.
+```
+
+**In words.** 2026-09-20.  `(R-BoundedNest)`'s method — a fact ESTABLISHED before the
+arithmetic runs, in the same magnitude-bound arithmetic the rule states — for the index
+chains of any counted loop, where the static `(R-Range)` proof stops: `composite_layer`'s
+`j * lw + i`, `x0 + i`, `y0 + j` read record scalars (`lay.lw`, `lay.x0`) that a program
+cannot bound at generation time and a guard can bound at the loop's entry in six checked
+operations.  Measured, `composite` 103 → 68 µs per call (−34 %, the hand ceiling for those
+six operators met), hash exact; the trace shows the guard admitting the graphics library's
+`fill_rect`, `fill_triangle`, `resample`, `mat4_mul`, `sphere` loops as well.  A leaf may be
+a PARAMETER — the guard tests its value — where the static proofs never trust one.  The
+two emission forms were measured against each other: the branch-per-operator form alone
+keeps `composite` at −21 % (LLVM does not unswitch a body that calls), the innermost
+loop's duplicated copy gives the full −35 % at +7 % emitted lines on the drawing probe;
+duplicating every guarded loop cost +16 % and doubled every per-function pin, which is
+why only the innermost loop — where the time is and the body is small — is copied.  Found by
+the cells: a `(R-LoopRecord)` local declared at the loop's prelude must be declared before
+the guard and freed after BOTH arms, or the plain arm neither sees it nor frees it (the
+`Value::Loop` emission's order was corrected for the bounded nest too).  Switch
+`LOFT_NO_GUARDED_CHAIN`; trace `LOFT_TRACE_CHAIN=1`; falsifier `LOFT_HOIST_VERIFY=1`
+(`ops::range_verify` at every admitted operator).  Cells `tests/scripts/157-guarded-chain.loft`
+c1–c6, pins `tests/guarded_chain.rs`.  Sites: `Output::chain_fast_path`,
+`Output::in_plain_chain`, `hoist::nested_counted_loops`, `hoist::written_vars`, the chain
+arm in `ops::int_arith`, the loop hook in `emit.rs`.
 
 ### A dying temporary's elements move into the append that consumes them
 
@@ -651,6 +994,63 @@ second statement keep the loop.  Switch `LOFT_NO_FILL_HOIST`; falsifier
 `tests/scripts/157-fill-hoist.loft`; `LOFT_TRACE_FILL=1` names the check that declined a
 loop.  Sites: `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoisted`.
 
+### A nest whose arithmetic cannot fault runs plain
+
+```
+  (R-BoundedNest) an innermost counted loop whose body is ONE accumulate over
+                 `?`-discharged element reads — `acc = acc + term`, the term a
+                 chain of `+`, `-`, `*` and negation over literals, the loop's
+                 counters, variables the loop does not write, and reads
+                 `v[chain]?` of `integer` vectors — runs with the processor's
+                 PLAIN operators when a guard, evaluated once at the loop's
+                 entry, proves that no operation in it can fault: the range's
+                 ends are not the sentinel and the trip count is positive; no
+                 invariant is the sentinel; every vector read has a known
+                 element bound (no stored null); and the MAGNITUDE BOUND of every
+                 chain and of `|acc| + trips × bound(term)` — literals by value,
+                 counters by the larger range end, reads by their vector's bound,
+                 `+`/`-` summing and `*` multiplying, each step checked — fits
+                 the type.  A bound that fits means every true intermediate
+                 fits, so the plain operator answers exactly what the checked
+                 template would; otherwise the checked loop runs, unchanged.
+                 An element bound is a fact about VALUES, taken once at the
+                 outermost loop whose body neither writes the vector (an element
+                 or field set through it, an append, a rebind of its root) nor
+                 hands it to a call — never at the nest's own prelude.
+                 When every read's chain names the counter at most ONCE (so it
+                 is affine, and its extremes over the range are its values at
+                 the two ends), the guard also requires both ends in [0, len)
+                 for every read; then each read is one load through the held
+                 base with no bounds test and no null select — the element
+                 bound has already ruled out a stored null.  A read outside the
+                 range at either end declines the nest whole.
+```
+
+**In words.**  @PLN157's guarded plain nest, the admissible successor C120 names: the
+integer closure is not taken (R-Counter) because an overflow's null must propagate on both
+backends, so the plain form is admitted only where a fact ESTABLISHED before the arithmetic
+runs says no overflow can occur — which is exactly what the guard checks, in the same
+magnitude-bound arithmetic the rule states, with `checked_*` operators whose failure is the
+decline.  The reads stay what they were (a bounds-tested load and the discharge's null
+test); what goes plain is the index chain, the product and the accumulate — the taps of a
+resample, where they were 12 checked operators per tap and ~55 checking instructions in
+front of the arithmetic.  The bound's placement is the cost model: one linear pass per pass
+of the nest's enclosing loop, against the nest's taps under it; at the nest's own prelude
+it would be the nest's cost again, which is why a function-level nest with no enclosing
+loop declines.  A stored null, an accumulator near the maximum, a null invariant and a
+vector written by the enclosing loop are the cells that must DECLINE
+(`tests/scripts/157-bounded-nest.loft` n2, n3, n7c, n8, n16, n17); a read one past the end
+and a chain that goes negative decline the RAW form and answer through the checked loop
+(n19, n23), while the last element, a negative coefficient and a constant index are in range
+(n18, n20, n22) and a counter named twice is not affine (n21).  Switches
+`LOFT_NO_BOUNDED_NEST` and, one step finer, `LOFT_NO_NEST_RAW_READS` (the plain arm keeps its
+bounds-tested reads); falsifier `LOFT_HOIST_VERIFY=1` (every plain operator's answer is
+compared with the checked template's at the operator — `ops::nest_verify` — and every raw read
+with the checked read); trace `LOFT_TRACE_NEST=1`.  Sites: `hoist::bounded_nest`,
+`hoist::nest_read_paths`, `Output::nest_fast_path`, `nest_bound_expr`, `nest_chain_at`,
+`ops::int_arith::nest_form`, `ops::vector_ops` (the raw read), `Output::output_if_inner` (the
+select), `vector::abs_bound_i64`.
+
 ### A witnessed buffer is allocated once, not minted per call
 
 ```
@@ -770,12 +1170,42 @@ panic's frame block read.  Switch `LOFT_NO_LEAF_CHAIN` (one step finer than
                  finish — by the prelude mint's prefill, a paired build, or the
                  kept sets.  Gates: declaration and append are top-level
                  statements of ONE block (an if-arm append strands unfinished
-                 elements per skipped iteration); nothing between them mentions
-                 `out`; the temp's whole-function mentions reconcile to its build
-                 plus the one copy (a later read or a second consuming append
-                 declines — though an INTERVENING append merely reads the slot and
-                 the later one may pair); `out` an owned never-rebound plain
-                 vector of a plain-struct element.  The interpreter keeps the
+                 elements per skipped iteration) — or (@PLN164 E-2b) the append
+                 stands in EACH arm of an `if` that block holds, into the same
+                 destination with the same temps, and the two arms share ONE early
+                 element: the second arm's mint becomes an alias of the first's,
+                 each arm keeping its own writes and its finish; no statement
+                 between them jumps out of it (a `return`, `break` or `continue`
+                 strands the element the same way, holding what the temp built);
+                 nothing between them names `out` in a way that reaches its
+                 collection (for a FIELD destination a naming that reaches only
+                 another field moves nothing, `namings_avoid_place`); and nothing
+                 between them READS A VIEW the early mint may have moved — the
+                 mint is the append's GROWTH brought forward, and `(B-Disturb)`'s
+                 copies were placed against the growth where the IR has it
+                 (loft#1553): a local whose deps close over `out`'s store, and,
+                 where that store is a caller's, any heap parameter (a caller may
+                 hand an element in beside its container), decline — except a
+                 local whose every binding views a SIBLING field, whose
+                 collection the growth does not move; the temp's declaration is its ONLY
+                 binding (a rebind points the temp at another store, and the
+                 element keeps what the declaration built); the temp's
+                 whole-function mentions reconcile to its build plus the one copy
+                 (a later read or a second consuming append declines — though an
+                 INTERVENING append merely reads the slot and the later one may
+                 pair), where an admitted function's own EXIT copies are not
+                 mentions (the value form drops them, `(O-ViewField)`); `out` is
+                 never rebound, and its element a plain struct stored inline.
+                 `out` is a local vector, or (@PLN164 E-2) a collection FIELD of a
+                 record variable — a parser appending into `sc.ops` — and the temp
+                 is a local built from a literal, or (E-2) the result of a call
+                 handed a hidden buffer that serves it alone: the call is then
+                 handed the element's field as that buffer, which is `(R-Place)`'s
+                 "the buffer IS the place" with the place made to exist by the
+                 early mint, and it needs `(R-Place)`'s callee condition — a
+                 callee that FILLS its buffer and never mints into it — and its
+                 argument condition — no other argument names `out`.  A value the
+                 list does not declare keeps its copy into the early element.  The interpreter keeps the
                  temp-store build and is the oracle.
 
   (R-ValueRecord) a function whose result is a PLAIN NO-HEAP RECORD of at most six
@@ -1012,7 +1442,29 @@ Two instruments check the assumptions, and the chapter is not complete without b
 
 ## Deviations
 
-**OPEN: 0** (2026-09-09).
+**OPEN: 0** (2026-09-17).
+
+- **D-rw-3 — OPENED AND CLOSED 2026-09-17 (loft#1553).**  `(R-ElemFirst)` moves the append's
+  mint — its GROWTH — to the temp's declaration, and the gate asked only whether a statement in
+  between NAMED `out`.  A view of `out`'s element is another variable: `e = out[0]; ws = [];
+  ws += […]; w = e.fid; out += [F { fpts: ws }]` left `e` a view (the scope pass saw the growth
+  at the append, after the read), and on `--native` it read the vector record the early mint
+  had relocated — `4609434218613702656` for `100` at the eleventh element, silently, since
+  @PLN157 § V-z.  Found by @PLN164 E-2b's growth-boundary sweep.  Closed at the gate: the
+  window may not read a local whose deps close over `out`'s store or, where that store is a
+  caller's, a heap parameter; a view of a sibling field is spared by the scope pass's own place
+  model.  Guard `tests/scripts/an-element-view-read-before-an-element-first-append-is-not-moved.loft`;
+  cells `g25`–`g27` of `164-element-place.loft` for the field destination.
+
+- **D-rw-2 — OPENED AND CLOSED 2026-09-17 (loft#1552).**  `(R-ElemFirst)` says the temp is consumed
+  exactly once, and the gate counted its READS but never its BINDINGS: `p: vector<Pt> = [];
+  if c { p = mk(n) }; out += [Op { pts: p }]` bound `p` to the early element's field at the
+  declaration, the conditional rebind pointed `p` at the call's store, and the suppressed copy
+  left the element holding the empty vector — `len(out[0].pts)` 0 where the interpreter says 3
+  (`1000` for `1093` in the guard), silently, on `--native` since @PLN157 § V-z.  Found by
+  @PLN164 E-2's cell `g13`, which widened the same gate.  Closed at the gate: the declaration
+  must be the temp's only binding.  Guard
+  `tests/scripts/a-rebound-element-first-temp-keeps-its-copy.loft`.
 
 - **D-rw-1 — CLOSED 2026-09-09.**  `one_op_wrapper` asked the body's SHAPE and not
   the definition's ORIGIN, so a user function whose body is one op (`fn reader(w:

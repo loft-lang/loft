@@ -410,6 +410,14 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
   own message and was never in question here.
   **Where:** `def_reshape_refusals` ran `ViewWalk::run(..., Some(removed), None, …)` — `removed`
   passed, `disturbed` withheld.
+  **Two shapes the call-site half also missed, and the blast radius, measured before landing.**
+  Its element test did not count the nullable element read a FORMAT string passes
+  (`print("{shift(v[2], v)}")` printed the moved element's stale bytes) nor a `?`-discharged one;
+  the test reads the place through `value_view_places` now, and a SIBLING field's growth still
+  compiles.  Over the 1629-file corpus and the consumer sources (crawler, dryopea, moros,
+  zero-trust-shared-files, loft-libs-*) the wider refusal names ONE program —
+  `164-element-place`'s `g27`, written to hand a container and its element in, now called
+  through a fn-ref, which is the one edge the refusal cannot follow.
   ⚠ **The lesson, and it cost the first reading of this defect a much larger cure.**
   `ViewWalk::shake_plain_places`'s doc SAID it works *"over PLAIN views only, leaving every `&`
   link alone"*, which described its INTENT for the materialise consumer and not what it does.  The

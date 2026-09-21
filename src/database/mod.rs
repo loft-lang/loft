@@ -2217,6 +2217,24 @@ impl Stores {
         }
     }
 
+    /// `@FR-R-PushRec`'s heap clause — [`Self::push_record_hoisted`] for an element that
+    /// OWNS heap: the slot is ZEROED before it is handed out, which is the whole of what the
+    /// default prefill did for its handles (a vector, text or nested-record handle of 0 is
+    /// the empty one), so the group's writes land on a slot no stale handle can be walked
+    /// from.  One range write against the per-field type walk the prefill was.
+    pub fn push_record_hoisted_zero<const VERIFY: bool>(
+        &mut self,
+        p: &mut crate::vector::PushHeader,
+        db: &crate::keys::DbRef,
+        size: u32,
+    ) -> crate::keys::DbRef {
+        let e = self.push_record_hoisted::<VERIFY>(p, db, size);
+        if e.rec != 0 {
+            self.allocations[e.store_nr as usize].zero_range(e.rec, e.pos, size);
+        }
+        e
+    }
+
     /// The finish half of [`Self::push_record_hoisted`]: the length bump, written to BOTH
     /// the header and the record — the one step that makes the element visible, exactly as
     /// `record_finish`'s `vector_finish` was for the unfused group.

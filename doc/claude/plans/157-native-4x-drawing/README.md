@@ -21,6 +21,135 @@ place), § V-e (the runtime's per-allocation overhead), § V-f (the runtime's
 per-record bookkeeping) and § V-g (read-only view elision at a record join)
 SHIPPED (see Sub-arcs); the queue is re-ranked below, and **§ Where to
 resume** is the hand-off for the next session.
+**`R-BoundedNest` SHIPPED 2026-09-17** (`formal/rewrites.md`, the queue's item 2 and C120's
+admissible successor): an innermost counted loop that accumulates `?`-discharged element
+products runs with PLAIN operators behind a guard evaluated once at its entry — every range end
+and invariant not the sentinel, every read's element bound known (taken once at the outermost
+loop that leaves the vector alone), the magnitude bound of every chain and of
+`|acc| + trips × bound(term)` fitting `i64` — with the checked loop as its `else`.  Measured
+on the arm64 lane (`compare.py`, 14/14 hashes): `render_marks` 6.11× → **2.69×**,
+`render_lock` 4.87× → **2.76×**, `resize` 5.37× → **2.42×**, the rest within noise — **every
+judged row but `lock_curved` (3.87× on this lane) is under the 3× bar, median 2.35×**.  Beside
+it a runtime item the same session's `sample` profile named: a self-append (`v += v`, the
+canvas fill's doubling ladder) copied byte by byte through a snapshot and, for heap-owning
+elements, read the source through a freed block — one block copy now, both backends,
+`render_marks` −8 % (D-heap-17).  **Step 2 the same evening:** where every read's chain is affine
+in the counter the guard also proves both range ends in `[0, len)` and the arm reads RAW through
+the held base with no null select — the vectorisable multiply-accumulate: `render_marks`
+1 740 → **1 125 µs/op (−35 %), 1.75× its reference**; the branchless `abs_bound_i64` −4 % beside
+it.  The full lane after step 2 (arm64, `compare.py --repeat 3`, two interleaved rounds against the
+step-1 arm, 14/14 hashes): `render_marks` 2.79–2.86× → **1.54–1.74×**, `render_lock` 2.68× →
+**2.01×**, `resize` 2.34× → **1.35–1.37×**, every other row within noise; **median 2.02×**, the
+(Perf-Weight) median bar met on this lane, `lock_curved` (3.85×) the one row still over 3×.  Switches `LOFT_NO_BOUNDED_NEST`, `LOFT_NO_NEST_RAW_READS`, `LOFT_NO_SELF_APPEND_BLOCK`;
+falsifier `LOFT_HOIST_VERIFY=1` (`ops::nest_verify`, and the raw read compared with the checked
+one); pins `tests/bounded_nest.rs`; cells `tests/scripts/157-bounded-nest.loft` n1–n23.
+**`R-Range` + `R-GuardedChain` SHIPPED 2026-09-20** (`formal/rewrites.md`; C120's admissible
+successor built twice — the static interval proof and the run-time guard for a counted loop's
+index chains): `composite` 103 → **68 µs** per call (−34 %, the hand ceiling for its six
+record-scalar chains met), hash exact, the guard admitting loops across the graphics library.
+The static half alone moved nothing on `composite` and says why in its prose (the twelve
+operators that carry the cost have operands no static proof can bound).  `parse` analysed in the
+same pass: scanner-bound (1.6× alone; inlining `size` and `byte_at` by hand is a wash), the rest
+a long tail — no compiler lever of this kind.  Switches `LOFT_NO_RANGE_ARITH`,
+`LOFT_NO_GUARDED_CHAIN`; trace `LOFT_TRACE_CHAIN`; cells `157-range-arith.loft` a1–a9,
+`157-guarded-chain.loft` c1–c6; pins `tests/range_arith.rs`, `tests/guarded_chain.rs`.
+Three follow-ups the CORPUS caught and no pin did, all on 2026-09-20: a guarded body carrying
+a `Yield`, a `Parallel` or a `CallRef` is never COPIED (a generator's loop body carries the
+native collector's refusal, delivered twice when duplicated); inside a coroutine's state
+machine NEITHER loop-entry guard is emitted at all (a persistent local is spelled
+`self.var_…`, so the guard named an identifier that does not exist — `E0425`, `928-generator-
+duplicate-local-name.loft` — and the machine re-enters its loop across a `next_*` call, so a
+fact proved once at entry is not proved for the resumes after it, which is the reason that
+survives a spelling fix and is why `R-BoundedNest` declines there too); and two pins were
+re-derived, `release_pass_probe`'s "no wrapping operator without the probe" (retired: the two
+rewrites are now sources of one, and what separates the builds is that every UNPROVEN operator
+keeps its checked helper) and `push_hoist` n_c7 (1, 1, 1) → (1, 2, 1) (its inner loop is
+innermost, so the one hoisted push appears in each of the two arms).
+
+**Next unit, MEASURED and not built — the guard should skip what `(R-Range)` already proved
+(2026-09-21).**  Making the counted-counter clause live (loft#1558) left `(R-GuardedChain)`
+guarding chains that are plain in BOTH arms, so the guard evaluates and — for an innermost
+loop — duplicates the body for nothing: `157-guarded-chain.loft`'s c4 is the clear case, where
+the range proof now reaches the whole chain and the guard converts not one operator.  Built as
+a probe (collect the range-proved chain nodes before the closures take their borrows, skip them
+in the collection, so the profitability count sees only what the guard actually converts) it
+took the drawing bench's admitted loops from **29 to 13** with every cell green on both
+backends, and the lane moved **`wide_line` +4.3 %, `lock_curved` +4.0 %, `lock` +3.1 %,
+`parse` +2.7 %, `render_lock` +1.0 %, `hair` +1.0 %**, the rest inside the swing.  Reverted
+unbuilt because it churns four more emission pins (`guarded_chain`, `invariant_arith`,
+`complete_write`, `callee_inputs`) on top of the six loft#1558 already re-derived, and that is
+its own arc with its own cells and falsification.  The probe is the cheap part; the pins are
+the unit.
+
+**The chain guard's profitability gate, 2026-09-21.**  `(R-GuardedChain)` shipped costing
+four rows what it gained on one.  A loop with ONE admitted operator now declines: the guard is
+a fixed cost per loop ENTRY against a saving of one null test per operator per ITERATION, and
+the innermost form is emitted twice, which in a small hot function costs the inline.  Measured
+against the guard off: `fill_circle` 1.88× → **0.90×**, `fill_star` 1.97× → **0.92×**,
+`wide_line` 2.34× → **1.73×**, `parse` 3.03× → **2.52×** (the one-operator loops in
+`pil_hline`, per scanline, and `matches_at`, ~2 000 calls per parse), while six-operator
+`composite_layer` keeps its 89.0 → 62.1 µs.  Found with `LOFT_GUARDED_CHAIN_ONLY=<fn>`, which
+attributes a moved row to ONE admitted loop where a whole-program A/B cannot.  Residual stated
+in the rule: `hair` is ~8 % down at every threshold up to 6, because `hair_brush` has the same
+six operators as `composite_layer` — trip count separates them and is not a compile-time fact.
+Two levers measured and NOT taken: `#[inline]` on `text_byte_at_native` is a wash (13.84 vs
+13.69 µs), and `(R-Range)`'s counted-counter clause turned out inert (loft#1558) rather than
+weak.
+
+**Lane, 2026-09-21** (same invocation; 14/14 hashes, **median 1.65×, three rows under 1×**):
+`hash` 1.03×, `fill_circle` 0.91×, `fill_star` 0.91×, `render_marks` 1.50×, `fronds` 1.55×,
+`composite` 1.62×, `hair` 1.65×, `render_lock` 1.69×, `wide_line` 1.73×, `lock` 1.74×,
+`smooth` 1.80×, `resize` 1.39×, `lock_curved` 2.06×, `parse` **2.52×** — still the one row
+over 2.1×, and its remaining cost is the scanner, not a compiler lever this family reaches.
+
+**Lane, 2026-09-20 late** (`compare.py --loft <this build> --skip-interp --repeat 3 --n-ref 500
+--n-native 500`, arm64; 14/14 hashes agree, **every judged row under the 4× bar, median ≈1.71×**):
+`hash` 1.04×, `resize` 1.37×, `render_marks` 1.53×, `fronds` 1.55×, `composite` 1.62×,
+`hair` 1.67×, `render_lock` 1.70×, `lock` 1.74×, `smooth` 1.75×, `fill_circle` 1.86×,
+`fill_star` 1.93×, `lock_curved` 2.05×, `wide_line` 2.22×, `parse` 3.08× — the one row over 3×,
+and the pass above says it has no compiler lever of this kind.  ⚠ `compare.py` defaults `--loft`
+to the binary on PATH: pass the repo build explicitly or the lane measures the INSTALLED loft
+and reads 15–180× while the hashes still agree.
+**`R-GroupPush` + the heap and rebound clauses SHIPPED 2026-09-18** (`formal/rewrites.md`, unit C of
+the store-traffic analysis in § Where to resume — the record-append machinery): a mint group that
+holds no push header binds one of its own after its reservation; an element that owns heap goes
+through the header with its slot zeroed at the mint; a loop whose body rebinds a mover to a loop
+buffer's or an element slot's projection hoists instead of declining.  Priced by hand patch first
+(−15 / −12 / −33 µs of `fronds`' 102 µs), then built: **`fronds` 101.7 → 69.6 µs per call, the lane
+2.60× → 1.63×, `smooth` 1.82× → 1.13×**, and 64.9 µs once the write-set walk typed the owned
+mints too (the `sp` scalars); every other row within noise (`lock`, `lock_curved`,
+`wide_line`, `parse` A/B'd under each switch), 14/14 hashes.  Switches `LOFT_NO_GROUP_PUSH`,
+`LOFT_NO_HEAP_RECORD_PUSH`, `LOFT_NO_REBOUND_MOVER`; trace `LOFT_TRACE_HOIST_DECLINE`; cells
+`tests/scripts/157-group-push.loft` g1–g10, pins `tests/group_push.rs`; `tests/record_push.rs`
+re-derived (c8, c11, c15 now fuse through a group header).
+**`R-LoopRecord` SHIPPED 2026-09-18** (`formal/rewrites.md`, unit A of the store-traffic
+analysis in § Where to resume): a plain no-heap record local declared and minted by a literal
+inside a loop keeps its store and its record across passes — declared at the loop's prelude, a
+null-guarded first mint, a partial literal re-establishing its declared defaults, one free after
+the loop.  Probe: 39 → 2.4 ns per pass; the lane does not move (`fd_sub` is 24 mints per `fronds` call).  Switch `LOFT_NO_LOOP_RECORD`; trace `LOFT_TRACE_LOOP_RECORD`; cells
+`tests/scripts/157-loop-record.loft` l1–l15, pins `tests/loop_record.rs`.  Found on the way and
+fixed first: the interpreter's last-use move firing on a name re-declared in a sibling scope
+(`Function::copy_variable` started the split at `uses: 1`; guard
+`a-name-reused-in-a-sibling-scope-copies.loft`).
+**`R-RecPtr` SHIPPED 2026-09-18** (`formal/rewrites.md`, `(R-View)`'s record twin, out of the
+`wide_line` analysis below): a plain-record VIEW (`pg_cur = pg_table[i]?`, `s = o.inner`)
+carries the address of its record for the rest of its block, every scalar field read is one
+load and every in-place write one store through it, and a callee twin the view is handed to
+takes its scalar inputs read through the address at the call (`edge_x`); beside it `(R-Base)`
+admits the null-discharge buffer's mint as growth-free, so the crossing loop holds its bases.
+Standalone probe: `wide_line` **7 800 → 5 060 ns/op (−35 %), 2.9× → 1.9×** its reference.
+The lane, two interleaved rounds against the switch, 14/14 hashes: `wide_line` 2.41× → **1.76×** (−27 %), `fill_circle` 1.46× → **0.89×** (−40 %), `fill_star` 1.31× → **0.94×** (−28 %) — the fills share `polygon_generic` — the rest within swing; **median 1.67×, three rows now under 1×**.  Switches `LOFT_NO_RECORD_PTR` (and `LOFT_NO_VECTOR_BASE`); falsifier
+`LOFT_HOIST_VERIFY=1`; trace `LOFT_TRACE_RECPTR`; cells `tests/scripts/157-record-ptr.loft`
+r1–r16, pins `tests/record_ptr.rs`.  **The `for e in v` loop variable joined the same day**: the
+loop's own statements are emitted from `Value::Loop`, not `output_block`, so the hook had never seen
+its `Set(e, iter-next)`; and its type is the NULLABLE element (the null ends the loop), admitted as
+its record with the null address answering the sentinel.  Its probe: three fields per element over 100 000 records, −31 %; no lane row moves (the bench's only record-iterating loop grows `pg_table` and declines by design), and a second lane pass on and off confirmed every row within its swing, 14/14 hashes.
+**`R-Base`'s twin clause SHIPPED 2026-09-18** (`formal/rewrites.md`, unit (1) of the
+`composite` pricing below): a § V-p twin takes the element BASE of each header it is handed
+(`__ib_k`), a view of the path inside it shares that base, and its fused reads and writes take
+`get_elem_at` / `vec_set_at` — the caller passes its held `__vb_N` or derives one from the held
+header at the call.  Measured on the arm64 lane, two interleaved rounds against the switch, 14/14 hashes: `composite` **114.5 → 91.3 µs (−20 %), 2.98× → 2.40×**; `lock` 1.83× → 1.76×, `lock_curved` 2.16× → 2.09×, `render_lock` 1.80× → 1.72×, the rest within their swing; **median 1.74×, every row under 3×**.  Switch `LOFT_NO_TWIN_BASE`; falsifier `LOFT_HOIST_VERIFY=1`;
+cells `tests/scripts/157-twin-base.loft` t1–t10, pins `tests/twin_base.rs`.
 **§ V-ab SHIPPED 2026-09-13** (DESIGN.md § V-ab): a counted `for` whose start is not a
 literal runs a second counter seeded AT the start instead of a null-encoded one — no null
 test per iteration on either backend (bare loop −32 %, a contiguous fill −18 %, the
@@ -1023,6 +1152,114 @@ its assumptions are written as a rule and checkable by both.
 
 ## Where to resume
 
+**2026-09-18, night — the store-traffic analysis of `fronds` (2.6×) and `parse` (2.6×), and the two
+units it asks for.  START HERE.**
+
+*Instruments that worked on this box (no `perf`; `sample` attaches to rustc or misses the
+short-lived binary):* the native checkpoint census (`LOFT_NATIVE_CHECKPOINTS=count`, exact
+counts per site), its `time` rollup (ticks are a HINT), the interpreter store log
+(`LOFT_STORES=log`: `+ alloc`/`- free` events are FRESH stores), the release-pass ceiling, the
+interpreter line profiler, and a loft micro-bench of the two runtime paths.
+
+*What the rows are made of:*
+- `fronds` (109 µs/call): 44 000 operators — 24 000 the noise hash (`seed_hash`/`seed_wave`,
+  ~30 % of ticks), 3 300 trig; the object machinery at the appends `fd_out += [Frond {…}]`
+  (drawing.loft:1647/1649: 654 `OpPreAllocVector` 12 %, 654 `OpNewRecord` 7 %, 654 `OpCopyRecord`
+  2 %, 1 300 `OpPushFloat` 4 %) ≈ 25 % of ticks; the per-k `FrondSpec` literal 5 %; **152 fresh
+  stores per call** (25 activations × ~5 hidden buffers + 24 `fd_sub`) ≈ 4 %.  The checks are
+  ~1 % (`LOFT_RELEASE_PASS_PROBE`).  Rust does ~700 mallocs per call here, so the COUNT is not
+  the gap; the per-append runtime calls are.
+- `parse` (14 µs/call): 42 000 operators for 13 lines — the byte scanner (`word_boundary`,
+  `matches_at`, `at`, `find_option`, `is_word_byte`: one loft call per byte per pass, 10 138 `at()`
+  per scene) ≈ 55 % of ticks, `text.split` 8 %, `size()` 3 %; **127 fresh stores per call**, all
+  temporaries dying with their activation (each `parse_*` call re-mints its return, discharge and
+  vector buffers and frees them at exit) ≈ 25–30 % by the pair cost below; checks ~8 %.
+
+*The two runtime paths, measured (native, 200 000 iterations):* a vector local declared inside
+a loop (`§ V-al`: keep the store, `clear`) **10 ns**; a record literal bound inside a loop
+(`s = S1 { a: k }`: `free_named` at the iteration's end, then `find_free_slot` + `reinit` +
+`claim` + zero + tag) **39 ns**, 1 003 fresh stores per 1 000 iterations.  A "fresh" store is
+NOT a malloc in steady state (the slot table only grows when every slot is live); the ~30 ns
+pair is the free/search/init bookkeeping.  So the reset-and-reuse path is ~4× cheaper and is
+taken only by `§ V-al` vector buffers and by return buffers within ONE activation.
+
+*Owner ruling C125 bounds the design:* temporaries are REMOVED, not co-located; one store is
+one object.  So "link them together" means RETAIN and re-use a site's store, never share one.
+
+*Unit A — `R-LoopRecord` (the `§ V-al` shape for a record local):* a plain no-heap record
+literal bound inside a loop (`fd_sub = FrondSpec {…}`) keeps its store across iterations —
+the emitter declares the local at the loop's prelude, the per-iteration mint takes
+`OpDatabase`'s clear arm, the body's `Set(v, null)` and its direct end-of-body `OpFreeRef`
+are not emitted, one free follows the loop.  Admitted where every mention is the mint, a
+fusable field read/write, a free, or a hand-off to a loft callee whose return does not borrow
+that parameter (`(O-Borrow)`: a callee cannot keep a caller's record except by copy or through
+its return deps); a copy to another local, a return, a capture, a heap-owning field, `par` or
+`yield` decline.  Frees on a `return`/`continue` path stay (they are nested in an `Insert`, not
+the body's tail).  Priced on the probe: 39 → ~12 ns; on the bench ~1 % (`fd_sub` is 24/call).
+*Unit C — the record append (SHIPPED 2026-09-18, `R-GroupPush` + `(R-PushRec)`'s heap clause +
+`(R-Mint)`'s rebound clause):* the class the correction below points at.  The A/B on the switch
+settled the first suspect first — `LOFT_NO_MOVE_APPEND=1` costs `fronds` 101.7 → 151 µs, so the
+624 fractal moves per call are already shallow — and a copy probe priced one deep copy of a
+`Frond` at ~117 ns against 4 ns for a read.  Hand patches on the lean emission (`fr_long.rs`,
+n = 60 000, baseline 102.6–103.8 µs): Pt mints without prefill −7.5 µs (1 296/call, ~5.8 ns
+each); Frond mints without prefill −7 µs (1 272/call); `sp`'s 38 field reads through one record
+address −3 µs; the Pt groups through a per-group push header −15 µs; the Frond mints through one
+held header with the two handles zeroed −12 µs; both −33 µs (70.1–70.8 µs).  Why nothing hoisted
+before: `fd_pts`/`fd_wid` are declared per pass (a rebound mover declined the side loop whole),
+the `for i` was declined by its `fd_sides` loop buffer's `OpDatabase` and by the element-first
+copies the emitter elides, and a `Frond` owns heap.  Built as three clauses, `fronds` 101.7 →
+69.6 µs (the ceiling met exactly), lane 2.60× → 1.63×.  *Same day, the write-set half:* `sp`'s
+scalar reads did not hoist at the `for i` although the loop hoisted — `LOFT_TRACE_HOIST_DECLINE`
+(taught to name the untyped node) showed the write-set walk giving up at the loop buffers'
+`OpDatabase` and the elided element-first copy, the very statements the admission let through;
+typed (`hoist::body_writes`), the twelve `sp` fields read once per activation: 69.8 → **64.9 µs**;
+the lane's `fronds` row 1.52× → **1.35×** (48.7 vs 65.9 µs, cdylib libs), `smooth` 1.38×, `hair`
+1.43×; `lock` and `parse` A/B'd interleaved against `LOFT_NO_REBOUND_MOVER=1` (default 1 % faster
+on both — the lane's ±10 % swings on those two rows between runs are noise, not the clause).
+**Left on `fronds`:** `fd_sides` per activation, and the `for k` loop's recursive call
+(`call_writes_store` is conservative on recursion).
+**Left on `parse`:** its appends are FIELD-PATH mints (`sc.ops += [Op {…}]`), outside the
+bare-variable `(R-Mint)` admission, so neither the loop header nor the group header reaches
+them — the natural next unit for that row, together with the `Paint` copies the advice names.
+*Correction, later the same night — the 127 and 152 are the INTERPRETER's counts.*  The
+native trace (`LOFT_TRACE_DB=1` on `--native`, `db=#65535` = a fresh mint) shows `parse`
+minting **~11 fresh stores per call** (3 `vector<float>`, 3 `PointList`, 1.5 `Sketch`, a
+`Paint`, a `Mark`, a `FrondSpec`, a `vector<Pt>`) and `fronds` **~51** (25 `vector<float>` —
+`fd_sides`, one per activation — 24.5 `FrondSpec`, 1 `vector<Frond>`): the value-record,
+element-first and buffer-adoption rewrites already remove most of what the interpreter
+mints, so the per-site retention below has ~11 × 30 ns ≈ 0.3 µs to win on `parse` (2 %),
+not 25–30 %.  That settles it: unit B is not worth its instrument cost, and C125 already
+said so (the owner ruled against a pooled cheap store per buffer).  What remains on `parse`
+is the scanner; on `fronds` the append machinery, the hash, and `fd_sides` (a per-activation
+two-element literal vector — a candidate for `(R-LiteralHoist)`'s const-param branch).
+*Unit B — per-site buffer retention across activations (SUPERSEDED by the correction):* the 127 fresh stores of `parse` are
+hidden buffers minted and freed once per callee activation.  A per-(function, buffer) chain
+that keeps the store between activations (`clear` on entry instead of `null` + `database`,
+push instead of `free_named` at exit; recursion takes the next link, so a live buffer is never
+re-seated) replaces the ~30 ns pair with a pop and a re-init.  Liveness is identical to
+today's unconditional exit free, so the soundness question is only the LEAK instruments: a
+retained chain must drain at exit so `LOFT_NATIVE_LEAK_CHECK` and `LOFT_STRICT_STORES` keep
+their meaning.  Price by hand patch on `parse_circle`'s emission before building.
+*The scanner, measured alone (2026-09-18, morning):* a like-for-like micro-bench — `find_option`
+over one 100-byte scene line, five keys, 200 000 rounds, the same checksum on both sides —
+runs **114–139 ns per call in loft against 71–96 in the Rust reference: 1.6×**, not the row's
+2.6×.  Three hand patches on the lean emission were WASHES within noise (13.2–14.4k ns/op
+for every variant): the byte read inlined in `at` (`text_byte_at_native` is a cross-crate
+call), `#[inline(always)]` on the ten scanner leaves, both together — LLVM already inlines
+the leaves and the byte read is cheap.  Two consequences.  (1) The tick census over-credited
+the scanner (its documented caveat: it inflates operator-dense functions); read as 55 % of
+14 µs it would be 7.7 µs against Rust's ~4.8 µs — nearly all of Rust's 5.4 µs — which puts
+loft's NON-scanner work at ~6 µs against Rust's ~0.6 µs, **~10×**: the per-line record and
+text building (`Op` records with `pts`, the two `Paint` copies per `parse_circle`, `pc_pts`,
+`to_lowercase`/`trim`/`split`/`"line {n}: …"`, `elem_index`'s text compares).  That is the
+parse lever, ahead of the scanner's own 1.6× (~2.7 µs).  (2) Whatever unit follows needs a
+real profile to be cut right; on this box the instruments are counts and probes, so the next
+step is the same method as today's — a per-line census of copies and text allocations from
+the emission, each priced by hand patch — or `scripts/profile.sh -- --native` on the x86-64
+box.  *The scanner as a unit* (the remaining 1.6×) is: a leaf reading a `text` byte-wise pays a call
+with a `Str` argument per byte; a twin taking the bytes once (as a header is taken) or an
+inlined leaf is the shape.
+
 **2026-09-15, afternoon — HAND-OFF after § V-ao.  START HERE.**
 
 *What shipped.*  § V-ao (`@FR-R-Invariant`, DESIGN.md § V-ao): an invariant integer chain
@@ -1056,9 +1293,93 @@ verify form is what found it.  Cells m1–m16, pins `tests/invariant_arith.rs`, 
 | **parse** | 6 654 | 50 294 | **7.56** | 7.59 |
 
 
-*Next, by the queue:* item 2, **`R-BoundedNest`** — a bound over the nest's inputs taken
-once per nest, the plain vectorised loop under it, the checked loop as fallback; the unit
-that reaches the reference's cycles per tap.  What to read first: § V-ae's fill for the
+*Next, by the queue:* ~~item 2, **`R-BoundedNest`**~~ — SHIPPED 2026-09-17 (§ Status); the
+three resample rows are under the bar.  What remains over it is **`lock_curved`**, analysed
+and PRICED 2026-09-17 (arm64, both binaries sampled with `sample`, the emission read, two hand
+patches on one emission, hash `2a3aa61` throughout):
+
+* **It is not the checks.**  `LOFT_RELEASE_PASS_PROBE=1` moves the row only 1 660 → 1 429 µs
+  (−14 %; still 3.5× the reference's 404), so the lever that closed the resample rows does not
+  reach this one.
+* **It is two fills that are not fills.**  `ll_out = [for _i in 0..ll_n { 0 }]` (brush.loft:476)
+  lowers to `OpAppendCopy`, whose runtime fills `[x; n]` with ONE `copy_block` AND ONE
+  `copy_claims` call PER ELEMENT — 38 249 calls each per `lock_layer`, 14 % of the row by
+  `sample` (`copy_block` 9.4, `copy_claims` 4.6); the interpreter's `State::append_copy` is its
+  twin.  The seven `Lay` planes, `best: [for _i in 0..ll_n { 2.0 }]` … (brush.loft:450–453), lower
+  the OTHER way — a `For comprehension` block pushing one element at a time into the record's
+  field (`push_hoisted` × 7 × 38 250) — and § V-am's fill idiom never sees them, because its
+  matcher admits `For loop` only; a reserve up front measured nothing (the cost is the push
+  loop, not the growth ladder).  Hand-patched on the emission: the seven planes as one
+  `push_fill` each, **1 635 → 1 108–1 204 µs**; plus `ll_out` as one fill, **→ 860–942 µs =
+  2.2×** the reference, from 4.2×.  Both are engine units: the runtime fill in `OpAppendCopy` /
+  `State::append_copy` (a block copy that doubles, the claims walk only for a heap-owning
+  template — both backends), and the constant comprehension into a record-literal field taking
+  the same lowering a local's does (parser, both backends) or the fill idiom admitting a
+  comprehension block (emitter).  **BOTH BUILT the same evening** — `Stores::fill_from_template`
+  (switch `LOFT_NO_BLOCK_REPEAT`) and the field fill (`LOFT_NO_FIELD_FILL`): `lock_curved`
+  **1 635 → 895–931 µs, 2.2×**, the row under the bar on this lane; cells
+  `a-repeated-element-fills-in-one-block.loft`.  The full lane, two interleaved rounds against
+  both switches off, 14/14 hashes: `lock_curved` 3.89× → **2.17×**, and every other layer-building
+  row moved with it — `lock` 2.38× → **1.84×**, `hair` 2.07–2.24× → **1.58–1.72×**, `render_lock`
+  2.01× → **1.81×** — the rest within their swing.  **Every one of the fourteen rows is under the
+  3× bar on this lane; the median is 1.73×** (2.04× before the fills, 2.35× at the start of the
+  evening).  Sites: `src/codegen_runtime.rs` `OpAppendCopy`,
+  `src/state/io.rs` `append_copy`, `src/parser/vectors.rs:3411` (the comprehension loop) and
+  `:5389` (the `[x; n]` lowering), `hoist::fill_loop`.
+* **`composite` (3.0×) analysed and PRICED 2026-09-17**, the same instruments, hash `cf852074` on
+  every run.  The sample is 100 % compiled code — no store runtime at all — and the census is
+  ~80 loft operators per pixel: 44 in `composite_layer`, 10 in `get_pixel`, 10 in `set_pixel`,
+  7.5 in `rgba`.  Two things that LOOK expensive measured as nothing (five rounds each): the
+  accessors' four range compares plus a length test, twice per pixel, and the three
+  `?? 0`-discharged divisions with their fault notes — LLVM predicts them away.  What is left is
+  two structural costs, independent and additive: (1) the accessor twins take a HEADER and no
+  BASE, so every element read and write inside them is `get_elem_hoisted`/`vec_set_hoisted`, a
+  store resolution per access where Rust's `cv.data[di]` is one load off a register — a base
+  handed into the twin beside its header, **115 → 84–85 µs (−27 %)**; (2) the checked
+  arithmetic, `LOFT_RELEASE_PASS_PROBE=1`, **115 → 83 µs (−28 %)**; both together **115 →
+  50.7–54.5 µs = 1.32×** the reference's 38.3.  Unit (1) is a straight extension of § V-p and
+  § V-ak: `CalleeInputs.headers` gains a base per header, the twin's signature `__ib_k: *const
+  u8` beside `__ih_k`, its body a `vec_bases` frame so the fused read/write take
+  `get_elem_at`/`vec_set_at`; a caller passes its held base, or derives one from the header at
+  the call when its loop is not growth-free — sound either way, because a twin is store-free or
+  in-place-only, so nothing reallocates for the call's duration.  **Unit (1) BUILT 2026-09-18**
+  (`LOFT_NO_TWIN_BASE`; § Status): `composite` 114.5 → 91.3 µs (−20 %), 2.98× → 2.40×, `lock`/`lock_curved`/`render_lock` −4 % each, 14/14 hashes.  Short of the hand patch's 84–87 because `composite_layer`'s own callers grow a store and so derive the base at the call rather than passing a held one; unit (2) is what remains.  Unit (2) is C120's next range
+  proof: `x & K` bounds `x` to `[0, K]`, so a chain of `+ - *` over masked leaves and literals
+  whose interval fits emits plain — `rgba`, `color_*`, the alpha-over arithmetic and
+  `lock_layer`'s `chan()` are all of that shape; it needs a per-function result interval for the
+  small colour helpers, and a design note before it is cut.
+* **`wide_line` (2.57× on the lane, 2.93× standalone) analysed and PRICED 2026-09-18**, the
+  same instruments (the lean emission read, hand patches compiled through loft's own rustc
+  line — the `--native-emit` default is the DEBUG tier, `--lean --native-emit` is what
+  `--native-release` builds, and the first control ran 10.5 µs against loft's 7.8 for that
+  reason), hash `91c48fd2` on every run.  The crossing loop `pg_cur = pg_table[i]?` paid a
+  STORE RESOLUTION per record field read — six on `pg_cur`/`pg_oth` per edge per row and
+  three more inside each `edge_x` — where Rust's `let cur = table[i]` reads registers, and its
+  `pg_xx` reads and writes went through `get_elem_hoisted` because the `?` discharge's buffer
+  mint counted as a growth and kept the loop off its bases.  Priced: bases past the mint
+  7 800 → 7 300–7 600 (−5 %); record addresses for `pg_cur`/`pg_oth` → 5 800 (−25 %); `edge_x`
+  reading through them → **4 650–5 050 (−40 %), 1.75×**.  **BUILT the same day** as
+  `R-RecPtr` (§ Status), the emitter reproducing the hand patch's shape at 5 060 (−35 %).
+
+  **Why LLVM does not hoist the store resolution itself — measured, because the owner would rather
+  it did than have the emitter repeat its algorithm.**  Two ways of GIVING it the knowledge were
+  built by hand on the same emission and moved nothing (rounds 2–4, hash `cf852074`): whole-program
+  fat LTO over a runtime built with `-C embed-bitcode=yes`, so every `#[cold]` hook body was in view
+  (116–118 µs, against 115–118 shipped), and the generated ABI rewritten from
+  `cell: &UnsafeCell<Stores>` to `stores: &mut Stores` — a `noalias` argument — on all 42 functions
+  (117.6–118 µs).  The base handed in by the emitter: 85.5–86.5.  The barrier is not the opaque
+  calls and not the missing `noalias`; it is that the element write goes through a pointer LOADED
+  from the store table (`allocations[k].ptr`), and a loaded pointer has no provenance LLVM can
+  relate to anything — not to a `noalias` argument, not to an identified object — so alias analysis
+  must let that write clobber the table it was loaded from.  The fact that makes the hoist sound is
+  loft's own allocator invariant, *an element buffer never overlaps the store table*, which no
+  source-level construct states; carrying the base is the one way to state it.  So `@FR-R-Base`
+  and a base through a twin are not LICM re-implemented: LLVM's LICM is not ABLE to do this one.
+
+* **After those, ~2.2× and diffuse:** five `st.*` scalar reads per resolved pixel still go
+  through `store_mut` (unhoisted record scalars of a `const` parameter in the resolve loop),
+  `brush_sample`/`chan`/`ramp` per pixel, the two `??`-discharged divisions per raster pixel
+  with their fault notes.  The x86-64 lane read this row 2.42× before any of it.  What to read first: § V-ae's fill for the
 guard-and-fallback shape, § V-al for the emitter placement, and § V-ao's placement lesson
 (a memo one loop out lost its gain — the bounded nest's guard must sit where LLVM can see
 it is decided).  The vertical tap's chain (counter innermost) is the case R-InvariantArith
@@ -1116,14 +1437,16 @@ reference's cycles per tap and takes the three rows under the bar).  The probe i
 last read 95.4 ms/op), the falsifier `LOFT_HOIST_VERIFY=1`, the ceiling
 `LOFT_RELEASE_PASS_PROBE=1` (38.3 ms/op on the probe).
 
-`parse` WAITS, by the same rule — and its class now has its own plan, **@PLN164**
-(`plans/164-activation-arena/`: activation arenas, adopt-at-bind, build-in-place, with the
-edge-case matrix the owner reviews before a phase is cut): after § V-an its profile is flat (the byte scan at 9 % is
-the largest routine) and what remains is a CLASS — deep record copies, 18.5 % over four
-sites (DESIGN.md § V-an's table: the first bind of a record result copies, an indexed
-element overwrite from a literal, a field assigned from a local at its last use).  That
-class is a memory-model unit (adopt at the first bind, move at the last use) and comes
-after the resample.
+`parse`'s class had its own plan, **@PLN164** (`plans/164-activation-arena/`: adopt-at-bind,
+build-in-place, and the elimination of the per-call temporaries a record-returning style
+mints), **closed 2026-09-17**: the row is **20 740 ns against the Rust reference's 6 675 —
+3.11×**, from 7.6×, and one parse mints 13 stores where it minted 31.  What is left of it is
+NOT a copy class: about 1.2 of the 2.1 units the row is over Rust is the per-RECORD and
+per-PUSH work every KEPT object pays (claim/free, the append pair, the append path's
+`heap_facts` and `nullable_field_parent` tests, `store_mut`) — a RUNTIME lever on both
+backends, priced the way every unit here is (a hand patch first, `perf` on the release
+binary, all fourteen rows), and registered with the role/lifetime work in PERFORMANCE.md
+§ 3e.
 
 *Machine notes for the resample unit.*  A fresh session needs: `cargo build --release`
 (bin AND lib — the native tests link the rlib), a scratch clone of `loft-libs-graphics`

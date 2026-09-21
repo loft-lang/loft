@@ -1,0 +1,140 @@
+// loft#1557 — a TUPLE-DESTRUCTURING assignment into a local that currently holds a VIEW
+// binds a store of its own; it does not write through the view into the container.
+//
+// `(B-View)` makes `m = o.inner` a view that aliases the container's place, and a
+// reassignment gives the binding its own copy — which every OTHER assignment form already
+// did (`m = Inner { … }` and `m = f(m)` build into a compiler work-ref and bind it, cells
+// h and i below).  The destructuring built its copy through the BINDING instead:
+// `Set(m, Null)` + `OpDatabase(m, tp)` + `OpCopyRecord`.  The null is elided for a local
+// already in scope (`scopes::scan_set` — the deliberate in-place reuse a `[]` re-init and a
+// loop buffer want), so `OpDatabase(m, tp)` ran on a local still holding the view and its
+// reuse arm RESET the container's store: `o`'s record came back as a bare `Inner`, so
+// `o.tag` read past its end (17179869184 for 7) and `o.inner` took the copy.  On an ELEMENT
+// view the container grew a second element instead.  Nothing reported either.
+//
+// The cure is the work-ref the plain assignment already uses: the compiler owns what it
+// mints whatever the binding holds, so the reuse arm is right for IT on every later turn.
+//
+// Cells: j the filed shape; k a NO-HEAP struct (the vector field is not the axis); l a
+// PARAMETER's field; m an ELEMENT view (the container grew); q the same inside a loop
+// (the work-ref's store is reused per turn, which is what the elision is for); p the
+// VECTOR arm of the same materialise, unchanged by the fix and here as its control; r an
+// OWNED local destructured in a loop — the case the reuse arm is RIGHT for; s a view and
+// an owned local destructured in one function; h, i the two assignment forms that were
+// always correct.  Every cell prints the container's untouched field beside the binding's
+// new value, so a write through the view shows in the VALUE channel and not only in a
+// later crash.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-20) — the materialise put back through
+// the BINDING (`OpDatabase(v_nr, …)` in place of the work-ref) turns j, k, l, m red on both
+// backends at once (j `tag=17179869184 inner.k=1`, k `tag=4294967200 p.a=2`, m `len=2
+// elem.k=1`) while h, i, n, p, r stay green; restored, both backends print the same and
+// LOFT_STRICT_STORES / LOFT_POISON / LOFT_NATIVE_LEAK_CHECK are silent.
+
+struct Inner { v: vector<integer>, k: integer }
+struct Outer { inner: Inner, tag: integer }
+struct Plain { a: integer, b: integer }
+struct Holder { p: Plain, tag: integer }
+
+fn bump(i: Inner) -> (Inner, integer) { (Inner { v: i.v, k: i.k + 1 }, i.k) }
+fn pbump(p: Plain) -> (Plain, integer) { (Plain { a: p.a + 1, b: p.b }, p.a) }
+fn vpair(xs: const vector<integer>) -> (vector<integer>, integer) { ([len(xs), 42], len(xs)) }
+fn mk_o() -> Outer { Outer { inner: Inner { v: [1, 2, 3], k: 0 }, tag: 7 } }
+
+// h — a view read, then reassigned from a LITERAL: always correct, the shape the cure copies.
+fn h() {
+  o = mk_o();
+  m = o.inner;
+  s = m.k;
+  m = Inner { v: [9], k: 5 };
+  assert(o.tag == 7 && s == 0 && m.k == 5 && o.inner.k == 0, "h");
+}
+
+// i — the same reassigned from a CALL's member: always correct.
+fn i() {
+  o = mk_o();
+  m = o.inner;
+  s = m.k;
+  m = bump(m).0;
+  assert(o.tag == 7 && s == 0 && m.k == 1 && o.inner.k == 0, "i");
+}
+
+// j — the filed shape: the container's sibling field and the viewed field both survive.
+fn j() {
+  o = mk_o();
+  m = o.inner;
+  (m, x) = bump(m);
+  assert(o.tag == 7 && m.k == 1 && x == 0 && o.inner.k == 0 && len(o.inner.v) == 3, "j");
+}
+
+// k — a NO-HEAP struct field: the vector field is not the axis.
+fn k() {
+  hh = Holder { p: Plain { a: 1, b: 2 }, tag: 7 };
+  q = hh.p;
+  (q, y) = pbump(q);
+  assert(hh.tag == 7 && q.a == 2 && y == 1 && hh.p.a == 1 && hh.p.b == 2, "k");
+}
+
+// l — the container is a PARAMETER.
+fn l_run(o: Outer) {
+  m = o.inner;
+  (m, x) = bump(m);
+  assert(o.tag == 7 && m.k == 1 && x == 0 && o.inner.k == 0, "l");
+}
+fn l() { l_run(mk_o()); }
+
+// m — an ELEMENT view: the container must not grow, and its element must not change.
+fn m_cell() {
+  vs: vector<Inner> = [Inner { v: [1, 2], k: 3 }];
+  e = vs[0];
+  (e, x) = bump(e);
+  assert(len(vs) == 1 && e.k == 4 && x == 3 && vs[0].k == 3, "m");
+}
+
+// n — the view named SECOND, off a tuple literal: a different lowering, always correct.
+fn n_cell() {
+  o = mk_o();
+  m = o.inner;
+  (z, m) = (99, bump(m).0);
+  assert(o.tag == 7 && m.k == 1 && z == 99, "n");
+}
+
+// p — the VECTOR arm of the same materialise (unchanged by the cure; its control).
+fn p() {
+  o = mk_o();
+  w = o.inner.v;
+  (w, c) = vpair(w);
+  assert(o.tag == 7 && len(w) == 2 && (w[0] ?? 0) == 3 && c == 3 && len(o.inner.v) == 3, "p");
+}
+
+// q — the view destructured inside a LOOP: four turns, the container untouched.
+fn q() {
+  o = mk_o();
+  m = o.inner;
+  t = 0;
+  for _s in 0..4 { (m, x) = bump(m); t = t + m.k + x; }
+  assert(o.tag == 7 && m.k == 4 && t == 16 && o.inner.k == 0, "q");
+}
+
+// r — an OWNED local destructured in a loop: the case the store reuse is RIGHT for.
+fn r() {
+  m = Inner { v: [1], k: 0 };
+  t = 0;
+  for _s in 0..4 { (m, x) = bump(m); t = t + m.k + x; }
+  assert(m.k == 4 && t == 16, "r");
+}
+
+// s — a view and an owned local destructured in one function.
+fn s() {
+  o = mk_o();
+  m = o.inner;
+  nn = Inner { v: [5], k: 9 };
+  (m, x) = bump(m);
+  (nn, y) = bump(nn);
+  assert(o.tag == 7 && m.k == 1 && x == 0 && nn.k == 10 && y == 9 && o.inner.k == 0, "s");
+}
+
+fn main() {
+  h(); i(); j(); k(); l(); m_cell(); n_cell(); p(); q(); r(); s();
+  println("1557 ok");
+}

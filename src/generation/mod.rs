@@ -17,6 +17,7 @@ pub mod hoist;
 pub mod non_sentinel;
 pub(crate) mod ops;
 mod pre_eval;
+pub mod range;
 mod text;
 
 /// One hoisted binding produced by `collect_pre_evals`:
@@ -668,6 +669,48 @@ pub struct Output<'a> {
     /// hoisted header when the loop grows no store (`hoist::LoopHoist::growth_free`);
     /// an empty frame for a loop that does.  Pushed and popped beside `vec_headers`.
     pub vec_bases: Vec<HashMap<hoist::PathKey, String>>,
+    /// `@FR-R-BoundedNest` — per loop frame, the element bound (`__bd_N: Option<i64>`) held
+    /// beside a hoisted header for every vector a bounded nest under the loop reads.  Pushed
+    /// and popped beside [`Self::vec_headers`].
+    pub vec_bounds: Vec<HashMap<hoist::PathKey, String>>,
+    /// `@FR-R-BoundedNest` — how many admitted nests the emission is inside; above 0 the four
+    /// nest operators emit their plain form ([`ops::int_arith`]).
+    pub plain_nest: u32,
+    /// `LOFT_NO_BOUNDED_NEST=1` — no nest is guarded and run plain.
+    pub bounded_nest_disabled: bool,
+    /// `@FR-R-GuardedChain` — per guarded loop, the argument-slice addresses of every
+    /// `+ - *`/negation node inside a chain its guard bounds, and the guard's name: those ops
+    /// emit the plain operator under the guard and the template otherwise
+    /// ([`ops::int_arith`]).  Pushed before the loop's body, popped after it.
+    pub plain_chains: Vec<(HashSet<usize>, Option<String>)>,
+    /// Non-zero while a verified chain operator's CHECKED copy is emitted.
+    pub chains_suspended: u32,
+    /// `LOFT_NO_GUARDED_CHAIN=1` — no counted loop's affine chains are guarded and run plain.
+    pub chain_guard_disabled: bool,
+    /// `LOFT_TRACE_CHAIN=1` — name every loop whose chains are guarded, and why one is not.
+    pub chain_trace: bool,
+    /// `LOFT_TRACE_NEST=1` — name every nest admitted and every loop declined, with why.
+    pub nest_trace: bool,
+    /// `@FR-R-BoundedNest` step 2 — set while the plain arm of a nest whose guard also proved
+    /// every index IN RANGE is emitted: a fused element read is a raw load through the held
+    /// base, and the discharge's null select is the element itself.
+    pub nest_raw_arm: bool,
+    /// `LOFT_NO_NEST_RAW_READS=1` — the plain arm keeps its bounds-tested reads and null
+    /// selects (step 1's form).
+    pub nest_raw_disabled: bool,
+    /// `LOFT_NO_TWIN_BASE=1` — a twin takes its header inputs alone again, and every element
+    /// read or write inside it resolves the store (`@FR-R-Base`'s twin clause off).
+    pub twin_base_disabled: bool,
+    /// `@FR-R-RecPtr` — per block, the `__pa_N` local holding the address of a record VIEW
+    /// bound in it, keyed by the view variable; a field read or in-place write of that
+    /// variable goes through it ([`Self::bind_record_ptr`]).
+    pub rec_ptrs: Vec<HashMap<u16, String>>,
+    /// `LOFT_NO_RECORD_PTR=1` — no record view carries its address; every field read and
+    /// write resolves the store again.
+    pub record_ptr_disabled: bool,
+    /// `LOFT_TRACE_RECPTR=1` — name every record view bound to an address and every
+    /// declined binding with its reason.
+    pub recptr_trace: bool,
     /// @PLN157 P4c — record scalars hoisted out of the enclosing loops, innermost last:
     /// `(variable, field offset)` → the Rust local holding the value the prelude read
     /// once.  Pushed and popped beside [`Self::vec_headers`], one frame per `Value::Loop`.
@@ -731,6 +774,32 @@ pub struct Output<'a> {
     /// loop.  `LOFT_HOIST_VERIFY=1` is the falsifier (the header is re-derived and compared
     /// at the slot and at the finish).
     pub record_push_disabled: bool,
+    /// `LOFT_NO_HEAP_RECORD_PUSH=1` — a heap-owning element keeps its mint-group templates
+    /// (`@FR-R-PushRec`'s heap clause off): the bisect step for a wrong or stale handle in an
+    /// appended record whose fields own heap.  `LOFT_POISON_CLAIM=1` is the falsifier.
+    pub heap_record_push_disabled: bool,
+    /// `LOFT_NO_REBOUND_MOVER=1` — a loop whose body rebinds a mover (a pushed or minted
+    /// vector) declines every hoist again, as before `(R-Mint)`'s rebound clause; the bisect
+    /// step for a wrong element or scalar read in a loop that declares a vector per pass.
+    pub rebound_mover_disabled: bool,
+    /// `LOFT_NO_GROUP_PUSH=1` — a mint group outside any held header keeps its templates
+    /// (`@FR-R-GroupPush` off); the bisect step for a wrong element out of a literal record
+    /// append.  `LOFT_HOIST_VERIFY=1` is the falsifier (header re-derived at slot and finish).
+    pub group_push_disabled: bool,
+    /// `(R-Mint)`'s rebound clause — the current function's emitter-owned buffer vars: the
+    /// § V-al loop buffers and the § V-z element-first witnesses, whose `OpDatabase` the
+    /// loop-hoist admission lets through and whose projection a rebound mover may be bound
+    /// from.  Rebuilt per function beside [`Self::loop_buffers`].
+    pub hoist_owned: hoist::HoistOwned,
+    /// `@FR-R-GroupPush` — the open mint GROUPS: `(block serial, index of the group's last
+    /// statement)`, innermost last; the header frame each pushed on
+    /// [`Self::mint_push_headers`] is popped when ITS block reaches the statement after the
+    /// end, or closes.  Keyed by block so a nested block's statement indices cannot close an
+    /// enclosing block's group (an `if` arm inside the group is emitted through the same
+    /// `output_block`).
+    group_ends: Vec<(usize, usize)>,
+    /// The serial of the `output_block` invocation being emitted, for [`Self::group_ends`].
+    block_serial: usize,
     /// @PLN157 § V-j (`@FR-R-MoveAppend`) — the paired move-appends of the function being
     /// emitted, keyed by BUFFER variable ([`hoist::move_appends`]); rebuilt per function.
     pub move_pairs: BTreeMap<u16, hoist::MoveAppend>,
@@ -794,6 +863,13 @@ pub struct Output<'a> {
     /// per-site vector buffer minted inside a loop whose mint after the first is a length
     /// reset, and whose literal field zero is not emitted.
     pub loop_buffers: HashSet<u16>,
+    /// `@FR-R-LoopRecord` — the current function's LOOP RECORDS (`hoist::loop_records`): a
+    /// plain no-heap record local declared and minted inside a loop, keyed by variable, with
+    /// the loop that owns its reuse and the block that declares it.
+    pub loop_records: HashMap<u16, hoist::LoopRecord>,
+    /// `LOFT_NO_LOOP_RECORD` (generation time): every such local frees its store at the
+    /// iteration's end and takes a fresh one next pass again.
+    pub loop_record_disabled: bool,
     /// `LOFT_NO_LOOP_BUFFER_REUSE` (generation time): every such buffer re-mints per
     /// iteration again.
     pub loop_buffer_disabled: bool,
@@ -871,6 +947,16 @@ pub struct Output<'a> {
     /// keyed by `def_nr` — computed on the first simplifiable compare a
     /// function emits, shared by the rest.
     nn_cache: HashMap<u32, std::rc::Rc<HashMap<u16, bool>>>,
+    /// `@FR-R-Range` — the per-definition range facts ([`range::range_vars`]), computed on
+    /// the first integer op a function emits and cached beside the non-sentinel ones.
+    range_cache: HashMap<u32, std::rc::Rc<HashMap<u16, range::Range>>>,
+    /// `LOFT_NO_RANGE_ARITH=1` — every integer operator keeps its checked template, as
+    /// before `@FR-R-Range`; the bisect step for a wrong integer value on native where the
+    /// range proof admitted a plain operator.  `LOFT_HOIST_VERIFY=1` is the falsifier.
+    pub range_arith_disabled: bool,
+    /// Non-zero while the CHECKED copy of a verified operator is being emitted, so the range
+    /// arm does not fire inside its own verify form.
+    range_suspended: u32,
     /// N4 (@PLN157): per-definition verdict of [`Output::is_elidable_leaf`].
     leaf_cache: HashMap<u32, bool>,
     /// Per-definition verdict of [`Output::is_frameless_chain`].
@@ -979,6 +1065,22 @@ pub struct Output<'a> {
     /// the current `impl LoftCoroutine`.  A second `Set(v, Null)` on the same field is the
     /// @P302 in-place clear, which must NOT re-run `null_named` (that would orphan the store).
     pub coroutine_allocated_vars: HashSet<u16>,
+    /// `@FR-R-GuardedChain` / `@FR-R-BoundedNest` — true while the body of a coroutine's
+    /// state machine is being emitted (`impl LoftCoroutine`), and the reason both LOOP-ENTRY
+    /// guards decline there.
+    ///
+    /// Two reasons, and the second is the one that would survive a spelling fix.  A
+    /// generator's persistent locals live on the state struct, so a guard that spells one
+    /// `var_i__1__index` names a Rust identifier that does not exist (loft#928's corpus file,
+    /// caught as `E0425` in CI and not by any pin).  And a state machine RE-ENTERS its loop
+    /// across a `next_*` call, so a fact established once at loop entry is not established
+    /// for the resumes that follow it — a guard evaluated in one activation cannot license
+    /// plain arithmetic in another.
+    ///
+    /// Kept as its own flag rather than read off `coroutine_persistent_fields` being
+    /// non-empty: a coroutine whose locals all happen to be non-persistent would spell every
+    /// variable correctly and still re-enter, so the empty map is not this question.
+    pub in_coroutine_body: bool,
     /// When true, `Value::Int` emits a `(d_nr_u32, null_DbRef)` tuple
     /// instead of `d_nr_i32`.  Set during fn-ref variable assignment so
     /// if-else branches produce the correct tuple type.
@@ -1087,8 +1189,94 @@ pub struct Output<'a> {
     pub keep_fn_names: bool,
 }
 
+/// `@FR-R-GuardedChain` — what [`Output::chain_fast_path`] emitted for a loop.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ChainGuard {
+    /// No guard: the loop has no admitted chain.
+    None,
+    /// A guard and a frame for the whole loop, each admitted op branching on it; the caller
+    /// pops the frame after the loop.
+    Branch,
+    /// A guard, the loop's plain copy and an open `else {`: the caller emits the checked loop
+    /// and closes the arm.
+    Arms,
+}
+
 /// Use this to convert loft names that contain `#` into valid Rust identifiers.
 /// Loft uses `#` as a separator in compiler-generated names (e.g., loop iterators).
+/// `@FR-R-BoundedNest` — the Rust expression of a chain's MAGNITUDE BOUND, spelled with
+/// checked operators so that any step past `i64` fails the guard's closure through `?`: a
+/// literal by its value, a counter by `__cb` (the larger of the range's ends), an invariant
+/// by its `__iv_k`, a `?`-discharged read by its vector's `__rb_j`, `+` and `-` summing,
+/// `*` multiplying, negation as its operand.  Only the nodes [`hoist::bounded_nest`] admits
+/// reach here; `read_no` counts the reads in the order the matcher recorded them.
+fn nest_bound_expr(
+    v: &Value,
+    data: &Data,
+    counters: &[u16],
+    invariants: &[u16],
+    read_no: &mut usize,
+) -> String {
+    match v.unspan() {
+        Value::Int(k) => format!("{}_i64", i64::from(*k).unsigned_abs()),
+        Value::Var(x) if counters.contains(x) => "__cb".to_string(),
+        Value::Var(x) => match invariants.iter().position(|i| i == x) {
+            Some(k) => format!("__iv_{k}"),
+            None => "return None".to_string(),
+        },
+        Value::Call(d, args) => match (data.def(*d).name(), args.len()) {
+            ("OpAddInt" | "OpMinInt", 2) => format!(
+                "({}).checked_add({})?",
+                nest_bound_expr(&args[0], data, counters, invariants, read_no),
+                nest_bound_expr(&args[1], data, counters, invariants, read_no)
+            ),
+            ("OpMulInt", 2) => format!(
+                "({}).checked_mul({})?",
+                nest_bound_expr(&args[0], data, counters, invariants, read_no),
+                nest_bound_expr(&args[1], data, counters, invariants, read_no)
+            ),
+            ("OpMinSingleInt", 1) => nest_bound_expr(&args[0], data, counters, invariants, read_no),
+            _ => "return None".to_string(),
+        },
+        Value::Block(bl) if bl.name == "ncc" => {
+            let e = format!("__rb_{}", *read_no);
+            *read_no += 1;
+            e
+        }
+        _ => "return None".to_string(),
+    }
+}
+
+/// `@FR-R-BoundedNest` step 2 — a read's index chain as Rust, with every counter replaced by
+/// `counter` (the range's low end, or its high end less one) and the operators wrapping: the
+/// guard's magnitude bound has already proved no step can overflow, so the wrapping form is the
+/// exact value.  Only the nodes [`hoist::bounded_nest`] admits reach here; anything else spells
+/// the sentinel, which fails the range test.
+fn nest_chain_at(
+    v: &Value,
+    data: &Data,
+    counters: &[u16],
+    var: &dyn Fn(u16) -> String,
+    counter: &str,
+) -> String {
+    match v.unspan() {
+        Value::Int(k) => format!("({k}_i64)"),
+        Value::Var(x) if counters.contains(x) => counter.to_string(),
+        Value::Var(x) => var(*x),
+        Value::Call(d, args) => {
+            let a = |i: usize| nest_chain_at(&args[i], data, counters, var, counter);
+            match (data.def(*d).name(), args.len()) {
+                ("OpAddInt", 2) => format!("({}).wrapping_add({})", a(0), a(1)),
+                ("OpMinInt", 2) => format!("({}).wrapping_sub({})", a(0), a(1)),
+                ("OpMulInt", 2) => format!("({}).wrapping_mul({})", a(0), a(1)),
+                ("OpMinSingleInt", 1) => format!("({}).wrapping_neg()", a(0)),
+                _ => "i64::MIN".to_string(),
+            }
+        }
+        _ => "i64::MIN".to_string(),
+    }
+}
+
 fn sanitize(name: &str) -> String {
     name.replace('#', "__")
 }
@@ -1764,6 +1952,25 @@ impl<'a> Output<'a> {
             loop_stack: Vec::new(),
             vec_headers: Vec::new(),
             vec_bases: Vec::new(),
+            vec_bounds: Vec::new(),
+            plain_nest: 0,
+            bounded_nest_disabled: std::env::var("LOFT_NO_BOUNDED_NEST").is_ok_and(|v| v != "0"),
+            in_coroutine_body: false,
+            plain_chains: Vec::new(),
+            chains_suspended: 0,
+            chain_guard_disabled: std::env::var("LOFT_NO_GUARDED_CHAIN").is_ok_and(|v| v != "0"),
+            chain_trace: std::env::var("LOFT_TRACE_CHAIN").is_ok_and(|v| v != "0"),
+            nest_trace: std::env::var("LOFT_TRACE_NEST").is_ok_and(|v| v != "0"),
+            nest_raw_arm: false,
+            nest_raw_disabled: std::env::var("LOFT_NO_NEST_RAW_READS").is_ok_and(|v| v != "0"),
+            // One rule: `LOFT_NO_VECTOR_BASE` switches its twin clause off with it.
+            twin_base_disabled: std::env::var("LOFT_NO_TWIN_BASE").is_ok_and(|v| v != "0")
+                || !crate::keys::vector_base_enabled(),
+            rec_ptrs: Vec::new(),
+            // One rule: `LOFT_NO_VECTOR_BASE` switches its record clause off with it.
+            record_ptr_disabled: std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0")
+                || !crate::keys::vector_base_enabled(),
+            recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
             scalar_hoist_disabled: std::env::var("LOFT_NO_SCALAR_HOIST").is_ok_and(|v| v != "0"),
@@ -1781,6 +1988,13 @@ impl<'a> Output<'a> {
             mint_hoist_disabled: std::env::var("LOFT_NO_MINT_HOIST").is_ok_and(|v| v != "0"),
             mint_push_headers: Vec::new(),
             record_push_disabled: std::env::var("LOFT_NO_RECORD_PUSH").is_ok_and(|v| v != "0"),
+            heap_record_push_disabled: std::env::var("LOFT_NO_HEAP_RECORD_PUSH")
+                .is_ok_and(|v| v != "0"),
+            rebound_mover_disabled: std::env::var("LOFT_NO_REBOUND_MOVER").is_ok_and(|v| v != "0"),
+            group_push_disabled: std::env::var("LOFT_NO_GROUP_PUSH").is_ok_and(|v| v != "0"),
+            hoist_owned: hoist::HoistOwned::default(),
+            group_ends: Vec::new(),
+            block_serial: 0,
             move_pairs: BTreeMap::new(),
             move_by_loopvar: HashMap::new(),
             active_move_vars: Vec::new(),
@@ -1800,6 +2014,9 @@ impl<'a> Output<'a> {
             element_first_disabled: std::env::var("LOFT_NO_ELEMENT_FIRST").is_ok_and(|v| v != "0"),
             loop_buffers: HashSet::new(),
             loop_buffer_disabled: !crate::keys::loop_buffer_reuse_enabled(),
+            loop_records: HashMap::new(),
+            loop_record_disabled: std::env::var("LOFT_NO_LOOP_RECORD").is_ok_and(|v| v != "0")
+                || !crate::keys::loop_buffer_reuse_enabled(),
             push_fill_disabled: !crate::keys::push_fill_enabled(),
             ret_adopt: None,
             retbuf_adopt_disabled: std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0"),
@@ -1817,6 +2034,9 @@ impl<'a> Output<'a> {
             nn_fast_disabled: std::env::var("LOFT_NO_NN_FAST").is_ok_and(|v| v != "0"),
             release_pass_probe: std::env::var("LOFT_RELEASE_PASS_PROBE").is_ok_and(|v| v != "0"),
             nn_cache: HashMap::new(),
+            range_cache: HashMap::new(),
+            range_arith_disabled: std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0"),
+            range_suspended: 0,
             leaf_cache: HashMap::new(),
             chain_cache: HashMap::new(),
             checkpoints: CkptMode::from_env(),
@@ -2080,7 +2300,12 @@ impl Output<'_> {
         self.elem_first = if self.element_first_disabled {
             hoist::ElemFirstMap::default()
         } else {
-            hoist::element_first(self.data, def_nr)
+            hoist::element_first(
+                self.data,
+                self.stores,
+                def_nr,
+                self.value_records.views.get(&def_nr),
+            )
         };
         self.complete_writes = if self.complete_write_disabled {
             hoist::CompleteWrites::default()
@@ -2109,6 +2334,10 @@ impl Output<'_> {
         // that owns a buffer's mint has claimed its own: an invariant literal (§ V-x), an
         // element-first pair (§ V-z), a move host (§ V-j) and the adopted result's witness
         // (§ V-u) are left to those.
+        self.loop_records.clear();
+        if !self.loop_record_disabled {
+            self.loop_records = hoist::loop_records(self.data, def_nr);
+        }
         self.loop_buffers.clear();
         if !self.loop_buffer_disabled {
             let mut lb = hoist::loop_buffers(self.data, self.stores, def_nr);
@@ -2120,6 +2349,24 @@ impl Output<'_> {
             });
             self.loop_buffers = lb;
         }
+        // `(R-Mint)`'s rebound clause — the buffer vars whose mint the hoist admission lets
+        // through: what the emitter itself owns the mint of.
+        self.hoist_owned = hoist::HoistOwned {
+            buffers: self
+                .loop_buffers
+                .iter()
+                .copied()
+                .chain(self.elem_first.by_vdb.keys().copied())
+                .collect(),
+            elem_fields: self
+                .elem_first
+                .pairs
+                .iter()
+                .flat_map(|p| p.binds.iter().map(move |b| (p.elm, i64::from(b.field_off))))
+                .collect(),
+            records: self.loop_records.keys().copied().collect(),
+        };
+        self.group_ends.clear();
         self.declared.clear();
         self.local_record_link.clear();
         self.retbuf_witness.clear();
@@ -2128,6 +2375,8 @@ impl Output<'_> {
         self.next_format_count = 0;
         self.vec_headers.clear();
         self.vec_bases.clear();
+        self.rec_ptrs.clear();
+        self.vec_bounds.clear();
         self.scalar_hoists.clear();
         self.push_headers.clear();
         self.mint_push_headers.clear();
@@ -2152,6 +2401,605 @@ impl Output<'_> {
         let mut buf: Vec<u8> = Vec::new();
         self.output_code_inner(&mut buf, v)?;
         Ok(String::from_utf8_lossy(&buf).into_owned())
+    }
+
+    /// `@FR-R-BoundedNest` — when `lp` is a bounded nest ([`hoist::bounded_nest`]) whose every
+    /// read has a header AND an element bound held by an enclosing frame, emit the guard
+    /// `let __nb_N: bool = …;`, then `if __nb_N { <the loop with plain operators> } else {`,
+    /// and answer `true`; the caller emits the checked loop as the `else` arm and closes it.
+    ///
+    /// The guard is one closure evaluated at the loop's entry.  It answers `Some` exactly when
+    /// no operation of the nest can fault: the range's start and end are not the sentinel and
+    /// the trip count is positive; every invariant the chains read is not the sentinel
+    /// (`checked_abs` fails on `i64::MIN`); every element bound is known (no stored null);
+    /// and the MAGNITUDE BOUND of every index chain and of the term — literals by value,
+    /// counters by the larger of the range's ends, invariants and reads by their bounds, `+`
+    /// and `-` summing, `*` multiplying, each step checked — fits `i64`, as does the
+    /// accumulate's `|acc| + trips × bound(term)`.  A magnitude bound that fits means the true
+    /// value of every intermediate fits, so the plain operator answers exactly what the
+    /// checked template would; the checked loop is the fallback for every case the guard
+    /// declines.  Emits `@FR-R-BoundedNest`.
+    fn nest_fast_path(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<bool> {
+        if self.bounded_nest_disabled
+            || self.hoist_disabled
+            || self.release_pass_probe
+            || self.in_coroutine_body
+        {
+            return Ok(false);
+        }
+        let fn_name = self.data.def(self.def_nr).name().to_string();
+        let nest = match hoist::bounded_nest(lp, self.data) {
+            Ok(n) => n,
+            Err(why) => {
+                if self.nest_trace && lp.name == "For loop" {
+                    eprintln!("nest: {fn_name} loop {} declined — {why}", lp.scope);
+                }
+                return Ok(false);
+            }
+        };
+        // Every read needs a held header (the read is fused through it) and a held bound.
+        let mut read_bounds: Vec<String> = Vec::new();
+        for (path, _) in &nest.reads {
+            let held = self.active_vec_header(path).is_some();
+            match self.active_vec_bound(path) {
+                Some(b) if held => read_bounds.push(b.to_string()),
+                _ => {
+                    if self.nest_trace {
+                        eprintln!(
+                            "nest: {fn_name} loop {} declined — no held header/bound for the read of variable {}",
+                            lp.scope, path.0
+                        );
+                    }
+                    return Ok(false);
+                }
+            }
+        }
+        let variables = self.data.def(self.def_nr).variables();
+        let var = |v: u16| format!("var_{}", sanitize(variables.name(v)));
+        let idx = var(nest.counters.index);
+        let lo = match nest.counters.next {
+            Some(nx) => var(nx),
+            None => format!("({idx}).checked_add(1_i64)?"),
+        };
+        let hi = self.expr_string(nest.counters.hi)?;
+        let mut counters = vec![nest.counters.loop_var, nest.counters.index];
+        if let Some(nx) = nest.counters.next {
+            counters.push(nx);
+        }
+        // The guard, one line: spelled as parts and joined, so every clause is a plain string.
+        let mut parts: Vec<String> = vec![
+            format!("let __nb_{}: bool = (|| -> Option<i64> {{ ", lp.scope),
+            format!("let __lo: i64 = {lo}; let __hi: i64 = {hi}; "),
+            "if __lo == i64::MIN || __hi == i64::MIN { return None; } ".to_string(),
+            "let __trips: i64 = __hi.checked_sub(__lo)?; if __trips <= 0 { return None; } "
+                .to_string(),
+            "let __cb: i64 = __lo.checked_abs()?.max(__hi.checked_abs()?); ".to_string(),
+        ];
+        for (k, v) in nest.invariants.iter().enumerate() {
+            parts.push(format!("let __iv_{k}: i64 = {}.checked_abs()?; ", var(*v)));
+        }
+        for (j, b) in read_bounds.iter().enumerate() {
+            parts.push(format!("let __rb_{j}: i64 = ({b})?; "));
+        }
+        // The index chains' bounds: bound for the `?`, the value itself unused.
+        for (j, (_, chain)) in nest.reads.iter().enumerate() {
+            let mut dummy = 0usize;
+            let e = nest_bound_expr(chain, self.data, &counters, &nest.invariants, &mut dummy);
+            parts.push(format!("let _ = {e}; let __ib_{j} = 0_i64; "));
+        }
+        let mut read_no = 0usize;
+        let term = nest_bound_expr(
+            nest.term,
+            self.data,
+            &counters,
+            &nest.invariants,
+            &mut read_no,
+        );
+        parts.push(format!("let __tb: i64 = {term}; "));
+        parts.push(format!(
+            "let __ab: i64 = {}.checked_abs()?; ",
+            var(nest.acc)
+        ));
+        parts.push("__trips.checked_mul(__tb)?.checked_add(__ab)?; ".to_string());
+        // Step 2 — every index in range at both ends of the range.  Each chain is affine in
+        // the counter (`nest.affine`), so its extremes over `[lo, hi)` are its values at `lo`
+        // and at `hi - 1`, spelled with wrapping operators: the magnitude bound above has
+        // already proved no step overflows.  A read outside `[0, len)` at either end declines
+        // the whole nest to the checked loop, where the absent element answers as it always has.
+        let raw = nest.affine && !self.nest_raw_disabled;
+        if raw {
+            for (j, (path, chain)) in nest.reads.iter().enumerate() {
+                let header = self
+                    .active_vec_header(path)
+                    .expect("checked above")
+                    .to_string();
+                let at_lo = nest_chain_at(chain, self.data, &counters, &var, "__lo");
+                let at_hi = nest_chain_at(
+                    chain,
+                    self.data,
+                    &counters,
+                    &var,
+                    "(__hi.wrapping_sub(1_i64))",
+                );
+                parts.push(format!(
+                    "let __ln_{j}: i64 = i64::from({header}.len); let __xl_{j}: i64 = {at_lo}; let __xh_{j}: i64 = {at_hi}; \
+                     if __xl_{j} < 0 || __xl_{j} >= __ln_{j} || __xh_{j} < 0 || __xh_{j} >= __ln_{j} {{ return None; }} "
+                ));
+            }
+        }
+        parts.push("Some(0) })().is_some(); //@FR-R-BoundedNest guard".to_string());
+        let g = parts.concat();
+        self.indent(w)?;
+        writeln!(w, "{g}")?;
+        if self.nest_trace {
+            eprintln!(
+                "nest: {fn_name} loop {} admitted — {} read(s), {} invariant(s), raw reads: {}",
+                lp.scope,
+                nest.reads.len(),
+                nest.invariants.len(),
+                if raw {
+                    "yes"
+                } else if nest.affine {
+                    "no (switch)"
+                } else {
+                    "no (a chain is not affine)"
+                }
+            );
+        }
+        self.indent(w)?;
+        writeln!(w, "if __nb_{} {{", lp.scope)?;
+        // The plain arm: the same loop, its four nest operators in their plain form.  Its
+        // `let`s live in this arm's block, so the declared set is restored afterwards and the
+        // checked arm declares the same locals again in its own block.
+        let declared_before = self.declared.clone();
+        self.plain_nest += 1;
+        self.nest_raw_arm = raw;
+        self.loop_stack.push(lp.scope);
+        self.indent(w)?;
+        writeln!(
+            w,
+            "'l{}: loop {{ //{}_{} plain nest",
+            lp.scope, lp.name, lp.scope
+        )?;
+        for v in &lp.operators {
+            self.indent(w)?;
+            self.indent += 1;
+            self.output_code_inner(w, v)?;
+            self.indent -= 1;
+            writeln!(w, ";")?;
+        }
+        self.indent(w)?;
+        writeln!(w, "}} /*{}_{} plain nest*/", lp.name, lp.scope)?;
+        self.loop_stack.pop();
+        self.plain_nest -= 1;
+        self.nest_raw_arm = false;
+        self.declared = declared_before;
+        self.indent(w)?;
+        writeln!(w, "}} else {{")?;
+        Ok(true)
+    }
+
+    /// How the op node with arguments `args` emits: `None` — the checked template (no
+    /// guarded loop holds it, or a verified op's checked copy is being emitted);
+    /// `Some(None)` — plain unconditionally (inside an innermost loop's guarded copy);
+    /// `Some(Some(g))` — plain under the guard `g` (a loop with loops inside it, emitted
+    /// once with the branch per op).
+    #[must_use]
+    pub fn plain_chain_guard(&self, args: &[Value]) -> Option<Option<String>> {
+        if self.chains_suspended > 0 {
+            return None;
+        }
+        self.plain_chains
+            .iter()
+            .rev()
+            .find(|(s, _)| s.contains(&(args.as_ptr() as usize)))
+            .map(|(_, g)| g.clone())
+    }
+
+    /// `@FR-R-GuardedChain` — when the counted loop `lp` carries integer CHAINS of `+`, `-`,
+    /// `*` and negation whose leaves are literals, the loop's own counters, the counters of a
+    /// counted loop nested in it, integer locals the loop never writes, and record scalars an
+    /// enclosing frame hoisted, emit a guard `let __gc_N: bool = …;` evaluated once at the
+    /// loop's entry — every leaf's value is not the sentinel and every chain's MAGNITUDE BOUND,
+    /// spelled with checked operators over the leaves' bounds (a counter by the larger of its
+    /// range's ends plus one, an invariant by its absolute value), fits the type — then
+    /// push the chains as a frame and answer `true`; every op of an admitted chain then
+    /// emits `if __gc_N { plain } else { checked }` — the guard is loop-invariant, so LLVM
+    /// unswitches the loop on it once while the body is emitted ONCE (the bounded nest
+    /// duplicates its one-statement body instead).  The caller pops the frame after the
+    /// loop.  A bound that fits means every true intermediate fits, so the plain operator
+    /// answers exactly what the checked template would; every other operator is untouched.
+    /// `(R-BoundedNest)`'s method for any counted loop's index arithmetic — the six operators
+    /// of `composite_layer`'s pixel loop (`j * lw + i`, `x0 + i`, `y0 + j`) whose unproven
+    /// record-scalar operands no static proof can bound.
+    fn chain_fast_path(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<ChainGuard> {
+        if self.chain_guard_disabled
+            || self.hoist_disabled
+            || self.release_pass_probe
+            || self.in_coroutine_body
+        {
+            return Ok(ChainGuard::None);
+        }
+        let data = self.data;
+        let fn_name = data.def(self.def_nr).name().to_string();
+        // `LOFT_GUARDED_CHAIN_ONLY=<fn>[,<fn>…]` — a BISECT instrument, never a tuning
+        // knob: admit the guard in the named functions alone, so a row that moved under
+        // `LOFT_NO_GUARDED_CHAIN` can be attributed to ONE loop by timing (the drawing
+        // `parse` row lost 15 % to the rewrite while the standalone scanner lost nothing,
+        // and there is no cheaper way to ask which of its six admitted loops paid).
+        if let Ok(only) = std::env::var("LOFT_GUARDED_CHAIN_ONLY")
+            && !only.split(',').any(|f| f.trim() == fn_name)
+        {
+            return Ok(ChainGuard::None);
+        }
+        let Ok(rc) = hoist::range_counters(lp, data) else {
+            return Ok(ChainGuard::None);
+        };
+        let variables = data.def(self.def_nr).variables();
+        let written = hoist::written_vars(lp);
+        let mut escaped: HashSet<u16> = HashSet::new();
+        non_sentinel::collect_escapes(data, data.def(self.def_nr).code(), &mut escaped);
+        let own: Vec<u16> = std::iter::once(rc.loop_var)
+            .chain(std::iter::once(rc.index))
+            .chain(rc.next)
+            .collect();
+        let nested = hoist::nested_counted_loops(lp, data);
+        let nested_counters: Vec<Vec<u16>> = nested
+            .iter()
+            .map(|(n, _)| {
+                std::iter::once(n.loop_var)
+                    .chain(std::iter::once(n.index))
+                    .chain(n.next)
+                    .collect()
+            })
+            .collect();
+        // The leaves a bound may name, registered as they are met so the guard declares them
+        // in order: integer locals the loop never writes, and hoisted record scalars.
+        let mut invariants: Vec<u16> = Vec::new();
+        let mut scalars: Vec<String> = Vec::new();
+        let sanitize_var = |v: u16| format!("var_{}", sanitize(variables.name(v)));
+        // The bound of a chain node, or `None` where a leaf is not one the guard can bound.
+        // `counters` false while bounding a nested loop's own seed and end (those are
+        // declared before any counter).  Eleven parameters: the node, what types it, the
+        // five leaf classes, the two registries and the one switch — a struct would name
+        // each once more at the three call sites without removing anything.
+        #[allow(clippy::too_many_arguments)]
+        fn bound(
+            v: &Value,
+            data: &Data,
+            variables: &crate::variables::Function,
+            own: &[u16],
+            nested_counters: &[Vec<u16>],
+            written: &HashSet<u16>,
+            escaped: &HashSet<u16>,
+            scalar_hoists: &[HashMap<hoist::ScalarKey, String>],
+            invariants: &mut Vec<u16>,
+            scalars: &mut Vec<String>,
+            counters: bool,
+        ) -> Option<String> {
+            match v.unspan() {
+                Value::Int(k) => Some(format!("{}_i64", i64::from(*k).unsigned_abs())),
+                Value::Long(l) if *l != i64::MIN => Some(format!("{}_i64", l.unsigned_abs())),
+                Value::Var(x) => {
+                    if own.contains(x) {
+                        return counters.then(|| "__cb".to_string());
+                    }
+                    if let Some(k) = nested_counters.iter().position(|c| c.contains(x)) {
+                        return counters.then(|| format!("__nc_{k}"));
+                    }
+                    if written.contains(x)
+                        || escaped.contains(x)
+                        || !matches!(variables.tp(*x).peel_link(), Type::Integer(_))
+                    {
+                        return None;
+                    }
+                    let k = invariants.iter().position(|i| i == x).unwrap_or_else(|| {
+                        invariants.push(*x);
+                        invariants.len() - 1
+                    });
+                    Some(format!("__gv_{k}"))
+                }
+                Value::Call(d, args) => {
+                    let name = data.def(*d).name();
+                    let sub = |a: &Value, invariants: &mut Vec<u16>, scalars: &mut Vec<String>| {
+                        bound(
+                            a,
+                            data,
+                            variables,
+                            own,
+                            nested_counters,
+                            written,
+                            escaped,
+                            scalar_hoists,
+                            invariants,
+                            scalars,
+                            counters,
+                        )
+                    };
+                    match (name, args.len()) {
+                        ("OpAddInt" | "OpMinInt" | "OpAddIntNullable" | "OpMinIntNullable", 2) => {
+                            let a = sub(&args[0], invariants, scalars)?;
+                            let b = sub(&args[1], invariants, scalars)?;
+                            Some(format!("({a}).checked_add({b})?"))
+                        }
+                        ("OpMulInt" | "OpMulIntNullable", 2) => {
+                            let a = sub(&args[0], invariants, scalars)?;
+                            let b = sub(&args[1], invariants, scalars)?;
+                            Some(format!("({a}).checked_mul({b})?"))
+                        }
+                        ("OpMinSingleInt", 1) => sub(&args[0], invariants, scalars),
+                        ("OpGetInt", _) => {
+                            let key = hoist::scalar_read(name, args)?;
+                            let held = scalar_hoists
+                                .iter()
+                                .rev()
+                                .find_map(|f| f.get(&key).cloned())?;
+                            let k = scalars.iter().position(|s| *s == held).unwrap_or_else(|| {
+                                scalars.push(held);
+                                scalars.len() - 1
+                            });
+                            Some(format!("__gs_{k}"))
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        }
+        let is_chain_op = |v: &Value| -> bool {
+            matches!(v.unspan(), Value::Call(d, args)
+                if matches!((data.def(*d).name(), args.len()),
+                    ("OpAddInt" | "OpMinInt" | "OpMulInt" | "OpAddIntNullable" | "OpMinIntNullable" | "OpMulIntNullable", 2) | ("OpMinSingleInt", 1)))
+        };
+        // Collect the maximal chains: a chain op whose whole subtree bounds is admitted whole
+        // (every chain op inside it emits plain); one that does not is descended for smaller
+        // chains.  The loop's own iterator is skipped — its step is (R-Counter)'s already.
+        let mut chains: Vec<String> = Vec::new();
+        let mut admitted: HashSet<usize> = HashSet::new();
+        fn collect_ops(v: &Value, data: &Data, into: &mut HashSet<usize>) {
+            if let Value::Call(d, args) = v.unspan()
+                && matches!(
+                    (data.def(*d).name(), args.len()),
+                    (
+                        "OpAddInt"
+                            | "OpMinInt"
+                            | "OpMulInt"
+                            | "OpAddIntNullable"
+                            | "OpMinIntNullable"
+                            | "OpMulIntNullable",
+                        2
+                    ) | ("OpMinSingleInt", 1)
+                )
+            {
+                into.insert(args.as_ptr() as usize);
+            }
+            v.for_each_child(&mut |c| collect_ops(c, data, into));
+        }
+        let scalar_hoists = self.scalar_hoists.clone();
+        // A chain an ENCLOSING guarded arm already admitted emits plain there already; asking
+        // again would guard the inner loop a second time inside the outer plain arm.
+        let already = |v: &Value| -> bool {
+            matches!(v.unspan(), Value::Call(_, args)
+                if self.plain_chains.iter().any(|(s, _)| s.contains(&(args.as_ptr() as usize))))
+        };
+        let mut stack: Vec<&Value> = lp.operators.iter().skip(1).collect();
+        while let Some(v) = stack.pop() {
+            if already(v) {
+                continue;
+            }
+            // A loop NESTED in this one guards its own chains (its body is where the time
+            // is, and it can duplicate itself); this loop's chains are the ones outside it.
+            if matches!(v.unspan(), Value::Loop(_)) {
+                continue;
+            }
+            if is_chain_op(v) {
+                let mut inv2 = invariants.clone();
+                let mut sc2 = scalars.clone();
+                if let Some(b) = bound(
+                    v,
+                    data,
+                    variables,
+                    &own,
+                    &nested_counters,
+                    &written,
+                    &escaped,
+                    &scalar_hoists,
+                    &mut inv2,
+                    &mut sc2,
+                    true,
+                ) {
+                    invariants = inv2;
+                    scalars = sc2;
+                    chains.push(b);
+                    collect_ops(v, data, &mut admitted);
+                    continue;
+                }
+            }
+            v.for_each_child(&mut |c| stack.push(c));
+        }
+        if chains.is_empty() {
+            return Ok(ChainGuard::None);
+        }
+        // `@FR-R-GuardedChain` profitability — a loop with ONE admitted operator declines.
+        //
+        // The guard is a fixed cost paid once per loop ENTRY and the saving is one null
+        // test per admitted operator per ITERATION, so the model the rewrite shipped with
+        // said a short loop still breaks even.  It does not, and the term the model was
+        // missing is not arithmetic at all: an innermost loop is emitted TWICE, and in a
+        // small function that doubling is what stops rustc inlining it into its caller.
+        // A one-operator loop saves the least it can save and pays that in full.
+        //
+        // Measured on the drawing lane against the guard switched off (ns/op, 500 calls,
+        // best of 3): `pil_hline` and `matches_at` are one-operator loops in per-scanline
+        // and per-byte helpers, and declining them took `fill_circle` 23.7k -> 23.1k
+        // (1.88x -> 0.90x of Rust), `fill_star` 1.97x -> 0.92x, `wide_line` 2.34x -> 1.73x
+        // and `parse` 3.03x -> 2.52x.  `composite_layer` has six operators, keeps its
+        // guard and keeps the whole reason the rewrite exists: 89.0 -> 62.1 us (+30 %).
+        // Thresholds 3 and 5 measured identical to 2 lane-wide, so 2 is taken as the
+        // lowest that removes the loss — a higher one only withholds the rewrite from
+        // loops this lane does not have.
+        //
+        // ⚠ An UNDER-approximation, and the residual is recorded rather than hidden: the
+        // `hair` row is ~8 % slower with the guard than without at EVERY threshold up to
+        // 6, because `hair_brush` has six admitted operators — the same count as
+        // `composite_layer`, which gains 30 %.  Operator count cannot separate them; what
+        // separates them is trip count, which is not a compile-time fact here.  Closing
+        // that wants a model of the DUPLICATION cost (is this function small and hot
+        // enough that a doubled body loses an inline?), not a larger constant.
+        if admitted.len() < 2 {
+            return Ok(ChainGuard::None);
+        }
+        // The nested loops' seeds and ends, bounded over the same leaves (no counters).
+        let mut nested_bounds: Vec<(String, String)> = Vec::new();
+        for (n, seed) in &nested {
+            let mut inv2 = invariants.clone();
+            let mut sc2 = scalars.clone();
+            let s = bound(
+                seed,
+                data,
+                variables,
+                &own,
+                &nested_counters,
+                &written,
+                &escaped,
+                &scalar_hoists,
+                &mut inv2,
+                &mut sc2,
+                false,
+            );
+            let h = bound(
+                n.hi,
+                data,
+                variables,
+                &own,
+                &nested_counters,
+                &written,
+                &escaped,
+                &scalar_hoists,
+                &mut inv2,
+                &mut sc2,
+                false,
+            );
+            let (Some(s), Some(h)) = (s, h) else {
+                // A chain naming this loop's counter cannot be bounded: decline whole.
+                if self.chain_trace {
+                    eprintln!(
+                        "chain: {fn_name} loop {} declined — a nested loop's seed or end is not a leaf",
+                        lp.scope
+                    );
+                }
+                return Ok(ChainGuard::None);
+            };
+            invariants = inv2;
+            scalars = sc2;
+            nested_bounds.push((s, h));
+        }
+        let idx = sanitize_var(rc.index);
+        let lo = match rc.next {
+            Some(nx) => sanitize_var(nx),
+            None => format!("({idx}).checked_add(1_i64)?"),
+        };
+        let hi = self.expr_string(rc.hi)?;
+        let mut parts: Vec<String> = vec![
+            format!("let __gc_{}: bool = (|| -> Option<i64> {{ ", lp.scope),
+            format!("let __lo: i64 = {lo}; let __hi: i64 = {hi}; "),
+            "if __lo == i64::MIN || __hi == i64::MIN { return None; } ".to_string(),
+            "let __cb: i64 = __lo.checked_abs()?.max(__hi.checked_abs()?).checked_add(1_i64)?; "
+                .to_string(),
+        ];
+        for (k, v) in invariants.iter().enumerate() {
+            parts.push(format!(
+                "let __gv_{k}: i64 = {}.checked_abs()?; ",
+                sanitize_var(*v)
+            ));
+        }
+        for (k, s) in scalars.iter().enumerate() {
+            parts.push(format!("let __gs_{k}: i64 = {s}.checked_abs()?; "));
+        }
+        for (k, (s, h)) in nested_bounds.iter().enumerate() {
+            parts.push(format!(
+                "let __nc_{k}: i64 = ({s}).max({h}).checked_add(1_i64)?; "
+            ));
+        }
+        for c in &chains {
+            parts.push(format!("let _ = {c}; "));
+        }
+        parts.push("Some(0) })().is_some(); //@FR-R-GuardedChain guard".to_string());
+        let g = parts.concat();
+        self.indent(w)?;
+        writeln!(w, "{g}")?;
+        if self.chain_trace {
+            eprintln!(
+                "chain: {fn_name} loop {} admitted — {} operator(s) in {} chain(s), {} invariant(s), {} hoisted scalar(s), {} nested loop(s)",
+                lp.scope,
+                admitted.len(),
+                chains.len(),
+                invariants.len(),
+                scalars.len(),
+                nested_bounds.len()
+            );
+        }
+        // An INNERMOST loop (no loop of any kind inside it) is where the time is and its body is small:
+        // emit it twice, the guarded copy plain and the checked loop as the `else` arm, exactly
+        // as the bounded nest does — LLVM does not unswitch a body that calls.  A loop with
+        // loops inside is emitted once, each admitted op branching on the guard, so nothing
+        // below it is duplicated.
+        // A body the hoist family refuses outright is one this must not COPY either: a
+        // `Yield` / `Parallel` / `CallRef` is not ours to run twice, and a generator's loop
+        // body carries the native collector's refusal — emitted twice, the author reads the
+        // same `compile_error!` twice (`native_yield_channel`'s "delivered exactly once").
+        let uncopyable = lp.operators.iter().any(|op| {
+            op.any_node(&mut |n| {
+                matches!(
+                    n,
+                    Value::Yield(_) | Value::Parallel(_) | Value::CallRef(_, _)
+                )
+            })
+        });
+        let has_inner_loop = uncopyable
+            || lp
+                .operators
+                .iter()
+                .any(|op| op.any_node(&mut |n| matches!(n, Value::Loop(_))));
+        if !has_inner_loop {
+            self.indent(w)?;
+            writeln!(w, "if __gc_{} {{", lp.scope)?;
+            let declared_before = self.declared.clone();
+            self.plain_chains.push((admitted, None));
+            self.loop_stack.push(lp.scope);
+            self.indent(w)?;
+            writeln!(
+                w,
+                "'l{}: loop {{ //{}_{} plain chains",
+                lp.scope, lp.name, lp.scope
+            )?;
+            for v in &lp.operators {
+                self.indent(w)?;
+                self.indent += 1;
+                self.output_code_inner(w, v)?;
+                self.indent -= 1;
+                writeln!(w, ";")?;
+            }
+            self.indent(w)?;
+            writeln!(w, "}} /*{}_{} plain chains*/", lp.name, lp.scope)?;
+            self.loop_stack.pop();
+            self.plain_chains.pop();
+            self.declared = declared_before;
+            self.indent(w)?;
+            writeln!(w, "}} else {{")?;
+            return Ok(ChainGuard::Arms);
+        }
+        self.plain_chains
+            .push((admitted, Some(format!("__gc_{}", lp.scope))));
+        Ok(ChainGuard::Branch)
     }
 
     /// @PLN157 § V-ae (`@FR-R-Fill`) — when `lp` is one fill over a path an enclosing frame
@@ -2311,6 +3159,21 @@ impl Output<'_> {
     ) -> std::io::Result<bool> {
         let mut frame: HashMap<hoist::PathKey, String> = HashMap::new();
         let mut scalar_frame: HashMap<hoist::ScalarKey, String> = HashMap::new();
+        // `@FR-R-BoundedNest` — the vectors a nest under this loop reads get an element bound
+        // beside their header, derived once here where the header is.
+        let mut bound_frame: HashMap<hoist::PathKey, String> = HashMap::new();
+        // Never at the nest's OWN prelude: a bound there is a scan per nest entry, which is the
+        // nest's own cost again.  The prelude that binds it is the outermost loop whose body
+        // leaves the vector alone — every enclosing loop runs this same test first, so the
+        // first level that can hold the bound is the one that does.
+        let nest_paths = if self.bounded_nest_disabled
+            || self.hoist_disabled
+            || hoist::bounded_nest(lp, self.data).is_ok()
+        {
+            HashSet::new()
+        } else {
+            hoist::nest_read_paths(lp, self.data)
+        };
         let hoisted = if self.hoist_disabled {
             hoist::LoopHoist::default()
         } else {
@@ -2327,8 +3190,11 @@ impl Output<'_> {
                     push: !self.push_hoist_disabled,
                     mint: !self.mint_hoist_disabled,
                     record_push: !self.record_push_disabled,
+                    heap_push: !self.heap_record_push_disabled,
+                    rebound_movers: !self.rebound_mover_disabled,
                 },
                 (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
+                Some(&self.hoist_owned),
             )
         };
         let hoist::LoopHoist {
@@ -2402,7 +3268,7 @@ impl Output<'_> {
                     lines.push(format!(
                         "let {base}: *const u8 = vector::vec_base(&{held}, &stores.allocations); //@PLN157 § V-ak element base of the held header"
                     ));
-                    base_frame.insert(path, base);
+                    base_frame.insert(path.clone(), base);
                 }
                 continue;
             }
@@ -2491,6 +3357,40 @@ impl Output<'_> {
                 }
             }
         }
+        // `@FR-R-BoundedNest` — the element bound of every vector a nest under this loop
+        // reads and this body leaves alone, derived once here: from the header this prelude or
+        // an enclosing one holds, or from a header taken for the purpose — a bound is a fact
+        // about the VALUES, so it needs no hoisted header, only that nothing in the body
+        // changes or hands out the elements (the filter in `nest_read_paths`).
+        let mut nest_paths: Vec<hoist::PathKey> = nest_paths.into_iter().collect();
+        nest_paths.sort();
+        for path in nest_paths {
+            if self.active_vec_bound(&path).is_some()
+                || self.coroutine_persistent_fields.contains_key(&path.0)
+            {
+                continue;
+            }
+            let header = match frame
+                .get(&path)
+                .cloned()
+                .or_else(|| self.active_vec_header(&path).map(str::to_owned))
+            {
+                Some(h) => format!("&{h}"),
+                // A standalone bound is spelled for a plain variable only; a field path
+                // without a held header keeps the checked loop.
+                None if path.1.is_empty() => {
+                    let operand = self.expr_string(&Value::Var(path.0))?;
+                    format!("&vector::vec_header(&({operand}), &stores.allocations)")
+                }
+                None => continue,
+            };
+            self.hoist_counter += 1;
+            let bound = format!("__bd_{}", self.hoist_counter);
+            lines.push(format!(
+                "let {bound}: Option<i64> = vector::abs_bound_i64({header}, &stores.allocations); //@FR-R-BoundedNest element bound"
+            ));
+            bound_frame.insert(path, bound);
+        }
         let opened = !lines.is_empty();
         if opened {
             writeln!(w, "{{ //loft#885 loop-invariant vector headers")?;
@@ -2502,6 +3402,7 @@ impl Output<'_> {
         }
         self.vec_headers.push(frame);
         self.vec_bases.push(base_frame);
+        self.vec_bounds.push(bound_frame);
         self.scalar_hoists.push(scalar_frame);
         self.invariant_hoists.push(invariant_frame);
         self.push_headers.push(push_frame);
@@ -2513,6 +3414,7 @@ impl Output<'_> {
     fn end_vector_hoist(&mut self, w: &mut dyn Write, opened: bool) -> std::io::Result<()> {
         self.vec_headers.pop();
         self.vec_bases.pop();
+        self.vec_bounds.pop();
         self.scalar_hoists.pop();
         self.invariant_hoists.pop();
         self.push_headers.pop();
@@ -2559,10 +3461,24 @@ impl Output<'_> {
         // @PLN157 § V-p — a view of a path whose header is already held (a loop's prelude, or
         // a twin's input) copies that header: the binding's `DbRef` is the path's, so the
         // header derived from either is the same one (`@FR-R-State`).
-        let held = match stmts[at].unspan() {
-            Value::Set(_, rhs) => hoist::vector_path(self.data, rhs)
-                .and_then(|p| self.active_vec_header(&p).map(str::to_owned)),
+        let held_path = match stmts[at].unspan() {
+            Value::Set(_, rhs) => hoist::vector_path(self.data, rhs),
             _ => None,
+        };
+        let held = held_path
+            .as_ref()
+            .and_then(|p| self.active_vec_header(p).map(str::to_owned));
+        // `@FR-R-Base`'s twin clause — where the held path also carries a BASE (a twin's
+        // input, or a growth-free loop's), the view shares it under its own key, so its
+        // element reads and writes take the one-load form.  A path held without a base
+        // (a loop that grows a store) shares the header alone.
+        let held_base = if self.twin_base_disabled {
+            None
+        } else {
+            held_path
+                .as_ref()
+                .filter(|_| held.is_some())
+                .and_then(|p| self.active_vec_base(p).map(str::to_owned))
         };
         let mut operand: Vec<u8> = Vec::new();
         self.output_code_inner(&mut operand, &Value::Var(d))?;
@@ -2581,7 +3497,18 @@ impl Output<'_> {
                 "let {name} = vector::vec_header(&({operand}), &stores.allocations); //@PLN157 § V-n view header for {operand}"
             )?;
         }
+        let mut bases = HashMap::new();
+        if let Some(base) = held_base {
+            let bname = format!("__vb_{}", self.hoist_counter);
+            self.indent(w)?;
+            writeln!(
+                w,
+                "let {bname} = {base}; //@FR-R-Base view base for {operand}, shared from the held path"
+            )?;
+            bases.insert(path.clone(), bname);
+        }
         self.vec_headers.push(HashMap::from([(path, name)]));
+        self.vec_bases.push(bases);
         Ok(true)
     }
 
@@ -2650,18 +3577,44 @@ impl Output<'_> {
     fn twin_call_inputs(&mut self, def_nr: u32, vals: &[Value]) -> Option<Vec<String>> {
         let inputs = self.callee_inputs_of(def_nr)?;
         let mut args = Vec::with_capacity(inputs.scalars.len() + inputs.headers.len());
-        for (p, fld, _) in &inputs.scalars {
+        for (p, fld, getter) in &inputs.scalars {
             let Some(Value::Var(c)) = vals.get(*p as usize).map(Value::unspan) else {
                 return None;
             };
-            args.push(self.active_scalar_hoist(&(*c, *fld))?.to_owned());
+            if let Some(held) = self.active_scalar_hoist(&(*c, *fld)) {
+                args.push(held.to_owned());
+                continue;
+            }
+            // `@FR-R-RecPtr` — an input the caller does not hold as a value but whose
+            // record's ADDRESS it holds is read through that address at the call: one load,
+            // where the plain call read it through the store inside the callee.
+            let Value::Call(g, _) = getter.unspan() else {
+                return None;
+            };
+            let name = self.data.def(*g).name().to_string();
+            args.push(self.rec_ptr_read(*c, *fld, &name)?);
         }
         // A header input is keyed on the argument's PATH (§ V-ac): `br.img` for a vector
         // parameter, `h.cv` + the callee's `data` offset for a record parameter's field.
+        let mut header_keys: Vec<hoist::PathKey> = Vec::with_capacity(inputs.headers.len());
         for (p, offs, _) in &inputs.headers {
             let (c, mut key) = hoist::vector_path(self.data, vals.get(*p as usize)?)?;
             key.extend_from_slice(offs);
-            args.push(self.active_vec_header(&(c, key))?.to_owned());
+            args.push(self.active_vec_header(&(c, key.clone()))?.to_owned());
+            header_keys.push((c, key));
+        }
+        // `@FR-R-Base`'s twin clause — a base beside each header: the one this loop holds
+        // when it grows no store, or one derived from the held header AT THE CALL — valid
+        // for the call's duration either way, since an admitted callee is store-free or
+        // writes only in place, so no store reallocates while it runs.
+        if !self.twin_base_disabled {
+            for key in &header_keys {
+                let hdr = self.active_vec_header(key)?.to_owned();
+                match self.active_vec_base(key) {
+                    Some(b) => args.push(b.to_owned()),
+                    None => args.push(format!("vector::vec_base(&{hdr}, &stores.allocations)")),
+                }
+            }
         }
         Some(args)
     }
@@ -2682,14 +3635,27 @@ impl Output<'_> {
             .enumerate()
             .map(|(k, (p, offs, _))| ((*p, offs.clone()), format!("__ih_{k}")))
             .collect();
+        // `@FR-R-Base`'s twin clause — each header's base under the same key, so the fused
+        // read and write emitters find it exactly as they find a loop's.
+        let bases: HashMap<hoist::PathKey, String> = if self.twin_base_disabled {
+            HashMap::new()
+        } else {
+            t.headers
+                .iter()
+                .enumerate()
+                .map(|(k, (p, offs, _))| ((*p, offs.clone()), format!("__ib_{k}")))
+                .collect()
+        };
         self.scalar_hoists.push(scalars);
         self.vec_headers.push(headers);
+        self.vec_bases.push(bases);
     }
 
     fn pop_twin_frames(&mut self) {
         if self.twin.is_some() {
             self.scalar_hoists.pop();
             self.vec_headers.pop();
+            self.vec_bases.pop();
         }
     }
 
@@ -2757,6 +3723,15 @@ impl Output<'_> {
             .find_map(|f| f.get(path).map(String::as_str))
     }
 
+    /// `@FR-R-BoundedNest` — the element bound an enclosing frame holds for `path`.
+    #[must_use]
+    pub fn active_vec_bound(&self, path: &hoist::PathKey) -> Option<&str> {
+        self.vec_bounds
+            .iter()
+            .rev()
+            .find_map(|f| f.get(path).map(String::as_str))
+    }
+
     /// @PLN157 § V-ak (`@FR-R-Base`) — the element base held for `path`, when the loop
     /// that bound its header grows no store.  Frames are searched innermost first, as the
     /// headers are, and a base is only ever bound in the frame that bound the header, so
@@ -2767,6 +3742,231 @@ impl Output<'_> {
             .iter()
             .rev()
             .find_map(|f| f.get(path).map(String::as_str))
+    }
+
+    /// `@FR-R-RecPtr` — the `__pa_N` local holding the address of record view `v`, when an
+    /// enclosing block bound one.
+    #[must_use]
+    pub fn active_rec_ptr(&self, v: u16) -> Option<&str> {
+        self.rec_ptrs
+            .iter()
+            .rev()
+            .find_map(|f| f.get(&v).map(String::as_str))
+    }
+
+    /// `@FR-R-RecPtr` — the expression reading field `fld` of record view `v` through its
+    /// held address with getter `getter`'s type and sentinel, or `None` when no address is
+    /// held or the getter is not one the address serves.
+    pub fn rec_ptr_read(&mut self, v: u16, fld: i64, getter: &str) -> Option<String> {
+        let ptr = self.active_rec_ptr(v)?.to_owned();
+        let (ty, absent) = hoist::scalar_kind(getter)?;
+        let mut operand: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut operand, &Value::Var(v)).ok()?;
+        let operand = String::from_utf8_lossy(&operand).into_owned();
+        Some(format!(
+            "unsafe {{ vector::rec_get::<{ty}>({ptr}, &({operand}), ({fld}_i64) as u32, {absent}, &stores.allocations, {}) }}",
+            self.hoist_verify
+        ))
+    }
+
+    /// `@FR-R-RecPtr` — after statement `at` of a block was emitted: if it bound a plain
+    /// record VIEW whose address the rest of the block may share ([`hoist::record_view_ptr`]),
+    /// emit `let __pa_N = vector::rec_ptr(&var_r, …);` as the next statement and push a frame
+    /// for it.  Answers whether a frame was pushed; `output_block` pops what it pushed before
+    /// the block closes.  A value-record local (`@FR-R-ValueRecord`) is a tuple, not a place,
+    /// and is never bound.
+    pub(super) fn bind_record_ptr(
+        &mut self,
+        w: &mut dyn Write,
+        stmts: &[Value],
+        at: usize,
+    ) -> std::io::Result<bool> {
+        if self.hoist_disabled || self.record_ptr_disabled {
+            return Ok(false);
+        }
+        let Some(Value::Set(r, _)) = stmts.get(at).map(Value::unspan) else {
+            return Ok(false);
+        };
+        if self.value_record_locals.contains_key(r)
+            || self.coroutine_persistent_fields.contains_key(r)
+            || self.rec_ptrs.iter().any(|f| f.contains_key(r))
+        {
+            return Ok(false);
+        }
+        // The `(callee, parameter)` pairs of the remainder's calls that hand `r` to a twin
+        // taking that parameter's scalar fields as inputs — a use of the address at the call.
+        let mut candidates: Vec<(u32, u16)> = Vec::new();
+        for op in &stmts[at + 1..] {
+            op.any_node(&mut |n| {
+                if let Value::Call(g, args) = n
+                    && (*g as usize) < self.data.definitions.len()
+                {
+                    for (i, a) in args.iter().enumerate() {
+                        if matches!(a.unspan(), Value::Var(v) if *v == *r)
+                            && let Ok(p) = u16::try_from(i)
+                        {
+                            candidates.push((*g, p));
+                        }
+                    }
+                }
+                false
+            });
+        }
+        let mut twin_params: HashSet<(u32, u16)> = HashSet::new();
+        for (g, p) in candidates {
+            if self
+                .callee_inputs_of(g)
+                .is_some_and(|ci| ci.scalars.iter().any(|(q, _, _)| *q == p))
+            {
+                twin_params.insert((g, p));
+            }
+        }
+        let verdict = hoist::record_view_ptr(
+            stmts,
+            at,
+            self.data,
+            self.def_nr,
+            &mut self.hoist_cache,
+            !self.write_hoist_disabled,
+            &twin_params,
+        );
+        let r = match verdict {
+            Ok(r) => r,
+            Err(why) => {
+                // Scalar locals and non-bindings are not candidates worth a line.
+                if self.recptr_trace && why != "not a plain record" && why != "not a binding" {
+                    eprintln!(
+                        "recptr: {} declines `{}`: {why}",
+                        self.data.def(self.def_nr).name(),
+                        self.data.def(self.def_nr).variables().name(*r)
+                    );
+                }
+                return Ok(false);
+            }
+        };
+        self.hoist_counter += 1;
+        let name = format!("__pa_{}", self.hoist_counter);
+        let mut operand: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut operand, &Value::Var(r))?;
+        let operand = String::from_utf8_lossy(&operand).into_owned();
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let {name}: *const u8 = vector::rec_ptr(&({operand}), &stores.allocations); //@FR-R-RecPtr record view address for {operand}"
+        )?;
+        if self.recptr_trace {
+            eprintln!(
+                "recptr: {} binds {name} for `{}`",
+                self.data.def(self.def_nr).name(),
+                self.data.def(self.def_nr).variables().name(r)
+            );
+        }
+        self.rec_ptrs.push(HashMap::from([(r, name)]));
+        Ok(true)
+    }
+
+    /// The tiers the loop hoist runs under, as [`Self::begin_vector_hoist`] passes them —
+    /// the ONE spelling, so the group admission (`@FR-R-GroupPush`) asks the same question.
+    fn hoist_tiers(&self) -> hoist::HoistTiers {
+        hoist::HoistTiers {
+            in_place: !self.write_hoist_disabled,
+            scalars: !self.scalar_hoist_disabled,
+            push: !self.push_hoist_disabled,
+            mint: !self.mint_hoist_disabled,
+            record_push: !self.record_push_disabled,
+            heap_push: !self.heap_record_push_disabled,
+            rebound_movers: !self.rebound_mover_disabled,
+        }
+    }
+
+    /// `@FR-R-GroupPush` — after statement `at` of a block was emitted: if it is the
+    /// `OpPreAllocVector` heading a mint GROUP on a path no enclosing loop holds a record-push
+    /// header for, and the group is admitted ([`hoist::mint_group`]), emit
+    /// `let mut __ph_N = vector::push_header(&(P), …);` as the next statement and push a
+    /// record-push frame for P that the group's mints and finishes emit through; the frame
+    /// is popped after the group's last statement ([`Self::group_ends`]).  The reservation
+    /// just emitted is what gives the header its capacity, so it stays.
+    pub(super) fn bind_group_push(
+        &mut self,
+        w: &mut dyn Write,
+        ops: &[Value],
+        at: usize,
+        block: usize,
+    ) -> std::io::Result<()> {
+        if self.group_push_disabled || self.record_push_disabled || self.hoist_disabled {
+            return Ok(());
+        }
+        let Value::Call(d, args) = ops[at].unspan() else {
+            return Ok(());
+        };
+        if (*d as usize) >= self.data.definitions.len()
+            || self.data.def(*d).name() != "OpPreAllocVector"
+        {
+            return Ok(());
+        }
+        let Some(path) = hoist::pre_alloc_path(self.data, "OpPreAllocVector", args) else {
+            return Ok(());
+        };
+        if self.active_mint_push(&path).is_some()
+            || self.coroutine_persistent_fields.contains_key(&path.0)
+        {
+            return Ok(());
+        }
+        let tiers = self.hoist_tiers();
+        let Some((path, end)) = hoist::mint_group(
+            ops,
+            at,
+            self.data,
+            self.stores,
+            self.def_nr,
+            &mut self.hoist_cache,
+            tiers,
+            Some(&self.hoist_owned),
+        ) else {
+            return Ok(());
+        };
+        self.hoist_counter += 1;
+        let name = format!("__ph_{}", self.hoist_counter);
+        let mut operand: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut operand, &args[0])?;
+        let operand = String::from_utf8_lossy(&operand).into_owned();
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let mut {name} = vector::push_header(&({operand}), &stores.allocations); //@FR-R-GroupPush group push header"
+        )?;
+        let mut frame: HashMap<hoist::PathKey, String> = HashMap::new();
+        frame.insert(path, name);
+        self.mint_push_headers.push(frame);
+        self.group_ends.push((block, end));
+        Ok(())
+    }
+
+    /// `@FR-R-GroupPush` — close every group of `block` whose last statement lies before
+    /// `at` (`usize::MAX` closes all of the block's).  Each close writes a marker comment:
+    /// the header's Rust binding outlives the group, and the marker is how the emission
+    /// audit (`scripts/emission_audit.py`) knows the holder is dead from here — a later
+    /// holder of the same path is then not a second one (`R-State`).
+    pub(super) fn close_groups_before(
+        &mut self,
+        w: &mut dyn Write,
+        block: usize,
+        at: usize,
+    ) -> std::io::Result<()> {
+        while self
+            .group_ends
+            .last()
+            .is_some_and(|&(b, end)| b == block && end < at)
+        {
+            self.group_ends.pop();
+            if let Some(frame) = self.mint_push_headers.pop() {
+                for name in frame.values() {
+                    self.indent(w)?;
+                    writeln!(w, "// @FR-R-GroupPush group {name} closed")?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// @PLN157 § V-q — the push header an enclosing loop holds for `path`, when one does.
@@ -3062,18 +4262,53 @@ impl Output<'_> {
     /// float-compare and integer-arithmetic emitters, which fall through to
     /// the `#rust` template on a `false`.
     pub fn non_sentinel_args(&mut self, args: &[Value]) -> bool {
-        let vars = if let Some(v) = self.nn_cache.get(&self.def_nr) {
-            v.clone()
-        } else {
-            let map = std::rc::Rc::new(non_sentinel::non_sentinel_vars(
-                self.data,
-                self.data.def(self.def_nr).code(),
-            ));
-            self.nn_cache.insert(self.def_nr, map.clone());
-            map
-        };
+        let vars = self.nn_facts();
         args.iter()
             .all(|a| non_sentinel::non_sentinel(self.data, &vars, a))
+    }
+
+    /// The current function's non-sentinel var facts, computed once and cached.
+    fn nn_facts(&mut self) -> std::rc::Rc<HashMap<u16, bool>> {
+        if let Some(v) = self.nn_cache.get(&self.def_nr) {
+            return v.clone();
+        }
+        let map = std::rc::Rc::new(non_sentinel::non_sentinel_vars(
+            self.data,
+            self.data.def(self.def_nr).code(),
+        ));
+        self.nn_cache.insert(self.def_nr, map.clone());
+        map
+    }
+
+    /// `@FR-R-Range` — the range the integer op `name` over `args` provably lies in, in the
+    /// current function, or `None`; computes the per-definition facts on first use.  `None`
+    /// while a verified operator's checked copy is being emitted, and under the switch.
+    pub fn op_range(&mut self, name: &str, args: &[Value]) -> Option<range::Range> {
+        if self.range_arith_disabled || self.range_suspended > 0 {
+            return None;
+        }
+        let nn = self.nn_facts();
+        let rv = if let Some(v) = self.range_cache.get(&self.def_nr) {
+            v.clone()
+        } else {
+            let map = std::rc::Rc::new(range::range_vars(
+                self.data,
+                self.data.def(self.def_nr).code(),
+                &nn,
+            ));
+            self.range_cache.insert(self.def_nr, map.clone());
+            map
+        };
+        range::op_range(self.data, &nn, &rv, name, args, 0)
+    }
+
+    /// Emit the CHECKED form of an operator for a verify comparison: the range arm is held
+    /// off for the duration.
+    pub fn with_range_suspended<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.range_suspended += 1;
+        let r = f(self);
+        self.range_suspended -= 1;
+        r
     }
 
     /// N4 (@PLN157): is this definition a LEAF — a body with no call to a
@@ -6595,6 +7830,13 @@ extern crate loft;"
             for k in 0..t.headers.len() {
                 write!(w, ", __ih_{k}: vector::VecHeader")?;
             }
+            // `@FR-R-Base`'s twin clause — the element base of each header, valid for the
+            // call because an admitted callee is store-free or writes only in place.
+            if !self.twin_base_disabled {
+                for k in 0..t.headers.len() {
+                    write!(w, ", __ib_{k}: *const u8")?;
+                }
+            }
         }
         write!(w, ") ")?;
         if *def.returned() != Type::Void {
@@ -6666,7 +7908,9 @@ extern crate loft;"
                         // the first temp's declaration site, and each temp is bound
                         // there to its field slot: both lose their in-place `let`.
                         || self.elem_first.elms.contains(&v)
-                        || self.elem_first.pairs.iter().any(|p| p.binds.iter().any(|b| b.tmp == v))
+                        || self.elem_first.pairs.iter().any(|p| {
+                            p.binds.iter().any(|b| b.tmp == v && !b.from_call)
+                        })
                         || (returned_vars.contains(&v) && !vars.tp(v).depend().is_empty()))
                     && rust_type(vars.tp(v), &Context::Variable) == "DbRef"
                 {

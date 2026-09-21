@@ -9138,6 +9138,24 @@ impl Data {
     /// synthesized for types that actually own a member (`Parser::synth_drop_cascades`): a
     /// type whose drop is just its own hook keeps calling that hook directly, so a program
     /// that owns no containers is byte-identical to one compiled before the cascade existed.
+    /// `@FR-H-Drop` / D-heap-13 — the per-element `vector<T>` DEF (the `DefType::Vector`
+    /// [`Self::vector_def`] mints beside the wrapper), or `u32::MAX` where this program never
+    /// built one — then no binding of that type exists to release.
+    ///
+    /// The DROP sites' own narrow question, and deliberately not [`Type::heap_def_nr`]
+    /// widened: that predicate's `Reference | Enum` pattern is written out across the parser,
+    /// the scope pass, both backends and the hoist, so widening IT moves all of them at once
+    /// (`formal/heap.md` D-heap-13 records the count).  Keyed exactly as `vector_def` keys the
+    /// def it creates — the element's `Type::name`, which is what separates two element DEFS
+    /// that share a spelling (`vector_wrapper_is_per_element_def_not_per_spelling`) — so the
+    /// lookup and the mint cannot disagree, and deps are dropped first because a binding's
+    /// type carries them and the def's name never does.
+    #[must_use]
+    pub fn collection_def_nr(&self, elem: &Type) -> u32 {
+        let bare = Type::Vector(Box::new(elem.without_deps()), Deps::none());
+        self.def_nr(&bare.name(self))
+    }
+
     #[must_use]
     pub fn drop_cascade_nr(&self, type_def: u32) -> u32 {
         if type_def == u32::MAX || type_def as usize >= self.definitions.len() {

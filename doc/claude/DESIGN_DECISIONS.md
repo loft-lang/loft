@@ -3784,6 +3784,14 @@ must leave every observable value as the interpreter answers it, faults included
 speed-up bought with a value the program cannot predict is not an optimisation.  Both
 forms — checked-only and plain — are closed by this, not only the silent one.
 
+**Built, 2026-09-20 — the successor, twice over:** `(R-Range)` (formal/rewrites.md) is the
+static half — an operator whose result provably fits by interval arithmetic over the
+language's own facts emits the plain operator — and `(R-GuardedChain)` the dynamic half — a
+counted loop's index chains over record scalars and parameters run plain behind a guard
+evaluated once at the loop's entry, `(R-BoundedNest)`'s method for any counted loop.  Neither
+changes a value: the plain form is admitted only where a fact established BEFORE the
+arithmetic says no fault can occur.  `composite` 103 → 68 µs.
+
 **What would reopen it: nothing about the closure itself.**  The sound successor is a
 PROOF, not a policy: arithmetic whose operands carry declared ranges (`integer(lo, hi)`,
 the counters a counted range bounds, a masked value) such that the result CANNOT
@@ -3814,6 +3822,16 @@ or the browser.  The evidence that licenses it is the in-house testing's fault-f
 ledger; the registry's own artefacts never lose the layer.  That is also why the proofs
 come first: a check retired by a proof is retired inside the library's ordinary build
 and reaches every consumer, checks intact.
+
+**Built (2026-09-17): the admissible successor, `R-BoundedNest`** (`formal/rewrites.md`).  Not the
+closure — a RANGE proof of the kind this ruling names: the innermost tap loop of a resample runs
+with plain operators only behind a guard, evaluated once at the loop's entry, that establishes
+from the vectors' element bounds, the range's ends and the accumulator's value that no operation
+in the loop can overflow; the checked loop is its `else`.  The values are the language's on every
+path (the interpreter is the oracle for the cells; a stored null, a product that overflows, an
+accumulator near the maximum all DECLINE and answer null as before).  Measured: `render_marks`
+6.11× → 2.69× its Rust reference, `render_lock` 4.87× → 2.76×, `resize` 5.37× → 2.42× — the
+−54 % the § V-aj hand patch priced, without moving the C85 line.
 
 ## C121 — a copy of a droppable takes its own lease or is refused; the release no longer moves with a copy
 

@@ -17,6 +17,10 @@ rewrites make about the loop they sit in (doc/claude/formal/rewrites.md):
             record push (@PLN157 § V-t) is the sanctioned form there
             (`push_record_hoisted` / `push_record_finish`, validated like a push).
   R-Inputs  a twin call (`<fn>__inv(cell, …)`) hands in only live holders.
+  R-Base    (twin clause) a twin's `__ib_k` inputs are holders, and a view's shared base
+            (`let __vb_N = __ib_k; //@FR-R-Base view base for …`) is derived from a live one.
+  R-RecPtr  a record view's address (`let __pa_N: *const u8 = vector::rec_ptr(…)`) is a holder
+            for the rest of its block, and every `rec_get`/`rec_set` through one names a live one.
 
 A runtime read on a held path (`vec_get_or_raise_runtime`, `length_vector`) is reported as a
 NOTE — a missed hoist, never a wrong answer.  Textual by design: the emitter spells a path
@@ -34,12 +38,20 @@ BIND_VIEW = re.compile(r"^\s*let (__vh_\d+) = .*//@PLN157 § V-n view header for
 # R-Base (@PLN157 § V-ak): an element base is derived FROM a live holder of the same path —
 # never a second derivation of the path — and only in a loop that grows no store.
 BIND_BASE = re.compile(r"^\s*let (__vb_\d+): \*const u8 = vector::vec_base\(&([\w.]+), &stores\.allocations\);")
+# R-Base's twin clause: a view inside a twin SHARES the twin's base input (`__ib_k`) — or a
+# loop's base — under its own name; the source must be live here.
+BIND_VIEW_BASE = re.compile(r"^\s*let (__vb_\d+) = (__[iv]b_\d+); //@FR-R-Base view base for")
+# R-RecPtr: a record VIEW's address, bound right after the binding and live to the block's
+# end; every `rec_get`/`rec_set` through it must name a live one.
+BIND_RECPTR = re.compile(r"^\s*let (__pa_\d+): \*const u8 = vector::rec_ptr\(&\((\S+?)\), &stores\.allocations\); //@FR-R-RecPtr record view address for")
+USE_RECPTR = re.compile(r"vector::rec_(get|set)::<[^>]*>\((__pa_\d+), ")
 BIND_SCALAR = re.compile(r"^\s*let (__vs_\d+) = (.*);")
 SCALAR_KEY = re.compile(r"let db = \((var_\w+)\);.*db\.pos \+ \((\d+)_i64\)")
 FN_HEAD = re.compile(r"^fn (\w+)\((.*)\)")
 USE_ELEM = re.compile(r"(get_elem_hoisted|vec_set_hoisted_or_raise_runtime|get_elem_at|vec_set_at)::<[^>]*>\(&([\w.]+), (?:(__vb_\d+), )?&\((.*?)\), \(\d+_i64\) as u32")
 USE_PUSH = re.compile(r"push_hoisted::<[^>]*>\(&mut (__ph_\d+), &\((.*?)\), \d+, __pv\)")
-USE_PUSHREC = re.compile(r"push_record_(?:hoisted|finish)::<[^>]*>\(&mut (__ph_\d+), &\((.*?)\)(?:, \d+)?\)")
+GROUP_CLOSE = re.compile(r"^\s*// @FR-R-GroupPush group (__ph_\d+) closed")
+USE_PUSHREC = re.compile(r"push_record_(?:hoisted|hoisted_zero|finish)::<[^>]*>\(&mut (__ph_\d+), &\((.*?)\)(?:, \d+)?\)")
 MOVER_MINT = re.compile(r"\b(OpNewRecord|OpFinishRecord)\(cell, (var_\w+),")
 USE_LEN = re.compile(r"\(i64::from\(([\w.]+)\.len\)\)")
 USE_SCALAR = re.compile(r"\b(__vs_\d+)\b")
@@ -69,9 +81,16 @@ def audit(text, quiet=False):
             depth = 0
             holders = []
             # a twin's inputs are holders for the whole body, path unknown
-            for param in re.findall(r"(__i[sh]_\d+): ", m.group(2)):
+            # (a base input `__ib_k` is the twin clause of R-Base: a holder like the rest)
+            for param in re.findall(r"(__i[shb]_\d+): ", m.group(2)):
                 holders.append(Holder(param, "input", None, 1, nr))
         code = line.split("//")[0]
+        # R-GroupPush — a group header's Rust binding outlives its group; the emitter marks
+        # where the holder dies, and from there it is not a holder of the path.
+        mg = GROUP_CLOSE.match(raw)
+        if mg:
+            holders = [h for h in holders if h.name != mg.group(1)]
+            continue
 
         def live(name):
             base = name[:-2] if name.endswith(".h") else name
@@ -89,7 +108,14 @@ def audit(text, quiet=False):
         mp = BIND_PUSH.match(line)
         mv = BIND_VIEW.match(line)
         ms = BIND_SCALAR.match(line)
-        mb = BIND_BASE.match(line)
+        mr = BIND_RECPTR.match(line)
+        if mr:
+            holders.append(Holder(mr.group(1), "recptr", f"rec:{mr.group(2)}", depth, nr))
+            bound_total += 1
+            depth += code.count("{") - code.count("}")
+            holders = [h for h in holders if h.depth <= depth]
+            continue
+        mb = BIND_BASE.match(line) or BIND_VIEW_BASE.match(line)
         if mb:
             # A base holds the path of the header it was derived from; that header must be
             # live here (R-Base), and the base is a SECOND holder of the path on purpose —
@@ -123,6 +149,10 @@ def audit(text, quiet=False):
             uses_total += (len(USE_ELEM.findall(code)) + len(USE_PUSH.findall(code))
                            + len(USE_PUSHREC.findall(code))
                            + len(USE_LEN.findall(code)) + len(USE_SCALAR.findall(code)))
+            for kind, ptr in USE_RECPTR.findall(code):
+                uses_total += 1
+                if live(ptr) is None:
+                    violations.append(f"{fn}:{nr}: R-RecPtr — rec_{kind} through {ptr}, which is not live here")
             for kind, name, base, path in USE_ELEM.findall(code):
                 if base and live(base) is None:
                     violations.append(f"{fn}:{nr}: R-Base — {kind} through {base}, which is not live here")

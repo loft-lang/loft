@@ -1,0 +1,130 @@
+// `v += v` — appending a vector to ITSELF — is one block copy inside the vector's own record.
+//
+// A self-append is the one append whose SOURCE can move: `Stores::vector_add` grows the very
+// record the source elements live in, and the growth may relocate it.  The relocation carries
+// the elements along, so after it they sit at the front of the current record and the new
+// slots follow them without overlap — one block copy, from the record re-read after the
+// growth.  The doubling fill (`filled` below, the graphics library's canvas fill) is this
+// shape run to a ladder, so its cost is what the cells guard as well as its values.
+//
+// Every cell asserts length AND content (a doubled length with stale bytes must show), and
+// the heap-owning cells (text, records with text, nested vectors) are the ones the claims
+// walk must re-read the moved record for — under LOFT_POISON=1 a walk over the freed block
+// reads poison.  s6 appends a DIFFERENT vector and is the control.
+//
+// @falsified-at: 48d49e24 — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0, native panicked -> clean
+//   (s4: the claims walk over the text elements read the source record's number captured before
+//   the growth relocated it — a freed block, `Store access out of bounds … the reference is corrupt`).
+// @falsified-by: tests/falsified/a-self-append-is-one-block-copy.patch
+//   — the same channels as the control above (interpret exit 101 -> 0, panicked -> clean;
+//   native exit 1 -> 0, panicked -> clean).  The control commit is reachable from no public
+//   ref, so the patch is the runnable form of this receipt: it reintroduces the fault on top
+//   of HEAD.  Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+//   HOLDS: leak, free-refusal and expectations are equal on BOTH trees; what moves is the exit
+//   and the panic on both backends, which is the crash s4 guards.
+
+struct SaP { x: integer, y: integer }
+struct SaN { name: text, n: integer }
+struct SaH { v: vector<integer> }
+
+/// The graphics library's constant fill, verbatim: doubling, one `+= [value]` per set bit.
+fn sa_filled(count: integer, value: integer) -> vector<integer> {
+  fi_out: vector<integer> = [];
+  if count <= 0 { return fi_out; }
+  fi_top = 0;
+  while (count >> (fi_top + 1)) != 0 { fi_top = fi_top + 1; }
+  fi_i = fi_top;
+  while fi_i >= 0 {
+    fi_out += fi_out;
+    if ((count >> fi_i) & 1) == 1 { fi_out += [value]; }
+    fi_i = fi_i - 1;
+  }
+  fi_out
+}
+
+fn sa_sum(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+
+fn main() {
+  // s1 — the smallest self-append: 3 elements become 6, the copy after the original.
+  s1: vector<integer> = [1, 2, 3];
+  s1 += s1;
+  assert(len(s1) == 6 && s1[3] == 1 && s1[4] == 2 && s1[5] == 3 && sa_sum(s1) == 12,
+         "s1: {len(s1)} {s1[3]} {s1[5]} {sa_sum(s1)}");
+
+  // s2 — the doubling fill to a count that is not a power of two: 37 nines.
+  s2 = sa_filled(37, 9);
+  assert(len(s2) == 37 && sa_sum(s2) == 333 && s2[0] == 9 && s2[36] == 9,
+         "s2: {len(s2)} {sa_sum(s2)}");
+
+  // s3 — big enough that the growth relocates the record: 1000 → 2000, 2 × 499500.
+  s3: vector<integer> = [];
+  for i in 0..1000 { s3 += [i]; }
+  s3 += s3;
+  assert(len(s3) == 2000 && s3[1000] == 0 && s3[1999] == 999 && s3[1500] == 500
+         && sa_sum(s3) == 999000, "s3: {len(s3)} {s3[1000]} {s3[1999]} {sa_sum(s3)}");
+
+  // s4 — text elements, relocating: every copied text must be the SAME text, not a stale
+  //      handle read off the moved-from block.
+  s4: vector<text> = [];
+  for i in 0..200 { s4 += ["t{i}"]; }
+  s4 += s4;
+  s4_ok = len(s4) == 400 && s4[200] == "t0" && s4[399] == "t199" && s4[273] == "t73";
+  s4_j = 0;
+  for i in 0..200 { if s4[i] != s4[200 + i] { s4_j += 1; } }
+  assert(s4_ok && s4_j == 0, "s4: {len(s4)} {s4[200]} {s4[399]} mismatches {s4_j}");
+
+  // s5 — records of two scalars: 50 → 100, the copy's fields intact.
+  s5: vector<SaP> = [];
+  for i in 0..50 { s5 += [SaP { x: i, y: i * 2 }]; }
+  s5 += s5;
+  s5_t = 0;
+  for p in s5 { s5_t += p.x + p.y; }
+  assert(len(s5) == 100 && s5[50].x == 0 && s5[99].y == 98 && s5_t == 2 * 3675,
+         "s5: {len(s5)} {s5[50].x} {s5[99].y} {s5_t}");
+
+  // s6 — CONTROL: a different vector in the same frame; unchanged by the self-append path.
+  s6: vector<integer> = [1, 2];
+  s6w: vector<integer> = [3, 4];
+  s6 += s6w;
+  assert(len(s6) == 4 && s6[2] == 3 && s6[3] == 4 && len(s6w) == 2, "s6: {len(s6)} {s6[2]}");
+
+  // s7 — through a struct FIELD: the source and destination name one slot.
+  s7 = SaH { v: [4, 5, 6] };
+  s7.v += s7.v;
+  assert(len(s7.v) == 6 && s7.v[3] == 4 && s7.v[5] == 6 && sa_sum(s7.v) == 30,
+         "s7: {len(s7.v)} {s7.v[3]} {sa_sum(s7.v)}");
+
+  // s8 — an empty self-append is a no-op.
+  s8: vector<integer> = [];
+  s8 += s8;
+  assert(len(s8) == 0, "s8: {len(s8)}");
+
+  // s9 — ten doublings from one element: 1024 ones.
+  s9: vector<integer> = [1];
+  for _ in 0..10 { s9 += s9; }
+  assert(len(s9) == 1024 && sa_sum(s9) == 1024, "s9: {len(s9)} {sa_sum(s9)}");
+
+  // s10 — records that OWN text, relocating: the claims walk must read the moved record.
+  s10: vector<SaN> = [];
+  for i in 0..120 { s10 += [SaN { name: "n{i}", n: i }]; }
+  s10 += s10;
+  s10_j = 0;
+  for i in 0..120 { if s10[120 + i].name != "n{i}" || s10[120 + i].n != i { s10_j += 1; } }
+  assert(len(s10) == 240 && s10_j == 0 && s10[239].name == "n119",
+         "s10: {len(s10)} mismatches {s10_j} {s10[239].name}");
+
+  // s11 — two self-appends in a row: 3 → 6 → 12, the second copies the first's copy.
+  s11: vector<integer> = [7, 8, 9];
+  s11 += s11;
+  s11 += s11;
+  assert(len(s11) == 12 && s11[11] == 9 && s11[6] == 7 && sa_sum(s11) == 96,
+         "s11: {len(s11)} {s11[11]} {sa_sum(s11)}");
+
+  // s12 — nested vectors: each element owns a vector, so the copy claims one per element.
+  s12: vector<vector<integer>> = [[1, 2], [3]];
+  s12 += s12;
+  assert(len(s12) == 4 && len(s12[2]) == 2 && s12[2][1] == 2 && s12[3][0] == 3,
+         "s12: {len(s12)} {len(s12[2])} {s12[3][0]}");
+
+  println("ok");
+}
