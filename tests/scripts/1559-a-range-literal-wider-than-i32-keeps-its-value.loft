@@ -27,6 +27,9 @@
 //   a4 prints `0 0`: the sign flipped, the start rose above the end, and the loop ran ZERO
 //      times with no diagnostic — the shape a reader cannot see.
 //   a6, a7, a8, a9, b1, b3 all print their expected values unchanged.
+//   b5's match arms and b6's near-i64::MAX range were added after the sabotage run, as the
+//      other consumer of the wide token and the far end of the type; they are covered by the
+//      same receipt because they take the same two lexer paths.
 //
 // The controls are what make it score: the small ranges and the neighbouring constructs
 // passing beside the wide ones failing is what says the fault is the literal's WIDTH and not
@@ -108,8 +111,33 @@ fn b2() { t = (7, "hi", 2.5); println("b2 {t.0} {t.2}"); assert(t.0 == 7 && t.2 
 fn b3() { f = 1.5; g = 0.25; println("b3 {f} {g}"); assert(f == 1.5 && g == 0.25, "b3"); }
 fn b4() { println("b4 {0xFF} {0o17} {0b1010}"); assert(0xFF == 255 && 0o17 == 15 && 0b1010 == 10, "b4"); }
 
+// b5 — a MATCH arm is a different consumer of the wide token (`control.rs` reads the index
+// with `has_integer` first and falls through to `has_long`), so it says the fix reaches the
+// other side of the split and not only the range.
+fn kind(v: integer) -> text {
+  match v { 3000000000 => "wide", -3000000000 => "negwide", 5 => "five", _ => "other" }
+}
+fn b5() {
+  println("b5 {kind(3000000000)} {kind(-3000000000)} {kind(5)} {kind(9)}");
+  assert(kind(3000000000) == "wide" && kind(-3000000000) == "negwide", "b5 wide arms");
+  assert(kind(5) == "five" && kind(9) == "other", "b5 narrow arms");
+}
+
+// b6 — the far end of the type: a range two below `i64::MAX`, where the token is as wide as it
+// can be and the step still must not overflow.
+fn b6() {
+  n = 0; first = 0;
+  for i in 9223372036854775805..9223372036854775807 {
+    if n == 0 { first = i; }
+    n = n + 1;
+    if n > 9 { break }
+  }
+  println("b6 {n} {first}");
+  assert(n == 2 && first == 9223372036854775805, "b6");
+}
+
 fn main() {
   a1(); a2(); a3(); a4(); a5(); a6(); a7(); a8(); a9(); a10();
-  b1(); b2(); b3(); b4();
+  b1(); b2(); b3(); b4(); b5(); b6();
   println("1559 ok");
 }
