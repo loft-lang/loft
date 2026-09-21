@@ -613,6 +613,7 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
         if ((matches!(data.def_type(d_nr), DefType::EnumValue) && data.attributes(d_nr) > 0)
             || matches!(data.def_type(d_nr), DefType::Struct))
             && data.def(d_nr).known_type == u16::MAX
+            && !data.needs_open_layout(d_nr)
             && !layout_blocked(data, d_nr, &mut Vec::new())
         {
             fill_database(data, database, d_nr);
@@ -1041,6 +1042,14 @@ fn variant_parent_qualified_name(data: &Data, database: &Stores, d_nr: u32) -> O
 }
 
 pub(crate) fn fill_database(data: &mut Data, database: &mut Stores, d_nr: u32) {
+    // @PLN165 D5 — an OPEN instance (`Box<T>` inside a template) has no layout: its fields
+    // are typed by a variable, and laying it out is loft#1536's class (a zero-width
+    // `__typevar_T` field).  Loud, so a path that reaches one is found where it happens.
+    assert!(
+        !data.is_open_instance(d_nr),
+        "an open instance `{}` reached layout — a type variable's instance has no layout",
+        data.def(d_nr).name()
+    );
     if data.def(d_nr).name == "Unknown(0)" {
         return;
     }

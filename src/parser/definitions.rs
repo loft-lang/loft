@@ -1880,7 +1880,11 @@ impl Parser {
             let unnamed: Vec<String> = self
                 .cur_type_vars
                 .iter()
-                .filter(|(_, h)| !arguments.iter().any(|a| a.typedef.contains_def(*h)))
+                .filter(|(_, h)| {
+                    !arguments
+                        .iter()
+                        .any(|a| self.data.type_mentions(&a.typedef, *h))
+                })
                 .map(|(n, _)| crate::data::Data::type_var_spelling(n).to_string())
                 .collect();
             unnamed_var = !unnamed.is_empty();

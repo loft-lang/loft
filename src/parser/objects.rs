@@ -2072,8 +2072,18 @@ impl Parser {
             && self.data.def_type(d_nr) == DefType::TypeTemplate
             && self.lexer.peek_token("{")
         {
+            // An OPEN expected instance (`Box<T>`) is the literal's own only inside the
+            // template that names it; a call's argument reaching a generic `f(b: Box<T>)` is
+            // expected as the parameter's open instance, and infers from its values instead.
+            let in_template =
+                self.context != u32::MAX && self.data.def_type(self.context) == DefType::Generic;
             let expected = match self.expected.base() {
-                Type::Reference(inst, _) if self.data.def(*inst).instance_of == d_nr => *inst,
+                Type::Reference(inst, _)
+                    if self.data.def(*inst).instance_of == d_nr
+                        && (in_template || !self.data.is_open_instance(*inst)) =>
+                {
+                    *inst
+                }
                 _ => u32::MAX,
             };
             let inst = if expected == u32::MAX {
@@ -2089,6 +2099,11 @@ impl Parser {
                     Type::Never
                 };
             };
+            // @PLN165 D5 — an open instance has no layout: its literal is deferred to each
+            // monomorph (`Parser::TV_OBJECT`).
+            if self.data.is_open_instance(inst) {
+                return self.open_literal(inst, code);
+            }
             d_nr = inst;
         }
         if d_nr != u32::MAX {
@@ -4238,12 +4253,12 @@ impl Parser {
             let spelled = crate::data::Data::type_var_spelling(self.data.def(v).name()).to_string();
             let mut bound: Option<(String, Type)> = None;
             for (f, declared, value) in &fields {
-                if !declared.contains_def(v) {
+                if !self.data.type_mentions(declared, v) {
                     continue;
                 }
                 // `null`, a call answering nothing and a value poisoned by its own report
                 // (@P376) name no type; they bind nothing.
-                let got = Self::resolve_type_var(declared, v, value);
+                let got = Self::resolve_type_var(&self.data, declared, v, value);
                 if got.is_unknown() || matches!(got.base(), Type::Null | Type::Void | Type::Never) {
                     continue;
                 }
@@ -4292,6 +4307,74 @@ impl Parser {
         (inst != u32::MAX).then_some(inst)
     }
 
+    /// A literal of the OPEN instance `open` (@PLN165 D5): its field values, parsed each
+    /// against its declared field type, deferred as a [`Parser::TV_OBJECT`] each monomorph
+    /// builds into a fresh record of the instance it names (`lower_open_object`).
+    fn open_literal(&mut self, open: u32, code: &mut Value) -> Type {
+        let mut fields = vec![Value::Int(open as i32)];
+        self.lexer.token("{");
+        while !self.lexer.peek_token("}") {
+            let Some(field) = self
+                .lexer
+                .has_identifier()
+                .or_else(|| self.lexer.has_cstring())
+            else {
+                break;
+            };
+            self.lexer.token(":");
+            let nr = self.data.attr(open, &field);
+            if nr == usize::MAX && !self.first_pass {
+                let shown = self.data.def(open).name().to_string();
+                diagnostic!(self.lexer, Level::Error, "Unknown field {shown}.{field}");
+            }
+            let declared = if nr == usize::MAX {
+                Type::Unknown(0)
+            } else {
+                self.data.attr_type(open, nr)
+            };
+            let outer = std::mem::replace(&mut self.expected, declared);
+            let mut value = Value::Null;
+            let tp = self.expression(&mut value);
+            self.expected = outer;
+            fields.push(v_block(
+                vec![Value::Text(field), value],
+                tp,
+                Self::TV_OBJECT_FIELD,
+            ));
+            if !self.lexer.has_token(",") {
+                break;
+            }
+        }
+        self.lexer.token("}");
+        let tp = Type::Reference(open, crate::data::Deps::none());
+        *code = v_block(fields, tp.clone(), Self::TV_OBJECT);
+        tp
+    }
+
+    /// [`Data::open_instance_bindings`](crate::data::Data::open_instance_bindings), with each
+    /// concrete instance it mints on pass 2 laid out as [`Parser::instance_def`] lays one out.
+    pub(crate) fn open_instance_bindings(&mut self, bindings: &[(u32, Type)]) -> Vec<(u32, Type)> {
+        let pairs = self.data.open_instance_bindings(&mut self.lexer, bindings);
+        for (_, bound) in &pairs {
+            if let Type::Reference(d, _) = bound {
+                self.lay_out_instance(*d);
+            }
+        }
+        pairs
+    }
+
+    fn lay_out_instance(&mut self, inst: u32) {
+        if !self.first_pass
+            && inst != u32::MAX
+            && self.data.def(inst).known_type() == u16::MAX
+            && !self.data.is_open_instance(inst)
+        {
+            crate::typedef::fill_database(&mut self.data, &mut self.database, inst);
+            self.database
+                .lay_out_record(self.data.def(inst).known_type());
+        }
+    }
+
     /// [`Data::instance_def`](crate::data::Data::instance_def), and on pass 2 the layout an
     /// instance minted there has missed: the file's `fill_all` ran at the end of pass 1, so an
     /// instance whose argument was a forward reference then (`Box { v: later() }`, `x: Box<Q>`
@@ -4299,11 +4382,7 @@ impl Parser {
     /// positions — the closure record's on-demand registration.
     pub(crate) fn instance_def(&mut self, template: u32, args: &[Type]) -> u32 {
         let inst = self.data.instance_def(&mut self.lexer, template, args);
-        if !self.first_pass && inst != u32::MAX && self.data.def(inst).known_type() == u16::MAX {
-            crate::typedef::fill_database(&mut self.data, &mut self.database, inst);
-            self.database
-                .lay_out_record(self.data.def(inst).known_type());
-        }
+        self.lay_out_instance(inst);
         inst
     }
 

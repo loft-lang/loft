@@ -567,7 +567,8 @@ impl Parser {
                     // A type variable's element names its variable (@PLN165 C2).
                     let stride = match vtp.base() {
                         Type::Reference(tv, _)
-                            if size == 0 && self.data.is_type_var_placeholder(*tv) =>
+                            if (size == 0 && self.data.is_type_var_placeholder(*tv))
+                                || self.data.is_open_instance(*tv) =>
                         {
                             Self::type_var_stride(*tv)
                         }
@@ -1282,6 +1283,24 @@ impl Parser {
                 "TS {}:{} op={op} f_type={f_type:?} src_tp={src_tp:?}\n   to={to:?}\n   val={val:?}",
                 self.lexer.pos().file,
                 self.lexer.pos().line
+            );
+        }
+        // @PLN165 D5 — a field of an OPEN instance: the write is deferred with its read, and
+        // each instance stores it as the twin's write does (`lower_open_field_set`).
+        if let Value::Block(bl) = to.unspan()
+            && bl.name == Self::TV_FIELD
+            && let [Value::Int(open), Value::Int(f_nr), receiver] = &bl.operators[..]
+        {
+            return v_block(
+                vec![
+                    Value::Int(*open),
+                    Value::Int(*f_nr),
+                    Value::Text(op.to_string()),
+                    receiver.clone(),
+                    v_block(vec![val.clone()], src_tp.clone(), Self::TV_SELECT_ARG),
+                ],
+                Type::Void,
+                Self::TV_FIELD_SET,
             );
         }
         // Intercept `h[key] = null` → remove the key from hash/index/sorted
@@ -4670,7 +4689,9 @@ use #count instead"
         }
         Self::template_vars(&self.data, self.context)
             .iter()
-            .any(|tv| ret_type.contains_def(*tv) || elem_tp.contains_def(*tv))
+            .any(|tv| {
+                self.data.type_mentions(ret_type, *tv) || self.data.type_mentions(elem_tp, *tv)
+            })
     }
 
     /// The definition a deferred `par` marker calls.  It is a placeholder, never emitted:

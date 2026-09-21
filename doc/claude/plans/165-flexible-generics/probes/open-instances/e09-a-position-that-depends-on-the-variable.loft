@@ -1,0 +1,10 @@
+// D5 — `n` sits after a field typed by T, so its offset differs per instance.
+// @EXPECT: 11|21|31
+struct Pair<T> { a: T, n: integer }
+fn bump<T>(p: Pair<T>) -> integer { p.n + 1 }
+fn main() {
+  x = Pair { a: "text", n: 10 };
+  y = Pair { a: 3.5, n: 20 };
+  z: Pair<u8> = Pair { a: 7, n: 30 };
+  println("{bump(x)}|{bump(y)}|{bump(z)}");
+}

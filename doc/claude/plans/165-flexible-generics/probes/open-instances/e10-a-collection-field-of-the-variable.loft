@@ -1,0 +1,10 @@
+// D5 — a `vector<T>` field read through the open instance, then indexed.
+// @EXPECT: 30|c|3
+struct Stack<T> { items: vector<T> }
+fn top<T>(s: Stack<T>) -> T { s.items[len(s.items) - 1] }
+fn size<T>(s: Stack<T>) -> integer { len(s.items) }
+fn main() {
+  n = Stack { items: [10, 20, 30] };
+  t = Stack { items: ["a", "b", "c"] };
+  println("{top(n)}|{top(t)}|{size(t)}");
+}

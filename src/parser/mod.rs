@@ -7313,7 +7313,8 @@ impl Parser {
         // `Function`, a `RefVar` or a keyed collection read as "no type variable here".
         // `contains_def`'s own doc records being unified from two earlier copies with
         // exactly that drift; this was a third, two hundred lines from a call to it.
-        tvs.iter().any(|tv| t.contains_def(*tv))
+        // Through an open instance's arguments too (@PLN165 D5).
+        tvs.iter().any(|tv| self.data.type_mentions(t, *tv))
     }
 
     /// Is the template's declared return the type VARIABLE itself, however it is wrapped?
@@ -7410,12 +7411,15 @@ impl Parser {
         if types.is_empty() || (self.first_param_binds(g_nr) && types[0].is_unknown()) {
             return Type::Unknown(0);
         }
-        let Some(bindings) = Self::bind_template(&self.data, g_nr, types) else {
+        let Some(mut bindings) = Self::bind_template(&self.data, g_nr, types) else {
             return Type::Unknown(0);
         };
         if bindings.iter().any(|(_, b)| b.is_unknown()) {
             return Type::Unknown(0);
         }
+        // `-> Box<T>` predicts the instance the binding names, as the monomorph declares it.
+        let open = self.open_instance_bindings(&bindings);
+        bindings.extend(open);
         let tmpl_returned = self.data.definitions[g_nr as usize].returned.clone();
         let from_tv = bindings
             .iter()
@@ -7527,6 +7531,32 @@ impl Parser {
     pub(crate) const TV_SELECT_ARG: &'static str = "tvselectarg";
     /// One named argument of a [`Parser::TV_SELECT`] site: `[Text(parameter), value]`.
     pub(crate) const TV_SELECT_NAMED: &'static str = "tvselectnamed";
+    /// @PLN165 D5 — a field READ of an OPEN instance (`b.v` with `b: Box<T>`):
+    /// `[Int(open instance), Int(field), receiver]`, its `result` the field's type.  The
+    /// field has no position until the instance is known, so each instance lowers it through
+    /// `get_field` on the instance its bindings name.
+    pub(crate) const TV_FIELD: &'static str = "tvfield";
+    /// A field WRITE of an open instance: `[Int(open instance), Int(field), Text(op),
+    /// receiver, TV_SELECT_ARG(value)]`, lowered through `towards_set` per instance.
+    pub(crate) const TV_FIELD_SET: &'static str = "tvfieldset";
+    /// A LITERAL of an open instance (`Box { v: x }` in a `-> Box<T>` template):
+    /// `[Int(open instance), TV_OBJECT_FIELD…]`, built per instance into a fresh record.
+    pub(crate) const TV_OBJECT: &'static str = "tvobject";
+    /// One field of a [`Parser::TV_OBJECT`]: `[Text(field), value]`, its `result` the
+    /// value's static type.
+    pub(crate) const TV_OBJECT_FIELD: &'static str = "tvobjectfield";
+
+    /// The instance the open instance `open` names in the monomorph being filled — its
+    /// `(open ↦ concrete)` pair in `instance_bindings` — or `open` itself when those bindings
+    /// leave it open (a template instantiated at another template's variable).
+    pub(crate) fn bound_instance(&self, open: u32) -> u32 {
+        match Type::Reference(open, crate::data::Deps::none())
+            .substitute_all(&self.instance_bindings)
+        {
+            Type::Reference(d, _) => d,
+            _ => open,
+        }
+    }
 
     /// Specialise a generic `name` for the concrete argument types `types`, returning the
     /// monomorph's def_nr (or `u32::MAX` when `name` names no generic).
@@ -7695,7 +7725,7 @@ impl Parser {
         // template. Self-recursion terminates there on the `existing` check.
         if var_bindings
             .iter()
-            .any(|(_, b)| tvs.iter().any(|tv| b.contains_def(*tv)))
+            .any(|(_, b)| tvs.iter().any(|tv| self.data.type_mentions(b, *tv)))
         {
             return g_nr;
         }
@@ -7753,6 +7783,10 @@ impl Parser {
         // types the list is one long and every step below reads exactly as it did.
         let mut bindings: Vec<(u32, Type)> = var_bindings.clone();
         bindings.extend(self.associated_bindings(g_nr, &var_bindings));
+        // @PLN165 D5 — each open instance the bindings close (`Box<T>` ↦ `Box<integer>`),
+        // substituted wherever the template's types mention it.
+        let open = self.open_instance_bindings(&bindings);
+        bindings.extend(open);
         // Clone the template data before mutating self.data.
         let tmpl_code = self.data.definitions[g_nr as usize].code.clone();
         let tmpl_returned = self.data.definitions[g_nr as usize].returned.clone();
@@ -7970,7 +8004,8 @@ impl Parser {
                 .zip(types)
                 .enumerate()
                 .filter(|(_, ((_, p), a))| {
-                    p.contains_def(*v) && !Self::resolve_type_var(p, *v, a).is_unknown()
+                    self.data.type_mentions(p, *v)
+                        && !Self::resolve_type_var(&self.data, p, *v, a).is_unknown()
                 })
                 .map(|(i, _)| i)
                 .collect();
@@ -7984,7 +8019,7 @@ impl Parser {
                     continue;
                 }
                 let spelled = Data::type_var_spelling(self.data.def(*v).name()).to_string();
-                let other = Self::resolve_type_var(&params[i].1, *v, &types[i]);
+                let other = Self::resolve_type_var(&self.data, &params[i].1, *v, &types[i]);
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -9007,24 +9042,19 @@ impl Parser {
     /// type-var PLACEHOLDER, not any `Reference`, so a parameter that also names a concrete
     /// struct — `(P, T)` — answers with `T`.
     pub(crate) fn template_vars(data: &Data, g_nr: u32) -> Vec<u32> {
-        let mut out: Vec<u32> = Vec::new();
+        // Through an open instance's arguments too (@PLN165 D5): `b: Box<T>` names `T`.
+        let mut found: Vec<u32> = Vec::new();
         for a in data.def(g_nr).attributes().iter().filter(|a| !a.hidden) {
-            a.typedef.any_node(&mut |t| {
-                if let Type::Reference(d, _) = t.base()
-                    && data.is_type_var_placeholder(*d)
-                    && !out.contains(d)
-                {
-                    let parent = data.def(*d).parent;
-                    let associated = (parent as usize) < data.definitions.len()
-                        && data.def_type(parent) == DefType::Interface;
-                    if !associated {
-                        out.push(*d);
-                    }
-                }
-                false
-            });
+            data.placeholders_in(&a.typedef, &mut found);
         }
-        out
+        found
+            .into_iter()
+            .filter(|d| {
+                let parent = data.def(*d).parent;
+                !((parent as usize) < data.definitions.len()
+                    && data.def_type(parent) == DefType::Interface)
+            })
+            .collect()
     }
 
     /// What each of `g_nr`'s type variables binds to at a call whose argument types are
@@ -9047,7 +9077,7 @@ impl Parser {
                     let bound = params
                         .iter()
                         .zip(types)
-                        .map(|(p, t)| Self::resolve_type_var(&p.typedef, v, t))
+                        .map(|(p, t)| Self::resolve_type_var(data, &p.typedef, v, t))
                         .find(|r| !r.is_unknown())
                         .unwrap_or(Type::Unknown(0));
                     (v, bound)
@@ -9064,13 +9094,13 @@ impl Parser {
     /// `…T…` is satisfied.  Both descend `Type::for_each_child`, so a declaration the
     /// parser accepts is one an instantiation can reach.
     /// E.g. template `vector<T>` + concrete `vector<integer>` → `integer`.
-    fn resolve_type_var(template_tp: &Type, tv_nr: u32, concrete_tp: &Type) -> Type {
+    fn resolve_type_var(data: &Data, template_tp: &Type, tv_nr: u32, concrete_tp: &Type) -> Type {
         // `Rewritten(T)` is a value-construction marker (e.g. `P { v: 99 }`
         // becoming an Insert sequence) that should not propagate into the
         // bound T — the type variable describes the data shape, not how
         // a particular argument got assembled.  Strip it before unifying.
         if let Type::Rewritten(inner) = concrete_tp {
-            return Self::resolve_type_var(template_tp, tv_nr, inner);
+            return Self::resolve_type_var(data, template_tp, tv_nr, inner);
         }
         // A `&` link is the same category as the `Rewritten` marker above: it records how
         // the argument is REACHED, not what it IS, and a type variable is bound to the data
@@ -9081,7 +9111,7 @@ impl Parser {
         // parameter from argument type" for `sum` / `min_of` / `max_of` and for EVERY
         // user-written generic over a collection.
         if let Type::RefVar(inner) = concrete_tp {
-            return Self::resolve_type_var(template_tp, tv_nr, inner);
+            return Self::resolve_type_var(data, template_tp, tv_nr, inner);
         }
         match template_tp {
             // Same principle as the `Rewritten` strip above: the call-site
@@ -9107,7 +9137,27 @@ impl Parser {
             // template and unify against the base; the nullability of the binding is
             // the template's to state, not the argument's to carry.
             Type::Optional(inner) if !matches!(concrete_tp, Type::Optional(_)) => {
-                Self::resolve_type_var(inner, tv_nr, concrete_tp.base())
+                Self::resolve_type_var(data, inner, tv_nr, concrete_tp.base())
+            }
+            // An OPEN instance (@PLN165 D5) against an instance of the same template pairs
+            // their recorded arguments: `Box<T>` against `Box<integer>` binds `T` to
+            // `integer`.  The arguments live in `Data`, where the keystone pairing below
+            // does not look.
+            Type::Reference(o, _)
+                if data.is_open_instance(*o)
+                    && matches!(concrete_tp.base(), Type::Reference(c, _)
+                        if data.def(*c).instance_of == data.def(*o).instance_of) =>
+            {
+                let Type::Reference(c, _) = concrete_tp.base() else {
+                    return Type::Unknown(0);
+                };
+                data.def(*o)
+                    .instance_args
+                    .iter()
+                    .zip(&data.def(*c).instance_args)
+                    .map(|(t, a)| Self::resolve_type_var(data, t, tv_nr, a))
+                    .find(|r| !r.is_unknown())
+                    .unwrap_or(Type::Unknown(0))
             }
             // Every other former descends through the keystone pairing, so a type
             // variable under a `(T, U)`, a `fn(T) -> T`, an `iterator<T>`, a `T?` or
@@ -9116,7 +9166,7 @@ impl Parser {
             _ => match template_tp.zip_children(concrete_tp) {
                 Some(pairs) => pairs
                     .into_iter()
-                    .map(|(t, c)| Self::resolve_type_var(t, tv_nr, c))
+                    .map(|(t, c)| Self::resolve_type_var(data, t, tv_nr, c))
                     .find(|r| !r.is_unknown())
                     .unwrap_or(Type::Unknown(0)),
                 None => Type::Unknown(0),
@@ -9135,7 +9185,10 @@ impl Parser {
             return d_nr;
         }
         // Check if any attribute's type references the type variable.
-        let has_tv = def.attributes.iter().any(|a| a.typedef.contains_def(tv_nr));
+        let has_tv = def
+            .attributes
+            .iter()
+            .any(|a| data.type_mentions(&a.typedef, tv_nr));
         if !has_tv {
             // Also check for Integer(0, tv_nr) patterns — operators sometimes encode
             // type info in the Integer bounds.
@@ -9382,7 +9435,9 @@ impl Parser {
         }
         for v in 0..tmpl_vars.count() {
             let tmpl_tp = tmpl_vars.tp(v).clone();
-            let over_a_variable = bindings.iter().any(|(h, _)| tmpl_tp.contains_def(*h));
+            let over_a_variable = bindings
+                .iter()
+                .any(|(h, _)| self.data.type_mentions(&tmpl_tp, *h));
             let is_a_variable = matches!(tmpl_tp.base(),
                 Type::Reference(d, _) if bindings.iter().any(|(h, _)| h == d));
             if !over_a_variable || is_a_variable {
@@ -10380,6 +10435,9 @@ impl Parser {
             // another type than the body was typed with is refused naming it; a nested
             // generic (a type still a variable) re-stamps through the same call.
             Value::Block(bl) if bl.name == Self::TV_SELECT => self.lower_set_call(&bl),
+            Value::Block(bl) if bl.name == Self::TV_FIELD => self.lower_open_field(*bl),
+            Value::Block(bl) if bl.name == Self::TV_FIELD_SET => self.lower_open_field_set(*bl),
+            Value::Block(bl) if bl.name == Self::TV_OBJECT => self.lower_open_object(*bl),
             // A template lambda, non-capturing: the instance calls its own instance of it.
             Value::FnRef(d, w, _)
                 if w == u16::MAX && d >= 0 && self.is_template_lambda(d as u32) =>
@@ -10494,6 +10552,122 @@ impl Parser {
     }
 
     /// The [`Parser::TV_SELECT`] arm of [`Parser::rewrite_generic_type_defaults`].
+    /// Lower a [`Parser::TV_FIELD`] read for the monomorph being filled: `get_field` on the
+    /// instance the open one names here, exactly as the twin's `b.v` reads.  Still open (a
+    /// nested template) re-stamps the site against that instance.
+    fn lower_open_field(&mut self, bl: crate::data::Block) -> Value {
+        let mut ops = bl.operators.into_iter();
+        let (Some(Value::Int(open)), Some(Value::Int(f_nr)), Some(receiver)) =
+            (ops.next(), ops.next(), ops.next())
+        else {
+            return Value::Null;
+        };
+        let receiver = self.rewrite_generic_type_defaults(receiver);
+        let d = self.bound_instance(open as u32);
+        self.get_field(d, f_nr as usize, receiver)
+    }
+
+    /// Lower a [`Parser::TV_FIELD_SET`] write: the instance's field read, turned into its
+    /// store by `towards_set` as the twin's `b.v = x` is.
+    fn lower_open_field_set(&mut self, bl: crate::data::Block) -> Value {
+        let mut ops = bl.operators.into_iter();
+        let (
+            Some(Value::Int(open)),
+            Some(Value::Int(f_nr)),
+            Some(Value::Text(op)),
+            Some(receiver),
+            Some(Value::Block(val)),
+        ) = (ops.next(), ops.next(), ops.next(), ops.next(), ops.next())
+        else {
+            return Value::Null;
+        };
+        let receiver = self.rewrite_generic_type_defaults(receiver);
+        let val = *val;
+        let src_tp = val.result.clone();
+        let value = self
+            .rewrite_generic_type_defaults(val.operators.into_iter().next().unwrap_or(Value::Null));
+        let d = self.bound_instance(open as u32);
+        let f_nr = f_nr as usize;
+        let to = self.get_field(d, f_nr, receiver);
+        let f_type = self.data.attr_type(d, f_nr);
+        let parent_tp = Type::Reference(d, crate::data::Deps::none());
+        let lhs = crate::parser::collections::AssignPlace {
+            parent_tp: &parent_tp,
+            fn_attr: None,
+        };
+        self.towards_set(&to, &value, &f_type, &src_tp, &op, &lhs)
+    }
+
+    /// Lower a [`Parser::TV_OBJECT`] literal: a fresh record of the instance the open one
+    /// names here, its declared defaults, then each given field written through
+    /// `handle_field` — the field write a literal of the twin makes.
+    fn lower_open_object(&mut self, bl: crate::data::Block) -> Value {
+        let mut ops = bl.operators.into_iter();
+        let Some(Value::Int(open)) = ops.next() else {
+            return Value::Null;
+        };
+        let d = self.bound_instance(open as u32);
+        let mut given: Vec<(String, Value, Type)> = Vec::new();
+        for op in ops {
+            if let Value::Block(f) = op
+                && f.name == Self::TV_OBJECT_FIELD
+            {
+                let f = *f;
+                let mut fo = f.operators.into_iter();
+                if let (Some(Value::Text(name)), Some(value)) = (fo.next(), fo.next()) {
+                    let value = self.rewrite_generic_type_defaults(value);
+                    given.push((name, value, f.result));
+                }
+            }
+        }
+        let tp = Type::Reference(d, crate::data::Deps::none());
+        if self.data.is_open_instance(d) {
+            // A template instantiated at another's variable: still open, still deferred.
+            let mut out = vec![Value::Int(d as i32)];
+            for (name, value, t) in given {
+                out.push(v_block(
+                    vec![Value::Text(name), value],
+                    t,
+                    Self::TV_OBJECT_FIELD,
+                ));
+            }
+            return v_block(out, tp, Self::TV_OBJECT);
+        }
+        self.data.set_referenced(d, self.context, Value::Null);
+        let w = self.vars.work_refs(&tp, &mut self.lexer);
+        self.set_call_refs.push(w);
+        let known = i32::from(self.data.def(d).known_type());
+        let mut list = vec![
+            v_set(w, Value::Null),
+            self.cl("OpDatabase", &[Value::Var(w), Value::Int(known)]),
+        ];
+        let mut code = Value::Var(w);
+        let found: std::collections::HashSet<String> =
+            given.iter().map(|(n, _, _)| n.clone()).collect();
+        let mut fills = Vec::new();
+        for (name, mut value, value_tp) in given {
+            if self.data.attr(d, &name) == usize::MAX {
+                continue;
+            }
+            if let Some(bulk) =
+                self.handle_field(d, &mut code, &mut list, &name, &mut value, &value_tp)
+            {
+                fills.push(bulk);
+            }
+        }
+        self.object_init(
+            &mut list,
+            d,
+            0,
+            &code,
+            &found,
+            &std::collections::HashSet::new(),
+        );
+        list.append(&mut fills);
+        list.push(Value::Var(w));
+        v_block(list, tp, "Object")
+    }
+
     fn lower_set_call(&mut self, bl: &crate::data::Block) -> Value {
         let expected = bl.result.clone();
         let mut source = u16::MAX;
@@ -11460,6 +11634,22 @@ impl Parser {
     }
 
     fn get_field(&mut self, d_nr: u32, f_nr: usize, code: Value) -> Value {
+        // @PLN165 D5 — a field of an OPEN instance has no position until a monomorph names
+        // the instance; the read is deferred to it.
+        if f_nr != usize::MAX && self.data.is_open_instance(d_nr) {
+            let tp = self.data.attr_type(d_nr, f_nr);
+            self.expr_not_null = !self.data.attr_nullable(d_nr, f_nr);
+            self.expr_not_null_name.clear();
+            return v_block(
+                vec![
+                    Value::Int(d_nr as i32),
+                    Value::Int(i32::try_from(f_nr).unwrap_or(i32::MAX)),
+                    code,
+                ],
+                tp,
+                Self::TV_FIELD,
+            );
+        }
         // #91: track $.<field> accesses during init(expr) parsing.
         if self.init_field_tracking && code == Value::Var(0) && f_nr != usize::MAX {
             let name = self.data.attr_name(d_nr, f_nr);
