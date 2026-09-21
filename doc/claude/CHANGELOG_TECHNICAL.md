@@ -9,6 +9,34 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The record shapes: seven clauses, the worst portal row from 18.3× to 2.95× (2026-09-21)
+
+`--native` only, generation time; every one a clause of an existing rule in
+`doc/claude/formal/rewrites.md`, with its own switch, cells and emission pins (@PLN158 R1–R7;
+the analysis and the before/after table are `bench/portal/analysis/records.md`).
+
+The machinery that makes a record loop fast already existed and DECLINED on the shapes a game
+writes.  **R1** `(R-Mint)`'s field clause — `m.verts += [Vertex { … }]` names the parent record
+and a field number, so the mint gate never saw a vector: `mesh_emit` −73 %
+(`LOFT_NO_FIELD_MINT`).  **R2** `(R-RecPtr)`'s base clause and `(R-Counter)`'s iteration clause
+— the loop variable of `for e in v` takes its address from the held element base and its index
+steps unchecked: `record_walk` −49 % (`LOFT_NO_BASE_RECPTR`); a first build that derived the
+address from the element's `DbRef` measured +46 % slower and was dropped.  **R3** the path
+clause — `v.pos.x` through the view's address at the summed offset, emitter-local because a
+parser-level fold would mint an `(R-Scalar)` key a sub-record write never evicts: `mesh_aabb`
+−47 % (`LOFT_NO_NESTED_FIELD`).  **R4** the mint clause — a minted element holds its slot's
+address up to its own finish: `record_append` −45 % (`LOFT_NO_MINT_WINDOW`).  **R5**
+`(R-InPlace)`'s copy clause — a flag-free copy of a no-heap record is an in-place write, so the
+write-back idiom `e = v[i]?; …; v[i] = e` keeps its loop's hoists: `entity_tick` −23 %
+(`LOFT_NO_COPY_IN_PLACE`).  **R6** the order clause — a free on a path that leaves the function
+is not a free before a use: `chunk_lookup` −23 %.  **R7** the enum clauses — a user struct-enum
+value is a record to the push header and the address: `enum_match` −64 % (`LOFT_NO_ENUM_RECORD`).
+
+Two runtime changes ride along: `Stores::push_record_finish` returns on an absent owner as
+`vector_finish` does (a null record root handed to a parameter panicked indexing store 65535),
+and `vector::rec_ptr` is `#[inline]`.  `scripts/emission_audit.py` learns the base-derived
+address binding and validates that the header and base it names are live holders of one path.
+
 ### A range literal wider than i32 keeps its value (2026-09-21)
 
 Both backends, lexer.  `for i in 3000000000..3000000002` started at **-1294967296** and ran

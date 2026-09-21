@@ -1585,6 +1585,10 @@ pub fn setter_kind(setter: &str) -> Option<&'static str> {
 /// The reason the statement declines, in the words `LOFT_TRACE_RECPTR=1` prints: not a
 /// binding, not a plain record, a remainder that may grow a store, one that frees a
 /// record before a use of the view, one that rebinds it, or no fusable use at all.
+// The eight parameters are the block and the statement, the two things that type it, the
+// function, the memo, the write tier and the twin parameters; a struct would put a name
+// between each and the one call site without removing anything.
+#[allow(clippy::too_many_arguments)]
 pub fn record_view_ptr(
     stmts: &[Value],
     at: usize,
@@ -1792,11 +1796,11 @@ fn free_before_use_by(stmts: &[Value], leaf_of: &mut dyn FnMut(&Value) -> (bool,
                 Ok(now)
             }
             leaf => {
-                let (uses, releases) = leaf_of(leaf);
-                if uses && (released || releases) {
+                let (uses, frees) = leaf_of(leaf);
+                if uses && (released || frees) {
                     return Err(());
                 }
-                Ok(released || releases)
+                Ok(released || frees)
             }
         }
     }

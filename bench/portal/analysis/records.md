@@ -3,7 +3,9 @@
 Analysis of the portal's two record classes, taken 2026-09-21 on x86-64 from
 `bench/16_consumer_shapes` (hot loops modelled on moros and crawler) and the record rows of
 `bench/14_stdlib_vector`.  An ANALYSIS: it names the mechanisms, prices what a paired
-source variant could price, and ranks what to build.  Nothing here is built.
+source variant could price, and ranks what to build.  **All seven levers are built** (the
+same day) — § Built, at the end, has what each measured against what this priced, and what
+the building found that the analysis had wrong.
 
 | routine | what it is | × Rust | loft instr / item | Rust |
 |---|---|---:|---:|---:|
@@ -167,3 +169,53 @@ exactly the suspected statement, both timed in-process with equal checksums — 
 that admits the rewrite prices the mechanism without building anything.  Bisecting the
 `entity_tick` decline took five one-statement variants under the trace: only the
 write-back moved it.
+
+## Built (2026-09-21) — R1 to R7
+
+| routine | before | after | × Rust before → after | levers that moved it |
+|---|---:|---:|---|---|
+| `mesh_emit` | 708.7 µs | 107.3 µs | **18.3 → 2.95** | R1 (−73 %), R4 (−43 %) |
+| `enum_match` | 111.6 µs | 40.3 µs | **12.4 → 4.47** | R7 (−64 %) |
+| `mesh_aabb` | 74.7 µs | 37.5 µs | **9.8 → 4.89** | R2 (−6 %), R3 (−47 %) |
+| `entity_tick` | 299.8 µs | 147.5 µs | 4.67 → 2.28 | R2 (−30 %), R5 (−23 %), R7's window (−6 %) |
+| `chunk_lookup` | 1,459 µs | 1,081 µs | 3.78 → 2.80 | R6 (−23 %) |
+| `record_append` | 126.7 µs | 69.0 µs | 3.55 → ~2.0 | R4 (−45 %) |
+| `record_walk` | 32.0 µs | 16.2 µs | 2.98 → 1.51 | R2 (−49 %) |
+| `tuple_kernel` | 282.3 µs | 224.8 µs | 2.02 → 1.61 | R2 (−20 %) |
+
+Lane 16's median 3.91× → 2.80×, its worst row 18.3× → 7.5× (`f32_build`, the vector-build
+class, not this one); lane 14's median 3.03× → 2.41×.  Every hash unchanged.  Each lever is
+a clause of an existing rule in `doc/claude/formal/rewrites.md` with its own switch, cells
+(`tests/scripts/158-*.loft`) and emission pins (`tests/{field_mint,iteration_base,
+nested_field,mint_window,copy_in_place,leaving_free,enum_record}.rs`).
+
+What the building found that this analysis had wrong or did not see:
+
+- **R2's form.**  The analysis priced R2 as a negative ("deriving the pointer costs what the
+  three loads save") and proposed the base anyway.  The first build took the address from
+  the element's `DbRef` — an identity test on its store and record — and measured **+46 %
+  SLOWER**.  Hand-pricing the emitted Rust (which this analysis's method did not do for R2)
+  found the form that works: the address from the INDEX (−40 %), and the iteration index
+  stepped unchecked (−26 % more), which is a range proof the analysis did not list at all.
+- **R1's hidden half.**  The § V-z element-first rewrite looked its header up by the
+  bare-variable key, so with R1's gate alone a field-form element would have been minted by
+  its template and finished through the header: 0 elements for 20, silently.  And a null
+  record root handed to a parameter panicked indexing store 65535.
+- **R3 must stay in the emitter.**  Folded in the parser, `v.pos.x` becomes an `(R-Scalar)`
+  candidate typed by the parent, which a write through a sub-record view never evicts.
+- **R5 does not elide the copy.**  The runtime already makes it a no-op; eliding it
+  statically would drop the fault note of an out-of-range `v[i] = e`.
+- **R6 is not small alone once R2 is in** (−23 %), and no program can make its rule answer
+  wrong — it is falsified over synthetic IR.
+- **R7's exclusion was one rule's reason read by all of them**: the (type, offset) key is
+  `(R-Scalar)`'s problem, not the push header's or the address's.
+- **Three cells could not fail when first sabotaged** (R4, R5, R6) and were replaced or
+  supplemented by ones that can; and the checking form had a hole (R3: an offset summed
+  wrongly re-reads the store at the same wrong offset) that is now closed.
+
+Left in this class: `record_update` (4.6×: `v[i].x = v[i]?.y + …`, inline element accesses
+rather than a view), the null-aware float compare in `mesh_aabb` (§ 8), R1's field-form
+GROUP outside a held header (the parser reserves only for a local vector), a text-field
+element's append (the text set grows a store), and `(R-Alias)` for a parameter root beside
+another vector (a type-based alias rule would admit `sc.ops += […]` beside `src[i]`).
+
