@@ -42,6 +42,7 @@ not count already do the hard half of generic TYPES.
 | bind a variable under any type former | `resolve_type_var` descends `Type::zip_children`, so `T` under `vector<T>`, `(T, U)`, `fn(T) -> T`, `T?` is found one way | `parser/mod.rs:8446` |
 | substitute a LIST of holders | `bindings: Vec<(u32, Type)>` — the type variable first, each associated type after (@PLN125 A2c) | `parser/mod.rs:7600`, `substitute_all` `:9213` |
 | sites whose lowering depends on `T` | six `TV_*` stamped blocks, re-lowered per instance; five of the six read their concrete type off the block's OWN `result` | `parser/mod.rs:9605` `rewrite_generic_type_defaults` |
+| type a short lambda from the parameter it is passed to | works for a concrete callee, and for the built-ins through a by-name table (`("map", 1)`); only the generic callee is missing | `parser/control.rs:17348`; e3 |
 | a method TEMPLATE keyed on a type constructor | `fn head<T>(self: vector<T>)` is `t_6vector_head` and instantiates from a method call | loft#1539, `instantiate_template` |
 | **a struct minted per type-argument tuple, by name, idempotently, deferred while a member is unresolved, registered for every source** | `Data::tuple_def` → `__tuple<integer,text>`; `vector_def` → `main_vector<τ>`; `__nullable<S>` | `data.rs:8648`, `:8536` |
 
@@ -52,7 +53,7 @@ loft#944 (a pass-1 name differing from the pass-2 name is an H5 contract failure
 (the name and the layout must erase the same things) — are the first two failure paths of
 phase D, already written down.
 
-## Five findings that shape the steps
+## Six findings that shape the steps
 
 **1. The plan's headline cell cannot be keyed today, and no generic is involved.**
 `fn first(v: vector<integer>)` beside `fn first(v: vector<text>)` is refused *"Cannot
@@ -100,6 +101,15 @@ rule is the sign the rule is wrong: an instance is not a method on its first bou
 key should stop saying so (step A5).  This probe was written to attack this design's own
 cleanest claim — *"with one variable the key is today's, byte for byte"* — and falsified it.
 
+**6. A lambda passed to a generic is typed from the template's `T`, not from what `T` is
+bound to.**  A short lambda takes its parameter type from the parameter it is handed to: the
+built-in `map(a, |x| { x * 10 })` answers `[10,20,30]`, and so does a CONCRETE function
+declared `f: fn(integer) -> integer`.  A generic declared `f: fn(T) -> T` hands the lambda the
+variable itself, although the first argument has already bound it: *"No matching operator '*'
+on 'T' and 'integer'"* ([e3](probes/e3-short-lambda-under-a-generic.loft)).  A third wrong
+refusal on `main`, and the reason `map` cannot yet be an ordinary library generic even at one
+variable (step A6).
+
 ## Failure paths
 
 Written before any code, because this list is where the invariant was found.  Each is closed
@@ -117,6 +127,7 @@ by a named step and watched by a named cell.
 | F7b | an instance key equals a concrete method's key, and the method is taken for the instance | A5 | a2 |
 | F7c | two templates of one name, bound alike, mint ONE instance | A5 (the key names its template) | b6 |
 | F7d | two keys differ only in characters the native emitter maps to `_` | A5 (the emitter refuses a duplicate identifier) | a generation-time check |
+| F7e | a lambda argument is typed from the template's parameter, not from the bindings the earlier arguments made | A6 | e3 |
 | F8 | `K, V` bound to `(integer, text)` and `(text, integer)` share an instance | C3 | c1 |
 | F9 | one variable named by two parameters binds two types | C1 | c3 |
 | F10 | a variable named by NO parameter cannot be inferred | C2 | refusal cell |
@@ -201,38 +212,118 @@ first site that forgot the flag.
 it has no finite set of instances.
 
 **`D-Keyed`.**  A keyed collection over a type variable stays refused at the definition
-(loft#1538's message).  C110 (b) stands whole: this plan proposes no `hash<K, V>`, and a
-user-written `Map<K, V>` is a struct over two vectors — a different construct.  That answers
-open question 4.
+(loft#1538's message).  C110's record-set decision stands whole: this plan proposes no
+`hash<K, V>`, and does not offer a hand-built `Map<K, V>` as a reason for anything — a keyed
+lookup is what a record set is for.  That answers open question 4.
 
-## The C110 revisit — what the owner is asked to record
+## C110, evaluated
 
-Phases C and D need it; A, B and E do not touch it.  A plan cannot supersede a register entry,
-so step C0 is the owner writing the revisit into `DESIGN_DECISIONS.md`, and this section is the
-material for it — including what argues against.
+Step C0 is the owner revising `DESIGN_DECISIONS.md` C110.  A plan cannot supersede a register
+entry, so this section is the material for that revision: each of C110's reasons, measured
+against `9f5cf6a96`, and what the measurement leaves standing.
 
-**What changed since C110 closed.**  Its cost argument: *"the name must encode a second type
-and every back-parsing site follows."*  @PLN162 has since put several types inside the key's
-length-counted part for every overload set, and the emitter maps `#`.  The cost C110 priced is
-largely paid — what remains is step A1, which `main` needs anyway (finding 3).
+| C110's reason | Verdict | Measured |
+|---|---|---|
+| The monomorph's name is its identity, built *"from the FIRST argument's type"*, and four readers must follow a second type: `find_fn`, native, `original_name`, the H5 guard | **no longer holds** | The name is built from what `T` BINDS to: `first<T>(v: vector<T>)` at `integer` is `t_7integer_first`.  `find_fn` looks under the first argument (`vector`) and never finds it — `LOFT_TRACE=call` shows both calls of `first(a)` resolving through the template.  All three stdlib generics have that shape.  Where `find_fn` DOES find an instance, that is finding 5's defect.  `h5_split_mangled` reads every leading digit and only the function-name half; native emits whatever the key is.  Three readers are indifferent to the key's content, and the fourth is a bug |
+| *"The cost is understood — it has simply never been worth paying"* (C95: *"when mangling extends beyond the first parameter…"*) | **overtaken** | @PLN162 extended it on 2026-09-14: every overload key carries every parameter's type (`f_10Rock#Paper_beat`) and the emitter maps `#` |
+| The sole named consumer is HARMED: *"a generic `hole<T>` accepts every type by construction"*, deleting the per-kind opt-in | **false as stated; stands on narrower ground** | `hole<T: SqlHole>(v: T)` called with a type that has not opted in is refused *"'Raw' does not satisfy interface 'SqlHole': missing sql_hole"* — a compile error naming the method to add, the property C110 says a generic deletes.  A BOUND is a per-kind opt-in.  What does change is who owns the list: the target's author today, anyone who implements the interface under a bound.  For a surface whose audit is *"read one target's method list"* that is a real difference, so the `hole_*` family stays per-kind.  It was a reason for one consumer not to use the feature, never a reason against the feature |
+| `hash<K, V>` would be a second spelling of a keyed collection, and a worse one | **holds in full** | Nothing has changed, and `D-Keyed` keeps it |
 
-**What did not change.**  C110's bar is *"a real consumer, not a shape that reads more familiar
-from another language."*  Measured against that bar: the published libraries declare **zero**
-generics; the stdlib declares three (`min_of`, `max_of`, `sum`); 59 corpus files use one.  Five
-library files hold paired parallel vectors (the `Map<K, V>` shape) and none was examined for
-whether a record set serves it better, which for a keyed lookup C110 (b) says it does.  The
-evidence for phases C and D is the owner's direction and the infrastructure now being cheap.
-It is not a consumer asking.
+**The consumer C110 asked for is the language itself.**  `map` is
+`vector<T> × fn(T) -> U → vector<U>`, and `reduce` is `vector<T> × U × fn(U, T) -> U`: two
+type variables each, shipped as compiler special forms (`parse_map`, `parse_reduce`) because a
+library cannot say `U`.  The H5 guard carries an exemption for exactly this — *"For `map` the
+OUTPUT element wrapper is unknowable in pass 1"*.  Measured: a program can write the `T → T`
+half as a library generic today (`[10,20,30]`) and cannot write `T → U`, which the built-in
+answers (`["<1>","<2>","<3>"]`).  The owner's rule of 2026-09-15 is *no observable special
+names*; arc E's first list (`insert`, `sort`, `reverse`, `reserve`) is the ONE-variable
+built-ins, and `map` and `reduce` are missing from it because they need two.  That is new
+evidence in C110's own sense — a use, not a shape that reads familiar from another language.
+No LIBRARY consumer was found: the published libraries declare zero generics.
 
-**The `hole_*` safety refusal survives.**  C110's named harm was a generic `hole<T>` deleting
-@PLN124's per-kind opt-in.  Nothing here touches that family: `D-Every-Var` admits
-`hole<T>(self: Acc, v: T)` as a shape, and whether a library USES it is that library's decision,
-which C110's third bullet already took.
+**What C110 never decided.**  Its reasons against *"multiple type variables"* are all about
+keyed collections; its decision says a case for multi-parameter generics *"must argue for
+itself"* — they were set aside, not evaluated.  And a generic struct with ONE variable
+(`struct Grid<T>`) is named nowhere in the register: it is unbuilt, not declined.  So arc D
+needs no revisit until its one step that gives a type several variables (D9).
 
-**Proposed wording** — *"Revised by @PLN165: (a) a type variable may appear in any parameter
-and a generic may declare several, keyed by `D-Key`; (b) a struct or enum may be generic.
-C110 (b)'s record-set decision stands — no `hash<K, V>` — and so does the `hole_*` family's
-per-kind form.  Recorded on the owner's direction; no consumer had asked."*
+**Several variables on a TYPE.**  C110's reasons do not reach it, and its bar — *"a use that a
+record set genuinely cannot express"* — is not met either: a tuple already is `Pair<K, V>`,
+`τ?` already is an option, and a record set already is a map.  It is in the plan on the
+owner's first reason below: `instance_def` takes an argument LIST, so the capability arrives
+with one-variable structs, and a rule that stops at the second variable is one no reader
+could derive from anything.
+
+**What gates what.**
+
+| Needs the revision | Does not |
+|---|---|
+| C1 — a variable in any parameter (C110 (a)) | arcs A and B |
+| C2–C4 — several variables on a function (C110 (b), for functions) | D1–D8, D10 — one-variable generic types |
+| D9 — several variables on a type | E1–E5 — the one-variable built-ins |
+| E6–E7 — `map`, `reduce` (they need C2) | |
+
+**The owner's reasons for the revision (2026-09-21)** — and they are not C110's bar, which
+asked for a consumer.  (1) *No random-feeling restrictions*: "one type variable, in the first
+parameter" is a restriction a reader meets with no way to derive it, and the measurement
+above says nothing in the compiler needs it any more.  (2) *Before stable*: the change is
+allowed later, the work under it is not — § Why before contract 1 says which steps.
+(3) *The fallout must not become a long-lived branch* — § How it lands.
+
+**Proposed wording** — *"Revised by @PLN165, on the owner's direction: loft carries no
+restriction a reader cannot derive, and this one's reasons no longer hold.  (a) A type variable may appear in any parameter:
+the monomorph's key is built from its bindings, not from the first argument, and since
+@PLN162 a key carries several types.  (b) A generic function may declare several type
+variables — `map` and `reduce` are two-variable generics the language ships as special forms,
+which the no-observable-special-names rule cannot retire otherwise.  A generic type may too,
+admitted with one-variable generic structs rather than argued for on its own.  Unchanged:
+keyed collections stay record sets — no `hash<K, V>` — and the `hole_*` family stays per-kind,
+because a bound would move ownership of the opt-in list from the target's author to anyone."*
+
+## Why before contract 1
+
+*"This change is allowed later"* is true of half the plan.  A step that only ADMITS programs
+can land after the freeze.  A step that renames a key, changes the IR, moves which definition
+a call reaches, or adds a refusal cannot — and those are the steps under everything else.
+
+| Surface a freeze would pin | Steps that move it | Why it cannot wait |
+|---|---|---|
+| definition keys — they are native symbols, and the library path decodes them (`native_lib.rs`, `lib_placement/dispatch.rs` call `original_name`) | A1, A5, B1 | a key is how a library's function is FOUND |
+| the IR schema and every cached image of it | D2 (a new definition kind), D3 (an instance records its template and arguments) | a published library's cached IR is read by later compilers |
+| which definition a call reaches | B4 — selection by rank where a receiver key decided | a program that compiles today may become ambiguous: an error-ADD |
+| the set of refused programs | D1 (`T` outside its header), `D-Regular`, `D-Rank`'s ambiguity | C95's rule: the error surface can only shrink after contract 1 |
+
+Pure broadening, safe at any time: A6, B2–B3, B5–B7, all of C, D4–D11 — and arc E, wherever a
+step's emission gate holds (a built-in that becomes a library function also renumbers
+`index/target_surface.json`, which is regenerated, not frozen).
+
+**The window is open now, and it is measured.**  The published libraries declare **0**
+generics and **0** free overload sets, so today A5 renames no library symbol and B1 re-keys
+no library definition — the fallout is this repository's corpus and nothing else.  @PLN162's
+overloads are a week old.  Every library that adopts them, or a generic, widens what A5 and
+B1 must carry.
+
+## How it lands — never a long-lived branch
+
+The fallout is worked on `main`, behind a switch, not on a branch.
+
+1. **A0–A4 cannot have fallout.**  Their gate is byte-identical emission over the corpus, so
+   they ride any PR.
+2. **The three steps that move a frozen surface land ALONE** — A5, B1, B4: one step, one PR,
+   nothing batched with it.  Each carries a parse-time switch that restores the old form and
+   an exact gate (A5: identical under the printed rename map; B1 and B4: identical with the
+   switch set).  After each, the library lanes run (`revalidate-libs`, `lib-main-health`) —
+   `make ci` says nothing about the shipped libraries.
+3. **A step whose corpus gate does not hold yet lands OPT-IN, and flips when it does.**  The
+   repository's standing pattern — `LOFT_NO_VALUE_RECORD` was opt-in for two days because its
+   call-site gate did not hold over the script corpus.  The step's own cells run under the
+   switch, so it is exercised, never dormant; `main` stays releasable; and the residue is
+   fixed in small PRs against `main` rather than accumulating beside it.
+4. **Everything else only admits programs**, so a defect in it cannot reach a program that
+   compiled before.
+
+An arc is sized to close inside the one-or-two-PRs-a-day cadence, and a step that does not
+fit is cut again rather than carried.
 
 ## Out of scope
 

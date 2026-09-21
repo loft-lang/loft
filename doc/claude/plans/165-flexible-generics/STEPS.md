@@ -5,7 +5,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # 165 — the steps
 
-The design is [DESIGN.md](DESIGN.md); read its invariant and its five findings first, because
+The design is [DESIGN.md](DESIGN.md); read its invariant and its six findings first, because
 the ORDER below comes from them.  Every step here passes two tests, and says how:
 
 - **Compared against** — while the step is half done, the old path and the new one can both
@@ -21,16 +21,23 @@ means `--interpret` and `--native`, with `LOFT_STRICT_STORES=1` and `LOFT_POISON
 
 ## The arcs
 
-Five arcs, each a PR that closes on its own.  A, B and E do not touch C110; C and D wait for
-step C0.
+Five arcs, each a PR that closes on its own.  What waits for step C0 — the owner revising
+C110 — is narrower than the plan's issue says: DESIGN.md § C110, evaluated measured each of
+its reasons, and a one-variable generic struct was never declined at all.
 
-| Arc | What a program can write afterwards | Steps | Needs C110 |
+| Arc | What a program can write afterwards | Steps | Waits for C0 |
 |---|---|---|---|
-| **A** | nothing new — two wrong refusals on `main` close | A0–A5 | no |
+| **A** | nothing new — three wrong refusals on `main` close | A0–A6 | no |
 | **B** | a generic beside concrete definitions of its name, and beside other generics | B1–B7 | no |
-| **C** | `fn pair_up<K, V>(k: K, v: V)`; `fn hole<T>(n: integer, v: T)` | C0–C4 | **yes** |
-| **D** | `struct Pair<K, V>`, `enum Opt<T>`, methods on them, the goal program | D1–D10 | **yes** |
-| **E** | a program's own `insert` / `sort` / `reverse` / `reserve` is one more member of the name's set | E1–E4 | no |
+| **C** | `fn hole<T>(n: integer, v: T)`; `fn map_grid<T, U>(…)` | C0–C4 | **all of it** |
+| **D** | `struct Grid<T>`, `enum Shape<T>`, methods on them, the goal program | D1–D11 | **D9 and D11 only** |
+| **E** | a program's own `insert` / `sort` / `reverse` / `reserve` / `filter` — then `map` / `reduce` — is one more member of the name's set | E1–E7 | **E6–E7** (they need C2) |
+
+**How it lands** (DESIGN.md § How it lands): never a long-lived branch.  A0–A4 are
+byte-identical and ride any PR.  The three steps marked **⚑ lands alone** move a surface a
+freeze would pin — one step, one PR, a switch that restores the old form, the library lanes
+run after it.  A step whose corpus gate does not hold yet lands opt-in and flips when it
+does.  Steps marked **pre-freeze** cannot wait for contract 1; the rest only admit programs.
 
 ---
 
@@ -38,7 +45,7 @@ step C0.
 
 **Nothing in A0–A4 changes what any program means**; each is proved by
 `introspect_diff.sh` reading IDENTICAL.  A step here that changes emission is a bug in the
-step.  A5 is the first change a program can see.
+step.  A5 and A6 are the first changes a program can see, and each closes a wrong refusal.
 
 ### A0 — the twin matrix  ·  XS
 
@@ -55,7 +62,7 @@ hand and one `@CONTROL` cell.
   acceptance is *"add its cells to this matrix"*.  Run `scripts/matrix_axes.py file` over it
   and record which composition axes it holds FIXED.
 
-### A1 — one decoder for the key  ·  S
+### A1 — one decoder for the key  ·  S  ·  pre-freeze
 
 `Data::split_key(name) -> Option<KeyParts { kind, spelling, rest }>`, reading the length as
 EVERY leading digit.  `Definition::original_name` (68 callers) and the 11 sites that strip `t_`
@@ -109,7 +116,7 @@ and D2 land.
 - **Compared against:** `introspect_diff.sh` names exactly the files refused for these shapes
   today (their stderr changed) and no other.
 
-### A5 — an instance has its own key  ·  M  ← first behaviour change
+### A5 — an instance has its own key  ·  M  ·  pre-freeze  ·  ⚑ lands alone
 
 `Data::identity_spelling(tp)` is extracted from the namer inside `instantiate_template`
 (collections keep their element, integers their range and forced width), and the instance key
@@ -123,16 +130,36 @@ sanitise to one identifier.
 - **Compared against:** the step prints its rename map (`t_7integer_idf → i_7integer_n_idf`)
   under an environment switch; `introspect_diff.sh` over the corpus with that map applied to
   the BEFORE side reads IDENTICAL.  A rename and nothing else, proved rather than asserted.
+- **Switch:** parse-time `LOFT_NO_INSTANCE_KEY=1` mints the `t_…` key again — the rollback,
+  and the first bisect step for a generic call that reaches the wrong definition.
 - **Watch:** the ladder no longer finds an instance as a "method", so a repeat call reaches
   it through the template and the `existing` lookup.  [x1](probes/x1-monomorph-is-not-a-method.loft)
   must stay refused in all three orders, and the unknown-function suggestions must stop
   offering instances as methods of a type.
 
+### A6 — a lambda argument is typed under the bindings made so far  ·  S
+
+A short lambda takes its parameter type from the parameter it is handed to (`self.expected`).
+For a generic callee that type is the template's — `fn(T) -> T` — with the variable still in
+it.  Substitute the bindings A3's `bind_template` makes from the arguments ALREADY parsed,
+so `my_map(a, |x| { … })` hands the lambda `fn(integer) -> integer`.  A variable no earlier
+argument binds stays as it is, and the lambda says it cannot infer — the message a lambda
+with no context already gives.
+
+- **Red on its own:** [e3](probes/e3-short-lambda-under-a-generic.loft) answers
+  `[10,20,30] [10,20,30] [10,20,30]` — the third is refused on `main` today.
+- **Compared against:** IDENTICAL over every file that compiles today; and the generic's
+  answer equals the CONCRETE twin's (`twice`), which is the same program with `T` written
+  out.
+- **Why here:** E5–E7 turn `filter`, `map` and `reduce` into library generics, and every call
+  of those passes a short lambda.  This is a one-variable defect and needs nothing from
+  arc C.
+
 ---
 
 ## Arc B — a generic is a member of its name's set
 
-### B1 — the key and the rank read a type's full identity  ·  M
+### B1 — the key and the rank read a type's full identity  ·  M  ·  pre-freeze  ·  ⚑ lands alone
 
 `full_spelling` (free-overload `f_` keys) and `dispatch_rank`'s `same` test call
 `identity_spelling`.  METHOD keys keep the bare constructor — `t_6vector_len` is found ON
@@ -180,7 +207,7 @@ template (`method_template`, loft#1539): predict the return on pass 1, instantia
   `LOFT_NO_GENERIC_MEMBER=1` restores the `Function`-only gate and is the first bisect step
   for a call that reaches the wrong definition where a generic shares the name.
 
-### B4 — a generic beside a same-named METHOD is a set too  ·  S
+### B4 — a generic beside a same-named METHOD is a set too  ·  S  ·  pre-freeze  ·  ⚑ lands alone
 
 Today the method is found by its receiver key and the generic never gets asked (finding 2).
 Both join the bare dispatcher, as a `self` name's overloads always have, so `Disp-Applicable`
@@ -190,6 +217,10 @@ reads arity and every parameter.
   `some square 1|SQUARE 1 x3` — a wrong refusal on `main`.
   [b4](probes/b4-concrete-method-beside-bounded-generic.loft) still answers
   `SQUARE 1|some tri 2`, now by rank.
+- **Switch:** parse-time `LOFT_NO_METHOD_IN_SET=1` leaves the pair on the receiver key.  A
+  program that compiles today and becomes AMBIGUOUS under rank (a method that needs a
+  conversion where the generic binds exactly — `D-Rank`) is an error-add: count those over
+  every `.loft` file before the default flips.
 - **Compared against:** count first which corpus files declare a generic beside a same-named
   method — they are the ONLY files whose emission may differ, and only in key names.  The
   59 corpus files that use a generic are the watch set.
@@ -228,14 +259,16 @@ keeps declining the open profile's stub for a set with a template member — a s
 
 ## Arc C — several variables, in any parameter
 
-### C0 — the owner records the C110 revisit
+### C0 — the owner revises C110
 
-No code.  DESIGN.md § The C110 revisit holds the material and a proposed wording.  C1–C4 and
-arc D do not start without it.
+No code.  DESIGN.md § C110, evaluated holds each of C110's reasons measured against the tree,
+the consumer it asked for (`map` and `reduce`, two-variable generics the language ships as
+special forms), what stays decided (no `hash<K, V>`; `hole_*` per-kind), and a proposed
+wording.  It gates arc C, step D9 and steps E6–E7 — and nothing else.
 
 ### C1 — one variable, any parameter  ·  S
 
-`D-Every-Var` replaces the first-parameter rule.  `bind_template` gains its consistency check:
+C110 (a).  `D-Every-Var` replaces the first-parameter rule.  `bind_template` gains its consistency check:
 a variable that two parameters bind to two types makes a template inapplicable in a set, and
 is refused naming both parameters where it stands alone (F9).
 
@@ -246,8 +279,8 @@ is refused naming both parameters where it stands alone (F9).
 
 ### C2 — a header declares a list  ·  S
 
-`<K, V>` and `<K: Ordered, V: Printable>` parse into `cur_type_vars` — one header parser,
-which D2 reuses for `struct`.  Nothing else changes: A3's binding loop and A5's key were
+C110 (b), for functions.  `<K, V>` and `<K: Ordered, V: Printable>` parse into
+`cur_type_vars` — the one header parser, which D2 already uses for `struct` at one variable.  Nothing else changes: A3's binding loop and A5's key were
 written over a list and have been running with one element since.
 
 - **Red on its own:** [c1](probes/c1-two-type-variables.loft) answers `1:a|b:2`, with two
@@ -276,7 +309,10 @@ cells graduate, `G-Key` is written into `formal/interfaces.md`.
 
 ## Arc D — generic structs and enums
 
-### D1 — a type variable is scoped to its header  ·  S
+One variable throughout, until D9.  A one-variable generic struct is declined nowhere in
+`DESIGN_DECISIONS.md`, so D1–D8 and D10 do not wait for C0.
+
+### D1 — a type variable is scoped to its header  ·  S  ·  pre-freeze
 
 `parse_type` resolves a variable's spelling only through `cur_type_vars`.
 
@@ -287,17 +323,19 @@ cells graduate, `G-Key` is written into `formal/interfaces.md`.
   docs, probes, fixture libraries — that name a leaked variable.  The expected count is zero;
   any hit is a program this step newly refuses, and is looked at by hand.
 
-### D2 — a struct may declare variables  ·  M
+### D2 — a struct may declare a variable  ·  M  ·  pre-freeze
 
 A new definition kind for a type template (`D-Template`): never laid out, never emitted.  The
-header parser is C2's.  The IR codec gains the kind, and the cache version moves with it.
+header is parsed by the function header's parser (A3), so `<T>` and `<T: Printable>` mean
+what they mean on a function; a list of several is D9's.  The IR codec gains the kind, and
+the cache version moves with it.
 
 - **Red on its own:** a program that only DECLARES `struct Box<T> { v: T }` compiles and runs
   `main` — three syntax errors today; `ir_schema_roundtrip` over a file holding a template;
   a template's field typed `T` never reaches layout (F15).
 - **Compared against:** IDENTICAL over the corpus.
 
-### D3 — an instance in type position  ·  M
+### D3 — an instance in type position  ·  M  ·  pre-freeze
 
 `Data::instance_def(template, args)`, written beside its sibling `tuple_def` and keeping its
 four properties: named from the arguments' identity spellings (`Box<integer>`); idempotent;
@@ -315,35 +353,37 @@ annotation, the way `v: vector<integer> = []` takes its element type.
   arguments differ only in deps are ONE instance (F12); an `@EXPECT_ERROR` cell reads
   `Box<integer>` in its message, not `Box_integer_` (F20).
 
-### D4 — a literal infers its arguments  ·  S
+### D4 — a literal infers its argument  ·  S
 
 `Box { v: 1 }`: `resolve_type_var` over each (field type, value type) pair — the function
 calls already use.  A variable no field value binds is refused naming the variable and the
 cure, which is D3's annotation.
 
-- **Red on its own:** [d1](probes/d1-generic-struct.loft) answers `1|a`;
-  `Pair { k: 1, v: "a" }` names `Pair<integer,text>`; an empty `Box {}` is refused.
+- **Red on its own:** [d1](probes/d1-generic-struct.loft) answers `1|a`; an empty `Box {}`
+  with no annotation is refused.
 
 ### D5 — a generic function over a generic struct  ·  M
 
-Inside a template, `Box<T>` is an OPEN instance — an argument mentions a variable — and is
+Inside a template, `Box<T>` is an OPEN instance — its argument mentions a variable — and is
 never laid out.  `Type::zip_children` pairs two instances of one template argument by
 argument; `substitute_all` over an open instance answers `instance_def` of the substituted
 arguments.
 
-- **Red on its own:** `fn get<T>(b: Box<T>) -> T`; a free
-  `fn swap<K, V>(p: Pair<K, V>) -> Pair<V, K>`; and the goal line
-  `fn insert<K, V>(m: Map<K, V>, k: K, v: V)`.  Twins for each.
+- **Red on its own:** `fn get<T>(b: Box<T>) -> T`;
+  `fn map_box<T>(b: Box<T>, f: fn(T) -> T) -> Box<T>` called with a short lambda (A6); a
+  concrete `fn show(b: Box<integer>)` beside `fn show<T: Printable>(b: Box<T>)`, the concrete
+  one winning for a `Box<integer>` (arc B).  Twins for each.
 - **The alarm:** an open instance reaching layout is loft#1536's class (a zero-width
   `__typevar_T`).  Make it loud: the layout pass refuses a definition whose recorded
   arguments mention a variable.
 
 ### D6 — a method on a generic struct  ·  S
 
-`fn swap<K, V>(self: Pair<K, V>)` is a method TEMPLATE keyed on the template's name,
-`t_4Pair_swap` — loft#1539's mechanism with `Pair` where `vector` stood.
+`fn at<T>(self: Grid<T>, i: integer) -> T?` is a method TEMPLATE keyed on the template's
+name, `t_4Grid_at` — loft#1539's mechanism with `Grid` where `vector` stood.
 
-- **Red on its own:** `p.swap()` and `swap(p)` answer alike and equal the twin's.
+- **Red on its own:** `g.at(2)` and `at(g, 2)` answer alike and equal the twin's, the
+  out-of-range read included.
 
 ### D7 — a template that mentions itself  ·  S
 
@@ -357,42 +397,76 @@ the declaration (`D-Regular`).
 
 ### D8 — a generic enum  ·  M
 
-`enum Opt<T> { Some { v: T }, Nothing }`: an instance is the enum AND each variant, minted
-together.  `match` over an instance; `Disp-Dynamic` over an instance's variants (B7).
+`enum Shape<T> { Dot { at: T }, Line { from: T, to: T } }`: an instance is the enum AND each
+variant, minted together.  `match` over an instance; `Disp-Dynamic` over an instance's
+variants (B7).
 
-- **Red on its own:** construct, match, a `vector<Opt<integer>>`, a nullable payload; twin;
+- **Red on its own:** construct, match, a `vector<Shape<integer>>`, a nullable payload; twin;
   an oracle twin for the dispatcher.
 
-### D9 — across the boundary  ·  S
+### D9 — several variables on a type  ·  S  (waits for C0 and C2)
+
+`struct Pair<K, V> { k: K, v: V }`, `fn swap<K, V>(self: Pair<K, V>) -> Pair<V, K>`.
+`instance_def` has taken an argument LIST since D3 and C2 parses the header's list, so this
+step is cells and whatever they find.
+
+- **Red on its own:** `Pair { k: 1, v: "a" }` names `Pair<integer,text>`; `swap` answers
+  `Pair<text,integer>`, a DIFFERENT instance; both spellings of the method; twins.
+- **The alarm:** if this step needs more than cells, D3 or D5 assumed one argument
+  somewhere.  Fix it there.
+- **Why it is in:** no consumer asks for it — a tuple already covers `Pair` (DESIGN.md §
+  C110, evaluated).  It is here because stopping at the second variable would be a
+  restriction no reader could derive.
+
+### D10 — across the boundary  ·  S
 
 A library exports a generic struct and a consumer instantiates it at its own type;
 `api_surface` golden; `ir_schema_roundtrip`; `--native-release`; the debugger and the LSP
-show `Pair<integer, text>`.
+show `Grid<integer>`.
 
-### D10 — the goal program  ·  XS
+### D11 — the goal program  ·  XS  (waits for arc C)
 
-`struct Map<K, V>`, `fn insert<K, V>(m: Map<K, V>, k: K, v: V)` beside
-`fn insert(m: PhoneBook, k: text, v: integer)`, as ONE guard in `tests/scripts/` — every arc
-in one file.  Closes the plan.
+README.md § Goal as ONE guard in `tests/scripts/`: `struct Grid<T>`, a two-variable
+`map_grid<T, U>` called with a short lambda, and a generic `show` beside a concrete one —
+every arc in one file.  Closes the plan.
 
 ---
 
 ## Arc E — the by-name built-ins become library generics
 
 Its first half is on `main` already: a by-name special case in `dispatch_call` is taken only
-when no definition the program declares applies.  One built-in per step — `reverse<T>` (E1),
-`reserve<T>` (E2), `insert<T>` (E3), `sort<T: Ordered>` (E4) — and each step is a parallel run:
+when no definition the program declares applies.  One built-in per step, each a parallel run:
 
 1. write the `default/*.loft` generic beside the special case, under a switch;
 2. compare `loft introspect` of every corpus call site, special case against instance;
 3. delete the entry from `dispatch_call` only when they are equal.
 
+| Step | Built-in | Variables | Waits for |
+|---|---|---|---|
+| E1 | `reverse<T>` | one | — |
+| E2 | `reserve<T>` | one | — |
+| E3 | `insert<T>` | one | — |
+| E4 | `sort<T: Ordered>` | one | — |
+| E5 | `filter<T>(v: vector<T>, f: fn(T) -> boolean)` | one | A6 |
+| E6 | `map<T, U>(v: vector<T>, f: fn(T) -> U) -> vector<U>` | **two** | A6, C2 |
+| E7 | `reduce<T, U>(v: vector<T>, init: U, f: fn(U, T) -> U) -> U` | **two** | A6, C2 |
+
+E6 and E7 are the consumer C110 asked for (DESIGN.md § C110, evaluated): the language's own
+two-variable generics, which the no-observable-special-names rule cannot retire without arc C.
+
 - **Red on its own:** the comparison in 2, per built-in.
-- **Not verified, and it may not hold:** a special case lowers to ops in place where an
-  instance is a CALL.  If 2 reads different, that is the step's finding — `--native`'s
-  one-op wrapper inlining (`LOFT_NO_WRAPPER_INLINE`) may close the gap there; the
-  interpreter has no such pass.  Each step also runs `make surface-gen`: a new builtin
-  renumbers `index/target_surface.json`.
+- **Not verified, and it may not hold — emission.**  A special case lowers to ops in place
+  where an instance is a CALL.  If 2 reads different, that is the step's finding —
+  `--native`'s one-op wrapper inlining (`LOFT_NO_WRAPPER_INLINE`) may close the gap there; the
+  interpreter has no such pass.
+- **Not verified, and it is the hard part of E6 — pass 1.**  `U` is bound from the lambda's
+  RETURN type, and the H5 guard already records that for `map` this is *"unknowable in pass
+  1"*: the built-in answers a result type early and desugars on pass 2 only.
+  `predict_template_return` has to do the same for a variable bound from a lambda.  E6's
+  first act is to measure what pass 1 knows of a short lambda's return, before anything is
+  written.
+- Each step also runs `make surface-gen`: a new builtin renumbers
+  `index/target_surface.json`.
 
 ---
 
@@ -402,8 +476,8 @@ when no definition the program declares applies.  One built-in per step — `rev
 - `scripts/matrix_axes.py file <guard>` — which axes the guard holds fixed, written down;
 - `make falsify GUARD=… REF=…` for each new `tests/scripts/` file (`@falsified-at:`);
 - for a step with a switch: the suite once with the switch set;
-- `Fixes #N` and a `Contract:` trailer where a step closes an issue.  Two defects on `main`
-  are closed here and are not filed yet: **a2** (A5) and **b5** (B4).
+- `Fixes #N` and a `Contract:` trailer where a step closes an issue.  Three defects on `main`
+  are closed here and are not filed yet: **a2** (A5), **e3** (A6) and **b5** (B4).
 
 ## What was not verified
 
@@ -411,9 +485,8 @@ when no definition the program declares applies.  One built-in per step — `rev
   parser's, measured on `--interpret`; none was re-measured on `--native`.
 - The count of call sites that read a set's members (`Type::Routine`, ~50 across 15 files) is
   a grep, not an audit.  B2's accessor is where the real number is found.
-- Whether the five library files holding paired vectors (`input`, `drawing`, `hex_body`, two
-  tests) are served better by a `Map<K, V>` or by a record set.  C110's bar is a real
-  consumer, and that question decides whether one exists.
-- Arc E's emission equality (above).
+- No LIBRARY wants several type variables: the published libraries declare zero generics.
+  The consumer is the stdlib's own `map` and `reduce`.
+- Arc E's emission equality, and E6's pass-1 return prediction (above).
 - Nothing here was built.  Every *"works because"* in arcs C and D is a prediction, and the
   step's own gate is what tests it.

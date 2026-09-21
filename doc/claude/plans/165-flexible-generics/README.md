@@ -14,18 +14,28 @@ The design is [DESIGN.md](DESIGN.md) and the ordered work is [STEPS.md](STEPS.md
 written against `9f5cf6a96` with every claim about today's compiler run, and the programs are
 in [`probes/`](probes/), each with the answer it gave at the top.
 
-| Arc | Delivers | State | Needs C110 revisited |
+| Arc | Delivers | State | Waits for C110 to be revised |
 |---|---|---|---|
 | phase 0 | today's generics hold `G-Mono` | DONE | no |
-| **A** groundwork | one key decoder, one home for a template's variables, an instance key of its own | designed | no |
+| **A** groundwork | one key decoder, one home for a template's variables, an instance key of its own, a lambda typed under its bindings | designed | no |
 | **B** overload sets | a generic beside concrete definitions of its name, ranked | designed | no |
-| **C** several variables | `<K, V>`, a variable in any parameter | designed | **yes** |
-| **D** generic types | `struct Pair<K, V>`, `enum Opt<T>`, methods, the goal program | designed | **yes** |
-| **E** built-ins | `insert` / `sort` / `reverse` / `reserve` as library generics | designed | no |
+| **C** several variables | a variable in any parameter; `<T, U>` | designed | **all of it** |
+| **D** generic types | `struct Grid<T>`, `enum Shape<T>`, methods, the goal program | designed | D9 (several variables on a type) and D11 only |
+| **E** built-ins | `insert` / `sort` / `reverse` / `reserve` / `filter`, then `map` / `reduce`, as library generics | designed | E6–E7 only (`map`, `reduce`) |
 
-Arcs A, B and E can start now.  C and D wait on step C0 — the owner recording a revisit of
-`DESIGN_DECISIONS.md` C110, for which DESIGN.md § The C110 revisit holds the material, the
-evidence on both sides, and a proposed wording.
+Arcs A and B, D1–D8 and E1–E5 can start now.  The rest waits on step C0 — the owner revising
+`DESIGN_DECISIONS.md` C110.  DESIGN.md § C110, evaluated measured each of C110's reasons
+against the tree: two no longer hold, one stands on narrower ground, one holds in full — and
+the consumer it asked for turned out to be the language's own `map` and `reduce`.
+
+**Why now** (owner, 2026-09-21): loft carries no restriction a reader cannot derive, and the
+work under this one is better done before loft is called stable.  DESIGN.md § Why before
+contract 1 names the steps that cannot wait — they move definition keys, the IR schema, which
+definition a call reaches, or the set of refused programs — and measures the window: the
+published libraries declare 0 generics and 0 free overload sets today, so the fallout is this
+repository's corpus alone.  § How it lands keeps it off a long-lived branch: the
+surface-moving steps land alone behind a switch, and a step whose corpus gate does not hold
+yet lands opt-in and flips when it does.
 
 ## Goal
 
@@ -34,15 +44,24 @@ be generic, and a generic definition is a member of its name's overload set — 
 instance answering exactly what a hand-written concrete twin answers.
 
 ```loft
-struct Map<K, V> { keys: vector<K>, vals: vector<V> }
-fn insert<K, V>(m: Map<K, V>, k: K, v: V) { … }
-fn insert(m: PhoneBook, k: text, v: integer) { … }   // a concrete member of the same set
+struct Grid<T> { w: integer, cells: vector<T> }
+fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> { … }   // what the built-in `map` cannot do
+fn show<T: Printable>(g: Grid<T>) -> text { … }
+fn show(g: Grid<Tile>) -> text { … }                            // a concrete member of the same set
+
+heights = map_grid(tiles, |t| { t.height });                     // Grid<Tile> -> Grid<integer>
 ```
+
+The tracker issue's goal is `Map<K, V>` beside a concrete `insert`.  It is replaced here on
+purpose: a keyed lookup is the one case where C110 still holds — a record set does it better
+— so it cannot be the reason for anything.  `map_grid` is: it is `map` over a container the
+program defined, which needs a generic struct AND a second type variable, and which no record
+set, tuple or `τ?` expresses.
 
 ## Effort + design
 
-- **Effort:** H across the plan; no single step above M.  A = S·S·S·S·M, B = M·S·M·S·S·S·M,
-  C = S·S·S·S, D = S·M·M·S·M·S·S·M·S·XS, E = four parallel runs.
+- **Effort:** H across the plan; no single step above M.  A = XS·S·S·S·S·M·S,
+  B = M·S·M·S·S·S·M, C = S·S·S·S, D = S·M·M·S·M·S·S·M·S·S·XS, E = seven parallel runs.
 - **Design:** ✓ for A and B; ~ for C and D until C0; ~ for E (its emission equality is a
   prediction the first step measures).
 
@@ -58,17 +77,21 @@ The design was probed before it was written down, and the probes moved it:
 4. **A type variable is a global definition**: `fn g(x: T)` compiles with no header.
 5. **An instance is keyed as a method, and takes a real method for itself** — a second wrong
    refusal on `main`, found by attacking this design's own cleanest claim, which it falsified.
+6. **A short lambda passed to a generic is typed as the raw `T`**, not as what `T` is bound
+   to — a third wrong refusal, and the reason `map` could not be a library generic even at
+   one variable.
 
-Two defects on `main` are therefore closed by steps here and are **not filed**: the instance
-key meeting a method key ([a2](probes/a2-instance-key-meets-a-method-key.loft), step A5) and
-the method that captures a generic's call
+Three defects on `main` are therefore closed by steps here and are **not filed**: the
+instance key meeting a method key ([a2](probes/a2-instance-key-meets-a-method-key.loft),
+step A5), the lambda typed as `T` ([e3](probes/e3-short-lambda-under-a-generic.loft), step
+A6), and the method that captures a generic's call
 ([b5](probes/b5-method-arity-captures-the-call.loft), step B4).
 
 ## The owner's open questions, answered by the design
 
 | Question (plans#165) | Answer | Where |
 |---|---|---|
-| 1. Is this the C110 revisit? | The owner's call; the evidence is laid out both ways | DESIGN.md § The C110 revisit |
+| 1. Is this the C110 revisit? | The owner's call, now with each of C110's reasons measured: lift (a) and (b) for functions, keep "no `hash<K, V>`" and `hole_*` per-kind.  One-variable generic structs were never C110's to gate | DESIGN.md § C110, evaluated |
 | 2. Explicit type arguments? | In TYPE position only; inferred everywhere else | `D-Infer` |
 | 3. Bound versus enum? | Incomparable, so ambiguous — RULES.md already decided it | `D-Kind` |
 | 4. Keyed collections over `T`? | Stay refused at the definition; no `hash<K, V>` | `D-Keyed` |
