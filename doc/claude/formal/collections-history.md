@@ -6,8 +6,8 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-> **D-col-5 — OPEN (2026-09-21, loft#1576) — a displacement in a linked group is decided per
-> MEMBER.**  `(Col-Group-Dup)` says a repeated key displaces the older record from EVERY keyed
+> **D-col-5 — CLOSED (2026-09-22; opened 2026-09-21, loft#1576) — a displacement in a linked
+> group was decided per MEMBER.**  `(Col-Group-Dup)` says a repeated key displaces the older record from EVERY keyed
 > member, and `(Col-Group)` that a record leaving through any member leaves every member.  Each
 > keyed arm of `Stores::insert_record` displaces only what collided in ITS OWN key, and every
 > member of a group only unlinks.  Two symptoms, both backends: members keyed on different
@@ -17,6 +17,19 @@
 > `record_finish`, after the fan-out; it needs every keyed arm to report what it displaced.
 > Found by loft#1572's matrix, whose `children_live` cell had pinned the first symptom as
 > design.
+>
+> **Closed** at the chokepoint the entry named.  Each keyed arm of `insert_record` (and
+> `dedup_keyed`) now answers the record an unlink-only insert displaced, `link_siblings` collects
+> them across the fan-out, and `Stores::settle_displaced` — reached from `record_finish` and from
+> `link_record_siblings`, the element-write route — looks each one up under its OWN key in every
+> keyed member and unlinks it where that answer is the record itself; with no vector member it
+> is released.  The measure that found the third route: a whole-vector write reaches the members
+> one `OpIndexGroup` per view, so a record displaced in one view stayed in every other; the op
+> now carries the struct and the primary's field, and `settle_group` applies the per-record
+> rule's final state after each view.  The rule gained its release clause, since "never a free"
+> had been written for a group with a vector member.  Guarded by
+> `1576-a-displaced-record-leaves-every-member-of-its-group` (both backends; values, lengths and
+> record counts).
 >
 > **D-col-4 — OPENED AND CLOSED (2026-09-21, loft#1572) — a `sorted` stored by reference kept a
 > repeated key.**  `(Col-Insert)` and C68 keep one record per key, latest insert wins.  A
