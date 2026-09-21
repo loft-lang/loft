@@ -5,7 +5,8 @@ portal's 24 rows still over 3×.  An ANALYSIS: every figure below is a HAND-PRIC
 emitted Rust of the routine edited to the form a rewrite would emit, compiled with the
 `--native-release` flags, run in-process with the result hash unchanged.  **V1–V3 and F1 are BUILT
 (§ Built, § F1 built); T1 is re-sized (it needs a refactor first — § T1 re-priced) and C1
-is priced; neither is built.**  Two candidates priced NEGATIVE or not at all are listed as such; they are not
+is priced with its condition CORRECTED (§ C1's condition — the premise below is false);
+neither is built.**  Two candidates priced NEGATIVE or not at all are listed as such; they are not
 work.
 
 | # | lever | rows it moves | hand-priced |
@@ -210,6 +211,32 @@ can reach the function.  Priced by removing it from `fib`: **11.8 → 8.67 ms (�
 4.36× → ~3.2×**.  A further −3 % from plain `n - 1` / `n - 2` needs a fact the range proof
 does not carry today — a branch condition (`n > 1` in the arm that subtracts) — and is not
 proposed on this row's evidence alone.
+
+### C1's condition CORRECTED before it was built (2026-09-22)
+
+The paragraph above says the fn-ref guard is *"owed only where a fn-ref dispatch can reach the
+function"*.  **That premise is false**, and building from it would leak.  The guard is not only
+the owner of a fn-ref dispatch arm's return buffer: `OpFreeRefOrHandUp`
+(`ops/ref_ops.rs`, `OpFreeRefOrHandUpEmitter`) — an ordinary op, emitted where a callee
+returns the store it minted and the caller reads the result as a BORROW — registers that store
+against the running frame through the same `cr_fnref_buf`, and `FnRefBufGuard` is what frees
+it.  A function with no `CallRef` anywhere in its call tree can therefore still own a store
+through its guard.  Found by asking the second-spelling question of the PUSHERS rather than of
+the call nodes: three emission sites register a buffer — the fn-ref dispatch
+(`emit.rs`, `cr_fnref_buf` and `cr_fnref_minted`) and this op — and only two of them sit behind
+a `CallRef`.
+
+The condition C1 can be built on: NOTHING THAT REGISTERS is reachable from the function —
+no `CallRef`, no `parallel`, no `yield`, no native (not loft-bodied) user function, and no
+`OpFreeRefOrHandUp` — over the whole reachable call tree, cycles INCLUDED (the closure of the
+call graph from the function, not `frameless_chain_from`, which answers `false` on a cycle
+because the DEPTH count needs the frame there; the guard does not).  Then no entry can stand
+above the mark the guard would take, and its drop is empty every time — the reasoning
+`is_frameless_chain`'s own doc gives, which never depended on acyclicity.  `fib` satisfies it
+(it returns an integer and calls itself), so the −27 % stands for that row.  Its falsifiers are
+`LOFT_NATIVE_LEAK_CHECK=1` and `LOFT_STRICT_STORES=1` over a cell that hands a store up through
+a RECURSIVE function with no fn-ref — the shape that would leak under the false premise, and
+the cell that must exist before the rewrite does.
 
 ## Priced negative, or not a clear case
 
