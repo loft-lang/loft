@@ -7361,7 +7361,7 @@ impl Data {
         let mut vars: Vec<(u32, String)> = Vec::new();
         for tp in &params {
             tp.any_node(&mut |t| {
-                if let Type::Reference(d, _) = t
+                if let Type::Reference(d, _) = t.base()
                     && (*d as usize) < self.definitions.len()
                     && self.is_type_var_placeholder(*d)
                     && !vars.iter().any(|(v, _)| v == d)
@@ -7532,7 +7532,7 @@ impl Data {
         if self.def_type(r) == DefType::Generic {
             for p in self.def(r).attributes.iter().filter(|p| !p.hidden) {
                 p.typedef.any_node(&mut |t| {
-                    if let Type::Reference(d, _) = t
+                    if let Type::Reference(d, _) = t.base()
                         && (*d as usize) < self.definitions.len()
                         && self.is_type_var_placeholder(*d)
                     {
@@ -7703,7 +7703,7 @@ impl Data {
             Type::Optional(inner) => format!("{}?", rec(inner)),
             Type::Rewritten(inner) => rec(inner),
             Type::RefVar(inner) => format!("&{}", rec(inner)),
-            Type::Vector(elm, _) if !matches!(elm.as_ref(), Type::Unknown(_)) => {
+            Type::Vector(elm, _) if !matches!(elm.base(), Type::Unknown(_)) => {
                 format!("vector<{}>", rec(elm))
             }
             Type::Iterator(elm, _) => format!("iterator<{}>", rec(elm)),
@@ -7741,7 +7741,7 @@ impl Data {
             Type::Optional(inner) => format!("{}?", rec(inner)),
             Type::Rewritten(inner) => rec(inner),
             Type::RefVar(inner) => format!("&{}", rec(inner)),
-            Type::Vector(elm, _) if !matches!(elm.as_ref(), Type::Unknown(_)) => {
+            Type::Vector(elm, _) if !matches!(elm.base(), Type::Unknown(_)) => {
                 format!("vector<{}>", rec(elm))
             }
             Type::Iterator(elm, _) => format!("iterator<{}>", rec(elm)),
@@ -9369,7 +9369,7 @@ impl Data {
     #[must_use]
     pub fn mentions_type_var(&self, tp: &Type) -> bool {
         tp.any_node(&mut |t| {
-            matches!(t, Type::Reference(d, _) if (*d as usize) < self.definitions.len()
+            matches!(t.base(), Type::Reference(d, _) if (*d as usize) < self.definitions.len()
                 && self.is_type_var_placeholder(*d))
         })
     }

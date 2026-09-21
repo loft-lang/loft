@@ -6770,10 +6770,9 @@ impl Parser {
             // "method call" message about a free call would not.
             let routed = self.data.routed_types(types);
             let set_refuses = types.iter().any(|t| self.data.mentions_type_var(t))
-                && matches!(
-                    self.select_overload(source, name, &routed),
-                    crate::parser::dispatch::Selection::NoneApplicable
-                );
+                && self
+                    .select_overload(source, name, &routed)
+                    .is_none_applicable();
             if set_refuses {
                 let sel = crate::parser::dispatch::Selection::NoneApplicable;
                 self.report_selection(name, &routed, &sel, Some(name_pos));
@@ -8881,7 +8880,7 @@ impl Parser {
         let mut out: Vec<u32> = Vec::new();
         for a in data.def(g_nr).attributes().iter().filter(|a| !a.hidden) {
             a.typedef.any_node(&mut |t| {
-                if let Type::Reference(d, _) = t
+                if let Type::Reference(d, _) = t.base()
                     && data.is_type_var_placeholder(*d)
                     && !out.contains(d)
                 {

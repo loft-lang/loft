@@ -62,6 +62,13 @@ pub(crate) enum Selection {
     NotDecidable,
 }
 
+impl Selection {
+    /// An overload set exists and no definition takes the call.
+    pub(crate) fn is_none_applicable(&self) -> bool {
+        matches!(self, Selection::NoneApplicable)
+    }
+}
+
 impl Parser {
     /// The rank of passing an argument of type `arg` to a parameter of type `param`, or
     /// `None` when the argument cannot satisfy the parameter.
@@ -76,7 +83,7 @@ impl Parser {
         // The base relation first, then the nullability step on top of it.
         let base: Rank = if same {
             EXACT
-        } else if let (Type::Integer(from), Type::Integer(to)) = (a, p)
+        } else if let (Type::Integer(from), Type::Integer(to)) = (arg.base(), param.base())
             && crate::keys::element_key_enabled()
             && to.min <= from.min
             && from.max <= to.max
@@ -569,17 +576,26 @@ impl Parser {
         specific: &Type,
         binds: &mut Vec<(u32, String)>,
     ) -> bool {
-        if let Type::Reference(d, _) = general
-            && self.data.is_type_var_placeholder(*d)
-        {
-            let Some(id) = self.data.key_identity(specific) else {
-                return false;
-            };
-            if let Some((_, seen)) = binds.iter().find(|(v, _)| v == d) {
-                return *seen == id;
+        match general {
+            // `(@FR-N-Shape)` — the wrapper is part of the PATTERN: `T?` admits only a nullable
+            // spelling, so it meets `σ?` and nothing else, the two peeled together.
+            Type::Optional(g) => {
+                return match specific {
+                    Type::Optional(sp) => self.pattern_instance(g, sp, binds),
+                    _ => false,
+                };
             }
-            binds.push((*d, id));
-            return true;
+            Type::Reference(d, _) if self.data.is_type_var_placeholder(*d) => {
+                let Some(id) = self.data.key_identity(specific) else {
+                    return false;
+                };
+                if let Some((_, seen)) = binds.iter().find(|(v, _)| v == d) {
+                    return *seen == id;
+                }
+                binds.push((*d, id));
+                return true;
+            }
+            _ => {}
         }
         if !general.has_child_types() || !specific.has_child_types() {
             return general.has_child_types() == specific.has_child_types()
@@ -598,7 +614,7 @@ impl Parser {
     fn position_bounds(&self, tp: &Type) -> std::collections::BTreeSet<String> {
         let mut out = std::collections::BTreeSet::new();
         tp.any_node(&mut |t| {
-            if let Type::Reference(d, _) = t
+            if let Type::Reference(d, _) = t.base()
                 && self.data.is_type_var_placeholder(*d)
                 && let Some(keys) = self.data.type_var_bound_keys.get(d)
             {
