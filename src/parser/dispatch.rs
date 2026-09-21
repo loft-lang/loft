@@ -517,12 +517,14 @@ impl Parser {
         better
     }
 
-    /// `D-Specific` (@PLN165 B5) between two TEMPLATES at one position where both rank
+    /// `D-Specific` (@PLN165 B5, B6) between two TEMPLATES at one position where both rank
     /// `GENERIC`: `Less` when `a`'s parameter admits strictly fewer types than `b`'s,
     /// `Greater` the reverse, `Equal` when they admit the same, `None` when neither contains
-    /// the other.  One parameter admits fewer when its bound set is a strict superset of the
-    /// other's — between PATTERNS that are the same up to renaming their variables; two
-    /// different patterns are not ordered here.
+    /// the other.  Two orders are read and must agree: the PATTERN (`vector<T>` admits fewer
+    /// than `T`, being a substitution instance of it and not the reverse), and the BOUND SET
+    /// (a strict superset admits fewer).  Where one says fewer and the other more, or either
+    /// says neither, the pair is not ordered — the refusing side, which a later rule can
+    /// broaden without moving a program.
     fn generic_position_order(&self, a: u32, b: u32, i: usize) -> Option<std::cmp::Ordering> {
         use std::cmp::Ordering;
         let param = |d: u32| {
@@ -537,15 +539,23 @@ impl Parser {
         let (pa, pb) = (param(a)?, param(b)?);
         let a_in_b = self.pattern_instance(&pb, &pa, &mut Vec::new());
         let b_in_a = self.pattern_instance(&pa, &pb, &mut Vec::new());
-        if !(a_in_b && b_in_a) {
-            return None;
-        }
+        let pattern = match (a_in_b, b_in_a) {
+            (true, true) => Ordering::Equal,
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            (false, false) => return None,
+        };
         let (ba, bb) = (self.position_bounds(&pa), self.position_bounds(&pb));
-        match (ba.is_superset(&bb), bb.is_superset(&ba)) {
-            (true, true) => Some(Ordering::Equal),
-            (true, false) => Some(Ordering::Less),
-            (false, true) => Some(Ordering::Greater),
-            (false, false) => None,
+        let bounds = match (ba.is_superset(&bb), bb.is_superset(&ba)) {
+            (true, true) => Ordering::Equal,
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            (false, false) => return None,
+        };
+        match (pattern, bounds) {
+            (Ordering::Equal, either) | (either, Ordering::Equal) => Some(either),
+            (by_pattern, by_bounds) if by_pattern == by_bounds => Some(by_pattern),
+            _ => None,
         }
     }
 

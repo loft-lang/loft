@@ -368,6 +368,15 @@ Pattern P is more specific than Q when P is a substitution instance of Q and not
 - **Red on its own:** [b6](probes/b6-two-generics-one-name.loft) answers `vec|any`;
   `g<T>(p: (T, integer))` beside `g<T>(p: (integer, T))` at `(1, 2)` is refused naming both.
   Both instances exist side by side at `T = integer` — F7c, which A5's key makes possible.
+- **Built** (2026-09-21).  `generic_position_order` reads two orders that must agree: the
+  pattern (`pattern_instance` both ways — one-way matching, the specific side's variables
+  opaque atoms, a variable met twice meeting one type) and the bound set (B5).  One saying
+  fewer and the other more, or either saying neither, leaves the pair unranked
+  ([sets-refused/r10](probes/sets-refused/): `vector<T>` against `<U: Named>` at a Named
+  `vector<C>`).  Cells [patterns/](probes/patterns/) q01–q05 (q05 re-decided per instance;
+  a two-variable tuple pattern waits for C2 in [arc-c/](probes/arc-c/)) green on both
+  backends under `LOFT_STRICT_STORES` + `LOFT_POISON`; b6 answers `vec|any`.  Corpus: only
+  the new guard differs from B5 (refused there).
 
 ### B7 — a template as a dynamic leaf  ·  M
 
