@@ -3915,10 +3915,15 @@ impl Output<'_> {
         // vector whose header and element BASE this loop holds: the element is at the base
         // plus index times size, with no `DbRef` consulted and no store resolved; past the
         // end the element is the null record, whose address is null.
-        if let Some((header, base, index, size)) = self.held_iteration_base(&stmts[at]) {
+        if let Some((header, base, index, size, offset)) = self.held_iteration_base(&stmts[at]) {
+            let plus = if offset == 0 {
+                String::new()
+            } else {
+                format!(" + {offset}")
+            };
             writeln!(
                 w,
-                "let {name}: *const u8 = if (var_{index} as u64) < u64::from({header}.len) {{ unsafe {{ {base}.add(var_{index} as usize * {size}) }} }} else {{ std::ptr::null() }}; //@FR-R-RecPtr record view address for {operand}, from the held base"
+                "let {name}: *const u8 = if (var_{index} as u64) < u64::from({header}.len) {{ unsafe {{ {base}.add(var_{index} as usize * {size}{plus}) }} }} else {{ std::ptr::null() }}; //@FR-R-RecPtr record view address for {operand}, from the held base"
             )?;
         } else {
             writeln!(
@@ -3962,7 +3967,7 @@ impl Output<'_> {
     /// `@FR-R-RecPtr`'s base clause — for a statement that is the head of a vector iteration
     /// ([`hoist::iteration_head`]) over a path whose header AND element base an enclosing
     /// frame holds: those two locals, the index variable's name and the element size.
-    fn held_iteration_base(&self, stmt: &Value) -> Option<(String, String, String, u32)> {
+    fn held_iteration_base(&self, stmt: &Value) -> Option<(String, String, String, u32, u32)> {
         if self.base_rec_ptr_disabled {
             return None;
         }
@@ -3974,7 +3979,7 @@ impl Output<'_> {
             return None;
         }
         let index = sanitize(self.data.def(self.def_nr).variables().name(it.index));
-        Some((header, base, index, it.size))
+        Some((header, base, index, it.size, it.offset))
     }
 
     /// The tiers the loop hoist runs under, as [`Self::begin_vector_hoist`] passes them —

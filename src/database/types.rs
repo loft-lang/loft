@@ -573,6 +573,18 @@ impl Stores {
         tp != u16::MAX && matches!(self.types[tp as usize].parts, Parts::EnumValue(_, _))
     }
 
+    /// True if `tp` is a USER struct-enum — an enum at least one of whose variants carries
+    /// fields — as opposed to a plain enumerate (one byte, no record) and to the synthetic
+    /// `__nullable<S>`, whose discriminant no literal writes (`@FR-R-PushRec`).  A value of
+    /// one is a record: the tag byte at 0, the variant's fields behind it.
+    #[must_use]
+    pub fn is_struct_enum(&self, tp: u16) -> bool {
+        tp != u16::MAX
+            && matches!(&self.types[tp as usize].parts, Parts::Enum(values)
+                if values.iter().any(|(v, _)| *v != u16::MAX))
+            && self.nullable_some_variant(tp).is_none()
+    }
+
     /// True if `tp` is a plain inline-element vector (`Parts::Vector`) — the container
     /// whose append is a slot at the tail, as opposed to the keyed and handle-holding
     /// kinds (`Sorted`, `Array`, `Ordered`, …) whose same-named ops place records.

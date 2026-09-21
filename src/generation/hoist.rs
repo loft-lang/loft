@@ -1545,6 +1545,7 @@ pub fn view_def_header(
 pub fn scalar_kind(getter: &str) -> Option<(&'static str, &'static str)> {
     FUSABLE_GETTERS
         .iter()
+        .chain(enum_record_enabled().then_some(&TAG_GETTER))
         .find(|(name, _, _)| *name == getter)
         .map(|(_, ty, absent)| (*ty, *absent))
 }
@@ -1607,7 +1608,7 @@ pub fn record_view_ptr(
         Type::Optional(inner) => inner.as_ref(),
         tp => tp,
     };
-    if plain_record_type(data, view_tp).is_none() {
+    if plain_record_type(data, view_tp).is_none() && !struct_enum_view(data, view_tp) {
         return Err("not a plain record");
     }
     // A buffer's pre-init (`__ref_p2_N = null`, then a mint into it): no place yet, so no
@@ -1670,8 +1671,13 @@ pub fn mint_window(
     if !minted {
         return Err("not a mint");
     }
-    if plain_record_type(data, data.def(def_nr).variables().tp(*e)).is_none() {
-        return Err("not a plain record");
+    // The element is a fresh record whatever its type: the window's writes carry the
+    // offsets the literal's lowering resolved, so the address asks no layout.  (A
+    // struct-enum element's variable is typed by a placeholder record, not by the enum.)
+    let e_tp = data.def(def_nr).variables().tp(*e);
+    let is_record = matches!(e_tp, Type::Reference(_, _) | Type::Enum(_, true, _));
+    if !is_record || (plain_record_type(data, e_tp).is_none() && !enum_record_enabled()) {
+        return Err("not a record element");
     }
     let finish = stmts[at + 1..].iter().position(|op| {
         matches!(op.unspan(), Value::Call(d, args)
@@ -2104,6 +2110,12 @@ pub enum WrapperOperand {
 /// is what makes one fused load able to stand for the pair. A getter with a different shape
 /// — `OpGetBoolean` masks, `OpGetByte` re-bases, `OpGetCharacter` decodes — is left out
 /// rather than approximated; it keeps the unfused emission.
+/// `@FR-R-RecPtr`'s enum clause — `OpGetEnum(r, fld)`, a struct-enum's TAG, read through a
+/// record address: one byte, and `0` (no variant) for the null record, which is the
+/// getter's own answer there.  For the address only — an element read through a header
+/// keeps [`FUSABLE_GETTERS`], whose cold path has no one-byte form.
+const TAG_GETTER: (&str, &str, &str) = ("OpGetEnum", "u8", "0u8");
+
 const FUSABLE_GETTERS: [(&str, &str, &str); 3] = [
     ("OpGetInt", "i64", "i64::MIN"),
     ("OpGetSingle", "f32", "f32::NAN"),
@@ -2415,6 +2427,10 @@ pub struct VectorIteration<'a> {
     pub index: u16,
     pub vector: &'a Value,
     pub size: u32,
+    /// The constant the head adds to the element's position: 0 for a plain element, and
+    /// whatever `OpGetField(element, off, _)` wrappers sum to — a struct-enum element is
+    /// bound through one at offset 0.
+    pub offset: u32,
 }
 
 /// Parse the binding `e = { idx = idx + 1; OpGetVectorNullable(vec, size, idx) }` — the
@@ -2451,6 +2467,20 @@ pub fn iteration_head<'a>(stmt: &'a Value, data: &Data) -> Option<VectorIteratio
     {
         return None;
     }
+    // The element, possibly behind `OpGetField(element, const off, _)` wrappers: each adds a
+    // constant to the element's position and leaves its record alone (a struct-enum
+    // element is bound through one at offset 0).
+    let mut read: &Value = read;
+    let mut offset: i64 = 0;
+    while let Value::Call(gd, gargs) = read.unspan()
+        && (*gd as usize) < data.definitions.len()
+        && data.def(*gd).name() == "OpGetField"
+        && gargs.len() == 3
+        && let Value::Int(off) = gargs[1].unspan()
+    {
+        offset += i64::from(*off);
+        read = &gargs[0];
+    }
     let Value::Call(rd, rargs) = read.unspan() else {
         return None;
     };
@@ -2469,6 +2499,7 @@ pub fn iteration_head<'a>(stmt: &'a Value, data: &Data) -> Option<VectorIteratio
         index: *index,
         vector: &rargs[0],
         size: u32::try_from(*size).ok()?,
+        offset: u32::try_from(offset).ok()?,
     })
 }
 
@@ -3381,7 +3412,39 @@ pub fn mint_push_qualifies(stores: &Stores, vector_tp: u16, heap: bool) -> bool 
     // `@FR-R-PushRec` heap clause — a heap-owning element's slot is ZEROED at the mint
     // (the handles' prefill, one range write), so the stale-bytes objection no longer
     // holds; `heap` is the switch that keeps such an element on its templates.
-    elem != u16::MAX && stores.is_struct(elem) && (heap || !stores.owns_heap(elem))
+    // The enum clause — a USER struct-enum element is a record too: its literal writes the
+    // tag (`OpSetEnum(e, 0, variant)`) beside the variant's fields, and its slot is always
+    // zeroed, since a narrower variant leaves the tail of a wider one's slot unwritten.
+    elem != u16::MAX
+        && (stores.is_struct(elem) || (enum_record_enabled() && stores.is_struct_enum(elem)))
+        && (heap || !stores.owns_heap(elem))
+}
+
+/// `LOFT_NO_ENUM_RECORD=1` — a struct-enum value is no record to the hoist family again: no
+/// push header for a vector of them, no address for a view of one (`@FR-R-Switch`).  Read
+/// at generation time.
+#[must_use]
+pub fn enum_record_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_ENUM_RECORD").is_ok_and(|v| v != "0"))
+}
+
+/// A USER struct-enum view, for the record ADDRESS (`@FR-R-RecPtr`'s enum clause): the tag
+/// byte at 0 and the variant's fields behind it, each read at the offset the parser
+/// resolved for the arm that reads it — so the address needs no layout of its own.
+/// `(R-Scalar)`'s hoisted scalars keep [`plain_record_type`]: a key of (type, offset)
+/// cannot tell one variant's field from another's at the same offset.  The synthetic
+/// `__nullable<S>` stays out — its absence is a discriminant, not a null record.
+fn struct_enum_view(data: &Data, tp: &Type) -> bool {
+    if !enum_record_enabled() {
+        return false;
+    }
+    let d = match tp.peel_link() {
+        Type::Enum(d, true, _) => *d,
+        Type::Reference(d, _) if data.def_type(*d) == DefType::Enum => *d,
+        _ => return false,
+    };
+    !data.def(d).name().starts_with("__nullable<")
 }
 
 const FUSABLE_SETTERS: [(&str, &str); 3] = [

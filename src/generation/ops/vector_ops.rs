@@ -496,8 +496,9 @@ impl OpEmitter for NewRecordEmitter {
         let elem = out.stores.content(target.vector_tp);
         let size = out.stores.size(elem);
         let verify = verify(ctx);
-        // `@FR-R-PushRec` heap clause — a heap-owning element's slot is zeroed at the mint.
-        let zero = if out.stores.owns_heap(elem) {
+        // `@FR-R-PushRec` heap clause — a heap-owning element's slot is zeroed at the mint;
+        // so is a struct-enum's, whose narrower variants leave a wider one's tail unwritten.
+        let zero = if out.stores.owns_heap(elem) || !out.stores.is_struct(elem) {
             "_zero"
         } else {
             ""

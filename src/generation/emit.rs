@@ -3381,7 +3381,7 @@ impl Output<'_> {
         {
             let elem = self.stores.content(target.vector_tp);
             let esize = self.stores.size(elem);
-            let zero = if self.stores.owns_heap(elem) {
+            let zero = if self.stores.owns_heap(elem) || !self.stores.is_struct(elem) {
                 "_zero"
             } else {
                 ""
