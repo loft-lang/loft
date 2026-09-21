@@ -4,6 +4,8 @@
 #   population  engine  — a synthetic program that measures the ENGINE (informational)
 #               stdlib  — a routine of the standard library, on a workload a program runs
 #               library:<name> — a `pub fn` of a shipped library
+#               consumer:<project> — a hot loop of a real loft program, MODELLED here at its
+#                 own data layout and sizes (the program itself is never run by the bench)
 #   exercises   what a reader should know the row stands for
 # A routine a lane prints and this file lacks is reported by the portal as UNCLASSIFIED.
 01_fibonacci	fibonacci	call	engine	recursive calls, two per frame
@@ -62,3 +64,14 @@ drawing	parse	alloc-temp	library:drawing	scene text to records: scan, split, rec
 drawing	render_lock	vector-read	library:drawing	render + Lanczos resample
 drawing	render_marks	vector-read	library:drawing	render + Lanczos resample
 drawing	resize	vector-read	library:drawing	Lanczos resample 1024 to 256
+16_consumer_shapes	tuple_kernel	float-kernel	consumer:crawler	`ov_sample`: a leaf returning a TUPLE, scanning a polyline of records, 1,024 cells
+16_consumer_shapes	fov_rays	vector-write	consumer:crawler	`sim_compute_fov`: cells in a radius, a short ray each, flags written
+16_consumer_shapes	bfs_flow	vector-write	consumer:crawler	`compute_flow`: a BFS over a flat vector, six TUPLE-returning neighbour probes per cell
+16_consumer_shapes	entity_tick	record-field	consumer:crawler	`sim_tick`: a record copied out, mutated, written back, with an O(N) scan of the same vector
+16_consumer_shapes	chunk_lookup	record-field	consumer:moros	`map_get_hex` / `map_set_hex`: a linear chunk scan, then a record in a vector in a record
+16_consumer_shapes	mesh_emit	record-build	consumer:moros	`build_hex_meshes`: NESTED records (`Vec3 + Vec3 + Vec2`) appended, 7 vertices + 6 triangles per hex
+16_consumer_shapes	mesh_aabb	record-field	consumer:moros	`mesh_aabb`: a min/max over NESTED fields (`v.pos.x / .y / .z`) of 7,168 vertices
+16_consumer_shapes	enum_match	record-field	consumer:moros	`EditKind`: 3,000 struct-ENUM values built, then matched and destructured
+16_consumer_shapes	composite_hash	keyed	consumer:dryopea	`paint_line`: a hash on a COMPOSITE two-integer key — find-or-insert, removal by null, probes
+16_consumer_shapes	f32_build	vector-build	consumer:crawler	`emit_hex_tris`: `vector<single>` built six values at a time, 331,776 pushes
+16_consumer_shapes	catalog_churn	alloc-temp	consumer:crawler	`game_items`: a 64-record catalogue with text fields REBUILT on every call, one field read

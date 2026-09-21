@@ -16,7 +16,8 @@ saved run with the registries beside this script and writes `doc/claude/PERF_POR
 
   classes.tsv   what each mechanism class is
   routines.tsv  every measured routine -> its class and its population
-  census.tsv    library routines worth a row and not measured yet
+  census.tsv    library routines and consumer shapes worth a row and not measured yet
+  gaps.tsv      features the consumer programs lean on that no row exercises
 
 The page leads with the CLASS table — the question it exists to answer is which KINDS of
 routine are still too slow, so that a pass starts from a class and not from one program —
@@ -202,9 +203,11 @@ def render():
         w("|---|---:|---:|---:|---:|---:|")
         pops = [("every measured routine", judged),
                 ("shipped routines — stdlib + libraries (the `(Perf-Weight)` population)",
-                 [r for r in judged if r["pop"] != "engine"]),
+                 [r for r in judged if r["pop"] == "stdlib" or r["pop"].startswith("library:")]),
                 ("stdlib", [r for r in judged if r["pop"] == "stdlib"]),
                 ("libraries", [r for r in judged if r["pop"].startswith("library:")]),
+                ("consumer shapes — hot loops of real programs, modelled",
+                 [r for r in judged if r["pop"].startswith("consumer:")]),
                 ("engine programs (informational)", [r for r in judged if r["pop"] == "engine"])]
         for label, rs in pops:
             if rs:
@@ -265,8 +268,9 @@ def render():
     w("## Coverage — what is measured, and what is waiting\n")
     w(f"Libraries with a measured lane: {', '.join(f'**{m}**' for m in measured_libs) or 'none'}.  "
       f"The standard library has {sum(r['pop'] == 'stdlib' for r in registry.values())} rows.\n")
-    w("### Waiting — surveyed library routines without a row yet\n")
-    w("From a read of each library's source against its published API.  `rank 1` is the survey's first")
+    w("### Waiting — surveyed routines without a row yet\n")
+    w("From a read of each library's source against its published API, and of the consumer programs'")
+    w("hot loops (`consumer:<project>` — modelled as bench routines, never run in place).  `rank 1` is the survey's first")
     w("pick for its tree.  A routine moves from here into a lane the day its twin is written; the twin")
     w("column says what that is.\n")
     w("| class | waiting | libraries |")
@@ -288,6 +292,17 @@ def render():
             mark = "**1**" if c["rank"] == "1" else "2"
             kind = "" if c["kind"] == "loft" else f" ({c['kind']})"
             w(f"| {c['lib']} | `{c['routine']}`{kind} | {mark} | {c['why']} | {c['workload']} | {c['twin']} |")
+        w("")
+
+    gaps = read_tsv(os.path.join(HERE, "gaps.tsv"), 3)
+    if gaps:
+        w("### Not exercised by any row yet\n")
+        w("Features the consumer programs lean on that no measured routine touches.  A line leaves")
+        w("`gaps.tsv` the day a lane's routine exercises it.\n")
+        w("| feature | class | where a consumer uses it |")
+        w("|---|---|---|")
+        for feature, cls, where in gaps:
+            w(f"| {feature} | {cls} | {where} |")
         w("")
 
     os.makedirs(os.path.dirname(PAGE), exist_ok=True)

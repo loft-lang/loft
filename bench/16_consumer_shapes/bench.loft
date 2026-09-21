@@ -1,0 +1,428 @@
+// Benchmark 16: the shapes CONSUMER programs run, one row each
+//
+// Each routine models a hot loop read out of a real loft program (crawler, moros, dryopea) —
+// the data layout and the loop, at the sizes those programs use — so that the features real
+// code leans on are measured: a TUPLE returned inside a hot loop, NESTED struct fields
+// reached through a vector, a struct-ENUM matched, a COMPOSITE-key hash with removal by
+// null, `vector<single>` built at scale, a catalogue rebuilt on every call.  bench/portal/
+// census.tsv names the consumer routine each one stands for.  Inputs differ by the
+// repetition's salt in VALUE only; the `hash` column is one canonical op's result, which
+// the Rust twin must print the same.
+
+struct Seg { x0: float, y0: float, x1: float, y1: float }
+
+struct Ent { id: integer, q: integer, r: integer, tq: integer, tr: integer, hp: integer,
+             energy: integer, speed: integer, cool: integer, age: integer, state: integer, flags: integer }
+
+struct Hex { h_height: integer, h_material: integer, h_wall: integer, h_flags: integer }
+struct Chunk { cx: integer, cy: integer, cz: integer, hexes: vector<Hex> }
+struct Map { chunks: vector<Chunk> }
+
+struct V3 { x: float, y: float, z: float }
+struct V2 { u: float, v: float }
+struct Vertex { pos: V3, nrm: V3, uv: V2 }
+struct Tri { a: integer, b: integer, c: integer }
+struct Mesh { verts: vector<Vertex>, tris: vector<Tri> }
+
+enum Edit {
+  SetHeight { eq: integer, er: integer, eh: integer },
+  Paint { pq: integer, pr: integer, pmat: integer },
+  Wall { wq: integer, wr: integer, wedge: integer }
+}
+
+struct Painted { q: integer, r: integer, kind: integer }
+struct World { painted: hash<Painted[q, r]> }
+
+struct ItemDef { id: integer, name: text, short: text, desc: text, weight: integer,
+                 value: integer, kind: integer, tier: integer }
+
+// ── crawler `ov_sample`: a leaf returning a TUPLE, scanning a polyline of records ───────
+fn make_segs(count: integer) -> vector<Seg> {
+  out: vector<Seg> = [];
+  for i in 0..count {
+    a = i as float * 1.25;
+    out += [Seg { x0: a, y0: (i % 7) as float * 3.0, x1: a + 2.5, y1: ((i + 3) % 7) as float * 3.0 }];
+  }
+  out
+}
+
+fn nearest(segs: const vector<Seg>, px: float, py: float) -> (float, integer) {
+  best = 1000000.0;
+  which = -1;
+  for s in segs {
+    dx = s.x1 - s.x0;
+    dy = s.y1 - s.y0;
+    t = (((px - s.x0) * dx + (py - s.y0) * dy) / (dx * dx + dy * dy))?;
+    if t < 0.0 { t = 0.0; }
+    if t > 1.0 { t = 1.0; }
+    ex = px - (s.x0 + dx * t);
+    ey = py - (s.y0 + dy * t);
+    d = sqrt(ex * ex + ey * ey);
+    if d < best { best = d; which = s#index; }
+  }
+  (best, which)
+}
+
+fn c_tuple_kernel(segs: const vector<Seg>, salt: integer) -> integer {
+  acc = 0.0;
+  hits = 0;
+  for c in 0..1024 {
+    px = (c % 32) as float * 1.5 + salt as float * 0.25;
+    py = (c / 32) as float * 0.75;
+    n = nearest(segs, px, py);
+    acc += n.0;
+    hits += n.1;
+  }
+  round(acc * 16.0) as integer + hits
+}
+
+// ── crawler `sim_compute_fov`: cells in a radius, a short ray each, flags written ───────
+fn make_tiles(w: integer, h: integer) -> vector<integer> {
+  [for i in 0..w * h { if ((i % w) * 7 + (i / w) * 13) % 11 == 0 { 1 } else { 0 } }]
+}
+
+fn c_fov(tiles: const vector<integer>, vis: vector<integer>, w: integer, salt: integer) -> integer {
+  oq = 50 + salt;
+  orr = 50;
+  seen = 0;
+  for r in 40..61 {
+    for q in (40 + salt)..(61 + salt) {
+      dq = q - oq;
+      dr = r - orr;
+      if dq * dq + dr * dr > 100 { continue }
+      n = max(abs(dq), abs(dr));
+      clear = 1;
+      for k in 1..n {
+        rq = ((oq * n + dq * k + n / 2) / n)?;
+        rr = ((orr * n + dr * k + n / 2) / n)?;
+        if tiles[rr * w + rq]? == 1 { clear = 0; break }
+      }
+      vis[r * w + q] = clear;
+      seen += clear;
+    }
+  }
+  seen
+}
+
+// ── crawler `compute_flow`: a BFS over a flat vector, six TUPLE-returning neighbours ─────
+fn nbr(q: integer, r: integer, d: integer) -> (integer, integer) {
+  odd = r & 1;
+  if d == 0 { (q + 1, r) }
+  else if d == 1 { (q - 1, r) }
+  else if d == 2 { (q + odd, r - 1) }
+  else if d == 3 { (q + odd - 1, r - 1) }
+  else if d == 4 { (q + odd, r + 1) }
+  else { (q + odd - 1, r + 1) }
+}
+
+fn c_flow(tiles: const vector<integer>, w: integer, h: integer, salt: integer) -> integer {
+  flow: vector<integer> = [];
+  for _ in 0..w * h { flow += [-1]; }
+  frontier: vector<integer> = [];
+  start = 50 * w + 50 + salt;
+  flow[start] = 0;
+  frontier += [start];
+  head = 0;
+  total = 0;
+  while head < len(frontier) {
+    cur = frontier[head]?;
+    head += 1;
+    cd = flow[cur]?;
+    cq = (cur % w)?;
+    cr = (cur / w)?;
+    for d in 0..6 {
+      p = nbr(cq, cr, d);
+      if p.0 < 0 || p.0 >= w || p.1 < 0 || p.1 >= h { continue }
+      ni = p.1 * w + p.0;
+      if tiles[ni]? == 1 || flow[ni]? >= 0 { continue }
+      flow[ni] = cd + 1;
+      total += cd + 1;
+      frontier += [ni];
+    }
+  }
+  total + len(frontier)
+}
+
+// ── crawler `sim_tick`: a record copied out, mutated, written back; an O(N) scan inside ─
+fn sign(v: integer) -> integer { if v > 0 { 1 } else if v < 0 { -1 } else { 0 } }
+
+fn c_entity_tick(salt: integer) -> integer {
+  ents: vector<Ent> = [];
+  for i in 0..60 {
+    ents += [Ent { id: i, q: (i * 7) % 40, r: (i * 11) % 40, tq: (i * 3 + salt) % 40, tr: (i * 5) % 40,
+                   hp: 20, energy: 0, speed: 30 + i % 50, cool: i % 4, age: 0, state: 0, flags: 0 }];
+  }
+  for _tick in 0..50 {
+    for i in 0..len(ents) {
+      e = ents[i]?;
+      e.energy += e.speed;
+      if e.cool > 0 { e.cool -= 1; }
+      if e.energy >= 100 {
+        e.energy -= 100;
+        nq = e.q + sign(e.tq - e.q);
+        nr = e.r + sign(e.tr - e.r);
+        taken = false;
+        for o in ents {
+          if o.id != e.id && o.q == nq && o.r == nr { taken = true; }
+        }
+        if !taken { e.q = nq; e.r = nr; e.state = 1; } else { e.state = 2; e.flags += 1; }
+      }
+      e.age += 1;
+      ents[i] = e;
+    }
+  }
+  acc = 0;
+  for done in ents { acc += done.q * 31 + done.r + done.flags; }
+  acc
+}
+
+// ── moros `map_get_hex` / `map_set_hex`: a linear chunk scan, then a record in a record ──
+fn make_map() -> Map {
+  m = Map { chunks: [] };
+  for cy in 0..4 {
+    for cx in 0..4 {
+      ck = Chunk { cx: cx, cy: cy, cz: 0, hexes: [] };
+      for i in 0..1024 { ck.hexes += [Hex { h_height: (i * 3 + cx * 5 + cy * 7) % 17, h_material: 0, h_wall: 0, h_flags: 0 }]; }
+      m.chunks += [ck];
+    }
+  }
+  m
+}
+
+fn map_get(m: const Map, q: integer, r: integer) -> integer {
+  cx = q / 32;
+  cy = r / 32;
+  for c in m.chunks {
+    if c.cx == cx && c.cy == cy && c.cz == 0 { return c.hexes[(r % 32) * 32 + q % 32]?.h_height }
+  }
+  -1
+}
+
+fn map_set(m: Map, q: integer, r: integer, mat: integer) {
+  cx = q / 32;
+  cy = r / 32;
+  for i in 0..len(m.chunks) {
+    if m.chunks[i]?.cx == cx && m.chunks[i]?.cy == cy && m.chunks[i]?.cz == 0 {
+      m.chunks[i].hexes[(r % 32) * 32 + q % 32].h_material = mat;
+      return
+    }
+  }
+}
+
+fn c_chunk_lookup(m: Map, salt: integer) -> integer {
+  acc = 0;
+  state = 12345 + salt;
+  for i in 0..20000 {
+    state = (state * 1103515245 + 12345) & 2147483647;
+    q = (state >> 8) % 128;
+    r = (state >> 16) % 128;
+    acc += map_get(m, q, r);
+    if i % 4 == 0 { map_set(m, q, r, (i + salt) & 7); }
+  }
+  acc
+}
+
+// ── moros `build_hex_meshes`: NESTED records appended; `mesh_aabb`: nested fields read ───
+fn emit_mesh(hexes: integer, salt: integer) -> Mesh {
+  ox: vector<float> = [1.0, 0.5, -0.5, -1.0, -0.5, 0.5];
+  oz: vector<float> = [0.0, 0.866, 0.866, 0.0, -0.866, -0.866];
+  m = Mesh { verts: [], tris: [] };
+  for i in 0..hexes {
+    bx = (i % 32) as float * 1.5;
+    bz = (i / 32) as float * 1.732 + salt as float * 0.5;
+    by = ((i * 7) % 5) as float * 0.25;
+    base = len(m.verts);
+    m.verts += [Vertex { pos: V3 { x: bx, y: by, z: bz }, nrm: V3 { x: 0.0, y: 1.0, z: 0.0 }, uv: V2 { u: 0.5, v: 0.5 } }];
+    for k in 0..6 {
+      m.verts += [Vertex { pos: V3 { x: bx + ox[k]?, y: by, z: bz + oz[k]? },
+                           nrm: V3 { x: 0.0, y: 1.0, z: 0.0 }, uv: V2 { u: ox[k]? * 0.5 + 0.5, v: oz[k]? * 0.5 + 0.5 } }];
+      m.tris += [Tri { a: base, b: base + 1 + k, c: base + 1 + (k + 1) % 6 }];
+    }
+  }
+  m
+}
+
+fn c_mesh_emit(salt: integer) -> integer {
+  m = emit_mesh(1024, salt);
+  len(m.verts) + len(m.tris) + round(m.verts[len(m.verts) - 1]?.pos.z * 8.0) as integer + (m.tris[len(m.tris) - 1]?.c)
+}
+
+fn c_mesh_aabb(m: const Mesh, salt: integer) -> integer {
+  lox = 1000000.0; hix = -1000000.0;
+  loy = 1000000.0; hiy = -1000000.0;
+  loz = 1000000.0; hiz = -1000000.0;
+  for v in m.verts {
+    if v.pos.x < lox { lox = v.pos.x; }
+    if v.pos.x > hix { hix = v.pos.x; }
+    if v.pos.y < loy { loy = v.pos.y; }
+    if v.pos.y > hiy { hiy = v.pos.y; }
+    if v.pos.z < loz { loz = v.pos.z; }
+    if v.pos.z > hiz { hiz = v.pos.z; }
+  }
+  round(((hix - lox) + (hiy - loy) + (hiz - loz)) * 16.0) as integer + salt
+}
+
+// ── moros `EditKind`: a struct-ENUM built, matched and destructured ─────────────────────
+fn c_enum_match(salt: integer) -> integer {
+  edits: vector<Edit> = [];
+  for i in 0..3000 {
+    q = (i * 7 + salt) % 64;
+    r = (i * 13) % 64;
+    if i % 3 == 0 { edits += [SetHeight { eq: q, er: r, eh: i % 19 }]; }
+    else if i % 3 == 1 { edits += [Paint { pq: q, pr: r, pmat: i % 5 }]; }
+    else { edits += [Wall { wq: q, wr: r, wedge: i % 6 }]; }
+  }
+  heights = [for _ in 0..4096 { 0 }];
+  mats = [for _ in 0..4096 { 0 }];
+  walls = 0;
+  for e in edits {
+    match e {
+      SetHeight { eq, er, eh } => { heights[er * 64 + eq] = eh; },
+      Paint { pq, pr, pmat } => { mats[pr * 64 + pq] = pmat; },
+      Wall { wq, wr, wedge } => { walls += wedge + wq - wr; }
+    }
+  }
+  acc = walls;
+  for i in 0..4096 { acc += heights[i]? * 3 + mats[i]?; }
+  acc
+}
+
+// ── dryopea `paint_line`: a hash on a COMPOSITE key, removal by null, probes ─────────────
+fn c_composite_hash(salt: integer) -> integer {
+  w = World { painted: [] };
+  for line in 0..40 {
+    for s in 0..50 {
+      q = line * 3 + s + salt;
+      r = (line * 5 + s * 2) % 97;
+      found = w.painted[q, r];
+      if found == null { w.painted += [Painted { q: q, r: r, kind: (line + s) % 7 }]; }
+      else { found.kind = (found.kind + 1) % 7; }
+    }
+  }
+  for line in 0..40 {
+    for s in 0..50 {
+      if (line + s) % 3 == 0 { w.painted[line * 3 + s + salt, (line * 5 + s * 2) % 97] = null; }
+    }
+  }
+  acc = 0;
+  for line in 0..40 {
+    for s in 0..50 {
+      p = w.painted[line * 3 + s + salt, (line * 5 + s * 2) % 97];
+      if p != null { acc += p.kind + 10; }
+    }
+  }
+  acc
+}
+
+// ── crawler `emit_hex_tris`: `vector<single>` built six values at a time ────────────────
+fn c_f32_build(salt: integer) -> integer {
+  buf: vector<single> = [];
+  for h in 0..1024 {
+    bx = (h % 32) as single;
+    bz = (h / 32 + salt) as single;
+    for t in 0..18 {
+      a = (t as single) * 0.125f;
+      buf += [bx, a, bz, 0.0f, 1.0f, 0.0f];
+      buf += [bx + 1.0f, a, bz, 0.0f, 1.0f, 0.0f];
+      buf += [bx, a, bz + 1.0f, 0.0f, 1.0f, 0.0f];
+    }
+  }
+  len(buf) + round((buf[len(buf) - 4]? as float) * 4.0) as integer
+}
+
+// ── crawler `game_items`: a catalogue REBUILT on every call, one field read ─────────────
+fn game_items(salt: integer) -> vector<ItemDef> {
+  out: vector<ItemDef> = [];
+  for i in 0..64 {
+    out += [ItemDef { id: i, name: "item-{i + salt}", short: "i{i}", desc: "A thing numbered {i} of tier {i % 5}",
+                      weight: i % 9, value: i * 3 + salt, kind: i % 4, tier: i % 5 }];
+  }
+  out
+}
+
+fn c_catalog(salt: integer) -> integer {
+  acc = 0;
+  for d in 0..64 {
+    items = game_items(salt);
+    acc += len(items[d]?.short) + items[d]?.value;
+  }
+  acc
+}
+
+fn arg_n(dflt: integer) -> integer {
+  an_args = arguments();
+  an_n = dflt;
+  an_i = 0;
+  while an_i < len(an_args) {
+    if an_args[an_i]? == "--n" && an_i + 1 < len(an_args) {
+      an_n = (an_args[an_i + 1]? as integer?)?;
+      an_i += 1;
+    }
+    an_i += 1;
+  }
+  if an_n < 2 { an_n = 2; }
+  an_n
+}
+
+fn row(name: text, iters: integer, us: integer, items: integer, result: integer) {
+  rw_ns = ((us * 1000) / iters) ?? 0;
+  rw_it = (((us * 1000) as float) / ((iters * items) as float)) ?? 0.0;
+  println("{name}\t{iters}\t{us}\t{rw_ns}\t{items}\t{rw_it:.3}\t{result:x}");
+}
+
+fn main() {
+  n = arg_n(40);
+  segs = make_segs(40);
+  tiles = make_tiles(101, 101);
+  vis = [for _ in 0..101 * 101 { 0 }];
+  map = make_map();
+  mesh = emit_mesh(1024, 0);
+  println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+  sink = 0;
+
+  t0 = ticks();
+  for r in 0..n { sink += c_tuple_kernel(segs, r & 1); }
+  row("tuple_kernel", n, ticks() - t0, 1024, c_tuple_kernel(segs, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_fov(tiles, vis, 101, r & 1); }
+  row("fov_rays", n, ticks() - t0, 441, c_fov(tiles, vis, 101, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_flow(tiles, 101, 101, r & 1); }
+  row("bfs_flow", n, ticks() - t0, 10201, c_flow(tiles, 101, 101, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_entity_tick(r & 1); }
+  row("entity_tick", n, ticks() - t0, 3000, c_entity_tick(0));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_chunk_lookup(map, r & 1); }
+  row("chunk_lookup", n, ticks() - t0, 20000, c_chunk_lookup(map, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_mesh_emit(r & 1); }
+  row("mesh_emit", n, ticks() - t0, 1024, c_mesh_emit(0));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_mesh_aabb(mesh, r & 1); }
+  row("mesh_aabb", n, ticks() - t0, 7168, c_mesh_aabb(mesh, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_enum_match(r & 1); }
+  row("enum_match", n, ticks() - t0, 3000, c_enum_match(0));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_composite_hash(r & 1); }
+  row("composite_hash", n, ticks() - t0, 2000, c_composite_hash(0));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_f32_build(r & 1); }
+  row("f32_build", n, ticks() - t0, 1024 * 18 * 18, c_f32_build(0));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_catalog(r & 1); }
+  row("catalog_churn", n, ticks() - t0, 64, c_catalog(0));
+
+  println("time: 0ms sink={sink}");
+}

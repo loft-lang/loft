@@ -1,0 +1,14 @@
+# Language and library features the CONSUMER programs lean on that no measured row exercises.
+# Columns: feature <TAB> class it belongs to <TAB> where a consumer uses it (from the 2026-09-21 survey)
+# A line leaves this file the day a lane's routine exercises the feature.
+a two-hash DIFF: walk A probing B, walk B probing A	keyed	dryopea `w.painted[q, r] = null`, `reload_and_record`
+JSON: a whole nested struct serialised and parsed back	text-build	moros `"{m:j}"` / `Map.parse`, dryopea `content() as MapFile`; crawler's code generator drives the dynamic `JsonValue` API
+`const` and `&` borrows of large vectors and structs at call boundaries	alloc-temp	208 `const` parameters in crawler alone; `shed(bed: const vector<float>, rub: &vector<float>)` called ~100,000x
+`u8` fields in records and `u8` vectors	record-field	313 occurrences in dryopea (`kind: u8`, `direction: u8`)
+text SLICING and a character round trip	text-build	crawler `out[..(len(out) - 1)]` in a shrink loop, `ln[10..par]`; zero-trust `raw[0..bar]`; crawler `for ch in nm { … (code as character) }`
+`#index` on a loop variable, `break <value>`, `rev(0..n)`	int-loop	moros `bm_h#index / 32` in the mesh build's inner loop, `break ri_r#index`; dryopea `return pi_g#index`
+binary file IO one element at a time	vector-build	crawler `f#read(2) as i16` ~150,000 times per region load
+QUADRATIC text accumulation at file scale	text-build	crawler `out = out + "{v:.9}"` producing a 1.28 MB file
+format WIDTH and precision specs in a per-frame string	text-build	moros `"{altitude:4.1}  FPS{fps:3}"`, crawler `{magic:X}`
+hand-rolled sorts and heaps on PARALLEL scalar vectors	vector-write	crawler `sort_floats` (selection sort into a fresh vector), the parallel-vector min-heap, a counting sort
+deletion by REBUILDING a vector of records	vector-build	moros `without_tail`, `spawn_remove`; dryopea `truncate_to`, `drop_oldest`

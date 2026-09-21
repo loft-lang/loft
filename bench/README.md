@@ -85,6 +85,8 @@ make perf-portal-render                                           # render from 
 | `portal/classes.tsv` | the mechanism classes: what bounds a routine of each |
 | `portal/routines.tsv` | every measured routine -> its class and its POPULATION (`engine`, `stdlib`, `library:<name>`) |
 | `portal/census.tsv` | library and consumer routines worth a row and not measured yet, each with its workload and its twin |
+| `portal/gaps.tsv` | features the consumer programs lean on that no measured row exercises |
+| `portal/libs.tsv` + `portal/checkout_libs.sh` | the library repositories the pass measures from, and the script that checks them out |
 | `portal/results/<host>.tsv` | the latest run per machine, stamped with its commit, compiler and settings |
 
 A CLASS names the mechanism a routine's cost is made of — the per-call frame, a checked
@@ -100,10 +102,14 @@ on the page as UNCLASSIFIED.  If it came off the census, delete its census line.
 
 **Lanes.**  `01`–`12` are ENGINE programs (informational).  `13_stdlib_text`,
 `14_stdlib_vector` and `15_stdlib_keyed` are the STANDARD LIBRARY as a program calls it, one
-row per routine.  A library's own bench (the drawing library's `bench/`) joins through
-`--package`, measured from a scratch clone.  Routines of other libraries and of consumer
-programs are MODELLED here as further lanes rather than run in their own trees, which the
-bench never writes to.
+row per routine.  `16_consumer_shapes` MODELS the hot loops of real loft programs (crawler,
+moros, dryopea) at their own data layouts and sizes — a tuple returned inside a hot loop,
+nested struct fields through a vector, a struct-enum matched, a composite-key hash — because
+those programs are never run by the bench and their trees are never written to.  A library's
+own bench (the drawing library's `bench/`) joins through `--package`, measured from the
+pass's OWN checkout of the library: `make perf-libs` clones the eight library repositories
+as normal checkouts beside this one (`$LOFT_PERF_LIBS`, default `../loft-bench-libs`) and
+fast-forwards them when they are clean; `portal/libs.tsv` names them and their benches.
 
 ## The row protocol
 
