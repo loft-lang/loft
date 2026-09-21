@@ -12451,6 +12451,48 @@ impl Parser {
             _ => {}
         }
     }
+    /// @PLN165 D5 — a template returning an OPEN instance (`-> Box<T>`) declares the
+    /// `__retbuf` its twin has (a record whatever `T` becomes), but its literal tail was a
+    /// deferred `TV_OBJECT` the template's own parse could not deliver.  Lowered, it is the
+    /// `"Object"` block the twin's tail is, so the delivery the twin's parse chose runs here
+    /// on the instance — the literal builds into the caller's buffer (`BuildIntoBuffer`),
+    /// and so do its literal mid-body exits.  `from_open` is the instance the return's open
+    /// instance became; only such a return is touched.
+    pub(crate) fn promote_monomorph_record_return(&mut self, d_nr: u32, from_open: bool) {
+        let ret = self.data.definitions[d_nr as usize].returned.clone();
+        let Some(td) = ret.base().heap_def_nr() else {
+            return;
+        };
+        if !from_open {
+            return;
+        }
+        let saved_ctx = self.context;
+        std::mem::swap(
+            &mut self.vars,
+            &mut self.data.definitions[d_nr as usize].variables,
+        );
+        self.context = d_nr;
+        let mut code =
+            std::mem::replace(&mut self.data.definitions[d_nr as usize].code, Value::Null);
+        if let Value::Block(bl) = &mut code
+            && !bl.operators.is_empty()
+        {
+            let l = &mut bl.operators;
+            let delivery =
+                self.classify_reference_delivery(&ret.base().depend(), l, "return from block");
+            if matches!(delivery, RefDelivery::BuildIntoBuffer { .. }) {
+                self.dispatch_reference_delivery(delivery, td, l);
+            }
+            self.literal_exits_into_buffer(l);
+        }
+        self.data.definitions[d_nr as usize].code = code;
+        std::mem::swap(
+            &mut self.vars,
+            &mut self.data.definitions[d_nr as usize].variables,
+        );
+        self.context = saved_ctx;
+    }
+
     pub(crate) fn promote_monomorph_text_return(&mut self, d_nr: u32) {
         // Only plain `text` / `text?` returns (tuple-of-text is a separate arc).
         if !matches!(

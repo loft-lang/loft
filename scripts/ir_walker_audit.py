@@ -877,7 +877,9 @@ TYPE_LET = re.compile(
 TYPE_MATCHES = re.compile(r"matches!\s*\([^;]{0,600}?(?<![A-Za-z0-9_])Type::([A-Za-z][A-Za-z0-9_]*)", re.S)
 # `Type::` as a WHOLE path head — the lookbehind is what keeps `DefType::` out.
 TYPE_BARE = re.compile(r"(?<![A-Za-z0-9_])Type::")
-TYPE_DESCEND = re.compile(r"\.(?:any_node|for_each_child|contains_def)\s*\(")
+# `type_mentions` is `contains_def` plus an `any_node` into an open instance's arguments
+# (@PLN165 D5) — the same keystone walk, one verb.
+TYPE_DESCEND = re.compile(r"\.(?:any_node|for_each_child|contains_def|type_mentions)\s*\(")
 
 # ── the type FORMERS this screen can be pointed at ────────────────────────────
 # `Optional` is the founding case, not the only one.  The blindness it names — a site

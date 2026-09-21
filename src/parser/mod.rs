@@ -7313,8 +7313,10 @@ impl Parser {
         // `Function`, a `RefVar` or a keyed collection read as "no type variable here".
         // `contains_def`'s own doc records being unified from two earlier copies with
         // exactly that drift; this was a third, two hundred lines from a call to it.
-        // Through an open instance's arguments too (@PLN165 D5).
-        tvs.iter().any(|tv| self.data.type_mentions(t, *tv))
+        // STRUCTURAL on purpose: this asks about the return's SHAPE, and an open instance
+        // (`Box<T>`, @PLN165 D5) is a record whatever `T` becomes — the ABI its concrete twin
+        // has (a `__retbuf`), so `type_mentions` would be the wrong question here.
+        tvs.iter().any(|tv| t.contains_def(*tv))
     }
 
     /// Is the template's declared return the type VARIABLE itself, however it is wrapped?
@@ -7552,8 +7554,9 @@ impl Parser {
     pub(crate) fn bound_instance(&self, open: u32) -> u32 {
         match Type::Reference(open, crate::data::Deps::none())
             .substitute_all(&self.instance_bindings)
+            .base()
         {
-            Type::Reference(d, _) => d,
+            Type::Reference(d, _) => *d,
             _ => open,
         }
     }
@@ -8324,6 +8327,12 @@ impl Parser {
         // is boxed by `tuple_return_rewrite` above, and the body's tuple tails are rewritten
         // into that synthetic record here, so signature and body agree on both passes.
         self.promote_monomorph_tuple_return(d_nr);
+        // @PLN165 D5 — and the record twin, for a return an open instance became.
+        let from_open = matches!(self.data.def(d_nr).returned().base(),
+            Type::Reference(td, _) if bindings.iter().any(|(h, b)|
+                self.data.is_open_instance(*h)
+                    && matches!(b.base(), Type::Reference(c, _) if c == td)));
+        self.promote_monomorph_record_return(d_nr, from_open);
         // @FR-F-Ret / @FR-B-Copy — and the vector twin: a `T`-typed local bound from another
         // vector COPIES, and a `-> T` that hands a vector argument up returns a copy of it.
         let holders: Vec<u32> = bindings.iter().map(|(h, _)| *h).collect();
@@ -9447,7 +9456,16 @@ impl Parser {
             let fresh = i32::from(self.get_type(&Self::substitute_all(tmpl_tp, bindings)));
             note(&mut rows, stale, fresh);
         }
-        if rows.is_empty() {
+        // @PLN165 D5 — the rows of the open instances this monomorph closes: none may survive
+        // the rewrite below, or the instance would build a fieldless record where its twin
+        // builds `Box<integer>` — loft#1536's class, made loud here.
+        let open_rows: Vec<i32> = bindings
+            .iter()
+            .filter(|(h, _)| self.data.is_open_instance(*h))
+            .map(|(h, _)| i32::from(self.data.def(*h).known_type()))
+            .filter(|r| *r != i32::from(u16::MAX))
+            .collect();
+        if rows.is_empty() && open_rows.is_empty() {
             return;
         }
         // Which ARGUMENT of each op is a type row, read off the op's declaration rather
@@ -9494,6 +9512,28 @@ impl Parser {
                 }
             }
         });
+        let mut surviving: Option<i32> = None;
+        code.map_nodes(&mut |v| {
+            if let Value::Call(d, args) = v
+                && let Some(at) = row_arg.get(d)
+            {
+                for &k in at {
+                    if let Some(Value::Int(row)) = args.get(k) {
+                        let bare = if *d == copy_record { row & mask } else { *row };
+                        if open_rows.contains(&bare) {
+                            surviving = Some(bare);
+                        }
+                    }
+                }
+            }
+        });
+        assert!(
+            surviving.is_none(),
+            "the instance `{}` still names an open instance's row ({}) after its rows were \
+             retargeted — a template op that bakes a row was not remapped",
+            self.data.def(d_nr).name(),
+            surviving.unwrap_or(-1)
+        );
         self.data.definitions[d_nr as usize].code = code;
     }
 
@@ -10437,7 +10477,7 @@ impl Parser {
             Value::Block(bl) if bl.name == Self::TV_SELECT => self.lower_set_call(&bl),
             Value::Block(bl) if bl.name == Self::TV_FIELD => self.lower_open_field(*bl),
             Value::Block(bl) if bl.name == Self::TV_FIELD_SET => self.lower_open_field_set(*bl),
-            Value::Block(bl) if bl.name == Self::TV_OBJECT => self.lower_open_object(*bl),
+            Value::Block(bl) if bl.name == Self::TV_OBJECT => self.lower_open_object(&bl),
             // A template lambda, non-capturing: the instance calls its own instance of it.
             Value::FnRef(d, w, _)
                 if w == u16::MAX && d >= 0 && self.is_template_lambda(d as u32) =>
@@ -10601,23 +10641,20 @@ impl Parser {
     /// Lower a [`Parser::TV_OBJECT`] literal: a fresh record of the instance the open one
     /// names here, its declared defaults, then each given field written through
     /// `handle_field` — the field write a literal of the twin makes.
-    fn lower_open_object(&mut self, bl: crate::data::Block) -> Value {
-        let mut ops = bl.operators.into_iter();
-        let Some(Value::Int(open)) = ops.next() else {
+    fn lower_open_object(&mut self, bl: &crate::data::Block) -> Value {
+        let Some(Value::Int(open)) = bl.operators.first().map(Value::unspan) else {
             return Value::Null;
         };
-        let d = self.bound_instance(open as u32);
+        let d = self.bound_instance(*open as u32);
         let mut given: Vec<(String, Value, Type)> = Vec::new();
-        for op in ops {
-            if let Value::Block(f) = op
+        for op in &bl.operators[1..] {
+            if let Value::Block(f) = op.unspan()
                 && f.name == Self::TV_OBJECT_FIELD
+                && let [name, value] = &f.operators[..]
+                && let Value::Text(name) = name.unspan()
             {
-                let f = *f;
-                let mut fo = f.operators.into_iter();
-                if let (Some(Value::Text(name)), Some(value)) = (fo.next(), fo.next()) {
-                    let value = self.rewrite_generic_type_defaults(value);
-                    given.push((name, value, f.result));
-                }
+                let value = self.rewrite_generic_type_defaults(value.clone());
+                given.push((name.clone(), value, f.result.clone()));
             }
         }
         let tp = Type::Reference(d, crate::data::Deps::none());
@@ -10634,7 +10671,13 @@ impl Parser {
             return v_block(out, tp, Self::TV_OBJECT);
         }
         self.data.set_referenced(d, self.context, Value::Null);
-        let w = self.vars.work_refs(&tp, &mut self.lexer);
+        // Minted on pass 2 only (a monomorph is filled there), so from the pass-2 sequence,
+        // as `parse_object`'s pass-2 arm draws (loft#848, loft#1078).
+        let w = if crate::keys::p2_object_workref_enabled() {
+            self.vars.work_refs_p2(&tp, &mut self.lexer)
+        } else {
+            self.vars.work_refs(&tp, &mut self.lexer)
+        };
         self.set_call_refs.push(w);
         let known = i32::from(self.data.def(d).known_type());
         let mut list = vec![
@@ -10665,7 +10708,13 @@ impl Parser {
         );
         list.append(&mut fills);
         list.push(Value::Var(w));
-        v_block(list, tp, "Object")
+        // The type `parse_object` gives a fresh record: it names the work-ref it is built in,
+        // which the return delivery re-points at the caller's buffer.
+        v_block(
+            list,
+            Type::Reference(d, crate::data::Deps::frame1(w)),
+            "Object",
+        )
     }
 
     fn lower_set_call(&mut self, bl: &crate::data::Block) -> Value {

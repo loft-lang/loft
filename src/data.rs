@@ -3031,6 +3031,19 @@ impl Type {
                     data.def(*t).name
                 )
             }
+            // An instance of a generic struct (@PLN165 D3/D5) is SHOWN as its template applied to
+            // its arguments, each spelled as the reader wrote it — `Box<T>` for the open
+            // instance keyed `Box<T#5>`, `Box<u8>` where the key carries the width.  The key
+            // keeps the def name.
+            Type::Reference(t, _) if source && data.def(*t).instance_of != u32::MAX => {
+                let d = data.def(*t);
+                let args: Vec<String> = d
+                    .instance_args
+                    .iter()
+                    .map(|a| a.render(data, true))
+                    .collect();
+                format!("{}<{}>", data.def(d.instance_of).name, args.join(", "))
+            }
             Type::Enum(t, _, _) | Type::Reference(t, _) => data.def(*t).name.clone(),
             Type::Text(_) => "text".to_string(),
             Type::Vector(tp, _) if matches!(tp as &Type, Type::Unknown(_)) => "vector".to_string(),
@@ -9483,19 +9496,6 @@ impl Data {
             return false;
         };
         d.instance_of != u32::MAX && d.instance_args.iter().any(|a| self.mentions_type_var(a))
-    }
-
-    /// Does laying `d_nr` out need an open instance — is it one, or does a field's type
-    /// mention one (`main_vector<Box<T>>`, the wrapper a `vector<Box<T>>` parameter
-    /// registers)?  Such a definition is internal to a template and has no layout either.
-    #[must_use]
-    pub fn needs_open_layout(&self, d_nr: u32) -> bool {
-        self.is_open_instance(d_nr)
-            || self.definitions[d_nr as usize].attributes.iter().any(|a| {
-                a.typedef.any_node(
-                    &mut |t| matches!(t.base(), Type::Reference(r, _) if self.is_open_instance(*r)),
-                )
-            })
     }
 
     /// Does `tp` mention the definition `d` — directly, or through an open instance's

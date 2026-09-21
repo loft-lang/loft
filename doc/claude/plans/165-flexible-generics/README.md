@@ -12,8 +12,9 @@ Tracker: [loft-lang/plans#165](https://github.com/loft-lang/plans/issues/165) (@
 **Phase 0 DONE (loft#1536–#1539, on `main`).  Arcs A and B BUILT on branch
 `tuxedo-165-generics` (2026-09-21): A0–A7, B1–B7 and the added B3b, each measured against the
 previous step's binary over the corpus; `G-Select` is in `formal/interfaces.md`.  Arc C
-BUILT too (C1–C4; `G-Key` written).  Arc D in progress: D1–D4 built (a generic struct is
-declared, named as an instance, and a literal infers its instance).**
+BUILT too (C1–C4; `G-Key` written).  Arc D in progress: D1–D5 built (a generic struct is
+declared, named as an instance, a literal infers its instance, and a generic function takes
+one).**
 The design is [DESIGN.md](DESIGN.md) and the ordered work is [STEPS.md](STEPS.md); both were
 written against `9f5cf6a96` with every claim about today's compiler run, and the programs are
 in [`probes/`](probes/), each with the answer it gave at the top.

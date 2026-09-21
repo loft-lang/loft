@@ -671,6 +671,36 @@ arguments.
 - **The alarm:** an open instance reaching layout is loft#1536's class (a zero-width
   `__typevar_T`).  Make it loud: the layout pass refuses a definition whose recorded
   arguments mention a variable.
+- **Built** (2026-09-22).  An open instance is a def `instance_def` now mints for arguments
+  that mention a variable (`Data::is_open_instance`).  It gets a ROW and no layout —
+  `fill_database` registers it fieldless under the placeholder's internal prefix, and the
+  native `init()` replays it fieldless (a replayed field minted `vector<__typevar_T>` and
+  shifted every later id; `LOFT_STRICT_SCHEMA_IDS=1` caught it).  Binding: `resolve_type_var`
+  takes `&Data` and pairs an open instance's recorded arguments with a concrete one's;
+  `template_vars`, the every-variable check and the type-variable questions read through
+  open instances (`type_mentions`, `placeholders_in`).  Substitution: a monomorph's bindings
+  gain `(open ↦ concrete)` pairs (`open_instance_bindings`) — the plan's *"`substitute_all`
+  over an open instance answers `instance_def` of the substituted arguments"*, reached by the
+  substitution the variable already takes — so signatures, locals, body types, predicted
+  returns and selection ranks see the concrete instance; `retarget_parametric_type_rows`
+  maps the open row to the concrete one, and a monomorph still naming an open row after it
+  is an internal error (the alarm).  Deferred sites for what the layout decides:
+  `TV_FIELD` (read, at `get_field`), `TV_FIELD_SET` (write, at `towards_set`), `TV_OBJECT`
+  (a literal), each lowered per instance by the ordinary helper; an element stride over a
+  `vector<Box<T>>` names the open instance.  A `-> Box<T>` template declares the twin's
+  `__retbuf` (the shape is a record whatever `T` is, so `return_shape_depends_on_type_var`
+  stays structural), and the monomorph replays the twin's tail delivery
+  (`promote_monomorph_record_return`: `BuildIntoBuffer`, and literal mid-body exits).  A
+  literal passed to a generic infers its own instance rather than the parameter's open one;
+  messages show an instance as written (`Box<T>`, not the `Box<T#5>` key).
+  Twins: `get`, `put`, `wrap` (literal return) and `bump` (an offset after a `T` field) are
+  byte-identical to their hand-written twins over `BoxInteger` / `PairText`.  Cells
+  [open-instances/](probes/open-instances/) e01–e10 green on both backends under
+  `LOFT_STRICT_STORES` + `LOFT_POISON`, and on native under `LOFT_STRICT_SCHEMA_IDS`.
+  Corpus against D4: IDENTICAL but for the new guard.
+  Found on the way (next): a field `assert(…)` on a generic struct is refused *"Unknown
+  variable 'n'"* where the twin's check holds, and `instance_def` copies the template's
+  check code into each instance.
 
 ### D6 — a method on a generic struct  ·  S
 

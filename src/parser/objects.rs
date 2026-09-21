@@ -4356,7 +4356,7 @@ impl Parser {
     pub(crate) fn open_instance_bindings(&mut self, bindings: &[(u32, Type)]) -> Vec<(u32, Type)> {
         let pairs = self.data.open_instance_bindings(&mut self.lexer, bindings);
         for (_, bound) in &pairs {
-            if let Type::Reference(d, _) = bound {
+            if let Type::Reference(d, _) = bound.base() {
                 self.lay_out_instance(*d);
             }
         }
@@ -4364,11 +4364,7 @@ impl Parser {
     }
 
     fn lay_out_instance(&mut self, inst: u32) {
-        if !self.first_pass
-            && inst != u32::MAX
-            && self.data.def(inst).known_type() == u16::MAX
-            && !self.data.is_open_instance(inst)
-        {
+        if !self.first_pass && inst != u32::MAX && self.data.def(inst).known_type() == u16::MAX {
             crate::typedef::fill_database(&mut self.data, &mut self.database, inst);
             self.database
                 .lay_out_record(self.data.def(inst).known_type());
