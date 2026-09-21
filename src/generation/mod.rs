@@ -4405,22 +4405,6 @@ impl Output<'_> {
     /// inside a nested block is out of scope for a `return` outside it.  The interpreter
     /// cannot have that — a local is a frame slot wherever it is written — so the answer is
     /// used to bind those locals up front and make the two backends agree about scope.
-    /// Locals whose binding's right-hand side can RETURN and names the local itself — an early
-    /// exit inside `x = e ?? return` frees every live local, `x` included, while the Rust
-    /// `let` that binds `x` is still open, and rustc cannot name it there (E0425).  The
-    /// interpreter reads the slot's null there, and freeing a null releases nothing.
-    fn collect_self_exiting_binds(node: &Value, out: &mut Vec<u16>) {
-        if let Value::Set(v, rhs) = node.unspan()
-            && !out.contains(v)
-            && rhs.reads_var(*v)
-            && rhs.any_node(&mut |n| matches!(n.unspan(), Value::Return(_)))
-        {
-            out.push(*v);
-        }
-        node.unspan()
-            .for_each_child(&mut |child| Self::collect_self_exiting_binds(child, out));
-    }
-
     fn collect_returned_vars(node: &Value, out: &mut Vec<u16>) {
         if let Value::Return(inner) = node.unspan()
             && let Value::Var(v) = inner.unspan()
@@ -7902,11 +7886,6 @@ extern crate loft;"
             // hoisted by the `__vdb` rule above.
             let mut returned_vars: Vec<u16> = Vec::new();
             Self::collect_returned_vars(def.code(), &mut returned_vars);
-            // loft#1584 — the same E0425 from the other side: a local named inside its own
-            // binding by the early exit's frees (`x = e ?? return`).  Bound to the sentinel up
-            // front, the binding becomes an assignment; the pre-binding owns nothing.
-            let mut self_exiting: Vec<u16> = Vec::new();
-            Self::collect_self_exiting_binds(def.code(), &mut self_exiting);
             for v in 0..vars.count() {
                 // loft#731 — the iteration scratch belongs here for exactly the
                 // reason above, and was missed because it arrives by a different
@@ -7932,8 +7911,7 @@ extern crate loft;"
                         || self.elem_first.pairs.iter().any(|p| {
                             p.binds.iter().any(|b| b.tmp == v && !b.from_call)
                         })
-                        || (returned_vars.contains(&v) && !vars.tp(v).depend().is_empty())
-                        || self_exiting.contains(&v))
+                        || (returned_vars.contains(&v) && !vars.tp(v).depend().is_empty()))
                     && rust_type(vars.tp(v), &Context::Variable) == "DbRef"
                 {
                     use std::fmt::Write as _;

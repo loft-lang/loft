@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1584 — binding a nullable RECORD with an early exit, `x = e ?? return`, releases only
+// what is bound, so it builds on --native and frees nothing it does not own.
+//
+// The scope pass registered `x` before scanning its right-hand side, so the exit inside that
+// right-hand side released `x` too — a local that holds nothing yet.  On --native the release
+// named `var_x` inside its own `let` and rustc refused the program (E0425); on the interpreter it
+// freed whatever the slot happened to hold, refused as a free of the stack store or of an
+// out-of-range store (`BUG (#306)` / `BUG (#405)`).
+//
+// Axes this file MOVES:  where the record comes from (a user function answering `Level?`, a
+//                        typed JSON parse), which path runs (present, absent), and what the exit
+//                        returns (nothing from a `void` function, a value from a `text` one).
+// Axes it HOLDS FIXED:   one record type with a text field; every value hand-computed.
+//
+// @falsified-at: 7d9bb3e5d — see the receipt written by `make falsify` below.
+
+struct Level1584 { name: text }
+
+fn find1584(ok: boolean) -> Level1584? {
+  if ok { Level1584 { name: "Cave" } } else { null }
+}
+
+fn load1584(ok: boolean) -> text {
+  lvl = find1584(ok) ?? return "none";
+  lvl.name
+}
+
+fn parse1584(src: text) -> text {
+  lvl = Level1584.parse(src) ?? return "bad";
+  "parsed {lvl.name}"
+}
+
+fn visit1584(ok: boolean, log: &text) {
+  lvl = find1584(ok) ?? return;
+  log += "{lvl.name};";
+}
+
+fn main() {
+  assert(load1584(true) == "Cave", "present: {load1584(true)}");
+  assert(load1584(false) == "none", "absent returns the default: {load1584(false)}");
+  assert(parse1584("{{\"name\":\"Tomb\"}}") == "parsed Tomb", "typed parse: {parse1584("{{\"name\":\"Tomb\"}}")}");
+  log = "";
+  visit1584(true, log);
+  visit1584(false, log);
+  visit1584(true, log);
+  assert(log == "Cave;Cave;", "a void function returns early on the absent path: {log}");
+}
