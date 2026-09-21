@@ -164,7 +164,7 @@ def defined_deviations():
 
 def _section_bullets(text):
     """(tag, status, issues, date, line) for each bullet entry in a `## Deviations` section."""
-    m = re.search(r"^## Deviations\s*$", text, re.M)
+    m = REG_SECTION.search(text)
     if not m:
         return
     end = re.search(r"^## ", text[m.end():], re.M)
@@ -215,6 +215,10 @@ def _fenced_lines(text):
 # section, and lists the entries below it.  Those are two claims about one number, and
 # `defined_deviations` above reads a THIRD — so the register has three decoders and
 # nothing compared them.  Measured 2026-09-12: they disagreed in five chapters at once.
+# A chapter's register heading.  Most write `## Deviations`; a chapter with numbered sections
+# writes `## 3. Deviations / decided edges` (collections.md), and read as the bare spelling alone
+# its stated `OPEN:` was never checked.  `doc_history_report.py` reads both spellings the same way.
+REG_SECTION = re.compile(r"^## (?:\d+\.\s*)?Deviations\b[^\n]*$", re.M)
 REG_OPEN = re.compile(r"OPEN:\s*\**\s*(\d+)")
 # An entry inside that section, in every spelling the docs use.  The BULLET form is the one
 # `defined_deviations` cannot see (it reads headings and blockquotes only), and it is how
@@ -246,7 +250,7 @@ def chapter_registers():
     out = []
     for path in sorted(glob.glob(FORMAL + "/*.md")):
         text = open(path, encoding="utf-8").read()
-        m = re.search(r"^## Deviations\s*$", text, re.M)
+        m = REG_SECTION.search(text)
         if not m:
             continue
         end = re.search(r"^## ", text[m.end():], re.M)

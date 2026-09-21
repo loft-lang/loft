@@ -6,7 +6,7 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **3** (D-op-11, opened 2026-09-21, loft#1575; D-op-1/2 — both NOT resolvable in a release, below; D-op-5, opened 2026-08-25 — two
+OPEN: **2** (D-op-1/2 — both NOT resolvable in a release, below; D-op-11, opened and closed 2026-09-21, loft#1575; D-op-5, opened 2026-08-25 — two
 spellings of a following null-check still reported, the sibling of a wrapper-list drift fixed the
 same day — CLOSED 2026-09-02; the null-model keystone deviations D-op-null-1/2 both CLOSED 2026-07-10 by
 keystone steps 2–3, D-op-6 opened AND closed 2026-08-29 by the first `@FR-E-NullArg` walk,
@@ -234,7 +234,7 @@ only as strong as the rules above it, not only as strong as its oracle.
   found this, and the shared front end needs its own oracle rather than a differential one.
   Related: the reference-route discipline in [DEBUG.md](../DEBUG.md).
 
-### D-op-11 — OPEN (2026-09-21, loft#1575): a literal passed to a call that returns it, rebound in a loop to the local it reads, reads the cleared record
+### D-op-11 — OPENED AND CLOSED (2026-09-21, loft#1575): a literal passed to a call that returns it, rebound in a loop to the local it reads, read the cleared record
 
 - **Violates:** `(E-Asgn)` — the right-hand side reduces to a value before the store updates
   the binding.
@@ -248,11 +248,22 @@ only as strong as the rules above it, not only as strong as its oracle.
   Bx { self }` answers `n` = 1 for 7 on both backends, silently; so does the method spelling
   `Bx { … }.me()`.  Right: the literal bound to a local first, a method returning a fresh
   record, a literal that does not read `s`, and the same statement outside a loop.
-- **Status:** OPEN — found 2026-09-21 while closing `D-rw-5` (rewrites.md), whose own shape
-  binds the construction directly.
-- **Removal:** `(H-Drop-Not)`'s text says `return p` of a parameter hands the caller a copy,
-  so the binding adopting the argument's store is the first question — either the copy is
-  owed, or the adoption must give the reuse up as the direct construction does.
+- **Found:** 2026-09-21 while closing `D-rw-5` (rewrites.md), whose own shape binds the
+  construction directly.
+- **Closed:** `delivered_work_ref` answers the work-ref a value delivers to its binding: a
+  construction bound directly, or one handed to a user function whose body hands that visible
+  PARAMETER back whole (its tail is the parameter, and `def.returned.depend()` names it).  Read
+  wider it was wrong twice, measured: a projection op names its argument in its return deps too,
+  and a function whose promoted local is the hidden return buffer names that buffer — the second
+  disarmed the caller's own buffer and leaked it (`a-return-that-hands-out-one-local-…`, `j15`).
+  Every ownership reader asks it (the drop
+  hand-off, the disarm, the join disarm, `member_mint`, `is_view_of_storage`), so the binding
+  is the store's one claimant and the reuse is given up for a construction that reads its
+  binding.  A variable argument is still copied by the caller's bind, which is what
+  `(H-Drop-Not)`'s *"`return p` … copies"* describes.  For a droppable-owning type such a
+  `return self` is a copy `(H-Copy-Refuse)` refuses (`D-heap-8`); with the refusal off, the
+  construction-argument cells now release once where they released twice.  Guard
+  `tests/scripts/1575-a-literal-handed-to-a-call-that-returns-it-is-computed-from-the-old-record.loft`.
 
 ### D-op-10 — CLOSED (2026-09-17, loft#1548): an appended record literal minted its element before its field expressions ran
 

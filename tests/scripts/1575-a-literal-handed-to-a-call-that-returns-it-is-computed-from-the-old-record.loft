@@ -1,0 +1,101 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1575, `@FR-E-Asgn` — A LITERAL HANDED TO A CALL THAT RETURNS IT IS COMPUTED FROM THE OLD
+// RECORD.  `for … { s = me(Bx { v: [i], n: s.n + 1 }) }`, with `fn me(self: Bx) -> Bx { self }`,
+// builds the literal in a work-ref and hands it to `me`, whose return borrows its parameter, so
+// `s` is bound to the work-ref's own store.  The work-ref keeps naming a store it handed over, to
+// rebuild it in place on the next pass (loft#1513), and that rebuild cleared the record before
+// the literal's `s.n` read it: `n` answered 1 for 7.  The scope pass now reads a construction
+// that reaches its binding through such a call as delivered to that binding, which gives the
+// reuse up as it does for a construction bound directly.
+//
+// Every expected value is worked out by hand from the old record: `n` goes 5 -> 6 -> 7.  The last
+// four cells are controls that were right before: the literal bound to a local first, a method
+// returning a fresh record, a literal that does not read `s`, and the same statement once.
+//
+// @falsified-at: f497f61ae — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1575-a-literal-handed-to-a-call-that-returns-it-is-computed-from-the-old-record.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion
+//   failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends — a wrong value,
+//   with no diagnostic.
+// WITNESS: on the control all four fault cells answer wrong and the four controls hold, on both
+//   backends, scored with the assertions replaced by prints: `g1` `1,1`, `g3` `0,1`.
+// HOLDS: leak, panic, refusals and expectations are unmoved on both trees.
+
+struct Bx { v: vector<integer>, n: integer }
+fn me(self: Bx) -> Bx { self }
+fn fresh(self: Bx) -> Bx { Bx { v: [self.v[0] ?? 0], n: self.n } }
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+/// g1 — the call spelling.
+fn g1() -> text {
+  s = Bx { v: [1], n: 5 };
+  for i in 0..2 { s = me(Bx { v: [i], n: s.n + 1 }); }
+  "{s.v[0]},{s.n}"
+}
+/// g2 — the method spelling.
+fn g2() -> text {
+  s = Bx { v: [1], n: 5 };
+  for i in 0..2 { s = Bx { v: [i], n: s.n + 1 }.me(); }
+  "{s.v[0]},{s.n}"
+}
+/// g3 — the vector member reads the local too: `v` takes the old `n` each pass.
+fn g3() -> text {
+  s = Bx { v: [1], n: 5 };
+  for _ in 0..2 { s = me(Bx { v: [s.n], n: s.n + 1 }); }
+  "{s.v[0]},{s.n}"
+}
+/// g4 — a `while` loop.
+fn g4() -> text {
+  s = Bx { v: [1], n: 5 };
+  i = 0;
+  while i < 2 {
+    s = me(Bx { v: [i], n: s.n + 1 });
+    i += 1;
+  }
+  "{s.v[0]},{s.n}"
+}
+/// c1 — control: the literal bound to a local first.
+fn c1() -> text {
+  s = Bx { v: [1], n: 5 };
+  for i in 0..2 {
+    t = Bx { v: [i], n: s.n + 1 };
+    s = me(t);
+  }
+  "{s.v[0]},{s.n}"
+}
+/// c2 — control: a method returning a fresh record.
+fn c2() -> text {
+  s = Bx { v: [1], n: 5 };
+  for i in 0..2 { s = Bx { v: [i], n: s.n + 1 }.fresh(); }
+  "{s.v[0]},{s.n}"
+}
+/// c3 — control: a literal that does not read `s`.
+fn c3() -> text {
+  s = Bx { v: [1], n: 5 };
+  for i in 0..2 { s = me(Bx { v: [i], n: 7 }); }
+  "{s.v[0]},{s.n}"
+}
+/// c4 — control: the same statement once, outside a loop.
+fn c4() -> text {
+  s = Bx { v: [1], n: 5 };
+  s = me(Bx { v: [9], n: s.n + 1 });
+  "{s.v[0]},{s.n}"
+}
+
+fn main() {
+  ok("g1 call              ", g1(), "1,7");
+  ok("g2 method            ", g2(), "1,7");
+  ok("g3 member reads it   ", g3(), "6,7");
+  ok("g4 while             ", g4(), "1,7");
+  ok("c1 bound first       ", c1(), "1,7");
+  ok("c2 fresh return      ", c2(), "1,7");
+  ok("c3 no read of s      ", c3(), "1,7");
+  ok("c4 once              ", c4(), "9,6");
+  println("a literal handed to a call that returns it is computed from the old record: every cell holds");
+}

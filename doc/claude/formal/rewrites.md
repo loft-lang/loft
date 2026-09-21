@@ -1463,7 +1463,7 @@ Two instruments check the assumptions, and the chapter is not complete without b
   `Scopes::scan_set` now gives that reuse up for a construction that reads its binding.
   Guard `tests/scripts/1574-a-literal-rebuilt-into-a-local-is-computed-from-the-old-record.loft`.
   The same read through a call that returns its argument (`s = me(Bx { … s.n … })` in a loop)
-  is `D-op-11`, open.
+  was `D-op-11`, closed the same day.
 
 - **D-rw-4 — OPENED AND CLOSED 2026-09-21 (loft#1571).**  `(R-InPlaceLiteral)` stages every
   field expression that may read the place, and the staging asked whether an expression NAMED

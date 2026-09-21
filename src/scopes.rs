@@ -3566,7 +3566,7 @@ fn drop_handoff_node(
                 // Every arm's construction when the value is a branch join: the binding adopts
                 // the one that ran, and the others hold nothing (`construction_work_refs`).
                 if function.proxy_says_owned(*v) {
-                    for w in construction_work_refs(rhs, function) {
+                    for w in construction_work_refs(rhs, function, data) {
                         if w != *v {
                             out.insert(w);
                         }
@@ -3621,6 +3621,75 @@ fn construction_work_ref(rhs: &Value, function: &Function) -> Option<u16> {
     }
 }
 
+/// The work-ref whose record `rhs` delivers to its target: a construction bound directly
+/// ([`construction_work_ref`]), or one handed to a function whose body hands that parameter
+/// back WHOLE — `s = me(Bx { … })` with `fn me(self: Bx) -> Bx { self }`, where the call returns
+/// the construction's own store and the binding adopts it.
+///
+/// Both deliver one record that the binding and the work-ref then both name, so every reader
+/// that asks *"who owns what this value hands over?"* — the drop hand-off, the disarm, the view
+/// test — asks it here.  Answered for the direct shape alone, the work-ref kept claiming the
+/// store the binding adopted through the call: in a loop its reuse re-initialised that store
+/// before a literal that read the binding had read it (loft#1575), and a droppable's hook ran
+/// through both claimants.
+fn delivered_work_ref(rhs: &Value, function: &Function, data: &Data) -> Option<u16> {
+    construction_work_ref(rhs, function).or_else(|| {
+        let mut tail = rhs.unspan();
+        loop {
+            match tail {
+                Value::Block(bl) => tail = bl.operators.last()?.unspan(),
+                Value::Insert(ops) => tail = ops.last()?.unspan(),
+                _ => break,
+            }
+        }
+        let Value::Call(d, args) = tail else {
+            return None;
+        };
+        if *d >= data.definitions() {
+            return None;
+        }
+        let def = data.def(*d);
+        // Only a function whose body hands a PARAMETER back WHOLE delivers that argument's
+        // record.  A projection op (`OpGetField`) also names its argument in its return deps,
+        // and so does a function whose promoted local IS the hidden return buffer — and read
+        // as delivered, the first made a view of a member look like the construction and the
+        // second disarmed the caller's own buffer, which then leaked.
+        if def.def_type != DefType::Function || def.name().starts_with("Op") {
+            return None;
+        }
+        let mut body = def.code.unspan();
+        loop {
+            match body {
+                Value::Block(bl) => body = bl.operators.last()?.unspan(),
+                Value::Insert(ops) => body = ops.last()?.unspan(),
+                Value::Return(v) => body = v.unspan(),
+                _ => break,
+            }
+        }
+        let Value::Var(returned) = body else {
+            return None;
+        };
+        // The argument is the construction itself while the scan reads it — its block, whose
+        // tail is the work-ref — or, once lifted, that work-ref by name.
+        def.returned.depend().iter().find_map(|&k| {
+            if k != *returned
+                || def
+                    .attributes()
+                    .get(usize::from(k))
+                    .is_none_or(|a| a.hidden)
+            {
+                return None;
+            }
+            let arg = args.get(usize::from(k))?;
+            if let Value::Var(w) = arg.unspan() {
+                let n = function.name(*w);
+                return (n.starts_with("__ref_") || n.starts_with("__rref_")).then_some(*w);
+            }
+            construction_work_ref(arg, function)
+        })
+    })
+}
+
 /// The work-refs whose records a value's CONSTRUCTIONS hand to its target: every arm's when
 /// `rhs` is a branch join, and [`construction_work_ref`]'s single answer otherwise.
 ///
@@ -3630,11 +3699,11 @@ fn construction_work_ref(rhs: &Value, function: &Function) -> Option<u16> {
 /// be handed off, and disarmed after the join, whichever arm ran (`@FR-O-Complete`).  An arm
 /// whose tail is not a construction — a call adopted through its own buffer, a lifted local —
 /// contributes nothing: its release is decided where that spelling is.
-fn construction_work_refs(rhs: &Value, function: &Function) -> Vec<u16> {
+fn construction_work_refs(rhs: &Value, function: &Function, data: &Data) -> Vec<u16> {
     match rhs.unspan() {
         Value::If(_, t, e) => {
-            let mut out = construction_work_refs(t, function);
-            for w in construction_work_refs(e, function) {
+            let mut out = construction_work_refs(t, function, data);
+            for w in construction_work_refs(e, function, data) {
                 if !out.contains(&w) {
                     out.push(w);
                 }
@@ -3646,11 +3715,13 @@ fn construction_work_refs(rhs: &Value, function: &Function) -> Vec<u16> {
         Value::Block(bl)
             if matches!(bl.operators.last().map(Value::unspan), Some(Value::If(..))) =>
         {
-            bl.operators
-                .last()
-                .map_or_else(Vec::new, |tail| construction_work_refs(tail, function))
+            bl.operators.last().map_or_else(Vec::new, |tail| {
+                construction_work_refs(tail, function, data)
+            })
         }
-        _ => construction_work_ref(rhs, function).into_iter().collect(),
+        _ => delivered_work_ref(rhs, function, data)
+            .into_iter()
+            .collect(),
     }
 }
 
@@ -4169,7 +4240,7 @@ fn member_mint(m: &Value, function: &Function, data: &Data) -> Option<MemberMint
     // owes the hook exactly as for a call mint, and the work-ref is the buffer to
     // disarm — without it the work-ref's own scope-end cascade ran the hook on the
     // store the element free had already released (freed-then-hooked, poison-visible).
-    if let Some(w) = construction_work_ref(m, function) {
+    if let Some(w) = delivered_work_ref(m, function, data) {
         return Some(MemberMint::Claimed(w));
     }
     let Value::Call(fn_nr, args) = m.unspan() else {
@@ -10291,7 +10362,7 @@ impl Scopes<'_> {
         // frees, so a comprehension minted per PASS instead of rebuilding one store —
         // `value_struct_alloc`'s O(1) promise measured it at N cycles).
         let mut handoff_disarm: Vec<Value> = Vec::new();
-        match construction_work_ref(value, function) {
+        match delivered_work_ref(value, function, data) {
             Some(w) if w != v && !function.proxy_says_owned(v) => {
                 self.construction_backing.insert(v, w);
             }
@@ -11067,14 +11138,14 @@ impl Scopes<'_> {
         // `x = a ?? H {…}` lifts `a` — and then the binding releases nothing, so a work-ref
         // disarmed before the lift was released by nobody.  After it, this reads the same
         // ownership fact the drop hand-off reads once the statement is scanned.
-        if construction_work_ref(value, function).is_none()
+        if delivered_work_ref(value, function, data).is_none()
             // @FR-O-Proxy asks free — the answer places the binding's hook and free as the
             // store's one claimant (the disarm above does the same for a single construction),
             // and the @FR-O-Override veto rides inside `proxy_says_owned` as one question.
             && function.proxy_says_owned(v)
             && drop_hook(function, v, data).is_some()
         {
-            for w in construction_work_refs(value, function) {
+            for w in construction_work_refs(value, function, data) {
                 if w != v {
                     handoff_disarm.push(v_set(
                         w,
@@ -17535,7 +17606,7 @@ fn owner_witness_locals(
 /// `Scopes::displaced_drop` declined on `@FR-O-Override` and neither record's `OpDrop` ran.
 /// Two sites, two different questions, one answer: this is the `viewed` half only.
 fn is_view_of_storage(value: &Value, function: &Function, data: &Data) -> bool {
-    if construction_work_ref(value, function).is_some() {
+    if delivered_work_ref(value, function, data).is_some() {
         return false;
     }
     match value.unspan() {
