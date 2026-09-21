@@ -6704,6 +6704,13 @@ impl Parser {
                 }
             }
             Type::Unknown(0)
+        } else if self.vars.name_exists(name)
+            && matches!(self.vars.tp(self.vars.var(name)), Type::Never)
+        {
+            // A local whose binding already failed holds no value (its type is poisoned
+            // `never`, the way an errored assignment's is): the binding's diagnostic names
+            // the cause, and "Unknown function" for calling it would name a second one.
+            Type::Unknown(0)
         } else {
             // generic-specific error for method calls on T.
             if let Some(tv_name) = types.first().and_then(|t| self.generic_type_name(t)) {

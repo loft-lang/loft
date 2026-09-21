@@ -190,6 +190,59 @@ impl Parser {
     /// Is the next argument a TYPE name closing the call — `sizeof(Roster)` — which no
     /// function can take, so the special form keeps it whatever the program declares?
     /// Reads ahead and restores the lexer.
+    /// Does a bracketed type-argument list follow, and then a call's `(` — `<integer>(` or
+    /// `<vector<text>, P>(`?  A lexical look ahead that consumes nothing: every token up to
+    /// the `>` that closes the first `<` may belong to a type (a name, `,`, `?`, `[`, `]`,
+    /// `(`, `)`, `.`, `::`, a nested `<…>`), and the token after it is `(`.
+    pub(crate) fn type_arguments_then_call(&mut self) -> bool {
+        let lnk = self.lexer.link();
+        let mut depth = 0u32;
+        let mut ok = false;
+        if self.lexer.has_token("<") {
+            depth = 1;
+            loop {
+                if self.lexer.has_token("<") {
+                    depth += 1;
+                } else if self.lexer.has_closing_angle() {
+                    depth -= 1;
+                    if depth == 0 {
+                        ok = self.lexer.peek_token("(");
+                        break;
+                    }
+                } else if !self.skip_type_token() {
+                    break;
+                }
+            }
+        }
+        self.lexer.revert(lnk);
+        ok && depth == 0
+    }
+
+    /// Consume one token that can sit inside a type-argument list other than an angle.
+    fn skip_type_token(&mut self) -> bool {
+        self.lexer.has_identifier().is_some()
+            || [",", "?", "[", "]", "(", ")", ".", "::"]
+                .iter()
+                .any(|t| self.lexer.has_token(t))
+    }
+
+    /// Consume the type-argument list [`Self::type_arguments_then_call`] recognised.
+    pub(crate) fn skip_type_arguments(&mut self) {
+        let mut depth = 0u32;
+        if self.lexer.has_token("<") {
+            depth = 1;
+        }
+        while depth > 0 {
+            if self.lexer.has_token("<") {
+                depth += 1;
+            } else if self.lexer.has_closing_angle() {
+                depth -= 1;
+            } else if !self.skip_type_token() {
+                break;
+            }
+        }
+    }
+
     pub(crate) fn next_is_type_name_argument(&mut self) -> bool {
         let lnk = self.lexer.link();
         let is_type = match self.lexer.has_identifier() {

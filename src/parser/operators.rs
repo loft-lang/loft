@@ -1158,7 +1158,7 @@ impl Parser {
                     // separate decision (it needs its own method, and a decision about
                     // whether `x[i] += 1` may then read-modify-write), so this is a
                     // refusal, not a gap left silent.
-                    if let Some(tp) = crate::data::Data::split_key(&name)
+                    if let Some(tp) = crate::data::Data::split_key(name)
                         .filter(|k| k.kind == crate::data::KeyKind::Method && k.rest == "OpIndex")
                         .map(|k| k.spelling)
                     {
@@ -1586,7 +1586,9 @@ impl Parser {
                 // bare name, so naming one where a VALUE is wanted reported that the file's
                 // own function does not exist. Say what it is instead.
                 let receivers = self.method_receivers_named(&name);
-                if receivers.is_empty() {
+                if let Some(msg) = self.generic_value_refusal(&name) {
+                    diagnostic!(self.lexer, Level::Error, "{msg}");
+                } else if receivers.is_empty() {
                     diagnostic!(self.lexer, Level::Error, "Unknown variable '{name}'");
                 } else {
                     let on = receivers.join("`, `");

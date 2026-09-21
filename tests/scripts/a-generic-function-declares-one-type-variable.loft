@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic function declares one type variable: a header with a second is refused once,
+// where the second is written, and the template never instantiates.
+//
+// The header used to stop at the comma and report five syntax errors (`Expect token >`,
+// `(`, `{`, `;`, `}`); a second variable's bounds went unread, so its use in the body added a
+// sixth.
+// @falsified-at: 04f5791cf — exit 1 -> 0, expectations FAIL/1 -> 0/1
+//   CHANNEL: expectations (the refusal is what moves; the program is refused on both trees).
+// @EXPECT_ERROR: `pair_up` declares 2 type variables (`K`, `V`), and a generic function declares one — `<K>`
+
+fn pair_up<K: Printable, V: Printable>(k: K, v: V) -> text { "{k}:{v}" }
+
+fn main() {
+  println("{pair_up(1, "a")}");
+}

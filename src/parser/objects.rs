@@ -51,8 +51,22 @@ pub(crate) struct FieldSinks {
     /// earlier one is handled.
     group_fills: Vec<Value>,
 }
-
 impl Parser {
+    /// The refusal for a GENERIC function named where a value is wanted (`f = idf`), or
+    /// `None` when `name` names no generic.  A template has a body only once a call has
+    /// fixed its type variables, so there is no one function to bind; one call of it
+    /// wrapped in a lambda is.
+    pub(crate) fn generic_value_refusal(&self, name: &str) -> Option<String> {
+        let g = self.data.def_nr(&format!("n_{name}"));
+        (g != u32::MAX && self.data.def_type(g) == DefType::Generic).then(|| {
+            format!(
+                "`{name}` is a generic function, and a generic is not a function VALUE — it has \
+                 no single body until a call fixes its type variables. Wrap one call of it in a \
+                 lambda that names the types: `|x: integer| {{ {name}(x) }}`"
+            )
+        })
+    }
+
     /// loft#1008 — the receiver TYPES of every method registered under the bare name `name`.
     ///
     /// A method is stored as `t_<len><Type>_<name>`, so a bare name has no definition of its
@@ -419,6 +433,26 @@ impl Parser {
         let mut t = self.parse_constant_value(code, source, &nm, name_pos, qualifier_enum);
         if t != Type::Null {
             return t;
+        }
+        // `D-Infer` — a type argument is written in TYPE position only; a call infers its
+        // type variables from its arguments.  `first<integer>(a)` otherwise reads as the
+        // chained comparison `first < integer > (a)`.  A local variable keeps that reading.
+        if self.lexer.peek_token("<")
+            && !self.vars.name_exists(&nm)
+            && self.type_arguments_then_call()
+        {
+            if !self.first_pass {
+                let at = self.lexer.peek_pos().clone();
+                diagnostic_at!(
+                    self.lexer,
+                    &at,
+                    Level::Error,
+                    "a call does not take type arguments — `{nm}(…)` infers them from its \
+                     arguments; where an argument does not fix one, give the value a declared \
+                     type (`a: vector<integer> = []`)"
+                );
+            }
+            self.skip_type_arguments();
         }
         if self.lexer.has_token("(") {
             // @F45 — sizeof() / type_name() / typedef(): the compiler's own reading of a TYPE.
@@ -823,7 +857,9 @@ impl Parser {
                     // exist. Say what it is and what to write; the receiver types are listed
                     // because a bare name can be a method on several.
                     let receivers = self.method_receivers_named(name);
-                    if !receivers.is_empty() {
+                    if let Some(msg) = self.generic_value_refusal(name) {
+                        diagnostic_at!(self.lexer, name_pos, Level::Error, "{msg}");
+                    } else if !receivers.is_empty() {
                         let on = receivers.join("`, `");
                         diagnostic_at!(
                             self.lexer,
@@ -1060,7 +1096,9 @@ impl Parser {
                         // VALUE is wanted (a fn-ref argument, `map(v, f)`). Naming what it is
                         // beats reporting that the file's own function does not exist.
                         let receivers = self.method_receivers_named(name);
-                        if receivers.is_empty() {
+                        if let Some(msg) = self.generic_value_refusal(name) {
+                            diagnostic!(self.lexer, Level::Error, "{msg}");
+                        } else if receivers.is_empty() {
                             diagnostic!(self.lexer, Level::Error, "Unknown variable '{}'", name);
                         } else {
                             let on = receivers.join("`, `");
@@ -2351,6 +2389,10 @@ impl Parser {
                 // function does not exist sends the reader looking for a typo; name what it
                 // is and what to write instead. Checked BEFORE the spelling suggestion,
                 // which would otherwise offer the nearest local.
+                if let Some(msg) = self.generic_value_refusal(&name) {
+                    diagnostic_at!(self.lexer, pos, Level::Error, "{msg}");
+                    return;
+                }
                 let receivers = self.method_receivers_named(&name);
                 if !receivers.is_empty() {
                     let on = receivers.join("`, `");

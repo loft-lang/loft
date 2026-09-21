@@ -7499,10 +7499,8 @@ impl Data {
     pub fn split_key(name: &str) -> Option<KeyParts<'_>> {
         let (kind, body) = if let Some(body) = name.strip_prefix("t_") {
             (KeyKind::Method, body)
-        } else if let Some(body) = name.strip_prefix("f_") {
-            (KeyKind::FreeOverload, body)
         } else {
-            return None;
+            (KeyKind::FreeOverload, name.strip_prefix("f_")?)
         };
         let digits = body.bytes().take_while(u8::is_ascii_digit).count();
         if digits == 0 {
