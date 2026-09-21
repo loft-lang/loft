@@ -34,10 +34,10 @@
 //   - doc 7's `rank` steps go in as 3, 1, 2. The ordinal is the COLLECTION's
 //     order, and only an out-of-order insertion can tell that from insertion
 //     order.
-//   - `band()` is the one shape that can hold two elements of one key, and it
-//     needs both of its collections to do it — see the comment there. It is
-//     also where the same records show up in TWO child tables, addressed two
-//     ways, from writing to only one of the collections.
+//   - `band()` is where the same records show up in TWO child tables,
+//     addressed two ways, from writing to only one of the collections — see
+//     the comment there. Its beats go in out of bar order, so the ordinal of
+//     one table and the key of the other disagree about the order.
 //   - the `scores` rows are written BACKWARDS, which is the only thing here that
 //     can tell `select_rows`' `ORDER BY` from no clause at all.
 //
@@ -71,18 +71,16 @@ struct Doc {
 }
 struct World { docs: hash<Doc[id]> = [] }
 
-/// The pair that carries the falsified claim, and it needs BOTH collections.
+/// Two keyed collections over one element type in one struct are one record set
+/// with two views of it (@FR-Col-Group, loft#843), so writing to `beats` alone
+/// fills `byname` too, and each child table addresses the same records its own
+/// way: `beats` by the ordinal, `byname` by its declared key.
 ///
-/// Measured, one axis at a time on both backends: a `sorted<T[k]>` REPLACES on
-/// an equal key when it is the only keyed view of `T` in the program, and KEEPS
-/// both when `T` has another keyed view — merely DECLARED is enough. The records
-/// are one set and each collection is a view of it, so `beats` shows two
-/// elements of one bar because `byname` is what tells them apart (loft#843).
-///
-/// So "a `sorted` may hold two elements of one key" — the sentence a real
-/// `INSERT` put into this design — is true, and this is the shape that makes it
-/// true. A gate using a single-view `sorted` would have written one row and
-/// proved nothing.
+/// Every bar and every note is distinct.  A `sorted` holds one record per key
+/// (@FR-Col-Insert), so a repeated bar REPLACES the older beat — including in a
+/// group, where a `sorted` is stored by reference (loft#1572).  This pair used to
+/// hold two beats of one bar, which is how "a `sorted` may hold two elements of
+/// one key" entered this design; it was that defect.
 struct Beat { const bar: integer, note: text }
 struct Sheet { const id: integer, beats: sorted<Beat[bar]> = [], byname: hash<Beat[note]> = [] }
 struct Band { rows: hash<Sheet[id]> = [] }
@@ -147,7 +145,7 @@ fn world() -> World {
   return w;
 }
 
-/// One sheet whose `beats` holds TWO elements of one bar.
+/// One sheet with three beats, added out of bar order.
 ///
 /// Only `beats` is added to; `byname` fills itself, because the two collections
 /// are views of one set of records. That is the mapping consequence worth
@@ -157,7 +155,7 @@ fn band() -> Band {
   b = Band { };
   s = Sheet { id: 1 };
   s.beats += [Beat { bar: 1, note: "x" }];
-  s.beats += [Beat { bar: 1, note: "y" }];
+  s.beats += [Beat { bar: 3, note: "y" }];
   s.beats += [Beat { bar: 2, note: "z" }];
   b.rows += [s];
   return b;

@@ -698,8 +698,9 @@ fn main() {
   // construction, and already columns because they are fields of the element —
   // so it carries no ordinal. Every other keyed kind takes the ordinal, and its
   // declared key becomes an ordinary access path: the correction a real INSERT
-  // made to the first design, since a `sorted<Tag[weight]>` may hold two
-  // elements of one weight.
+  // made to the first design. (That INSERT met a `sorted` holding two elements
+  // of one weight, which was loft#1572; a `sorted` keeps one record per key now,
+  // so the ordinal is still correct for it, no longer forced.)
   wc = S6WorldC { };
   ti_wc = type_of(wc.docs);
   kc6 = derive_tables(ti_wc);

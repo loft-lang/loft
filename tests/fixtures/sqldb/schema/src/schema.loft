@@ -1422,13 +1422,18 @@ pub fn bound_of(c: ColumnDef, v: ValueInfo) -> Bound {
 ///
 /// The split is **unique vs not**, which is not the same as keyed vs positional
 /// — and that correction came from a database rather than from re-reading the
-/// design. A `sorted<Tag[weight]>` may hold two elements of the same weight, so
-/// its declared key is an access path, not a name:
+/// design:
 ///
 /// ```
 /// INSERT INTO Doc_rank VALUES (7,3,'m'),(7,3,'n');
 /// ERROR 1062 (23000): Duplicate entry '7-3' for key 'PRIMARY'
 /// ```
+///
+/// That pair was a `sorted` holding two elements of one key, which it no longer
+/// can: a keyed collection keeps one record per key (@FR-Col-Insert), and the
+/// `sorted` that stacked them was loft#1572. So the ordinal is no longer FORCED
+/// for a `sorted` or an `index` — it is still correct for them, and it stays
+/// their address here.
 ///
 /// Only a `hash` earns its key as identity. For every other kind the declared
 /// key becomes an ordinary index, which is what it always was.
