@@ -1,0 +1,15 @@
+// A0 — one variable, bound at four kinds: a scalar, text, a float, a record.  Each generic
+// answer is printed BESIDE its hand-written twin's.
+// @EXPECT: 7=7|ab=ab|1.5=1.5|3=3
+struct Ctr { n: integer }
+fn idf<T>(x: T) -> T { x }
+fn idf_i(x: integer) -> integer { x }
+fn idf_t(x: text) -> text { x }
+fn idf_f(x: float) -> float { x }
+fn idf_c(x: Ctr) -> Ctr { x }
+fn main() {
+  c = Ctr { n: 3 };
+  a = idf(c);
+  b = idf_c(c);
+  println("{idf(7)}={idf_i(7)}|{idf("ab")}={idf_t("ab")}|{idf(1.5)}={idf_f(1.5)}|{a.n}={b.n}");
+}

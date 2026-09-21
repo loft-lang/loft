@@ -1,0 +1,12 @@
+// A0 — a tuple return carrying the variable, at a scalar and at text.
+// @EXPECT: 5,1=5,1|hi,1=hi,1
+fn tag<T>(x: T) -> (T, integer) { (x, 1) }
+fn tag_i(x: integer) -> (integer, integer) { (x, 1) }
+fn tag_t(x: text) -> (text, integer) { (x, 1) }
+fn main() {
+  (a, an) = tag(5);
+  (b, bn) = tag_i(5);
+  (c, cn) = tag("hi");
+  (d, dn) = tag_t("hi");
+  println("{a},{an}={b},{bn}|{c},{cn}={d},{dn}");
+}

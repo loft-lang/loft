@@ -1,0 +1,13 @@
+// A0 — a bounded variable: `Ordered` at two scalars, `Printable` at a program's own type.
+// @EXPECT: 9=9|b=b|P(4)=P(4)
+struct P { v: integer }
+fn to_text(self: P) -> text { "P({self.v})" }
+fn bigger<T: Ordered>(a: T, b: T) -> T { if a < b { b } else { a } }
+fn bigger_i(a: integer, b: integer) -> integer { if a < b { b } else { a } }
+fn bigger_t(a: text, b: text) -> text { if a < b { b } else { a } }
+fn show<T: Printable>(x: T) -> text { x.to_text() }
+fn show_p(x: P) -> text { x.to_text() }
+fn main() {
+  p = P { v: 4 };
+  println("{bigger(9, 2)}={bigger_i(9, 2)}|{bigger("a", "b")}={bigger_t("a", "b")}|{show(p)}={show_p(p)}");
+}

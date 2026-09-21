@@ -1,0 +1,4 @@
+// A library's generic, instantiated by a consumer at the consumer's own type.
+pub fn count_if_positive<T>(v: vector<T>, n: integer) -> integer {
+  if n > 0 { len(v) } else { 0 }
+}

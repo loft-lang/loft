@@ -1,0 +1,19 @@
+// A0 — a nullable return over the variable: a hit and a miss, at a scalar and at a record.
+// @EXPECT: 30=30|-1=-1|8=8|-1=-1
+struct Box { v: integer }
+fn at<T>(v: vector<T>, i: integer) -> T? { v[i] }
+fn at_i(v: vector<integer>, i: integer) -> integer? { v[i] }
+fn at_b(v: vector<Box>, i: integer) -> Box? { v[i] }
+fn main() {
+  a = [10, 20, 30];
+  bs = [Box { v: 8 }];
+  g_hit = at(a, 2) ?? -1;
+  c_hit = at_i(a, 2) ?? -1;
+  g_miss = at(a, 7) ?? -1;
+  c_miss = at_i(a, 7) ?? -1;
+  gb = if at(bs, 0) { at(bs, 0).v } else { -1 };
+  cb = if at_b(bs, 0) { at_b(bs, 0).v } else { -1 };
+  gm = if at(bs, 3) { 1 } else { -1 };
+  cm = if at_b(bs, 3) { 1 } else { -1 };
+  println("{g_hit}={c_hit}|{g_miss}={c_miss}|{gb}={cb}|{gm}={cm}");
+}

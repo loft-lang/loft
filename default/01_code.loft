@@ -1895,7 +1895,7 @@ pub fn max_of < T: Ordered > (v: const vector<T>) -> T? {
 }
 #pure
 // Sum of vector elements.  Works on any Addable type.  `init` is the identity to start
-// from; leave it out and the element type's own zero is used (0, 0.0, "").
+// from; leave it out and the element type's own zero is used (0, 0.0).
 // Example: sum([10, 20, 12], 0) == 42
 // Example: sum([10, 20, 12]) == 42
 // Example: @STD-005

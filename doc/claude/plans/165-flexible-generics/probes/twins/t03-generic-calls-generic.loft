@@ -1,0 +1,13 @@
+// A0 — a generic calling a generic, the callee declared BELOW the caller (loft#1023's order).
+// @EXPECT: 3=3|2=2
+fn outer<T>(v: vector<T>) -> integer { inner(v) + 1 }
+fn outer_i(v: vector<integer>) -> integer { inner_i(v) + 1 }
+fn outer_t(v: vector<text>) -> integer { inner_t(v) + 1 }
+fn inner<T>(v: vector<T>) -> integer { len(v) }
+fn inner_i(v: vector<integer>) -> integer { len(v) }
+fn inner_t(v: vector<text>) -> integer { len(v) }
+fn main() {
+  a = [4, 5];
+  b = ["x"];
+  println("{outer(a)}={outer_i(a)}|{outer(b)}={outer_t(b)}");
+}
