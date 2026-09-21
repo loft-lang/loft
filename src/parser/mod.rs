@@ -8378,6 +8378,27 @@ impl Parser {
         ))
     }
 
+    /// The type a call's argument at `arg` is checked against — the callee's declared
+    /// parameter — with, for a GENERIC callee, every type variable the arguments parsed so far
+    /// (`types`) have bound replaced by what it bound to.  A short lambda takes its parameter
+    /// types from this, so `my_map(a, |x| { x * 10 })` hands `x` the element type of `a`, as
+    /// the built-in `map` and a concrete twin do; a variable no earlier argument binds stays
+    /// as declared, and the lambda says it cannot infer it.
+    pub(crate) fn callee_param_hint(&self, d_nr: u32, arg: usize, types: &[Type]) -> Type {
+        let declared = self.data.attr_type(d_nr, arg);
+        if self.data.def_type(d_nr) != DefType::Generic {
+            return declared;
+        }
+        let Some(bindings) = Self::bind_template(&self.data, d_nr, types) else {
+            return declared;
+        };
+        let known: Vec<(u32, Type)> = bindings
+            .into_iter()
+            .filter(|(_, b)| !b.is_unknown())
+            .collect();
+        Self::substitute_all(declared, &known)
+    }
+
     /// The type variables of the template `g_nr`: the distinct placeholders its declared
     /// parameters mention, in the order they FIRST appear.  An interface's associated type
     /// (a placeholder whose parent is the interface) is not one — it is bound from the
