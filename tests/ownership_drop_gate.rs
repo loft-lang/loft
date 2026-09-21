@@ -1587,7 +1587,9 @@ const CENSUS_BLIND: &[&str] = &[];
 // `D-heap-16` was retired 2026-09-21 with its fix (the arm lift that turns the binding into a
 // borrow gives a minting call arm a temp of its own): `p_l2` and `q_default_local_call_local`
 // moved LOST → clean on both backends, and `q_default_param_call_local` with them.
-const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[("D-heap-15", &["p_v2", "p_o2", "p_i2"])];
+// `p_o2` left `D-heap-15` 2026-09-22 (loft#1563): a tuple member its own call minted hands its
+// release to the copy when the copy is certain to run, and `c_tuple_tuplem` with it.
+const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[("D-heap-15", &["p_v2", "p_i2"])];
 
 /// Every cell has a lease verdict, and every cell the rules say must release once while a
 /// baseline says it does not is carried by exactly one OPEN deviation in `formal/heap.md`.  A fix

@@ -1252,6 +1252,23 @@ CLOSED 2026-09-17, below.
   `p_v1`, the same bind without the growth, closed with `D-heap-23`), `p_o2` (`u = t` of a tuple)
   and `p_i2` (`a = a ?? mk()`, a variable rebound to a `??` over itself).  None of them is a
   join.
+- ⚠ **NARROWED again 2026-09-22 — the tuple bind is closed (`p_o2`, loft#1563).**  `u = t` of a
+  tuple is lowered onto one copy per member (loft#1361), and a member names its work-ref in the
+  tuple's type — except a member its own CALL minted (`t = (mk(11), 1)`), whose pairing lives only
+  in the scan's `tuple_call_mint`.  So that copy moved nothing: both sides ran the hook, and a
+  refill released the moved member again before the copy was read (`p_o2`; a literal member
+  measured the same).  `scopes::call_minted_member_handoff` makes the member's buffer the source
+  the copy moves the release from, `tuple_owned_elem_frees` skips a handed-off buffer's hook, and
+  an unconditional refill retires the hand-off for the members it mints.  Only the whole-tuple
+  bind moves: `(t.0, 2)` lowers onto the same copy but spells a copy of a container's member,
+  which `(H-Copy-Refuse)` refuses, so the bind's builder names its blocks `tuple_member_move` and
+  the hand-off reads that name (`c_tuple_tuplem` stays with its `c_tuple_*` siblings).  And only
+  where the copy is CERTAIN to run (`walk_unconditional`, in the tuple's own scope): a move
+  written in an `if` arm keeps both releases on the path that runs it, because moving it there
+  lost the release on the path that skips the arm.  Guard
+  `tests/scripts/1563-a-moved-tuple-releases-a-call-minted-member-once.loft`.  **Open:** `p_v2`
+  and `p_i2` (programs `(H-Spent)` and `(H-Copy-Refuse)` refuse, `D-heap-8`'s errors), and that
+  tuple move written in an arm.
 - **Removal:** the copy that makes the second structure, removed wherever the rules move the
   value; `scopes::copy_moves_drop_from` and the hand-off flags beside it are @PLN163 P5's
   subject and this entry is the measurement P5 is verified against.

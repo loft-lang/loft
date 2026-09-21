@@ -5310,7 +5310,7 @@ impl Census<'_> {
                         for (item, elm) in items.iter().zip(elms) {
                             if !self.data.type_owns_droppable_anywhere(elm)
                                 || matches!(item.unspan(),
-                                    Value::Block(b) if b.name == "tuple_member_copy")
+                                    Value::Block(b) if matches!(b.name, "tuple_member_copy" | "tuple_member_move"))
                             {
                                 continue;
                             }

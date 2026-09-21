@@ -6199,7 +6199,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let Value::Block(b) = val.unspan() else {
             return None;
         };
-        if b.name != "tuple_member_copy" {
+        if !matches!(b.name, "tuple_member_copy" | "tuple_member_move") {
             return None;
         }
         // The block ends `OpAppendVector(backing, source, elem_tp); backing` for a VECTOR

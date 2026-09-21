@@ -103,11 +103,13 @@ fn nullable_member_absent() -> integer {
   return -1;
 }
 
-// The whole-tuple copy is a second record (loft#1361): each hooks once.
+// The whole-tuple bind of a tuple this function owns MOVES it (`(H-Move)`, the 2026-09-17
+// ruling): one record's worth of release, the new owner's.  `u` is spent after the bind, so the
+// cell reads `w` alone — reading `u` is what `(H-Spent)` will refuse (loft#1563).
 fn copied() -> integer {
   u = (mk(31), 9);
   w = u;
-  return u.0.h.id + w.0.h.id;
+  return w.0.h.id;
 }
 
 // The fixed neighbours, pinned: via a local, an inline struct literal, a struct field, a
@@ -151,8 +153,8 @@ fn main() {
   assert(got == "", "a null member hooks never: got '{got}'");
 
   v = copied(); got = drain();
-  assert(v == 62, "both names read the member: got {v}");
-  assert(got == "31,31", "the copy is a second record and each hooks once: got '{got}'");
+  assert(v == 31, "the new owner reads the member: got {v}");
+  assert(got == "31", "the moved member releases once, from its new owner: got '{got}'");
 
   v = via_local(); got = drain();
   assert(v == 11, "via a local reads: got {v}");

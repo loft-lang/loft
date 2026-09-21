@@ -3360,6 +3360,13 @@ use a separate collection or add after the loop"
                 let mut m = Value::TupleGet(src, i as u16);
                 if let Some(owned) = self.tuple_member_owned_copy(&mut m, t) {
                     types[i] = owned;
+                    // `(H-Move)`: a whole-tuple bind MOVES the members of a tuple this function
+                    // owns, while a member read written into a literal (`(t.0, 2)`) is a COPY.
+                    // The two lower onto the same IR, so the builder names the difference and
+                    // the scope pass reads the name (loft#1563).
+                    if let Value::Block(b) = m.unspan_mut() {
+                        b.name = "tuple_member_move";
+                    }
                 }
                 members.push(m);
             }

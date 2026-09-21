@@ -58,9 +58,10 @@
 // HOLDS: leak, panic, free-refusal and expectations are unmoved — equal on both trees and on
 //   both backends.  SEVEN cells hold, and each is there to hold: c_literal_text and c_scalar
 //   (their dep list already matched the leaf walk), c_two_droppables, c_param, c_from_call,
-//   c_plain, and c_reassigned — which reads FOUR releases on both trees, because a variable
+//   c_plain, and c_reassigned — which read FOUR releases on both trees, because a variable
 //   assigned two tuples has no single pairing and the join declines rather than answer with
-//   the latest one.
+//   the latest one.  c_reassigned reads two since loft#1563, whose hand-off does not go through
+//   the join.
 //
 // The trace file is this guard's own — its own means THIS file, not this family: several corpus
 // guards write one, and two concurrent runs of the SAME guard clobber each other's.
@@ -130,11 +131,12 @@ fn c_two_tuples() { a = nb_mk(111); b = nb_mk(112); w = "wx"; t1 = (a, w); t2 = 
 // answers that before the pairing is consulted at all.
 fn c_param_take(p: (NbH, text)) { u = p; note("in{u.0.id}{u.1}"); }
 fn c_param() { s = nb_mk(121); w = "wx"; t = (s, w); c_param_take(t); note("alive{t.0.id}"); }
-// CONTROL — the tuple variable is assigned TWICE, with different backings.  The reader has only
-// the variable, so there is no single pairing to record: the join declines and both resources
-// release twice, exactly as they did before the pairing was carried.  Taking the LATEST answer
-// instead passes this cell's first half and LOSES the second resource's release entirely, which
-// is why the decline is the answer and not a missing case.
+// The tuple variable is assigned TWICE, with different backings.  The reader has only the
+// variable, so there is no single pairing to record, and the join declines: taking the LATEST
+// answer instead passes this cell's first half and LOSES the second resource's release entirely.
+// Each member's release now moves through the scan's per-assignment `tuple_call_mint` instead
+// (loft#1563), which does see which assignment is live, so each resource releases once.  It was
+// a control that pinned both releasing twice.
 fn c_reassigned() { a = nb_mk(131); w = "wx"; b = nb_mk(132); v = "wy"; t = (a, w); u = t; t = (b, v); z = t; note("alive{u.0.id}{z.0.id}"); }
 // A STRUCT-ENUM member beside the text.  It IS a heap leaf, so the leaf walk counts it and the
 // dep list counts it too — and the text between them still put the two out of step.
@@ -215,7 +217,7 @@ fn main() {
   assert(got == "in121wx,alive121,121", "CONTROL a copy off a tuple parameter: {got}");
 
   c_reassigned(); got = drain();
-  assert(got == "alive131132,131,131,132,132", "CONTROL a reassigned tuple declines: {got}");
+  assert(got == "alive131132,131,132", "a reassigned tuple releases each resource once: {got}");
 
   c_enum_beside(); got = drain();
   assert(got == "alive141wx,141", "a struct-enum member beside the text: {got}");

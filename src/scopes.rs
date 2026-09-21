@@ -3585,6 +3585,44 @@ fn collect_drop_transferred(
     out
 }
 
+/// Visit every node of `v` that runs whenever `v` does: not an `if`'s arms and not a loop's body.
+fn walk_unconditional(v: &Value, f: &mut impl FnMut(&Value)) {
+    f(v);
+    match v.unspan() {
+        Value::If(test, _, _) => walk_unconditional(test, f),
+        Value::Loop(_) => {}
+        other => other.for_each_child(&mut |c| walk_unconditional(c, f)),
+    }
+}
+
+/// The call buffer a whole-value copy of a tuple MEMBER hands the release of, where that member
+/// was minted by its own initializing call (`t = (mk(11), 1)`), or `None`.
+///
+/// `(H-Move)`: `u = t` of a tuple the function built moves `t`, member by member (loft#1361
+/// lowers it onto one copy per member).  A member built by a literal names its work-ref in the
+/// tuple's type and [`drop_bearing_source`] finds it; a member a CALL minted names nothing
+/// there, because its store is frame-owned, and its pairing lives only in the scan's
+/// `tuple_call_mint`.  Without this the copy moved nothing, and both the copy and the member
+/// ran the hook (loft#1563).
+fn call_minted_member_handoff(
+    args: &[Value],
+    function: &Function,
+    data: &Data,
+    call_mints: &HashMap<u16, HashMap<u16, Option<u16>>>,
+) -> Option<u16> {
+    let Value::TupleGet(base, idx) = args.first()?.unspan() else {
+        return None;
+    };
+    let buf = (*call_mints.get(base)?.get(idx)?)?;
+    let Value::Var(dst) = args.get(1)?.unspan() else {
+        return None;
+    };
+    if !function.name(*dst).starts_with("__ref") {
+        return None;
+    }
+    copy_moves_drop_from(function, data, *dst, buf, true)
+}
+
 /// The variable whose RELEASE a whole-value `OpCopyRecord(src, dest, tp)` hands over, or `None`
 /// where the copy moves no release — the one answer [`drop_handoff_node`]'s collector and the
 /// scan's per-path flag write both read, so the two cannot disagree about which copies stop
@@ -4248,6 +4286,7 @@ fn tuple_owned_elem_frees(
     data: &Data,
     function: &crate::variables::Function,
     call_mints: Option<&HashMap<u16, Option<u16>>>,
+    handed: &HashSet<u16>,
     only: Option<usize>,
 ) -> Vec<Value> {
     let mut out = Vec::new();
@@ -4288,7 +4327,10 @@ fn tuple_owned_elem_frees(
         // slot, which would lose every hook but the last one's).
         if let Some(&buf) = call_mints.and_then(|m| m.get(&(idx as u16))) {
             let elem = || Value::TupleGet(v, idx as u16);
-            if let Some(d) = elems[idx].base().heap_def_nr() {
+            // A member whose release a copy took (`call_minted_member_handoff`) keeps its free
+            // and loses only the hook: the copy is the member's owner now.
+            let handed_off = buf.is_some_and(|b| handed.contains(&b));
+            if !handed_off && let Some(d) = elems[idx].base().heap_def_nr() {
                 let cascade = data.drop_cascade_nr(d);
                 if cascade != u32::MAX {
                     out.push(v_if(
@@ -10291,6 +10333,7 @@ impl Scopes<'_> {
                 data,
                 function,
                 self.tuple_call_mint.get(&v),
+                &self.drop_transferred,
                 None,
             );
             if !frees.is_empty() {
@@ -10554,6 +10597,7 @@ impl Scopes<'_> {
                                 data,
                                 function,
                                 None,
+                                &HashSet::new(),
                                 Some(idx as usize),
                             )
                             .is_empty();
@@ -10567,6 +10611,14 @@ impl Scopes<'_> {
                                     Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
                                 ));
                             }
+                        }
+                    }
+                    // The members this statement minted are the tuple's own: a copy that took an
+                    // EARLIER member's release does not reach them.  Retired only where the
+                    // refill is certain to run, as a record's hand-off is (above).
+                    if self.var_scope.get(&v) == Some(&self.scope) {
+                        for b in m.values().flatten() {
+                            self.drop_transferred.remove(b);
                         }
                     }
                     self.tuple_call_mint.insert(v, m);
@@ -11719,7 +11771,15 @@ impl Scopes<'_> {
             return put(value);
         };
         let elems = elems.clone();
-        let release = tuple_owned_elem_frees(&elems, v, data, function, None, Some(idx as usize));
+        let release = tuple_owned_elem_frees(
+            &elems,
+            v,
+            data,
+            function,
+            None,
+            &HashSet::new(),
+            Some(idx as usize),
+        );
         if release.is_empty() {
             return put(value);
         }
@@ -12173,6 +12233,9 @@ impl Scopes<'_> {
                     drop_transferred,
                     arm_lift_temps,
                     per_path_pairs,
+                    tuple_call_mint,
+                    var_scope,
+                    scope,
                     ..
                 } = self;
                 v.walk(&mut |n| {
@@ -12185,6 +12248,37 @@ impl Scopes<'_> {
                         per_path_pairs,
                     );
                 });
+                // A call-minted tuple member's release moves only where the copy is CERTAIN to
+                // run: a copy of a tuple in the tuple's own scope, and not inside an `if` arm or
+                // a loop body below this statement.  A copy that only some runs perform would
+                // move the release on the path that skips it too, and lose it there; that case
+                // keeps the release with both sides (D-heap-15 records it).  Only the whole-tuple
+                // bind's copies move (`tuple_member_move`): `(t.0, 2)` spells a copy of a member
+                // of a container, which `(H-Copy-Refuse)` refuses, and it keeps both releases.
+                let certain: HashMap<u16, HashMap<u16, Option<u16>>> = tuple_call_mint
+                    .iter()
+                    .filter(|(t, _)| var_scope.get(t) == Some(scope))
+                    .map(|(t, m)| (*t, m.clone()))
+                    .collect();
+                if !certain.is_empty() {
+                    let copy_d = data.def_nr("OpCopyRecord");
+                    walk_unconditional(v, &mut |n| {
+                        let Value::Block(b) = n else { return };
+                        if b.name != "tuple_member_move" {
+                            return;
+                        }
+                        walk_unconditional(n, &mut |c| {
+                            if let Value::Call(d, args) = c
+                                && *d == copy_d
+                                && args.len() >= 3
+                                && let Some(b) =
+                                    call_minted_member_handoff(args, function, data, &certain)
+                            {
+                                drop_transferred.insert(b);
+                            }
+                        });
+                    });
+                }
             }
             if let Some((pre, _)) = &rebuilt {
                 ls.extend(pre.iter().cloned());
@@ -13808,6 +13902,7 @@ impl Scopes<'_> {
                     data,
                     function,
                     self.tuple_call_mint.get(&v),
+                    &self.drop_transferred,
                     None,
                 ));
                 continue;
