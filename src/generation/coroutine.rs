@@ -1502,7 +1502,10 @@ impl Output<'_> {
                                 w,
                                 "                let __yv = {wrap_open}{yield_code}{wrap_close};"
                             )?;
-                            writeln!(w, "                self.var_{field}.store_nr = u16::MAX;")?;
+                            // The WHOLE field, not only its store number: the tail's drop
+                            // hook is guarded on `rec != 0`, and a field that kept its record
+                            // number there read the null store (index 65535).
+                            writeln!(w, "                self.var_{field} = DbRef::NULL;")?;
                             writeln!(w, "                return __yv;")?;
                         } else {
                             writeln!(
