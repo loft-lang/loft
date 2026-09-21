@@ -488,6 +488,13 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  WINDOW — from the mint (after its growth step, if it had one) up
                  to its `OpFinishRecord(…, e, …)` in the same block — when the
                  window meets the conditions above in the remainder's place.
+                 THE ORDER CLAUSE: "frees no record before a later use of r" is
+                 asked in EXECUTION order through the extent's structure — a
+                 block its statements in sequence, an `if` its condition then
+                 either arm, a loop its body twice when the body frees — and a
+                 block that ends in `return` and holds no `break` or `continue`
+                 leaves the function on every path that reaches a free in it, so
+                 it carries none past itself.
 ```
 
 **In words.** 2026-09-18, the drawing library's crossing loop (`pg_cur = pg_table[i]?`,
@@ -587,6 +594,30 @@ elements) is the cell that can: under the sabotage it answers `120 125094 21420`
 `LOFT_NO_MINT_WINDOW`.  Cells `tests/scripts/158-mint-window.loft`, pins
 `tests/mint_window.rs`.  Sites: `hoist::mint_window`, `hoist::view_extent_verdict`,
 `Output::bind_record_ptr`, `Output::close_ptr_windows_before`.
+
+*The order clause (2026-09-21, @PLN158 R6).*  The free-before-use question was asked per
+top-level STATEMENT of the extent, and a lookup loop's whole body is one statement — so
+`for c in m.chunks { if c.cx == cx && … { return c.hexes[i]?.h } }`, where the `return`
+releases the `?` discharge buffer after the last read of `c`, read as *"frees and uses in
+one statement"* and `c` held no address (*"the remainder frees a record before a use of the
+view"*).  It is the shape of every find-and-answer helper.  Asked in execution order it is
+no free before a use at all.  `chunk_lookup` 1,417 → 1,097 µs (−23 %), 3.67× → 2.84× of the
+Rust reference.  A `break` or `continue` keeps running this function, so a block holding
+one carries its frees on; and a loop variable's extent is ONE pass — it is rebound, and its
+address re-derived, at the top of the next — which is why a returning block that also holds
+a `break` still leaves `c` its address (cell q9: the prediction said decline, the rule and
+the values said otherwise, and the rule was right).  **No program can make this clause
+answer wrong**: the only frees that reach it are discharge-buffer frees, which the scope
+pass places after the last use on every path, so a free-before-use inside an extent is
+what a scope-pass defect would produce, not what a test can write — three cells written to
+decline through it declined EARLIER, as a store growth (the literal that mints their
+record local).  The walk is therefore falsified where it lives, over synthetic IR
+(`hoist::free_order_tests`, five tests): with a returning block made to drop its frees even
+when it holds a `break`, and a loop body's second pass removed, exactly the two tests that
+state those facts fail.  No switch of its own — it refines `(R-RecPtr)`'s admission, which
+`LOFT_NO_RECORD_PTR` turns off whole.  Cells `tests/scripts/158-leaving-free.loft`, pins
+`tests/leaving_free.rs`.  Sites: `hoist::free_before_use`, `hoist::free_before_use_by`,
+`hoist::view_extent_verdict`.
 
 ### A stdlib one-op wrapper is its op
 

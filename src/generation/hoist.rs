@@ -1699,6 +1699,200 @@ pub fn mint_window(
 /// ([`record_view_ptr`]) or a mint's window ([`mint_window`]) — judged under ONE definition:
 /// none may grow a store, free a record before a use of `r`, or rebind `r`, and at least one
 /// must read or write a fusable scalar field of `r` or hand it to a twin.
+/// `@FR-R-RecPtr` — may a use of view `r` run AFTER a record free, anywhere in `stmts`?
+///
+/// Through the store a freed record answers the sentinel; through an address it would
+/// answer stale bytes — so an address is held only where every free follows the last use.
+/// The walk is in EXECUTION order, down through the structure the statements have: a block
+/// is its statements in sequence, an `if` its condition and then either arm, a loop its body
+/// — twice when the body itself frees, since a free at the end of one pass precedes a use
+/// at the start of the next.  Everything else is a leaf, and a leaf that both uses `r` and
+/// frees is refused without asking its inner order.
+///
+/// A block whose last statement is a `return`, and which holds no `break` or `continue`,
+/// leaves the FUNCTION on every path that reaches a free in it, so its frees precede no
+/// later use and are not carried past it.  That is the shape of every find-and-answer
+/// helper — `for c in m.chunks { if … { return c.hexes[i]?.h } }`, where the `return`
+/// releases the `?` discharge buffer after the last read of `c`.  A `break` or `continue`
+/// keeps running code of this function, so a block holding one carries its frees on.
+fn free_before_use(
+    stmts: &[Value],
+    r: u16,
+    data: &Data,
+    vars: &crate::variables::Function,
+) -> bool {
+    free_before_use_by(stmts, &mut |leaf| {
+        let (mut uses, mut releases) = (false, false);
+        leaf.any_node(&mut |n| {
+            match n {
+                Value::Var(x) if *x == r => uses = true,
+                Value::Call(g, args)
+                    if (*g as usize) < data.definitions.len()
+                        && frees_a_record(data.def(*g).name(), args, Some(vars)) =>
+                {
+                    releases = true;
+                }
+                _ => {}
+            }
+            false
+        });
+        (uses, releases)
+    })
+}
+
+/// [`free_before_use`]'s ORDER walk, over any leaf classifier answering `(uses the view,
+/// frees a record)` — the structure is the claim, so it is what the unit tests drive.
+fn free_before_use_by(stmts: &[Value], leaf_of: &mut dyn FnMut(&Value) -> (bool, bool)) -> bool {
+    /// `Err(())` — a use after a free; `Ok(released)` — whether a free may have run by
+    /// the end of `v`, given whether one may have run before it.
+    fn scan(
+        v: &Value,
+        released: bool,
+        leaf_of: &mut dyn FnMut(&Value) -> (bool, bool),
+    ) -> Result<bool, ()> {
+        match v.unspan() {
+            Value::Block(b) => {
+                let mut now = released;
+                for op in &b.operators {
+                    now = scan(op, now, leaf_of)?;
+                }
+                let returns = b
+                    .operators
+                    .iter()
+                    .rev()
+                    .find(|o| !matches!(o, Value::Line(_)))
+                    .is_some_and(|o| matches!(o.unspan(), Value::Return(_)));
+                let jumps = v.any_node(&mut |n| matches!(n, Value::Break(_) | Value::Continue(_)));
+                Ok(if returns && !jumps { released } else { now })
+            }
+            Value::If(cond, on_true, on_false) => {
+                let after = scan(cond, released, leaf_of)?;
+                let a = scan(on_true, after, leaf_of)?;
+                let b = scan(on_false, after, leaf_of)?;
+                Ok(a || b)
+            }
+            Value::Loop(lp) => {
+                let mut now = released;
+                for op in &lp.operators {
+                    now = scan(op, now, leaf_of)?;
+                }
+                if now && !released {
+                    // A free in one pass precedes every use in the next.
+                    let mut again = true;
+                    for op in &lp.operators {
+                        again = scan(op, again, leaf_of)?;
+                    }
+                }
+                Ok(now)
+            }
+            leaf => {
+                let (uses, releases) = leaf_of(leaf);
+                if uses && (released || releases) {
+                    return Err(());
+                }
+                Ok(released || releases)
+            }
+        }
+    }
+    let mut released = false;
+    for op in stmts {
+        match scan(op, released, leaf_of) {
+            Ok(now) => released = now,
+            Err(()) => return true,
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod free_order_tests {
+    use super::*;
+
+    // `Var(1)` stands for a use of the view, `Var(2)` for a record free; everything else is
+    // neither.  The walk's claim is about ORDER and STRUCTURE, which is all these drive.
+    fn leaf(v: &Value) -> (bool, bool) {
+        (
+            v.any_node(&mut |n| matches!(n, Value::Var(1))),
+            v.any_node(&mut |n| matches!(n, Value::Var(2))),
+        )
+    }
+    fn verdict(stmts: &[Value]) -> bool {
+        free_before_use_by(stmts, &mut leaf)
+    }
+    fn block(ops: Vec<Value>) -> Value {
+        Value::Block(Box::new(Block {
+            name: "block",
+            operators: ops,
+            result: Type::Void,
+            scope: 0,
+            var_size: 0,
+        }))
+    }
+    fn when(then: Value) -> Value {
+        Value::If(
+            Box::new(Value::Boolean(true)),
+            Box::new(then),
+            Box::new(Value::Null),
+        )
+    }
+    fn lp(ops: Vec<Value>) -> Value {
+        let Value::Block(b) = block(ops) else {
+            unreachable!()
+        };
+        Value::Loop(b)
+    }
+    const USE: Value = Value::Var(1);
+    const FREE: Value = Value::Var(2);
+    fn ret() -> Value {
+        Value::Return(Box::new(Value::Int(0)))
+    }
+
+    #[test]
+    fn a_free_after_the_last_use_is_fine_and_one_before_a_use_is_not() {
+        assert!(!verdict(&[USE, FREE]));
+        assert!(verdict(&[FREE, USE]));
+        assert!(
+            verdict(&[USE, block(vec![FREE]), USE]),
+            "a nested block runs in sequence"
+        );
+    }
+
+    #[test]
+    fn a_returning_block_carries_no_free_past_itself() {
+        // `for c in v { if … { use; free; return } use }` — the lookup helper.
+        let body = vec![when(block(vec![USE, FREE, ret()])), USE];
+        assert!(!verdict(&[lp(body)]));
+        // …but a use AFTER the free inside that block is still a use after a free.
+        assert!(verdict(&[when(block(vec![FREE, USE, ret()]))]));
+    }
+
+    #[test]
+    fn a_break_or_continue_keeps_running_this_function() {
+        // The free stands before a `break`, and the view is used after the loop.
+        let body = vec![when(block(vec![FREE, Value::Break(0)]))];
+        assert!(verdict(&[lp(body), USE]));
+        // A returning block that also holds a `break` carries its free on.
+        let mixed = block(vec![when(Value::Break(0)), FREE, ret()]);
+        assert!(verdict(&[lp(vec![USE, when(mixed)])]));
+    }
+
+    #[test]
+    fn a_free_at_the_end_of_one_pass_precedes_a_use_in_the_next() {
+        assert!(verdict(&[lp(vec![USE, FREE])]));
+        assert!(!verdict(&[lp(vec![USE]), FREE]));
+    }
+
+    #[test]
+    fn either_arm_of_an_if_may_have_freed() {
+        let v = Value::If(
+            Box::new(Value::Boolean(true)),
+            Box::new(block(vec![FREE])),
+            Box::new(Value::Null),
+        );
+        assert!(verdict(&[v, USE]));
+    }
+}
+
 // The eight parameters are the extent, the view, the two things that type it, the
 // function, the memo, the write tier and the twin parameters; a struct would put a name
 // between each and the two call sites without removing anything.
@@ -1740,19 +1934,15 @@ fn view_extent_verdict(
     // container is `(B-Disturb)`'s case and is materialised by the parser before this runs.
     let mut rebound = false;
     let mut touched = false;
-    let mut released_before = false;
+    if free_before_use(rest, *r, data, vars) {
+        return Err("the remainder frees a record before a use of the view");
+    }
     for op in rest {
-        let mut uses = false;
-        let mut releases = false;
         op.any_node(&mut |n| {
             match n {
                 Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == *r => rebound = true,
-                Value::Var(v) if *v == *r => uses = true,
                 Value::Call(g, args) if (*g as usize) < data.definitions.len() => {
                     let name = data.def(*g).name();
-                    if frees_a_record(name, args, Some(vars)) {
-                        releases = true;
-                    }
                     let on_r =
                         matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == *r);
                     // A NATIVE op with the view as its first operand that is not a read
@@ -1794,10 +1984,6 @@ fn view_extent_verdict(
             }
             false
         });
-        if uses && (released_before || releases) {
-            return Err("the remainder frees a record before a use of the view");
-        }
-        released_before |= releases;
     }
     if rebound {
         return Err("the remainder rebinds the view");
