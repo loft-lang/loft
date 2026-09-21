@@ -9032,9 +9032,12 @@ impl Data {
     /// the caller reports that.
     pub fn instance_def(&mut self, lexer: &mut Lexer, template: u32, args: &[Type]) -> u32 {
         let params = self.definitions[template as usize].type_params.clone();
+        // `never` is a poisoned site's type (@P376), not an argument: no instance holds one.
         if params.len() != args.len()
             || args.iter().any(Self::type_has_unresolved)
-            || args.iter().any(|a| self.mentions_type_var(a))
+            || args
+                .iter()
+                .any(|a| self.mentions_type_var(a) || matches!(a.base(), Type::Never))
         {
             return u32::MAX;
         }

@@ -2769,12 +2769,17 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **334** |
+| **333** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-22, @PLN165 D4 on `tuxedo-165-generics`: **867 · 529 · 5 · 333**, and `--check-ratchet`
+re-pinned at opaque 333, opaque tests 1314.  The fall is the D4 unit peeling each `never` test it
+added (`.base()`) — a function that asked `matches!(t, Type::Never)` beside a peeled test was
+counted opaque — while the census's growth since the second join is the @PLN165 arcs A–D.)
 
 (2026-09-17, the SECOND join, re-measured at its end: **847 · 507 · 6 · 334**, and
 `--check-ratchet` reports *at baseline* — opaque 334, opaque tests 1314.  The opaque column is

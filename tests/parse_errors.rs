@@ -4594,3 +4594,70 @@ fn b_ref_reshape_a_computed_removal_key_is_still_refused() {
          b_ref_reshape_a_computed_removal_key_is_still_refused:1:1",
     );
 }
+
+// ── A name read as a value is checked wherever the value is parsed ─────────────────────
+//
+// A struct field's value and a vector literal's element are parsed straight through
+// `parse_operators`, which never met `expression()`'s check that a name READ resolves.  A
+// bare unknown name there was reported as "Cannot assign unknown(0)" (a scalar field),
+// "`main_vector<unknown>` never resolved" (an element) or NOTHING at all (a collection
+// field, whose in-place append then reached codegen with the unresolved variable: an
+// internal compiler error).  Each is now the one "Unknown variable", and the value is
+// poisoned (@P376) so nothing after it reports the same name again.
+
+#[test]
+fn an_unknown_name_as_a_collection_field_value_is_reported() {
+    code!("struct V { f: vector<integer> }\nfn test() { w = V { f: undefined_x }; assert(len(w.f) == 0, \"\"); }")
+        .error("Unknown variable 'undefined_x' at an_unknown_name_as_a_collection_field_value_is_reported:2:24");
+}
+
+#[test]
+fn an_unknown_name_as_a_scalar_field_value_is_reported_once() {
+    code!("struct Q { k: integer }\nfn test() { q = Q { k: undefined_x }; assert(q.k == 0, \"\"); }")
+        .error("Unknown variable 'undefined_x' at an_unknown_name_as_a_scalar_field_value_is_reported_once:2:24");
+}
+
+#[test]
+fn an_unknown_name_as_a_vector_element_is_reported_once() {
+    code!("fn test() { v = [1, undefined_x]; w = [[1], [undefined_y]]; assert(len(v) + len(w) == 0, \"\"); }")
+        .error("Unknown variable 'undefined_x' at an_unknown_name_as_a_vector_element_is_reported_once:1:21")
+        .error("Unknown variable 'undefined_y' at an_unknown_name_as_a_vector_element_is_reported_once:1:46");
+}
+
+#[test]
+fn an_unknown_name_assigned_to_a_vector_field_is_reported_once() {
+    code!("struct V { f: vector<integer> }\nfn test() { w = V { f: [] }; w.f = undefined_x; w.f += undefined_y; assert(len(w.f) == 0, \"\"); }")
+        .error("Unknown variable 'undefined_x' at an_unknown_name_assigned_to_a_vector_field_is_reported_once:2:36")
+        .error("Unknown variable 'undefined_y' at an_unknown_name_assigned_to_a_vector_field_is_reported_once:2:56");
+}
+
+#[test]
+fn a_call_on_a_binding_that_failed_reports_nothing_more() {
+    code!("fn test() { x: vector<integer> = undefined_x; assert(len(x) == 0, \"\"); }")
+        .error("Unknown variable 'undefined_x' at a_call_on_a_binding_that_failed_reports_nothing_more:1:34");
+}
+
+// ── @PLN165 D4: a literal of a generic struct infers its instance ──────────────────────
+
+#[test]
+fn a_literal_with_nothing_to_bind_is_refused_naming_the_variable() {
+    code!("struct Box<T> { v: T }\nstruct Stack<T> { items: vector<T> }\nfn test() { b = Box {}; s = Stack { items: [] }; c = Box { v: null }; assert(len(s.items) == 0 && b.v == c.v, \"\"); }")
+        .error("`Box { … }` cannot tell what T is — no field value names it; give the binding its type, `x: Box<integer> = Box { … }` at a_literal_with_nothing_to_bind_is_refused_naming_the_variable:3:17")
+        .error("`Stack { … }` cannot tell what T is — no field value names it; give the binding its type, `x: Stack<integer> = Stack { … }` at a_literal_with_nothing_to_bind_is_refused_naming_the_variable:3:29")
+        .error("`Box { … }` cannot tell what T is — no field value names it; give the binding its type, `x: Box<integer> = Box { … }` at a_literal_with_nothing_to_bind_is_refused_naming_the_variable:3:54");
+}
+
+#[test]
+fn a_literal_binding_one_variable_to_two_types_is_refused() {
+    code!("struct Pair<T> { a: T, b: T }\nfn test() { p = Pair { a: 1, b: \"x\" }; assert(p.a == 1, \"\"); }")
+        .error("`Pair { … }` binds T to integer through `a` and to text through `b` — a type variable is one type in a literal; give `b` a value of the same type, or give the two fields a variable each at a_literal_binding_one_variable_to_two_types_is_refused:2:17");
+}
+
+/// The literal's values are read once to learn their types and then parsed again: what a
+/// value reports is said once, and a value that errored adds no refusal of its own.
+#[test]
+fn a_literal_value_reports_once() {
+    code!("struct Box<T> { v: T }\nfn test() { b = Box { v: 1 / 0 }; c = Box { v: undefined_name }; assert(b.v == null && c.v == 0, \"\"); }")
+        .warning("Division by constant zero — result is always null at a_literal_value_reports_once:2:33")
+        .error("Unknown variable 'undefined_name' at a_literal_value_reports_once:2:48");
+}

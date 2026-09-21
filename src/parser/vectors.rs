@@ -4885,7 +4885,17 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             if Self::seeds_lambda_hint(in_t) {
                 self.expected = in_t.base().clone();
             }
+            let item_pos = self.lexer.peek_pos().clone();
             let parsed = self.parse_operators(&in_t.clone(), &mut p, &mut parent_tp, 0);
+            // A name READ must resolve — the struct field value's gap (`parse_object_field`):
+            // `[undefined]` reported only that `main_vector<unknown>` never resolved.
+            // The literal is poisoned whole (@P376): an element typed by nothing would type
+            // the vector by nothing, and its layout is then refused a second time.
+            if !matches!(parsed.base(), Type::Never) && self.known_var_or_type(&p, &item_pos) {
+                self.expected = saved_expected;
+                self.skip_to_close("[", "]");
+                return Some(Type::Never);
+            }
             self.expected = saved_expected;
             parsed
         };

@@ -2977,13 +2977,21 @@ impl Parser {
                 self.data.def(d as u32).synthetic(),
                 Some("lambda_instance" | "closure_instance")
             );
+            // The seventh: an instance of a generic struct (@PLN165 D3/D4) whose argument
+            // was a forward reference on pass 1 — `Box { v: later() }` with `later` declared
+            // below, `x: Box<Q>` above `struct Q`.  `instance_def` refuses an unresolved
+            // argument for `tuple_def`'s two reasons (the name and the layout are both
+            // derived from it) and has its append shape: name-keyed, idempotent, at the end.
+            let lazy_struct_instance =
+                matches!(dt, DefType::Struct) && self.data.def(d as u32).instance_of != u32::MAX;
             assert!(
                 lazy_wrapper
                     || lazy_instantiation
                     || lazy_bound_stub
                     || lazy_tuple
                     || lazy_dispatcher
-                    || lazy_lambda_instance,
+                    || lazy_lambda_instance
+                    || lazy_struct_instance,
                 "H5: pass-2-only definition `{name}` (#{d}, {dt:?}) is not a lazy vector \
                  wrapper or generic instantiation — a real cross-pass divergence \
                  (pass1={}, pass2={})",
@@ -6776,6 +6784,15 @@ impl Parser {
                 }
             }
             Type::Unknown(0)
+        } else if types.iter().any(|t| matches!(t.base(), Type::Never))
+            && self.lexer.diagnostics().error_count() > 0
+        {
+            // An argument poisoned by a reported error (@P376): the error named the cause,
+            // and no overload can be judged against a value that is not there — "Unknown
+            // function len" for `len(<a binding that failed>)` would name a second one.
+            // Guarded on the report, so a diverging argument alone never hides a real
+            // unknown function.
+            Type::Never
         } else if self.vars.name_exists(name)
             && matches!(self.vars.tp(self.vars.var(name)), Type::Never)
         {

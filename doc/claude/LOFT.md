@@ -2789,6 +2789,30 @@ identity(42)      // T = integer → returns 42
 identity("hi")    // T = text → returns "hi"
 ```
 
+### Generic structs
+
+A struct may declare type variables, and `Box<integer>` names an **instance** — an ordinary
+struct whose fields are the template's with every variable replaced, laid out and behaving
+exactly as its hand-written twin `struct BoxInteger { v: integer }` would:
+
+```
+struct Box<T> { v: T }
+b: Box<text> = Box { v: "hi" };   // the annotation names the instance
+c = Box { v: 1 };                 // or the field values bind it: a Box<integer>
+fn twice(b: Box<integer>) -> integer { b.v * 2 }
+twice(c)                          // one type: the inferred instance is the named one
+```
+
+- A literal takes its instance from the type expected of it (a binding's annotation, a
+  parameter, a return type) or else binds each variable from the field values whose declared
+  types name it, as a call binds a generic function's.  A variable no value binds (`Box {}`,
+  `Box { v: null }`, an empty `[]` for a `vector<T>` field) is refused naming the variable;
+  one variable given two types by two fields is refused naming both fields.
+- The bare template name is not a type: `b: Box` is refused — name the arguments, `Box<integer>`.
+  The argument count must match the header's.
+- `Box<integer>` and `Box<integer?>` are two instances, as are `Box<integer>` and `Box<u8>`.
+- A type variable is a type only inside its own header; enums declare none.
+
 ---
 
 ## File structure

@@ -3304,7 +3304,7 @@ impl Parser {
             }
             let mut dep = Vec::new();
             self.parse_depended(returned, &mut dep);
-            let inst = self.data.instance_def(&mut self.lexer, tp_nr, &args);
+            let inst = self.instance_def(tp_nr, &args);
             if inst == u32::MAX {
                 // An argument not resolved yet (pass 1), or one that still names a type
                 // variable (an OPEN instance, @PLN165 D5).

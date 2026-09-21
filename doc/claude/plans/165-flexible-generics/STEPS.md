@@ -626,6 +626,36 @@ cure, which is D3's annotation.
 
 - **Red on its own:** [d1](probes/d1-generic-struct.loft) answers `1|a`; an empty `Box {}`
   with no annotation is refused.
+- **Built** (2026-09-22).  `Parser::literal_instance`: with no expected instance the field
+  values are read once (`expression()`, nothing expected) to learn their types and the lexer
+  is put back — the abandon path `parse_object`'s hint retry already takes — then each header
+  variable binds through `resolve_type_var` over (declared field type, value type), the first
+  field that relates deciding, and the literal is built against the instance exactly as an
+  annotated one.  The first read's diagnostics are REWOUND (`Diagnostics::mark`/`rewind`,
+  new), so a value's warning is said once.  Refused on pass 2 at the literal's name: a
+  variable no value binds (`null`, a void call and a poisoned value bind nothing) — *"`Box
+  { … }` cannot tell what T is — no field value names it; give the binding its type"* — and
+  one variable given two types by two fields, named both (C1's predicate,
+  `convert_admitting`); a value that itself reported adds nothing (@P376).  An instance whose
+  argument is only typed on pass 2 (a function or struct declared BELOW the use) is minted
+  after the file's layout ran: H5 admits it as the seventh legal pass-2 append (a
+  `__tuple`'s shape), and the parser's `instance_def` wrapper registers and lays it out on
+  the spot as the closure record's registration does — this also closes the same hole in
+  D3's type position (`x: Box<Q>` above `struct Q` answered *"field has no storage"*).
+  `instance_def` refuses a `never` argument.
+  Found on the way and fixed (pre-existing on main, `hit-by:loft`): a struct field's value
+  and a vector literal's element are parsed through `parse_operators`, which never met
+  `expression()`'s check that a name READ resolves — a bare unknown name there read
+  *"Cannot assign unknown(0)"*, *"`main_vector<unknown>` never resolved"*, or NOTHING for a
+  collection field, whose in-place append then reached codegen (*"Incorrect var
+  undefined[65535]"*, an internal compiler error).  `known_var_or_type` now answers whether
+  it reported, both sites check and poison, `expression()` answers `never` for a name it
+  reported, and four cascades behind it are closed: a call on a poisoned argument
+  (*"Unknown function len"*), `+=` of a poisoned source, a vector field assigned a reported
+  name (said twice), a format width.  Exact-list tests in `tests/parse_errors.rs`.
+  Cells [inferred/](probes/inferred/) i01–i12 green on both backends under
+  `LOFT_STRICT_STORES` + `LOFT_POISON`, refusals [inferred-refused/](probes/inferred-refused/)
+  x01–x06 read by hand.  Corpus against D3: the new guard alone differs.
 
 ### D5 — a generic function over a generic struct  ·  M
 

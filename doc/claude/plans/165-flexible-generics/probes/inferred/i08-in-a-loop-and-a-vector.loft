@@ -1,0 +1,11 @@
+// D4 — built per iteration and appended: the first element infers, the rest take the
+// vector's element type.
+// @EXPECT: 3|0,1,2
+struct Box<T> { v: T }
+fn main() {
+  v = [Box { v: 0 }];
+  for i in 1..3 { v += [Box { v: i }]; }
+  s = "";
+  for b in v { if s != "" { s += ","; } s += "{b.v}"; }
+  println("{len(v)}|{s}");
+}
