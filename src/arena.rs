@@ -111,6 +111,7 @@ pub const OWNER_FLD: u32 = 4;
 /// `index` is 1-based, so 0 is free to mean "no entry" in a bucket slot and in the free
 /// list. Both halves are arithmetic — `chunk_of` is a `leading_zeros`, not a search —
 /// because this runs on every lookup that hits.
+#[inline]
 #[must_use]
 pub fn locate(index: u32, stride: u32) -> (u32, u32) {
     debug_assert!(index >= 1, "arena index is 1-based; 0 means absent");
@@ -125,6 +126,7 @@ pub fn locate(index: u32, stride: u32) -> (u32, u32) {
 /// `i / BASE + 1` lands in `[2^k, 2^(k+1))` exactly when `i` is in chunk `k`, and the
 /// chunk number is that value's floor-log2.  Past [`CAP_CHUNK`] the chunks are equal,
 /// so it is a division.  Both are O(1) — this runs on every lookup that hits.
+#[inline]
 #[must_use]
 pub fn chunk_of(i: u32) -> u32 {
     if i < CAP_START {
@@ -135,6 +137,7 @@ pub fn chunk_of(i: u32) -> u32 {
 }
 
 /// The first 0-based slot number that chunk `k` holds.
+#[inline]
 #[must_use]
 pub fn first_index_of(k: u32) -> u32 {
     if k <= CAP_CHUNK {
@@ -297,7 +300,19 @@ pub fn slot(store: &Store, table: u32, index: u32, stride: u32) -> Option<(u32, 
 pub fn index_of(store: &Store, table: u32, rec: u32, off: u32, stride: u32) -> u32 {
     let dir = store.get_u32_raw(table, DIR_FLD);
     let cap = dir_capacity(store, dir);
-    for k in 0..cap {
+    // Newest chunk first: the one caller maps an entry it was JUST handed, and a fill
+    // hands them out of the last chunk — so the scan ends on its first compare where it
+    // used to walk every chunk before it (5 % of an insert, `analysis/keyed.md`).  The
+    // chunks past the cursor do not exist yet and are skipped, not compared.
+    // `NEXT_FLD` is the next 1-based index to hand out, so the newest slot is 0-based
+    // `next - 2`.
+    let next = store.get_u32_raw(table, NEXT_FLD);
+    let top = if next < 2 {
+        0
+    } else {
+        (chunk_of(next - 2) + 1).min(cap)
+    };
+    for k in (0..top).rev().chain(top..cap) {
         if store.get_u32_raw(dir, DIR0 + 4 * k) == rec {
             return first_index_of(k) + (off - SLOT0) / stride + 1;
         }

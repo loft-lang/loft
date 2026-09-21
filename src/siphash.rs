@@ -225,6 +225,7 @@ impl SipHasher13 {
     }
 
     /// The 64-bit digest. Does not consume the hasher, matching `Hasher::finish`.
+    #[inline]
     #[must_use]
     pub fn finish(&self) -> u64 {
         let mut state = self.state;

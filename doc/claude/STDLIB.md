@@ -316,8 +316,8 @@ there, and too much costs the unused tail until the vector is copied.
 
 **`reserve(h, n)` also takes a `hash`**, where it sizes the bucket table instead
 of an element block. Here it pays on the plain shape — no interleaving needed —
-because a hash rebuilds its whole table every time it crosses a 0.75 load factor,
-re-bucketing every entry it already holds:
+because a hash rebuilds its whole table every time it is half full, re-bucketing
+every entry it already holds:
 
 ```loft
 cache: hash<Entry[key]> = [];
@@ -325,11 +325,13 @@ reserve(cache, expected_rows);
 for row in rows { cache += Entry { key: row.id, value: row.value }; }
 ```
 
-Filling a million-entry hash rebuilds the table 17 times without it. Measured on
-`--native-release`, 1M `integer` keys: **618 → 352 ms**, and the finished table is
-**half the size** (10.2 MB → 5.3 MB) — the growth ladder doubles *past* the
-trigger and lands at load 0.42, while a reserved table sits at the 0.75 it asked
-for. So it buys time and memory at once.
+Filling a million-entry hash rebuilds the table 18 times without it. Measured on
+`--native-release`, 1M `integer` keys (2026-09-21): **240 → ~120 ms**, and the finished
+table is **a third smaller** (11.5 MB → 8.0 MB) — the growth ladder doubles *past* the
+trigger and lands at load 0.35, while a reserved table sits at the 0.5 it asked for. So
+it buys time and memory at once.  (Until 2026-09-21 the trigger was 0.75: tables were
+half this size, a miss walked five buckets where it now walks one, and a lookup at this
+size was 10 % slower on a hit and 35 % on a miss — `bench/portal/analysis/keyed.md`.)
 
 Same contract as the vector form: capacity only. It never changes `len(h)`, the
 records, or which keys are found; an `n` the table already covers does nothing;

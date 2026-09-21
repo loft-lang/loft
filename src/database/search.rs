@@ -33,6 +33,45 @@ fn compare(a: &Content, b: &Content) -> Ordering {
     }
 }
 
+/// What [`Stores::remove`] reads of a collection's type row: its kind, and the content id
+/// where the removal needs the element's width.  `Copy`, so the row is never cloned.
+#[derive(Clone, Copy)]
+enum RemoveKind {
+    /// `vector` / `sorted`: elements inline, removed by position.
+    Inline(u16),
+    /// `array` / `ordered`: 4-byte record ids, removed by the record they name.
+    ByReference,
+    Hash,
+    Index,
+    Trie,
+    Radix,
+    NotACollection,
+}
+
+impl RemoveKind {
+    fn of(parts: &Parts) -> Self {
+        match parts {
+            Parts::Sorted(c, _) | Parts::Vector(c) => Self::Inline(*c),
+            Parts::Ordered(_, _) | Parts::Array(_) => Self::ByReference,
+            Parts::Hash(_, _) => Self::Hash,
+            Parts::Index(_, _, _) => Self::Index,
+            Parts::Trie(_, _) => Self::Trie,
+            Parts::Radix(_, _) => Self::Radix,
+            Parts::Base
+            | Parts::Struct(_)
+            | Parts::Enum(_)
+            | Parts::EnumValue(_, _)
+            | Parts::Byte(_, _)
+            | Parts::Short(_, _)
+            | Parts::ShortRaw(_, _)
+            | Parts::Int(_, _)
+            | Parts::IntRaw(_, _)
+            | Parts::DbRef
+            | Parts::ChildRec(_) => Self::NotACollection,
+        }
+    }
+}
+
 impl Stores {
     #[allow(dead_code)]
     pub(super) fn get_key(&self, fld: &DbRef, db: u16, keys: &[(u16, bool)]) -> Vec<Content> {
@@ -748,6 +787,18 @@ impl Stores {
         }
     }
 
+    /// Release a hash entry the unlink just named: through the bucket value it answered
+    /// where there is one, and by looking the entry up (`hash::free_entry`) where the table
+    /// did not hold it — which keeps an entry that was allocated but never filed from
+    /// leaking, as before.
+    fn free_hash_entry(&mut self, data: &DbRef, rec: &DbRef, slot: u32) {
+        if slot == 0 {
+            hash::free_entry(data, rec, &mut self.allocations);
+        } else {
+            hash::free_slot(data, slot, &mut self.allocations);
+        }
+    }
+
     /// Take `existing` out of the collection for the insert that displaces it — the
     /// second half of [`Self::dedup_keyed`], for an insert that found its duplicate on
     /// its own walk (`hash::probe_for_insert`, `tree::add`) and so never looked it up.
@@ -763,11 +814,11 @@ impl Stores {
         content_tp: u16,
         secondary: bool,
     ) {
-        self.remove(data, existing, db);
+        let slot = self.unlink(data, existing, db);
         if !secondary {
             self.remove_claims(existing, content_tp);
             if matches!(self.types[db as usize].parts, Parts::Hash(_, _)) {
-                hash::free_entry(data, existing, &mut self.allocations);
+                self.free_hash_entry(data, existing, slot);
             } else {
                 self.store_mut(data).delete(existing.rec);
             }
@@ -804,16 +855,13 @@ impl Stores {
     /// [`Stores::remove_vector_at`] is the by-INDEX twin; [`Stores::remove`] below is the
     /// UNLINK half both of them share, and is deliberately not this.
     pub fn remove_owned(&mut self, data: &DbRef, rec: &DbRef, db: u16) {
-        let parts = self.types[db as usize].parts.clone();
-        let content = match &parts {
-            Parts::Vector(c)
-            | Parts::Array(c)
-            | Parts::Sorted(c, _)
-            | Parts::Ordered(c, _)
-            | Parts::Hash(c, _)
+        let (content, own_block, is_hash) = match &self.types[db as usize].parts {
+            Parts::Vector(c) | Parts::Array(c) | Parts::Sorted(c, _) => (*c, false, false),
+            Parts::Hash(c, _) => (*c, true, true),
+            Parts::Ordered(c, _)
             | Parts::Radix(c, _)
             | Parts::Trie(c, _)
-            | Parts::Index(c, _, _) => *c,
+            | Parts::Index(c, _, _) => (*c, true, false),
             // Not a collection: `remove` panics on these, and it stays the one
             // place that decides so.
             _ => {
@@ -832,14 +880,6 @@ impl Stores {
         // leak the record.  `Array` is left out deliberately: it is removed by
         // INDEX rather than by key, so `rec` reaches this function differently
         // and it has no test to move it on.
-        let own_block = matches!(
-            parts,
-            Parts::Hash(..)
-                | Parts::Index(..)
-                | Parts::Radix(..)
-                | Parts::Trie(..)
-                | Parts::Ordered(..)
-        );
         let rec_nr = rec.rec;
         if own_block {
             // Unlink BEFORE releasing the claims, which is the order
@@ -848,7 +888,7 @@ impl Stores {
             // look like owned children. Free first and it follows them into the
             // live siblings and takes the subtree with it — the whole
             // collection then reads back as "Item not found".
-            self.remove(data, rec, db);
+            let slot = self.unlink(data, rec, db);
             // Walk the element's owned children from the RECORD's payload
             // start, not from the position the caller navigated with (loft#718).
             //
@@ -882,9 +922,9 @@ impl Stores {
             // when the removal is spelled through this member it IS the free, so
             // taking the arena path leaked the record and everything it claimed.
             // `owns_entries` is the table's own answer to which case this is.
-            if matches!(parts, Parts::Hash(..)) && self.hash_owns_entries(data) {
+            if is_hash && self.hash_owns_entries(data) {
                 self.remove_claims(rec, content);
-                hash::free_entry(data, rec, &mut self.allocations);
+                self.free_hash_entry(data, rec, slot);
                 return;
             }
             let elem = DbRef {
@@ -1001,22 +1041,36 @@ impl Stores {
     When not in a structure.
     */
     pub fn remove(&mut self, data: &DbRef, rec: &DbRef, db: u16) {
-        let parts = self.types[db as usize].parts.clone();
+        self.unlink(data, rec, db);
+    }
+
+    /// [`Self::remove`], answering what a `hash` unlink learned on its way: the bucket
+    /// value that named the entry (0 for every other kind, and for an entry the table did
+    /// not hold).  The two callers that go on to RELEASE the entry hand it to
+    /// `hash::free_slot`, which otherwise scans the arena's directory to find it again.
+    fn unlink(&mut self, data: &DbRef, rec: &DbRef, db: u16) -> u32 {
+        // The KIND and its content id are all this reads of the type row.  Cloning the
+        // row's `Parts` — a `Hash`'s key list with it — and then the key descriptors again
+        // for the call below was three allocations per removal, a quarter of a `hash`
+        // removal's instructions (`bench/portal/analysis/keyed.md`, L7).  The descriptors
+        // are borrowed from `self.types` beside the `&mut self.allocations` the kinds
+        // write through: two fields, no copy.
+        let kind = RemoveKind::of(&self.types[db as usize].parts);
         // A NULL element is in no keyed view, so it leaves none — the LEAVE half of the
         // test `link_siblings` already applies on the ENTER half, through the same home
         // (`@FR-Col-Group`).  Only the keyed kinds ask: a by-value `vector<E?>` holds its
         // null slots as elements and removes them by position like any other.
         if matches!(
-            parts,
-            Parts::Hash(..) | Parts::Index(..) | Parts::Trie(..) | Parts::Radix(..)
+            kind,
+            RemoveKind::Hash | RemoveKind::Index | RemoveKind::Trie | RemoveKind::Radix
         ) && self.absent_nullable_record(self.content(db), rec)
         {
-            return;
+            return 0;
         }
-        match parts {
+        match kind {
             // BY-VALUE: elements sit inline in the container, so the element's
             // byte position IS its index.
-            Parts::Sorted(c, _) | Parts::Vector(c) => {
+            RemoveKind::Inline(c) => {
                 let size = u32::from(self.types[c as usize].size);
                 vector::remove_vector(
                     data,
@@ -1038,10 +1092,10 @@ impl Stores {
             // records with a keyed sibling, so removing one entry of a linked
             // group through the keyed member must unlink the vector's slot too,
             // and by-value arithmetic sent every such removal to slot 0.
-            Parts::Ordered(_, _) | Parts::Array(_) => {
+            RemoveKind::ByReference => {
                 let vec_rec = self.store(data).get_u32_raw(data.rec, data.pos);
                 if vec_rec == 0 {
-                    return;
+                    return 0;
                 }
                 let len = self.store(data).get_u32_raw(vec_rec, 4);
                 let slot =
@@ -1050,38 +1104,46 @@ impl Stores {
                     vector::remove_vector(data, 4, i64::from(i), &mut self.allocations);
                 }
             }
-            Parts::Hash(_, _) => {
-                let keys = self.keys(db).to_vec();
-                hash::remove(data, rec, &mut self.allocations, &keys);
+            RemoveKind::Hash => {
+                return hash::remove(
+                    data,
+                    rec,
+                    &mut self.allocations,
+                    &self.types[db as usize].keys,
+                );
             }
-            Parts::Index(_, _, _) => {
+            RemoveKind::Index => {
                 let left = self.fields(db);
-                let keys = self.keys(db).to_vec();
-                tree::remove(data, rec, left, &mut self.allocations, &keys);
+                tree::remove(
+                    data,
+                    rec,
+                    left,
+                    &mut self.allocations,
+                    &self.types[db as usize].keys,
+                );
             }
-            Parts::Trie(_, _) => {
-                let keys = self.keys(db).to_vec();
-                crate::trie_db::remove(data, rec, &mut self.allocations, &keys);
+            RemoveKind::Trie => {
+                crate::trie_db::remove(
+                    data,
+                    rec,
+                    &mut self.allocations,
+                    &self.types[db as usize].keys,
+                );
             }
-            Parts::Radix(_, _) => {
-                let keys = self.keys(db).to_vec();
-                crate::radix_db::remove(data, rec, &mut self.allocations, &keys);
+            RemoveKind::Radix => {
+                crate::radix_db::remove(
+                    data,
+                    rec,
+                    &mut self.allocations,
+                    &self.types[db as usize].keys,
+                );
             }
-            Parts::Base
-            | Parts::Struct(_)
-            | Parts::Enum(_)
-            | Parts::EnumValue(_, _)
-            | Parts::Byte(_, _)
-            | Parts::Short(_, _)
-            | Parts::ShortRaw(_, _)
-            | Parts::Int(_, _)
-            | Parts::IntRaw(_, _)
-            | Parts::DbRef
-            | Parts::ChildRec(_) => panic!(
+            RemoveKind::NotACollection => panic!(
                 "remove called on non-collection type: {} (db={})",
                 self.types[db as usize].name, db
             ),
         }
+        0
     }
 
     // Output the hash content and validate its content.

@@ -727,6 +727,50 @@ pub fn OpGetRecord(
     get_record_lookup(cell, data, db_tp, key).or_null()
 }
 
+/// [`OpGetRecord`] for a `hash<T[k]>` whose ONE key is an integer, the key handed over as
+/// the value (`@FR-R-TypedKeyed`): what `--native` emits where the collection's kind and
+/// its key's are read off the schema at generation time.
+///
+/// The general entry learns both again per lookup — a `Content` built to be matched
+/// apart, the collection's type row dispatched on, a `FastKey` chosen and re-dispatched —
+/// which after the probe walk itself was cut to ~1.2 buckets had become most of a lookup.
+/// This one goes straight to `hash::find_long`.  Everything that is not the plain answer
+/// — no record, an absent collection, a width `find_long` does not list, a miss on a
+/// collection a lazy source is bound to — is the general entry's, reached with the same
+/// key, so the two cannot answer differently.
+///
+/// # Panics
+/// Under `LOFT_KEYED_VERIFY=1`, when the typed lookup and the general one disagree.
+pub fn OpGetHashLong(
+    cell: &std::cell::UnsafeCell<Stores>,
+    data: DbRef,
+    db_tp: i32,
+    key: i64,
+) -> DbRef {
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    if data.rec != 0
+        && !vector::is_absent_collection(&data, &stores.allocations)
+        && let [k] = stores.keys(db_tp as u16)
+        && let Some(found) = crate::hash::find_long(&data, &stores.allocations, k, key)
+        && (found.rec != 0 || !stores.lazy_bound(&data))
+    {
+        if crate::keys::keyed_verify() {
+            let general = stores.find(&data, db_tp as u16, &[crate::keys::Content::Long(key)]);
+            assert!(
+                (general.rec, general.pos) == (found.rec, found.pos),
+                "LOFT_KEYED_VERIFY: the typed lookup answers {}+{} where the general one \
+                 answers {}+{}",
+                found.rec,
+                found.pos,
+                general.rec,
+                general.pos,
+            );
+        }
+        return found.or_null();
+    }
+    OpGetRecord(cell, data, db_tp, &[crate::keys::Content::Long(key)])
+}
+
 /// [`OpGetRecord`]'s lookup: resident first, then the lazy source.  Every miss arm answers
 /// a reference with no record and the caller spells it as a value.
 fn get_record_lookup(

@@ -44,6 +44,7 @@ use std::sync::OnceLock;
 /// bucket → O(N²) insertion / lookup (the 2011/2012 Python / Ruby / PHP /
 /// Java / Node hash-DoS, CVE-2011-4815 et al.).  An attacker cannot
 /// pre-compute collisions without knowing the hash's seed.
+#[inline]
 #[must_use]
 fn seeded_hasher(seed: u64) -> SipHasher13 {
     let mut hasher = SipHasher13::new();
@@ -2540,6 +2541,15 @@ impl FastKey<'_> {
     ///
     /// Each arm is the equality half of the identically-numbered arm of
     /// [`compare_key`]; keep them together when either changes.
+    ///
+    /// `#[inline(always)]` so `hash::find_fast` — which builds the variant as a constant per
+    /// arm — folds this to the one read and compare its arm is.  As a hint it was declined
+    /// (the text arm makes the body look large), and the out-of-line copy re-dispatched on
+    /// the kind per bucket at three times the cost of the read.
+    // Measured: as a hint this was declined, and the out-of-line copy re-dispatched on the
+    // key's kind per bucket or per comparison (`bench/portal/analysis/keyed.md`, L5).
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     #[must_use]
     pub fn matches(&self, s: &Store, rec: u32, base: u32) -> bool {
         match self {
@@ -2561,7 +2571,14 @@ impl FastKey<'_> {
     ///
     /// Each arm is the identically-numbered arm of [`compare_key`] with its match taken
     /// outside the search that repeats it; keep the two together when either changes.
-    #[inline]
+    ///
+    /// `#[inline(always)]`, like [`Self::matches`] and for its reason: as a hint it was
+    /// declined, and a search then paid two calls per comparison (`order_key` → `order`,
+    /// ~50 instructions) for a read and a compare.
+    // Measured: as a hint this was declined, and the out-of-line copy re-dispatched on the
+    // key's kind per bucket or per comparison (`bench/portal/analysis/keyed.md`, L5).
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     #[must_use]
     pub fn order(&self, s: &Store, rec: u32, base: u32) -> Ordering {
         match self {
@@ -2696,7 +2713,10 @@ pub fn fast_order_of<'a>(rec: &DbRef, stores: &'a [Store], keys: &[Key]) -> Opti
 impl FastOrder<'_> {
     /// How the key orders against the record at `(rec, base)` of `s` — the answer
     /// [`key_compare`] gives for the same pair.
-    #[inline]
+    // Measured: as a hint this was declined, and the out-of-line copy re-dispatched on the
+    // key's kind per bucket or per comparison (`bench/portal/analysis/keyed.md`, L5).
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     #[must_use]
     pub fn compare(&self, s: &Store, rec: u32, base: u32) -> Ordering {
         let c = self.key.order(s, rec, base);
@@ -2718,7 +2738,10 @@ impl FastOrder<'_> {
 /// How lookup `key` orders against `record`: through `fast` where the search resolved one,
 /// through [`key_compare`] otherwise — the ONE comparison a keyed search makes, so the
 /// pre-resolved form and its verification cannot be spelled differently per search.
-#[inline]
+// Measured: as a hint this was declined, and a search then paid a call per comparison
+// (`bench/portal/analysis/keyed.md`, L5).
+#[allow(clippy::inline_always)]
+#[inline(always)]
 #[must_use]
 pub fn order_key(
     fast: Option<&FastOrder>,
@@ -2740,7 +2763,10 @@ pub fn order_key(
 /// [`order_key`] for an INSERT, whose key is the new record's own: how `rec` orders
 /// against `other`, through `fast` (resolved from `rec` by [`fast_order_of`]) or through
 /// [`compare`].
-#[inline]
+// Measured: as a hint this was declined, and a search then paid a call per comparison
+// (`bench/portal/analysis/keyed.md`, L5).
+#[allow(clippy::inline_always)]
+#[inline(always)]
 #[must_use]
 pub fn order_record(
     fast: Option<&FastOrder>,
@@ -2885,6 +2911,7 @@ pub fn get_simple(record: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<Simple>
     result
 }
 
+#[inline]
 #[must_use]
 pub fn hash(rec: &DbRef, stores: &[Store], keys: &[Key], seed: u64) -> u64 {
     let mut hasher = seeded_hasher(seed);
@@ -2895,6 +2922,17 @@ pub fn hash(rec: &DbRef, stores: &[Store], keys: &[Key], seed: u64) -> u64 {
     hasher.finish()
 }
 
+/// [`key_hash`] of a key that is ONE integer value — the same digest, for a caller that
+/// holds the value and not a `Content` of it (`hash::find_long`).
+#[inline]
+#[must_use]
+pub fn long_hash(value: i64, seed: u64) -> u64 {
+    let mut hasher = seeded_hasher(seed);
+    hasher.write_i64(value);
+    hasher.finish()
+}
+
+#[inline]
 #[must_use]
 pub fn key_hash(key: &[Content], seed: u64) -> u64 {
     let mut hasher = seeded_hasher(seed);
@@ -2908,6 +2946,7 @@ pub fn key_hash(key: &[Content], seed: u64) -> u64 {
     hasher.finish()
 }
 
+#[inline]
 fn hash_ref(r: &DbRef, stores: &[Store], key: &Key, p: u32, hasher: &mut SipHasher13) {
     let s = store(r, stores);
     match key.type_nr.abs() {

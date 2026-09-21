@@ -13,11 +13,16 @@
 //   * the searches that ORDER — an `index` descent, a `sorted` / `ordered` binary search —
 //     compare through a comparator resolved once (`keys::FastOrder`);
 //   * an `index` point lookup stops at the equal key (`tree::find_exact`), and an `index`
-//     insert finds its duplicate on the descent it makes anyway (`tree::add`).
+//     insert finds its duplicate on the descent it makes anyway (`tree::add`);
+//   * (L5-L7) a table is rebuilt at half full and walked through a slot decoder read once
+//     (`hash::Entries`, `hash::probe`); `--native` emits a lookup by one integer key as the
+//     typed `OpGetHashLong` (`@FR-R-TypedKeyed`); a removal recognises its entry by decoding
+//     its chain and clones nothing (`Entries::names`, `hash::free_slot`).
 //
 // None of that may change a value, a length or an order, so every cell states the answer by
-// hand and the file is run three ways by `tests/keyed_fast_paths.rs`: as built, with
-// `LOFT_NO_FAST_ORDER=1 LOFT_NO_ONE_PROBE_INSERT=1` (the general paths), and with
+// hand and the file is run three ways by `tests/keyed_fast_paths.rs`: as built, with every
+// switch of the pass set (`LOFT_NO_FAST_ORDER`, `LOFT_NO_ONE_PROBE_INSERT`,
+// `LOFT_NO_HALF_LOAD`, `LOFT_NO_TYPED_KEYED` — the general paths), and with
 // `LOFT_KEYED_VERIFY=1`, which checks every fast answer against the general one as it is
 // made and panics on a disagreement.
 //
@@ -40,8 +45,13 @@
 //   * `tree::find_exact` descending the wrong way -> 5 cells fail: `_index_integer`
 //     ("1 of 30"), `_index_descending`, `_index_text`, `_index_compound`, and
 //     `_hash_narrow_keys` through the index beside its hash.
-//   Under `LOFT_KEYED_VERIFY=1` each of the three panics at its first disagreement instead,
-//   naming both answers.  The fourth lever is guarded elsewhere: `Stores::lazy_bound`
+//   * (L7) `hash::hash_rec_pos` never recognising its entry -> 6 cells fail:
+//     `_hash_remove_reinsert` ("ten removed: len 30") and the five displacement cells,
+//     which unlink through the same walk;
+//   * (L6) `hash::find_long` hashing the wrong value -> the native run fails, the
+//     interpreter is untouched, and `LOFT_NO_TYPED_KEYED=1` passes — the switch isolates it.
+//   Under `LOFT_KEYED_VERIFY=1` each panics at its first disagreement instead, naming both
+//   answers.  The fourth lever is guarded elsewhere: `Stores::lazy_bound`
 //   answering "unbound" for every collection fails the three `lazy_*` tests of
 //   `tests/store_persist_loft.rs`, which bind a real source — no cell here can, and a
 //   miss on an UNBOUND collection is what every cell below already asserts.

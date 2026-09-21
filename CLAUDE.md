@@ -987,7 +987,19 @@ levers of the same pass carry no switch because they have no second answer to bi
 miss on a collection with no lazy binding answers at once (`Stores::lazy_bound`, a lookup
 loop that misses half the time −20 %), and a whole word fed to the hasher on a word boundary
 is one inline round (`SipHasher13::write_u64`, digest pinned by `siphash_std_parity`).
-`bench/portal/analysis/keyed.md` has the ledger and what is left (L5–L7).
+**`LOFT_NO_HALF_LOAD=1`** (runtime, BOTH backends) rebuilds a `hash` table at three quarters
+full again instead of at half — a writer's policy no reader assumes, so stores written under
+either read under both; with it off a miss walks ~1 bucket where it walked 5 at the old
+threshold (removal −25 %, the vector + hash group −22 %, fill −21 %), for ~3.6 bytes an entry
+more bucket array — and is the bisect step for a `hash` whose table size matters.
+**`LOFT_NO_TYPED_KEYED=1`** (`@FR-R-TypedKeyed`, generation time, `--native` only) emits a
+lookup in a `hash` with ONE integer key as the general `OpGetRecord` again — with it off it
+is `OpGetHashLong`, the key handed over as the integer it is, with no `Content` built, no
+type-row dispatch and the walk compiled for the key's kind (613 → 444 instructions a lookup,
+`hash_find` −13 %) — and is the first bisect step for a wrong or missing record out of such
+a lookup on native; `LOFT_KEYED_VERIFY=1` answers every typed lookup through the general
+entry too, and checks a removal's recognised slot against the entry's own index.
+`bench/portal/analysis/keyed.md` has the ledger and what is left.
 **`LOFT_RELEASE_PASS_PROBE=1`** (generation time) is a MEASUREMENT INSTRUMENT, never a
 build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal
 division emits the processor's wrapping operator and every float comparison the plain

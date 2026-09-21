@@ -1054,6 +1054,28 @@ two-walk form still — it owns those answers — and `LOFT_NO_ONE_PROBE_INSERT=
 for every insert.  Measured on 5,000 integer keys: a fill −37 %
 (`bench/portal/analysis/keyed.md`).
 
+### What a walk over the buckets holds, and what it does not
+
+* **`Entries`** — the loop-invariant half of decoding a bucket slot (the arena's directory,
+  its capacity, the stride), read once per walk by `find`, `probe_for_insert`,
+  `rehash_into` and `remove`.  Valid while nothing appends a chunk, which none of them does.
+* **`probe`** — the walk for a pre-resolved key, compiled once per key KIND
+  (`find_fast`, `find_long`): inside one arm the comparison is a read and a compare.
+  `FastKey::matches` / `order` are `#[inline(always)]` because as hints they were declined,
+  and an out-of-line comparator re-dispatched on the kind per bucket.
+* **`home_bucket`** — the ONE place a digest becomes a bucket number, `digest % count`.
+  It is a 64-bit division on every lookup's critical path, priced at 7–10 % of a
+  cache-resident lookup, and it stays: a multiply-shift reduction would move every entry
+  of every stored hash, and an exact reciprocal needs a per-table number the header has no
+  word for.  Both are a format break (`crate::placement::HASH`).
+* **A removal** recognises its entry by DECODING the slots on its chain (`Entries::names`)
+  and answers the bucket value that named it, which `free_slot` releases — so it never
+  maps a record back to an arena index (`arena::index_of`, a directory scan it used to
+  make twice).  Its back-shift computes round-the-table distances with a compare and an
+  add where it had three `%` per entry walked, and `Stores::remove` reads a `Copy` kind off
+  the type row instead of cloning the row and the key descriptors (three allocations per
+  removal, a quarter of its instructions).
+
 ### Entries live in a chunked arena, not one record each (@PLN135 arc H)
 
 A bucket slot holds a **1-based arena index**, not a record number. Entries sit packed at
@@ -1381,13 +1403,20 @@ written without meaning a group; there is no diagnostic for it yet (loft#926).
 
 ### Probing and Load Factor
 
-Collision resolution is **linear probing**: on collision, advance slot index by 1 (wrapping). The load factor threshold is:
+Collision resolution is **linear probing**: on collision, advance slot index by 1 (wrapping). The load factor threshold is (`hash::is_full`):
 
 ```rust
-(length * 2 / 3) + RESERVED_WORDS >= room
+length + RESERVED_WORDS >= room
 ```
 
-which is `length >= 0.75 * elms`. When it is met after an insertion, the table is rehashed
+which is `length >= elms / 2` — a table is rebuilt at HALF full.  It was three quarters
+(`length * 2 / 3` in the same test) until 2026-09-21.  A probe here is a dependent read of
+the entry, with no fingerprint to reject on, and a miss walks to the first empty bucket:
+8.5 buckets at 0.75 against 2.5 at 0.5 — a table just under the old threshold measured
+2.30 key compares a hit and 5.36 a miss.  The price is the bucket array, 4 bytes a slot:
+~10.7 bytes an entry averaged over a doubling instead of ~7.1.  It is a WRITER's policy:
+no reader assumes a load, so stores written under either rule read under both, and
+`LOFT_NO_HALF_LOAD=1` restores the old one.  When it is met after an insertion, the table is rehashed
 into a new record with doubled capacity, and the arena's four fields travel with it —
 leaving them behind would strand every chunk and hand out index 1 again on top of a live
 entry. `reserve(h, n)` sizes the table so this never fires while filling to `n`; it claims

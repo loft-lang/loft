@@ -957,6 +957,10 @@ pub struct Output<'a> {
     /// `@FR-R-Range` — the per-definition range facts ([`range::range_vars`]), computed on
     /// the first integer op a function emits and cached beside the non-sentinel ones.
     range_cache: HashMap<u32, std::rc::Rc<HashMap<u16, range::Range>>>,
+    /// `LOFT_NO_TYPED_KEYED=1` — a lookup in a `hash` with one integer key is emitted as the
+    /// general `OpGetRecord` again instead of `OpGetHashLong` (`@FR-R-TypedKeyed`); the
+    /// bisect step for a wrong or missing record out of such a lookup on native.
+    pub typed_keyed_disabled: bool,
     /// `LOFT_NO_RANGE_ARITH=1` — every integer operator keeps its checked template, as
     /// before `@FR-R-Range`; the bisect step for a wrong integer value on native where the
     /// range proof admitted a plain operator.  `LOFT_HOIST_VERIFY=1` is the falsifier.
@@ -2044,6 +2048,7 @@ impl<'a> Output<'a> {
             release_pass_probe: std::env::var("LOFT_RELEASE_PASS_PROBE").is_ok_and(|v| v != "0"),
             nn_cache: HashMap::new(),
             range_cache: HashMap::new(),
+            typed_keyed_disabled: std::env::var("LOFT_NO_TYPED_KEYED").is_ok_and(|v| v != "0"),
             range_arith_disabled: std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0"),
             range_suspended: 0,
             leaf_cache: HashMap::new(),

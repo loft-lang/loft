@@ -4,9 +4,10 @@ Analysis of the portal's slowest complete class (`hash`, `sorted`, `index`; ever
 the ceiling), taken 2026-09-21 on x86-64 from `bench/15_stdlib_keyed`.  It names the
 mechanisms, prices what could be priced, and ranks what to build.
 
-**L1–L4 are BUILT (2026-09-21)** — see [§ What L1–L4 bought](#what-l1l4-bought): the class
-median went 6.02× → 4.31×, no row is within the bar yet, and L5–L7 are what is left.  The
-sections before it describe the tree those four levers were built against.
+**L1–L7 are BUILT (2026-09-21)** — see [§ What L1–L4 bought](#what-l1l4-bought) and
+[§ What L5–L7 bought](#what-l5l7-bought): the class median went 6.02× → 4.31× → **3.49×**.
+No row is within the bar yet; [§ What is left](#what-is-left) says what stands between.
+The sections before those describe the tree the levers were built against.
 
 ## The regime: instruction-bound, not memory-bound
 
@@ -204,14 +205,107 @@ unrelated `index<T[…]>` changes what `sorted<T[…]>` does with a repeated key
 and the general paths answer the same; the cells here pin neither.  Filed as loft#1572,
 with a verified workaround (remove the key first).
 
+## What L5–L7 bought
+
+Against the L1–L4 build, same box and lane:
+
+| routine | L1–L4 | L5–L7 | | × Rust |
+|---|---:|---:|---:|---|
+| `hash_remove` | 1,289 µs | 970 µs | **−25 %** | 4.62 → 3.47 |
+| `grouped_fill_find` | 1,035 | 804 | **−22 %** | 4.59 → 3.53 |
+| `hash_fill` | 711 | 563 | **−21 %** | 3.87 → 3.07 |
+| `hash_update` | 199 | 171 | −14 % | 3.85 → 3.30 |
+| `hash_find` | 418 | 364 | −13 % | 4.03 → 3.51 |
+| `hash_text_keys` | 758 | 666 | −12 % | 5.62 → 5.01 |
+| `composite_hash` (consumer lane) | 696 | 478 | **−31 %** | 5.30 → 3.87 |
+| `index_fill_find` | 1,961 | 1,900 | −3 % | 3.31 → 3.20 |
+| `sorted_fill_walk` | 1,636 | 1,642 | 0 | 5.07 → 5.08 |
+
+* **L5 — the probe loop.**  A table is rebuilt at HALF full (`hash::is_full`; a writer's
+  policy, so no format break — `LOFT_NO_HALF_LOAD=1` restores 0.75).  The lane's table
+  went from load 0.72 to 0.25 and a lookup from 3.83 key compares to 1.22.  The
+  loop-invariant half of decoding a bucket slot is read once per walk (`hash::Entries`),
+  and the walk is compiled once per key kind (`hash::probe`, `find_fast`).
+  ⚠ What this pass learnt about `#[inline]`: as a HINT it was declined for
+  `FastKey::matches` and for the order comparator, and the out-of-line copies re-dispatched
+  on the key's kind per bucket at three times the cost of the read — with the hint alone
+  a lookup got SLOWER per probe while making a third as many.  They are
+  `#[inline(always)]` now; the same fix took `index` 6,211 → 5,413 instructions an item.
+* **L6 — the typed lookup** (`@FR-R-TypedKeyed`, `--native`): a lookup in a `hash` with one
+  integer key is emitted as `OpGetHashLong`, the key handed over as a value: **613 → 444
+  instructions** a lookup (Rust: 177).  `LOFT_NO_TYPED_KEYED=1` restores the general call.
+  The general entry had become most of a lookup once L5 cut the walk to ~1.2 buckets.
+* **L7 — removal.**  The ledger found what the estimate had not: `Stores::remove` and
+  `remove_owned` CLONED the collection's type row and its key descriptors, three
+  allocations per removal, and a removal mapped its record back to an arena index twice
+  (`arena::index_of`, a scan of the chunk directory) — once to find its bucket, once to
+  free its slot.  Now the kind is a `Copy` enum read off the row, the entry is recognised
+  by decoding the slots on its chain (`Entries::names`), the bucket value found is what
+  `hash::free_slot` releases, and the back-shift measures its distances without the three
+  divisions per entry it made.  "Carrying the home bucket" per entry, as this lever was
+  first worded, would need a wider slot — a format break — and half load already cut the
+  cluster a removal re-hashes to about one entry.
+
+**What half load costs, measured where it could hurt — a million entries.**  Same binary,
+`LOFT_NO_HALF_LOAD=1` for the old rule, shuffled keys:
+
+| 1 M `integer` keys | rebuilt at 0.75 | rebuilt at 0.5 |
+|---|---:|---:|
+| lookup, hit | 121–140 ns | **108–126 ns** |
+| lookup, miss | 130–151 ns | **88–101 ns** |
+| fill, grown | 182–221 ms | 240 ms |
+| fill, `reserve`d | 120–145 ms | 114–129 ms |
+| bucket table, grown | 5.8 MB (load 0.69) | 11.5 MB (load 0.35) |
+| bucket table, `reserve`d | 5.3 MB | 8.0 MB |
+
+So it is a trade with a loser: an UNRESERVED fill of a very large hash is ~20 % slower
+(one more rebuild, of a bigger table) and the bucket array doubles — 3–6 bytes an entry
+beside the ~16+ the entry itself takes.  Lookups win at both sizes, and `reserve(h, n)`
+removes the fill's half of the price.  The hash-size cell
+(`tests/scripts/pln110-size-hash.loft`) exists to notice exactly this kind of change and
+did NOT: it sampled at 3, 13 and 39 entries, which both rules answer alike.  It samples
+both sides of every rebuild now, and fails at its first rung under the old rule.
+
+**Declined, with its price.**  The digest becomes a bucket number by `digest % count`, a
+64-bit division on every lookup's critical path.  Priced by a temporary probe (a
+multiply-shift reduction in its place): `hash_update` −10 %, `hash_find` −7 %, removal,
+text keys and the group −3 %.  It is part of the on-disk placement contract — the probe
+moves every entry of every stored hash, and an exact reciprocal needs a per-table number
+the table header has no word for — so it stays, in ONE place now (`hash::home_bucket`)
+where a future format revision would change it.
+
+**Not built: the append half of L6.**  A keyed append walks the type table per element
+(`nullable_field_parent`, `sub_record_type`, `field_ref`, twice — once to mint, once to
+finish): ~300 of an insert's 2,100 instructions, est. −8 % on `hash_fill`.  On `--native`
+its emission runs through the mint and push rewrites (`hoist::mint_path`), so a typed
+entry there is an emitter change with those rewrites' interplay to prove; a per-field
+memo in the runtime would serve both backends but has to be invalidated by every path
+that re-lays a type out.  Neither is a change to make at the end of a pass.
+
+**Verification.**  The cells (`tests/scripts/158-keyed-fast-paths.loft`) pass on both
+backends as built, with all four switches set, and under `LOFT_KEYED_VERIFY=1`, which now
+also answers every typed lookup through the general entry and checks a removal's
+recognised slot against the entry's own index; the interpreter's script corpus passes
+under it.  Two more sabotages: a removal that never recognises its entry fails six cells
+(`test_158_hash_remove_reinsert` "len 30", and every displacement — it unlinks through
+the same walk); a typed lookup hashing the wrong value fails the native run, panics under
+the verify naming both answers, and passes under `LOFT_NO_TYPED_KEYED=1`.
+
 ## What is left
 
-| | lever | now |
+A lookup is 444 instructions against Rust's 177, and ~3.5× in time — the time ratio is
+the higher one because the walk is a chain of DEPENDENT loads (table header → bucket →
+chunk directory → entry) behind a division, where hashbrown reads one control group.
+
+| | lever | what it is worth |
 |---|---|---|
-| L5 | the probe loop: maximum load → ~0.55, the compare inlined per key kind, no `div` | the largest remaining term of a lookup: 5.4 compares per miss at the lane's load |
-| L6 | `--native` typed entry points for a statically known `hash<T[integer]>` | the `Content` slice, `Stores::find`'s dispatch, the type-table walk of every append (~900 instr) |
-| L7 | removal carries the home bucket | `hash_remove` still re-hashes its cluster |
-| — | `sorted`'s insert | a gap buffer or a chunked layout; the `memmove` is the row |
+| — | the division in `home_bucket` | 7–10 % of a lookup; a store-format revision |
+| — | a typed keyed APPEND (L6's other half) | ~300 of 2,100 instructions an insert |
+| — | the arena's bookkeeping on insert (`arena::alloc` 176, `index_of` 93, the zeroing `memset` 90) | ~17 % of an insert; `index_of` disappears if the mint hands its index to the finish |
+| — | the table rebuild re-hashing every entry from its record (`keys::hash`, ~1.4 per insert amortised) | ~11 % of an insert; hashbrown pays this too |
+| — | `sorted`'s insert | a gap buffer or a chunked layout; the `memmove` is 50 % of the row |
+| — | `index` as a red-black tree of store records | `put` + `balance` are 45 % of the row; a B-tree of inline keys is the structural answer |
+| — | text keys | the key is COPIED into the record per insert and hashed through the byte-slice `write`; the twin borrows `&str` |
 
 ## Two findings about the measurement itself
 

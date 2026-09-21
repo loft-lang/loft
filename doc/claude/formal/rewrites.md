@@ -988,6 +988,50 @@ to re-derive at run time, so `(R-Switch)`'s second form applies: cells
 in `Output::collect_pre_evals_inner`, the null decl in `Output::emit_null_dbref`,
 `codegen_runtime::lazy_split`.
 
+### A lookup by one integer key takes the typed entry
+
+```
+  (R-TypedKeyed)  c[k] where c's type is `hash<T[f]>` — a HASH, with exactly ONE key
+                  field, of an integer width the hash's pre-resolved equality lists
+                  (`integer`, `long`, `i32`, the unsigned 4-byte form) — is emitted
+                  as the typed lookup `OpGetHashLong(c, type, k)` with `k` handed over
+                  as the integer it is.  It answers what `OpGetRecord(c, type, [k])`
+                  answers, by construction: the same digest of the same value under
+                  the table's seed, the same home bucket, the same walk to the first
+                  empty bucket, the same equality on the key field; and everything
+                  that is not that plain answer — a holder with no record, an ABSENT
+                  collection, a miss on a collection a lazy source is bound to — is
+                  handed to the general entry with the same key, so there is no case
+                  the two can answer differently.  Every other collection kind
+                  (`index`, `sorted`, a vector), a text key, a compound key, and a
+                  width the pre-resolved forms do not list keep the general call.
+```
+
+**In words.** `(R-Escape)` is not needed here — nothing is removed or reshaped, the
+lookup is the same lookup.  What changes is how much of it is re-derived per call.  The
+general entry is handed a slice of tagged key values and a type number, and learns from
+them, per lookup, what the schema said once at generation time: that the collection is a
+hash (a dispatch over its type row), that the key is one integer (a `Content` built to be
+matched apart, a pre-resolved key chosen and then re-dispatched per bucket).  After the
+walk itself was cut to ~1.2 buckets a lookup (`bench/portal/analysis/keyed.md`, L5) that
+prologue had become most of a lookup: 613 instructions, of which the hash and the walk
+are about 250.  The typed entry is the table's header reads, the digest inline, and the
+walk compiled for the key's kind: **613 → 444 instructions a lookup**, `hash_find` −13 %,
+`hash_update` −14 % on x86-64.  The condition is read off the schema the emitter already
+bakes type numbers from (`Output::stores`), and the runtime re-reads the key's position
+and kind from the same row, so the emitter asserts only the SHAPE (hash, one key, integer)
+and never an offset.  Switch `LOFT_NO_TYPED_KEYED`.  The falsifier is
+`LOFT_KEYED_VERIFY=1`, which answers every typed lookup through the general entry as well
+and panics where the two differ (a typed lookup sabotaged to hash the wrong value fails
+the native run of the cells, panics under the verify naming both answers, and passes
+under the switch).  Cells `tests/scripts/158-keyed-fast-paths.loft`; pin
+`tests/keyed_fast_paths.rs::a_hash_lookup_by_one_integer_key_takes_the_typed_entry`.
+Sites: `OpGetRecordEmitter` (`src/generation/ops/key_ops.rs`), `Output::emit_long_key`,
+`codegen_runtime::OpGetHashLong`, `hash::find_long`.  The APPEND half — a keyed append
+that skips the per-element type-table walk the same way — is not built: its emission
+runs through the mint and push rewrites (`hoist::mint_path`), and it is priced at ~300 of
+an insert's 2,100 instructions.
+
 ### A result vector adopts the return buffer
 
 ```
