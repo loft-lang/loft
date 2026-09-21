@@ -2304,41 +2304,102 @@ fn walk_lined(code: &Value, line: u32, f: &mut impl FnMut(&Value, u32)) {
     }
 }
 
-/// @PLN130 F9 — does argument `arg` name an ELEMENT of container `c`?
+/// @PLN130 F9 (@FR-B-Ref-Reshape) — does argument `arg` name an ELEMENT inside `place`, the
+/// container the callee disturbs?
 ///
-/// Both ways an author can write it, because the two reach the check in different shapes:
+/// Every way an author can write it, because they reach the check in different shapes:
 ///
 /// - **bound earlier** (`t = v[2]; f(t, v)`) — `t` arrives as a plain `Var` and carries `v` in
-///   its type deps, which is the borrow relation itself;
+///   its type deps, which is the borrow relation itself.  For a whole container that is the
+///   answer.  For a container in a FIELD the deps name only the variable, so the local's own
+///   bindings say which field: one that resolves to another field names nothing the callee
+///   moves, and one that does not resolve is taken to name it — refusing is the direction that
+///   costs a program a rewrite, where admitting costs it its meaning;
 /// - **written into the call** (`f(v[2], v)`) — the parser does not leave that inline. It lifts
 ///   the projection into a temp first, so the argument is
 ///   `Insert([Set(t, OpGetVector(v, …)), OpCreateStack(t)])` and the alias is a `Set` INSIDE the
-///   argument expression. Reading only the argument's value misses it, which is how the issue's
-///   own repro (`shift(v[2], v)`) went unreported while `t = v[2]; shift(t, v)` did not.
+///   argument expression. Reading only the argument's value misses it, which is how loft#779's
+///   own repro (`shift(v[2], v)`) went unreported while `t = v[2]; shift(t, v)` did not;
+/// - **not a variable at all** — a `?`-discharged element is a block whose tail names the temp
+///   the block bound, and the NULLABLE element read a format string passes
+///   (`OpGetVectorNullable`) is a second spelling of the same projection.  Both are answered by
+///   [`names_element_in`] over the WHOLE argument, not its tail (loft#1554).
 ///
 /// The lifted `Set` is looked up by the temp the argument actually passes rather than by
-/// searching the expression for any projection of `c`: `f(w[v[0].n], v)` mentions `v[0]` but
-/// passes an element of `w`, and a search would refuse it.
-fn arg_references_element_of(arg: &Value, c: u16, function: &Function, data: &Data) -> bool {
+/// searching the expression for any projection of the container: `f(w[v[0].n], v)` mentions
+/// `v[0]` but passes an element of `w`, and a search would refuse it.
+fn arg_references_element_in(
+    arg: &Value,
+    place: ParamPlace,
+    body: &Value,
+    function: &Function,
+    data: &Data,
+) -> bool {
     let Value::Var(t) = arg_target(arg, data) else {
-        return base_container_var(arg_target(arg, data), data) == Some(c);
+        let whole = match arg.unspan() {
+            Value::Call(cs, cargs) if data.def(*cs).name() == "OpCreateStack" => {
+                cargs.first().unwrap_or(arg)
+            }
+            _ => arg,
+        };
+        return names_element_in(whole, place, function, data);
     };
-    if *t == c {
+    if *t == place.0 {
         return false;
     }
-    if function.tp(*t).depend().contains(&c) {
-        return true;
-    }
+    // A lifting preamble inside the argument binds the temp it passes.
     let mut lifted = false;
     arg.walk(&mut |n| {
         if let Value::Set(s, rhs) = n
             && *s == *t
-            && base_container_var(rhs.unspan(), data) == Some(c)
+            && names_element_in(rhs, place, function, data)
         {
             lifted = true;
         }
     });
-    lifted
+    if lifted {
+        return true;
+    }
+    if !function.tp(*t).depend().contains(&place.0) {
+        return false;
+    }
+    if place.1 == ANY_FIELD {
+        return true;
+    }
+    let mut resolved = true;
+    let mut names = false;
+    body.walk(&mut |n| {
+        let Value::Set(s, rhs) = n else { return };
+        if *s != *t || matches!(rhs.unspan(), Value::Null) {
+            return;
+        }
+        let places = value_view_places(rhs, data, function);
+        if places.is_empty() {
+            resolved = false;
+        }
+        names |= places.iter().any(|p| same_place(*p, place));
+    });
+    names || !resolved
+}
+
+/// Does `value` name an ELEMENT inside `place` — a read that crossed an element of the
+/// container there, rather than the container's own slot (`&cv.data`, which a growth repoints
+/// and the reader re-reads, `(B-Ref-Alias)`'s in-versus-to)?
+///
+/// Through [`value_view_places`], the one home for "which places does this value view", so a
+/// `?`-discharged or a nullable element read is the projection it is.  A value that names no
+/// place answers no: a scalar, a fresh record and a call's result alias nothing the callee
+/// can move.
+fn names_element_in(value: &Value, place: ParamPlace, function: &Function, data: &Data) -> bool {
+    if matches!(
+        crate::use_analysis::view_source_place_indexed(data, value),
+        Some((_, false))
+    ) {
+        return false;
+    }
+    value_view_places(value, data, function)
+        .iter()
+        .any(|p| same_place(*p, place))
 }
 
 /// The value an argument ultimately passes: the tail of any lifting preamble, with the
@@ -2625,21 +2686,50 @@ fn def_reshape_refusals(
         });
     }
     // (2) — a call handed both a container and a reference into it.
+    //
+    // The callee's half is `disturbed` (@PLN164 C3's fact): every place it grows or removes
+    // from through a parameter — a plain or a `&` one, a field inside one, at any depth.  This
+    // half read `removed` alone until loft#1554, which carries one spelling of one event (a
+    // removal through a bare `&vector` parameter), so a plain vector, a struct field and every
+    // GROWTH compiled and read the element that moved.  `removed` is still unioned in: it is
+    // what `LOFT_NO_CALLEE_DISTURB=1` leaves, and a removal both facts carry is one place.
+    // The places are visited in a fixed order so the report does not depend on hashing, and a
+    // removal is reported where one place is both, because a renumbering is the one the author
+    // can act on at the container.
     walk_lined(&def.code, def.position.line, &mut |node, line| {
         let Value::Call(callee, args) = node else {
             return;
         };
         let cdef = data.def(*callee);
-        let Some(params) = removed.get(callee) else {
+        let mut places: Vec<(ParamPlace, ViewCause)> = disturbed
+            .and_then(|d| d.get(callee))
+            .map(|m| m.iter().map(|(p, c)| (*p, *c)).collect())
+            .unwrap_or_default();
+        if let Some(params) = removed.get(callee) {
+            places.extend(
+                params
+                    .iter()
+                    .map(|k| ((*k, ANY_FIELD), ViewCause::Reshaped)),
+            );
+        }
+        if places.is_empty() {
             return;
-        };
-        for k in params {
-            let k = usize::from(*k);
-            let Some(Value::Var(c)) = args.get(k).map(|a| peel_stack_ref(a, data)) else {
+        }
+        places.sort_by_key(|((slot, inner), cause)| {
+            (*slot, *inner, !matches!(cause, ViewCause::Reshaped))
+        });
+        let mut reported: HashSet<(usize, usize)> = HashSet::new();
+        for ((slot, inner), cause) in places {
+            let k = usize::from(slot);
+            let Some(place) = args
+                .get(k)
+                .and_then(|a| call_arg_place(a, data))
+                .and_then(|base| compose_param_place(base, inner))
+            else {
                 continue;
             };
             for (j, arg) in args.iter().enumerate() {
-                if j == k {
+                if j == k || reported.contains(&(k, j)) {
                     continue;
                 }
                 // Only a parameter that can NAME an element is a hazard; a scalar or a text
@@ -2651,22 +2741,36 @@ fn def_reshape_refusals(
                     Type::RefVar(inner) => inner.as_ref(),
                     other => other,
                 };
-                if !matches!(ptp, Type::Reference(_, _) | Type::Enum(_, true, _)) {
+                // `@FR-N-Shape` — `heap_def_nr`, which peels `τ?`: a nullable record or
+                // struct-enum parameter aliases its element exactly as the dense one does.
+                if ptp.heap_def_nr().is_none() {
                     continue;
                 }
-                if !arg_references_element_of(arg, *c, function, data) {
+                if !arg_references_element_in(arg, place, &def.code, function, data) {
                     continue;
                 }
+                reported.insert((k, j));
+                let (does, why, after) = match cause {
+                    ViewCause::Grown => (
+                        "grows",
+                        "and a container that outgrows its allocation moves every element",
+                        "growth",
+                    ),
+                    _ => (
+                        "removes from",
+                        "which renumbers the remaining elements",
+                        "removal",
+                    ),
+                };
                 out.push(ReshapeRefusal {
                     file: file.clone(),
                     line,
                     message: format!(
                         "cannot pass both `{cname}` and a reference into it to `{fname}` — \
-                         `{fname}` removes from `{cparam}`, which renumbers the remaining \
-                         elements while `{vparam}` still references one, so a write through \
-                         `{vparam}` would be lost. Pass the INDEX instead and read the element \
-                         again after the removal",
-                        cname = function.name(*c),
+                         `{fname}` {does} `{cparam}`, {why} while `{vparam}` still references \
+                         one, so a write through `{vparam}` would be lost. Pass the INDEX \
+                         instead and read the element again after the {after}",
+                        cname = function.name(place.0),
                         fname = cdef.original_name(),
                         cparam = cdef.attributes[k].name,
                         vparam = attr.name,

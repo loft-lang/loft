@@ -393,6 +393,53 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 **OPEN: 2.**
 
+* **D-bind-49** *(opened 2026-09-21, CLOSED 2026-09-21; loft#1554)* — the CALL-SITE half of
+  `(B-Ref-Reshape)` read one spelling of one event.  A call handed both a container and a
+  reference into it (`shift(v[2], v)`) was refused only where the callee REMOVES through a bare
+  `&vector` parameter — `removed_params_map`, built from `OpRemoveVector`/`OpRemove` over a `Var`
+  typed `RefVar`.  The rule exempts no spelling (*"A plain PARAMETER is NOT exempt"*), `(B-Disturb)`
+  names four events *"wherever they happen"*, and `calls.md` `F-ParamHeap` states the call-site
+  reach in so many words — so every other shape was a deviation, and a silent one: the program
+  compiled and read or wrote the element that moved, identically on both backends.
+  **Measured**, 14 hazard cells and 9 controls, on the build before the cure: ONE hazard refused
+  (`t = &v[2]; shift(t, v)`, and that by the FRAME half).  The other 13 compiled — a plain
+  `vector` container (a lost write: `33` for `99`), a struct FIELD as the container, the field
+  itself handed in (`shift(b.items[2], b.items)`), a GROWTH of either (`11` for `99`; the issue's
+  `0` once the vector reallocates), a growth two frames down, a `&vector` growth, a `&` element
+  parameter, an element bound earlier from a field, a reference INTO an element
+  (`shift(v[1].inner, v)`), a struct-enum element, a `?`-discharged element, and the `&vector`
+  removal itself once the call sat inside a FORMAT STRING, where the element argument is the
+  nullable read `OpGetVectorNullable` — a second spelling the element test did not know.
+  **Cure:** the call-site half reads `disturbed_params_map` (@PLN164 C3's fact, the one the frame
+  half and the materialise already read), unioned with `removed` so `LOFT_NO_CALLEE_DISTURB=1`
+  keeps the narrower refusal; the argument's place is composed with the callee's
+  (`call_arg_place` · `compose_param_place`), and the element test names places through
+  `value_view_places` (`arg_references_element_in`, `names_element_in`) — a local bound earlier
+  from a field is resolved by its own bindings, an unresolved one is taken to name the container.
+  No new fact and no new predicate.  The message gained the growth form (*"`stash` grows `bag`,
+  and a container that outgrows its allocation moves every element…"*); the removal form is
+  byte-identical.
+  **What keeps it from over-reaching, each a compiling control with a hand-computed answer on
+  both backends:** a SIBLING field's growth (`100`), a callee disturbing ANOTHER container
+  parameter (`94`), a SCALAR read out of an element (`35`), an element of another container
+  (`123`), a callee that only reads, scalar elements, and the index workaround the message names.
+  A call through a FN-REF is the one edge the refusal cannot follow; it compiles and loses the
+  write (`33`), as before.
+  **Blast radius (measured, not predicted):** `loft --check` over the 1628-file corpus names
+  **0** files (the harness proven able to fail on a hazard cell first); over the consumer sources
+  (crawler, dryopea, moros, zero-trust-shared-files, loft-libs-*) every file that parses names 0,
+  and a syntactic scan of all 325 for a call handed an indexed element beside its container or a
+  prefix of it finds ONE site, whose element argument is an integer (`hud.itex[i] ?? 0`).
+  ⚠ **How it stayed open while reading CLOSED.**  This was cured once, on 2026-09-17, and the
+  cure was lost in a JOIN: two streams had each numbered a D-bind-47 the same day, the join kept
+  the other stream's `scopes.rs` and merged the PROSE — so D-bind-48's *"Two shapes the call-site
+  half also missed"* paragraph below and `calls.md` both described a call-site half that read
+  `value_view_places` while the code read `removed`, the six tests were gone, and the issue
+  closed on a `Fixes` trailer with `main` still answering `2 2 0` on its own repro.  Nothing
+  gated the difference: a register entry is prose, and the merged tree's guards were the other
+  stream's.  The check that found it is the cheap one — run the issue's repro on the joined
+  tree — and it belongs to every join that squashes a stream carrying a `Fixes`.
+
 * **D-bind-48** *(opened 2026-09-17, CLOSED 2026-09-17)* — `(B-Ref-Reshape)`'s CALLEE clause was
   never implemented for a GROWTH, so a disturbance one frame down did not refuse.  The rule states
   the reach outright — *"The disturbance may be in this frame or in anything the frame CALLS"* —
