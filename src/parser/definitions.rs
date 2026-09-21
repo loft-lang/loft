@@ -4707,8 +4707,15 @@ impl Parser {
         // `re_resolve_call` substitutes, and the result was read from a
         // slot nobody wrote: the call returned EMPTY on `--interpret` —
         // exit 0, no diagnostic — and did not compile on `--native`.
+        //
+        // HIDDEN, as the concrete method's buffer is (`text_return` marks it) and as the
+        // `__retbuf` below is: a signature's arity counts only what a caller writes, and
+        // `(G-Sat)` compares the stub's against the interface method's.  Left visible, a
+        // bounded generic calling another bounded generic at a variable spelled differently
+        // (`outer<U: Named>` → `inner<T: Named>(x)`) read the stub of every text-returning
+        // method as one parameter too many and refused `U` as "missing" it.
         if matches!(t_ret_type.base(), crate::data::Type::Text(_)) {
-            self.data.add_attribute(
+            let a = self.data.add_attribute(
                 &mut self.lexer,
                 t_stub_nr,
                 "__work_1",
@@ -4716,6 +4723,7 @@ impl Parser {
                     crate::data::Deps::none(),
                 ))),
             );
+            self.data.definitions[t_stub_nr as usize].attributes[a].hidden = true;
         }
         // The @PLAN59 twin of the I9-text arm: a concrete method
         // returning Reference / Vector / struct-Enum carries the
