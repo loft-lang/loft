@@ -10110,7 +10110,7 @@ impl Parser {
             // source the generic was written in, as its other calls were.  A member returning
             // another type than the body was typed with is refused naming it; a nested
             // generic (a type still a variable) re-stamps through the same call.
-            Value::Block(bl) if bl.name == Self::TV_SELECT => self.lower_set_call(*bl),
+            Value::Block(bl) if bl.name == Self::TV_SELECT => self.lower_set_call(&bl),
             // A template lambda, non-capturing: the instance calls its own instance of it.
             Value::FnRef(d, w, _)
                 if w == u16::MAX && d >= 0 && self.is_template_lambda(d as u32) =>
@@ -10225,7 +10225,7 @@ impl Parser {
     }
 
     /// The [`Parser::TV_SELECT`] arm of [`Parser::rewrite_generic_type_defaults`].
-    fn lower_set_call(&mut self, bl: crate::data::Block) -> Value {
+    fn lower_set_call(&mut self, bl: &crate::data::Block) -> Value {
         let expected = bl.result.clone();
         let mut source = u16::MAX;
         let mut home = self.data.source;
