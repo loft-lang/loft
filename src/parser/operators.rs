@@ -3990,7 +3990,11 @@ impl Parser {
                 let (v, t) = self.subparse_default(&format!("{name} {{}}"), tp);
                 self.cur_type_var = saved.0;
                 self.cur_type_var_name = saved.1;
-                Some((v_block(vec![v], t.clone(), Self::TV_DEFAULT_BLOCK), t))
+                // The marker's `result` is the type the default is FOR, which substitution
+                // turns into the concrete type the monomorph answers — the sub-parse's own
+                // type is not that on pass 1, where a template declared below its caller
+                // is first instantiated from (loft#1023).
+                Some((v_block(vec![v], tp.clone(), Self::TV_DEFAULT_BLOCK), t))
             }
             // A record defaults to `S{}` — every field defaulted, exactly the value a
             // bare `S{}` literal builds (`has_default` has already verified each field

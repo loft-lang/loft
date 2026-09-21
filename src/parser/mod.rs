@@ -7679,7 +7679,7 @@ impl Parser {
             concrete,
             new_returned,
         );
-        self.fill_monomorph_body(d_nr, new_code, &tmpl_vars, &bindings, &concrete);
+        self.fill_monomorph_body(d_nr, new_code, &tmpl_vars, &bindings);
         // @FR-F-Ret / @FR-O-Oracle — a template's `-> T` record return carries NO deps: its
         // `ref_return` is skipped (the promotion is deferred to instantiation), so the
         // `MergeAttr` that writes `-> Ctr["x"]` on a concrete twin never ran, and the instance
@@ -7768,7 +7768,6 @@ impl Parser {
         code: Value,
         tmpl_vars: &Function,
         bindings: &[(u32, Type)],
-        concrete: &Type,
     ) {
         // Copy the variable table with substituted types.
         let mut vars = Function::copy(tmpl_vars);
@@ -7784,7 +7783,7 @@ impl Parser {
         // primitive value).  See `rewrite_generic_vector_writes`.
         let code = Self::rewrite_generic_vector_writes(
             code,
-            concrete,
+            bindings,
             &mut vars,
             &self.data,
             &mut self.database,
@@ -7799,7 +7798,7 @@ impl Parser {
         self.context = d_nr;
         let before_work: std::collections::HashSet<u16> =
             self.vars.work_texts().into_iter().collect();
-        let mut code = self.rewrite_generic_type_defaults(code, concrete);
+        let mut code = self.rewrite_generic_type_defaults(code);
         // loft#1175 — a work buffer minted by the rewrite above is not declared at the top
         // level, so `scopes::check` would scope it to the ARGUMENT block it appears in and
         // free it there, before the callee fills it.  Hoisting a top-level `Set` is the same
@@ -8020,7 +8019,7 @@ impl Parser {
                         &self.data,
                     );
                 }
-                self.fill_monomorph_body(d_nr, code, &tmpl_vars, &bindings, &concrete);
+                self.fill_monomorph_body(d_nr, code, &tmpl_vars, &bindings);
                 // The body is fresh, so every call it makes to ANOTHER generic has to be
                 // retargeted at that one's monomorph again.
                 self.instantiate_nested_generics(d_nr, &concrete);
@@ -8771,16 +8770,27 @@ impl Parser {
                 row_arg.insert(i as u32, at);
             }
         }
+        // `OpCopyRecord` carries two flag bits beside the row in its `tp`
+        // ([`crate::keys::COPY_TP_MASK`]): the row is looked up with them masked off and
+        // written back with them kept, or a flagged copy of a type built over the variable
+        // kept the template's row.
+        let copy_record = self.data.def_nr("OpCopyRecord");
+        let mask = i32::from(crate::keys::COPY_TP_MASK);
         let mut code = self.data.definitions[d_nr as usize].code.clone();
         code.map_nodes(&mut |v| {
             if let Value::Call(d, args) = v
                 && let Some(at) = row_arg.get(d)
             {
                 for &k in at {
-                    if let Some(Value::Int(row)) = args.get(k)
-                        && let Some((_, fresh)) = rows.iter().find(|(stale, _)| stale == row)
-                    {
-                        args[k] = Value::Int(*fresh);
+                    if let Some(Value::Int(row)) = args.get(k) {
+                        let (bare, flags) = if *d == copy_record {
+                            (row & mask, row & !mask)
+                        } else {
+                            (*row, 0)
+                        };
+                        if let Some((_, fresh)) = rows.iter().find(|(stale, _)| *stale == bare) {
+                            args[k] = Value::Int(*fresh | flags);
+                        }
                     }
                 }
             }
@@ -9575,7 +9585,7 @@ impl Parser {
         self.push_fnref_text_buffers(args, &work_vars);
     }
 
-    fn rewrite_generic_type_defaults(&mut self, val: Value, concrete: &Type) -> Value {
+    fn rewrite_generic_type_defaults(&mut self, val: Value) -> Value {
         match val {
             // loft#1020 — the deferred `== null` / `!= null`.  `bl.result` came through
             // type substitution, so it is the CONCRETE operand type by now, and
@@ -9587,7 +9597,7 @@ impl Parser {
             {
                 let negate = bl.name == Self::TV_NULLTEST_NE;
                 let mut bl = *bl;
-                let operand = self.rewrite_generic_type_defaults(bl.operators.remove(0), concrete);
+                let operand = self.rewrite_generic_type_defaults(bl.operators.remove(0));
                 let tp = bl.result.clone();
                 if let Some(test) = self.null_test(operand.clone(), &tp, negate) {
                     return test;
@@ -9609,7 +9619,7 @@ impl Parser {
             // call and stays deferred until an outer instantiation names a real type.
             Value::Block(bl) if bl.name == Self::TV_NULLCHECK => {
                 let mut bl = *bl;
-                let subject = self.rewrite_generic_type_defaults(bl.operators.remove(0), concrete);
+                let subject = self.rewrite_generic_type_defaults(bl.operators.remove(0));
                 let tp = bl.result.clone();
                 self.coalesce_not_null(&subject, &tp)
             }
@@ -9643,7 +9653,7 @@ impl Parser {
                 let list: Vec<Value> = bl
                     .operators
                     .into_iter()
-                    .map(|a| self.rewrite_generic_type_defaults(a, concrete))
+                    .map(|a| self.rewrite_generic_type_defaults(a))
                     .collect();
                 let types = [bl.result.clone()];
                 let mut out = Value::Null;
@@ -9654,8 +9664,12 @@ impl Parser {
                 }
                 out
             }
+            // loft#1016 — the deferred `x?` default.  `bl.result` came through type
+            // substitution, so it is the CONCRETE operand type by now, the way each sibling
+            // above reads its own.
             Value::Block(bl) if bl.name == Self::TV_DEFAULT_BLOCK => {
-                match self.monomorph_default(concrete) {
+                let tp = bl.result.clone();
+                match self.monomorph_default(&tp) {
                     Some((v, _)) => v,
                     // No default for this `T` — `has_default` refuses a bare reference,
                     // and the template could not have known.  Leave the site as parsed
@@ -9674,7 +9688,7 @@ impl Parser {
             Value::CallRef(v_nr, args) => {
                 let mut args: Vec<Value> = args
                     .into_iter()
-                    .map(|a| self.rewrite_generic_type_defaults(a, concrete))
+                    .map(|a| self.rewrite_generic_type_defaults(a))
                     .collect();
                 self.push_deferred_fnref_buffers(v_nr, &mut args);
                 Value::CallRef(v_nr, args)
@@ -9694,7 +9708,7 @@ impl Parser {
             mut other => {
                 other.for_each_child_mut(&mut |child| {
                     let taken = std::mem::replace(child, Value::Null);
-                    *child = self.rewrite_generic_type_defaults(taken, concrete);
+                    *child = self.rewrite_generic_type_defaults(taken);
                 });
                 other
             }
@@ -9865,8 +9879,8 @@ impl Parser {
     }
 
     pub(crate) fn rewrite_generic_vector_writes(
-        val: Value,
-        concrete: &Type,
+        mut val: Value,
+        bindings: &[(u32, Type)],
         vars: &mut crate::variables::Function,
         data: &Data,
         database: &mut Stores,
@@ -9879,86 +9893,56 @@ impl Parser {
         // OpFinishRecord parent_tp args must be patched from the
         // parametric T type-id to the concrete struct's type-ids,
         // otherwise the runtime reads the wrong record size.
-        if !Self::is_rewritable_vector_element_target(concrete) {
-            return val;
-        }
+        //
+        // Each write is rewritten against the binding of the type variable IT was lowered
+        // for ([`Self::element_write_binding`]), so a write of an ordinary record inside the
+        // template keeps its own row, and with several variables each write takes its own.  The walk is total (`for_each_child_mut`), and the
+        // operator lists of a block or loop are searched for triplets once their children
+        // are done.
+        val.for_each_child_mut(&mut |child| {
+            let taken = std::mem::replace(child, Value::Null);
+            *child = Self::rewrite_generic_vector_writes(taken, bindings, vars, data, database);
+        });
         match val {
-            Value::Block(bl) => {
-                let recursed: Vec<Value> = bl
-                    .operators
-                    .into_iter()
-                    .map(|v| Self::rewrite_generic_vector_writes(v, concrete, vars, data, database))
-                    .collect();
-                let rewritten =
-                    Self::rewrite_vector_write_triplets(recursed, concrete, vars, data, database);
-                Value::Block(Box::new(crate::data::Block {
-                    operators: rewritten,
-                    result: bl.result,
-                    name: bl.name,
-                    scope: bl.scope,
-                    var_size: bl.var_size,
-                }))
+            Value::Block(mut bl) => {
+                let ops = std::mem::take(&mut bl.operators);
+                bl.operators =
+                    Self::rewrite_vector_write_triplets(ops, bindings, vars, data, database);
+                Value::Block(bl)
             }
-            Value::Loop(lp) => {
-                let recursed: Vec<Value> = lp
-                    .operators
-                    .into_iter()
-                    .map(|v| Self::rewrite_generic_vector_writes(v, concrete, vars, data, database))
-                    .collect();
-                let rewritten =
-                    Self::rewrite_vector_write_triplets(recursed, concrete, vars, data, database);
-                Value::Loop(Box::new(crate::data::Block {
-                    operators: rewritten,
-                    result: lp.result,
-                    name: lp.name,
-                    scope: lp.scope,
-                    var_size: lp.var_size,
-                }))
-            }
-            Value::If(c, t, f) => Value::If(
-                Box::new(Self::rewrite_generic_vector_writes(
-                    *c, concrete, vars, data, database,
-                )),
-                Box::new(Self::rewrite_generic_vector_writes(
-                    *t, concrete, vars, data, database,
-                )),
-                Box::new(Self::rewrite_generic_vector_writes(
-                    *f, concrete, vars, data, database,
-                )),
-            ),
-            Value::Set(v, expr) => Value::Set(
-                v,
-                Box::new(Self::rewrite_generic_vector_writes(
-                    *expr, concrete, vars, data, database,
-                )),
-            ),
-            Value::Return(expr) => Value::Return(Box::new(Self::rewrite_generic_vector_writes(
-                *expr, concrete, vars, data, database,
-            ))),
-            Value::Drop(expr) => Value::Drop(Box::new(Self::rewrite_generic_vector_writes(
-                *expr, concrete, vars, data, database,
-            ))),
-            Value::Span(b) => {
-                let (pos, inner) = *b;
-                Value::Span(Box::new((
-                    pos,
-                    Self::rewrite_generic_vector_writes(inner, concrete, vars, data, database),
-                )))
+            Value::Loop(mut lp) => {
+                let ops = std::mem::take(&mut lp.operators);
+                lp.operators =
+                    Self::rewrite_vector_write_triplets(ops, bindings, vars, data, database);
+                Value::Loop(lp)
             }
             Value::Call(d, args) => {
-                let recursed: Vec<Value> = args
-                    .into_iter()
-                    .map(|a| Self::rewrite_generic_vector_writes(a, concrete, vars, data, database))
-                    .collect();
-                Self::rewrite_indexed_element_write(d, recursed, concrete, data, database)
+                Self::rewrite_indexed_element_write(d, args, bindings, data, database)
             }
-            Value::Insert(ops) => Value::Insert(
-                ops.into_iter()
-                    .map(|v| Self::rewrite_generic_vector_writes(v, concrete, vars, data, database))
-                    .collect(),
-            ),
             other => other,
         }
+    }
+
+    /// The binding a parametric element write stands for: the type variable whose record
+    /// row the write's `OpCopyRecord` was lowered against (`tp`, its flag bits masked off —
+    /// [`crate::keys::COPY_TP_MASK`]).  `None` for a write of anything else, so a record
+    /// appended or assigned inside the template keeps its own row, a `vector<T>` element of
+    /// a `vector<vector<T>>` (a row of its own) is not taken for `T`, and each of several
+    /// variables finds its own binding.  A variable with no row yet (`u16::MAX`) matches
+    /// nothing: the sentinel is shared by every unresolved row.
+    fn element_write_binding<'b>(
+        tp: i32,
+        bindings: &'b [(u32, Type)],
+        data: &Data,
+    ) -> Option<&'b Type> {
+        let mask = i32::from(crate::keys::COPY_TP_MASK);
+        bindings
+            .iter()
+            .find(|(holder, _)| {
+                let row = data.def(*holder).known_type();
+                row != u16::MAX && i32::from(row) & mask == tp & mask
+            })
+            .map(|(_, bound)| bound)
     }
 
     /// P241 fix (2026-05-11) — slice 2: integer-only.  Walks a Block's
@@ -10002,19 +9986,27 @@ impl Parser {
     /// independently — each triplet rewrites once.
     fn rewrite_vector_write_triplets(
         ops: Vec<Value>,
-        concrete: &Type,
+        bindings: &[(u32, Type)],
         vars: &mut crate::variables::Function,
         data: &Data,
         database: &mut Stores,
     ) -> Vec<Value> {
-        // Slice 3 covers all primitive vector-element targets
-        // (Integer/Text/Float/Single/Boolean/Character/Enum/Function +
-        // narrow-int variants).  P255 extends to struct T (Reference)
-        // by keeping OpCopyRecord and patching its tp arg.
-        if !Self::is_rewritable_vector_element_target(concrete) {
-            return ops;
+        // Register the element rows of each of the template's own variables up front, before
+        // any triplet is looked for — the order type rows are minted in is observable
+        // (native's `init()` replays it), and this is where they have always been minted.  An
+        // interface's associated type (a placeholder whose parent is the interface) mints its
+        // rows where a write of it is rewritten.
+        for (holder, bound) in bindings {
+            let parent = data.def(*holder).parent;
+            let associated = (parent as usize) < data.definitions.len()
+                && data.def_type(parent) == DefType::Interface;
+            if !associated && Self::is_rewritable_vector_element_target(bound) {
+                let content = data
+                    .vector_element_type(bound, database)
+                    .unwrap_or_else(|| database.db_type(bound, data));
+                database.vector(content);
+            }
         }
-        let is_struct_target = matches!(concrete, Type::Reference(_, _));
         // Resolve op def_nrs once — re-resolution per-triplet would
         // cost N lookups for a long Block.
         let new_record_d = data.def_nr("OpNewRecord");
@@ -10028,25 +10020,6 @@ impl Parser {
         {
             return ops; // missing op definitions — bail safely
         }
-        // Look up the concrete vector-element record type-id.
-        // Mirrors `vectors.rs:1532-1535` — `database.vector(content_db_type)`
-        // returns the synthetic vector<concrete> type id (registers
-        // it on first use; idempotent on subsequent calls).
-        // The element's STORAGE type from the one home every writer and reader of a vector
-        // element routes through — `Data::vector_element_type`, which the concrete `+=`
-        // append asks too (a narrow integer keeps its width, a struct is its record) — and
-        // the stride from the store that owns the layout, exactly as the concrete path sizes
-        // its `OpPreAllocVector` (`vectors.rs`: `database.size(known)`).  This used to
-        // re-derive the stride from the Type alone (`type_element_size`), summing a struct's
-        // fields and descending into a field of the struct's own type without end, and it
-        // was computed before any triplet was looked for — so EVERY generic instantiated at
-        // a self-referential struct died in the parser with a bare SIGSEGV, `fn id<T>(v: T)
-        // -> T? { v }` at `struct Node { …, next: reference<Node>? }` included (loft#1378).
-        let content_db_type = data
-            .vector_element_type(concrete, database)
-            .unwrap_or_else(|| database.db_type(concrete, data));
-        let concrete_vec_tp = i32::from(database.vector(content_db_type));
-        let elem_size = i32::from(database.size(content_db_type));
         // Walk operators looking for the triplet.  Build a new vec
         // with rewrites applied; copy unchanged ops verbatim.
         // Drain `ops` into a deque-like cursor so we can take owned
@@ -10076,9 +10049,69 @@ impl Parser {
                 copy_record_d,
                 finish_record_d,
             );
-            if let Some((elm_var, out_var, src_value)) = matched {
-                // Consume the matched triplet.
+            // Slice 3 covers all primitive vector-element targets
+            // (Integer/Text/Float/Single/Boolean/Character/Enum/Function +
+            // narrow-int variants).  P255 extends to struct T (Reference)
+            // by keeping OpCopyRecord and patching its tp arg.  The element type is the
+            // binding of the variable this triplet was lowered for — never the template's
+            // first variable by default.
+            let site = matched.as_ref().and_then(|(_, _, _, copy_tp)| {
+                Self::element_write_binding(*copy_tp, bindings, data)
+                    .filter(|bound| Self::is_rewritable_vector_element_target(bound))
+                    .cloned()
+            });
+            if let (Some((elm_var, out_var, src_value, _)), Some(concrete)) = (matched, site) {
                 buf.drain(0..3);
+                Self::emit_rewritten_triplet(
+                    &mut out,
+                    (elm_var, out_var, src_value),
+                    &concrete,
+                    vars,
+                    data,
+                    database,
+                    (new_record_d, copy_record_d, finish_record_d, pre_alloc_d),
+                );
+            } else {
+                // No triplet at this position — emit one op and slide.
+                out.push(buf.remove(0));
+            }
+        }
+        out
+    }
+
+    /// Emit the concrete shape of one matched parametric element-write triplet at the type
+    /// `concrete` — the four-op sequence documented on [`Self::rewrite_vector_write_triplets`].
+    fn emit_rewritten_triplet(
+        out: &mut Vec<Value>,
+        (elm_var, out_var, src_value): (u16, u16, Value),
+        concrete: &Type,
+        vars: &mut crate::variables::Function,
+        data: &Data,
+        database: &mut Stores,
+        (new_record_d, copy_record_d, finish_record_d, pre_alloc_d): (u32, u32, u32, u32),
+    ) {
+        let is_struct_target = matches!(concrete, Type::Reference(_, _));
+        // Look up the concrete vector-element record type-id.
+        // Mirrors `vectors.rs:1532-1535` — `database.vector(content_db_type)`
+        // returns the synthetic vector<concrete> type id (registers
+        // it on first use; idempotent on subsequent calls).
+        // The element's STORAGE type from the one home every writer and reader of a vector
+        // element routes through — `Data::vector_element_type`, which the concrete `+=`
+        // append asks too (a narrow integer keeps its width, a struct is its record) — and
+        // the stride from the store that owns the layout, exactly as the concrete path sizes
+        // its `OpPreAllocVector` (`vectors.rs`: `database.size(known)`).  This used to
+        // re-derive the stride from the Type alone (`type_element_size`), summing a struct's
+        // fields and descending into a field of the struct's own type without end, and it
+        // was computed before any triplet was looked for — so EVERY generic instantiated at
+        // a self-referential struct died in the parser with a bare SIGSEGV, `fn id<T>(v: T)
+        // -> T? { v }` at `struct Node { …, next: reference<Node>? }` included (loft#1378).
+        let content_db_type = data
+            .vector_element_type(concrete, database)
+            .unwrap_or_else(|| database.db_type(concrete, data));
+        let concrete_vec_tp = i32::from(database.vector(content_db_type));
+        let elem_size = i32::from(database.size(content_db_type));
+        {
+            {
                 // Patch the elm var's type back to `Reference(content_def_nr, [out_var])`.
                 // After `vars.substitute_type`, `Reference(T_d_nr, deps)` became
                 // `Type::<concrete>` (deps lost — primitive types don't carry deps).
@@ -10153,12 +10186,8 @@ impl Parser {
                         Value::Int(i32::from(u16::MAX)),
                     ],
                 ));
-            } else {
-                // No triplet at this position — emit one op and slide.
-                out.push(buf.remove(0));
             }
         }
-        out
     }
 
     /// P241 fix slice 2 — pattern-matches the parametric vector-element
@@ -10196,7 +10225,7 @@ impl Parser {
     fn rewrite_indexed_element_write(
         d: u32,
         args: Vec<Value>,
-        concrete: &Type,
+        bindings: &[(u32, Type)],
         data: &Data,
         database: &mut Stores,
     ) -> Value {
@@ -10207,6 +10236,16 @@ impl Parser {
         let Some(elem) = Self::element_write_destination(&args[1], data) else {
             return Value::Call(d, args);
         };
+        let Value::Int(copy_tp) = args[2].unspan() else {
+            return Value::Call(d, args);
+        };
+        let Some(concrete) = Self::element_write_binding(*copy_tp, bindings, data)
+            .filter(|bound| Self::is_rewritable_vector_element_target(bound))
+            .cloned()
+        else {
+            return Value::Call(d, args);
+        };
+        let concrete = &concrete;
         if Self::is_primitive_vector_element_target(concrete) {
             // The element's VALUE wrapper is stripped by `element_write_destination`: the
             // substitution wraps every rewritten element read for value use, and a write
@@ -10260,7 +10299,7 @@ impl Parser {
         new_record_d: u32,
         copy_record_d: u32,
         finish_record_d: u32,
-    ) -> Option<(u16, u16, Value)> {
+    ) -> Option<(u16, u16, Value, i32)> {
         // op0: Set(elm_var, Call(OpNewRecord, [Var(out_var), Int(_), Int(MAX)]))
         let (elm_var_set, out_var, _new_record_tp) = match op0.unspan() {
             Value::Set(elm, set_val) => {
@@ -10280,15 +10319,16 @@ impl Parser {
             }
             _ => return None,
         };
-        // op1: Call(OpCopyRecord, [src_value, Var(elm_var), Int(_)])
-        let src_value = match op1.unspan() {
+        // op1: Call(OpCopyRecord, [src_value, Var(elm_var), Int(copy_tp)])
+        let (src_value, copy_tp) = match op1.unspan() {
             Value::Call(d, args) => {
                 if *d == copy_record_d
                     && args.len() == 3
                     && let Value::Var(elm_in_copy) = args[1].unspan()
                     && *elm_in_copy == elm_var_set
+                    && let Value::Int(copy_tp) = args[2].unspan()
                 {
-                    args[0].clone()
+                    (args[0].clone(), *copy_tp)
                 } else {
                     return None;
                 }
@@ -10308,7 +10348,7 @@ impl Parser {
                     && *elm_in_finish == elm_var_set
                     && *fld == i32::from(u16::MAX)
                 {
-                    Some((elm_var_set, out_var, src_value))
+                    Some((elm_var_set, out_var, src_value, copy_tp))
                 } else {
                     None
                 }

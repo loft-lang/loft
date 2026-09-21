@@ -5415,7 +5415,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // handle size (4).  Integer/single (≥4) and the inner scalar append
             // (`in_t` not a vector) are untouched.
             let elem_known = lhs_known.unwrap_or_else(|| self.vector_of(in_t));
+            // Inside a template a vector over a type variable has no row yet (`vector_of`
+            // bakes the `u16::MAX` sentinel), so there is no content to size.
             let known_tp = if matches!(in_t, Type::Vector(_, _))
+                && elem_known != u16::MAX
                 && self.database.size(self.database.content(elem_known)) < 4
             {
                 self.database.vector(elem_known)
