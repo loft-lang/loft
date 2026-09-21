@@ -5128,6 +5128,16 @@ impl Parser {
         if matches!(is_type, Type::Never) {
             return true;
         }
+        // @FR-L-Ref — a `reference<E>` over a STRUCT-enum is a record pointer, and a value of
+        // that enum is a record (`Enum(E, true)`), so the value meets the slot as the pointer
+        // to its own record — the relation a struct value already has with `reference<S>`,
+        // where both sides are `Reference(S)`.  A PLAIN enum's value is a discriminant with no
+        // record to point at, so it is not admitted.
+        if let (Type::Enum(e, true, _), Type::Reference(r, _)) = (is_type, should)
+            && e == r
+        {
+            return true;
+        }
         let _ = code;
         // Struct-literal inline constructors are typed as Rewritten(Reference(...)); strip
         // the wrapper so method calls chained on the constructor are accepted correctly.

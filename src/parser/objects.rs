@@ -4016,6 +4016,11 @@ impl Parser {
                 }
                 self.expected = saved_expected;
                 self.amp_head = AmpHead::No;
+                // The field store below IS the binding a `reference<T>` field's `&` annotates,
+                // so the `&` is consumed here.  Left pending, it reached the enclosing
+                // binding (`b: Box = Hold { l: &leaf }`), which then read itself as `b = &…`,
+                // took the link marker and was never given a stack slot.
+                self.amp_pending = false;
                 t
             };
             // #330 / @FR-R-InPlaceLiteral — an initialiser that READS the place being
