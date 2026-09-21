@@ -1778,9 +1778,11 @@ impl Output<'_> {
         // surviving lazy segment's states a second time.
         let persistent_vars: std::collections::HashSet<u16> =
             persistent.iter().map(|(v, _)| *v).collect();
+        // Peeled (`@FR-N-Shape`): an `iterator<τ?>` is refused today, so the wrapper cannot
+        // reach this, but the channel is a question about the runtime SHAPE, which `τ?` shares.
         let channel_can_suspend = tuple_kinds(&yield_tp).is_none()
             && !matches!(
-                yield_tp,
+                yield_tp.base(),
                 Type::Function(..)
                     | Type::Reference(_, _)
                     | Type::Vector(_, _)
