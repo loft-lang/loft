@@ -1,0 +1,77 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1579 — a field typed `reference<E>` over a STRUCT-enum holds a pointer to a record of E.
+//
+// `(L-Ref)` makes a reference field a record pointer with no enum exception, and the cycle
+// refusal (*"Enum 'Expr' contains itself … use reference<Expr> to break the cycle"*) names that
+// field as its cure.  Two faults broke the cure: the value of a struct-enum (`Enum(E, true)`) had
+// no relation to `reference<E>` (`Reference(E)`), so every `&x` was refused with two types that
+// print alike; and a field's prefix `&` stayed pending past the field store, so an ANNOTATED local
+// built from such a literal read itself as a `&` binding and was given no stack slot.
+//
+// Axes this file MOVES:  the source of the pointer (a local, a vector element), the write route
+//                        (literal field, assignment after construction), the holder (a struct,
+//                        a variant of the same enum, a variant of another enum), the local's
+//                        annotation, and recursion depth (one and two levels).
+// Axes it HOLDS FIXED:   integer payloads; every value hand-computed.
+//
+// @falsified-at: bce473128 — interpret exit 1 -> 0, native exit 1 -> 0.
+//   CHANNEL: exit.  On the control the file does not compile: every `&x` into a `reference<E>`
+//   field is refused ("Cannot assign ref(Shape1579)[…] to field …").
+//   WITNESS: `SH1579 { s: &c }` refused where the file reads 12.
+//   HOLDS: leak, panic and free-refusal are clean on both trees.
+// @falsified-by: tests/falsified/1579-a-reference-to-an-enum-field-holds-its-record.patch — the same
+//   channels (interpret exit 1 -> 0, native exit 1 -> 0).
+
+enum Shape1579 { Circle { r: integer }, Sq { s: integer } }
+struct SH1579 { s: reference<Shape1579>? }
+
+enum Expr1579 { Lit { v: integer }, Add { l: reference<Expr1579>, r: reference<Expr1579> } }
+
+struct Leaf1579 { v: integer }
+enum Box1579 { Hold { l: reference<Leaf1579> }, Empty }
+enum Wrap1579 { Around { s: reference<Shape1579> }, Nothing }
+
+fn area1579(x: Shape1579) -> integer {
+  match x { Circle { r } => 3 * r * r, Sq { s } => s * s }
+}
+
+fn eval1579(e: Expr1579) -> integer {
+  match e { Lit { v } => v, Add { l, r } => eval1579(l) + eval1579(r) }
+}
+
+fn main() {
+  c: Shape1579 = Circle { r: 2 };
+  h = SH1579 { s: &c };
+  assert(area1579(h.s ?? c) == 12, "a pointer to a local: {area1579(h.s ?? c)}");
+
+  v: vector<Shape1579> = [Sq { s: 3 }];
+  e = SH1579 { s: &v[0] };
+  assert(area1579(e.s ?? c) == 9, "a pointer to an element: {area1579(e.s ?? c)}");
+  v[0] = Sq { s: 5 };
+  assert(area1579(e.s ?? c) == 25, "the field shares the element it points at: {area1579(e.s ?? c)}");
+
+  late = SH1579 { };
+  assert(late.s == null, "an omitted pointer is absent");
+  late.s = &c;
+  assert(area1579(late.s ?? v[0]) == 12, "assigned after construction: {area1579(late.s ?? v[0])}");
+
+  // The recursive enum the cycle refusal asks for, with ANNOTATED locals (the slot fault).
+  a: Expr1579 = Lit { v: 2 };
+  b: Expr1579 = Lit { v: 5 };
+  sum: Expr1579 = Add { l: &a, r: &b };
+  ten: Expr1579 = Lit { v: 10 };
+  top = Add { l: &sum, r: &ten };
+  assert(eval1579(sum) == 7, "one level: {eval1579(sum)}");
+  assert(eval1579(top) == 17, "two levels: {eval1579(top)}");
+
+  // Annotated struct-enum locals holding a pointer to a struct and to another enum.
+  leaf = Leaf1579 { v: 4 };
+  held: Box1579 = Hold { l: &leaf };
+  got = match held { Hold { l } => l.v, Empty => -1 };
+  assert(got == 4, "a variant holding a pointer to a struct: {got}");
+  w: Wrap1579 = Around { s: &c };
+  gw = match w { Around { s } => area1579(s), Nothing => -1 };
+  assert(gw == 12, "a variant holding a pointer to another enum: {gw}");
+}
