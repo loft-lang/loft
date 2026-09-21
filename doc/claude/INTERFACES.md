@@ -367,9 +367,10 @@ declared.
   supported. Interfaces are constraint annotations, not types.
 - **Composite interfaces / interface inheritance** — `interface A extends B` is
   not supported; declare the methods directly in the interface that needs them.
-- **Associated types** — no `type Item` inside an interface.
 - **Default method implementations** — no bodies inside interface declarations.
-- **Interface inheritance** — no `interface A extends B`.
+- **Naming a companion type outside its interface** — an associated type is in scope
+  (§ Associated types below), but `Self.<Name>` is spellable only inside the declaring
+  interface's body, so a generic cannot write `S.Rows` in its own signature.
 - **Implementing an interface for a type you didn't define** — satisfaction is
   structural; if the method exists with the right signature, it counts. There is
   no orphan rule.

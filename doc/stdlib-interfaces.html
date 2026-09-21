@@ -23,6 +23,54 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="libraries.html">Libraries</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <span class="cur">Interfaces</span> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>Interfaces</h1>
 <article>
+<div class="item">
+<pre><code>pub interface Ordered {
+  op &lt; (self: Self, other: Self) -&gt; boolean
+}</code></pre>
+<p>Standard interfaces for bounded generic functions. A type satisfies an interface by defining the required operator or method. Types that support the `&lt;` comparison operator. Satisfied by integer, single, float, text, and any user type defining OpLt.</p>
+<p>`boolean` is NOT among them, deliberately: it satisfies Equatable below and has no ordering, so `false &lt; true` is a refusal rather than a convention the language picks for you.  A program that wants it says so — `(a as integer) &lt; (b as integer)`.  The same line bounds how null is ordered: that applies to the ordered types only, and a boolean null still compares with `==` like every other scalar.</p>
+<p>ONE method is all a type has to define: inside a generic bounded by this, `&gt;`, `&lt;=` and `&gt;=` all derive from `&lt;` — `a &gt; b` is `b &lt; a`, `a &lt;= b` is `!(b &lt; a)`, `a &gt;= b` is `!(a &lt; b)`.  Each evaluates its operands exactly once.</p>
+</div>
+<div class="item">
+<pre><code>pub interface Equatable {
+  op == (self: Self, other: Self) -&gt; boolean
+}</code></pre>
+<p>Types that support the `==` equality operator. Satisfied by integer, single, float, text, boolean, and user types defining OpEq.</p>
+<p>`!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.</p>
+</div>
+<div class="item">
+<pre><code>pub interface Addable {
+  op + (self: Self, other: Self) -&gt; Self
+}</code></pre>
+<p>Types that support the `+` addition operator, returning the same type. Satisfied by integer, single, float, and user types defining OpAdd.</p>
+</div>
+<div class="item">
+<pre><code>pub interface Numeric {
+  op * (self: Self, other: Self) -&gt; Self
+  op - (self: Self) -&gt; Self
+}</code></pre>
+<p>Types that support `*` and `-` (unary negation). Separate from `Addable` so a generic can ask for the fewest operators it needs. Satisfied by integer, single, float, and user types defining OpMul and OpMin.</p>
+<p>Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, so keeping them apart is a choice about the shipped surface rather than a limitation: adding a requirement to `Numeric` would take satisfaction away from every user type that provides `OpMul` and unary `OpMin` today, which a compatible release may not do.</p>
+</div>
+<div class="item">
+<pre><code>pub interface Subtractable {
+  op - (self: Self, other: Self) -&gt; Self
+}</code></pre>
+<p>Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and user types defining a two-operand OpMin.</p>
+<p>A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `&lt;T: Numeric + Subtractable&gt;` gets negation and subtraction together from two interfaces that each name `OpMin`.</p>
+</div>
+<div class="item">
+<pre><code>pub interface Scalable {
+  fn scale(self: Self, factor: integer) -&gt; integer
+}</code></pre>
+<p>Types that support integer scaling via a `scale` method. Uses a method (not `op *`) because a `&lt;T: Numeric + Scalable&gt;` would then need two signatures of one name from ONE bound set, which is refused. Two SEPARATE generics may each bound their own `T` by an interface declaring the same method differently — a header binds its own type variable. User types satisfy Scalable by defining `fn scale(self: T, factor: integer) -&gt; integer`.</p>
+</div>
+<div class="item">
+<pre><code>pub interface Printable {
+  fn to_text(self: Self) -&gt; text
+}</code></pre>
+<p>Types that can be converted to text via a `to_text` method. User types satisfy Printable by defining `fn to_text(self: T) -&gt; text`.</p>
+</div>
 
   </article>
 <script src="search-index.js"></script>

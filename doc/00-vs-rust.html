@@ -118,14 +118,13 @@ let xor  = a ^ b;          // bitwise XOR</code></pre>
 <p class="down"><strong>Downside</strong> The <code>**</code> operator is loft-specific — Rust has no exponentiation operator and reaches for methods instead (<code>.pow()</code>, <code>.powi()</code>, <code>.powf()</code>), so the muscle memory does not transfer. And <code>^</code> is XOR in both languages, never exponentiation — a trap for anyone reaching for it as a power operator out of habit.</p>
 </div>
 
-<h2 id="loops">5. No <code>loop</code> keyword — use <code>while</code> or <code>for + break</code></h2>
+<h2 id="loops">5. No <code>loop</code> keyword — an infinite loop is <code>while true</code></h2>
 <div class="compare">
 <div>
   <p class="lang-label loft-label">Loft</p>
   <pre><code><span class="kw">while</span> !<span class="fn-call">done</span>() { <span class="fn-call">step</span>(); }  <span class="cm">// while works</span>
 
-<span class="cm">// Infinite loop workaround — use a long range:</span>
-<span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0l..9223372036854775807l</span> {  <span class="cm">// long: ~9.2×10^18</span>
+<span class="kw">while</span> <span class="kw">true</span> {           <span class="cm">// infinite until a break</span>
     <span class="kw">if</span> <span class="fn-call">should_exit</span>() { <span class="kw">break</span>; }
     <span class="fn-call">step</span>();
 }</code></pre>
@@ -142,7 +141,7 @@ loop {           // truly infinite — no bound needed
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> <code>while condition { }</code> works exactly as expected. Every <code>for</code> loop has an iteration variable, making it easy to add index tracking or a cycle limit without restructuring.</p>
-<p class="down"><strong>Downside</strong> There is no <code>loop { }</code> keyword for an unconditionally infinite loop. The workaround — a <code>for</code> loop over a <code>long</code> range — is verbose but practically unbounded: the 64-bit maximum (~9.2×10^18) exceeds any realistic event-loop iteration count.</p>
+<p class="down"><strong>Downside</strong> There is no <code>loop { }</code> keyword: an unconditionally infinite loop is spelled <code>while true { }</code>, which reads the same and ends only at a <code>break</code> or a <code>return</code>.</p>
 </div>
 
 <h2 id="filtered-loops">6. Filtered loops — <code>for ... if ...</code></h2>

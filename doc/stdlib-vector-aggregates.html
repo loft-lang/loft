@@ -40,6 +40,12 @@
 <p>Sum of all integer elements. Returns 0 for an empty vector. Superseded by the general `sum(v, init)`; kept as a shim over it (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the shim's call resolves — a forward reference to a generic is not yet supported.</p>
 </div>
 <div class="item">
+<pre><code>pub interface Walkable {
+  fn children(self: Self) -&gt; vector&lt;Self&gt;
+}</code></pre>
+<p>A type that can be walked as a tree.  Declaring `fn children(self: T) -&gt; vector&lt;T&gt;` is the whole contract — that bare function is what makes `T` walkable, with nothing to register and no base type to inherit from.  `tree_walk` is what consumes it.</p>
+</div>
+<div class="item">
 <pre><code>pub fn tree_walk &lt; T: Walkable &gt; (wk_root: T, cap: integer) -&gt; vector&lt;T&gt;</code></pre>
 <p>Every node reachable from `wk_root` in breadth-first order: the root, then its children, then theirs.  `T` is any type declaring `fn children(self: T) -&gt; vector&lt;T&gt;` — writing that bare function is what makes a type `Walkable`, with nothing to register.</p>
 <p>`cap` bounds the ANSWER, not just the effort: at most `cap` nodes come back (the root alone when `cap` is 0 or 1) and the walk stops there.  That bound is what makes this total on a structure that has a cycle or no end, so pass a count you would accept as an answer rather than a number picked to be large.</p>

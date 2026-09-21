@@ -825,16 +825,13 @@
   <span class="st">"rect {self.width} by {self.height}"</span>
 }</code></pre>
 <h2 id="enum-methods">Enum methods</h2>
-<p>Plain enum variants can also have methods. The <code>self</code> parameter carries the current direction value, and the method can return any type. Here <code>opposite()</code> flips North↔South and East↔West.</p>
+<p>A plain enum can have methods too. The method is written once, for the whole enum: the <code>self</code> parameter carries the current value, and a <code>match</code> on it picks the case. Here <code>opposite()</code> flips North↔South and East↔West.</p>
 <pre><code><span class="kw">fn</span> <span class="fn-call">opposite</span>(self: <span class="en">Direction</span>) -&gt; <span class="en">Direction</span> {
-  <span class="kw">if</span> self == <span class="en">North</span> {
-    <span class="en">South</span>
-  } <span class="kw">else</span> <span class="kw">if</span> self == <span class="en">South</span> {
-    <span class="en">North</span>
-  } <span class="kw">else</span> <span class="kw">if</span> self == <span class="en">East</span> {
-    <span class="en">West</span>
-  } <span class="kw">else</span> {
-    <span class="en">East</span>
+  match self {
+    <span class="en">North</span> =&gt; <span class="en">South</span>,
+    <span class="en">South</span> =&gt; <span class="en">North</span>,
+    <span class="en">East</span> =&gt; <span class="en">West</span>,
+    <span class="en">West</span> =&gt; <span class="en">East</span>
   }
 }</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {</code></pre>
@@ -2327,18 +2324,18 @@ Walkable   — the method `children() -&gt; vector&lt;Self&gt;`.  The standard l
 </code></pre>
 <p>Reach for <code>Ordered + Addable</code> when you want <code>+</code> and a comparison.</p>
 <p><code>-</code> desugars to the same <code>OpMin</code> name at BOTH arities, so unary negation and binary subtraction are two SIGNATURES of one name — and therefore two bounds: <code>&lt;T: Numeric&gt;</code> gives you <code>-a</code>, <code>&lt;T: Subtractable&gt;</code> gives you <code>a - b</code>, and <code>&lt;T: Numeric + Subtractable&gt;</code> gives you both.  A user type provides one of the two arities and so satisfies one of the two bounds — a concrete method key carries no arity, so a type cannot declare <code>OpMin</code> twice.</p>
-<pre><code><span class="kw">fn</span> gen_diff&lt;<span class="en">T</span>: <span class="en">Subtractable</span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>) -&gt; <span class="en">T</span> { gen_a - gen_b }
-<span class="kw">fn</span> gen_negdiff&lt;<span class="en">T</span>: <span class="en">Numeric</span> + <span class="en">Subtractable</span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>) -&gt; <span class="en">T</span> { -(gen_a - gen_b) }</code></pre>
-<pre><code><span class="kw">fn</span> gen_max&lt;<span class="en">T</span>: <span class="en">Ordered</span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="en">T</span> {
+<pre><code><span class="kw">fn</span> gen_diff&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Subtractable</a></span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>) -&gt; <span class="en">T</span> { gen_a - gen_b }
+<span class="kw">fn</span> gen_negdiff&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Numeric</a></span> + <span class="en"><a href="stdlib-interfaces.html">Subtractable</a></span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>) -&gt; <span class="en">T</span> { -(gen_a - gen_b) }</code></pre>
+<pre><code><span class="kw">fn</span> gen_max&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="en">T</span> {
   <span class="kw">if</span> gen_x &gt; gen_y { gen_x } <span class="kw">else</span> { gen_y }
 }
-<span class="kw">fn</span> gen_min&lt;<span class="en">T</span>: <span class="en">Ordered</span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="en">T</span> {
+<span class="kw">fn</span> gen_min&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="en">T</span> {
   <span class="kw">if</span> gen_x &lt; gen_y { gen_x } <span class="kw">else</span> { gen_y }
 }
-<span class="kw">fn</span> same&lt;<span class="en">T</span>: <span class="en">Equatable</span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {
+<span class="kw">fn</span> same&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Equatable</a></span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {
   gen_x == gen_y
 }
-<span class="kw">fn</span> described&lt;<span class="en">T</span>: <span class="en">Printable</span>&gt;(gen_x: <span class="en">T</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {
+<span class="kw">fn</span> described&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Printable</a></span>&gt;(gen_x: <span class="en">T</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {
   gen_x.<span class="fn-call"><a href="stdlib-field-iteration-support-types.html">to_text</a></span>()
 }
 <span class="kw">fn</span> <span class="fn-call">test_bounded</span>() {
@@ -2355,7 +2352,7 @@ Walkable   — the method `children() -&gt; vector&lt;Self&gt;`.  The standard l
 }</code></pre>
 <h2 id="combining-bounds">Combining bounds</h2>
 <p>Use <code>+</code> to require multiple interfaces: <code>&lt;T: Ordered + Addable&gt;</code>.</p>
-<pre><code><span class="kw">fn</span> clamped_add&lt;<span class="en">T</span>: <span class="en">Ordered</span> + <span class="en">Addable</span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>, gen_hi: <span class="en">T</span>) -&gt; <span class="en">T</span> {
+<pre><code><span class="kw">fn</span> clamped_add&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span> + <span class="en"><a href="stdlib-interfaces.html">Addable</a></span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>, gen_hi: <span class="en">T</span>) -&gt; <span class="en">T</span> {
   result = gen_a + gen_b;
   <span class="kw">if</span> result &gt; gen_hi { gen_hi } <span class="kw">else</span> { result }
 }
@@ -2438,13 +2435,21 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>A capturing closure can be called directly, and it can also be handed to map or filter — the captures travel with it.</p>
 <h2 id="non-capturing-lambdas-with-higher-order-functions">Non-capturing lambdas with higher-order functions</h2>
 <p>Lambdas that use only their own parameters (no capture) also work fine.</p>
-<h2 id="what-a-closure-cannot-capture">What a closure cannot capture</h2>
-<p>Two shapes the compiler refuses, and the one that replaces them.</p>
+<h2 id="capturing-a-parameter">Capturing a <code>&amp;</code> parameter</h2>
+<p>A closure inside a function can use the function's <code>&amp;</code> parameters.  What it captures is what the parameter points at, by the same two rules as above.</p>
+<h2 id="what-a-closure-cannot-do">What a closure cannot do</h2>
+<p>Two shapes the compiler refuses, and what replaces each.</p>
 <pre><code><span class="kw">struct</span> <span class="en">Counter</span> {
   hits: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
 }</code></pre>
 <pre><code><span class="kw">struct</span> <span class="en">Stepper</span> {
   advance: <span class="kw">fn</span>(<span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+}</code></pre>
+<p>Zero every even element, from inside a closure, then append a marker.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">clear_evens</span>(v: &amp;<span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) {
+  wipe = <span class="kw">fn</span>(i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) { <span class="kw">if</span> v[i] % <span class="nm">2</span> == <span class="nm">0</span> { v[i] = <span class="nm">0</span>; } };
+  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(v) { <span class="fn-call">wipe</span>(i); }
+  v += [<span class="nm">9</span>];
 }</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">make_adder</span>(base_val: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="kw">fn</span>(<span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {
   <span class="kw">fn</span>(n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { base_val + n }
@@ -2528,9 +2533,14 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <pre><code>  evens = <span class="fn-call">filter</span>(nums, |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(evens[<span class="nm">0</span>] == <span class="nm">2</span>, <span class="st">"evens[0]: {evens[0]}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(evens[<span class="nm">1</span>] == <span class="nm">4</span>, <span class="st">"evens[1]: {evens[1]}"</span>);</code></pre>
-<h2 id="what-a-closure-cannot-capture">What a closure cannot capture</h2>
-<p>A <code>&amp;</code> parameter cannot be captured at all, in any shape — copy it into a local, capture the local, and write the local back before returning.</p>
-<p>A capturing closure cannot be stored in a COLLECTION either: <code>vector&lt;fn(…)&gt;</code> and the keyed collections take non-capturing lambdas only.  A struct FIELD holds one without trouble, which is the shape to reach for.</p>
+<h2 id="capturing-a-parameter">Capturing a <code>&amp;</code> parameter</h2>
+<p>A <code>&amp;vector</code> or a <code>&amp;</code> struct is SHARED, so writes from inside the closure reach the caller's value.  A <code>&amp;integer</code> or a <code>&amp;text</code> is COPIED when the closure is created, like any scalar: the closure can read it, and a write to it is refused (see below).</p>
+<pre><code>  evens = [<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>];
+  <span class="fn-call">clear_evens</span>(evens);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{evens}"</span> == <span class="st">"[1,0,3,0,9]"</span>, <span class="st">"writes through a captured '&amp;vector' reach the caller: {evens}"</span>);</code></pre>
+<h2 id="what-a-closure-cannot-do">What a closure cannot do</h2>
+<p>A closure cannot WRITE a captured <code>&amp;integer</code> or <code>&amp;text</code> parameter: it holds a copy, so the write would not reach the caller, and the compiler says so. Copy the parameter into a local, let the closure update the local, and write it back before returning.</p>
+<p>A capturing closure cannot be stored in a COLLECTION: <code>vector&lt;fn(…)&gt;</code> and the keyed collections take non-capturing lambdas only.  A struct FIELD holds one without trouble, which is the shape to reach for.</p>
 <pre><code>  step = <span class="nm">7</span>;
   stepper = <span class="en">Stepper</span> { advance: <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { x + step } };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(stepper.<span class="fn-call">advance</span>(<span class="nm">10</span>) == <span class="nm">17</span>, <span class="st">"a struct field holds a capturing closure: {stepper.advance(10)}"</span>);
@@ -2814,6 +2824,9 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
   <span class="en">Circle</span> { radius: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
   <span class="en">Rect</span> { w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, h: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
 }</code></pre>
+<p>A variant whose field is itself an enum.</p>
+<pre><code><span class="kw">enum</span> <span class="en">Paint</span> { <span class="en">Solid</span> { rgb: <span class="ty"><a href="stdlib-types.html">integer</a></span> }, <span class="en">Clear</span> }
+<span class="kw">enum</span> <span class="en">Tile</span> { <span class="en">Painted</span> { paint: <span class="en">Paint</span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span> }, <span class="en">Bare</span> }</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">direction_name</span>(d: <span class="en">Direction</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {
   match d {
     <span class="en">North</span> =&gt; <span class="st">"north"</span>,
@@ -2849,6 +2862,16 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
     <span class="en">Rect</span> { w, h }     =&gt; w * h,
   };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(shape_area == <span class="nm">12</span>, <span class="st">"struct-enum destructure: {shape_area}"</span>);</code></pre>
+<h2 id="patterns-inside-a-field">Patterns inside a field</h2>
+<p>A field can take a pattern instead of a name.  A literal matches only that value, and when the field is itself an enum, a variant matches only that variant and binds its own fields in turn.  A field the arm does not name is simply not tested.  An arm with a pattern inside a field covers only part of its variant, so the match still needs <code>_</code> (or an arm that binds the fields plainly) to cover the rest.</p>
+<pre><code>  tile = <span class="en">Painted</span> { paint: <span class="en">Solid</span> { rgb: <span class="nm">255</span> }, n: <span class="nm">2</span> };
+  what = match tile {
+    <span class="en">Painted</span> { paint: <span class="en">Clear</span>, n } =&gt; <span class="st">"clear x{n}"</span>,
+    <span class="en">Painted</span> { paint: <span class="en">Solid</span> { rgb: <span class="nm">0</span> }, n } =&gt; <span class="st">"black x{n}"</span>,
+    <span class="en">Painted</span> { paint: <span class="en">Solid</span> { rgb }, n } =&gt; <span class="st">"colour {rgb} x{n}"</span>,
+    _ =&gt; <span class="st">"bare"</span>,
+  };
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(what == <span class="st">"colour 255 x2"</span>, <span class="st">"a pattern inside a field: {what}"</span>);</code></pre>
 <h2 id="guards">Guards</h2>
 <p>Add <code>if condition</code> after a pattern to restrict when the arm matches. A guard can reject, so a guarded arm never counts towards covering an enum: a match whose arms name every variant but guard them all is still refused.</p>
 <pre><code>  v = <span class="nm">42</span>;
@@ -2927,6 +2950,15 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
     _        =&gt; <span class="st">"elsewhere"</span>,
   };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(where == <span class="st">"two-b"</span>, <span class="st">"tuple pattern: {where}"</span>);</code></pre>
+<p>An element can be an enum variant with its fields bound, so one arm reads both sides at once, and a guard can compare them.</p>
+<pre><code>  a: <span class="en">Shape</span> = <span class="en">Rect</span> { w: <span class="nm">2</span>, h: <span class="nm">3</span> };
+  b: <span class="en">Shape</span> = <span class="en">Circle</span> { radius: <span class="nm">5</span> };
+  bigger = <span class="fn-call">match</span> (a, b) {
+    (<span class="en">Rect</span> { w, h }, <span class="en">Circle</span> { radius }) <span class="kw">if</span> w * h &gt; radius =&gt; <span class="st">"rect"</span>,
+    (<span class="en">Rect</span> { w, h }, <span class="en">Circle</span> { radius }) =&gt; <span class="st">"circle"</span>,
+    _ =&gt; <span class="st">"other"</span>,
+  };
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bigger == <span class="st">"rect"</span>, <span class="st">"variants inside a tuple pattern: {bigger}"</span>);</code></pre>
 <h2 id="when-nothing-matches">When nothing matches</h2>
 <p>This match names no <code>_</code>, and 7 is none of its arms.  On an enum that would not compile; on a scalar there is no finite set to check, so the match answers null and the null travels on.  Give the result a fallback with <code>??</code>, or add a <code>_</code> arm — the compiler will not remind you.</p>
 <pre><code>  unmatched = match <span class="nm">7</span> {
@@ -2935,8 +2967,8 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
   };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(unmatched == <span class="kw">null</span>, <span class="st">"a scalar match that selects no arm answers null"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((unmatched ?? <span class="st">"none"</span>) == <span class="st">"none"</span>, <span class="st">"so give it a fallback"</span>);</code></pre>
-<h2 id="nested-match">Nested match</h2>
-<p>Match can appear inside other expressions, including other match arms.</p>
+<h2 id="match-inside-an-arm">Match inside an arm</h2>
+<p>Match is an expression, so it can appear inside other expressions, including another match's arm.</p>
 <pre><code>  n = <span class="nm">15</span>;
   result = match n % <span class="nm">2</span> == <span class="nm">0</span> {
     <span class="kw">true</span>  =&gt; <span class="st">"even"</span>,
@@ -3948,36 +3980,51 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 </div>
 <h2 id="stdlib-interfaces">Interfaces</h2>
 <div class="item">
-<pre><code>pub interface Ordered</code></pre>
+<pre><code>pub interface Ordered {
+  op &lt; (self: Self, other: Self) -&gt; boolean
+}</code></pre>
 <p>Standard interfaces for bounded generic functions. A type satisfies an interface by defining the required operator or method. Types that support the `&lt;` comparison operator. Satisfied by integer, single, float, text, and any user type defining OpLt.</p>
-<p>`boolean` is NOT among them, deliberately: it satisfies Equatable below and has no ordering, so `false &lt; true` is a refusal rather than a convention the language picks for you.  A program that wants it says so — `(a as integer) &lt; (b as integer)`.  Note this is what bounds the null-ordering half of @FR-E-NullArg, which applies to the ORDERED types only; boolean null still compares with `==` like every other scalar.</p>
+<p>`boolean` is NOT among them, deliberately: it satisfies Equatable below and has no ordering, so `false &lt; true` is a refusal rather than a convention the language picks for you.  A program that wants it says so — `(a as integer) &lt; (b as integer)`.  The same line bounds how null is ordered: that applies to the ordered types only, and a boolean null still compares with `==` like every other scalar.</p>
 <p>ONE method is all a type has to define: inside a generic bounded by this, `&gt;`, `&lt;=` and `&gt;=` all derive from `&lt;` — `a &gt; b` is `b &lt; a`, `a &lt;= b` is `!(b &lt; a)`, `a &gt;= b` is `!(a &lt; b)`.  Each evaluates its operands exactly once.</p>
 </div>
 <div class="item">
-<pre><code>pub interface Equatable</code></pre>
+<pre><code>pub interface Equatable {
+  op == (self: Self, other: Self) -&gt; boolean
+}</code></pre>
 <p>Types that support the `==` equality operator. Satisfied by integer, single, float, text, boolean, and user types defining OpEq.</p>
 <p>`!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.</p>
 </div>
 <div class="item">
-<pre><code>pub interface Addable</code></pre>
+<pre><code>pub interface Addable {
+  op + (self: Self, other: Self) -&gt; Self
+}</code></pre>
 <p>Types that support the `+` addition operator, returning the same type. Satisfied by integer, single, float, and user types defining OpAdd.</p>
 </div>
 <div class="item">
-<pre><code>pub interface Numeric</code></pre>
+<pre><code>pub interface Numeric {
+  op * (self: Self, other: Self) -&gt; Self
+  op - (self: Self) -&gt; Self
+}</code></pre>
 <p>Types that support `*` and `-` (unary negation). Separate from `Addable` so a generic can ask for the fewest operators it needs. Satisfied by integer, single, float, and user types defining OpMul and OpMin.</p>
-<p>Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, so keeping them apart is a choice about the shipped surface rather than a limitation: adding a requirement to `Numeric` would take satisfaction away from every user type that provides `OpMul` and unary `OpMin` today, which is what COMPATIBILITY.md forbids.</p>
+<p>Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, so keeping them apart is a choice about the shipped surface rather than a limitation: adding a requirement to `Numeric` would take satisfaction away from every user type that provides `OpMul` and unary `OpMin` today, which a compatible release may not do.</p>
 </div>
 <div class="item">
-<pre><code>pub interface Subtractable</code></pre>
+<pre><code>pub interface Subtractable {
+  op - (self: Self, other: Self) -&gt; Self
+}</code></pre>
 <p>Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and user types defining a two-operand OpMin.</p>
-<p>A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` desugars to `OpMin` either way, and the stub key carries the arity), so `&lt;T: Numeric + Subtractable&gt;` gets negation and subtraction together from two interfaces that each name `OpMin`.</p>
+<p>A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `&lt;T: Numeric + Subtractable&gt;` gets negation and subtraction together from two interfaces that each name `OpMin`.</p>
 </div>
 <div class="item">
-<pre><code>pub interface Scalable</code></pre>
+<pre><code>pub interface Scalable {
+  fn scale(self: Self, factor: integer) -&gt; integer
+}</code></pre>
 <p>Types that support integer scaling via a `scale` method. Uses a method (not `op *`) because a `&lt;T: Numeric + Scalable&gt;` would then need two signatures of one name from ONE bound set, which is refused. Two SEPARATE generics may each bound their own `T` by an interface declaring the same method differently — a header binds its own type variable. User types satisfy Scalable by defining `fn scale(self: T, factor: integer) -&gt; integer`.</p>
 </div>
 <div class="item">
-<pre><code>pub interface Printable</code></pre>
+<pre><code>pub interface Printable {
+  fn to_text(self: Self) -&gt; text
+}</code></pre>
 <p>Types that can be converted to text via a `to_text` method. User types satisfy Printable by defining `fn to_text(self: T) -&gt; text`.</p>
 </div>
 <h2 id="stdlib-math">Math</h2>
@@ -4425,7 +4472,9 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Sum of all integer elements. Returns 0 for an empty vector. Superseded by the general `sum(v, init)`; kept as a shim over it (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the shim's call resolves — a forward reference to a generic is not yet supported.</p>
 </div>
 <div class="item">
-<pre><code>pub interface Walkable</code></pre>
+<pre><code>pub interface Walkable {
+  fn children(self: Self) -&gt; vector&lt;Self&gt;
+}</code></pre>
 <p>A type that can be walked as a tree.  Declaring `fn children(self: T) -&gt; vector&lt;T&gt;` is the whole contract — that bare function is what makes `T` walkable, with nothing to register and no base type to inherit from.  `tree_walk` is what consumes it.</p>
 </div>
 <div class="item">
@@ -4636,8 +4685,8 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>&quot;The collection IS the file.&quot;  Re-root the Store backing the given reference at a file path so mutations are durable via mmap without any explicit save/load loop.</p>
 <p>Works for any store-rooted collection — `hash`, `sorted`, `ordered`, `index` (each keyed local/field is a dedicated Store).  `hash` carries its bucket seed in its own record and `sorted`/`ordered`/`index` are comparison-based (no per-process state), so the persisted image is portable: a different process (a restart, or a remote reader) both iterates AND key-looks-up correctly.  A reference that is NOT its own Store root fails soft (returns `false`), same as any I/O error.</p>
 <p>First call on a path that does NOT yet exist: serialises the current in-memory Store at the reference's slot to disk (padded to a valid ≥1024-word image with a tail free block), then mmaps it back.  Caller's existing DbRefs into that slot remain valid.</p>
-<p>Call on a path that DOES exist: opens the file via mmap; the caller's prior in-memory contents at that slot are dropped in favour of the on-disk image.  This is the load-on-startup path, assumes the on-disk layout matches the declared type.</p>
-<p>Both modes return `true` on success, `false` on any I/O / format error (no panic — the binding is fail-soft, callers fall back to JSON or rebuild-from-source).</p>
+<p>Call on a path that DOES exist: opens the file via mmap; the caller's prior in-memory contents at that slot are dropped in favour of the on-disk image.  This is the load-on-startup path. The `.dschema` file written beside the store records the layout it was written with.  When that layout differs from `r`'s type — a struct gained, lost or changed a field — the bind is refused (`false`, with the difference on stderr), exactly as `store_load` refuses it.  The file, its `.dschema` and `r` are left untouched.</p>
+<p>Both modes return `true` on success, `false` on any I/O / format / layout error (no panic — the binding is fail-soft, callers fall back to JSON or rebuild-from-source).</p>
 <p>Typical dryopea-style pattern: pw = PaintedWorld { painted: [] }   // painted's declared type is hash&lt;PaintedHex[q, r]&gt; store_persist_bind(pw.painted, &quot;dryopea_world.store&quot;) // …mutations to pw.painted now hit mmap'd bytes… `r` is any store-rooted collection — `hash`, `sorted`, `index`, `spatial`. A bare `reference` parameter accepts them all.</p>
 <p>It snapshots the whole STORE `r` lives in, which is not always a store of just `r`.  A keyed LOCAL owns its store, so binding it writes a file for that collection.  A keyed FIELD shares its container's store, so binding `pw.painted` above writes a file for `PaintedWorld` — carrying the container and every sibling collection — and that file will NOT load back into a bare `hash&lt;PaintedHex[q, r]&gt;`.  Both are usable; they are just different files.  Bind through the container consistently, or bind a local of the collection's own type when another program has to read the file. The compiler advises at the call when the argument is a field.  `hash` carries its bucket seed in its own record and the comparison-based kinds hold no per-process state, so every persisted image is portable across processes.</p>
 </div>
@@ -4650,15 +4699,15 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 </div>
 <div class="item">
 <pre><code>pub fn store_load(r: reference, path: text) -&gt; boolean fs#read</code></pre>
-<p>Load a persisted store IMAGE fully into memory, populating the empty store-rooted collection `r` so it can be queried like any in-memory collection.  The portable, read-only counterpart of `store_persist_bind`: it HEAP-COPIES the file (no mmap), so it works on EVERY backend — including wasm, which has no mmap — but is NOT durable (writes stay in memory and never reach the file).  Use it to open a snapshot for querying where `store_persist_bind` can't run (a browser / wasm target) or where a durable live binding isn't wanted.  Returns `false` on a missing / truncated / wrong-format file (no panic; assumes the on-disk layout matches `r`'s declared type).  This is the whole-file load that the browser's working-set path builds on. h: hash&lt;Rec[id]&gt; = [] store_load(h, &quot;world.store&quot;)   // h now holds the file's records</p>
+<p>Load a persisted store IMAGE fully into memory, populating the empty store-rooted collection `r` so it can be queried like any in-memory collection.  The portable, read-only counterpart of `store_persist_bind`: it HEAP-COPIES the file (no mmap), so it works on EVERY backend — including wasm, which has no mmap — but is NOT durable (writes stay in memory and never reach the file).  Use it to open a snapshot for querying where `store_persist_bind` can't run (a browser / wasm target) or where a durable live binding isn't wanted.  Returns `false` on a missing / truncated / wrong-format file, and on a file whose `.dschema` records a different layout than `r`'s declared type (no panic; the difference is printed on stderr).  This is the whole-file load that the browser's working-set path builds on. h: hash&lt;Rec[id]&gt; = [] store_load(h, &quot;world.store&quot;)   // h now holds the file's records</p>
 </div>
 <div class="item">
 <pre><code>pub fn store_load_url(r: reference, url: text, sha256: text) -&gt; boolean fs#read</code></pre>
-<p>Load a persisted store IMAGE over HTTP(S) from a TRUSTED source, establishing authenticity BEFORE the bytes are adopted: fetch the whole image at `url`, verify its SHA-256 against the caller-pinned `sha256` (lowercase hex), and only on a match heap-load it into `r` — the bytes never touch disk. A fetch error or a hash mismatch REFUSES the load (returns false, loads nothing). The fetch→verify→trust discipline the registry install uses, bridged onto the store loader; `url` may be `http(s)://` or `file://`. Whole-file counterpart of the paged `store_load_key(s)`/`store_load_range` loaders. h: hash&lt;Rec[id]&gt; = [] store_load_url(h, &quot;https://cdn.example/world.store&quot;, &quot;&lt;sha256-hex&gt;&quot;)</p>
+<p>Load a persisted store IMAGE over HTTP(S) from a TRUSTED source, establishing authenticity BEFORE the bytes are adopted: fetch the whole image at `url`, verify its SHA-256 against the caller-pinned `sha256` (lowercase hex), and only on a match heap-load it into `r` — the bytes never touch disk. A fetch error or a hash mismatch REFUSES the load (returns false, loads nothing). The fetch→verify→trust discipline the registry install uses, bridged onto the store loader; `url` may be `http(s)://` or `file://`. Like `store_load`, it refuses an image whose `&lt;url&gt;.dschema` records a different layout than `r`'s type (a missing `.dschema` is not checked). Whole-file counterpart of the paged `store_load_key(s)`/`store_load_range` loaders. h: hash&lt;Rec[id]&gt; = [] store_load_url(h, &quot;https://cdn.example/world.store&quot;, &quot;&lt;sha256-hex&gt;&quot;)</p>
 </div>
 <div class="item">
 <pre><code>pub fn store_load_url_trusted(r: reference, url: text) -&gt; boolean fs#read</code></pre>
-<p>Load a whole store IMAGE over HTTP(S)/file:// from a TRUSTED source into `r` — the INSTANT counterpart of store_load_url: skips the SHA-256 pin (you trust the origin) for a fast read, but is still structurally validated, so a corrupt or malformed image is rejected (false), never adopted. Use store_load_url for an untrusted source. world: hash&lt;Rec[id]&gt; = [] store_load_url_trusted(world, &quot;https://cdn.internal/world.store&quot;)</p>
+<p>Load a whole store IMAGE over HTTP(S)/file:// from a TRUSTED source into `r` — the INSTANT counterpart of store_load_url: skips the SHA-256 pin (you trust the origin) for a fast read, but is still structurally validated, so a corrupt or malformed image is rejected (false), never adopted, and an image whose `&lt;url&gt;.dschema` records a different layout is refused. Use store_load_url for an untrusted source. world: hash&lt;Rec[id]&gt; = [] store_load_url_trusted(world, &quot;https://cdn.internal/world.store&quot;)</p>
 </div>
 <div class="item">
 <pre><code>pub fn store_load_untrusted(r: reference, path: text) -&gt; boolean fs#read</code></pre>

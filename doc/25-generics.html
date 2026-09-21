@@ -83,18 +83,18 @@ Walkable   — the method `children() -&gt; vector&lt;Self&gt;`.  The standard l
 </code></pre>
 <p>Reach for <code>Ordered + Addable</code> when you want <code>+</code> and a comparison.</p>
 <p><code>-</code> desugars to the same <code>OpMin</code> name at BOTH arities, so unary negation and binary subtraction are two SIGNATURES of one name — and therefore two bounds: <code>&lt;T: Numeric&gt;</code> gives you <code>-a</code>, <code>&lt;T: Subtractable&gt;</code> gives you <code>a - b</code>, and <code>&lt;T: Numeric + Subtractable&gt;</code> gives you both.  A user type provides one of the two arities and so satisfies one of the two bounds — a concrete method key carries no arity, so a type cannot declare <code>OpMin</code> twice.</p>
-<pre><code><span class="kw">fn</span> gen_diff&lt;<span class="en">T</span>: <span class="en">Subtractable</span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>) -&gt; <span class="en">T</span> { gen_a - gen_b }
-<span class="kw">fn</span> gen_negdiff&lt;<span class="en">T</span>: <span class="en">Numeric</span> + <span class="en">Subtractable</span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>) -&gt; <span class="en">T</span> { -(gen_a - gen_b) }</code></pre>
-<pre><code><span class="kw">fn</span> gen_max&lt;<span class="en">T</span>: <span class="en">Ordered</span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="en">T</span> {
+<pre><code><span class="kw">fn</span> gen_diff&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Subtractable</a></span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>) -&gt; <span class="en">T</span> { gen_a - gen_b }
+<span class="kw">fn</span> gen_negdiff&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Numeric</a></span> + <span class="en"><a href="stdlib-interfaces.html">Subtractable</a></span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>) -&gt; <span class="en">T</span> { -(gen_a - gen_b) }</code></pre>
+<pre><code><span class="kw">fn</span> gen_max&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="en">T</span> {
   <span class="kw">if</span> gen_x &gt; gen_y { gen_x } <span class="kw">else</span> { gen_y }
 }
-<span class="kw">fn</span> gen_min&lt;<span class="en">T</span>: <span class="en">Ordered</span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="en">T</span> {
+<span class="kw">fn</span> gen_min&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="en">T</span> {
   <span class="kw">if</span> gen_x &lt; gen_y { gen_x } <span class="kw">else</span> { gen_y }
 }
-<span class="kw">fn</span> same&lt;<span class="en">T</span>: <span class="en">Equatable</span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {
+<span class="kw">fn</span> same&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Equatable</a></span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {
   gen_x == gen_y
 }
-<span class="kw">fn</span> described&lt;<span class="en">T</span>: <span class="en">Printable</span>&gt;(gen_x: <span class="en">T</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {
+<span class="kw">fn</span> described&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Printable</a></span>&gt;(gen_x: <span class="en">T</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {
   gen_x.<span class="fn-call"><a href="stdlib-field-iteration-support-types.html">to_text</a></span>()
 }
 <span class="kw">fn</span> <span class="fn-call">test_bounded</span>() {
@@ -111,7 +111,7 @@ Walkable   — the method `children() -&gt; vector&lt;Self&gt;`.  The standard l
 }</code></pre>
 <h2 id="combining-bounds">Combining bounds</h2>
 <p>Use <code>+</code> to require multiple interfaces: <code>&lt;T: Ordered + Addable&gt;</code>.</p>
-<pre><code><span class="kw">fn</span> clamped_add&lt;<span class="en">T</span>: <span class="en">Ordered</span> + <span class="en">Addable</span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>, gen_hi: <span class="en">T</span>) -&gt; <span class="en">T</span> {
+<pre><code><span class="kw">fn</span> clamped_add&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span> + <span class="en"><a href="stdlib-interfaces.html">Addable</a></span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>, gen_hi: <span class="en">T</span>) -&gt; <span class="en">T</span> {
   result = gen_a + gen_b;
   <span class="kw">if</span> result &gt; gen_hi { gen_hi } <span class="kw">else</span> { result }
 }

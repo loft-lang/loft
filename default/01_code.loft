@@ -47,9 +47,9 @@ pub type u32 = integer limit(0, 4294967294) size(4);
 //
 // `boolean` is NOT among them, deliberately: it satisfies Equatable below and has no
 // ordering, so `false < true` is a refusal rather than a convention the language picks
-// for you.  A program that wants it says so — `(a as integer) < (b as integer)`.  Note
-// this is what bounds the null-ordering half of @FR-E-NullArg, which applies to the
-// ORDERED types only; boolean null still compares with `==` like every other scalar.
+// for you.  A program that wants it says so — `(a as integer) < (b as integer)`.  The
+// same line bounds how null is ordered: that applies to the ordered types only, and a
+// boolean null still compares with `==` like every other scalar.
 //
 // ONE method is all a type has to define: inside a generic bounded by this, `>`, `<=` and
 // `>=` all derive from `<` — `a > b` is `b < a`, `a <= b` is `!(b < a)`, `a >= b` is
@@ -79,8 +79,8 @@ pub interface Addable {
 // Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN
 // declare both arities of `-`, so keeping them apart is a choice about the shipped surface
 // rather than a limitation: adding a requirement to `Numeric` would take satisfaction away
-// from every user type that provides `OpMul` and unary `OpMin` today, which is what
-// COMPATIBILITY.md forbids.
+// from every user type that provides `OpMul` and unary `OpMin` today, which a compatible
+// release may not do.
 pub interface Numeric {
   op * (self: Self, other: Self) -> Self
   op - (self: Self) -> Self
@@ -90,8 +90,8 @@ pub interface Numeric {
 // Satisfied by integer, single, float, and user types defining a two-operand OpMin.
 //
 // A bound of its own rather than a third requirement on `Numeric`: a bound set may declare
-// one name at two arities (`-` desugars to `OpMin` either way, and the stub key carries the
-// arity), so `<T: Numeric + Subtractable>` gets negation and subtraction together from two
+// one name at two arities (`-` means `OpMin` either way, told apart by its operand count),
+// so `<T: Numeric + Subtractable>` gets negation and subtraction together from two
 // interfaces that each name `OpMin`.
 pub interface Subtractable {
   op - (self: Self, other: Self) -> Self
