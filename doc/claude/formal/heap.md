@@ -597,7 +597,8 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-15` and `D-heap-26` (`D-heap-22` and `D-heap-24`
+OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-15` and `D-heap-26` (`D-heap-27`, the tuple twin of
+`D-heap-21` and `D-heap-22`, opened and closed 2026-09-22; `D-heap-22` and `D-heap-24`
 closed 2026-09-21, `D-heap-25`, found in D-heap-24's controls, and `D-heap-26`, found in
 D-heap-22's, both opened that day and the first closed; `D-heap-13`
 closed 2026-09-20; `D-heap-16` closed 2026-09-21 together with the three it uncovered,
@@ -777,6 +778,38 @@ CLOSED 2026-09-17, below.
 - **Removal:** release the displaced elements at the rebind, after the new value — for a new
   backing, the old one's hook at the `Set`; for a re-mint, after the literal, as `D-heap-25` did
   for a record.
+
+### D-heap-27 — OPENED AND CLOSED (2026-09-22, loft#1588): a tuple's member backings were released at the function's head turn, not the tuple's
+
+- **Violates:** (H-Drop), its scope-end clause — *"the owner's scope end, in reverse declaration
+  order"*, and for a loop body's or a block's owner, THAT scope's end.
+- **Where:** a tuple's vector member lives in a `__vdb_N` backing, and a record member a
+  whole-tuple bind (`u = t`) copies lives in a `__ref_p2_N` one (loft#1361).  Both are registered
+  by their null-init at the function's head, so `get_free_vars` swept them after every other
+  local, and a tuple declared in a block or a loop body left them to the function's end.  The
+  `D-heap-21` and `D-heap-22` cures read a VECTOR local's one dep, and a tuple has no dep list of
+  its own.
+- **Effect:** measured on both backends, identical: `b = mk(11); t = (mk(12), 1); u = t` released
+  `11 12` for the rule's `12 11`; `t = (mk(21), 1); u = t; t = (mk(22), 2)` released `22 21` for
+  `21 22`; in a loop body the last pass's member was released after the loop, and in a block after
+  the block's successor ran — for a vector member even with no move (`if … { t = ([mk(1)], 1) }`).
+  The counts were right.  Along the way a SECOND defect showed, hidden by the first: a whole-tuple
+  bind of a vector member copied the elements into a backing minted as `main_vector<vector<T>>`
+  (`vector_db` takes the ELEMENT type and was handed the vector's), which carried no hook, so the
+  source's backing released them at the SOURCE's turn and the copy never did — a double release
+  wearing a single one, `(H-Move)` unmet.
+- **Closed:** each of a tuple's member backings takes the tuple's turn in the sweep, read after the
+  literal is scanned so a refill's backing lands at the tuple and not at the refill; a tuple
+  leaving an inner scope releases a member backing registered outside it there — a vector's
+  emptied, a record's freed and reset to the null sentinel — unless a variable of a scope that
+  stays open views it; the tuple member copy's backing is typed by its element, and a whole-tuple
+  bind (`tuple_member_move`) moves a vector member's release to the copy, paired through
+  `Scopes::tuple_member_now` because the tuple's type carries only its LATEST assignment's deps.
+  Order within one tuple is reverse member order, as a struct's fields are: seven cells of
+  `a-tuple-member-releases-once-beside-any-neighbour.loft` had pinned whatever the head
+  registration gave.  A refused copy of a vector member (`t2 = (tt.0, 2)`) now releases twice with
+  the rest of `D-heap-8`'s `c_tuple_*` family, where the hook-less backing gave one.
+  Guard `tests/scripts/1588-a-tuple-releases-at-its-own-turn.loft`.
 
 ### D-heap-22 — OPENED AND CLOSED (2026-09-21, loft#1565): a vector declared in a loop body released its elements during the NEXT pass, not at the end of its own
 

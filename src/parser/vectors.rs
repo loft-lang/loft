@@ -6166,7 +6166,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             return None;
         }
         self.vars.defined(o);
-        let mut ops = self.vector_db(tp, o);
+        let mut ops = self.vector_db(&elm, o);
         // The clear says once, where the replace is: a no-op on a fresh store and correct on a
         // reused one — the same reason the match-arm copy beside this one clears.
         ops.push(self.cl("OpClearVector", &[Value::Var(o)]));

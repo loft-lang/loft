@@ -1,0 +1,100 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1588, `@FR-H-Drop` — A TUPLE RELEASES AT ITS OWN TURN.  A scope's end releases its owners
+// in REVERSE DECLARATION order, because a later structure may hold a lease on an earlier one's
+// resource, and a loop body's or a block's owners at THAT scope's end.  A tuple's vector member
+// lives in a backing of its own, and so does a record member a whole-tuple bind (`u = t`) copies
+// (loft#1361).  Both backings are registered by their null-init at the head of the function, so
+// they were released after every other local whatever the declaration order, and a tuple in a
+// block or a loop body released them only at the function's end.  Each backing now takes its
+// tuple's turn in the sweep, and a tuple leaving an inner scope releases them there — the tuple
+// twins of `D-heap-21` and `D-heap-22`.  On the way: a whole-tuple bind of a VECTOR member now
+// moves the elements' release to the copy, as a record member's does (`(H-Move)`); the copy's
+// backing was typed as a vector of vectors and so carried no hook, which is what had hidden it.
+//
+// Reads (`R…`) and releases (`<id>`) are traced in the order they happen, and every expected
+// trace is worked out by hand from the declaration order of the OWNER holding each resource, and
+// one structure's members in reverse member order, as a struct's fields are.  The last three
+// cells are controls that were right before: tuples bound without a whole-tuple bind, a local
+// declared after the copy, and the same program with a struct.
+
+fn trace_path() -> text { return "loft_tuple_own_turn_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct Oh { id: integer }
+fn OpDrop(self: Oh) { note("{self.id}"); }
+fn omk(id: integer) -> Oh { return Oh { id: id }; }
+struct Op { h: Oh, n: integer }
+
+/// g1 — a local declared before the tuple: the moved copy goes first.
+fn g1() { b = omk(11); t = (omk(12), 1); u = t; note("R{u.0.id}{b.id}"); }
+/// g2 — a refill after the move: the copy `u` was declared after `t`, so it goes first.
+fn g2() { t = (omk(21), 1); u = t; t = (omk(22), 2); note("R{u.0.id}{t.0.id}"); }
+/// g3 — the same with literal members.
+fn g3() { t = (Oh { id: 31 }, 1); u = t; t = (Oh { id: 32 }, 2); note("R{u.0.id}{t.0.id}"); }
+/// g4 — a local declared between the tuple and its copy.
+fn g4() { t = (omk(41), 1); b = omk(42); u = t; note("R{u.0.id}{b.id}"); }
+/// g5 — two members, and a local before: the copy's members in reverse order, then the local.
+fn g5() { b = omk(51); t = (omk(52), omk(53)); u = t; note("R{u.0.id}{u.1.id}{b.id}"); }
+/// g6 — moved twice: `z` last declared, so first released.
+fn g6() { t = (omk(61), 1); u = t; t = (omk(62), 2); z = t; b = omk(63); note("R{u.0.id}{z.0.id}{b.id}"); }
+/// g7 — a vector member, a local between the tuple and its copy.
+fn g7() { t = ([omk(71)], 1); b = omk(72); u = t; note("R{len(u.0)}{b.id}"); }
+/// g8 — a vector member moved, then the tuple refilled: the refill's backing takes `t`'s turn.
+fn g8() { t = ([omk(81)], 1); u = t; t = ([omk(82)], 2); note("R{u.0[0].id}{t.0[0].id}"); }
+/// g9 — a record member moved in a loop body: released at the end of its own pass.
+fn g9() { for i in 0..2 { t = (omk(90 + i), 1); u = t; b = omk(95 + i); note("R{u.0.id}{b.id}"); } note("out"); }
+/// g10 — a record member moved in a block: released before the block's successor runs.
+fn g10(n: integer) { if n > 0 { t = (omk(101), 1); u = t; note("R{u.0.id}"); } note("out"); b = omk(102); note("R{b.id}"); }
+/// g11 — a vector member in a block, not moved.
+fn g11(n: integer) { if n > 0 { t = ([omk(111)], 1); note("R{len(t.0)}"); } note("out"); }
+/// g12 — a vector member moved in a loop body.
+fn g12() { for i in 0..2 { t = ([omk(120 + i)], 1); u = t; b = omk(125 + i); note("R{len(u.0)}{b.id}"); } note("out"); }
+/// c1 — control: two tuples, no whole-tuple bind.
+fn c1() { t = (omk(71), 1); u = (omk(72), 2); note("R{t.0.id}{u.0.id}"); }
+/// c2 — control: a local after the copy.
+fn c2() { t = (omk(91), 1); u = t; b = omk(92); note("R{u.0.id}{b.id}"); }
+/// c3 — control: the same program as g2 with a struct.
+fn c3() { t = Op { h: omk(101), n: 1 }; u = t; t = Op { h: omk(102), n: 2 }; note("R{u.h.id}{t.h.id}"); }
+
+fn check(nm: text, want: text) {
+  got = drain();
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+fn main() {
+  drain();
+  g1(); check("g1 a local before     ", "R1211,12,11");
+  g2(); check("g2 refilled after     ", "R2122,21,22");
+  g3(); check("g3 literal members    ", "R3132,31,32");
+  g4(); check("g4 a local between    ", "R4142,41,42");
+  g5(); check("g5 two members        ", "R525351,53,52,51");
+  g6(); check("g6 moved twice        ", "R616263,63,62,61");
+  g7(); check("g7 vector, between    ", "R172,71,72");
+  g8(); check("g8 vector, refilled   ", "R8182,81,82");
+  g9(); check("g9 record, loop body  ", "R9095,95,90,R9196,96,91,out");
+  g10(1); check("g10 record, block    ", "R101,101,out,R102,102");
+  g11(1); check("g11 vector, block    ", "R1,111,out");
+  g12(); check("g12 vector, loop body ", "R1125,125,120,R1126,126,121,out");
+  c1(); check("c1 control: no bind   ", "R7172,72,71");
+  c2(); check("c2 control: after     ", "R9192,92,91");
+  c3(); check("c3 control: a struct  ", "R101102,101,102");
+  println("a tuple releases at its own turn: every cell holds");
+}

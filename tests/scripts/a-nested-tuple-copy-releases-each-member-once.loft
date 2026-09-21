@@ -70,6 +70,10 @@
 // The trace file is this guard's own — and its own means THIS file, not this family: several
 // corpus guards write one, and two concurrent runs of the SAME guard clobber each other's
 // (see `scripts/falsify.sh`, which says so on its unclean path).
+//
+// The ORDER within one tuple is reverse member order, as a struct's fields are (loft#1588): the
+// cells with two droppables pinned the forward order until then, which is what the backings'
+// registration at the function's head produced, not a rule.
 
 fn trace_path() -> text { return "loft_nesttuple_trace.tmp"; }
 
@@ -144,13 +148,13 @@ fn main() {
   assert(got == "a1,1", "a droppable in the INNER tuple releases once: {got}");
 
   c_two_inner(); got = drain();
-  assert(got == "a1112,11,12", "one droppable per inner tuple, each once: {got}");
+  assert(got == "a1112,12,11", "one droppable per inner tuple, each once: {got}");
 
   c_both_in_one(); got = drain();
-  assert(got == "a2122,21,22", "two droppables in one inner tuple, each once: {got}");
+  assert(got == "a2122,22,21", "two droppables in one inner tuple, each once: {got}");
 
   c_outer_and_inner(); got = drain();
-  assert(got == "a3132,31,32", "an outer droppable beside an inner one, each once: {got}");
+  assert(got == "a3132,32,31", "an outer droppable beside an inner one, each once: {got}");
 
   c_depth3(); got = drain();
   assert(got == "a41,41", "a droppable three levels down releases once: {got}");
@@ -171,7 +175,7 @@ fn main() {
   assert(got == "a61,61", "CONTROL the flat tuple: {got}");
 
   c_flat_two(); got = drain();
-  assert(got == "a7172,71,72", "CONTROL flat, a scalar between two droppables: {got}");
+  assert(got == "a7172,72,71", "CONTROL flat, a scalar between two droppables: {got}");
 
   c_no_copy(); got = drain();
   assert(got == "a91,91", "CONTROL the nested literal alone releases once: {got}");
