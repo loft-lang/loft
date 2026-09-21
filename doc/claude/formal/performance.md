@@ -108,12 +108,18 @@ library's source does not change.
 
 OPEN: **1**
 
-- **D-perf-1 (OPEN, loft#1426)** — violates (Perf-Weight): the drawing library's routines
-  ran 10–50× behind their pure-Rust twins on `--native-release` when it was filed
-  (hash-validated lanes, so the comparison is admissible under (Perf-Like)). Profiler
+- **D-perf-1 (OPEN, loft#1570)** — violates (Perf-Weight) and (Perf-Twin): a drawing routine
+  over the 3× bar, and four with no reference twin to judge them against.  Measured 2026-09-21
+  on main 9f5cf6a96 (`compare.py --skip-interp --repeat 4 --bar 3.0`, quiet machine, 14/14
+  hashes): of the ten routines with a Rust reference only `smooth` is over, at 4.50× (a 200 ns
+  reference that swings; 7.50× under load the same afternoon), and the median is 1.41×.
+  `parse`, `render_lock`, `render_marks` and `resize` have no reference in the bench, so the
+  bench cannot judge them; the 2026-09-17 figures had them at 3.39×, 4.43×, 6.25× and 4.51×.
+  The entry closes when every routine has its twin and meets the bar.
+
+  Filed as loft#1426 when the routines ran 10–50× behind their twins on `--native-release`
+  (hash-validated lanes, so the comparison is admissible under (Perf-Like)).  Profiler
   attribution showed the loft side's hot loop matching the reference's, placing the cost in
   the value model (`codegen_runtime` / `DbRef` indirection — PERFORMANCE.md's N1 class), not
-  the library.  @PLN157 and @PLN164 are the fix streams.  Measured 2026-09-17 against the
-  3× bar (`compare.py --skip-interp`, best of four runs, 14/14 hashes): eight rows under 2.1×,
-  and six at or over 3× — `smooth` 3.00, `fronds` 3.12, `parse` 3.39, `render_lock` 4.43,
-  `resize` 4.51, `render_marks` 6.25.  The entry closes when every row meets the bar.
+  the library.  That issue closed when @PLN157 brought every judged row within the then 4×
+  bar; @PLN157 and @PLN164 remain the fix streams.

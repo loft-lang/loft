@@ -655,7 +655,7 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
   variant resolver read through `peel_link`.  Guard
   `tests/scripts/an-enum-link-reads-and-writes-through-its-own-op.loft`.  Found while measuring
   D-bind-39's enum element face.
-* **D-bind-39** *(opened 2026-09-14; silent until the refusal the same day, now loud)* —
+* **D-bind-39** *(opened 2026-09-14, loft#1567; silent until the refusal the same day, now loud)* —
   `(B-Ref-Lvalue)` for an integer STORE place stored in fewer than 8 bytes — an element or a field
   of `u8`, `i8`, `u16`, `i32`, or a narrow range: `c = &u[1]`, `c = &o.a`.  The rule says such a place
   links, and it is refused on both backends with one error per `&` ("`&` cannot link to an integer
@@ -678,7 +678,7 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
   `tests/scripts/a-link-to-a-narrow-integer-store-place-is-refused.loft` (one error per `&`) and
   `tests/scripts/a-link-to-a-narrow-integer-local-reads-and-writes-it.loft` (what must still link).
   Found while checking D-bind-36's cells against a middle element.
-* **D-bind-38** *(opened 2026-09-14)* — `(B-Ref-Lvalue)`: a link to a TEXT place is refused.  `a:
+* **D-bind-38** *(opened 2026-09-14, loft#1566)* — `(B-Ref-Lvalue)`: a link to a TEXT place is refused.  `a:
   vector<text> = ["aa"]; t = &a[0]` and `o = O{s: "aa"}; t = &o.s` stop with "`&` requires an
   addressable operand — a variable, struct field, or vector element", on both backends and already
   on the first bind, while the same spellings over an integer, float, enum or struct place link.  The

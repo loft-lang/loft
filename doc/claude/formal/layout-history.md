@@ -19,6 +19,14 @@
   load-time gate automatically yet — the deviation closes fully when a persistence consumer wires
   `check_beside` into its open path. Until then the guard exists but is opt-in.
 
+  **Re-measured 2026-09-21 — the residual is narrower, and it is silent (loft#1562).**  The gate
+  has since become the default on two of the three load paths: the paged loaders (@PLN97 arc G)
+  and the whole-image `store_load` (loft#700, `Stores::schema_gate_ok`) refuse a store whose
+  sidecar records a different layout, naming what changed.  The durable `store_persist_bind`
+  does not ask it: a `hash<Rec[id]>` written as `{id, v}` and bound as `{id, extra, v}` binds and
+  reads `rec 1 10 2` for `{1, 10}`, identically on both backends and with no diagnostic.  Closes
+  when the bind asks the same gate.
+
 - **D-layout-2 — the `?` changed the layout** (2026-08-28, loft#1125). `L-Null` says
   `layout(τ) = layout(τ?)`, and three sites decided layout by naming `Type` variants BARE, so a
   wrapped shape reached none of them.

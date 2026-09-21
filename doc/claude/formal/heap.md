@@ -673,7 +673,7 @@ CLOSED 2026-09-17, below.
   (`p_v2`).  `p_v1` retired from `D-heap-15`.  Guard
   `tests/scripts/a-moved-collection-releases-its-elements-once.loft`.
 
-### D-heap-24 — OPEN (2026-09-21): a local returned on one path loses the record it held on a path that did not return
+### D-heap-24 — OPEN (2026-09-21, loft#1564): a local returned on one path loses the record it held on a path that did not return
 
 - **Violates:** (H-Drop), its reassignment and scope-end clauses.
 - **Where:** not established.  The shape is `(H-Move)`'s promoted return local — the local a
@@ -709,7 +709,7 @@ CLOSED 2026-09-17, below.
   through itself and its buffer's free is identity-guarded, so a record buffer keeps its place.
   Guard `tests/scripts/a-collection-local-releases-in-declaration-order.loft`.
 
-### D-heap-22 — OPEN (2026-09-21): a collection declared in a loop body releases its elements at the NEXT pass, not at the end of its own
+### D-heap-22 — OPEN (2026-09-21, loft#1565): a collection declared in a loop body releases its elements at the NEXT pass, not at the end of its own
 
 - **Violates:** (H-Drop), its scope-end clause — the owner of a loop-body local dies at the end
   of each pass.
@@ -849,7 +849,7 @@ CLOSED 2026-09-17, below.
   across 900 000 refills, and twelve value cells); plan cells
   `plans/164-activation-arena/bytecode-comparisons/1549-pooled-buffer-release-cells.loft`.
 
-### D-heap-8 — OPEN (2026-09-15): nothing refuses a copy — a written copy of a droppable without `OpCopy` compiles
+### D-heap-8 — OPEN (2026-09-15, loft#1568): nothing refuses a copy — a written copy of a droppable without `OpCopy` compiles
 
 - **Violates:** (H-Copy-Refuse).
 - ⚠ **NARROWED 2026-09-17, when the owner ruled on the copy rules.**  `(H-Move)` now moves a value
@@ -930,7 +930,7 @@ CLOSED 2026-09-17, below.
   and then the refusal on by default, with the switch left as the bisect step for a program the
   rules refuse.
 
-### D-heap-9 — OPEN (2026-09-15): `OpCopy` is not a hook
+### D-heap-9 — OPEN (2026-09-15, loft#1569): `OpCopy` is not a hook
 
 - **Violates:** (H-Copy-Lease), (H-Elide).
 - **Where:** `parser/definitions.rs` checks `OpDrop`'s signature (`check_drop_signature`) and
@@ -1127,7 +1127,7 @@ CLOSED 2026-09-17, below.
   of its 56 cells lost the source on the tree before, on both backends, and none does after.
   Guard `tests/scripts/a-move-in-one-arm-leaves-the-other-path-releasing.loft`.
 
-### D-heap-15 — OPEN (2026-09-17, NARROWED 2026-09-21): a value the rules MOVE is still copied, and both structures release it
+### D-heap-15 — OPEN (2026-09-17, NARROWED 2026-09-21, loft#1563): a value the rules MOVE is still copied, and both structures release it
 
 - **Violates:** (H-Move), and through it (H-Lease).
 - **Where:** not established.  What is measured is the population, below; the shapes share that

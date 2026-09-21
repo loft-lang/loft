@@ -151,8 +151,9 @@ chapter names. The two in operational.md are the **meta** entry, `D-op-1`/`D-op-
 being no shared operational semantics, the interpreter is the spec and a backend divergence
 is test-caught rather than definition-caught (@PLN89's differential oracle, an open-ended
 instrument and not a one-shot close); every operational chapter below inherits them. The one
-in layout.md is a **residual**: `D-layout-1`'s mechanism is shipped and opt-in, waiting on a
-persistence consumer to wire `check_beside` into its open path. No open row is a rule that
+in layout.md is `D-layout-1`: the load-time layout gate refuses a stale store in `store_load`
+and the paged loaders, and the durable `store_persist_bind` does not ask it, so it misreads
+(loft#1562). No open row is a rule that
 needs changing. What closed, when, and what it cost is each chapter's `<area>-history.md`;
 this paragraph and the table below are derived from the chapters and say nothing the
 chapters do not.
@@ -181,7 +182,7 @@ chapters do not.
 | [grammar.md](grammar.md) | concrete grammar + operator precedence | **0 open** — the 12-level precedence ladder; the prefix-`&`/infix-`&` overload and the non-CFG surface are decided edges (C81/C82) |
 | [operational.md](operational.md) | small-step semantics — the scalar core | **2 open** — the META pair `D-op-1`/`D-op-2` (conformance is differential, not definitional), inherited by every operational chapter below; the rules are complete for the scalar core; register in [operational-history.md](operational-history.md) |
 | [heap.md](heap.md) | store steps — alloc / read / write / **copy** / free / **drop** | **3 open** (D-heap-8, D-heap-9, D-heap-11 — the copy-lease rules `H-Copy-Refuse` / `H-Copy-Lease` / `H-View-Drop`, written 2026-09-15 ahead of their implementation, @PLN163; the revision that judges a copy by its own line reclassified `D-heap-1` and `D-heap-7` into them) — the `DbRef`/`Store` model, the whole-value COPY (C86), `H-Materialise`, the LIFO free discipline whose soundness is ownership.md, the drop hook's one-release-per-resource rule (`H-Drop`: owner's scope end, reassignment, container cascade; a copy moves the responsibility); conformance via the oracle (D-op-1) |
-| [layout.md](layout.md) | the store BYTE layout — `layout(τ)` (widths, offsets, packing, the reference encoding) | **1 open** — `D-layout-1`: no version guard on persisted bytes; the golden test and the `.dschema` sidecar are shipped and opt-in, pending a durable-store consumer (@PLN97). One format (RAM = disk); nullability is a sentinel, not a layout (`L-Null`); register in [layout-history.md](layout-history.md) |
+| [layout.md](layout.md) | the store BYTE layout — `layout(τ)` (widths, offsets, packing, the reference encoding) | **1 open** — `D-layout-1` (loft#1562): the durable `store_persist_bind` does not ask the load-time layout gate, so a store written with an older layout is bound and misread; `store_load` and the paged loaders refuse it (@PLN97, loft#700). One format (RAM = disk); nullability is a sentinel, not a layout (`L-Null`); register in [layout-history.md](layout-history.md) |
 | [iteration.md](iteration.md) | `for`, ranges, text iteration, the map/filter/reduce/comprehension combinators | **0 own** — index-cursor `for`, deterministic combinator order, fresh result vector; conformance via the oracle; register in [iteration-history.md](iteration-history.md) |
 | [coroutines.md](coroutines.md) | generators — `yield` / `next`, stackful suspension | **0 own** — lazy one-value-per-advance; a loop body with a SECOND statement is eager on native (a decided edge, loft#836); conformance via the oracle; register in [coroutines-history.md](coroutines-history.md) |
 | [concurrency.md](concurrency.md) | `par` — the one parallel construct | **0 own** — a parallel map consumed in source order; determinism CONDITIONAL on a pure worker; conformance via the oracle |
@@ -195,7 +196,7 @@ chapters do not.
 | [ownership.md](ownership.md) | the `deps` / borrow **checker** (lifetimes) — distinct from binding.md's surface | **1 open** (D-own-43: the interpreter's rebind of a promoted buffer local frees the buffer the caller handed it — masked while such callees receive the null sentinel; closes with @PLN164 B1b) — every store-lifetime decision reads the one total `deps` fact (`O-Deps`), per binding, per path, complete (`O-Complete`); the soundness proof heap.md's free rules rest on; register in [ownership-history.md](ownership-history.md) |
 | [capabilities.md](capabilities.md) | sandbox **admission** — what a restricted caller may do (call / parameter / field / mutation rights) | **0 open** — the 6-rule judgment `P;ctx ⊢ e ✓` fully enforced, each closed entry with a RED/GREEN adversarial pair; register in [capabilities-history.md](capabilities-history.md) |
 | [rewrites.md](rewrites.md) | the NATIVE emitter's cheaper forms — a header derived once, a scalar read once, a view's header at its binding, a stdlib wrapper as its op, a callee handed its invariant inputs, a push through its own header | **0 open** — the HOIST STATE the rewrites compose through (`R-State` one holder per path, `R-Refresh` the changing op refreshes at its own site, `R-Alias` ownership decides who may name one vector) and the rewrites themselves (`R-Switch` … `R-LeafChain`): every rewrite has a generation-time switch and a falsifier (`LOFT_HOIST_VERIFY=1`), the interpreter applies none and is the oracle; the emission audit (@PLN157 § V-r) is the emission-time check; D-rw-1 closed 2026-09-09; [rewrites-history.md](rewrites-history.md) records where each invariant is held |
-| [performance.md](performance.md) | routines pull their weight — the DISTRIBUTION's speed contract | **1 open** — `Perf-Like` (hash-equal lanes before any comparison), `Perf-Weight` (per-release measurement against an industry-language twin — drift satisfies nothing), `Perf-Twin` (a twin is written where a hit is expected, never waived), `Perf-Cure` (the twin MEASURES, never ships — the cure goes to the engine, keeping libraries readable loft); D-perf-1 = loft#1426 |
+| [performance.md](performance.md) | routines pull their weight — the DISTRIBUTION's speed contract | **1 open** — `Perf-Like` (hash-equal lanes before any comparison), `Perf-Weight` (per-release measurement against an industry-language twin — drift satisfies nothing), `Perf-Twin` (a twin is written where a hit is expected, never waived), `Perf-Cure` (the twin MEASURES, never ships — the cure goes to the engine, keeping libraries readable loft); D-perf-1 = loft#1570 |
 
 ## Roadmap
 
@@ -296,13 +297,34 @@ system grows, anchor the question on the RULE, not on the code*.
 ## Deviation entry format
 
 ```
-### Dn — <one-line name>
+### Dn — OPEN (<date>, loft#NNNN): <one-line name>
 - **Violates:** <rule id(s)>
 - **Where:** <file:symbol> (the site(s) that break it)
 - **Effect:** <user-visible symptom / issue refs>
 - **Status:** OPEN | IN PROGRESS (<branch/PR>) | CLOSED (<commit> — then delete)
 - **Removal:** <the change that makes the code obey the rule>
 ```
+
+**Every OPEN deviation a release can close has a tracking issue, named in its head as
+`loft#NNNN`** — in the heading, or in the first line of a register bullet, which is where
+`rule_tags.py` reads it.  A register records a deviation; it does not make anyone fix it, and a
+deviation only this directory knows about is deferred work the tracker cannot count, rank or
+schedule.  The owner's standing is that no deviation a release can resolve ships in one, so
+each is filed the day it is opened — as a bug, with a both-backend repro, a verified workaround
+and the labels the bug-filing policy asks for (`status:planned` when a plan owns the fix) — and
+its entry and its issue close together.
+
+The one exception is an entry no release can close, which says so in its head — the words `not
+resolvable in a release` — and gives the reason in the entry.  `D-op-1` and `D-op-2` are the
+case: the interpreter and the native generator are two implementations with no executable
+semantics linking them outside the tests that run both, and @PLN89's differential oracle
+narrows that gap without closing it.  The exception is for that shape, not for work that is
+merely large.
+
+`python3 scripts/rule_tags.py registers` names every open entry that has neither, and
+`registers --issues` names an open entry whose issue the tracker has since closed — which is a
+pair to re-measure, never a closure: `D-perf-1`'s issue closed at a bar the rules had since
+tightened, and `D-layout-1`'s residual had moved to a path its text no longer named.
 
 A CLOSED deviation leaves the rules doc; its entry — dates, measurements, what closed it —
 is kept in `<area>-history.md`. The count of OPEN deviations per doc is the area's distance

@@ -428,8 +428,12 @@ drift apart; verified both backends —
 ## Deviations
 
 **OPEN: 2.**
-- **D-op-1** — there is no shared operational semantics — the interpreter is the spec
-- **D-op-2** — interpreter/native divergences are test-caught, not definition-caught
+- **D-op-1** — there is no shared operational semantics — the interpreter is the spec.  Not
+  resolvable in a release: two implementations, and nothing links them into one executable
+  semantics outside the tests that run both; @PLN89's differential oracle narrows it, and each
+  divergence it catches is filed on its own.
+- **D-op-2** — interpreter/native divergences are test-caught, not definition-caught.  Not
+  resolvable in a release, for D-op-1's reason.
 
 The full register — these entries in full, plus every closed one with its dates and
 issue numbers — is the companion [operational-history.md](operational-history.md).

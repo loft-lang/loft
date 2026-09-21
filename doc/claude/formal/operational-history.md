@@ -6,8 +6,9 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **3** (D-op-1/2, and D-op-5 opened 2026-08-25 — two spellings of a following
-null-check still report, the sibling of a wrapper-list drift fixed the same day; the null-model keystone deviations D-op-null-1/2 both CLOSED 2026-07-10 by
+OPEN: **2** (D-op-1/2 — both NOT resolvable in a release, below; D-op-5, opened 2026-08-25 — two
+spellings of a following null-check still reported, the sibling of a wrapper-list drift fixed the
+same day — CLOSED 2026-09-02; the null-model keystone deviations D-op-null-1/2 both CLOSED 2026-07-10 by
 keystone steps 2–3, D-op-6 opened AND closed 2026-08-29 by the first `@FR-E-NullArg` walk,
 and D-op-7/8 opened AND closed 2026-08-31 by loft#1246 — the sized-integer overflow pair.
 Opened 2026-07-10 by the @PLN102 pre-freeze audit —
@@ -125,8 +126,13 @@ only as strong as the rules above it, not only as strong as its oracle.
   `tests/scripts/pln102-cast-collision-guard.loft`; the conversion set was one assertion
   (`inf as integer` saturate → null in `02-floats.loft`).
 
-### D-op-1 — there is no shared operational semantics; the interpreter is the spec
+### D-op-1 — there is no shared operational semantics; the interpreter is the spec (not resolvable in a release)
 - **Violates:** the premise of this doc (a single evaluation relation both backends obey)
+- **Not resolvable in a release:** the interpreter and the native generator are two
+  implementations, and nothing links them into one executable semantics outside the tests
+  that run both.  The differential oracle (@PLN89) turns a divergence into a caught failure
+  over a growing corpus; it narrows the gap and never closes it, so no issue tracks this
+  entry — each divergence the oracle catches is filed on its own.  D-op-2 inherits it.
 - **Where:** `src/state/` (the interpreter) is the de-facto *executable* definition;
   `src/generation/` (native) is a *separate* generator. The rules across this operational
   family — this file's scalar core plus [heap](heap.md) / [iteration](iteration.md) /
@@ -203,7 +209,7 @@ only as strong as the rules above it, not only as strong as its oracle.
   backends conforming to one definition) — switchable to that later; these rules are reused
   either way.*
 
-### D-op-2 — interp/native divergences are test-caught, not definition-caught
+### D-op-2 — interp/native divergences are test-caught, not definition-caught (not resolvable in a release)
 - **Violates:** E-Op / E-Uncomp / the shared-contract premise
 - **Where:** the two backends are kept in agreement by the suite, so a divergence ships
   until a test happens to exercise it. **#433** is the canonical case: a program the

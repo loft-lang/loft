@@ -335,7 +335,7 @@ that gate, now applied across a network boundary.
 ## Deviations
 
 **OPEN: 1.**
-- **D-layout-1** — residual: the load-time schema gate is built and opt-in, and closes fully when a persistence consumer wires `check_beside` into its open path
+- **D-layout-1** (loft#1562) — the durable `store_persist_bind` binds a store written with a different layout and misreads every record, while `store_load` and the paged loaders refuse the same file; closes when the bind asks the load-time gate too
 
 D-layout-8 OPENED AND CLOSED 2026-09-10 (loft#1503): `(L-Tuple)` requires a tuple's two layout
 views to compute the SAME offsets and says their agreement *"is part of the rule, not an

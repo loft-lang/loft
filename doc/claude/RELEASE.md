@@ -1147,7 +1147,10 @@ artefacts, step 10's
 binaries and registry entry, and the monthly reviews the cadence makes
 per-release work (`M-monthly-docs`, `M-monthly-bugs`, `M-close-plans`, and
 `M-perf-pass` — the performance read over loft AND its libraries; @PLN158 grows it
-into per-routine benches with industry reference twins).
+into per-routine benches with industry reference twins).  `A-deviations` blocks a release on
+any open formal deviation a release can resolve: each has a tracking issue, and the only ones
+allowed to ship are marked `not resolvable in a release` with their reason
+(`formal/README.md` § Deviation entry format).
 
 One of those is worth calling out because it is invisible and it ships:
 **`make-release.sh` copies `doc/loft-reference.pdf` into all four bundles and
