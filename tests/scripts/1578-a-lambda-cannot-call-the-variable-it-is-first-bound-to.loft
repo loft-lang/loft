@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1578 — a lambda on the right-hand side of its variable's FIRST binding cannot call that
+// variable: a lambda captures when it is created, and at that moment the variable holds nothing.
+//
+// The shape is how a recursive helper is written in languages with a `let rec`; in loft it was an
+// internal compiler error on both backends (*"var_pos underflow … variable 'go' has no assigned
+// slot"*).  A plain read of the same shape, `y = y + 1`, was already refused as an unknown
+// variable; the refusal here says the same thing about the call and names the cure, a
+// file-scope `fn`.  `1578b-…` holds the shapes that must keep working: a REBINDING captures the
+// previous value, a file-scope `fn` recurses, and a lambda captures a variable bound earlier.
+//
+// Axes this file MOVES:  whether the lambda captures anything else (none · a scalar).
+// Axes it HOLDS FIXED:   one function, one first binding per cell, distinct names so no two
+//                        expectations share a substring; the refused call is an arm's whole
+//                        value, because an unknown call used as an OPERAND also reports the
+//                        operator's missing argument (the same for any unknown name).
+//
+// @falsified-at: ae768af07 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2, native
+//   exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches).
+//   CHANNEL: exit and expectations.  On the control neither refusal exists: both cells reach
+//   codegen and die with the slot ICE, so the suite fails the file.
+//   WITNESS: `var_pos underflow in fn 'n___lambda_0': variable 'walk1578' … has no assigned slot`.
+//   HOLDS: leak and free-refusal are equal on both trees (a refused file runs nothing).
+// @falsified-by: tests/falsified/1578-a-lambda-cannot-call-the-variable-it-is-first-bound-to.patch —
+//   the same channels.
+
+// @EXPECT_ERROR: 'walk1578' is not bound yet
+fn bare1578() -> integer {
+  walk1578 = fn(i: integer) -> integer { if i == 0 { 0 } else { walk1578(i - 1) } };
+  walk1578(3)
+}
+
+// @EXPECT_ERROR: 'climb1578' is not bound yet
+fn capturing1578() -> integer {
+  top = 3;
+  climb1578 = fn(i: integer) -> integer { if i > top { 0 } else { climb1578(i + 1) } };
+  climb1578(1)
+}
+
+fn main() {
+  println("{bare1578()} {capturing1578()}");
+}

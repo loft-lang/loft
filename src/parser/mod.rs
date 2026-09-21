@@ -412,6 +412,15 @@ pub struct Parser {
     /// `parse_assign_op` to lower a SCALAR reference to `OpCreateStack`. Cleared per
     /// binding so it never leaks into the next statement.
     pub(crate) amp_pending: bool,
+    /// The variables whose FIRST binding is the assignment being parsed, innermost last.  A
+    /// lambda on that right-hand side is created before the variable holds anything, so the
+    /// name is not a capture there (`go = fn(i) { go(i - 1) }`); a rebinding is not listed and
+    /// captures the previous value as usual.
+    pub(crate) first_bind_targets: Vec<String>,
+    /// Where each variable is first bound: pass 1 records `(function, variable)` → the
+    /// position of the statement whose left-hand side CREATED the variable, and both passes
+    /// read it back to tell a first binding from a rebinding.
+    pub(crate) first_bind_at: HashMap<(u32, u16), (u32, u32)>,
     /// loft#1382 — the statement about to be parsed BEGINS with `if` or `match`, so whatever
     /// that construct yields is discarded (`@FR-F-Block`: a `;`-terminated block's value is
     /// dropped, and `@FR-F-Drop` still runs the work).
@@ -1470,6 +1479,8 @@ impl Parser {
             pending_param_locks: Vec::new(),
             pending_param_positions: Vec::new(),
             amp_pending: false,
+            first_bind_targets: Vec::new(),
+            first_bind_at: HashMap::new(),
             stmt_if_pending: false,
             fit_candidate: None,
             fit_armed: None,
@@ -5155,6 +5166,16 @@ impl Parser {
         if matches!(is_type, Type::Never) {
             return true;
         }
+        // @FR-L-Ref — a `reference<E>` over a STRUCT-enum is a record pointer, and a value of
+        // that enum is a record (`Enum(E, true)`), so the value meets the slot as the pointer
+        // to its own record — the relation a struct value already has with `reference<S>`,
+        // where both sides are `Reference(S)`.  A PLAIN enum's value is a discriminant with no
+        // record to point at, so it is not admitted.
+        if let (Type::Enum(e, true, _), Type::Reference(r, _)) = (is_type, should)
+            && e == r
+        {
+            return true;
+        }
         let _ = code;
         // Struct-literal inline constructors are typed as Rewritten(Reference(...)); strip
         // the wrapper so method calls chained on the constructor are accepted correctly.
@@ -6828,7 +6849,19 @@ impl Parser {
                     // could this live?", and here we already know exactly where it
                     // lives and why it does not reach.  The fuzzy guess is what
                     // turned this into "did you mean 'move'?".
-                    if let Some(note) = self.importer_boundary_note(&format!("n_{name}")) {
+                    // A lambda on the right-hand side of the name's own FIRST binding: the
+                    // variable holds nothing when the lambda captures, so there is no function
+                    // value to call yet (`first_bind_targets`).
+                    if self.first_bind_targets.iter().any(|t| t == name) {
+                        diagnostic_at!(
+                            self.lexer,
+                            name_pos,
+                            Level::Error,
+                            "'{name}' is not bound yet — a lambda captures its variables when it \
+                             is created, so it cannot call the variable it is being assigned to; \
+                             for recursion declare a file-scope 'fn {name}(…)'"
+                        );
+                    } else if let Some(note) = self.importer_boundary_note(&format!("n_{name}")) {
                         diagnostic_at!(self.lexer, name_pos, Level::Error, "{note}");
                     } else if let Some(hint) =
                         registry_fn_hint(name, &self.data.resolved_libraries())

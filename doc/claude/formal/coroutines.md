@@ -114,8 +114,14 @@ computed lazily, on demand, rather than read from a store.
 
 ## Deviations
 
-**OPEN: 0.**  Every deviation this doc has carried is closed; the record is in
-the companion [coroutines-history.md](coroutines-history.md).
+**OPEN: 1.**
+
+- **`D-cor-3`** — OPEN (loft#1586): an endless `while` generator never yields on `--native` — it
+  runs eagerly until memory is exhausted, against `(G-Next)`.  Record:
+  [coroutines-history.md](coroutines-history.md).
+
+Every other deviation this doc has carried is closed; the record is in the companion
+[coroutines-history.md](coroutines-history.md).
 
 ## Conformance
 

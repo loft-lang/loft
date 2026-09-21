@@ -3303,6 +3303,22 @@ impl Parser {
             if matches!(dt, DefType::EnumValue)
                 || (self.first_pass && matches!(dt, DefType::Struct))
             {
+                // @FR-C-Var — a variant TYPE is a record variant, `Reference(S)`.  A PLAIN enum's
+                // value is a discriminant with no record, so no expression ever has its type: a
+                // parameter spelled with it is never selected, and beside a definition over the
+                // enum every call silently reaches that one instead.  The enum is plain only
+                // once its values are parsed, so this is asked on the second pass.
+                if !self.first_pass && dt == DefType::EnumValue {
+                    let parent = self.data.def(tp_nr).parent();
+                    if matches!(self.data.def(parent).returned(), Type::Enum(_, false, _)) {
+                        let enum_name = self.data.def(parent).name.clone();
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "'{type_name}' is a value of the plain enum '{enum_name}', not a type — nothing ever has type '{type_name}', so it cannot be a parameter, field or result type; take a '{enum_name}' and 'match' on its value"
+                        );
+                    }
+                }
                 Some(Type::Reference(tp_nr, crate::data::Deps::unknown(dep)))
             } else if matches!(self.data.def(tp_nr).returned(), Type::Text(_)) {
                 Some(Type::Text(crate::data::Deps::unknown(dep)))

@@ -1,0 +1,37 @@
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index be4aca7d1..c040e7c38 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -5128,16 +5128,6 @@ impl Parser {
+         if matches!(is_type, Type::Never) {
+             return true;
+         }
+-        // @FR-L-Ref — a `reference<E>` over a STRUCT-enum is a record pointer, and a value of
+-        // that enum is a record (`Enum(E, true)`), so the value meets the slot as the pointer
+-        // to its own record — the relation a struct value already has with `reference<S>`,
+-        // where both sides are `Reference(S)`.  A PLAIN enum's value is a discriminant with no
+-        // record to point at, so it is not admitted.
+-        if let (Type::Enum(e, true, _), Type::Reference(r, _)) = (is_type, should)
+-            && e == r
+-        {
+-            return true;
+-        }
+         let _ = code;
+         // Struct-literal inline constructors are typed as Rewritten(Reference(...)); strip
+         // the wrapper so method calls chained on the constructor are accepted correctly.
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+index 00affefa2..f09b948dd 100644
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -4016,11 +4016,6 @@ impl Parser {
+                 }
+                 self.expected = saved_expected;
+                 self.amp_head = AmpHead::No;
+-                // The field store below IS the binding a `reference<T>` field's `&` annotates,
+-                // so the `&` is consumed here.  Left pending, it reached the enclosing
+-                // binding (`b: Box = Hold { l: &leaf }`), which then read itself as `b = &…`,
+-                // took the link marker and was never given a stack slot.
+-                self.amp_pending = false;
+                 t
+             };
+             // #330 / @FR-R-InPlaceLiteral — an initialiser that READS the place being

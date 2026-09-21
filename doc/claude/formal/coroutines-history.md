@@ -6,8 +6,21 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** (2026-08-28) — **D-cor-2 opened and closed the same day**; D-cor-1 likewise on
-2026-08-23.
+OPEN: **1** (2026-09-21) — **D-cor-3** (loft#1586, below).  D-cor-2 opened and closed the same
+day (2026-08-28); D-cor-1 likewise on 2026-08-23.
+
+> **D-cor-3 — OPEN (2026-09-21, loft#1586) — an endless `while` generator never yields on
+> `--native`.**
+> `(G-Next)` says an advance runs to the next `yield` and produces one value.  Native loop
+> generators outside CL-9 slice 1 (a `for` whose body ends in one unconditional `yield`) run the
+> whole loop eagerly into a buffer, which the Conformance section accepts as an interleaving
+> difference because the values still agree.  A `while` loop is outside slice 1, and when it is
+> endless the premise fails: `while true { n += 1; yield n; }` answers `1 2` on the interpreter
+> and on `--native` never answers — it fills its buffer until the process is killed for memory
+> (measured at a 2 GB cap; three shapes: integer, boolean and float yields).  A `for` over a large
+> range is lazy on both backends and is the workaround.  Closes with CL-9 slice 3 (COROUTINE.md
+> § Design: lazy loop yields, axis A5).  Found by the Lua expressiveness measurement (LUA_BAR
+> LB3 / LB4).
 
 > **D-cor-2 — CLOSED (2026-08-28, loft#1132) — a native transport channel was chosen for
 > types it could not carry.**

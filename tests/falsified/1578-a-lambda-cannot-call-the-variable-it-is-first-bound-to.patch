@@ -1,0 +1,118 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index acd36d5ad..8fb13f7aa 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -6552,19 +6552,7 @@ use a separate collection or add after the loop"
+         // loft#1205 — only a discharge built by THIS left-hand side may be peeled below,
+         // so the flag starts clear rather than carrying an earlier statement's answer.
+         self.last_place_discharge = false;
+-        let vars_before_lhs = self.vars.next_var();
+         let mut f_type = self.parse_operators(&Type::Unknown(0), code, &mut parent_tp, 0);
+-        // A left-hand side that CREATED its variable in pass 1 is that variable's first
+-        // binding — recorded for both passes to read (`first_bind_at`).
+-        if self.first_pass
+-            && let Value::Var(v) = code.unspan()
+-            && *v >= vars_before_lhs
+-        {
+-            self.first_bind_at.insert(
+-                (self.context, *v),
+-                (stmt_start_pos.line, stmt_start_pos.pos),
+-            );
+-        }
+         self.amp_head = AmpHead::No;
+         self.in_tuple_lhs = saved_tuple_lhs;
+         if let (Type::RefVar(_), Value::Var(v_nr)) = (&f_type, &code) {
+@@ -7328,26 +7316,8 @@ use a separate collection or add after the loop"
+                 // record closure association if the RHS was a capturing lambda.
+                 // NOTE: must come AFTER parse_assign_op because that is where the RHS
+                 // lambda is parsed and last_closure_work_var gets set by emit_lambda_code.
+-                // The target's FIRST binding is this statement when pass 1 created the variable
+-                // at this statement's left-hand side (`first_bind_at`); both passes ask it.
+-                let first_bind = if op == "="
+-                    && let Value::Var(v) = to.unspan()
+-                    && self.vars.exists(*v)
+-                    && self.first_bind_at.get(&(self.context, *v))
+-                        == Some(&(stmt_start_pos.line, stmt_start_pos.pos))
+-                {
+-                    Some(self.vars.name(*v).to_string())
+-                } else {
+-                    None
+-                };
+-                if let Some(name) = &first_bind {
+-                    self.first_bind_targets.push(name.clone());
+-                }
+                 let result =
+                     self.parse_assign_op(code, op, &f_type, &to, parent_tp, var_nr, f2_hoisted);
+-                if first_bind.is_some() {
+-                    self.first_bind_targets.pop();
+-                }
+                 // loft#1205 — the discharged read runs before the compound, which was built
+                 // for a place the seed has just made non-null.  Prepended FIRST so the F2
+                 // binding below ends up in front of it: the seed reads and writes THROUGH
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 204a9a3f0..be4aca7d1 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -404,15 +404,6 @@ pub struct Parser {
+     /// `parse_assign_op` to lower a SCALAR reference to `OpCreateStack`. Cleared per
+     /// binding so it never leaks into the next statement.
+     pub(crate) amp_pending: bool,
+-    /// The variables whose FIRST binding is the assignment being parsed, innermost last.  A
+-    /// lambda on that right-hand side is created before the variable holds anything, so the
+-    /// name is not a capture there (`go = fn(i) { go(i - 1) }`); a rebinding is not listed and
+-    /// captures the previous value as usual.
+-    pub(crate) first_bind_targets: Vec<String>,
+-    /// Where each variable is first bound: pass 1 records `(function, variable)` → the
+-    /// position of the statement whose left-hand side CREATED the variable, and both passes
+-    /// read it back to tell a first binding from a rebinding.
+-    pub(crate) first_bind_at: HashMap<(u32, u16), (u32, u32)>,
+     /// loft#1382 — the statement about to be parsed BEGINS with `if` or `match`, so whatever
+     /// that construct yields is discarded (`@FR-F-Block`: a `;`-terminated block's value is
+     /// dropped, and `@FR-F-Drop` still runs the work).
+@@ -1460,8 +1451,6 @@ impl Parser {
+             pending_param_locks: Vec::new(),
+             pending_param_positions: Vec::new(),
+             amp_pending: false,
+-            first_bind_targets: Vec::new(),
+-            first_bind_at: HashMap::new(),
+             stmt_if_pending: false,
+             fit_candidate: None,
+             fit_armed: None,
+@@ -6778,19 +6767,7 @@ impl Parser {
+                     // could this live?", and here we already know exactly where it
+                     // lives and why it does not reach.  The fuzzy guess is what
+                     // turned this into "did you mean 'move'?".
+-                    // A lambda on the right-hand side of the name's own FIRST binding: the
+-                    // variable holds nothing when the lambda captures, so there is no function
+-                    // value to call yet (`first_bind_targets`).
+-                    if self.first_bind_targets.iter().any(|t| t == name) {
+-                        diagnostic_at!(
+-                            self.lexer,
+-                            name_pos,
+-                            Level::Error,
+-                            "'{name}' is not bound yet — a lambda captures its variables when it \
+-                             is created, so it cannot call the variable it is being assigned to; \
+-                             for recursion declare a file-scope 'fn {name}(…)'"
+-                        );
+-                    } else if let Some(note) = self.importer_boundary_note(&format!("n_{name}")) {
++                    if let Some(note) = self.importer_boundary_note(&format!("n_{name}")) {
+                         diagnostic_at!(self.lexer, name_pos, Level::Error, "{note}");
+                     } else if let Some(hint) =
+                         registry_fn_hint(name, &self.data.resolved_libraries())
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
+index b8eda1692..cc5992c3c 100644
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
+@@ -1217,12 +1217,9 @@ impl Parser {
+         // `Reference(elem)` type and `p += [9]` reported *"No matching operator 'Add' on
+         // 'integer' and 'integer'"* — the ELEMENT's type, for an append to the collection
+         // (loft#1276, the same shape loft#1209 had through `?`).
+-        // A variable whose first binding is the statement creating this lambda holds nothing
+-        // yet, so it is not offered as a capture (`first_bind_targets`).
+         let mut ctx: Vec<(String, Type)> = outer_vars
+             .all_names_and_types()
+             .into_iter()
+-            .filter(|(n, _)| !self.first_bind_targets.contains(n))
+             .map(|(n, t)| match t {
+                 Type::RefVar(inner) => (n, *inner),
+                 other => (n, other),
