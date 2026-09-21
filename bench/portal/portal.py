@@ -134,6 +134,21 @@ def fmt_ns(ns):
     return f"{ns:,.0f} ns"
 
 
+def analysis_for(cls):
+    """The analysis document of a class: `analysis/<class>.md`, or the file `analysis/index.tsv`
+    names for it (one analysis may serve several classes), or None."""
+    own = f"{cls}.md"
+    if os.path.exists(os.path.join(HERE, "analysis", own)):
+        return own
+    index = os.path.join(HERE, "analysis", "index.tsv")
+    if os.path.exists(index):
+        for line in open(index):
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) == 2 and parts[0] == cls and os.path.exists(os.path.join(HERE, "analysis", parts[1])):
+                return parts[1]
+    return None
+
+
 def render():
     classes = read_tsv(os.path.join(HERE, "classes.tsv"), 2)
     class_order = [c[0] for c in classes]
@@ -242,9 +257,10 @@ def render():
         w("### Every routine, under its class\n")
         for cls, rs in ranked:
             w(f"#### {cls} — {class_what[cls]}\n")
-            if os.path.exists(os.path.join(HERE, "analysis", f"{cls}.md")):
+            doc = analysis_for(cls)
+            if doc:
                 w(f"Why it is slow, priced, and what to build: "
-                  f"[analysis/{cls}.md](../../bench/portal/analysis/{cls}.md)\n")
+                  f"[analysis/{doc}](../../bench/portal/analysis/{doc})\n")
             w("| routine | lane | population | × Rust | range | native | Rust | | what it stands for |")
             w("|---|---|---|---:|---|---:|---:|---|---|")
             for r in sorted(rs, key=lambda r: -r["ratio_f"]):
