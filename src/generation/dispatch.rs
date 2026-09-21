@@ -381,13 +381,19 @@ impl Output<'_> {
             // @PLN25: a `text?` var stores as `String` like plain `text` — peel so the literal→String
             // `.to_string()` conversion fires for an Optional(Text) local.
             let needs_to_string = matches!(variables.tp(var).base(), Type::Text(_));
+            // @PLN17 — a boolean's storage form is `u8`, on the struct field as in a local, and
+            // the right-hand side may be a compound `bool` expression (`!b` → `(..) != 1`), so
+            // the ` as u8` wraps the WHOLE of it, as the local path below does.
+            let wrap_bool = matches!(variables.tp(var).base(), Type::Boolean);
             write!(w, "self.var_{name} = ")?;
-            if needs_to_string {
+            if needs_to_string || wrap_bool {
                 write!(w, "(")?;
             }
             self.output_code_inner(w, to)?;
             if needs_to_string {
                 write!(w, ").to_string()")?;
+            } else if wrap_bool {
+                write!(w, ") as u8")?;
             }
             return Ok(());
         }

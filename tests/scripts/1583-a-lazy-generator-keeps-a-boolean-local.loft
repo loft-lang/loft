@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1583 — a generator whose `for` loop keeps a `boolean` local across its `yield` builds on
+// --native and answers what the interpreter answers.
+//
+// A loop whose body ends in one unconditional `yield` is compiled LAZILY on --native (CL-9 slice
+// 1): its locals live on the coroutine struct, where a boolean is stored as `u8` like everywhere
+// else.  The field write emitted the `bool` right-hand side raw — `self.var_on = false`,
+// `self.var_on = (… ) != 1` — so rustc refused the program (E0308) while the interpreter ran it.
+//
+// Axes this file MOVES:  what the boolean feeds (the yielded value's sign, the yield itself),
+//                        and how it is written (a literal, a negation).
+// Axes it HOLDS FIXED:   small finite ranges, so an eager regression is still finite; every value
+//                        hand-computed.
+//
+// @falsified-at: 730114624 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move).
+//   CHANNEL: exit, native — rustc refused the control (E0308, `expected u8, found bool`).
+//   WITNESS: `self.var_flag = false;` in the generated state machine, on the control.
+//   HOLDS: assertions, leak, panic and free-refusal are equal on both trees on the interpreter.
+// @falsified-by: tests/falsified/1583-a-lazy-generator-keeps-a-boolean-local.patch — the same
+//   channels.
+
+fn signs1583() -> iterator<integer> {
+  flag = false;
+  for i in 0..4 { flag = !flag; yield if flag { i } else { -i }; }
+}
+
+fn blink1583() -> iterator<boolean> {
+  on = false;
+  for _ in 0..5 { on = !on; yield on; }
+}
+
+fn main() {
+  s = "";
+  for v in signs1583() { s += "{v} "; }
+  assert(s == "0 -1 2 -3 ", "a boolean local steering the value: {s}");
+  b = "";
+  for v in blink1583() { b += if v { "1" } else { "0" }; }
+  assert(b == "10101", "a boolean local yielded: {b}");
+}
