@@ -657,10 +657,80 @@ fn coalesce_cells() -> Vec<Cell> {
     out
 }
 
+// ── the BOUND family: a local bound from a join, then placed again ─────────────────────────
+
+/// How the join is written: the `??`, the value `if`, and the author's own statement form, which
+/// the compiler writes the other two out to where the binding must own what it is handed.
+const BOUND_SPELL: &[(&str, &str)] = &[
+    ("coal", "x = a ?? @D;"),
+    ("value", "x = if a != null { a } else { @D };"),
+    ("stmt", "if a != null { x = a; } else { x = @D; }"),
+];
+/// Where the bound local goes next.  `ret` is written by the generator: the local is returned.
+const BOUND_PLACE: &[(&str, &str)] = &[
+    ("local", r#"y = x; println("R{y.id}");"#),
+    ("field", r#"c = Hold { h: x }; println("R{c.h.id}");"#),
+    (
+        "push",
+        r#"v: vector<H> = []; v += [x]; println("R{v[0].id}");"#,
+    ),
+    ("ret", ""),
+];
+
+/// `x` is bound from a join of values the function owns and then placed a SECOND time.  Every
+/// source is the function's own, so `(H-Move)` moves each one on and the resource is released
+/// once, by whatever holds it last.  The join is the first bind of `x` or a reassignment of a
+/// local that already holds a record of its own (`@K`), which that reassignment releases.
+fn bound_cells() -> Vec<Cell> {
+    let mut out = Vec::new();
+    let mut idx = 0u32;
+    for path in ["present", "default"] {
+        let setup_a = if path == "present" {
+            "a: H? = mk(@I);"
+        } else {
+            "a: H? = null;"
+        };
+        for &(sname, spelling) in BOUND_SPELL {
+            for bind in ["first", "rebind"] {
+                for &(bname, bsetup, bexpr) in COAL_B {
+                    for &(pname, place) in BOUND_PLACE {
+                        idx += 1;
+                        let name = format!("b_{path}_{sname}_{bind}_{bname}_{pname}");
+                        let pre = if bind == "rebind" {
+                            "x: H = mk(@K);"
+                        } else {
+                            ""
+                        };
+                        let join = spelling.replace("@D", bexpr);
+                        let body = format!("{setup_a} {bsetup} {pre} {join}");
+                        let mut text = String::new();
+                        if pname == "ret" {
+                            let _ = writeln!(text, "fn {name}_m() -> H {{ {body} return x; }}");
+                            let _ = writeln!(
+                                text,
+                                "fn {name}_b() {{ r = {name}_m(); println(\"R{{r.id}}\"); }}"
+                            );
+                        } else {
+                            let _ = writeln!(text, "fn {name}_b() {{ {body} {place} }}");
+                        }
+                        let _ = writeln!(text, "fn {name}() {{ {name}_b(); }}");
+                        out.push(Cell {
+                            text: with_ids(&text, 500_000 + 1000 * idx),
+                            name,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 fn all_cells() -> Vec<Cell> {
     let mut cells = pilot_cells();
     cells.extend(cross_cells());
     cells.extend(coalesce_cells());
+    cells.extend(bound_cells());
     cells
 }
 
@@ -1312,6 +1382,8 @@ fn lease_verdict(name: &str) -> Lease {
         ["q", _, "local", ..] => Lease::Once,
         ["q", _, "field", _, dest] if VIEWING.contains(dest) => Lease::Once,
         ["q", ..] => Lease::Refused,
+        // Every source of a bound cell is a local the function made, so each placement moves.
+        ["b", ..] => Lease::Once,
         _ => panic!("{name} has no lease verdict: classify it under formal/heap.md § Drop"),
     }
 }
@@ -1387,35 +1459,35 @@ const CENSUS_BLIND: &[&str] = &[];
 // `D-heap-13` was retired 2026-09-20 with its fix (a collection a call answers releases
 // through the binding, `scopes::drop_hook`'s collection arm): `p_v5`–`p_v7` moved LOST →
 // clean on both backends and `p_v8` / `p_v9`, the controls that bound it, did not move.
-const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[
-    (
-        "D-heap-15",
-        &[
-            "p_v1",
-            "p_v2",
-            "p_o2",
-            "p_i2",
-            "p_j3",
-            "p_j4",
-            "c_coalesce_field",
-            "c_coalesce_enum",
-            "c_coalesce_push",
-            "c_coalesce_veclit",
-            "q_present_local_call_field",
-            "q_present_local_call_push",
-            "q_present_local_var_field",
-            "q_present_local_var_push",
-            "q_present_local_literal_field",
-            "q_present_local_literal_push",
-            "q_default_local_call_field",
-            "q_default_local_var_field",
-            "q_default_local_var_push",
-            "q_default_local_literal_field",
-            "q_default_local_literal_push",
-        ],
-    ),
-    ("D-heap-16", &["p_l2", "q_default_local_call_local"]),
-];
+// `D-heap-16` was retired 2026-09-21 with its fix (the arm lift that turns the binding into a
+// borrow gives a minting call arm a temp of its own): `p_l2` and `q_default_local_call_local`
+// moved LOST → clean on both backends, and `q_default_param_call_local` with them.
+const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[(
+    "D-heap-15",
+    &[
+        "p_v1",
+        "p_v2",
+        "p_o2",
+        "p_i2",
+        "p_j3",
+        "p_j4",
+        "c_coalesce_field",
+        "c_coalesce_enum",
+        "c_coalesce_push",
+        "c_coalesce_veclit",
+        "q_present_local_call_field",
+        "q_present_local_call_push",
+        "q_present_local_var_field",
+        "q_present_local_var_push",
+        "q_present_local_literal_field",
+        "q_present_local_literal_push",
+        "q_default_local_call_field",
+        "q_default_local_var_field",
+        "q_default_local_var_push",
+        "q_default_local_literal_field",
+        "q_default_local_literal_push",
+    ],
+)];
 
 /// Every cell has a lease verdict, and every cell the rules say must release once while a
 /// baseline says it does not is carried by exactly one OPEN deviation in `formal/heap.md`.  A fix

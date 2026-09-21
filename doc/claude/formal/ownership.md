@@ -8,7 +8,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 **Catalogue:** @F21 (references `&T`), @I60 (deps / lifetime tracker) — Goal E. Roadmap: @PLN85, @PLN87.
 
 > **Rules then deviations** (see [README](README.md)). The rules below are loft's
-> ownership model.  The register stands at **`OPEN: 0`** — `D-own-46`, a view leaf the opt-in
+> ownership model.  The register stands at **`OPEN: 0`** — `D-own-47`, a `match` arm's local freed
+> at the block the lowering wraps the arms in, opened and CLOSED 2026-09-21; `D-own-46`, a view leaf the opt-in
 > unit admitted off the per-path clause, opened and CLOSED 2026-09-17; `D-own-43`, a masked backend
 > divergence opened 2026-09-15, was CLOSED by @PLN164 B1b on 2026-09-17; `D-own-40` and
 > `D-own-41` both opened and CLOSED 2026-09-11, below.  It read `OPEN: 0` from 2026-07-04
@@ -492,7 +493,9 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 0.**  `D-own-46` (a view leaf admitted where the element was not the value's copy on
+**OPEN: 0.**  `D-own-47` (a local a `match` statement's arms first assign died at the block
+the lowering wraps the arms in, and was read after it) opened and CLOSED 2026-09-21, below.
+`D-own-46` (a view leaf admitted where the element was not the value's copy on
 every path — the opt-in `LOFT_VIEW_FIELD` unit only) opened and CLOSED 2026-09-17, below.
 `D-own-43` (the interpreter's rebind of a promoted buffer local frees the
 buffer the caller handed it — masked while such callees receive the null sentinel) opened
@@ -525,6 +528,34 @@ the entry records why the obvious widening is not taken: it answers wrong on `--
 > a struct's has, `tests/scripts/a-struct-enum-whole-value-bind-copies-like-a-struct.loft`);
 > and the `--native` release of a displaced store on a fn-ref re-bind of a USER local, which
 > is loft#1328 and which the `??` hoist sidesteps by releasing in the IR.
+
+### D-own-47 — OPENED AND CLOSED (2026-09-21): a local a `match` statement's arms first assign died at the match's block, and was read after it
+
+`@FR-O-Owner` places a free where the value DIES.  Every `match` lowers its arms inside a block
+of its own — the subject binding, then the arm chain — and a heap local first assigned in an arm
+was registered in that block, so `get_free_vars` released its store at the block's end:
+
+```loft
+match e { A => { t = P { v: 7 }; }, B => { t = P { v: 8 }; } }
+// … anything that allocates …
+t.v      // answered 3 — a churned record's bytes — on the interpreter; E0425 on native
+```
+
+It is `D-own-24` (loft#1156) with the `match` block in place of a loop body, and it has that
+entry's signature: the interpreter answered WRONG with no diagnostic (an ordinary build, not
+only under `LOFT_POISON`), and `--native` refused to compile, because it scopes the Rust `let` to
+the same block — one decision shown twice.  The `if` spelling of the same arms was clean, since
+`scan_if` pre-initialises a first-assigned local where the `if` stands.  Scalars were never
+affected: a scalar slot is function-wide already.
+
+Found 2026-09-21 because a droppable's value `match` began to be written out to its statement
+form (`formal/heap.md` D-heap-18), which is the author's own spelling of this shape; the
+author's spelling had been failing all along.
+
+Closed at loft#1156's home, generalised: `Scopes::locals_read_after` takes a statement BLOCK as
+well as a loop, and hoists a local that the block first assigns and that the following
+statements READ, under the same liveness guard (loft#1332) and the same loop-variable exclusion
+(loft#1135).  Guard: `tests/scripts/a-local-a-match-arm-binds-lives-past-the-match.loft`.
 
 ### D-own-46 — OPENED AND CLOSED (2026-09-17): a view leaf was admitted where the element was not the value's copy on every path
 

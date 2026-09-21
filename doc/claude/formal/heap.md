@@ -597,8 +597,9 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-14`, `D-heap-15` and `D-heap-16` (`D-heap-13`
-closed 2026-09-20).  The
+OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-14` and `D-heap-15` (`D-heap-13` closed
+2026-09-20, `D-heap-16` closed 2026-09-21 together with the three it uncovered, `D-heap-18`,
+`D-heap-19` and `D-heap-20`, each opened and closed that day).  The
 first two are the copy-lease rules `(H-Copy-Refuse)` and `(H-Copy-Lease)`, written 2026-09-15
 before their implementation (@PLN163); `D-heap-8` was NARROWED 2026-09-17 when the owner ruled that
 a value the function owns MOVES, which makes 156 of its 227 measured sites legal and leaves the 71
@@ -646,6 +647,56 @@ freed without its hook) opened and CLOSED 2026-09-10, below.  `D-heap-12` (a ref
 buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.  `D-heap-17` (a self-append's claims walk
 read the source record through a number captured before the growth relocated it) opened and
 CLOSED 2026-09-17, below.
+
+### D-heap-18 — OPENED AND CLOSED (2026-09-21): a local bound from a join, placed again, released twice
+
+- **Violates:** (H-Move) — every arm of `x = a ?? b` (or `x = if c { a } else { b }`) is a value
+  the function owns, so `x` owns what the join hands it, and placing `x` again moves it on.
+  One release, by whatever holds it last.
+- **Where:** the arm lift (`Scopes::lift_join_arm_tails`).  It gives each arm a `__lift_N` temp,
+  keeps each arm's release with the arm's SOURCE and makes `x` a BORROW of the temps.  That is
+  right for `x` read in place, and wrong the moment `x` is placed: `y = x`, `S { h: x }`,
+  `v += [x]` and `return x` each stopped `x`, which released nothing, while the source still
+  released.  The author's own statement form, `if c { x = a } else { x = b }`, was clean
+  throughout: there `x` owns, and loft#1515's per-path flags stop the sources.
+- **Effect:** measured 2026-09-21 on the 144-cell `bound` family of `ownership_drop_gate`
+  (`b_*`: the `??`, the value `if` and the statement form; first bind and reassignment; a
+  call, a variable and a literal default; both paths; four placements): **63 cells released
+  twice** on the tree before, some also before a read, on both backends and with no diagnostic.
+  None of the gate's earlier families placed a join-bound local a second time.
+- **Closed:** a FIRST bind of a type that owns a droppable is written out to the statement
+  form, as a reassignment already was (`sink_set_into_arms`, then a rescan so the analyses
+  before the scan read that form).  A literal default arm is written out whole, and the
+  binding adopts its construction as a single bind of the literal does.  Not where an arm's
+  source outlives the loop the bind runs in: that places one name on every iteration, which
+  `(H-Spent)` refuses; until that error is built, the lift's keep-with-the-source is the answer
+  that releases once (`p_l1`, which the rewrite otherwise turned into a use after release).
+  After: 144 of 144 clean on both backends.
+
+### D-heap-19 — OPENED AND CLOSED (2026-09-21): a copy into a local promoted onto the return buffer moved nothing
+
+- **Violates:** (H-Move), (H-Drop).
+- **Where:** `copy_moves_drop_from` refuses a hand-off into an ARGUMENT, and exempts the return
+  buffer only when it is named `__ref…`.  A local promoted onto the buffer
+  (`x = …; return x` becomes `fn f(…, x: H)`) is that buffer under the local's name.
+- **Effect:** `a = mk(5); x = mk(1); x = a; return x` released `5` twice, the first time before
+  the caller read it, on both backends; the same under a branch (`if c { x = a }`).
+- **Closed:** `copy_moves_drop_from` asks `promoted_ret_buffer`, the one home `displaced_drop`
+  already used for the same question (D-heap-7's `a = mk(1); a = mk(5); return a`), so every
+  reader of a copy agrees that the caller adopts what the promoted local holds.
+
+### D-heap-20 — OPENED AND CLOSED (2026-09-21): a literal rebuilt into a local promoted onto the return buffer lost what it displaced
+
+- **Violates:** (H-Drop), its reassignment clause.
+- **Where:** a literal into a promoted return buffer is guarded — a record the buffer already
+  holds is written in place, an absent one is minted (`parse_object`, @PLN157 § V-d) — and
+  `Scopes::in_place_rebuild` recognised only the unguarded `OpDatabase`.  The guard's premise
+  holds at entry, where a record in the buffer is the caller's; after `x = mk(1)` it is this
+  frame's.
+- **Effect:** `x = mk(1); x = H { id: 7 }; return x` never released `1`, on both backends; a
+  caller rebinding from such a callee (`r = f(1); r = f(2)`) lost both.
+- **Closed:** `in_place_rebuild` looks through the guard.  `displaced_drop` then releases only
+  a record this frame bound, so the caller's offered record at entry stays untouched.
 
 ### D-heap-17 — OPENED AND CLOSED (2026-09-17): a self-append read its source through the record number captured before the growth moved it
 
@@ -1027,10 +1078,17 @@ CLOSED 2026-09-17, below.
   value; `scopes::copy_moves_drop_from` and the hand-off flags beside it are @PLN163 P5's
   subject and this entry is the measurement P5 is verified against.
 
-### D-heap-16 — OPEN (2026-09-17): the fresh value of a `??` DEFAULT arm is never released
+### D-heap-16 — OPENED 2026-09-17, CLOSED 2026-09-21: the fresh value of a `??` DEFAULT arm is never released
 
 - **Violates:** (H-Drop).
-- **Where:** not established.
+- **Where:** the arm lift (`Scopes::lift_join_arm_tails`).  `x = a ?? mk(7)` over a LOCAL `a` is
+  typed as `a`'s own type, so the parser reads the join as owned and leaves the call arm for `x`
+  to own.  The lift then rewrites `x` into a borrow of the per-arm temps and gives a temp only
+  to the `a` arm.  The call's answer lives only in the value the join hands over: its `__ref_N`
+  buffer starts as the null sentinel (loft#1085), and a callee handed null mints a store of its
+  own.  So nothing owned it, and the buffer's scope-end free was paired with `x` besides.  The
+  `if` spelling of the same join was clean, because the parser types its `a` arm as a view and
+  gives the call arm an owner (`join-arm-owner`) before the lift runs.
 - **Effect:** the value the default arm builds owes one release and runs none.  Measured on both
   backends: `a: H? = null; x = a ?? mk(7)` traces `M7 R7` — minted, read, never released — and
   the loop form `for i in 0..2 { x = a ?? mk(27 + i) }` leaks once per iteration
@@ -1045,9 +1103,16 @@ CLOSED 2026-09-17, below.
   (`g = fn(q: P?) -> P { q ?? P{} }`, argument witness closed by loft#1248, capture witness
   tracked there).  That is a lambda leaking a store per call; this is a plain function leaving a
   HOOK unrun.  Whether one cure reaches both is not established.
-- **Status:** OPEN — exposed 2026-09-17 by narrowing the refusal, the same way as `D-heap-15`.
-- **Removal:** the default arm's value released at the scope end of whatever binds it, on both
-  backends, with the present-arm control held at one release.
+- **Status:** CLOSED 2026-09-21 — exposed 2026-09-17 by narrowing the refusal, the same way as
+  `D-heap-15`.
+- **Closed:** when the lift turns the binding into a borrow, it gives each bare minting call arm a
+  temp of its own as well, which owns the store on the path that made it and is null on every
+  other (`Scopes::lift_owned_call_tails`).  `p_l2`, `q_default_local_call_local` and
+  `q_default_param_call_local` moved LOST → clean on both backends, with the present-arm control
+  at one release.  ⚠ The missing owner was never the hook's alone: the STORE leaked too, for
+  EVERY record type — `a: P? = null; x = a ?? mkp(n)` in a function called 1000 times left
+  `P×1000` unfreed on both backends — and that is closed with it.  The fix also exposed
+  `D-heap-18` in four cells, which had released once only because their store had no owner.
 
 ### D-heap-11 — OPENED 2026-09-15, CLOSED 2026-09-17: a view of a droppable member is turned into a copy when its container is disturbed
 

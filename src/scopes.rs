@@ -2779,7 +2779,9 @@ fn established_stores(stmt: &Value, function: &Function, data: &Data) -> HashSet
 /// a materialised branch arm is copied into) is exempt from the not-an-argument test — a
 /// return buffer IS an argument (the caller's, adopted at the return), and its record is
 /// released with the cascade at its own free or by the caller that adopts it.  That is how
-/// `t = s; return t` releases once, in the caller.
+/// `t = s; return t` releases once, in the caller.  A local PROMOTED onto the return buffer
+/// is the same destination under the local's name ([`promoted_ret_buffer`]), so
+/// `x = mk(1); x = a; return x` moves `a`'s release to the caller too.
 ///
 /// One home for the three sites that see a whole-value copy: [`collect_drop_transferred`]
 /// (the parser's `Set(v, Var(src))` and its `OpCopyRecord` into a buffer), the branch-arm
@@ -2793,7 +2795,9 @@ pub(crate) fn copy_moves_drop_from(
     buffer_dst: bool,
 ) -> Option<u16> {
     if v == src
-        || (!buffer_dst && function.is_argument(v))
+        || (!buffer_dst
+            && function.is_argument(v)
+            && !promoted_ret_buffer(data, data.def_nr(&function.name), function, v))
         || function.is_captured(v)
         || function.is_captured(src)
     {
@@ -2811,6 +2815,24 @@ pub(crate) fn copy_moves_drop_from(
             src
         },
     )
+}
+
+/// Is `v` a local PROMOTED onto function `d_nr`'s hidden return buffer — `x = …; return x`
+/// becomes `fn f(…, x: H)`, so `x` occupies the argument slot the caller hands for the result?
+///
+/// An argument by slot only: this frame binds what it holds, and the caller adopts the record
+/// at the return.  So its assignments displace a record as a plain local's do
+/// ([`Scopes::displaced_drop`]), and a copy into it moves a release as a copy into any buffer
+/// does ([`copy_moves_drop_from`]).
+fn promoted_ret_buffer(data: &Data, d_nr: u32, function: &Function, v: u16) -> bool {
+    let n = function.name(v);
+    n != "__retbuf"
+        && d_nr != u32::MAX
+        && data
+            .def(d_nr)
+            .attr_names
+            .get(n)
+            .is_some_and(|&a| data.def(d_nr).attributes()[a].hidden)
 }
 
 /// Does copying a value of type `src_tp` into `v` carry a DROP with it?
@@ -5449,7 +5471,7 @@ enum FirstUse {
 
 /// The first use of `v` in `node`, in execution order.
 ///
-/// This is the liveness question [`Scopes::loop_locals_read_after`] asks: a later region that
+/// This is the liveness question [`Scopes::locals_read_after`] asks: a later region that
 /// ASSIGNS `v` before reading it is a fresh binding that happens to share a name, not a reader
 /// of the value the loop produced.  [`mentions_var`] cannot tell those apart — it answers
 /// "does `v` appear here", so an independent binding reads as a use of the loop's value.
@@ -9546,12 +9568,24 @@ impl Scopes<'_> {
         // freed it as its own at scope exit.  The FIRST bind keeps its per-arm lift
         // (`lift_join_arm_tails`), whose temps the binding borrows — a binding assigned
         // elsewhere cannot borrow them (`@FR-O-Latest`), which is exactly why the
-        // reassignment is written out per arm instead.  Arms that hand back a compiler temp
+        // reassignment is written out per arm instead.
+        //
+        // Except a first bind of a type that owns a DROPPABLE (`formal/heap.md` (H-Move)): the
+        // lift keeps each arm's release with the arm's SOURCE and makes the binding a borrow, so
+        // the binding cannot hand the value on — `y = x`, `S { h: x }`, `v += [x]` and `return x`
+        // each stopped a binding that released nothing while the source still did, and one
+        // resource was released twice.  Written out, the binding OWNS what its arm moved into it,
+        // as the author's own `if c { x = a } else { x = b }` does.  Not where an arm's source
+        // outlives the loop the bind runs in: that places one name on every iteration, which
+        // `(H-Spent)` refuses, and until that error exists the lift's keep-with-the-source is the
+        // answer that releases once ([`Self::arm_source_outlives_loop`]).  Arms that hand back a compiler temp
         // (a `??` hoist, a literal's work-ref) keep the value form: the join they express is a
         // runtime fact (`Own::Join`), not a copy — except a call arm the parser gave an owner for
         // the value form, which is written out as the call itself, because that owner served the
         // join.  RECORDS only: a vector keeps the value form, which already copies the chosen arm.
-        let writes_out = self.var_scope.contains_key(&v)
+        let writes_out = (self.var_scope.contains_key(&v)
+            || (data.type_owns_droppable_anywhere(function.tp(v))
+                && !self.arm_source_outlives_loop(value, function)))
             && Self::is_value_branch(value)
             && !matches!(function.tp(v), Type::RefVar(_))
             && matches!(
@@ -11095,6 +11129,13 @@ impl Scopes<'_> {
         function: &mut Function,
         data: &Data,
     ) -> Option<(Vec<Value>, Vec<Value>)> {
+        // A literal into a local promoted onto the return buffer rebuilds behind a guard — a
+        // record the buffer already holds is written in place, an absent one is minted
+        // (`parse_object`, @PLN157 § V-d) — and both replace what the local held.
+        let stmt = match stmt.unspan() {
+            Value::If(_, kept, rebuilt) if matches!(kept.unspan(), Value::Null) => rebuilt,
+            _ => stmt,
+        };
         let Value::Call(d, args) = stmt.unspan() else {
             return None;
         };
@@ -11443,7 +11484,7 @@ impl Scopes<'_> {
             // own pre-init: the body's `Set` must see the variable as already assigned and
             // take the reassignment path, not `claim()`.
             let mut hoist: Vec<u16> = Vec::new();
-            self.loop_locals_read_after(v, &bl.operators[i + 1..], function, &mut hoist);
+            self.locals_read_after(v, &bl.operators[i + 1..], function, &mut hoist);
             for &h in &hoist {
                 self.put_scope(h);
                 self.var_order.push(h);
@@ -11703,13 +11744,7 @@ impl Scopes<'_> {
     /// two apart per run wherever a free of it is emitted.  The un-renamed `__retbuf`
     /// placeholder is left out — no local was promoted onto it (loft#688).
     fn is_promoted_ret_buffer(&self, function: &Function, data: &Data, v: u16) -> bool {
-        let n = function.name(v);
-        n != "__retbuf"
-            && data
-                .def(self.d_nr)
-                .attr_names
-                .get(n)
-                .is_some_and(|&a| data.def(self.d_nr).attributes()[a].hidden)
+        promoted_ret_buffer(data, self.d_nr, function, v)
     }
 
     /// Enforces @FR-O-Derived: free placement is DERIVED, not decided — a local is freed
@@ -13732,7 +13767,8 @@ impl Scopes<'_> {
         ls
     }
 
-    /// loft#1156 — the locals a LOOP first assigns that something AFTER it READS.
+    /// loft#1156 — the locals a LOOP, or a statement BLOCK, first assigns that something AFTER it
+    /// READS.
     ///
     /// A body local is scoped to the body block, so `get_free_vars` releases its store at the
     /// end of each iteration.  A read after the loop is then a use-after-free — silent, and
@@ -13749,18 +13785,32 @@ impl Scopes<'_> {
     /// registers it in a scope it does not live in — one orphaned store per program.
     /// `was_loop_var` is the declared home for that question.  A local used INSIDE the loop
     /// alone is correctly per-iteration and is left exactly as it is.
-    fn loop_locals_read_after(
+    ///
+    /// A statement BLOCK is the same decision with one death instead of one per iteration.
+    /// Every `match` lowers its arms inside a block of its own (the subject binding, then the
+    /// arm chain), a scope the author never wrote: `match e { A => { t = P {…} }, … }; t.id`
+    /// freed `t` at that block's end and read it after — a freed store on the interpreter,
+    /// `E0425` on native — while the `if` spelling of the same arms declares `t` where it is
+    /// read (`scan_if`'s pre-init).
+    fn locals_read_after(
         &self,
         op: &Value,
         rest: &[Value],
         function: &Function,
         out: &mut Vec<u16>,
     ) {
-        if rest.is_empty() || !contains_loop(op) {
+        if rest.is_empty() {
             return;
         }
         let mut assigned: Vec<u16> = Vec::new();
-        collect_loop_body_sets(op, &self.var_mapping, &mut assigned);
+        if contains_loop(op) {
+            collect_loop_body_sets(op, &self.var_mapping, &mut assigned);
+        }
+        if let Value::Block(bl) = op.unspan() {
+            for inner in &bl.operators {
+                collect_sets_in(inner, &self.var_mapping, &mut assigned);
+            }
+        }
         for v in assigned {
             if self.var_scope.contains_key(&v)
                 || out.contains(&v)
@@ -14795,6 +14845,13 @@ impl Scopes<'_> {
                 Value::Block(bl) if bl.name == crate::parser::Parser::JOIN_ARM_OWNER => {
                     owner_block_call(bl).is_some()
                 }
+                // A struct literal's construction, which ends in the work-ref holding the finished
+                // record.  Written out, the arm binds that construction whole and the binding
+                // adopts the record, as a single bind of the literal does
+                // (`construction_work_refs`).
+                Value::Block(bl) if bl.name == "Object" => {
+                    construction_work_ref(tail, function).is_some()
+                }
                 Value::Block(bl) if !matches!(bl.result, Type::Void | Type::Null) => bl
                     .operators
                     .last()
@@ -14857,6 +14914,13 @@ impl Scopes<'_> {
                 *node = Value::Set(ov, Box::new(call));
                 return;
             }
+            if let Value::Block(bl) = node
+                && bl.name == "Object"
+            {
+                let construction = std::mem::replace(node, Value::Null);
+                *node = Value::Set(ov, Box::new(construction));
+                return;
+            }
             match node {
                 Value::Span(b) => sink(&mut b.1, ov),
                 Value::If(_, t, f) => {
@@ -14882,7 +14946,12 @@ impl Scopes<'_> {
                 }
             }
         }
-        if !sinkable(value, v, ov, function) || (!beside_any && !owners_beside_locals_only(value)) {
+        // A construction is an ARM, never the branch: written out on its own it would be the
+        // bind it already is, and the scan would write it out again forever.
+        if matches!(value.unspan(), Value::Block(bl) if bl.name == "Object")
+            || !sinkable(value, v, ov, function)
+            || (!beside_any && !owners_beside_locals_only(value))
+        {
             return None;
         }
         let mut out = value.clone();
@@ -14995,7 +15064,19 @@ impl Scopes<'_> {
         if self.multi_assigned.contains(&bound) {
             return materialised;
         }
+        // From here the binding BORROWS its per-arm temps and releases nothing, so an arm it was
+        // owning has no owner left: a minting call's answer lives only in the value the join
+        // hands over, because the call's `__ref_N` buffer starts as the null sentinel and a
+        // callee handed null mints a store of its own.  Each such arm is given a temp too —
+        // `x = a ?? mk(7)` then owns `mk(7)`'s store on the path that made it, exactly as the
+        // `if` spelling of the same join does through its `join-arm-owner` block
+        // (`formal/heap.md` D-heap-16).
+        let mut owned: Vec<u16> = Vec::new();
+        self.lift_owned_call_tails(node, home, function, data, &mut owned);
         let mut deps: Vec<u16> = function.tp(bound).depend().clone();
+        for tmp in owned {
+            deps.push(tmp);
+        }
         // A `??` hoist the join hands back as an arm is a binding the join BORROWS on that
         // path — say so, or the joined binding reads as owning what the hoist holds, and a
         // return of it cannot be seen to hand the hoist's store out.
@@ -15017,6 +15098,82 @@ impl Scopes<'_> {
         }
         function.depend_on_all(bound, &deps);
         materialised
+    }
+
+    /// Does an arm of the value branch `value` hand back a variable declared OUTSIDE the
+    /// innermost loop this statement runs in — or a parameter, which every loop is inside?
+    ///
+    /// Moving such a variable into the binding moves it once per iteration, so from the second
+    /// iteration on the arm reads a name `(H-Spent)` has already spent.
+    fn arm_source_outlives_loop(&self, value: &Value, function: &Function) -> bool {
+        !self.loops.is_empty()
+            && branch_tail_vars(value).iter().any(|&src| {
+                !function.is_compiler_generated(src)
+                    && self
+                        .var_scope
+                        .get(&src)
+                        .is_none_or(|&home| self.loop_depth_at(home) < self.loops.len())
+            })
+    }
+
+    /// Give every arm tail that is a bare call MINTING a record a `__lift_N` temp of its own —
+    /// `{ __lift_N = <call>; __lift_N }`, declared at `home` — and collect the temps in `out`.
+    ///
+    /// For a join whose binding [`Self::lift_join_arm_tails`] has just turned into a borrow: the
+    /// binding no longer releases what an arm hands it, so a store only that arm made needs an
+    /// owner on its own path.  The temp is that owner, null on every path that took another
+    /// arm.  An arm [`Self::arm_bind`] already lifted ends in its temp, and an arm the parser
+    /// already gave an owner ends in that owner's `__ref_N`, so neither is a bare call here.
+    fn lift_owned_call_tails(
+        &mut self,
+        node: &mut Value,
+        home: u16,
+        function: &mut Function,
+        data: &Data,
+        out: &mut Vec<u16>,
+    ) {
+        match node {
+            Value::Span(b) => self.lift_owned_call_tails(&mut b.1, home, function, data, out),
+            Value::If(_, t, f) => {
+                self.lift_owned_call_tails(t, home, function, data, out);
+                self.lift_owned_call_tails(f, home, function, data, out);
+            }
+            Value::Block(bl) if !matches!(bl.result, Type::Void | Type::Null) => {
+                if let Some(last) = bl.operators.last_mut() {
+                    self.lift_owned_call_tails(last, home, function, data, out);
+                }
+            }
+            Value::Insert(ops) => {
+                if let Some(last) = ops.last_mut() {
+                    self.lift_owned_call_tails(last, home, function, data, out);
+                }
+            }
+            Value::Call(d, _) => {
+                let def = data.def(*d);
+                if !def.is_loft_defined() {
+                    return;
+                }
+                let (returned, opt) = def.returned().peel_optional();
+                let tp = match returned {
+                    Type::Reference(r, _) => Type::Reference(*r, Deps::none()),
+                    Type::Enum(r, true, _) => Type::Enum(*r, true, Deps::none()),
+                    _ => return,
+                };
+                if !matches!(
+                    crate::use_analysis::ownership_of(data, self.d_nr, node),
+                    crate::use_analysis::Own::Owned
+                ) {
+                    return;
+                }
+                let tmp = self.new_lift_var(function, &Self::reopt(opt, tp));
+                self.var_scope.insert(tmp, home);
+                self.lift_decl_depth.insert(tmp, self.loop_depth_at(home));
+                let tail = std::mem::replace(node, Value::Null);
+                *node = Value::Insert(vec![v_set(tmp, tail), Value::Var(tmp)]);
+                out.push(tmp);
+            }
+            _ => {}
+        }
     }
 
     /// The walk behind [`Self::lift_join_arm_tails`]; `copied` collects `(source, temp)` for
@@ -15148,8 +15305,9 @@ impl Scopes<'_> {
     ///   * a fn-ref call — [`Self::arm_callref_lift_type`];
     ///   * a named call answering a RECORD the caller must COPY (`@FR-O-Move`: a borrowed or
     ///     `Join` return; codegen's `callee_of` arm is the copy) — an owned temp.  A named
-    ///     call's OWNED record and every named COLLECTION return already land in the
-    ///     caller-side `__ref_N` buffer, a per-site owner, so those arms stay;
+    ///     call's OWNED record and every named COLLECTION return stay: the binding owns what
+    ///     they hand it, and where the lift makes the binding a borrow instead,
+    ///     [`Self::lift_owned_call_tails`] gives the record arm a temp of its own;
     ///   * a plain VARIABLE, which a plain bind COPIES (`@FR-B-Copy`) — a record temp bound
     ///     from it (codegen copies a same-struct `Var` bind on its first and every later
     ///     Set), or a vector buffer refilled from it (`OpReplaceVector`).  Not a compiler temp

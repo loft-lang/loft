@@ -35,7 +35,6 @@ p_e2 DOUBLE
 p_i2 DOUBLE,EARLY
 p_j3 DOUBLE
 p_j4 DOUBLE
-p_l2 LOST
 p_o1 DOUBLE
 p_o2 DOUBLE,EARLY
 p_o3 DOUBLE,EARLY
@@ -54,13 +53,11 @@ q_default_field_var_field DOUBLE
 q_default_field_var_push DOUBLE
 q_default_field_var_ret DOUBLE,EARLY
 q_default_local_call_field DOUBLE
-q_default_local_call_local LOST
 q_default_local_literal_field DOUBLE
 q_default_local_literal_push DOUBLE
 q_default_local_var_field DOUBLE
 q_default_local_var_push DOUBLE
 q_default_param_call_field DOUBLE
-q_default_param_call_local LOST
 q_default_param_literal_field DOUBLE
 q_default_param_literal_push DOUBLE
 q_default_param_var_field DOUBLE

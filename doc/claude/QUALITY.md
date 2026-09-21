@@ -6639,7 +6639,7 @@ local it is — and the shallowest with no branch in it at all:
   there (`o.opt` read 0).  Both backends; a one-arm assignment read on the other path was the
   same word.  One peel, at the one predicate.
 - **A nullable local first assigned inside a loop body** stayed scoped to the body — the
-  hoist `loop_locals_read_after` reads the same predicate — so the read after the loop that
+  hoist `locals_read_after` reads the same predicate — so the read after the loop that
   LOFT.md promises was a use-after-free on the interpreter and an unresolved `var_x` under
   rustc.  The same peel; and a nullable VECTOR's pre-init then needed a lowering of its own
   (`gen_set_first_nullable_collection_null`): the dense arm allocates a store, or for a
