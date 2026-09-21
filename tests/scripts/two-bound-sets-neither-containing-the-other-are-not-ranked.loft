@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `D-Specific` (@PLN165 B5): `<T: Named>` and `<T: Sized>` at a type with both bounds —
+// neither set contains the other, so neither admits fewer types, and the call is refused
+// naming both.  Choosing either would be a rule a later one could not take back.
+//
+//   CHANNEL: expectations — refused on both trees; only the reason moves.
+//   ARMED: nothing.
+//   WITNESS: on the control the same call is ambiguous too, since no two templates were
+//     ranked apart; the message is the same, so the receipt is the control's own refusal.
+//   HOLDS: the program is refused on both trees.
+// @EXPECT_ERROR: `show(Both)` is ambiguous — it is taken by show<T: Named>(T) and show<T: Sized>(T)
+
+interface Named { fn tag(self: Self) -> text }
+interface Sized { fn size(self: Self) -> integer }
+struct Both { n: integer }
+fn tag(self: Both) -> text { "both" }
+fn size(self: Both) -> integer { 2 }
+fn show<T: Named>(x: T) -> text { "N" }
+fn show<T: Sized>(x: T) -> text { "S" }
+
+fn main() {
+  println("{show(Both{n:1})}");
+}

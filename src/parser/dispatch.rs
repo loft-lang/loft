@@ -484,20 +484,123 @@ impl Parser {
         }
         // The minimal elements of the pointwise order: a definition no other applicable one is
         // strictly better than.
-        let dominated = |a: &[Rank], b: &[Rank]| -> bool {
-            // b is strictly better than a
-            a.iter().zip(b).all(|(x, y)| rank_no_worse(*y, *x))
-                && a.iter().zip(b).any(|(x, y)| y != x)
-        };
         let minimal: Vec<u32> = ranked
             .iter()
-            .filter(|(_, ra)| !ranked.iter().any(|(_, rb)| dominated(ra, rb)))
+            .filter(|a| !ranked.iter().any(|b| self.strictly_better(b, a)))
             .map(|(r, _)| *r)
             .collect();
         match minimal.as_slice() {
             [one] => Selection::One(*one),
             _ => Selection::Ambiguous(minimal),
         }
+    }
+
+    /// Is definition `b` strictly better than `a` for the call both were ranked on: no worse at
+    /// any position and better at one (`Disp-Specific`)?  Where both rank `GENERIC` at a
+    /// position, `D-Specific` orders them ([`Self::generic_position_order`]); elsewhere the
+    /// ranks' own order does ([`rank_no_worse`]).
+    fn strictly_better(&self, b: &(u32, Vec<Rank>), a: &(u32, Vec<Rank>)) -> bool {
+        let mut better = false;
+        for (i, (x, y)) in a.1.iter().zip(&b.1).enumerate() {
+            if *x == GENERIC && *y == GENERIC {
+                match self.generic_position_order(b.0, a.0, i) {
+                    Some(std::cmp::Ordering::Less) => better = true,
+                    Some(std::cmp::Ordering::Equal) => {}
+                    _ => return false,
+                }
+            } else if rank_no_worse(*y, *x) {
+                better |= y != x;
+            } else {
+                return false;
+            }
+        }
+        better
+    }
+
+    /// `D-Specific` (@PLN165 B5) between two TEMPLATES at one position where both rank
+    /// `GENERIC`: `Less` when `a`'s parameter admits strictly fewer types than `b`'s,
+    /// `Greater` the reverse, `Equal` when they admit the same, `None` when neither contains
+    /// the other.  One parameter admits fewer when its bound set is a strict superset of the
+    /// other's — between PATTERNS that are the same up to renaming their variables; two
+    /// different patterns are not ordered here.
+    fn generic_position_order(&self, a: u32, b: u32, i: usize) -> Option<std::cmp::Ordering> {
+        use std::cmp::Ordering;
+        let param = |d: u32| {
+            self.data
+                .def(d)
+                .attributes
+                .iter()
+                .filter(|p| !p.hidden)
+                .nth(i)
+                .map(|p| p.typedef.clone())
+        };
+        let (pa, pb) = (param(a)?, param(b)?);
+        let a_in_b = self.pattern_instance(&pb, &pa, &mut Vec::new());
+        let b_in_a = self.pattern_instance(&pa, &pb, &mut Vec::new());
+        if !(a_in_b && b_in_a) {
+            return None;
+        }
+        let (ba, bb) = (self.position_bounds(&pa), self.position_bounds(&pb));
+        match (ba.is_superset(&bb), bb.is_superset(&ba)) {
+            (true, true) => Some(Ordering::Equal),
+            (true, false) => Some(Ordering::Less),
+            (false, true) => Some(Ordering::Greater),
+            (false, false) => None,
+        }
+    }
+
+    /// Is `specific` a substitution instance of `general` — does some assignment of
+    /// `general`'s type variables make it `specific`?  A variable in `specific` is an opaque
+    /// atom; a variable of `general` met twice must meet the same type twice (`binds` holds
+    /// each one's identity spelling).
+    fn pattern_instance(
+        &self,
+        general: &Type,
+        specific: &Type,
+        binds: &mut Vec<(u32, String)>,
+    ) -> bool {
+        if let Type::Reference(d, _) = general
+            && self.data.is_type_var_placeholder(*d)
+        {
+            let Some(id) = self.data.key_identity(specific) else {
+                return false;
+            };
+            if let Some((_, seen)) = binds.iter().find(|(v, _)| v == d) {
+                return *seen == id;
+            }
+            binds.push((*d, id));
+            return true;
+        }
+        if !general.has_child_types() || !specific.has_child_types() {
+            return general.has_child_types() == specific.has_child_types()
+                && self.data.key_identity(general).is_some()
+                && self.data.key_identity(general) == self.data.key_identity(specific);
+        }
+        match general.zip_children(specific) {
+            Some(pairs) => pairs
+                .into_iter()
+                .all(|(g, s)| self.pattern_instance(g, s, binds)),
+            None => false,
+        }
+    }
+
+    /// The interfaces bounding the type variables a parameter type mentions.
+    fn position_bounds(&self, tp: &Type) -> std::collections::BTreeSet<String> {
+        let mut out = std::collections::BTreeSet::new();
+        tp.any_node(&mut |t| {
+            if let Type::Reference(d, _) = t
+                && self.data.is_type_var_placeholder(*d)
+                && let Some(keys) = self.data.type_var_bound_keys.get(d)
+            {
+                out.extend(
+                    keys.split('+')
+                        .filter(|k| !k.is_empty())
+                        .map(str::to_string),
+                );
+            }
+            false
+        });
+        out
     }
 
     /// The two refusals selection can end in, worded once for both call spellings.

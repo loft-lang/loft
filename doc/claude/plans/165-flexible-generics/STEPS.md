@@ -350,6 +350,16 @@ Bound-set inclusion at `GENERIC` positions (`D-Specific`).
 - **Red on its own:** `<T: Ordered + Printable>` beside `<T: Ordered>` beside `<T>`: a type
   with both bounds reaches the first, one with `Ordered` alone the second, one with neither
   the third; `<T: A>` beside `<T: B>` at a type with both is refused naming both.
+- **Built** (2026-09-21).  `Parser::strictly_better` replaces the closure: where both ranks
+  are `GENERIC` at a position, `generic_position_order` answers — bound-set inclusion
+  (`position_bounds`, over every variable the parameter mentions), asked only between
+  patterns that are the same up to renaming (`pattern_instance` both ways), so B5 makes no
+  choice B6 would take back.  The cells use two user interfaces rather than `Ordered` /
+  `Printable` (the order is the same; a user type satisfying one and not the other is
+  clearer to write).  Cells [specific/](probes/specific/) p01–p05 (p04 re-decided per
+  instance) green on both backends under `LOFT_STRICT_STORES` + `LOFT_POISON`;
+  [sets-refused/r08](probes/sets-refused/) refused naming both.  Corpus: only the new guard
+  differs from B4 (refused there).
 
 ### B6 — a narrower pattern is more specific  ·  S
 
