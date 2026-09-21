@@ -124,6 +124,6 @@ or under it.
 ## Method
 
 `--native-release --native-emit` for the routine's Rust; the edit a rewrite would make,
-applied by script to that function alone; `rustc` with loft's own release line (captured
-once with a logging `rustc` shim on `PATH`); the lane's own binary run with `--n`, the hash
+applied by script to that function alone; `bench/portal/hand_price.sh`, which is `rustc`
+with loft's own release line (captured once with a logging `rustc` shim on `PATH`); the lane's own binary run with `--n`, the hash
 column compared.  A figure is quoted only where the hash is unchanged and two runs agree.
