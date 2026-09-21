@@ -897,6 +897,17 @@ the first bisect step for a wrong or lost field in an appended record on native;
 `LOFT_HOIST_VERIFY=1` compares the address with a fresh derivation at every write.  Its
 cells could not fail until one reallocated the store INSIDE a window (`m4b`): small cells
 never move the memory a stale address would miss.
+**`LOFT_NO_COPY_IN_PLACE=1`** (`@FR-R-InPlace`'s copy clause, default-ON, generation time,
+`--native` only) makes a whole-record copy a store writer again, so a loop holding one
+hoists nothing — with it off, a flag-free `OpCopyRecord` over a record type that owns no
+heap is an in-place write at a larger width: the write-back idiom `e = v[i]?; …; v[i] = e`
+(a copy of a view onto the place it views, which the runtime makes a no-op) keeps its
+loop's header, base and the address of `e` (`entity_tick` −23 %, 3.19× → 2.45× of Rust) —
+and is the first bisect step for a wrong value in a loop that assigns a whole record to an
+element or a field; `LOFT_HOIST_VERIFY=1` is the falsifier (the copy writes its type WHOLE
+for the scalar hoist).  A heap-owning type and a call's freed result keep the store-writer
+verdict.  The copy is not elided: on the absent-element path it is an out-of-range store
+with a fault note of its own.
 **`LOFT_NO_LOOP_BUFFER_REUSE=1`** (@PLN157 § V-al, `@FR-R-LoopBuffer`, default-ON,
 generation time) makes a vector local declared `[]` INSIDE a loop re-mint its per-site
 buffer every iteration again — with it off, the buffer's store and its vector survive the

@@ -341,7 +341,14 @@ pins `tests/loop_record.rs`.
                  so it cannot invalidate a header: a loop whose store writes are all
                  such sets keeps (R-Header).  What may run in such a loop is an
                  ALLOW-LIST (the store-free ops, IN_PLACE_SET_OPS); an op missing from
-                 it costs the rewrite, never correctness.
+                 it costs the rewrite, never correctness.  THE COPY CLAUSE: a
+                 flag-free OpCopyRecord(src, dst, tp) over a record type that owns no
+                 heap is the same write at a larger width — size(tp) bytes stored
+                 at dst's address, nothing claimed, released or moved — and is on
+                 the list; (R-Scalar) reads it as a write of tp WHOLE, and
+                 (R-RecPtr) reads a copy FROM a view as a read of it.  A copy of a
+                 heap-owning type walks claims, and a flagged one frees its source
+                 or marks a fresh destination: both stay store writers.
 ```
 
 **In words.** @PLN157 P4a.  Aliasing is free for headers under this rule — an
@@ -360,6 +367,26 @@ the pass-2 discharge buffers qualify: a `__ref_N` work-ref may be a return buffe
 a return buffer may be a record the caller offered (R-Callee's second half carries
 that case).  Switch `LOFT_NO_NULL_BUFFER_HOIST`; falsifier `LOFT_HOIST_VERIFY=1`.
 Site: `hoist::null_buffer_alloc`.
+**The copy clause** (2026-09-21, @PLN158 R5).  A consumer writes the copy-out / mutate /
+write-back a Rust or C author writes — `e = ents[i]?; e.energy += e.speed; …; ents[i] = e`.
+In loft `e` is a VIEW of `ents[i]` (`(B-View)`), so the last statement copies the element
+onto itself, which both backends already make a no-op (`data == to`).  But the whole-record
+copy was an unclassified store writer: the loop held no header, `e` no address (*"the
+remainder may grow a store"*), and each of the ~20 field accesses per pass resolved the
+store.  Found by a five-variant one-statement bisect under `LOFT_TRACE_RECPTR=1`; priced by
+deleting the write-back (−26 %); built, `entity_tick` 205.4 → 157.7 µs (−23 %), 3.19× →
+2.45× of the Rust reference (4.67× before this arc).  The copy itself STAYS.  Eliding it
+statically would need more than the alias proof: on the path where `ents[i]?` discharged an
+absent element, `ents[i] = e` is an out-of-range store with a fault note of its own, and a
+rewrite does not decide what is reported after a fault (C120).  Two cells could not fail
+when first sabotaged and were replaced by ones that can: with the copy contributing nothing
+to the write set, a loop that also discharges with `?` stayed green — the discharge buffer
+is itself a whole-type write of the same type and evicted the scalars on the copy's behalf —
+while `c3b`, where the copy is the loop's ONLY whole-type write, answers `195 1 40` for
+`255 1 40` and `LOFT_HOIST_VERIFY=1` panics *"hoisted record scalar is stale (hoisted 30,
+now 40)"*.  Switch `LOFT_NO_COPY_IN_PLACE`.  Cells `tests/scripts/158-copy-in-place.loft`,
+pins `tests/copy_in_place.rs`.  Sites: `hoist::in_place_copy`, `hoist::blocks_header_hoist`,
+`hoist::body_writes`, `hoist::view_extent_verdict`.
 
 ### A callee is admitted by what its body writes, one call deep
 

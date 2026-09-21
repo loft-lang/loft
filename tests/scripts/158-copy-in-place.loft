@@ -12,12 +12,20 @@
 // values and asserts them.  `LOFT_NO_COPY_IN_PLACE=1`, `LOFT_NO_RECORD_PTR=1`,
 // `LOFT_NO_SCALAR_HOIST=1` and `LOFT_HOIST_VERIFY=1` must all answer identically.
 //
-// Predictions (tests/copy_in_place.rs pins them): c1, c3, c6, c7, c8 hoist across the
-// copy; c3's hoisted scalar of the copied TYPE is evicted (the copy writes the type whole);
-// c4 and c9 copy a heap-owning record, c5 a call's result (its source is freed) and c11 an
-// enum value — each still a store writer, so their loops hoist nothing.
+// Predictions (tests/copy_in_place.rs pins them): c1, c2, c3, c3b, c6, c7, c8 hoist across
+// the copy; c3b's hoisted scalar of the copied TYPE is evicted (the copy writes the type
+// whole); c4 and c9 copy a heap-owning record, c5 a call's result (its source is freed) and
+// c11 an enum value — each still a store writer, so those loops gain nothing.
 //
-// @falsified-at: pending — recorded as MEASURED once the sabotage has run.
+// @falsified-at: hand-measured (sabotage, 2026-09-21) — the copy made to contribute
+// NOTHING to `(R-Scalar)`'s write set.  The first run changed nothing: c3 stayed green,
+// because its `?` discharge buffer is itself a whole-type write of `Ent` and evicted the
+// same scalars on the copy's behalf — the cell could not fail for this clause.  c3b has the
+// copy as the loop's ONLY whole-type write: under the sabotage it answers `195 1 40` for
+// `255 1 40` on --native (`first.speed` hoisted at 30 and never re-read; its assert fails),
+// and LOFT_HOIST_VERIFY=1 panics "hoisted record scalar is stale — the loop wrote the field
+// it was hoisted from (hoisted 30, now 40)".  Restored byte-identically: interpret / native
+// / every switch / every falsifier green.
 
 struct Ent { id: integer, q: integer, energy: integer, speed: integer }
 struct V3 { x: float, y: float, z: float }
@@ -70,6 +78,18 @@ fn c3() {
   for i in 1..8 { e = v[i]?; e.q = i * 2; v[0] = e; t += first.q + first.speed; }
   println("c3 {t} {v[0]?.id} {first.id}");
   assert(t == 546 && v[0]?.id == 7 && first.id == 7, "c3");
+}
+
+// c3b — the copy is the ONLY whole-type write in the loop: both views are bound outside it,
+// so no discharge buffer of the same type evicts `first.speed` on the copy's behalf.
+fn c3b() {
+  v = ents(4);
+  first = v[0]?;
+  other = v[1]?;
+  t = 0;
+  for i in 0..6 { other.q = i; v[0] = other; t += first.speed + first.q; }
+  println("c3b {t} {first.id} {v[0]?.speed}");
+  assert(t == 255 && first.id == 1 && v[0]?.speed == 40, "c3b");
 }
 
 // c4 — a heap-owning record: the copy walks claims, so the loop keeps the general path.
@@ -137,6 +157,6 @@ fn c11() {
 }
 
 fn main() {
-  c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); c11();
+  c1(); c2(); c3(); c3b(); c4(); c5(); c6(); c7(); c8(); c9(); c11();
   println("copy in place ok");
 }
