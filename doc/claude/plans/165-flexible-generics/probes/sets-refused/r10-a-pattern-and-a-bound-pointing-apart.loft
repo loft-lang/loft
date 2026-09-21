@@ -1,0 +1,12 @@
+// B6 — `vector<T>` is the narrower pattern and `<U: Named>` the stronger bound: the two
+// orders disagree, so a vector of a Named type is refused naming both.
+interface Named { fn tag(self: Self) -> text }
+struct C { n: integer }
+fn tag(self: C) -> text { "c" }
+fn tag(self: vector<C>) -> text { "vc" }
+fn f<T>(v: vector<T>) -> text { "v" }
+fn f<U: Named>(x: U) -> text { "n" }
+fn main() {
+  a: vector<C> = [C { n: 1 }];
+  println("{f(a)}");
+}

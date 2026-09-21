@@ -7437,6 +7437,25 @@ impl Data {
     /// attribute labelled by its spelling.  A free incumbent is re-keyed from `n_<name>` to
     /// its full spelling, so the name offers no parse hint (`Disp-Hint`) and the sites that
     /// read `n_<name>` as THE definition find none, exactly as they do for a `both` name.
+    /// The `self`/`both` METHODS named `fn_name` that source `source` declares, on any
+    /// receiver — what a free generic of the name joins in one overload set (@PLN165 B4).
+    fn methods_named(&self, fn_name: &str, source: u16) -> Vec<u32> {
+        (0..self.definitions.len() as u32)
+            .filter(|&d| {
+                let def = &self.definitions[d as usize];
+                def.source == source
+                    && matches!(def.def_type, DefType::Function | DefType::Generic)
+                    && def
+                        .attributes
+                        .first()
+                        .is_some_and(|a| a.name == "self" || a.name == "both")
+                    && Self::split_key(&def.name)
+                        .is_some_and(|k| k.kind == KeyKind::Method && k.rest == fn_name)
+                    && !Self::is_bound_stub_name(&def.name)
+            })
+            .collect()
+    }
+
     pub(crate) fn admit_overload_set(&mut self, lexer: &mut Lexer, fn_name: &str, incumbent: u32) {
         let mut main = self.def_nr(fn_name);
         if main == u32::MAX {
@@ -8086,6 +8105,8 @@ impl Data {
         // a stdlib name stays the refusal below (C95), and a library's names stay module-scoped
         // (C97).  The same spelling twice is the redefinition it always was.
         let mut overload_label: Option<String> = None;
+        // @PLN165 B4 — a `self` method that joins a free generic's set after registering.
+        let mut join_as_method = false;
         // @PLN165 B2 — a TEMPLATE is a member too: an incumbent that is one (`Generic`, set
         // right after it registered), or a newcomer whose parameters name a type variable.
         let generic_members = crate::keys::generic_member_enabled();
@@ -8138,6 +8159,46 @@ impl Data {
             if own(self, &key) == u32::MAX {
                 name = key;
                 overload_label = Some(full);
+            }
+        } else if d_nr == u32::MAX
+            && generic_members
+            && crate::keys::method_in_set_enabled()
+            && !crate::portable_path::is_stdlib_source(&lexer.pos().file)
+            && (o_nr == u32::MAX
+                || (self.def(o_nr).def_type == DefType::Dynamic
+                    && self.def(o_nr).source == self.source))
+        {
+            // @PLN165 B4 — a free GENERIC beside a same-named `self`/`both` METHOD of this
+            // source is one overload set, in either declaration order: before, the method was
+            // found by its receiver key and the generic never asked, so `describe(sq)` reached
+            // a two-parameter method and was refused for its missing argument while the
+            // one-parameter generic took it.  The method keeps its `t_` key (both spellings of
+            // a call still reach it — `(F-OneBody)`); the generic joins under its full
+            // spelling.  A method on the generic's own pattern stays `(F-OneBody)`'s refusal,
+            // reported above.
+            if !(is_self || is_both) && newcomer_is_template {
+                let methods = self.methods_named(fn_name, self.source);
+                if !methods.is_empty()
+                    && let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
+                {
+                    let key = Self::mangle_free_overload(&full, fn_name);
+                    if own(self, &key) == u32::MAX {
+                        for m in methods {
+                            self.admit_overload_set(lexer, fn_name, m);
+                        }
+                        name = key;
+                        overload_label = Some(full);
+                    }
+                }
+            } else if is_self || is_both {
+                let t = own(self, &format!("n_{fn_name}"));
+                if t != u32::MAX
+                    && self.def(t).def_type == DefType::Generic
+                    && self.def(t).source == self.source
+                {
+                    self.admit_overload_set(lexer, fn_name, t);
+                    join_as_method = is_self;
+                }
             }
         }
         if d_nr != u32::MAX {
@@ -8262,6 +8323,9 @@ impl Data {
                 self.definitions[type_nr as usize].attributes[a_nr].mutable = false;
                 self.definitions[type_nr as usize].attributes[a_nr].constant = true;
             }
+        }
+        if join_as_method {
+            self.admit_overload_set(lexer, fn_name, d_nr);
         }
         if is_both || overload_label.is_some() {
             let mut main = self.def_nr(fn_name);

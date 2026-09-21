@@ -325,6 +325,23 @@ reads arity and every parameter.
 - **Compared against:** count first which corpus files declare a generic beside a same-named
   method — they are the ONLY files whose emission may differ, and only in key names.  The
   59 corpus files that use a generic are the watch set.
+- **Built** (2026-09-21).  `Data::add_fn`, both declaration orders: a free template beside
+  `self`/`both` methods of its name in one source admits them to the dispatcher
+  (`admit_overload_set` — a method keeps its `t_` key, so `x.m(…)` and `m(x, …)` still reach
+  one definition) and joins under its `f_` key; a method declared after a free template
+  admits the template.  The stdlib never joins.  The count came first: over every `.loft`
+  file in the repository, two corpus files declare the pair (`an-instance-is-not-a-method-on-
+  its-bound-type`, and `a-method-and-a-function-of-one-name-on-one-type-are-refused`, whose
+  pair is on ONE receiver pattern and stays `(F-OneBody)`'s refusal, reported before any join).
+  Measured: DIFFERENT 1 of 1633 against `c243bd4e6` — the first file, and there a pure rename
+  (`i_3Cat_n_count_of` → `i_3Cat_f_10vector<$0>_count_of`) plus def renumbering, proven with
+  the rename map applied and numbers masked; no file became refused (error-adds: 0).  Cells
+  [method-sets/](probes/method-sets/) m01–m10 (m10 through a library) and
+  [sets/s13](probes/sets/), which covers the argument spellings and element types the first
+  cells held fixed, green on both backends under `LOFT_STRICT_STORES` + `LOFT_POISON`.  A
+  free generic answers the METHOD spelling too where the receiver has a method of the name
+  (`q.describe()` reaches `describe<T>` when only a two-parameter method is on `Sq`), which is
+  `(F-OneBody)` read from the other side.
 
 ### B5 — a stronger bound is more specific  ·  S
 

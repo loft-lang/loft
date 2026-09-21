@@ -1058,6 +1058,17 @@ pub fn generic_member_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_GENERIC_MEMBER"))
 }
 
+/// @PLN165 B4 — a free generic beside a same-named `self`/`both` METHOD is one overload set:
+/// both join the name's bare dispatcher, so a call is decided by rank over arity and every
+/// parameter rather than by the receiver's key alone.  **DEFAULT ON.**
+/// `LOFT_NO_METHOD_IN_SET=1` leaves the pair apart, the method found by its receiver key — the
+/// rollback, and the first bisect step for a call that reaches the wrong one of a method and a
+/// generic of one name.
+pub fn method_in_set_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_METHOD_IN_SET"))
+}
+
 /// @PLN165 B3b — a call written inside a generic, whose argument is typed by the generic's own
 /// variable, is lowered again in each instance with the instance's argument types, so it
 /// reaches the member of its name's overload set the instance's concrete twin reaches.

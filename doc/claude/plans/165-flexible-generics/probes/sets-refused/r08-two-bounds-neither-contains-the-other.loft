@@ -1,0 +1,12 @@
+// B5 — `<T: Named>` beside `<T: Sized>` at a type with both: neither bound set contains the
+// other, so the call is refused naming both.
+interface Named { fn tag(self: Self) -> text }
+interface Sized { fn size(self: Self) -> integer }
+struct Both { n: integer }
+fn tag(self: Both) -> text { "both" }
+fn size(self: Both) -> integer { 2 }
+fn show<T: Named>(x: T) -> text { "N" }
+fn show<T: Sized>(x: T) -> text { "S" }
+fn main() {
+  println("{show(Both{n:1})}");
+}

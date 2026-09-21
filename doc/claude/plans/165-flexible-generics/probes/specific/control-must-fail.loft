@@ -1,0 +1,10 @@
+// @CONTROL
+// @EXPECT: any
+interface Named { fn tag(self: Self) -> text }
+struct OnlyNamed { n: integer }
+fn tag(self: OnlyNamed) -> text { "named" }
+fn g<T: Named>(x: T) -> text { "N {x.tag()}" }
+fn g<T>(x: T) -> text { "any" }
+fn main() {
+  println("{g(OnlyNamed{n:1})}");
+}
