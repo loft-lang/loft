@@ -911,6 +911,9 @@ pub struct Parser {
     /// Set by `dynamic_dispatcher` when it refused a leaf, so the call site returns rather
     /// than falling to the ladder and reporting the same site a second way.
     pub(crate) reported_dynamic_refusal: bool,
+    /// A call refused because two parameters bind one type variable to two types (@PLN165
+    /// C1, F9): the refusal names both, and `call` answers nothing further for it.
+    pub(crate) reported_binding_clash: bool,
     /// How many functions of each name each program source FILE declares, by a lexical scan —
     /// pass 1's answer to "is a definition of this name still below the call?"
     /// (`Parser::file_has_pending_fn`).
@@ -1106,9 +1109,9 @@ pub struct Parser {
     /// the pass-1 body; [`Parser::rebuild_stale_monomorphs`] redoes those at the end of
     /// the pass, when every template body exists.
     pub(crate) pass2_bodies: std::collections::HashSet<u32>,
-    /// loft#1023 — `(monomorph, template, bindings, concrete)` for each monomorph built
+    /// loft#1023 — `(monomorph, template, bindings)` for each monomorph built
     /// from a template whose pass-2 body had not been parsed yet.
-    pub(crate) stale_monomorphs: Vec<(u32, u32, Vec<(u32, Type)>, Type)>,
+    pub(crate) stale_monomorphs: Vec<(u32, u32, Vec<(u32, Type)>)>,
     /// Generic templates refused at their own declaration (loft#1538): a call to one is
     /// already an error the declaration names, so the call adds no second message.
     pub(crate) refused_templates: std::collections::HashSet<u32>,
@@ -1536,6 +1539,7 @@ impl Parser {
             lambda_counter: 0,
             expected: Type::Unknown(0),
             reported_dynamic_refusal: false,
+            reported_binding_clash: false,
             declared_fn_names: HashMap::new(),
             positionless_loops: HashSet::new(),
             fields_of: u32::MAX,
@@ -6311,10 +6315,13 @@ impl Parser {
                         .unwrap_or(d)
                 }
                 sel @ crate::parser::dispatch::Selection::Ambiguous(_) => {
-                    if !self.first_pass {
-                        self.report_selection(name, &routed, &sel, Some(name_pos));
+                    if self.first_pass {
+                        return Type::Unknown(0);
                     }
-                    return Type::Unknown(0);
+                    self.report_selection(name, &routed, &sel, Some(name_pos));
+                    // @P376 — a reported expression is poisoned to `never`, so the call it is
+                    // an argument of does not report it a second time as "missing".
+                    return Type::Never;
                 }
                 crate::parser::dispatch::Selection::NoneApplicable => {
                     // `Disp-Exhaustive` over the closed enum: no definition takes the static
@@ -6326,7 +6333,7 @@ impl Parser {
                         Some(dd) => dd,
                         None if !self.first_pass && self.reported_dynamic_refusal => {
                             self.reported_dynamic_refusal = false;
-                            return Type::Unknown(0);
+                            return Type::Never;
                         }
                         None => self.data.select_fn(source, name, types),
                     }
@@ -6452,6 +6459,11 @@ impl Parser {
                 } else {
                     method_template
                 };
+                // F9 — refused naming both parameters; nothing further to say about the call.
+                if d_nr == u32::MAX && self.reported_binding_clash {
+                    self.reported_binding_clash = false;
+                    return Type::Never;
+                }
                 if d_nr == u32::MAX && self.refused_templates.contains(&g_nr) {
                     *code = Value::Null;
                     return self.data.def(g_nr).returned().clone();
@@ -7359,7 +7371,7 @@ impl Parser {
     /// found by its `n_` name, or a METHOD template (`t_6vector_head`) that a method call
     /// selected (loft#1539).  `name` is the spelling the call wrote.
     fn predict_template_return(&mut self, g_nr: u32, name: &str, types: &[Type]) -> Type {
-        if types.is_empty() || types[0].is_unknown() {
+        if types.is_empty() || (self.first_param_binds(g_nr) && types[0].is_unknown()) {
             return Type::Unknown(0);
         }
         let Some(bindings) = Self::bind_template(&self.data, g_nr, types) else {
@@ -7581,8 +7593,21 @@ impl Parser {
     /// found by its `n_` name, or a METHOD template (`t_6vector_head`) that a method call
     /// selected (loft#1539).  `name` is the spelling the call wrote, and the monomorph is
     /// named from it exactly as a free generic's is.
+    /// Does the template `g_nr`'s FIRST parameter name one of its type variables?  Until
+    /// `D-Every-Var` (@PLN165 C1) it always did, and an unknown first argument meant nothing
+    /// could bind yet; a variable elsewhere is bound by its own argument, and a missing one is
+    /// then [`Self::bind_template`]'s to report.
+    fn first_param_binds(&self, g_nr: u32) -> bool {
+        self.data
+            .def(g_nr)
+            .attributes
+            .iter()
+            .find(|a| !a.hidden)
+            .is_some_and(|a| self.data.mentions_type_var(&a.typedef))
+    }
+
     fn instantiate_template(&mut self, g_nr: u32, name: &str, types: &[Type]) -> u32 {
-        if types.is_empty() || types[0].is_unknown() {
+        if types.is_empty() || (self.first_param_binds(g_nr) && types[0].is_unknown()) {
             // First-pass argument types may be incomplete; defer the diagnostic
             // to second pass when types are stable.  Returning MAX here is the
             // same effect; it just doesn't emit a noisy first-pass error.
@@ -7604,6 +7629,10 @@ impl Parser {
         let Some(var_bindings) = Self::bind_template(&self.data, g_nr, types) else {
             return u32::MAX;
         };
+        if !self.first_pass && self.binding_clash(g_nr, name, types, &var_bindings) {
+            self.reported_binding_clash = true;
+            return u32::MAX;
+        }
         let tvs: Vec<u32> = var_bindings.iter().map(|(tv, _)| *tv).collect();
         // loft#761 — a SELF-recursive generic arrives here while its own template is
         // still being parsed, and the argument type is the type VARIABLE, so `concrete`
@@ -7844,10 +7873,9 @@ impl Parser {
         // parsed yet when the call instantiates, so the monomorph above was built from the
         // PASS-1 body.  Record it and re-derive once the whole file is through.
         if !self.first_pass && !self.pass2_bodies.contains(&g_nr) {
-            self.stale_monomorphs
-                .push((d_nr, g_nr, bindings.clone(), concrete.clone()));
+            self.stale_monomorphs.push((d_nr, g_nr, bindings.clone()));
         }
-        self.instantiate_nested_generics(d_nr, &concrete);
+        self.instantiate_nested_generics(d_nr, &bindings);
         // The body's text-return promotion ran while its tail call still named the nested
         // TEMPLATE (`inner(s, c)` in `outer<S>(s: S) -> S?`): not a text call, nothing to
         // promote.  Now that the call names `inner`'s monomorph, ask again — a `-> text?`
@@ -7865,6 +7893,69 @@ impl Parser {
             // The function won't execute because parsing will halt on errors.
         }
         d_nr
+    }
+
+    /// F9 (@PLN165 C1): does one type variable take two types from two parameters at this
+    /// call — `same(1, "x")` for `same<T>(a: T, b: T)`?  The variable is bound by the first
+    /// parameter that relates to its argument; a later one whose argument cannot take the
+    /// parameter AS BOUND is the clash, refused naming both parameters.  The predicate is the
+    /// argument check's own (`convert_admitting`, as an overload trial asks it), so this
+    /// refuses exactly what the check after instantiation would, and says why.
+    fn binding_clash(
+        &mut self,
+        g_nr: u32,
+        name: &str,
+        types: &[Type],
+        var_bindings: &[(u32, Type)],
+    ) -> bool {
+        let params: Vec<(String, Type)> = self
+            .data
+            .def(g_nr)
+            .attributes
+            .iter()
+            .filter(|a| !a.hidden)
+            .map(|a| (a.name.clone(), a.typedef.clone()))
+            .collect();
+        for (v, bound) in var_bindings {
+            if bound.is_unknown() || self.data.mentions_type_var(bound) {
+                continue;
+            }
+            let binders: Vec<usize> = params
+                .iter()
+                .zip(types)
+                .enumerate()
+                .filter(|(_, ((_, p), a))| {
+                    p.contains_def(*v) && !Self::resolve_type_var(p, *v, a).is_unknown()
+                })
+                .map(|(i, _)| i)
+                .collect();
+            let Some(&first) = binders.first() else {
+                continue;
+            };
+            for &i in &binders[1..] {
+                let expected = Self::substitute_all(params[i].1.clone(), var_bindings);
+                let mut trial = Value::Null;
+                if self.convert_admitting(&mut trial, &types[i], &expected) {
+                    continue;
+                }
+                let spelled = Data::type_var_spelling(self.data.def(*v).name()).to_string();
+                let other = Self::resolve_type_var(&params[i].1, *v, &types[i]);
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{name}` binds {spelled} to {} through `{}` and to {} through `{}` — a type \
+                     variable is one type at a call; pass `{}` a value of the same type, or give \
+                     the two parameters a variable each",
+                    bound.source_name(&self.data),
+                    params[first].0,
+                    other.source_name(&self.data),
+                    params[i].0,
+                    params[i].0
+                );
+                return true;
+            }
+        }
+        false
     }
 
     /// Is `d` a lambda written inside a template ([`Parser::mark_template_lambda`])?
@@ -7951,9 +8042,8 @@ impl Parser {
             }
             self.closure_parameter_last(inst);
         }
-        if let Some((_, concrete)) = bindings.first() {
-            let concrete = concrete.clone();
-            self.instantiate_nested_generics(inst, &concrete);
+        if !bindings.is_empty() {
+            self.instantiate_nested_generics(inst, &bindings);
         }
         inst
     }
@@ -8330,7 +8420,7 @@ impl Parser {
         let mut rounds = 0;
         while !self.stale_monomorphs.is_empty() && rounds < 16 {
             rounds += 1;
-            for (d_nr, g_nr, bindings, concrete) in std::mem::take(&mut self.stale_monomorphs) {
+            for (d_nr, g_nr, bindings) in std::mem::take(&mut self.stale_monomorphs) {
                 let tmpl_code = self.data.definitions[g_nr as usize].code.clone();
                 if tmpl_code == Value::Null {
                     continue;
@@ -8350,7 +8440,7 @@ impl Parser {
                 self.fill_monomorph_body(d_nr, code, &tmpl_vars, &bindings);
                 // The body is fresh, so every call it makes to ANOTHER generic has to be
                 // retargeted at that one's monomorph again.
-                self.instantiate_nested_generics(d_nr, &concrete);
+                self.instantiate_nested_generics(d_nr, &bindings);
                 // And the text-return promotion has to be asked again: the first
                 // instantiation asked it of the pass-1 body, whose tail call still named
                 // the nested TEMPLATE (`-> S?` — not text, so nothing to promote), and the
@@ -9435,7 +9525,10 @@ impl Parser {
     /// Called after `add_def` has registered THIS monomorph, so a self-recursive generic
     /// (`fn f<T>(t: T) { f(t) }`) finds itself in the `existing` check and stops, rather
     /// than instantiating forever.
-    fn instantiate_nested_generics(&mut self, d_nr: u32, concrete: &Type) {
+    fn instantiate_nested_generics(&mut self, d_nr: u32, bindings: &[(u32, Type)]) {
+        let concrete = &bindings
+            .first()
+            .map_or(Type::Unknown(0), |(_, b)| b.clone());
         // The nested call's own FIRST ARGUMENT type, not the outer binding.
         //
         // This used to instantiate every nested generic at `concrete` — the type the OUTER
@@ -9539,7 +9632,21 @@ impl Parser {
                 None if key.starts_with("t_") => Self::method_spelling(&key),
                 None => continue,
             };
-            let inst = self.instantiate_template(t, &name, std::slice::from_ref(&arg_tp));
+            // The call's own first argument, and — for a variable named in a LATER parameter
+            // (`D-Every-Var`) — the callee's parameters with this instance's bindings: the
+            // callee is the template or an instance bound to this template's variables, so
+            // its parameter types are the arguments' static types at every variable position.
+            let mut arg_types = vec![arg_tp];
+            arg_types.extend(
+                self.data
+                    .def(callee)
+                    .attributes
+                    .iter()
+                    .filter(|a| !a.hidden)
+                    .skip(1)
+                    .map(|a| Self::substitute_all(a.typedef.clone(), bindings)),
+            );
+            let inst = self.instantiate_template(t, &name, &arg_types);
             if inst != u32::MAX && inst != t && inst != callee {
                 remap.insert(callee, inst);
             }

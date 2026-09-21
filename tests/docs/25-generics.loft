@@ -7,18 +7,18 @@
 // concrete type you call it with.
 // ## Declaring a generic function
 // Place a single type variable in angle brackets after the function name.
-// The type variable must appear in the first parameter (directly or as a
-// container element like vector<T>) — a T that appears only later, or only in
-// the return type, is refused with "Type variable T must appear in the first
-// parameter".  ONE type variable: `<T, U>` does not parse.
+// The type variable must appear in a parameter (directly or as a container
+// element like vector<T>) — any parameter; a T that appears only in the return
+// type is refused, since a call infers T from its arguments.  ONE type
+// variable: `<T, U>` is refused.
 //
 // Generic STRUCTS are a separate thing and loft does not have them — `struct
 // Box<T>` is a parse error.  A generic FUNCTION over `vector<T>` covers most of
 // what a generic container would be reached for.
 fn identity<T>(x: T) -> T { x }
 // ## Calling a generic function
-// No special syntax at the call site — the compiler infers T from the first
-// argument's type and creates a specialised copy automatically.
+// No special syntax at the call site — the compiler infers T from the
+// arguments' types and creates a specialised copy automatically.
 fn test_identity() {
   assert(identity(42) == 42, "identity integer");
   assert(identity(3.14) == 3.14, "identity float");

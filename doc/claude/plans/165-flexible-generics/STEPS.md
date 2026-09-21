@@ -437,6 +437,23 @@ is refused naming both parameters where it stands alone (F9).
   `1:a|2:7`; [c3](probes/c3-one-variable-bound-twice.loft) stays refused;
   `fn bad<T>(n: integer) -> T` is refused at its declaration (F10).
 - **Compared against:** IDENTICAL over every file that compiles today.
+- **Built** (2026-09-21).  The first-parameter rule is `D-Every-Var` in `parse_function`, and a
+  template refused by it answers its declared return at a call (loft#1538's shape, as the
+  several-variables refusal does).  Three places assumed the FIRST parameter: the pass-2
+  "cannot infer" precheck in `instantiate_template` and its twin in `predict_template_return`
+  (now asked only when the first parameter carries a variable — `first_param_binds`), and
+  `instantiate_nested_generics`, which bound a nested generic from its call's first argument
+  alone and now takes the rest from the callee's parameters under the instance's bindings (it
+  takes the whole binding list, and the stale-monomorph record drops its `concrete`).  F9 is
+  `binding_clash`, asked with the argument check's own predicate (`convert_admitting`) — a
+  first cut with `can_convert` refused the stdlib's `sum(v, 0)`, since selection's
+  applicability is narrower than the argument check.  Found on the way: a call refused by
+  selection answered `unknown`, and the call it was an argument of then reported it again as
+  a MISSING argument; it answers `never` now (@P376's poison), for the ambiguity and the
+  variant-decision refusals too.  Cells [any-param/](probes/any-param/) v01–v05 green on both
+  backends under `LOFT_STRICT_STORES` + `LOFT_POISON`; r11, r12 refused with one message
+  each.  Corpus: IDENTICAL 1640/1640 against B7.  `parse_errors`' pinned first-parameter test
+  is rewritten for the new rule, and LOFT.md / `tests/docs/25-generics.loft` say it.
 
 ### C2 — a header declares a list  ·  S
 

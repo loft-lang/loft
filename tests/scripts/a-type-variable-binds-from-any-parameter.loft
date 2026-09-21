@@ -1,0 +1,51 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `D-Every-Var` (@PLN165 C1): a type variable may appear in ANY parameter — a call infers it
+// from its arguments, and the binding reads every parameter.  It replaces the rule that the
+// variable appear in the FIRST parameter, under which `hole<T>(n: integer, v: T)` was refused
+// "Type variable T must appear in the first parameter".  A variable in a vector in the third
+// parameter, a record bound through the second and returned, a template of that shape in an
+// overload set, and a generic calling one — each answers what its concrete twin answers.
+//
+// @falsified-at: f5a2b3801 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-type-variable-binds-from-any-parameter.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses every template here.
+//   ARMED: nothing.
+//   WITNESS: on the control `hole` is "Type variable T must appear in the first parameter".
+//   HOLDS: the variable named twice consistently, in the first parameter.
+
+struct Pt { x: integer, y: integer }
+
+fn hole<T: Printable>(n: integer, v: T) -> text { "{n}:{v}" }
+fn last_of<T>(tag: text, n: integer, v: vector<T>) -> T { v[len(v) - 1] }
+fn pick<T>(k: integer, v: T) -> T { v }
+fn pick_pt_twin(k: integer, v: Pt) -> Pt { v }
+fn same<T: Printable>(a: T, b: T) -> text { "{a}{b}" }
+
+fn put(n: integer, v: integer) -> text { "int {n} {v}" }
+fn put<T: Printable>(n: integer, v: T) -> text { "gen {n} {v}" }
+
+fn relay<U: Printable>(u: U) -> text { hole(9, u) }
+
+fn test_a_later_parameter() {
+  assert("{hole(1, "a")}|{hole(2, 7)}" == "1:a|2:7", "{hole(1, "a")}");
+  a: vector<text> = ["x", "z"];
+  b: vector<integer> = [3, 4];
+  assert(last_of("t", 1, a) == "z" && last_of("u", 2, b) == 4, "{last_of("t", 1, a)}");
+}
+
+fn test_a_record_through_the_second_parameter() {
+  p = pick(1, Pt { x: 3, y: 4 });
+  q = pick_pt_twin(1, Pt { x: 3, y: 4 });
+  assert(p.x == q.x && p.y == q.y && p.y == 4, "{p.x} {p.y}");
+}
+
+fn test_named_twice_consistently() {
+  assert(same(1, 2) == "12" && same("a", "b") == "ab", "{same(1, 2)}");
+}
+
+fn test_in_a_set_and_through_a_generic() {
+  assert("{put(1, 5)}|{put(1, "x")}" == "int 1 5|gen 1 x", "{put(1, "x")}");
+  assert(relay(2.5) == "9:2.5", "{relay(2.5)}");
+}

@@ -2763,9 +2763,15 @@ fn pick_second<T>(a: T, b: T) -> T { _x = a; b }
 ```
 
 **Rules:**
-- T must appear in the first parameter (directly or as `vector<T>`, etc.).
+- T must appear in a parameter (directly or as `vector<T>`, etc.) — any parameter; one it
+  appears in nowhere is refused, since a call has nothing to infer it from.
 - Only one type variable is allowed.
-- At the call site, T is inferred from the first argument's concrete type.
+- At the call site, T is inferred from the arguments; two parameters naming T must receive
+  one type (`same<T>(a: T, b: T)` called with an integer and a text is refused, naming both).
+- A generic may share its name with other definitions — concrete ones, other generics, a
+  method: a call reaches the most specific one that takes it (a concrete definition over a
+  generic, `vector<T>` over `T`, `<T: A + B>` over `<T: A>`), and two nothing ranks are
+  refused naming both.
 - The compiler creates a specialised copy per concrete type automatically.
 
 **Allowed on T:** assign, return, store in variables.

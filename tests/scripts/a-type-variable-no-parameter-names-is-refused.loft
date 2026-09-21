@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `D-Every-Var` (@PLN165 C1): a type variable no parameter names cannot be inferred by any
+// call, so the declaration is refused — naming the variable and the shape that fixes it.
+//
+// @falsified-at: f5a2b3801 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-type-variable-no-parameter-names-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — refused on both trees; only the rule, and so the message, moves.
+//   ARMED: nothing.
+//   WITNESS: on the control "Type variable T must appear in the first parameter".
+//   HOLDS: the program is refused on both trees.
+// @EXPECT_ERROR: type variable T of `bad` appears in no parameter — a call infers a type variable from its arguments, so each must name one
+
+fn bad<T>(n: integer) -> integer { n }
+
+fn main() {
+  println("{bad(1)}");
+}

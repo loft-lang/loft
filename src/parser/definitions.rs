@@ -1839,26 +1839,33 @@ impl Parser {
                 );
             }
         }
-        // validate that the type variable appears in the first parameter.
+        // `D-Every-Var` (@PLN165 C1): every declared variable appears in SOME parameter,
+        // which is where a call infers it from.  It replaces the first-parameter rule: the
+        // binding reads every parameter (`Parser::bind_template`), so the first is not special.
+        let mut unnamed_var = false;
         if is_generic && several {
             // Refused at the header; the rules below are about one variable.
         } else if is_generic && !arguments.is_empty() {
             // The HEADER's variable, not whatever the spelling names globally: two headers
-            // writing `T` bind two placeholders, and the parameter was resolved against
+            // writing `T` bind two placeholders, and the parameters were resolved against
             // this one.
-            let has_tv = !self.cur_type_vars.is_empty()
-                && self
-                    .cur_type_vars
-                    .iter()
-                    .all(|(_, h)| arguments[0].typedef.contains_def(*h));
-            if !has_tv && !self.first_pass {
+            let unnamed: Vec<String> = self
+                .cur_type_vars
+                .iter()
+                .filter(|(_, h)| !arguments.iter().any(|a| a.typedef.contains_def(*h)))
+                .map(|(n, _)| crate::data::Data::type_var_spelling(n).to_string())
+                .collect();
+            unnamed_var = !unnamed.is_empty();
+            if unnamed_var && !self.first_pass {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
-                    "Type variable {} must appear in the first parameter — \
-                     move {} to the first parameter position",
-                    type_var_name,
-                    type_var_name
+                    "type variable {} of `{fn_name}` appears in no parameter — a call infers a \
+                     type variable from its arguments, so each must name one \
+                     (`fn {fn_name}<{}>(x: {}, …)`)",
+                    unnamed[0],
+                    unnamed[0],
+                    unnamed[0]
                 );
             }
         } else if is_generic && arguments.is_empty() && !self.first_pass {
@@ -1897,7 +1904,9 @@ impl Parser {
         if self.context == u32::MAX {
             return false;
         }
-        if several && !self.first_pass {
+        // loft#1538's shape: a template refused at its declaration answers its declared
+        // return at a call, which the declaration's own refusal explains.
+        if (several || unnamed_var) && !self.first_pass {
             self.refused_templates.insert(self.context);
         }
         // @PLN86 §7.2 (F7) — now the function's def_nr exists, key each parsed parameter
