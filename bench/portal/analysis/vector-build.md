@@ -215,28 +215,38 @@ proposed on this row's evidence alone.
 ### C1's condition CORRECTED before it was built (2026-09-22)
 
 The paragraph above says the fn-ref guard is *"owed only where a fn-ref dispatch can reach the
-function"*.  **That premise is false**, and building from it would leak.  The guard is not only
-the owner of a fn-ref dispatch arm's return buffer: `OpFreeRefOrHandUp`
-(`ops/ref_ops.rs`, `OpFreeRefOrHandUpEmitter`) — an ordinary op, emitted where a callee
-returns the store it minted and the caller reads the result as a BORROW — registers that store
-against the running frame through the same `cr_fnref_buf`, and `FnRefBufGuard` is what frees
-it.  A function with no `CallRef` anywhere in its call tree can therefore still own a store
-through its guard.  Found by asking the second-spelling question of the PUSHERS rather than of
-the call nodes: three emission sites register a buffer — the fn-ref dispatch
-(`emit.rs`, `cr_fnref_buf` and `cr_fnref_minted`) and this op — and only two of them sit behind
-a `CallRef`.
+function"*, which reads as the predicate *no `CallRef` reachable from F*.  **That predicate is
+not sufficient.**  Three emission sites register a store against the running frame, and only
+two sit behind a `CallRef` node: the fn-ref dispatch (`emit.rs`: `cr_fnref_buf`,
+`cr_fnref_minted`) — and `OpFreeRefOrHandUp` (`ops/ref_ops.rs`), an ordinary op.  Found by
+asking the second-spelling question of the PUSHERS rather than of the call nodes.
 
-The condition C1 can be built on: NOTHING THAT REGISTERS is reachable from the function —
-no `CallRef`, no `parallel`, no `yield`, no native (not loft-bodied) user function, and no
-`OpFreeRefOrHandUp` — over the whole reachable call tree, cycles INCLUDED (the closure of the
-call graph from the function, not `frameless_chain_from`, which answers `false` on a cycle
-because the DEPTH count needs the frame there; the guard does not).  Then no entry can stand
-above the mark the guard would take, and its drop is empty every time — the reasoning
-`is_frameless_chain`'s own doc gives, which never depended on acyclicity.  `fib` satisfies it
-(it returns an integer and calls itself), so the −27 % stands for that row.  Its falsifiers are
-`LOFT_NATIVE_LEAK_CHECK=1` and `LOFT_STRICT_STORES=1` over a cell that hands a store up through
-a RECURSIVE function with no fn-ref — the shape that would leak under the false premise, and
-the cell that must exist before the rewrite does.
+What is KNOWN about that op, read from `scopes.rs`: it replaces `OpFreeRefIfDistinct` only in a
+function whose published return BORROWS ITS `__closure` (`return_borrows_closure`) — a capturing
+lambda's body, the shape `tests/scripts/1186-a-join-tail-hands-its-mint-an-owner.loft` guards.
+Such a body need hold no `CallRef` in its OWN tree, so the predicate above would elide ITS
+guard — and that frame's guard is the one that takes the mark and hands the registered store
+up at exit.
+
+What is NOT known, and is not claimed: whether eliding that particular guard would be
+OBSERVABLE.  The entry might simply be released by the caller's guard (the caller holds the
+`CallRef`, so it keeps one) at the same moment the hand-up would have delivered it.  The
+hand-up protocol (`hands_up`, the watermark) was not traced, and reasoning about it unread is
+how the false premise got written.  So the rule C1 is built on is the conservative one, right
+either way: NOTHING THAT REGISTERS is reachable from the function — no `CallRef`, no
+`parallel`, no `yield`, no native (not loft-bodied) user function, no `OpFreeRefOrHandUp` —
+over the whole reachable call tree, cycles INCLUDED (the closure of the call graph, not
+`frameless_chain_from`, which answers `false` on a cycle because the DEPTH count needs the
+frame there; the guard does not).  Then no entry can stand above the mark the guard would
+take and its drop is empty every time — the reasoning `is_frameless_chain`'s own doc gives,
+which never depended on acyclicity.  `fib` satisfies it, so the −27 % stands for that row.
+
+Falsifiers when it is built: `LOFT_NATIVE_LEAK_CHECK=1` and `LOFT_STRICT_STORES=1` over cell
+1186's shape with C1 ON (the body that registers must keep its guard), beside a recursive
+fn-ref-free function that returns a heap value (its guard goes; nothing may leak).  An earlier
+draft of this note prescribed *"a store handed up through a RECURSIVE function with no
+fn-ref"* as the cell that must exist first — that cell was never constructed and, the op
+living in lambda bodies, may not be constructible; do not chase it.
 
 ## Priced negative, or not a clear case
 
