@@ -1853,7 +1853,7 @@ impl Output<'_> {
             for op in setup.iter().chain(body).chain(resume).chain(post) {
                 op.walk(&mut |n| {
                     if let Value::Var(v) | Value::Set(v, _) | Value::CallRef(v, _) = n
-                        && (matches!(vars.tp(*v), Type::Function(..))
+                        && (matches!(vars.tp(*v).base(), Type::Function(..))
                             || vars.name(*v).starts_with("___clos"))
                     {
                         found = true;
