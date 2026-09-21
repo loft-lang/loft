@@ -558,7 +558,17 @@ tests/scripts/901-linked-group-fill.loft.
 
 ## 3. Deviations / decided edges
 
-**OPEN: 0.**  `D-col-lookup` (loft#1450, opened 2026-09-07) was CLOSED 2026-09-08: `(Col-Lookup)`
+**OPEN: 1.**
+
+- **`D-col-5`** — OPEN (loft#1576): a repeated key displaces the older record per MEMBER of a
+  linked group, not from the group.  Members keyed on different fields then disagree about the
+  record set, and a group with no vector member never releases the displaced record — against
+  `(Col-Group-Dup)` and `(Col-Group)`.  Record: [collections-history.md](collections-history.md).
+
+`D-col-4` (loft#1572) was opened and CLOSED 2026-09-21: an `ordered` — a `sorted` stored by
+reference — stacked a repeated key instead of replacing it, against `(Col-Insert)`.
+
+`D-col-lookup` (loft#1450, opened 2026-09-07) was CLOSED 2026-09-08: `(Col-Lookup)`
 carried its `τ?` on the `expr_not_null` LINT flag its own anchor cited and never on a type, so a
 lookup that missed in a PRESENT collection bound into a non-null slot in silence, on all four
 keyed kinds.  `wrap_keyed_lookup_nullable` is the type now, in one home for both arms.  The
