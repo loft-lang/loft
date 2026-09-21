@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1577 — a value of a PLAIN enum spelled as a parameter or result type is refused.
+//
+// `(C-Var)` makes a variant a type only as `Reference(S)`, a record variant.  A plain enum's value
+// is a discriminant with no record, so no expression ever has its type.  Every position already
+// refused it except one: a definition over a plain value beside a definition over the enum.  That
+// pair compiled, the per-value definition could never be selected, and every call silently took
+// the enum-level one — `fn beats(a: Rock, b: Scissors)` beside `fn beats(a: Hand, b: Hand)`
+// answered the fallback for all nine pairs.  The refusal names the cure, which
+// `1577b-the-cure-for-per-value-behaviour-on-a-plain-enum` measures working on both backends.
+//
+// Axes this file MOVES:  the spelling (a two-parameter set, a one-parameter set, a method
+//                        `self`), each beside an enum-level definition — the silent shape.
+// Axes it HOLDS FIXED:   one plain enum; ONE plain value per cell and a distinct one per cell, so
+//                        each cell emits one refusal and no two expectations share a substring.
+//                        A result or field type was refused before the fix and is not the
+//                        silent shape, so it is not a cell here.
+//
+// @falsified-at: bce473128 — interpret expectations FAIL -> 3/3, native the same.
+//   CHANNEL: expectations.  On the control every cell COMPILES — the three definitions are
+//   accepted and the calls run the enum-level fallback — so none of the three refusals is emitted.
+//   WITNESS: on the control `beats1577(Rock, Hand1577)` beside `beats1577(Hand1577, Hand1577)`
+//   compiles and the call answers the fallback.
+//   HOLDS: leak, panic and free-refusal are equal on both trees (a refused file runs nothing).
+
+enum Hand1577 { Rock, Paper, Scissors }
+
+// @EXPECT_ERROR: 'Rock' is a value of the plain enum 'Hand1577', not a type
+fn beats1577(a: Rock, b: Hand1577) -> boolean { true }
+fn beats1577(a: Hand1577, b: Hand1577) -> boolean { false }
+
+// @EXPECT_ERROR: 'Paper' is a value of the plain enum 'Hand1577', not a type
+fn name1577(h: Paper) -> text { "paper" }
+fn name1577(h: Hand1577) -> text { "other" }
+
+// @EXPECT_ERROR: 'Scissors' is a value of the plain enum 'Hand1577', not a type
+fn shout1577(self: Scissors) -> text { "SCISSORS" }
+fn shout1577(self: Hand1577) -> text { "..." }
+
+fn main() {
+  h: Hand1577 = Hand1577.Rock;
+  println("{beats1577(h, h)} {name1577(h)} {h.shout1577()}");
+}

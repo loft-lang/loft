@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1577 — the cure the plain-enum refusal names, and the dispatch it must not reach.
+//
+// A plain enum's value is not a type, so behaviour per value is ONE definition over the enum with
+// a `match` on its value — a tuple `match` for a pair.  Every cell is hand-computed.  The last two
+// cells are the controls the refusal must leave alone: a STRUCT-enum's variants are record types
+// and dispatch per variant, a unit variant of a struct-enum included.
+//
+// @falsified-at: none — a LOCK.  Every cell passed before the refusal existed and passes after
+//   it; the change may only remove the plain-value spelling.  Run it against a build whose
+//   refusal also fires for a struct-enum variant (drop the `Enum(_, false, _)` test in
+//   `parse_type_inner`) and the dispatch cells stop compiling — that is the direction it fails in.
+//   CHANNEL: exit and assertions.  ARMED: none needed (no leak-class claim).
+//   WITNESS: the nine-pair table reads `nnRPnnnSn` and the struct-enum walk `dead hp 3`.
+//   HOLDS: leak, panic and free-refusal are clean on both backends.
+
+enum Hand1577b { Rock, Paper, Scissors }
+
+fn name1577b(self: Hand1577b) -> text {
+  match self { Rock => "r", Paper => "p", Scissors => "s" }
+}
+
+fn beats1577b(a: Hand1577b, b: Hand1577b) -> text {
+  match (a, b) {
+    (Rock, Scissors) => "R",
+    (Paper, Rock) => "P",
+    (Scissors, Paper) => "S",
+    _ => "n",
+  }
+}
+
+enum State1577b { Dead, Playing { hp: integer } }
+fn label1577b(s: Dead) -> text { "dead" }
+fn label1577b(s: Playing) -> text { "hp {s.hp}" }
+fn label1577b(s: State1577b) -> text { "?" }
+
+fn main() {
+  hs: vector<Hand1577b> = [Hand1577b.Rock, Hand1577b.Paper, Hand1577b.Scissors];
+  names = "";
+  table = "";
+  for a in hs {
+    names += a.name1577b();
+    for b in hs { table += beats1577b(a, b); }
+  }
+  assert(names == "rps", "a method over the whole plain enum: {names}");
+  // Rows a = Rock, Paper, Scissors; columns b the same.  Rock beats Scissors (row 1, col 3),
+  // Paper beats Rock (row 2, col 1), Scissors beats Paper (row 3, col 2).
+  assert(table == "nnRPnnnSn", "a tuple match per pair of values: {table}");
+
+  xs: vector<State1577b> = [Dead, Playing { hp: 3 }];
+  walk = "";
+  for x in xs { walk += "{label1577b(x)} "; }
+  assert(walk == "dead hp 3 ", "struct-enum variants still dispatch, a unit variant included: {walk}");
+}
