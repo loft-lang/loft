@@ -1,0 +1,211 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1571, `@FR-R-InPlaceLiteral` — A LITERAL WRITTEN IN PLACE READS THE OLD RECORD THROUGH
+// ANY VIEW.  A record literal assigned to an element or a field is written into that place one
+// field at a time.  The rule says every field expression is evaluated before the first write,
+// so a field that reads the place reads the OLD record.  The compiler stages such a field into
+// a temporary, and it decided which fields to stage by asking whether the expression names the
+// destination.  It missed the other names a place has:
+//
+// - a view bound to the element (`p = v[0]`), because for an element destination the check
+//   tested only a direct read of `v`;
+// - a view reached through another view, like a loop variable over the container;
+// - a parameter, when the destination is a caller's.  `sw(v, v[0])` hands the callee the
+//   element and its container, and nothing in the callee can tell.
+//
+// So `v[0] = Pt { x: p.y, y: p.x }` wrote `x` first and then read it back for `y`.
+//
+// Every expected value is worked out by hand from the old record.  A cell is a swap, or
+// otherwise reads a field the literal writes before the read.  The last three cells are
+// controls: a direct read of the destination (always staged), a view of a different vector,
+// which needs no staging, and a text parameter, which a bind copies.
+//
+// @falsified-at: e1cdd1d8c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1571-a-literal-written-in-place-reads-the-old-record-through-any-view.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion
+//   failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends — a wrong value,
+//   with no diagnostic and nothing else moving.
+// WITNESS: on the control every fault cell answers wrong and every control answers right, on both
+//   backends, scored with the assertions replaced by prints: `g1` `(12,12)`, `g4` `(42,42)`,
+//   `g8` `82,81,882`, `g9` `ninety-two,ninety-two`, `g10` `102,102`, `g11` `7,7,-300`.
+// HOLDS: leak, panic, refusals and expectations are unmoved on both trees.
+
+struct Pt { x: integer, y: integer }
+struct Wr { p: Pt, n: integer }
+struct Nm { a: text, b: text }
+struct Px { r: u8, g: u8, b: i16 }
+struct Fl { a: float, b: float, on: boolean, off: boolean }
+enum Col { Red, Green, Blue }
+struct Ce { c: Col, d: Col }
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+fn pts(v: const vector<Pt>) -> text {
+  r = "";
+  for p in v { r += "({p.x},{p.y})"; }
+  r
+}
+
+/// g1 — a view local of the element the literal overwrites.
+fn g1() -> text {
+  v: vector<Pt> = [Pt { x: 11, y: 12 }];
+  p = v[0];
+  v[0] = Pt { x: p.y, y: p.x };
+  pts(v)
+}
+/// g2 — a view through a computed index, discharged with `?`.
+fn g2() -> text {
+  v: vector<Pt> = [Pt { x: 21, y: 22 }, Pt { x: 23, y: 24 }];
+  i = 1;
+  p = v[i - 1]?;
+  v[0] = Pt { x: p.y, y: p.x };
+  pts(v)
+}
+/// g3 — a loop variable over the container: its deps reach `v` through the iterated copy.
+fn g3() -> text {
+  v: vector<Pt> = [Pt { x: 31, y: 32 }];
+  for p in v { v[0] = Pt { x: p.y, y: p.x + 100 }; }
+  pts(v)
+}
+/// g4 — a parameter the caller bound to the element beside its container.
+fn g4_sw(v: vector<Pt>, p: Pt) { v[0] = Pt { x: p.y, y: p.x }; }
+fn g4() -> text {
+  v: vector<Pt> = [Pt { x: 41, y: 42 }];
+  g4_sw(v, v[0]);
+  pts(v)
+}
+/// g5 — two vector parameters that are the same vector.
+fn g5_sw(a: vector<Pt>, b: vector<Pt>) { a[0] = Pt { x: b[0].y, y: b[0].x }; }
+fn g5() -> text {
+  v: vector<Pt> = [Pt { x: 51, y: 52 }];
+  g5_sw(v, v);
+  pts(v)
+}
+/// g6 — a parameter view with a variable index, element 1.
+fn g6_sw(v: vector<Pt>, i: integer, p: Pt) { v[i] = Pt { x: p.y, y: p.x }; }
+fn g6() -> text {
+  v: vector<Pt> = [Pt { x: 61, y: 62 }, Pt { x: 63, y: 64 }];
+  g6_sw(v, 1, v[1]);
+  pts(v)
+}
+/// g7 — a variable index, and a field that reads one the literal wrote first.
+fn g7() -> text {
+  v: vector<Pt> = [Pt { x: 71, y: 72 }];
+  k = 0;
+  p = v[k]?;
+  v[k] = Pt { x: 5, y: p.x };
+  pts(v)
+}
+/// g8 — a nested literal field, and a later field that reads the nested one's old value.
+fn g8() -> text {
+  ws: vector<Wr> = [Wr { p: Pt { x: 81, y: 82 }, n: 800 }];
+  q = ws[0];
+  ws[0] = Wr { p: Pt { x: q.p.y, y: q.p.x }, n: q.n + q.p.x };
+  "{ws[0].p.x},{ws[0].p.y},{ws[0].n}"
+}
+/// g9 — text fields: the second read would see the first write's text.
+fn g9() -> text {
+  v: vector<Nm> = [Nm { a: "ninety-one", b: "ninety-two" }];
+  q = v[0];
+  v[0] = Nm { a: q.b, b: q.a };
+  "{v[0].a},{v[0].b}"
+}
+/// g10 — a FIELD destination through a parameter that views it.
+fn g10_sw(w: Wr, p: Pt) { w.p = Pt { x: p.y, y: p.x }; }
+fn g10() -> text {
+  w = Wr { p: Pt { x: 101, y: 102 }, n: 0 };
+  g10_sw(w, w.p);
+  "{w.p.x},{w.p.y}"
+}
+/// g11 — narrow integer fields: the staged temp keeps the field's width.
+fn g11() -> text {
+  v: vector<Px> = [Px { r: 200, g: 7, b: -300 }];
+  p = v[0];
+  v[0] = Px { r: p.g, g: p.r, b: p.b };
+  "{v[0].r},{v[0].g},{v[0].b}"
+}
+/// g12 — float and boolean fields.
+fn g12() -> text {
+  v: vector<Fl> = [Fl { a: 1.5, b: 2.25, on: true, off: false }];
+  p = v[0];
+  v[0] = Fl { a: p.b, b: p.a, on: p.off, off: p.on };
+  "{v[0].a},{v[0].b},{v[0].on},{v[0].off}"
+}
+/// g13 — enum fields.
+fn g13() -> text {
+  v: vector<Ce> = [Ce { c: Red, d: Blue }];
+  p = v[0];
+  v[0] = Ce { c: p.d, d: p.c };
+  "{v[0].c},{v[0].d}"
+}
+/// g14 — a container a call returned: its deps name the call's buffer, not a literal's.
+fn g14_mk() -> vector<Pt> { r: vector<Pt> = [Pt { x: 141, y: 142 }]; r }
+fn g14() -> text {
+  v = g14_mk();
+  p = v[0];
+  v[0] = Pt { x: p.y, y: p.x };
+  pts(v)
+}
+/// g15 — the view and the assignment in a loop body, three passes: (1,2) (2,1) (1,3) (3,3).
+fn g15() -> text {
+  v: vector<Pt> = [Pt { x: 1, y: 2 }];
+  for i in 0..3 {
+    p = v[0];
+    v[0] = Pt { x: p.y, y: p.x + i };
+  }
+  pts(v)
+}
+/// g16 — the assignment in an `if` arm.
+fn g16() -> text {
+  v: vector<Pt> = [Pt { x: 161, y: 162 }];
+  p = v[0];
+  if p.x > 0 { v[0] = Pt { x: p.y, y: p.x }; }
+  pts(v)
+}
+/// c1 — control: a direct read of the destination was always staged.
+fn c1() -> text {
+  v: vector<Pt> = [Pt { x: 111, y: 112 }];
+  v[0] = Pt { x: v[0].y, y: v[0].x };
+  pts(v)
+}
+/// c2 — control: a view of a DIFFERENT vector cannot see the write.
+fn c2() -> text {
+  v: vector<Pt> = [Pt { x: 121, y: 122 }];
+  o: vector<Pt> = [Pt { x: 123, y: 124 }];
+  e = o[0];
+  v[0] = Pt { x: e.y, y: e.x };
+  "{pts(v)}{pts(o)}"
+}
+/// c3 — control: a text parameter is a copy, so the swap is right without staging.
+fn c3_sw(v: vector<Nm>, a: text, b: text) { v[0] = Nm { a: b, b: a }; }
+fn c3() -> text {
+  v: vector<Nm> = [Nm { a: "one-thirty-one", b: "one-thirty-two" }];
+  c3_sw(v, v[0].a, v[0].b);
+  "{v[0].a},{v[0].b}"
+}
+
+fn main() {
+  ok("g1 view local        ", g1(), "(12,11)");
+  ok("g2 computed view     ", g2(), "(22,21)(23,24)");
+  ok("g3 loop variable     ", g3(), "(32,131)");
+  ok("g4 parameter view    ", g4(), "(42,41)");
+  ok("g5 same vector twice ", g5(), "(52,51)");
+  ok("g6 parameter, v[i]   ", g6(), "(61,62)(64,63)");
+  ok("g7 variable index    ", g7(), "(5,71)");
+  ok("g8 nested literal    ", g8(), "82,81,881");
+  ok("g9 text fields       ", g9(), "ninety-two,ninety-one");
+  ok("g10 field, parameter ", g10(), "102,101");
+  ok("g11 narrow integers  ", g11(), "7,200,-300");
+  ok("g12 float, boolean   ", g12(), "2.25,1.5,false,true");
+  ok("g13 enum             ", g13(), "Blue,Red");
+  ok("g14 from a call      ", g14(), "(142,141)");
+  ok("g15 loop body        ", g15(), "(3,3)");
+  ok("g16 if arm           ", g16(), "(162,161)");
+  ok("c1 direct read       ", c1(), "(112,111)");
+  ok("c2 other vector      ", c2(), "(124,123)(123,124)");
+  ok("c3 text parameter    ", c3(), "one-thirty-two,one-thirty-one");
+  println("a literal written in place reads the old record: every cell holds");
+}

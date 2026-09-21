@@ -4795,10 +4795,8 @@ fn jumps_out(v: &Value) -> bool {
 /// once the collection outgrows its allocation.  The scope pass placed its view copies against
 /// the growth where the IR has it — at the append — so a view read in between would read an
 /// element that already moved: `e = sc.ops[0]; p = mk(n); x = e.ow; sc.ops += [Op { opts: p }]`
-/// answered `0` for `100` on the eleventh element.  Two shapes can hold such a view: a local
-/// whose deps close over a store `out` lives in, and, where one of those stores is a CALLER's,
-/// any heap-typed parameter (and the locals that view one) — a caller may hand an element in
-/// beside its container, and nothing in this frame can tell.
+/// answered `0` for `100` on the eleventh element.  Which variables can hold such a view is
+/// [`crate::variables::Function::store_viewers`]'s answer.
 ///
 /// An upper bound on purpose, because a miss reads freed bytes.  One refinement, for a
 /// destination FIELD at byte `dest`: a local that depends on `out` alone and whose every
@@ -4816,28 +4814,6 @@ fn destination_views(
     out: u16,
     dest: Option<u32>,
 ) -> HashSet<u16> {
-    let closure = |start: u16| -> HashSet<u16> {
-        let mut seen: HashSet<u16> = HashSet::new();
-        let mut stack = vec![start];
-        while let Some(v) = stack.pop() {
-            for d in vars.tp(v).depend() {
-                if d < vars.count() && seen.insert(d) {
-                    stack.push(d);
-                }
-            }
-        }
-        seen
-    };
-    let mut roots = closure(out);
-    roots.insert(out);
-    let from_caller = roots.iter().any(|r| vars.is_argument(*r));
-    let foreign: HashSet<u16> = if from_caller {
-        (0..vars.count())
-            .filter(|w| *w != out && vars.is_argument(*w) && vars.tp(*w).heap_dep().is_some())
-            .collect()
-    } else {
-        HashSet::new()
-    };
     let sibling = |w: u16| -> bool {
         let Some(dest) = dest else { return false };
         if vars.is_argument(w) || vars.tp(w).depend() != [out] {
@@ -4865,14 +4841,8 @@ fn destination_views(
         });
         bound && other
     };
-    (0..vars.count())
-        .filter(|&w| w != out)
-        .filter(|&w| {
-            foreign.contains(&w)
-                || closure(w)
-                    .iter()
-                    .any(|d| roots.contains(d) || foreign.contains(d))
-        })
+    vars.store_viewers(out)
+        .into_iter()
         .filter(|&w| !sibling(w))
         .collect()
 }

@@ -3571,45 +3571,43 @@ impl Parser {
     /// the literal's own field count, and closing it wants the field's declared SPAN rather
     /// than another list.
     fn reads_place(&self, value: &Value, root: u16, off: u32) -> bool {
+        // A view of the destination is a read of it under another name: `e = sc.els[i]?;
+        // sc.els[i] = El { a: e.b, … }` reads the very slot the literal overwrites, and `e` is
+        // its own variable.  So is a loop variable over the container, whose deps reach it
+        // through the iterated copy, and — where the destination is a caller's — a parameter
+        // the caller may have handed the same place in (`sw(v, v[0])`).  Which variables those
+        // are is `store_viewers`' answer, shared with `(R-ElemFirst)`'s window, which asks the
+        // same question of a growth.
+        let viewers = self.vars.store_viewers(root);
         // `ANY_FIELD` is the whole variable — the re-init clears the entire record, so no read
         // of it is disjoint from what is replaced and the spare below must never apply.
         if off == crate::use_analysis::ANY_FIELD {
-            return value.reads_var(root);
+            return value.reads_var(root) || viewers.iter().any(|&w| value.reads_var(w));
         }
         let mut occurrences = 0usize;
         let mut disjoint = 0usize;
         let mut hits_destination = false;
         value.walk(&mut |n| {
-            // Every node that NAMES the root, by the same arms `Value::reads_var` uses — a
-            // `TupleGet`, a `Set` target, a `CallRef` callee and an `Iter` subject carry the
-            // variable NUMBER and have no `Value::Var` child, so counting only `Var` would
-            // leave them unaccounted for and the spare below would fire on a read it never
-            // saw.  The count is what licenses the spare, so it has to be complete: a naming
-            // this does not recognise must raise `occurrences`, never sit silently at zero.
-            let names_root = match n {
+            // Every node that NAMES the root or a viewer of it, by the same arms
+            // `Value::reads_var` uses — a `TupleGet`, a `Set` target, a `CallRef` callee and an
+            // `Iter` subject carry the variable NUMBER and have no `Value::Var` child, so
+            // counting only `Var` would leave them unaccounted for and the spare below would
+            // fire on a read it never saw.  The count is what licenses the spare, so it has to
+            // be complete: a naming this does not recognise must raise `occurrences`, never sit
+            // silently at zero.  A viewer is never spared: only a projection of the root itself
+            // can prove its field disjoint.
+            let named = match n {
                 Value::Var(x)
                 | Value::Set(x, _)
                 | Value::TupleGet(x, _)
                 | Value::TuplePut(x, _, _)
                 | Value::FnRefDnr(x)
                 | Value::CallRef(x, _)
-                | Value::Iter(x, _, _, _) => *x == root,
-                Value::FnRef(_, w, _) => *w == root,
-                _ => false,
+                | Value::Iter(x, _, _, _) => Some(*x),
+                Value::FnRef(_, w, _) => Some(*w),
+                _ => None,
             };
-            if names_root {
-                occurrences += 1;
-            }
-            // A view of the destination is a read of it under another name: `e =
-            // sc.els[i]?; sc.els[i] = El { a: e.b, … }` reads the very slot the literal
-            // overwrites, and `e` is its own variable.  The deps are what say so — `e` is
-            // typed `ref(El)["sc"]` — and this is `acc_pts`'s own shape, so missing it would
-            // reintroduce the swap the staging exists to stop, one spelling over.
-            if let Value::Var(x) = n
-                && *x != root
-                && self.vars.exists(*x)
-                && self.vars.tp(*x).depend().contains(&root)
-            {
+            if named.is_some_and(|x| x == root || viewers.contains(&x)) {
                 occurrences += 1;
             }
             let Value::Call(d, args) = n else { return };

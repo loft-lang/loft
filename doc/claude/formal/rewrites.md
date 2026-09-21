@@ -1442,7 +1442,25 @@ Two instruments check the assumptions, and the chapter is not complete without b
 
 ## Deviations
 
-**OPEN: 0** (2026-09-17).
+**OPEN: 0** (2026-09-21).
+
+- **D-rw-4 — OPENED AND CLOSED 2026-09-21 (loft#1571).**  `(R-InPlaceLiteral)` stages every
+  field expression that may read the place, and the staging asked whether an expression NAMED
+  the destination.  It missed three other names a place has.  For an ELEMENT destination the
+  place is the whole variable, and that branch tested only a direct read of `v`, so a view
+  local (`p = v[0]; v[0] = Pt { x: p.y, y: p.x }`) was never staged.  A view that reaches the
+  destination through another view, such as a loop variable over the container, was missed by
+  the one-level deps test.  And a heap PARAMETER, where the destination is a caller's
+  (`sw(v, v[0])`), has no deps in the callee at all.  Each answered `2,2` for `2,1` on both
+  backends, silently: the element spelling since @PLN164 C1, the field spelling through a
+  parameter (`w.p = Pt { … }` inside `sw3(w, w.p)`) since the field road was built.  Found
+  while probing `D-heap-24`'s control, a record rebuilt from its own fields.  Closed at the
+  staging: a naming of any variable in `Function::store_viewers(root)` counts as a read of the
+  place.  That is `(R-ElemFirst)`'s answer to the same question for a growth (`D-rw-3`), moved
+  out of `hoist::destination_views` so that both readers ask one home.  Guard
+  `tests/scripts/1571-a-literal-written-in-place-reads-the-old-record-through-any-view.loft`
+  (16 cells and 3 controls: views, parameters, a loop variable, a nested literal, narrow-int,
+  float, enum and text fields).
 
 - **D-rw-3 — OPENED AND CLOSED 2026-09-17 (loft#1553).**  `(R-ElemFirst)` moves the append's
   mint — its GROWTH — to the temp's declaration, and the gate asked only whether a statement in
