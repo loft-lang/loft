@@ -7699,6 +7699,13 @@ impl Parser {
                 const_pos: (0, 0),
             })
             .collect();
+        // Which parameters are HIDDEN (a record return's `__retbuf`, a text return's buffer):
+        // `Argument` carries no such flag, so it rides beside the list and is set below.
+        let tmpl_hidden: Vec<bool> = self.data.definitions[g_nr as usize]
+            .attributes
+            .iter()
+            .map(|a| a.hidden)
+            .collect();
         let tmpl_vars = self.data.definitions[g_nr as usize].variables.clone();
         let tmpl_pos = self.data.definitions[g_nr as usize].position.clone();
         // The per-element iteration stride for vector<T=concrete> — from the
@@ -7755,7 +7762,7 @@ impl Parser {
         }
         // Register the new definition.
         let d_nr = self.data.add_def(&mangled, &tmpl_pos, DefType::Function);
-        for a in &tmpl_attrs {
+        for (a, hidden) in tmpl_attrs.iter().zip(&tmpl_hidden) {
             let a_nr = self
                 .data
                 .add_attribute(&mut self.lexer, d_nr, &a.name, a.typedef.clone());
@@ -7763,6 +7770,11 @@ impl Parser {
             // C124 — registered here and not through `Data::add_fn`, so the template's
             // `const` has to be carried by hand, or the instance answers a plain parameter.
             self.data.definitions[d_nr as usize].attributes[a_nr].value_const = a.constant;
+            // `(G-Mono)` — and so does HIDDEN: an instance whose `__retbuf` read as a declared
+            // parameter was not its twin's signature.  Native kept the buffer where the twin's
+            // value record drops it, and a variant decision that forwards its leaves' hidden
+            // buffers minted an undeclared one for the instance (@PLN165 B7).
+            self.data.definitions[d_nr as usize].attributes[a_nr].hidden = *hidden;
         }
         self.data.set_returned(d_nr, new_returned.clone());
         // Trace point: full instantiation result.  Used during plan-17

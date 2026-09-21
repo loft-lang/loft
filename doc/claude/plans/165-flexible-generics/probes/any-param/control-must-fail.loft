@@ -1,0 +1,6 @@
+// @CONTROL
+// @EXPECT: 1:b
+fn hole<T: Printable>(n: integer, v: T) -> text { "{n}:{v}" }
+fn main() {
+  println("{hole(1, "a")}");
+}

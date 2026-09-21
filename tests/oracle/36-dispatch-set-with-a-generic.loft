@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 B7 (@PLN89 differential-oracle corpus) — AXIS: `Disp-Match-Equiv` where a leaf is
+// a GENERIC.  The set holds a concrete member for one variant and a bounded generic the
+// other variants satisfy; a call held at the enum decides by variant, and the variant a
+// generic takes reaches that generic's instance AT THE VARIANT — what the call would reach
+// had the variant been its static type.  `36-dispatch-set-with-a-generic-as-match.loft` is
+// the `match` written by hand: one arm per variant, the generic's body at each variant it
+// takes.  Cells: a static site at each variant; a dynamic site over a `vector<Pet>`; the
+// instance reached through the dispatcher and directly is one instance.
+// @ORACLE_TWIN: 36-dispatch-set-with-a-generic-as-match.loft
+
+interface Named { fn tag(self: Self) -> text }
+
+enum Pet {
+  Cat { n: integer },
+  Dog { n: integer },
+  Fish { n: integer },
+}
+
+fn tag(self: Cat) -> text { "cat {self.n}" }
+fn tag(self: Fish) -> text { "fish {self.n}" }
+
+fn greet(x: Dog) -> text { "woof {x.n}" }
+fn greet<T: Named>(x: T) -> text { "hello {x.tag()}" }
+
+fn main() {
+  s = greet(Cat { n: 1 }) + "|" + greet(Dog { n: 2 }) + "|" + greet(Fish { n: 3 });
+  assert(s == "hello cat 1|woof 2|hello fish 3", "static sites: got {s}");
+  print("{s}\n");
+  ps: vector<Pet> = [Cat { n: 4 }, Dog { n: 5 }, Fish { n: 6 }, Cat { n: 7 }];
+  out = "";
+  for p in ps {
+    out += greet(p) + ";";
+  }
+  assert(out == "hello cat 4;woof 5;hello fish 6;hello cat 7;", "every variant through the dynamic site: got {out}");
+  print("{out}\n");
+}

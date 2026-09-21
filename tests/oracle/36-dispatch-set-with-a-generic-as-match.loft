@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 B7 (@PLN89 differential-oracle corpus) — the TWIN of
+// `36-dispatch-set-with-a-generic.loft`: the set as ONE function over the enum whose body
+// is the `match` written by hand — one arm per variant, the concrete member's body at `Dog`
+// and the generic's body, at the variant it takes, at `Cat` and `Fish`.  Same calls, same
+// assertions, same stdout (`@ORACLE_TWIN` on the set's side).
+
+enum Pet {
+  Cat { n: integer },
+  Dog { n: integer },
+  Fish { n: integer },
+}
+
+fn greet(p: Pet) -> text {
+  match p {
+    Dog => "woof {p.n}",
+    Cat => "hello cat {p.n}",
+    Fish => "hello fish {p.n}",
+  }
+}
+
+fn main() {
+  s = greet(Cat { n: 1 }) + "|" + greet(Dog { n: 2 }) + "|" + greet(Fish { n: 3 });
+  assert(s == "hello cat 1|woof 2|hello fish 3", "static sites: got {s}");
+  print("{s}\n");
+  ps: vector<Pet> = [Cat { n: 4 }, Dog { n: 5 }, Fish { n: 6 }, Cat { n: 7 }];
+  out = "";
+  for p in ps {
+    out += greet(p) + ";";
+  }
+  assert(out == "hello cat 4;woof 5;hello fish 6;hello cat 7;", "every variant through the match: got {out}");
+  print("{out}\n");
+}

@@ -305,6 +305,16 @@ member is an ordinary set, and its values under the open profile are measured
 `LOFT_LIVE_RELOAD=1`), but no add was tried — and the native live-flip binary, whose compiled
 callers keep the world they were built in until flipped — recorded, not closed.
 
+**Disp-World's stated limit — a set that holds a generic (@PLN165 B7, 2026-09-21).**  A
+generic member's call is an instance chosen per use, so a static site of such a set gets no
+`__sel_` stub (`Parser::stub_admissible` declines) and reaches its definition directly —
+nothing the reload host rebuilds.  Taking an add there would move the dynamic sites to the new
+world and leave the static ones selecting in the old, the stale selection this rule forbids;
+so an add to a set that holds a generic is REFUSED whole, and the next full run takes it
+(`live_reload::add_fn_block`; `tests/live_world.rs`
+`an_add_to_a_set_holding_a_generic_is_refused`).  The limit is the refusing side: stubs for
+such a set can broaden it later without moving a program.
+
 **Disp-Match-Equiv, in the oracle (IMPL.md step 14, 2026-09-14).**  A dispatch set and its
 canonical `match` are two programs of the differential-oracle corpus, `tests/oracle/34-…`,
 and the set's side declares `@ORACLE_TWIN: <the match>`: the sweep holds the pair to one

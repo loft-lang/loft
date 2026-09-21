@@ -1,5 +1,6 @@
-// B3 — a call held at an ENUM whose set decides by variant, where one variant's leaf is the
-// template: B7 builds that leaf; until then it is refused, never answered by the static pick.
+// @CONTROL
+// @EXPECT: -1
+// @EXPECT: -1
 enum Shape { Circle { r: integer }, Square { s: integer } }
 fn area(x: Circle) -> integer { 3 * x.r * x.r }
 fn area<T>(x: T) -> integer { -1 }

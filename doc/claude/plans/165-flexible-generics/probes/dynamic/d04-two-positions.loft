@@ -1,0 +1,13 @@
+// B7 — two positions held at the enum; the concrete member takes one pair, the template the
+// rest, each at its variants.
+// @EXPECT: fire-wall 12;gen 3;gen 2;gen 3;
+enum Entity { Fireball { n: integer }, IceWall { n: integer }, Slime { n: integer } }
+fn hit(f: Fireball, w: IceWall) -> text { "fire-wall {f.n}{w.n}" }
+fn hit<T>(a: T, b: Entity) -> text { "gen {b.n}" }
+fn main() {
+  a: vector<Entity> = [Fireball { n: 1 }, Slime { n: 7 }];
+  b: vector<Entity> = [IceWall { n: 2 }, Slime { n: 3 }];
+  out = "";
+  for x in a { for y in b { out += hit(x, y) + ";"; } }
+  println(out);
+}

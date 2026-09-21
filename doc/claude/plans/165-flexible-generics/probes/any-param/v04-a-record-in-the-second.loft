@@ -1,0 +1,11 @@
+// C1 — a record bound through the second parameter and returned (ownership: the instance
+// returns what its twin would, and nothing leaks).
+// @EXPECT: 3 4|4
+struct Pt { x: integer, y: integer }
+fn pick<T>(k: integer, v: T) -> T { v }
+fn pick_pt_twin(k: integer, v: Pt) -> Pt { v }
+fn main() {
+  p = pick(1, Pt { x: 3, y: 4 });
+  q = pick_pt_twin(1, Pt { x: 3, y: 4 });
+  println("{p.x} {p.y}|{q.y}");
+}

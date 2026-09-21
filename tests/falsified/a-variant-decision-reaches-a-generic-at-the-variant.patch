@@ -1,0 +1,160 @@
+diff --git b/src/live_reload.rs a/src/live_reload.rs
+index e4f37a916..30def73c0 100644
+--- b/src/live_reload.rs
++++ a/src/live_reload.rs
+@@ -514,22 +514,6 @@ fn add_fn_block(
+         eprintln!("live-reload: '{head}' parsed but did not join the set of '{name}'; skipped");
+         return false;
+     }
+-    // `Disp-World`'s stated limit (@PLN165 B7): a set that holds a GENERIC has no per-spelling
+-    // stub at a static site (`stub_admissible` declines — a template's call is an instance
+-    // chosen per use), so its static calls reach their definitions directly and nothing here
+-    // could rebuild them.  Taking the add would move the dynamic sites to the new world and
+-    // leave the static ones selecting in the old — the stale selection the rule forbids.  So
+-    // the add is refused whole, and the next full run takes it.
+-    if set_members(&parser.data, set)
+-        .iter()
+-        .any(|&m| parser.data.def_type(m) == crate::data::DefType::Generic)
+-    {
+-        parser.data.rollback_to(pre_defs);
+-        eprintln!(
+-            "live-reload: adding '{head}' is refused — the set of '{name}' holds a generic, whose static calls reach their definitions directly with nothing to rebuild; restart to apply"
+-        );
+-        return false;
+-    }
+     // Every specialisation of the name from the worlds before this one — the defs the running
+     // program's sites call, whose numbers stay the dispatch home; a rebuild from an earlier
+     // world (`__w<k>`) is reached only through one of these and is not rebuilt again.
+diff --git b/src/parser/dispatch.rs a/src/parser/dispatch.rs
+index d98bbdf89..1f124f771 100644
+--- b/src/parser/dispatch.rs
++++ a/src/parser/dispatch.rs
+@@ -849,6 +849,7 @@ impl Parser {
+                 Selection::NotDecidable => return None,
+             }
+         }
++        let ret = self.data.def(leaves[0].1).returned().clone();
+         // `Disp-Dynamic` over a NULLABLE enum position (D-disp-2): a present value's variant
+         // decides exactly as a dense one's does, and a null — which has no variant — reaches
+         // the definition the call's static types select, which is what it reached before the
+@@ -860,29 +861,15 @@ impl Parser {
+                 .any(|(pos, _)| matches!(routed[*pos], Type::Optional(_)))
+         });
+         // A variant tuple — or a null at a nullable position — may select a TEMPLATE member
+-        // (@PLN165 B7).  Its leaf is the template's instance at that tuple's types — the
+-        // variant's own type at a dynamic position — built the way a static call builds it,
+-        // so the leaf is what the call would reach had the variant been its static type
+-        // (`Disp-Match-Equiv`).  An instance that cannot be built refuses the call naming the
+-        // template, never answering every variant with the static selection.
+-        for leaf in &mut leaves {
+-            if self.data.def_type(leaf.1) == DefType::Generic {
+-                leaf.1 = self.instantiate_template(leaf.1, name, &leaf.2);
+-            }
+-        }
+-        let null_leaf = null_leaf.map(|d| {
+-            if self.data.def_type(d) == DefType::Generic {
+-                self.instantiate_template(d, name, routed)
+-            } else {
+-                d
+-            }
+-        });
+-        let failed = leaves
++        // (@PLN165 B3).  Its instance per variant is not built here, so the call is refused
++        // rather than answered, for every variant, by the one definition the static types
++        // select.
++        let template_leaf = leaves
+             .iter()
+             .map(|(_, d, ts)| (*d, ts.clone()))
+             .chain(null_leaf.map(|d| (d, routed.to_vec())))
+-            .find(|(d, _)| *d == u32::MAX || self.data.def_type(*d) == DefType::Generic);
+-        if let Some((_, leaf_types)) = failed {
++            .find(|(d, _)| self.data.def_type(*d) == DefType::Generic);
++        if let Some((g, leaf_types)) = template_leaf {
+             let shown = |data: &crate::data::Data, ts: &[Type]| -> String {
+                 ts.iter()
+                     .map(|t| t.source_name(data))
+@@ -890,15 +877,15 @@ impl Parser {
+                     .join(", ")
+             };
+             let text = format!(
+-                "`{name}({})` decides by variant, and at ({}) no instance of the generic it selects can be built",
++                "`{name}({})` decides by variant, and at ({}) that selects the generic {}; a decision by variant reaches concrete definitions only — declare `{name}` at those types",
+                 shown(&self.data, routed),
+                 shown(&self.data, &leaf_types),
++                self.data.overload_signature(name, g)
+             );
+             crate::diagnostic!(self.lexer, crate::diagnostics::Level::Error, "{text}");
+             self.reported_dynamic_refusal = true;
+             return None;
+         }
+-        let ret = self.data.def(leaves[0].1).returned().clone();
+         // One dispatcher has ONE return type, so the definitions it chooses between must agree
+         // on it — DESIGN.md's open question 4, at the one place it cannot stay open.  A
+         // `Fireball` leaf answering `integer` beside an enum-level leaf answering `text` read the
+@@ -996,15 +983,8 @@ impl Parser {
+             })
+             .find(|h| !h.is_empty())
+             .unwrap_or_default();
+-        // Forwarded under the DISPATCHER's own names, not the leaf's: a leaf's buffer may carry
+-        // a name the dispatcher's own text-return promotion also mints — a generic instance's
+-        // `___tret_1` — and the two then were one variable, every leaf's result assigned into
+-        // the buffer it had just filled (a SIGSEGV on the interpreter, E0308 on `--native`;
+-        // @PLN165 B7).  The buffers go to the leaves by position, so the name is the
+-        // dispatcher's to choose.
+-        let hidden_names: Vec<String> = (0..hidden.len()).map(|k| format!("__fwd_{k}")).collect();
+-        for (a, fwd) in hidden.iter().zip(&hidden_names) {
+-            args.push(argument(fwd.clone(), a.typedef.clone(), a.value.clone()));
++        for a in &hidden {
++            args.push(argument(a.name.clone(), a.typedef.clone(), a.value.clone()));
+         }
+         // The dispatcher is built as its own function: the caller's parsing context is put
+         // aside and restored, whatever the outcome.
+@@ -1030,8 +1010,7 @@ impl Parser {
+                 .collect();
+             let hidden_vars: Vec<(Value, Type)> = hidden
+                 .iter()
+-                .zip(&hidden_names)
+-                .map(|(a, fwd)| (Value::Var(self.vars.var(fwd)), a.typedef.clone()))
++                .map(|a| (Value::Var(self.vars.var(&a.name)), a.typedef.clone()))
+                 .collect();
+             let mut ls = Vec::new();
+             for (tuple, d, _) in &leaves {
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 7f8a5b0dc..51e8c4c32 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -7699,13 +7699,6 @@ impl Parser {
+                 const_pos: (0, 0),
+             })
+             .collect();
+-        // Which parameters are HIDDEN (a record return's `__retbuf`, a text return's buffer):
+-        // `Argument` carries no such flag, so it rides beside the list and is set below.
+-        let tmpl_hidden: Vec<bool> = self.data.definitions[g_nr as usize]
+-            .attributes
+-            .iter()
+-            .map(|a| a.hidden)
+-            .collect();
+         let tmpl_vars = self.data.definitions[g_nr as usize].variables.clone();
+         let tmpl_pos = self.data.definitions[g_nr as usize].position.clone();
+         // The per-element iteration stride for vector<T=concrete> — from the
+@@ -7762,7 +7755,7 @@ impl Parser {
+         }
+         // Register the new definition.
+         let d_nr = self.data.add_def(&mangled, &tmpl_pos, DefType::Function);
+-        for (a, hidden) in tmpl_attrs.iter().zip(&tmpl_hidden) {
++        for a in &tmpl_attrs {
+             let a_nr = self
+                 .data
+                 .add_attribute(&mut self.lexer, d_nr, &a.name, a.typedef.clone());
+@@ -7770,11 +7763,6 @@ impl Parser {
+             // C124 — registered here and not through `Data::add_fn`, so the template's
+             // `const` has to be carried by hand, or the instance answers a plain parameter.
+             self.data.definitions[d_nr as usize].attributes[a_nr].value_const = a.constant;
+-            // `(G-Mono)` — and so does HIDDEN: an instance whose `__retbuf` read as a declared
+-            // parameter was not its twin's signature.  Native kept the buffer where the twin's
+-            // value record drops it, and a variant decision that forwards its leaves' hidden
+-            // buffers minted an undeclared one for the instance (@PLN165 B7).
+-            self.data.definitions[d_nr as usize].attributes[a_nr].hidden = *hidden;
+         }
+         self.data.set_returned(d_nr, new_returned.clone());
+         // Trace point: full instantiation result.  Used during plan-17

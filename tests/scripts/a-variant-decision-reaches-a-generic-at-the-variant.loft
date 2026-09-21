@@ -1,0 +1,79 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `Disp-Dynamic` with a GENERIC leaf (@PLN165 B7): a call held at an enum whose overload set
+// decides by variant reaches, for a variant only a generic member takes, that generic's
+// instance AT THE VARIANT — what the call would reach had the variant been its static type
+// (`Disp-Match-Equiv`).  A nullable position's null reaches the static selection's instance;
+// a record-returning leaf shares the dispatcher's buffer; two positions decide together; and
+// the decision is made again inside each instance of a generic that calls the set.
+//
+// Before, such a call was refused.  Building it found two defects: the dispatcher forwarded
+// its leaves' hidden buffers under the first leaf's names, and an instance's `___tret_1`
+// collided with the dispatcher's own text-return buffer; and an instance dropped its
+// template's HIDDEN flags, so its `__retbuf` read as a declared parameter (native kept it
+// where the twin's value record drops it, and the dispatcher minted an undeclared one).
+//
+// @falsified-at: 190c4d0d5 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-variant-decision-reaches-a-generic-at-the-variant.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses every variant decision with a
+//     generic leaf.
+//   ARMED: nothing.
+//   WITNESS: on the control `area(s)` is "decides by variant, and at (Square) that selects
+//     the generic area<T>(T)".
+//   HOLDS: nothing else — every cell decides by variant.
+
+struct Pt { x: integer, y: integer }
+enum Shape { Circle { r: integer }, Square { s: integer } }
+enum Entity { Fireball { n: integer }, IceWall { n: integer }, Slime { n: integer } }
+
+fn area(x: Circle) -> integer { 3 * x.r * x.r }
+fn area<T>(x: T) -> integer { -1 }
+
+fn corner(x: Circle) -> Pt { Pt { x: x.r, y: x.r } }
+fn corner<T>(x: T) -> Pt { Pt { x: 0, y: 0 } }
+
+fn hit(f: Fireball, w: IceWall) -> text { "fire-wall {f.n}{w.n}" }
+fn hit<T>(a: T, b: Entity) -> text { "gen {b.n}" }
+
+fn wrap<U>(x: U) -> integer { area(x) }
+
+fn pick(k: integer) -> Shape? {
+  if k == 0 { Circle { r: 2 } } else if k == 1 { Square { s: 1 } } else { null }
+}
+
+fn test_each_variant_reaches_its_leaf() {
+  v: vector<Shape> = [Circle { r: 2 }, Square { s: 3 }];
+  out = "";
+  for s in v { out += "{area(s)};"; }
+  assert(out == "12;-1;", out);
+}
+
+fn test_a_nullable_position() {
+  assert("{area(pick(0))}|{area(pick(1))}|{area(pick(2))}" == "12|-1|-1", "{area(pick(2))}");
+}
+
+fn test_a_record_returning_leaf() {
+  v: vector<Shape> = [Circle { r: 2 }, Square { s: 3 }, Circle { r: 5 }];
+  out = "";
+  for s in v {
+    p = corner(s);
+    out += "{p.x} {p.y};";
+  }
+  assert(out == "2 2;0 0;5 5;", out);
+}
+
+fn test_two_positions() {
+  a: vector<Entity> = [Fireball { n: 1 }, Slime { n: 7 }];
+  b: vector<Entity> = [IceWall { n: 2 }, Slime { n: 3 }];
+  out = "";
+  for x in a { for y in b { out += hit(x, y) + ";"; } }
+  assert(out == "fire-wall 12;gen 3;gen 2;gen 3;", out);
+}
+
+fn test_inside_a_generic() {
+  v: vector<Shape> = [Circle { r: 2 }, Square { s: 3 }];
+  out = "";
+  for s in v { out += "{wrap(s)};"; }
+  assert(out == "12;-1;", out);
+}

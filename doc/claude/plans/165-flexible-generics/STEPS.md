@@ -391,6 +391,30 @@ keeps declining the open profile's stub for a set with a template member — a s
 - **Closes the arc:** every B cell graduates to `tests/scripts/` with its `@falsified-at:`
   receipt; `G-Select` is written into `formal/interfaces.md` with its citations — not before,
   because a rule with no implementation is a deviation.
+- **Built** (2026-09-21).  `build_specialisation` instantiates each template leaf at its variant
+  tuple's types (the null leaf at the call's static types) before reading the dispatcher's
+  return, the way a static call instantiates; a leaf that cannot instantiate refuses the call.
+  Three defects found on the way, each fixed where it lives:
+  - a variant's own methods did not satisfy a bound at that variant (`190c4d0d5`, on main);
+  - the dispatcher forwarded its leaves' hidden buffers under the FIRST leaf's names, and an
+    instance's `___tret_1` (a `unique`-minted name — so is `___acc_1`) was the very name the
+    dispatcher's own text-return promotion then minted: one variable, every result assigned
+    into the buffer it had just filled (SIGSEGV / E0308).  The buffers now go by position
+    under the dispatcher's own `__fwd_{k}` names; making `unique` skip taken names was tried
+    and is wrong — pass 2 reuses pass 1's variables by name on purpose;
+  - an instance dropped its template's HIDDEN flags (`Argument` has none), so its `__retbuf`
+    read as a declared parameter: native kept it where the twin's value record drops it — a
+    `G-Mono` divergence of its own — and the dispatcher minted an undeclared buffer for it.
+  `Disp-World`'s stated limit is written into [@PLN162 RULES.md](../162-multiple-dispatch/RULES.md):
+  an add to a set that holds a generic is refused whole (`live_reload::add_fn_block`), since
+  its static sites have no stub to rebuild.  Cells [dynamic/](probes/dynamic/) d01–d05 green
+  on both backends under `LOFT_STRICT_STORES` + `LOFT_POISON`; the `Disp-Match-Equiv` pair
+  `tests/oracle/36-dispatch-set-with-a-generic*` agrees across the interpreter, native and
+  wasm; `tests/live_world.rs` gains the refused add.  Corpus against `190c4d0d5`: DIFFERENT
+  10 of 1639 — every difference read: dispatchers' forwarded-buffer rename; instances now
+  carrying their twins' hidden parameters (native signature without `__retbuf`, its buffer
+  witness, one more fn-ref arm whose type now matches).  `G-Select` is written into
+  `formal/interfaces.md` and cited at its four sites.
 
 ---
 

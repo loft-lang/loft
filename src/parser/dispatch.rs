@@ -164,7 +164,7 @@ impl Parser {
             .collect()
     }
 
-    /// `D-Rank` for a TEMPLATE member of a set (@PLN165 B3): it takes the call where every
+    /// `D-Rank` for a TEMPLATE member of a set (@PLN165 B3, @FR-G-Select): it takes the call where every
     /// type variable binds — [`Parser::bind_template`], the binding its instantiation will
     /// use — and the bound type satisfies the bounds ([`Parser::satisfies`], which reports
     /// nothing: a template whose bounds fail is simply not a candidate).  A position whose
@@ -227,7 +227,7 @@ impl Parser {
             .all(|p| p.value != crate::data::Value::Null)
     }
 
-    /// `(G-Mono)` for a call written inside a generic (@PLN165 B3b): where an argument is typed
+    /// `(G-Mono)` for a call written inside a generic (@PLN165 B3b, @FR-G-Select): where an argument is typed
     /// by a type VARIABLE, which member of the name's overload set the call reaches depends on
     /// what the variable becomes — `wrap<U>` calling `show(x)` reaches `show(x: Cat)` in the
     /// instance at `Cat`, as `wrap`'s concrete twin would.  The selection made here, over the
@@ -517,7 +517,7 @@ impl Parser {
         better
     }
 
-    /// `D-Specific` (@PLN165 B5, B6) between two TEMPLATES at one position where both rank
+    /// `D-Specific` (@PLN165 B5, B6, @FR-G-Select) between two TEMPLATES at one position where both rank
     /// `GENERIC`: `Less` when `a`'s parameter admits strictly fewer types than `b`'s,
     /// `Greater` the reverse, `Equal` when they admit the same, `None` when neither contains
     /// the other.  Two orders are read and must agree: the PATTERN (`vector<T>` admits fewer
@@ -849,7 +849,6 @@ impl Parser {
                 Selection::NotDecidable => return None,
             }
         }
-        let ret = self.data.def(leaves[0].1).returned().clone();
         // `Disp-Dynamic` over a NULLABLE enum position (D-disp-2): a present value's variant
         // decides exactly as a dense one's does, and a null — which has no variant — reaches
         // the definition the call's static types select, which is what it reached before the
@@ -861,15 +860,29 @@ impl Parser {
                 .any(|(pos, _)| matches!(routed[*pos], Type::Optional(_)))
         });
         // A variant tuple — or a null at a nullable position — may select a TEMPLATE member
-        // (@PLN165 B3).  Its instance per variant is not built here, so the call is refused
-        // rather than answered, for every variant, by the one definition the static types
-        // select.
-        let template_leaf = leaves
+        // (@PLN165 B7, @FR-G-Select).  Its leaf is the template's instance at that tuple's types — the
+        // variant's own type at a dynamic position — built the way a static call builds it,
+        // so the leaf is what the call would reach had the variant been its static type
+        // (`Disp-Match-Equiv`).  An instance that cannot be built refuses the call naming the
+        // template, never answering every variant with the static selection.
+        for leaf in &mut leaves {
+            if self.data.def_type(leaf.1) == DefType::Generic {
+                leaf.1 = self.instantiate_template(leaf.1, name, &leaf.2);
+            }
+        }
+        let null_leaf = null_leaf.map(|d| {
+            if self.data.def_type(d) == DefType::Generic {
+                self.instantiate_template(d, name, routed)
+            } else {
+                d
+            }
+        });
+        let failed = leaves
             .iter()
             .map(|(_, d, ts)| (*d, ts.clone()))
             .chain(null_leaf.map(|d| (d, routed.to_vec())))
-            .find(|(d, _)| self.data.def_type(*d) == DefType::Generic);
-        if let Some((g, leaf_types)) = template_leaf {
+            .find(|(d, _)| *d == u32::MAX || self.data.def_type(*d) == DefType::Generic);
+        if let Some((_, leaf_types)) = failed {
             let shown = |data: &crate::data::Data, ts: &[Type]| -> String {
                 ts.iter()
                     .map(|t| t.source_name(data))
@@ -877,15 +890,15 @@ impl Parser {
                     .join(", ")
             };
             let text = format!(
-                "`{name}({})` decides by variant, and at ({}) that selects the generic {}; a decision by variant reaches concrete definitions only — declare `{name}` at those types",
+                "`{name}({})` decides by variant, and at ({}) no instance of the generic it selects can be built",
                 shown(&self.data, routed),
                 shown(&self.data, &leaf_types),
-                self.data.overload_signature(name, g)
             );
             crate::diagnostic!(self.lexer, crate::diagnostics::Level::Error, "{text}");
             self.reported_dynamic_refusal = true;
             return None;
         }
+        let ret = self.data.def(leaves[0].1).returned().clone();
         // One dispatcher has ONE return type, so the definitions it chooses between must agree
         // on it — DESIGN.md's open question 4, at the one place it cannot stay open.  A
         // `Fireball` leaf answering `integer` beside an enum-level leaf answering `text` read the
@@ -983,8 +996,15 @@ impl Parser {
             })
             .find(|h| !h.is_empty())
             .unwrap_or_default();
-        for a in &hidden {
-            args.push(argument(a.name.clone(), a.typedef.clone(), a.value.clone()));
+        // Forwarded under the DISPATCHER's own names, not the leaf's: a leaf's buffer may carry
+        // a name the dispatcher's own text-return promotion also mints — a generic instance's
+        // `___tret_1` — and the two then were one variable, every leaf's result assigned into
+        // the buffer it had just filled (a SIGSEGV on the interpreter, E0308 on `--native`;
+        // @PLN165 B7).  The buffers go to the leaves by position, so the name is the
+        // dispatcher's to choose.
+        let hidden_names: Vec<String> = (0..hidden.len()).map(|k| format!("__fwd_{k}")).collect();
+        for (a, fwd) in hidden.iter().zip(&hidden_names) {
+            args.push(argument(fwd.clone(), a.typedef.clone(), a.value.clone()));
         }
         // The dispatcher is built as its own function: the caller's parsing context is put
         // aside and restored, whatever the outcome.
@@ -1010,7 +1030,8 @@ impl Parser {
                 .collect();
             let hidden_vars: Vec<(Value, Type)> = hidden
                 .iter()
-                .map(|a| (Value::Var(self.vars.var(&a.name)), a.typedef.clone()))
+                .zip(&hidden_names)
+                .map(|(a, fwd)| (Value::Var(self.vars.var(fwd)), a.typedef.clone()))
                 .collect();
             let mut ls = Vec::new();
             for (tuple, d, _) in &leaves {

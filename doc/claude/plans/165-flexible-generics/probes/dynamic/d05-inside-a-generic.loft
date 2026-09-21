@@ -1,0 +1,13 @@
+// B7 + B3b — a generic calling the set at its variable, instantiated at the ENUM: the
+// instance's call decides by variant.
+// @EXPECT: 12;-1;
+enum Shape { Circle { r: integer }, Square { s: integer } }
+fn area(x: Circle) -> integer { 3 * x.r * x.r }
+fn area<T>(x: T) -> integer { -1 }
+fn wrap<U>(x: U) -> integer { area(x) }
+fn main() {
+  v: vector<Shape> = [Circle { r: 2 }, Square { s: 3 }];
+  out = "";
+  for s in v { out += "{wrap(s)};"; }
+  println(out);
+}
