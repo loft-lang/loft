@@ -6552,7 +6552,19 @@ use a separate collection or add after the loop"
         // loft#1205 — only a discharge built by THIS left-hand side may be peeled below,
         // so the flag starts clear rather than carrying an earlier statement's answer.
         self.last_place_discharge = false;
+        let vars_before_lhs = self.vars.next_var();
         let mut f_type = self.parse_operators(&Type::Unknown(0), code, &mut parent_tp, 0);
+        // A left-hand side that CREATED its variable in pass 1 is that variable's first
+        // binding — recorded for both passes to read (`first_bind_at`).
+        if self.first_pass
+            && let Value::Var(v) = code.unspan()
+            && *v >= vars_before_lhs
+        {
+            self.first_bind_at.insert(
+                (self.context, *v),
+                (stmt_start_pos.line, stmt_start_pos.pos),
+            );
+        }
         self.amp_head = AmpHead::No;
         self.in_tuple_lhs = saved_tuple_lhs;
         if let (Type::RefVar(_), Value::Var(v_nr)) = (&f_type, &code) {
@@ -7316,8 +7328,26 @@ use a separate collection or add after the loop"
                 // record closure association if the RHS was a capturing lambda.
                 // NOTE: must come AFTER parse_assign_op because that is where the RHS
                 // lambda is parsed and last_closure_work_var gets set by emit_lambda_code.
+                // The target's FIRST binding is this statement when pass 1 created the variable
+                // at this statement's left-hand side (`first_bind_at`); both passes ask it.
+                let first_bind = if op == "="
+                    && let Value::Var(v) = to.unspan()
+                    && self.vars.exists(*v)
+                    && self.first_bind_at.get(&(self.context, *v))
+                        == Some(&(stmt_start_pos.line, stmt_start_pos.pos))
+                {
+                    Some(self.vars.name(*v).to_string())
+                } else {
+                    None
+                };
+                if let Some(name) = &first_bind {
+                    self.first_bind_targets.push(name.clone());
+                }
                 let result =
                     self.parse_assign_op(code, op, &f_type, &to, parent_tp, var_nr, f2_hoisted);
+                if first_bind.is_some() {
+                    self.first_bind_targets.pop();
+                }
                 // loft#1205 — the discharged read runs before the compound, which was built
                 // for a place the seed has just made non-null.  Prepended FIRST so the F2
                 // binding below ends up in front of it: the seed reads and writes THROUGH

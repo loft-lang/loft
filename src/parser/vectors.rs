@@ -1217,9 +1217,12 @@ impl Parser {
         // `Reference(elem)` type and `p += [9]` reported *"No matching operator 'Add' on
         // 'integer' and 'integer'"* — the ELEMENT's type, for an append to the collection
         // (loft#1276, the same shape loft#1209 had through `?`).
+        // A variable whose first binding is the statement creating this lambda holds nothing
+        // yet, so it is not offered as a capture (`first_bind_targets`).
         let mut ctx: Vec<(String, Type)> = outer_vars
             .all_names_and_types()
             .into_iter()
+            .filter(|(n, _)| !self.first_bind_targets.contains(n))
             .map(|(n, t)| match t {
                 Type::RefVar(inner) => (n, *inner),
                 other => (n, other),
