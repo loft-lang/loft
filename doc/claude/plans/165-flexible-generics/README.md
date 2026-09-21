@@ -9,7 +9,9 @@ Tracker: [loft-lang/plans#165](https://github.com/loft-lang/plans/issues/165) (@
 
 ## Status
 
-**Phase 0 DONE (loft#1536–#1539, on `main`).  Everything else: DESIGNED, nothing built.**
+**Phase 0 DONE (loft#1536–#1539, on `main`).  Arc A: A0–A4, A6 and A7 built on branch
+`tuxedo-165-generics` (2026-09-21), each byte-identical over the corpus where its step says so;
+A5 next.**
 The design is [DESIGN.md](DESIGN.md) and the ordered work is [STEPS.md](STEPS.md); both were
 written against `9f5cf6a96` with every claim about today's compiler run, and the programs are
 in [`probes/`](probes/), each with the answer it gave at the top.

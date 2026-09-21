@@ -1,0 +1,6 @@
+// A long-form lambda over T stored in a local and called in the template.
+// @EXPECT: 5 s
+fn g<T>(x: T) -> T { f = fn(y: T) -> T { y }; f(x) }
+fn main() {
+  println("{g(5)} {g("s")}");
+}

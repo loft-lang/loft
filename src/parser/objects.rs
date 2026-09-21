@@ -499,7 +499,7 @@ impl Parser {
             // A5.3/A5.4: redirect captured variable reads to closure record field.
             let closure_d_nr = self.data.def(self.context).closure_record();
             let fnr = self.data.attr(closure_d_nr, name);
-            *code = self.get_field(closure_d_nr, fnr, Value::Var(self.closure_param));
+            *code = self.closure_capture_read(closure_d_nr, fnr);
             // @PLN93 (#511): a collection capture's stored attr is a `Reference` DbRef,
             // but the body must see the ORIGINAL collection type (from capture_context)
             // so `h[key]` / iteration type-check — the DbRef value read via OpGetDbRef is

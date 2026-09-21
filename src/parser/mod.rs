@@ -978,6 +978,11 @@ pub struct Parser {
     /// variable stays dense, since nullability is decided by whatever the instantiation
     /// binds.  Reset per function.
     pub(crate) cur_type_vars: Vec<(String, u32)>,
+    /// The bindings of the instance whose body is being filled — every type variable and
+    /// associated type it binds — read where a deferred site needs them and has no argument
+    /// to carry them: a template LAMBDA is instantiated with its enclosing instance's
+    /// bindings ([`Self::instantiate_template_lambda`]).  Empty outside an instantiation.
+    pub(crate) instance_bindings: Vec<(u32, Type)>,
     /// The placeholder definition standing for a `(type-variable spelling, bound set)` pair.
     ///
     /// Sharing one placeholder across generic functions is what lets the stdlib's many
@@ -1540,6 +1545,7 @@ impl Parser {
             fn_lambdas: std::collections::HashMap::new(),
             closure_param: u16::MAX,
             cur_type_vars: Vec::new(),
+            instance_bindings: Vec::new(),
             type_var_holders: std::collections::HashMap::new(),
             type_var_bounds: std::collections::HashMap::new(),
             closure_vars: std::collections::HashMap::new(),
@@ -2949,12 +2955,19 @@ impl Parser {
             // same append shape too — name-keyed, idempotent, at the end.
             let lazy_dispatcher = matches!(dt, DefType::Function)
                 && self.data.def(d as u32).synthetic() == Some("dynamic_dispatcher");
+            // The sixth: a template LAMBDA's instance and its closure record, minted with the
+            // instance that owns them — pass-2-only for the reason an instantiation is.
+            let lazy_lambda_instance = matches!(
+                self.data.def(d as u32).synthetic(),
+                Some("lambda_instance" | "closure_instance")
+            );
             assert!(
                 lazy_wrapper
                     || lazy_instantiation
                     || lazy_bound_stub
                     || lazy_tuple
-                    || lazy_dispatcher,
+                    || lazy_dispatcher
+                    || lazy_lambda_instance,
                 "H5: pass-2-only definition `{name}` (#{d}, {dt:?}) is not a lazy vector \
                  wrapper or generic instantiation — a real cross-pass divergence \
                  (pass1={}, pass2={})",
@@ -7402,6 +7415,11 @@ impl Parser {
     /// A `reverse(v)` whose element type is still a TYPE VARIABLE: the width it walks is the
     /// element's, so it is lowered per monomorph like [`TV_INSERT`](Parser::TV_INSERT).
     pub(crate) const TV_REVERSE: &'static str = "tvreverse";
+    /// A capture READ inside a template lambda: `[Var(__closure), Text(name), read]`.  The
+    /// template's closure record lays a capture typed by a type variable out at no width, so
+    /// the read is re-lowered by NAME against the instance's own record
+    /// ([`Parser::closure_capture_read`]).
+    pub(crate) const TV_CAPTURE: &'static str = "tvcapture";
 
     /// Specialise a generic `name` for the concrete argument types `types`, returning the
     /// monomorph's def_nr (or `u32::MAX` when `name` names no generic).
@@ -7755,6 +7773,199 @@ impl Parser {
         d_nr
     }
 
+    /// Is `d` a lambda written inside a template ([`Parser::mark_template_lambda`])?
+    pub(crate) fn is_template_lambda(&self, d: u32) -> bool {
+        (d as usize) < self.data.definitions.len()
+            && self.data.def_type(d) == DefType::Generic
+            && self.data.def(d).name().starts_with("n___lambda_")
+    }
+
+    /// The instance of the template lambda `d` that belongs to the instance being filled
+    /// (`self.context`), bound with that instance's bindings — `(G-Mono)` for a lambda: an
+    /// instance's lambda is the lambda its concrete twin would have written.  Named after the
+    /// enclosing instance (`n___lambda_3_in_t_7integer_f`), so each instance owns its own
+    /// and a re-derivation finds it again.  Its closure record is instantiated beside it,
+    /// because a capture typed by a variable has no width in the template's.
+    pub(crate) fn instantiate_template_lambda(&mut self, d: u32) -> u32 {
+        let bindings = self.instance_bindings.clone();
+        let owner = self.data.def(self.context).name().to_string();
+        let name = format!("{}_in_{owner}", self.data.def(d).name());
+        let mut inst = self.data.def_nr(&name);
+        let rec = self.data.def(d).closure_record();
+        if inst == u32::MAX {
+            let pos = self.data.definitions[d as usize].position.clone();
+            let attrs: Vec<(String, Type, Value, bool, bool)> = self.data.definitions[d as usize]
+                .attributes
+                .iter()
+                .map(|a| {
+                    (
+                        a.name.clone(),
+                        Self::substitute_all(a.typedef.clone(), &bindings),
+                        a.value.clone(),
+                        a.value_const,
+                        a.hidden,
+                    )
+                })
+                .collect();
+            let tmpl_returned = self.data.definitions[d as usize].returned.clone();
+            let ret_deps = tmpl_returned.depend();
+            let mut returned = Self::substitute_all(tmpl_returned, &bindings);
+            if !matches!(returned.base(), Type::Tuple(_)) {
+                returned = returned.with_deps(&crate::data::Deps::attrs(ret_deps));
+            }
+            inst = self.data.add_def(&name, &pos, DefType::Function);
+            self.data.definitions[inst as usize].synthetic = Some("lambda_instance");
+            let rec_inst = if rec == u32::MAX {
+                u32::MAX
+            } else {
+                self.instantiate_closure_record(rec, &owner, &bindings)
+            };
+            self.data.definitions[inst as usize].closure_record = rec_inst;
+            for (a_name, a_tp, a_value, a_const, a_hidden) in attrs {
+                let a_tp = match a_tp.base() {
+                    Type::Reference(r, _) if *r == rec && rec != u32::MAX => {
+                        Type::Reference(rec_inst, crate::data::Deps::none())
+                    }
+                    _ => a_tp,
+                };
+                let a_nr = self
+                    .data
+                    .add_attribute(&mut self.lexer, inst, &a_name, a_tp);
+                self.data.set_attr_value(inst, a_nr, a_value);
+                self.data.definitions[inst as usize].attributes[a_nr].value_const = a_const;
+                self.data.definitions[inst as usize].attributes[a_nr].hidden = a_hidden;
+            }
+            self.data.set_returned(inst, returned);
+        }
+        let rec_inst = self.data.def(inst).closure_record();
+        let tmpl_code = self.data.definitions[d as usize].code.clone();
+        let tmpl_vars = self.data.definitions[d as usize].variables.clone();
+        let mut code = tmpl_code;
+        for (holder, bound_to) in &bindings {
+            let iter_stride = i32::from(self.vector_elem_iter_stride(bound_to));
+            code = Self::substitute_type_in_value(code, *holder, bound_to, iter_stride, &self.data);
+        }
+        self.fill_monomorph_body(inst, code, &tmpl_vars, &bindings);
+        // The `__closure` parameter names the TEMPLATE's record in the copied table; the
+        // instance reads its own.
+        if rec != u32::MAX {
+            let vars = &mut self.data.definitions[inst as usize].variables;
+            for v in 0..vars.count() {
+                if matches!(vars.tp(v).base(), Type::Reference(r, _) if *r == rec) {
+                    vars.set_type(v, Type::Reference(rec_inst, crate::data::Deps::none()));
+                }
+            }
+            self.closure_parameter_last(inst);
+        }
+        if let Some((_, concrete)) = bindings.first() {
+            let concrete = concrete.clone();
+            self.instantiate_nested_generics(inst, &concrete);
+        }
+        inst
+    }
+
+    /// Keep a lambda's `__closure` parameter LAST.  A closure call hands the record over after
+    /// every other argument, work buffers included, so it must be the last attribute and the
+    /// last argument variable.  A template lambda's instance gains a text-return buffer only
+    /// once its return is known to be `text` — after the closure parameter it copied from the
+    /// template — so the two are swapped back: the attributes, the return's attribute-space
+    /// deps, and the argument variables with every reference to them (the 3-way renumbering
+    /// `av_renumber_retbuf` uses for a late return buffer).
+    fn closure_parameter_last(&mut self, d: u32) {
+        loop {
+            let def = &self.data.definitions[d as usize];
+            let n = def.attributes.len();
+            let Some(ci) = def.attributes.iter().position(|a| a.name == "__closure") else {
+                return;
+            };
+            if ci + 1 >= n {
+                return;
+            }
+            let args = def.variables.arguments();
+            let (Some(&a), Some(&b)) = (args.get(ci), args.get(ci + 1)) else {
+                return;
+            };
+            self.data.definitions[d as usize]
+                .attributes
+                .swap(ci, ci + 1);
+            // The name index answers the same question as the list, so it moves with it.
+            for i in [ci, ci + 1] {
+                let n = self.data.definitions[d as usize].attributes[i].name.clone();
+                self.data.definitions[d as usize].attr_names.insert(n, i);
+            }
+            let ret = self.data.definitions[d as usize].returned.clone();
+            let deps: Vec<u16> = ret
+                .depend()
+                .into_iter()
+                .map(|x| {
+                    if x as usize == ci {
+                        (ci + 1) as u16
+                    } else if x as usize == ci + 1 {
+                        ci as u16
+                    } else {
+                        x
+                    }
+                })
+                .collect();
+            if !ret.depend().is_empty() {
+                self.data.definitions[d as usize].returned =
+                    ret.with_deps(&crate::data::Deps::attrs(deps));
+            }
+            let mut code =
+                std::mem::replace(&mut self.data.definitions[d as usize].code, Value::Null);
+            let vars = &mut self.data.definitions[d as usize].variables;
+            let tmp = vars.count();
+            Self::renumber_frame_var(&mut code, a, tmp);
+            Self::renumber_frame_var(&mut code, b, a);
+            Self::renumber_frame_var(&mut code, tmp, b);
+            vars.renumber_frame_in_types(a, tmp);
+            vars.renumber_frame_in_types(b, a);
+            vars.renumber_frame_in_types(tmp, b);
+            vars.swap_variables(a, b);
+            self.data.definitions[d as usize].code = code;
+        }
+    }
+
+    /// The closure record of a template lambda's instance: the template's record with every
+    /// capture's type bound, stored the way a concrete capture of that type is
+    /// ([`Parser::closure_attr_type`]), and laid out now — the instance's closure is built
+    /// before the pass ends.
+    fn instantiate_closure_record(
+        &mut self,
+        rec: u32,
+        owner: &str,
+        bindings: &[(u32, Type)],
+    ) -> u32 {
+        let name = format!("{}_in_{owner}", self.data.def(rec).name());
+        let existing = self.data.def_nr(&name);
+        if existing != u32::MAX {
+            return existing;
+        }
+        let pos = self.data.definitions[rec as usize].position.clone();
+        let fields: Vec<(String, Type, bool)> = self.data.definitions[rec as usize]
+            .attributes
+            .iter()
+            .map(|a| {
+                (
+                    a.name.clone(),
+                    Self::substitute_all(a.typedef.clone(), bindings),
+                    a.value_const,
+                )
+            })
+            .collect();
+        let r = self.data.add_def(&name, &pos, DefType::Struct);
+        self.data.definitions[r as usize].synthetic = Some("closure_instance");
+        self.data.definitions[r as usize].returned = Type::Reference(r, crate::data::Deps::none());
+        for (f_name, f_tp, f_const) in fields {
+            let stored = self.closure_attr_type(&f_tp);
+            let a = self.data.add_attribute(&mut self.lexer, r, &f_name, stored);
+            self.data.definitions[r as usize].attributes[a].value_const = f_const;
+        }
+        crate::typedef::fill_database(&mut self.data, &mut self.database, r);
+        self.database.lay_out_record(self.data.def(r).known_type());
+        r
+    }
+
     /// Substitute a template's body + variable table into the monomorph `d_nr`.
     ///
     /// Split out of [`Self::try_generic_instantiation`] so loft#1023's re-derivation can
@@ -7795,9 +8006,22 @@ impl Parser {
         let outer_vars = std::mem::replace(&mut self.vars, vars);
         let outer_context = self.context;
         self.context = d_nr;
+        // The frame a template lambda is re-lowered in: this instance's bindings, and — for a
+        // lambda instance — its own `__closure` parameter, which its capture reads go through.
+        let outer_bindings = std::mem::replace(&mut self.instance_bindings, bindings.to_vec());
+        let outer_closure_param = self.closure_param;
+        self.closure_param = if self.data.def(d_nr).closure_record() == u32::MAX {
+            u16::MAX
+        } else {
+            self.vars.var("__closure")
+        };
+        let outer_assign_target = std::mem::replace(&mut self.assign_target, u16::MAX);
         let before_work: std::collections::HashSet<u16> =
             self.vars.work_texts().into_iter().collect();
         let mut code = self.rewrite_generic_type_defaults(code);
+        self.instance_bindings = outer_bindings;
+        self.closure_param = outer_closure_param;
+        self.assign_target = outer_assign_target;
         // loft#1175 — a work buffer minted by the rewrite above is not declared at the top
         // level, so `scopes::check` would scope it to the ARGUMENT block it appears in and
         // free it there, before the callee fills it.  Hoisting a top-level `Set` is the same
@@ -9713,6 +9937,46 @@ impl Parser {
                     self.parse_reverse(&mut out, &list, &types);
                 }
                 out
+            }
+            // A template lambda, non-capturing: the instance calls its own instance of it.
+            Value::FnRef(d, w, _)
+                if w == u16::MAX && d >= 0 && self.is_template_lambda(d as u32) =>
+            {
+                Value::Int(self.instantiate_template_lambda(d as u32) as i32)
+            }
+            // A template lambda that captures: its record is re-built for the instance, whose
+            // captured values may have a width the template's record could not give them.
+            Value::Block(bl)
+                if bl.name == "fn_ref_with_closure"
+                    && matches!(bl.operators.last().map(Value::unspan),
+                        Some(Value::FnRef(d, _, _)) if *d >= 0 && self.is_template_lambda(*d as u32)) =>
+            {
+                let Some(Value::FnRef(d, w, _)) = bl.operators.last().map(Value::unspan).cloned()
+                else {
+                    return Value::Block(bl);
+                };
+                let inst = self.instantiate_template_lambda(d as u32);
+                let mut out = Value::Null;
+                self.emit_lambda_code_in(&mut out, inst, Some(w));
+                out
+            }
+            // A capture read inside a template lambda, re-lowered against this instance's
+            // record by the capture's name.
+            Value::Block(bl) if bl.name == Self::TV_CAPTURE => {
+                let rec = self.data.def(self.context).closure_record();
+                let name = match bl.operators.get(1).map(Value::unspan) {
+                    Some(Value::Text(n)) => n.clone(),
+                    _ => String::new(),
+                };
+                let fnr = if rec == u32::MAX {
+                    usize::MAX
+                } else {
+                    self.data.attr(rec, &name)
+                };
+                if fnr == usize::MAX || self.closure_param == u16::MAX {
+                    return Value::Block(bl);
+                }
+                self.closure_capture_read(rec, fnr)
             }
             // loft#1016 — the deferred `x?` default.  `bl.result` came through type
             // substitution, so it is the CONCRETE operand type by now, the way each sibling

@@ -1159,7 +1159,7 @@ impl Parser {
         if fnr == usize::MAX {
             return None;
         }
-        Some(self.get_field(rec, fnr, Value::Var(self.closure_param)))
+        Some(self.closure_capture_read(rec, fnr))
     }
 
     /// The record and attribute index THIS scope names a relayed capture by, or `None` when it
@@ -1401,6 +1401,7 @@ or build a local and use that."
         }
         let d_nr = self.context;
         self.mark_lambda_sandboxed(outer_context, d_nr);
+        self.mark_template_lambda(outer_context, d_nr);
 
         // Parse optional return type annotation.
         let result = if self.lexer.has_token("->") {
@@ -1691,6 +1692,7 @@ or build a local and use that."
         }
         let d_nr = self.context;
         self.mark_lambda_sandboxed(outer_context, d_nr);
+        self.mark_template_lambda(outer_context, d_nr);
 
         // return-type annotations are not allowed in |x| short-form lambdas.
         let has_arrow = self.lexer.has_token("->");
@@ -1898,8 +1900,20 @@ or build a local and use that."
 
     // emit the lambda value — plain Int(d_nr) for non-capturing
     // lambdas, or an Insert block that allocates and populates the closure record.
-    #[allow(clippy::similar_names)]
     fn emit_lambda_code(&mut self, code: &mut Value, d_nr: u32) {
+        self.emit_lambda_code_in(code, d_nr, None);
+    }
+
+    /// [`Self::emit_lambda_code`], with the closure record built into `reuse_w` when given —
+    /// the `__clos` variable an instance inherited from its template, re-emitted for the
+    /// instance's own record ([`Parser::instantiate_template_lambda`]).
+    #[allow(clippy::similar_names)]
+    pub(crate) fn emit_lambda_code_in(
+        &mut self,
+        code: &mut Value,
+        d_nr: u32,
+        reuse_w: Option<u16>,
+    ) {
         let closure_rec_d = self.data.def(d_nr).closure_record();
         if closure_rec_d != u32::MAX && !self.first_pass {
             // A5.6-1/2 (16-byte fn-ref + embedded closure):
@@ -1919,10 +1933,16 @@ or build a local and use that."
             // At call sites, fn_call_ref reads the embedded DbRef and pushes it as
             // the hidden __closure arg automatically — no explicit injection needed.
             let rec_tp = Type::Reference(closure_rec_d, Deps::none());
-            let w = self.create_unique("__clos", &rec_tp);
-            self.vars.defined(w);
-            // Register w as a work-ref so parse_code inserts Set(w,Null) at fn start.
-            self.vars.add_to_work_refs(w);
+            let w = if let Some(w) = reuse_w {
+                self.vars.set_type(w, rec_tp.clone());
+                w
+            } else {
+                let w = self.create_unique("__clos", &rec_tp);
+                self.vars.defined(w);
+                // Register w as a work-ref so parse_code inserts Set(w,Null) at fn start.
+                self.vars.add_to_work_refs(w);
+                w
+            };
             let tp_nr = i32::from(self.data.def(closure_rec_d).known_type());
             // Build fn_type for fn_ref_var: visible params (excluding __closure) + ret.
             let n_all_attrs = self.data.attributes(d_nr);
@@ -2055,9 +2075,60 @@ or build a local and use that."
             // record the work var so parse_assign can populate closure_vars
             // (used by write-back and native codegen's closure_var_of lookup).
             self.last_closure_work_var = w;
+        } else if self.data.def_type(d_nr) == DefType::Generic {
+            // A TEMPLATE lambda answers a distinct node rather than its bare number, so an
+            // instance finds it by shape ([`Parser::rewrite_generic_type_defaults`]) and never
+            // mistakes an integer for it.  A template emits no code, so nothing runs this.
+            let params: Vec<Type> = self
+                .data
+                .def(d_nr)
+                .attributes()
+                .iter()
+                .filter(|a| !a.hidden && a.name != "__closure")
+                .map(|a| a.typedef.clone())
+                .collect();
+            let ret = self.data.def(d_nr).returned().clone();
+            let tp = Type::Function(
+                params,
+                Box::new(ret),
+                Deps::none(),
+                crate::data::ConstParams::NONE,
+            );
+            *code = Value::FnRef(d_nr as i32, u16::MAX, Box::new(tp));
         } else {
             *code = Value::Int(d_nr as i32);
         }
+    }
+
+    /// A lambda written inside a TEMPLATE is a template itself (`interfaces.md (G-Mono)`): its
+    /// parameters, its captures and its body mention the template's type variables, so it has
+    /// no one body until the enclosing instance binds them.  It shares the template's bounds,
+    /// so a bound method or operator on the variable resolves inside it as it does outside.
+    fn mark_template_lambda(&mut self, outer: u32, d_nr: u32) {
+        if outer == u32::MAX || self.data.def_type(outer) != DefType::Generic {
+            return;
+        }
+        self.data.definitions[d_nr as usize].def_type = DefType::Generic;
+        let bounds = self.data.def(outer).bounds.clone();
+        self.data.definitions[d_nr as usize].bounds = bounds;
+    }
+
+    /// Read the capture at field `fnr` of the closure record `rec` through this lambda's
+    /// `__closure` parameter.  Inside a TEMPLATE lambda the record's layout is the template's
+    /// — a capture typed by a type variable has no width yet — so the read is stamped
+    /// [`Parser::TV_CAPTURE`] with the capture's NAME and re-lowered against the instance's
+    /// own record.
+    pub(crate) fn closure_capture_read(&mut self, rec: u32, fnr: usize) -> Value {
+        let read = self.get_field(rec, fnr, Value::Var(self.closure_param));
+        if self.data.def_type(self.context) != DefType::Generic {
+            return read;
+        }
+        let name = self.data.attr_name(rec, fnr);
+        crate::data::v_block(
+            vec![Value::Var(self.closure_param), Value::Text(name), read],
+            self.data.attr_type(rec, fnr),
+            Self::TV_CAPTURE,
+        )
     }
 
     /// The backing a NULL collection capture needs before the closure record can share it —
@@ -2676,7 +2747,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// native mirror, and closure records are its sole producer, so none of this reaches
     /// user-defined struct fields.  Ownership (which marker) is decided later, after
     /// scope analysis — see `scopes::mark_borrowed_captures` (#682).
-    fn closure_attr_type(&mut self, tp: &Type) -> Type {
+    pub(crate) fn closure_attr_type(&mut self, tp: &Type) -> Type {
         // A NULLABLE heap value takes the same storage as its dense twin, and that is the
         // whole of the rule rather than a special case: `S?` IS a `DbRef` whose `rec == 0`
         // means absent, so sharing it needs no wrapper.  Left to fall through, the `S?`

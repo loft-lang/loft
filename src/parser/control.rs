@@ -18018,7 +18018,7 @@ impl Parser {
             {
                 let f_nr = self.data.attr(closure_rec_d, name);
                 if f_nr != usize::MAX {
-                    let load = self.get_field(closure_rec_d, f_nr, Value::Var(self.closure_param));
+                    let load = self.closure_capture_read(closure_rec_d, f_nr);
                     *val = v_block(
                         vec![crate::data::v_set(v_nr, load), call_ir],
                         *ret_type.clone(),

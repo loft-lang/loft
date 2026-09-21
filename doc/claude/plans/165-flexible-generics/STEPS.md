@@ -155,6 +155,27 @@ with no context already gives.
   of those passes a short lambda.  This is a one-variable defect and needs nothing from
   arc C.
 
+### A7 — a lambda written inside a template is instantiated with it  ·  M  ·  added while building A6
+
+Not in the first cut of the plan: A6's cells put a lambda INSIDE a generic body and found it
+was one definition typed by the template's own variable, shared by every instance — its
+parameters, its return (a `-> T` lambda even took a record return buffer) and its closure
+record were the placeholder's.  Silent-wrong on the interpreter (`x * x` answered
+`[null,null,null]` for `[1,4,9]`), a panic or a refused crate on `--native`, in every cell but
+the one whose lambda mentions no variable.  The design is `G-Mono` applied once more: a lambda
+written inside a template is a template itself (`mark_template_lambda`, sharing its bounds);
+the enclosing instance instantiates it with its own bindings (`instantiate_template_lambda`,
+named `n___lambda_N_in_<instance>`); its closure record is re-laid for the instance's types
+(`instantiate_closure_record`); a capture read is stamped `TV_CAPTURE` and re-lowered against
+that record by name; a capturing lambda's record is re-built in the instance's frame
+(`emit_lambda_code_in`, reusing the template's `__clos` slot); and `closure_parameter_last`
+keeps `__closure` the last parameter after an instance's text return gains its buffer.
+
+- **Red on its own:** `probes/lambdas/` (13 cells, both backends, strict stores and poison) and
+  `tests/scripts/a-lambda-inside-a-generic-is-instantiated-with-it.loft`.
+- **Compared against:** IDENTICAL over the corpus — no corpus file wrote a lambda inside a
+  generic, which is why nothing caught it.
+
 ---
 
 ## Arc B — a generic is a member of its name's set

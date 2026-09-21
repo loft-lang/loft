@@ -1,0 +1,8 @@
+// A `use`d library's template with an inner capturing lambda, at the consumer's types.
+// @EXPECT: [3,6] [1.5]
+use lamlib;
+fn main() {
+  a: vector<integer> = [1, 2];
+  f: vector<float> = [0.5];
+  println("{lamlib::scaled(a, 3)} {lamlib::scaled(f, 3.0)}");
+}
