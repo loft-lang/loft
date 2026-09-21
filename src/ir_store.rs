@@ -318,6 +318,7 @@ fn def_type_code(t: &DefType) -> i64 {
         DefType::Constant => 8,
         DefType::Generic => 9,
         DefType::Interface => 10,
+        DefType::TypeTemplate => 11,
     }
 }
 

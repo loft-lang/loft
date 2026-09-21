@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `D-Template` (@PLN165 D2): a generic struct is not a type until its arguments are named —
+// `b: Box` is refused naming the cure, once (the refused type is poisoned, so the parameter
+// check does not report it again).
+//
+// @falsified-at: a693d5dc8 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-generic-struct-names-its-type-arguments.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — the control refuses the `struct Box<T>` header instead.
+//   ARMED: nothing.
+//   WITNESS: on the control "a struct declares no type variables — `Box<T>`".
+//   HOLDS: the program is refused on both trees.
+// @EXPECT_ERROR: `Box` is a generic struct — name its type arguments, `Box<integer>`
+
+struct Box<T> { v: T }
+fn f(b: Box) -> integer { 1 }
+
+fn main() {
+  println("ok");
+}

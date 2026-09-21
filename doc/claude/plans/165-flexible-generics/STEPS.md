@@ -570,6 +570,17 @@ the cache version moves with it.
   `main` — three syntax errors today; `ir_schema_roundtrip` over a file holding a template;
   a template's field typed `T` never reaches layout (F15).
 - **Compared against:** IDENTICAL over the corpus.
+- **Built** (2026-09-21).  `DefType::TypeTemplate` (codec code 11, `CACHE_FORMAT_VERSION` 8 → 9);
+  the six exhaustive `DefType` sites map it (IR store/read, the schema's names both ways, the
+  LSP's symbol kind and the API surface read it as a struct).  `parse_struct` binds a header
+  (`bind_type_header`: each variable to its placeholder, each bound set to its placeholder and
+  stubs) and marks the definition a template; a list of several parses already (C2's header),
+  its cells are D9's.  A bare template name in type position is refused naming the cure
+  (`Box<integer>`), its type poisoned so nothing reports it twice.  The enum header stays
+  refused until D8 (A4's guard narrowed to it).  Switch `LOFT_NO_GENERIC_TYPES=1`.  A program
+  declaring `struct Box<T>` and `struct Pair<K: Printable, V>` runs on both backends and
+  emits no template; `ir_schema_roundtrip` 8/8 over a script holding them.  Corpus: only the
+  two new guards differ from D1.
 
 ### D3 — an instance in type position  ·  M  ·  pre-freeze
 

@@ -3322,6 +3322,20 @@ impl Parser {
             );
         }
         let dt = self.data.def_type(tp_nr);
+        // `D-Template` — a generic struct is not a type until its arguments are named.
+        if tp_nr != u32::MAX && dt == DefType::TypeTemplate && !self.lexer.peek_token("<") {
+            if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{type_name}` is a generic struct — name its type arguments, \
+                     `{type_name}<integer>`"
+                );
+                // @P376 — the reported site is poisoned, so nothing reports it again.
+                return Some(Type::Never);
+            }
+            return Some(Type::Unknown(0));
+        }
         if tp_nr != u32::MAX
             && matches!(
                 dt,
@@ -4239,7 +4253,13 @@ impl Parser {
             diagnostic!(self.lexer, Level::Error, "Expect attribute");
             return true;
         };
-        self.refuse_type_var_header("a struct", &id);
+        // @PLN165 D2 — a struct may declare type variables; it is then a TEMPLATE.
+        let header = if self.lexer.peek_token("<") && crate::keys::generic_types_enabled() {
+            self.parse_type_var_header()
+        } else {
+            self.refuse_type_var_header("a struct", &id);
+            Vec::new()
+        };
         let mut d_nr = self.data.def_nr(&id);
         // @PLN22 Phase 2 — shadow a prelude/import struct of the same key.  This
         // includes the stdlib's generic type-var marker (`<T>`): a user `struct T`
@@ -4293,6 +4313,11 @@ impl Parser {
                      already defined at {prev_pos} — pick a different name"
                 );
             }
+        }
+        // `D-Template` — a struct with a header is a type template: its variables are types
+        // in its fields, and the definition is its own kind, so no struct site lays it out.
+        if !header.is_empty() && self.bind_type_header(&header) {
+            self.data.definitions[d_nr as usize].def_type = DefType::TypeTemplate;
         }
         let context = self.context;
         self.context = d_nr;
@@ -4357,6 +4382,38 @@ impl Parser {
             self.check_circular_init(&init_deps);
         }
         self.context = context;
+        self.cur_type_vars.clear();
+        true
+    }
+
+    /// Bind a TYPE template's header (@PLN165 D2): each variable to its placeholder, as a
+    /// function's header binds them, and each bound set to the stubs its fields' methods
+    /// will call.  `false` when a variable collides with another definition (reported).
+    fn bind_type_header(&mut self, header: &[HeaderVar]) -> bool {
+        for var in header {
+            match self.bind_header_var(var) {
+                Some(holder) if holder != u32::MAX => {
+                    self.cur_type_vars.push((var.name.clone(), holder));
+                }
+                Some(_) => {}
+                None => {
+                    self.cur_type_vars.clear();
+                    return false;
+                }
+            }
+        }
+        for var in header {
+            if var.bounds.is_empty() {
+                continue;
+            }
+            let bounds = self.resolve_bound_names(&var.bounds);
+            if let Some(&(_, holder)) = self.cur_type_vars.iter().find(|(n, _)| *n == var.name) {
+                self.data.definitions[holder as usize]
+                    .bounds
+                    .clone_from(&bounds);
+                self.create_bound_method_stubs(holder, &bounds);
+            }
+        }
         true
     }
 

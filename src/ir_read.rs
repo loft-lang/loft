@@ -806,6 +806,7 @@ fn def_type_from_code(c: i64) -> DefType {
         8 => DefType::Constant,
         9 => DefType::Generic,
         10 => DefType::Interface,
+        11 => DefType::TypeTemplate,
         other => panic!("ir_read: unknown DefType code {other}"),
     }
 }

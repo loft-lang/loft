@@ -4242,6 +4242,11 @@ pub enum DefType {
     // Method stubs are stored as attributes on this definition.
     // Used by bounded generics (<T: InterfaceName>) for satisfaction checking (I6).
     Interface,
+    // @PLN165 D2 (`D-Template`): a generic STRUCT or ENUM — `struct Box<T> { v: T }`.  Its own
+    // kind, so every site that asks `def_type == Struct` reads a template as NOT a struct: it
+    // is never laid out and never emitted.  Its instances (`Box<integer>`) are ordinary
+    // structs, minted per argument list.
+    TypeTemplate,
 }
 
 impl Display for DefType {

@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `D-Template` (@PLN165 D2): a `struct` may declare type variables — `struct Box<T> { v: T }`,
+// `struct Pair<K: Printable, V> { … }` — and is then a TYPE TEMPLATE: its own definition kind,
+// never laid out and never emitted, so no struct site reads it as a struct.  Declaring one
+// compiles and runs the program; its instances (`Box<integer>`) are ordinary structs.
+//
+// Before, the header was refused ("a struct declares no type variables").
+//
+// @falsified-at: a693d5dc8 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-struct-declares-type-variables.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the headers.
+//   ARMED: nothing.
+//   WITNESS: on the control "a struct declares no type variables — `Box<T>`".
+//   HOLDS: nothing else.
+
+struct Box<T> { v: T }
+struct Pair<K: Printable, V> { k: K, vs: vector<V> }
+struct Keep { n: integer }
+
+fn main() {
+  k = Keep { n: 3 };
+  println("ok {k.n}");
+}

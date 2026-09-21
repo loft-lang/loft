@@ -1,0 +1,221 @@
+diff --git b/src/api_surface.rs a/src/api_surface.rs
+index b8d78b9f0..8d507bab7 100644
+--- b/src/api_surface.rs
++++ a/src/api_surface.rs
+@@ -230,7 +230,7 @@ pub fn classify(data: &Data, d: u32) -> Option<(&'static str, String)> {
+                 Some(("fn", name.to_string()))
+             }
+         }
+-        DefType::Struct | DefType::TypeTemplate => Some(("struct", name.to_string())),
++        DefType::Struct => Some(("struct", name.to_string())),
+         DefType::Enum => Some(("enum", name.to_string())),
+         DefType::Type => Some(("typedef", name.to_string())),
+         DefType::Constant => Some(("constant", name.to_string())),
+diff --git b/src/cache.rs a/src/cache.rs
+index 103fc6148..bbc3ff523 100644
+--- b/src/cache.rs
++++ a/src/cache.rs
+@@ -62,10 +62,7 @@ use sha2::{Digest, Sha256};
+ ///
+ /// 8 — `Variable` carries `deferred_first_bind` (stride 39 → 40): a warm load at the old
+ /// stride would copy at a bind the scope pass paired for an adopt (@PLN164 B1b).
+-///
+-/// 9 — `DefType::TypeTemplate` (code 11), a generic struct or enum (@PLN165 D2): an older
+-/// reader panics on the code, so an image carrying one must not be read by it.
+-const CACHE_FORMAT_VERSION: u8 = 9;
++const CACHE_FORMAT_VERSION: u8 = 8;
+ 
+ /// Loft crate version — a release bump invalidates every cache.
+ const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");
+diff --git b/src/data.rs a/src/data.rs
+index 600c83b11..a80911123 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -4242,11 +4242,6 @@ pub enum DefType {
+     // Method stubs are stored as attributes on this definition.
+     // Used by bounded generics (<T: InterfaceName>) for satisfaction checking (I6).
+     Interface,
+-    // @PLN165 D2 (`D-Template`): a generic STRUCT or ENUM — `struct Box<T> { v: T }`.  Its own
+-    // kind, so every site that asks `def_type == Struct` reads a template as NOT a struct: it
+-    // is never laid out and never emitted.  Its instances (`Box<integer>`) are ordinary
+-    // structs, minted per argument list.
+-    TypeTemplate,
+ }
+ 
+ impl Display for DefType {
+diff --git b/src/ir_read.rs a/src/ir_read.rs
+index 47e7df00d..ddb2fb86b 100644
+--- b/src/ir_read.rs
++++ a/src/ir_read.rs
+@@ -806,7 +806,6 @@ fn def_type_from_code(c: i64) -> DefType {
+         8 => DefType::Constant,
+         9 => DefType::Generic,
+         10 => DefType::Interface,
+-        11 => DefType::TypeTemplate,
+         other => panic!("ir_read: unknown DefType code {other}"),
+     }
+ }
+diff --git b/src/ir_schema.rs a/src/ir_schema.rs
+index 50699e238..5b934ecaf 100644
+--- b/src/ir_schema.rs
++++ a/src/ir_schema.rs
+@@ -966,7 +966,6 @@ fn def_type_str(t: &DefType) -> &'static str {
+         DefType::Constant => "Constant",
+         DefType::Generic => "Generic",
+         DefType::Interface => "Interface",
+-        DefType::TypeTemplate => "TypeTemplate",
+     }
+ }
+ 
+@@ -1173,7 +1172,6 @@ fn def_type_from_str(s: &str) -> Result<DefType, TypeDecodeError> {
+         "Constant" => DefType::Constant,
+         "Generic" => DefType::Generic,
+         "Interface" => DefType::Interface,
+-        "TypeTemplate" => DefType::TypeTemplate,
+         other => return Err(TypeDecodeError::UnknownTag(format!("DefType::{other}"))),
+     })
+ }
+diff --git b/src/ir_store.rs a/src/ir_store.rs
+index ae3ce1fde..2ebdf595e 100644
+--- b/src/ir_store.rs
++++ a/src/ir_store.rs
+@@ -318,7 +318,6 @@ fn def_type_code(t: &DefType) -> i64 {
+         DefType::Constant => 8,
+         DefType::Generic => 9,
+         DefType::Interface => 10,
+-        DefType::TypeTemplate => 11,
+     }
+ }
+ 
+diff --git b/src/keys.rs a/src/keys.rs
+index 754c56585..9279f9b15 100644
+--- b/src/keys.rs
++++ a/src/keys.rs
+@@ -1069,15 +1069,6 @@ pub fn method_in_set_enabled() -> bool {
+     *ON.get_or_init(|| !env_set("LOFT_NO_METHOD_IN_SET"))
+ }
+ 
+-/// @PLN165 D2 — a `struct` may declare type variables (`struct Box<T> { v: T }`), which makes
+-/// it a TEMPLATE: never laid out, instantiated per argument list.  **DEFAULT ON.**
+-/// `LOFT_NO_GENERIC_TYPES=1` refuses a struct header again — the rollback, and the first
+-/// bisect step for anything a generic struct changed.
+-pub fn generic_types_enabled() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_GENERIC_TYPES"))
+-}
+-
+ /// @PLN165 C2 — a generic's header declares a LIST of type variables (`<K, V>`), each with its
+ /// own bounds.  **DEFAULT ON.**  `LOFT_NO_SEVERAL_VARS=1` refuses a header with more than one
+ /// again and keeps a variable's bounds on its function alone — the rollback, and the first
+diff --git b/src/lsp.rs a/src/lsp.rs
+index 5d49993f3..831c3084d 100644
+--- b/src/lsp.rs
++++ a/src/lsp.rs
+@@ -2289,7 +2289,7 @@ fn token_kind(data: &Data, name: &str) -> Option<u32> {
+         return None;
+     }
+     match data.def(d).def_type {
+-        crate::data::DefType::Struct | crate::data::DefType::TypeTemplate => Some(3),
++        crate::data::DefType::Struct => Some(3),
+         crate::data::DefType::Enum => Some(4),
+         crate::data::DefType::Type => Some(5),
+         crate::data::DefType::Constant => Some(6),
+@@ -2365,7 +2365,6 @@ fn is_global_symbol(data: &Data, name: &str) -> bool {
+         && matches!(
+             data.def(d).def_type,
+             crate::data::DefType::Struct
+-                | crate::data::DefType::TypeTemplate
+                 | crate::data::DefType::Enum
+                 | crate::data::DefType::Type
+                 | crate::data::DefType::Constant
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index 02aec2b78..3c65625ec 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -3322,20 +3322,6 @@ impl Parser {
+             );
+         }
+         let dt = self.data.def_type(tp_nr);
+-        // `D-Template` — a generic struct is not a type until its arguments are named.
+-        if tp_nr != u32::MAX && dt == DefType::TypeTemplate && !self.lexer.peek_token("<") {
+-            if !self.first_pass {
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "`{type_name}` is a generic struct — name its type arguments, \
+-                     `{type_name}<integer>`"
+-                );
+-                // @P376 — the reported site is poisoned, so nothing reports it again.
+-                return Some(Type::Never);
+-            }
+-            return Some(Type::Unknown(0));
+-        }
+         if tp_nr != u32::MAX
+             && matches!(
+                 dt,
+@@ -4253,13 +4239,7 @@ impl Parser {
+             diagnostic!(self.lexer, Level::Error, "Expect attribute");
+             return true;
+         };
+-        // @PLN165 D2 — a struct may declare type variables; it is then a TEMPLATE.
+-        let header = if self.lexer.peek_token("<") && crate::keys::generic_types_enabled() {
+-            self.parse_type_var_header()
+-        } else {
+-            self.refuse_type_var_header("a struct", &id);
+-            Vec::new()
+-        };
++        self.refuse_type_var_header("a struct", &id);
+         let mut d_nr = self.data.def_nr(&id);
+         // @PLN22 Phase 2 — shadow a prelude/import struct of the same key.  This
+         // includes the stdlib's generic type-var marker (`<T>`): a user `struct T`
+@@ -4314,11 +4294,6 @@ impl Parser {
+                 );
+             }
+         }
+-        // `D-Template` — a struct with a header is a type template: its variables are types
+-        // in its fields, and the definition is its own kind, so no struct site lays it out.
+-        if !header.is_empty() && self.bind_type_header(&header) {
+-            self.data.definitions[d_nr as usize].def_type = DefType::TypeTemplate;
+-        }
+         let context = self.context;
+         self.context = d_nr;
+         // @PLN101 — mark the value-struct kind now that d_nr is the confirmed struct def.
+@@ -4382,38 +4357,6 @@ impl Parser {
+             self.check_circular_init(&init_deps);
+         }
+         self.context = context;
+-        self.cur_type_vars.clear();
+-        true
+-    }
+-
+-    /// Bind a TYPE template's header (@PLN165 D2): each variable to its placeholder, as a
+-    /// function's header binds them, and each bound set to the stubs its fields' methods
+-    /// will call.  `false` when a variable collides with another definition (reported).
+-    fn bind_type_header(&mut self, header: &[HeaderVar]) -> bool {
+-        for var in header {
+-            match self.bind_header_var(var) {
+-                Some(holder) if holder != u32::MAX => {
+-                    self.cur_type_vars.push((var.name.clone(), holder));
+-                }
+-                Some(_) => {}
+-                None => {
+-                    self.cur_type_vars.clear();
+-                    return false;
+-                }
+-            }
+-        }
+-        for var in header {
+-            if var.bounds.is_empty() {
+-                continue;
+-            }
+-            let bounds = self.resolve_bound_names(&var.bounds);
+-            if let Some(&(_, holder)) = self.cur_type_vars.iter().find(|(n, _)| *n == var.name) {
+-                self.data.definitions[holder as usize]
+-                    .bounds
+-                    .clone_from(&bounds);
+-                self.create_bound_method_stubs(holder, &bounds);
+-            }
+-        }
+         true
+     }
+ 

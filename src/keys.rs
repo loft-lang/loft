@@ -1069,6 +1069,15 @@ pub fn method_in_set_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_METHOD_IN_SET"))
 }
 
+/// @PLN165 D2 — a `struct` may declare type variables (`struct Box<T> { v: T }`), which makes
+/// it a TEMPLATE: never laid out, instantiated per argument list.  **DEFAULT ON.**
+/// `LOFT_NO_GENERIC_TYPES=1` refuses a struct header again — the rollback, and the first
+/// bisect step for anything a generic struct changed.
+pub fn generic_types_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_GENERIC_TYPES"))
+}
+
 /// @PLN165 C2 — a generic's header declares a LIST of type variables (`<K, V>`), each with its
 /// own bounds.  **DEFAULT ON.**  `LOFT_NO_SEVERAL_VARS=1` refuses a header with more than one
 /// again and keeps a variable's bounds on its function alone — the rollback, and the first

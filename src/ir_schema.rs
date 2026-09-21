@@ -966,6 +966,7 @@ fn def_type_str(t: &DefType) -> &'static str {
         DefType::Constant => "Constant",
         DefType::Generic => "Generic",
         DefType::Interface => "Interface",
+        DefType::TypeTemplate => "TypeTemplate",
     }
 }
 
@@ -1172,6 +1173,7 @@ fn def_type_from_str(s: &str) -> Result<DefType, TypeDecodeError> {
         "Constant" => DefType::Constant,
         "Generic" => DefType::Generic,
         "Interface" => DefType::Interface,
+        "TypeTemplate" => DefType::TypeTemplate,
         other => return Err(TypeDecodeError::UnknownTag(format!("DefType::{other}"))),
     })
 }

@@ -62,7 +62,10 @@ use sha2::{Digest, Sha256};
 ///
 /// 8 — `Variable` carries `deferred_first_bind` (stride 39 → 40): a warm load at the old
 /// stride would copy at a bind the scope pass paired for an adopt (@PLN164 B1b).
-const CACHE_FORMAT_VERSION: u8 = 8;
+///
+/// 9 — `DefType::TypeTemplate` (code 11), a generic struct or enum (@PLN165 D2): an older
+/// reader panics on the code, so an image carrying one must not be read by it.
+const CACHE_FORMAT_VERSION: u8 = 9;
 
 /// Loft crate version — a release bump invalidates every cache.
 const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");
