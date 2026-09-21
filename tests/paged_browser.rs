@@ -16,7 +16,7 @@
 //! Without (2) the test would pass over a silent fallback to a whole-file load — which is
 //! precisely the outcome the consumer cannot afford (a phone paging a multi-GB block).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn repo_root() -> PathBuf {
@@ -480,10 +480,10 @@ fn store_load_url_verifies_the_hash_in_the_browser() {
     let good = loft::integrity::sha256_hex(&bytes);
     let bad = "0".repeat(64);
 
-    let src = tmp.join("verified.loft");
-    std::fs::write(
-        &src,
-        format!(
+    let stdout = run_url_program(
+        &tmp,
+        "verified",
+        &format!(
             "struct Rec {{ id: integer not null, val: integer not null }}\n\
              fn main() {{\n\
              \x20 ok: hash<Rec[id]> = [];\n\
@@ -494,10 +494,59 @@ fn store_load_url_verifies_the_hash_in_the_browser() {
              \x20 println(\"bad sha ok={{b}} len={{len(no)}}\");\n\
              }}\n"
         ),
-    )
-    .expect("write browser script");
+        &store,
+    );
+    assert!(
+        stdout.contains("good sha ok=true len=2"),
+        "a matching digest must ADOPT the image in the browser\n  stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("bad sha ok=false len=0"),
+        "a mismatched digest must REFUSE and adopt nothing — a loader that accepts \
+         anything would still satisfy the match case above\n  stdout:\n{stdout}"
+    );
 
-    let html = tmp.join("verified.html");
+    // loft#1562 — a program whose `Rec` grew a field is refused by BOTH whole-image loaders,
+    // even with the image's own digest: the pin says the bytes are the ones published, and
+    // the `.dschema` beside them says they were written with a layout this program does not
+    // read.  The match half above now runs through that sidecar too, so the refusal here
+    // is the layout and not a gate that refuses everything.
+    let stdout = run_url_program(
+        &tmp,
+        "changed",
+        &format!(
+            "struct Rec {{ id: integer not null, extra: integer not null, val: integer not null }}\n\
+             fn main() {{\n\
+             \x20 a: hash<Rec[id]> = [];\n\
+             \x20 x = store_load_url(a, \"http://127.0.0.1:1/v.store\", \"{good}\");\n\
+             \x20 println(\"changed pinned ok={{x}} len={{len(a)}}\");\n\
+             \x20 b: hash<Rec[id]> = [];\n\
+             \x20 y = store_load_url_trusted(b, \"http://127.0.0.1:1/v.store\");\n\
+             \x20 println(\"changed trusted ok={{y}} len={{len(b)}}\");\n\
+             }}\n"
+        ),
+        &store,
+    );
+    assert!(
+        stdout.contains("changed pinned ok=false len=0"),
+        "a changed layout must be REFUSED in the browser even with a matching digest\n  \
+         stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("changed trusted ok=false len=0"),
+        "a changed layout must be REFUSED by the trusted loader in the browser\n  \
+         stdout:\n{stdout}"
+    );
+}
+
+/// Build `source` with `loft --html` and run it under `tools/paged_range_host.mjs` with
+/// whole-file GETs enabled, serving `store` (and the `.dschema` beside it) for every URL.
+/// Answers the program's stdout.
+fn run_url_program(tmp: &Path, name: &str, source: &str, store: &Path) -> String {
+    let src = tmp.join(format!("{name}.loft"));
+    std::fs::write(&src, source).expect("write browser script");
+
+    let html = tmp.join(format!("{name}.html"));
     let status = Command::new(loft_bin())
         .args([
             "--html",
@@ -519,13 +568,13 @@ fn store_load_url_verifies_the_hash_in_the_browser() {
     let marker = "const wasmB64=\"";
     let start = page.find(marker).expect("wasmB64 marker") + marker.len();
     let end = start + page[start..].find('"').expect("wasmB64 closing quote");
-    let wasm = tmp.join("verified.wasm");
+    let wasm = tmp.join(format!("{name}.wasm"));
     std::fs::write(&wasm, loft::base64::decode(&page[start..end])).expect("write wasm");
 
     let run = Command::new("node")
         .arg(repo_root().join("tools/paged_range_host.mjs"))
         .arg(&wasm)
-        .env("LOFT_PAGED_FILE", &store)
+        .env("LOFT_PAGED_FILE", store)
         .env("LOFT_WHOLE_GET", "1")
         .current_dir(repo_root())
         .output()
@@ -536,14 +585,5 @@ fn store_load_url_verifies_the_hash_in_the_browser() {
         "browser run failed\n  stdout:\n{stdout}\n  stderr:\n{}",
         String::from_utf8_lossy(&run.stderr)
     );
-
-    assert!(
-        stdout.contains("good sha ok=true len=2"),
-        "a matching digest must ADOPT the image in the browser\n  stdout:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("bad sha ok=false len=0"),
-        "a mismatched digest must REFUSE and adopt nothing — a loader that accepts \
-         anything would still satisfy the match case above\n  stdout:\n{stdout}"
-    );
+    stdout
 }

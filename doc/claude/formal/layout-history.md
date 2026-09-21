@@ -19,6 +19,26 @@
   load-time gate automatically yet — the deviation closes fully when a persistence consumer wires
   `check_beside` into its open path. Until then the guard exists but is opt-in.
 
+  **CLOSED 2026-09-21 (loft#1562).** Re-measured on main `9f5cf6a96`, the residual was narrower
+  than written and silent: the gate had become the default on `store_load` (loft#700) and the
+  paged loaders (@PLN97 arc G), and three paths still read an existing image raw.
+  - `store_persist_bind` on an existing file.  A `hash<Rec[id]>` written as `{id, v}` and bound
+    as `{id, extra, v}` answered `true` and read `v` from the neighbouring bytes, on both
+    backends.  The bind then wrote the `.dschema` with the READER's layout, so the same file's
+    later `store_load` answered `true` too, and the program that wrote it read the records its
+    reader had inserted in the other layout.  Reshaped, dropped and nested fields, `sorted`,
+    `index` and a struct container behaved the same; a garbage sidecar was bound and relabelled.
+  - `store_load_url_trusted` and `store_load_url` (whole-image fetches) — no gate at all, over
+    `file://` and HTTP alike.  A SHA-256 pin does not help: it says the bytes are the ones
+    published, not which layout wrote them.
+
+  Now all three ask the gate before they read: the bind before `Store::open`, so a refusal
+  leaves the file, its sidecar and the collection untouched; the URL loaders before the image
+  fetch, reading `<url>.dschema` over the same transport (a failed fetch is an absent sidecar,
+  as a server's 404 is).  The refusal names its own builtin.  Both backends, and the browser
+  build, whose node harnesses had answered every whole-file GET with the store bytes and now
+  answer a `.dschema` request as a server does.  Guards are named in layout.md.
+
 - **D-layout-2 — the `?` changed the layout** (2026-08-28, loft#1125). `L-Null` says
   `layout(τ) = layout(τ?)`, and three sites decided layout by naming `Type` variants BARE, so a
   wrapped shape reached none of them.

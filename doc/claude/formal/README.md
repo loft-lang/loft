@@ -145,15 +145,14 @@ not duplicate: a deviation entry links to the lens analysis instead of re-explai
 
 ## Areas
 
-**Four deviations are open, in three chapters:** operational.md 2, layout.md 1 and performance.md 1. Every
+**Ten deviations are open, in four chapters:** heap.md 5, binding.md 2, operational.md 2 and
+performance.md 1 (`rule_tags.py registers`, 2026-09-21). Every
 other chapter is at 0, and each zero is a claim to re-measure against the oracle line its
 chapter names. The two in operational.md are the **meta** entry, `D-op-1`/`D-op-2` — there
 being no shared operational semantics, the interpreter is the spec and a backend divergence
 is test-caught rather than definition-caught (@PLN89's differential oracle, an open-ended
-instrument and not a one-shot close); every operational chapter below inherits them. The one
-in layout.md is a **residual**: `D-layout-1`'s mechanism is shipped and opt-in, waiting on a
-persistence consumer to wire `check_beside` into its open path. No open row is a rule that
-needs changing. What closed, when, and what it cost is each chapter's `<area>-history.md`;
+instrument and not a one-shot close); every operational chapter below inherits them. No open
+row is a rule that needs changing. What closed, when, and what it cost is each chapter's `<area>-history.md`;
 this paragraph and the table below are derived from the chapters and say nothing the
 chapters do not.
 
@@ -181,7 +180,7 @@ chapters do not.
 | [grammar.md](grammar.md) | concrete grammar + operator precedence | **0 open** — the 12-level precedence ladder; the prefix-`&`/infix-`&` overload and the non-CFG surface are decided edges (C81/C82) |
 | [operational.md](operational.md) | small-step semantics — the scalar core | **2 open** — the META pair `D-op-1`/`D-op-2` (conformance is differential, not definitional), inherited by every operational chapter below; the rules are complete for the scalar core; register in [operational-history.md](operational-history.md) |
 | [heap.md](heap.md) | store steps — alloc / read / write / **copy** / free / **drop** | **3 open** (D-heap-8, D-heap-9, D-heap-11 — the copy-lease rules `H-Copy-Refuse` / `H-Copy-Lease` / `H-View-Drop`, written 2026-09-15 ahead of their implementation, @PLN163; the revision that judges a copy by its own line reclassified `D-heap-1` and `D-heap-7` into them) — the `DbRef`/`Store` model, the whole-value COPY (C86), `H-Materialise`, the LIFO free discipline whose soundness is ownership.md, the drop hook's one-release-per-resource rule (`H-Drop`: owner's scope end, reassignment, container cascade; a copy moves the responsibility); conformance via the oracle (D-op-1) |
-| [layout.md](layout.md) | the store BYTE layout — `layout(τ)` (widths, offsets, packing, the reference encoding) | **1 open** — `D-layout-1`: no version guard on persisted bytes; the golden test and the `.dschema` sidecar are shipped and opt-in, pending a durable-store consumer (@PLN97). One format (RAM = disk); nullability is a sentinel, not a layout (`L-Null`); register in [layout-history.md](layout-history.md) |
+| [layout.md](layout.md) | the store BYTE layout — `layout(τ)` (widths, offsets, packing, the reference encoding) | **0 open** — `D-layout-1` closed 2026-09-21 (loft#1562): every path that reads an existing image — `store_load`, the bind of an existing file, the whole-image URL loaders and the paged loaders — refuses a store whose `.dschema` records another layout (`L-Sound`). One format (RAM = disk); nullability is a sentinel, not a layout (`L-Null`); register in [layout-history.md](layout-history.md) |
 | [iteration.md](iteration.md) | `for`, ranges, text iteration, the map/filter/reduce/comprehension combinators | **0 own** — index-cursor `for`, deterministic combinator order, fresh result vector; conformance via the oracle; register in [iteration-history.md](iteration-history.md) |
 | [coroutines.md](coroutines.md) | generators — `yield` / `next`, stackful suspension | **0 own** — lazy one-value-per-advance; a loop body with a SECOND statement is eager on native (a decided edge, loft#836); conformance via the oracle; register in [coroutines-history.md](coroutines-history.md) |
 | [concurrency.md](concurrency.md) | `par` — the one parallel construct | **0 own** — a parallel map consumed in source order; determinism CONDITIONAL on a pure worker; conformance via the oracle |

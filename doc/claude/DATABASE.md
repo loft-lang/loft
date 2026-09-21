@@ -147,6 +147,19 @@ collection returned wild values (`510277628`) that a consumer then iterated. Now
 `store_load` returns `false` and names what differs. Rebuild the store with the new
 program, or read it with the version that wrote it.
 
+Every path that reads an EXISTING image through the program's types takes this gate
+(`@FR-L-Sound`): `store_load`, `store_load_untrusted`, `store_persist_bind` on an
+existing file, the whole-image URL loaders `store_load_url` / `store_load_url_trusted`
+(the sidecar is `<url>.dschema`, over the same transport, and a missing one is not
+checked), and the working-set loaders above. Each refusal names its own builtin. A
+refused bind leaves the file, its `.dschema` and the collection as they were. That
+matters because the bind WRITES the sidecar with the binding program's layout when it
+succeeds — so a bind that accepted a mismatched file would also relabel it, and every
+later load would then read the misread store as matching (loft#1562). The whole-image
+paths share one verdict, `Stores::layout_verdict_ok`, and a new whole-image loader asks
+it rather than growing its own; the working-set loaders refuse through `refuse_paged`,
+so the program can read their refusal back.
+
 #### What the file's SIZE and BYTES mean (loft#710)
 
 A persisted store used to be the arena's whole **capacity**, so its size said how

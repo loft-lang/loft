@@ -14,6 +14,15 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A store written by an older version of your program is refused, not misread, by every
+way of opening it.**  A struct that gained, lost or changed a field lays its records out
+differently, and `store_load` already refused a store written with the old layout.
+`store_persist_bind` on an existing file did not: it bound the store and read each record at
+the wrong offsets, and then marked the file with the new layout, so later loads accepted it
+too.  `store_load_url` and `store_load_url_trusted` did not check at all.  All three now
+answer `false`, name what differs, and leave the file and your collection untouched.  Rebuild
+the store with the new program, or open it with the version that wrote it.
+
 **A record copied from a local whose name an earlier block also used reads right on the
 interpreter.**  `r = P {…}` in one loop and, in a later loop, `r = P {…}; c = r` — the second
 `r` is a new variable under the old name, and on `--interpret` the copy `c = r` was handed the

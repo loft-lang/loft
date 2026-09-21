@@ -55,8 +55,18 @@ const loft_io = {
   // Whole-file GET is refused BY DEFAULT: the paged test must not pass over a regression
   // that silently falls back to a whole-image load. LOFT_WHOLE_GET=1 enables it for the
   // `store_load_url` tests, which are about that path on purpose.
-  loft_host_http_get: () => {
+  //
+  // Those loaders ask for the layout sidecar first (`<url>.dschema`), and it is answered as
+  // a server answers it: the `.dschema` beside the store when there is one, a 404 when there
+  // is not — never the store's own bytes, which would read as an unreadable sidecar.
+  loft_host_http_get: (ptr, len) => {
     if (!process.env.LOFT_WHOLE_GET) return 0xffffffff;
+    if (dec.decode(new Uint8Array(mem.buffer, ptr, len)).endsWith(".dschema")) {
+      if (!fs.existsSync(storePath + ".dschema")) return 0xffffffff;
+      httpBytes = fs.readFileSync(storePath + ".dschema");
+      requests += 1;
+      return httpBytes.length;
+    }
     httpBytes = store;
     bytesFetched += store.length;
     requests += 1;
