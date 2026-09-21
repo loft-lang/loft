@@ -597,9 +597,10 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **3** — `D-heap-8`, `D-heap-9` and `D-heap-15` (`D-heap-13` closed 2026-09-20;
-`D-heap-16` closed 2026-09-21 together with the three it uncovered, `D-heap-18`, `D-heap-19` and
-`D-heap-20`, each opened and closed that day; `D-heap-14` closed the same day).  The
+OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-15` and `D-heap-22` (`D-heap-13` closed
+2026-09-20; `D-heap-16` closed 2026-09-21 together with the three it uncovered, `D-heap-18`,
+`D-heap-19` and `D-heap-20`, each opened and closed that day; `D-heap-14` closed the same day, and
+`D-heap-21` opened and closed with it, `D-heap-22` its loop-body face, still open).  The
 first two are the copy-lease rules `(H-Copy-Refuse)` and `(H-Copy-Lease)`, written 2026-09-15
 before their implementation (@PLN163); `D-heap-8` was NARROWED 2026-09-17 when the owner ruled that
 a value the function owns MOVES, which makes 156 of its 227 measured sites legal and leaves the 71
@@ -647,6 +648,45 @@ freed without its hook) opened and CLOSED 2026-09-10, below.  `D-heap-12` (a ref
 buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.  `D-heap-17` (a self-append's claims walk
 read the source record through a number captured before the growth relocated it) opened and
 CLOSED 2026-09-17, below.
+
+### D-heap-21 — OPENED AND CLOSED (2026-09-21): a collection local was released after every other local at its scope's end
+
+- **Violates:** (H-Drop), its scope-end clause: *"the owner's scope end, in reverse declaration
+  order"*.  The order is part of the contract because a later structure may hold a lease on an
+  earlier one's resource: cursors in a vector must close before the connection declared ahead of
+  them.
+- **Where:** `get_free_vars` sweeps a scope in reverse `var_order`, which is the order variables
+  are REGISTERED.  A collection local is a view of the store holding its elements — its
+  `__vdb_N` backing, or the `__ref_N` buffer a call delivered it through — and that store is
+  registered by its null-init at the head of the function, so it was swept last whatever the
+  declaration order.
+- **Effect:** measured on both backends, identical: `b = mk(5); v: vector<H> = [mk(4)]` released
+  `5` before `4`; two vectors released in declaration order; three locals `b, v, w` released
+  `5 4 6` for the rule's `6 4 5`; a collection a call answers (`d = mkv(4)`) the same.  A struct
+  holding a vector, and a vector declared first, were right — the controls.
+- **Closed:** when a local is first registered, a `__vdb_N` it views — or, for a collection, a
+  `__ref_N` — moves to its place in `var_order`, which is where the store is minted.  Its scope
+  and its ownership are untouched; only its turn in the sweep moves.  A record local releases
+  through itself and its buffer's free is identity-guarded, so a record buffer keeps its place.
+  Guard `tests/scripts/a-collection-local-releases-in-declaration-order.loft`.
+
+### D-heap-22 — OPEN (2026-09-21): a collection declared in a loop body releases its elements at the NEXT pass, not at the end of its own
+
+- **Violates:** (H-Drop), its scope-end clause — the owner of a loop-body local dies at the end
+  of each pass.
+- **Where:** the collection's `__vdb_N` backing is registered at FUNCTION scope, so the store
+  survives the pass and is re-minted by the next one; the elements are released by that re-mint's
+  displaced release (`__disp_N`), and the last pass's at the function's end.  Keeping the store
+  across passes is deliberate (it is reused); releasing its elements with it is not what the
+  rule says.
+- **Effect:** `for i in 0..2 { b = mk(10 + i); v: vector<H> = [mk(20 + i)]; }` releases
+  `10 20 11 21` on both backends for the rule's `20 10 21 11`: every pass's resources are held
+  one pass longer, and out of order with the pass's other locals.  The count is right.
+- **Status:** OPEN — found while closing `D-heap-21`, whose fix moves the backing's turn in a
+  sweep but cannot move it into a scope it is not registered in.
+- **Removal:** release a loop-body collection's elements at the end of the pass that declared it,
+  keeping the store for reuse — the clear `(H-ClearRelease)` already performs for a reused
+  store-root vector is the shape to reach for.
 
 ### D-heap-18 — OPENED AND CLOSED (2026-09-21): a local bound from a join, placed again, released twice
 

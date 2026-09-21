@@ -10299,6 +10299,24 @@ impl Scopes<'_> {
         }
         if !self.var_scope.contains_key(&v) {
             self.put_scope(v);
+            // `(H-Drop)` releases at a scope's end in REVERSE DECLARATION order.  A collection
+            // local is a view of the store that holds its elements — its `__vdb_N` backing, or
+            // the `__ref_N` buffer a call delivered it through — and that store is registered by
+            // its null-init at the head of the function, so its release came after every other
+            // local's, whatever the order they were declared in (D-heap-21).  The store is minted
+            // where the local is bound, so its place in the sweep is there.  A RECORD local
+            // releases through itself, and its buffer's free is guarded by identity, so a record
+            // buffer keeps the place it has.
+            let collection = matches!(function.tp(v).base(), Type::Vector(_, _));
+            for d in function.tp(v).depend().clone() {
+                let name = function.name(d);
+                if (name.starts_with("__vdb_") || (collection && name.starts_with("__ref_")))
+                    && let Some(pos) = self.var_order.iter().position(|&x| x == d)
+                {
+                    self.var_order.remove(pos);
+                    self.var_order.push(d);
+                }
+            }
             self.var_order.push(v);
         }
         // When a Reference variable is assigned from a user-function call,
