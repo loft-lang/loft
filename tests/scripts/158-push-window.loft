@@ -18,12 +18,45 @@
 // `LOFT_NO_GUARDED_CHAIN=1` and `LOFT_HOIST_VERIFY=1` must all answer identically.
 //
 // Predictions (tests/push_window.rs pins them).  A WINDOW: w1 w2 w3 w4 w5 w6 w7 (the inner
-// loop) w8 w9 (one window, both guarded arms) w10 w11 w12.  HEADER PUSHES KEPT, each for
-// its own reason: d1 reads the vector it pushes to, d2 reads its length, d3 hands it to a
-// callee, d4 reads it through a view taken before the loop, d5 writes another vector in
-// place, d7 reads a sibling field of the pushed record, d8 (a return buffer) reads a
-// parameter that may alias it.  NO PUSH LOOP AT ALL: d5b pushes two paths, d6 and d9 are
-// filtered (a `continue`).
+// loop) w8 w9 (one window, both guarded arms) w10 w11 w12, and d8 / a1-a4 — a result
+// vector that reads a PARAMETER's vector.  The admission reaches and DECLINES, each for its
+// own reason: d1 reads the vector it pushes to, d7 a sibling field of the pushed record
+// (both name the root), d4 reads it through a view taken before the loop, d5 writes another
+// vector in place.  NEVER REACH the admission, so they say nothing about it: d2 (`len(v)`
+// is a stdlib wrapper call, which the counted-push recogniser reads as another write to the
+// path — no reservation either), d3 (a callee handed the pushed vector declines the whole
+// hoist), d5b (two pushed paths), d6 (filtered: a `continue`).
+//
+// a1-a4 and b1-b2 are the aliasing cases, measured because a prediction failed: d8's pushed
+// root is a local whose store witness (`__vdb_1`) is the hidden return buffer the CALLER
+// handed in, which `(R-Alias)`'s ownership test reads as an owned local.  So the window is
+// admitted beside a parameter read, and whether the caller can make the two one store is a
+// question to measure: the result replacing its own source (a2, twice a3, in a loop a4) and
+// the result built in an element slot of the container the source is an element of (b1,
+// and b2 with that store reallocating under the call).  All hold, LOFT_HOIST_VERIFY=1
+// included — the window rests on the body never reading the pushed vector's LENGTH and
+// never growing a store, and neither needs the parameter to live in another store.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-21) — each of the admission's three
+// clauses switched off in turn, on --native:
+//   - "the body names the pushed vector": d1 answers `51 102` for `51 2601` (the read
+//     `v[i]` is bounded by the header's length, frozen while the window is open, so every
+//     element past the first reads absent) and its assert fails.
+//   - "the body names a variable that may view the pushed vector": d4 answers 780 for
+//     2340 (`len(d)` reads the record's length, which lags: 0 on every pass) and its assert
+//     fails.
+//   - "the body writes a store beside its pushes": NOTHING CHANGED, with or without
+//     LOFT_HOIST_VERIFY=1 — every cell stayed green, so no cell here guards that clause
+//     and none is claimed to.  The shape that would need it is a second grower in the
+//     pushed vector's store, and every one that could be built (a push to a parameter
+//     beside the result, `g_mk` in the probe) declines the loop's whole hoist before this
+//     admission is asked: the push header's own gate is the fence, this clause a second
+//     one behind it.  It is kept because it can only decline — it costs a window, never a
+//     value — and it becomes load-bearing the day that first gate admits a grower.
+// Two expectations written by hand before measuring were wrong (d1's 101, and a probe that
+// assumed a push to a by-value parameter reaches the caller's row); the values above are
+// the measured ones.  Restored byte-identically (`git diff` empty against the pre-sabotage
+// commit): interpret / native / every switch / LOFT_HOIST_VERIFY=1 green.
 
 struct Bag { items: vector<integer>, count: integer }
 
@@ -237,8 +270,65 @@ fn d8() {
   assert(len(r) == 50 && tot(r) == 2450, "d8");
 }
 
+// d4 — a VIEW of the pushed vector, taken before the loop and read inside it: `len(d)`
+// goes through the runtime and must see every push.  v[i] = 2i + i: 3 * 780.
+fn d4() {
+  v: vector<integer> = [];
+  d = &v;
+  for i in 0..40 { v += [len(d) * 2 + i]; }
+  println("d4 {len(v)} {tot(v)}");
+  assert(len(v) == 40 && tot(v) == 2340, "d4");
+}
+
+// a1-a4 — the result of `a_mk` bound fresh (a1), replacing its own source (a2), twice (a3),
+// and in a loop that feeds each result back (a4: doubled 5 times, 32 * 1225).
+fn a_mk(src: const vector<integer>, n: integer) -> vector<integer> { [for i in 0..n { (src[i] ?? 0) * 2 }] }
+fn a1() {
+  x = [for i in 0..50 { i }];
+  r = a_mk(x, 50);
+  y = [for i in 0..50 { i }]; y = a_mk(y, 50);
+  z = [for i in 0..50 { i }]; z = a_mk(z, 50); z = a_mk(z, 50);
+  q = [for i in 0..50 { i }]; for _ in 0..5 { q = a_mk(q, 50); }
+  println("a1 {len(r)} {tot(r)} {tot(x)} a2 {len(y)} {tot(y)} a3 {tot(z)} a4 {len(q)} {tot(q)}");
+  assert(len(r) == 50 && tot(r) == 2450 && tot(x) == 1225, "a1");
+  assert(len(y) == 50 && tot(y) == 2450 && tot(z) == 4900 && len(q) == 50 && tot(q) == 39200, "a2-a4");
+}
+
+// b1 — the result is built in an ELEMENT SLOT of the container its source is an element of;
+// b2 — 40 rows, each the double of the last, so that store reallocates under the call.
+// Row k sums 1225 * 2^k: rows 0..3 are 1225 + 2450 + 4900 + 9800 = 18375.
+fn b1() {
+  g: vector<vector<integer>> = [[for i in 0..50 { i }]];
+  g += [a_mk(g[0]?, 50)];
+  h: vector<vector<integer>> = [[for i in 0..50 { i }]];
+  for k in 0..39 { h += [a_mk(h[k]?, 50)]; }
+  println("b1 {len(g)} {tot(g[0]?)} {len(g[1]?)} {tot(g[1]?)} b2 {len(h)} {tot(h[0]?) + tot(h[1]?) + tot(h[2]?) + tot(h[3]?)}");
+  assert(len(g) == 2 && tot(g[0]?) == 1225 && len(g[1]?) == 50 && tot(g[1]?) == 2450, "b1");
+  assert(len(h) == 40 && tot(h[0]?) + tot(h[1]?) + tot(h[2]?) + tot(h[3]?) == 18375, "b2");
+}
+
+// r1 — `(R-Base)`'s growth condition, found on the way: a loop that appends a VECTOR
+// element (no struct, so its mint keeps the runtime's append and earns no push header)
+// beside a read of a SIBLING field of the same record.  The append grows the record's
+// store; a base bound for the sibling would address the buffer that growth freed.  Before
+// the fix --native answered `null` here, and LOFT_HOIST_VERIFY=1 panicked "hoisted vector
+// base is stale".  vals sums 110 per four passes: 12500 * 110 + 50000.
+struct Grid { rows: vector<vector<integer>>, vals: vector<integer> }
+fn r1() {
+  seed = [7, 8, 9];
+  o = Grid { rows: [], vals: [11, 22, 33, 44] };
+  acc = 0;
+  for i in 0..50000 {
+    o.rows += [seed];
+    acc += o.vals[i % 4]?;
+  }
+  println("r1 {acc} {len(o.rows)} {tot(o.rows[49999]?)}");
+  assert(acc == 1375000 && len(o.rows) == 50000 && tot(o.rows[49999]?) == 24, "r1");
+}
+
 fn main() {
   w1(); w2(); w3(); w4(); w5(); w6(); w7(); w8(); w9(); w10(); w11(); w12();
-  d1(); d2(); d3(); d5(); d6(); d7(); d8();
+  d1(); d2(); d3(); d4(); d5(); d6(); d7(); d8();
+  a1(); b1(); r1();
   println("push window ok");
 }

@@ -838,7 +838,9 @@ split bound to a name first and a generator keep the vector.  `LOFT_TRACE_LAZY_S
 names each loop admitted and each declined with its reason.
 **`LOFT_NO_VECTOR_BASE=1`** (@PLN157 § V-ak, `@FR-R-Base`, default-ON) makes a
 growth-free loop's fused element reads and writes resolve the store per element again —
-with it off, a loop that grows no store (no push, no mint push — a null-discharge
+with it off, a loop that grows no store (no push and no mint, whether or not the mint
+emits through a push header — since 2026-09-21: one left on its templates grows its store
+all the same, and a base bound beside it answered `null` on native; a null-discharge
 buffer's mint is a fresh store and does not count, since 2026-09-18)
 binds the address of each hoisted vector's element 0 beside its header and every read
 or write is one bounds test and one load or store through it (the resample probe −14 %)
@@ -946,7 +948,23 @@ bisect step for a wrong element or length out of a counted push loop on native. 
 that can `break`, `return` or loop again, a push under a branch, another write to the
 path, or a range end that is not a simple invariant declines the loop.
 `LOFT_TRACE_PUSH_FILL=1` names each decline; `LOFT_HOIST_VERIFY=1` re-derives the push
-header at the fill.
+header at the fill.  The loop is read in either spelling — the statement and the
+comprehension `[for i in a..b { e }]` — and the reservation stands in front of every
+guarded copy of the loop (one written after a guard lands in the arm that does not run).
+**`LOFT_NO_PUSH_WINDOW=1`** (`@FR-R-PushFill`'s window clause, default-ON, generation time,
+`--native` only) makes a reserved counted push loop push through its push header again, the
+length written back to the record per push — with it off, a loop whose body reaches its
+vector through the pushes alone (an exclusive root, never named outside the pushes, no
+variable that may view it, no other store write) pushes through a held element address and
+a local length, and writes the record's length once when the loop ends (`push` 48.8 → 8.0 µs,
+0.47× its Rust twin; `comprehension` 9.53× → 1.70×; `grid` 8.10× → 2.81×; `f32_build`
+−80 %) — and is the first bisect step for a wrong element or length out of a counted push
+loop or a comprehension on native.  `LOFT_TRACE_PUSH_FILL=1` names the clause that declined
+a window.  ⚠ `LOFT_HOIST_VERIFY=1` checks the window's base and its frozen header at every
+push, but CANNOT see what the admission exists to prevent — a runtime reader meeting the
+lagging length changes no held fact — so there the interpreter is the falsifier.  The form
+is load-bearing: the window is three scalars whose address never reaches a call, because a
+counter whose address escaped to the growth arm lived on the stack and cost half the gain.
 **`LOFT_NO_INVARIANT_HOIST=1`** (@PLN157 § V-ao, `@FR-R-Invariant`, default-ON, generation
 time) makes every invariant integer chain evaluate at every use again — with it off, a
 chain of `+ - * neg & | ^` over literals and variables a loop neither rebinds nor lets

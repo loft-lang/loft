@@ -3,8 +3,8 @@
 Taken 2026-09-21 on x86-64, right after the record shapes (`records.md` § Built), from the
 portal's 24 rows still over 3×.  An ANALYSIS: every figure below is a HAND-PRICE — the
 emitted Rust of the routine edited to the form a rewrite would emit, compiled with the
-`--native-release` flags, run in-process with the result hash unchanged — and nothing here
-is built.  Two candidates priced NEGATIVE or not at all are listed as such; they are not
+`--native-release` flags, run in-process with the result hash unchanged.  **V1–V3 are BUILT
+(§ Built); F1, T1 and C1 are priced and not built.**  Two candidates priced NEGATIVE or not at all are listed as such; they are not
 work.
 
 | # | lever | rows it moves | hand-priced |
@@ -111,6 +111,55 @@ proposed on this row's evidence alone.
   chunked `sorted`), priced there at 7–17 % apiece.
 - **`mesh_aabb` (4.84×)**: the null-aware float comparison on fields no proof calls non-null
   (`records.md` § 8).  **`par` (5.16×)**: one row, another subsystem; not looked at.
+
+## Built — V1–V3 (2026-09-21)
+
+One clause of `(R-PushFill)` (`formal/rewrites.md`), switch `LOFT_NO_PUSH_WINDOW`, cells
+`tests/scripts/158-push-window.loft`, pins `tests/push_window.rs`.  Pinned figures
+(`bench/stats.py`, ±0.5 % or tighter), hashes unchanged:
+
+| row | before | after | of Rust |
+|---|---|---|---|
+| `push` | 48.8 µs | 8.0 µs | 3.03× → **0.47×** |
+| `comprehension` | 62.1 µs | 11.0 µs | 9.53× → **1.70×** |
+| `grid` | 69.6 µs | 23.9 µs | 8.10× → **2.81×** |
+| `f32_build` | 739 µs | 148 µs | 7.50× → **1.49×** (range 1.22–1.50: the Rust lane is noisy, ±22.8 %; native ±0.1 %) |
+
+Lane 14 median 1.90×, 7 of 12 within 2×.  `grid` stays over the bar: what is left is the
+outer loop — a vector-of-vectors append, whose hoist is declined whole.
+
+What the building found, that the next lever should start from:
+
+- **The hand-price has to be of the form you will EMIT, not of the idea.**  The first price
+  of V1 kept the header's own `len` as the counter and handed the header to the growth arm by
+  reference: 22.8 µs, half the analysis's figure.  Its address escaped, so LLVM kept it on the
+  stack and every push loaded and stored the length through memory.  Three scalars, the
+  growth arm taking the length by value and answering a fresh window by value: 10–13 µs.  A
+  helper's signature decides whether the rewrite works.
+- **A side-finding, fixed: `(R-Base)` bound a base over a store that grows.**  `growth_free`
+  counted the mints that earned a push header, so a mint left on its templates read as no
+  growth.  Reachable by default: `o.rows += [seed]` (`rows: vector<vector<integer>>`) beside
+  `o.vals[i % 4]?` answered `null` on --native for 1 425 000.  Cell r1.
+- **A prediction that failed is a measurement owed.**  d8 was predicted to decline and took a
+  window: a result vector's root depends on a `__vdb` witness that is the return buffer the
+  CALLER handed in, and `hoist::owned_local` reads any `__vdb*` dep as the store it owns.
+  Built both ways a caller could make it and the parameter one store (cells a1–b1): all hold.
+- **A sabotage that changes nothing is a finding too.**  Of the admission's three clauses two
+  have a cell that fails without them; the third (`may_write_store`) has none, because every
+  second grower that could be built declines the loop's hoist upstream.  Recorded as such in
+  the cell file rather than claimed.
+- **Re-derive a moved pin by what its column MEANS.**  `tests/push_hoist.rs` went red on c7,
+  c10, c17: its "hoisted pushes" column counted `push_hoisted::<` lines.  A windowed push is
+  still a push through the held header, so the counter took both routes and the table needed
+  no number changed.
+- **An unpinned bench loop can invent a regression.**  `record_append` read bimodal
+  (69k / 76–79k) in an ad-hoc loop while its emission was byte-identical; pinned it reads
+  68.4–69.5k.  Not reproduced, cause not established — `bench/stats.py` is the instrument.
+- NOT built, and the natural next widening: a body that READS the vector it pushes to
+  (`v += [v[i-1]? + x]`, d1) keeps the header push — the reads already serve from the header,
+  so it needs the window's length kept current in the header as well.  And `len(v)` in a push
+  loop's body (d2) is read by the counted-push recogniser as another write to the path, so
+  that loop is not even reserved.
 
 ## Order
 

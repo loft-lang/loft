@@ -3192,11 +3192,14 @@ pub fn push_window_ok(
     // naming predicate (`Value::reads_var`), so every spelling of a mention is covered.
     let may_view: Vec<u16> = (0..vars.count())
         .filter(|&x| {
+            // `(R-Alias)`: a parameter cannot name a local's store, but it can name a
+            // return buffer the caller offered.
+            let separate_parameter = vars.is_argument(x) && !root_is_retbuf;
             x != root
                 && !is_scalar(vars.tp(x))
                 && !matches!(vars.tp(x).base(), Type::Text(_))
                 && !owned_local(vars, x)
-                && !(vars.is_argument(x) && !root_is_retbuf)
+                && !separate_parameter
         })
         .collect();
     for s in body {
