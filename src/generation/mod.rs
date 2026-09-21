@@ -500,6 +500,23 @@ pub fn disambiguated_fn_ident(dups: &HashSet<String>, def: &crate::data::Definit
     rust_fn_ident(&base)
 }
 
+/// Is `def` a free function in all but its key — a free overload member (`f_…`, @PLN162) or
+/// an instance of a FREE generic (`i_<…>_n_<name>` / `i_<…>_f_<…>`, @PLN165 `D-Key`)?  Its
+/// `n_` twin is the definition it must behave as.
+fn is_free_in_all_but_key(def: &crate::data::Definition) -> bool {
+    if def.is_free_overload() {
+        return true;
+    }
+    let mut name = def.name();
+    while let Some(key) = Data::split_key(name).filter(|k| k.kind == crate::data::KeyKind::Instance)
+    {
+        name = key.rest;
+    }
+    name != def.name()
+        && (name.starts_with("n_")
+            || Data::split_key(name).is_some_and(|k| k.kind == crate::data::KeyKind::FreeOverload))
+}
+
 /// Flatten a loft def name into a valid Rust identifier.  Most names already are
 /// (`n_foo`, `t_4Pair_first`), but a generic instantiated over a TUPLE carries the
 /// synthetic tuple struct's schema name verbatim — `t_24__tuple<integer,integer>_first`
@@ -4329,7 +4346,9 @@ impl Output<'_> {
             Value::Call(d, _) => {
                 let callee = data.def(*d);
                 let name = callee.name();
+                // A free overload member (`f_…`) is a free function in all but its key.
                 name.starts_with("n_")
+                    || callee.is_free_overload()
                     || ((name.starts_with("t_") || callee.is_instance())
                         && matches!(callee.code(), Value::Block(_)))
             }
@@ -4370,11 +4389,12 @@ impl Output<'_> {
                 let callee = data.def(*d);
                 let name = callee.name();
                 let loft_bodied = matches!(callee.code(), Value::Block(_));
-                if name.starts_with("n_") && !loft_bodied {
+                let free = name.starts_with("n_") || callee.is_free_overload();
+                if free && !loft_bodied {
                     // a native user-level function: what it reaches is not visible here
                     return true;
                 }
-                if (name.starts_with("n_") || name.starts_with("t_") || callee.is_instance())
+                if (free || name.starts_with("t_") || callee.is_instance())
                     && loft_bodied
                     && !callees.contains(d)
                 {
@@ -8089,12 +8109,21 @@ extern crate loft;"
                 self.declared.insert(v);
             }
         }
-        // Determine the user-visible loft name for the shadow call stack.
-        let loft_name = def.name().strip_prefix("n_").unwrap_or(def.name());
+        // Only instrument user-defined FREE functions (Block body): an `n_` function, and what
+        // is one in all but its key — a free overload member (`f_…`) and an instance of a free
+        // generic (`i_…_n_…`) — so each carries the depth cap and the shadow-stack frame its
+        // `n_` twin carries.
+        let free = def.name().starts_with("n_") || is_free_in_all_but_key(def);
+        let instrument = matches!(def.code(), Value::Block(_)) && free;
+        // The user-visible loft name for the shadow call stack.
+        let source_name = def.original_name();
+        let loft_name = if def.name().starts_with("n_") || !free {
+            def.name().strip_prefix("n_").unwrap_or(def.name())
+        } else {
+            source_name.as_str()
+        };
         let loft_file = &def.position().file;
         let loft_line = def.position().line;
-        // Only instrument user-defined functions (Block body, n_ prefix).
-        let instrument = matches!(def.code(), Value::Block(_)) && def.name().starts_with("n_");
         let returns_text = matches!(def.returned(), Type::Text(_));
         if let Value::Block(bl) = def.code() {
             // An empty-body loft function (explicit stub) has no operators and result Void,

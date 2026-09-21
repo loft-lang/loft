@@ -187,9 +187,6 @@ impl Parser {
         })
     }
 
-    /// Is the next argument a TYPE name closing the call — `sizeof(Roster)` — which no
-    /// function can take, so the special form keeps it whatever the program declares?
-    /// Reads ahead and restores the lexer.
     /// Does a bracketed type-argument list follow, and then a call's `(` — `<integer>(` or
     /// `<vector<text>, P>(`?  A lexical look ahead that consumes nothing: every token up to
     /// the `>` that closes the first `<` may belong to a type (a name, `,`, `?`, `[`, `]`,
@@ -243,6 +240,9 @@ impl Parser {
         }
     }
 
+    /// Is the next argument a TYPE name closing the call — `sizeof(Roster)` — which no
+    /// function can take, so the special form keeps it whatever the program declares?
+    /// Reads ahead and restores the lexer.
     pub(crate) fn next_is_type_name_argument(&mut self) -> bool {
         let lnk = self.lexer.link();
         let is_type = match self.lexer.has_identifier() {

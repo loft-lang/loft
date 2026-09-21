@@ -16160,7 +16160,10 @@ impl Scopes<'_> {
             let lift_owned_return = if def.has_fnref_return_site() {
                 self.monomorph_fnref_return_is_fresh(val, data, def)
             } else {
+                // A free member of an overload set (`f_…`, @PLN162) is a free function in
+                // every respect but its key, and lifts as one.
                 def.name.starts_with("n_")
+                    || def.is_free_overload()
                     || monomorph_returns_a_borrow
                     || ((def.name.starts_with("t_") || def.is_instance())
                         && (def.attr_names.contains_key("__retbuf")

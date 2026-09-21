@@ -5085,8 +5085,18 @@ impl Definition {
     /// question that reaches them.
     #[must_use]
     pub fn is_loft_defined(&self) -> bool {
-        (self.name.starts_with("n_") || self.name.starts_with("t_") || self.is_instance())
+        (self.name.starts_with("n_")
+            || self.name.starts_with("t_")
+            || self.is_instance()
+            || self.is_free_overload())
             && self.code != Value::Null
+    }
+
+    /// Is this a FREE member of an overload set — keyed `f_<LEN><τ₁#τ₂…>_<name>` (`Disp-Key`,
+    /// @PLN162)?  A free function in every respect but its key.
+    #[must_use]
+    pub fn is_free_overload(&self) -> bool {
+        Data::split_key(&self.name).is_some_and(|k| k.kind == KeyKind::FreeOverload)
     }
 
     /// Is this an INSTANCE of a generic — keyed `i_<LEN><types>_<template>` (`D-Key`)?  Asked
