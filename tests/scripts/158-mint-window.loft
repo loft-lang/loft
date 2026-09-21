@@ -20,6 +20,17 @@
 // m7 is a keyed insert, whose claimed record takes the address too; m12 and m13 hand the
 // element to the callee as its buffer, so the caller has no write to serve; m14 is a
 // struct-enum element, which is not a plain record.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-21) — the window's verdict shown only the
+// element's own writes, so a nested mint inside it was admitted.  The FIRST run of that
+// sabotage changed nothing: every cell stayed green under it, because a stale address needs
+// the store's memory to MOVE inside the window and nine small elements never reallocate —
+// the cells could not fail, so they proved nothing about the growth condition.  m4b was
+// added for that: under the sabotage it answers `120 125094 21420` for `120 127140 21420`
+// on --native (the `k` writes land in memory the store has left; its assert fails), and
+// LOFT_HOIST_VERIFY=1 panics "record view address is stale — a store grew or moved under
+// the block".  Restored byte-identically: interpret / native / every switch / every
+// falsifier green.
 
 struct P { x: integer, y: integer }
 struct Mix { a: integer, on: boolean, f: float, s: single, k: integer }
@@ -68,6 +79,21 @@ fn m4() {
   t = 0; for q in v { t += sx(q.pts) + sy(q.pts) * 100 + q.k; }
   println("m4 {t}");
   assert(t == 3132, "m4");
+}
+
+// m4b — the same shape at a size that REALLOCATES the store inside the window: each outer
+// element owns sixty points claimed in the element's own store, so the store's memory
+// moves between the outer mint and the write of `k` that follows the nested vector.  An
+// address held across that growth writes `k` into memory the store has left.
+fn m4b() {
+  v: vector<Poly> = [];
+  for i in 0..120 {
+    v += [Poly { pts: [for j in 0..60 { P { x: i + j, y: 1 } }], k: i + 1000 }];
+  }
+  tk = 0; tp = 0;
+  for q in v { tk += q.k; tp += len(q.pts) + q.pts[59]?.x; }
+  println("m4b {len(v)} {tk} {tp}");
+  assert(len(v) == 120 && tk == 127140 && tp == 21420, "m4b");
 }
 
 // m5 — a field's value is a call that APPENDS to a sibling vector of the same record.
@@ -155,6 +181,6 @@ fn m14() {
 }
 
 fn main() {
-  m1(); m2(); m3(); m4(); m5(); m5b(); m6(); m7(); m10(); m11(); m12(); m13(); m14();
+  m1(); m2(); m3(); m4(); m4b(); m5(); m5b(); m6(); m7(); m10(); m11(); m12(); m13(); m14();
   println("mint window ok");
 }

@@ -435,9 +435,10 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  (R-Base's condition; a null-discharge buffer's mint is not a
                  growth), frees no record before a later use of r, never
                  rebinds r — a `Set`, and a NATIVE op taking r as its first
-                 operand that is not a read (`OpGet…`) or a fusable scalar set:
-                 a mint into it, a copy into it, a free — and reads, writes or
-                 hands r at least once.  A binding to null (a buffer's pre-init,
+                 operand that is not a read (`OpGet…`) or an in-place scalar set
+                 (R-InPlace; a kind the address does not serve keeps its store
+                 write, to the same bytes): a mint into it, a copy into it, a
+                 free — and reads, writes or hands r at least once.  A binding to null (a buffer's pre-init,
                  minted later) is never a view.  A NULLABLE view — `e = v[i]`
                  without `?`, the loop variable of `for e in v`, whose null is the
                  loop's end signal — is admitted as its inner record: the null
@@ -455,7 +456,11 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  write like a direct one: OpGetField adds a constant to the DbRef's
                  position and leaves its record alone.  The clause serves the
                  ADDRESS only; (R-Scalar)'s hoisted scalars keep their
-                 bare-variable key.
+                 bare-variable key.  THE MINT CLAUSE: a minted plain-record
+                 element `e = OpNewRecord(…)` holds its address over its own
+                 WINDOW — from the mint (after its growth step, if it had one) up
+                 to its `OpFinishRecord(…, e, …)` in the same block — when the
+                 window meets the conditions above in the remainder's place.
 ```
 
 **In words.** 2026-09-18, the drawing library's crossing loop (`pg_cur = pg_table[i]?`,
@@ -527,6 +532,34 @@ a nested read now walks the path the unrewritten way and compares
 `tests/nested_field.rs`.  Sites: `hoist::view_field`, `hoist::record_view_ptr` (the fusable
 use), `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`,
 `vector::path_read_verify`.
+
+*The mint clause (2026-09-21, @PLN158 R4).*  An address is promised for the whole
+remainder of a block, and a minted element never got one: its remainder holds the NEXT
+append, which grows a store (`_elm_N`: *"the remainder may grow a store"*).  So every field
+of an appended record resolved the store again — a store lookup, a record-validity read and
+two bounds checks per field, 143 instructions for a three-field record against the Rust
+reference's 18, even through a push header that had just produced the slot.  The element
+needs the address only while it is filled.  Hand-priced on the emitted Rust (−38…46 %),
+then built: `record_append` 126.7 → 69.1 µs (3.55× → 1.95×), `mesh_emit` 189.3 → 107.2 µs
+(4.98× → 2.83×; it stood at 18.3× before `(R-Mint)`'s field clause).  The window is judged
+by the verdict a remainder gets (`hoist::view_extent_verdict`, one definition for both
+extents): a text set, a nested mint, a builder that appends and a delivery copy each
+decline it; a field value that names the container runs BEFORE the mint (loft#1548) and so
+leaves the window clean; an element handed to its builder as the return buffer has no write
+left for the caller to serve.  Any mint form qualifies — a keyed collection's claimed
+record is one `DbRef` too, and its finish files it by the key just written.  The shared
+verdict also stopped reading an in-place set of a kind the address does not serve
+(`OpSetBoolean`, the narrow integers) as a REBIND of the view: it is a fixed-width write to
+the same bytes, and counting it had declined every record with such a field.  **The first
+sabotage of this clause changed nothing** — with the window's verdict blinded to everything
+but the element's own writes, every cell stayed green, because a stale address needs the
+store's memory to MOVE inside the window and nine small elements never reallocate: the
+cells could not fail, so they proved nothing.  `m4b` (sixty nested points per element, 120
+elements) is the cell that can: under the sabotage it answers `120 125094 21420` for
+`120 127140 21420`, and `LOFT_HOIST_VERIFY=1` panics naming the stale address.  Switch
+`LOFT_NO_MINT_WINDOW`.  Cells `tests/scripts/158-mint-window.loft`, pins
+`tests/mint_window.rs`.  Sites: `hoist::mint_window`, `hoist::view_extent_verdict`,
+`Output::bind_record_ptr`, `Output::close_ptr_windows_before`.
 
 ### A stdlib one-op wrapper is its op
 

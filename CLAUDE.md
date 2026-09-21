@@ -887,6 +887,16 @@ first bisect step for a wrong value read or written through a nested field path 
 `LOFT_HOIST_VERIFY=1` compares every such read with the path walked the unrewritten way.
 Emitter-local on purpose: folded in the parser, the read would become an `(R-Scalar)`
 candidate typed by the PARENT record, which a write through a sub-record view never evicts.
+**`LOFT_NO_MINT_WINDOW=1`** (`@FR-R-RecPtr`'s mint clause, default-ON, generation time,
+`--native` only) makes every field write of an appended record resolve the store again —
+with it off, a minted plain-record element holds its slot's address from the mint up to its
+own finish, and its `integer` / `float` / `single` fields are one store each through it
+(`record_append` −45 %, 3.55× → 1.95× of Rust; `mesh_emit` −43 %, 2.83×); a window that
+holds a text set, a nested mint, a builder that appends or a delivery copy declines — and is
+the first bisect step for a wrong or lost field in an appended record on native;
+`LOFT_HOIST_VERIFY=1` compares the address with a fresh derivation at every write.  Its
+cells could not fail until one reallocated the store INSIDE a window (`m4b`): small cells
+never move the memory a stale address would miss.
 **`LOFT_NO_LOOP_BUFFER_REUSE=1`** (@PLN157 § V-al, `@FR-R-LoopBuffer`, default-ON,
 generation time) makes a vector local declared `[]` INSIDE a loop re-mint its per-site
 buffer every iteration again — with it off, the buffer's store and its vector survive the
