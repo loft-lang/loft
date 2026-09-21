@@ -15,6 +15,13 @@
 // collection returned wild values (`510277628`, `2135492622`) and iterating one
 // read arbitrary memory — silently, on both backends. The paged loaders had this
 // gate; the whole-image path did not.
+//
+// loft#1562 — `bind` and `url` are the same mismatch through the other two ways an
+// existing image is read through this program's types: `store_persist_bind` on an
+// existing file, and the whole-image URL loaders (`LOFT_PERSIST_TEST_SHA` is the
+// pin, or `trusted`).  Both refuse.  A refused bind leaves the collection as it was
+// (empty, and still usable) and leaves the file's `.dschema` naming the layout that
+// wrote it, so `store_load` goes on refusing the file too.
 
 struct Tile {
   id: integer not null,
@@ -31,6 +38,18 @@ fn main() {
     ok = store_load(h, path);
     println("changed whole ok={ok}");
     println("changed whole len={len(h)}");
+  } else if mode == "bind" {
+    ok = store_persist_bind(h, path);
+    println("changed bind ok={ok}");
+    println("changed bind len={len(h)}");
+    h += Tile { id: 5, name: "five", extra: 55 };
+    println("changed bind after-insert len={len(h)} name={(h[5] ?? Tile { id: 0, name: \"?\", extra: 0 }).name}");
+  } else if mode == "url" {
+    url = env_variable("LOFT_PERSIST_TEST_URL");
+    sha = env_variable("LOFT_PERSIST_TEST_SHA");
+    ok = if sha == "trusted" { store_load_url_trusted(h, url) } else { store_load_url(h, url, sha) };
+    println("changed url ok={ok}");
+    println("changed url len={len(h)}");
   } else {
     ok = store_load_key(h, path, 42);
     println("changed ok={ok}");

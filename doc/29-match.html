@@ -32,6 +32,9 @@
   <span class="en">Circle</span> { radius: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
   <span class="en">Rect</span> { w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, h: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
 }</code></pre>
+<p>A variant whose field is itself an enum.</p>
+<pre><code><span class="kw">enum</span> <span class="en">Paint</span> { <span class="en">Solid</span> { rgb: <span class="ty"><a href="stdlib-types.html">integer</a></span> }, <span class="en">Clear</span> }
+<span class="kw">enum</span> <span class="en">Tile</span> { <span class="en">Painted</span> { paint: <span class="en">Paint</span>, n: <span class="ty"><a href="stdlib-types.html">integer</a></span> }, <span class="en">Bare</span> }</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">direction_name</span>(d: <span class="en">Direction</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {
   match d {
     <span class="en">North</span> =&gt; <span class="st">"north"</span>,
@@ -67,6 +70,16 @@
     <span class="en">Rect</span> { w, h }     =&gt; w * h,
   };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(shape_area == <span class="nm">12</span>, <span class="st">"struct-enum destructure: {shape_area}"</span>);</code></pre>
+<h2 id="patterns-inside-a-field">Patterns inside a field</h2>
+<p>A field can take a pattern instead of a name.  A literal matches only that value, and when the field is itself an enum, a variant matches only that variant and binds its own fields in turn.  A field the arm does not name is simply not tested.  An arm with a pattern inside a field covers only part of its variant, so the match still needs <code>_</code> (or an arm that binds the fields plainly) to cover the rest.</p>
+<pre><code>  tile = <span class="en">Painted</span> { paint: <span class="en">Solid</span> { rgb: <span class="nm">255</span> }, n: <span class="nm">2</span> };
+  what = match tile {
+    <span class="en">Painted</span> { paint: <span class="en">Clear</span>, n } =&gt; <span class="st">"clear x{n}"</span>,
+    <span class="en">Painted</span> { paint: <span class="en">Solid</span> { rgb: <span class="nm">0</span> }, n } =&gt; <span class="st">"black x{n}"</span>,
+    <span class="en">Painted</span> { paint: <span class="en">Solid</span> { rgb }, n } =&gt; <span class="st">"colour {rgb} x{n}"</span>,
+    _ =&gt; <span class="st">"bare"</span>,
+  };
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(what == <span class="st">"colour 255 x2"</span>, <span class="st">"a pattern inside a field: {what}"</span>);</code></pre>
 <h2 id="guards">Guards</h2>
 <p>Add <code>if condition</code> after a pattern to restrict when the arm matches. A guard can reject, so a guarded arm never counts towards covering an enum: a match whose arms name every variant but guard them all is still refused.</p>
 <pre><code>  v = <span class="nm">42</span>;
@@ -145,6 +158,15 @@
     _        =&gt; <span class="st">"elsewhere"</span>,
   };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(where == <span class="st">"two-b"</span>, <span class="st">"tuple pattern: {where}"</span>);</code></pre>
+<p>An element can be an enum variant with its fields bound, so one arm reads both sides at once, and a guard can compare them.</p>
+<pre><code>  a: <span class="en">Shape</span> = <span class="en">Rect</span> { w: <span class="nm">2</span>, h: <span class="nm">3</span> };
+  b: <span class="en">Shape</span> = <span class="en">Circle</span> { radius: <span class="nm">5</span> };
+  bigger = <span class="fn-call">match</span> (a, b) {
+    (<span class="en">Rect</span> { w, h }, <span class="en">Circle</span> { radius }) <span class="kw">if</span> w * h &gt; radius =&gt; <span class="st">"rect"</span>,
+    (<span class="en">Rect</span> { w, h }, <span class="en">Circle</span> { radius }) =&gt; <span class="st">"circle"</span>,
+    _ =&gt; <span class="st">"other"</span>,
+  };
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(bigger == <span class="st">"rect"</span>, <span class="st">"variants inside a tuple pattern: {bigger}"</span>);</code></pre>
 <h2 id="when-nothing-matches">When nothing matches</h2>
 <p>This match names no <code>_</code>, and 7 is none of its arms.  On an enum that would not compile; on a scalar there is no finite set to check, so the match answers null and the null travels on.  Give the result a fallback with <code>??</code>, or add a <code>_</code> arm — the compiler will not remind you.</p>
 <pre><code>  unmatched = match <span class="nm">7</span> {
@@ -153,8 +175,8 @@
   };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(unmatched == <span class="kw">null</span>, <span class="st">"a scalar match that selects no arm answers null"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((unmatched ?? <span class="st">"none"</span>) == <span class="st">"none"</span>, <span class="st">"so give it a fallback"</span>);</code></pre>
-<h2 id="nested-match">Nested match</h2>
-<p>Match can appear inside other expressions, including other match arms.</p>
+<h2 id="match-inside-an-arm">Match inside an arm</h2>
+<p>Match is an expression, so it can appear inside other expressions, including another match's arm.</p>
 <pre><code>  n = <span class="nm">15</span>;
   result = match n % <span class="nm">2</span> == <span class="nm">0</span> {
     <span class="kw">true</span>  =&gt; <span class="st">"even"</span>,
@@ -198,6 +220,10 @@ enum Shape {
   Rect { w: integer, h: integer },
 }
 
+// A variant whose field is itself an enum.
+enum Paint { Solid { rgb: integer }, Clear }
+enum Tile { Painted { paint: Paint, n: integer }, Bare }
+
 fn direction_name(d: Direction) -&gt; text {
   match d {
     North =&gt; "north",
@@ -239,6 +265,22 @@ fn main() {
     Rect { w, h }     =&gt; w * h,
   };
   assert(shape_area == 12, "struct-enum destructure: {shape_area}");
+
+  // ## Patterns inside a field
+  // A field can take a pattern instead of a name.  A literal matches only that
+  // value, and when the field is itself an enum, a variant matches only that
+  // variant and binds its own fields in turn.  A field the arm does not name is
+  // simply not tested.  An arm with a pattern inside a field covers only part of
+  // its variant, so the match still needs `_` (or an arm that binds the fields
+  // plainly) to cover the rest.
+  tile = Painted { paint: Solid { rgb: 255 }, n: 2 };
+  what = match tile {
+    Painted { paint: Clear, n } =&gt; "clear x{n}",
+    Painted { paint: Solid { rgb: 0 }, n } =&gt; "black x{n}",
+    Painted { paint: Solid { rgb }, n } =&gt; "colour {rgb} x{n}",
+    _ =&gt; "bare",
+  };
+  assert(what == "colour 255 x2", "a pattern inside a field: {what}");
   // ## Guards
   // Add `if condition` after a pattern to restrict when the arm matches.
   // A guard can reject, so a guarded arm never counts towards covering an enum:
@@ -334,6 +376,17 @@ fn main() {
   };
   assert(where == "two-b", "tuple pattern: {where}");
 
+  // An element can be an enum variant with its fields bound, so one arm reads both
+  // sides at once, and a guard can compare them.
+  a: Shape = Rect { w: 2, h: 3 };
+  b: Shape = Circle { radius: 5 };
+  bigger = match (a, b) {
+    (Rect { w, h }, Circle { radius }) if w * h &gt; radius =&gt; "rect",
+    (Rect { w, h }, Circle { radius }) =&gt; "circle",
+    _ =&gt; "other",
+  };
+  assert(bigger == "rect", "variants inside a tuple pattern: {bigger}");
+
   // ## When nothing matches
   // This match names no `_`, and 7 is none of its arms.  On an enum that would
   // not compile; on a scalar there is no finite set to check, so the match
@@ -346,8 +399,9 @@ fn main() {
   assert(unmatched == null, "a scalar match that selects no arm answers null");
   assert((unmatched ?? "none") == "none", "so give it a fallback");
 
-  // ## Nested match
-  // Match can appear inside other expressions, including other match arms.
+  // ## Match inside an arm
+  // Match is an expression, so it can appear inside other expressions, including
+  // another match's arm.
   n = 15;
   result = match n % 2 == 0 {
     true  =&gt; "even",

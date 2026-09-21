@@ -3758,6 +3758,15 @@ impl Stores {
         // snapshot-then-mmap path.
         let exists = std::fs::metadata(path).is_ok_and(|m| m.len() >= 8);
 
+        // An existing file is READ through this slot's type, so it passes the same
+        // layout gate as `store_load` (`@FR-L-Sound`).  It has to come before the open:
+        // a refused bind must leave the slot as it was, and must not reach the sidecar
+        // write at the end of this function, which records THIS program's layout and
+        // so would wave every later load of the file through.
+        if exists && !self.schema_gate_ok(slot, path, "store_persist_bind") {
+            return false;
+        }
+
         // Preserve the slot's bookkeeping across the swap.
         let preserved = {
             let s = &self.allocations[slot_idx];
@@ -3995,7 +4004,7 @@ impl Stores {
         if slot_idx >= self.allocations.len() {
             return false;
         }
-        if !self.schema_gate_ok(slot, path) {
+        if !self.schema_gate_ok(slot, path, "store_load") {
             return false;
         }
         let path_str = match path.to_str() {
@@ -4873,6 +4882,9 @@ impl Stores {
         all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
     ))]
     pub fn load_url_verified(&mut self, slot: u16, url: &str, sha256_hex: &str) -> bool {
+        if !self.url_schema_gate_ok(slot, url, "store_load_url") {
+            return false;
+        }
         let bytes = match crate::net::fetch_bytes(url) {
             Ok(b) => b,
             Err(e) => {
@@ -4905,6 +4917,9 @@ impl Stores {
         all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
     ))]
     pub fn load_url(&mut self, slot: u16, url: &str) -> bool {
+        if !self.url_schema_gate_ok(slot, url, "store_load_url_trusted") {
+            return false;
+        }
         let bytes = match crate::net::fetch_bytes(url) {
             Ok(b) => b,
             Err(e) => {
@@ -4924,7 +4939,7 @@ impl Stores {
     /// `load_path` (the trusted path) validates only in debug and is faster;
     /// use this for a file whose provenance you don't control.
     pub fn load_path_untrusted(&mut self, slot: u16, path: &std::path::Path) -> bool {
-        if !self.schema_gate_ok(slot, path) {
+        if !self.schema_gate_ok(slot, path, "store_load_untrusted") {
             return false;
         }
         let bytes = match std::fs::read(path) {
@@ -4947,27 +4962,72 @@ impl Stores {
     ///
     /// The `.dschema` sidecar already records the layout the file was written with, and
     /// the paged loaders already gate on it — this is the same gate on the whole-image
-    /// path.  A store with no sidecar (legacy, or written by another tool) still loads:
-    /// the check can only report what it knows, and refusing every unlabelled store
-    /// would break programs that are reading their own correct data.
-    fn schema_gate_ok(&self, slot: u16, path: &std::path::Path) -> bool {
-        let known_type = self.allocations[slot as usize].known_type;
-        if known_type == u16::MAX {
+    /// paths, `store_persist_bind` opening an existing file among them.  A store with no
+    /// sidecar (legacy, or written by another tool) still loads: the check can only
+    /// report what it knows, and refusing every unlabelled store would break programs
+    /// that are reading their own correct data.
+    ///
+    /// `builtin` names the call in the refusal, so the reader is sent to the line that
+    /// asked.
+    fn schema_gate_ok(&self, slot: u16, path: &std::path::Path, builtin: &str) -> bool {
+        let Some(current) = self.slot_layout_identity(slot) else {
             return true; // untyped store — no identity to compare against
-        }
-        let current = crate::schema_sidecar::LayoutIdentity::of(self, &[known_type]);
+        };
         // An unreadable sidecar (an I/O failure, not a layout answer) tells us nothing
         // about the layout, so it neither passes nor fails the store: keep the previous
         // behaviour rather than refuse a load on a filesystem hiccup.
         let Ok(verdict) = crate::schema_sidecar::check_beside(path, &current) else {
             return true;
         };
+        Self::layout_verdict_ok(&verdict, &path.display().to_string(), builtin)
+    }
+
+    /// [`schema_gate_ok`](Self::schema_gate_ok) for a store image fetched from `url`: the
+    /// sidecar is `<url>.dschema`, read over the same transport as the image.  A fetch
+    /// that fails is an absent sidecar — a server answers 404 for one it does not have,
+    /// and a missing `file://` sidecar is the same answer — so it passes, as a local
+    /// store with no sidecar does.  The image's SHA-256 pin does not cover the sidecar
+    /// and does not need to: a sidecar can only refuse a load, never admit a misread
+    /// that its absence would not.
+    #[cfg(any(
+        feature = "registry",
+        all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
+    ))]
+    fn url_schema_gate_ok(&self, slot: u16, url: &str, builtin: &str) -> bool {
+        let Some(current) = self.slot_layout_identity(slot) else {
+            return true; // untyped store — no identity to compare against
+        };
+        let verdict = match crate::net::fetch_bytes(&format!("{url}.dschema")) {
+            Ok(bytes) => match std::str::from_utf8(&bytes) {
+                Ok(text) => crate::schema_sidecar::verdict_for_sidecar_text(text, &current),
+                Err(_) => crate::schema_sidecar::SchemaVerdict::Unreadable,
+            },
+            Err(_) => crate::schema_sidecar::SchemaVerdict::Fresh,
+        };
+        Self::layout_verdict_ok(&verdict, url, builtin)
+    }
+
+    /// The layout identity of the type `slot` is read through, or `None` for an untyped
+    /// store, which has nothing to compare a sidecar against.
+    fn slot_layout_identity(&self, slot: u16) -> Option<crate::schema_sidecar::LayoutIdentity> {
+        let known_type = self.allocations[slot as usize].known_type;
+        (known_type != u16::MAX)
+            .then(|| crate::schema_sidecar::LayoutIdentity::of(self, &[known_type]))
+    }
+
+    /// May a store whose sidecar gave `verdict` be read raw (`@FR-L-Sound`)?  Only an
+    /// absent sidecar or a matching one says yes.  Every other answer is refused, with
+    /// what changed, on stderr: a refused load otherwise reads as "the file is missing",
+    /// which sends the reader to the wrong half of their program.
+    fn layout_verdict_ok(
+        verdict: &crate::schema_sidecar::SchemaVerdict,
+        what: &str,
+        builtin: &str,
+    ) -> bool {
         if verdict.is_raw_safe() {
             return true;
         }
-        // Say what changed.  A refused load otherwise reads as "the file is missing",
-        // which sends the reader to the wrong half of their program.
-        let detail = match &verdict {
+        let detail = match verdict {
             crate::schema_sidecar::SchemaVerdict::Changed(diff) => {
                 let mut parts = Vec::new();
                 if !diff.changed.is_empty() {
@@ -4984,11 +5044,10 @@ impl Stores {
             _ => "its recorded layout could not be read".to_string(),
         };
         crate::loft_eprintln!(
-            "store_load: refusing {} — it was written with a different layout than this \
+            "{builtin}: refusing {what} — it was written with a different layout than this \
              program reads it with, so its records would be read at the wrong stride \
-             ({detail}).  Rebuild the store with this program, or load it with the \
-             version that wrote it.",
-            path.display()
+             ({detail}).  Rebuild the store with this program, or open it with the \
+             version that wrote it."
         );
         false
     }

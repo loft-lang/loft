@@ -85,7 +85,7 @@ not *keyed vs positional*. It is **unique vs not**:
 |---|---|---|---|
 | `vector<T>`, `array<T>` | inline / referenced | **ordinal** | position is the only identity there is |
 | `hash<T[k]>` | own records | **the declared key** | a hash key is unique by construction |
-| `sorted<T[k]>`, `ordered<T[k]>` | own records | **ordinal**, key indexed | ordered BY the key, duplicates allowed |
+| `sorted<T[k]>`, `ordered<T[k]>` | own records | **ordinal**, key indexed | ordered BY the key; one record per key is an insert rule, not a declaration |
 | `index<T[k]>`, `trie<T[k]>` | own records | **ordinal**, key indexed | the key is not declared unique, so nothing may lean on it |
 | `spatial<T[k…]>` | own records | **none** | a Morton order over several axes is not a SQL order |
 
@@ -106,7 +106,7 @@ wrong for a reason worth keeping:
 |---|---|---|
 | `hash` | replaces | **replaces** |
 | `index` | replaces | **replaces** |
-| `sorted` / `ordered` | replaces | **keeps both** |
+| `sorted` / `ordered` | replaces | ~~keeps both~~ **replaces** since loft#1572 |
 
 - **`index` does not permit duplicates.** The old row said it did "by
   definition"; a loft `index` replaces on an equal key, in both configurations.
@@ -114,20 +114,19 @@ wrong for a reason worth keeping:
   on a uniqueness the type DECLARES, and `index` declares none. A guarantee is a
   declaration, not an observed behaviour — leaning on the behaviour would put
   the schema at the mercy of an insert path nobody promised.
-- **`sorted` really can hold two elements of one key**, so the sentence the
-  falsifying `INSERT` put into this design is true. But it is true for a reason
-  the design did not state: the duplicate survives only when the element type has
-  ANOTHER keyed collection over it — merely DECLARED is enough, never
-  instantiated. Two keyed collections over one element type are views of one
-  record set (loft#843), so `sorted<Beat[bar]>` shows two elements of one bar
-  because `hash<Beat[note]>` is what tells them apart.
+- **`sorted` held two elements of one key only through a defect.** When the
+  element type had ANOTHER keyed collection over it — merely DECLARED was enough
+  — a `sorted` was stored by reference (`ordered`) and that layout stacked a
+  repeated key instead of replacing it. That was loft#1572, against
+  `@FR-Col-Insert` (one record per key, latest insert wins); it now replaces in
+  both configurations, like `index`. The falsifying `INSERT` had met that
+  duplicate.
 
-That last point is the one to carry forward: **whether a `sorted` can hold
-duplicates is not a property of the collection**. It depends on what else in the
-program keys that element type, which another file can change. So the ordinal is
-not merely the conservative answer for a non-hash collection — it is the only
-answer a derivation is entitled to, because the alternative depends on a fact
-outside the type it is deriving from.
+The ANSWER stays the ordinal, for the reason the `index` bullet gives: an address
+may rest only on a uniqueness the type DECLARES. And the defect is the argument
+for that rule rather than against it: the observed uniqueness of a `sorted`
+depended on what ANOTHER file declared, and a derivation that had leaned on it
+would have been wrong in exactly the programs that tripped it.
 
 A `hash` is unaffected: it enforces its key in both configurations, which is what
 makes `AddrKey` sound.
@@ -139,11 +138,11 @@ a record with `beats: sorted<Beat[bar]>` and `byname: hash<Beat[note]>` writes
 **every one of its records into BOTH child tables**, addressed two different
 ways — and adding to only one of the two collections fills both. That is not
 duplication the mapping introduced; it is what the loft value is. `children_live`
-measures it:
+measures it, with beats added out of bar order (1, 3, 2):
 
 ```
-beats  1|0|1|y;1|1|1|x;1|2|2|z     ordinal-addressed, two elements of bar 1
-byname 1|1|x;1|1|y;1|2|z           the same three, addressed by the other key
+beats  1|0|1|x;1|1|2|z;1|2|3|y     ordinal-addressed, in bar order
+byname 1|1|x;1|3|y;1|2|z           the same three, addressed by the other key
 ```
 
 It belongs beside "Sharing is lost" below: a tree mapping cannot represent a

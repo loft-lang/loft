@@ -854,7 +854,7 @@ also the canonical pattern for any single-collection on-disk state.
 
 | Function | Description |
 |----------|-------------|
-| `store_persist_bind(h: hash, path: text) -> boolean` | Re-roots the Store backing `h` at a file at `path`.  Fresh-path branch: snapshots the current bytes (padded to ≥1024 words with a valid tail-free block), writes them, and mmaps the file.  Existing-path branch: opens the file via mmap and adopts its contents (discarding the in-memory state at that slot).  Returns `false` on any I/O / format error — no panic; callers fall back to JSON or rebuild. |
+| `store_persist_bind(h: hash, path: text) -> boolean` | Re-roots the Store backing `h` at a file at `path`.  Fresh-path branch: snapshots the current bytes (padded to ≥1024 words with a valid tail-free block), writes them, and mmaps the file.  Existing-path branch: opens the file via mmap and adopts its contents (discarding the in-memory state at that slot) — unless the `.dschema` beside it records a different layout than `h`'s type, which is refused as `store_load` refuses it.  Returns `false` on any I/O / format / layout error — no panic; callers fall back to JSON or rebuild. |
 | `store_persist_copy(r: reference, path: text) -> boolean` | Writes an image of `r` laid out for PAGING and leaves the live collection where it is — nothing moves, so every reference stays valid, and the file is NOT bound.  The image is REBUILT, so each record sits in its collection's own order (key order for a `trie`), which is what makes a paged prefix query cheap: measured 4.9 requests / 0.32 MB against a bound image's 19.9 / 1.28 MB on a 74,692-word vocabulary.  Sized to its content, with none of the growth slack a bound file keeps.  Use it for a file another program or a browser will READ; use `store_persist_bind` for a store you go on writing to. @PLN134 |
 
 Usage pattern:
@@ -882,8 +882,14 @@ fn main() {
   `h` is unchanged from a record-layout perspective — the DbRef
   shape `(store_nr, rec, pos)` stays valid, only the underlying
   buffer moves from anonymous heap to mmap.
-- When `path` exists, the call invokes `Store::open(path)` which
-  validates the loft Store signature and rebuilds the free-list.
+- When `path` exists, the call first compares the layout recorded
+  in `<path>.dschema` with `h`'s type.  A different layout — a
+  struct that gained, lost or changed a field — is refused: the
+  call returns `false`, prints what differs on stderr, and leaves
+  the file, its `.dschema` and `h` untouched.  A file without a
+  `.dschema` is not checked.  Otherwise the call invokes
+  `Store::open(path)`, which validates the loft Store signature and
+  rebuilds the free-list.
   The caller's prior in-memory state at that slot is discarded.
   The caller's existing `DbRef`s into the hash remain valid IFF the
   on-disk layout describes the same type — the standard pattern is

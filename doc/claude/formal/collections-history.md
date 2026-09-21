@@ -6,6 +6,31 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
+> **D-col-5 — OPEN (2026-09-21, loft#1576) — a displacement in a linked group is decided per
+> MEMBER.**  `(Col-Group-Dup)` says a repeated key displaces the older record from EVERY keyed
+> member, and `(Col-Group)` that a record leaving through any member leaves every member.  Each
+> keyed arm of `Stores::insert_record` displaces only what collided in ITS OWN key, and every
+> member of a group only unlinks.  Two symptoms, both backends: members keyed on different
+> fields disagree about the record set (`hash<B[bar]>` + `index<B[note]>`: `B{1,"x"}` then
+> `B{1,"y"}` leaves `x` in the index after it left the hash), and a group with no vector member
+> releases a displaced record nowhere (two records per repeated key).  The home for both is
+> `record_finish`, after the fan-out; it needs every keyed arm to report what it displaced.
+> Found by loft#1572's matrix, whose `children_live` cell had pinned the first symptom as
+> design.
+>
+> **D-col-4 — OPENED AND CLOSED (2026-09-21, loft#1572) — a `sorted` stored by reference kept a
+> repeated key.**  `(Col-Insert)` and C68 keep one record per key, latest insert wins.  A
+> `sorted<T[k]>` whose element type any `hash` / `index` in the program also holds is the
+> `ordered` layout, and `vector::ordered_finish` kept only the POSITION of its search, so the
+> repeated key was shifted in beside the older record: an unrelated declaration changed what
+> `+=` did, on both backends and in groups.  Closed by the insert's own search taking the found
+> flag — the new record takes the older one's slot, as `sorted_finish` does inline — and
+> `insert_record` releasing the displaced record unless a group sibling holds it.  Nothing
+> registered it while it was open: `children_live` and `OBJECT_MAPPING.md` had recorded the
+> stacking as the measured reason a `sorted` takes the SQL ordinal.  Guarded by
+> `1572-an-ordered-collection-displaces-a-repeated-key` (nine cells, falsified at eb8702054 and
+> by patch).
+
 > **D-col-3 — OPENED AND CLOSED (2026-09-06, loft#1402) — a by-INDEX removal kept what the
 > element OWNED.**  `(Col-Remove)` deletes one element and LOFT.md says `v#remove` "removes
 > exactly one element, releases what that element owned".  `Stores::remove_vector_at`'s UNLINKED
@@ -52,7 +77,8 @@
 - **Candidate OPEN (verify):** the per-query scratch-vector allocation for spatial slices (CAVEATS.md notes
   it as the next efficiency lever) — a performance note, likely NOT a formal deviation.
 
-OPEN: **0** — `D-col-lookup` opened 2026-09-07 and CLOSED 2026-09-08 (loft#1450, below);
+OPEN: **1** — `D-col-5` (loft#1576, above).  `D-col-4` opened and CLOSED 2026-09-21 (loft#1572,
+above); `D-col-lookup` opened 2026-09-07 and CLOSED 2026-09-08 (loft#1450, below);
 `D-col-null` was opened and CLOSED the same day (2026-08-28, below).
 
 ### `D-col-lookup` — OPENED 2026-09-07, CLOSED 2026-09-08 (loft#1450): the rule's cited anchor was a lint switch, not a type

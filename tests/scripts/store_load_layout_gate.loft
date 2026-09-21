@@ -8,6 +8,12 @@
 // extra field → different layout) must be REFUSED against the same store — the
 // gate reads the sidecar and rejects rather than range-read foreign bytes.
 // Driven by `store_persist_loft.rs` (local file and over HTTP).
+//
+// loft#1562 — `bind` and `url` are the matching half for the other two ways an
+// existing image is read through this program's types: binding the file durably,
+// and fetching the whole image from a URL (`LOFT_PERSIST_TEST_SHA` is its pin, or
+// `trusted` for the unpinned loader).  Each must still load an unchanged layout,
+// so the refusals in the sibling script cannot be passing by refusing everything.
 
 struct Tile {
   id: integer not null,
@@ -37,5 +43,17 @@ fn main() {
     println("gate whole ok={ok}");
     println("gate whole len={len(h)}");
     println("gate whole name={(h[42] ?? Tile { id: 0, name: \"?\" }).name}");
+  } else if mode == "bind" {
+    ok = store_persist_bind(h, path);
+    println("gate bind ok={ok}");
+    println("gate bind len={len(h)}");
+    println("gate bind name={(h[42] ?? Tile { id: 0, name: \"?\" }).name}");
+  } else if mode == "url" {
+    url = env_variable("LOFT_PERSIST_TEST_URL");
+    sha = env_variable("LOFT_PERSIST_TEST_SHA");
+    ok = if sha == "trusted" { store_load_url_trusted(h, url) } else { store_load_url(h, url, sha) };
+    println("gate url ok={ok}");
+    println("gate url len={len(h)}");
+    println("gate url name={(h[42] ?? Tile { id: 0, name: \"?\" }).name}");
   } else { println("FAIL unknown-mode") }
 }

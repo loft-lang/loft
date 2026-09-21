@@ -48,19 +48,16 @@ fn describe(self: Rect) -> text {
   "rect {self.width} by {self.height}"
 }
 // ## Enum methods
-// Plain enum variants can also have methods. The 'self' parameter carries the
-// current direction value, and the method can return any type.
-// Here 'opposite()' flips North↔South and East↔West.
+// A plain enum can have methods too. The method is written once, for the whole
+// enum: the 'self' parameter carries the current value, and a 'match' on it picks
+// the case. Here 'opposite()' flips North↔South and East↔West.
 
 fn opposite(self: Direction) -> Direction {
-  if self == North {
-    South
-  } else if self == South {
-    North
-  } else if self == East {
-    West
-  } else {
-    East
+  match self {
+    North => South,
+    South => North,
+    East => West,
+    West => East
   }
 }
 

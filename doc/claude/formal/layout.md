@@ -334,8 +334,19 @@ that gate, now applied across a network boundary.
 
 ## Deviations
 
-**OPEN: 1.**
-- **D-layout-1** (loft#1562) — the durable `store_persist_bind` binds a store written with a different layout and misreads every record, while `store_load` and the paged loaders refuse the same file; closes when the bind asks the load-time gate too
+**OPEN: 0.**
+
+D-layout-1 CLOSED 2026-09-21 (loft#1562): every path that reads an EXISTING image through the
+program's types now asks the `.dschema` gate before it reads a byte — `store_load`,
+`store_load_untrusted`, `store_persist_bind` on an existing file, the whole-image URL loaders
+`store_load_url` / `store_load_url_trusted` (the sidecar is `<url>.dschema`, over the same
+transport) and the working-set loaders.  The bind and the two URL loaders were the three that
+did not, and the bind also REWROTE the sidecar with the reader's layout after binding, so one
+mismatched bind disarmed the gate on every later load of that file.  The whole-image verdict
+has one home, `Stores::layout_verdict_ok`.  Guards: `store_persist_bind_refuses_a_changed_layout_both_backends`
+and `store_load_url_refuses_a_changed_layout_both_backends` (`tests/store_persist_loft.rs`,
+file and HTTP), and the browser twin in `store_load_url_verifies_the_hash_in_the_browser`.
+Record: [layout-history.md](layout-history.md).
 
 D-layout-8 OPENED AND CLOSED 2026-09-10 (loft#1503): `(L-Tuple)` requires a tuple's two layout
 views to compute the SAME offsets and says their agreement *"is part of the rule, not an

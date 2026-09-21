@@ -42,13 +42,21 @@
 <p>A capturing closure can be called directly, and it can also be handed to map or filter — the captures travel with it.</p>
 <h2 id="non-capturing-lambdas-with-higher-order-functions">Non-capturing lambdas with higher-order functions</h2>
 <p>Lambdas that use only their own parameters (no capture) also work fine.</p>
-<h2 id="what-a-closure-cannot-capture">What a closure cannot capture</h2>
-<p>Two shapes the compiler refuses, and the one that replaces them.</p>
+<h2 id="capturing-a-parameter">Capturing a <code>&amp;</code> parameter</h2>
+<p>A closure inside a function can use the function's <code>&amp;</code> parameters.  What it captures is what the parameter points at, by the same two rules as above.</p>
+<h2 id="what-a-closure-cannot-do">What a closure cannot do</h2>
+<p>Two shapes the compiler refuses, and what replaces each.</p>
 <pre><code><span class="kw">struct</span> <span class="en">Counter</span> {
   hits: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
 }</code></pre>
 <pre><code><span class="kw">struct</span> <span class="en">Stepper</span> {
   advance: <span class="kw">fn</span>(<span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+}</code></pre>
+<p>Zero every even element, from inside a closure, then append a marker.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">clear_evens</span>(v: &amp;<span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) {
+  wipe = <span class="kw">fn</span>(i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) { <span class="kw">if</span> v[i] % <span class="nm">2</span> == <span class="nm">0</span> { v[i] = <span class="nm">0</span>; } };
+  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(v) { <span class="fn-call">wipe</span>(i); }
+  v += [<span class="nm">9</span>];
 }</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">make_adder</span>(base_val: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="kw">fn</span>(<span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {
   <span class="kw">fn</span>(n: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { base_val + n }
@@ -132,9 +140,14 @@
 <pre><code>  evens = <span class="fn-call">filter</span>(nums, |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(evens[<span class="nm">0</span>] == <span class="nm">2</span>, <span class="st">"evens[0]: {evens[0]}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(evens[<span class="nm">1</span>] == <span class="nm">4</span>, <span class="st">"evens[1]: {evens[1]}"</span>);</code></pre>
-<h2 id="what-a-closure-cannot-capture">What a closure cannot capture</h2>
-<p>A <code>&amp;</code> parameter cannot be captured at all, in any shape — copy it into a local, capture the local, and write the local back before returning.</p>
-<p>A capturing closure cannot be stored in a COLLECTION either: <code>vector&lt;fn(…)&gt;</code> and the keyed collections take non-capturing lambdas only.  A struct FIELD holds one without trouble, which is the shape to reach for.</p>
+<h2 id="capturing-a-parameter">Capturing a <code>&amp;</code> parameter</h2>
+<p>A <code>&amp;vector</code> or a <code>&amp;</code> struct is SHARED, so writes from inside the closure reach the caller's value.  A <code>&amp;integer</code> or a <code>&amp;text</code> is COPIED when the closure is created, like any scalar: the closure can read it, and a write to it is refused (see below).</p>
+<pre><code>  evens = [<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>];
+  <span class="fn-call">clear_evens</span>(evens);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{evens}"</span> == <span class="st">"[1,0,3,0,9]"</span>, <span class="st">"writes through a captured '&amp;vector' reach the caller: {evens}"</span>);</code></pre>
+<h2 id="what-a-closure-cannot-do">What a closure cannot do</h2>
+<p>A closure cannot WRITE a captured <code>&amp;integer</code> or <code>&amp;text</code> parameter: it holds a copy, so the write would not reach the caller, and the compiler says so. Copy the parameter into a local, let the closure update the local, and write it back before returning.</p>
+<p>A capturing closure cannot be stored in a COLLECTION: <code>vector&lt;fn(…)&gt;</code> and the keyed collections take non-capturing lambdas only.  A struct FIELD holds one without trouble, which is the shape to reach for.</p>
 <pre><code>  step = <span class="nm">7</span>;
   stepper = <span class="en">Stepper</span> { advance: <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { x + step } };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(stepper.<span class="fn-call">advance</span>(<span class="nm">10</span>) == <span class="nm">17</span>, <span class="st">"a struct field holds a capturing closure: {stepper.advance(10)}"</span>);
@@ -188,8 +201,11 @@
 // map or filter — the captures travel with it.
 // ## Non-capturing lambdas with higher-order functions
 // Lambdas that use only their own parameters (no capture) also work fine.
-// ## What a closure cannot capture
-// Two shapes the compiler refuses, and the one that replaces them.
+// ## Capturing a '&amp;' parameter
+// A closure inside a function can use the function's '&amp;' parameters.  What it
+// captures is what the parameter points at, by the same two rules as above.
+// ## What a closure cannot do
+// Two shapes the compiler refuses, and what replaces each.
 
 struct Counter {
   hits: integer,
@@ -197,6 +213,13 @@ struct Counter {
 
 struct Stepper {
   advance: fn(integer) -&gt; integer,
+}
+
+// Zero every even element, from inside a closure, then append a marker.
+fn clear_evens(v: &amp;vector&lt;integer&gt;) {
+  wipe = fn(i: integer) { if v[i] % 2 == 0 { v[i] = 0; } };
+  for i in 0..len(v) { wipe(i); }
+  v += [9];
 }
 
 fn make_adder(base_val: integer) -&gt; fn(integer) -&gt; integer {
@@ -307,13 +330,24 @@ fn main() {
   assert(evens[0] == 2, "evens[0]: {evens[0]}");
   assert(evens[1] == 4, "evens[1]: {evens[1]}");
 
-  // ## What a closure cannot capture
-  // A '&amp;' parameter cannot be captured at all, in any shape — copy it into a
-  // local, capture the local, and write the local back before returning.
+  // ## Capturing a '&amp;' parameter
+  // A '&amp;vector' or a '&amp;' struct is SHARED, so writes from inside the closure
+  // reach the caller's value.  A '&amp;integer' or a '&amp;text' is COPIED when the
+  // closure is created, like any scalar: the closure can read it, and a write to
+  // it is refused (see below).
+  evens = [1, 2, 3, 4];
+  clear_evens(evens);
+  assert("{evens}" == "[1,0,3,0,9]", "writes through a captured '&amp;vector' reach the caller: {evens}");
+
+  // ## What a closure cannot do
+  // A closure cannot WRITE a captured '&amp;integer' or '&amp;text' parameter: it holds
+  // a copy, so the write would not reach the caller, and the compiler says so.
+  // Copy the parameter into a local, let the closure update the local, and write
+  // it back before returning.
   //
-  // A capturing closure cannot be stored in a COLLECTION either: 'vector&lt;fn(…)&gt;'
-  // and the keyed collections take non-capturing lambdas only.  A struct FIELD
-  // holds one without trouble, which is the shape to reach for.
+  // A capturing closure cannot be stored in a COLLECTION: 'vector&lt;fn(…)&gt;' and
+  // the keyed collections take non-capturing lambdas only.  A struct FIELD holds
+  // one without trouble, which is the shape to reach for.
   step = 7;
   stepper = Stepper { advance: fn(x: integer) -&gt; integer { x + step } };
   assert(stepper.advance(10) == 17, "a struct field holds a capturing closure: {stepper.advance(10)}");

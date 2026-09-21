@@ -282,13 +282,12 @@ Upside Loft has a \*\* exponentiation operator that works on both integers (2 \*
 
 Downside The \*\* operator is loft-specific — Rust has no exponentiation operator and reaches for methods instead (.pow(), .powi(), .powf()), so the muscle memory does not transfer. And ^ is XOR in both languages, never exponentiation — a trap for anyone reaching for it as a power operator out of habit.
 
-=== No loop keyword — use while or for + break
+=== No loop keyword — an infinite loop is while true
 
 ```rust
 while !done() { step(); }  // while works
 
-// Infinite loop workaround — use a long range:
-for _ in 0l..9223372036854775807l {  // long: ~9.2×10^18
+while true {           // infinite until a break
     if should_exit() { break; }
     step();
 }
@@ -305,7 +304,7 @@ loop {           // truly infinite — no bound needed
 
 Upside while condition { } works exactly as expected. Every for loop has an iteration variable, making it easy to add index tracking or a cycle limit without restructuring.
 
-Downside There is no loop { } keyword for an unconditionally infinite loop. The workaround — a for loop over a long range — is verbose but practically unbounded: the 64-bit maximum (~9.2×10^18) exceeds any realistic event-loop iteration count.
+Downside There is no loop { } keyword: an unconditionally infinite loop is spelled while true { }, which reads the same and ends only at a break or a return.
 
 === Filtered loops — for ... if ...
 
@@ -640,9 +639,9 @@ p.x = <span class="st">"hi"</span> <span class="cm"># allowed at runtime; mypy c
 
 Upside Field access is checked at compile time — typos in field names are caught before any code runs. Struct memory layout is fixed and unboxed; integer and float fields live directly in memory with no heap allocation overhead. Methods are ordinary named functions — they can be added from any file, at any time, without modifying the struct definition.
 
-Downside No inheritance, no \_\_repr\_\_, no operator overloading (\_\_add\_\_, \_\_eq\_\_, etc.), no properties or descriptors. Python's \@dataclass generates \_\_init\_\_, \_\_repr\_\_, and \_\_eq\_\_ automatically. Loft structs are data holders; all display and comparison logic must be written by hand. Python also supports plain dicts as lightweight records, which is often more convenient for ad-hoc data.
+Downside No inheritance, no properties or descriptors. Printing needs no \_\_repr\_\_ — "{p}" renders every field — and a struct can overload operators by defining them (OpAdd for +, OpEq for ==, OpLt for \<). But == on a struct compares identity until it defines OpEq, where Python's \@dataclass generates a field-by-field \_\_eq\_\_ for you. Python also supports plain dicts as lightweight records, which is often more convenient for ad-hoc data.
 
-=== while loop — yes; no loop or while ... else
+=== while loop — yes, and while true; no while ... else
 
 ```rust
 while !ready() { step(); }  // works
@@ -652,8 +651,8 @@ while len(queue) > 0 {
     queue.remove(0);   // `#remove` is for a loop variable
 }
 
-// No loop keyword — infinite loop needs a large bound:
-for _ in 0..2147483647 {
+// An infinite loop, left by a break:
+while true {
     if should_exit() { break; }
     step();
 }
@@ -673,7 +672,7 @@ for _ in 0..2147483647 {
 
 Upside while condition { } works exactly as expected. Filtered loops (for x in v if pred(x)) and loop attributes (x\#first, x\#count) add expressive power to for without needing a separate loop form.
 
-Downside No while True: equivalent — infinite loops require a bounded for range as a workaround. No while ... else (executes when the condition becomes false without a break), a Python pattern with no clean equivalent in loft.
+Downside No while ... else (executes when the condition becomes false without a break), a Python pattern with no clean equivalent in loft.
 
 === Polymorphic enum dispatch vs isinstance
 
@@ -2506,18 +2505,15 @@ fn describe(self: Rect) -> text {
 
 === Enum methods
 
-Plain enum variants can also have methods. The 'self' parameter carries the current direction value, and the method can return any type. Here 'opposite()' flips North↔South and East↔West.
+A plain enum can have methods too. The method is written once, for the whole enum: the 'self' parameter carries the current value, and a 'match' on it picks the case. Here 'opposite()' flips North↔South and East↔West.
 
 ```rust
 fn opposite(self: Direction) -> Direction {
-  if self == North {
-    South
-  } else if self == South {
-    North
-  } else if self == East {
-    West
-  } else {
-    East
+  match self {
+    North => South,
+    South => North,
+    East => West,
+    West => East
   }
 }
 ```
@@ -4842,6 +4838,10 @@ Naming some fields and omitting others is legal, and each omitted field takes it
 
 Enum payloads are named fields you read straight — `shape.radius`. Where several variants declare the same name and type it is ONE slot and each variant reads its own value. Where only SOME declare it, the access resolves at compile time to the first variant that has it, and a value of any other variant reads that slot anyway: the tag is never consulted, so the read answers another variant's bytes typed as this one's. loft warns (`warning\[variant-field-unchecked\]`); bind the field in a `match` arm, which is per-variant and cannot reach the wrong one.
 
+=== A `while` generator runs eagerly on --native
+
+A generator is suspended at each `yield` on the interpreter.  On --native only a `for` loop whose body ends in one unconditional `yield` is; a `while` loop, a yield inside an `if` or `match`, a statement after the yield, a nested loop or a `continue` runs the whole loop before the first value is handed out.  The values agree, the side effects do not — and an endless `while true { …; yield x; }` never hands out a value on --native, it runs until memory runs out.  Write an endless behaviour as `for \_ in 0..1000000000 { …; yield x; }`, with the yield last.
+
 === XOR is `^`, not exponentiation
 
 Unlike some languages where `^` means "power", in loft `^` is bitwise XOR. For exponentiation use the `\*\*` operator (`2 \*\* 10 == 1024`, `2.0 \*\* 3.0 == 8.0`) or the `pow()` function. Watch one precedence footgun: a leading `-` binds TIGHTER than `\*\*`, so `-x \*\* y` raises the NEGATED BASE. loft warns on the bare spelling; write the parentheses for whichever of the two you mean.
@@ -5409,9 +5409,13 @@ A capturing closure can be called directly, and it can also be handed to map or 
 
 Lambdas that use only their own parameters (no capture) also work fine.
 
-=== What a closure cannot capture
+=== Capturing a '&' parameter
 
-Two shapes the compiler refuses, and the one that replaces them.
+A closure inside a function can use the function's '&' parameters.  What it captures is what the parameter points at, by the same two rules as above.
+
+=== What a closure cannot do
+
+Two shapes the compiler refuses, and what replaces each.
 
 ```rust
 struct Counter {
@@ -5422,6 +5426,16 @@ struct Counter {
 ```rust
 struct Stepper {
   advance: fn(integer) -> integer,
+}
+```
+
+Zero every even element, from inside a closure, then append a marker.
+
+```rust
+fn clear_evens(v: &vector<integer>) {
+  wipe = fn(i: integer) { if v[i] % 2 == 0 { v[i] = 0; } };
+  for i in 0..len(v) { wipe(i); }
+  v += [9];
 }
 ```
 
@@ -5570,11 +5584,21 @@ No capture needed here — the lambda uses only its own parameter.
   assert(evens[1] == 4, "evens[1]: {evens[1]}");
 ```
 
-=== What a closure cannot capture
+=== Capturing a '&' parameter
 
-A '&' parameter cannot be captured at all, in any shape — copy it into a local, capture the local, and write the local back before returning.
+A '&vector' or a '&' struct is SHARED, so writes from inside the closure reach the caller's value.  A '&integer' or a '&text' is COPIED when the closure is created, like any scalar: the closure can read it, and a write to it is refused (see below).
 
-A capturing closure cannot be stored in a COLLECTION either: 'vector\<fn(…)\>' and the keyed collections take non-capturing lambdas only.  A struct FIELD holds one without trouble, which is the shape to reach for.
+```rust
+  evens = [1, 2, 3, 4];
+  clear_evens(evens);
+  assert("{evens}" == "[1,0,3,0,9]", "writes through a captured '&vector' reach the caller: {evens}");
+```
+
+=== What a closure cannot do
+
+A closure cannot WRITE a captured '&integer' or '&text' parameter: it holds a copy, so the write would not reach the caller, and the compiler says so. Copy the parameter into a local, let the closure update the local, and write it back before returning.
+
+A capturing closure cannot be stored in a COLLECTION: 'vector\<fn(…)\>' and the keyed collections take non-capturing lambdas only.  A struct FIELD holds one without trouble, which is the shape to reach for.
 
 ```rust
   step = 7;
@@ -5740,7 +5764,7 @@ Squares via for loop with index tracking.
 
 'counted' is asked for a thousand values and the loop breaks after six. Its step counter shows the body ran six times, not a thousand — the work for the values nobody asked for was never done.
 
-⚠ That holds on BOTH backends for the shape written here: a loop whose body ends in one unconditional 'yield'.  Other shapes — a statement after the yield, a yield inside an 'if' or 'match', a nested loop, a 'continue' — still run the whole loop eagerly on --native, so their side effects happen for values the consumer never asks for (measured: 1000 steps where the interpreter does 5).  The VALUES are the same either way; it is the side effects that differ.  Keep the yield last, or do not put observable work in a generator body.  COROUTINE.md tracks this as CL-9.
+⚠ That holds on BOTH backends for the shape written here: a loop whose body ends in one unconditional 'yield'.  Other shapes — a statement after the yield, a yield inside an 'if' or 'match', a nested loop, a 'continue', and any 'while' loop — still run the whole loop eagerly on --native, so their side effects happen for values the consumer never asks for (measured: 1000 steps where the interpreter does 5).  The VALUES are the same either way; it is the side effects that differ.  An ENDLESS eager loop never hands out a value at all: a 'while true' generator on --native runs until memory runs out.  Keep the yield last in a 'for' loop — for an endless behaviour, a 'for' over a large range — or do not put observable work in a generator body. COROUTINE.md tracks this as CL-9.
 
 ```rust
   trace = Trace { steps: 0 };
@@ -6079,6 +6103,13 @@ enum Shape {
 }
 ```
 
+A variant whose field is itself an enum.
+
+```rust
+enum Paint { Solid { rgb: integer }, Clear }
+enum Tile { Painted { paint: Paint, n: integer }, Bare }
+```
+
 ```rust
 fn direction_name(d: Direction) -> text {
   match d {
@@ -6139,6 +6170,21 @@ The variable names must match the field names exactly.
     Rect { w, h }     => w * h,
   };
   assert(shape_area == 12, "struct-enum destructure: {shape_area}");
+```
+
+=== Patterns inside a field
+
+A field can take a pattern instead of a name.  A literal matches only that value, and when the field is itself an enum, a variant matches only that variant and binds its own fields in turn.  A field the arm does not name is simply not tested.  An arm with a pattern inside a field covers only part of its variant, so the match still needs `\_` (or an arm that binds the fields plainly) to cover the rest.
+
+```rust
+  tile = Painted { paint: Solid { rgb: 255 }, n: 2 };
+  what = match tile {
+    Painted { paint: Clear, n } => "clear x{n}",
+    Painted { paint: Solid { rgb: 0 }, n } => "black x{n}",
+    Painted { paint: Solid { rgb }, n } => "colour {rgb} x{n}",
+    _ => "bare",
+  };
+  assert(what == "colour 255 x2", "a pattern inside a field: {what}");
 ```
 
 === Guards
@@ -6264,6 +6310,19 @@ A tuple subject matches element by element.  Write `\_` for an element you do no
   assert(where == "two-b", "tuple pattern: {where}");
 ```
 
+An element can be an enum variant with its fields bound, so one arm reads both sides at once, and a guard can compare them.
+
+```rust
+  a: Shape = Rect { w: 2, h: 3 };
+  b: Shape = Circle { radius: 5 };
+  bigger = match (a, b) {
+    (Rect { w, h }, Circle { radius }) if w * h > radius => "rect",
+    (Rect { w, h }, Circle { radius }) => "circle",
+    _ => "other",
+  };
+  assert(bigger == "rect", "variants inside a tuple pattern: {bigger}");
+```
+
 === When nothing matches
 
 This match names no `\_`, and 7 is none of its arms.  On an enum that would not compile; on a scalar there is no finite set to check, so the match answers null and the null travels on.  Give the result a fallback with `??`, or add a `\_` arm — the compiler will not remind you.
@@ -6277,9 +6336,9 @@ This match names no `\_`, and 7 is none of its arms.  On an enum that would not 
   assert((unmatched ?? "none") == "none", "so give it a fallback");
 ```
 
-=== Nested match
+=== Match inside an arm
 
-Match can appear inside other expressions, including other match arms.
+Match is an expression, so it can appear inside other expressions, including another match's arm.
 
 ```rust
   n = 15;
@@ -7654,48 +7713,63 @@ pub type u32 = integer limit(0, 4294967294) size(4)
 == Interfaces
 
 ```rust
-pub interface Ordered
+pub interface Ordered {
+  op < (self: Self, other: Self) -> boolean
+}
 ```
 
 Standard interfaces for bounded generic functions. A type satisfies an interface by defining the required operator or method. Types that support the `\<` comparison operator. Satisfied by integer, single, float, text, and any user type defining OpLt.
-`boolean` is NOT among them, deliberately: it satisfies Equatable below and has no ordering, so `false \< true` is a refusal rather than a convention the language picks for you.  A program that wants it says so — `(a as integer) \< (b as integer)`.  Note this is what bounds the null-ordering half of \@FR-E-NullArg, which applies to the ORDERED types only; boolean null still compares with `==` like every other scalar.
+`boolean` is NOT among them, deliberately: it satisfies Equatable below and has no ordering, so `false \< true` is a refusal rather than a convention the language picks for you.  A program that wants it says so — `(a as integer) \< (b as integer)`.  The same line bounds how null is ordered: that applies to the ordered types only, and a boolean null still compares with `==` like every other scalar.
 ONE method is all a type has to define: inside a generic bounded by this, `\>`, `\<=` and `\>=` all derive from `\<` — `a \> b` is `b \< a`, `a \<= b` is `!(b \< a)`, `a \>= b` is `!(a \< b)`.  Each evaluates its operands exactly once.
 
 ```rust
-pub interface Equatable
+pub interface Equatable {
+  op == (self: Self, other: Self) -> boolean
+}
 ```
 
 Types that support the `==` equality operator. Satisfied by integer, single, float, text, boolean, and user types defining OpEq.
 `!=` derives from it (`a != b` is `!(a == b)`), so a type defining `op ==` gets both.
 
 ```rust
-pub interface Addable
+pub interface Addable {
+  op + (self: Self, other: Self) -> Self
+}
 ```
 
 Types that support the `+` addition operator, returning the same type. Satisfied by integer, single, float, and user types defining OpAdd.
 
 ```rust
-pub interface Numeric
+pub interface Numeric {
+  op * (self: Self, other: Self) -> Self
+  op - (self: Self) -> Self
+}
 ```
 
 Types that support `\*` and `-` (unary negation). Separate from `Addable` so a generic can ask for the fewest operators it needs. Satisfied by integer, single, float, and user types defining OpMul and OpMin.
-Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, so keeping them apart is a choice about the shipped surface rather than a limitation: adding a requirement to `Numeric` would take satisfaction away from every user type that provides `OpMul` and unary `OpMin` today, which is what COMPATIBILITY.md forbids.
+Binary subtraction is `Subtractable` below and deliberately NOT here.  One interface CAN declare both arities of `-`, so keeping them apart is a choice about the shipped surface rather than a limitation: adding a requirement to `Numeric` would take satisfaction away from every user type that provides `OpMul` and unary `OpMin` today, which a compatible release may not do.
 
 ```rust
-pub interface Subtractable
+pub interface Subtractable {
+  op - (self: Self, other: Self) -> Self
+}
 ```
 
 Types that support binary `-` (subtraction), returning the same type. Satisfied by integer, single, float, and user types defining a two-operand OpMin.
-A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` desugars to `OpMin` either way, and the stub key carries the arity), so `\<T: Numeric + Subtractable\>` gets negation and subtraction together from two interfaces that each name `OpMin`.
+A bound of its own rather than a third requirement on `Numeric`: a bound set may declare one name at two arities (`-` means `OpMin` either way, told apart by its operand count), so `\<T: Numeric + Subtractable\>` gets negation and subtraction together from two interfaces that each name `OpMin`.
 
 ```rust
-pub interface Scalable
+pub interface Scalable {
+  fn scale(self: Self, factor: integer) -> integer
+}
 ```
 
 Types that support integer scaling via a `scale` method. Uses a method (not `op \*`) because a `\<T: Numeric + Scalable\>` would then need two signatures of one name from ONE bound set, which is refused. Two SEPARATE generics may each bound their own `T` by an interface declaring the same method differently — a header binds its own type variable. User types satisfy Scalable by defining `fn scale(self: T, factor: integer) -\> integer`.
 
 ```rust
-pub interface Printable
+pub interface Printable {
+  fn to_text(self: Self) -> text
+}
 ```
 
 Types that can be converted to text via a `to\_text` method. User types satisfy Printable by defining `fn to\_text(self: T) -\> text`.
@@ -8372,7 +8446,9 @@ pub fn sum_of(v: const vector<integer>) -> integer
 Sum of all integer elements. Returns 0 for an empty vector. Superseded by the general `sum(v, init)`; kept as a shim over it (the old form keeps working). `sum\_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the shim's call resolves — a forward reference to a generic is not yet supported.
 
 ```rust
-pub interface Walkable
+pub interface Walkable {
+  fn children(self: Self) -> vector<Self>
+}
 ```
 
 A type that can be walked as a tree.  Declaring `fn children(self: T) -\> vector\<T\>` is the whole contract — that bare function is what makes `T` walkable, with nothing to register and no base type to inherit from.  `tree\_walk` is what consumes it.
@@ -8661,8 +8737,8 @@ pub fn store_persist_bind(r: reference, path: text) -> boolean fs#update
 "The collection IS the file."  Re-root the Store backing the given reference at a file path so mutations are durable via mmap without any explicit save/load loop.
 Works for any store-rooted collection — `hash`, `sorted`, `ordered`, `index` (each keyed local/field is a dedicated Store).  `hash` carries its bucket seed in its own record and `sorted`/`ordered`/`index` are comparison-based (no per-process state), so the persisted image is portable: a different process (a restart, or a remote reader) both iterates AND key-looks-up correctly.  A reference that is NOT its own Store root fails soft (returns `false`), same as any I/O error.
 First call on a path that does NOT yet exist: serialises the current in-memory Store at the reference's slot to disk (padded to a valid ≥1024-word image with a tail free block), then mmaps it back.  Caller's existing DbRefs into that slot remain valid.
-Call on a path that DOES exist: opens the file via mmap; the caller's prior in-memory contents at that slot are dropped in favour of the on-disk image.  This is the load-on-startup path, assumes the on-disk layout matches the declared type.
-Both modes return `true` on success, `false` on any I/O / format error (no panic — the binding is fail-soft, callers fall back to JSON or rebuild-from-source).
+Call on a path that DOES exist: opens the file via mmap; the caller's prior in-memory contents at that slot are dropped in favour of the on-disk image.  This is the load-on-startup path. The `.dschema` file written beside the store records the layout it was written with.  When that layout differs from `r`'s type — a struct gained, lost or changed a field — the bind is refused (`false`, with the difference on stderr), exactly as `store\_load` refuses it.  The file, its `.dschema` and `r` are left untouched.
+Both modes return `true` on success, `false` on any I/O / format / layout error (no panic — the binding is fail-soft, callers fall back to JSON or rebuild-from-source).
 Typical dryopea-style pattern: pw = PaintedWorld { painted: \[\] }   // painted's declared type is hash\<PaintedHex\[q, r\]\> store\_persist\_bind(pw.painted, "dryopea\_world.store") // …mutations to pw.painted now hit mmap'd bytes… `r` is any store-rooted collection — `hash`, `sorted`, `index`, `spatial`. A bare `reference` parameter accepts them all.
 It snapshots the whole STORE `r` lives in, which is not always a store of just `r`.  A keyed LOCAL owns its store, so binding it writes a file for that collection.  A keyed FIELD shares its container's store, so binding `pw.painted` above writes a file for `PaintedWorld` — carrying the container and every sibling collection — and that file will NOT load back into a bare `hash\<PaintedHex\[q, r\]\>`.  Both are usable; they are just different files.  Bind through the container consistently, or bind a local of the collection's own type when another program has to read the file. The compiler advises at the call when the argument is a field.  `hash` carries its bucket seed in its own record and the comparison-based kinds hold no per-process state, so every persisted image is portable across processes.
 
@@ -8679,19 +8755,19 @@ Returns `false` on an I/O or format error, and for a collection whose shape the 
 pub fn store_load(r: reference, path: text) -> boolean fs#read
 ```
 
-Load a persisted store IMAGE fully into memory, populating the empty store-rooted collection `r` so it can be queried like any in-memory collection.  The portable, read-only counterpart of `store\_persist\_bind`: it HEAP-COPIES the file (no mmap), so it works on EVERY backend — including wasm, which has no mmap — but is NOT durable (writes stay in memory and never reach the file).  Use it to open a snapshot for querying where `store\_persist\_bind` can't run (a browser / wasm target) or where a durable live binding isn't wanted.  Returns `false` on a missing / truncated / wrong-format file (no panic; assumes the on-disk layout matches `r`'s declared type).  This is the whole-file load that the browser's working-set path builds on. h: hash\<Rec\[id\]\> = \[\] store\_load(h, "world.store")   // h now holds the file's records
+Load a persisted store IMAGE fully into memory, populating the empty store-rooted collection `r` so it can be queried like any in-memory collection.  The portable, read-only counterpart of `store\_persist\_bind`: it HEAP-COPIES the file (no mmap), so it works on EVERY backend — including wasm, which has no mmap — but is NOT durable (writes stay in memory and never reach the file).  Use it to open a snapshot for querying where `store\_persist\_bind` can't run (a browser / wasm target) or where a durable live binding isn't wanted.  Returns `false` on a missing / truncated / wrong-format file, and on a file whose `.dschema` records a different layout than `r`'s declared type (no panic; the difference is printed on stderr).  This is the whole-file load that the browser's working-set path builds on. h: hash\<Rec\[id\]\> = \[\] store\_load(h, "world.store")   // h now holds the file's records
 
 ```rust
 pub fn store_load_url(r: reference, url: text, sha256: text) -> boolean fs#read
 ```
 
-Load a persisted store IMAGE over HTTP(S) from a TRUSTED source, establishing authenticity BEFORE the bytes are adopted: fetch the whole image at `url`, verify its SHA-256 against the caller-pinned `sha256` (lowercase hex), and only on a match heap-load it into `r` — the bytes never touch disk. A fetch error or a hash mismatch REFUSES the load (returns false, loads nothing). The fetch→verify→trust discipline the registry install uses, bridged onto the store loader; `url` may be `http(s)://` or `file://`. Whole-file counterpart of the paged `store\_load\_key(s)`/`store\_load\_range` loaders. h: hash\<Rec\[id\]\> = \[\] store\_load\_url(h, "https://cdn.example/world.store", "\<sha256-hex\>")
+Load a persisted store IMAGE over HTTP(S) from a TRUSTED source, establishing authenticity BEFORE the bytes are adopted: fetch the whole image at `url`, verify its SHA-256 against the caller-pinned `sha256` (lowercase hex), and only on a match heap-load it into `r` — the bytes never touch disk. A fetch error or a hash mismatch REFUSES the load (returns false, loads nothing). The fetch→verify→trust discipline the registry install uses, bridged onto the store loader; `url` may be `http(s)://` or `file://`. Like `store\_load`, it refuses an image whose `\<url\>.dschema` records a different layout than `r`'s type (a missing `.dschema` is not checked). Whole-file counterpart of the paged `store\_load\_key(s)`/`store\_load\_range` loaders. h: hash\<Rec\[id\]\> = \[\] store\_load\_url(h, "https://cdn.example/world.store", "\<sha256-hex\>")
 
 ```rust
 pub fn store_load_url_trusted(r: reference, url: text) -> boolean fs#read
 ```
 
-Load a whole store IMAGE over HTTP(S)/file:// from a TRUSTED source into `r` — the INSTANT counterpart of store\_load\_url: skips the SHA-256 pin (you trust the origin) for a fast read, but is still structurally validated, so a corrupt or malformed image is rejected (false), never adopted. Use store\_load\_url for an untrusted source. world: hash\<Rec\[id\]\> = \[\] store\_load\_url\_trusted(world, "https://cdn.internal/world.store")
+Load a whole store IMAGE over HTTP(S)/file:// from a TRUSTED source into `r` — the INSTANT counterpart of store\_load\_url: skips the SHA-256 pin (you trust the origin) for a fast read, but is still structurally validated, so a corrupt or malformed image is rejected (false), never adopted, and an image whose `\<url\>.dschema` records a different layout is refused. Use store\_load\_url for an untrusted source. world: hash\<Rec\[id\]\> = \[\] store\_load\_url\_trusted(world, "https://cdn.internal/world.store")
 
 ```rust
 pub fn store_load_untrusted(r: reference, path: text) -> boolean fs#read

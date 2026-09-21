@@ -1301,6 +1301,127 @@ fn store_load_refuses_a_changed_layout_both_backends() {
     }
 }
 
+/// `store_persist_bind` on an EXISTING file reads it through the slot's type, so it
+/// passes the same layout gate as `store_load` (`@FR-L-Sound`, loft#1562): a Tile that
+/// grew a field is refused rather than bound and read at the wider stride.  A refused
+/// bind leaves the store, its `.dschema` and the collection as they were — so
+/// `store_load` still refuses the file afterwards, and the program that wrote it still
+/// binds it.
+#[test]
+fn store_persist_bind_refuses_a_changed_layout_both_backends() {
+    let dir = scratch("layout_gate_bind");
+    let path = dir.join("tiles.store");
+    let sidecar = PathBuf::from(format!("{}.dschema", path.display()));
+
+    let (out_w, code_w) = run_mode(&gate_script(), &path, "write");
+    assert_eq!(code_w, 0, "write: {out_w:?}");
+
+    for backend in ["--interpret", "--native"] {
+        let before = (fs::read(&path).unwrap(), fs::read(&sidecar).unwrap());
+
+        // CHANGED layout (extra field) — refused, and the collection stays usable.
+        let (out, code) = run_mode_backend(backend, &gate_changed_script(), &path, "bind");
+        assert_eq!(code, 0, "{backend} mismatch exit: {out:?}");
+        assert!(
+            out.contains("changed bind ok=false"),
+            "{backend}: a changed layout MUST be refused, not bound and read raw: {out:?}"
+        );
+        assert!(
+            out.contains("changed bind len=0"),
+            "{backend}: a refused bind leaves the collection empty: {out:?}"
+        );
+        assert!(
+            out.contains("changed bind after-insert len=1 name=five"),
+            "{backend}: a refused bind leaves the collection usable: {out:?}"
+        );
+        assert!(
+            before == (fs::read(&path).unwrap(), fs::read(&sidecar).unwrap()),
+            "{backend}: a refused bind must not write the store or relabel its sidecar"
+        );
+
+        // The sidecar still names the layout that wrote the file, so the whole-image
+        // loader goes on refusing it.
+        let (out, code) = run_mode_backend(backend, &gate_changed_script(), &path, "whole");
+        assert_eq!(code, 0, "{backend} whole exit: {out:?}");
+        assert!(
+            out.contains("changed whole ok=false"),
+            "{backend}: a refused bind must not disarm store_load's gate: {out:?}"
+        );
+
+        // MATCHING layout — the writer's program still binds its own data.
+        let (out, code) = run_mode_backend(backend, &gate_script(), &path, "bind");
+        assert_eq!(code, 0, "{backend} match exit: {out:?}");
+        assert!(
+            out.contains("gate bind ok=true"),
+            "{backend}: an unchanged layout must still bind: {out:?}"
+        );
+        assert!(out.contains("gate bind len=2"), "{backend}: {out:?}");
+        assert!(
+            out.contains("gate bind name=forty-two"),
+            "{backend}: {out:?}"
+        );
+    }
+}
+
+/// `store_load_url` and `store_load_url_trusted` adopt a fetched image through the slot's
+/// type, so they pass the layout gate too (`@FR-L-Sound`, loft#1562).  The sidecar is
+/// `<url>.dschema`, read over the same transport as the image: beside the file for
+/// `file://`, and from the server over HTTP.  Both loaders, both transports and both
+/// backends are covered, each with its matching half, so the gate cannot pass by
+/// refusing everything.
+#[cfg(feature = "registry")]
+#[test]
+fn store_load_url_refuses_a_changed_layout_both_backends() {
+    let dir = scratch("layout_gate_url");
+    let path = dir.join("tiles.store");
+
+    let (out_w, code_w) = run_mode(&gate_script(), &path, "write");
+    assert_eq!(code_w, 0, "write: {out_w:?}");
+    let bytes = fs::read(&path).unwrap();
+    let sidecar = fs::read(format!("{}.dschema", path.display())).unwrap();
+    let sha = loft::integrity::sha256_hex(&bytes);
+    let file_url = format!("file://{}", path.display());
+    let http_url = serve_ranges(bytes, Some(sidecar));
+
+    let run = |backend: &str, script: &Path, url: &str, pin: &str| -> String {
+        let out = Command::new(loft_bin())
+            .arg(backend)
+            .arg(script)
+            .env("LOFT_PERSIST_TEST_PATH", &path)
+            .env("LOFT_PERSIST_TEST_MODE", "url")
+            .env("LOFT_PERSIST_TEST_URL", url)
+            .env("LOFT_PERSIST_TEST_SHA", pin)
+            .current_dir(workspace_root())
+            .output()
+            .expect("failed to invoke loft binary");
+        assert!(
+            out.status.success(),
+            "{backend} {url} exit: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+
+    for backend in ["--interpret", "--native"] {
+        for url in [&file_url, &http_url] {
+            for pin in ["trusted", sha.as_str()] {
+                let out = run(backend, &gate_script(), url, pin);
+                assert!(
+                    out.contains("gate url ok=true")
+                        && out.contains("gate url len=2")
+                        && out.contains("gate url name=forty-two"),
+                    "{backend} {url} pin={pin}: an unchanged layout must still load: {out:?}"
+                );
+                let out = run(backend, &gate_changed_script(), url, pin);
+                assert!(
+                    out.contains("changed url ok=false") && out.contains("changed url len=0"),
+                    "{backend} {url} pin={pin}: a changed layout MUST be refused: {out:?}"
+                );
+            }
+        }
+    }
+}
+
 /// @PLN97 3b.5 — the layout-identity gate over HTTP: the remote loader fetches
 /// `<url>.dschema` and rejects a mismatched layout, never range-reading foreign
 /// bytes across the network (the safety gate for a REMOTE store read, #522).

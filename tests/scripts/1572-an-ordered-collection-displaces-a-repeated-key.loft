@@ -1,0 +1,209 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A keyed collection holds ONE record per key: a record inserted under a key the collection
+// already holds replaces the older one (@FR-Col-Insert, latest insert wins).  That includes the
+// `ordered` layout, the by-reference form a `sorted<T[k]>` takes as soon as ANY `hash` / `index`
+// in the program also holds `T` — here the never-constructed `Promote1572` does that.  So a
+// declaration elsewhere in the program must not change what `+=` does with a repeated key.
+//
+// An `ordered` element is a record of its own, so replacing one owes three things: the new
+// record takes the old one's place, the length does not grow, and the old record is RELEASED —
+// its block and what it owns — unless the collection is a member of a linked group, where a
+// sibling still holds it and it is only unlinked (@FR-Col-Group-Dup).  Each cell below scores
+// the order, the length and the value read back by key; `leak1572` scores the release by record
+// count, because a displaced record that is unlinked and never freed reads correctly everywhere.
+//
+// The routes into the collection are the axis the defect has: a single append, a duplicate
+// inside one appended literal, a duplicate inside the constructor, a local.  `c[k] = v` and a
+// whole vector value go through `insert_keyed_copy`, which deduplicated before this fix too —
+// they are the controls that say the other routes were the defect, not the collection.
+//
+// @falsified-at: eb8702054 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.
+//   CHANNEL: assertions.  The run stops at its first failure, which is `append1572`.
+//   WITNESS: on the control `append1572` reads `2:2 5:3 5:1` with len 3 where the file says
+//   `2:2 5:3` and 2 — the duplicate stacked BEHIND the new record, both backends alike.
+//   HOLDS: leak, panic and free-refusal are equal on both trees; the defect is the value, and
+//   the record-count cell turns it into an assertion rather than a leaked store.
+// @falsified-by: tests/falsified/1572-an-ordered-collection-displaces-a-repeated-key.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1
+//   assertion failures -> 0: the same channels as the ref control.
+
+struct T1572 { id: integer, s: text }
+struct N1572 { nm: text, v: integer }
+struct C1572 { a: integer, b: integer, s: text }
+struct V1572 { id: integer, pts: vector<integer> }
+
+// Every `sorted` below over these element types lowers to `ordered` because of this struct.
+struct Promote1572 { t: index<T1572[id]>, n: index<N1572[nm]>, c: index<C1572[a, b]>, v: index<V1572[id]> }
+
+struct Rows1572 { rows: sorted<T1572[id]> }
+struct ByName1572 { by: sorted<N1572[nm]> }
+struct Pair1572 { by: sorted<C1572[a, b]> }
+struct Desc1572 { by: sorted<V1572[-id]> }
+struct GroupVec1572 { es: vector<T1572>, by: sorted<T1572[id]> }
+struct GroupHash1572 { h: hash<T1572[id]>, by: sorted<T1572[id]> }
+struct GroupAll1572 { es: vector<T1572>, by: sorted<T1572[id]>, h: hash<T1572[id]> }
+struct GroupPts1572 { es: vector<V1572>, by: sorted<V1572[id]> }
+
+fn rows1572(c: sorted<T1572[id]>) -> text {
+  r = "";
+  for e in c { r += "{e.id}:{e.s} "; }
+  "{r}n={len(c)}"
+}
+
+fn vec1572(c: vector<T1572>) -> text {
+  r = "";
+  for e in c { r += "{e.id}:{e.s} "; }
+  "{r}n={len(c)}"
+}
+
+// `store_memory()`'s first line carries "... | records N | ...".
+fn records1572() -> integer {
+  first = "";
+  for line in store_memory().split('\n') { if first == "" { first = line; } }
+  want = false;
+  for tok in first.split(' ') {
+    if want { return tok as integer ?? 0 }
+    if tok == "records" { want = true; }
+  }
+  0
+}
+
+fn append1572() {
+  a = Rows1572 { rows: [T1572 { id: 5, s: "a1" }, T1572 { id: 2, s: "a2" }] };
+  a.rows += [T1572 { id: 5, s: "a3" }];
+  assert(rows1572(a.rows) == "2:a2 5:a3 n=2", "append: {rows1572(a.rows)}");
+  assert(a.rows[5].s == "a3", "append lookup: {a.rows[5].s}");
+}
+
+fn literal1572() {
+  b = Rows1572 { rows: [T1572 { id: 2, s: "b2" }] };
+  b.rows += [T1572 { id: 5, s: "b1" }, T1572 { id: 5, s: "b3" }];
+  assert(rows1572(b.rows) == "2:b2 5:b3 n=2", "one literal: {rows1572(b.rows)}");
+}
+
+fn constructor1572() {
+  c = Rows1572 { rows: [T1572 { id: 5, s: "c1" }, T1572 { id: 2, s: "c2" }, T1572 { id: 5, s: "c3" }] };
+  assert(rows1572(c.rows) == "2:c2 5:c3 n=2", "constructor: {rows1572(c.rows)}");
+}
+
+fn local1572() {
+  f: sorted<T1572[id]> = [T1572 { id: 5, s: "f1" }, T1572 { id: 2, s: "f2" }];
+  f += [T1572 { id: 5, s: "f3" }];
+  assert(rows1572(f) == "2:f2 5:f3 n=2", "local: {rows1572(f)}");
+  assert(f[5].s == "f3", "local lookup: {f[5].s}");
+}
+
+// The controls: these two routes deduplicated before the fix.
+fn controls1572() {
+  d = Rows1572 { rows: [T1572 { id: 5, s: "d1" }, T1572 { id: 2, s: "d2" }] };
+  d.rows[5] = T1572 { id: 5, s: "d3" };
+  assert(rows1572(d.rows) == "2:d2 5:d3 n=2", "keyed write: {rows1572(d.rows)}");
+  v: vector<T1572> = [T1572 { id: 5, s: "e1" }, T1572 { id: 2, s: "e2" }, T1572 { id: 5, s: "e3" }];
+  e = Rows1572 { rows: [] };
+  e.rows = v;
+  assert(rows1572(e.rows) == "2:e2 5:e3 n=2", "vector value: {rows1572(e.rows)}");
+}
+
+fn keys1572() {
+  n = ByName1572 { by: [N1572 { nm: "b", v: 1 }, N1572 { nm: "a", v: 2 }] };
+  n.by += [N1572 { nm: "b", v: 3 }, N1572 { nm: "c", v: 4 }];
+  r = "";
+  for e in n.by { r += "{e.nm}:{e.v} "; }
+  assert(r == "a:2 b:3 c:4 " && len(n.by) == 3, "text key: {r}n={len(n.by)}");
+  assert(n.by["b"].v == 3, "text key lookup: {n.by["b"].v}");
+
+  p = Pair1572 { by: [C1572 { a: 1, b: 2, s: "x" }, C1572 { a: 1, b: 3, s: "y" }] };
+  p.by += [C1572 { a: 1, b: 2, s: "z" }];
+  r = "";
+  for e in p.by { r += "{e.a}/{e.b}:{e.s} "; }
+  assert(r == "1/2:z 1/3:y " && len(p.by) == 2, "composite key: {r}n={len(p.by)}");
+
+  // Descending, and an element that owns a vector.
+  d = Desc1572 { by: [V1572 { id: 1, pts: [1] }, V1572 { id: 3, pts: [3, 3] }, V1572 { id: 2, pts: [2, 2] }] };
+  d.by += [V1572 { id: 3, pts: [7, 7, 7] }];
+  r = "";
+  for e in d.by { r += "{e.id}:{e.pts} "; }
+  assert(r == "3:[7,7,7] 2:[2,2] 1:[1] " && len(d.by) == 3, "descending: {r}n={len(d.by)}");
+}
+
+// In a group the displaced record stays in the vector — with its text intact — and leaves
+// every keyed member (@FR-Col-Group-Dup).
+fn groups1572() {
+  g = GroupVec1572 { es: [], by: [] };
+  g.es += [T1572 { id: 5, s: "g1" }];
+  g.es += [T1572 { id: 2, s: "g2" }];
+  g.es += [T1572 { id: 5, s: "g3" }];
+  assert(vec1572(g.es) == "5:g1 2:g2 5:g3 n=3", "group vector: {vec1572(g.es)}");
+  assert(rows1572(g.by) == "2:g2 5:g3 n=2", "group sorted: {rows1572(g.by)}");
+  g.by += [T1572 { id: 5, s: "g4" }];
+  assert(vec1572(g.es) == "5:g1 2:g2 5:g3 5:g4 n=4", "group vector via sorted: {vec1572(g.es)}");
+  assert(rows1572(g.by) == "2:g2 5:g4 n=2", "group sorted via sorted: {rows1572(g.by)}");
+
+  h = GroupHash1572 { h: [], by: [] };
+  h.h += [T1572 { id: 5, s: "h1" }];
+  h.h += [T1572 { id: 2, s: "h2" }];
+  h.h += [T1572 { id: 5, s: "h3" }];
+  assert(len(h.h) == 2 && h.h[5].s == "h3", "keyed group hash: {len(h.h)} {h.h[5].s}");
+  assert(rows1572(h.by) == "2:h2 5:h3 n=2", "keyed group sorted: {rows1572(h.by)}");
+  h.by += [T1572 { id: 5, s: "h4" }];
+  assert(len(h.h) == 2 && h.h[5].s == "h4", "keyed group hash via sorted: {len(h.h)} {h.h[5].s}");
+  assert(rows1572(h.by) == "2:h2 5:h4 n=2", "keyed group sorted via sorted: {rows1572(h.by)}");
+
+  a = GroupAll1572 { es: [], by: [], h: [] };
+  a.es += [T1572 { id: 5, s: "k1" }, T1572 { id: 2, s: "k2" }];
+  a.es += [T1572 { id: 5, s: "k3" }];
+  a.h += [T1572 { id: 5, s: "k4" }];
+  assert(vec1572(a.es) == "5:k1 2:k2 5:k3 5:k4 n=4", "three members vector: {vec1572(a.es)}");
+  assert(rows1572(a.by) == "2:k2 5:k4 n=2", "three members sorted: {rows1572(a.by)}");
+  assert(len(a.h) == 2 && a.h[5].s == "k4", "three members hash: {len(a.h)} {a.h[5].s}");
+}
+
+// An element write through the vector member re-indexes the record it wrote; onto a key another
+// record holds, that record leaves the keyed member and stays in the vector.
+fn relink1572() {
+  g = GroupPts1572 { es: [], by: [] };
+  g.es += [V1572 { id: 7, pts: [70] }];
+  g.es += [V1572 { id: 8, pts: [80] }];
+  g.es[1] = V1572 { id: 7, pts: [71] };
+  r = "";
+  for e in g.es { r += "{e.id}:{e.pts} "; }
+  q = "";
+  for e in g.by { q += "{e.id}:{e.pts} "; }
+  assert(r == "7:[70] 7:[71] " && q == "7:[71] " && len(g.by) == 1, "relink: {r}| {q}n={len(g.by)}");
+  g.es[0] = V1572 { id: 7, pts: [72] };
+  r = "";
+  for e in g.es { r += "{e.id}:{e.pts} "; }
+  q = "";
+  for e in g.by { q += "{e.id}:{e.pts} "; }
+  assert(r == "7:[72] 7:[71] " && q == "7:[72] " && len(g.by) == 1, "relink back: {r}| {q}n={len(g.by)}");
+}
+
+// A displaced record is released: two more rounds of 100 replaced keys leave the record count
+// where one round left it.  Unreleased, each replacement strands the record AND its text.
+fn leak1572() {
+  l = Rows1572 { rows: [] };
+  for k in 0..3 {
+    for i in 0..100 { l.rows += [T1572 { id: i, s: "value {i} round {k} padded out" }]; }
+    if k == 0 { first = records1572(); }
+    if k == 2 {
+      now = records1572();
+      assert(now <= first + 8, "a displaced record is released: {first} -> {now}");
+    }
+  }
+  assert(len(l.rows) == 100 && l.rows[42].s == "value 42 round 2 padded out", "leak cell: {len(l.rows)}");
+}
+
+fn main() {
+  append1572();
+  literal1572();
+  constructor1572();
+  local1572();
+  controls1572();
+  keys1572();
+  groups1572();
+  relink1572();
+  leak1572();
+}
