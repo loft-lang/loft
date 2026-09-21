@@ -2943,6 +2943,60 @@ fn per_path_stops(function: &Function, data: &Data, dst: u16, src: u16) -> Optio
     copy_moves_drop_from(function, data, dst, src, false)
 }
 
+/// The store whose elements' release a whole-collection copy hands over — `d = v`
+/// (`OpAppendVector(d, v)`), `w += v`, a nested `return v` copied into the caller's buffer
+/// (`OpReplaceVector(buffer, v)`) — or `None` where the copy moves nothing.
+///
+/// `(H-Move)` moves a collection the function owns wherever it is placed, and its elements go
+/// with it; the copy made a second structure over the same resources and both released them
+/// (D-heap-23).  The source is a USER local the function owns — not a parameter, which is the
+/// caller's, and not a compiler temp, which answers for itself — viewing the backing that holds
+/// its elements (`__vdb_N`, or the `__ref_N` a call delivered it through).  Only a backing whose
+/// elements carry a hook is an answer, and never the destination's own: `v += v` copies a
+/// collection into itself.
+fn collection_copy_handoff(
+    d_nr: u32,
+    args: &[Value],
+    function: &Function,
+    data: &Data,
+) -> Option<u16> {
+    if d_nr != data.def_nr("OpAppendVector") && d_nr != data.def_nr("OpReplaceVector") {
+        return None;
+    }
+    let (Value::Var(dst), Value::Var(src)) = (args.first()?.unspan(), args.get(1)?.unspan()) else {
+        return None;
+    };
+    if dst == src || function.is_argument(*src) || function.is_compiler_generated(*src) {
+        return None;
+    }
+    let dst_deps = function.tp(*dst).depend();
+    let backing = function.tp(*src).depend().iter().copied().find(|&b| {
+        let name = function.name(b);
+        (name.starts_with("__vdb_") || name.starts_with("__ref_"))
+            && !dst_deps.contains(&b)
+            && b != *dst
+    })?;
+    drop_hook(function, backing, data).map(|_| backing)
+}
+
+/// Every store [`collection_copy_handoff`] answers for a copy anywhere in `code`.  Each is decided
+/// per path, whether or not the copy sits under a branch: the backing still holds the elements
+/// the copy moved until a re-mint replaces them, so its release is skipped exactly on the paths
+/// the copy ran, and a re-mint gives it back (`Scopes::in_place_rebuild`).
+fn collection_handoffs(code: &Value, function: &Function, data: &Data) -> Vec<u16> {
+    let mut out: Vec<u16> = Vec::new();
+    code.walk(&mut |n| {
+        if let Value::Call(d, args) = n.unspan()
+            && let Some(backing) = collection_copy_handoff(*d, args, function, data)
+            && !out.contains(&backing)
+        {
+            out.push(backing);
+        }
+    });
+    out.sort_unstable();
+    out
+}
+
 /// The user variables a copy hands to a CONTAINER inside a branch ARM, whose type owns a
 /// droppable — a field or element write, an append, a literal's field, a return buffer
 /// ([`copy_record_handoff`]).
@@ -4824,6 +4878,12 @@ fn run_scan_phase(
     for src in arm_container_handoffs(orig_code, &function, data) {
         scopes.per_path_pairs.insert((u16::MAX, src));
         scopes.mint_handoff_flag(&mut function, src);
+    }
+    // D-heap-23 — the store behind a collection the function owns, whose elements a
+    // whole-collection copy moved elsewhere, stops releasing them on the path the copy ran.
+    for backing in collection_handoffs(orig_code, &function, data) {
+        scopes.per_path_pairs.insert((u16::MAX, backing));
+        scopes.mint_handoff_flag(&mut function, backing);
     }
     // loft#1336 / `(H-Drop)` — a witnessed local assigned a copy off a PARAMETER, anywhere in the
     // body: the witness releases the store the copy is and must skip its hook, so the local gets
@@ -9103,8 +9163,10 @@ fn check_arg_ref_allocs(ir: &Value, function: &Function, fn_name: &str) {
 }
 
 impl Scopes<'_> {
-    /// The per-path flag an `OpCopyRecord` sets when it runs, or `None` where the copy is not a
-    /// hand-over written in a branch arm (`arm_container_handoffs`, D-heap-14).
+    /// The per-path flag a copy sets when it runs, or `None` where the copy hands nothing over
+    /// per path: an `OpCopyRecord` written in a branch arm (`arm_container_handoffs`, D-heap-14),
+    /// or a whole-collection copy of a collection the function owns (`collection_handoffs`,
+    /// D-heap-23).
     fn arm_handoff_flag(
         &self,
         d_nr: u32,
@@ -9112,14 +9174,40 @@ impl Scopes<'_> {
         function: &Function,
         data: &Data,
     ) -> Option<u16> {
-        if d_nr != data.def_nr("OpCopyRecord") || args.len() < 3 {
-            return None;
-        }
-        let stopped = copy_record_handoff(args, function, data)?;
+        let stopped = if d_nr == data.def_nr("OpCopyRecord") && args.len() >= 3 {
+            copy_record_handoff(args, function, data)?
+        } else {
+            collection_copy_handoff(d_nr, args, function, data)?
+        };
         if !self.per_path_pairs.contains(&(u16::MAX, stopped)) {
             return None;
         }
         self.handed_off.get(&stopped).copied()
+    }
+
+    /// The per-path flag of the store behind collection `args[0]` when this call GROWS it — an
+    /// append or a new element — and a whole-collection copy may have moved its elements out
+    /// (`collection_handoffs`); `None` otherwise.
+    fn regrown_flag(
+        &self,
+        d_nr: u32,
+        args: &[Value],
+        function: &Function,
+        data: &Data,
+    ) -> Option<u16> {
+        if d_nr != data.def_nr("OpAppendVector") && d_nr != data.def_nr("OpNewRecord") {
+            return None;
+        }
+        let Value::Var(x) = args.first()?.unspan() else {
+            return None;
+        };
+        function.tp(*x).depend().iter().find_map(|b| {
+            if self.per_path_pairs.contains(&(u16::MAX, *b)) {
+                self.handed_off.get(b).copied()
+            } else {
+                None
+            }
+        })
     }
 
     /// The per-path flag of `var` (loft#1515): `false` at function entry, set where a copy that
@@ -9609,6 +9697,16 @@ impl Scopes<'_> {
                     ops.push(v_set(flag, Value::Boolean(true)));
                     return Value::Insert(ops);
                 }
+                // A collection whose elements a copy moved out, GROWN again: its store holds
+                // elements it must release once more.  `(H-Spent)` refuses the program — the name
+                // was spent — and until that error exists the release is given back, which keeps
+                // the answer such a program had before the move was honoured (D-heap-23).  Ahead
+                // of the call, because `OpNewRecord` answers the element it adds.
+                let regrown = self.regrown_flag(*d_nr, args, function, data);
+                let call = match regrown {
+                    Some(flag) => Value::Insert(vec![v_set(flag, Value::Boolean(false)), call]),
+                    None => call,
+                };
                 if preamble.is_empty() && postamble.is_empty() {
                     call
                 } else if postamble.is_empty() {
@@ -11450,9 +11548,22 @@ impl Scopes<'_> {
             return None;
         }
         // A construction OWNS what it builds, on every iteration.
-        let ops = self.displaced_drop(v, true, function, data);
+        let mut ops = self.displaced_drop(v, true, function, data);
         if self.var_scope.get(&v) == Some(&self.scope) {
             self.drop_transferred.remove(&v);
+        }
+        // What the rebuilt store holds from here on is its own to release again, whatever an
+        // earlier copy moved out of it — `@FR-O-Latest` for a store rebuilt in place, which is
+        // no `Set` for `scan_set` to retire.  After the snapshot, which read the flag.
+        if let Some(&flag) = self.handed_off.get(&v) {
+            let reset = v_set(flag, Value::Boolean(false));
+            ops = Some(match ops {
+                Some((pre, mut post)) => {
+                    post.push(reset);
+                    (pre, post)
+                }
+                None => (Vec::new(), vec![reset]),
+            });
         }
         ops
     }

@@ -597,10 +597,11 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-15` and `D-heap-22` (`D-heap-13` closed
-2026-09-20; `D-heap-16` closed 2026-09-21 together with the three it uncovered, `D-heap-18`,
-`D-heap-19` and `D-heap-20`, each opened and closed that day; `D-heap-14` closed the same day, and
-`D-heap-21` opened and closed with it, `D-heap-22` its loop-body face, still open).  The
+OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-22` and `D-heap-24` (`D-heap-13`
+closed 2026-09-20; `D-heap-16` closed 2026-09-21 together with the three it uncovered,
+`D-heap-18`, `D-heap-19` and `D-heap-20`, each opened and closed that day; `D-heap-14` closed the
+same day, and `D-heap-21` and `D-heap-23` opened and closed with it; `D-heap-22`, `D-heap-21`'s
+loop-body face, and `D-heap-24`, found beside `D-heap-23`, still open).  The
 first two are the copy-lease rules `(H-Copy-Refuse)` and `(H-Copy-Lease)`, written 2026-09-15
 before their implementation (@PLN163); `D-heap-8` was NARROWED 2026-09-17 when the owner ruled that
 a value the function owns MOVES, which makes 156 of its 227 measured sites legal and leaves the 71
@@ -648,6 +649,44 @@ freed without its hook) opened and CLOSED 2026-09-10, below.  `D-heap-12` (a ref
 buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.  `D-heap-17` (a self-append's claims walk
 read the source record through a number captured before the growth relocated it) opened and
 CLOSED 2026-09-17, below.
+
+### D-heap-23 — OPENED AND CLOSED (2026-09-21): a whole-collection copy of a collection the function owns released its elements twice
+
+- **Violates:** (H-Move) — a collection the function owns moves wherever it is placed, and its
+  elements go with it: `d = v`, `w += v`, `d = a + b`, and a `return v` from a nested block.
+- **Where:** the parser writes each as a whole-collection COPY — `OpAppendVector(d, v)`, or
+  `OpReplaceVector(buffer, v)` into the caller's buffer where `v`'s backing is not that buffer,
+  which is every `return v` below a function's top level — and no site handed the release over,
+  so the source's backing ran its cascade over the elements the copy had moved.
+- **Effect:** measured on both backends, identical: `d = v` released `80` twice; `w += v`
+  `70` twice; `d = a + b` both operands twice; and `if c { v = [mk(20)]; return v }` released
+  `20` in the callee BEFORE the caller read it and again in the caller — a use after release in
+  a shape as ordinary as building a result inside an `if`.  The same through a `match` arm and
+  from a loop body.  A top-level `return v` was clean: there the backing IS the caller's buffer,
+  so nothing is copied.  The stores were right throughout (poison, strict stores and native's
+  leak check silent); only the hooks doubled.
+- **Closed:** the source's backing takes loft#1515's per-path flag, set right after the copy
+  (`collection_copy_handoff`, one home, read by the pre-scan registration and the flag write); a
+  re-mint of the backing resets it (`in_place_rebuild`), because what the rebuilt store holds is
+  its own again.  A collection GROWN after its elements moved gives the release back at the
+  growth: `(H-Spent)` refuses that program, and until the error exists it keeps the answer it had
+  (`p_v2`).  `p_v1` retired from `D-heap-15`.  Guard
+  `tests/scripts/a-moved-collection-releases-its-elements-once.loft`.
+
+### D-heap-24 — OPEN (2026-09-21): a local returned on one path loses the record it held on a path that did not return
+
+- **Violates:** (H-Drop), its reassignment and scope-end clauses.
+- **Where:** not established.  The shape is `(H-Move)`'s promoted return local — the local a
+  `return` names is renamed onto the caller's buffer (`D-heap-19`, `D-heap-20`) — together with a
+  path on which that return does not run.
+- **Effect:** measured on both backends, identical to the tree before this entry's day:
+  `s = Hold { h: mk(20) }; if c { return s; } s = Hold { h: mk(21) }; return s` with `c` false
+  never releases `20`; so does a record, or a bare droppable, declared in a loop body and returned
+  on a LATER pass (`for i … { s = mk(20 + i); if i == 1 { return s; } }` loses `20`).  Returned on
+  the FIRST pass, and with no return in the loop, both are clean.
+- **Status:** OPEN — found 2026-09-21 while measuring `D-heap-23`'s return cells.
+- **Removal:** the record a promoted return local displaces released on every path that does not
+  return it, as a plain local's is.
 
 ### D-heap-21 — OPENED AND CLOSED (2026-09-21): a collection local was released after every other local at its scope's end
 
@@ -1131,9 +1170,10 @@ CLOSED 2026-09-17, below.
   (`{ __ref_N = call; __ref_N }`), which also closed the STORE that `v += [a ?? mk()]` leaked on
   the path that made it.  All 17 are clean on both backends, and so are 11 of `D-heap-8`'s cells
   on the path where the value the join chose was the function's own (`q_default_field_*`,
-  `q_default_param_*`).  **Open:** `p_v1` and `p_v2` (`d = v` of a droppable collection),
-  `p_o2` (`u = t` of a tuple) and `p_i2` (`a = a ?? mk()`, a variable rebound to a `??` over
-  itself).  None of them is a join.
+  `q_default_param_*`).  **Open:** `p_v2` (`d = v`, then `v` grown — `(H-Spent)` refuses it;
+  `p_v1`, the same bind without the growth, closed with `D-heap-23`), `p_o2` (`u = t` of a tuple)
+  and `p_i2` (`a = a ?? mk()`, a variable rebound to a `??` over itself).  None of them is a
+  join.
 - **Removal:** the copy that makes the second structure, removed wherever the rules move the
   value; `scopes::copy_moves_drop_from` and the hand-off flags beside it are @PLN163 P5's
   subject and this entry is the measurement P5 is verified against.

@@ -1,0 +1,105 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A collection the function owns, moved as a whole — `d = v`, `w += v`, `d = a + b`, a `return v`
+// from inside a block — takes its elements with it, and they are released once, by whatever
+// holds them last.
+//
+// The parser writes each as a whole-collection COPY, and nothing handed the release over, so the
+// source's store released the elements too (`formal/heap.md` D-heap-23).  A `return v` below a
+// function's top level did it in the callee, before the caller had read the result.  The source
+// store now takes a per-path flag, set right after the copy and reset where the store is rebuilt.
+//
+// The loop cells assert each release happens exactly once rather than the order: a collection
+// declared in a loop body still releases a pass late (D-heap-22), and this guard is not about
+// that.  The trace file is this guard's own.
+
+// @falsified-at: 0d17cb1b7 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-moved-collection-releases-its-elements-once.patch — interpret exit
+//   1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends; the stores are
+//   right on both trees, and only the hook's own trace shows the second release.
+// ARMED: no instrument — each hook call is written to this guard's own trace file.
+// WITNESS: on the control every cell releases an element twice, on both backends, scored with
+//   the assertions replaced by prints: `d = v` `L1,1,1`, `w += v` `L2,3,2,2`, `d = a + b`
+//   `L2,4,5,5,4`, and the three returns `6,L1,6`, `7,L1,7`, `10,L1,10` — each released in the
+//   callee BEFORE the caller read it — and the loop cells `L1,11,11,L1,12,12`, `L1,13,14,13`,
+//   `15,16,L1,16`.
+// HOLDS: leak, panic, free-refusal and expectations are unmoved on both trees.
+
+fn trace_path() -> text { return "loft_moved_collection_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn once(trace: text, id: text) -> boolean {
+  n = 0;
+  for part in trace.split(',') { if part == id { n += 1; } }
+  n == 1
+}
+
+struct McH { id: integer }
+fn OpDrop(self: McH) { note("{self.id}"); }
+fn mc_mk(id: integer) -> McH { return McH { id: id }; }
+
+fn mc_bind() { v: vector<McH> = [mc_mk(1)]; d = v; note("L{len(d)}"); }
+fn mc_concat() { v: vector<McH> = [mc_mk(2)]; w: vector<McH> = [mc_mk(3)]; w += v; note("L{len(w)}"); }
+fn mc_sum() { a: vector<McH> = [mc_mk(4)]; b: vector<McH> = [mc_mk(5)]; d = a + b; note("L{len(d)}"); }
+fn mc_nested_m(c: boolean) -> vector<McH> { if c { v: vector<McH> = [mc_mk(6)]; return v; } return []; }
+fn mc_nested() { r = mc_nested_m(true); note("L{len(r)}"); }
+fn mc_loop_m() -> vector<McH> { for i in 0..3 { v: vector<McH> = [mc_mk(7 + i)]; if i == 0 { return v; } } return []; }
+fn mc_loop() { r = mc_loop_m(); note("L{len(r)}"); }
+fn mc_match_m(k: integer) -> vector<McH> { match k { 0 => { v: vector<McH> = [mc_mk(10)]; return v; }, _ => {} } return []; }
+fn mc_match() { r = mc_match_m(0); note("L{len(r)}"); }
+fn mc_each_pass() { for i in 0..2 { v: vector<McH> = [mc_mk(11 + i)]; d = v; note("L{len(d)}"); } }
+fn mc_one_pass() { for i in 0..2 { v: vector<McH> = [mc_mk(13 + i)]; if i == 0 { d = v; note("L{len(d)}"); } } }
+fn mc_late_m() -> vector<McH> { for i in 0..3 { v: vector<McH> = [mc_mk(15 + i)]; if i == 1 { return v; } } return []; }
+fn mc_late() { r = mc_late_m(); note("L{len(r)}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  mc_bind(); got = drain();
+  assert(got == "L1,1", "d = v: {got}");
+
+  mc_concat(); got = drain();
+  assert(got == "L2,3,2", "w += v: {got}");
+
+  mc_sum(); got = drain();
+  assert(got == "L2,4,5", "d = a + b: {got}");
+
+  mc_nested(); got = drain();
+  assert(got == "L1,6", "a return from an if block, released by the caller only: {got}");
+
+  mc_loop(); got = drain();
+  assert(got == "L1,7", "a return from a loop body's first pass: {got}");
+
+  mc_match(); got = drain();
+  assert(got == "L1,10", "a return from a match arm: {got}");
+
+  mc_each_pass(); got = drain();
+  assert(once(got, "11") && once(got, "12"), "moved on every pass, each once: {got}");
+
+  mc_one_pass(); got = drain();
+  assert(once(got, "13") && once(got, "14"), "moved on one pass, each once: {got}");
+
+  mc_late(); got = drain();
+  assert(once(got, "15") && once(got, "16"), "a return from a later pass, each once: {got}");
+}

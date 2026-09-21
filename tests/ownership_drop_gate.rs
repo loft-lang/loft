@@ -1580,10 +1580,14 @@ const CENSUS_BLIND: &[&str] = &[];
 // (`scopes::write_out_joined_copies`), which retired `p_j3`, `p_j4`, the four `c_coalesce_*`
 // cells and every `q_*_local_*` field or push cell on both backends.  What is left is not a
 // join: a whole-collection bind, a tuple bind and a variable rebound to a `??` over itself.
+// `p_v1` left it the same day with `D-heap-23`: a whole-collection copy of a collection the
+// function owns hands its elements' release over on the path it runs.  `p_v2` stays, because it
+// grows the collection after moving it, which `(H-Spent)` refuses; until that error exists the
+// release is given back at the growth and the cell keeps the answer it had.
 // `D-heap-16` was retired 2026-09-21 with its fix (the arm lift that turns the binding into a
 // borrow gives a minting call arm a temp of its own): `p_l2` and `q_default_local_call_local`
 // moved LOST → clean on both backends, and `q_default_param_call_local` with them.
-const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[("D-heap-15", &["p_v1", "p_v2", "p_o2", "p_i2"])];
+const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[("D-heap-15", &["p_v2", "p_o2", "p_i2"])];
 
 /// Every cell has a lease verdict, and every cell the rules say must release once while a
 /// baseline says it does not is carried by exactly one OPEN deviation in `formal/heap.md`.  A fix

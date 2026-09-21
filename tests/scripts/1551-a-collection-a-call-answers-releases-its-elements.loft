@@ -73,9 +73,11 @@ fn a2() { d = mkv(2); d += [mk(3)]; note("r{len(d)}"); }
 // a3 — passed on to a `const` parameter, which borrows and releases nothing.
 fn a3() { d = mkv(4); n = take(d); note("r{n}"); }
 
-// a9 / o1 — a COPY pair.  `e = d` copies (measured: growing `e` leaves `d` at 1), so there
-// are two structures and two releases.  o1 is the same pair without a call and is the
-// oracle: it released twice before this fix and releases twice after.
+// a9 / o1 — a whole-collection bind of a collection the function owns.  `e = d` copies the
+// elements (measured: growing `e` leaves `d` at 1), and `(H-Move)` makes it a MOVE: the
+// elements go with the copy, and one release follows.  Both released twice until
+// `formal/heap.md` D-heap-23 handed the release over; o1 is the same pair without a call, and
+// the two answer alike, which is what makes it this cell's oracle.
 fn a9() { d = mkv(10); e = d; note("r{len(e)}"); }
 fn o1() { f: vector<H> = [mk(30)]; g = f; note("r{len(g)}"); }
 
@@ -106,10 +108,10 @@ fn main() {
   assert(got == "r1,4", "a3 a const parameter borrows, so the binding still releases once: {got}");
 
   a9(); got = drain();
-  assert(got == "r1,10,10", "a9 a copy pair is two structures and two releases: {got}");
+  assert(got == "r1,10", "a9 a moved collection releases its element once: {got}");
 
   o1(); got = drain();
-  assert(got == "r1,30,30", "o1 a9's no-call oracle answers the same: {got}");
+  assert(got == "r1,30", "o1 a9's no-call oracle answers the same: {got}");
 
   g1(); got = drain();
   assert(got == "r6,6", "g1 a struct from a call releases once: {got}");
