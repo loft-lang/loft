@@ -1,0 +1,9 @@
+// B3 — a call held at an ENUM whose set decides by variant, where one variant's leaf is the
+// template: B7 builds that leaf; until then it is refused, never answered by the static pick.
+enum Shape { Circle { r: integer }, Square { s: integer } }
+fn area(x: Circle) -> integer { 3 * x.r * x.r }
+fn area<T>(x: T) -> integer { -1 }
+fn main() {
+  v: vector<Shape> = [Circle { r: 2 }, Square { s: 3 }];
+  for s in v { println("{area(s)}"); }
+}

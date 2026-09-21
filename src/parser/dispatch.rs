@@ -25,12 +25,30 @@ use crate::diagnostics::diagnostic_format;
 use crate::parser::{Function, Parser, v_block, v_if};
 
 /// How far a call's argument is from a parameter's declared type, per position.
-/// Smaller is more specific.
+/// Smaller is more specific — except that `GENERIC` and a conversion are not ordered at all
+/// ([`rank_no_worse`]).
 type Rank = u8;
 const EXACT: Rank = 0;
 const WIDENED: Rank = 1;
 const LOSSY: Rank = 2;
 const CONVERTED: Rank = 3;
+/// `D-Rank` (@PLN165) — a template's parameter that names a type variable, where the
+/// variable binds.  Worse than `EXACT`, `WIDENED` and `LOSSY`: a concrete definition that
+/// takes the argument as it is wins.  Apart from the concrete ranks' sums (a conversion with
+/// a nullability step on top reaches 5), so no concrete rank ever reads as this one.
+const GENERIC: Rank = 100;
+
+/// `D-Rank`'s order on one position: is `a` no worse than `b`?  The concrete ranks are
+/// ordered by size and `GENERIC` sits above `LOSSY`, but `GENERIC` against any conversion is
+/// INCOMPARABLE — one definition needs an implicit conversion, the other an instantiation,
+/// and neither is derivable as more specific from the signatures.
+fn rank_no_worse(a: Rank, b: Rank) -> bool {
+    let apart = |x: Rank, y: Rank| x == GENERIC && y != GENERIC && y >= CONVERTED;
+    if apart(a, b) || apart(b, a) {
+        return false;
+    }
+    a <= b
+}
 
 /// What selection over an overload set answered.
 pub(crate) enum Selection {
@@ -125,8 +143,10 @@ impl Parser {
     /// does not take the call (`Disp-Applicable`): more arguments than parameters, a trailing
     /// parameter with no default, or an argument its parameter cannot accept.
     fn definition_ranks(&mut self, r: u32, routed: &[Type]) -> Option<Vec<Rank>> {
-        // @PLN165 B2 — a template member is not ranked yet: it takes no call in this step.
         if self.data.def_type(r) == DefType::Generic {
+            return self.template_ranks(r, routed);
+        }
+        if !self.takes_arity(r, routed.len()) {
             return None;
         }
         let declared: Vec<Type> = self
@@ -137,27 +157,73 @@ impl Parser {
             .filter(|p| !p.hidden)
             .map(|p| p.typedef.clone())
             .collect();
-        if routed.len() > declared.len() {
-            return None;
-        }
-        // A trailing parameter is admitted when it has a default (the one optionality a
-        // definition carries — owner, 2026-09-14).
-        let trailing_defaulted = self
-            .data
-            .def(r)
-            .attributes
-            .iter()
-            .filter(|p| !p.hidden)
-            .skip(routed.len())
-            .all(|p| p.value != crate::data::Value::Null);
-        if !trailing_defaulted {
-            return None;
-        }
         routed
             .iter()
             .zip(&declared)
             .map(|(arg, param)| self.dispatch_rank(arg, param))
             .collect()
+    }
+
+    /// `D-Rank` for a TEMPLATE member of a set (@PLN165 B3): it takes the call where every
+    /// type variable binds — [`Parser::bind_template`], the binding its instantiation will
+    /// use — and the bound type satisfies the bounds ([`Parser::satisfies`], which reports
+    /// nothing: a template whose bounds fail is simply not a candidate).  A position whose
+    /// parameter names a variable ranks `GENERIC` where the argument takes the parameter as
+    /// bound without a conversion; any other position ranks as a concrete definition's does.
+    fn template_ranks(&mut self, r: u32, routed: &[Type]) -> Option<Vec<Rank>> {
+        if self.refused_templates.contains(&r) || !self.takes_arity(r, routed.len()) {
+            return None;
+        }
+        let bindings = Self::bind_template(&self.data, r, routed)?;
+        // An argument typed by the CALLER's own type variable (a call written inside another
+        // generic) is not decided here: which member its instances reach depends on what the
+        // variable becomes, and a set is not re-selected per instance — the call is refused,
+        // as it is for a set of concrete members.
+        if bindings
+            .iter()
+            .any(|(_, b)| b.is_unknown() || self.data.mentions_type_var(b))
+        {
+            return None;
+        }
+        let first = bindings[0].1.clone();
+        if !self.satisfies(r, self.data.type_def_nr(&first)) {
+            return None;
+        }
+        let declared: Vec<Type> = self
+            .data
+            .def(r)
+            .attributes
+            .iter()
+            .filter(|p| !p.hidden)
+            .map(|p| p.typedef.clone())
+            .collect();
+        routed
+            .iter()
+            .zip(&declared)
+            .map(|(arg, param)| {
+                if self.data.mentions_type_var(param) {
+                    let bound = Self::substitute_all(param.clone(), &bindings);
+                    self.dispatch_rank(arg, &bound)
+                        .filter(|rank| *rank < CONVERTED)
+                        .map(|_| GENERIC)
+                } else {
+                    self.dispatch_rank(arg, param)
+                }
+            })
+            .collect()
+    }
+
+    /// Does definition `r` take a call of `given` arguments: no more than it declares, and a
+    /// default on every parameter past them (the one optionality a definition carries —
+    /// owner, 2026-09-14)?
+    fn takes_arity(&self, r: u32, given: usize) -> bool {
+        let declared = self.data.def(r).attributes.iter().filter(|p| !p.hidden);
+        if given > declared.clone().count() {
+            return false;
+        }
+        declared
+            .skip(given)
+            .all(|p| p.value != crate::data::Value::Null)
     }
 
     /// Does a definition the PROGRAM declares — anything outside the stdlib prelude, a
@@ -352,7 +418,8 @@ impl Parser {
         // strictly better than.
         let dominated = |a: &[Rank], b: &[Rank]| -> bool {
             // b is strictly better than a
-            a.iter().zip(b).all(|(x, y)| y <= x) && a.iter().zip(b).any(|(x, y)| y < x)
+            a.iter().zip(b).all(|(x, y)| rank_no_worse(*y, *x))
+                && a.iter().zip(b).any(|(x, y)| y != x)
         };
         let minimal: Vec<u32> = ranked
             .iter()
@@ -612,6 +679,32 @@ impl Parser {
                 .iter()
                 .any(|(pos, _)| matches!(routed[*pos], Type::Optional(_)))
         });
+        // A variant tuple — or a null at a nullable position — may select a TEMPLATE member
+        // (@PLN165 B3).  Its instance per variant is not built here, so the call is refused
+        // rather than answered, for every variant, by the one definition the static types
+        // select.
+        let template_leaf = leaves
+            .iter()
+            .map(|(_, d, ts)| (*d, ts.clone()))
+            .chain(null_leaf.map(|d| (d, routed.to_vec())))
+            .find(|(d, _)| self.data.def_type(*d) == DefType::Generic);
+        if let Some((g, leaf_types)) = template_leaf {
+            let shown = |data: &crate::data::Data, ts: &[Type]| -> String {
+                ts.iter()
+                    .map(|t| t.source_name(data))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            let text = format!(
+                "`{name}({})` decides by variant, and at ({}) that selects the generic {}; a decision by variant reaches concrete definitions only — declare `{name}` at those types",
+                shown(&self.data, routed),
+                shown(&self.data, &leaf_types),
+                self.data.overload_signature(name, g)
+            );
+            crate::diagnostic!(self.lexer, crate::diagnostics::Level::Error, "{text}");
+            self.reported_dynamic_refusal = true;
+            return None;
+        }
         // One dispatcher has ONE return type, so the definitions it chooses between must agree
         // on it — DESIGN.md's open question 4, at the one place it cannot stay open.  A
         // `Fireball` leaf answering `integer` beside an enum-level leaf answering `text` read the

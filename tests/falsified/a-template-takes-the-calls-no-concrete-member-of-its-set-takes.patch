@@ -1,0 +1,379 @@
+diff --git b/src/data.rs a/src/data.rs
+index 588b47287..1b6e67773 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -7507,36 +7507,7 @@ impl Data {
+             .filter(|p| !p.hidden)
+             .map(|p| p.typedef.source_name(self))
+             .collect();
+-        // A TEMPLATE member (@PLN165 B3) is named with its header, the way its author wrote
+-        // it — `show<T: Named>(T)` — so a refusal naming it says which definition it means.
+-        let mut vars: Vec<String> = Vec::new();
+-        if self.def_type(r) == DefType::Generic {
+-            for p in self.def(r).attributes.iter().filter(|p| !p.hidden) {
+-                p.typedef.any_node(&mut |t| {
+-                    if let Type::Reference(d, _) = t
+-                        && (*d as usize) < self.definitions.len()
+-                        && self.is_type_var_placeholder(*d)
+-                    {
+-                        let spelled = Self::type_var_spelling(self.def(*d).name());
+-                        let bounds = self.type_var_bound_keys.get(d).cloned().unwrap_or_default();
+-                        let label = if bounds.is_empty() {
+-                            spelled.to_string()
+-                        } else {
+-                            format!("{spelled}: {}", bounds.replace('+', " + "))
+-                        };
+-                        if !vars.contains(&label) {
+-                            vars.push(label);
+-                        }
+-                    }
+-                    false
+-                });
+-            }
+-        }
+-        if vars.is_empty() {
+-            format!("{fn_name}({})", params.join(", "))
+-        } else {
+-            format!("{fn_name}<{}>({})", vars.join(", "), params.join(", "))
+-        }
++        format!("{fn_name}({})", params.join(", "))
+     }
+ 
+     #[must_use]
+diff --git b/src/parser/dispatch.rs a/src/parser/dispatch.rs
+index f514871ab..a20e5467d 100644
+--- b/src/parser/dispatch.rs
++++ a/src/parser/dispatch.rs
+@@ -25,30 +25,12 @@ use crate::diagnostics::diagnostic_format;
+ use crate::parser::{Function, Parser, v_block, v_if};
+ 
+ /// How far a call's argument is from a parameter's declared type, per position.
+-/// Smaller is more specific — except that `GENERIC` and a conversion are not ordered at all
+-/// ([`rank_no_worse`]).
++/// Smaller is more specific.
+ type Rank = u8;
+ const EXACT: Rank = 0;
+ const WIDENED: Rank = 1;
+ const LOSSY: Rank = 2;
+ const CONVERTED: Rank = 3;
+-/// `D-Rank` (@PLN165) — a template's parameter that names a type variable, where the
+-/// variable binds.  Worse than `EXACT`, `WIDENED` and `LOSSY`: a concrete definition that
+-/// takes the argument as it is wins.  Apart from the concrete ranks' sums (a conversion with
+-/// a nullability step on top reaches 5), so no concrete rank ever reads as this one.
+-const GENERIC: Rank = 100;
+-
+-/// `D-Rank`'s order on one position: is `a` no worse than `b`?  The concrete ranks are
+-/// ordered by size and `GENERIC` sits above `LOSSY`, but `GENERIC` against any conversion is
+-/// INCOMPARABLE — one definition needs an implicit conversion, the other an instantiation,
+-/// and neither is derivable as more specific from the signatures.
+-fn rank_no_worse(a: Rank, b: Rank) -> bool {
+-    let apart = |x: Rank, y: Rank| x == GENERIC && y != GENERIC && y >= CONVERTED;
+-    if apart(a, b) || apart(b, a) {
+-        return false;
+-    }
+-    a <= b
+-}
+ 
+ /// What selection over an overload set answered.
+ pub(crate) enum Selection {
+@@ -143,10 +125,8 @@ impl Parser {
+     /// does not take the call (`Disp-Applicable`): more arguments than parameters, a trailing
+     /// parameter with no default, or an argument its parameter cannot accept.
+     fn definition_ranks(&mut self, r: u32, routed: &[Type]) -> Option<Vec<Rank>> {
++        // @PLN165 B2 — a template member is not ranked yet: it takes no call in this step.
+         if self.data.def_type(r) == DefType::Generic {
+-            return self.template_ranks(r, routed);
+-        }
+-        if !self.takes_arity(r, routed.len()) {
+             return None;
+         }
+         let declared: Vec<Type> = self
+@@ -157,75 +137,29 @@ impl Parser {
+             .filter(|p| !p.hidden)
+             .map(|p| p.typedef.clone())
+             .collect();
+-        routed
+-            .iter()
+-            .zip(&declared)
+-            .map(|(arg, param)| self.dispatch_rank(arg, param))
+-            .collect()
+-    }
+-
+-    /// `D-Rank` for a TEMPLATE member of a set (@PLN165 B3): it takes the call where every
+-    /// type variable binds — [`Parser::bind_template`], the binding its instantiation will
+-    /// use — and the bound type satisfies the bounds ([`Parser::satisfies`], which reports
+-    /// nothing: a template whose bounds fail is simply not a candidate).  A position whose
+-    /// parameter names a variable ranks `GENERIC` where the argument takes the parameter as
+-    /// bound without a conversion; any other position ranks as a concrete definition's does.
+-    fn template_ranks(&mut self, r: u32, routed: &[Type]) -> Option<Vec<Rank>> {
+-        if self.refused_templates.contains(&r) || !self.takes_arity(r, routed.len()) {
+-            return None;
+-        }
+-        let bindings = Self::bind_template(&self.data, r, routed)?;
+-        // An argument typed by the CALLER's own type variable (a call written inside another
+-        // generic) is not decided here: which member its instances reach depends on what the
+-        // variable becomes, and a set is not re-selected per instance — the call is refused,
+-        // as it is for a set of concrete members.
+-        if bindings
+-            .iter()
+-            .any(|(_, b)| b.is_unknown() || self.data.mentions_type_var(b))
+-        {
+-            return None;
+-        }
+-        let first = bindings[0].1.clone();
+-        if !self.satisfies(r, self.data.type_def_nr(&first)) {
++        if routed.len() > declared.len() {
+             return None;
+         }
+-        let declared: Vec<Type> = self
++        // A trailing parameter is admitted when it has a default (the one optionality a
++        // definition carries — owner, 2026-09-14).
++        let trailing_defaulted = self
+             .data
+             .def(r)
+             .attributes
+             .iter()
+             .filter(|p| !p.hidden)
+-            .map(|p| p.typedef.clone())
+-            .collect();
++            .skip(routed.len())
++            .all(|p| p.value != crate::data::Value::Null);
++        if !trailing_defaulted {
++            return None;
++        }
+         routed
+             .iter()
+             .zip(&declared)
+-            .map(|(arg, param)| {
+-                if self.data.mentions_type_var(param) {
+-                    let bound = Self::substitute_all(param.clone(), &bindings);
+-                    self.dispatch_rank(arg, &bound)
+-                        .filter(|rank| *rank < CONVERTED)
+-                        .map(|_| GENERIC)
+-                } else {
+-                    self.dispatch_rank(arg, param)
+-                }
+-            })
++            .map(|(arg, param)| self.dispatch_rank(arg, param))
+             .collect()
+     }
+ 
+-    /// Does definition `r` take a call of `given` arguments: no more than it declares, and a
+-    /// default on every parameter past them (the one optionality a definition carries —
+-    /// owner, 2026-09-14)?
+-    fn takes_arity(&self, r: u32, given: usize) -> bool {
+-        let declared = self.data.def(r).attributes.iter().filter(|p| !p.hidden);
+-        if given > declared.clone().count() {
+-            return false;
+-        }
+-        declared
+-            .skip(given)
+-            .all(|p| p.value != crate::data::Value::Null)
+-    }
+-
+     /// Does a definition the PROGRAM declares — anything outside the stdlib prelude, a
+     /// library's included — take a call of `name` with these argument types?  A compiler
+     /// special case for a call name (`sort` over a vector, `type_of`, `assert`, …) is a
+@@ -418,8 +352,7 @@ impl Parser {
+         // strictly better than.
+         let dominated = |a: &[Rank], b: &[Rank]| -> bool {
+             // b is strictly better than a
+-            a.iter().zip(b).all(|(x, y)| rank_no_worse(*y, *x))
+-                && a.iter().zip(b).any(|(x, y)| y != x)
++            a.iter().zip(b).all(|(x, y)| y <= x) && a.iter().zip(b).any(|(x, y)| y < x)
+         };
+         let minimal: Vec<u32> = ranked
+             .iter()
+@@ -679,32 +612,6 @@ impl Parser {
+                 .iter()
+                 .any(|(pos, _)| matches!(routed[*pos], Type::Optional(_)))
+         });
+-        // A variant tuple — or a null at a nullable position — may select a TEMPLATE member
+-        // (@PLN165 B3).  Its instance per variant is not built here, so the call is refused
+-        // rather than answered, for every variant, by the one definition the static types
+-        // select.
+-        let template_leaf = leaves
+-            .iter()
+-            .map(|(_, d, ts)| (*d, ts.clone()))
+-            .chain(null_leaf.map(|d| (d, routed.to_vec())))
+-            .find(|(d, _)| self.data.def_type(*d) == DefType::Generic);
+-        if let Some((g, leaf_types)) = template_leaf {
+-            let shown = |data: &crate::data::Data, ts: &[Type]| -> String {
+-                ts.iter()
+-                    .map(|t| t.source_name(data))
+-                    .collect::<Vec<_>>()
+-                    .join(", ")
+-            };
+-            let text = format!(
+-                "`{name}({})` decides by variant, and at ({}) that selects the generic {}; a decision by variant reaches concrete definitions only — declare `{name}` at those types",
+-                shown(&self.data, routed),
+-                shown(&self.data, &leaf_types),
+-                self.data.overload_signature(name, g)
+-            );
+-            crate::diagnostic!(self.lexer, crate::diagnostics::Level::Error, "{text}");
+-            self.reported_dynamic_refusal = true;
+-            return None;
+-        }
+         // One dispatcher has ONE return type, so the definitions it chooses between must agree
+         // on it — DESIGN.md's open question 4, at the one place it cannot stay open.  A
+         // `Fireball` leaf answering `integer` beside an enum-level leaf answering `text` read the
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index ea8a11e13..baa51e1e5 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -6359,14 +6359,10 @@ impl Parser {
+         // bare lookup found (`fn head<T>(self: vector<T>)` for `head(a)`) is kept aside and
+         // instantiated: a bare call reaches a method template exactly as it reaches a concrete
+         // `self` method ((F-Recv)), and a free template of that name on that receiver type
+-        // cannot also exist ((F-OneBody)) (loft#1539).  So is a template that SELECTION chose
+-        // from its name's overload set (@PLN165 B3, `D-Rank`): the set is what named it, so
+-        // no lookup by the bare name can find it again.
++        // cannot also exist ((F-OneBody)) (loft#1539).
+         let mut method_template = u32::MAX;
+         if d_nr != u32::MAX && self.data.def(d_nr).def_type() == DefType::Generic {
+-            if self.data.def(d_nr).name().starts_with("t_")
+-                || self.data.def(d_nr).is_free_overload()
+-            {
++            if self.data.def(d_nr).name().starts_with("t_") {
+                 method_template = d_nr;
+             }
+             d_nr = u32::MAX;
+@@ -6435,11 +6431,7 @@ impl Parser {
+                 // the declaration already says why; "Unknown function" here would point the
+                 // author at the call instead.  Answer the declared return, so the rest of the
+                 // expression types as written.
+-                let g_nr = if method_template == u32::MAX {
+-                    self.data.def_nr(&format!("n_{name}"))
+-                } else {
+-                    method_template
+-                };
++                let g_nr = self.data.def_nr(&format!("n_{name}"));
+                 if d_nr == u32::MAX && self.refused_templates.contains(&g_nr) {
+                     *code = Value::Null;
+                     return self.data.def(g_nr).returned().clone();
+@@ -8327,26 +8319,12 @@ impl Parser {
+     /// types, because the alternative is a monomorph typed against a companion the author
+     /// never chose.
+     fn associated_bindings(&mut self, g_nr: u32, concrete_nr: u32) -> Vec<(u32, Type)> {
+-        let (out, clashes) = self.infer_associated(g_nr, concrete_nr);
+-        for text in clashes {
+-            let msg = crate::diagnostics::diagnostic_format(Level::Error, format_args!("{text}"));
+-            let peek_pos = self.lexer.peek().position.clone();
+-            self.lexer.pos_diagnostic(Level::Error, &peek_pos, &msg);
+-        }
+-        out
+-    }
+-
+-    /// [`Self::associated_bindings`] without its diagnostic: the pairs it infers, and one
+-    /// message per associated type the implementor names two different companions for.
+-    /// Asked on its own by [`Self::satisfies`], which must answer without reporting.
+-    fn infer_associated(&self, g_nr: u32, concrete_nr: u32) -> (Vec<(u32, Type)>, Vec<String>) {
+         let bounds = self.data.definitions[g_nr as usize].bounds.clone();
+         if bounds.is_empty() || concrete_nr == u32::MAX {
+-            return (Vec::new(), Vec::new());
++            return Vec::new();
+         }
+         let concrete_type = self.data.def(concrete_nr).returned().clone();
+         let mut out: Vec<(u32, Type)> = Vec::new();
+-        let mut clashes: Vec<String> = Vec::new();
+         for iface_nr in bounds {
+             let children: Vec<u32> = self.data.children_of(iface_nr).collect();
+             // The placeholders this interface declares — its non-method children.
+@@ -8408,10 +8386,15 @@ impl Parser {
+                 if let Some((first, second)) = clash {
+                     let ph_name = self.data.def(ph).name().to_string();
+                     let concrete_name = self.data.def(concrete_nr).name().to_string();
+-                    clashes.push(format!(
+-                        "'{concrete_name}' does not agree with itself about '{ph_name}': \
+-                         '{first}' and '{second}' name different types for it",
+-                    ));
++                    let msg = crate::diagnostics::diagnostic_format(
++                        Level::Error,
++                        format_args!(
++                            "'{concrete_name}' does not agree with itself about '{ph_name}': \
++                             '{first}' and '{second}' name different types for it",
++                        ),
++                    );
++                    let peek_pos = self.lexer.peek().position.clone();
++                    self.lexer.pos_diagnostic(Level::Error, &peek_pos, &msg);
+                     continue;
+                 }
+                 if let Some((companion, _)) = found {
+@@ -8419,7 +8402,7 @@ impl Parser {
+                 }
+             }
+         }
+-        (out, clashes)
++        out
+     }
+ 
+     /// The definition a type NAMES, for a struct, a vector element or a struct-enum —
+@@ -8526,50 +8509,18 @@ impl Parser {
+     /// Enforces @FR-G-Sat: satisfaction is STRUCTURAL and judged at the point of use — a
+     /// type satisfies an interface exactly when the required methods are VISIBLE there.
+     /// No `impl` declaration exists to consult, so having the methods IS satisfying, and
+-    /// [`Self::satisfaction_messages`] is the only thing that decides it.
++    /// this function is the only thing that decides it.
+     ///
+     /// `assoc` is what [`Self::try_generic_instantiation`] already inferred for this
+     /// monomorph — passed in rather than recomputed, so a companion the implementor cannot
+     /// agree on is reported once, not once per place that asks.
+     fn check_satisfaction(&mut self, g_nr: u32, concrete_nr: u32, assoc: &[(u32, Type)]) -> bool {
+-        let messages = self.satisfaction_messages(g_nr, concrete_nr, assoc);
+-        for message in &messages {
+-            let msg =
+-                crate::diagnostics::diagnostic_format(Level::Error, format_args!("{message}"));
+-            let peek_pos = self.lexer.peek().position.clone();
+-            self.lexer.pos_diagnostic(Level::Error, &peek_pos, &msg);
+-        }
+-        messages.is_empty()
+-    }
+-
+-    /// Does the type `concrete_nr` satisfy every bound of the template `g_nr` — the question
+-    /// [`Self::check_satisfaction`] reports on, answered without reporting.  Selection asks it
+-    /// of each template member of an overload set (`D-Rank`: a template takes a call where its
+-    /// variables bind AND its bounds hold), and a template whose bounds fail is simply not a
+-    /// candidate there; the diagnostic belongs to the instantiation that goes ahead anyway.
+-    pub(crate) fn satisfies(&self, g_nr: u32, concrete_nr: u32) -> bool {
+-        let (assoc, clashes) = self.infer_associated(g_nr, concrete_nr);
+-        clashes.is_empty()
+-            && self
+-                .satisfaction_messages(g_nr, concrete_nr, &assoc)
+-                .is_empty()
+-    }
+-
+-    /// Every reason `concrete_nr` fails `g_nr`'s bounds and its associated types' bounds, as
+-    /// the words a diagnostic prints — empty when it satisfies them.  The one home of the
+-    /// judgement [`Self::check_satisfaction`] and [`Self::satisfies`] both read.
+-    fn satisfaction_messages(
+-        &self,
+-        g_nr: u32,
+-        concrete_nr: u32,
+-        assoc: &[(u32, Type)],
+-    ) -> Vec<String> {
+         let bounds = self.data.definitions[g_nr as usize].bounds.clone();
+         if bounds.is_empty() {
+-            return Vec::new();
++            return true;
+         }
+         if concrete_nr == u32::MAX {
+-            return Vec::new(); // can't check without a concrete type def_nr
++            return true; // can't check without a concrete type def_nr
+         }
+         let concrete_name = self.data.def(concrete_nr).name().to_string();
+         let mut messages: Vec<String> = Vec::new();
+@@ -8606,7 +8557,13 @@ impl Parser {
+                 }
+             }
+         }
+-        messages
++        for message in &messages {
++            let msg =
++                crate::diagnostics::diagnostic_format(Level::Error, format_args!("{message}"));
++            let peek_pos = self.lexer.peek().position.clone();
++            self.lexer.pos_diagnostic(Level::Error, &peek_pos, &msg);
++        }
++        messages.is_empty()
+     }
+ 
+     /// @PLN125 A2a — does the implementor's method return a DIFFERENT named type

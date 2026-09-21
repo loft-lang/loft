@@ -6359,10 +6359,14 @@ impl Parser {
         // bare lookup found (`fn head<T>(self: vector<T>)` for `head(a)`) is kept aside and
         // instantiated: a bare call reaches a method template exactly as it reaches a concrete
         // `self` method ((F-Recv)), and a free template of that name on that receiver type
-        // cannot also exist ((F-OneBody)) (loft#1539).
+        // cannot also exist ((F-OneBody)) (loft#1539).  So is a template that SELECTION chose
+        // from its name's overload set (@PLN165 B3, `D-Rank`): the set is what named it, so
+        // no lookup by the bare name can find it again.
         let mut method_template = u32::MAX;
         if d_nr != u32::MAX && self.data.def(d_nr).def_type() == DefType::Generic {
-            if self.data.def(d_nr).name().starts_with("t_") {
+            if self.data.def(d_nr).name().starts_with("t_")
+                || self.data.def(d_nr).is_free_overload()
+            {
                 method_template = d_nr;
             }
             d_nr = u32::MAX;
@@ -6431,7 +6435,11 @@ impl Parser {
                 // the declaration already says why; "Unknown function" here would point the
                 // author at the call instead.  Answer the declared return, so the rest of the
                 // expression types as written.
-                let g_nr = self.data.def_nr(&format!("n_{name}"));
+                let g_nr = if method_template == u32::MAX {
+                    self.data.def_nr(&format!("n_{name}"))
+                } else {
+                    method_template
+                };
                 if d_nr == u32::MAX && self.refused_templates.contains(&g_nr) {
                     *code = Value::Null;
                     return self.data.def(g_nr).returned().clone();
@@ -8319,12 +8327,26 @@ impl Parser {
     /// types, because the alternative is a monomorph typed against a companion the author
     /// never chose.
     fn associated_bindings(&mut self, g_nr: u32, concrete_nr: u32) -> Vec<(u32, Type)> {
+        let (out, clashes) = self.infer_associated(g_nr, concrete_nr);
+        for text in clashes {
+            let msg = crate::diagnostics::diagnostic_format(Level::Error, format_args!("{text}"));
+            let peek_pos = self.lexer.peek().position.clone();
+            self.lexer.pos_diagnostic(Level::Error, &peek_pos, &msg);
+        }
+        out
+    }
+
+    /// [`Self::associated_bindings`] without its diagnostic: the pairs it infers, and one
+    /// message per associated type the implementor names two different companions for.
+    /// Asked on its own by [`Self::satisfies`], which must answer without reporting.
+    fn infer_associated(&self, g_nr: u32, concrete_nr: u32) -> (Vec<(u32, Type)>, Vec<String>) {
         let bounds = self.data.definitions[g_nr as usize].bounds.clone();
         if bounds.is_empty() || concrete_nr == u32::MAX {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
         let concrete_type = self.data.def(concrete_nr).returned().clone();
         let mut out: Vec<(u32, Type)> = Vec::new();
+        let mut clashes: Vec<String> = Vec::new();
         for iface_nr in bounds {
             let children: Vec<u32> = self.data.children_of(iface_nr).collect();
             // The placeholders this interface declares — its non-method children.
@@ -8386,15 +8408,10 @@ impl Parser {
                 if let Some((first, second)) = clash {
                     let ph_name = self.data.def(ph).name().to_string();
                     let concrete_name = self.data.def(concrete_nr).name().to_string();
-                    let msg = crate::diagnostics::diagnostic_format(
-                        Level::Error,
-                        format_args!(
-                            "'{concrete_name}' does not agree with itself about '{ph_name}': \
-                             '{first}' and '{second}' name different types for it",
-                        ),
-                    );
-                    let peek_pos = self.lexer.peek().position.clone();
-                    self.lexer.pos_diagnostic(Level::Error, &peek_pos, &msg);
+                    clashes.push(format!(
+                        "'{concrete_name}' does not agree with itself about '{ph_name}': \
+                         '{first}' and '{second}' name different types for it",
+                    ));
                     continue;
                 }
                 if let Some((companion, _)) = found {
@@ -8402,7 +8419,7 @@ impl Parser {
                 }
             }
         }
-        out
+        (out, clashes)
     }
 
     /// The definition a type NAMES, for a struct, a vector element or a struct-enum —
@@ -8509,18 +8526,50 @@ impl Parser {
     /// Enforces @FR-G-Sat: satisfaction is STRUCTURAL and judged at the point of use — a
     /// type satisfies an interface exactly when the required methods are VISIBLE there.
     /// No `impl` declaration exists to consult, so having the methods IS satisfying, and
-    /// this function is the only thing that decides it.
+    /// [`Self::satisfaction_messages`] is the only thing that decides it.
     ///
     /// `assoc` is what [`Self::try_generic_instantiation`] already inferred for this
     /// monomorph — passed in rather than recomputed, so a companion the implementor cannot
     /// agree on is reported once, not once per place that asks.
     fn check_satisfaction(&mut self, g_nr: u32, concrete_nr: u32, assoc: &[(u32, Type)]) -> bool {
+        let messages = self.satisfaction_messages(g_nr, concrete_nr, assoc);
+        for message in &messages {
+            let msg =
+                crate::diagnostics::diagnostic_format(Level::Error, format_args!("{message}"));
+            let peek_pos = self.lexer.peek().position.clone();
+            self.lexer.pos_diagnostic(Level::Error, &peek_pos, &msg);
+        }
+        messages.is_empty()
+    }
+
+    /// Does the type `concrete_nr` satisfy every bound of the template `g_nr` — the question
+    /// [`Self::check_satisfaction`] reports on, answered without reporting.  Selection asks it
+    /// of each template member of an overload set (`D-Rank`: a template takes a call where its
+    /// variables bind AND its bounds hold), and a template whose bounds fail is simply not a
+    /// candidate there; the diagnostic belongs to the instantiation that goes ahead anyway.
+    pub(crate) fn satisfies(&self, g_nr: u32, concrete_nr: u32) -> bool {
+        let (assoc, clashes) = self.infer_associated(g_nr, concrete_nr);
+        clashes.is_empty()
+            && self
+                .satisfaction_messages(g_nr, concrete_nr, &assoc)
+                .is_empty()
+    }
+
+    /// Every reason `concrete_nr` fails `g_nr`'s bounds and its associated types' bounds, as
+    /// the words a diagnostic prints — empty when it satisfies them.  The one home of the
+    /// judgement [`Self::check_satisfaction`] and [`Self::satisfies`] both read.
+    fn satisfaction_messages(
+        &self,
+        g_nr: u32,
+        concrete_nr: u32,
+        assoc: &[(u32, Type)],
+    ) -> Vec<String> {
         let bounds = self.data.definitions[g_nr as usize].bounds.clone();
         if bounds.is_empty() {
-            return true;
+            return Vec::new();
         }
         if concrete_nr == u32::MAX {
-            return true; // can't check without a concrete type def_nr
+            return Vec::new(); // can't check without a concrete type def_nr
         }
         let concrete_name = self.data.def(concrete_nr).name().to_string();
         let mut messages: Vec<String> = Vec::new();
@@ -8557,13 +8606,7 @@ impl Parser {
                 }
             }
         }
-        for message in &messages {
-            let msg =
-                crate::diagnostics::diagnostic_format(Level::Error, format_args!("{message}"));
-            let peek_pos = self.lexer.peek().position.clone();
-            self.lexer.pos_diagnostic(Level::Error, &peek_pos, &msg);
-        }
-        messages.is_empty()
+        messages
     }
 
     /// @PLN125 A2a — does the implementor's method return a DIFFERENT named type

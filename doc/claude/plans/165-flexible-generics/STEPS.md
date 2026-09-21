@@ -254,6 +254,40 @@ template (`method_template`, loft#1539): predict the return on pass 1, instantia
 - **Compared against:** IDENTICAL over every file that compiles today; parse-time switch
   `LOFT_NO_GENERIC_MEMBER=1` restores the `Function`-only gate and is the first bisect step
   for a call that reaches the wrong definition where a generic shares the name.
+- **Built** (2026-09-21).  `template_ranks` in `parser/dispatch.rs`; `GENERIC` is apart from
+  every sum of the concrete ranks, and `rank_no_worse` is the partial order.
+  `check_satisfaction` is now `satisfaction_messages` (the one judgement) plus its diagnostic;
+  `satisfies` asks it without reporting, and `infer_associated` is `associated_bindings`
+  without its diagnostic.  A selected template takes the method-template route in `call`.
+  Three findings:
+  - the red cell's premise does not hold — selection's `can_convert` has NO integer-to-float
+    step (a lone call converts; a set never did), so `f(x: float)` beside `f<T>(x: T)` at
+    an `integer` reaches the template.  The incomparability is shown with a plain enum
+    into an `integer` instead ([sets-refused/r05](probes/sets-refused/));
+  - an argument typed by the CALLER's variable (a call inside another generic) does not
+    rank a template: a set is not re-selected per instance, so the call stays refused as it
+    is today for a set of concrete members — step B3b;
+  - a variant decision (`Disp-Dynamic`) whose leaf is a template is refused naming it, never
+    answered by the static selection for every variant — B7 builds that leaf.
+  Cells: [sets/](probes/sets/) s03–s12 and [twins/t14](probes/twins/), green on both
+  backends (twins under `LOFT_STRICT_STORES` + `LOFT_POISON`).  A refusal names a template by
+  its header (`show<T: Named>(T)`).
+
+### B3b — a set is re-selected per instance  ·  M  ·  added while building B3
+
+`(G-Mono)`: a call written inside a generic, whose argument is typed by the generic's own
+variable, reaches in each instance what the instance's concrete twin reaches.  Today a set
+called that way is refused (*"generic type U: method call requires a concrete type"*), for a
+set of concrete members as much as for one holding a template, and a bounded generic cannot
+even call a lone bounded generic whose variable is spelled differently (`outer<U: Named>`
+calling `inner<T: Named>` is *"'U' does not satisfy interface 'Named'"*, on `main`).  The
+call site is stamped as a deferred site (the `TV_*` family) and lowered again per instance
+through `call`, with the instance's argument types.
+
+- **Red on its own:** [sets-in-generic/g01](probes/sets-in-generic/) answers
+  `special cat 1|any dog 2`; the same through a set of two concrete members; the lone
+  bounded pair at two spellings.  Twins beside each.
+- **Compared against:** IDENTICAL over every file that compiles today.
 
 ### B4 — a generic beside a same-named METHOD is a set too  ·  S  ·  pre-freeze  ·  ⚑ lands alone
 

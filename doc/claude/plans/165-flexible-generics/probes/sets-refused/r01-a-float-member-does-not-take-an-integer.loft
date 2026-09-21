@@ -1,0 +1,9 @@
+// B3 — the plan's `D-Rank` example: `f(x: float)` beside `f<T>(x: T)`, called with an
+// integer.  Selection's applicability (`can_convert`) has no integer-to-float step — a set
+// never took one — so the float member does not apply and the template takes the call.
+// Must compile and print `gen|float`.
+fn f(x: float) -> text { "float" }
+fn f<T>(x: T) -> text { "gen" }
+fn main() {
+  println("{f(1)}|{f(1.0)}");
+}

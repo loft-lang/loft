@@ -1,0 +1,7 @@
+// B3 — a template with a concrete second parameter beside a fully concrete member.
+// @EXPECT: text x 1|gen 2.5 1|gen true 3
+fn pair(a: text, b: integer) -> text { "text {a} {b}" }
+fn pair<T: Printable>(a: T, b: integer) -> text { "gen {a} {b}" }
+fn main() {
+  println("{pair("x", 1)}|{pair(2.5, 1)}|{pair(true, 3)}");
+}

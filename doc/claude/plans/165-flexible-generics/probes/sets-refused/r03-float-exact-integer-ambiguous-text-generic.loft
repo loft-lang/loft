@@ -1,0 +1,7 @@
+// B3 — the same set: a float is EXACT for the concrete member, a text binds only the
+// template.  Must compile and print `float|gen`.
+fn f(x: float) -> text { "float" }
+fn f<T>(x: T) -> text { "gen" }
+fn main() {
+  println("{f(1.5)}|{f("s")}");
+}

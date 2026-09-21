@@ -7507,7 +7507,36 @@ impl Data {
             .filter(|p| !p.hidden)
             .map(|p| p.typedef.source_name(self))
             .collect();
-        format!("{fn_name}({})", params.join(", "))
+        // A TEMPLATE member (@PLN165 B3) is named with its header, the way its author wrote
+        // it — `show<T: Named>(T)` — so a refusal naming it says which definition it means.
+        let mut vars: Vec<String> = Vec::new();
+        if self.def_type(r) == DefType::Generic {
+            for p in self.def(r).attributes.iter().filter(|p| !p.hidden) {
+                p.typedef.any_node(&mut |t| {
+                    if let Type::Reference(d, _) = t
+                        && (*d as usize) < self.definitions.len()
+                        && self.is_type_var_placeholder(*d)
+                    {
+                        let spelled = Self::type_var_spelling(self.def(*d).name());
+                        let bounds = self.type_var_bound_keys.get(d).cloned().unwrap_or_default();
+                        let label = if bounds.is_empty() {
+                            spelled.to_string()
+                        } else {
+                            format!("{spelled}: {}", bounds.replace('+', " + "))
+                        };
+                        if !vars.contains(&label) {
+                            vars.push(label);
+                        }
+                    }
+                    false
+                });
+            }
+        }
+        if vars.is_empty() {
+            format!("{fn_name}({})", params.join(", "))
+        } else {
+            format!("{fn_name}<{}>({})", vars.join(", "), params.join(", "))
+        }
     }
 
     #[must_use]

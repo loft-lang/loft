@@ -1,0 +1,11 @@
+// B3 — a type the bound does not admit, beside a concrete member of another type: no
+// member takes the call, and the refusal names what is declared.
+interface Named { fn tag(self: Self) -> text }
+struct Cat { n: integer }
+struct Bird { n: integer }
+fn tag(self: Cat) -> text { "cat {self.n}" }
+fn show<T: Named>(x: T) -> text { "any {x.tag()}" }
+fn show(x: integer) -> text { "int" }
+fn main() {
+  println("{show(Bird{n:1})}");
+}

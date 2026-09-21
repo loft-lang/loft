@@ -1,0 +1,9 @@
+// B3 — `D-Rank`: a plain enum CONVERTS to an integer, and `f<T>(x: T)` instantiates; neither
+// is more specific, so the call is refused naming both.
+enum Color { Red, Green }
+fn f(x: integer) -> text { "int" }
+fn f<T>(x: T) -> text { "gen" }
+fn main() {
+  c = Color.Red;
+  println("{f(c)}");
+}
