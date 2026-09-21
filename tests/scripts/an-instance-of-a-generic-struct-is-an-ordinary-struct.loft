@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D3 — `Box<integer>` in type position names the INSTANCE `Data::instance_def` mints:
+// an ordinary struct whose fields are the template's with every variable replaced, laid out
+// and emitted as its hand-written twin `struct BoxInteger { v: integer }` is (their
+// introspections are identical once the one name is mapped).  A literal of the template
+// (`Box { … }`) builds the instance its expected type names — a binding's annotation, a
+// parameter, a return — as an empty `[]` learns its element type.  Two widths are two
+// instances; an instance nests, sits in a vector and in another struct's field, and takes a
+// record argument.
+//
+// @falsified-at: 684cd140f — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/an-instance-of-a-generic-struct-is-an-ordinary-struct.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control has no instances.
+//   ARMED: nothing.
+//   WITNESS: on the control `Box<integer>` is "`Box` is a generic struct — name its type
+//     arguments".
+//   HOLDS: nothing else.
+
+struct Pt { x: integer, y: integer }
+struct Box<T> { v: T }
+struct Holder { b: Box<integer>, p: Box<Pt> }
+
+fn mk(n: integer) -> Box<integer> { Box { v: n } }
+fn twice(b: Box<integer>) -> integer { b.v * 2 }
+
+fn test_construct_read_write() {
+  b: Box<integer> = Box { v: 1 };
+  b.v = b.v + 5;
+  t: Box<text> = Box { v: "a" };
+  t.v += "b";
+  assert("{b.v}|{t.v}" == "6|ab", "{b.v}|{t.v}");
+}
+
+fn test_a_vector_of_instances() {
+  v: vector<Box<integer>> = [];
+  for i in 0..3 {
+    x: Box<integer> = Box { v: i * 10 };
+    v += [x];
+  }
+  s = 0;
+  for e in v { s += e.v; }
+  assert(len(v) == 3 && v[2].v == 20 && s == 30, "{len(v)} {s}");
+}
+
+fn test_passed_and_returned() {
+  assert(twice(mk(4)) == 8, "{twice(mk(4))}");
+}
+
+fn test_nested_widths_fields_and_records() {
+  inner: Box<integer> = Box { v: 7 };
+  bb: Box<Box<integer>> = Box { v: inner };
+  bv: Box<vector<text>> = Box { v: ["a", "b"] };
+  a: Box<u8> = Box { v: 200 };
+  p: Box<Pt> = Box { v: Pt { x: 3, y: 4 } };
+  h = Holder { b: inner, p: p };
+  assert(bb.v.v == 7 && len(bv.v) == 2 && bv.v[1] == "b" && a.v == 200, "{bb.v.v}");
+  assert(h.b.v == 7 && h.p.v.x == 3 && h.p.v.y == 4, "{h.p.v.x}");
+}

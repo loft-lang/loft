@@ -1007,6 +1007,11 @@ pub struct Parser {
     /// the return buffers of the calls it made, which [`Parser::fill_monomorph_body`] declares
     /// at the instance's top level as the function parse declares its own (@PLN165 B3b).
     pub(crate) set_call_refs: Vec<u16>,
+    /// The variables a `struct` / `enum` header wrote where the language refuses one: its
+    /// fields may name them, and the header's refusal already covers that.
+    pub(crate) refused_header_vars: Vec<String>,
+    /// The struct whose header `bind_type_header` is binding (@PLN165 D2).
+    pub(crate) context_type_template: u32,
     /// The placeholder definition standing for a `(type-variable spelling, bound set)` pair.
     ///
     /// Sharing one placeholder across generic functions is what lets the stdlib's many
@@ -1576,6 +1581,8 @@ impl Parser {
             cur_type_vars: Vec::new(),
             instance_bindings: Vec::new(),
             set_call_refs: Vec::new(),
+            refused_header_vars: Vec::new(),
+            context_type_template: u32::MAX,
             type_var_holders: std::collections::HashMap::new(),
             type_var_bounds: std::collections::HashMap::new(),
             closure_vars: std::collections::HashMap::new(),
@@ -4156,6 +4163,15 @@ impl Parser {
     /// answer cannot differ between a call argument, a struct-literal field, a vector
     /// element, a block tail and a parameter default (loft#1067). LOFT.md states the
     /// rule as *the expected type wherever there is one* — this is "wherever".
+    /// @PLN165 D3 — is `tp` an INSTANCE of a generic struct (`Box<integer>`)?  A literal of
+    /// the template (`Box { … }`) cannot say which instance it builds, so an expected type
+    /// that is one tells it — the way an empty `[]` learns its element type.
+    pub(crate) fn seeds_instance_hint(&self, tp: &Type) -> bool {
+        matches!(tp.base(), Type::Reference(d, _)
+            if (*d as usize) < self.data.definitions.len()
+                && self.data.def(*d).instance_of != u32::MAX)
+    }
+
     pub(crate) fn seeds_lambda_hint(tp: &Type) -> bool {
         matches!(tp.base(), Type::Function(..))
     }
@@ -4200,6 +4216,7 @@ impl Parser {
             || crate::parser::vectors::is_collection(result)
             || self.interpolation_target(result) != u32::MAX
             || Self::seeds_lambda_hint(result)
+            || self.seeds_instance_hint(result)
         {
             self.expected = result.clone();
         } else if let Some(tuple) = self.tuple_hint_type(result) {
@@ -6222,6 +6239,9 @@ impl Parser {
                 && self.context != u32::MAX
                 && self.data.definitions[self.context as usize].def_type == DefType::Generic
             {
+                // The placeholder's KEY (`T#2` for a second variable spelled alike) — a caller
+                // may look the definition up by it; a message respells it with
+                // `Data::type_var_spelling`.
                 return Some(&self.data.definitions[d].name);
             }
         }
@@ -8799,6 +8819,17 @@ impl Parser {
                 .is_empty()
     }
 
+    /// A type's name as a message shows it: a type-variable placeholder by the spelling its
+    /// header wrote (`T`, not the `T#4` key a second variable spelled alike is minted under).
+    fn shown_type_name(&self, d_nr: u32) -> String {
+        let name = self.data.def(d_nr).name();
+        if self.data.is_type_var_placeholder(d_nr) {
+            Data::type_var_spelling(name).to_string()
+        } else {
+            name.to_string()
+        }
+    }
+
     /// The bounds of the template `g_nr`'s variable `holder`: the variable's own, recorded on
     /// its placeholder (@PLN165 C2), or — for the first variable of a template whose
     /// placeholder carries none (`LOFT_NO_SEVERAL_VARS=1`, an image cached before) — the
@@ -8837,7 +8868,7 @@ impl Parser {
             if concrete_nr == u32::MAX {
                 continue; // can't check without a concrete type def_nr
             }
-            let concrete_name = self.data.def(concrete_nr).name().to_string();
+            let concrete_name = self.shown_type_name(concrete_nr);
             for iface_nr in self.var_bounds(g_nr, *holder, i == 0) {
                 let iface_name = self.data.def(iface_nr).name().to_string();
                 for why in self.satisfaction_failures(iface_nr, concrete_nr) {
@@ -8864,7 +8895,7 @@ impl Parser {
             } else {
                 concrete
             };
-            self.data.def(concrete).name().to_string()
+            self.shown_type_name(concrete)
         };
         // @PLN125 A2c — the bound declared on an associated type is a promise about the
         // COMPANION, and this is the only place it can be kept: `type Rows: Cursor` says a
@@ -9906,25 +9937,17 @@ impl Parser {
     /// are separate definitions — so the order only fixes which is tried first, never the
     /// result.
     fn substitute_all(tp: Type, bindings: &[(u32, Type)]) -> Type {
-        bindings.iter().fold(tp, |t, (holder, bound_to)| {
-            Self::substitute_type(t, *holder, bound_to)
-        })
+        tp.substitute_all(bindings)
     }
 
     /// `[T ↦ C]` over one type — @FR-G-Mono's *"applied throughout"*, for the signature
     /// half.  Its twin for the variable table is `Function::subst_type`.
     fn substitute_type(tp: Type, tv_nr: u32, concrete: &Type) -> Type {
-        match tp {
-            Type::Reference(d, _) if d == tv_nr => concrete.clone(),
-            // Every former descends through the keystone, so `[T ↦ C]` reaches a type
-            // variable wherever it sits — `vector<T>`, `(T, T)`, `T?`, `iterator<T>`,
-            // `fn(T) -> T`, and whatever the next `Type` variant is.  The four arms
-            // this replaces were added one defect at a time (Plan-17 for the tuple,
-            // #493 for the optional, loft#1032 for the iterator) and each was the same
-            // omission a former further out; `Type::map_children` is exhaustive, so
-            // the next variant fails the build here rather than staying parametric.
-            other => other.map_children(&mut |c| Self::substitute_type(c.clone(), tv_nr, concrete)),
-        }
+        // Every former descends through the keystone (`Type::substitute`), so `[T ↦ C]`
+        // reaches a type variable wherever it sits.  The four arms that one home replaced
+        // were added one defect at a time (Plan-17 for the tuple, #493 for the optional,
+        // loft#1032 for the iterator), each the same omission a former further out.
+        tp.substitute(tv_nr, concrete)
     }
 
     /// Recursively substitute types in a Value IR tree and re-resolve Call targets

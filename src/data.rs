@@ -2324,6 +2324,26 @@ impl Type {
         }
     }
 
+    /// `[holder ↦ bound]` over this type — the one home for substituting a type variable (or
+    /// an associated type) wherever it sits.  Every former descends through
+    /// [`Type::map_children`], so `vector<T>`, `(T, T)`, `T?`, `iterator<T>` and `fn(T) -> T`
+    /// are all reached, and a new former fails the build there rather than staying parametric.
+    #[must_use]
+    pub fn substitute(self, holder: u32, bound: &Type) -> Type {
+        match self {
+            Type::Reference(d, _) if d == holder => bound.clone(),
+            other => other.map_children(&mut |c| c.clone().substitute(holder, bound)),
+        }
+    }
+
+    /// [`Type::substitute`] for every `(holder, bound)` pair, in order.
+    #[must_use]
+    pub fn substitute_all(self, bindings: &[(u32, Type)]) -> Type {
+        bindings
+            .iter()
+            .fold(self, |t, (holder, bound)| t.substitute(*holder, bound))
+    }
+
     /// Pair this type's children with `other`'s, for a walk that descends TWO type
     /// trees at once — the unifier's shape of the question `for_each_child` answers
     /// for one tree.
@@ -4242,6 +4262,11 @@ pub enum DefType {
     // Method stubs are stored as attributes on this definition.
     // Used by bounded generics (<T: InterfaceName>) for satisfaction checking (I6).
     Interface,
+    // @PLN165 D2 (`D-Template`): a generic STRUCT or ENUM — `struct Box<T> { v: T }`.  Its own
+    // kind, so every site that asks `def_type == Struct` reads a template as NOT a struct: it
+    // is never laid out and never emitted.  Its instances (`Box<integer>`) are ordinary
+    // structs, minted per argument list.
+    TypeTemplate,
 }
 
 impl Display for DefType {
@@ -4501,6 +4526,15 @@ pub struct Definition {
     /// Empty for non-generic or unbounded generic functions.  Multiple bounds (`<T: A + B>`)
     /// are stored as multiple entries; checked for conflicting method signatures at I6.
     pub bounds: Vec<u32>,
+    /// @PLN165 D2 — a TYPE TEMPLATE's variables (their placeholders) in HEADER order, which is
+    /// the order `Box<integer, text>` binds its arguments in.  Empty for anything else.
+    pub type_params: Vec<u32>,
+    /// @PLN165 D3 — the type template this struct was minted from (`Box<integer>` → `Box`), or
+    /// `u32::MAX`.  A stored fact: reading it back out of the instance's NAME is the decoder
+    /// problem finding 3 names.
+    pub instance_of: u32,
+    /// @PLN165 D3 — the instance's type arguments, in the template's header order.
+    pub instance_args: Vec<Type>,
     /// DbRef into CONST_STORE for pre-built vector constants.
     /// `None` for non-constant definitions or constants that couldn't be pre-built.
     pub const_ref: Option<crate::keys::DbRef>,
@@ -6648,6 +6682,9 @@ impl Data {
             mutated_captures: Vec::new(),
             scalars_to_box: Vec::new(),
             bounds: Vec::new(),
+            type_params: Vec::new(),
+            instance_of: u32::MAX,
+            instance_args: Vec::new(),
             const_ref: None,
             forced_size: None,
             purity: Purity::Unknown,
@@ -8981,6 +9018,65 @@ impl Data {
             }
             _ => t.clone(),
         }
+    }
+
+    /// @PLN165 D3 — the instance of the type template `template` at `args` (`Box<integer>`):
+    /// an ordinary struct whose fields are the template's with every variable replaced by its
+    /// argument, laid out and emitted as its hand-written twin would be.  `tuple_def`'s four
+    /// properties hold: NAMED from the arguments' identity spellings, so two widths or two
+    /// element types are two instances and two dep lists are one (F12); IDEMPOTENT; DEFERRED
+    /// (`u32::MAX`) while an argument is unresolved or still names a type variable — the
+    /// pass-2 call mints it with final arguments (F11); REGISTERED for every source.  The
+    /// instance records `(template, args)` on its definition (`instance_of`,
+    /// `instance_args`).  `u32::MAX` too for an argument count the template does not take;
+    /// the caller reports that.
+    pub fn instance_def(&mut self, lexer: &mut Lexer, template: u32, args: &[Type]) -> u32 {
+        let params = self.definitions[template as usize].type_params.clone();
+        if params.len() != args.len()
+            || args.iter().any(Self::type_has_unresolved)
+            || args.iter().any(|a| self.mentions_type_var(a))
+        {
+            return u32::MAX;
+        }
+        let args: Vec<Type> = args.iter().map(Type::without_deps).collect();
+        let spelled: Vec<String> = args.iter().map(|a| self.identity_spelling(a)).collect();
+        let name = format!(
+            "{}<{}>",
+            self.definitions[template as usize].name,
+            spelled.join(",")
+        );
+        if let Some(&nr) = self.def_names.get(&(name.clone(), STD_SOURCE)) {
+            return nr;
+        }
+        let position = self.definitions[template as usize].position.clone();
+        let d = self.add_def(&name, &position, DefType::Struct);
+        self.def_names.entry((name, STD_SOURCE)).or_insert(d);
+        self.definitions[d as usize].source = STD_SOURCE;
+        self.definitions[d as usize].returned = Type::Reference(d, Deps::none());
+        self.definitions[d as usize].instance_of = template;
+        self.definitions[d as usize].instance_args.clone_from(&args);
+        let bindings: Vec<(u32, Type)> = params.iter().copied().zip(args).collect();
+        let fields = self.definitions[template as usize].attributes.clone();
+        for f in fields {
+            let a_nr = self.add_attribute(
+                lexer,
+                d,
+                &f.name,
+                f.typedef.clone().substitute_all(&bindings),
+            );
+            let a = &mut self.definitions[d as usize].attributes[a_nr];
+            a.mutable = f.mutable;
+            a.constant = f.constant;
+            a.const_field = f.const_field;
+            a.value_const = f.value_const;
+            a.init = f.init;
+            a.nullable = f.nullable;
+            a.hidden = f.hidden;
+            a.value = f.value;
+            a.check = f.check;
+            a.check_message = f.check_message;
+        }
+        d
     }
 
     pub fn tuple_def(&mut self, lexer: &mut Lexer, types: &[Type]) -> u32 {

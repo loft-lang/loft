@@ -1,0 +1,9 @@
+// D3 — an instance whose argument is an instance, and one over a vector.
+// @EXPECT: 7|2 b
+struct Box<T> { v: T }
+fn main() {
+  inner: Box<integer> = Box { v: 7 };
+  bb: Box<Box<integer>> = Box { v: inner };
+  bv: Box<vector<text>> = Box { v: ["a", "b"] };
+  println("{bb.v.v}|{len(bv.v)} {bv.v[1]}");
+}

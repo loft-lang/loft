@@ -1,0 +1,7 @@
+// @CONTROL
+// @EXPECT: 7
+struct Box<T> { v: T }
+fn main() {
+  b: Box<integer> = Box { v: 1 };
+  println("{b.v}");
+}

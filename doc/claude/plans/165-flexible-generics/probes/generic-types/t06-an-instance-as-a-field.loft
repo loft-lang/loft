@@ -1,0 +1,11 @@
+// D3 — an instance as another struct's field, and a record argument.
+// @EXPECT: 5 3 4
+struct Pt { x: integer, y: integer }
+struct Box<T> { v: T }
+struct Holder { b: Box<integer>, p: Box<Pt> }
+fn main() {
+  b: Box<integer> = Box { v: 5 };
+  p: Box<Pt> = Box { v: Pt { x: 3, y: 4 } };
+  h = Holder { b: b, p: p };
+  println("{h.b.v} {h.p.v.x} {h.p.v.y}");
+}

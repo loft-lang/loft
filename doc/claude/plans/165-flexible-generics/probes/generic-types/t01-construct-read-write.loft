@@ -1,0 +1,10 @@
+// D3 — an instance is constructed from an annotation, read and written.
+// @EXPECT: 6|ab
+struct Box<T> { v: T }
+fn main() {
+  b: Box<integer> = Box { v: 1 };
+  b.v = b.v + 5;
+  t: Box<text> = Box { v: "a" };
+  t.v += "b";
+  println("{b.v}|{t.v}");
+}

@@ -663,6 +663,12 @@ pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
             r.field_recvec(ds::DEF_SCALARS_TO_BOX, ds::NAMEREF_STRIDE),
         ),
         bounds: read_u32_list(stores, r.field_recvec(ds::DEF_BOUNDS, ds::INT_STRIDE)),
+        type_params: read_u32_list(stores, r.field_recvec(ds::DEF_TYPE_PARAMS, ds::INT_STRIDE)),
+        instance_of: u32::try_from(r.field_int(stores, ds::DEF_INSTANCE_OF)).unwrap_or(u32::MAX),
+        instance_args: read_type_list(
+            stores,
+            r.field_recvec(ds::DEF_INSTANCE_ARGS, ds::TYPET_STRIDE),
+        ),
         forced_size: if forced == 0 {
             None
         } else {
@@ -806,6 +812,7 @@ fn def_type_from_code(c: i64) -> DefType {
         8 => DefType::Constant,
         9 => DefType::Generic,
         10 => DefType::Interface,
+        11 => DefType::TypeTemplate,
         other => panic!("ir_read: unknown DefType code {other}"),
     }
 }

@@ -230,7 +230,7 @@ pub fn classify(data: &Data, d: u32) -> Option<(&'static str, String)> {
                 Some(("fn", name.to_string()))
             }
         }
-        DefType::Struct => Some(("struct", name.to_string())),
+        DefType::Struct | DefType::TypeTemplate => Some(("struct", name.to_string())),
         DefType::Enum => Some(("enum", name.to_string())),
         DefType::Type => Some(("typedef", name.to_string())),
         DefType::Constant => Some(("constant", name.to_string())),

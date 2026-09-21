@@ -546,6 +546,18 @@ One variable throughout, until D9.  A one-variable generic struct is declined no
 - **Compared against:** first COUNT the `.loft` files anywhere in the repository — corpus,
   docs, probes, fixture libraries — that name a leaked variable.  The expected count is zero;
   any hit is a program this step newly refuses, and is looked at by hand.
+- **Built** (2026-09-21).  The check sits where a type name has resolved
+  (`parse_type_inner`): a definition in `Data::type_var_bound_keys` — every header variable is
+  recorded there, which `Self`, an interface's associated types and an empty user
+  `struct Marker {}` (a placeholder's shape) are not — that is not one of the current
+  header's variables is refused where it is written, on either pass (a struct's fields are
+  laid out at the end of pass 1).  `parse_struct` / `parse_enum` / `parse_typedef` /
+  `parse_interface` clear the previous function's header, which a struct declared after a
+  generic function otherwise still saw.  A4's refused `struct Box<T>` header lets its own
+  fields name `T` (`refused_header_vars`), so the one refusal stands alone.  Count, with
+  `loft --check` over all 7 101 `.loft` files in the repository: four hits — the plan's d1,
+  d2, d3 probes and A4's guard (the cascade just named) — none unexpected.  Corpus: only
+  the two new guards differ from C4.
 
 ### D2 — a struct may declare a variable  ·  M  ·  pre-freeze
 
@@ -558,6 +570,17 @@ the cache version moves with it.
   `main` — three syntax errors today; `ir_schema_roundtrip` over a file holding a template;
   a template's field typed `T` never reaches layout (F15).
 - **Compared against:** IDENTICAL over the corpus.
+- **Built** (2026-09-21).  `DefType::TypeTemplate` (codec code 11, `CACHE_FORMAT_VERSION` 8 → 9);
+  the six exhaustive `DefType` sites map it (IR store/read, the schema's names both ways, the
+  LSP's symbol kind and the API surface read it as a struct).  `parse_struct` binds a header
+  (`bind_type_header`: each variable to its placeholder, each bound set to its placeholder and
+  stubs) and marks the definition a template; a list of several parses already (C2's header),
+  its cells are D9's.  A bare template name in type position is refused naming the cure
+  (`Box<integer>`), its type poisoned so nothing reports it twice.  The enum header stays
+  refused until D8 (A4's guard narrowed to it).  Switch `LOFT_NO_GENERIC_TYPES=1`.  A program
+  declaring `struct Box<T>` and `struct Pair<K: Printable, V>` runs on both backends and
+  emits no template; `ir_schema_roundtrip` 8/8 over a script holding them.  Corpus: only the
+  two new guards differ from D1.
 
 ### D3 — an instance in type position  ·  M  ·  pre-freeze
 
@@ -576,6 +599,24 @@ annotation, the way `v: vector<integer> = []` takes its element type.
 - **Also:** `LOFT_STRICT_SCHEMA_IDS=1` clean on `--native` (F18); two instances whose
   arguments differ only in deps are ONE instance (F12); an `@EXPECT_ERROR` cell reads
   `Box<integer>` in its message, not `Box_integer_` (F20).
+- **Built** (2026-09-21).  `Data::instance_def` beside `tuple_def`; `Definition` gains
+  `type_params` (a template's variables, header order), `instance_of` and `instance_args` —
+  the IR schema source (`tools/ir_schema/ir.loft`), the regenerated schema, the pinned
+  positions (stride 167 → 183), both codecs, and `CACHE_FORMAT_VERSION` 9 → 10.  Type
+  substitution moved onto `Type` (`substitute`, `substitute_all`) so `Data` can instantiate
+  without the parser; the parser's two helpers delegate.  `Box<…>` parses before the
+  collection sub-type dispatch; a collection's element takes a template (and its `?` after
+  the arguments); a wrong argument count is refused saying how many the template takes.  A
+  literal takes its instance from the expected type — `seeds_instance_hint`, added to the
+  leaving-value hint and the four argument admission lists — and without one is refused for
+  now (D4 infers).  The strongest gate: `loft introspect` of a program over `Box<integer>`
+  against its twin over `struct BoxInteger { v: integer }` — IDENTICAL once the one name is
+  mapped and numbers masked (the template's `__typevar_T` store registration aside, which
+  any generic program carries).  F18 clean on native; F12 one `Box<text>` for three
+  spellings with different deps; F20 reads `Box<integer>`.  Cells
+  [generic-types/](probes/generic-types/) t01–t06 green on both backends under
+  `LOFT_STRICT_STORES` + `LOFT_POISON`.  Corpus against D2: one file differs, the
+  `field_value` message the respelling fix changed (the snapshot predates it).
 
 ### D4 — a literal infers its argument  ·  S
 

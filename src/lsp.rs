@@ -2289,7 +2289,7 @@ fn token_kind(data: &Data, name: &str) -> Option<u32> {
         return None;
     }
     match data.def(d).def_type {
-        crate::data::DefType::Struct => Some(3),
+        crate::data::DefType::Struct | crate::data::DefType::TypeTemplate => Some(3),
         crate::data::DefType::Enum => Some(4),
         crate::data::DefType::Type => Some(5),
         crate::data::DefType::Constant => Some(6),
@@ -2365,6 +2365,7 @@ fn is_global_symbol(data: &Data, name: &str) -> bool {
         && matches!(
             data.def(d).def_type,
             crate::data::DefType::Struct
+                | crate::data::DefType::TypeTemplate
                 | crate::data::DefType::Enum
                 | crate::data::DefType::Type
                 | crate::data::DefType::Constant

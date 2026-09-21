@@ -318,6 +318,7 @@ fn def_type_code(t: &DefType) -> i64 {
         DefType::Constant => 8,
         DefType::Generic => 9,
         DefType::Interface => 10,
+        DefType::TypeTemplate => 11,
     }
 }
 
@@ -425,6 +426,19 @@ fn write_definition(stores: &mut Stores, r: &Record, d: &Definition) {
     name_list(stores, r, ds::DEF_MUTATED_CAPTURES, &d.mutated_captures);
     name_list(stores, r, ds::DEF_SCALARS_TO_BOX, &d.scalars_to_box);
     int_list_u32(stores, r, ds::DEF_BOUNDS, &d.bounds);
+    // @PLN165 D2/D3 — a type template's variables; an instance's template (-1 = none) and
+    // its arguments.
+    int_list_u32(stores, r, ds::DEF_TYPE_PARAMS, &d.type_params);
+    r.set_field_int(
+        stores,
+        ds::DEF_INSTANCE_OF,
+        if d.instance_of == u32::MAX {
+            -1
+        } else {
+            i64::from(d.instance_of)
+        },
+    );
+    type_list(stores, r, ds::DEF_INSTANCE_ARGS, &d.instance_args);
     // forced_size: Option<u8> -> 0 = None.
     r.set_field_int(
         stores,
