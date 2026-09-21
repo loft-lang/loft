@@ -19,7 +19,8 @@
 // Axes this file MOVES:  the loop (`while`, `for`), where the yield sits (last, first with
 //                        statements after it, before a `break`), the yielded kind (integer,
 //                        text), a record built by a call per iteration (drained, abandoned), and
-//                        a closure in the loop (which keeps the eager buffer; values only).
+//                        a closure in the loop (values only here; its order is loft#1587's
+//                        guard, `1587-a-generator-holds-a-lambda-across-a-yield`).
 // Axes it HOLDS FIXED:   two or three iterations, one yield per iteration, every value
 //                        hand-computed.
 //
@@ -119,5 +120,5 @@ fn main() {
 
   si = "";
   for x in closure1586() { si += "{x} "; }
-  assert(si == "1 11 21 ", "a closure in the loop keeps the eager buffer, values unchanged: {si}");
+  assert(si == "1 11 21 ", "a closure in the loop: {si}");
 }
