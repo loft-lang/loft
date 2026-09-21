@@ -176,13 +176,14 @@ impl Parser {
         }
         let bindings = Self::bind_template(&self.data, r, routed)?;
         // An argument typed by the CALLER's own type variable (a call written inside another
-        // generic) is not decided here: which member its instances reach depends on what the
-        // variable becomes, and a set is not re-selected per instance — the call is refused,
-        // as it is for a set of concrete members.
-        if bindings
-            .iter()
-            .any(|(_, b)| b.is_unknown() || self.data.mentions_type_var(b))
-        {
+        // generic) ranks the template like any other binding: the variable's bounds answer
+        // `satisfies` through the stubs they minted.  What the call reaches in each instance
+        // is decided again there ([`Parser::defer_set_call`]) — this answer only types the
+        // generic body.
+        if bindings.iter().any(|(_, b)| {
+            b.is_unknown()
+                || (self.data.mentions_type_var(b) && !crate::keys::set_reselect_enabled())
+        }) {
             return None;
         }
         let first = bindings[0].1.clone();
@@ -224,6 +225,67 @@ impl Parser {
         declared
             .skip(given)
             .all(|p| p.value != crate::data::Value::Null)
+    }
+
+    /// `(G-Mono)` for a call written inside a generic (@PLN165 B3b): where an argument is typed
+    /// by a type VARIABLE, which member of the name's overload set the call reaches depends on
+    /// what the variable becomes — `wrap<U>` calling `show(x)` reaches `show(x: Cat)` in the
+    /// instance at `Cat`, as `wrap`'s concrete twin would.  The selection made here, over the
+    /// members that apply at the variable (`selected`), only types the generic body; the site
+    /// is stamped [`Parser::TV_SELECT`] with each argument and its static type, and every
+    /// instance lowers it again through [`Parser::call`] with its own argument types.
+    /// `None` when no argument mentions a variable: the call is decided now, as always.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn defer_set_call(
+        &mut self,
+        code: &mut Value,
+        source: u16,
+        name: &str,
+        list: &[Value],
+        types: &[Type],
+        named_args: &[(String, Value, Type)],
+        routed: &[Type],
+        selected: u32,
+    ) -> Option<Type> {
+        // Only a TEMPLATE body defers.  An instance bound to a variable (`i_1V_n_wrap`, minted
+        // while another template's body was parsed) is never instantiated from — its callers
+        // are re-aimed at the template — so its call is made the ordinary way, and compiles.
+        let in_template = self.context != u32::MAX
+            && (self.context as usize) < self.data.definitions.len()
+            && self.data.def_type(self.context) == DefType::Generic;
+        if !crate::keys::set_reselect_enabled()
+            || !in_template
+            || !routed.iter().any(|t| self.data.mentions_type_var(t))
+        {
+            return None;
+        }
+        let ret = if self.data.def_type(selected) == DefType::Generic {
+            self.predict_template_return(selected, name, types)
+        } else {
+            self.data.def(selected).returned().clone()
+        };
+        if ret.is_unknown() {
+            return None;
+        }
+        let ret = ret.without_deps();
+        let home = i32::from(self.data.source);
+        let mut ops = vec![
+            Value::Int(i32::from(source)),
+            Value::Int(home),
+            Value::Text(name.to_string()),
+        ];
+        for (v, t) in list.iter().zip(types) {
+            ops.push(v_block(vec![v.clone()], t.clone(), Self::TV_SELECT_ARG));
+        }
+        for (param, v, t) in named_args {
+            ops.push(v_block(
+                vec![Value::Text(param.clone()), v.clone()],
+                t.clone(),
+                Self::TV_SELECT_NAMED,
+            ));
+        }
+        *code = v_block(ops, ret.clone(), Self::TV_SELECT);
+        Some(ret)
     }
 
     /// Does a definition the PROGRAM declares — anything outside the stdlib prelude, a

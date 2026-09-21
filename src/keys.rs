@@ -1048,10 +1048,6 @@ pub fn value_return_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VALUE_RETURN"))
 }
 
-/// `LOFT_NO_LITERAL_EXIT_BUFFER=1` keeps a mid-body `return S { … }` building its record in
-/// a store of its own (@PLN164 B2, `@FR-R-Place`'s callee clause: a callee that on some exit
-/// answers a store other than the buffer it was handed cannot be placed) — the bisect step
-/// for a wrong record out of a callee with more than one literal exit.
 /// @PLN165 B2/B3 — a generic is a member of its name's overload set, beside concrete
 /// definitions and other generics.  **DEFAULT ON.**  `LOFT_NO_GENERIC_MEMBER=1` restores the
 /// `Function`-only admission (a generic beside a same-named definition is "Cannot redefine") —
@@ -1060,6 +1056,17 @@ pub fn value_return_enabled() -> bool {
 pub fn generic_member_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_GENERIC_MEMBER"))
+}
+
+/// @PLN165 B3b — a call written inside a generic, whose argument is typed by the generic's own
+/// variable, is lowered again in each instance with the instance's argument types, so it
+/// reaches the member of its name's overload set the instance's concrete twin reaches.
+/// **DEFAULT ON.**  `LOFT_NO_SET_RESELECT=1` refuses such a call again, as naming no member
+/// of the set — the rollback, and the first bisect step for a set call inside a generic that
+/// reaches the wrong definition.
+pub fn set_reselect_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_SET_RESELECT"))
 }
 
 /// @PLN165 B1 — a definition key and an overload's rank read a type's FULL identity: a
@@ -1081,6 +1088,10 @@ pub fn instance_key_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_INSTANCE_KEY"))
 }
 
+/// `LOFT_NO_LITERAL_EXIT_BUFFER=1` keeps a mid-body `return S { … }` building its record in
+/// a store of its own (@PLN164 B2, `@FR-R-Place`'s callee clause: a callee that on some exit
+/// answers a store other than the buffer it was handed cannot be placed) — the bisect step
+/// for a wrong record out of a callee with more than one literal exit.
 pub fn literal_exit_buffer_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_LITERAL_EXIT_BUFFER"))

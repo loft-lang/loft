@@ -983,6 +983,10 @@ pub struct Parser {
     /// to carry them: a template LAMBDA is instantiated with its enclosing instance's
     /// bindings ([`Self::instantiate_template_lambda`]).  Empty outside an instantiation.
     pub(crate) instance_bindings: Vec<(u32, Type)>,
+    /// The work-refs a [`Parser::TV_SELECT`] lowering minted in the instance being filled —
+    /// the return buffers of the calls it made, which [`Parser::fill_monomorph_body`] declares
+    /// at the instance's top level as the function parse declares its own (@PLN165 B3b).
+    pub(crate) set_call_refs: Vec<u16>,
     /// The placeholder definition standing for a `(type-variable spelling, bound set)` pair.
     ///
     /// Sharing one placeholder across generic functions is what lets the stdlib's many
@@ -1546,6 +1550,7 @@ impl Parser {
             closure_param: u16::MAX,
             cur_type_vars: Vec::new(),
             instance_bindings: Vec::new(),
+            set_call_refs: Vec::new(),
             type_var_holders: std::collections::HashMap::new(),
             type_var_bounds: std::collections::HashMap::new(),
             closure_vars: std::collections::HashMap::new(),
@@ -6293,6 +6298,13 @@ impl Parser {
             let routed = self.data.routed_types(types);
             let d = match self.select_overload(source, name, &routed) {
                 crate::parser::dispatch::Selection::One(d) => {
+                    // A call inside a generic at the generic's own variable is decided again
+                    // in each instance (@PLN165 B3b).
+                    if let Some(tp) =
+                        self.defer_set_call(code, source, name, list, types, named_args, &routed, d)
+                    {
+                        return tp;
+                    }
                     // `Disp-Dynamic`: a position held at the enum where the set decides by
                     // variant calls the synthesised dispatcher instead.
                     self.dynamic_dispatcher(source, name, &routed, Some(d))
@@ -6740,8 +6752,21 @@ impl Parser {
             // the cause, and "Unknown function" for calling it would name a second one.
             Type::Unknown(0)
         } else {
-            // generic-specific error for method calls on T.
-            if let Some(tv_name) = types.first().and_then(|t| self.generic_type_name(t)) {
+            // A name with an overload set, called at a generic's type VARIABLE, where no member
+            // takes it (@PLN165 B3b: only a template member can take a variable, through its
+            // bounds): the set's refusal names what was passed and what is declared, which a
+            // "method call" message about a free call would not.
+            let routed = self.data.routed_types(types);
+            let set_refuses = types.iter().any(|t| self.data.mentions_type_var(t))
+                && matches!(
+                    self.select_overload(source, name, &routed),
+                    crate::parser::dispatch::Selection::NoneApplicable
+                );
+            if set_refuses {
+                let sel = crate::parser::dispatch::Selection::NoneApplicable;
+                self.report_selection(name, &routed, &sel, Some(name_pos));
+            } else if let Some(tv_name) = types.first().and_then(|t| self.generic_type_name(t)) {
+                // generic-specific error for method calls on T.
                 let tv_name = crate::data::Data::type_var_spelling(tv_name);
                 diagnostic_at!(
                     self.lexer,
@@ -7435,6 +7460,16 @@ impl Parser {
     /// the read is re-lowered by NAME against the instance's own record
     /// ([`Parser::closure_capture_read`]).
     pub(crate) const TV_CAPTURE: &'static str = "tvcapture";
+    /// @PLN165 B3b — a call to an overload set whose argument is typed by a TYPE VARIABLE:
+    /// `[Int(source), Int(home source), Text(name), TV_SELECT_ARG…, TV_SELECT_NAMED…]`, its
+    /// `result` the type the generic body was typed with.  Each instance lowers it through
+    /// [`Parser::call`] with its own argument types ([`Parser::defer_set_call`]).
+    pub(crate) const TV_SELECT: &'static str = "tvselect";
+    /// One positional argument of a [`Parser::TV_SELECT`] site: the value, its `result` the
+    /// argument's static type, which substitution rewrites to the instance's.
+    pub(crate) const TV_SELECT_ARG: &'static str = "tvselectarg";
+    /// One named argument of a [`Parser::TV_SELECT`] site: `[Text(parameter), value]`.
+    pub(crate) const TV_SELECT_NAMED: &'static str = "tvselectnamed";
 
     /// Specialise a generic `name` for the concrete argument types `types`, returning the
     /// monomorph's def_nr (or `u32::MAX` when `name` names no generic).
@@ -8065,7 +8100,9 @@ impl Parser {
         let outer_assign_target = std::mem::replace(&mut self.assign_target, u16::MAX);
         let before_work: std::collections::HashSet<u16> =
             self.vars.work_texts().into_iter().collect();
+        let outer_set_call_refs = std::mem::take(&mut self.set_call_refs);
         let mut code = self.rewrite_generic_type_defaults(code);
+        let set_call_refs = std::mem::replace(&mut self.set_call_refs, outer_set_call_refs);
         self.instance_bindings = outer_bindings;
         self.closure_param = outer_closure_param;
         self.assign_target = outer_assign_target;
@@ -8075,11 +8112,20 @@ impl Parser {
         // replay `patch_tret_callers` and `retarget_parametric_*` already do for a buffer
         // minted after the parse; without it `--native` declared the `String` inside the
         // argument block and emitted an empty `OpCreateStack`, which does not compile.
+        // A call a deferred set-call site lowered here (`TV_SELECT`, @PLN165 B3b) mints its
+        // return buffer the same way, and takes the null-init the function parse gives every
+        // work-ref — the one predicate, `work_ref_takes_preamble`.  Only those: a buffer
+        // another deferred site mints is declared where that site's lowering sets it.
         if let Value::Block(bl) = &mut code {
             for wt in self.vars.work_texts() {
                 if !before_work.contains(&wt) {
                     bl.operators
                         .insert(0, v_set(wt, Value::Text(String::new())));
+                }
+            }
+            for r in set_call_refs {
+                if self.work_ref_takes_preamble(r) {
+                    bl.operators.insert(0, v_set(r, Value::Null));
                 }
             }
         }
@@ -10059,6 +10105,12 @@ impl Parser {
                 }
                 out
             }
+            // @PLN165 B3b — a set call at a type variable, decided again with this instance's
+            // argument types: the call the instance's concrete twin makes.  Resolved in the
+            // source the generic was written in, as its other calls were.  A member returning
+            // another type than the body was typed with is refused naming it; a nested
+            // generic (a type still a variable) re-stamps through the same call.
+            Value::Block(bl) if bl.name == Self::TV_SELECT => self.lower_set_call(*bl),
             // A template lambda, non-capturing: the instance calls its own instance of it.
             Value::FnRef(d, w, _)
                 if w == u16::MAX && d >= 0 && self.is_template_lambda(d as u32) =>
@@ -10148,6 +10200,106 @@ impl Parser {
                 other
             }
         }
+    }
+
+    /// Does the work-ref `r` take a null-init in its function's preamble?  The one answer for
+    /// the function parse and for a monomorph whose deferred sites minted a buffer after it.
+    ///
+    /// @FR-O-Proxy asks alloc — this decides which work-refs get a null-init in the preamble,
+    /// which is the opposite direction from a free: it puts a slot in a known-absent state, and
+    /// releases nothing.
+    pub(crate) fn work_ref_takes_preamble(&self, r: u16) -> bool {
+        !self.vars.is_argument(r)
+            && !self.vars.is_inline_ref(r)
+            // @PLAN51 Cluster IV: also null-init caller-side hidden-buffer work-refs even when
+            // their typedef carries a non-empty dep list (e.g. Reference(td, [arg_idx]) for
+            // if-tail / recursion / explicit-return-in-if shapes).  Without it, the slot
+            // allocator skips them ("no first_def") and codegen panics at codegen.rs:2529.
+            // Empty-dep refs still take this path (the original arm); caller_hidden_buf is
+            // the additional gate.  #319: `__ncc_N` heap-DbRef temps likewise — their only
+            // Set is inside the ncc block, so they need the preamble init regardless of their
+            // dep list.
+            && (self.vars.tp(r).depend().is_empty()
+                || self.vars.is_caller_hidden_buf(r)
+                || self.vars.name(r).starts_with("__ncc_"))
+    }
+
+    /// The [`Parser::TV_SELECT`] arm of [`Parser::rewrite_generic_type_defaults`].
+    fn lower_set_call(&mut self, bl: crate::data::Block) -> Value {
+        let expected = bl.result.clone();
+        let mut source = u16::MAX;
+        let mut home = self.data.source;
+        let mut name = String::new();
+        let mut list: Vec<Value> = Vec::new();
+        let mut types: Vec<Type> = Vec::new();
+        let mut named: Vec<(String, Value, Type)> = Vec::new();
+        for (i, op) in bl.operators.iter().enumerate() {
+            match (i, op.unspan().clone()) {
+                (0, Value::Int(s)) => source = u16::try_from(s).unwrap_or(u16::MAX),
+                (1, Value::Int(s)) => home = u16::try_from(s).unwrap_or(home),
+                (2, Value::Text(n)) => name = n,
+                (_, Value::Block(a)) if a.name == Self::TV_SELECT_ARG => {
+                    let a = *a;
+                    let v = a.operators.into_iter().next().unwrap_or(Value::Null);
+                    list.push(self.rewrite_generic_type_defaults(v));
+                    types.push(a.result);
+                }
+                (_, Value::Block(a)) if a.name == Self::TV_SELECT_NAMED => {
+                    let a = *a;
+                    let mut ops = a.operators.into_iter();
+                    let param = match ops.next() {
+                        Some(Value::Text(p)) => p,
+                        _ => String::new(),
+                    };
+                    let v = ops.next().unwrap_or(Value::Null);
+                    let v = self.rewrite_generic_type_defaults(v);
+                    named.push((param, v, a.result));
+                }
+                _ => {}
+            }
+        }
+        let pos = self.lexer.pos().clone();
+        let arg_pos = vec![pos.clone(); list.len()];
+        let saved = self.data.source;
+        self.data.source = home;
+        let before_refs: std::collections::HashSet<u16> =
+            self.vars.work_references().into_iter().collect();
+        let mut out = Value::Null;
+        let got = self.call(
+            &mut out, source, &name, &list, &types, &named, &arg_pos, &pos,
+        );
+        for r in self.vars.work_references() {
+            if !before_refs.contains(&r) {
+                self.set_call_refs.push(r);
+            }
+        }
+        self.data.source = saved;
+        let differs = !got.is_unknown()
+            && !expected.is_unknown()
+            && !self.data.mentions_type_var(&got)
+            && self.data.key_identity(&got) != self.data.key_identity(&expected);
+        if differs {
+            let shown: Vec<String> = types.iter().map(|t| t.source_name(&self.data)).collect();
+            let routed = self.data.routed_types(&types);
+            self.data.source = home;
+            let reached = match self.select_overload(source, &name, &routed) {
+                crate::parser::dispatch::Selection::One(d) => {
+                    self.data.overload_signature(&name, d)
+                }
+                _ => format!("{name}({})", shown.join(", ")),
+            };
+            self.data.source = saved;
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "inside `{}`, the call `{name}` reaches {reached} at ({}), which returns {} — the generic body was typed with {}; give {reached} that return type, or make the call outside the generic",
+                self.data.def(self.context).display_name(),
+                shown.join(", "),
+                got.source_name(&self.data),
+                expected.source_name(&self.data)
+            );
+        }
+        out
     }
 
     /// `construct_default(concrete)` as a VALUE, for a monomorph's deferred `x?`.

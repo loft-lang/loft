@@ -1,0 +1,8 @@
+// B3b — the variable in the first position, a concrete integer in the second.
+// @EXPECT: text x 1|gen 2.5 1|gen true 1
+fn pair(a: text, b: integer) -> text { "text {a} {b}" }
+fn pair<T: Printable>(a: T, b: integer) -> text { "gen {a} {b}" }
+fn g<U: Printable>(x: U) -> text { pair(x, 1) }
+fn main() {
+  println("{g("x")}|{g(2.5)}|{g(true)}");
+}

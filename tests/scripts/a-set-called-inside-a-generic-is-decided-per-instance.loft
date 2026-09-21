@@ -1,0 +1,101 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(G-Mono)` for a call written inside a generic whose argument is typed by the generic's own
+// variable (@PLN165 B3b): each instance reaches the member of the name's overload set its
+// hand-written concrete twin reaches.  `wrap<U: Named>` calling `show(x)` reaches
+// `show(x: Cat)` in the instance at Cat and the template's instance at Dog.
+//
+// The generic body is typed by the members that apply at the variable — only a template can,
+// through the variable's bounds — and the site is stamped as a deferred site that every
+// instance lowers again through the ordinary call with its own argument types.  Before, the
+// call was refused in the template body.
+//
+// @falsified-at: 142e35694 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-set-called-inside-a-generic-is-decided-per-instance.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses every set call at a variable.
+//   ARMED: nothing.
+//   WITNESS: on the control `show(x)` inside `wrap` is "generic type U: method call requires
+//     a concrete type".
+//   HOLDS: nothing else — every cell calls a set from inside a generic.
+
+interface Named { fn tag(self: Self) -> text }
+struct Cat { n: integer }
+struct Dog { n: integer }
+struct Pt { x: integer, y: integer }
+fn tag(self: Cat) -> text { "cat {self.n}" }
+fn tag(self: Dog) -> text { "dog {self.n}" }
+
+fn show<T: Named>(x: T) -> text { "any {x.tag()}" }
+fn show(x: Cat) -> text { "special {x.tag()}" }
+fn wrap<U: Named>(x: U) -> text { show(x) }
+fn outer<V: Named>(x: V) -> text { wrap(x) }
+
+fn first<T>(v: vector<T>) -> T { v[0] }
+fn first(v: vector<integer>) -> integer { 999 }
+fn head<U>(v: vector<U>) -> U { first(v) }
+
+fn pair(a: text, b: integer) -> text { "text {a} {b}" }
+fn pair<T: Printable>(a: T, b: integer) -> text { "gen {a} {b}" }
+fn pair_at<U: Printable>(x: U) -> text { pair(x, 1) }
+
+fn count<T>(v: vector<T>, n: integer) -> integer { if n == 0 { 0 } else { 1 + count(v, n - 1) } }
+fn count(v: vector<text>, n: integer) -> integer { -100 }
+
+fn fmt<T: Printable>(x: T, pre: text = "<") -> text { "gen {pre}{x}" }
+fn fmt(x: integer, pre: text = "<") -> text { "int {pre}{x}" }
+fn fmt_at<U: Printable>(x: U) -> text { fmt(x, pre: "[") }
+
+fn mk<T>(v: T) -> Pt { Pt { x: 7, y: 7 } }
+fn mk(v: Pt) -> Pt { Pt { x: v.x, y: v.y } }
+fn relay<U>(v: U) -> Pt { mk(v) }
+
+fn lab<T: Printable>(x: T) -> text { "gen {x}" }
+fn lab(x: integer) -> text { "int {x}" }
+fn every<U: Printable>(v: vector<U>) -> text {
+  s = "";
+  for e in v { s += lab(e) + ","; }
+  s
+}
+
+fn test_a_bounded_template_member() {
+  assert(wrap(Cat { n: 1 }) == "special cat 1", "{wrap(Cat { n: 1 })}");
+  assert(wrap(Dog { n: 2 }) == "any dog 2", "{wrap(Dog { n: 2 })}");
+}
+
+fn test_two_levels_of_generic() {
+  assert(outer(Cat { n: 1 }) == "special cat 1", "{outer(Cat { n: 1 })}");
+  assert(outer(Dog { n: 2 }) == "any dog 2", "{outer(Dog { n: 2 })}");
+}
+
+fn test_the_body_is_typed_by_the_variable() {
+  a: vector<integer> = [1, 2];
+  b: vector<text> = ["p", "q"];
+  assert(head(a) == 999, "{head(a)}");
+  assert(head(b) == "p", "{head(b)}");
+}
+
+fn test_a_concrete_second_argument_and_a_named_one() {
+  assert(pair_at("x") == "text x 1", "{pair_at("x")}");
+  assert(pair_at(2.5) == "gen 2.5 1", "{pair_at(2.5)}");
+  assert(fmt_at(5) == "int [5", "{fmt_at(5)}");
+  assert(fmt_at("x") == "gen [x", "{fmt_at("x")}");
+}
+
+fn test_a_template_member_recursing_through_its_set() {
+  a: vector<integer> = [1];
+  b: vector<text> = ["p"];
+  assert(count(a, 3) == 3, "{count(a, 3)}");
+  assert(count(b, 3) == -100, "{count(b, 3)}");
+}
+
+fn test_a_record_and_a_text_through_the_decided_call() {
+  p = relay(Pt { x: 3, y: 4 });
+  q = relay(5);
+  assert(p.x == 3 && p.y == 4, "{p.x} {p.y}");
+  assert(q.x == 7 && q.y == 7, "{q.x} {q.y}");
+  a: vector<integer> = [1, 2];
+  b: vector<text> = ["a", "b"];
+  assert(every(a) == "int 1,int 2,", "{every(a)}");
+  assert(every(b) == "gen a,gen b,", "{every(b)}");
+}

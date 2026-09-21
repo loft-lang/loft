@@ -1,0 +1,9 @@
+// @CONTROL
+// @EXPECT: any 1
+struct Cat { n: integer }
+fn show<T>(x: T) -> text { "any" }
+fn show(x: Cat) -> text { "special {x.n}" }
+fn wrap<U>(x: U) -> text { show(x) }
+fn main() {
+  println("{wrap(Cat{n:1})}");
+}

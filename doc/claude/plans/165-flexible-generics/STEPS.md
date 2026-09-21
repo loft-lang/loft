@@ -285,9 +285,28 @@ call site is stamped as a deferred site (the `TV_*` family) and lowered again pe
 through `call`, with the instance's argument types.
 
 - **Red on its own:** [sets-in-generic/g01](probes/sets-in-generic/) answers
-  `special cat 1|any dog 2`; the same through a set of two concrete members; the lone
-  bounded pair at two spellings.  Twins beside each.
+  `special cat 1|any dog 2`; the lone bounded pair at two spellings.  Twins beside each.
 - **Compared against:** IDENTICAL over every file that compiles today.
+- **Built** (2026-09-21).  `Parser::defer_set_call` stamps `TV_SELECT` (with `TV_SELECT_ARG` /
+  `TV_SELECT_NAMED` carrying each argument and its static type, and the source the generic
+  was written in); `lower_set_call` lowers it in each instance through `call`.  Switch
+  `LOFT_NO_SET_RESELECT=1`.  What the cells found:
+  - the lone bounded pair was a separate defect, fixed first (`142e35694`): a text-returning
+    interface method's bound stub did not mark its hidden `&text` buffer hidden, so `(G-Sat)`
+    at a variable read it as one parameter too many;
+  - only a TEMPLATE body defers — an instance bound to a variable (`i_1V_n_wrap`) is never
+    instantiated from, and native emits it, so its call is made the ordinary way (g04);
+  - a re-decided call that returns a record mints its buffer after the parse; the monomorph
+    declares it with the preamble's own predicate, `work_ref_takes_preamble`, extracted to one
+    home — and only those buffers, or a deferred default's buffer moves (three corpus files
+    did, caught by the corpus diff);
+  - a set of CONCRETE members at a variable stays refused (`D-Rank` gives nothing to rank at a
+    variable but a template): no duck typing.  The refusal names the set now, not a "method
+    call";
+  - a member reached in an instance whose return differs from what the body was typed with is
+    refused naming it ([sets-refused/r06](probes/sets-refused/)).
+  Measured: IDENTICAL 1629/1629 against `142e35694`; g01–g10 (g10 through a library) and twin
+  t15 green on both backends under `LOFT_STRICT_STORES` + `LOFT_POISON`.
 
 ### B4 — a generic beside a same-named METHOD is a set too  ·  S  ·  pre-freeze  ·  ⚑ lands alone
 

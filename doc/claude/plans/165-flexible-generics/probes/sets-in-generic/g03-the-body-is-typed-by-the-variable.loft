@@ -1,0 +1,12 @@
+// B3b — the call's result is typed by the generic's variable: `first(v)` inside `head<U>` is
+// `U`, and at `integer` the concrete member (returning integer) answers.
+// @EXPECT: 999|p|2.5
+fn first<T>(v: vector<T>) -> T { v[0] }
+fn first(v: vector<integer>) -> integer { 999 }
+fn head<U>(v: vector<U>) -> U { first(v) }
+fn main() {
+  a: vector<integer> = [1, 2];
+  b: vector<text> = ["p", "q"];
+  c: vector<float> = [2.5];
+  println("{head(a)}|{head(b)}|{head(c)}");
+}

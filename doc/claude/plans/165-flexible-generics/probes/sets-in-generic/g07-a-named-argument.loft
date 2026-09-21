@@ -1,0 +1,8 @@
+// B3b — a named argument rides the deferred site.
+// @EXPECT: int [5|gen [x
+fn fmt<T: Printable>(x: T, pre: text = "<") -> text { "gen {pre}{x}" }
+fn fmt(x: integer, pre: text = "<") -> text { "int {pre}{x}" }
+fn g<U: Printable>(x: U) -> text { fmt(x, pre: "[") }
+fn main() {
+  println("{g(5)}|{g("x")}");
+}
