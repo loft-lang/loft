@@ -3152,6 +3152,197 @@ fn branch_tail_vars(node: &Value) -> Vec<u16> {
     out
 }
 
+/// `formal/heap.md` D-heap-15 — write a join COPIED into a container out per arm:
+/// `OpCopyRecord(if c { a } else { b }, dest, tp)` becomes
+/// `if c { OpCopyRecord(a, dest, tp) } else { OpCopyRecord(b, dest, tp) }`.
+///
+/// `Hold { h: a ?? b }` and `v += [a ?? b]` move whichever value the join chose into the
+/// container (`(H-Move)`), and the container releases it.  Copied as one value, the join names no
+/// variable, so nothing was handed over on any path and the chosen arm's source released it a
+/// second time.  Written out, each arm is the plain copy the author's own
+/// `if c { v += [a] } else { v += [b] }` makes, and [`copy_record_handoff`] and the per-path flag
+/// (`arm_container_handoffs`) decide it as they decide that spelling.
+///
+/// Only a copy that hands a release over is written out — into a place a droppable-owning
+/// container's cascade reaches, or an appended element ([`copy_hands_off`],
+/// [`appends_to_element`]).  EVERY copy of a join, written out or not, gives an arm that is a
+/// bare call minting a record the owner the parser gives it in a view-typed join
+/// (`{ __ref_N = call; __ref_N }`): the store the call mints lives only in the value it answers,
+/// since the buffer it is handed starts as the null sentinel, and the copy only reads it —
+/// `v += [a ?? mk(n)]` leaked one store per evaluation for every record type.
+fn write_out_joined_copies(code: &mut Value, function: &Function, data: &Data) {
+    let copy_d = data.def_nr("OpCopyRecord");
+    if copy_d == u32::MAX {
+        return;
+    }
+    fn writable(tail: &Value) -> bool {
+        match tail.unspan() {
+            Value::Var(_) | Value::Call(_, _) => true,
+            Value::If(_, t, f) => writable(t) && writable(f),
+            Value::Block(bl)
+                if bl.name == crate::parser::Parser::JOIN_ARM_OWNER || bl.name == "Object" =>
+            {
+                true
+            }
+            Value::Block(bl) if !matches!(bl.result.base(), Type::Void | Type::Null) => {
+                bl.operators.last().is_some_and(writable)
+            }
+            Value::Insert(ops) => ops.last().is_some_and(writable),
+            _ => false,
+        }
+    }
+    fn arm_block(arm: &mut Value) {
+        if matches!(arm.unspan(), Value::Block(_) | Value::If(_, _, _)) {
+            return;
+        }
+        let inner = std::mem::replace(arm, Value::Null);
+        *arm = Value::Block(Box::new(Block {
+            name: "sunk arm",
+            operators: vec![inner],
+            result: Type::Void,
+            scope: 0,
+            var_size: 0,
+        }));
+    }
+    struct JoinCopy<'a> {
+        op: u32,
+        dest: &'a Value,
+        tp: &'a Value,
+        function: &'a Function,
+        data: &'a Data,
+    }
+    impl JoinCopy<'_> {
+        fn wrap(&self, node: &mut Value) {
+            let source = std::mem::replace(node, Value::Null);
+            *node = Value::Call(self.op, vec![source, self.dest.clone(), self.tp.clone()]);
+        }
+        /// The owner block for a bare minting call, or `None` where the call is not one.
+        fn owned(&self, node: &Value) -> Option<Value> {
+            let Value::Call(fd, args) = node.unspan() else {
+                return None;
+            };
+            let def = self.data.def(*fd);
+            if !def.is_loft_defined()
+                || !matches!(
+                    def.returned().peel_optional().0,
+                    Type::Reference(_, _) | Type::Enum(_, true, _)
+                )
+            {
+                return None;
+            }
+            let buf = args.iter().find_map(|a| match a.unspan() {
+                Value::Var(v) if self.function.is_caller_hidden_buf(*v) => Some(*v),
+                _ => None,
+            })?;
+            Some(Value::Block(Box::new(Block {
+                name: crate::parser::Parser::JOIN_ARM_OWNER,
+                operators: vec![v_set(buf, node.clone()), Value::Var(buf)],
+                result: self.function.tp(buf).clone(),
+                scope: 0,
+                var_size: 0,
+            })))
+        }
+        /// Give every bare minting call arm of the join its owner block, and nothing else.
+        fn own_calls(&self, node: &mut Value) {
+            if let Some(owned) = self.owned(node) {
+                *node = owned;
+                return;
+            }
+            match node {
+                Value::Span(b) => self.own_calls(&mut b.1),
+                Value::If(_, t, f) => {
+                    self.own_calls(t);
+                    self.own_calls(f);
+                }
+                Value::Block(bl) if bl.name != crate::parser::Parser::JOIN_ARM_OWNER => {
+                    if let Some(last) = bl.operators.last_mut() {
+                        self.own_calls(last);
+                    }
+                }
+                Value::Insert(ops) => {
+                    if let Some(last) = ops.last_mut() {
+                        self.own_calls(last);
+                    }
+                }
+                _ => {}
+            }
+        }
+        fn sink(&self, node: &mut Value) {
+            if let Some(owned) = self.owned(node) {
+                *node = owned;
+                self.wrap(node);
+                return;
+            }
+            match node {
+                Value::Span(b) => self.sink(&mut b.1),
+                Value::If(_, t, f) => {
+                    self.sink(t);
+                    self.sink(f);
+                    arm_block(t);
+                    arm_block(f);
+                }
+                Value::Block(bl)
+                    if bl.name == crate::parser::Parser::JOIN_ARM_OWNER || bl.name == "Object" =>
+                {
+                    self.wrap(node);
+                }
+                Value::Block(bl) => {
+                    if let Some(last) = bl.operators.last_mut() {
+                        self.sink(last);
+                    }
+                    bl.result = Type::Void;
+                }
+                Value::Insert(ops) => {
+                    if let Some(last) = ops.last_mut() {
+                        self.sink(last);
+                    }
+                }
+                _ => self.wrap(node),
+            }
+        }
+    }
+    fn visit(n: &mut Value, copy_d: u32, function: &Function, data: &Data) {
+        n.for_each_child_mut(&mut |c| visit(c, copy_d, function, data));
+        let node = n.unspan_mut();
+        let Value::Call(d, args) = &*node else {
+            return;
+        };
+        if *d != copy_d
+            || args.len() != 3
+            || !Scopes::is_value_branch(&args[0])
+            || !writable(&args[0])
+            || matches!(args[2].unspan(), Value::Int(tp) if tp & 0x8000 != 0)
+        {
+            return;
+        }
+        let hands_over = copy_hands_off(&args[1], function, data)
+            || appends_to_element(&args[1], function, data);
+        let Value::Call(_, args) = std::mem::replace(node, Value::Null) else {
+            unreachable!();
+        };
+        let [mut branch, dest, tp] = <[Value; 3]>::try_from(args).unwrap_or_else(|_| {
+            unreachable!("an OpCopyRecord carries three arguments");
+        });
+        let copy = JoinCopy {
+            op: copy_d,
+            dest: &dest,
+            tp: &tp,
+            function,
+            data,
+        };
+        if hands_over {
+            copy.sink(&mut branch);
+            *node = branch;
+        } else {
+            // No release to hand over, but the store a bare call arm mints still needs an owner:
+            // the copy reads it and nothing else does.
+            copy.own_calls(&mut branch);
+            *node = Value::Call(copy_d, vec![branch, dest, tp]);
+        }
+    }
+    visit(code, copy_d, function, data);
+}
+
 /// The call a `join-arm-owner` block binds — `{ buf = call; buf }`, exactly as
 /// `Parser::materialise_owned_call` builds it — or `None` for any other contents, which are then
 /// not written out.
@@ -7205,6 +7396,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         let free_ref_nr = data.def_nr("OpFreeRef");
         let mut orig_code = data.definitions[d_nr as usize].code.clone();
         let mut orig_vars = Function::copy(&data.def(d_nr).variables);
+        // A join copied into a container is written out per arm before any analysis reads it,
+        // so each arm's copy hands its own source over (`formal/heap.md` D-heap-15).
+        write_out_joined_copies(&mut orig_code, &orig_vars, data);
         // Phase 1: the normal scan → apply → set-scope pass.
         let written_out = run_scan_phase(
             data,

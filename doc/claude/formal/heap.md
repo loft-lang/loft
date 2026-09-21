@@ -1048,7 +1048,7 @@ CLOSED 2026-09-17, below.
   of its 56 cells lost the source on the tree before, on both backends, and none does after.
   Guard `tests/scripts/a-move-in-one-arm-leaves-the-other-path-releasing.loft`.
 
-### D-heap-15 — OPEN (2026-09-17): a value the rules MOVE is still copied, and both structures release it
+### D-heap-15 — OPEN (2026-09-17, NARROWED 2026-09-21): a value the rules MOVE is still copied, and both structures release it
 
 - **Violates:** (H-Move), and through it (H-Lease).
 - **Where:** not established.  What is measured is the population, below; the shapes share that
@@ -1080,6 +1080,20 @@ CLOSED 2026-09-17, below.
   it appears to, where silence reads as a pass; it is worse only because a verdict does not even
   look like silence.  The 23 cells here and in `D-heap-16` were the measure of it: they appeared
   the moment the verdict narrowed, having been there all along.
+- ⚠ **NARROWED 2026-09-21 — the JOIN half is closed.**  17 of the 21 cells placed a join into a
+  container: `Hold { h: a ?? b }`, `v += [if c { a } else { mk() }]`.  The parser copies such a
+  join as ONE value (`OpCopyRecord(<join>, dest, tp)`), whose source names no variable, so no
+  release was handed over on any path.  The author's own statement spelling,
+  `if c { v += [a] } else { v += [b] }`, was measured clean on all twelve cells of the same
+  matrix, so the join is now written out to it before any analysis reads the function
+  (`scopes::write_out_joined_copies`), and each arm is the plain copy that `D-heap-14`'s per-path
+  flag already decides.  A bare minting call arm is given the owner a view-typed join gives it
+  (`{ __ref_N = call; __ref_N }`), which also closed the STORE that `v += [a ?? mk()]` leaked on
+  the path that made it.  All 17 are clean on both backends, and so are 11 of `D-heap-8`'s cells
+  on the path where the value the join chose was the function's own (`q_default_field_*`,
+  `q_default_param_*`).  **Open:** `p_v1` and `p_v2` (`d = v` of a droppable collection),
+  `p_o2` (`u = t` of a tuple) and `p_i2` (`a = a ?? mk()`, a variable rebound to a `??` over
+  itself).  None of them is a join.
 - **Removal:** the copy that makes the second structure, removed wherever the rules move the
   value; `scopes::copy_moves_drop_from` and the hand-off flags beside it are @PLN163 P5's
   subject and this entry is the measurement P5 is verified against.

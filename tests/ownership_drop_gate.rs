@@ -1576,35 +1576,14 @@ const CENSUS_BLIND: &[&str] = &[];
 // `D-heap-13` was retired 2026-09-20 with its fix (a collection a call answers releases
 // through the binding, `scopes::drop_hook`'s collection arm): `p_v5`–`p_v7` moved LOST →
 // clean on both backends and `p_v8` / `p_v9`, the controls that bound it, did not move.
+// `D-heap-15` was NARROWED 2026-09-21: a join copied into a container is written out per arm
+// (`scopes::write_out_joined_copies`), which retired `p_j3`, `p_j4`, the four `c_coalesce_*`
+// cells and every `q_*_local_*` field or push cell on both backends.  What is left is not a
+// join: a whole-collection bind, a tuple bind and a variable rebound to a `??` over itself.
 // `D-heap-16` was retired 2026-09-21 with its fix (the arm lift that turns the binding into a
 // borrow gives a minting call arm a temp of its own): `p_l2` and `q_default_local_call_local`
 // moved LOST → clean on both backends, and `q_default_param_call_local` with them.
-const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[(
-    "D-heap-15",
-    &[
-        "p_v1",
-        "p_v2",
-        "p_o2",
-        "p_i2",
-        "p_j3",
-        "p_j4",
-        "c_coalesce_field",
-        "c_coalesce_enum",
-        "c_coalesce_push",
-        "c_coalesce_veclit",
-        "q_present_local_call_field",
-        "q_present_local_call_push",
-        "q_present_local_var_field",
-        "q_present_local_var_push",
-        "q_present_local_literal_field",
-        "q_present_local_literal_push",
-        "q_default_local_call_field",
-        "q_default_local_var_field",
-        "q_default_local_var_push",
-        "q_default_local_literal_field",
-        "q_default_local_literal_push",
-    ],
-)];
+const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[("D-heap-15", &["p_v1", "p_v2", "p_o2", "p_i2"])];
 
 /// Every cell has a lease verdict, and every cell the rules say must release once while a
 /// baseline says it does not is carried by exactly one OPEN deviation in `formal/heap.md`.  A fix
