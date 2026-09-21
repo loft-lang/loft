@@ -8504,6 +8504,13 @@ impl Parser {
     fn satisfaction_failures(&self, iface_nr: u32, concrete_nr: u32) -> Vec<String> {
         let concrete_name = self.data.def(concrete_nr).name().to_string();
         let concrete_type = self.data.def(concrete_nr).returned().clone();
+        // A struct-enum VARIANT's `returned` is its parent ENUM, so a method declared on the
+        // variant itself (`fn tag(self: Cat)`) was never seen: `greet<T: Named>(Cat {…})` was
+        // "'Cat' does not satisfy interface 'Named': missing tag" while `c.tag()` compiled —
+        // `(G-Sat)` says the methods VISIBLE for the type decide.  The variant's own type is
+        // asked first; the enum's methods, visible for every variant, stay the fallback.
+        let variant_type = (self.data.def_type(concrete_nr) == DefType::EnumValue)
+            .then(|| Type::Reference(concrete_nr, crate::data::Deps::none()));
         let mut out = Vec::new();
         for child_nr in self.data.children_of(iface_nr).collect::<Vec<u32>>() {
             // Only the METHODS are structural satisfaction; a companion type is matched
@@ -8515,7 +8522,11 @@ impl Parser {
             };
             // I9-prim: use find_fn which checks both the method-style convention
             // (t_7integer_OpLt) and the add_op convention (OpLtInt via possible map).
-            let mut found = self.data.find_fn(u16::MAX, &method_suffix, &concrete_type);
+            let mut found = variant_type
+                .as_ref()
+                .map(|v| self.data.find_fn(u16::MAX, &method_suffix, v))
+                .filter(|d| *d != u32::MAX)
+                .unwrap_or_else(|| self.data.find_fn(u16::MAX, &method_suffix, &concrete_type));
             // @PLN25 E2 — a synth `__nullable<S>` delegates method/interface
             // resolution to its underlying `S` (a method call on a nullable
             // element unwraps through `Some` to call `S`'s method), so satisfy
