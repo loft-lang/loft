@@ -1,0 +1,11 @@
+// D6 — `describe(g)` reaches what `g.describe()` reaches, for the concrete member and the
+// template alike.
+// @EXPECT: int 3|any 4|int 3|any 4
+struct Grid<T> { cells: vector<T>, w: integer }
+fn describe(self: Grid<integer>) -> text { "int {self.w}" }
+fn describe<T>(self: Grid<T>) -> text { "any {self.w}" }
+fn main() {
+  g = Grid { cells: [1], w: 3 };
+  t = Grid { cells: ["a"], w: 4 };
+  println("{describe(g)}|{describe(t)}|{g.describe()}|{t.describe()}");
+}

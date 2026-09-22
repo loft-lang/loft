@@ -1,0 +1,10 @@
+// `n` follows a field typed by T, so its offset differs per instance; the check reads the
+// right bytes in each.
+// @EXPECT: 7|8|9
+struct Pair<T> { a: T, n: integer assert(n > 5, "n") }
+fn main() {
+  x = Pair { a: "long text", n: 7 };
+  y = Pair { a: 1.5, n: 8 };
+  z: Pair<u8> = Pair { a: 3, n: 9 };
+  println("{x.n}|{y.n}|{z.n}");
+}

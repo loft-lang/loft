@@ -1,0 +1,10 @@
+// A write through the field runs the check, as the twin's write does.
+// @EXPECT: 6
+struct Box<T> { v: T, n: integer assert(n > 0, "n must be positive") }
+fn main() {
+  a = Box { v: "a", n: 3 };
+  a.n = 6;
+  println("{a.n}");
+  a.n = -2;
+  println("unreachable {a.n}");
+}

@@ -7928,11 +7928,29 @@ impl Data {
         Self::mangle_method(&n, method)
     }
 
+    /// The definition a receiver's methods belong to: the template of an instance of a
+    /// generic struct (@PLN165 D6), the receiver's own definition otherwise.
+    #[must_use]
+    pub fn method_family(&self, type_nr: u32) -> u32 {
+        match self.definitions.get(type_nr as usize) {
+            Some(d) if d.instance_of != u32::MAX => d.instance_of,
+            _ => type_nr,
+        }
+    }
+
     /// The name that KEYS a method on `type_nr`: a concrete type's own name, or a bound
     /// holder's marked spelling.
     #[must_use]
     fn key_type_name(&self, type_nr: u32) -> String {
         let d = &self.definitions[type_nr as usize];
+        // @PLN165 D6 — a method of a generic struct is keyed on the TEMPLATE, as a `vector<τ>`
+        // receiver keys on `vector` (loft#1539): `fn at<T>(self: Grid<T>)` is `t_4Grid_at`, and
+        // a call on a `Grid<integer>` looks there.  A concrete `fn at(self: Grid<integer>)`
+        // beside it then shares the key and the two form one overload set, ranked as a
+        // concrete member beside a template is (arc B).
+        if d.instance_of != u32::MAX {
+            return self.key_type_name(d.instance_of);
+        }
         if d.bound_holder {
             format!("{}{}", d.name, Self::HOLDER_MARK)
         } else {
@@ -8293,7 +8311,9 @@ impl Data {
             // for operator definitions (add_op), where non-mutable params are bytecode constants.
         }
         if is_self || is_both {
-            let type_nr = self.type_def_nr(&arguments[0].typedef);
+            // A method of a generic struct is a member of the TEMPLATE, where it is keyed
+            // (`key_type_name`, @PLN165 D6): every instance, open or concrete, reaches it there.
+            let type_nr = self.method_family(self.type_def_nr(&arguments[0].typedef));
             let existing = self.attr(type_nr, fn_name) != usize::MAX;
             // @FR-F-Recv — `m(τ)` and `m(τ?)` are TWO definitions: the mangled key carries the
             // `?` (@PLN25), so they never collide there.  They do collide HERE, because a `τ?`
@@ -8442,9 +8462,11 @@ impl Data {
             };
             // `Disp-Key` (@PLN162): an overload of a method lives under its FULL parameter
             // spelling; that key is asked first, so a second `m(self: τ, …)` reaches its own
-            // def on pass 2 and not the incumbent's.  With one parameter the two keys are one.
-            if arguments.len() > 1
-                && let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
+            // def on pass 2 and not the incumbent's.  With one parameter the two keys are one —
+            // except where the receiver's key names a FAMILY (`vector` for `vector<integer>`,
+            // the template `Grid` for `Grid<T>`, @PLN165 D6), so it is asked whenever it differs.
+            if let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
+                && (arguments.len() > 1 || full != sig)
             {
                 let d_nr = lookup(&Self::mangle_method(&full, fn_name));
                 if d_nr != u32::MAX {
@@ -8501,7 +8523,11 @@ impl Data {
             return true;
         };
         let declared = self.type_def_nr(&receiver.typedef);
-        declared == u32::MAX || declared == type_nr
+        // @PLN165 D6 — the instances of one generic struct are one receiver family, as every
+        // `vector<τ>` is `vector`: `fn at<T>(self: Grid<T>)` receives a `Grid<integer>`.
+        declared == u32::MAX
+            || declared == type_nr
+            || self.method_family(declared) == self.method_family(type_nr)
     }
 
     /// The definitions `fn_name` could resolve to for a receiver of type `tp`, as a SET, in

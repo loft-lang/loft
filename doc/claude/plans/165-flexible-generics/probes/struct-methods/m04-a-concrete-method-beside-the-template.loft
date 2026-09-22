@@ -1,0 +1,11 @@
+// D6 — a concrete method on one instance beside the template: the instance it names takes
+// the concrete one.
+// @EXPECT: int 3|any 3
+struct Grid<T> { cells: vector<T>, w: integer }
+fn describe(self: Grid<integer>) -> text { "int {self.w}" }
+fn describe<T>(self: Grid<T>) -> text { "any {self.w}" }
+fn main() {
+  g = Grid { cells: [1], w: 3 };
+  t = Grid { cells: ["a"], w: 3 };
+  println("{g.describe()}|{t.describe()}");
+}

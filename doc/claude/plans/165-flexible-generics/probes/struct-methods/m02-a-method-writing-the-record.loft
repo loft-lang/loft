@@ -1,0 +1,11 @@
+// D6 — a method that writes a field of its receiver; the caller sees it.
+// @EXPECT: 5|12
+struct Grid<T> { cells: vector<T>, w: integer }
+fn widen<T>(self: Grid<T>, by: integer) { self.w += by; }
+fn main() {
+  g = Grid { cells: [1], w: 3 };
+  g.widen(2);
+  t = Grid { cells: ["x"], w: 10 };
+  t.widen(2);
+  println("{g.w}|{t.w}");
+}

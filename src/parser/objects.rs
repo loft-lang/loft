@@ -262,7 +262,14 @@ impl Parser {
         name_pos: &Position,
     ) -> Type {
         // '$' refers to the current record in struct field default expressions
-        if name == "$" && matches!(self.data.def_type(self.context), DefType::Struct) {
+        // …and in a generic struct's own declaration (@PLN165), where a field read defers to
+        // each instance (`Parser::TV_FIELD`, bound by `bind_instance_code`).
+        if name == "$"
+            && matches!(
+                self.data.def_type(self.context),
+                DefType::Struct | DefType::TypeTemplate
+            )
+        {
             // Noted HERE rather than at the field it selects: a `$.x` naming a field
             // declared later in the struct does not resolve in pass 1, and a default that
             // reads the record must be recognised as one in BOTH passes.
@@ -963,8 +970,10 @@ impl Parser {
                     Type::Null
                 };
             }
-        } else if matches!(self.data.def_type(self.context), DefType::Struct)
-            && self.data.attr(self.context, name) != usize::MAX
+        } else if matches!(
+            self.data.def_type(self.context),
+            DefType::Struct | DefType::TypeTemplate
+        ) && self.data.attr(self.context, name) != usize::MAX
         {
             let fnr = self.data.attr(self.context, name);
             *code = self.get_field(self.context, fnr, Value::Var(0));
@@ -4414,6 +4423,11 @@ impl Parser {
             }
         }
         self.lexer.token("}");
+        // Where the literal is — what its field checks report, as the twin's do
+        // (`parse_object` reads the position here too) — the lowering runs at the call.
+        let pos = self.lexer.pos().clone();
+        fields.insert(1, Value::Text(pos.file.clone()));
+        fields.insert(2, Value::Int(pos.line as i32));
         let tp = Type::Reference(open, crate::data::Deps::none());
         *code = v_block(fields, tp.clone(), Self::TV_OBJECT);
         tp
@@ -4448,6 +4462,54 @@ impl Parser {
         let inst = self.data.instance_def(&mut self.lexer, template, args);
         self.lay_out_instance(inst);
         inst
+    }
+
+    /// Bind code a generic struct's declaration lowered — a field `assert`, a stored default
+    /// that reads the record — to its instance `d` (@PLN165): each field read the template
+    /// deferred (`Parser::TV_FIELD` naming the template, whose positions depend on the
+    /// arguments) becomes the instance's own read, as its twin's declaration lowered it.
+    /// Any other definition's code is returned as it is.
+    /// The `assert(…)` on field `a` of `d`, bound to `d`.  An instance runs its TEMPLATE's:
+    /// the copy `instance_def` took can predate the template's pass-2 parse, which is when a
+    /// field check is stored.
+    pub(crate) fn field_check(&mut self, d: u32, a: usize) -> Value {
+        let template = self.data.def(d).instance_of;
+        let owner = if template != u32::MAX && a < self.data.def(template).attributes().len() {
+            template
+        } else {
+            d
+        };
+        let code = self.data.def(owner).attributes()[a].check.clone();
+        self.bind_instance_code(code, d)
+    }
+
+    /// The message of that check, read where [`Parser::field_check`] reads the check.
+    pub(crate) fn field_check_message(&self, d: u32, a: usize) -> Value {
+        let template = self.data.def(d).instance_of;
+        let owner = if template != u32::MAX && a < self.data.def(template).attributes().len() {
+            template
+        } else {
+            d
+        };
+        self.data.def(owner).attributes()[a].check_message.clone()
+    }
+
+    pub(crate) fn bind_instance_code(&mut self, mut code: Value, d: u32) -> Value {
+        let template = self.data.def(d).instance_of;
+        if template == u32::MAX || code == Value::Null {
+            return code;
+        }
+        code.map_nodes(&mut |v| {
+            if let Value::Block(bl) = v.unspan()
+                && bl.name == Self::TV_FIELD
+                && let [Value::Int(open), Value::Int(f_nr), receiver] = &bl.operators[..]
+                && *open as u32 == template
+            {
+                let (f_nr, receiver) = (*f_nr as usize, receiver.clone());
+                *v = self.get_field(d, f_nr, receiver);
+            }
+        });
+        code
     }
 
     /// Consume a `{ … }` body whole, nested braces included, stopping at the end of input —
@@ -4884,11 +4946,11 @@ impl Parser {
             // emit all field constraint checks after construction completes.
             let assert_dnr = self.data.def_nr("n_assert");
             for a_nr in 0..self.data.def(td_nr).attributes().len() {
-                let check = self.data.def(td_nr).attributes()[a_nr].check.clone();
+                let check = self.field_check(td_nr, a_nr);
                 if check != Value::Null {
                     let bound = Self::replace_record_ref(check, code);
                     let nm = self.data.attr_name(td_nr, a_nr);
-                    let msg = match &self.data.def(td_nr).attributes()[a_nr].check_message {
+                    let msg = match &self.field_check_message(td_nr, a_nr) {
                         Value::Text(s) => Value::Text(s.clone()),
                         _ => Value::Text(format!(
                             "field constraint failed on {}.{nm}",
@@ -5362,7 +5424,8 @@ impl Parser {
             {
                 continue;
             }
-            let mut default = self.data.attr_value(td_nr, aid);
+            let default = self.data.attr_value(td_nr, aid);
+            let mut default = self.bind_instance_code(default, td_nr);
             // #697 — a COLLECTION field MENTIONED in the literal is primed first: the
             // mentioned-field path emits `OpSetInt4(pos, 0)` to zero the 4-byte header
             // before anything writes through it (see `sinks.vector_headers`).  A field
