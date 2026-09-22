@@ -984,6 +984,24 @@ two-variable generics, which the no-observable-special-names rule cannot retire 
   written.
 - Each step also runs `make surface-gen`: a new builtin renumbers
   `index/target_surface.json`.
+- **E1 measured, not built — blocked on a design decision** (2026-09-22).  `pub fn reverse<T>(v:
+  vector<T>) { reverse(v) }` in `default/` (its body reaches the special form, which the stdlib
+  never pre-empts) behind `LOFT_BUILTIN_GENERICS=reverse`, with a call to an instance of a stdlib
+  generic whose body is one op inlined in the IR (native's `@FR-R-Wrapper`, done for both
+  backends): every corpus CALL SITE is identical on both backends; what differs is the instances
+  themselves, minted and emitted but never called.  But the step cannot land: a standard-library
+  FREE function's name is RESERVED (`redefinition_text`, loft#863/C95 — *"a program cannot define
+  its own `reverse`"*), so declaring `reverse<T>` in `default/` refuses every program that
+  defines its own `reverse` — `a-builtin-call-name-never-hides-a-programs-own-function` among
+  them, the guard of the special-names half this arc stands on (*"never limit what a user can
+  define"*, 2026-09-15).  Arc E as written reserves exactly the names that half freed.  The
+  choice is the owner's: (a) a built-in's stdlib generic does not reserve its name — a
+  program's definition joins the set and outranks it, as it outranks the special form today;
+  (b) no stdlib free name is reserved any more — every program definition beside a stdlib one
+  is a member of the set (`G-Select`), the program's ranking first on a tie; (c) the special
+  forms stay.  Measuring note: every binary reads `default/` from the tree, so a corpus diff
+  of a `default/` change needs the OLD `default/` on the before side — two step binaries over
+  one tree read the same stdlib and reported IDENTICAL while the guard above was refused.
 
 ---
 
