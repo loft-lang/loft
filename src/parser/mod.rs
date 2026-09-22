@@ -10665,9 +10665,9 @@ impl Parser {
                     .collect();
                 let mut out = Value::Null;
                 if bl.name == Self::TV_INSERT {
-                    self.parse_insert(&mut out, &list, &[bl.result.clone()]);
+                    self.parse_insert(&mut out, &list, std::slice::from_ref(&bl.result));
                 } else if bl.name == Self::TV_REVERSE {
-                    self.parse_reverse(&mut out, &list, &[bl.result.clone()]);
+                    self.parse_reverse(&mut out, &list, std::slice::from_ref(&bl.result));
                 } else {
                     // The count was checked an integer where the template stamped the site.
                     let count = Type::Integer(crate::data::IntegerSpec::wide());
