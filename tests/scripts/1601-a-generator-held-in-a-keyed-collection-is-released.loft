@@ -20,6 +20,7 @@
 //   the same channels.
 // CHANNEL: interpret — the strict-store census stops the run; native — the leak gate.
 // ARMED: LOFT_STRICT_STORES=1.
+// HOLDS: every cell's value assertion passes on both trees; only the census moves.
 
 fn patrol(id: integer, n: integer) -> iterator<integer> {
   steps = [0, 1, 2, 3, 4];

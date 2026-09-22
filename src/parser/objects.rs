@@ -4949,7 +4949,7 @@ impl Parser {
             // than in a work-ref copied in, which also costs the append its push header.
             let variant_into_element = self.vars.is_inline_ref(*v_nr)
                 && self.data.def_type(td_nr) == DefType::EnumValue
-                && matches!(var_tp.base(), Type::Reference(d, _) if *d == self.data.def(td_nr).parent);
+                && matches!(var_tp.base(), Type::Enum(d, true, _) if *d == self.data.def(td_nr).parent);
             let type_matches = var_tp.is_unknown()
                 || matches!(&var_tp, Type::Reference(d, _) if *d == td_nr)
                 || variant_into_element;
