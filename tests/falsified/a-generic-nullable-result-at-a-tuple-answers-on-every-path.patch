@@ -1,0 +1,372 @@
+diff --git b/src/data.rs a/src/data.rs
+index 4397cbe9f..679f2ae8f 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -4950,21 +4950,11 @@ impl Definition {
+     /// [`Self::monomorph_return_is_fresh`] for what the answer is used for and why it
+     /// under-approximates.  `buf` is [`Self::value_return_buffer_var`] — the one argument
+     /// that answers "owned" rather than "borrowed".
+-    fn site_is_fresh(
+-        v: &Value,
+-        vars: &crate::variables::Function,
+-        buf: Option<u16>,
+-        null_ref: u32,
+-    ) -> bool {
++    fn site_is_fresh(v: &Value, vars: &crate::variables::Function, buf: Option<u16>) -> bool {
+         match v.unspan() {
+-            // Null is a value, not a store — it can neither leak nor dangle.  So is the null
+-            // REFERENCE (`OpNullRefSentinel()`, `null_ref`), which is how a record-typed
+-            // `null` tail is spelled: read as "not proven", it refused every instance that
+-            // ends `… null` after minting on another path, which then leaked one record per
+-            // inline call where its hand-written twin was lifted and freed (@FR-G-Mono).
++            // Null is a value, not a store — it can neither leak nor dangle.
+             Value::Null => true,
+-            Value::Call(nr, args) if *nr == null_ref && args.is_empty() => true,
+-            Value::Var(n) => Self::local_owns(*n, vars, buf),
++            Value::Var(n) => *n < vars.count() && (!vars.is_argument(*n) || buf == Some(*n)),
+             // loft#1070 — a value-yielding `if` / `match` tail: fresh iff EVERY arm is.
+             // Held back while an arm-local of a monomorph was built against the type
+             // variable's row and answered a wrong number; with that fixed the arms are
+@@ -4972,14 +4962,13 @@ impl Definition {
+             // Both arms are required, so one borrowing arm still refuses the whole site —
+             // the under-approximation composes rather than being widened away.
+             Value::If(_, then, els) => {
+-                Self::site_is_fresh(then, vars, buf, null_ref)
+-                    && Self::site_is_fresh(els, vars, buf, null_ref)
++                Self::site_is_fresh(then, vars, buf) && Self::site_is_fresh(els, vars, buf)
+             }
+             // A block's value is its tail; an empty one yields nothing to own.
+             Value::Block(bl) => bl
+                 .operators
+                 .last()
+-                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf, null_ref)),
++                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf)),
+             // A call THROUGH A FN-REF reaches the `_` arm below and answers "not proven",
+             // and that is the honest answer HERE: the target is a runtime value, so this
+             // body cannot read the callee's fact.  It is readable one frame up, where the
+@@ -4998,42 +4987,13 @@ impl Definition {
+             // one both read "capture-free".  The target's own BODY is what tells them
+             // apart, which is why the resolution goes to the definition and not the type.
+             other => match Self::root_var(other) {
+-                Some(n) => Self::local_owns(n, vars, buf),
++                Some(n) => n < vars.count() && (!vars.is_argument(n) || buf == Some(n)),
+                 // No readable root (a call, a literal-built aggregate): not proven fresh.
+                 None => false,
+             },
+         }
+     }
+ 
+-    /// Does local `n` OWN what it holds — the return buffer, or a non-parameter that does not
+-    /// VIEW a parameter through its deps (`@FR-O-Proxy`, the fact the scope pass frees by)?
+-    /// A loop's element (`for x in v { return x; }`) is a local too, but it depends on the
+-    /// loop's copy of `v`, which depends on `v`: lifting it freed the caller's own record.
+-    /// That was hidden while a `null` tail beside it refused the whole body; it is not the
+-    /// tail that makes the site a borrow.  A dep on a store the frame minted (a vector
+-    /// local's `__vdb_N`) is ownership, not a view.
+-    fn local_owns(n: u16, vars: &crate::variables::Function, buf: Option<u16>) -> bool {
+-        fn views_a_parameter(
+-            n: u16,
+-            vars: &crate::variables::Function,
+-            buf: Option<u16>,
+-            seen: &mut Vec<u16>,
+-        ) -> bool {
+-            if seen.contains(&n) {
+-                return false;
+-            }
+-            seen.push(n);
+-            vars.tp(n).depend().iter().any(|&d| {
+-                d < vars.count()
+-                    && buf != Some(d)
+-                    && (vars.is_argument(d) || views_a_parameter(d, vars, buf, seen))
+-            })
+-        }
+-        n < vars.count()
+-            && (buf == Some(n)
+-                || (!vars.is_argument(n) && !views_a_parameter(n, vars, buf, &mut Vec::new())))
+-    }
+-
+     /// Every value this body can hand back: each explicit `return`, PLUS the body's own
+     /// tail.
+     ///
+@@ -5078,7 +5038,7 @@ impl Definition {
+     /// reads `None` as "no closure involved" gets the unsound half: a body with one
+     /// readable fn-ref site and one site this cannot read also answers `None`.
+     #[must_use]
+-    pub fn monomorph_fnref_return_slots(&self, null_ref: u32) -> Option<Vec<u16>> {
++    pub fn monomorph_fnref_return_slots(&self) -> Option<Vec<u16>> {
+         let vars = &self.variables;
+         let buf = self.value_return_buffer_var();
+         let sites = self.return_sites();
+@@ -5087,7 +5047,7 @@ impl Definition {
+         }
+         let mut slots: Vec<u16> = Vec::new();
+         for site in &sites {
+-            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref) {
++            if Self::site_is_fresh(site.unspan(), vars, buf) {
+                 continue;
+             }
+             match site.unspan() {
+@@ -5126,7 +5086,7 @@ impl Definition {
+     /// target — a body that hands back its own argument must NOT be lifted, or the free
+     /// releases the caller's record while the variable holding it is still live.
+     #[must_use]
+-    pub fn monomorph_direct_call_return_targets(&self, null_ref: u32) -> Option<Vec<u32>> {
++    pub fn monomorph_direct_call_return_targets(&self) -> Option<Vec<u32>> {
+         let vars = &self.variables;
+         let buf = self.value_return_buffer_var();
+         let sites = self.return_sites();
+@@ -5135,7 +5095,7 @@ impl Definition {
+         }
+         let mut targets: Vec<u32> = Vec::new();
+         for site in &sites {
+-            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref) {
++            if Self::site_is_fresh(site.unspan(), vars, buf) {
+                 continue;
+             }
+             match site.unspan() {
+@@ -5174,7 +5134,7 @@ impl Definition {
+     }
+ 
+     #[must_use]
+-    pub fn monomorph_return_is_fresh(&self, null_ref: u32) -> bool {
++    pub fn monomorph_return_is_fresh(&self) -> bool {
+         let vars = &self.variables;
+         let buf = self.value_return_buffer_var();
+         let mut seen_return = false;
+@@ -5185,7 +5145,7 @@ impl Definition {
+             let inner = inner.unspan();
+             // A bare `Var` is the shape both the owned and the borrowed monomorph end
+             // with after the scope pass, and it is the one the answer turns on.
+-            if !Self::site_is_fresh(inner, vars, buf, null_ref) {
++            if !Self::site_is_fresh(inner, vars, buf) {
+                 all_fresh = false;
+             }
+         }
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 62e17cb76..5db345ed2 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -8446,10 +8446,8 @@ impl Parser {
+             self.vars.work_texts().into_iter().collect();
+         let outer_set_call_refs = std::mem::take(&mut self.set_call_refs);
+         let mut code = code;
+-        let returned = self.data.def(d_nr).returned().clone();
+-        if matches!(returned, Type::Optional(_)) && Self::every_result_is_a_tuple_read(&code, true)
+-        {
+-            Self::keep_returned_tuple_reads(&mut code, true, &returned);
++        if matches!(self.data.def(d_nr).returned(), Type::Optional(_)) {
++            Self::keep_returned_tuple_reads(&mut code, true);
+         }
+         let mut code = self.rewrite_generic_type_defaults(code);
+         self.stage_text_self_reads(&mut code, tmpl_vars);
+@@ -10603,123 +10601,28 @@ impl Parser {
+     /// (`TV_TUPLE_READ`).  Unboxed, the return boxed the tuple again into a record of its own
+     /// that no caller freed: one `__tuple` store leaked per call.  `tail` says whether `v`
+     /// is in a result position: the body's tail, a tail block's tail, a tail `if`'s arms, and
+-    /// every `return`'s value wherever it stands.  Answers whether `v` now yields that
+-    /// reference; a block that does is retyped to the result `ret`, as a hand-written
+-    /// function's is — left at the stack tuple, an `if` arm's block exit was sized for the
+-    /// tuple while it held a reference (the interpreter read past the frame).  An `if` yields
+-    /// it when every arm does or is absent (`null`), and its absent arms are retyped with it.
+-    ///
+-    /// Only where EVERY result is such a read or absent ([`Self::every_result_is_a_tuple_read`]):
+-    /// a result that also mints on some path (a tuple parameter, a local, a literal) would
+-    /// be a borrow on one path and an owned record on another, which a call read without a
+-    /// binding does not free (`@FR-O-Complete`'s join, the residual QUALITY.md B7t records).
+-    /// There every read stays unboxed, every path mints, and the caller owns the result.
+-    fn keep_returned_tuple_reads(v: &mut Value, tail: bool, ret: &Type) -> bool {
++    /// every `return`'s value wherever it stands.
++    fn keep_returned_tuple_reads(v: &mut Value, tail: bool) {
+         match v {
+             Value::Block(bl)
+                 if tail && bl.name == Self::TV_TUPLE_READ && bl.operators.len() == 1 =>
+             {
+                 *v = bl.operators.remove(0);
+-                true
+-            }
+-            Value::Span(b) => Self::keep_returned_tuple_reads(&mut b.1, tail, ret),
+-            Value::Return(inner) => {
+-                Self::keep_returned_tuple_reads(inner, true, ret);
+-                false
+             }
++            Value::Span(b) => Self::keep_returned_tuple_reads(&mut b.1, tail),
++            Value::Return(inner) => Self::keep_returned_tuple_reads(inner, true),
+             Value::Block(bl) => {
+                 let last = bl.operators.len().saturating_sub(1);
+-                let mut yields = false;
+                 for (i, op) in bl.operators.iter_mut().enumerate() {
+-                    let got = Self::keep_returned_tuple_reads(op, tail && i == last, ret);
+-                    yields = tail && i == last && got;
+-                }
+-                if yields && matches!(bl.result.base(), Type::Tuple(_)) {
+-                    bl.result = ret.clone();
++                    Self::keep_returned_tuple_reads(op, tail && i == last);
+                 }
+-                yields
+             }
+             Value::If(c, t, e) => {
+-                Self::keep_returned_tuple_reads(c, false, ret);
+-                let then = Self::keep_returned_tuple_reads(t, tail, ret);
+-                let other = Self::keep_returned_tuple_reads(e, tail, ret);
+-                let yields = tail
+-                    && (then || other)
+-                    && (then || Self::is_absent_arm(t))
+-                    && (other || Self::is_absent_arm(e));
+-                if yields {
+-                    Self::retype_absent_arm(t, ret);
+-                    Self::retype_absent_arm(e, ret);
+-                }
+-                yields
+-            }
+-            _ => {
+-                v.for_each_child_mut(&mut |child| {
+-                    Self::keep_returned_tuple_reads(child, false, ret);
+-                });
+-                false
+-            }
+-        }
+-    }
+-
+-    /// Is every result of `v` a tuple element read (`TV_TUPLE_READ`) or absent?  `tail`
+-    /// says whether `v` is in a result position, as in [`Self::keep_returned_tuple_reads`];
+-    /// a statement is searched for the `return`s it holds.
+-    fn every_result_is_a_tuple_read(v: &Value, tail: bool) -> bool {
+-        match v {
+-            Value::Block(bl) if tail && bl.name == Self::TV_TUPLE_READ => true,
+-            Value::Span(b) => Self::every_result_is_a_tuple_read(&b.1, tail),
+-            Value::Return(inner) => Self::every_result_is_a_tuple_read(inner, true),
+-            Value::Block(bl) if bl.name != Self::TV_NULL_BLOCK => {
+-                let last = bl.operators.len().saturating_sub(1);
+-                bl.operators
+-                    .iter()
+-                    .enumerate()
+-                    .all(|(i, op)| Self::every_result_is_a_tuple_read(op, tail && i == last))
+-            }
+-            Value::If(c, t, e) => {
+-                Self::every_result_is_a_tuple_read(c, false)
+-                    && Self::every_result_is_a_tuple_read(t, tail)
+-                    && Self::every_result_is_a_tuple_read(e, tail)
+-            }
+-            _ if tail => Self::is_absent_arm(v),
+-            _ => {
+-                let mut all = true;
+-                v.for_each_child(&mut |child| {
+-                    all &= Self::every_result_is_a_tuple_read(child, false);
+-                });
+-                all
+-            }
+-        }
+-    }
+-
+-    /// An `if` arm that answers `null` — a bare `null`, the template's deferred null of `T`
+-    /// (`TV_NULL_BLOCK`), or a block ending in either: beside an arm answering the stored
+-    /// element's reference it is that reference absent.
+-    fn is_absent_arm(arm: &Value) -> bool {
+-        match arm.unspan() {
+-            Value::Null => true,
+-            Value::Block(bl) if bl.name == Self::TV_NULL_BLOCK => true,
+-            Value::Block(bl) => bl.operators.last().is_some_and(Self::is_absent_arm),
+-            _ => false,
+-        }
+-    }
+-
+-    /// Retypes an absent arm's blocks to the result type, the deferred null's included, so
+-    /// its per-instance null is the reference's (a no-op on any other arm).
+-    fn retype_absent_arm(arm: &mut Value, ret: &Type) {
+-        if !Self::is_absent_arm(arm) {
+-            return;
+-        }
+-        if let Value::Block(bl) = arm.unspan_mut() {
+-            if matches!(bl.result.base(), Type::Tuple(_)) {
+-                bl.result = ret.clone();
+-            }
+-            if bl.name != Self::TV_NULL_BLOCK
+-                && let Some(tail) = bl.operators.last_mut()
+-            {
+-                Self::retype_absent_arm(tail, ret);
++                Self::keep_returned_tuple_reads(c, false);
++                Self::keep_returned_tuple_reads(t, tail);
++                Self::keep_returned_tuple_reads(e, tail);
+             }
++            _ => v.for_each_child_mut(&mut |child| Self::keep_returned_tuple_reads(child, false)),
+         }
+     }
+ 
+@@ -10733,26 +10636,6 @@ impl Parser {
+                 };
+                 self.unbox_tuple_from_dbref(read, &elems)
+             }
+-            // @FR-G-Mono — a template returns a local that VIEWS a record through an owned
+-            // copy (`materialize_return_into`: `w = null; OpDatabase(w); OpCopyRecord(src, w);
+-            // w`), because `T` compiled as a record there.  At a tuple the local is its
+-            // unboxed stack tuple and the copy's work-ref substituted to that tuple: the
+-            // record ops ran on a tuple (the interpreter indexed a store table with its
+-            // bits; `--native` did not compile, E0308).  The instance hands the tuple up
+-            // as its twin does, and the tuple return boxes it (`synthetic_tuple_return`).
+-            Value::Block(bl)
+-                if bl.name == "materialized_view_return"
+-                    && let [_, _, Value::Call(_, args), Value::Var(w)] =
+-                        bl.operators.as_slice()
+-                    && matches!(args.as_slice(), [_, Value::Var(to), _] if to == w)
+-                    && matches!(self.vars.tp(*w).base(), Type::Tuple(_)) =>
+-            {
+-                let mut bl = *bl;
+-                let Value::Call(_, mut args) = bl.operators.swap_remove(2) else {
+-                    unreachable!("matched above");
+-                };
+-                self.rewrite_generic_type_defaults(args.swap_remove(0))
+-            }
+             Value::Block(bl) if bl.name == Self::TV_TUPLE_ELEM && bl.operators.len() == 2 => {
+                 let mut bl = *bl;
+                 let src = self.rewrite_generic_type_defaults(bl.operators.remove(1));
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 8839dfa08..c6df17ed0 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -15589,8 +15589,7 @@ impl Scopes<'_> {
+     /// No `self`: unlike the fn-ref twin, which resolves a closure through the caller's
+     /// `fnref_target`, the target here is written in the IR and only `Data` is needed.
+     fn monomorph_delegated_return_is_fresh(data: &Data, def: &crate::data::Definition) -> bool {
+-        let null_ref = data.def_nr("OpNullRefSentinel");
+-        let Some(targets) = def.monomorph_direct_call_return_targets(null_ref) else {
++        let Some(targets) = def.monomorph_direct_call_return_targets() else {
+             return false;
+         };
+         targets.iter().all(|&d_nr| {
+@@ -15600,7 +15599,7 @@ impl Scopes<'_> {
+             let target = data.def(d_nr);
+             target.code != Value::Null
+                 && !target.returns_borrowed_view()
+-                && target.monomorph_return_is_fresh(null_ref)
++                && target.monomorph_return_is_fresh()
+         })
+     }
+ 
+@@ -15610,8 +15609,7 @@ impl Scopes<'_> {
+         data: &Data,
+         def: &crate::data::Definition,
+     ) -> bool {
+-        let null_ref = data.def_nr("OpNullRefSentinel");
+-        let Some(slots) = def.monomorph_fnref_return_slots(null_ref) else {
++        let Some(slots) = def.monomorph_fnref_return_slots() else {
+             return false;
+         };
+         let Value::Call(_, args) = val.unspan() else {
+@@ -15633,7 +15631,7 @@ impl Scopes<'_> {
+             };
+             target.code != Value::Null
+                 && !target.returns_borrowed_view()
+-                && target.monomorph_return_is_fresh(null_ref)
++                && target.monomorph_return_is_fresh()
+         })
+     }
+ 
+@@ -16169,7 +16167,7 @@ impl Scopes<'_> {
+                     || monomorph_returns_a_borrow
+                     || ((def.name.starts_with("t_") || def.is_instance())
+                         && (def.attr_names.contains_key("__retbuf")
+-                            || def.monomorph_return_is_fresh(data.def_nr("OpNullRefSentinel"))
++                            || def.monomorph_return_is_fresh()
+                             // loft#1273 — a tail that DELEGATES (`a + b` is `Call(n_OpAdd)`)
+                             // is a shape the callee's own body settles.
+                             || Self::monomorph_delegated_return_is_fresh(data, def)))

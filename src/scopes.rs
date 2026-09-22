@@ -17942,7 +17942,8 @@ impl Scopes<'_> {
     /// No `self`: unlike the fn-ref twin, which resolves a closure through the caller's
     /// `fnref_target`, the target here is written in the IR and only `Data` is needed.
     fn monomorph_delegated_return_is_fresh(data: &Data, def: &crate::data::Definition) -> bool {
-        let Some(targets) = def.monomorph_direct_call_return_targets() else {
+        let null_ref = data.def_nr("OpNullRefSentinel");
+        let Some(targets) = def.monomorph_direct_call_return_targets(null_ref) else {
             return false;
         };
         targets.iter().all(|&d_nr| {
@@ -17952,7 +17953,7 @@ impl Scopes<'_> {
             let target = data.def(d_nr);
             target.code != Value::Null
                 && !target.returns_borrowed_view()
-                && target.monomorph_return_is_fresh()
+                && target.monomorph_return_is_fresh(null_ref)
         })
     }
 
@@ -17962,7 +17963,8 @@ impl Scopes<'_> {
         data: &Data,
         def: &crate::data::Definition,
     ) -> bool {
-        let Some(slots) = def.monomorph_fnref_return_slots() else {
+        let null_ref = data.def_nr("OpNullRefSentinel");
+        let Some(slots) = def.monomorph_fnref_return_slots(null_ref) else {
             return false;
         };
         let Value::Call(_, args) = val.unspan() else {
@@ -17984,7 +17986,7 @@ impl Scopes<'_> {
             };
             target.code != Value::Null
                 && !target.returns_borrowed_view()
-                && target.monomorph_return_is_fresh()
+                && target.monomorph_return_is_fresh(null_ref)
         })
     }
 
@@ -18520,7 +18522,7 @@ impl Scopes<'_> {
                     || monomorph_returns_a_borrow
                     || ((def.name.starts_with("t_") || def.is_instance())
                         && (def.attr_names.contains_key("__retbuf")
-                            || def.monomorph_return_is_fresh()
+                            || def.monomorph_return_is_fresh(data.def_nr("OpNullRefSentinel"))
                             // loft#1273 — a tail that DELEGATES (`a + b` is `Call(n_OpAdd)`)
                             // is a shape the callee's own body settles.
                             || Self::monomorph_delegated_return_is_fresh(data, def)))

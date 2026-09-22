@@ -8520,8 +8520,10 @@ impl Parser {
             self.vars.work_texts().into_iter().collect();
         let outer_set_call_refs = std::mem::take(&mut self.set_call_refs);
         let mut code = code;
-        if matches!(self.data.def(d_nr).returned(), Type::Optional(_)) {
-            Self::keep_returned_tuple_reads(&mut code, true);
+        let returned = self.data.def(d_nr).returned().clone();
+        if matches!(returned, Type::Optional(_)) && Self::every_result_is_a_tuple_read(&code, true)
+        {
+            Self::keep_returned_tuple_reads(&mut code, true, &returned);
         }
         let mut code = self.rewrite_generic_type_defaults(code);
         self.settle_parametric_yield_copies(&mut code);
@@ -10711,28 +10713,123 @@ impl Parser {
     /// (`TV_TUPLE_READ`).  Unboxed, the return boxed the tuple again into a record of its own
     /// that no caller freed: one `__tuple` store leaked per call.  `tail` says whether `v`
     /// is in a result position: the body's tail, a tail block's tail, a tail `if`'s arms, and
-    /// every `return`'s value wherever it stands.
-    fn keep_returned_tuple_reads(v: &mut Value, tail: bool) {
+    /// every `return`'s value wherever it stands.  Answers whether `v` now yields that
+    /// reference; a block that does is retyped to the result `ret`, as a hand-written
+    /// function's is — left at the stack tuple, an `if` arm's block exit was sized for the
+    /// tuple while it held a reference (the interpreter read past the frame).  An `if` yields
+    /// it when every arm does or is absent (`null`), and its absent arms are retyped with it.
+    ///
+    /// Only where EVERY result is such a read or absent ([`Self::every_result_is_a_tuple_read`]):
+    /// a result that also mints on some path (a tuple parameter, a local, a literal) would
+    /// be a borrow on one path and an owned record on another, which a call read without a
+    /// binding does not free (`@FR-O-Complete`'s join, the residual QUALITY.md B7t records).
+    /// There every read stays unboxed, every path mints, and the caller owns the result.
+    fn keep_returned_tuple_reads(v: &mut Value, tail: bool, ret: &Type) -> bool {
         match v {
             Value::Block(bl)
                 if tail && bl.name == Self::TV_TUPLE_READ && bl.operators.len() == 1 =>
             {
                 *v = bl.operators.remove(0);
+                true
             }
-            Value::Span(b) => Self::keep_returned_tuple_reads(&mut b.1, tail),
-            Value::Return(inner) => Self::keep_returned_tuple_reads(inner, true),
+            Value::Span(b) => Self::keep_returned_tuple_reads(&mut b.1, tail, ret),
+            Value::Return(inner) => {
+                Self::keep_returned_tuple_reads(inner, true, ret);
+                false
+            }
             Value::Block(bl) => {
                 let last = bl.operators.len().saturating_sub(1);
+                let mut yields = false;
                 for (i, op) in bl.operators.iter_mut().enumerate() {
-                    Self::keep_returned_tuple_reads(op, tail && i == last);
+                    let got = Self::keep_returned_tuple_reads(op, tail && i == last, ret);
+                    yields = tail && i == last && got;
                 }
+                if yields && matches!(bl.result.base(), Type::Tuple(_)) {
+                    bl.result = ret.clone();
+                }
+                yields
             }
             Value::If(c, t, e) => {
-                Self::keep_returned_tuple_reads(c, false);
-                Self::keep_returned_tuple_reads(t, tail);
-                Self::keep_returned_tuple_reads(e, tail);
+                Self::keep_returned_tuple_reads(c, false, ret);
+                let then = Self::keep_returned_tuple_reads(t, tail, ret);
+                let other = Self::keep_returned_tuple_reads(e, tail, ret);
+                let yields = tail
+                    && (then || other)
+                    && (then || Self::is_absent_arm(t))
+                    && (other || Self::is_absent_arm(e));
+                if yields {
+                    Self::retype_absent_arm(t, ret);
+                    Self::retype_absent_arm(e, ret);
+                }
+                yields
             }
-            _ => v.for_each_child_mut(&mut |child| Self::keep_returned_tuple_reads(child, false)),
+            _ => {
+                v.for_each_child_mut(&mut |child| {
+                    Self::keep_returned_tuple_reads(child, false, ret);
+                });
+                false
+            }
+        }
+    }
+
+    /// Is every result of `v` a tuple element read (`TV_TUPLE_READ`) or absent?  `tail`
+    /// says whether `v` is in a result position, as in [`Self::keep_returned_tuple_reads`];
+    /// a statement is searched for the `return`s it holds.
+    fn every_result_is_a_tuple_read(v: &Value, tail: bool) -> bool {
+        match v {
+            Value::Block(bl) if tail && bl.name == Self::TV_TUPLE_READ => true,
+            Value::Span(b) => Self::every_result_is_a_tuple_read(&b.1, tail),
+            Value::Return(inner) => Self::every_result_is_a_tuple_read(inner, true),
+            Value::Block(bl) if bl.name != Self::TV_NULL_BLOCK => {
+                let last = bl.operators.len().saturating_sub(1);
+                bl.operators
+                    .iter()
+                    .enumerate()
+                    .all(|(i, op)| Self::every_result_is_a_tuple_read(op, tail && i == last))
+            }
+            Value::If(c, t, e) => {
+                Self::every_result_is_a_tuple_read(c, false)
+                    && Self::every_result_is_a_tuple_read(t, tail)
+                    && Self::every_result_is_a_tuple_read(e, tail)
+            }
+            _ if tail => Self::is_absent_arm(v),
+            _ => {
+                let mut all = true;
+                v.for_each_child(&mut |child| {
+                    all &= Self::every_result_is_a_tuple_read(child, false);
+                });
+                all
+            }
+        }
+    }
+
+    /// An `if` arm that answers `null` — a bare `null`, the template's deferred null of `T`
+    /// (`TV_NULL_BLOCK`), or a block ending in either: beside an arm answering the stored
+    /// element's reference it is that reference absent.
+    fn is_absent_arm(arm: &Value) -> bool {
+        match arm.unspan() {
+            Value::Null => true,
+            Value::Block(bl) if bl.name == Self::TV_NULL_BLOCK => true,
+            Value::Block(bl) => bl.operators.last().is_some_and(Self::is_absent_arm),
+            _ => false,
+        }
+    }
+
+    /// Retypes an absent arm's blocks to the result type, the deferred null's included, so
+    /// its per-instance null is the reference's (a no-op on any other arm).
+    fn retype_absent_arm(arm: &mut Value, ret: &Type) {
+        if !Self::is_absent_arm(arm) {
+            return;
+        }
+        if let Value::Block(bl) = arm.unspan_mut() {
+            if matches!(bl.result.base(), Type::Tuple(_)) {
+                bl.result = ret.clone();
+            }
+            if bl.name != Self::TV_NULL_BLOCK
+                && let Some(tail) = bl.operators.last_mut()
+            {
+                Self::retype_absent_arm(tail, ret);
+            }
         }
     }
 
@@ -10745,6 +10842,26 @@ impl Parser {
                     return read;
                 };
                 self.unbox_tuple_from_dbref(read, &elems)
+            }
+            // @FR-G-Mono — a template returns a local that VIEWS a record through an owned
+            // copy (`materialize_return_into`: `w = null; OpDatabase(w); OpCopyRecord(src, w);
+            // w`), because `T` compiled as a record there.  At a tuple the local is its
+            // unboxed stack tuple and the copy's work-ref substituted to that tuple: the
+            // record ops ran on a tuple (the interpreter indexed a store table with its
+            // bits; `--native` did not compile, E0308).  The instance hands the tuple up
+            // as its twin does, and the tuple return boxes it (`synthetic_tuple_return`).
+            Value::Block(bl)
+                if bl.name == "materialized_view_return"
+                    && let [_, _, Value::Call(_, args), Value::Var(w)] =
+                        bl.operators.as_slice()
+                    && matches!(args.as_slice(), [_, Value::Var(to), _] if to == w)
+                    && matches!(self.vars.tp(*w).base(), Type::Tuple(_)) =>
+            {
+                let mut bl = *bl;
+                let Value::Call(_, mut args) = bl.operators.swap_remove(2) else {
+                    unreachable!("matched above");
+                };
+                self.rewrite_generic_type_defaults(args.swap_remove(0))
             }
             Value::Block(bl) if bl.name == Self::TV_TUPLE_ELEM && bl.operators.len() == 2 => {
                 let mut bl = *bl;

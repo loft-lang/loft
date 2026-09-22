@@ -6679,6 +6679,22 @@ instance does not have; the cure is the buffer at instantiation, and the teammat
 their own walk beside the oracle; the walk did not fold them, and it is the next question
 this rule asks.
 
+⚠ **Its TUPLE half is closed (2026-09-22), by never forming the join.**  A `-> T?` at a tuple
+returns a record reference (`(τ, σ)?` has no stack spelling), and an instance that reads the
+vector on one path and holds a tuple on the other was a borrow on one path and a mint on the
+other — the call read inline freed nothing.  Now a tuple element read in a result position
+keeps the element's reference only where EVERY result is such a read or absent; otherwise
+every path mints and the caller owns the result.  The same walk found four more: an `if` whose
+arms both read (arm blocks typed as the stack tuple while holding a reference — a store
+panic), a `null` arm (the run stopped after the call, nothing printed), a tuple local declared
+in an arm (the template's record copy of a view local ran on the tuple — a panic, E0308 on
+native), and a `null` tail beside a mint at ANY `T` (`monomorph_return_is_fresh` read the
+null reference as "not proven", so the mint leaked per inline call; accepting it exposed that
+the check called a loop's element — a view of the parameter — fresh, and a local now owns only
+where its deps reach no parameter).  Guard
+`a-generic-nullable-result-at-a-tuple-answers-on-every-path.loft`.  The RECORD join stays as
+recorded above.
+
 #### B7u — `@FR-O-Complete` walked: the statement form its guards never crossed, and four nullable locals not treated as the heap locals they are (2026-09-05)
 
 Picked by `rule_tags.py dups`: 12 sites.  The rule says the ownership fact is per binding

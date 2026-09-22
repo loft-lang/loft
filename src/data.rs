@@ -4953,11 +4953,21 @@ impl Definition {
     /// [`Self::monomorph_return_is_fresh`] for what the answer is used for and why it
     /// under-approximates.  `buf` is [`Self::value_return_buffer_var`] — the one argument
     /// that answers "owned" rather than "borrowed".
-    fn site_is_fresh(v: &Value, vars: &crate::variables::Function, buf: Option<u16>) -> bool {
+    fn site_is_fresh(
+        v: &Value,
+        vars: &crate::variables::Function,
+        buf: Option<u16>,
+        null_ref: u32,
+    ) -> bool {
         match v.unspan() {
-            // Null is a value, not a store — it can neither leak nor dangle.
+            // Null is a value, not a store — it can neither leak nor dangle.  So is the null
+            // REFERENCE (`OpNullRefSentinel()`, `null_ref`), which is how a record-typed
+            // `null` tail is spelled: read as "not proven", it refused every instance that
+            // ends `… null` after minting on another path, which then leaked one record per
+            // inline call where its hand-written twin was lifted and freed (@FR-G-Mono).
             Value::Null => true,
-            Value::Var(n) => *n < vars.count() && (!vars.is_argument(*n) || buf == Some(*n)),
+            Value::Call(nr, args) if *nr == null_ref && args.is_empty() => true,
+            Value::Var(n) => Self::local_owns(*n, vars, buf),
             // loft#1070 — a value-yielding `if` / `match` tail: fresh iff EVERY arm is.
             // Held back while an arm-local of a monomorph was built against the type
             // variable's row and answered a wrong number; with that fixed the arms are
@@ -4965,13 +4975,14 @@ impl Definition {
             // Both arms are required, so one borrowing arm still refuses the whole site —
             // the under-approximation composes rather than being widened away.
             Value::If(_, then, els) => {
-                Self::site_is_fresh(then, vars, buf) && Self::site_is_fresh(els, vars, buf)
+                Self::site_is_fresh(then, vars, buf, null_ref)
+                    && Self::site_is_fresh(els, vars, buf, null_ref)
             }
             // A block's value is its tail; an empty one yields nothing to own.
             Value::Block(bl) => bl
                 .operators
                 .last()
-                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf)),
+                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf, null_ref)),
             // A call THROUGH A FN-REF reaches the `_` arm below and answers "not proven",
             // and that is the honest answer HERE: the target is a runtime value, so this
             // body cannot read the callee's fact.  It is readable one frame up, where the
@@ -4990,11 +5001,40 @@ impl Definition {
             // one both read "capture-free".  The target's own BODY is what tells them
             // apart, which is why the resolution goes to the definition and not the type.
             other => match Self::root_var(other) {
-                Some(n) => n < vars.count() && (!vars.is_argument(n) || buf == Some(n)),
+                Some(n) => Self::local_owns(n, vars, buf),
                 // No readable root (a call, a literal-built aggregate): not proven fresh.
                 None => false,
             },
         }
+    }
+
+    /// Does local `n` OWN what it holds — the return buffer, or a non-parameter that does not
+    /// VIEW a parameter through its deps (`@FR-O-Proxy`, the fact the scope pass frees by)?
+    /// A loop's element (`for x in v { return x; }`) is a local too, but it depends on the
+    /// loop's copy of `v`, which depends on `v`: lifting it freed the caller's own record.
+    /// That was hidden while a `null` tail beside it refused the whole body; it is not the
+    /// tail that makes the site a borrow.  A dep on a store the frame minted (a vector
+    /// local's `__vdb_N`) is ownership, not a view.
+    fn local_owns(n: u16, vars: &crate::variables::Function, buf: Option<u16>) -> bool {
+        fn views_a_parameter(
+            n: u16,
+            vars: &crate::variables::Function,
+            buf: Option<u16>,
+            seen: &mut Vec<u16>,
+        ) -> bool {
+            if seen.contains(&n) {
+                return false;
+            }
+            seen.push(n);
+            vars.tp(n).depend().iter().any(|&d| {
+                d < vars.count()
+                    && buf != Some(d)
+                    && (vars.is_argument(d) || views_a_parameter(d, vars, buf, seen))
+            })
+        }
+        n < vars.count()
+            && (buf == Some(n)
+                || (!vars.is_argument(n) && !views_a_parameter(n, vars, buf, &mut Vec::new())))
     }
 
     /// Every value this body can hand back: each explicit `return`, PLUS the body's own
@@ -5041,7 +5081,7 @@ impl Definition {
     /// reads `None` as "no closure involved" gets the unsound half: a body with one
     /// readable fn-ref site and one site this cannot read also answers `None`.
     #[must_use]
-    pub fn monomorph_fnref_return_slots(&self) -> Option<Vec<u16>> {
+    pub fn monomorph_fnref_return_slots(&self, null_ref: u32) -> Option<Vec<u16>> {
         let vars = &self.variables;
         let buf = self.value_return_buffer_var();
         let sites = self.return_sites();
@@ -5050,7 +5090,7 @@ impl Definition {
         }
         let mut slots: Vec<u16> = Vec::new();
         for site in &sites {
-            if Self::site_is_fresh(site.unspan(), vars, buf) {
+            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref) {
                 continue;
             }
             match site.unspan() {
@@ -5089,7 +5129,7 @@ impl Definition {
     /// target — a body that hands back its own argument must NOT be lifted, or the free
     /// releases the caller's record while the variable holding it is still live.
     #[must_use]
-    pub fn monomorph_direct_call_return_targets(&self) -> Option<Vec<u32>> {
+    pub fn monomorph_direct_call_return_targets(&self, null_ref: u32) -> Option<Vec<u32>> {
         let vars = &self.variables;
         let buf = self.value_return_buffer_var();
         let sites = self.return_sites();
@@ -5098,7 +5138,7 @@ impl Definition {
         }
         let mut targets: Vec<u32> = Vec::new();
         for site in &sites {
-            if Self::site_is_fresh(site.unspan(), vars, buf) {
+            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref) {
                 continue;
             }
             match site.unspan() {
@@ -5137,7 +5177,7 @@ impl Definition {
     }
 
     #[must_use]
-    pub fn monomorph_return_is_fresh(&self) -> bool {
+    pub fn monomorph_return_is_fresh(&self, null_ref: u32) -> bool {
         let vars = &self.variables;
         let buf = self.value_return_buffer_var();
         let mut seen_return = false;
@@ -5148,7 +5188,7 @@ impl Definition {
             let inner = inner.unspan();
             // A bare `Var` is the shape both the owned and the borrowed monomorph end
             // with after the scope pass, and it is the one the answer turns on.
-            if !Self::site_is_fresh(inner, vars, buf) {
+            if !Self::site_is_fresh(inner, vars, buf, null_ref) {
                 all_fresh = false;
             }
         }
