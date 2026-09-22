@@ -9,6 +9,13 @@
 // the constant store ("Write to read-only store") and `--native` did not compile (E0610,
 // `OpCopyRecord` on an `i64`).  A struct element was right.  Found building @PLN165 E4, whose
 // `sort` body merges through slices.
+//
+// @falsified-at: 5adf97f8a — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-slice-inside-a-generic-is-copied-at-its-element.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the interpreter panics ("Write to read-only store"),
+//     native does not compile (E0610, `OpCopyRecord` on an `i64`).
+//   ARMED: nothing.
+//   HOLDS: the struct cells.
 
 struct Pt { x: integer, y: integer }
 

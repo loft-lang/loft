@@ -9,6 +9,13 @@
 // `--native`, and `min_of` over a `vector<integer?>` read a corrupt reference.  The answers
 // are `(E-NullArg)`'s: a comparison is definite and null sorts first; arithmetic with a null
 // is null.  Found building @PLN165 E4, whose `sort` orders a nullable element this way.
+//
+// @falsified-at: a4938bbc8 — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-bounded-generic-at-a-nullable-reaches-its-operator.patch — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: the ASSERTIONS on the interpreter (the stub answered, silently), exit on native
+//     (E0308 at the bound stub `t_4T_g2_OpLt`).
+//   ARMED: nothing.
+//   WITNESS: on the control `smaller(x, y)` over `integer?` answered 4.
 
 fn smaller<T: Ordered>(a: T, b: T) -> T { if b < a { b } else { a } }
 fn same<T: Equatable>(a: T, b: T) -> boolean { a == b }
