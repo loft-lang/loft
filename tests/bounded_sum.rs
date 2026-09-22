@@ -15,8 +15,8 @@ const CELLS: &str = "tests/scripts/158-bounded-sum.loft";
 /// Per function: the reduction preludes emitted.
 const EXPECTED: &[(&str, usize)] = &[
     // The stdlib `sum`'s integer instance, and the callee twin the hoisting caller reaches.
-    ("t_7integer_sum", 1),
-    ("t_7integer_sum__inv", 1),
+    ("i_7integer_n_sum", 1),
+    ("i_7integer_n_sum__inv", 1),
     // The same loop written by hand, and with the operands the other way round.
     ("n_s_user", 1),
     ("n_s_acc", 1),
