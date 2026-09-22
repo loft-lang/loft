@@ -3501,7 +3501,16 @@ use #count instead"
                             .enumerate()
                             .map(|(i, name)| {
                                 let elem_tp = elem_types[i].clone();
-                                let var = self.create_var(name, &elem_tp);
+                                // A binder read off the loop variable's member is a VIEW of
+                                // that variable (`(B-View)`), never a second owner: whoever
+                                // owns the element — the collection, or a generator's loop
+                                // variable (`(G-Own)`) — releases the member, once.
+                                let bind_tp = if crate::data::holds_dbref(&elem_tp) {
+                                    elem_tp.depending(for_var)
+                                } else {
+                                    elem_tp.clone()
+                                };
+                                let var = self.create_var(name, &bind_tp);
                                 self.vars.defined(var);
                                 self.vars.in_use(var, true);
                                 let read = if ref_def_nr == u32::MAX {

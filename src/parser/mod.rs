@@ -12433,13 +12433,26 @@ impl Parser {
             return vec![self.cl("OpCopyRecord", &[val_code, field_ref, Value::Int(inner_kt)])];
         }
         // Non-literal source: stash to a work-ref Tuple local, then
-        // read each element via `Value::TupleGet`.
-        let tup_tp = Type::Tuple(elems_vec.clone());
-        let tmp = self.vars.work_refs(&tup_tp, &mut self.lexer);
-        if !self.first_pass {
-            self.change_var_type(tmp, &tup_tp);
-        }
-        let mut ops = vec![v_set(tmp, val_code)];
+        // read each element via `Value::TupleGet`.  A tuple VARIABLE is read in place: it
+        // needs no second evaluation guarded against, and each member copy then names the
+        // variable itself as its source, so a copy that hands a member's release over
+        // (`scopes::copy_hands_off`) stops THAT variable's release.  Through a stash it
+        // stopped only the stash, and the variable released the member a second time.
+        let (tmp, mut ops) = match val_code.unspan() {
+            Value::Var(v)
+                if *v < self.vars.count() && matches!(self.vars.tp(*v).base(), Type::Tuple(_)) =>
+            {
+                (*v, Vec::new())
+            }
+            _ => {
+                let tup_tp = Type::Tuple(elems_vec.clone());
+                let tmp = self.vars.work_refs(&tup_tp, &mut self.lexer);
+                if !self.first_pass {
+                    self.change_var_type(tmp, &tup_tp);
+                }
+                (tmp, vec![v_set(tmp, val_code)])
+            }
+        };
         for (i, elem_tp) in elems_vec.iter().enumerate() {
             let elem_pos = base_pos.saturating_add(offsets[i]);
             let elem_val = Value::TupleGet(tmp, i as u16);
