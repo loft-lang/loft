@@ -856,6 +856,51 @@ show `Grid<integer>`.
   is stuck on; the unknown-name arm of `parse_var` reports at the name, as its siblings do.
   Corpus against D9: the new guard, dead temporaries and two orphan lambdas gone from the
   D4–D7 guards, and the three moved carets.
+- **Built** (2026-09-22).  [boundary-types/](probes/boundary-types/) b01–b08 over
+  `tests/lib/gridlib.loft`, green on both backends and under `--native-release`: the
+  consumer's own instances, the library's enum, field check, default, self-naming struct and
+  two-variable struct, a qualified `gridlib::Grid<integer>`, and the consumer's generics
+  (a function, a struct) over the library's.  The widened cells found five defects, none of
+  them the boundary's:
+  - a generic naming one variable in two parameters through a generic struct
+    (`widths<T>(a: Grid<T>, b: Grid<T>)`) was refused, `T` "to text and to text": the clash
+    check compared the second argument with the OPEN `Grid<T>`.  It now closes it
+    (`Parser::close_open`, which lays out what it mints on pass 2) — probes o20, x01.
+  - D8 never put a generic enum in template code, and every shape failed: a layout alarm on
+    the open instance's variants, `Enum` forms missed by the pairing, the substitution, the
+    variable table, the stride and the nested-call instantiation (the last ran a template
+    with no code and ended the program with no output and exit 0), and a variant literal
+    or unit variant that built a record at the open row.  An open instance's variant is now
+    open too, mapped per monomorph to its instance's variant (`bound_instance`) — probes
+    [generic-enums/](probes/generic-enums/) g07–g12.  `generate_call` refuses a call to a
+    template (`@FR-G-Mono`), which turns that silent exit into an internal compiler error:
+    falsified by removing the variable table's `Enum` arm.
+  - a generic `match` answering `T` fell back to a REFERENCE null: native refused an
+    `integer` instance (E0308).  On main too, for any enum subject.  The fallback is now asked
+    of the concrete type per monomorph (`TV_NULL_VALUE`), a type with no null value of its own
+    keeping the reference sentinel — probes [type-var-nulls/](probes/type-var-nulls/).
+  - `Pair<V, K>` inside `Pair<K, V>` had fields `k: K, v: K`: an instance's bindings were
+    applied one after another.  `close_open` substitutes them at once
+    (`Type::substitute_simultaneous`); a template reading its swapped instance was refused
+    ("expected V, got K") — probe p06.
+  - `api-surface` listed the variable placeholders, every instance and the `main_vector<τ>`
+    wrapper of a vector parameter (the last on main too, for any library).  It lists the
+    template now (`Grid<T>`, `Slot<T>` as an enum), no method as a field, and spells a
+    signature's generic types from source — golden tests in `tests/api_surface.rs`.  The
+    LSP outline shares `classify` and drops them too; hover already named the template.
+  - the debugger showed `Box<integer(0, 255)s1>` and could not evaluate an expression over a
+    generic local: its seed `g = Grid<integer>{…}` does not parse (DESIGN keeps type
+    arguments out of expressions).  A literal now names the template (`Stores::shown`, a
+    display alias filled when bytecode is generated) and the pause line and every seed carry
+    the source type (`g: Grid<integer> = Grid{…}`); a stdlib alias reads as itself in source
+    spelling (`u8`, not the unparseable `integer(0, 255)`); an instance's frame is named by
+    its function (`peek`).
+  Guards: `a-library-carries-generic-types-across-the-boundary` (`--lib tests/lib`),
+  `a-generic-function-over-a-generic-enum-equals-its-twin`,
+  `a-generic-match-falls-back-to-its-variables-null`,
+  `two-parameters-at-one-variable-through-an-instance`.  `ir_schema_roundtrip` green.
+  Corpus against the first half: IDENTICAL — every change above is to programs the corpus
+  did not have.
 
 ### D11 — the goal program  ·  XS  (waits for arc C)
 

@@ -1,0 +1,14 @@
+// D9 — a template reads a field of its own instance at its variables in another order
+// (`Pair<V, K>` inside `Pair<K, V>`): the instance's fields are `k: V, v: K`, substituted
+// at once — one after the other they read `k: K`, and the read was refused.
+// @EXPECT: a|1|x|2
+struct Pair<K, V> { k: K, v: V }
+struct Flip<A, B> { p: Pair<B, A> }
+fn swap<K, V>(self: Pair<K, V>) -> Pair<V, K> { Pair { k: self.v, v: self.k } }
+fn keyof<K, V>(p: Pair<K, V>) -> V { q = p.swap(); q.k }
+fn valof<K, V>(p: Pair<K, V>) -> K { q = p.swap(); q.v }
+fn main() {
+  p = Pair { k: 1, v: "a" };
+  f = Flip { p: Pair { k: "x", v: 2 } };
+  println("{keyof(p)}|{valof(p)}|{f.p.k}|{f.p.v}");
+}

@@ -1094,7 +1094,17 @@ pub(crate) fn fill_database(data: &mut Data, database: &mut Stores, d_nr: u32) {
     // field access of an open instance is deferred to the instance (`Parser::TV_FIELD`).
     if data.is_open_instance(d_nr) {
         if data.def(d_nr).known_type == u16::MAX {
-            let reg_name = format!("{TYPEVAR_ROW_PREFIX}{}", data.def(d_nr).name);
+            // A variant is named by its instance: every instance's `Full` is `Full`.
+            let d = data.def(d_nr);
+            let reg_name = if d.def_type == DefType::EnumValue {
+                format!(
+                    "{TYPEVAR_ROW_PREFIX}{}::{}",
+                    data.def(d.parent).name,
+                    d.name
+                )
+            } else {
+                format!("{TYPEVAR_ROW_PREFIX}{}", d.name)
+            };
             let s_type = database.structure(&reg_name, 0);
             data.definitions[d_nr as usize].known_type = s_type;
         }

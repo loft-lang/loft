@@ -996,12 +996,22 @@ fn print_pause_filtered<W: Write>(
     all: bool,
 ) -> std::io::Result<()> {
     if let Some(f) = session.paused_frame() {
+        // A generic instance's literal names its template; its type says which instance
+        // (`g: Grid<integer> = Grid{…}`, @PLN165 D10).
+        let shown = |n: &str, v: &str| match session
+            .paused
+            .as_deref()
+            .and_then(|s| s.frame_local_generic_type(n, &session.parser.data))
+        {
+            Some(t) => format!("{n}: {t} = {v}"),
+            None => format!("{n} = {v}"),
+        };
         let vars: Vec<String> = if all {
-            f.locals.iter().map(|(n, v)| format!("{n} = {v}")).collect()
+            f.locals.iter().map(|(n, v)| shown(n, v)).collect()
         } else {
             f.user_locals()
                 .into_iter()
-                .map(|(n, v)| format!("{n} = {v}"))
+                .map(|(n, v)| shown(n, v))
                 .collect()
         };
         let hidden = f.locals.len() - vars.len();
@@ -3100,6 +3110,10 @@ impl ReplSession {
                     keyed.push((name.clone(), ty));
                 } else {
                     seed.push_str(name);
+                    if let Some(ty) = state.frame_local_generic_type(name, &self.parser.data) {
+                        seed.push_str(": ");
+                        seed.push_str(&ty);
+                    }
                     seed.push_str(" = ");
                     match state.eval_frame_heap(name, false, &self.parser.data) {
                         Some(full) => seed.push_str(&full),
@@ -3383,9 +3397,14 @@ impl ReplSession {
                 // the null literal: every other seed already carries its type in its own
                 // syntax, and annotating those would turn a rendering difference into a
                 // compile error.
-                if lit == "null"
-                    && let Some(ty) = state.frame_local_source_type(name, &self.parser.data)
-                {
+                // A generic instance's literal names its TEMPLATE (`Box{v:7}` for a `Box<u8>`),
+                // so it carries its type no more than `null` does (@PLN165 D10).
+                let ty = if lit == "null" {
+                    state.frame_local_source_type(name, &self.parser.data)
+                } else {
+                    state.frame_local_generic_type(name, &self.parser.data)
+                };
+                if let Some(ty) = ty {
                     p.push_str(": ");
                     p.push_str(&ty);
                 }

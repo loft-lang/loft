@@ -1,0 +1,11 @@
+// D10 — the consumer's generic struct holds the library's, open in its own template and
+// closed at each instance.
+// @EXPECT: 2|x|1
+use gridlib;
+struct Wrap<T> { g: Grid<T>, tag: text }
+fn wrap<T>(g: Grid<T>) -> Wrap<T> { Wrap { g: g, tag: "w" } }
+fn main() {
+  a = wrap(grid([1, 2], 1));
+  b = Wrap { g: grid(["x"], 1), tag: "t" };
+  println("{a.g.height()}|{b.g.at(0)}|{b.g.height()}");
+}

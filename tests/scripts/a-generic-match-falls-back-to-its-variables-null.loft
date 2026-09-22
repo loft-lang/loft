@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic `match` that answers `T` joins its arms with a fallback that is `T`'s null — and
+// which null that is depends on the instance.  The template wrote a REFERENCE null, so an
+// `integer` instance returned a `DbRef` where it returns an `i64`: native refused to compile
+// it, while the interpreter never reached the fallback and answered.  Each kind of `T`, and
+// the author's own `return null` at a `T?` over a tuple, whose instance returns a boxed
+// record and so keeps the reference null.
+//
+// @falsified-at: 17de93013 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-generic-match-falls-back-to-its-variables-null.patch — native exit 1 -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: exit on native — rustc refuses the `integer` instance.
+//   ARMED: nothing.
+//   WITNESS: on the control native is "error[E0308]: mismatched types" at the match's
+//     `DbRef::NULL` fallback.
+//   HOLDS: the interpreter's answers, which the control already gave (it never reaches
+//     the fallback).
+
+struct P { n: integer }
+enum E { A, B }
+enum Sl { Full { v: integer }, Hole }
+
+fn get<T>(d: T, s: Sl) -> T { match s { Full { v } => d, Hole => d } }
+fn name<T>(n: integer, one: T, other: T) -> T { match n { 1 => one, _ => other } }
+fn first<T>(v: vector<T>) -> T? { if len(v) > 0 { return v[0]; } return null; }
+
+fn test_a_match_answering_the_variable_at_each_kind() {
+  h = Sl.Hole;
+  assert(get(7, h) == 7 && get("t", h) == "t" && get(2.5, h) == 2.5, "{get(7, h)}");
+  assert(get(true, h) && get('c', h) == 'c' && get(P { n: 4 }, h).n == 4, "{get(true, h)}");
+  assert(get(E.B, h) == E.B, "enum");
+}
+
+fn test_a_match_on_an_integer_subject() {
+  assert(name(1, "one", "x") == "one" && name(3, 1.5, 0.5) == 0.5, "{name(3, 1.5, 0.5)}");
+}
+
+fn test_an_absent_value_at_a_tuple() {
+  v: vector<(integer, text)> = [];
+  w: vector<(integer, text)> = [(1, "a")];
+  assert(first(v) == null && first(w).1 == "a", "tuple");
+}

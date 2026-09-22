@@ -1,0 +1,12 @@
+// D10 — the consumer's own generic takes the library's generic struct, at the consumer's
+// type and at the library's.
+// @EXPECT: 9|b|2
+use gridlib;
+struct Mine { n: integer }
+fn first_of<T>(g: Grid<T>) -> T? { g.cells[0] }
+fn widths<T>(a: Grid<T>, b: Grid<T>) -> integer { a.w + b.w }
+fn main() {
+  m = grid([Mine { n: 9 }], 1);
+  t = Grid { cells: ["b"], w: 1 };
+  println("{first_of(m).n}|{first_of(t)}|{widths(t, t)}");
+}

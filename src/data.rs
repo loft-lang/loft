@@ -2343,7 +2343,36 @@ impl Type {
                 other => other.clone(),
             },
             Type::Reference(d, _) if d == holder => bound.clone(),
+            // An open instance of a generic ENUM is `Enum(holder, …)`: it becomes the bound
+            // instance and keeps its own form (@PLN165 D8).
+            Type::Enum(d, mixed, deps) if d == holder => match bound.base() {
+                Type::Reference(b, _) | Type::Enum(b, _, _) => Type::Enum(*b, mixed, deps),
+                _ => bound.clone(),
+            },
             other => other.map_children(&mut |c| c.clone().substitute(holder, bound)),
+        }
+    }
+
+    /// Every `(holder, bound)` pair at once: a bound is never substituted again.  Where one
+    /// pair's bound names another pair's holder — the variables of `Pair<V, K>` inside
+    /// `Pair<K, V>`, `[K ↦ V, V ↦ K]` — [`Type::substitute_all`]'s fold turned `k: K` into
+    /// `V` and back into `K` (@PLN165 D10).
+    #[must_use]
+    pub fn substitute_simultaneous(self, bindings: &[(u32, Type)]) -> Type {
+        match self {
+            Type::Optional(inner) => {
+                Type::Optional(Box::new(inner.substitute_simultaneous(bindings)))
+            }
+            Type::Reference(h, _) | Type::Enum(h, _, _)
+                if bindings.iter().any(|(x, _)| *x == h) =>
+            {
+                let bound = bindings
+                    .iter()
+                    .find(|(x, _)| *x == h)
+                    .map_or(Type::Unknown(0), |(_, b)| b.clone());
+                self.substitute(h, &bound)
+            }
+            other => other.map_children(&mut |c| c.clone().substitute_simultaneous(bindings)),
         }
     }
 
@@ -3046,7 +3075,9 @@ impl Type {
             // its arguments, each spelled as the reader wrote it — `Box<T>` for the open
             // instance keyed `Box<T#5>`, `Box<u8>` where the key carries the width.  The key
             // keeps the def name.
-            Type::Reference(t, _) if source && data.def(*t).instance_of != u32::MAX => {
+            Type::Reference(t, _) | Type::Enum(t, _, _)
+                if source && data.def(*t).instance_of != u32::MAX =>
+            {
                 let d = data.def(*t);
                 let args: Vec<String> = d
                     .instance_args
@@ -3100,6 +3131,14 @@ impl Type {
             Type::Float => "float".to_string(),
             Type::Single => "single".to_string(),
             Type::Character => "character".to_string(),
+            // A width declared through a stdlib alias reads as the alias the author wrote
+            // (`Box<u8>`): the key's `integer(0, 255)` is no spelling the parser reads, and a
+            // debugger seed annotated with it could not be evaluated (@PLN165 D10).
+            Type::Integer(spec)
+                if source && spec.forced_size.is_some() && data.integer_alias(spec).is_some() =>
+            {
+                data.integer_alias(spec).unwrap_or("integer").to_string()
+            }
             Type::Integer(spec) if spec.source_name().is_some() => {
                 spec.source_name().unwrap_or("integer").to_string()
             }
@@ -9274,7 +9313,7 @@ impl Data {
         let tp = tp.clone();
         let mut opens: Vec<u32> = Vec::new();
         tp.any_node(&mut |t| {
-            if let Type::Reference(r, _) = t.base()
+            if let Type::Reference(r, _) | Type::Enum(r, _, _) = t.base()
                 && self.is_open_instance(*r)
                 && !opens.contains(r)
             {
@@ -9296,7 +9335,10 @@ impl Data {
                 pairs.push((o, Type::Reference(closed, Deps::none())));
             }
         }
-        tp.substitute_all(&pairs).substitute_all(bindings)
+        // At once: an instance's arguments may be the template's own variables in another
+        // order (`Pair<V, K>` inside `Pair<K, V>`).
+        pairs.extend(bindings.iter().cloned());
+        tp.substitute_simultaneous(&pairs)
     }
 
     /// Does `tp` still name something unresolved — a forward stub, or a generic struct's bare
@@ -9723,25 +9765,51 @@ impl Data {
         self.definitions[v_nr as usize].known_type = vec_tp;
         v_nr
     }
+    /// The stdlib `type` alias that declares exactly this narrow integer (`u8` for
+    /// `integer limit(0, 255) size(1)`), read off the declarations themselves.
+    #[must_use]
+    pub fn integer_alias(&self, spec: &IntegerSpec) -> Option<&str> {
+        self.definitions.iter().find_map(|d| {
+            (d.def_type == DefType::Type
+                && d.source == STD_SOURCE
+                && matches!(d.returned.base(), Type::Integer(s)
+                    if s == spec && s.forced_size == spec.forced_size))
+            .then_some(d.name.as_str())
+        })
+    }
+
     /// Does `tp` mention a type-variable placeholder anywhere — is it still a template's type
     /// rather than a type?
     #[must_use]
     pub fn mentions_type_var(&self, tp: &Type) -> bool {
-        tp.any_node(&mut |t| {
-            matches!(t.base(), Type::Reference(d, _) if (*d as usize) < self.definitions.len()
-                && (self.is_type_var_placeholder(*d) || self.is_open_instance(*d)))
+        tp.any_node(&mut |t| match t.base() {
+            Type::Reference(d, _) => {
+                (*d as usize) < self.definitions.len()
+                    && (self.is_type_var_placeholder(*d) || self.is_open_instance(*d))
+            }
+            Type::Enum(d, _, _) => self.is_open_instance(*d),
+            _ => false,
         })
     }
 
     /// An OPEN instance (@PLN165 D5): an instance of a generic struct whose recorded
     /// arguments mention a type variable — `Box<T>` written inside a template.  It is a type
     /// only inside that template: never laid out, and a monomorph substitutes the concrete
-    /// instance its bindings name ([`Data::open_instance_bindings`]).
+    /// instance its bindings name ([`Data::open_instance_bindings`]).  A VARIANT of an open
+    /// enum instance is one too (@PLN165 D8): its payload is typed by the same variable, and
+    /// a monomorph reads the variant of that name in its own instance.
     #[must_use]
     pub fn is_open_instance(&self, d_nr: u32) -> bool {
         let Some(d) = self.definitions.get(d_nr as usize) else {
             return false;
         };
+        if d.def_type == DefType::EnumValue && d.instance_of == u32::MAX {
+            return self
+                .definitions
+                .get(d.parent as usize)
+                .is_some_and(|p| p.def_type == DefType::Enum)
+                && self.is_open_instance(d.parent);
+        }
         d.instance_of != u32::MAX && d.instance_args.iter().any(|a| self.mentions_type_var(a))
     }
 
@@ -9766,7 +9834,8 @@ impl Data {
     pub fn type_mentions(&self, tp: &Type, d: u32) -> bool {
         tp.contains_def(d)
             || tp.any_node(&mut |t| {
-                matches!(t.base(), Type::Reference(r, _) if self.is_open_instance(*r)
+                matches!(t.base(), Type::Reference(r, _) | Type::Enum(r, _, _)
+                    if self.is_open_instance(*r)
                     && self.definitions[*r as usize]
                         .instance_args
                         .iter()
@@ -9779,7 +9848,7 @@ impl Data {
     pub fn placeholders_in(&self, tp: &Type, out: &mut Vec<u32>) {
         let mut found: Vec<u32> = Vec::new();
         tp.any_node(&mut |t| {
-            if let Type::Reference(r, _) = t.base()
+            if let Type::Reference(r, _) | Type::Enum(r, _, _) = t.base()
                 && (*r as usize) < self.definitions.len()
                 && (self.is_type_var_placeholder(*r) || self.is_open_instance(*r))
             {

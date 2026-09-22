@@ -1,0 +1,778 @@
+diff --git b/src/api_surface.rs a/src/api_surface.rs
+index 476517d8f..b8d78b9f0 100644
+--- b/src/api_surface.rs
++++ a/src/api_surface.rs
+@@ -113,14 +113,7 @@ fn kind_from_str(s: &str) -> Option<&'static str> {
+ /// are excluded even when a `pub` signature mentions them.
+ #[must_use]
+ pub fn surface(data: &Data, lib_file: &str) -> Vec<Member> {
+-    // A def the compiler minted while parsing the library — the `main_vector<τ>` wrapper a
+-    // `vector<τ>` parameter registers — carries the library's position but the stdlib's
+-    // SOURCE: it is global, and nothing a consumer can name.
+-    let in_lib = |d: u32| {
+-        d < data.definitions()
+-            && data.def(d).position.file == lib_file
+-            && data.def(d).source != crate::data::STD_SOURCE
+-    };
++    let in_lib = |d: u32| d < data.definitions() && data.def(d).position.file == lib_file;
+ 
+     let mut members: Vec<Member> = Vec::new();
+     let mut seen: HashSet<u32> = HashSet::new();
+@@ -225,25 +218,6 @@ fn is_receiver_alias(data: &Data, d: u32) -> bool {
+ pub fn classify(data: &Data, d: u32) -> Option<(&'static str, String)> {
+     let def = data.def(d);
+     let name = def.name.as_str();
+-    // @PLN165 — a type variable's placeholder and an INSTANCE of a generic type or function
+-    // are the compiler's: the template stands for every instance (`Grid<T>`, `height`), and a
+-    // signature names one where it uses it.
+-    if data.is_type_var_placeholder(d) || def.instance_of != u32::MAX || def.is_instance() {
+-        return None;
+-    }
+-    if def.def_type == DefType::TypeTemplate {
+-        let vars: Vec<&str> = def
+-            .type_params
+-            .iter()
+-            .map(|v| Data::type_var_spelling(&data.def(*v).name))
+-            .collect();
+-        let kind = if matches!(def.returned.base(), Type::Enum(..)) {
+-            "enum"
+-        } else {
+-            "struct"
+-        };
+-        return Some((kind, format!("{name}<{}>", vars.join(", "))));
+-    }
+     match def.def_type {
+         DefType::Function | DefType::Dynamic | DefType::Generic => {
+             if let Some(f) = name.strip_prefix("n_") {
+@@ -285,21 +259,7 @@ fn method_name(raw: &str) -> String {
+ #[must_use]
+ pub fn signature_of(data: &Data, d: u32, kind: &str) -> String {
+     let def = data.def(d);
+-    // A generic type is spelled as its author writes it — `Grid<T>`, `Slot<integer>` — where
+-    // the key carries the placeholder's number (`T#4`) or an argument's width.
+-    let generic = |t: &Type| {
+-        t.any_node(&mut |n| {
+-            matches!(n.base(), Type::Reference(r, _) | Type::Enum(r, _, _)
+-                if data.is_type_var_placeholder(*r) || data.def(*r).instance_of != u32::MAX)
+-        })
+-    };
+-    let ty = |t: &Type| {
+-        if generic(t) {
+-            t.source_name(data)
+-        } else {
+-            data.type_name_str(t)
+-        }
+-    };
++    let ty = |t: &Type| data.type_name_str(t);
+     // Render a field/parameter list. Skip hidden return-mechanism params and the synthetic
+     // `enum` discriminant tag (`enum` is a reserved keyword, never a user field). `sort`
+     // CANONICALISES by name: struct/enum fields use NAMED construction, so their order is
+@@ -318,11 +278,7 @@ pub fn signature_of(data: &Data, d: u32, kind: &str) -> String {
+     let render = |atts: &[crate::data::Attribute], sort: bool, defaults: bool| -> Vec<String> {
+         let mut v: Vec<(&str, String)> = atts
+             .iter()
+-            // A method of a generic struct is a MEMBER of its template (@PLN165 D6), not a
+-            // field: it is its own surface entry.
+-            .filter(|a| {
+-                !a.hidden && a.name != "enum" && !matches!(a.typedef.base(), Type::Routine(_))
+-            })
++            .filter(|a| !a.hidden && a.name != "enum")
+             .map(|a| {
+                 let opt = if defaults && !matches!(a.value, crate::data::Value::Null) {
+                     " = default"
+diff --git b/src/compile.rs a/src/compile.rs
+index 2e97f3c36..a9c03b8b1 100644
+--- b/src/compile.rs
++++ a/src/compile.rs
+@@ -68,15 +68,6 @@ pub fn byte_code_from(
+     // that verdict in now, while `Data` and the live schema are both in hand; this
+     // is the single funnel every `byte_code*` entry point goes through.
+     crate::typedef::sync_capture_ownership(data, &mut state.database);
+-    // @PLN165 D10 — an instance's literal names its template (`Stores::shown`).
+-    for d in 0..data.definitions() {
+-        let def = data.def(d);
+-        if def.instance_of != u32::MAX && def.known_type() != u16::MAX && !data.is_open_instance(d)
+-        {
+-            let template = data.def(def.instance_of).name().to_string();
+-            state.database.shown.insert(def.known_type(), template);
+-        }
+-    }
+     if start_d_nr == 0 {
+         native::init(state);
+         register_native_stubs(state, data);
+diff --git b/src/data.rs a/src/data.rs
+index d146da9e7..6ecd100ba 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -2343,39 +2343,10 @@ impl Type {
+                 other => other.clone(),
+             },
+             Type::Reference(d, _) if d == holder => bound.clone(),
+-            // An open instance of a generic ENUM is `Enum(holder, …)`: it becomes the bound
+-            // instance and keeps its own form (@PLN165 D8).
+-            Type::Enum(d, mixed, deps) if d == holder => match bound.base() {
+-                Type::Reference(b, _) | Type::Enum(b, _, _) => Type::Enum(*b, mixed, deps),
+-                _ => bound.clone(),
+-            },
+             other => other.map_children(&mut |c| c.clone().substitute(holder, bound)),
+         }
+     }
+ 
+-    /// Every `(holder, bound)` pair at once: a bound is never substituted again.  Where one
+-    /// pair's bound names another pair's holder — the variables of `Pair<V, K>` inside
+-    /// `Pair<K, V>`, `[K ↦ V, V ↦ K]` — [`Type::substitute_all`]'s fold turned `k: K` into
+-    /// `V` and back into `K` (@PLN165 D10).
+-    #[must_use]
+-    pub fn substitute_simultaneous(self, bindings: &[(u32, Type)]) -> Type {
+-        match self {
+-            Type::Optional(inner) => {
+-                Type::Optional(Box::new(inner.substitute_simultaneous(bindings)))
+-            }
+-            Type::Reference(h, _) | Type::Enum(h, _, _)
+-                if bindings.iter().any(|(x, _)| *x == h) =>
+-            {
+-                let bound = bindings
+-                    .iter()
+-                    .find(|(x, _)| *x == h)
+-                    .map_or(Type::Unknown(0), |(_, b)| b.clone());
+-                self.substitute(h, &bound)
+-            }
+-            other => other.map_children(&mut |c| c.clone().substitute_simultaneous(bindings)),
+-        }
+-    }
+-
+     /// [`Type::substitute`] for every `(holder, bound)` pair, in order.
+     #[must_use]
+     pub fn substitute_all(self, bindings: &[(u32, Type)]) -> Type {
+@@ -3075,9 +3046,7 @@ impl Type {
+             // its arguments, each spelled as the reader wrote it — `Box<T>` for the open
+             // instance keyed `Box<T#5>`, `Box<u8>` where the key carries the width.  The key
+             // keeps the def name.
+-            Type::Reference(t, _) | Type::Enum(t, _, _)
+-                if source && data.def(*t).instance_of != u32::MAX =>
+-            {
++            Type::Reference(t, _) if source && data.def(*t).instance_of != u32::MAX => {
+                 let d = data.def(*t);
+                 let args: Vec<String> = d
+                     .instance_args
+@@ -3131,14 +3100,6 @@ impl Type {
+             Type::Float => "float".to_string(),
+             Type::Single => "single".to_string(),
+             Type::Character => "character".to_string(),
+-            // A width declared through a stdlib alias reads as the alias the author wrote
+-            // (`Box<u8>`): the key's `integer(0, 255)` is no spelling the parser reads, and a
+-            // debugger seed annotated with it could not be evaluated (@PLN165 D10).
+-            Type::Integer(spec)
+-                if source && spec.forced_size.is_some() && data.integer_alias(spec).is_some() =>
+-            {
+-                data.integer_alias(spec).unwrap_or("integer").to_string()
+-            }
+             Type::Integer(spec) if spec.source_name().is_some() => {
+                 spec.source_name().unwrap_or("integer").to_string()
+             }
+@@ -9313,7 +9274,7 @@ impl Data {
+         let tp = tp.clone();
+         let mut opens: Vec<u32> = Vec::new();
+         tp.any_node(&mut |t| {
+-            if let Type::Reference(r, _) | Type::Enum(r, _, _) = t.base()
++            if let Type::Reference(r, _) = t.base()
+                 && self.is_open_instance(*r)
+                 && !opens.contains(r)
+             {
+@@ -9335,10 +9296,7 @@ impl Data {
+                 pairs.push((o, Type::Reference(closed, Deps::none())));
+             }
+         }
+-        // At once: an instance's arguments may be the template's own variables in another
+-        // order (`Pair<V, K>` inside `Pair<K, V>`).
+-        pairs.extend(bindings.iter().cloned());
+-        tp.substitute_simultaneous(&pairs)
++        tp.substitute_all(&pairs).substitute_all(bindings)
+     }
+ 
+     /// Does `tp` still name something unresolved — a forward stub, or a generic struct's bare
+@@ -9765,51 +9723,25 @@ impl Data {
+         self.definitions[v_nr as usize].known_type = vec_tp;
+         v_nr
+     }
+-    /// The stdlib `type` alias that declares exactly this narrow integer (`u8` for
+-    /// `integer limit(0, 255) size(1)`), read off the declarations themselves.
+-    #[must_use]
+-    pub fn integer_alias(&self, spec: &IntegerSpec) -> Option<&str> {
+-        self.definitions.iter().find_map(|d| {
+-            (d.def_type == DefType::Type
+-                && d.source == STD_SOURCE
+-                && matches!(d.returned.base(), Type::Integer(s)
+-                    if s == spec && s.forced_size == spec.forced_size))
+-            .then_some(d.name.as_str())
+-        })
+-    }
+-
+     /// Does `tp` mention a type-variable placeholder anywhere — is it still a template's type
+     /// rather than a type?
+     #[must_use]
+     pub fn mentions_type_var(&self, tp: &Type) -> bool {
+-        tp.any_node(&mut |t| match t.base() {
+-            Type::Reference(d, _) => {
+-                (*d as usize) < self.definitions.len()
+-                    && (self.is_type_var_placeholder(*d) || self.is_open_instance(*d))
+-            }
+-            Type::Enum(d, _, _) => self.is_open_instance(*d),
+-            _ => false,
++        tp.any_node(&mut |t| {
++            matches!(t.base(), Type::Reference(d, _) if (*d as usize) < self.definitions.len()
++                && (self.is_type_var_placeholder(*d) || self.is_open_instance(*d)))
+         })
+     }
+ 
+     /// An OPEN instance (@PLN165 D5): an instance of a generic struct whose recorded
+     /// arguments mention a type variable — `Box<T>` written inside a template.  It is a type
+     /// only inside that template: never laid out, and a monomorph substitutes the concrete
+-    /// instance its bindings name ([`Data::open_instance_bindings`]).  A VARIANT of an open
+-    /// enum instance is one too (@PLN165 D8): its payload is typed by the same variable, and
+-    /// a monomorph reads the variant of that name in its own instance.
++    /// instance its bindings name ([`Data::open_instance_bindings`]).
+     #[must_use]
+     pub fn is_open_instance(&self, d_nr: u32) -> bool {
+         let Some(d) = self.definitions.get(d_nr as usize) else {
+             return false;
+         };
+-        if d.def_type == DefType::EnumValue && d.instance_of == u32::MAX {
+-            return self
+-                .definitions
+-                .get(d.parent as usize)
+-                .is_some_and(|p| p.def_type == DefType::Enum)
+-                && self.is_open_instance(d.parent);
+-        }
+         d.instance_of != u32::MAX && d.instance_args.iter().any(|a| self.mentions_type_var(a))
+     }
+ 
+@@ -9834,8 +9766,7 @@ impl Data {
+     pub fn type_mentions(&self, tp: &Type, d: u32) -> bool {
+         tp.contains_def(d)
+             || tp.any_node(&mut |t| {
+-                matches!(t.base(), Type::Reference(r, _) | Type::Enum(r, _, _)
+-                    if self.is_open_instance(*r)
++                matches!(t.base(), Type::Reference(r, _) if self.is_open_instance(*r)
+                     && self.definitions[*r as usize]
+                         .instance_args
+                         .iter()
+@@ -9848,7 +9779,7 @@ impl Data {
+     pub fn placeholders_in(&self, tp: &Type, out: &mut Vec<u32>) {
+         let mut found: Vec<u32> = Vec::new();
+         tp.any_node(&mut |t| {
+-            if let Type::Reference(r, _) | Type::Enum(r, _, _) = t.base()
++            if let Type::Reference(r, _) = t.base()
+                 && (*r as usize) < self.definitions.len()
+                 && (self.is_type_var_placeholder(*r) || self.is_open_instance(*r))
+             {
+diff --git b/src/database/allocation.rs a/src/database/allocation.rs
+index f254ac54a..9a9fb422e 100644
+--- b/src/database/allocation.rs
++++ a/src/database/allocation.rs
+@@ -2242,7 +2242,6 @@ impl Stores {
+         WorkerStores::new(Stores {
+             types: self.types.clone(),
+             names: self.names.clone(),
+-            shown: self.shown.clone(),
+             allocations,
+             records_created: self.records_created,
+             stores_allocated: self.stores_allocated,
+diff --git b/src/database/format.rs a/src/database/format.rs
+index e91e69cdc..7d1e65210 100644
+--- b/src/database/format.rs
++++ a/src/database/format.rs
+@@ -425,14 +425,6 @@ impl Stores {
+     /// `"line N:M path:X"` shape via [`format_walk_err`], so
+     /// callers see one consistent format regardless of where the
+     /// failure originated.
+-    /// The name the loft-literal form writes for type `tp` (`Stores::shown`).
+-    #[must_use]
+-    pub fn shown_name(&self, tp: u16) -> &str {
+-        self.shown
+-            .get(&tp)
+-            .map_or(self.types[tp as usize].name.as_str(), String::as_str)
+-    }
+-
+     pub fn parse(&mut self, text: &str, tp: u16, result: &DbRef) -> Option<String> {
+         self.record_text_parse(text, tp, result)
+     }
+@@ -1378,7 +1370,7 @@ impl ShowDb<'_> {
+                     // re-parses unambiguously (a bare `Variant` can't infer its
+                     // enum type in the language parser).
+                     if self.loft && v > 0 && (v as usize - 1) < vals.len() {
+-                        write!(s, "{}.", self.stores.shown_name(self.known_type)).unwrap();
++                        write!(s, "{}.", self.stores.types[self.known_type as usize].name).unwrap();
+                     }
+                     s.push_str(enum_val);
+                     if let Some(st) = payload {
+@@ -1390,7 +1382,7 @@ impl ShowDb<'_> {
+                     // loft prefixes the type name → `TypeName{…}`, a re-parseable
+                     // constructor; debug/JSON emit a bare object.
+                     if self.loft {
+-                        s.push_str(self.stores.shown_name(self.known_type));
++                        s.push_str(&self.stores.types[self.known_type as usize].name);
+                     }
+                     self.write_struct(s, st, indent);
+                 }
+diff --git b/src/database/mod.rs a/src/database/mod.rs
+index 3324aaa61..2b664c015 100644
+--- b/src/database/mod.rs
++++ a/src/database/mod.rs
+@@ -351,12 +351,6 @@ pub const TYPEVAR_ROW_PREFIX: &str = "__typevar_";
+ pub struct Stores {
+     pub types: Vec<Type>,
+     pub names: HashMap<String, u16>,
+-    /// @PLN165 D10 — the name the loft-literal form writes for a type whose schema name is
+-    /// a KEY: an instance of a generic type is keyed `Box<integer(0, 255)s1>`, which no
+-    /// parser reads back, and written `Box` — its template, which a literal infers from its
+-    /// values or takes from an annotation.  Filled from `Data` when bytecode is generated
+-    /// (`compile::byte_code_from`), read only by that form; not part of the schema.
+-    pub shown: HashMap<u16, String>,
+     pub allocations: Vec<Store>,
+     /// #306 — true when slot 0 holds the interpreter's eval-stack store
+     /// (set by `State::new`).  `free_named` then refuses a whole-store free
+@@ -692,7 +686,6 @@ impl Clone for Stores {
+         Self {
+             types: self.types.clone(),
+             names: self.names.clone(),
+-            shown: self.shown.clone(),
+             allocations: Vec::new(),
+             stack_store_at_zero: self.stack_store_at_zero,
+             lazy_sources: HashMap::new(),
+@@ -1445,7 +1438,6 @@ impl Stores {
+         let mut result = Stores {
+             types: Vec::new(),
+             names: HashMap::new(),
+-            shown: HashMap::new(),
+             allocations: Vec::new(),
+             stack_store_at_zero: false,
+             lazy_sources: HashMap::new(),
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index f5d5577bf..866531b43 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -566,7 +566,7 @@ impl Parser {
+                     let size = self.vector_elem_iter_stride(vtp);
+                     // A type variable's element names its variable (@PLN165 C2).
+                     let stride = match vtp.base() {
+-                        Type::Reference(tv, _) | Type::Enum(tv, _, _)
++                        Type::Reference(tv, _)
+                             if (size == 0 && self.data.is_type_var_placeholder(*tv))
+                                 || self.data.is_open_instance(*tv) =>
+                         {
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index eab18a02f..398b07fb8 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -5663,7 +5663,7 @@ impl Parser {
+         for (name, tp) in fields {
+             let mut irregular: Option<u32> = None;
+             tp.any_node(&mut |t| {
+-                if let Type::Reference(r, _) | Type::Enum(r, _, _) = t.base()
++                if let Type::Reference(r, _) = t.base()
+                     && self.data.def(*r).instance_of == d_nr
+                     && irregular.is_none()
+                 {
+diff --git b/src/parser/fields.rs a/src/parser/fields.rs
+index 11bc01c98..aaa22aff9 100644
+--- b/src/parser/fields.rs
++++ a/src/parser/fields.rs
+@@ -1968,7 +1968,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+         // change (`known` / is_base / is_linked / deref type are untouched).
+         let elm_size = if matches!(elm_type, Type::Vector(_, _)) {
+             elm_size_raw.max(4)
+-        } else if let Type::Reference(tv, _) | Type::Enum(tv, _, _) = elm_type.base()
++        } else if let Type::Reference(tv, _) = elm_type.base()
+             && ((elm_size_raw == 0 && self.data.is_type_var_placeholder(*tv))
+                 || self.data.is_open_instance(*tv))
+         {
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 5f110949c..222a2e50b 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -7559,11 +7559,6 @@ impl Parser {
+     /// the conversion once `T` is concrete.  The block's `result` is the target type,
+     /// which substitution rewrites to the concrete one.
+     pub(crate) const TV_NULL_BLOCK: &'static str = "tvnull";
+-    /// The value [`Parser::null_value`] answers for a type still a TYPE VARIABLE — a `match`
+-    /// join's fallback, a branch with nothing to yield — asked again of the concrete type by
+-    /// each monomorph.  Apart from [`Self::TV_NULL_BLOCK`] because every type has this one:
+-    /// that block stands for a `null` the author wrote, which some types refuse.
+-    pub(crate) const TV_NULL_VALUE: &'static str = "tvnullvalue";
+     /// loft#1537 — an `insert(v, i, e)` whose element type is still a TYPE VARIABLE.  The
+     /// width, the row and the setter are all functions of the element type, so the site is
+     /// stamped with its three arguments and a `result` of the vector's type, and
+@@ -7607,16 +7602,6 @@ impl Parser {
+     /// `(open ↦ concrete)` pair in `instance_bindings` — or `open` itself when those bindings
+     /// leave it open (a template instantiated at another template's variable).
+     pub(crate) fn bound_instance(&self, open: u32) -> u32 {
+-        // A variant of an open enum instance: the variant of that name in the bound instance.
+-        let d = self.data.def(open);
+-        if d.def_type == DefType::EnumValue && self.data.is_open_instance(open) {
+-            let parent = self.bound_instance(d.parent);
+-            return if parent == d.parent {
+-                open
+-            } else {
+-                self.data.variant_of(parent, &d.name)
+-            };
+-        }
+         match Type::Reference(open, crate::data::Deps::none())
+             .substitute_all(&self.instance_bindings)
+             .base()
+@@ -8081,9 +8066,7 @@ impl Parser {
+                 continue;
+             };
+             for &i in &binders[1..] {
+-                // Closed: `b: Grid<T>` at `T = text` is `Grid<text>`, where a plain substitution
+-                // leaves the open instance `Grid<T>`, which no argument converts to.
+-                let expected = self.close_open(&params[i].1, var_bindings);
++                let expected = Self::substitute_all(params[i].1.clone(), var_bindings);
+                 let mut trial = Value::Null;
+                 if self.convert_admitting(&mut trial, &types[i], &expected) {
+                     continue;
+@@ -9218,13 +9201,13 @@ impl Parser {
+             // An OPEN instance (@PLN165 D5) against an instance of the same template pairs
+             // their recorded arguments: `Box<T>` against `Box<integer>` binds `T` to
+             // `integer`.  The arguments live in `Data`, where the keystone pairing below
+-            // does not look.  A generic enum's instance is an `Enum` (@PLN165 D8).
+-            Type::Reference(o, _) | Type::Enum(o, _, _)
++            // does not look.
++            Type::Reference(o, _)
+                 if data.is_open_instance(*o)
+-                    && matches!(concrete_tp.base(), Type::Reference(c, _) | Type::Enum(c, _, _)
++                    && matches!(concrete_tp.base(), Type::Reference(c, _)
+                         if data.def(*c).instance_of == data.def(*o).instance_of) =>
+             {
+-                let (Type::Reference(c, _) | Type::Enum(c, _, _)) = concrete_tp.base() else {
++                let Type::Reference(c, _) = concrete_tp.base() else {
+                     return Type::Unknown(0);
+                 };
+                 data.def(*o)
+@@ -10501,13 +10484,6 @@ impl Parser {
+             // null?".  A nested generic (`concrete` still a type variable) re-stamps
+             // through that same call and stays deferred until an outer instantiation
+             // names a real type.
+-            // A type with no null VALUE of its own (a tuple, boxed as a record where it is
+-            // returned) keeps the reference sentinel the template wrote.
+-            Value::Block(bl) if bl.name == Self::TV_NULL_VALUE => match self.null_value(&bl.result)
+-            {
+-                Value::Null => bl.operators.first().cloned().unwrap_or(Value::Null),
+-                null => null,
+-            },
+             Value::Block(bl) if bl.name == Self::TV_NULL_BLOCK => {
+                 let tp = bl.result.clone();
+                 let mut null = Value::Null;
+@@ -10738,7 +10714,7 @@ impl Parser {
+                 given.push((name.clone(), value, f.result.clone()));
+             }
+         }
+-        let tp = self.literal_type(d);
++        let tp = Type::Reference(d, crate::data::Deps::none());
+         if self.data.is_open_instance(d) {
+             // A template instantiated at another's variable: still open, still deferred.
+             let mut out = vec![Value::Int(d as i32), Value::Text(file), Value::Int(line)];
+@@ -18836,16 +18812,6 @@ impl Parser {
+     /// `if n == 0 { null } else { [n] }`, where the null arm is parsed BEFORE
+     /// the sibling that names the type and so is back-patched here (#936).
+     pub fn null_value(&mut self, tp: &Type) -> Value {
+-        // A TYPE VARIABLE's null is a function of the type it is bound to, so it is asked
+-        // again by each monomorph (`TV_NULL_VALUE`).  Answered here as a reference null, a
+-        // generic `match` returning `T` fell back to a `DbRef` in an `integer` instance —
+-        // native refused to compile it.
+-        if let Type::Reference(d, _) = tp.base()
+-            && self.data.is_type_var_placeholder(*d)
+-        {
+-            let placeholder = self.cl("OpNullRefSentinel", &[]);
+-            return v_block(vec![placeholder], tp.clone(), Self::TV_NULL_VALUE);
+-        }
+         match tp.base() {
+             Type::Vector(_, _)
+             | Type::Sorted(_, _, _)
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 976cc23f2..77d73ae21 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -1882,21 +1882,6 @@ impl Parser {
+     ) -> Type {
+         let ret = self.data.def(enum_nr).returned().clone();
+         let variant_nr = self.data.variant_of(enum_nr, variant_name);
+-        // @PLN165 D8 — a unit variant of an OPEN instance (`Hole` in a template returning
+-        // `Slot<T>`) has no layout: built by each monomorph, as a literal of one is.
+-        if variant_nr != u32::MAX && self.data.is_open_instance(variant_nr) {
+-            let pos = self.lexer.pos().clone();
+-            *code = v_block(
+-                vec![
+-                    Value::Int(variant_nr as i32),
+-                    Value::Text(pos.file.clone()),
+-                    Value::Int(pos.line as i32),
+-                ],
+-                ret.clone(),
+-                Self::TV_OBJECT,
+-            );
+-            return ret;
+-        }
+         if matches!(ret, Type::Enum(_, true, _))
+             && !self.first_pass
+             && variant_nr != u32::MAX
+@@ -2112,11 +2097,6 @@ impl Parser {
+             d_nr
+         } else if self.data.is_template_part(d_nr) {
+             self.data.def(d_nr).parent
+-        } else if let Some(parent) = self.open_variant_parent(d_nr) {
+-            // Inside a template an expected `Slot<T>` resolves the name to its OPEN instance's
+-            // variant, which has no layout: the literal is the template's, deferred to each
+-            // monomorph.  A closed instance's variant is already the literal's own.
+-            self.data.def(parent).instance_of
+         } else {
+             u32::MAX
+         };
+@@ -2144,15 +2124,9 @@ impl Parser {
+                 };
+             };
+             // @PLN165 D5 — an open instance has no layout: its literal is deferred to each
+-            // monomorph (`Parser::TV_OBJECT`) — a variant's literal as the open instance's
+-            // variant of that name (D8).
++            // monomorph (`Parser::TV_OBJECT`).
+             if self.data.is_open_instance(inst) {
+-                let target = if template == d_nr {
+-                    inst
+-                } else {
+-                    self.data.variant_of(inst, name)
+-                };
+-                return self.open_literal(target, code);
++                return self.open_literal(inst, code);
+             }
+             // The expected instance never passed `instance_def` here; one whose layout waited
+             // for pass 2 (a field naming a generic struct declared below) is laid out now.
+@@ -4367,7 +4341,9 @@ impl Parser {
+                     None => bound = Some((f.clone(), got)),
+                     Some((first, b)) => {
+                         // Closed: `vector<Tree<T>>` at `T = integer` is `vector<Tree<integer>>`.
+-                        let expected = self.close_open(declared, &[(v, b.clone())]);
++                        let expected =
++                            self.data
++                                .close_open(&mut self.lexer, declared, &[(v, b.clone())]);
+                         let mut trial = Value::Null;
+                         if refusal.is_none()
+                             && !self.convert_admitting(&mut trial, value, &expected)
+@@ -4468,26 +4444,11 @@ impl Parser {
+         let pos = self.lexer.pos().clone();
+         fields.insert(1, Value::Text(pos.file.clone()));
+         fields.insert(2, Value::Int(pos.line as i32));
+-        let tp = self.literal_type(open);
++        let tp = Type::Reference(open, crate::data::Deps::none());
+         *code = v_block(fields, tp.clone(), Self::TV_OBJECT);
+         tp
+     }
+ 
+-    /// The open instance `d` is a variant of (@PLN165 D8), when it is one.
+-    fn open_variant_parent(&self, d: u32) -> Option<u32> {
+-        (self.data.def_type(d) == DefType::EnumValue && self.data.is_open_instance(d))
+-            .then(|| self.data.def(d).parent)
+-    }
+-
+-    /// The type a literal of `d` has: a record's reference, or a variant's enum.
+-    pub(crate) fn literal_type(&self, d: u32) -> Type {
+-        if self.data.def_type(d) == DefType::EnumValue {
+-            self.data.def(d).returned().clone()
+-        } else {
+-            Type::Reference(d, crate::data::Deps::none())
+-        }
+-    }
+-
+     /// [`Data::open_instance_bindings`](crate::data::Data::open_instance_bindings), with each
+     /// concrete instance it mints on pass 2 laid out as [`Parser::instance_def`] lays one out.
+     pub(crate) fn open_instance_bindings(&mut self, bindings: &[(u32, Type)]) -> Vec<(u32, Type)> {
+@@ -4500,25 +4461,6 @@ impl Parser {
+         pairs
+     }
+ 
+-    /// [`Data::close_open`](crate::data::Data::close_open), with each instance it names laid
+-    /// out as [`Parser::instance_def`] lays out one it mints on pass 2.
+-    pub(crate) fn close_open(&mut self, tp: &Type, bindings: &[(u32, Type)]) -> Type {
+-        let closed = self.data.close_open(&mut self.lexer, tp, bindings);
+-        let mut named: Vec<u32> = Vec::new();
+-        closed.any_node(&mut |t| {
+-            if let Type::Reference(d, _) | Type::Enum(d, _, _) = t.base() {
+-                named.push(*d);
+-            }
+-            false
+-        });
+-        for d in named {
+-            if self.data.def(d).instance_of != u32::MAX {
+-                self.lay_out_instance(d);
+-            }
+-        }
+-        closed
+-    }
+-
+     fn lay_out_instance(&mut self, inst: u32) {
+         if !self.first_pass && inst != u32::MAX && self.data.def(inst).known_type() == u16::MAX {
+             // A record that contains itself has no layout: the check `fill_all` makes at the end
+diff --git b/src/repl.rs a/src/repl.rs
+index 3d7cc8723..fd33b0ad7 100644
+--- b/src/repl.rs
++++ a/src/repl.rs
+@@ -996,22 +996,12 @@ fn print_pause_filtered<W: Write>(
+     all: bool,
+ ) -> std::io::Result<()> {
+     if let Some(f) = session.paused_frame() {
+-        // A generic instance's literal names its template; its type says which instance
+-        // (`g: Grid<integer> = Grid{…}`, @PLN165 D10).
+-        let shown = |n: &str, v: &str| match session
+-            .paused
+-            .as_deref()
+-            .and_then(|s| s.frame_local_generic_type(n, &session.parser.data))
+-        {
+-            Some(t) => format!("{n}: {t} = {v}"),
+-            None => format!("{n} = {v}"),
+-        };
+         let vars: Vec<String> = if all {
+-            f.locals.iter().map(|(n, v)| shown(n, v)).collect()
++            f.locals.iter().map(|(n, v)| format!("{n} = {v}")).collect()
+         } else {
+             f.user_locals()
+                 .into_iter()
+-                .map(|(n, v)| shown(n, v))
++                .map(|(n, v)| format!("{n} = {v}"))
+                 .collect()
+         };
+         let hidden = f.locals.len() - vars.len();
+@@ -3110,10 +3100,6 @@ impl ReplSession {
+                     keyed.push((name.clone(), ty));
+                 } else {
+                     seed.push_str(name);
+-                    if let Some(ty) = state.frame_local_generic_type(name, &self.parser.data) {
+-                        seed.push_str(": ");
+-                        seed.push_str(&ty);
+-                    }
+                     seed.push_str(" = ");
+                     match state.eval_frame_heap(name, false, &self.parser.data) {
+                         Some(full) => seed.push_str(&full),
+@@ -3397,14 +3383,9 @@ impl ReplSession {
+                 // the null literal: every other seed already carries its type in its own
+                 // syntax, and annotating those would turn a rendering difference into a
+                 // compile error.
+-                // A generic instance's literal names its TEMPLATE (`Box{v:7}` for a `Box<u8>`),
+-                // so it carries its type no more than `null` does (@PLN165 D10).
+-                let ty = if lit == "null" {
+-                    state.frame_local_source_type(name, &self.parser.data)
+-                } else {
+-                    state.frame_local_generic_type(name, &self.parser.data)
+-                };
+-                if let Some(ty) = ty {
++                if lit == "null"
++                    && let Some(ty) = state.frame_local_source_type(name, &self.parser.data)
++                {
+                     p.push_str(": ");
+                     p.push_str(&ty);
+                 }
+diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+index 8d20e4972..6823d2d15 100644
+--- b/src/state/codegen.rs
++++ a/src/state/codegen.rs
+@@ -3992,16 +3992,6 @@ impl State {
+         // existing body unchanged.  Makes the Call path store-capable.
+         let params_owned: Vec<Value> = parameters.iter().map(|p| p.to_owned_value()).collect();
+         let parameters = &params_owned[..];
+-        // @FR-G-Mono — a generic never survives the parser: a call names an INSTANCE.  A
+-        // template has no code, and a call to one ran nothing and ended the program with no
+-        // output and a clean exit (a nested generic call in a monomorph over an open enum
+-        // instance, @PLN165 D10), so it is refused here rather than emitted.
+-        assert!(
+-            stack.data.def(op).def_type() != crate::data::DefType::Generic,
+-            "a call to the template {} reached the bytecode — every call names an instance \
+-             (@FR-G-Mono)",
+-            stack.data.def(op).name()
+-        );
+         let mut tps = Vec::new();
+         let mut last = 0;
+         let mut was_stack = u16::MAX;
+diff --git b/src/state/mod.rs a/src/state/mod.rs
+index 96a5b29b8..764e3fa42 100644
+--- b/src/state/mod.rs
++++ a/src/state/mod.rs
+@@ -3447,23 +3447,6 @@ impl State {
+     ///
+     /// `None` for an un-live or unknown local, so the caller keeps its existing
+     /// unannotated seed rather than emitting a line it cannot justify.
+-    /// A live frame local's source type when it names an INSTANCE of a generic type
+-    /// (@PLN165 D10) — `Grid<integer>`, `vector<Box<u8>>`.  Such a value's literal names its
+-    /// template (`Stores::shown`), which infers `Box<integer>` where the frame holds a
+-    /// `Box<u8>`: a seed and the pause line carry the type beside it.
+-    #[must_use]
+-    pub fn frame_local_generic_type(&self, name: &str, data: &crate::data::Data) -> Option<String> {
+-        if !self.frame_local_is_live(name, data) {
+-            return None;
+-        }
+-        let (_, _, tp, _) = self.frame_slot(name, data)?;
+-        tp.any_node(&mut |t| {
+-            matches!(t.base(), crate::data::Type::Reference(d, _) | crate::data::Type::Enum(d, _, _)
+-                if data.def(*d).instance_of != u32::MAX)
+-        })
+-        .then(|| tp.source_name(data))
+-    }
+-
+     #[must_use]
+     pub fn frame_local_source_type(&self, name: &str, data: &crate::data::Data) -> Option<String> {
+         if !self.frame_local_is_live(name, data) {
+@@ -4994,13 +4977,7 @@ impl State {
+             };
+         }
+         let raw = data.def(d_nr).name();
+-        // An instance of a generic function is the function its author wrote (@FR-G-Key:
+-        // the key's one decoder).
+-        let function = if data.def(d_nr).is_instance() {
+-            data.def(d_nr).original_name()
+-        } else {
+-            raw.strip_prefix("n_").unwrap_or(raw).to_string()
+-        };
++        let function = raw.strip_prefix("n_").unwrap_or(raw).to_string();
+         let mut locals = Vec::new();
+         let mut unheld = Vec::new();
+         for e in self.frame_view(d_nr, pc, data) {
+diff --git b/src/typedef.rs a/src/typedef.rs
+index ec21c4d30..7e8a55a87 100644
+--- b/src/typedef.rs
++++ a/src/typedef.rs
+@@ -1094,17 +1094,7 @@ pub(crate) fn fill_database(data: &mut Data, database: &mut Stores, d_nr: u32) {
+     // field access of an open instance is deferred to the instance (`Parser::TV_FIELD`).
+     if data.is_open_instance(d_nr) {
+         if data.def(d_nr).known_type == u16::MAX {
+-            // A variant is named by its instance: every instance's `Full` is `Full`.
+-            let d = data.def(d_nr);
+-            let reg_name = if d.def_type == DefType::EnumValue {
+-                format!(
+-                    "{TYPEVAR_ROW_PREFIX}{}::{}",
+-                    data.def(d.parent).name,
+-                    d.name
+-                )
+-            } else {
+-                format!("{TYPEVAR_ROW_PREFIX}{}", d.name)
+-            };
++            let reg_name = format!("{TYPEVAR_ROW_PREFIX}{}", data.def(d_nr).name);
+             let s_type = database.structure(&reg_name, 0);
+             data.definitions[d_nr as usize].known_type = s_type;
+         }
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index f659eac92..6decc54b6 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -1515,16 +1515,6 @@ impl Function {
+                 }
+                 result
+             }
+-            // `τ?` over a substituted `τ` stays `τ?` (@FR-N-Shape: the arm the catch-all
+-            // below would take, named so the shape test sees the wrapper).
+-            Type::Optional(inner) => {
+-                Type::Optional(Box::new(Self::subst_type(*inner, tv_nr, concrete)))
+-            }
+-            // An open instance of a generic ENUM (@PLN165 D8), as `Type::substitute` reads it.
+-            Type::Enum(d, mixed, deps) if d == tv_nr => match concrete.base() {
+-                Type::Reference(b, _) | Type::Enum(b, _, _) => Type::Enum(*b, mixed, deps),
+-                _ => concrete.clone(),
+-            },
+             // The shape is the keystone's to decide; only the LEAF above differs from
+             // the `Parser::substitute_type` twin this mirrors (that one drops the deps,
+             // this one carries them).  Written as four hand-spelled formers the two

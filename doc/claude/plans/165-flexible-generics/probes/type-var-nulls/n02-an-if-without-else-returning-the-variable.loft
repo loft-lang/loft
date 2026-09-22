@@ -1,0 +1,10 @@
+// A generic value `if` with a null arm, at a scalar and a text T.
+// @EXPECT: 5|null|a|null
+fn pick<T>(c: boolean, d: T) -> T? { if c { d } else { null } }
+fn main() {
+  a = pick(true, 5);
+  b = pick(false, 5);
+  c = pick(true, "a");
+  d = pick(false, "a");
+  println("{a}|{b}|{c}|{d}");
+}

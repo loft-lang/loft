@@ -1882,6 +1882,21 @@ impl Parser {
     ) -> Type {
         let ret = self.data.def(enum_nr).returned().clone();
         let variant_nr = self.data.variant_of(enum_nr, variant_name);
+        // @PLN165 D8 — a unit variant of an OPEN instance (`Hole` in a template returning
+        // `Slot<T>`) has no layout: built by each monomorph, as a literal of one is.
+        if variant_nr != u32::MAX && self.data.is_open_instance(variant_nr) {
+            let pos = self.lexer.pos().clone();
+            *code = v_block(
+                vec![
+                    Value::Int(variant_nr as i32),
+                    Value::Text(pos.file.clone()),
+                    Value::Int(pos.line as i32),
+                ],
+                ret.clone(),
+                Self::TV_OBJECT,
+            );
+            return ret;
+        }
         if matches!(ret, Type::Enum(_, true, _))
             && !self.first_pass
             && variant_nr != u32::MAX
@@ -2097,6 +2112,11 @@ impl Parser {
             d_nr
         } else if self.data.is_template_part(d_nr) {
             self.data.def(d_nr).parent
+        } else if let Some(parent) = self.open_variant_parent(d_nr) {
+            // Inside a template an expected `Slot<T>` resolves the name to its OPEN instance's
+            // variant, which has no layout: the literal is the template's, deferred to each
+            // monomorph.  A closed instance's variant is already the literal's own.
+            self.data.def(parent).instance_of
         } else {
             u32::MAX
         };
@@ -2124,9 +2144,15 @@ impl Parser {
                 };
             };
             // @PLN165 D5 — an open instance has no layout: its literal is deferred to each
-            // monomorph (`Parser::TV_OBJECT`).
+            // monomorph (`Parser::TV_OBJECT`) — a variant's literal as the open instance's
+            // variant of that name (D8).
             if self.data.is_open_instance(inst) {
-                return self.open_literal(inst, code);
+                let target = if template == d_nr {
+                    inst
+                } else {
+                    self.data.variant_of(inst, name)
+                };
+                return self.open_literal(target, code);
             }
             // The expected instance never passed `instance_def` here; one whose layout waited
             // for pass 2 (a field naming a generic struct declared below) is laid out now.
@@ -4341,9 +4367,7 @@ impl Parser {
                     None => bound = Some((f.clone(), got)),
                     Some((first, b)) => {
                         // Closed: `vector<Tree<T>>` at `T = integer` is `vector<Tree<integer>>`.
-                        let expected =
-                            self.data
-                                .close_open(&mut self.lexer, declared, &[(v, b.clone())]);
+                        let expected = self.close_open(declared, &[(v, b.clone())]);
                         let mut trial = Value::Null;
                         if refusal.is_none()
                             && !self.convert_admitting(&mut trial, value, &expected)
@@ -4444,9 +4468,24 @@ impl Parser {
         let pos = self.lexer.pos().clone();
         fields.insert(1, Value::Text(pos.file.clone()));
         fields.insert(2, Value::Int(pos.line as i32));
-        let tp = Type::Reference(open, crate::data::Deps::none());
+        let tp = self.literal_type(open);
         *code = v_block(fields, tp.clone(), Self::TV_OBJECT);
         tp
+    }
+
+    /// The open instance `d` is a variant of (@PLN165 D8), when it is one.
+    fn open_variant_parent(&self, d: u32) -> Option<u32> {
+        (self.data.def_type(d) == DefType::EnumValue && self.data.is_open_instance(d))
+            .then(|| self.data.def(d).parent)
+    }
+
+    /// The type a literal of `d` has: a record's reference, or a variant's enum.
+    pub(crate) fn literal_type(&self, d: u32) -> Type {
+        if self.data.def_type(d) == DefType::EnumValue {
+            self.data.def(d).returned().clone()
+        } else {
+            Type::Reference(d, crate::data::Deps::none())
+        }
     }
 
     /// [`Data::open_instance_bindings`](crate::data::Data::open_instance_bindings), with each
@@ -4459,6 +4498,25 @@ impl Parser {
             }
         }
         pairs
+    }
+
+    /// [`Data::close_open`](crate::data::Data::close_open), with each instance it names laid
+    /// out as [`Parser::instance_def`] lays out one it mints on pass 2.
+    pub(crate) fn close_open(&mut self, tp: &Type, bindings: &[(u32, Type)]) -> Type {
+        let closed = self.data.close_open(&mut self.lexer, tp, bindings);
+        let mut named: Vec<u32> = Vec::new();
+        closed.any_node(&mut |t| {
+            if let Type::Reference(d, _) | Type::Enum(d, _, _) = t.base() {
+                named.push(*d);
+            }
+            false
+        });
+        for d in named {
+            if self.data.def(d).instance_of != u32::MAX {
+                self.lay_out_instance(d);
+            }
+        }
+        closed
     }
 
     fn lay_out_instance(&mut self, inst: u32) {

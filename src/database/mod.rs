@@ -351,6 +351,12 @@ pub const TYPEVAR_ROW_PREFIX: &str = "__typevar_";
 pub struct Stores {
     pub types: Vec<Type>,
     pub names: HashMap<String, u16>,
+    /// @PLN165 D10 — the name the loft-literal form writes for a type whose schema name is
+    /// a KEY: an instance of a generic type is keyed `Box<integer(0, 255)s1>`, which no
+    /// parser reads back, and written `Box` — its template, which a literal infers from its
+    /// values or takes from an annotation.  Filled from `Data` when bytecode is generated
+    /// (`compile::byte_code_from`), read only by that form; not part of the schema.
+    pub shown: HashMap<u16, String>,
     pub allocations: Vec<Store>,
     /// #306 — true when slot 0 holds the interpreter's eval-stack store
     /// (set by `State::new`).  `free_named` then refuses a whole-store free
@@ -686,6 +692,7 @@ impl Clone for Stores {
         Self {
             types: self.types.clone(),
             names: self.names.clone(),
+            shown: self.shown.clone(),
             allocations: Vec::new(),
             stack_store_at_zero: self.stack_store_at_zero,
             lazy_sources: HashMap::new(),
@@ -1438,6 +1445,7 @@ impl Stores {
         let mut result = Stores {
             types: Vec::new(),
             names: HashMap::new(),
+            shown: HashMap::new(),
             allocations: Vec::new(),
             stack_store_at_zero: false,
             lazy_sources: HashMap::new(),

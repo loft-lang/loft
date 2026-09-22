@@ -113,7 +113,14 @@ fn kind_from_str(s: &str) -> Option<&'static str> {
 /// are excluded even when a `pub` signature mentions them.
 #[must_use]
 pub fn surface(data: &Data, lib_file: &str) -> Vec<Member> {
-    let in_lib = |d: u32| d < data.definitions() && data.def(d).position.file == lib_file;
+    // A def the compiler minted while parsing the library — the `main_vector<τ>` wrapper a
+    // `vector<τ>` parameter registers — carries the library's position but the stdlib's
+    // SOURCE: it is global, and nothing a consumer can name.
+    let in_lib = |d: u32| {
+        d < data.definitions()
+            && data.def(d).position.file == lib_file
+            && data.def(d).source != crate::data::STD_SOURCE
+    };
 
     let mut members: Vec<Member> = Vec::new();
     let mut seen: HashSet<u32> = HashSet::new();
@@ -218,6 +225,25 @@ fn is_receiver_alias(data: &Data, d: u32) -> bool {
 pub fn classify(data: &Data, d: u32) -> Option<(&'static str, String)> {
     let def = data.def(d);
     let name = def.name.as_str();
+    // @PLN165 — a type variable's placeholder and an INSTANCE of a generic type or function
+    // are the compiler's: the template stands for every instance (`Grid<T>`, `height`), and a
+    // signature names one where it uses it.
+    if data.is_type_var_placeholder(d) || def.instance_of != u32::MAX || def.is_instance() {
+        return None;
+    }
+    if def.def_type == DefType::TypeTemplate {
+        let vars: Vec<&str> = def
+            .type_params
+            .iter()
+            .map(|v| Data::type_var_spelling(&data.def(*v).name))
+            .collect();
+        let kind = if matches!(def.returned.base(), Type::Enum(..)) {
+            "enum"
+        } else {
+            "struct"
+        };
+        return Some((kind, format!("{name}<{}>", vars.join(", "))));
+    }
     match def.def_type {
         DefType::Function | DefType::Dynamic | DefType::Generic => {
             if let Some(f) = name.strip_prefix("n_") {
@@ -259,7 +285,21 @@ fn method_name(raw: &str) -> String {
 #[must_use]
 pub fn signature_of(data: &Data, d: u32, kind: &str) -> String {
     let def = data.def(d);
-    let ty = |t: &Type| data.type_name_str(t);
+    // A generic type is spelled as its author writes it — `Grid<T>`, `Slot<integer>` — where
+    // the key carries the placeholder's number (`T#4`) or an argument's width.
+    let generic = |t: &Type| {
+        t.any_node(&mut |n| {
+            matches!(n.base(), Type::Reference(r, _) | Type::Enum(r, _, _)
+                if data.is_type_var_placeholder(*r) || data.def(*r).instance_of != u32::MAX)
+        })
+    };
+    let ty = |t: &Type| {
+        if generic(t) {
+            t.source_name(data)
+        } else {
+            data.type_name_str(t)
+        }
+    };
     // Render a field/parameter list. Skip hidden return-mechanism params and the synthetic
     // `enum` discriminant tag (`enum` is a reserved keyword, never a user field). `sort`
     // CANONICALISES by name: struct/enum fields use NAMED construction, so their order is
@@ -278,7 +318,11 @@ pub fn signature_of(data: &Data, d: u32, kind: &str) -> String {
     let render = |atts: &[crate::data::Attribute], sort: bool, defaults: bool| -> Vec<String> {
         let mut v: Vec<(&str, String)> = atts
             .iter()
-            .filter(|a| !a.hidden && a.name != "enum")
+            // A method of a generic struct is a MEMBER of its template (@PLN165 D6), not a
+            // field: it is its own surface entry.
+            .filter(|a| {
+                !a.hidden && a.name != "enum" && !matches!(a.typedef.base(), Type::Routine(_))
+            })
             .map(|a| {
                 let opt = if defaults && !matches!(a.value, crate::data::Value::Null) {
                     " = default"

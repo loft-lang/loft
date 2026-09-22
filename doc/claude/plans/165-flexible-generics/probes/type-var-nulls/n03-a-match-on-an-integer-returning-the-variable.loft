@@ -1,0 +1,4 @@
+// A generic `match` on an integer subject with a wildcard, returning `T`.
+// @EXPECT: one|2.5|other
+fn name<T>(n: integer, one: T, other: T) -> T { match n { 1 => one, _ => other } }
+fn main() { println("{name(1, "one", "x")}|{name(1, 2.5, 0.0)}|{name(3, "one", "other")}"); }

@@ -1,0 +1,11 @@
+// D8 — a generic function hands the generic enum to another generic, at a struct type.
+// @EXPECT: 6|0
+struct Mine { n: integer }
+enum Slot<T> { Full { v: T }, Hole }
+fn full<T>(a: Slot<T>) -> boolean { a is Full }
+fn count2<T>(a: Slot<T>, b: Slot<T>) -> integer { n = 0; if full(a) { n += 3 } if full(b) { n += 3 } n }
+fn main() {
+  a: Slot<Mine> = Full { v: Mine { n: 1 } };
+  h: Slot<Mine> = Hole;
+  println("{count2(a, a)}|{count2(h, h)}");
+}

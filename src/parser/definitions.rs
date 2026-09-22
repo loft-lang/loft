@@ -5663,7 +5663,7 @@ impl Parser {
         for (name, tp) in fields {
             let mut irregular: Option<u32> = None;
             tp.any_node(&mut |t| {
-                if let Type::Reference(r, _) = t.base()
+                if let Type::Reference(r, _) | Type::Enum(r, _, _) = t.base()
                     && self.data.def(*r).instance_of == d_nr
                     && irregular.is_none()
                 {

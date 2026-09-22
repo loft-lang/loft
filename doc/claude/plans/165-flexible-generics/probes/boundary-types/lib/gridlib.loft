@@ -17,3 +17,9 @@ pub fn full_count(v: vector<Slot<integer>>) -> integer {
   for s in v { match s { Full { v } => n += 1 + v * 0, Hole => n += 0 } }
   n
 }
+pub struct Tally<T> { v: T, n: integer assert(n > 0, "n must be positive"), m: integer = $.n + 1 }
+pub fn tally<T>(x: T, k: integer) -> Tally<T> { Tally { v: x, n: k } }
+pub struct Node<T> { v: T, next: reference<Node<T>>? }
+pub fn depth<T>(n: Node<T>) -> integer { d = 1; c = n.next; while c != null { d += 1; c = c.next; } d }
+pub struct Pair<K, V> { k: K, v: V }
+pub fn swap<K, V>(self: Pair<K, V>) -> Pair<V, K> { Pair { k: self.v, v: self.k } }

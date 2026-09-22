@@ -566,7 +566,7 @@ impl Parser {
                     let size = self.vector_elem_iter_stride(vtp);
                     // A type variable's element names its variable (@PLN165 C2).
                     let stride = match vtp.base() {
-                        Type::Reference(tv, _)
+                        Type::Reference(tv, _) | Type::Enum(tv, _, _)
                             if (size == 0 && self.data.is_type_var_placeholder(*tv))
                                 || self.data.is_open_instance(*tv) =>
                         {

@@ -68,6 +68,12 @@ surface* is the canonical guide with a worked example; the wire contract is
 [plans/16-debugger/PROTOCOL.md](plans/16-debugger/PROTOCOL.md). Order matters
 there: `launch` loads, `run` starts, and breakpoints go between them.
 
+**A local of a generic type** shows its instance beside a literal naming the template —
+`g: Grid<integer> = Grid{cells:[1,2],w:1}` — because the literal is what an evaluated
+expression is seeded from, and `Grid<integer>{…}` is no expression the parser reads; the
+seed carries the same annotation.  A frame inside a generic function is named by the
+function (`peek`), not by its instance's key.
+
 **What `:vars` shows, and the two markers.** A paused frame lists every local in
 **lexical scope** at that line. A local in scope whose value the frame does not
 hold is still listed, with the reason instead of a value:

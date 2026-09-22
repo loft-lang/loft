@@ -3992,6 +3992,16 @@ impl State {
         // existing body unchanged.  Makes the Call path store-capable.
         let params_owned: Vec<Value> = parameters.iter().map(|p| p.to_owned_value()).collect();
         let parameters = &params_owned[..];
+        // @FR-G-Mono — a generic never survives the parser: a call names an INSTANCE.  A
+        // template has no code, and a call to one ran nothing and ended the program with no
+        // output and a clean exit (a nested generic call in a monomorph over an open enum
+        // instance, @PLN165 D10), so it is refused here rather than emitted.
+        assert!(
+            stack.data.def(op).def_type() != crate::data::DefType::Generic,
+            "a call to the template {} reached the bytecode — every call names an instance \
+             (@FR-G-Mono)",
+            stack.data.def(op).name()
+        );
         let mut tps = Vec::new();
         let mut last = 0;
         let mut was_stack = u16::MAX;

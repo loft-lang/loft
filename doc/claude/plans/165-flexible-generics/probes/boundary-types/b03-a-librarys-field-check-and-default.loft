@@ -1,0 +1,11 @@
+// D10 — a library's field check and default reach the consumer's instances: built by the
+// library's constructor and by the consumer's literal, at a type of each.
+// @EXPECT: 3|4|7|8|2
+use gridlib;
+struct Mine { n: integer }
+fn main() {
+  a = tally("x", 3);
+  b = Tally { v: Mine { n: 2 }, n: 7 };
+  c: Tally<integer> = Tally { v: 1, n: 1 };
+  println("{a.n}|{a.m}|{b.n}|{b.m}|{c.m}");
+}

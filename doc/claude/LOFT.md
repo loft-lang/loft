@@ -2825,7 +2825,16 @@ twice(c)                          // one type: the inferred instance is the name
   `Shape<integer>` is an enum with its own variants; a variant literal takes its instance
   from its payload or its annotation (a unit variant only from the annotation:
   `e: Shape<integer> = Empty`), `match` reads it, and `Shape<integer>::Dot` names one of the
-  instance's variants as a type — a set over those dispatches on the variant.
+  instance's variants as a type — a set over those dispatches on the variant.  Generic code
+  takes one as it takes a generic struct: `fn get<T>(s: Slot<T>, d: T) -> T { match s {
+  Full { v } => v, Hole => d } }` reads the payload, `fn wrap<T>(x: T) -> Slot<T> { Full {
+  v: x } }` builds a variant, `is` tests one.
+- A library's generic structs and enums cross `use` whole: a consumer instantiates them at the
+  library's types and at its own (`Grid { cells: [Mine { n: 5 }], w: 1 }`), the library's
+  generic functions, methods, field checks and defaults reach every instance, and the
+  consumer's own generics take them.  `loft api-surface` lists the template (`Grid<T>`), not
+  its instances; the debugger shows a local's instance beside a literal that names the
+  template (`g: Grid<integer> = Grid{cells:[1,2],w:1}`).
 
 ---
 

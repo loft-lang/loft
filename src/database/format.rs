@@ -425,6 +425,14 @@ impl Stores {
     /// `"line N:M path:X"` shape via [`format_walk_err`], so
     /// callers see one consistent format regardless of where the
     /// failure originated.
+    /// The name the loft-literal form writes for type `tp` (`Stores::shown`).
+    #[must_use]
+    pub fn shown_name(&self, tp: u16) -> &str {
+        self.shown
+            .get(&tp)
+            .map_or(self.types[tp as usize].name.as_str(), String::as_str)
+    }
+
     pub fn parse(&mut self, text: &str, tp: u16, result: &DbRef) -> Option<String> {
         self.record_text_parse(text, tp, result)
     }
@@ -1370,7 +1378,7 @@ impl ShowDb<'_> {
                     // re-parses unambiguously (a bare `Variant` can't infer its
                     // enum type in the language parser).
                     if self.loft && v > 0 && (v as usize - 1) < vals.len() {
-                        write!(s, "{}.", self.stores.types[self.known_type as usize].name).unwrap();
+                        write!(s, "{}.", self.stores.shown_name(self.known_type)).unwrap();
                     }
                     s.push_str(enum_val);
                     if let Some(st) = payload {
@@ -1382,7 +1390,7 @@ impl ShowDb<'_> {
                     // loft prefixes the type name → `TypeName{…}`, a re-parseable
                     // constructor; debug/JSON emit a bare object.
                     if self.loft {
-                        s.push_str(&self.stores.types[self.known_type as usize].name);
+                        s.push_str(self.stores.shown_name(self.known_type));
                     }
                     self.write_struct(s, st, indent);
                 }

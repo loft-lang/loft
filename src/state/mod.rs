@@ -3447,6 +3447,23 @@ impl State {
     ///
     /// `None` for an un-live or unknown local, so the caller keeps its existing
     /// unannotated seed rather than emitting a line it cannot justify.
+    /// A live frame local's source type when it names an INSTANCE of a generic type
+    /// (@PLN165 D10) — `Grid<integer>`, `vector<Box<u8>>`.  Such a value's literal names its
+    /// template (`Stores::shown`), which infers `Box<integer>` where the frame holds a
+    /// `Box<u8>`: a seed and the pause line carry the type beside it.
+    #[must_use]
+    pub fn frame_local_generic_type(&self, name: &str, data: &crate::data::Data) -> Option<String> {
+        if !self.frame_local_is_live(name, data) {
+            return None;
+        }
+        let (_, _, tp, _) = self.frame_slot(name, data)?;
+        tp.any_node(&mut |t| {
+            matches!(t.base(), crate::data::Type::Reference(d, _) | crate::data::Type::Enum(d, _, _)
+                if data.def(*d).instance_of != u32::MAX)
+        })
+        .then(|| tp.source_name(data))
+    }
+
     #[must_use]
     pub fn frame_local_source_type(&self, name: &str, data: &crate::data::Data) -> Option<String> {
         if !self.frame_local_is_live(name, data) {
@@ -4977,7 +4994,13 @@ impl State {
             };
         }
         let raw = data.def(d_nr).name();
-        let function = raw.strip_prefix("n_").unwrap_or(raw).to_string();
+        // An instance of a generic function is the function its author wrote (@FR-G-Key:
+        // the key's one decoder).
+        let function = if data.def(d_nr).is_instance() {
+            data.def(d_nr).original_name()
+        } else {
+            raw.strip_prefix("n_").unwrap_or(raw).to_string()
+        };
         let mut locals = Vec::new();
         let mut unheld = Vec::new();
         for e in self.frame_view(d_nr, pc, data) {

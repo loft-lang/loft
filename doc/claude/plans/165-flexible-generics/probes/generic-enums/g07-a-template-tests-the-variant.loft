@@ -1,0 +1,10 @@
+// D8 — a generic function over a generic enum tests the variant (`is`), at two instances.
+// @EXPECT: 1|0|1
+enum Slot<T> { Full { v: T }, Hole }
+fn full<T>(a: Slot<T>) -> integer { if a is Full { 1 } else { 0 } }
+fn main() {
+  s: Slot<integer> = Full { v: 1 };
+  h: Slot<integer> = Hole;
+  t: Slot<text> = Full { v: "x" };
+  println("{full(s)}|{full(h)}|{full(t)}");
+}

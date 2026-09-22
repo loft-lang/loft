@@ -1,0 +1,67 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D10 — a `use`d library's generic structs and enums behave as the same types
+// written in the program: the consumer instantiates them at the library's types and at its
+// OWN (through the library's constructor, its own literal and an annotation), the library's
+// generic methods, field checks and defaults reach every instance, a self-naming struct and
+// a two-variable one cross whole, and the consumer's own generics — a function and a struct
+// — take the library's.
+//
+// @falsified-at: d156a9d91 — interpret exit 1 -> 0, native exit 1 -> 0
+//   (no patch receipt: D10 is 1334 source lines, past `falsify.sh`'s bound for one.)
+//   CHANNEL: exit on both backends — the control refuses the file.
+//   ARMED: nothing.
+//   WITNESS: on the control the consumer's own instance is "Variable '_vec_2' cannot change
+//     type from vector<Mine> to vector<text>".
+//   HOLDS: nothing else.
+// @ARGS: --lib tests/lib
+
+use gridlib;
+
+struct Mine { n: integer }
+struct Wrap<T> { g: Grid<T>, tag: text }
+
+fn first_of<T>(g: Grid<T>) -> T? { g.cells[0] }
+fn wrap<T>(g: Grid<T>) -> Wrap<T> { Wrap { g: g, tag: "w" } }
+
+fn test_a_consumer_instantiates_at_its_own_type() {
+  g = grid([1, 2, 3, 4], 2);
+  m = Grid { cells: [Mine { n: 5 }], w: 1 };
+  t: Grid<text> = grid(["a", "b", "c"], 3);
+  assert(g.at(3) == 4 && g.height() == 2, "{g.at(3)} {g.height()}");
+  assert(m.at(0).n == 5 && m.height() == 1 && cell_count(t) == 3, "{m.height()}");
+  q: gridlib::Grid<integer> = gridlib::grid([1, 2, 3, 4, 5, 6], 2);
+  assert(q.at(5) == 6 && q.height() == 3, "{q.at(5)}");
+}
+
+fn test_a_librarys_generic_enum() {
+  v: vector<Slot<integer>> = [Full { v: 1 }, Hole, Full { v: 3 }];
+  c: Slot<Mine> = Full { v: Mine { n: 7 } };
+  a = match c { Full { v } => v.n, Hole => 0 };
+  assert(full_count(v) == 2 && a == 7, "{full_count(v)} {a}");
+}
+
+fn test_a_librarys_field_check_and_default() {
+  a = tally("x", 3);
+  b = Tally { v: Mine { n: 2 }, n: 7 };
+  assert(a.n == 3 && a.m == 4 && b.n == 7 && b.m == 8, "{a.m} {b.m}");
+}
+
+fn test_a_librarys_self_reference_and_two_variables() {
+  n = Node { v: 1, next: Node { v: 2, next: Node { v: 3, next: null } } };
+  m = Node { v: Mine { n: 4 }, next: null };
+  assert(depth(n) == 3 && depth(m) == 1, "{depth(n)} {depth(m)}");
+  p = Pair { k: 1, v: "a" }.swap();
+  q = Pair { k: "t", v: Mine { n: 5 } }.swap();
+  assert(p.k == "a" && p.v == 1 && q.k.n == 5 && q.v == "t", "{p.k} {q.v}");
+}
+
+fn test_the_consumers_generics_take_the_librarys() {
+  m = grid([Mine { n: 9 }], 1);
+  t = Grid { cells: ["b"], w: 1 };
+  assert(first_of(m).n == 9 && first_of(t) == "b", "first_of");
+  a = wrap(grid([1, 2], 1));
+  b = Wrap { g: grid(["x"], 1), tag: "t" };
+  assert(a.g.height() == 2 && b.g.at(0) == "x" && b.tag == "t", "{a.g.height()}");
+}

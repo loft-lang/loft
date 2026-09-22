@@ -7559,6 +7559,11 @@ impl Parser {
     /// the conversion once `T` is concrete.  The block's `result` is the target type,
     /// which substitution rewrites to the concrete one.
     pub(crate) const TV_NULL_BLOCK: &'static str = "tvnull";
+    /// The value [`Parser::null_value`] answers for a type still a TYPE VARIABLE — a `match`
+    /// join's fallback, a branch with nothing to yield — asked again of the concrete type by
+    /// each monomorph.  Apart from [`Self::TV_NULL_BLOCK`] because every type has this one:
+    /// that block stands for a `null` the author wrote, which some types refuse.
+    pub(crate) const TV_NULL_VALUE: &'static str = "tvnullvalue";
     /// loft#1537 — an `insert(v, i, e)` whose element type is still a TYPE VARIABLE.  The
     /// width, the row and the setter are all functions of the element type, so the site is
     /// stamped with its three arguments and a `result` of the vector's type, and
@@ -7602,6 +7607,16 @@ impl Parser {
     /// `(open ↦ concrete)` pair in `instance_bindings` — or `open` itself when those bindings
     /// leave it open (a template instantiated at another template's variable).
     pub(crate) fn bound_instance(&self, open: u32) -> u32 {
+        // A variant of an open enum instance: the variant of that name in the bound instance.
+        let d = self.data.def(open);
+        if d.def_type == DefType::EnumValue && self.data.is_open_instance(open) {
+            let parent = self.bound_instance(d.parent);
+            return if parent == d.parent {
+                open
+            } else {
+                self.data.variant_of(parent, &d.name)
+            };
+        }
         match Type::Reference(open, crate::data::Deps::none())
             .substitute_all(&self.instance_bindings)
             .base()
@@ -8066,7 +8081,9 @@ impl Parser {
                 continue;
             };
             for &i in &binders[1..] {
-                let expected = Self::substitute_all(params[i].1.clone(), var_bindings);
+                // Closed: `b: Grid<T>` at `T = text` is `Grid<text>`, where a plain substitution
+                // leaves the open instance `Grid<T>`, which no argument converts to.
+                let expected = self.close_open(&params[i].1, var_bindings);
                 let mut trial = Value::Null;
                 if self.convert_admitting(&mut trial, &types[i], &expected) {
                     continue;
@@ -9201,13 +9218,13 @@ impl Parser {
             // An OPEN instance (@PLN165 D5) against an instance of the same template pairs
             // their recorded arguments: `Box<T>` against `Box<integer>` binds `T` to
             // `integer`.  The arguments live in `Data`, where the keystone pairing below
-            // does not look.
-            Type::Reference(o, _)
+            // does not look.  A generic enum's instance is an `Enum` (@PLN165 D8).
+            Type::Reference(o, _) | Type::Enum(o, _, _)
                 if data.is_open_instance(*o)
-                    && matches!(concrete_tp.base(), Type::Reference(c, _)
+                    && matches!(concrete_tp.base(), Type::Reference(c, _) | Type::Enum(c, _, _)
                         if data.def(*c).instance_of == data.def(*o).instance_of) =>
             {
-                let Type::Reference(c, _) = concrete_tp.base() else {
+                let (Type::Reference(c, _) | Type::Enum(c, _, _)) = concrete_tp.base() else {
                     return Type::Unknown(0);
                 };
                 data.def(*o)
@@ -10484,6 +10501,13 @@ impl Parser {
             // null?".  A nested generic (`concrete` still a type variable) re-stamps
             // through that same call and stays deferred until an outer instantiation
             // names a real type.
+            // A type with no null VALUE of its own (a tuple, boxed as a record where it is
+            // returned) keeps the reference sentinel the template wrote.
+            Value::Block(bl) if bl.name == Self::TV_NULL_VALUE => match self.null_value(&bl.result)
+            {
+                Value::Null => bl.operators.first().cloned().unwrap_or(Value::Null),
+                null => null,
+            },
             Value::Block(bl) if bl.name == Self::TV_NULL_BLOCK => {
                 let tp = bl.result.clone();
                 let mut null = Value::Null;
@@ -10714,7 +10738,7 @@ impl Parser {
                 given.push((name.clone(), value, f.result.clone()));
             }
         }
-        let tp = Type::Reference(d, crate::data::Deps::none());
+        let tp = self.literal_type(d);
         if self.data.is_open_instance(d) {
             // A template instantiated at another's variable: still open, still deferred.
             let mut out = vec![Value::Int(d as i32), Value::Text(file), Value::Int(line)];
@@ -18812,6 +18836,16 @@ impl Parser {
     /// `if n == 0 { null } else { [n] }`, where the null arm is parsed BEFORE
     /// the sibling that names the type and so is back-patched here (#936).
     pub fn null_value(&mut self, tp: &Type) -> Value {
+        // A TYPE VARIABLE's null is a function of the type it is bound to, so it is asked
+        // again by each monomorph (`TV_NULL_VALUE`).  Answered here as a reference null, a
+        // generic `match` returning `T` fell back to a `DbRef` in an `integer` instance —
+        // native refused to compile it.
+        if let Type::Reference(d, _) = tp.base()
+            && self.data.is_type_var_placeholder(*d)
+        {
+            let placeholder = self.cl("OpNullRefSentinel", &[]);
+            return v_block(vec![placeholder], tp.clone(), Self::TV_NULL_VALUE);
+        }
         match tp.base() {
             Type::Vector(_, _)
             | Type::Sorted(_, _, _)

@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D5 — a generic function naming one variable in two parameters through a generic
+// struct (`widths<T>(a: Grid<T>, b: Grid<T>)`): the second argument is checked against the
+// instance the first binds.  It was checked against the OPEN `Grid<T>`, which no argument
+// converts to, so `widths(t, t)` was refused — "binds T to text through `a` and to text
+// through `b`".  Two variables, an enum, a nested instance and a vector beside the instance.
+//
+// @falsified-at: 17de93013 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/two-parameters-at-one-variable-through-an-instance.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the call.
+//   ARMED: nothing.
+//   WITNESS: the control stops first at the open `Slot<T>`'s layout ("type layout: Full
+//     (size=1,align=0){…, [1]v:__typevar_T…}", D8's half); the `Grid` half fails alone there
+//     too — `widths(t, t)` is "`widths` binds T to text through `a` and to text through `b`".
+//   HOLDS: nothing else.
+
+struct Grid<T> { cells: vector<T>, w: integer }
+enum Slot<T> { Full { v: T }, Hole }
+struct Pair<K, V> { k: K, v: V }
+
+fn widths<T>(a: Grid<T>, b: Grid<T>) -> integer { a.w + b.w }
+fn mixed<T>(a: vector<T>, b: Grid<T>) -> integer { len(a) + len(b.cells) }
+fn nested<T>(a: Grid<Grid<T>>, b: Grid<T>) -> integer { a.w * 10 + b.w }
+fn fulls<T>(a: Slot<T>, b: Slot<T>) -> integer { n = 0; if a is Full { n += 1 } if b is Full { n += 1 } n }
+fn keys<K, V>(a: Pair<K, V>, b: Pair<K, V>) -> V { b.v }
+
+fn test_two_parameters_of_one_instance() {
+  t = Grid { cells: ["b"], w: 1 };
+  u: Grid<text> = Grid { cells: ["c", "d"], w: 2 };
+  i = Grid { cells: [1, 2, 3], w: 2 };
+  assert(widths(t, u) == 3 && widths(i, i) == 4, "{widths(t, u)} {widths(i, i)}");
+  assert(mixed([4, 5], i) == 5, "{mixed([4, 5], i)}");
+  g = Grid { cells: [i], w: 3 };
+  assert(nested(g, i) == 32, "{nested(g, i)}");
+}
+
+fn test_an_enum_and_two_variables() {
+  s: Slot<integer> = Full { v: 1 };
+  p = Pair { k: 1, v: "x" };
+  q = Pair { k: 2, v: "y" };
+  assert(fulls(s, s) == 2 && keys(p, q) == "y", "{fulls(s, s)} {keys(p, q)}");
+}

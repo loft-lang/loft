@@ -1968,7 +1968,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // change (`known` / is_base / is_linked / deref type are untouched).
         let elm_size = if matches!(elm_type, Type::Vector(_, _)) {
             elm_size_raw.max(4)
-        } else if let Type::Reference(tv, _) = elm_type.base()
+        } else if let Type::Reference(tv, _) | Type::Enum(tv, _, _) = elm_type.base()
             && ((elm_size_raw == 0 && self.data.is_type_var_placeholder(*tv))
                 || self.data.is_open_instance(*tv))
         {

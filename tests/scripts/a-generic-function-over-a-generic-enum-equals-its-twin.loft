@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D8, D10 — generic code over a generic enum: a function or method over `Slot<T>`
+// tests the variant, reads the payload, builds a payload and a unit variant, walks a vector
+// of them and hands one on to another generic — each instance answering what a hand-written
+// function over `Slot<integer>` answers.  The template's `Slot<T>` is an OPEN instance and
+// so is each of its variants: no layout, and every monomorph reads, builds and steps over
+// its own instance's variants.
+//
+// @falsified-at: 17de93013 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-generic-function-over-a-generic-enum-equals-its-twin.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the file.
+//   ARMED: nothing.
+//   WITNESS: on the control the open instance's variant is laid out: "type layout: Full
+//     (size=1,align=0){[0]enum:byte@0..1, [1]v:__typevar_T…}".
+//   HOLDS: nothing else; each shape fails alone there too — probes/generic-enums g07–g12.
+
+enum Slot<T> { Full { v: T }, Hole }
+struct Mine { n: integer }
+
+fn full<T>(a: Slot<T>) -> boolean { a is Full }
+fn get<T>(s: Slot<T>, d: T) -> T { match s { Full { v } => v, Hole => d } }
+fn pick<T>(x: T, keep: boolean) -> Slot<T> { if keep { Full { v: x } } else { Hole } }
+fn fulls<T>(v: vector<Slot<T>>) -> integer { n = 0; for s in v { if s is Full { n += 1 } } n }
+fn count2<T>(a: Slot<T>, b: Slot<T>) -> integer { n = 0; if full(a) { n += 3 } if full(b) { n += 3 } n }
+fn or_else<T>(self: Slot<T>, d: T) -> T { match self { Full { v } => v, Hole => d } }
+
+// The twin, by hand, at one instance.
+fn get_int(s: Slot<integer>, d: integer) -> integer { match s { Full { v } => v, Hole => d } }
+
+fn test_the_variant_is_tested_at_each_instance() {
+  s: Slot<integer> = Full { v: 1 };
+  h: Slot<text> = Hole;
+  m: Slot<Mine> = Full { v: Mine { n: 2 } };
+  assert(full(s) && !full(h) && full(m), "full");
+}
+
+fn test_the_payload_is_read_at_each_instance() {
+  a: Slot<integer> = Full { v: 5 };
+  b: Slot<integer> = Hole;
+  c: Slot<text> = Full { v: "x" };
+  assert(get(a, 0) == get_int(a, 0) && get(b, 9) == get_int(b, 9), "{get(a, 0)} {get(b, 9)}");
+  assert(get(c, "") == "x" && c.or_else("q") == "x" && b.or_else(4) == 4, "{get(c, "")}");
+}
+
+fn test_a_variant_is_built_in_the_template() {
+  a = pick(4, true);
+  b = pick("y", false);
+  sa = match a { Full { v } => "{v}", Hole => "hole" };
+  sb = match b { Full { v } => v, Hole => "hole" };
+  assert(sa == "4" && sb == "hole", "{sa} {sb}");
+}
+
+fn test_a_vector_of_the_enum_and_a_nested_generic() {
+  a: vector<Slot<integer>> = [Full { v: 1 }, Hole, Full { v: 3 }];
+  b: vector<Slot<text>> = [Hole, Full { v: "z" }];
+  m: Slot<Mine> = Full { v: Mine { n: 1 } };
+  h: Slot<Mine> = Hole;
+  assert(fulls(a) == 2 && fulls(b) == 1, "{fulls(a)} {fulls(b)}");
+  assert(count2(m, m) == 6 && count2(h, h) == 0, "{count2(m, m)} {count2(h, h)}");
+}

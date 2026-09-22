@@ -1,0 +1,21 @@
+// D5 — two parameters at one variable through an OPEN instance each: the second is checked
+// against the instance the first binds (`Grid<text>`), not the open `Grid<T>`.
+// @EXPECT: 3|5|4|2|7
+struct Grid<T> { cells: vector<T>, w: integer }
+enum Slot<T> { Full { v: T }, Hole }
+struct Pair<K, V> { k: K, v: V }
+fn widths<T>(a: Grid<T>, b: Grid<T>) -> integer { a.w + b.w }
+fn mixed<T>(a: vector<T>, b: Grid<T>) -> integer { len(a) + len(b.cells) }
+fn nested<T>(a: Grid<Grid<T>>, b: Grid<T>) -> integer { a.w + b.w }
+fn fulls<T>(a: Slot<T>, b: Slot<T>) -> integer { n = 0; if a is Full { n += 1 } if b is Full { n += 1 } n }
+fn keys<K, V>(a: Pair<K, V>, b: Pair<K, V>) -> integer { 7 }
+fn main() {
+  t = Grid { cells: ["b"], w: 1 };
+  u: Grid<text> = Grid { cells: ["c", "d"], w: 2 };
+  i = Grid { cells: [1, 2, 3], w: 2 };
+  g = Grid { cells: [i], w: 3 };
+  s: Slot<integer> = Full { v: 1 };
+  p = Pair { k: 1, v: "x" };
+  println("{widths(t, u)}|{mixed([4, 5], i)}|{widths(i, i)}|{fulls(s, s)}|{keys(p, p)}");
+  q = nested(g, i);
+}

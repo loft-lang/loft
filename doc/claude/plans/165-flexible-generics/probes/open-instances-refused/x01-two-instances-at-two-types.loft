@@ -1,0 +1,8 @@
+// D5 — `Grid<integer>` and `Grid<text>` at one variable: refused naming both parameters.
+struct Grid<T> { cells: vector<T>, w: integer }
+fn widths<T>(a: Grid<T>, b: Grid<T>) -> integer { a.w + b.w }
+fn main() {
+  i = Grid { cells: [1], w: 1 };
+  t = Grid { cells: ["b"], w: 1 };
+  println("{widths(i, t)}");
+}
