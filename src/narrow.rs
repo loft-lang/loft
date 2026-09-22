@@ -248,7 +248,7 @@ mod tests {
             (BYTE_SPARE, -100, -100, 100),
             (SHORT_SPARE, -1000, -1000, 1000),
         ] {
-            for v in [lo, lo + 1, (lo + hi) / 2, hi - 1, hi] {
+            for v in [lo, lo + 1, i64::midpoint(lo, hi), hi - 1, hi] {
                 assert_eq!(
                     decode(kind, min, encode(kind, min, v)),
                     v,
