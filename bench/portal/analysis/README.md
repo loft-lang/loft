@@ -23,8 +23,10 @@ gh workflow run ci.yml --ref 157-native-4x -f os=ubuntu-latest                  
 ```
 
 Green, 21 jobs each, ASan included: R1–R7 (`35654730666`), V1–V3 (`35660794064`, head
-`ccfd90fd2`) and F1 (`35663137897`, head `1e458f9f8`).  The commits after `1e458f9f8` are
-analysis docs only.  ⚠ Read a run's `createdAt` beside `date -u` before calling it slow: a
+`ccfd90fd2`), F1 (`35663137897`, head `1e458f9f8`) and the bounded sum (`35691737133`, head
+`87089b1fb`).  After that: loft#1593 + the examples index (`d6be1f657`, gate `35696686990`)
+and E (`b2599cbc0`, gate to dispatch once the previous one finishes — a dispatch cancels an
+in-progress run on the same branch, `ci.yml` § concurrency).  ⚠ Read a run's `createdAt` beside `date -u` before calling it slow: a
 healthy six-minute-old run was nearly reported as hung on a wrong sense of elapsed time.
 
 If a new run is red, check these FIRST — each made an earlier run red:
@@ -49,9 +51,12 @@ If a new run is red, check these FIRST — each made an earlier run red:
   in that run; treat a single first-try failure there as a flake, a repeated one as real.
 
 **2. Then the rest of `vector-build.md`: C1 on its CORRECTED condition, then T1 (a
-one-predicate refactor first), then one full `make perf-portal` run alone on the box — the
-generated `doc/claude/PERF_PORTAL.md` is stale against V1–V3 and F1, and a partial re-render
-mixes sessions.**  V1–V3 and F1 are built.  Build
+one-predicate refactor first), then a dot product as the bounded sum's next row, then one
+full `make perf-portal` run alone on the box — the generated `doc/claude/PERF_PORTAL.md`
+was re-measured at `33ab9d2d7` and is stale against the bounded sum and E, and a partial
+re-render mixes sessions.**  V1–V3, F1, the bounded sum and E are built; loft#1593 is fixed
+on the way (a tightening — the `imaging` library's own tests owe seven `?? 0` cures, its src
+none; reported in `types-history.md` D-Narrow-Limit, not edited there).  Build
 each as the record-shapes levers were built — a clause of an existing rule, a switch, cells
 (`tests/scripts/158-*.loft`), emission pins (`tests/*.rs`), a sabotage whose result is
 written into the cell file as MEASURED.
