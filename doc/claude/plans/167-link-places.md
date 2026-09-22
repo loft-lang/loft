@@ -7,10 +7,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**Open — design settled with the owner 2026-09-23, no implementation.**  Every measurement
+**Open — design settled with the owner 2026-09-22; P0 measured.**  Every measurement
 the design rests on is recorded below and was taken on both backends at
 `tuxedo-quality-2026-09-21` @ `53d8d5d4a`.  Tracker: [@PLN167](https://github.com/loft-lang/plans/issues/167).
-Closes loft#1566 (`D-bind-38`), loft#1567 (`D-bind-39`), loft#1602 and loft#1603.
+Closes loft#1566 (`D-bind-38`), loft#1567 (`D-bind-39`), loft#1602, loft#1603 and loft#1604.
 
 ## Goal
 
@@ -20,9 +20,10 @@ link is done and the `DbRef` or pointer alone choosing where.
 
 ## Effort + design
 
-- **Effort:** M (P0 XS · A S+S+XS · B S+XS+XS · C M+S+S · D XS)
-- **Design:** ✓ — the three decisions are made; two open questions are sized by P0
-- **Last touched:** 2026-09-23
+- **Effort:** M (P0 XS · A XS+M+S+XS · B S+XS+XS · C M+S+S · D XS) — A1 grew from S to M
+  in P0, see § P0
+- **Design:** ✓ — the three decisions are made; P0 answered open question 1 and refined decision 1
+- **Last touched:** 2026-09-22
 
 ## What is measured, and what the rules say
 
@@ -99,6 +100,69 @@ function (`__retbuf`), so its stack form cannot change.
    `DbRef`; native's `&mut (expr)` argument arm is already there for it).  The refusal was the
    stale half of a rung built only at the bind.
 
+## P0 — what the width probe measured (2026-09-22)
+
+**Decision 1 holds, with one correction: "at its width" means "in its type's FIELD
+encoding", not a Rust `i8`.**  A narrow store place is not two's complement at its width.  It
+is biased by the type's minimum, and a nullable place reserves a sentinel code.  The one home
+for the encoding is `data::NarrowIntKind::of(width, nullable, narrow_vec, unsigned_wide)`:
+
+| kind | stored | null | types |
+|---|---|---|---|
+| `Byte` | `v - min` as `u8` | — | `u8`, `i8`, `limit(0, 7)` |
+| `ByteNullable` | `v - min` as `u8` | `255` | `u8?`, `i8?` |
+| `ShortFull` (read) / `ShortRaw` (write) | `v - min` as `u16` | — | `u16`, `i16` |
+| `Short` | `v - min + 1` as `u16` | `0` | `u16?`, `i16?` |
+| `Int4` | `v` as `i32` | `i32::MIN` | `i32`, `i32?` |
+| `Int4Full` / `Int4Raw` | `v` as `u32` | `u32::MAX` (nullable) | `u32` |
+
+So an `i8` local holding `-1` as a Rust `i8` is the byte `0xFF`, and a store `i8` place holding
+`-1` is the byte `0x7F`.  One `*mut u8` cannot read both.  Every narrow LOCAL therefore holds the
+FIELD encoding of its type — the kind with `narrow_vec = false`, which reads every place of the
+type correctly, because the element and field kinds of one type store the same bytes and differ
+only in how a non-null read treats the top code.
+
+**Native, proven by hand.**  An emitted program was edited so `x: u8`, `y: i8` and `n: u8?` are
+`u8` locals holding the field encoding, and ONE `*mut u8` link was re-pointed between each local
+and a field of the same type (`addr_mut::<u8>`).  Under rustc it printed every edge cell right:
+the `u8` max `255` written into a field, the `i8` min `-128` into a local and max `127` into a
+field, `u8?` null read from a local, its max `254` written and read, a null written into a
+field and read back by the store's own `get_byte` as code `255`.
+
+**Interpreter — open question 1 answered: two fused frame ops.**  The interpreter keeps every
+integer local in an 8-byte slot and has only `OpVarInt` / `OpPutInt` for it.  Reading a narrow
+slot through `OpCreateStack` + `OpGetByte` works, but every read site would emit two ops and
+every write site would have to push the `DbRef` BEFORE the value, which reorders `set_var`.
+`OpVarNarrow(pos, min, kind)` / `OpPutNarrow(pos, min, kind)` drop in wherever `OpVarInt` /
+`OpPutInt` stand for a narrow local, and do their encoding through the SAME `Store` setters and
+getters the field ops call, on a `DbRef` naming the slot — so the encoding has one home.  The
+slot stays 8 bytes, which leaves the frame layout (`SLOTS.md`) and every slot offset untouched;
+the encoded bytes sit at its start, where a link's `DbRef` points.  `Store::read` / `write` are
+unaligned-safe, so a 2- or 4-byte access at any slot offset is sound.
+
+**Scope of "a narrow local".**  A local and a by-value PARAMETER both: a parameter is linked or
+handed to a `&` parameter as often as a local is.  A by-value narrow parameter keeps its
+calling convention (`i64` on native, the plain value in the interpreter's frame) and the callee
+re-encodes it once at entry, so no caller and no calling convention changes.  Tuple members stay
+widened (open question 2's safe answer: a tuple place is refused as a link target anyway).
+
+**What P0 found beside the question.**
+
+- **loft#1604 (silent-wrong, both backends, on `main`):** a write through a `&` link or `&`
+  parameter to a narrow integer is never range-checked.  `c = &w; c = c + 10` leaves a `u8`
+  holding `260` where `w = w + 10` is refused, and `c += 100` on an `i8` link leaves `220` where
+  `y += 100` takes the slot's default `0`.  The narrowing refusal and the range guard are asked
+  of the target's type, which is `RefVar(Integer(…))` for a link, and neither looks inside it.
+  Decision 1 relies on every write to a narrow slot being checked, so this is fixed first (A0).
+- **The size of A1.**  Native writes a local's name at ~200 sites across `generation/`, and the
+  hoist and twin machinery reads locals by name too.  A narrow Rust type makes a missed decode a
+  rustc type error at most of them, which is what makes the change tractable — and why the
+  local is a `u8`/`u16`/`i32`/`u32` rather than an `i64` holding the encoded bytes, which would
+  compile everywhere and read wrong silently.
+- **No published library declares a narrow `&` parameter** (0 hits over every `loft-libs-*`
+  checkout; the corpus has one, `set_200`), so A1's ABI change reaches no shipped cdylib.  The
+  published-lib gate still runs.
+
 ## Composition matrix — Stage A
 
 Build every cell as a `/tmp` probe on `--interpret` first, expected values hand-computed,
@@ -127,9 +191,10 @@ reaches, and the review reads that list against the cells by hand.
 
 | Item | Source | Verify | Status |
 |---|---|---|---|
-| **P0** — the width probe: hand-edit one emitted program so its linked `u8`/`i8` locals are `u8`/`i8` and confirm a byte pointer reads and writes them, min/max/null included; list what the interpreter needs (new `OpVarByte`/`OpPutByte` frame ops, or narrow access through the stack-store `DbRef`) and size A2 | this file | the edited program prints the matrix's edge cells under rustc; the op inventory is written into A2's row | Open |
-| **A1** — native: a narrow local's Rust type is its width, widened at each use, narrowed through the existing range check on each write | decision 1 | `--native-emit` diff over `tests/scripts/`: only narrow-local declarations and their uses move; script corpus + bench hashes unchanged; `range_arith` pins unmoved; published-lib gate green | Open |
-| **A2** — interpreter: a narrow local's slot is read and written at its width (the cure P0 chose) | decision 1, P0 | value parity of the corpus across backends; `a-link-to-a-narrow-integer-local-reads-and-writes-it.loft` unmoved | Open |
+| **P0** — the width probe: hand-edit one emitted program so its linked `u8`/`i8` locals are at width and confirm a byte pointer reads and writes them, min/max/null included; list what the interpreter needs and size A2 | this file | the edited program prints the matrix's edge cells under rustc; the op inventory is written into A2's row | **Done** 2026-09-22 — § P0: the local holds the FIELD encoding; A2 = two fused frame ops |
+| **A0** — loft#1604: the narrowing refusal and the range guard look through a link, so a write through `&u8` (a local link or a parameter) is checked like a write to the `u8` | loft#1604, `(B-Ref-Uniform)` | the issue's cell: `x = x + 10` through a link or parameter refused, `+=` takes the slot's default, both backends; falsified against P0's tip | Open |
+| **A1** — native: a narrow local's Rust type is its FIELD encoding's storage type (`u8`/`u16`/`i32`/`u32`), decoded at each use, encoded at each write; a narrow by-value parameter re-encoded once at entry | decision 1, § P0 | `--native-emit` diff over `tests/scripts/`: only narrow-local declarations and their uses move; script corpus + bench hashes unchanged; `range_arith` pins unmoved; published-lib gate green | Open |
+| **A2** — interpreter: `OpVarNarrow(pos, min, kind)` / `OpPutNarrow(pos, min, kind)` read and write a narrow local's 8-byte slot in the field encoding through the `Store` getters and setters the field ops call; a narrow by-value parameter re-encoded at entry; the debugger and every other frame reader decode | decision 1, § P0 | value parity of the corpus across backends; `a-link-to-a-narrow-integer-local-reads-and-writes-it.loft` unmoved; `LOFT_VERIFY_STACK` sweep clean | Open |
 | **A3** — retire `is_narrow_store_place`; `&u8` to a field or element links | decision 1 | `tests/scripts/167-a-narrow-link-into-a-store.loft`, both backends, falsified against A2's tip; `a-link-to-a-narrow-integer-store-place-is-refused.loft` retired; `D-bind-39` closed | Open |
 | **B1** — a `&` parameter takes a scalar field or element (the bind's lowering at the call; `is_addressable` asks the place set `is_amp_place` asks) | decision 3 | `bump(p.n)`, `bump(v[i])`, `bump(o.inner.k)` write through, both backends; the refusal keeps a literal and a call result out | Open |
 | **B2** — loft#1603: a `&`-bound scalar local passed to a `&` parameter compiles on native (`unsafe { &mut *var_c }`, the tuple arm's form) | loft#1603 | the issue's cell answers `6 11` on both backends; falsified against B1's tip | Open |
@@ -141,19 +206,21 @@ reaches, and the review reads that list against the cells by hand.
 
 ## Phase ordering
 
-1. P0, because it sizes A2 and can kill decision 1 for the cost of a compile.
-2. A1 → A2 → A3: native first, since its emission diff is the exact comparison; the
+1. P0, because it sizes A2 and can kill decision 1 for the cost of a compile.  Done.
+2. A0 before everything: it is a silent-wrong on `main`, and A1's encode-at-write assumes every
+   write to a narrow slot has already been range-checked.
+3. B1 → B2 → B3 next: independent of A, smaller, and B3 stops loft#1602's silent loss.
+4. A1 → A2 → A3: native first, since its emission diff is the exact comparison; the
    interpreter follows against parity; the refusal comes off last, when both agree.
-3. B1 → B2 → B3: independent of A, and B3 stops the silent loss before C exists.
-4. C1 → C2 → C3: C1 needs nothing from A; C3 needs the instantiation entry point @PLN165 E
+5. C1 → C2 → C3: C1 needs nothing from A; C3 needs the instantiation entry point @PLN165 E
    leaves, so it waits for that arc if E moves it.
-5. D closes with the last of A3/C3.
+6. D closes with the last of A3/C3.
 
 ## Open design questions
 
-1. **A2's cure** — new narrow frame-slot ops, or narrow access through the stack-store `DbRef`
-   with `OpGetByte`/`OpSetByte`?  The first is faster and more code; the second reuses the
-   field ops that already carry the `min` offset and the nullable twins.  P0 answers it.
+1. **A2's cure** — *answered by P0*: two fused frame ops that call the field ops' `Store`
+   getters and setters on a `DbRef` naming the slot, so the encoding keeps one home and every
+   `OpVarInt` / `OpPutInt` site for a narrow local swaps one op for one op.
 2. **Tuple members** — a tuple local is a frame blob (`element_stack_size`); does storing a
    narrow member at width change that layout, and is a store tuple's member already narrow?
    Measure in P0 before A1 touches tuples; the safe answer is to leave tuple members widened
