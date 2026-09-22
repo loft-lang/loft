@@ -1364,9 +1364,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             if build == u32::MAX {
                 return false;
             }
-            // Named as a `for`'s snapshot is, which the scope pass releases with
-            // `OpFreeScratch` rather than as a record of the element type.
+            // Named as a `for`'s snapshot is, and released by this walk itself —
+            // `OpFreeScratch` after the loop, which nothing leaves early — so no scope-exit
+            // free is owed: `skip_free`, where a `for`'s snapshot is a VIEW typed with its
+            // collection's deps.  Owned and unmarked, it read as a leaked reference to the
+            // debug build's `check_ref_leaks`.
             let s = self.create_unique("hash_scratch", &elem_tp);
+            self.vars.set_skip_free(s);
             ops.push(v_set(
                 s,
                 Value::Call(build, vec![coll.clone(), Value::Int(i32::from(tp_id))]),
