@@ -8512,6 +8512,10 @@ impl Parser {
         let before_work: std::collections::HashSet<u16> =
             self.vars.work_texts().into_iter().collect();
         let outer_set_call_refs = std::mem::take(&mut self.set_call_refs);
+        let mut code = code;
+        if matches!(self.data.def(d_nr).returned(), Type::Optional(_)) {
+            Self::keep_returned_tuple_reads(&mut code, true);
+        }
         let mut code = self.rewrite_generic_type_defaults(code);
         self.settle_parametric_yield_copies(&mut code);
         self.stage_text_self_reads(&mut code, tmpl_vars);
@@ -10691,6 +10695,38 @@ impl Parser {
             .map(|_| self.vars.caller_text_buf(&mut self.lexer))
             .collect();
         self.push_fnref_text_buffers(args, &work_vars);
+    }
+
+    /// A NULLABLE result at a tuple `T` (`fn first<T>(v: vector<T>) -> T? { v[0] }`) is the
+    /// stored element's REFERENCE — `(τ, σ)?` has no stack spelling, and
+    /// `an-absent-tuple-meets-the-type-its-author-declares` pins what it answers — so a tuple
+    /// element read that IS the result keeps the reference instead of being unboxed
+    /// (`TV_TUPLE_READ`).  Unboxed, the return boxed the tuple again into a record of its own
+    /// that no caller freed: one `__tuple` store leaked per call.  `tail` says whether `v`
+    /// is in a result position: the body's tail, a tail block's tail, a tail `if`'s arms, and
+    /// every `return`'s value wherever it stands.
+    fn keep_returned_tuple_reads(v: &mut Value, tail: bool) {
+        match v {
+            Value::Block(bl)
+                if tail && bl.name == Self::TV_TUPLE_READ && bl.operators.len() == 1 =>
+            {
+                *v = bl.operators.remove(0);
+            }
+            Value::Span(b) => Self::keep_returned_tuple_reads(&mut b.1, tail),
+            Value::Return(inner) => Self::keep_returned_tuple_reads(inner, true),
+            Value::Block(bl) => {
+                let last = bl.operators.len().saturating_sub(1);
+                for (i, op) in bl.operators.iter_mut().enumerate() {
+                    Self::keep_returned_tuple_reads(op, tail && i == last);
+                }
+            }
+            Value::If(c, t, e) => {
+                Self::keep_returned_tuple_reads(c, false);
+                Self::keep_returned_tuple_reads(t, tail);
+                Self::keep_returned_tuple_reads(e, tail);
+            }
+            _ => v.for_each_child_mut(&mut |child| Self::keep_returned_tuple_reads(child, false)),
+        }
     }
 
     fn rewrite_generic_type_defaults(&mut self, val: Value) -> Value {
