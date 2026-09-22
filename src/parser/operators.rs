@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use super::{
-    AmpHead, Data, IntegerSpec, Level, OPERATORS, Parser, Position, Type, Value, diagnostic_format,
-    rename, to_default, v_block, v_if, v_set,
+    AmpHead, Data, IntegerSpec, Level, OPERATORS, Parser, Position, Type, VOID_LEFT_OPERATORS,
+    Value, diagnostic_format, rename, to_default, v_block, v_if, v_set,
 };
 
 // Operator parsing and type dispatch.
@@ -1313,8 +1313,40 @@ impl Parser {
             // consuming a token that's actually the start of the *next*
             // statement — e.g. `if cond { return 0; }\n -1` where `-1` is
             // the function's tail expression, not `void - 1`.
+            //
+            // An operator that cannot BEGIN an expression is not that ambiguity: after a void
+            // operand it is this operand's, and the program is wrong.  Returning here left the
+            // operator unread, so `assert(f(v) == 5, …)` reported the `)` it then expected
+            // and three errors after it, and never that `f(v)` has no value.  Name it, and
+            // read the right-hand side so the parse stays aligned.
             if matches!(current_type, Type::Void) {
-                return current_type;
+                let at = self.lexer.peek_pos().clone();
+                let Some(op) = OPERATORS[precedence]
+                    .iter()
+                    .copied()
+                    .find(|op| VOID_LEFT_OPERATORS.contains(op) && self.lexer.peek_token(op))
+                else {
+                    return current_type;
+                };
+                self.lexer.has_token(op);
+                if !self.first_pass {
+                    diagnostic_at!(
+                        self.lexer,
+                        &at,
+                        Level::Error,
+                        "`{op}` needs a value on its left, and the expression before it answers nothing"
+                    );
+                }
+                let mut rhs = Value::Null;
+                let mut rhs_parent = Type::Unknown(0);
+                self.parse_operators(&Type::Unknown(0), &mut rhs, &mut rhs_parent, precedence + 1);
+                current_type = if precedence <= 3 && op != "??" {
+                    Type::Boolean
+                } else {
+                    Type::Unknown(0)
+                };
+                *code = Value::Null;
+                continue;
             }
             // Plan-07 phase 1, step 1.B.1 — capture the operator's source
             // position *before* `has_token` consumes it.  `op_pos` is then

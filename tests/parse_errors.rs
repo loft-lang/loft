@@ -271,6 +271,21 @@ fn empty_return() {
         .error("Expect expression after return at empty_return:1:53");
 }
 
+/// A binary operator that cannot begin an expression, after an operand that answers
+/// nothing, is that operand's: named once at the operator, with the right-hand side read so
+/// nothing cascades (it reported "Expect token )" and three errors after it).
+#[test]
+fn an_operator_after_a_void_call_names_it() {
+    code!("fn f(n: integer) { assert(n > 0, \"n\"); }\nfn test() { assert(f(1) == 5, \"x\"); }")
+        .error("`==` needs a value on its left, and the expression before it answers nothing at an_operator_after_a_void_call_names_it:2:25");
+}
+
+#[test]
+fn a_coalesce_after_a_void_call_names_it() {
+    code!("fn f(n: integer) { assert(n > 0, \"n\"); }\nfn test() { x = f(1) ?? 3; assert(x == 3, \"x\"); }")
+        .error("`??` needs a value on its left, and the expression before it answers nothing at a_coalesce_after_a_void_call_names_it:2:22");
+}
+
 #[test]
 fn wrong_void() {
     code!("fn rout(a: integer) {if a > 4 {return 12}}\nfn test() {}")

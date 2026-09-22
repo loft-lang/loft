@@ -1279,6 +1279,14 @@ static OPERATORS: &[&[&str]] = &[
     &["as"],
 ];
 
+/// The binary operators that cannot BEGIN an expression, so one that follows an operand
+/// answering nothing belongs to that operand (`parse_operators`).  `-`, `+`, `|` and `&` are
+/// absent: each can open the NEXT statement (`-1`, a lambda, a reference).
+static VOID_LEFT_OPERATORS: [&str; 18] = [
+    "??", "||", "or", "&&", "and", "==", "!=", "<", "<=", ">", ">=", "^", "<<", ">>", "*", "/",
+    "%", "**",
+];
+
 static SKIP_TOKEN: [&str; 8] = ["}", ".", "<", ">", "^", "+", "-", "#"];
 /// Tokens that END a `{x:…}` spec rather than starting its WIDTH expression.  The radix
 /// LETTERS are deliberately absent: [`radix_for`] is their one home, and this list plus
