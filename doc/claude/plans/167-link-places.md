@@ -98,6 +98,22 @@ function (`__retbuf`), so its stack form cannot change.
      published library declares a narrow `&` parameter) so the guards carry the weight.  It also
      leaves a closure capture and a generator frame (R9) untouched.
    The recommendation is the second.  A1/A2 do not start until this is answered.
+   **Cells the scope decision owes, whichever way it goes** (2026-09-22): a narrow by-value
+   PARAMETER linked in its callee (re-encoded at entry — only if linked, under the second
+   option); a `&u8` parameter RE-POINTED to a local of the callee (`c = &y`: a re-point takes an
+   address too); a LOOP VARIABLE linked in the body; a `par` worker's capture (R9's shape); a
+   local first bound inside an `if` ARM and read after it — the pre-declaration writes `0`, and
+   a zero byte decodes as the type's MINIMUM (`-128` for an `i8` no arm bound); the decode and
+   encode seams `n: integer = x`, `x = n as u8`, `x + 1`, `"{x}"`; a narrow RETURN, which native
+   already answers as a two's-complement Rust `i8` (a third representation, kept: it is the
+   convention between loft functions); a null landing in a linked `u8?` as the sentinel code,
+   and `x == null` testing that code; and every reader of a frame slot that is not the program —
+   `loft debug` / `setValue`, `introspect`, reflection, `LOFT_VAR_TABLE`, `LOFT_VERIFY_STACK`'s
+   shadow tags (the falsifier: an `OpPutNarrow` write tags the slot and an 8-byte read must be
+   reported).  Unaffected: `(R-Scalar)`'s hoist temps (wide, never linked), tuple members
+   (refused as targets; a whole-tuple link reads members through the element ops), and
+   `range_arith`'s `type_range` (the value range is the encoding's invariant).  The "linked"
+   fact is recorded on pass 1 and read on pass 2, as `ref_linked_tuple_locals` already is.
 2. **Text: the kind is static, so it lives in the type; the stack kind keeps its shortcut.**
    `RefVar(Text)` records whether the link names a stack text or a store text.  The stack kind
    is today's `*mut String`, untouched.  The store kind is a `DbRef` plus field: its read is the
