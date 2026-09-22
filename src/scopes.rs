@@ -2765,18 +2765,21 @@ fn def_reshape_refusals(
                 if j == k || reported.contains(&(k, j)) {
                     continue;
                 }
-                // Only a parameter that can NAME an element is a hazard; a scalar or a text
-                // copies, so there is nothing pinned to a position.
+                // Only a parameter that can NAME an element is a hazard; a plain scalar or a
+                // text copies, so there is nothing pinned to a position.  A scalar `&`
+                // parameter links to the element itself (@FR-B-Ref-Lvalue), so it names one.
                 let Some(attr) = cdef.attributes.get(j) else {
                     continue;
                 };
+                let scalar_link =
+                    matches!(&attr.typedef, Type::RefVar(inner) if crate::data::is_scalar(inner));
                 let ptp = match &attr.typedef {
                     Type::RefVar(inner) => inner.as_ref(),
                     other => other,
                 };
                 // `@FR-N-Shape` — `heap_def_nr`, which peels `τ?`: a nullable record or
                 // struct-enum parameter aliases its element exactly as the dense one does.
-                if ptp.heap_def_nr().is_none() {
+                if ptp.heap_def_nr().is_none() && !scalar_link {
                     continue;
                 }
                 if !arg_references_element_in(arg, place, &def.code, function, data) {

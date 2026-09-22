@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A text field or element handed to a `&text` parameter is refused, naming the cure: a text
+// place is a string record in a store, and a `&text` parameter reaches only a text variable, so
+// the call could only hand the callee a copy — and its write would be lost.
+// `(B-Ref-Reshape)` refuses a link it cannot honour rather than downgrade it to a copy.
+//
+// Before loft#1602 both backends compiled `app(o.s)` with `fn app(t: &text) { t = t + "!" }`
+// and left `o.s` unchanged: a silent lost write.  This is the stopgap; @PLN167 C3 makes the
+// same call link to the place.
+//
+// A text VARIABLE still links, and a temporary (a literal, a computed text) still takes a
+// read-only work copy — nothing names it, so nothing can miss the write.  The standard
+// library's `directory("sub")` relies on that.  Neither may be refused.
+//
+// Every expected error below is matched exactly once.
+//
+// CHANNEL: the expected diagnostics, one per refused text place.
+//
+// @EXPECT_ERROR: a `&text` parameter cannot link to a text field or element
+// @EXPECT_ERROR: a `&text` parameter cannot link to a text field or element
+// @EXPECT_ERROR: a `&text` parameter cannot link to a text field or element
+
+struct O { s: text }
+
+fn app(t: &text) { t = t + "!"; }
+fn via_ref(q: &O) { app(q.s); }
+
+fn main() {
+  o = O { s: "cc" };
+  app(o.s);
+  v: vector<text> = ["a"];
+  app(v[0]);
+  loc = "x";
+  app(loc);
+  app("lit");
+  d = directory("sub");
+  via_ref(o);
+  println("{o.s} {v} {loc} {len(d) > 0}");
+}

@@ -3662,31 +3662,7 @@ use a separate collection or add after the loop"
                 && is_scalar(&s_type)
                 && !Self::is_narrow_store_place(&s_type, code)
             {
-                match code.unspan() {
-                    // The bare element op IS the place.  An enum element arrives in this
-                    // spelling on the first pass, before its enum getter wraps it; without
-                    // this arm the first pass typed the local as the enum and the second as
-                    // its link.  It sits above the `OpGet*` arm, whose prefix test would
-                    // otherwise take `OpGetVector` itself.
-                    Value::Call(g, _)
-                        if matches!(self.data.def(*g).name(), "OpGetVector" | "OpVectorRef") =>
-                    {
-                        Some(code.unspan().clone())
-                    }
-                    Value::Call(g, gargs) if self.data.def(*g).name().starts_with("OpGet") => {
-                        if gargs.first().is_some_and(|a| {
-                            matches!(a.unspan(), Value::Call(d, _)
-                                if matches!(self.data.def(*d).name(), "OpGetVector" | "OpVectorRef"))
-                        }) {
-                            Some(gargs[0].clone())
-                        } else if let [base, fld] = gargs.as_slice() {
-                            Some(self.cl("OpGetField", &[base.clone(), fld.clone()]))
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                }
+                self.scalar_place_ref(code)
             } else {
                 None
             };
@@ -7874,6 +7850,41 @@ use a separate collection or add after the loop"
         }
         let expected = self.coalesce_not_null(&Value::Var(v), &tp);
         (*cond.unspan() == expected).then_some(v)
+    }
+
+    /// The place a scalar read names, as the reference a `&` link to it holds: a vector
+    /// element's own `OpGetVector` / `OpVectorRef`, or `OpGetField(base, fld)` for a field read
+    /// `OpGet*(base, fld)`.  `None` for a read that names no place this way.
+    ///
+    /// @FR-B-Ref-Lvalue — the ONE lowering of a scalar field or element to a link, asked by the
+    /// `&` bind (`c = &p.n`) and by a `&` parameter's argument (`bump(p.n)`), so the two cannot
+    /// link to different places.  The caller decides whether the place may be linked at all
+    /// (a narrow store place may not: D-bind-39).
+    pub(crate) fn scalar_place_ref(&mut self, code: &Value) -> Option<Value> {
+        match code.unspan() {
+            // The bare element op IS the place.  An enum element arrives in this spelling on
+            // the first pass, before its enum getter wraps it; without this arm the first pass
+            // typed the local as the enum and the second as its link.  It sits above the
+            // `OpGet*` arm, whose prefix test would otherwise take `OpGetVector` itself.
+            Value::Call(g, _)
+                if matches!(self.data.def(*g).name(), "OpGetVector" | "OpVectorRef") =>
+            {
+                Some(code.unspan().clone())
+            }
+            Value::Call(g, gargs) if self.data.def(*g).name().starts_with("OpGet") => {
+                if gargs.first().is_some_and(|a| {
+                    matches!(a.unspan(), Value::Call(d, _)
+                        if matches!(self.data.def(*d).name(), "OpGetVector" | "OpVectorRef"))
+                }) {
+                    Some(gargs[0].clone())
+                } else if let [base, fld] = gargs.as_slice() {
+                    Some(self.cl("OpGetField", &[base.clone(), fld.clone()]))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn guard_declared_range(

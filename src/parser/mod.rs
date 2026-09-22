@@ -5701,6 +5701,14 @@ impl Parser {
                 let orig = std::mem::replace(code, Value::Null);
                 if matches!(orig, Value::Var(_)) {
                     *code = self.cl("OpCreateStack", &[orig]);
+                } else if crate::data::is_scalar(ref_tp)
+                    && Self::is_amp_place(&orig, &self.data)
+                    && let Some(place) = self.scalar_place_ref(&orig)
+                {
+                    // A scalar field or element: the parameter links to the place itself, the
+                    // reference the `&` bind would hold (@FR-B-Ref-Lvalue).  A copy in a work
+                    // variable would take the callee's write and drop it.
+                    *code = place;
                 } else {
                     // produce a `Value::Insert` so that scope
                     // analysis (`scopes::scan_args`) hoists the
@@ -14718,9 +14726,52 @@ impl Parser {
             // also accept "addressable" expressions — vector element access
             // (`v[i]`), field access (`s.field`), and chains thereof — since these
             // produce a DbRef into existing mutable storage.
+            // @FR-B-Ref-Lvalue — a SCALAR field or element is a place too, and a `&` parameter
+            // links to it through the lowering the `&` bind uses (`scalar_place_ref`, in
+            // `convert`) — except a narrow integer store place, which no link can honour yet
+            // (D-bind-39), refused here in the bind's own words.
+            let scalar_place = matches!(&tp, Type::RefVar(inner) if crate::data::is_scalar(inner))
+                && !matches!(actual_code.unspan(), Value::Var(_))
+                && Self::is_amp_place(&actual_code, &self.data);
+            // loft#1602 — a `&text` parameter handed a text FIELD or ELEMENT.  A text place is a
+            // string record in a store, and a `&text` parameter today reaches only a text
+            // variable, so `convert` would hand the callee a work copy and drop its write.
+            // `(B-Ref-Reshape)`: refuse a link that cannot be honoured rather than downgrade it
+            // to a copy.  A temporary (a literal, a computed text) keeps its work copy: nothing
+            // names it, so nothing can miss the write.
+            if matches!(&tp, Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+                && self.is_text_place(&actual_code)
+            {
+                if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "a `&text` parameter cannot link to a text field or element, so the \
+                         function's write would be lost. Copy it into a local, pass the local and \
+                         write it back (`t = o.s; f(t); o.s = t`)"
+                    );
+                }
+                actual.push(actual_code);
+                continue;
+            }
+            if scalar_place && Self::is_narrow_store_place(actual_type, &actual_code) {
+                if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`&` cannot link to an integer element or field that is stored in fewer \
+                         than 8 bytes, because a link reads and writes a whole integer. Copy it \
+                         into a local and write it back (`x = v[i]; ...; v[i] = x`), or declare \
+                         the element or field as `integer`"
+                    );
+                }
+                actual.push(actual_code);
+                continue;
+            }
             if let Type::RefVar(inner) = &tp
                 && !matches!(inner.as_ref(), Type::Text(_))
                 && !matches!(&actual_code, Value::Var(_))
+                && !scalar_place
                 && !Self::is_addressable(&actual_code, &self.data)
             {
                 // Defer on pass 1 (#375): a field access on a struct whose
@@ -14828,7 +14879,29 @@ impl Parser {
             // is not null-transparent; an overload TRIAL (`!report`) and a null-transparent
             // callee (`abs(x)` propagates the null through a runtime guard) only test the fit.
             let arg_at = actual_code.span_pos().cloned();
-            let accepted = if report && callarg_nstore {
+            // A scalar PLACE is linked, not stored, so @FR-N-Store's "a nullable value becomes
+            // null there" does not describe it, and its cure (`?`) would turn the place into a
+            // value.  What can go wrong is that the element is absent: a link to an absent place
+            // reads null (C80), so a callee whose `&τ` is non-null would see one.
+            let linked_place = scalar_place && report && !self.first_pass;
+            if linked_place
+                && matches!(actual_type, Type::Optional(_))
+                && matches!(&tp, Type::RefVar(pointee) if !matches!(pointee.as_ref(), Type::Optional(_)))
+            {
+                let msg = diagnostic_format(
+                    Level::Warning,
+                    format_args!(
+                        "the element handed to parameter {} of `{callee_name}` may not exist, and \
+                         the parameter is the non-null `{}` — a link to an absent element reads \
+                         null; guard the index (`if i < len(v)`) or declare the parameter `{}?`",
+                        nr + 1,
+                        tp.source_name(&self.data),
+                        tp.source_name(&self.data),
+                    ),
+                );
+                self.nstore_diag(arg_at.as_ref(), Level::Warning, &msg);
+            }
+            let accepted = if report && callarg_nstore && !linked_place {
                 self.convert_store(
                     &mut actual_code,
                     actual_type,
@@ -18719,6 +18792,14 @@ impl Parser {
             }
             _ => false,
         }
+    }
+
+    /// Is this a read of a text FIELD or ELEMENT — `OpGetText(<place>, fld)` over a variable, a
+    /// field or an element, the spelling `o.s` and `v[i]` of a `text` take?
+    fn is_text_place(&self, code: &Value) -> bool {
+        matches!(code.unspan(), Value::Call(d, args)
+            if self.data.def(*d).name() == "OpGetText"
+                && args.first().is_some_and(|a| Self::is_amp_place(a, &self.data)))
     }
 
     /// Is this `&` operand an integer STORE place narrower than 8 bytes — an element or a field
