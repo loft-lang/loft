@@ -1,0 +1,13 @@
+// D11 — a callback answering null on one arm: U is integer, the null an absent element.
+// @EXPECT: null|2|2
+struct Grid<T> { w: integer, cells: vector<T> }
+fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
+  out: vector<U> = [];
+  for c in g.cells { out += [f(c)]; }
+  Grid { w: g.w, cells: out }
+}
+fn main() {
+  g = Grid { w: 1, cells: [1, 2] };
+  r = map_grid(g, |x| { if x > 1 { x } else { null } });
+  println("{r.cells[0]}|{r.cells[1]}|{len(r.cells)}");
+}

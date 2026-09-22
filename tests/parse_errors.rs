@@ -4670,6 +4670,15 @@ fn a_short_lambda_alone_cannot_bind_a_generic_literal() {
         .error("`Th { … }` cannot tell what T is — the `|…|` lambda in `f` takes its types from the field; spell it `fn(…) -> <type> { … }`, or give the binding its type, `x: Th<integer> = Th { … }` at a_short_lambda_alone_cannot_bind_a_generic_literal:2:17");
 }
 
+/// @PLN165 D11 — a variable bound only by a callback's return: a `|…|` lambda that answers
+/// only `null` names no type, so the call is refused naming the variable (it bound `U` to
+/// `null` and minted a `Grid<null>` with no layout).
+#[test]
+fn a_callback_answering_only_null_binds_no_variable() {
+    code!("struct Grid<T> { w: integer, cells: vector<T> }\nfn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> { out: vector<U> = []; for c in g.cells { out += [f(c)]; } Grid { w: g.w, cells: out } }\nfn test() { g = Grid { w: 1, cells: [3] }; r = map_grid(g, |x| { null }); assert(len(r.cells) == 1, \"\"); }")
+        .error("`map_grid` cannot tell what U is — no argument's type names it (a `null`, or a lambda that answers only `null`, names none) at a_callback_answering_only_null_binds_no_variable:3:74");
+}
+
 /// What a value reports points where its hand-written twin's does: the literal's second read
 /// replays the first read's cursor, not the place the first read stopped (after `};`).
 #[test]

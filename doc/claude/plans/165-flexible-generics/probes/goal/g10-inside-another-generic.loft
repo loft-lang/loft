@@ -1,0 +1,15 @@
+// D11 — the call written inside another generic, which hands its own callback on.
+// @EXPECT: 2|4|x!
+struct Grid<T> { w: integer, cells: vector<T> }
+fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
+  out: vector<U> = [];
+  for c in g.cells { out += [f(c)]; }
+  Grid { w: g.w, cells: out }
+}
+fn twice_map<A, B>(g: Grid<A>, f: fn(A) -> B) -> Grid<B> { map_grid(g, f) }
+fn main() {
+  g = Grid { w: 1, cells: [1, 2] };
+  d = twice_map(g, |x| { x * 2 });
+  t = twice_map(Grid { w: 1, cells: ["x"] }, |s| { "{s}!" });
+  println("{d.cells[0]}|{d.cells[1]}|{t.cells[0]}");
+}

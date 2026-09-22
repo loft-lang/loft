@@ -4251,7 +4251,7 @@ impl Parser {
         orig
     }
 
-    /// @PLN165 D4 — the instance a literal of the generic struct `template` builds.  The
+    /// @PLN165 D4 (@FR-G-Type) — the instance a literal of the generic struct `template` builds.  The
     /// `expected` instance (a binding's annotation, a parameter) where one applies, as `v:
     /// vector<integer> = []` takes its element type from the annotation — unless the literal
     /// is the RECEIVER of a postfix (`Pair { k: 1, v: "a" }.swap()`), whose expected type is

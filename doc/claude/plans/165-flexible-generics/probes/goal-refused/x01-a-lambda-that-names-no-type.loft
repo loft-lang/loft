@@ -1,0 +1,13 @@
+// D11 — a short lambda that answers only `null` names no `U`: refused, as a `map` whose
+// callback gives nothing is.
+struct Grid<T> { w: integer, cells: vector<T> }
+fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
+  out: vector<U> = [];
+  for c in g.cells { out += [f(c)]; }
+  Grid { w: g.w, cells: out }
+}
+fn main() {
+  g = Grid { w: 1, cells: [3] };
+  r = map_grid(g, |x| { null });
+  println("{len(r.cells)}");
+}

@@ -2769,12 +2769,16 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **330** |
+| **329** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-22, @PLN165 D11 on `tuxedo-165-generics`: **885 · 551 · 5 · 329**, re-pinned at opaque
+329, opaque tests 1313 — the generic vector-element write peels its binding (a `τ?` element is
+`τ`'s shape) and names the tuple case; one existing function moved to the seeing side.)
 
 (2026-09-22, @PLN165 D10 on `tuxedo-165-generics`: **882 · 547 · 5 · 330**, re-pinned at opaque
 330, opaque tests 1313 — the variable table's substitution names the `Optional` arm its

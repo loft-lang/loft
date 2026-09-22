@@ -1,0 +1,15 @@
+// D11 — an assignment reading its own destination in an instance at `text`: staged as the
+// parse stages it for a text variable (P223), or the interpreter hands the call the cleared
+// value (`c` for `abc`; native answered right).
+// @EXPECT: abc|abb|xx|6
+fn fold<T, U>(v: vector<T>, init: U, f: fn(U, T) -> U) -> U { acc = init; for x in v { acc = f(acc, x); } acc }
+fn step<T>(init: T, f: fn(T) -> T) -> T { acc = init; acc = f(acc); acc = f(acc); acc }
+fn glue<T: Printable>(a: T, b: T) -> text { "{a}{b}" }
+fn twice<T: Printable>(x: T) -> text { r = "{x}"; r = glue(r, "{x}"); r }
+fn main() {
+  a = fold(["a", "b", "c"], "", |s, x| { "{s}{x}" });
+  b = step("a", |s| { "{s}b" });
+  c = twice("x");
+  n = fold([1, 2, 3], 0, |s, x| { s + x });
+  println("{a}|{b}|{c}|{n}");
+}

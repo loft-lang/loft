@@ -1,0 +1,19 @@
+// D11 — README § Goal: a generic struct, a two-variable generic called with a short lambda
+// (`U` bound from the lambda's return), and a bounded generic beside a concrete member.
+// @EXPECT: tiles:2|[3][5]|[a][b]|5|2
+struct Tile { height: integer, name: text }
+fn to_text(self: Tile) -> text { self.name }
+struct Grid<T> { w: integer, cells: vector<T> }
+fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
+  out: vector<U> = [];
+  for c in g.cells { out += [f(c)]; }
+  Grid { w: g.w, cells: out }
+}
+fn show<T: Printable>(g: Grid<T>) -> text { r = ""; for c in g.cells { r += "[{c.to_text()}]"; } r }
+fn show(g: Grid<Tile>) -> text { "tiles:{len(g.cells)}" }
+fn main() {
+  tiles = Grid { w: 2, cells: [Tile { height: 3, name: "a" }, Tile { height: 5, name: "b" }] };
+  heights = map_grid(tiles, |t| { t.height });
+  names = map_grid(tiles, |t| { t.name });
+  println("{show(tiles)}|{show(heights)}|{show(names)}|{heights.cells[1]}|{heights.w}");
+}

@@ -1,0 +1,15 @@
+// D11 — a value enum as the element and as the callback's result.
+// @EXPECT: 1|0|Blue
+enum Color { Red, Blue }
+struct Grid<T> { w: integer, cells: vector<T> }
+fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
+  out: vector<U> = [];
+  for c in g.cells { out += [f(c)]; }
+  Grid { w: g.w, cells: out }
+}
+fn main() {
+  g = Grid { w: 1, cells: [Color.Red, Color.Blue] };
+  n = map_grid(g, |c| { if c == Color.Blue { 0 } else { 1 } });
+  back = map_grid(n, |k| { if k == 0 { Color.Blue } else { Color.Red } });
+  println("{n.cells[0]}|{n.cells[1]}|{back.cells[1]}");
+}

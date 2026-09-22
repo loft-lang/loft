@@ -1,0 +1,14 @@
+// D11 — a short lambda returning a struct: `U` is the struct, and the result is a Grid of it.
+// @EXPECT: 3:6|5:10
+struct Pt { x: integer, y: integer }
+struct Grid<T> { w: integer, cells: vector<T> }
+fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
+  out: vector<U> = [];
+  for c in g.cells { out += [f(c)]; }
+  Grid { w: g.w, cells: out }
+}
+fn main() {
+  g = Grid { w: 1, cells: [3, 5] };
+  p = map_grid(g, |x| { Pt { x: x, y: x * 2 } });
+  println("{p.cells[0].x}:{p.cells[0].y}|{p.cells[1].x}:{p.cells[1].y}");
+}

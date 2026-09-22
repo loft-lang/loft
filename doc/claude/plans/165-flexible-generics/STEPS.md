@@ -908,6 +908,45 @@ README.md § Goal as ONE guard in `tests/scripts/`: `struct Grid<T>`, a two-vari
 `map_grid<T, U>` called with a short lambda, and a generic `show` beside a concrete one —
 every arc in one file.  Closes the plan.
 
+- **Built** (2026-09-22).  [goal/](probes/goal/) g01–g12, green on both backends; the guard is
+  `the-goal-program-of-flexible-generics`.  The goal program was refused — "expected U, got
+  integer on return from block": the callback's hint (`callee_param_hint`) handed the short
+  lambda `fn(Tile) -> U` with `U` bound by no argument yet.  A return naming such a variable
+  is left open now, so the body declares it (loft#945's rule for `map`'s callback) and the
+  call binds `U` from the lambda's type; the hint is also closed (`close_open`), so a
+  callback typed by the generic struct itself (`fn(Grid<T>) -> integer`) is handed the call's
+  instance — it "bound T to T".  The cells found two more:
+  - an instance at `text` answered WRONG on the interpreter: `acc = f(acc)` in `fold<T, U>`
+    at `U = text` gave `c` for `abc` (native `abc`), since A6 let a short lambda reach a
+    generic.  The parse stages an assignment that reads its destination through a work text
+    when the variable is text (P223); a template's `acc: T` is not, so each instance where a
+    variable BECAME text now stages it (`stage_text_self_reads`) — guard
+    `an-instance-at-text-stages-a-self-reading-assignment`.
+  - a lambda answering only `null` bound `U` to `null` and died minting `Grid<null>` (an ICE).
+    `null`, `void` and a poisoned value bind nothing in a call either, as in a literal (D4);
+    the refusal names the variable ("`map_grid` cannot tell what U is") and the clash check
+    no longer reads an unbound variable's parameter as a clash on another — probe
+    [goal-refused/](probes/goal-refused/) x01, a `parse_errors` test.
+  The axes the guards held fixed (`matrix_axes.py`: nullable, narrow integer, enum, tuple,
+  an `if` arm) were crossed in g13–g17 and found three more, two of them on main:
+  - a template building a `vector<T>` (a literal `[x]` or an append) at `T = integer?` or at a
+    tuple kept the template's record copy at the variable's row — a SIGSEGV, a store panic or
+    an internal error on both backends, on main too.  The element write peels its binding
+    (`τ?` is `τ`'s shape, @FR-N-Shape) and writes a tuple member by member through the
+    concrete append's own `emit_tuple_set_ops`, lowered in the instance's frame
+    (`TV_TUPLE_ELEM`) — guard `a-generic-builds-a-vector-of-a-nullable-or-a-tuple`.
+  - a tuple's instance key read the registry: spelled `(integer, text)` before its
+    `__tuple<…>` struct existed and by that name after, so one type minted two
+    `Grid<(integer, text)>` and the binding "changed type" to itself.  `identity_spelling`
+    names a tuple as `tuple_def` will, registered or not.
+  - a self-reading `acc = if … { f(acc) } else { acc }` at a text instance was assigned whole:
+    native met `String` against `&String` (E0308, before any staging too), and staging it
+    appended the whole `if`.  A branch now delivers per arm first, as the parse binds one
+    (`try_branch_text_bind`), and each arm is staged on its own.
+  Corpus against D10: IDENTICAL.  Arc D closes here: `G-Type` (an instance is an ordinary
+  type, an open instance is re-read per monomorph, how a literal and a call bind) and
+  `G-Regular` are written into `formal/interfaces.md` and cited at their sites.
+
 ---
 
 ## Arc E — the by-name built-ins become library generics

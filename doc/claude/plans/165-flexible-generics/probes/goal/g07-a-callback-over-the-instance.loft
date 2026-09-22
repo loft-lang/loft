@@ -1,0 +1,10 @@
+// D11 — a callback typed by the generic struct itself (`fn(Grid<T>) -> integer`): the
+// lambda's parameter is the call's instance, not the template's open one.
+// @EXPECT: 4|2
+struct Grid<T> { w: integer, cells: vector<T> }
+fn measure<T>(g: Grid<T>, f: fn(Grid<T>) -> integer) -> integer { f(g) }
+fn main() {
+  g = Grid { w: 2, cells: [1, 2, 3, 4] };
+  t = Grid { w: 1, cells: ["a", "b"] };
+  println("{measure(g, |x| { len(x.cells) })}|{measure(t, |x| { len(x.cells) * x.w })}");
+}

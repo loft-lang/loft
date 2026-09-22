@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D11 — the plan's goal program: a generic struct, a two-variable generic called
+// with a short lambda whose RETURN binds `U` (`map_grid(tiles, |t| { t.height })` is a
+// `Grid<integer>`), and a bounded generic beside a concrete member of its set.  The
+// callback's hint leaves a variable no argument has bound open, so the lambda's body gives
+// it, as `map`'s callback does; a callback typed by the generic struct itself is handed the
+// call's instance.
+//
+// @falsified-at: cd2605b78 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/the-goal-program-of-flexible-generics.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the file.
+//   ARMED: nothing.
+//   WITNESS: on the control `map_grid(tiles, |t| { t.height })` is "expected U, got integer
+//     on return from block": the lambda was handed `U` as its declared return.
+//   HOLDS: nothing else.
+
+struct Tile { height: integer, name: text }
+struct Pt { x: integer, y: integer }
+fn to_text(self: Tile) -> text { self.name }
+struct Grid<T> { w: integer, cells: vector<T> }
+
+fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
+  out: vector<U> = [];
+  for c in g.cells { out += [f(c)]; }
+  Grid { w: g.w, cells: out }
+}
+fn show<T: Printable>(g: Grid<T>) -> text { r = ""; for c in g.cells { r += "[{c.to_text()}]"; } r }
+fn show(g: Grid<Tile>) -> text { "tiles:{len(g.cells)}" }
+fn measure<T>(g: Grid<T>, f: fn(Grid<T>) -> integer) -> integer { f(g) }
+fn twice_map<A, B>(g: Grid<A>, f: fn(A) -> B) -> Grid<B> { map_grid(g, f) }
+
+fn test_the_goal() {
+  tiles = Grid { w: 2, cells: [Tile { height: 3, name: "a" }, Tile { height: 5, name: "b" }] };
+  heights = map_grid(tiles, |t| { t.height });
+  names = map_grid(tiles, |t| { t.name });
+  r = "{show(tiles)}|{show(heights)}|{show(names)}|{heights.cells[1]}|{heights.w}";
+  assert(r == "tiles:2|[3][5]|[a][b]|5|2", r);
+}
+
+fn test_the_lambda_answers_a_struct_a_call_and_a_capture() {
+  g = Grid { w: 1, cells: [3, 5] };
+  p = map_grid(g, |x| { Pt { x: x, y: x * 2 } });
+  k = 10;
+  q = map_grid(g, |x| { x + k });
+  n = map_grid(Grid { w: 1, cells: ["a", "bcd"] }, |s| { len(s) });
+  b = map_grid(n, |m| { m > 1 });
+  assert(p.cells[1].y == 10 && q.cells[0] == 13 && n.cells[1] == 3 && b.cells[1], "shapes");
+}
+
+fn test_a_map_of_a_map_and_a_forwarded_callback() {
+  g = Grid { w: 1, cells: ["abc", "abcde"] };
+  r = map_grid(map_grid(g, |s| { len(s) }), |n| { n * 2 + 1 });
+  t = twice_map(Grid { w: 1, cells: ["x"] }, |s| { "{s}!" });
+  assert(r.cells[0] == 7 && r.cells[1] == 11 && t.cells[0] == "x!", "{r.cells[0]} {t.cells[0]}");
+}
+
+fn test_a_callback_answering_null_or_a_tuple() {
+  g = Grid { w: 1, cells: [1, 2] };
+  n = map_grid(g, |x| { if x > 1 { x } else { null } });
+  t = map_grid(g, |x| { (x, if x == 1 { "a" } else { "b" }) });
+  assert(n.cells[0] == null && n.cells[1] == 2 && t.cells[1].1 == "b", "{t.cells[1].1}");
+}
+
+fn test_a_callback_over_the_instance() {
+  g = Grid { w: 2, cells: [1, 2, 3, 4] };
+  t = Grid { w: 1, cells: ["a", "b"] };
+  assert(measure(g, |x| { len(x.cells) }) == 4 && measure(t, |x| { len(x.cells) * x.w }) == 2, "measure");
+}
