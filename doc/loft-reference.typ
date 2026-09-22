@@ -8482,6 +8482,30 @@ pub fn sum < T: Addable > (v: const vector<T>, init: T? = null) -> T
 Sum of vector elements.  Works on any Addable type.  `init` is the identity to start from; leave it out and the element type's own zero is used (0, 0.0). Example: sum(\[10, 20, 12\], 0) == 42 Example: sum(\[10, 20, 12\]) == 42
 
 ```rust
+pub fn reverse < T > (self: vector<T>)
+```
+
+Reverse a vector's elements in place: `reverse(v)` or `v.reverse()`.  A method on `vector`, so a program may define its own `reverse` for its own types beside it.
+
+```rust
+pub fn reserve < T > (self: vector<T>, n: integer)
+```
+
+Give a vector room for `n` elements, so filling it does not grow it step by step: `reserve(v, n)` or `v.reserve(n)`.  Changes neither `len(v)` nor what is in it, and a count the vector already covers does nothing.  A `hash` takes `reserve(h, n)` too.
+
+```rust
+pub fn insert < T > (self: vector<T>, index: integer, elem: T)
+```
+
+Insert `elem` at `index`, moving the elements from there one place up: `insert(v, i, x)` or `v.insert(i, x)`.  Both arguments are values before the vector grows, so an element read from the vector itself (`v.insert(0, v\[1\])`) is the one it was.
+
+```rust
+pub fn sort < T: Ordered > (self: vector<T>)
+```
+
+Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `\<` (`Ordered`) — a struct defining `op \<` sorts by it — and is stable: elements that compare equal keep their order.  A null element sorts first.
+
+```rust
 pub fn sum_of(v: const vector<integer>) -> integer
 ```
 
