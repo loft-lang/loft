@@ -86,6 +86,16 @@ remainder is structural; `mesh_aabb`'s rest is the null-aware float compare.
   measured the same in the same sitting (`git archive <commit> | tar -x -C <dir on DISK>`,
   `CARGO_TARGET_DIR=<dir>/target cargo build --release --lib --bin loft`, then
   `bench/stats.py --only N --loft <dir>/target/release/loft --lib-dir <dir>/target/release`).
+- **A row that reads slower on a function the change did not touch: compare the MACHINE CODE,
+  not only the emission.**  `entity_tick` read +6 % after the push window, reproducibly, on
+  one core, interleaved, on a same-build pair — with its emitted Rust byte-identical.  `nm -S`
+  + `objdump` on both binaries: same size, same 990 instructions, same 26 loops, a different
+  base address, every loop head shifted by 16 mod 64 (the hottest, 9 back-edges, from 16 to
+  32 mod 64).  Code alignment, exposed by three OTHER functions changing size — not the
+  rewrite's doing, and not a regression to chase in it.  Between-session drift is the other
+  class (keyed +8–11 % on native with FLAT ratios: the Rust lane moved with it, and the lane's
+  emission was byte-identical under the new switches).  Separate the two before explaining
+  either: a flat ratio says machine, an identical function at a new address says layout.
 - **The measuring laptop runs ONE heavy job at a time**, and `/tmp` is RAM: a build tree
   there is memory.  `scripts/find_problems.sh --changed` falls back to the long curated set
   while `loft-ffi/Cargo.lock` sits untracked in the tree; run named test binaries instead.
