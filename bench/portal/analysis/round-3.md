@@ -270,6 +270,30 @@ arithmetic 1.3–2.5.
 
 ## P1 — one write declines a whole loop it cannot disturb
 
+**Diagnosis CORRECTED before it was built (2026-09-22).**  The paragraph below blames the
+setter's untypeable target; a four-variant probe (the loop with the setter removed, the same
+loop over an all-scalar record, the nested setter alone) under `LOFT_TRACE_HOIST_DECLINE` says
+otherwise.  The nested setter alone HOLDS the loop's header (`(R-InPlace)` admits an
+`IN_PLACE_SET_OPS` call whatever its target, and `element_target` types the target off the
+field's schema — `hexes: vector<Hex>` — so the scalar walk types it too).  What declines the
+headers is the three `m.chunks[i]?` JOINS: each mints its absent-arm buffer
+(`OpDatabaseNP(__ref_p2_N)`), and `null_buffer_alloc` admitted that mint only for an
+ALL-SCALAR record — `Chunk` holds `hexes: vector<Hex>`, so the mint read as a store writer.
+The restriction was over-conservative: the buffer's store is reachable only through the
+site's temp, rebound on every run, so no loop-invariant path names it and no header or base
+can go stale; a growth of its vector field from the body is a push through a non-pure path,
+declined on its own.  Built as the one-line relaxation of the hidden-buffer allowance
+(`hoist::null_buffer_alloc`; rule text in `formal/rewrites.md` § (R-InPlace)), cells
+`tests/scripts/158-heap-discharge-buffer.loft` h1–h6, pins `tests/heap_discharge.rs`.  The
+join reads then fold through the held base by `(R-Base)`'s join clause on their own.
+**Measured** (`bench/16_consumer_shapes`, `hand_price.sh` on the emission with the allowance on
+and `LOFT_NO_NULL_BUFFER_HOIST=1` as the before, one core, three runs each): `chunk_lookup`
+**1 777 → 816 µs per call (−54 %)**, hash `26d76` — past the ledger's −30 %, because the base
+and the folded joins came together.  Left on the row, unpriced: the range's bound
+`len(m.chunks)` is still a CALL per iteration — `(R-Wrapper)` inlines a one-op wrapper only
+over LEAF arguments (the pre-eval map keys on node addresses), and `m.chunks` is a field
+path; with the header held it should read `__vh_1.len`.
+
 `map_set` (the `chunk_lookup` row) is `for i in 0..len(m.chunks) { if m.chunks[i]?.cx == cx
 && … { m.chunks[i].hexes[k].h_material = mat; return } }`.  The loop hoists NOTHING: the
 write's target is an element of a vector that is itself a FIELD of an element — a path with
