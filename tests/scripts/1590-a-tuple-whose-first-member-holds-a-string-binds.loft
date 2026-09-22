@@ -13,6 +13,16 @@
 // Every expected value is worked out by hand.  The last four cells are controls that were right
 // before: a member 0 with no string, and three parenthesised expressions that are NOT tuples and
 // must keep building in the destination.
+//
+// @falsified-at: afb2e2be2 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1590-a-tuple-whose-first-member-holds-a-string-binds.patch —
+//   interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: the exit code, identically on both backends — the control REFUSES the file at compile
+//   time, so no assertion runs; the assertions are what hold the values once it compiles.
+// WITNESS: on the control the five fault cells are the five errors, "Variable 'a' cannot change
+//   type from vector<text> to (vector<text>, integer)" through 'm' (`vector<(text, integer)>`),
+//   and the four controls raise none.
+// HOLDS: leak, panic and expectations are unmoved; the refusals are the channel.
 
 struct Tx { id: integer, name: text }
 
