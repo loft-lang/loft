@@ -1,5 +1,78 @@
+diff --git b/src/keys.rs a/src/keys.rs
+index e3eb8b00a..6f3caa6aa 100644
+--- b/src/keys.rs
++++ a/src/keys.rs
+@@ -1265,40 +1265,6 @@ pub fn adopt_first_bind_enabled() -> bool {
+     *ON.get_or_init(|| !env_set("LOFT_NO_ADOPT_FIRST_BIND"))
+ }
+ 
+-/// loft#1612 (`@FR-B-Copy`): a `??` chain the AUTHOR parenthesised — `(x ?? y) ?? d`, whose
+-/// subject the parser must hoist into a `__ncc_N` temp — is right-associated in the scopes pass,
+-/// so every operand is an arm again and the destination copies rather than viewing the temp.
+-/// **DEFAULT ON**, both backends.  `LOFT_NO_COALESCE_REASSOC=1` keeps loft#1591's gate (only a
+-/// chain that names its destination): the first bisect step for a wrong value, a leak or a double
+-/// release out of a parenthesised chain.  The FLAT spelling never reaches this pass — `??` is
+-/// right-associative in the parser (`coalesce_left_assoc`).
+-pub fn no_coalesce_reassoc() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| env_set("LOFT_NO_COALESCE_REASSOC"))
+-}
+-
+-/// loft#1612 (`@FR-B-Copy`, `@FR-H-Move`): a `??` chain BLOCK is a sinkable ARM — written out,
+-/// the arm binds the join as a statement of its own would — **DEFAULT ON**, both backends, read
+-/// in the scopes pass.  Only where every arm of that chain is OWNED (`ncc_arms_are_all_owned`):
+-/// an arm that VIEWS a place the program can still reach must be copied into the destination,
+-/// and a written-out `Set` binds what it is given.  `LOFT_NO_CHAIN_ARM_SINK=1` declines the whole
+-/// branch again, as before: the first bisect step for a double release, a leak or an aliased
+-/// record out of a branch with a `??` chain in one of its arms.
+-pub fn no_chain_arm_sink() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| env_set("LOFT_NO_CHAIN_ARM_SINK"))
+-}
+-
+-/// loft#1612 (`@FR-G-Assoc`, `@FR-B-Copy`): `??` is RIGHT-associative, so every operand of a
+-/// chain is an ARM whose bind copies — **DEFAULT ON**, both backends, read at PARSE time.
+-/// `LOFT_COALESCE_LEFT_ASSOC=1` parses `x ?? y ?? d` as `(x ?? y) ?? d` again, whose subject is
+-/// hoisted into a `__ncc_N` temp that VIEWS the operand it chose: the first bisect step for a
+-/// wrong value, a leak or a double release out of a `??` chain of three or more operands.
+-pub fn coalesce_left_assoc() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| env_set("LOFT_COALESCE_LEFT_ASSOC"))
+-}
+-
+ /// loft#1600 (`@FR-H-Drop`, scope-end clause), OPT-IN: a heap local every mention of which
+ /// lies in ONE arm of an `if` is declared in that arm and released at its end, rather than
+ /// pre-initialised at the `if`'s scope and released at that scope's end.  Off by default:
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index 293bf53e8..c92584c5b 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -3258,22 +3258,7 @@ impl Parser {
+             rhs = pending;
+             pending_tp
+         } else {
+-            // loft#1612, `@FR-G-Assoc` — `??` is RIGHT-associative, so its RHS parses at its
+-            // OWN level and a following `?? d` is consumed there.  `??` is associative as a
+-            // VALUE (either grouping answers the first present operand, in the same order,
+-            // short-circuiting the same way), so this changes no program's meaning; what it
+-            // changes is the SHAPE.  Left-associated, `x ?? y ?? d` is `(x ?? y) ?? d`, whose
+-            // subject is not a variable, so it is hoisted into a `__ncc_N` temp — and that
+-            // temp VIEWS the operand it chose, which the destination then binds.  Right-
+-            // associated, every operand is an ARM of a plain `if`, and an arm's bind is the
+-            // one `(B-Copy)` describes: the two-operand spelling has always been right for
+-            // exactly this reason, and this gives the longer chains the same lowering.
+-            let rhs_precedence = if crate::keys::coalesce_left_assoc() {
+-                precedence + 1
+-            } else {
+-                precedence
+-            };
+-            self.parse_operators(rhs_hint, &mut rhs, parent_tp, rhs_precedence)
++            self.parse_operators(rhs_hint, &mut rhs, parent_tp, precedence + 1)
+         };
+         // loft#1003 — the default's END, for the `redundant-coalesce` deletion span.
+         // Taken HERE and not at the caller's tail: by then the cursor has moved past the
 diff --git b/src/scopes.rs a/src/scopes.rs
-index 07e8f0cfa..290a4fe63 100644
+index 6c31f5795..290a4fe63 100644
 --- b/src/scopes.rs
 +++ a/src/scopes.rs
 @@ -3728,40 +3728,15 @@ fn branch_tail_vars(node: &Value) -> Vec<u16> {
@@ -70,7 +143,7 @@ index 07e8f0cfa..290a4fe63 100644
                  true
              }
              Value::Block(bl) if bl.name == "ncc" => {
-@@ -3822,87 +3792,26 @@ fn reassociate_coalesce_chains(code: &mut Value, function: &mut Function, data:
+@@ -3822,94 +3792,26 @@ fn reassociate_coalesce_chains(code: &mut Value, function: &mut Function, data:
                  if !is_present(c, *tmp) || !matches!(held.unspan(), Value::Var(x) if x == tmp) {
                      return false;
                  }
@@ -145,6 +218,13 @@ index 07e8f0cfa..290a4fe63 100644
 -        Some(acc)
 -    }
 -    let mut counter = 0_u32;
+-    // `LOFT_NO_COALESCE_REASSOC=1` keeps loft#1591's gate — only a chain that NAMES its
+-    // destination is right-associated — so a chain the AUTHOR parenthesised keeps the hoisted
+-    // form, whose temp views the operand it chose.  The first bisect step for a wrong value, a
+-    // leak or a double release out of a `??` chain written with parentheses.  The flat spelling
+-    // is right-associated by the PARSER now (loft#1612, `formal/grammar.md` (G-Assoc)) and does
+-    // not reach here at all; what is left for this pass is the grouping the author wrote.
+-    let only_self = crate::keys::no_coalesce_reassoc();
 -    let rewrite = |n: &Value, function: &mut Function, counter: &mut u32| -> Option<Value> {
 +    let rewrite = |n: &Value| -> Option<Value> {
          let Value::Set(dest, val) = n else {
@@ -162,7 +242,7 @@ index 07e8f0cfa..290a4fe63 100644
          if !matches!(val.unspan(), Value::Block(bl) if bl.name == "ncc") {
              return None;
          }
-@@ -3915,7 +3824,7 @@ fn reassociate_coalesce_chains(code: &mut Value, function: &mut Function, data:
+@@ -3922,7 +3824,7 @@ fn reassociate_coalesce_chains(code: &mut Value, function: &mut Function, data:
          // the destination.
          // Each arm is a block of its own, as `sink_set_into_arms` writes them: the rebind may
          // take a snapshot of the record it displaces, registered at the scope it runs in.
@@ -171,7 +251,7 @@ index 07e8f0cfa..290a4fe63 100644
              let arm = |op: Value| {
                  Value::Block(Box::new(Block {
                      name: "sunk arm",
-@@ -3925,34 +3834,37 @@ fn reassociate_coalesce_chains(code: &mut Value, function: &mut Function, data:
+@@ -3932,37 +3834,37 @@ fn reassociate_coalesce_chains(code: &mut Value, function: &mut Function, data:
                      var_size: 0,
                  }))
              };
@@ -198,18 +278,19 @@ index 07e8f0cfa..290a4fe63 100644
 -        // the plain bind that copies: the two-operand chain has always lowered that way
 -        // (`if let Value::Var(_) = code` in the `??` parse), and this gives the longer chains
 -        // the same shape.
--        Some(v_set(
--            dest,
--            right_assoc(&ops, present, &dest_tp, function, counter)?,
--        ))
+-        if only_self {
 +        let last = ops.pop()?;
 +        if !ops
 +            .iter()
 +            .any(|o| matches!(o.unspan(), Value::Var(x) if *x == dest))
 +            && !matches!(last.unspan(), Value::Var(x) if *x == dest)
 +        {
-+            return None;
-+        }
+             return None;
+         }
+-        Some(v_set(
+-            dest,
+-            right_assoc(&ops, present, &dest_tp, function, counter)?,
+-        ))
 +        let mut acc = last;
 +        for o in ops.into_iter().rev() {
 +            let Value::Var(x) = o.unspan() else {
@@ -228,7 +309,46 @@ index 07e8f0cfa..290a4fe63 100644
  }
  
  fn write_out_joined_copies(code: &mut Value, function: &Function, data: &Data) {
-@@ -8531,7 +8443,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+@@ -5630,25 +5532,14 @@ fn buffer_call_uses(ops: &[Value], av: u16, data: &Data) -> usize {
+ /// sites.  Children are rewritten before their parent, so a recorded site nested inside another's
+ /// arm still has its recorded address when it is reached.  A site the scan reached only inside a
+ /// tree it had built itself is not in `code`; the rescan writes that one out as the scan did.
+-fn rewrite_written_out(
+-    code: &mut Value,
+-    vars: &mut Function,
+-    data: &Data,
+-    written: &[(usize, u16)],
+-) -> bool {
+-    fn walk(
+-        n: &mut Value,
+-        vars: &mut Function,
+-        data: &Data,
+-        written: &[(usize, u16)],
+-        hit: &mut bool,
+-    ) {
+-        n.for_each_child_mut(&mut |c| walk(c, vars, data, written, hit));
++fn rewrite_written_out(code: &mut Value, vars: &mut Function, written: &[(usize, u16)]) -> bool {
++    fn walk(n: &mut Value, vars: &mut Function, written: &[(usize, u16)], hit: &mut bool) {
++        n.for_each_child_mut(&mut |c| walk(c, vars, written, hit));
+         let stmt = match &*n {
+             Value::Set(t, val)
+                 if written.contains(&(std::ptr::from_ref::<Value>(val).addr(), *t)) =>
+             {
+-                let stmt = Scopes::sink_set_into_arms(*t, *t, val, vars, data, true);
++                let stmt = Scopes::sink_set_into_arms(*t, *t, val, vars, true);
+                 if stmt.is_some() {
+                     for src in branch_tail_vars(val) {
+                         if var_copy_owns(vars, *t, src) {
+@@ -5666,7 +5557,7 @@ fn rewrite_written_out(
+         }
+     }
+     let mut hit = false;
+-    walk(code, vars, data, written, &mut hit);
++    walk(code, vars, written, &mut hit);
+     hit
+ }
+ 
+@@ -8552,7 +8443,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
          // A join copied into a container is written out per arm before any analysis reads it,
          // so each arm's copy hands its own source over (`formal/heap.md` D-heap-15).
          write_out_joined_copies(&mut orig_code, &orig_vars, data);
@@ -237,17 +357,118 @@ index 07e8f0cfa..290a4fe63 100644
          // Phase 1: the normal scan → apply → set-scope pass.
          let written_out = run_scan_phase(
              data,
-@@ -17104,13 +17016,6 @@ impl Scopes<'_> {
+@@ -8569,7 +8460,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+         // that ran before the scan.  Rewrite exactly those and scan again, so those analyses read
+         // the per-arm form; the confinement rescan below starts from the rewritten pair too.
+         if !written_out.is_empty()
+-            && rewrite_written_out(&mut orig_code, &mut orig_vars, data, &written_out)
++            && rewrite_written_out(&mut orig_code, &mut orig_vars, &written_out)
+         {
+             run_scan_phase(
+                 data,
+@@ -11183,13 +11074,11 @@ impl Scopes<'_> {
+         // handed, for `rewrite_written_out` — with every arm shape the rewrite accepts, a
+         // projection arm beside an owned call included: the rescan's analyses see that
+         // projection's assignment, which this scan's could not.
+-        if writes_out && Self::sink_set_into_arms(v, ov, value, function, data, true).is_some() {
++        if writes_out && Self::sink_set_into_arms(v, ov, value, function, true).is_some() {
+             self.written_out
+                 .push((std::ptr::from_ref(value).addr(), ov));
+         }
+-        if writes_out
+-            && let Some(sunk) = Self::sink_set_into_arms(v, ov, value, function, data, false)
+-        {
++        if writes_out && let Some(sunk) = Self::sink_set_into_arms(v, ov, value, function, false) {
+             // The written-out arms are copies the author could have spelled, so they get what
+             // that spelling gets, BEFORE the first arm is scanned: a per-path flag for each source
+             // a copy hands off (loft#1515 — minted here, because the pre-scan pass saw one
+@@ -17121,16 +17010,9 @@ impl Scopes<'_> {
+         ov: u16,
+         value: &Value,
+         function: &Function,
+-        data: &Data,
+         beside_any: bool,
+     ) -> Option<Value> {
+-        // The chain's own block is a UNIT as an ARM (see `sinkable`), so as the VALUE being
+-        // bound it is not a branch to sink into: `b = e ?? d` is already the statement a sunk
+-        // arm would write, and sinking it would rebuild the same `Set` around it forever.
+-        if matches!(value.unspan(), Value::Block(bl) if bl.name == "ncc") {
+-            return None;
+-        }
+-        fn sinkable(tail: &Value, v: u16, ov: u16, function: &Function, data: &Data) -> bool {
++        fn sinkable(tail: &Value, v: u16, ov: u16, function: &Function) -> bool {
              match tail.unspan() {
                  // The binding itself: written out, that arm is `v = v`, the identity (#330).
                  Value::Var(x) if *x == v || *x == ov => true,
--                // A `??` chain's own temp is sinkable although it is compiler-generated: it
--                // holds one operand of the chain, and written out the arm binds THAT — which is
--                // what records the hand-off a chosen variable's arm makes beside it.  Left
--                // unsinkable, a chain carrying both a variable and a call kept its value form,
--                // so the variable's move went unrecorded and its record was released twice
--                // (loft#1612).
--                Value::Var(x) if function.name(*x).starts_with("__ncc") => true,
-                 Value::Var(x) => {
+@@ -17138,9 +17020,7 @@ impl Scopes<'_> {
                      (*x as usize) < function.count() as usize && !function.is_compiler_generated(*x)
                  }
+                 Value::Null | Value::Call(_, _) | Value::CallRef(_, _) => true,
+-                Value::If(_, t, f) => {
+-                    sinkable(t, v, ov, function, data) && sinkable(f, v, ov, function, data)
+-                }
++                Value::If(_, t, f) => sinkable(t, v, ov, function) && sinkable(f, v, ov, function),
+                 // A call arm the parser gave an owner so the VALUE form's join had one; written
+                 // out, the arm binds that call itself.
+                 Value::Block(bl) if bl.name == crate::parser::Parser::JOIN_ARM_OWNER => {
+@@ -17153,32 +17033,11 @@ impl Scopes<'_> {
+                 Value::Block(bl) if bl.name == "Object" => {
+                     construction_work_ref(tail, function).is_some()
+                 }
+-                // loft#1612 — a `??` chain's own block, sunk as a UNIT.  Its tail is the
+-                // hoisted `__ncc_N` temp, which is compiler-generated and so not a tail a
+-                // plain bind may take; the BLOCK is, and written out the arm binds the join
+-                // exactly as a statement of its own would (`b = e ?? d`).  Left unsinkable it
+-                // declines the WHOLE sink, and then a chosen VARIABLE arm beside it records no
+-                // hand-off: `b = x ?? (c() ?? d())` released `x`'s record from `b` AND from
+-                // `x`, the second release on freed memory — `@FR-H-Move`, and a double release
+-                // only a type with an `OpDrop` hook can witness.
+-                //
+-                // Only where every arm of that chain is OWNED, which is the question
+-                // `ncc_arms_are_all_owned` already asks for `inline_struct_return`: an arm
+-                // that VIEWS a place the program can still reach owes the destination a COPY
+-                // (`@FR-B-Copy`), and a written-out `Set` binds what it is given — the copy is
+-                // the parser's to emit and it is not there to emit one here.  Without the
+-                // clause `x: H = if k > 0 { s.h ?? b } else { mk(3) }` aliased `b`, which
+-                // `ownership_drop_gate`'s copy census names.
+-                Value::Block(bl) if bl.name == "ncc" => {
+-                    !crate::keys::no_chain_arm_sink() && Scopes::ncc_arms_are_all_owned(bl, data)
+-                }
+                 Value::Block(bl) if !matches!(bl.result, Type::Void | Type::Null) => bl
+                     .operators
+                     .last()
+-                    .is_some_and(|l| sinkable(l, v, ov, function, data)),
+-                Value::Insert(ops) => ops
+-                    .last()
+-                    .is_some_and(|l| sinkable(l, v, ov, function, data)),
++                    .is_some_and(|l| sinkable(l, v, ov, function)),
++                Value::Insert(ops) => ops.last().is_some_and(|l| sinkable(l, v, ov, function)),
+                 _ => false,
+             }
+         }
+@@ -17251,16 +17110,6 @@ impl Scopes<'_> {
+                 *node = Value::Set(ov, Box::new(construction));
+                 return;
+             }
+-            // A `??` chain's block is the arm's VALUE, bound whole (loft#1612): descending
+-            // into it would bind its `__ncc_N` temp, which is the view the chain hands back
+-            // and not a value a bind may adopt.
+-            if let Value::Block(bl) = node
+-                && bl.name == "ncc"
+-            {
+-                let chain = std::mem::replace(node, Value::Null);
+-                *node = Value::Set(ov, Box::new(chain));
+-                return;
+-            }
+             match node {
+                 Value::Span(b) => sink(&mut b.1, v, ov),
+                 Value::If(_, t, f) => {
+@@ -17289,7 +17138,7 @@ impl Scopes<'_> {
+         // A construction is an ARM, never the branch: written out on its own it would be the
+         // bind it already is, and the scan would write it out again forever.
+         if matches!(value.unspan(), Value::Block(bl) if bl.name == "Object")
+-            || !sinkable(value, v, ov, function, data)
++            || !sinkable(value, v, ov, function)
+             || (!beside_any && !owners_beside_locals_only(value))
+         {
+             return None;

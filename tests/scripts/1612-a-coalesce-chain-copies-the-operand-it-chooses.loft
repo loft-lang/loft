@@ -25,8 +25,7 @@
 //
 // Every value is worked out by hand; each cell reads its destination AFTER the source moves on.
 //
-// @falsified-at: 9789ef07c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
-//   exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-at: 9789ef07c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/1612-a-coalesce-chain-copies-the-operand-it-chooses.patch —
 //   the same channels.
 // CHANNEL: assertion failures, both backends — a cell reads the source's NEW value.

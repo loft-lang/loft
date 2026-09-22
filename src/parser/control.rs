@@ -15138,10 +15138,16 @@ impl Parser {
             // Delivering it emits `OpClearVector(w); OpAppendVector(w, v)`, which empties
             // the buffer before appending it to itself (the arm answered `[]`), and the
             // dep-free leg below then frees `w` — the CALLER's store.  Leave it alone.
+            // `.base()`, so a NULLABLE vector local is the same arm: `return b ?? [4]` yields
+            // `b: vector<T>?` on the present path, and read as `Type::Optional` it fell past
+            // this leg and was handed back AS IS — a vector living in the frame's own store,
+            // which the caller never adopts and nothing frees (one leaked store per call, on
+            // the interpreter alone, so `(O-NoDiverge)` with it).  The value is right either
+            // way; only the DELIVERY was missing (loft#1618).
             Value::Var(v)
                 if *v != w
                     && !self.vars.tp(*v).depend().contains(&w)
-                    && matches!(self.vars.tp(*v), Type::Vector(_, _)) =>
+                    && matches!(self.vars.tp(*v).base(), Type::Vector(_, _)) =>
             {
                 let local = *v;
                 let deps = self.vars.tp(local).depend();
@@ -15529,9 +15535,12 @@ impl Parser {
     fn deliver_mid_vector_walk(&mut self, elm: &Type, op: &mut Value, buf_var: u16) {
         match op {
             Value::Return(inner) => {
+                // `.base()`, for the reason the arm materialiser reads it that way: a NULLABLE
+                // vector local is the same local one `?` down, and read as `Type::Optional` it
+                // fell past this leg and was returned in the frame's own store (loft#1618).
                 if let Value::Var(v) = inner.unspan()
                     && *v != buf_var
-                    && matches!(self.vars.tp(*v), Type::Vector(_, _))
+                    && matches!(self.vars.tp(*v).base(), Type::Vector(_, _))
                 {
                     let local = *v;
                     let rec_tp = self.append_elem_tp(elm);
@@ -15554,6 +15563,13 @@ impl Parser {
                     // terminal Var is a fresh `_vec`, so the cluster-I per-arm
                     // materialiser delivers it (clear+append+free the __vdb), leaving
                     // the block yielding __retbuf; wrap it back in the `return`.
+                    self.materialize_vector_arms_into(elm, inner.unspan_mut(), buf_var);
+                } else if matches!(inner.unspan(), Value::If(_, _, _)) {
+                    // A mid-body `return <branch>` — a `??` chain is one — delivers ARM BY ARM,
+                    // the same walk the tail takes: each arm's own value is copied into the
+                    // buffer and the arm that yields a local frees the store it built
+                    // (loft#1618).  Without it the branch was returned as it stands, and the
+                    // arm that answered a local handed back the frame's store.
                     self.materialize_vector_arms_into(elm, inner.unspan_mut(), buf_var);
                 }
             }
