@@ -1,18 +1,18 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// loft#1600, `@FR-H-Drop` — A LOCAL BOUND INSIDE AN `if` ARM IS RELEASED AT THE ARM'S END.  An
-// owner dies at its scope's end, in reverse declaration order, and an arm is a block: a local
-// every mention of which lies inside the arm is the arm's.  The scope pass pre-initialised
-// every heap local first bound in an arm at the scope AROUND the `if`, which is what a local
-// read after the `if` needs.  So a record, a vector moved or copied in, and a vector a call
-// returned were released at that scope's end — the function's, or a loop pass's.  A vector
-// literal escaped only because its backing was not yet registered.  Counts were right.
+// loft#1600, `@FR-H-Drop` — WHERE A LOCAL BOUND INSIDE AN `if` ARM IS RELEASED, and the order a
+// HOISTED local releases in.  Two contracts, one of them still a design question:
 //
-// Found beside it and fixed here: a local hoisted out of an `if`, a loop or a block because it
-// IS read afterwards kept its backing's turn at the head of the function (`a9`–`a11`).  The
-// release came after every local declared before it, where reverse declaration order puts it
-// first — D-heap-21's move of the backing, which the plain first bind made and the three
-// hoists did not.
+// ALWAYS (D-heap-37, closed): a local bound inside an `if` arm, a loop body or a block and READ
+// after it is hoisted to the enclosing scope, and released there in reverse declaration order —
+// before the locals declared ahead of it (`a9`–`a11`; the controls `k1`–`k3`).  The three
+// hoists registered it with a bare push, and its backing kept its turn at the function's head.
+//
+// OPT-IN (D-heap-36, OPEN): whether a local every mention of which lies in ONE arm dies at the
+// arm's end or at the scope around the `if`.  @PLN125 decided the scope around it
+// (`pln125-b-drop.loft`'s `if_block_local`); loft#1600 asks for the arm's end.  The mechanism
+// exists behind `LOFT_ARM_SCOPE=1`, and so do its cells: run this file with it set to assert
+// them (`a1`–`a8`, `a12`–`a16`).  Off by default, and the corpus runs it off.
 //
 // Every expected trace is worked out by hand.  The drop hook writes a trace FILE, as
 // `139-drop-cascade.loft` does and for its reason.
@@ -21,9 +21,9 @@
 //   exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/1600-a-local-bound-inside-an-if-arm-is-released-at-the-arms-end.patch
 //   — the same channels.
-// CHANNEL: assertion failures, both backends — the traces carry the releases late.
+// CHANNEL: assertion failures, both backends — the order cells carry a hoisted local late.
 // HOLDS: leak and panic are unmoved; the controls `k1`–`k3` are right before and after.
-// WITNESS: on the control, `a1 moved in the arm: m50,r1,x,d50, want m50,r1,d50,x`.
+// WITNESS: on the control, `a9 read after the if: m50,m52,r1,a1,x,d50,d52, want …,x,d52,d50`.
 
 fn trace_path() -> text { return "loft_1600_arm_scope_trace.tmp"; }
 
@@ -135,46 +135,58 @@ fn k3(c: boolean) { v: vector<H> = [mk(50)]; if c { w = [mk(52)]; note("r{len(w)
 fn main() {
   empty: vector<u8> = [];
   if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
-  a1(true);
-  ok("a1 moved in the arm   ", drain(), "m50,r1,d50,x");
-  a2(true);
-  ok("a2 else arm           ", drain(), "m50,r1,d50,x");
-  a3(true);
-  ok("a3 nested if          ", drain(), "m50,r1,d50,b,x");
-  a4(true);
-  ok("a4 else-if            ", drain(), "m50,r1,d50,x");
-  a5(true);
-  ok("a5 record from a call ", drain(), "m50,m52,r52,d52,x,d50");
-  a6(true);
-  ok("a6 vector from a call ", drain(), "m50,m53,r1,d53,x,d50");
-  a7(true);
-  ok("a7 in a loop body     ", drain(), "m50,r1,d50,e,x");
-  a8(true);
-  ok("a8 record literal     ", drain(), "m50,r54,d54,x,d50");
+  // ALWAYS — the hoisted local's release order, and the controls.
   a9(true);
   ok("a9 read after the if  ", drain(), "m50,m52,r1,a1,x,d52,d50");
   a10();
   ok("a10 read after a loop ", drain(), "m50,m52,r1,a1,x,d52,d50");
   a11();
   ok("a11 read after a block", drain(), "m50,m52,r1,a1,x,d52,d50");
-  a12(true);
-  ok("a12 both arms, true   ", drain(), "m50,r70,d70,x,d50");
-  a12(false);
-  ok("a12 both arms, false  ", drain(), "m50,q71,d71,x,d50");
-  a13(true);
-  ok("a13 rebound in the arm", drain(), "m50,m74,r74,m75,d74,s75,d75,x,d50");
-  a14(true);
-  ok("a14 break             ", drain(), "m50,m62,r1,d62,b,x,d50");
-  a15(true);
-  ok("a15 match arm         ", drain(), "m50,m63,r1,d63,x,d50");
-  a16();
-  ok("a16 early return      ", drain(), "m65,r1,d65,g1");
   k1(true);
   ok("k1 control, read after", drain(), "m50,r1,a1,x,d50");
   k2(true);
   ok("k2 control, not taken ", drain(), "m50,a0,x,d50");
   k3(true);
   ok("k3 control, literal   ", drain(), "m50,m52,r1,d52,x,d50");
+  // OPT-IN — an arm's local released at the arm's end (`LOFT_ARM_SCOPE=1`, D-heap-36).
+  // `env_variable` answers null for an unset variable, where its doc says `""` (loft#1609).
+  arm = env_variable("LOFT_ARM_SCOPE");
+  if arm != null && arm != "" {
+    a1(true);
+    ok("a1 moved in the arm   ", drain(), "m50,r1,d50,x");
+    a2(true);
+    ok("a2 else arm           ", drain(), "m50,r1,d50,x");
+    a3(true);
+    ok("a3 nested if          ", drain(), "m50,r1,d50,b,x");
+    a4(true);
+    ok("a4 else-if            ", drain(), "m50,r1,d50,x");
+    a5(true);
+    ok("a5 record from a call ", drain(), "m50,m52,r52,d52,x,d50");
+    a6(true);
+    ok("a6 vector from a call ", drain(), "m50,m53,r1,d53,x,d50");
+    a7(true);
+    ok("a7 in a loop body     ", drain(), "m50,r1,d50,e,x");
+    a8(true);
+    ok("a8 record literal     ", drain(), "m50,r54,d54,x,d50");
+    a12(true);
+    ok("a12 both arms, true   ", drain(), "m50,r70,d70,x,d50");
+    a12(false);
+    ok("a12 both arms, false  ", drain(), "m50,q71,d71,x,d50");
+    a13(true);
+    ok("a13 rebound in the arm", drain(), "m50,m74,r74,m75,d74,s75,d75,x,d50");
+    a14(true);
+    ok("a14 break             ", drain(), "m50,m62,r1,d62,b,x,d50");
+    a15(true);
+    ok("a15 match arm         ", drain(), "m50,m63,r1,d63,x,d50");
+    a16();
+    ok("a16 early return      ", drain(), "m65,r1,d65,g1");
+  } else {
+    // Run every cell so none of them rots unparsed; their traces are the rule this file
+    // does not assert with the switch off.
+    a1(true); a2(true); a3(true); a4(true); a5(true); a6(true); a7(true); a8(true);
+    a12(true); a12(false); a13(true); a14(true); a15(true); a16();
+    drain();
+  }
   delete(trace_path());
-  println("a local bound inside an if arm is released at the arm's end: every cell holds");
+  println("a hoisted local releases in its declaration turn: every asserted cell holds");
 }

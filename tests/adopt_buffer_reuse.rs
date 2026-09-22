@@ -165,11 +165,12 @@ fn a_bind_after_an_if_pre_init_adopts() {
         !r28.contains("OpCopyRecord(cell,_src, var_mf"),
         "r28 native: no copy into `mf`"
     );
-    // r22: every mention in the arm, so the arm's local (loft#1600) — a first bind, declared there.
+    // r22: bound inside the `if` alone — pre-initialised in front of it all the same (an arm's
+    // local is the scope around the `if`'s unless `LOFT_ARM_SCOPE=1`, formal/heap.md D-heap-36).
     let r22 = section(&rust, "n_r22");
     assert!(
-        r22.contains("let mut var_mf: DbRef = n_scan_mk(cell, 4_i64,"),
-        "r22 native: a first bind in the arm"
+        r22.contains("var_mf = n_scan_mk(cell, 4_i64,"),
+        "r22 native: the plain assignment"
     );
     assert!(
         !r22.contains("OpCopyRecord(cell,_src, var_mf"),
