@@ -1680,7 +1680,9 @@ impl Parser {
         let claimed = self
             .type_var_holders
             .get(&(type_var_name.clone(), bounds_key.clone()))
-            .copied();
+            .copied()
+            // … and where this parser did not mint it, the Data it continues knows.
+            .or_else(|| self.data.holder_for_spelling(type_var_name, &bounds_key));
         let existing = self.data.def_nr(type_var_name);
         // A prior generic's type-var placeholder is an attribute-less `Struct`, safe to
         // reuse (that is how `<T>` is shared across functions). Any OTHER existing def

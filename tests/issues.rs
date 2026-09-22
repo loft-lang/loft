@@ -13991,6 +13991,27 @@ fn run() -> text {
     .result(Value::Text(r#"{"msg":"line1\nline2\ttab"}"#.to_string()));
 }
 
+/// @PLN165 E5–E7 — a program's own `<T>` reaches the stdlib's generics when the parser
+/// CONTINUES another's Data (a prepared or cached stdlib, which is what this harness, and
+/// `snapshot`/`ir_store`/`native_gate`, hand it).
+///
+/// `Parser::type_var_holders` — the map from `(spelling, bounds)` to the placeholder — belongs
+/// to the parser that minted it, so a continuing parser fell back to the def the bare spelling
+/// resolves to.  Since `sort<T: Ordered>` that def is the BOUNDED `T`, which an unbounded `<T>`
+/// may not reuse, so this program minted `T#4` and its `vector<T#4>` would not convert to the
+/// stdlib `reduce`'s `vector<T#3>`: *"expected vector<T>, got vector<T>"*, then a binding clash
+/// on every call.  The whole corpus runner parses this way, so the E5–E7 guard was red there
+/// while passing under the binary, which parses the stdlib itself.
+#[test]
+fn a_programs_type_variable_reaches_the_stdlib_generics_on_a_continued_parse() {
+    code!(
+        "fn fold<T, U>(v: vector<T>, init: U, f: fn(U, T) -> U) -> U { v.reduce(init, f) }
+fn run() -> integer { fold([1, 2, 3], 0, |acc, n| { acc + n }) }"
+    )
+    .expr("run()")
+    .result(Value::Int(6));
+}
+
 /// @PLN165 E5–E7 — a program may name a struct after a STDLIB type variable.
 ///
 /// `map<T, U>` and `reduce<T, U>` made `U` one, and this harness (like the REPL and a

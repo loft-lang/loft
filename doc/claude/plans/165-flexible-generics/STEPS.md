@@ -1110,7 +1110,13 @@ two-variable generics, which the no-observable-special-names rule cannot retire 
   local rebound from a call that reads it (`a = add(a, x)`) read back EMPTY — on `main`, both
   backends (4586b6abe); and a bare `[]` at a keyed type variable reached the instance as
   `null` (the commit after this arc).  A dependency on a `text` argument is kept only by a
-  `text` dependent (`drop_scalar_deps`).
+  `text` dependent (`drop_scalar_deps`).  And the arc's own guard was RED in the corpus
+  runner while green under the binary: a parser that CONTINUES another's Data (the runner's
+  cached stdlib, and `snapshot`/`ir_store`/`native_gate`) has no `type_var_holders` map, so a
+  program's `<T>` fell back to the def the bare spelling resolves to — the BOUNDED `T` since
+  `sort<T: Ordered>` — minted `T#4`, and `vector<T#4>` would not convert to the stdlib
+  `reduce`'s `vector<T#3>`.  The bound key each holder carries travels with the Data
+  (`Data::holder_for_spelling`), so the same question is answered there.
 - **Measured for E3–E7 before they start** — each special form inside a generic against its
   twin, both backends: `insert` and `any`/`all`/`count_if` answer right; **`filter` and `map`
   CRASH** for every scalar element (interpreter: "DbRef store_nr … out of range", `text`:

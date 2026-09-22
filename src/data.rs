@@ -8175,6 +8175,32 @@ impl Data {
         self.def_names.keys().any(|(n, _)| n == name)
     }
 
+    /// The placeholder a header spelling `<T>` (or `<T: Ordered>`) already names, read off the
+    /// DATA rather than off the parser that minted it.
+    ///
+    /// `Parser::type_var_holders` answers this while one parser mints and then uses a
+    /// placeholder.  A parser that CONTINUES another's Data — a prepared or cached stdlib —
+    /// has an empty map, and fell back to the def the bare spelling resolves to: `T` is the
+    /// stdlib's BOUNDED `<T: Ordered>` holder since `sort` was declared, so an unbounded
+    /// program `<T>` could not reuse it and minted `T#4`, and its `vector<T#4>` then would not
+    /// convert to the stdlib `reduce`'s `vector<T#3>` — *"expected vector<T>, got vector<T>"*.
+    /// The bound key each holder carries (`type_var_bound_keys`) travels with the Data, so the
+    /// same question is answerable there: the lowest-numbered holder of this SPELLING whose
+    /// bounds match.
+    #[must_use]
+    pub fn holder_for_spelling(&self, spelling: &str, bounds_key: &str) -> Option<u32> {
+        self.type_var_bound_keys
+            .iter()
+            .filter(|(d, key)| {
+                key.as_str() == bounds_key
+                    && (**d as usize) < self.definitions.len()
+                    && self.definitions[**d as usize].def_type == DefType::Struct
+                    && Self::type_var_spelling(self.definitions[**d as usize].name()) == spelling
+            })
+            .map(|(d, _)| *d)
+            .min()
+    }
+
     /// The spelling a type-variable placeholder was DECLARED under.
     ///
     /// Two generic headers may both write `T` while binding different variables
