@@ -7,7 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**Open — design settled with the owner 2026-09-22; P0 measured.**  Every measurement
+**Open — P0, A0 and B0–B3 landed 2026-09-22; A1–A3, B4, C1–C3 and D remain.**  Every measurement
 the design rests on is recorded below and was taken on both backends at
 `tuxedo-quality-2026-09-21` @ `53d8d5d4a`.  Tracker: [@PLN167](https://github.com/loft-lang/plans/issues/167).
 Closes loft#1566 (`D-bind-38`), loft#1567 (`D-bind-39`), loft#1602, loft#1603, loft#1604 and loft#1605.
