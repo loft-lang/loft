@@ -50,6 +50,11 @@
 // a question about one scalar slot's encoding, which every container reaches through the
 // same two parser sites the fix routes through.
 //
+// @falsified-at: 53f2c6bd3 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends; no durable
+//   patch, because 53f2c6bd3 is 2548 source lines from this tree and a diff against it would
+//   reintroduce everything fixed in between rather than this defect.
+//
 // CHANNEL: the assertions.
 
 type S8  = integer limit(-100, 100) size(1);

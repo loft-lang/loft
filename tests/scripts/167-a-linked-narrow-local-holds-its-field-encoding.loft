@@ -22,6 +22,17 @@
 // pre-init; the decode seams (`n: integer = x`, `x + 1000`, `"{x}"`, `as u8 ??`); a linked
 // local handed by value to a function and returned; an unlinked neighbour that must not move.
 //
+// @falsified-at: none — this guard is INERT against the commit before A1 (`d19fe5eb5`), and
+//   that is the right answer rather than a gap: pre-A1 a narrow local was WIDE and every cell
+//   here still passed, because A1 changed the REPRESENTATION and not the values.  The claim is
+//   that the local holds the same bytes a FIELD of its type holds (`@FR-B-Ref-Uniform`), so
+//   what contradicts it is a WRONG encoding, not a missing one — which is what the patch below
+//   supplies.
+// @falsified-by: tests/falsified/167-a-linked-narrow-local-holds-its-field-encoding.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.  The patch
+//   drops the type's minimum from the LOCAL's encoding alone and leaves every store op's bias
+//   intact, so the cells that fail name the local's own encoding and nothing else.
+//
 // CHANNEL: the assertions.
 
 type Lim = integer limit(1000, 1100);

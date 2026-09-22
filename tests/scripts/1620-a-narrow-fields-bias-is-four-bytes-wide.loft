@@ -39,6 +39,13 @@
 // mis-sizes the operand in the other direction moves them.  `u8` and `i16` are the built-in
 // spellings, whose bias is `0` and `-32768`.
 //
+// @falsified-at: 22feb4e2f — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.  Native's
+//   control carries ZERO assertion failures at exit 1 on purpose — there the defect is a
+//   COMPILE failure (`literal out of range for i16`), so no cell runs to assert; the
+//   interpreter's control is the one that answers wrong.  No durable patch: 22feb4e2f is
+//   2316 source lines away.
+//
 // CHANNEL: the assertions.
 
 type B40  = integer limit(40000, 40100) size(1);      // 1 byte, min  40000 >  i16::MAX
