@@ -4047,14 +4047,22 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             if ed_nr != u32::MAX {
                 let known = self.data.def(ed_nr).known_type();
                 if known != u16::MAX {
-                    let elem_size = self.database.size(known);
+                    // `@FR-H-Stride` — the width is the ELEMENT's, which
+                    // `Parser::element_store_size` is the one home for: a narrow element
+                    // (`u8`/`i16`/`u32`) is one, two or four bytes wide and a nested vector
+                    // element is its handle's row, while `database.size(known)` answers 8 for
+                    // the integer base whatever the declaration said.  Asked here, that 8
+                    // reserved a `vector<u8>` literal eight times the bytes its own reads then
+                    // walked at stride 1 — the same disagreement loft#1420 closed for the four
+                    // operations it reached, arriving at a fifth site.
+                    let elem_size = self.element_store_size(in_t);
                     if elem_size > 0 {
                         ls.push(self.cl(
                             "OpPreAllocVector",
                             &[
                                 Value::Var(vec),
                                 Value::Int(res.len() as i32),
-                                Value::Int(i32::from(elem_size)),
+                                Value::Int(elem_size),
                             ],
                         ));
                     }
