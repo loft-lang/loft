@@ -10377,13 +10377,38 @@ impl Data {
         self.def_nr(&bare.name(self))
     }
 
+    /// The definition key of `type_def`'s synthesized drop cascade —
+    /// `t_<LEN><spelling>_<method>`, for `OpDropAll` or `OpDropAllExcept`.
+    ///
+    /// ONE home for the name, so the parser's mint
+    /// ([`Parser::drop_cascade_name`](crate::parser::Parser::drop_cascade_name)) and every
+    /// lookup here spell the same key; two homes could only drift.
+    ///
+    /// An enum VARIANT is qualified by its enum (`E::Some`). A variant's name is unique only
+    /// WITHIN its enum — that is what [`Self::variant_of`] exists to say — so a bare `Some`
+    /// names no one type. Every `τ?` lowers to a `__nullable<τ>` whose variant is `Some`, so
+    /// two droppable types used as nullable FIELDS mint the same cascade key twice, and the
+    /// second trips the dual-definition guard.
+    #[must_use]
+    pub fn drop_cascade_key(&self, type_def: u32, method: &str) -> String {
+        let def = self.def(type_def);
+        if self.def_type(type_def) == DefType::EnumValue
+            && def.parent() != u32::MAX
+            && (def.parent() as usize) < self.definitions.len()
+        {
+            let owner = self.def(def.parent()).name();
+            return Self::mangle_method(&format!("{owner}::{}", def.name()), method);
+        }
+        Self::mangle_method(def.name(), method)
+    }
+
     #[must_use]
     pub fn drop_cascade_nr(&self, type_def: u32) -> u32 {
         if type_def == u32::MAX || type_def as usize >= self.definitions.len() {
             return u32::MAX;
         }
         let def = self.def(type_def);
-        let key = Self::mangle_method(&def.name, "OpDropAll");
+        let key = self.drop_cascade_key(type_def, "OpDropAll");
         let nr = self.source_nr(def.source, &key);
         if nr != u32::MAX {
             return nr;
@@ -10412,7 +10437,7 @@ impl Data {
             return u32::MAX;
         }
         let def = self.def(type_def);
-        let key = Self::mangle_method(&def.name, "OpDropAllExcept");
+        let key = self.drop_cascade_key(type_def, "OpDropAllExcept");
         let nr = self.source_nr(def.source, &key);
         if nr != u32::MAX {
             return nr;
@@ -10433,7 +10458,7 @@ impl Data {
             return false;
         }
         let def = self.def(type_def);
-        let key = Self::mangle_method(&def.name, "OpDropAll");
+        let key = self.drop_cascade_key(type_def, "OpDropAll");
         self.source_nr(def.source, &key) != u32::MAX || self.def_nr(&key) != u32::MAX
     }
 

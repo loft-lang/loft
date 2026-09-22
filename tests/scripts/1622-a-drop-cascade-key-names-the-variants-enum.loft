@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1622, `@FR-G-Key` / `@FR-H-Drop` — A DROP CASCADE'S KEY NAMES THE VARIANT'S ENUM.
+// A synthesized cascade is keyed by the TYPE it releases, so two types must key two cascades.
+// An enum VARIANT keyed by its bare name does not: a variant name is unique only WITHIN its
+// enum, which is what `Data::variant_of` exists to say — *"two enums may share a variant name
+// and a variant is never found without a contextual enum"*.
+//
+// Every `τ?` lowers to a `__nullable<τ>` whose payload variant is named `Some`, so two
+// droppable types reached through a NULLABLE FIELD both minted `t_4Some_OpDropAll` and the
+// second tripped the dual-definition guard — an ICE before the program ran, on both backends.
+// The key now spells the variant as `<enum>::<variant>`, so the two are `__nullable<A>::Some`
+// and `__nullable<B>::Some`.
+//
+// The key has ONE home (`Data::drop_cascade_key`), read by the parser that MINTS the cascade
+// and by every lookup that finds it.  Two homes could only drift, and a cascade minted under
+// one spelling and looked up under another is a release that silently never runs.
+//
+// The release ORDER between two independent locals is the scope-exit order and not a rule
+// (it differs between `c1` and `k1`, whose cascades take different routes); it is pinned here
+// because a guard that accepted either could not tell a reordering from a lost release.
+//
+// The cells are the four corners of the boundary: what it takes is two distinct DROPPABLE
+// types each behind a NULLABLE field.  `k1` and `k2` compiled before and must still.
+//
+// @falsified-at: 6814cb829 — interpret exit 101 -> 0, native exit 101 -> 0.
+// CHANNEL: exit code, both backends — the compiler aborts on the dual-definition assert.
+// HOLDS: assertion failures, leak and panic are unmoved once it compiles at all.
+// WITNESS: on the control, `Dual definition of t_4Some_OpDropAll [src/data.rs:6746]`.
+
+struct A { id: integer }
+struct B { id: integer }
+
+// c1 — the shape: two structs, each with a nullable field of its own droppable type.
+struct SA { a: A? }
+struct SB { b: B? }
+
+// k1 — one nullable field beside a NON-nullable one: compiled before.
+struct NA { a: A? }
+struct NB { b: B }
+
+fn OpDrop(self: A) { note("a{self.id}"); }
+fn OpDrop(self: B) { note("b{self.id}"); }
+
+fn trace_path() -> text { return "loft_1622_cascade_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+// 1 — the ICE shape, and each cascade releases its OWN payload exactly once.
+fn c1() { s = SA { a: A { id: 1 } }; t = SB { b: B { id: 2 } }; note("r{s.a?.id ?? -1}{t.b?.id ?? -1}"); }
+
+// 2 — the field left ABSENT: the enum's dispatch reads the discriminator and releases nothing.
+fn c2() { s = SA { a: null }; t = SB { b: B { id: 2 } }; note("r{t.b?.id ?? -1}"); }
+
+// 3 — the same two types nested one level down, so the release is reached through two
+//     cascades rather than one.
+struct Outer { sa: SA, sb: SB }
+fn c3() { o = Outer { sa: SA { a: A { id: 3 } }, sb: SB { b: B { id: 4 } } }; note("r{o.sa.a?.id ?? -1}"); }
+
+// Controls — the shapes that compiled before.
+// k1: a nullable field beside a non-nullable one — only ONE `__nullable<τ>` owns a droppable.
+fn k1() { s = NA { a: A { id: 5 } }; t = NB { b: B { id: 6 } }; note("r{s.a?.id ?? -1}"); }
+// k2: two nullable LOCALS, which mint no cascade for the variant at all.
+fn k2() { a: A? = A { id: 7 }; b: B? = B { id: 8 }; note("r{a.id}{b.id}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+
+  c1();
+  ok("c1 two nullable droppable fields", drain(), "r12,a1,b2");
+  c2();
+  ok("c2 one field absent            ", drain(), "r2,b2");
+  c3();
+  ok("c3 nested a level down         ", drain(), "r3,b4,a3");
+  k1();
+  ok("k1 control, one nullable       ", drain(), "r5,b6,a5");
+  k2();
+  ok("k2 control, two locals         ", drain(), "r78,b8,a7");
+
+  delete(trace_path());
+  println("a drop cascade's key names the variant's enum: every cell holds");
+}

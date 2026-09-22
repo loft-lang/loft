@@ -6263,16 +6263,17 @@ impl Parser {
     /// library's type resolves through that library's source the same way its hook does.
     /// The `_OpDropAll` suffix is deliberately not `_OpDrop`: `check_drop_signature` keys on
     /// the latter, and a synthesized function must not be validated as a user declaration.
+    ///
+    /// The spelling is [`Data::drop_cascade_key`](crate::data::Data::drop_cascade_key)'s, the
+    /// one home every lookup reads, so the name this mints is the name they find.
     pub(crate) fn drop_cascade_name(data: &crate::data::Data, type_def: u32) -> String {
-        let n = data.def(type_def).name();
-        crate::data::Data::mangle_method(n, "OpDropAll")
+        data.drop_cascade_key(type_def, "OpDropAll")
     }
 
     /// The mangled name of a type's skip-capable cascade — `t_<LEN><Type>_OpDropAllExcept`.
     /// See [`crate::data::Data::drop_cascade_except_nr`] for what it is for.
     pub(crate) fn drop_cascade_except_name(data: &crate::data::Data, type_def: u32) -> String {
-        let n = data.def(type_def).name();
-        crate::data::Data::mangle_method(n, "OpDropAllExcept")
+        data.drop_cascade_key(type_def, "OpDropAllExcept")
     }
 
     /// @PLN139 stage B — give every type that OWNS a droppable through a field a function

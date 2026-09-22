@@ -597,7 +597,9 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-36` and `D-heap-38` (`D-heap-36`,
+OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-36` and `D-heap-38` (`D-heap-40`,
+loft#1622, opened and CLOSED 2026-09-22: the drop-cascade key that ICEd on two droppable types
+behind nullable fields, found while building loft#1617's matrix; `D-heap-36`,
 loft#1600, opened 2026-09-22 as a design question; `D-heap-37`, the hoist order found beside it,
 opened and closed that day; `D-heap-38`, what an arm-scope rule would leave for a vector bound in
 both arms, opened that day; `D-heap-34` and `D-heap-35` opened and closed
@@ -659,6 +661,32 @@ freed without its hook) opened and CLOSED 2026-09-10, below.  `D-heap-12` (a ref
 buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.  `D-heap-17` (a self-append's claims walk
 read the source record through a number captured before the growth relocated it) opened and
 CLOSED 2026-09-17, below.
+
+### D-heap-40 — OPENED AND CLOSED (2026-09-22, loft#1622): two droppable types behind nullable fields mint ONE drop-cascade key
+
+- **Violates:** (H-Drop) — a container's death releases what it holds, through the cascade — and
+  [interfaces.md](interfaces.md) `(G-Key)`, which asks that a definition key identify its
+  definition.
+- **Where:** `synth_drop_cascades` gives an enum VARIANT a cascade of its own, keyed by
+  `mangle_method(def.name(), "OpDropAll")` — the BARE variant name.  A variant name is unique only
+  WITHIN its enum, which is exactly what `Data::variant_of` exists to say (*"two enums may share a
+  variant name and a variant is never found without a contextual enum"*).  Every `τ?` lowers to a
+  `__nullable<τ>` whose payload variant is named `Some`.
+- **Effect:** two distinct droppable types each reached through a NULLABLE FIELD both mint
+  `t_4Some_OpDropAll`, and the second trips `Data::add_def`'s dual-definition assert — an ICE
+  before the program runs, on both backends.  Loud, not silent, and it takes a shape no reader
+  would expect to be rare: a pair of structs holding optionals.  Measured 2026-09-22 —
+  `struct SA { a: A? }` beside `struct SB { b: B? }` over two droppable payloads aborts; two
+  nullable LOCALS do not, nor does one nullable field beside a non-nullable one, nor two nullable
+  fields where only one payload is droppable.
+- **Status:** CLOSED 2026-09-22.  Found while building `D-heap-39`'s matrix, whose cascade cell
+  needs a second droppable type; until then that cell did not compile.
+- **Closed:** the key spells a variant as `<enum>::<variant>`, so the two are
+  `__nullable<A>::Some` and `__nullable<B>::Some`.  It has ONE home, `Data::drop_cascade_key`,
+  read by the parser that MINTS the cascade and by every lookup that finds it — the name had two
+  homes before (the parser's `drop_cascade_name` and three inline rebuilds in `Data`), and a
+  cascade minted under one spelling and looked up under another is a release that silently never
+  runs.  Guard `tests/scripts/1622-a-drop-cascade-key-names-the-variants-enum.loft`.
 
 ### D-heap-23 — OPENED AND CLOSED (2026-09-21): a whole-collection copy of a collection the function owns released its elements twice
 
