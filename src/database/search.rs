@@ -775,7 +775,7 @@ impl Stores {
         db: u16,
         content_tp: u16,
         secondary: bool,
-    ) {
+    ) -> Option<DbRef> {
         let key = keys::get_key(rec, &self.allocations, &self.types[db as usize].keys);
         let existing = self.find(data, db, &key);
         // @PLN135 arc H — two entries of the same hash now share a chunk RECORD, so
@@ -784,7 +784,9 @@ impl Stores {
         // entry being inserted and skip the dedup.
         if existing.rec != 0 && (existing.rec, existing.pos) != (rec.rec, rec.pos) {
             self.displace_keyed(data, &existing, db, content_tp, secondary);
+            return Some(existing);
         }
+        None
     }
 
     /// Release a hash entry the unlink just named: through the bucket value it answered

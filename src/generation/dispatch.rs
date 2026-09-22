@@ -385,11 +385,19 @@ impl Output<'_> {
             // the right-hand side may be a compound `bool` expression (`!b` → `(..) != 1`), so
             // the ` as u8` wraps the WHOLE of it, as the local path below does.
             let wrap_bool = matches!(variables.tp(var).base(), Type::Boolean);
+            // A fn-ref field holds the `(definition, closure)` pair, so a bare definition
+            // number — a non-capturing lambda, or an arm of an `if` — emits as that pair, the
+            // channel the local path below uses (loft#1587).
+            let prev_fn_ref_ctx = self.fn_ref_context;
+            if matches!(variables.tp(var).base(), Type::Function(..)) {
+                self.fn_ref_context = true;
+            }
             write!(w, "self.var_{name} = ")?;
             if needs_to_string || wrap_bool {
                 write!(w, "(")?;
             }
             self.output_code_inner(w, to)?;
+            self.fn_ref_context = prev_fn_ref_ctx;
             if needs_to_string {
                 write!(w, ").to_string()")?;
             } else if wrap_bool {

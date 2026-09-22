@@ -1,0 +1,220 @@
+diff --git b/src/generation/coroutine.rs a/src/generation/coroutine.rs
+index 51b4d304b..56a5bd259 100644
+--- b/src/generation/coroutine.rs
++++ a/src/generation/coroutine.rs
+@@ -675,13 +675,7 @@ fn coroutine_persistent_locals(data: &crate::data::Data, def_nr: u32) -> Vec<(u1
+         // eager-collect factory) own no store and keep their own emission paths.
+         // One home: `variables::owns_literal_backing_store` — the keyed twin `__kvb_*` was
+         // missing here and at the pre-declaration below (loft#1130).
+-        // A closure's record (`___clos_*`) is the third: a fn-ref local names it, and both
+-        // have to outlive the advance that built them when the closure is called after a
+-        // `yield` (loft#1587).
+-        if name.starts_with("__")
+-            && !crate::variables::owns_literal_backing_store(name)
+-            && !name.starts_with("___clos")
+-        {
++        if name.starts_with("__") && !crate::variables::owns_literal_backing_store(name) {
+             continue;
+         }
+         let tp = var_table.tp(v);
+@@ -703,7 +697,6 @@ fn coroutine_persistent_locals(data: &crate::data::Data, def_nr: u32) -> Vec<(u1
+                 | Type::Radix(_, _, _)
+                 | Type::Trie(_, _, _)
+                 | Type::Index(_, _, _)
+-                | Type::Function(..)
+         );
+         if !suitable {
+             continue;
+@@ -1012,9 +1005,6 @@ fn persistent_default(tp: &Type) -> String {
+         | Type::Index(_, _, _)
+         | Type::Enum(_, true, _)
+         | Type::Iterator(_, _) => "DbRef::NULL".to_string(),
+-        // A fn-ref is the `(definition, closure record)` pair `rust_type` lowers it to; the
+-        // null closure is what a non-capturing lambda carries.
+-        Type::Function(..) => "(0_u32, DbRef::NULL)".to_string(),
+         // Every remaining field type lowers to a Rust NUMBER, so the zero of whatever
+         // `rust_type` decided is a value of exactly that type.  Asking it, rather than
+         // listing the types a second time here, is the point: the second list had drifted
+@@ -1843,10 +1833,39 @@ impl Output<'_> {
+                     || !elsewhere.contains(v)
+             })
+         };
++        // A closure in the loop — a fn-ref local and the `___clos_*` record it captures into —
++        // is neither a struct field nor declared at `next_*` scope, so the iteration state
++        // named a record no scope declared (E0425).  The eager factory is an ordinary function
++        // body that declares both, so such a loop keeps the buffer.
++        let names_a_closure = |seg: &YieldSegment| {
++            let YieldSegment::ForLoopLazy {
++                setup,
++                body,
++                resume,
++                post,
++                ..
++            } = seg
++            else {
++                return false;
++            };
++            let vars = self.data.def(def_nr).variables();
++            let mut found = false;
++            for op in setup.iter().chain(body).chain(resume).chain(post) {
++                op.walk(&mut |n| {
++                    if let Value::Var(v) | Value::Set(v, _) | Value::CallRef(v, _) = n
++                        && (matches!(vars.tp(*v).base(), Type::Function(..))
++                            || vars.name(*v).starts_with("___clos"))
++                    {
++                        found = true;
++                    }
++                });
++            }
++            found
++        };
+         let keep_lazy = channel_can_suspend
+             && segments.iter().all(|s| match s {
+                 YieldSegment::ForLoopLazy { setup, .. } => {
+-                    setup_is_carried(setup) && resume_is_carried(s)
++                    setup_is_carried(setup) && resume_is_carried(s) && !names_a_closure(s)
+                 }
+                 _ => true,
+             });
+diff --git b/src/generation/dispatch.rs a/src/generation/dispatch.rs
+index a73380fff..68740aaed 100644
+--- b/src/generation/dispatch.rs
++++ a/src/generation/dispatch.rs
+@@ -385,19 +385,11 @@ impl Output<'_> {
+             // the right-hand side may be a compound `bool` expression (`!b` → `(..) != 1`), so
+             // the ` as u8` wraps the WHOLE of it, as the local path below does.
+             let wrap_bool = matches!(variables.tp(var).base(), Type::Boolean);
+-            // A fn-ref field holds the `(definition, closure)` pair, so a bare definition
+-            // number — a non-capturing lambda, or an arm of an `if` — emits as that pair, the
+-            // channel the local path below uses (loft#1587).
+-            let prev_fn_ref_ctx = self.fn_ref_context;
+-            if matches!(variables.tp(var).base(), Type::Function(..)) {
+-                self.fn_ref_context = true;
+-            }
+             write!(w, "self.var_{name} = ")?;
+             if needs_to_string || wrap_bool {
+                 write!(w, "(")?;
+             }
+             self.output_code_inner(w, to)?;
+-            self.fn_ref_context = prev_fn_ref_ctx;
+             if needs_to_string {
+                 write!(w, ").to_string()")?;
+             } else if wrap_bool {
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index 24bc509d7..179db609a 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -220,11 +220,15 @@ impl Output<'_> {
+             // a null sentinel when non-capturing.
+             ValueType::FnRef => {
+                 let clos_var = node.fnref_clos_var();
++                let clos_name = if clos_var == u16::MAX {
++                    None
++                } else {
++                    let variables = self.data.def(self.def_nr).variables();
++                    Some(sanitize(variables.name(clos_var)))
++                };
+                 let d_nr = node.fnref_dnr();
+-                if clos_var != u16::MAX {
+-                    // The closure record's PLACE — a struct field in a generator (loft#1587).
+-                    let place = self.var_place(clos_var);
+-                    return write!(w, "({d_nr}_u32, {place})");
++                if let Some(name) = clos_name {
++                    return write!(w, "({d_nr}_u32, var_{name})");
+                 }
+                 return write!(w, "({d_nr}_u32, loft::keys::DbRef::NULL)");
+             }
+@@ -294,10 +298,14 @@ impl Output<'_> {
+                 return write!(w, "])");
+             }
+             ValueType::FnRefDnr => {
+-                // P215: project the d_nr from a fn-ref var's (u32, DbRef) tuple — through
+-                // the slot's place, which is a struct field in a generator (loft#1587).
+-                let place = self.var_place(node.fnref_dnr_var());
+-                return write!(w, "({place}.0 as i64)");
++                // P215: project the d_nr from a fn-ref var's (u32, DbRef) tuple.
++                let var_name = sanitize(
++                    self.data
++                        .def(self.def_nr)
++                        .variables
++                        .name(node.fnref_dnr_var()),
++                );
++                return write!(w, "(var_{var_name}.0 as i64)");
+             }
+             // Plan-07 — Span is transparent in native emit.
+             ValueType::Span => return self.output_code_node(w, node.span_inner()),
+@@ -1134,10 +1142,6 @@ impl Output<'_> {
+     ) -> std::io::Result<()> {
+         let variables = self.data.def(self.def_nr).variables();
+         let var_name = sanitize(variables.name(v_nr));
+-        // The slot's PLACE: `self.var_<field>` for a generator's persistent fn-ref, which has
+-        // no local of its own — spelling the local named a Rust identifier no state declared
+-        // (loft#1587).  Outside a coroutine this is the bare local, as before.
+-        let place = self.var_place(v_nr);
+         let fn_type = variables.tp(v_nr).clone();
+         let (param_types, ret_type) = if let Type::Function(p, r, ..) = &fn_type {
+             (p.clone(), *r.clone())
+@@ -1267,7 +1271,7 @@ impl Output<'_> {
+         // loft#1443's ten cells, all pinned to a non-capturing initial value, never moved it
+         // (`D-bind-29`).
+         let _ = closure_var_nr;
+-        let closure_expr: String = format!("{place}.1");
++        let closure_expr: String = format!("var_{var_name}.1");
+         let work_buf_expr: String = if let Some(idx) = work_buf_idx {
+             format!("_farg_{idx}")
+         } else {
+@@ -1316,7 +1320,7 @@ impl Output<'_> {
+         if heap_return {
+             write!(w, "let __vc_out = ")?;
+         }
+-        write!(w, "match {place}.0 {{")?;
++        write!(w, "match var_{var_name}.0 {{")?;
+         for super::fnref::Arm {
+             d_nr, has_closure, ..
+         } in &candidates
+@@ -1466,7 +1470,7 @@ impl Output<'_> {
+         }
+         write!(
+             w,
+-            " _ => unreachable!(\"invalid fn-ref: {{}} in {var_name}\", {place}.0) }}"
++            " _ => unreachable!(\"invalid fn-ref: {{}} in {var_name}\", var_{var_name}.0) }}"
+         )?;
+         if heap_return {
+             // The match is the block's value; bind it so the store can be asked about, then
+diff --git b/src/generation/ops/ref_ops.rs a/src/generation/ops/ref_ops.rs
+index f6285c303..95e386652 100644
+--- b/src/generation/ops/ref_ops.rs
++++ a/src/generation/ops/ref_ops.rs
+@@ -140,11 +140,16 @@ impl OpEmitter for OpFreeRefEmitter {
+                     Type::Function(..)
+                 )
+             {
+-                let (label, vn) = free_label_lvalue(ctx, *v);
++                let vn = format!(
++                    "var_{}",
++                    super::super::sanitize(
++                        ctx.output.data.def(ctx.output.def_nr).variables().name(*v)
++                    )
++                );
+                 write!(
+                     ctx.w,
+                     "if {vn}.1.store_nr != u16::MAX {{ \
+-                     OpFreeRef(cell,{vn}.1, \"{label}.1\"); \
++                     OpFreeRef(cell,{vn}.1, \"{vn}.1\"); \
+                      {vn}.1.store_nr = u16::MAX }}"
+                 )?;
+                 return Ok(());
+@@ -236,7 +241,12 @@ impl OpEmitter for OpFreeRefTagEmitter {
+                     Type::Function(..)
+                 )
+             {
+-                let vn = free_label_lvalue(ctx, *v).1;
++                let vn = format!(
++                    "var_{}",
++                    super::super::sanitize(
++                        ctx.output.data.def(ctx.output.def_nr).variables().name(*v)
++                    )
++                );
+                 write!(
+                     ctx.w,
+                     "if {vn}.1.store_nr != u16::MAX {{ OpFreeRefTag(cell,{vn}.1, "

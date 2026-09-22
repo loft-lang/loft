@@ -2488,9 +2488,12 @@ fn clear_keyed(s: &mut State) {
 
 fn index_group(s: &mut State) {
     let v_tp = s.code::<u16>();
+    let v_parent_tp = s.code::<u16>();
+    let v_fld = s.code::<u16>();
     let v_view = s.get_stack::<DbRef>();
     let v_primary = s.get_stack::<DbRef>();
-    s.database.index_group_records(&v_primary, &v_view, v_tp);
+    s.database
+        .index_group_records(&v_primary, &v_view, v_tp, v_parent_tp, v_fld);
 }
 
 fn link_record(s: &mut State) {

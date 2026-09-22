@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1587 — a generator may hold a lambda across a `yield`, on --native as on the interpreter.
+//
+// A generator's locals that live across a `yield` are fields of its state machine.  A fn-ref
+// local and the `___clos_*` record it captures into were not, so the state that built the
+// lambda declared them inside its own arm and every later state named identifiers no scope
+// declared: rustc refused the program (E0425 `var_f`), captured or not — and since --native
+// emits every function, even a program that never called that generator.  A closure inside a
+// lazily lowered loop hit the same wall, so #1586 had kept such a loop on the eager buffer;
+// it is lazy now, and its cells assert the ORDER of side effects to show it.
+//
+// Axes this file MOVES:  what the lambda captures (an integer, nothing, a text), how it is
+//                        held (a lambda, a named fn, rebound between yields), where it is built
+//                        (straight-line, a `for` body, a `while` body), and how the generator
+//                        ends (drained, abandoned after one value).
+// Axes it HOLDS FIXED:   finite loops only — an eager regression fails an order assertion
+//                        rather than exhausting memory; every value hand-computed.
+//
+// @falsified-at: 405ff146c — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move).
+//   CHANNEL: exit, native — rustc refused the control (E0425 on `var_f` and on the
+//   `___clos_*` record, named in states that never declared them).
+//   WITNESS: `cannot find value var_f in this scope` on the control.
+//   HOLDS: assertions, leak, panic and free-refusal are equal on both trees on the interpreter.
+// @falsified-by: tests/falsified/1587-a-generator-holds-a-lambda-across-a-yield.patch — the same
+//   channels.
+
+struct Log { n: integer }
+
+fn plus5_1587(x: integer) -> integer { x + 5 }
+
+fn captures1587() -> iterator<integer> {
+  k = 5;
+  f = fn(x: integer) -> integer { x + k };
+  yield f(1);
+  yield f(2);
+}
+
+fn plain1587() -> iterator<integer> {
+  f = fn(x: integer) -> integer { x + 5 };
+  yield f(1);
+  yield f(2);
+}
+
+fn rebound1587() -> iterator<integer> {
+  k = 10;
+  f = fn(x: integer) -> integer { x + k };
+  yield f(1);
+  j = 20;
+  f = fn(x: integer) -> integer { x + j };
+  yield f(1);
+}
+
+fn named1587() -> iterator<integer> {
+  f = plus5_1587;
+  yield f(1);
+  yield f(2);
+}
+
+fn text1587() -> iterator<text> {
+  p = "x";
+  f = fn(s: text) -> text { p + s };
+  yield f("a");
+  yield f("b");
+}
+
+fn in_for1587(lg: reference<Log>) -> iterator<integer> {
+  for i in 0..2 { k = i * 10; f = fn(x: integer) -> integer { x + k }; lg.n = lg.n * 10 + 1; yield f(1); }
+}
+
+fn in_while1587(lg: reference<Log>) -> iterator<integer> {
+  n = 0;
+  while n < 2 { k = n * 10; f = fn(x: integer) -> integer { x + k }; lg.n = lg.n * 10 + 1; yield f(1); n += 1; }
+}
+
+fn main() {
+  s1 = ""; for v in captures1587() { s1 += "{v} "; }
+  assert(s1 == "6 7 ", "a capturing lambda across two yields: {s1}");
+  s2 = ""; for v in plain1587() { s2 += "{v} "; }
+  assert(s2 == "6 7 ", "a lambda that captures nothing: {s2}");
+  s3 = ""; for v in rebound1587() { s3 += "{v} "; }
+  assert(s3 == "11 21 ", "a lambda rebound between yields: {s3}");
+  s4 = ""; for v in named1587() { s4 += "{v} "; }
+  assert(s4 == "6 7 ", "a named fn held as a fn-ref: {s4}");
+  s5 = ""; for v in text1587() { s5 += "{v} "; }
+  assert(s5 == "xa xb ", "a lambda capturing text: {s5}");
+
+  a = Log { n: 0 };
+  sa = "";
+  for v in in_for1587(a) { a.n = a.n * 10 + 2; sa += "{v} "; }
+  assert(a.n == 1212 && sa == "1 11 ", "a closure in a for body, one iteration per advance: {a.n} / {sa}");
+
+  b = Log { n: 0 };
+  sb = "";
+  for v in in_while1587(b) { b.n = b.n * 10 + 2; sb += "{v} "; }
+  assert(b.n == 1212 && sb == "1 11 ", "a closure in a while body, one iteration per advance: {b.n} / {sb}");
+
+  g = captures1587();
+  first = next(g) ?? -1;
+  assert(first == 6, "abandoned after one value: {first}");
+}

@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generator's compiler heap temps — a call's return buffer, a lift, a yield's record — live
+// across its `yield`s on --native, as the interpreter's whole frame does.
+//
+// On --native the locals that outlive an advance are fields of the state machine.  The
+// compiler's own heap temps were not: they were `next_*`-scope locals, re-declared NULL on
+// every advance.  A temp whose null initialiser sits at the top of the body was then DECLARED
+// in the first state and filled in a later one, so `yield A { h: mk(1) }` — a variant literal
+// built from a call, whose lift temp is exactly that — did not build (E0425 `var___lift_2`).
+// Found by a probe for loft#1588; the interpreter always answered.
+//
+// The record a yield HANDS OVER stays the consumer's on --native: the generator forgets its
+// temp after the hand-over, as the per-advance local did.  Who owns a yielded record is not yet
+// a rule — the interpreter releases it with the generator, and a drained `for` leaks it on
+// --native — and is loft#1589.
+//
+// Axes this file MOVES:  where the record comes from (a call inside a variant literal, a
+//                        literal) and how the generator ends (every value taken, abandoned
+//                        after one).
+// Axes it HOLDS FIXED:   straight-line yields; every value hand-computed.
+//
+// @falsified-at: f856b901f — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move).
+//   CHANNEL: exit, native — rustc refused the control (E0425 `var___lift_2`, the lift temp of
+//   the second yield, declared only in the first state).
+//   WITNESS: `cannot find value var___lift_2 in this scope` on the control.
+//   HOLDS: assertions, leak, panic and free-refusal are equal on both trees on the interpreter.
+// @falsified-by: tests/falsified/a-generator-keeps-its-heap-temps-across-a-yield.patch — the same
+//   channels.
+
+struct H { id: integer }
+enum E { A { h: H }, B }
+
+fn mk(i: integer) -> H { return H { id: i }; }
+
+fn from_calls() -> iterator<E> { yield A { h: mk(1) }; yield A { h: mk(2) }; yield B; }
+fn from_literals() -> iterator<E> { yield A { h: H { id: 10 } }; yield A { h: H { id: 20 } }; yield B; }
+
+fn id_of(e: E) -> integer { match e { A { h } => h.id, B => 100 } }
+
+// Each value is taken into a local that owns it; a drained `for` would leave the records on
+// --native (loft#1589), which is not this file's question.
+fn sum3(g: iterator<E>) -> integer {
+  a = next(g) ?? B;
+  b = next(g) ?? B;
+  c = next(g) ?? B;
+  id_of(a) + id_of(b) + id_of(c)
+}
+
+fn main() {
+  assert(sum3(from_calls()) == 103, "three values from calls in variant literals: {sum3(from_calls())}");
+  assert(sum3(from_literals()) == 130, "records from literals: {sum3(from_literals())}");
+
+  g = from_calls();
+  first = next(g);
+  got = match first { A { h } => h.id, B => -1 };
+  assert(got == 1, "abandoned after one value: {got}");
+}

@@ -140,16 +140,11 @@ impl OpEmitter for OpFreeRefEmitter {
                     Type::Function(..)
                 )
             {
-                let vn = format!(
-                    "var_{}",
-                    super::super::sanitize(
-                        ctx.output.data.def(ctx.output.def_nr).variables().name(*v)
-                    )
-                );
+                let (label, vn) = free_label_lvalue(ctx, *v);
                 write!(
                     ctx.w,
                     "if {vn}.1.store_nr != u16::MAX {{ \
-                     OpFreeRef(cell,{vn}.1, \"{vn}.1\"); \
+                     OpFreeRef(cell,{vn}.1, \"{label}.1\"); \
                      {vn}.1.store_nr = u16::MAX }}"
                 )?;
                 return Ok(());
@@ -241,12 +236,7 @@ impl OpEmitter for OpFreeRefTagEmitter {
                     Type::Function(..)
                 )
             {
-                let vn = format!(
-                    "var_{}",
-                    super::super::sanitize(
-                        ctx.output.data.def(ctx.output.def_nr).variables().name(*v)
-                    )
-                );
+                let vn = free_label_lvalue(ctx, *v).1;
                 write!(
                     ctx.w,
                     "if {vn}.1.store_nr != u16::MAX {{ OpFreeRefTag(cell,{vn}.1, "

@@ -127,7 +127,7 @@ Every deviation this doc has carried is closed; the record is in the companion
   straight line — `for` or `while`, statements after the yield included — does too (`y0 g0 y1 g1`),
   so an endless one hands out each value as it is asked for.  The loop shapes CL-9 has not reached
   (more than one yield per iteration, a yield under an `if`/`match`, a nested loop, a `continue`,
-  a closure in the body, a tuple or record yield) still run EAGERLY on native (`y0 y1 g0 g1`):
+  a tuple or record yield) still run EAGERLY on native (`y0 y1 g0 g1`):
   the values agree and the side effects do not, an interleaving difference COROUTINE.md § CL-9
   records rather than a divergence of values — and an ENDLESS loop of one of those shapes never
   hands out a value on native, so write it with the yield on the straight line.

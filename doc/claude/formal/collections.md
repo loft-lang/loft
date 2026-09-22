@@ -437,7 +437,13 @@ tests/scripts/48b-spatial-slice.loft (the asserted box/open/cap slices). CAVEATS
                 displaces the OLDER record from every keyed member and leaves it in the
                 vector, which has no key to refuse on: es += [E{k:7}]; es += [E{k:7,n:"dup"}]
                 reads len(es) = 2, len(by_k) = 1, by_k[7].n = "dup", and the same through
-                by_k — the group's dedup is unlink-only, never a free (loft#1226).
+                by_k — the group's dedup is unlink-only, never a free, while a vector member
+                holds the record (loft#1226).  A group whose members are all keyed holds the
+                displaced record nowhere, so there it is RELEASED (loft#1576).  One insert may
+                displace two records, one per member keyed on a different field; each leaves
+                every keyed member.  A whole-vector write settles to the same state: a record
+                stays in the keyed members exactly when no LATER record in the vector shares one
+                of its keys.
 ```
 
 Seven fixes are all instances of this one rule, which is why it is written here rather than left
@@ -558,12 +564,11 @@ tests/scripts/901-linked-group-fill.loft.
 
 ## 3. Deviations / decided edges
 
-**OPEN: 1.**
+**OPEN: 0.**
 
-- **`D-col-5`** — OPEN (loft#1576): a repeated key displaces the older record per MEMBER of a
-  linked group, not from the group.  Members keyed on different fields then disagree about the
-  record set, and a group with no vector member never releases the displaced record — against
-  `(Col-Group-Dup)` and `(Col-Group)`.  Record: [collections-history.md](collections-history.md).
+`D-col-5` (loft#1576) was opened 2026-09-21 and CLOSED 2026-09-22: a repeated key displaced the
+older record from the one MEMBER of a linked group it collided in, not from the group, and a group
+with no vector member never released it, against `(Col-Group-Dup)` and `(Col-Group)`.
 
 `D-col-4` (loft#1572) was opened and CLOSED 2026-09-21: an `ordered` — a `sorted` stored by
 reference — stacked a repeated key instead of replacing it, against `(Col-Insert)`.

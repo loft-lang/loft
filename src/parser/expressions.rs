@@ -2501,9 +2501,22 @@ use a separate collection or add after the loop"
                 continue;
             }
             let field = Self::field_at(to, off);
+            // The struct and the primary's field, so the op can settle a repeated key across
+            // every keyed member (loft#1576); `u16::MAX` when no field sits at the offset,
+            // which indexes the view and settles nothing, as before.
+            let fld = self
+                .database
+                .field_index_at(struct_tp, byte_off)
+                .unwrap_or(u16::MAX);
             ops.push(self.cl(
                 "OpIndexGroup",
-                &[to.clone(), field, Value::Int(i32::from(coll_tp))],
+                &[
+                    to.clone(),
+                    field,
+                    Value::Int(i32::from(coll_tp)),
+                    Value::Int(i32::from(struct_tp)),
+                    Value::Int(i32::from(fld)),
+                ],
             ));
         }
         ops
