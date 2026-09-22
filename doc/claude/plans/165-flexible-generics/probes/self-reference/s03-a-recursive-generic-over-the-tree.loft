@@ -1,0 +1,13 @@
+// D7 — a generic function recursing over `Tree<T>` at its own variable.
+// @EXPECT: 4|3
+struct Tree<T> { v: T, kids: vector<Tree<T>> }
+fn size<T>(t: Tree<T>) -> integer {
+  n = 1;
+  for k in t.kids { n += size(k); }
+  n
+}
+fn main() {
+  t = Tree { v: 1, kids: [Tree { v: 2, kids: [Tree { v: 4, kids: [] }] }, Tree { v: 3, kids: [] }] };
+  s = Tree { v: "r", kids: [Tree { v: "a", kids: [] }, Tree { v: "b", kids: [] }] };
+  println("{size(t)}|{size(s)}");
+}

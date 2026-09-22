@@ -1,0 +1,8 @@
+// A return type names `Later<…>` above `struct Later<T>`.
+// @EXPECT: 9|y
+fn mk(n: integer) -> Later<integer> { Later { v: n } }
+fn mk_t() -> Later<text> { Later { v: "y" } }
+struct Later<T> { v: T }
+fn main() {
+  println("{mk(9).v}|{mk_t().v}");
+}

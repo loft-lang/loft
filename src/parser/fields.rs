@@ -169,6 +169,13 @@ impl Parser {
             t = inner.as_ref().clone();
         }
         let enr = self.data.type_elm(&t);
+        // Pass 1 may hold a receiver typed by a forward reference it cannot resolve yet — a
+        // generic struct declared below reads `Unknown` until pass 2 names its instance
+        // (@PLN165 D7) — which is the unknown receiver the early return above stays quiet on,
+        // behind a `?`.
+        if enr == u32::MAX && self.first_pass && self.data.names_unresolved(&t) {
+            return Type::Unknown(0);
+        }
         if enr == u32::MAX {
             let shown = t.show(&self.data, &self.vars);
             if let Some(s) = self.suggest_type_name(&shown) {
@@ -402,8 +409,9 @@ impl Parser {
             if let Type::Reference(child_d, _) = &t {
                 let parent_d = self.data.def(*child_d).parent();
                 if parent_d != u32::MAX && matches!(self.data.def_type(parent_d), DefType::Enum) {
-                    let parent_name = self.data.def(parent_d).name().to_string();
-                    let stub_name = crate::data::Data::mangle_method(&parent_name, &field);
+                    // Keyed as every method is (`method_key`): a generic enum's instance keys
+                    // on its template (@PLN165 D6/D8).
+                    let stub_name = self.data.method_key(parent_d, &field, 0);
                     let md_nr = self.data.def_nr(&stub_name);
                     // Only fire when `t_<Parent>_<field>` is the
                     // user's direct declaration on the enum, NOT the
@@ -1960,7 +1968,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // change (`known` / is_base / is_linked / deref type are untouched).
         let elm_size = if matches!(elm_type, Type::Vector(_, _)) {
             elm_size_raw.max(4)
-        } else if let Type::Reference(tv, _) = elm_type.base()
+        } else if let Type::Reference(tv, _) | Type::Enum(tv, _, _) = elm_type.base()
             && ((elm_size_raw == 0 && self.data.is_type_var_placeholder(*tv))
                 || self.data.is_open_instance(*tv))
         {

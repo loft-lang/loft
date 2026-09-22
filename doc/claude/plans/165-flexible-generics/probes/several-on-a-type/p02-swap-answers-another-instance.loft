@@ -1,0 +1,10 @@
+// D9 — `swap` answers `Pair<V, K>`, a DIFFERENT instance, in both spellings.
+// @EXPECT: a|1|x|2.5
+struct Pair<K, V> { k: K, v: V }
+fn swap<K, V>(self: Pair<K, V>) -> Pair<V, K> { Pair { k: self.v, v: self.k } }
+fn main() {
+  p = Pair { k: 1, v: "a" };
+  s = p.swap();
+  t = swap(Pair { k: 2.5, v: "x" });
+  println("{s.k}|{s.v}|{t.k}|{t.v}");
+}

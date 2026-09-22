@@ -1,0 +1,7 @@
+// @CONTROL
+// @EXPECT: 2
+struct Pair<K, V> { k: K, v: V }
+fn main() {
+  p = Pair { k: 1, v: "a" };
+  println("{p.k}");
+}

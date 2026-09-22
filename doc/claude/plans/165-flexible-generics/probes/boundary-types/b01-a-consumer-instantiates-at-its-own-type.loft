@@ -1,0 +1,11 @@
+// D10 — a library's generic struct, instantiated by the consumer at the library's types and
+// at its OWN; the library's generic methods and constructor reach both.
+// @EXPECT: 4|2|5|1|3
+use gridlib;
+struct Mine { n: integer }
+fn main() {
+  g = grid([1, 2, 3, 4], 2);
+  m = Grid { cells: [Mine { n: 5 }], w: 1 };
+  t: Grid<text> = grid(["a", "b", "c"], 3);
+  println("{g.at(3)}|{g.height()}|{m.at(0).n}|{m.height()}|{cell_count(t)}");
+}

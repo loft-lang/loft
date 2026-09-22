@@ -1,0 +1,7 @@
+// @CONTROL
+// @EXPECT: 99
+use gridlib;
+fn main() {
+  g = grid([1, 2], 1);
+  println("{g.height()}");
+}

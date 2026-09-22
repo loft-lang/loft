@@ -924,7 +924,13 @@ impl Parser {
                 "Expect enum definitions to be in camel case style"
             );
         }
-        self.refuse_type_var_header("an enum", &type_name);
+        // @PLN165 D8 — an enum may declare type variables, as a struct may (D2).
+        let header = if self.lexer.peek_token("<") && crate::keys::generic_types_enabled() {
+            self.parse_type_var_header()
+        } else {
+            self.refuse_type_var_header("an enum", &type_name);
+            Vec::new()
+        };
         let mut d_nr = self.data.def_nr(&type_name);
         // @PLN22 Phase 2 — shadow a prelude/import name of the same key.
         if self.prelude_shadowed(&type_name) {
@@ -956,6 +962,12 @@ impl Parser {
         if self.first_pass && !conflict {
             self.data
                 .set_returned(d_nr, Type::Enum(d_nr, false, crate::data::Deps::none()));
+        }
+        // `D-Template` — an enum with a header is a template: its instances are the enums
+        // (`Shape<integer>`, variants and all); the template itself is laid out nowhere.
+        self.context_type_template = d_nr;
+        if !header.is_empty() && !conflict && self.bind_type_header(&header) {
+            self.data.definitions[d_nr as usize].def_type = DefType::TypeTemplate;
         }
         if !self.lexer.token("{") {
             return false;
@@ -2032,6 +2044,7 @@ impl Parser {
             }
         }
         let mut returned_not_null = false;
+        self.pending_forward_return = None;
         let mut result = if self.lexer.has_token("->") {
             // Will be the correct def_nr on the second pass
             if let Some(tp) = self.parse_type_full(self.data.def_nr(&fn_name), true) {
@@ -2222,6 +2235,10 @@ impl Parser {
         if self.first_pass {
             self.data.set_returned(self.context, result);
             self.data.definitions[self.context as usize].returned_not_null = returned_not_null;
+            if let Some((stub, args)) = self.pending_forward_return.take() {
+                self.forward_generic_returns
+                    .push((self.context, stub, args));
+            }
         }
         // Dep inference for native methods: if a native fn (no body, `;`-terminated)
         // has a `self` parameter and returns the same struct-enum type, the return
@@ -2260,6 +2277,19 @@ impl Parser {
                         }
                     }
                 } else {
+                    // A parameter naming a generic struct declared BELOW (`l: Later<integer>`
+                    // above `struct Later<T>`) was a stub on pass 1, which the signature and the
+                    // variable kept; this pass names the instance (@PLN165 D7).
+                    let ctx = self.context as usize;
+                    if a_nr < self.data.definitions[ctx].attributes.len()
+                        && self
+                            .data
+                            .names_unresolved(&self.data.definitions[ctx].attributes[a_nr].typedef)
+                        && !self.data.names_unresolved(&a.typedef)
+                    {
+                        self.data.definitions[ctx].attributes[a_nr].typedef = a.typedef.clone();
+                        self.vars.set_type(a_nr as u16, a.typedef.clone());
+                    }
                     self.change_var_type(a_nr as u16, &a.typedef);
                     if a.constant {
                         self.vars.set_value_const(a_nr as u16);
@@ -3273,9 +3303,13 @@ impl Parser {
                 self.data
                     .add_def(type_name, self.lexer.pos(), DefType::Unknown)
             };
+            let args = self.skip_forward_type_args(on_d);
+            self.note_forward_return(returned, u_nr, args);
             return Some(Type::Unknown(u_nr));
         }
         if tp_nr != u32::MAX && self.data.def_type(tp_nr) == DefType::Unknown {
+            let args = self.skip_forward_type_args(on_d);
+            self.note_forward_return(returned, tp_nr, args);
             return Some(Type::Unknown(tp_nr));
         }
         // `D-Template` — an INSTANCE in type position (@PLN165 D3): `Box<integer>` names the
@@ -3306,13 +3340,40 @@ impl Parser {
                 }
                 return Some(Type::Never);
             }
+            // `Shape<integer>::Dot` — a VARIANT of an enum instance as a type (@PLN165 D8), found
+            // in the instance: a bare `Dot` names the template's own variant.
+            let variant = if self.lexer.has_token("::") {
+                self.lexer.has_identifier()
+            } else {
+                None
+            };
             let mut dep = Vec::new();
             self.parse_depended(returned, &mut dep);
             let inst = self.instance_def(tp_nr, &args);
+            if let Some(vname) = variant
+                && inst != u32::MAX
+            {
+                let v = self.data.variant_of(inst, &vname);
+                if v == u32::MAX {
+                    if !self.first_pass {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "`{type_name}` has no variant `{vname}`"
+                        );
+                    }
+                    return Some(Type::Never);
+                }
+                return Some(Type::Reference(v, crate::data::Deps::unknown(dep)));
+            }
             if inst == u32::MAX {
                 // An argument not resolved yet (pass 1), or one that still names a type
                 // variable (an OPEN instance, @PLN165 D5).
                 return Some(Type::Unknown(0));
+            }
+            // An enum instance (@PLN165 D8) is spelled as its enum is: `Enum(inst, mixed)`.
+            if let Type::Enum(e, mixed, _) = self.data.def(inst).returned().base() {
+                return Some(Type::Enum(*e, *mixed, crate::data::Deps::unknown(dep)));
             }
             return Some(Type::Reference(inst, crate::data::Deps::unknown(dep)));
         }
@@ -3679,7 +3740,19 @@ impl Parser {
             }
             let element_is_template =
                 dn != u32::MAX && self.data.def_type(dn) == DefType::TypeTemplate;
+            self.forward_template_args = false;
             if let Some(tp) = self.parse_type(on_d, &sub_name, false) {
+                // `reference<B<T>>` naming a generic struct declared BELOW: its arguments were
+                // read and set aside (`skip_forward_type_args`), so on this pass the pointer
+                // has no target yet — `Unknown`, as the plain `B<T>` spelling is.  A pointer to
+                // the stub would name the bare template once it is adopted (@PLN165 D7).
+                if std::mem::take(&mut self.forward_template_args)
+                    && type_name == "reference"
+                    && let Type::Unknown(d) = tp
+                {
+                    self.lexer.closing_angle();
+                    return Some(Type::Unknown(d));
+                }
                 // @PLN165 D3 — a template element (`vector<Box<integer>?>`) writes its `?`
                 // after its own arguments, which `parse_type` has just read.
                 if element_is_template && !nullable_elem && self.lexer.has_token("?") {
@@ -3876,10 +3949,12 @@ impl Parser {
                         // could not exist at all.  Non-field positions
                         // (locals, parameters, return types) keep the plain
                         // shape — their semantics are unchanged by #328.
+                        // A generic struct's field is a struct field too (@PLN165 D7):
+                        // `next: reference<Node<T>>?` is the list terminator in every instance.
                         if on_d != u32::MAX
                             && matches!(
                                 self.data.def_type(on_d),
-                                DefType::Struct | DefType::EnumValue
+                                DefType::Struct | DefType::EnumValue | DefType::TypeTemplate
                             )
                         {
                             Type::Reference(sub_nr, crate::data::Deps::pointer_marker())
@@ -4462,6 +4537,16 @@ impl Parser {
         }
         self.lexer.token("}");
         self.lexer.has_token(";");
+        // @PLN165 D7 — an instance this declaration minted (`Tree<T>` in `kids:
+        // vector<Tree<T>>`) copied only the fields parsed before it; and a template may
+        // mention itself only regularly.
+        if self.data.def_type(d_nr) == DefType::TypeTemplate
+            && self.template_is_regular(d_nr, &field_at)
+        {
+            self.data.refresh_instances(&mut self.lexer, d_nr);
+        } else if !self.first_pass {
+            crate::typedef::lay_out_late(&mut self.data, &mut self.database, d_nr);
+        }
         self.link_shared_nullable_views(d_nr);
         self.advise_group_apart(d_nr, &field_at);
         // #91: check for circular init dependencies (second pass, all fields known).
@@ -5543,6 +5628,18 @@ impl Parser {
             }
         } else {
             let a = self.data.attr(d_nr, a_name);
+            // A field that named a generic struct declared BELOW was a stub on pass 1
+            // (`skip_forward_type_args`); now it is the instance it names.  Upgrading the stub
+            // in place — what a concrete forward reference takes — would give the bare
+            // template rather than `B<T>` (@PLN165 D7).
+            if a != usize::MAX
+                && self.data.names_unresolved(&self.data.attr_type(d_nr, a))
+                && !self.data.names_unresolved(&a_type)
+            {
+                // Written directly: `set_attr_type` refuses a second write, and pass 1 may
+                // already have resolved the stub — to the bare template, which is the point.
+                self.data.definitions[d_nr as usize].attributes[a].typedef = a_type.clone();
+            }
             if value_const {
                 self.data.definitions[d_nr as usize].attributes[a].value_const = true;
             }
@@ -5570,6 +5667,101 @@ impl Parser {
     /// One home for both field-type branches of `parse_field`.  Answers whether a check
     /// was consumed, so the identifier branch can keep using it as the head of its
     /// if-chain while the tuple branch, which ends the field itself, calls it directly.
+    /// @PLN165 D7 — `D-Regular`: a generic struct may name itself in its fields only at its
+    /// own type variables, unchanged (`kids: vector<Tree<T>>`), for then every instance is a
+    /// finite type.  At other arguments (`Bad<vector<T>>` inside `Bad<T>`) it has no finite
+    /// set of instances: refused here, on the pass that parses it first, and marked so no
+    /// instance of it is ever minted — closing its fields would descend forever.  (An INLINE
+    /// self field is each instance's own cycle, reported by the layout in the instance's words,
+    /// as its twin's is.)  Answers whether the declaration is regular.
+    fn template_is_regular(
+        &mut self,
+        d_nr: u32,
+        field_at: &[(String, crate::lexer::Position)],
+    ) -> bool {
+        let own: Vec<u32> = self.data.def(d_nr).type_params.clone();
+        let fields: Vec<(String, Type)> = self
+            .data
+            .def(d_nr)
+            .attributes()
+            .iter()
+            .filter(|a| !matches!(a.typedef.base(), Type::Routine(_)))
+            .map(|a| (a.name.clone(), a.typedef.clone()))
+            .collect();
+        for (name, tp) in fields {
+            let mut irregular: Option<u32> = None;
+            tp.any_node(&mut |t| {
+                if let Type::Reference(r, _) | Type::Enum(r, _, _) = t.base()
+                    && self.data.def(*r).instance_of == d_nr
+                    && irregular.is_none()
+                {
+                    let args = &self.data.def(*r).instance_args;
+                    let is_own = args.len() == own.len()
+                        && args
+                            .iter()
+                            .zip(&own)
+                            .all(|(a, p)| matches!(a.base(), Type::Reference(ad, _) if ad == p));
+                    if !is_own {
+                        irregular = Some(*r);
+                    }
+                }
+                false
+            });
+            let Some(r) = irregular else {
+                continue;
+            };
+            self.data.refused_type_templates.insert(d_nr);
+            let tname = self.data.def(d_nr).name().to_string();
+            let vars: Vec<String> = own
+                .iter()
+                .map(|p| crate::data::Data::type_var_spelling(self.data.def(*p).name()).to_string())
+                .collect();
+            let regular = format!("{tname}<{}>", vars.join(", "));
+            let shown = Type::Reference(r, crate::data::Deps::none()).source_name(&self.data);
+            let at = field_at
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map_or_else(|| self.lexer.pos().clone(), |(_, p)| p.clone());
+            diagnostic_at!(
+                self.lexer,
+                &at,
+                Level::Error,
+                "`{shown}` inside `{regular}` has no finite set of instances — a struct may \
+                 name itself only at its own type variables, unchanged: `{regular}`"
+            );
+            return false;
+        }
+        true
+    }
+
+    /// A forward reference to a generic struct declared BELOW (`b: B<T>?` above `struct
+    /// B<T>`): its name is still a stub, so its argument list is read and set aside — pass 2,
+    /// where the name is a template, parses it as the instance (@PLN165 D7).
+    fn skip_forward_type_args(&mut self, on_d: u32) -> Vec<Type> {
+        let mut args = Vec::new();
+        if !self.lexer.has_token("<") {
+            return args;
+        }
+        self.forward_template_args = true;
+        while let Some(t) = self.parse_type_full(on_d, false) {
+            args.push(t);
+            if !self.lexer.has_token(",") {
+                break;
+            }
+        }
+        self.lexer.closing_angle();
+        args
+    }
+
+    /// A RETURN type naming a generic struct declared below keeps its arguments until the
+    /// declaration is seen: between the passes it becomes the instance (`between_passes`),
+    /// early enough for the record return's `__retbuf` to be reserved there (@PLN165 D7).
+    fn note_forward_return(&mut self, returned: bool, stub: u32, args: Vec<Type>) {
+        if returned && self.first_pass && !args.is_empty() {
+            self.pending_forward_return = Some((stub, args));
+        }
+    }
+
     pub(crate) fn parse_field_assert(&mut self, check: &mut Value, message: &mut Value) -> bool {
         if !self.lexer.has_token("assert") {
             return false;

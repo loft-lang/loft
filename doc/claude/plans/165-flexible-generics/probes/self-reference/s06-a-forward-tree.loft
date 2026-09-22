@@ -1,0 +1,8 @@
+// A template whose field names ANOTHER template declared below it, through a vector.
+// @EXPECT: 2|b
+struct Forest<T> { trees: vector<Tree<T>> }
+struct Tree<T> { v: T, kids: vector<Tree<T>> }
+fn main() {
+  f = Forest { trees: [Tree { v: "a", kids: [] }, Tree { v: "b", kids: [] }] };
+  println("{len(f.trees)}|{f.trees[1].v}");
+}

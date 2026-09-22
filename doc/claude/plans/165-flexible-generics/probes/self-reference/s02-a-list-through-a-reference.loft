@@ -1,0 +1,10 @@
+// D7 — `next: reference<Node<T>>?`, the linked-list terminator a concrete list uses.
+// @EXPECT: 3|2|1|true|c
+struct Node<T> { v: T, next: reference<Node<T>>? }
+fn main() {
+  a = Node { v: 1, next: null };
+  b = Node { v: 2, next: a };
+  c = Node { v: 3, next: b };
+  t = Node { v: "c", next: null };
+  println("{c.v}|{c.next.v}|{c.next.next.v}|{c.next.next.next == null}|{t.v}");
+}

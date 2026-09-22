@@ -1,0 +1,7 @@
+// D10 — the library's generic struct and constructor named through the library.
+// @EXPECT: 6|3
+use gridlib;
+fn main() {
+  g: gridlib::Grid<integer> = gridlib::grid([1, 2, 3, 4, 5, 6], 2);
+  println("{g.at(5)}|{g.height()}");
+}

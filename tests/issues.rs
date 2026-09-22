@@ -6065,7 +6065,9 @@ fn run_c() -> integer {
     p_c.x + p_c.y
 }"
     )
-    .error("Expect token ; at inc30_typo_comma_without_colon_is_rejected:5:22");
+    // At the `{` the statement is stuck on: the literal is abandoned and the lexer put back.
+    // It read 5:22 while a revert left the cursor where the abandoned read had stopped.
+    .error("Expect token ; at inc30_typo_comma_without_colon_is_rejected:5:17");
 }
 
 // ── INC#31: open-ended range patterns in match arms ────────────────────

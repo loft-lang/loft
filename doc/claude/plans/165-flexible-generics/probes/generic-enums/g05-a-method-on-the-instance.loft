@@ -1,0 +1,11 @@
+// D8 — a concrete method on one instance (keyed on the template, D6), both spellings.
+// @EXPECT: 1|2|1
+enum Shape<T> { Dot { at: T }, Line { from: T, to: T }, Empty }
+fn arity(self: Shape<integer>) -> integer {
+  match self { Dot { at } => 1, Line { from, to } => 2, Empty => 0 }
+}
+fn main() {
+  a = Dot { at: 7 };
+  b = Line { from: 1, to: 2 };
+  println("{a.arity()}|{arity(b)}|{Dot { at: 9 }.arity()}");
+}

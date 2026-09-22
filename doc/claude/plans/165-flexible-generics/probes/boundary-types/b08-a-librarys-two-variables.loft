@@ -1,0 +1,10 @@
+// D10 — a library's struct over two variables, swapped by its generic method at the
+// consumer's types.
+// @EXPECT: a:1|5:t
+use gridlib;
+struct Mine { n: integer }
+fn main() {
+  p = Pair { k: 1, v: "a" }.swap();
+  q = Pair { k: "t", v: Mine { n: 5 } }.swap();
+  println("{p.k}:{p.v}|{q.k.n}:{q.v}");
+}

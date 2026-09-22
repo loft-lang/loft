@@ -68,6 +68,15 @@ pub fn byte_code_from(
     // that verdict in now, while `Data` and the live schema are both in hand; this
     // is the single funnel every `byte_code*` entry point goes through.
     crate::typedef::sync_capture_ownership(data, &mut state.database);
+    // @PLN165 D10 — an instance's literal names its template (`Stores::shown`).
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if def.instance_of != u32::MAX && def.known_type() != u16::MAX && !data.is_open_instance(d)
+        {
+            let template = data.def(def.instance_of).name().to_string();
+            state.database.shown.insert(def.known_type(), template);
+        }
+    }
     if start_d_nr == 0 {
         native::init(state);
         register_native_stubs(state, data);

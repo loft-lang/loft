@@ -1363,6 +1363,9 @@ or build a local and use that."
     }
 
     pub(crate) fn parse_lambda(&mut self, code: &mut Value) -> Type {
+        if self.discovering > 0 {
+            return self.lambda_signature();
+        }
         let lambda_name = format!("__lambda_{}", self.lambda_counter);
         self.lambda_counter += 1;
         let stored_name = format!("n_{lambda_name}");
@@ -1578,6 +1581,75 @@ or build a local and use that."
         Type::Function(arg_types, Box::new(ret_type), dep, consts)
     }
 
+    /// The type a `fn(…) -> τ { … }` lambda's header spells, for a generic literal reading its
+    /// values to learn its instance (`Parser::discovering`): that read defines nothing, and a
+    /// lambda parsed as one is a definition.  The body is still READ — a walk over its tokens
+    /// would record ones no parse reads (a format string's holes) for the literal's second
+    /// read to replay — against a table of its own, which the literal's read puts back.
+    fn lambda_signature(&mut self) -> Type {
+        let file = self.lexer.pos().file.clone();
+        let outer_vars = std::mem::replace(&mut self.vars, Function::new("__lambda", &file));
+        self.lexer.token("(");
+        let mut arguments = Vec::new();
+        self.parse_arguments("__lambda", &mut arguments);
+        self.lexer.token(")");
+        let result = if self.lexer.has_token("->") {
+            self.parse_type_full(self.context, true)
+                .unwrap_or(Type::Void)
+        } else {
+            Type::Void
+        };
+        let result = self.boxed_tuple_return(result);
+        self.read_lambda_body(&arguments);
+        self.vars = outer_vars;
+        let arg_types: Vec<Type> = arguments.iter().map(|a| a.typedef.clone()).collect();
+        let consts = crate::data::ConstParams::from_flags(arguments.iter().map(|a| a.constant));
+        Type::Function(arg_types, Box::new(result), Deps::none(), consts)
+    }
+
+    /// A `|…| { … }` lambda for the same read: its parameter types come from the type that
+    /// read is looking for, so it answers none, and the value holding it binds nothing
+    /// (`Parser::discovery_skipped_lambda`).  Read as [`Self::lambda_signature`] reads a body.
+    fn skip_short_lambda(&mut self, expect_close: bool) {
+        let file = self.lexer.pos().file.clone();
+        let outer_vars = std::mem::replace(&mut self.vars, Function::new("__lambda", &file));
+        let mut arguments = Vec::new();
+        if expect_close {
+            while let Some(name) = self.lexer.has_identifier() {
+                arguments.push(Argument {
+                    name,
+                    typedef: Type::Unknown(0),
+                    default: Value::Null,
+                    constant: false,
+                    ref_pos: (0, 0),
+                    const_pos: (0, 0),
+                });
+                if !self.lexer.has_token(",") {
+                    break;
+                }
+            }
+            self.lexer.token("|");
+        }
+        self.read_lambda_body(&arguments);
+        self.vars = outer_vars;
+        self.discovery_skipped_lambda = true;
+    }
+
+    /// Read a discovered lambda's body with its parameters in scope; what it reports is the
+    /// lambda's own second read's to say.
+    fn read_lambda_body(&mut self, arguments: &[Argument]) {
+        let mark = self.lexer.diagnostics().mark();
+        for a in arguments {
+            self.create_var(&a.name, &a.typedef);
+        }
+        let outer_loop = self.in_loop;
+        self.in_loop = false;
+        let mut body = Value::Null;
+        self.parse_block("lambda", &mut body, &Type::Unknown(0));
+        self.in_loop = outer_loop;
+        self.lexer.rewind_diagnostics(mark);
+    }
+
     // <short-lambda> ::= '||' ['->' type] block              (expect_close=false)
     //                  | '|' [param {',' param}] '|' ['->' type] block  (expect_close=true)
     // param ::= ident [':' type]
@@ -1587,6 +1659,10 @@ or build a local and use that."
     // Produces Type::Function; runtime representation is d_nr as i32, same as fn-ref.
     #[allow(clippy::too_many_lines)] // single context save/restore spans the whole body; splitting would need unsafe borrowing
     pub(crate) fn parse_lambda_short(&mut self, code: &mut Value, expect_close: bool) -> Type {
+        if self.discovering > 0 {
+            self.skip_short_lambda(expect_close);
+            return Type::Unknown(0);
+        }
         let lambda_name = format!("__lambda_{}", self.lambda_counter);
         self.lambda_counter += 1;
         let stored_name = format!("n_{lambda_name}");

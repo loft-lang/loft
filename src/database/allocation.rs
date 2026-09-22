@@ -2242,6 +2242,7 @@ impl Stores {
         WorkerStores::new(Stores {
             types: self.types.clone(),
             names: self.names.clone(),
+            shown: self.shown.clone(),
             allocations,
             records_created: self.records_created,
             stores_allocated: self.stores_allocated,

@@ -1,0 +1,11 @@
+// D8 — a unit variant names no type argument; the annotation names the instance.
+// @EXPECT: empty|dot 4
+enum Shape<T> { Dot { at: T }, Line { from: T, to: T }, Empty }
+fn show(s: Shape<integer>) -> text {
+  match s { Dot { at } => "dot {at}", Line { from, to } => "line {from}-{to}", Empty => "empty" }
+}
+fn main() {
+  e: Shape<integer> = Empty;
+  d: Shape<integer> = Dot { at: 4 };
+  println("{show(e)}|{show(d)}");
+}

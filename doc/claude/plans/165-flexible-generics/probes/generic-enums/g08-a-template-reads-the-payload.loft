@@ -1,0 +1,11 @@
+// D8 — a generic function matches a generic enum and returns its payload, at two instances.
+// @EXPECT: 5|9|x|d
+enum Slot<T> { Full { v: T }, Hole }
+fn get<T>(s: Slot<T>, d: T) -> T { match s { Full { v } => v, Hole => d } }
+fn main() {
+  a: Slot<integer> = Full { v: 5 };
+  b: Slot<integer> = Hole;
+  c: Slot<text> = Full { v: "x" };
+  e: Slot<text> = Hole;
+  println("{get(a, 0)}|{get(b, 9)}|{get(c, "")}|{get(e, "d")}");
+}

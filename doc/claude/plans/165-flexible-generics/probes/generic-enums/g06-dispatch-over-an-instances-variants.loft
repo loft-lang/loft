@@ -1,0 +1,12 @@
+// D8 — a set whose members take an instance's variants (`Shape<integer>::Dot`) dispatches
+// on the variant at run time, as the twin set over `ShapeI`'s variants does.
+// @EXPECT: line 4|dot 2|dot a
+enum Shape<T> { Dot { at: T }, Line { from: T, to: T } }
+fn f(x: Shape<integer>::Dot) -> text { "dot {x.at}" }
+fn f(x: Shape<integer>::Line) -> text { "line {x.from}" }
+fn g(x: Shape<text>::Dot) -> text { "dot {x.at}" }
+fn main() {
+  s: Shape<integer> = Line { from: 4, to: 5 };
+  t: Shape<integer> = Dot { at: 2 };
+  println("{f(s)}|{f(t)}|{g(Dot { at: "a" })}");
+}

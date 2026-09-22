@@ -2331,8 +2331,48 @@ impl Type {
     #[must_use]
     pub fn substitute(self, holder: u32, bound: &Type) -> Type {
         match self {
+            // `reference<X>` at a substituted `X` stays a POINTER: the marker lives in the
+            // replaced reference's deps, and a record bound in its place keeps it — without
+            // it `reference<Node<T>>?` in `Node<integer>` became an inline self field.
+            Type::Reference(d, deps) if d == holder && deps.is_pointer_marker() => match bound {
+                Type::Reference(b, _) => Type::Reference(*b, deps),
+                Type::Optional(inner) => match inner.base() {
+                    Type::Reference(b, _) => Type::Optional(Box::new(Type::Reference(*b, deps))),
+                    _ => bound.clone(),
+                },
+                other => other.clone(),
+            },
             Type::Reference(d, _) if d == holder => bound.clone(),
+            // An open instance of a generic ENUM is `Enum(holder, …)`: it becomes the bound
+            // instance and keeps its own form (@PLN165 D8).
+            Type::Enum(d, mixed, deps) if d == holder => match bound.base() {
+                Type::Reference(b, _) | Type::Enum(b, _, _) => Type::Enum(*b, mixed, deps),
+                _ => bound.clone(),
+            },
             other => other.map_children(&mut |c| c.clone().substitute(holder, bound)),
+        }
+    }
+
+    /// Every `(holder, bound)` pair at once: a bound is never substituted again.  Where one
+    /// pair's bound names another pair's holder — the variables of `Pair<V, K>` inside
+    /// `Pair<K, V>`, `[K ↦ V, V ↦ K]` — [`Type::substitute_all`]'s fold turned `k: K` into
+    /// `V` and back into `K` (@PLN165 D10).
+    #[must_use]
+    pub fn substitute_simultaneous(self, bindings: &[(u32, Type)]) -> Type {
+        match self {
+            Type::Optional(inner) => {
+                Type::Optional(Box::new(inner.substitute_simultaneous(bindings)))
+            }
+            Type::Reference(h, _) | Type::Enum(h, _, _)
+                if bindings.iter().any(|(x, _)| *x == h) =>
+            {
+                let bound = bindings
+                    .iter()
+                    .find(|(x, _)| *x == h)
+                    .map_or(Type::Unknown(0), |(_, b)| b.clone());
+                self.substitute(h, &bound)
+            }
+            other => other.map_children(&mut |c| c.clone().substitute_simultaneous(bindings)),
         }
     }
 
@@ -3035,7 +3075,9 @@ impl Type {
             // its arguments, each spelled as the reader wrote it — `Box<T>` for the open
             // instance keyed `Box<T#5>`, `Box<u8>` where the key carries the width.  The key
             // keeps the def name.
-            Type::Reference(t, _) if source && data.def(*t).instance_of != u32::MAX => {
+            Type::Reference(t, _) | Type::Enum(t, _, _)
+                if source && data.def(*t).instance_of != u32::MAX =>
+            {
                 let d = data.def(*t);
                 let args: Vec<String> = d
                     .instance_args
@@ -3089,6 +3131,14 @@ impl Type {
             Type::Float => "float".to_string(),
             Type::Single => "single".to_string(),
             Type::Character => "character".to_string(),
+            // A width declared through a stdlib alias reads as the alias the author wrote
+            // (`Box<u8>`): the key's `integer(0, 255)` is no spelling the parser reads, and a
+            // debugger seed annotated with it could not be evaluated (@PLN165 D10).
+            Type::Integer(spec)
+                if source && spec.forced_size.is_some() && data.integer_alias(spec).is_some() =>
+            {
+                data.integer_alias(spec).unwrap_or("integer").to_string()
+            }
             Type::Integer(spec) if spec.source_name().is_some() => {
                 spec.source_name().unwrap_or("integer").to_string()
             }
@@ -5522,6 +5572,10 @@ pub struct Data {
     /// aliased via a DbRef, non-null. A thin marker (a set, not a Definition field — those
     /// serialize) consulted by the few value-semantics chokepoints.
     pub value_structs: HashSet<u32>,
+    /// @PLN165 D7 — generic structs refused at their declaration for an irregular self-mention
+    /// (`D-Regular`): `instance_def` mints none of them, so closing their fields cannot descend
+    /// forever.  A refused program does not run, so this needs no place in the image.
+    pub refused_type_templates: HashSet<u32>,
     /// @PLN165 B2 — the bound set each type-variable placeholder stands for, as its sorted
     /// interface names joined with `+` (`"Ordered+Printable"`; `""` unbounded).  A placeholder
     /// is minted per (spelling, bound set), so this is what tells two variables of one bound set
@@ -6120,6 +6174,7 @@ impl Data {
             adopted_stubs: Vec::new(),
             source: STD_SOURCE,
             value_structs: HashSet::new(),
+            refused_type_templates: HashSet::new(),
             type_var_bound_keys: HashMap::new(),
             used_definitions: HashSet::new(),
             used_attributes: HashSet::new(),
@@ -8576,10 +8631,27 @@ impl Data {
             Type::RefVar(inner) => inner.as_ref(),
             other => other,
         };
-        let type_nr = self.type_def_nr(tp);
+        let mut type_nr = self.type_def_nr(tp);
         if type_nr == u32::MAX {
             // No method dispatch for types like Function; fall back to n_ global.
             return free();
+        }
+        // @FR-F-Recv — a VARIANT's value is a value of its enum, so a method declared on the
+        // enum answers `m(v)` as it answers `v.m()` (the field path's Plan-19 fallback): where
+        // the variant declares no `m` of its own, its enum is the receiver.  Asked only here,
+        // the free spelling reported an unknown function the method spelling reached.
+        // "Its own" in either nullability spelling (`m(self: Tri?)` is the variant's too), which
+        // is what the spelling loop below tries — asked of the dense one alone, an enum's
+        // generated dispatcher reached ITSELF for such a variant.
+        if self.def_type(type_nr) == DefType::EnumValue {
+            let parent = self.definitions[type_nr as usize].parent;
+            let base = self.key_type_name(type_nr);
+            let declares_own = [base.clone(), format!("{base}?")]
+                .iter()
+                .any(|sp| self.source_nr(source, &Self::mangle_method(sp, fn_name)) != u32::MAX);
+            if parent != u32::MAX && self.def_type(parent) == DefType::Enum && !declares_own {
+                type_nr = parent;
+            }
         }
         // A bound HOLDER's stubs are keyed per SIGNATURE (loft#1275), and this entry point has
         // no arity to offer, so every arity the language admits is probed — `Walkable::children`
@@ -8838,8 +8910,12 @@ impl Data {
     }
 
     pub fn resolve_adopted_stubs(&mut self, lexer: &mut Lexer) -> Vec<(u32, Type)> {
+        // Not a stub a GENERIC struct adopted: its target would be the bare template, where
+        // each use names an instance whose arguments the paths that read them resolve
+        // (@PLN165 D7).
         let adopted: Vec<(u32, Type)> = std::mem::take(&mut self.adopted_stubs)
             .into_iter()
+            .filter(|d| self.definitions[*d as usize].def_type != DefType::TypeTemplate)
             .map(|d| (d, self.definitions[d as usize].returned.clone()))
             .filter(|(_, ret)| !matches!(ret, Type::Unknown(_)))
             .collect();
@@ -9070,6 +9146,10 @@ impl Data {
     /// `instance_args`).  `u32::MAX` too for an argument count the template does not take;
     /// the caller reports that.
     pub fn instance_def(&mut self, lexer: &mut Lexer, template: u32, args: &[Type]) -> u32 {
+        // A template refused at its declaration (`D-Regular`) has no instances to mint.
+        if self.refused_type_templates.contains(&template) {
+            return u32::MAX;
+        }
         let params = self.definitions[template as usize].type_params.clone();
         // `never` is a poisoned site's type (@P376), not an argument: no instance holds one.
         // An argument mentioning a type variable mints an OPEN instance (@PLN165 D5,
@@ -9090,35 +9170,218 @@ impl Data {
         if let Some(&nr) = self.def_names.get(&(name.clone(), STD_SOURCE)) {
             return nr;
         }
+        // Termination (@PLN165 D7): a template mentioning itself IRREGULARLY
+        // (`Bad<vector<T>>` inside `Bad<T>`) has no finite set of instances, and closing its
+        // fields would mint deeper ones forever.  The declaration refuses it (`D-Regular`);
+        // this bound is what keeps the compiler finite until that report is read.
+        if name.matches('<').count() > Self::MAX_INSTANCE_NESTING {
+            return u32::MAX;
+        }
         let position = self.definitions[template as usize].position.clone();
-        let d = self.add_def(&name, &position, DefType::Struct);
+        let enum_mixed = match self.definitions[template as usize].returned.base() {
+            Type::Enum(_, mixed, _) => Some(*mixed),
+            _ => None,
+        };
+        let kind = if enum_mixed.is_some() {
+            DefType::Enum
+        } else {
+            DefType::Struct
+        };
+        let d = self.add_def(&name, &position, kind);
         self.def_names.entry((name, STD_SOURCE)).or_insert(d);
         self.definitions[d as usize].source = STD_SOURCE;
-        self.definitions[d as usize].returned = Type::Reference(d, Deps::none());
+        self.definitions[d as usize].returned = match enum_mixed {
+            Some(mixed) => Type::Enum(d, mixed, Deps::none()),
+            None => Type::Reference(d, Deps::none()),
+        };
         self.definitions[d as usize].instance_of = template;
         self.definitions[d as usize].instance_args.clone_from(&args);
         let bindings: Vec<(u32, Type)> = params.iter().copied().zip(args).collect();
-        let fields = self.definitions[template as usize].attributes.clone();
-        for f in fields {
+        if enum_mixed.is_some() {
+            self.fill_enum_instance(lexer, template, d, &bindings);
+            return d;
+        }
+        for f in &self.template_fields(template) {
+            self.copy_instance_field(lexer, d, f, &bindings);
+        }
+        d
+    }
+
+    /// An instance of a generic ENUM (@PLN165 D8) is the enum and each of its variants, minted
+    /// together: the variant list (`Dot`, `Line`, … with their discriminants, as
+    /// `parse_enum_values` records it) and one variant definition per template variant, its
+    /// payload fields closed to the instance.  The variants keep their bare names — first-wins,
+    /// as every `__nullable<S>` has its own `Null` and `Some` — and are found through their
+    /// enum (`variant_of`), which is how a variant in context resolves.
+    fn fill_enum_instance(
+        &mut self,
+        lexer: &mut Lexer,
+        template: u32,
+        d: u32,
+        bindings: &[(u32, Type)],
+    ) {
+        let list = self.definitions[template as usize].attributes.clone();
+        for a in list
+            .iter()
+            .filter(|a| matches!(a.typedef.base(), Type::Enum(e, _, _) if *e == template))
+        {
+            let Type::Enum(_, variant_mixed, _) = *a.typedef.base() else {
+                continue;
+            };
             let a_nr = self.add_attribute(
                 lexer,
                 d,
-                &f.name,
-                f.typedef.clone().substitute_all(&bindings),
+                &a.name,
+                Type::Enum(d, variant_mixed, Deps::none()),
             );
-            let a = &mut self.definitions[d as usize].attributes[a_nr];
-            a.mutable = f.mutable;
-            a.constant = f.constant;
-            a.const_field = f.const_field;
-            a.value_const = f.value_const;
-            a.init = f.init;
-            a.nullable = f.nullable;
-            a.hidden = f.hidden;
-            a.value = f.value;
-            a.check = f.check;
-            a.check_message = f.check_message;
+            self.definitions[d as usize].attributes[a_nr].constant = true;
+            self.definitions[d as usize].attributes[a_nr].value = a.value.clone();
         }
-        d
+        let variants: Vec<u32> = self
+            .children_of(template)
+            .filter(|&c| self.def_type(c) == DefType::EnumValue)
+            .collect();
+        let position = self.definitions[d as usize].position.clone();
+        for v in variants {
+            let vname = self.definitions[v as usize].name.clone();
+            let vd = self.add_def(&vname, &position, DefType::EnumValue);
+            self.definitions[vd as usize].source = STD_SOURCE;
+            self.definitions[vd as usize].parent = d;
+            // As its template variant says: a payload variant is `Enum(_, true)`, and a unit
+            // variant of a mixed enum takes its parent's form (`parse_enum_values`).
+            let variant_mixed = matches!(
+                self.definitions[v as usize].returned.base(),
+                Type::Enum(_, true, _)
+            );
+            self.definitions[vd as usize].returned = Type::Enum(d, variant_mixed, Deps::none());
+            let fields = self.definitions[v as usize].attributes.clone();
+            for f in &fields {
+                self.copy_instance_field(lexer, vd, f, bindings);
+            }
+        }
+    }
+
+    /// A generic struct's FIELDS, which each instance copies — not its method members, which
+    /// stay on the template, where a method call on any instance finds them (@PLN165 D6).
+    fn template_fields(&self, template: u32) -> Vec<Attribute> {
+        self.definitions[template as usize]
+            .attributes
+            .iter()
+            .filter(|a| !matches!(a.typedef.base(), Type::Routine(_)))
+            .cloned()
+            .collect()
+    }
+
+    /// Deeper than this an instance's arguments stop being spelled — the bound behind
+    /// `D-Regular` (see [`Data::instance_def`]).
+    const MAX_INSTANCE_NESTING: usize = 48;
+
+    /// Give instance `d` the template field `f`: its type with the instance's bindings applied
+    /// and every open instance in it closed ([`Data::close_open`]), and the field's flags.
+    fn copy_instance_field(
+        &mut self,
+        lexer: &mut Lexer,
+        d: u32,
+        f: &Attribute,
+        bindings: &[(u32, Type)],
+    ) {
+        let tp = self.close_open(lexer, &f.typedef, bindings);
+        let a_nr = self.add_attribute(lexer, d, &f.name, tp);
+        let a = &mut self.definitions[d as usize].attributes[a_nr];
+        a.mutable = f.mutable;
+        a.constant = f.constant;
+        a.const_field = f.const_field;
+        a.value_const = f.value_const;
+        a.init = f.init;
+        a.nullable = f.nullable;
+        a.hidden = f.hidden;
+        a.value = f.value.clone();
+        a.check = f.check.clone();
+        a.check_message = f.check_message.clone();
+    }
+
+    /// `tp` with `bindings` applied and every OPEN instance in it closed — replaced by the
+    /// instance its arguments name once the bindings decide them (@PLN165 D7).  An instance's
+    /// fields are its template's through this: `Tree<text>`'s `kids: vector<Tree<T>>` is
+    /// `vector<Tree<text>>`.  Regular recursion ends because `instance_def` registers a name
+    /// before it fills the fields, so `Tree<text>` inside `Tree<text>` finds itself.  An
+    /// argument still mentioning a variable afterwards keeps an open instance.
+    pub fn close_open(&mut self, lexer: &mut Lexer, tp: &Type, bindings: &[(u32, Type)]) -> Type {
+        // The open instances the type WRITES — collected before the bindings apply, because
+        // one a binding brings in (`T ↦ Box<T>` for `Box<Box<T>>`'s field `v: T`) is already
+        // the answer: closing it again under the same bindings recursed without end.
+        let tp = tp.clone();
+        let mut opens: Vec<u32> = Vec::new();
+        tp.any_node(&mut |t| {
+            if let Type::Reference(r, _) | Type::Enum(r, _, _) = t.base()
+                && self.is_open_instance(*r)
+                && !opens.contains(r)
+            {
+                opens.push(*r);
+            }
+            false
+        });
+        let mut pairs: Vec<(u32, Type)> = Vec::new();
+        for o in opens {
+            let template = self.definitions[o as usize].instance_of;
+            let args: Vec<Type> = self.definitions[o as usize]
+                .instance_args
+                .clone()
+                .iter()
+                .map(|a| self.close_open(lexer, a, bindings))
+                .collect();
+            let closed = self.instance_def(lexer, template, &args);
+            if closed != u32::MAX && closed != o {
+                pairs.push((o, Type::Reference(closed, Deps::none())));
+            }
+        }
+        // At once: an instance's arguments may be the template's own variables in another
+        // order (`Pair<V, K>` inside `Pair<K, V>`).
+        pairs.extend(bindings.iter().cloned());
+        tp.substitute_simultaneous(&pairs)
+    }
+
+    /// Does `tp` still name something unresolved — a forward stub, or a generic struct's bare
+    /// TEMPLATE, which is never a type (a stub inside `reference<…>` is adopted as the
+    /// template before its arguments can be read, @PLN165 D7)?
+    #[must_use]
+    pub fn names_unresolved(&self, tp: &Type) -> bool {
+        tp.any_node(&mut |t| match t.base() {
+            Type::Unknown(_) => true,
+            Type::Reference(d, _) => {
+                (*d as usize) < self.definitions.len()
+                    && self.definitions[*d as usize].def_type == DefType::TypeTemplate
+            }
+            _ => false,
+        })
+    }
+
+    /// Give every instance of `template` the fields the template gained after it was minted —
+    /// an instance its OWN declaration mints (`Tree<T>` in `kids: vector<Tree<T>>`) copied
+    /// only the fields parsed before that mention — and re-close a field that was a forward
+    /// stub when it was copied (@PLN165 D7).
+    pub fn refresh_instances(&mut self, lexer: &mut Lexer, template: u32) {
+        let fields = self.template_fields(template);
+        let params = self.definitions[template as usize].type_params.clone();
+        for d in 0..self.definitions() {
+            if self.definitions[d as usize].instance_of != template {
+                continue;
+            }
+            let args = self.definitions[d as usize].instance_args.clone();
+            let bindings: Vec<(u32, Type)> = params.iter().copied().zip(args).collect();
+            for f in &fields {
+                let a = self.attr(d, &f.name);
+                if a == usize::MAX {
+                    self.copy_instance_field(lexer, d, f, &bindings);
+                } else if self.names_unresolved(&self.definitions[d as usize].attributes[a].typedef)
+                {
+                    // A field whose template type was a forward stub when the instance was
+                    // minted: closed again from the template's resolved field.
+                    let tp = self.close_open(lexer, &f.typedef, &bindings);
+                    self.definitions[d as usize].attributes[a].typedef = tp;
+                }
+            }
+        }
     }
 
     pub fn tuple_def(&mut self, lexer: &mut Lexer, types: &[Type]) -> u32 {
@@ -9502,26 +9765,65 @@ impl Data {
         self.definitions[v_nr as usize].known_type = vec_tp;
         v_nr
     }
+    /// The stdlib `type` alias that declares exactly this narrow integer (`u8` for
+    /// `integer limit(0, 255) size(1)`), read off the declarations themselves.
+    #[must_use]
+    pub fn integer_alias(&self, spec: &IntegerSpec) -> Option<&str> {
+        self.definitions.iter().find_map(|d| {
+            (d.def_type == DefType::Type
+                && d.source == STD_SOURCE
+                && matches!(d.returned.base(), Type::Integer(s)
+                    if s == spec && s.forced_size == spec.forced_size))
+            .then_some(d.name.as_str())
+        })
+    }
+
     /// Does `tp` mention a type-variable placeholder anywhere — is it still a template's type
     /// rather than a type?
     #[must_use]
     pub fn mentions_type_var(&self, tp: &Type) -> bool {
-        tp.any_node(&mut |t| {
-            matches!(t.base(), Type::Reference(d, _) if (*d as usize) < self.definitions.len()
-                && (self.is_type_var_placeholder(*d) || self.is_open_instance(*d)))
+        tp.any_node(&mut |t| match t.base() {
+            Type::Reference(d, _) => {
+                (*d as usize) < self.definitions.len()
+                    && (self.is_type_var_placeholder(*d) || self.is_open_instance(*d))
+            }
+            Type::Enum(d, _, _) => self.is_open_instance(*d),
+            _ => false,
         })
     }
 
     /// An OPEN instance (@PLN165 D5): an instance of a generic struct whose recorded
     /// arguments mention a type variable — `Box<T>` written inside a template.  It is a type
     /// only inside that template: never laid out, and a monomorph substitutes the concrete
-    /// instance its bindings name ([`Data::open_instance_bindings`]).
+    /// instance its bindings name ([`Data::open_instance_bindings`]).  A VARIANT of an open
+    /// enum instance is one too (@PLN165 D8): its payload is typed by the same variable, and
+    /// a monomorph reads the variant of that name in its own instance.
     #[must_use]
     pub fn is_open_instance(&self, d_nr: u32) -> bool {
         let Some(d) = self.definitions.get(d_nr as usize) else {
             return false;
         };
+        if d.def_type == DefType::EnumValue && d.instance_of == u32::MAX {
+            return self
+                .definitions
+                .get(d.parent as usize)
+                .is_some_and(|p| p.def_type == DefType::Enum)
+                && self.is_open_instance(d.parent);
+        }
         d.instance_of != u32::MAX && d.instance_args.iter().any(|a| self.mentions_type_var(a))
+    }
+
+    /// A definition that is only a TEMPLATE's part and so never laid out (@PLN165 D8): a
+    /// variant of a generic enum, whose payload is typed by the template's variables — each
+    /// instance has variants of its own.
+    #[must_use]
+    pub fn is_template_part(&self, d_nr: u32) -> bool {
+        let Some(d) = self.definitions.get(d_nr as usize) else {
+            return false;
+        };
+        d.def_type == DefType::EnumValue
+            && (d.parent as usize) < self.definitions.len()
+            && self.definitions[d.parent as usize].def_type == DefType::TypeTemplate
     }
 
     /// Does `tp` mention the definition `d` — directly, or through an open instance's
@@ -9532,7 +9834,8 @@ impl Data {
     pub fn type_mentions(&self, tp: &Type, d: u32) -> bool {
         tp.contains_def(d)
             || tp.any_node(&mut |t| {
-                matches!(t.base(), Type::Reference(r, _) if self.is_open_instance(*r)
+                matches!(t.base(), Type::Reference(r, _) | Type::Enum(r, _, _)
+                    if self.is_open_instance(*r)
                     && self.definitions[*r as usize]
                         .instance_args
                         .iter()
@@ -9545,7 +9848,7 @@ impl Data {
     pub fn placeholders_in(&self, tp: &Type, out: &mut Vec<u32>) {
         let mut found: Vec<u32> = Vec::new();
         tp.any_node(&mut |t| {
-            if let Type::Reference(r, _) = t.base()
+            if let Type::Reference(r, _) | Type::Enum(r, _, _) = t.base()
                 && (*r as usize) < self.definitions.len()
                 && (self.is_type_var_placeholder(*r) || self.is_open_instance(*r))
             {
@@ -10621,7 +10924,7 @@ impl Data {
     /// `Some(new_type)` when the subtree contained `Type::Unknown(stub)`
     /// and was rewritten, or `None` when the subtree is unchanged.
     #[allow(clippy::only_used_in_recursion)] // kept as associated fn for clarity
-    fn rewrite_type_opt(t: &Type, stub: u32, target: &Type) -> Option<Type> {
+    pub(crate) fn rewrite_type_opt(t: &Type, stub: u32, target: &Type) -> Option<Type> {
         match t {
             Type::Unknown(n) if *n == stub => Some(target.clone()),
             Type::Vector(inner, deps) => Self::rewrite_type_opt(inner, stub, target)

@@ -1,0 +1,14 @@
+// A generic `match` over a plain enum returning `T`: the join's fallback null is `T`'s, at
+// every kind of T (it was a reference null, which native refused at a scalar T).
+// @EXPECT: 7|t|2.5|true|c|4|x
+struct P { n: integer }
+enum E { A, B }
+enum Sl { Full { v: integer }, Hole }
+fn get<T>(d: T, s: Sl) -> T { match s { Full { v } => d, Hole => d } }
+fn main() {
+  h = Sl.Hole;
+  p = get(P { n: 4 }, h);
+  e = get(E.B, h);
+  en = if e == E.B { "x" } else { "y" };
+  println("{get(7, h)}|{get("t", h)}|{get(2.5, h)}|{get(true, h)}|{get('c', h)}|{p.n}|{en}");
+}

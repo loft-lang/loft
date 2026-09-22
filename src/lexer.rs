@@ -108,6 +108,28 @@ impl LexResult {
     }
 }
 
+/// A token as the read that scanned it left the lexer — what [`Lexer::revert`] replays.
+///
+/// The token alone is not the whole of it.  The parser raises a diagnostic at the scan
+/// CURSOR and at the end of the source it consumed ([`Lexer::report_pos`]), and asks the
+/// string-interpolation state whether a string literal left a `{…}` hole open
+/// (`parse_string`); a replay that served only the tokens left all of them where the first
+/// read stopped.  So a caret raised while a generic literal was built again pointed past its
+/// closing brace, a format string read a second time kept `Formatting` after its closing quote
+/// (`Expect token }`), and every interpolation in a re-read literal was refused
+/// (`Expect token ]`).
+#[derive(Clone)]
+struct Recorded {
+    res: LexResult,
+    /// The scan cursor once the token was read.
+    cursor: (u32, u32),
+    /// Where the consumed source ended when the token became the one held.
+    prev_end: (u32, u32),
+    /// The string-interpolation state the read left: a literal that opens a hole leaves
+    /// `Formatting`, with the string the closing `}` resumes.
+    scan: ScanState,
+}
+
 /// A lexer that can remember a state via a link and then optionally return to that state.
 ///
 /// It defaults to reading all found data into Text elements but has a list of TOKENS and
@@ -126,10 +148,10 @@ pub struct Lexer {
     iter: Peekable<IntoIter<char>>,
     peek: LexResult,
     /// Keep the scanned items in memory when a Link is created to return when reverted to this link.
-    memory: Vec<LexResult>,
-    /// The string-interpolation state each token in `memory` was scanned in, index for
-    /// index — see [`ScanState`].  A replay restores it with the token.
-    memory_state: Vec<ScanState>,
+    memory: Vec<Recorded>,
+    /// The scan cursor a replay from [`memory`](Self#structfield.memory) left, restored when
+    /// the source is scanned again: while a token is replayed, the cursor is the one it had.
+    replay_return: Option<(u32, u32)>,
     /// Keep track of the number of currently in use links
     links: Rc<RefCell<u32>>,
     /// Keep track of where we are in the current memory structure
@@ -446,7 +468,7 @@ impl Default for Lexer {
                 pos: 0,
             },
             memory: Vec::new(),
-            memory_state: Vec::new(),
+            replay_return: None,
             link: 0,
             links: Rc::new(RefCell::new(0)),
             seek_return: None,
@@ -518,7 +540,7 @@ impl Lexer {
                 pos: 0,
             },
             memory: Vec::new(),
-            memory_state: Vec::new(),
+            replay_return: None,
             link: 0,
             links: Rc::new(RefCell::new(0)),
             seek_return: None,
@@ -583,15 +605,25 @@ impl Lexer {
     fn next(&mut self) -> Option<LexResult> {
         if self.link < self.memory.len() {
             let n = self.memory[self.link].clone();
-            if let Some(st) = self.memory_state.get(self.link).cloned() {
-                self.restore_scan_state(st);
-            }
             self.link += 1;
             lex_trace(format_args!(
-                "replay {:?} @ {}:{} (cursor stays {}:{})",
-                n.has, n.position.line, n.position.pos, self.position.line, self.position.pos
+                "replay {:?} @ {}:{} (cursor {}:{} -> {}:{})",
+                n.res.has,
+                n.res.position.line,
+                n.res.position.pos,
+                self.position.line,
+                self.position.pos,
+                n.cursor.0,
+                n.cursor.1
             ));
-            return Some(n);
+            return Some(self.replay(n));
+        }
+        // Scanning fresh source after a replay: the cursor the replay moved is the scan's
+        // own again — and a seek made during the replay moved a replayed cursor, not it.
+        if let Some((line, pos)) = self.replay_return.take() {
+            self.seek_return = None;
+            self.position.line = line;
+            self.position.pos = pos;
         }
         // Scanning fresh source: the read cursor is authoritative again, so a
         // reporting seek that was never undone ends here rather than shifting every
@@ -928,6 +960,72 @@ impl Lexer {
         )
     }
 
+    pub fn set_mode(&mut self, mode: Mode) {
+        if mode == Mode::Formatting && self.peek_token("}") {
+            self.mode = mode;
+            // The `}` closing a hole is exchanged for the rest of the string.  A replay
+            // serves the rest the first read resumed — the source it was scanned from is
+            // behind the cursor now — and a read being recorded keeps it for one.
+            if self.link < self.memory.len()
+                && matches!(self.memory[self.link].res.has, LexItem::CString(_))
+            {
+                let n = self.memory[self.link].clone();
+                self.link += 1;
+                self.peek = self.replay(n);
+            } else {
+                self.peek = self.resume_string();
+                if self.link == self.memory.len() && self.count_links() > 0 {
+                    let rest = self.recorded(&self.peek);
+                    self.memory.push(rest);
+                    self.link += 1;
+                }
+            }
+        } else {
+            self.mode = mode;
+        }
+    }
+
+    /// The token just read, as [`Recorded`] keeps it.
+    fn recorded(&self, res: &LexResult) -> Recorded {
+        Recorded {
+            res: res.clone(),
+            cursor: (self.position.line, self.position.pos),
+            prev_end: (self.prev_end.line, self.prev_end.pos),
+            scan: self.scan_state(),
+        }
+    }
+
+    /// Queue a token a scan read beyond the one it returns (the `..` after `1`): served next,
+    /// as it would be read, with the cursor and consumed end the scan leaves.
+    fn queue(&mut self, res: LexResult) {
+        let at = (self.position.line, self.position.pos);
+        let scan = self.scan_state();
+        self.memory.push(Recorded {
+            res,
+            cursor: at,
+            prev_end: at,
+            scan,
+        });
+    }
+
+    /// Serve a recorded token as the read that scanned it left the lexer: its cursor, the
+    /// end of the source consumed before it, and its mode.
+    fn replay(&mut self, n: Recorded) -> LexResult {
+        if self.replay_return.is_none() {
+            self.replay_return = Some(
+                self.seek_return
+                    .take()
+                    .unwrap_or((self.position.line, self.position.pos)),
+            );
+        }
+        self.position.line = n.cursor.0;
+        self.position.pos = n.cursor.1;
+        self.prev_end.line = n.prev_end.0;
+        self.prev_end.pos = n.prev_end.1;
+        self.restore_scan_state(n.scan);
+        n.res
+    }
+
     fn scan_state(&self) -> ScanState {
         ScanState {
             mode: self.mode.clone(),
@@ -942,25 +1040,6 @@ impl Lexer {
         self.in_format_expr = st.in_format_expr;
         self.open_strings = st.open_strings;
         self.backtick_strip = st.backtick_strip;
-    }
-
-    pub fn set_mode(&mut self, mode: Mode) {
-        if mode == Mode::Formatting && self.peek_token("}") {
-            self.mode = mode;
-            self.peek = self.resume_string();
-            // The rest of the string is read straight from the source, not through `cont()`,
-            // so the replay buffer still holds the `}` it replaces.  A revert past this point
-            // replayed that `}`, and resuming again read from wherever the live scan had got
-            // to: a literal parsed a second time refused every interpolation inside it
-            // (`Expect token ]`).  The resumed string takes the `}`'s slot, so a replay hands
-            // back what was read.
-            if self.count_links() > 0 && self.link > 0 && self.link <= self.memory.len() {
-                self.memory[self.link - 1] = self.peek.clone();
-                self.memory_state[self.link - 1] = self.scan_state();
-            }
-        } else {
-            self.mode = mode;
-        }
     }
 
     pub fn whitespace(&mut self) {
@@ -1781,8 +1860,7 @@ impl Lexer {
             if let Some('.') = self.iter.peek() {
                 self.next_char();
                 self.link = self.memory.len();
-                self.memory_state.push(self.scan_state());
-                self.memory.push(LexResult::new(
+                self.queue(LexResult::new(
                     LexItem::Token("..".to_string()),
                     pos.clone(),
                 ));
@@ -1820,8 +1898,7 @@ impl Lexer {
                 // the following token (digit, identifier, or whatever)
                 // re-lexes fresh.
                 self.link = self.memory.len();
-                self.memory_state.push(self.scan_state());
-                self.memory.push(LexResult::new(
+                self.queue(LexResult::new(
                     LexItem::Token(".".to_string()),
                     self.position.clone(),
                 ));
@@ -2040,7 +2117,7 @@ impl Lexer {
             position: self.position.clone(),
         };
         self.memory.clear();
-        self.memory_state.clear();
+        self.replay_return = None;
         self.link = 0;
         self.links = Rc::new(RefCell::new(0));
         self.iter = LINE.chars().collect::<Vec<_>>().into_iter().peekable();
@@ -2260,12 +2337,10 @@ impl Lexer {
         // (`link_revert_repeatable_same_region`).
         if at_edge && self.link == self.memory.len() {
             if self.count_links() > 0 {
-                self.memory.push(res.clone());
-                self.memory_state.push(self.scan_state());
+                self.memory.push(self.recorded(&res));
                 self.link += 1;
             } else {
                 self.memory.clear();
-                self.memory_state.clear();
                 self.link = 0;
             }
         } else if at_edge && self.link < self.memory.len() && self.count_links() > 0 {
@@ -2279,8 +2354,7 @@ impl Lexer {
             // Insert it BEFORE the queued token and step over it, which leaves the live
             // sequence unchanged — the next `cont()` still replays the follow-up — and
             // makes the buffer say what was actually read.
-            self.memory.insert(self.link, res.clone());
-            self.memory_state.insert(self.link, self.scan_state());
+            self.memory.insert(self.link, self.recorded(&res));
             self.link += 1;
         }
         self.peek = res;
@@ -2292,8 +2366,7 @@ impl Lexer {
         let cur: u32 = *self.links.borrow();
         self.links.replace(cur + 1);
         if self.memory.is_empty() {
-            self.memory.push(self.peek.clone());
-            self.memory_state.push(self.scan_state());
+            self.memory.push(self.recorded(&self.peek));
             self.link += 1;
         }
         Link {
@@ -2369,6 +2442,66 @@ impl Lexer {
             }
             self.cont();
         }
+    }
+
+    /// Is the parenthesised group just opened a TUPLE literal — does a top-level `,`
+    /// reach the caller before the group's own `)`?
+    ///
+    /// The caller needs the answer BEFORE it parses member 0, which is the only member
+    /// parsed before a `,` has proved anything: a tuple MEMBER is not the enclosing
+    /// assignment's whole value, so it must not adopt that assignment's destination
+    /// variable as its build accumulator the way a parenthesised expression legitimately
+    /// does.
+    ///
+    /// Two things stop the walk short of the closer, and both answer `false`:
+    ///
+    /// * a depth-0 `;`, or end of input — inside parentheses that means the source is
+    ///   malformed, and stopping keeps the scan STATEMENT-LOCAL.  That bound is not only
+    ///   about speed: [`revert`](Self::revert) restores the token STREAM and not the
+    ///   reporting cursor (a replayed token deliberately leaves `position` where the scan
+    ///   reached), so however far this walks is how far a diagnostic raised inside the
+    ///   replayed region has its caret pushed.  Unbounded, an unclosed `(` moved its caret
+    ///   from the offending line to the end of the function.
+    /// * a string literal, stopped BEFORE it is consumed.  A string may carry an
+    ///   interpolation HOLE, and the scanner's hole state (`in_format_expr`,
+    ///   `open_strings`, the backtick dedent stack) is not part of what a revert restores —
+    ///   crossing one and coming back leaves the lexer describing a string it is no longer
+    ///   inside, and the enclosing group then fails to close.  The answer given up costs
+    ///   nothing: a text member does not adopt the destination, so a `(` group led by a
+    ///   string was already correct without this.  A vector LITERAL whose first element is
+    ///   an interpolated string is the shape this concedes.
+    ///
+    /// Deliberately not [`recover_to`](Self::recover_to), whose depth walk this otherwise
+    /// mirrors: recovery is allowed to cross a string, and this is not.
+    pub fn peek_tuple_literal(&mut self) -> bool {
+        let saved = self.link();
+        let mut depth: i32 = 0;
+        let mut found = false;
+        loop {
+            if matches!(self.peek.has, LexItem::None | LexItem::CString(_)) {
+                break;
+            }
+            if depth == 0 {
+                if self.peek_token(",") {
+                    found = true;
+                    break;
+                }
+                if self.peek_token(";") {
+                    break;
+                }
+            }
+            if self.peek_token("(") || self.peek_token("[") || self.peek_token("{") {
+                depth += 1;
+            } else if self.peek_token(")") || self.peek_token("]") || self.peek_token("}") {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+            }
+            self.cont();
+        }
+        self.revert(saved);
+        found
     }
 
     /// Shorthand test if the current element is a specific token and skip it if found.

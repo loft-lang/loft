@@ -1,0 +1,10 @@
+// D8 — a generic method on the generic enum, called on two instances and on a variant.
+// @EXPECT: 7|q|0
+enum Slot<T> { Full { v: T }, Hole }
+fn or_else<T>(self: Slot<T>, d: T) -> T { match self { Full { v } => v, Hole => d } }
+fn main() {
+  a: Slot<integer> = Full { v: 7 };
+  b: Slot<text> = Hole;
+  c: Slot<integer> = Hole;
+  println("{a.or_else(0)}|{b.or_else("q")}|{c.or_else(0)}");
+}

@@ -1,0 +1,10 @@
+// D4 — an inner generic literal read inside the outer one's read, its lambda typed from
+// its header both times.
+// @EXPECT: 9|tt
+struct Box<T> { v: T }
+struct Pair<A, B> { a: A, b: B }
+fn main() {
+  p = Pair { a: Box { v: fn(x: integer) -> integer { x - 1 } }, b: "t" };
+  q = fn(s: text) -> text { "{s}{s}" };
+  println("{p.a.v(10)}|{q(p.b)}");
+}

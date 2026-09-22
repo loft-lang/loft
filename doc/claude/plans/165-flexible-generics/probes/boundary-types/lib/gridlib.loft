@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D10 — generic TYPES as a library exports them: a generic struct with generic methods
+// and a generic constructor, and a generic enum
+// (`tests/scripts/a-library-exports-generic-types.loft`).
+
+pub struct Grid<T> { cells: vector<T>, w: integer }
+pub fn grid<T>(cells: vector<T>, w: integer) -> Grid<T> { Grid { cells: cells, w: w } }
+pub fn at<T>(self: Grid<T>, i: integer) -> T? { self.cells[i] }
+pub fn height<T>(self: Grid<T>) -> integer { len(self.cells) / self.w }
+pub fn cell_count<T>(g: Grid<T>) -> integer { len(g.cells) }
+
+pub enum Slot<T> { Full { v: T }, Hole }
+pub fn full_count(v: vector<Slot<integer>>) -> integer {
+  n = 0;
+  for s in v { match s { Full { v } => n += 1 + v * 0, Hole => n += 0 } }
+  n
+}
+pub struct Tally<T> { v: T, n: integer assert(n > 0, "n must be positive"), m: integer = $.n + 1 }
+pub fn tally<T>(x: T, k: integer) -> Tally<T> { Tally { v: x, n: k } }
+pub struct Node<T> { v: T, next: reference<Node<T>>? }
+pub fn depth<T>(n: Node<T>) -> integer { d = 1; c = n.next; while c != null { d += 1; c = c.next; } d }
+pub struct Pair<K, V> { k: K, v: V }
+pub fn swap<K, V>(self: Pair<K, V>) -> Pair<V, K> { Pair { k: self.v, v: self.k } }

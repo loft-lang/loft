@@ -1,0 +1,7 @@
+// @CONTROL
+// @EXPECT: 9
+struct Tree<T> { v: T, kids: vector<Tree<T>> }
+fn main() {
+  t = Tree { v: 1, kids: [] };
+  println("{t.v}");
+}

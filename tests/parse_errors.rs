@@ -3048,14 +3048,14 @@ fn scalar_rep_nonliteral_tail() {
 #[test]
 fn field_capture_nonscalar_deferred() {
     code!("enum Box { B { items: vector<integer> } }\nfn f(v: vector<Box>) -> integer { match v { [ ( B { items } )* ] => 1, _ => -1 } }")
-        .error("per-iteration capture of the non-scalar field `items` is not yet supported (only scalar/text fields project into a vector) at field_capture_nonscalar_deferred:2:63");
+        .error("per-iteration capture of the non-scalar field `items` is not yet supported (only scalar/text fields project into a vector) at field_capture_nonscalar_deferred:2:60");
 }
 
 // @PLN35 slice 2 — a `{ field }` naming something that is not a field of the run variant.
 #[test]
 fn field_capture_unknown_field() {
     code!("enum Tok { Num { n: integer } }\nfn f(v: vector<Tok>) -> integer { match v { [ ( Num { nope } )* ] => 1, _ => -1 } }")
-        .error("`nope` is not a field of Num at field_capture_unknown_field:2:64");
+        .error("`nope` is not a field of Num at field_capture_unknown_field:2:61");
 }
 
 // @PLN35 slice 3 — a fixed (non-`..rest`) tail after a repetition and a `..rest` are still
@@ -4899,4 +4899,20 @@ fn a_literal_value_reports_once() {
     code!("struct Box<T> { v: T }\nfn test() { b = Box { v: 1 / 0 }; c = Box { v: undefined_name }; assert(b.v == null && c.v == 0, \"\"); }")
         .warning("Division by constant zero — result is always null at a_literal_value_reports_once:2:33")
         .error("Unknown variable 'undefined_name' at a_literal_value_reports_once:2:48");
+}
+
+/// A `|…|` lambda takes its parameter types from where it stands, which the literal has not
+/// decided yet: alone it binds nothing, and the refusal names it and both cures.
+#[test]
+fn a_short_lambda_alone_cannot_bind_a_generic_literal() {
+    code!("struct Th<T> { f: fn() -> T }\nfn test() { a = Th { f: || { 42 } }; assert(a.f() == 42, \"\"); }")
+        .error("`Th { … }` cannot tell what T is — the `|…|` lambda in `f` takes its types from the field; spell it `fn(…) -> <type> { … }`, or give the binding its type, `x: Th<integer> = Th { … }` at a_short_lambda_alone_cannot_bind_a_generic_literal:2:17");
+}
+
+/// What a value reports points where its hand-written twin's does: the literal's second read
+/// replays the first read's cursor, not the place the first read stopped (after `};`).
+#[test]
+fn a_generic_literal_reports_where_its_twin_does() {
+    code!("struct Box<T> { v: T, w: integer }\nfn test() {\n  b = Box { v: 1,\n            w: \"x\" };\n  assert(b.v == 1, \"\");\n}")
+        .error("Cannot assign text to field Box<integer>.w of type integer at a_generic_literal_reports_where_its_twin_does:4:21");
 }

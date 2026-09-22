@@ -1,0 +1,9 @@
+// D8 — a generic function walks a vector of a generic enum's instance.
+// @EXPECT: 2|1
+enum Slot<T> { Full { v: T }, Hole }
+fn fulls<T>(v: vector<Slot<T>>) -> integer { n = 0; for s in v { if s is Full { n += 1 } } n }
+fn main() {
+  a: vector<Slot<integer>> = [Full { v: 1 }, Hole, Full { v: 3 }];
+  b: vector<Slot<text>> = [Hole, Full { v: "z" }];
+  println("{fulls(a)}|{fulls(b)}");
+}

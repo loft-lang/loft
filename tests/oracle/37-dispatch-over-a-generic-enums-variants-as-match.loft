@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D8 — the `match` twin of `37-dispatch-over-a-generic-enums-variants.loft`: one arm
+// per variant, each member's body at its variant.
+// @ORACLE_TWIN: 37-dispatch-over-a-generic-enums-variants.loft
+
+enum Shape<T> { Dot { at: T }, Line { from: T, to: T }, Empty }
+
+fn area(x: Shape<integer>) -> integer {
+  match x { Dot { at } => at * 0 + 1, Line { from, to } => to - from, Empty => 0 }
+}
+
+fn name(x: Shape<text>) -> text {
+  match x { Dot { at } => "dot {at}", Line { from, to } => "line {from}{to}", Empty => "empty" }
+}
+
+fn main() {
+  s = "{area(Dot { at: 9 })},{area(Line { from: 2, to: 7 })}";
+  v: vector<Shape<integer>> = [Dot { at: 1 }, Line { from: 2, to: 7 }, Empty];
+  for x in v { s += ",{area(x)}"; }
+  w: vector<Shape<text>> = [Line { from: "a", to: "b" }, Empty, Dot { at: "c" }];
+  for x in w { s += ",{name(x)}"; }
+  assert(s == "1,5,1,5,0,line ab,empty,dot c", "got {s}");
+  println(s);
+}

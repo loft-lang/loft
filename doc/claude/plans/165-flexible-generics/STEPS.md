@@ -742,6 +742,32 @@ the declaration (`D-Regular`).
 - **Red on its own:** `struct Node<T> { v: T, next: Node<T>? }` — push three, read back,
   length, leak; `struct Bad<T> { n: Bad<vector<T>>? }` is refused, and the compiler
   terminates (the cell runs under `LOFT_TIMEOUT`).
+- **Built** (2026-09-22).  The plan's example was measured against its twin first: an INLINE
+  `next: NodeInt?` is refused (*"contains itself — use reference<NodeInt>"*); the list is
+  `reference<Node<T>>?` and the tree `vector<Tree<T>>`.  So the red cells became those two
+  shapes plus the refusals.  An instance's field types are its template's with the bindings
+  applied and each open instance the field WRITES closed (`Data::close_open`; closing ones a
+  binding brought in recursed without end on `Box<Box<T>>`); regular recursion ends because
+  the name is registered before the fields.  An instance the template's own declaration
+  mints copies only the fields parsed so far, so the declaration's end refreshes them
+  (`refresh_instances`) — FIELDS only, methods stay on the template (copying one on pass 2
+  broke H5).  `D-Regular` refuses an irregular self-mention on the pass that parses it
+  first and marks the template so no instance is minted; a nesting bound in `instance_def`
+  keeps compilation finite regardless.  An inline self field is each instance's own cycle,
+  reported in the instance's words (`Node<integer>`) as the twin's is — the cycle check
+  skips open instances and also runs for an instance first laid out on pass 2.
+  `Type::substitute` keeps a `reference<…>` pointer marker, and a template's `reference<…>`
+  field is a pointer field.  A mutual pair needs a FORWARD reference to a generic struct,
+  which was a syntax error: pass 1 now reads and sets aside the arguments of a name still a
+  stub; the stub adoption and `resolve_adopted_stubs` no longer point it at the bare
+  template (`names_unresolved` counts a bare template as unresolved); a template's or a
+  concrete struct's field and a parameter are retyped on pass 2 (a concrete struct laid out
+  as soon as its declaration completes, `lay_out_late`); a RETURN is resolved between the
+  passes (`resolve_forward_generic_returns`) so its `__retbuf` is reserved in time; a
+  literal lays out the expected instance it takes.  Cells [self-reference/](probes/self-reference/)
+  s01–s07 green on both backends under `LOFT_STRICT_STORES` + `LOFT_POISON`; refusals
+  x01–x04 read by hand; four guards falsified at f5db133f1.  Corpus against D6: one file
+  differs, the D6 guard, whose `init()` no longer replays method names as fields.
 
 ### D8 — a generic enum  ·  M
 
@@ -751,6 +777,28 @@ variants (B7).
 
 - **Red on its own:** construct, match, a `vector<Shape<integer>>`, a nullable payload; twin;
   an oracle twin for the dispatcher.
+- **Built** (2026-09-22).  `parse_enum` reads a header as `parse_struct` does and makes the
+  enum a `TypeTemplate`; its variants are template parts (`Data::is_template_part`), never laid
+  out, wrapped or cycle-checked.  `instance_def` on an enum template mints the enum and each
+  variant together (`fill_enum_instance`): the variant list with its discriminants, and one
+  variant definition per template variant with its payload closed to the instance — the
+  variants keep their bare names first-wins, as every `__nullable<S>`'s `Null` and `Some` do,
+  and are reached through their enum.  In type position an enum instance is `Enum(inst, …)`,
+  and `Shape<integer>::Dot` names an instance's variant (a bare `Dot` is the template's).  A
+  variant literal takes its instance from an expected `Enum(instance)` or infers it from its
+  payload (D4's reader, generalised to fields of one def and variables of another), then
+  builds the instance's own variant; a unit variant resolves through its expected instance
+  as any variant in context does.  `match`, vectors and a nullable payload needed nothing
+  further.  Found on the way and fixed (on main): a method on an enum answered `v.m()` for a
+  variant-typed `v` but not `m(v)` — `Data::candidates` now falls back from a variant that
+  declares no `m` (in either nullability spelling — asked of the dense one alone, an enum's
+  generated dispatcher called itself, which the corpus diff caught on `1427b`) to its enum.
+  Twins: `show`/`mk`/`main` over `Shape<integer>` are identical to `ShapeI`'s with type ids
+  masked.  The `Disp-Match-Equiv` pair `tests/oracle/37-dispatch-over-a-generic-enums-variants*`
+  agrees across the interpreter, native and wasm.  Cells [generic-enums/](probes/generic-enums/)
+  g01–g06 green on both backends under `LOFT_STRICT_STORES` + `LOFT_POISON`.  D2's guard that
+  refused an enum's variables is replaced by `a-generic-enum-is-an-enum-per-instance`.  Corpus
+  against D7: only the two new guards differ.
 
 ### D9 — several variables on a type  ·  S  (waits for C0 and C2)
 
@@ -765,12 +813,94 @@ step is cells and whatever they find.
 - **Why it is in:** no consumer asks for it — a tuple already covers `Pair` (DESIGN.md §
   C110, evaluated).  It is here because stopping at the second variable would be a
   restriction no reader could derive.
+- **Built** (2026-09-22).  The cells found no one-argument assumption in D3–D6.  They found a
+  literal RECEIVER taking its statement's expected type: in `s = Pair { k: 1, v: "a" }.swap()`
+  the expected type is `swap`'s result (`Pair<text, integer>`, from pass 1) and the literal
+  was built as that — loft#1304's postfix class, for the instance a literal chooses.  A
+  literal followed by `.` or `[` now infers from its payload (`literal_is_a_receiver`, one
+  balanced look-ahead the literal's own parse then re-walks).  `swap` is its twin over
+  `PairIT`/`PairTI` with numbers masked.  Cells [several-on-a-type/](probes/several-on-a-type/)
+  p01–p05 green on both backends.  Corpus against D8: the new guard, and D6's guard, whose
+  receiver literal `Grid { cells: ["a"], w: 1 }.with_w(20)` now infers — through D4's
+  discovery read, which leaves a dead temporary behind for a collection value (declared null,
+  freed, never read).  That is a difference in FORM from the twin, not in value; its cure is
+  a variable-table rollback for a discarded read, which touches every side map keyed by a
+  variable number — built in D10, where the temporary turned out to break programs too.
 
 ### D10 — across the boundary  ·  S
 
 A library exports a generic struct and a consumer instantiates it at its own type;
 `api_surface` golden; `ir_schema_roundtrip`; `--native-release`; the debugger and the LSP
 show `Grid<integer>`.
+
+- **Found on the way** (2026-09-22).  The first consumer cell failed: `t: Grid<text> =
+  grid(["a", "b", "c"], 3)` after `m = Grid { cells: [Mine { n: 5 }], w: 1 }` was refused,
+  `_vec_2` changing type from `vector<Mine>` to `vector<text>`.  No library was needed — D4's
+  first read (the values read to learn the instance) is not repeated on pass 2 where a bound
+  variable's pass-1 type is the expected instance, so whatever it NUMBERED renumbered what
+  followed: its `_vec_N` temporary took the name the next vector wanted, and a lambda value's
+  definition shifted every later lambda (`x` met `s: text`).  The matrix
+  ([inferred/](probes/inferred/) i13–i21, [x07](probes/inferred-refused/)) found two more:
+  a format string in a generic literal failed outright (`Expect token }`, inferred since D4
+  and annotated since D9), and D9's receiver look-ahead was a walk over tokens.  One cause
+  under both: `Lexer::revert` replayed tokens but not the state around them — the cursor a
+  caret is read from, the end of the consumed source, the mode a string literal leaves, and
+  the rest of a string a hole's `}` resumes — and a token walk records what no parse reads.
+  So the replay now carries all four (`Recorded`), the first read puts the variable table
+  back whole and defines no lambda (a long one answers its header's type; a `|…|` one takes
+  its types from the field and binds nothing — refused alone, naming both cures), and the
+  receiver question is the one token after that read's closing brace.  Every generic literal
+  is read that way now, so the answer is one per program, not one per pass.  A caret raised
+  during a replay moved to the parse's own position: three corpus pins moved (the INC#30
+  typo, two slice-pattern refusals), each onto the construct it names or the token the parse
+  is stuck on; the unknown-name arm of `parse_var` reports at the name, as its siblings do.
+  Corpus against D9: the new guard, dead temporaries and two orphan lambdas gone from the
+  D4–D7 guards, and the three moved carets.
+- **Built** (2026-09-22).  [boundary-types/](probes/boundary-types/) b01–b08 over
+  `tests/lib/gridlib.loft`, green on both backends and under `--native-release`: the
+  consumer's own instances, the library's enum, field check, default, self-naming struct and
+  two-variable struct, a qualified `gridlib::Grid<integer>`, and the consumer's generics
+  (a function, a struct) over the library's.  The widened cells found five defects, none of
+  them the boundary's:
+  - a generic naming one variable in two parameters through a generic struct
+    (`widths<T>(a: Grid<T>, b: Grid<T>)`) was refused, `T` "to text and to text": the clash
+    check compared the second argument with the OPEN `Grid<T>`.  It now closes it
+    (`Parser::close_open`, which lays out what it mints on pass 2) — probes o20, x01.
+  - D8 never put a generic enum in template code, and every shape failed: a layout alarm on
+    the open instance's variants, `Enum` forms missed by the pairing, the substitution, the
+    variable table, the stride and the nested-call instantiation (the last ran a template
+    with no code and ended the program with no output and exit 0), and a variant literal
+    or unit variant that built a record at the open row.  An open instance's variant is now
+    open too, mapped per monomorph to its instance's variant (`bound_instance`) — probes
+    [generic-enums/](probes/generic-enums/) g07–g12.  `generate_call` refuses a call to a
+    template (`@FR-G-Mono`), which turns that silent exit into an internal compiler error:
+    falsified by removing the variable table's `Enum` arm.
+  - a generic `match` answering `T` fell back to a REFERENCE null: native refused an
+    `integer` instance (E0308).  On main too, for any enum subject.  The fallback is now asked
+    of the concrete type per monomorph (`TV_NULL_VALUE`), a type with no null value of its own
+    keeping the reference sentinel — probes [type-var-nulls/](probes/type-var-nulls/).
+  - `Pair<V, K>` inside `Pair<K, V>` had fields `k: K, v: K`: an instance's bindings were
+    applied one after another.  `close_open` substitutes them at once
+    (`Type::substitute_simultaneous`); a template reading its swapped instance was refused
+    ("expected V, got K") — probe p06.
+  - `api-surface` listed the variable placeholders, every instance and the `main_vector<τ>`
+    wrapper of a vector parameter (the last on main too, for any library).  It lists the
+    template now (`Grid<T>`, `Slot<T>` as an enum), no method as a field, and spells a
+    signature's generic types from source — golden tests in `tests/api_surface.rs`.  The
+    LSP outline shares `classify` and drops them too; hover already named the template.
+  - the debugger showed `Box<integer(0, 255)s1>` and could not evaluate an expression over a
+    generic local: its seed `g = Grid<integer>{…}` does not parse (DESIGN keeps type
+    arguments out of expressions).  A literal now names the template (`Stores::shown`, a
+    display alias filled when bytecode is generated) and the pause line and every seed carry
+    the source type (`g: Grid<integer> = Grid{…}`); a stdlib alias reads as itself in source
+    spelling (`u8`, not the unparseable `integer(0, 255)`); an instance's frame is named by
+    its function (`peek`).
+  Guards: `a-library-carries-generic-types-across-the-boundary` (`--lib tests/lib`),
+  `a-generic-function-over-a-generic-enum-equals-its-twin`,
+  `a-generic-match-falls-back-to-its-variables-null`,
+  `two-parameters-at-one-variable-through-an-instance`.  `ir_schema_roundtrip` green.
+  Corpus against the first half: IDENTICAL — every change above is to programs the corpus
+  did not have.
 
 ### D11 — the goal program  ·  XS  (waits for arc C)
 
