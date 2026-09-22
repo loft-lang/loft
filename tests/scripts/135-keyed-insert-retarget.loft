@@ -116,7 +116,7 @@ fn cell_entry_shapes() {
 
   // A `limit(...)` field emits its constraint check after construction.
   hl: hash<ALim[k]> = [];
-  for i in 0..8 { hl += ALim { k: i, n: i * 2 }; }
+  for i in 0..8 { hl += ALim { k: i, n: i * 2 ?? 0 }; }
   assert(len(hl) == 8 && hl[7] != null && hl[7].n == 14, "limit field: {len(hl)}");
 }
 

@@ -46,7 +46,7 @@ fn to_hex(self: Colour) -> integer {
 // The original struct is not modified — the caller gets a brand-new copy.
 
 fn dimmed(self: Colour) -> Colour {
-  Colour {r: self.r / 2, g: self.g / 2, b: self.b / 2 }
+  Colour {r: self.r / 2 ?? 0, g: self.g / 2 ?? 0, b: self.b / 2 ?? 0 }
 }
 // ## Defaults and Computed Fields
 // Write '= expression' after the type to set a stored default, filled at construction.
@@ -133,10 +133,11 @@ fn main() {
   // Zero is a real value in a limited field — pure black needs nothing extra.
   black = Colour {r: 0, g: 0, b: 0 };
   assert(black.r == 0 and black.g == 0 and black.b == 0, "pure black reads back as zeros");
-  // A value outside the range takes the type's default rather than being rejected.
+  // A value the compiler cannot prove in range is REFUSED unless you say what it becomes:
+  // `?? 0` makes the fallback explicit, and 300 does not fit, so the fallback is stored.
   over = 300;
-  black.r = over;
-  assert(black.r == 0, "out of range takes the default: {black.r}");
+  black.r = over ?? 0;
+  assert(black.r == 0, "out of range takes the fallback you wrote: {black.r}");
   // Formatting a struct shows all fields compactly.
   assert("{col}" == "{{r:128,g:0,b:128}}", "Struct compact formatting");
   // ':j' produces JSON output — a text format used by many web APIs and config tools.

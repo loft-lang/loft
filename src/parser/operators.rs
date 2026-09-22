@@ -2638,9 +2638,17 @@ impl Parser {
         // it describes is about to be rejected outright.  Measured before the refusal existed,
         // the pair was worse than contradictory — `s.t ?? (9, "d")` on a field holding
         // `(null, null)` warned "never used" and then USED the default, answering `9 d`.
+        // `(I-Narrow-Opt)` — into a NARROW integer destination the LHS does not provably fit,
+        // `?? d` is the checked narrowing's fallback, not a null discharge: `c.b = over ?? 0`
+        // on a `u8` field stores 0 for 999, and the refusal it cures NAMES this spelling as
+        // the cure.  Asked through the refusal's own predicate, so lint and refusal cannot
+        // disagree about which stores are narrowings (loft#1593 sends every `limit(…)` slot
+        // through here as well).
+        let narrowing_fallback = Self::is_narrowing_int(ctp.base(), var_tp.base());
         if self.expr_not_null
             && !self.first_pass
             && !matches!(ctp, Type::Optional(_))
+            && !narrowing_fallback
             && !Self::is_existing_tuple(&self.data, ctp)
             && !self.call_declares_nullable(code)
         {

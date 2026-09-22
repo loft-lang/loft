@@ -4327,11 +4327,12 @@ impl Parser {
     /// range its own type declares, while `f(p + 10)` on a `u8?` parameter and
     /// `S { u: p + 10 }` on a `u8?` field both answered null (loft#1246).
     ///
-    /// The `limit(lo, hi)` spelling of the same range deliberately does NOT come here: it
-    /// sets no `forced_size`, so `is_narrowing_int` declines it, and its bound is the
-    /// runtime `OpRangeDefault` every seam already applies (`guard_declared_range`).  Two
-    /// mechanisms, one answer — checked here cell for cell in
-    /// `tests/scripts/1246-a-nullable-narrow-slot-answers-null.loft`.
+    /// The `limit(lo, hi)` spelling of the same range comes here too (loft#1593): it is a
+    /// narrow target under `(I-Narrow)` exactly as an alias is, so a nullable `limit` slot
+    /// takes the checked cast and a non-nullable one is refused.  The runtime
+    /// `OpRangeDefault` the seams apply (`guard_declared_range`) is what bounds an
+    /// arithmetic OVERFLOW landing in such a slot (`(E-Uncomp-NN)`), never a substitute for
+    /// this refusal — a default nothing reports is not the null `??` can recover from.
     fn implicit_checked_narrow(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
         if self.first_pass {
             return false;
@@ -4353,16 +4354,24 @@ impl Parser {
             return false;
         };
         // The integer model (formal/types.md § the integer model): width lives in the
-        // value RANGE.  A `dst` with no `forced_size` is the FULL integer — `IntegerSpec`'s
-        // i32/u32 bounds cannot represent the i64 range and the "full integer" has several
-        // bound encodings (`signed32` max = i32::MAX, `wide` max = u32::MAX), so
-        // `forced_size = None` is the canonical "full range" marker; nothing narrows to it.
-        // For a genuinely narrow (forced) storage, `src` narrows iff its range is not
-        // contained in `dst`'s — `[s.min,s.max] ⊆ [d.min,d.max]`.  This is the same
+        // value RANGE, and `(I-Narrow)` is stated over ANY `Integer[a, b]` target.  The
+        // FULL integer is the one target nothing narrows to, and it has two bound encodings
+        // (`IntegerSpec`'s i32/u32 bounds cannot hold the i64 range: the `signed32` template
+        // ends at i32::MAX, the `wide` one at u32::MAX), so it is recognised by the two
+        // template predicates `source_name` already reads.  Every other spec — a width
+        // alias with a `forced_size`, or a user-written `limit(lo, hi)` without one — is a
+        // narrow target: `src` narrows into it iff `[s.min, s.max] ⊄ [d.min, d.max]`, the
         // range+sign test codegen's `narrow_int_cast` uses, so the two width derivations
-        // now agree (D2/D3/D5).  Containment also makes signedness visible: `i8` (down to
-        // -128) is not contained in `u8`.
-        if d.forced_size.is_none() {
+        // agree (D2/D3/D5); containment also makes signedness visible (`i8` is not
+        // contained in `u8`).
+        //
+        // Keying this on `forced_size` instead — "no forced size means the full integer" —
+        // left every user-written `limit` outside all three narrowing rules at once: an
+        // unranged store, call or literal into `integer limit(0, 7)` compiled, and the
+        // runtime range guard then answered a legal in-range DEFAULT that nothing reports in
+        // an ordinary run, where the same store into `u8` is refused with the cure named;
+        // and the checked cast `as integer limit(0, 7)?` was a no-op (loft#1593).
+        if d.is_signed32_template() || d.is_wide_template() {
             return false;
         }
         s.min < d.min || s.max > d.max
