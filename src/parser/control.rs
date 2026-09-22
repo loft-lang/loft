@@ -17753,7 +17753,9 @@ impl Parser {
             "map" => return self.parse_map(val, list, types),
             "filter" => return self.parse_filter(val, list, types),
             "reduce" => return self.parse_reduce(val, list, types),
-            "sort" => return self.parse_sort(val, list, types),
+            "sort" if self.sort_is_special(source, types) => {
+                return self.parse_sort(val, list, types);
+            }
             "insert" => return self.parse_insert(val, list, types),
             "reverse" => return self.parse_reverse(val, list, types),
             "reserve" => return self.parse_reserve(val, list, types),

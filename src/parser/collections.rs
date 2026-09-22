@@ -6512,6 +6512,52 @@ use #count instead"
         }
     }
 
+    /// @PLN165 E4 — does the special form lower this `sort` call?  It sorts the elements the
+    /// runtime compares itself — `integer` at any width, `float`, `single`, `text` — with one
+    /// `OpSortVector`.  Any other element that satisfies `Ordered` is the stdlib declaration's
+    /// to sort, through its body (`sort<T: Ordered>`, stable, by the type's own `<`); the call
+    /// takes the ordinary path to it, which also refuses an element that is not `Ordered`
+    /// naming the bound.  Inside a template the element is its variable, and the site is
+    /// stamped (`TV_SORT`) for the monomorph to decide — where the declaration takes the call;
+    /// a variable without the bound takes the ordinary path and its refusal.  A call the
+    /// special form cannot read (an arity, a non-vector) stays with it for its message.
+    pub(crate) fn sort_is_special(&mut self, source: u16, types: &[Type]) -> bool {
+        let [vec] = types else {
+            return true;
+        };
+        let Type::Vector(elm, _) = vec.peel_link() else {
+            return true;
+        };
+        if Self::sorts_itself(elm) {
+            return true;
+        }
+        self.is_type_var_element(elm) && self.builtin_selected(source, "sort", types).is_some()
+    }
+
+    /// The element types `OpSortVector` compares at runtime.  Not a nullable one: its order is
+    /// `<`'s (`@FR-E-NullArg`), which the declaration's body follows.
+    fn sorts_itself(elm: &Type) -> bool {
+        matches!(
+            elm,
+            Type::Integer(_) | Type::Float | Type::Single | Type::Text(_)
+        )
+    }
+
+    /// The `#builtin` stdlib declaration a call of `name` with these argument types selects,
+    /// if that is what it selects (`@FR-G-Select`).
+    pub(crate) fn builtin_selected(
+        &mut self,
+        source: u16,
+        name: &str,
+        types: &[Type],
+    ) -> Option<u32> {
+        let routed = self.data.routed_types(types);
+        match self.select_overload(source, name, &routed) {
+            crate::parser::dispatch::Selection::One(d) if self.data.def(d).builtin() => Some(d),
+            _ => None,
+        }
+    }
+
     /// Compiler special-case for `sort(v: vector<T>)`.
     /// Emits `OpSortVector(v, db_tp)` which sorts in-place at runtime, dispatching
     /// on the database element type.
@@ -6528,10 +6574,13 @@ use #count instead"
             return Type::Void;
         }
         if let Type::Vector(elm, _) = types[0].peel_link() {
-            if !matches!(
-                elm.as_ref(),
-                Type::Integer(_) | Type::Float | Type::Single | Type::Text(_)
-            ) {
+            // Which lowering a template's element takes is the monomorph's to decide: this op
+            // for an element the runtime compares, the declaration's instance otherwise.
+            if self.is_type_var_element(elm) {
+                *val = v_block(list.to_vec(), types[0].clone(), Self::TV_SORT);
+                return Type::Void;
+            }
+            if !Self::sorts_itself(elm) {
                 diagnostic!(
                     self.lexer,
                     Level::Error,

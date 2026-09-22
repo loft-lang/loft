@@ -7587,6 +7587,11 @@ impl Parser {
     /// A `reserve(v, n)` whose element type is still a TYPE VARIABLE: the claim is sized in
     /// the element's width, so it is lowered per monomorph like [`TV_INSERT`](Parser::TV_INSERT).
     pub(crate) const TV_RESERVE: &'static str = "tvreserve";
+    /// A `sort(v)` whose element type is still a TYPE VARIABLE bounded by `Ordered` (@PLN165
+    /// E4): the monomorph lowers it to `OpSortVector` where the runtime compares the element
+    /// itself, and to a call of the stdlib declaration's instance otherwise — what the
+    /// instance's hand-written twin reaches either way.
+    pub(crate) const TV_SORT: &'static str = "tvsort";
     /// A capture READ inside a template lambda: `[Var(__closure), Text(name), read]`.  The
     /// template's closure record lays a capture typed by a type variable out at no width, so
     /// the read is re-lowered by NAME against the instance's own record
@@ -10659,6 +10664,28 @@ impl Parser {
             // substitution, so it is the CONCRETE vector type by now, and the same parse
             // function the concrete spelling uses lowers it — width, row and setter from one
             // home.  A nested generic re-stamps through that call and stays deferred.
+            Value::Block(bl) if bl.name == Self::TV_SORT => {
+                let bl = *bl;
+                let list: Vec<Value> = bl
+                    .operators
+                    .into_iter()
+                    .map(|a| self.rewrite_generic_type_defaults(a))
+                    .collect();
+                let types = [bl.result.clone()];
+                if self.sort_is_special(u16::MAX, &types) {
+                    let mut out = Value::Null;
+                    self.parse_sort(&mut out, &list, &types);
+                    out
+                } else if let Some(d) = self.builtin_selected(u16::MAX, "sort", &types) {
+                    // The declaration's template: the monomorph's nested-generic pass aims
+                    // the call at its instance, as it does every call to a template.
+                    Value::Call(d, list)
+                } else {
+                    // The template's bound held where the site was stamped; a concrete type
+                    // that fails it was refused at the instantiation.
+                    Value::Null
+                }
+            }
             Value::Block(bl)
                 if bl.name == Self::TV_INSERT
                     || bl.name == Self::TV_REVERSE
