@@ -6,12 +6,13 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **1** (2026-09-22) — D-cor-5.  D-cor-4 opened and closed 2026-09-22 (loft#1589); D-cor-3 opened
+OPEN: **0** (2026-09-22).  D-cor-5 opened and closed 2026-09-22 (loft#1601); D-cor-4
+opened and closed 2026-09-22 (loft#1589); D-cor-3 opened
 2026-09-21 and closed the next day; D-cor-2 opened and
 closed the same day (2026-08-28); D-cor-1 likewise on 2026-08-23.
 
-> **D-cor-5 — OPEN (2026-09-22, loft#1601) — a generator held by a record in a keyed collection is
-> never released.**
+> **D-cor-5 — CLOSED (2026-09-22, loft#1601) — a generator held by a record in a keyed collection
+> was never released.**
 > `(G-Hold)` was written with loft#1585, which made a generator holdable at all: before it, a
 > vector of them and a struct field holding one failed to compile.  A record, a vector, a
 > nested record, a vector field and a tuple member now release every frame they hold, at death
@@ -21,7 +22,18 @@ closed the same day (2026-08-28); D-cor-1 likewise on 2026-08-23.
 > store.  So its generators, and every heap local they allocated, stay allocated to program
 > exit, on both backends, reported only by the store census.  A vector of vectors of
 > generators was the same until loft#1597 made a vector's cascade walk its vector elements
-> (2026-09-23).
+> (2026-09-22).
+>
+> **Closed** by giving each keyed collection type whose records hold a generator a FRAMES WALK
+> (`Parser::keyed_frame_release`, synthesized beside the drop cascades as
+> `__frames_<type>`): it walks the records — through the unsorted snapshot a `for` takes of a
+> `hash`, `spatial` or `trie`, and through the cursor of a `sorted` or an `index` — and
+> releases the frames each holds, and nothing else, so a hook beside them stays unrun as
+> `(H-Drop-Not)` says.  It runs where the collection dies: a local at its scope end
+> (`scopes::drop_hook`) and at its rebind, a field in its record's cascade, and a record
+> taken out (`h[k] = null`, `x#remove`), whose walk reaches its inline records, its vectors
+> and its own keyed collections.  Guard
+> `tests/scripts/1601-a-generator-held-in-a-keyed-collection-is-released.loft`.
 
 > **D-cor-4 — CLOSED (2026-09-22, loft#1589) — nothing said who owns a yielded record, and the
 > two backends answered differently.**

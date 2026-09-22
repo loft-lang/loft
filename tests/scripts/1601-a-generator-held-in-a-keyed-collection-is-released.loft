@@ -1,0 +1,177 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1601, `@FR-G-Hold` — A GENERATOR HELD IN A KEYED COLLECTION IS RELEASED.  Whatever holds a
+// generator releases its frame, once (`formal/coroutines.md`), and a record in a `hash`, a
+// `sorted`, an `index` or a `spatial` holds one like any other.  Its container released nothing:
+// a keyed collection's records are released without a walk — `(H-Drop-Not)` keeps `OpDrop`
+// hooks out of them — and the store walk cannot reach a frame, which lives in the coroutine
+// table.  Each such collection type now has a frames walk, run where the collection dies: a
+// local at its scope end or rebind, a field at its record's death, and a record taken out
+// (`h[k] = null`, `x#remove`), inline records and vectors and nested keyed collections
+// included.  The walk releases frames and nothing else, so a hook in the same record stays
+// unrun (`c9`).
+//
+// Every generator here owns a heap local, so a frame nobody releases is a store the leak gate
+// reports, and one released early answers `-1` where the hand-computed value is expected.
+//
+// @falsified-at: 53d8d5d4a — interpret exit 101 -> 0, interpret panicked -> clean, native exit
+//   1 -> 0, native leaked kt=29 main_vector<integer>×23 -> clean (LOFT_STRICT_STORES=1 make falsify …)
+// @falsified-by: tests/falsified/1601-a-generator-held-in-a-keyed-collection-is-released.patch —
+//   the same channels.
+// CHANNEL: interpret — the strict-store census stops the run; native — the leak gate.
+// ARMED: LOFT_STRICT_STORES=1.
+
+fn patrol(id: integer, n: integer) -> iterator<integer> {
+  steps = [0, 1, 2, 3, 4];
+  for s in steps {
+    if s >= n { break; }
+    yield id * 100 + s;
+  }
+}
+
+struct Task { g: iterator<integer>, id: integer }
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+// The hook in `c9` writes a trace FILE, as `139-drop-cascade.loft` does and for its reason.
+fn trace_path() -> text { return "loft_1601_keyed_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+// 1 — a `sorted` local, walked; each record is advanced through the loop variable.
+fn c1() -> text {
+  s: sorted<Task[id]> = [Task { g: patrol(2, 3), id: 2 }, Task { g: patrol(1, 3), id: 1 }];
+  t = 0;
+  for x in s { t += next(x.g) ?? -1; }
+  "{t} {next(s[1].g) ?? -1}"
+}
+
+// 2 — a `hash` field of a record, and a record taken out of it.
+struct Pool { byid: hash<Task[id]>, n: integer }
+fn c2() -> text {
+  p = Pool { byid: [], n: 1 };
+  p.byid += [Task { g: patrol(1, 3), id: 1 }, Task { g: patrol(2, 3), id: 2 }];
+  a = next(p.byid[1].g) ?? -1;
+  p.byid[1] = null;
+  b = next(p.byid[2].g) ?? -1;
+  "{a} {b} {len(p.byid)}"
+}
+
+// 3 — an `index` local, a record taken out.
+fn c3() -> text {
+  ix: index<Task[id]> = [Task { g: patrol(1, 3), id: 1 }, Task { g: patrol(2, 3), id: 2 }];
+  a = next(ix[1].g) ?? -1;
+  ix[1] = null;
+  b = next(ix[2].g) ?? -1;
+  "{a} {b}"
+}
+
+// 4 — a `spatial` local.
+struct Spot { x: integer, y: integer, g: iterator<integer> }
+fn c4() -> text {
+  sp: spatial<Spot[x, y]> = [Spot { x: 1, y: 1, g: patrol(1, 3) }, Spot { x: 2, y: 2, g: patrol(2, 3) }];
+  a = next(sp[1, 1].g) ?? -1;
+  b = next(sp[2, 2].g) ?? -1;
+  "{a} {b}"
+}
+
+// 5 — rebound: a literal, a cleared `hash`, and once per pass of a loop.
+fn c5() -> text {
+  s: sorted<Task[id]> = [Task { g: patrol(1, 3), id: 1 }];
+  a = next(s[1].g) ?? -1;
+  s = [Task { g: patrol(2, 3), id: 2 }];
+  b = next(s[2].g) ?? -1;
+  h: hash<Task[id]> = [Task { g: patrol(3, 3), id: 3 }];
+  c = next(h[3].g) ?? -1;
+  h = [];
+  h += [Task { g: patrol(4, 3), id: 4 }];
+  d = next(h[4].g) ?? -1;
+  t = 0;
+  for i in 1..4 {
+    s = [Task { g: patrol(i, 3), id: i }];
+    t += next(s[i].g) ?? -1;
+  }
+  "{a} {b} {c} {d} {t}"
+}
+
+// 6 — `#remove` in a `for` over a `sorted`.
+fn c6() -> text {
+  s: sorted<Task[id]> = [Task { g: patrol(1, 3), id: 1 }, Task { g: patrol(2, 3), id: 2 }];
+  t = 0;
+  for x in s {
+    t += next(x.g) ?? -1;
+    if x.id == 1 { x#remove; }
+  }
+  "{t} {next(s[2].g) ?? -1}"
+}
+
+// 7 — records holding a keyed collection: in a vector, one of them removed, and nested in a
+//     keyed collection, one of them taken out.
+struct Outer { id: integer, inner: sorted<Task[id]> }
+fn c7() -> text {
+  ps = [Pool { byid: [Task { g: patrol(1, 3), id: 1 }], n: 1 }, Pool { byid: [Task { g: patrol(2, 3), id: 2 }], n: 2 }];
+  a = next(ps[0].byid[1].g) ?? -1;
+  ps.remove(0);
+  b = next(ps[0].byid[2].g) ?? -1;
+  h: hash<Outer[id]> = [Outer { id: 1, inner: [Task { g: patrol(3, 3), id: 5 }] }, Outer { id: 2, inner: [Task { g: patrol(4, 3), id: 6 }] }];
+  c = next(h[1].inner[5].g) ?? -1;
+  h[1] = null;
+  d = next(h[2].inner[6].g) ?? -1;
+  "{a} {b} {c} {d}"
+}
+
+// 8 — returned from a function: moved, released once, by the caller.
+fn mk() -> hash<Task[id]> { h: hash<Task[id]> = [Task { g: patrol(1, 3), id: 1 }]; h }
+fn c8() -> text {
+  h = mk();
+  a = next(h[1].g) ?? -1;
+  b = next(h[1].g) ?? -1;
+  "{a} {b}"
+}
+
+// 9 — a record with a hook beside its generator: the frame is released, the hook stays unrun
+//     (`(H-Drop-Not)`), at a removal and at the collection's death.
+struct H { id: integer }
+fn OpDrop(self: H) { note("hook{self.id}"); }
+struct HT { id: integer, h: H, g: iterator<integer> }
+fn c9() -> text {
+  hs: hash<HT[id]> = [HT { id: 1, h: H { id: 1 }, g: patrol(1, 3) }, HT { id: 2, h: H { id: 2 }, g: patrol(2, 3) }];
+  a = next(hs[1].g) ?? -1;
+  hs[1] = null;
+  b = next(hs[2].g) ?? -1;
+  "{a} {b}"
+}
+
+fn main() {
+  ok("c1 sorted            ", c1(), "300 101");
+  ok("c2 hash field        ", c2(), "100 200 1");
+  ok("c3 index             ", c3(), "100 200");
+  ok("c4 spatial           ", c4(), "100 200");
+  ok("c5 rebound           ", c5(), "100 200 300 400 600");
+  ok("c6 #remove           ", c6(), "300 201");
+  ok("c7 records           ", c7(), "100 200 300 400");
+  ok("c8 returned          ", c8(), "100 101");
+  drain();
+  ok("c9 hook beside       ", c9(), "100 200");
+  ok("c9 no hook ran       ", drain(), "");
+  delete(trace_path());
+  println("a generator held in a keyed collection is released: every cell holds");
+}

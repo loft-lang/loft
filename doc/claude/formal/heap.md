@@ -598,7 +598,7 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 ## Deviations
 
 OPEN: **3** — `D-heap-8`, `D-heap-9` and `D-heap-15` (`D-heap-34` and `D-heap-35` opened and closed
-2026-09-23, loft#1597 and the struct-enum unit literal found beside it; `D-heap-26` and `D-heap-28` closed 2026-09-22;
+2026-09-22, loft#1597 and the struct-enum unit literal found beside it; `D-heap-26` and `D-heap-28` closed 2026-09-22;
 `D-heap-30`, `D-heap-31` and `D-heap-32` opened and closed 2026-09-22, loft#1594, loft#1596 and
 loft#1598; `D-heap-28` and
 `D-heap-29` found 2026-09-22 while closing `D-heap-15`'s `p_i2`, the second closed that day; `D-heap-27`, the tuple twin of
@@ -799,7 +799,7 @@ CLOSED 2026-09-17, below.
   its inner elements (loft#1597), and a vector moved out and then refilled releases the moved
   elements twice (loft#1598).
 
-### D-heap-35 — OPENED AND CLOSED (2026-09-23, found with loft#1597): a struct-enum vector released a unit variant's literal twice
+### D-heap-35 — OPENED AND CLOSED (2026-09-22, found with loft#1597): a struct-enum vector released a unit variant's literal twice
 
 - **Violates:** (H-Move) — a fresh value placed into an element moves there, and the element's
   container releases it once.
@@ -811,7 +811,7 @@ CLOSED 2026-09-17, below.
 - **Effect:** measured on both backends, identical: `v: vector<E> = [A { id: 1 }, B, A { id: 2 }]`
   ran B's hook twice, from the vector's cascade and from the work-ref; appended (`v += [B]`)
   and in a struct field's literal the same.
-- **Status:** CLOSED 2026-09-23.
+- **Status:** CLOSED 2026-09-22.
 - **Closed:** a struct-enum element variable is typed as a record of its enum.  A literal of one
   of its variants is still built INTO that element, as it was against the placeholder: a
   variant literal matches an inline element slot typed as its enum (`Parser`'s object-literal
@@ -820,7 +820,7 @@ CLOSED 2026-09-17, below.
   emission pins.  Guard
   `tests/scripts/1597-a-vector-of-vectors-releases-its-inner-elements.loft` `c10`.
 
-### D-heap-34 — OPENED AND CLOSED (2026-09-23, loft#1597): a vector of vectors never released its inner elements
+### D-heap-34 — OPENED AND CLOSED (2026-09-22, loft#1597): a vector of vectors never released its inner elements
 
 - **Violates:** (H-Drop) — a container's death releases what it holds.
 - **Where:** a vector's synthesized cascade walks its elements when the element type owns a
@@ -830,7 +830,7 @@ CLOSED 2026-09-17, below.
 - **Effect:** measured on both backends, identical, with no diagnostic:
   `v: vector<vector<H>> = [[mk(50)], [mk(52)]]` traced `M50 M52 R2` — neither released.  A
   rebind, a return and a loop the same.
-- **Status:** CLOSED 2026-09-23.
+- **Status:** CLOSED 2026-09-22.
 - **Closed:** a vector element is released through its own collection's cascade
   (`collection_def_nr`), read as `v[i]` reads it; a struct's vector field of vectors takes the
   same walk.  A local vector appended as an element (`v += [inner]`) is a collection copy, and

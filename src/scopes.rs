@@ -11045,6 +11045,27 @@ impl Scopes<'_> {
                 transition_free = Some(Value::Insert(frees));
             }
         }
+        // loft#1601, @FR-G-Hold — a keyed collection rebound releases the generator frames its
+        // records hold before they are cleared, through its type's walk; the records run no
+        // hook (`(H-Drop-Not)`).
+        if transition_free.is_none()
+            && was_in_scope
+            && data.keyed_holds_generator(function.tp(v))
+            && !value.reads_var(v)
+            && !value.reads_var(ov)
+            // Its own store, not a view of another's: a keyed local lists itself.
+            && function.tp(v).depend().iter().all(|&d| d == v || d == ov)
+        {
+            let walk = data.def_nr(&data.keyed_frames_name(function.tp(v)));
+            if walk != u32::MAX {
+                let live = Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(v)]);
+                transition_free = Some(v_if(
+                    live,
+                    Value::Call(walk, vec![Value::Var(v)]),
+                    Value::Null,
+                ));
+            }
+        }
         // A generator HANDLE owns its frame (@FR-G-Hold), so reassigning one releases the frame it held
         // — as its scope end would have (loft#835).  Nothing did: `g = steps(1); g =
         // steps(5)` kept the first frame, and every heap local it owned, to program exit.
@@ -19523,6 +19544,9 @@ fn drop_hook(function: &Function, v: u16, data: &Data) -> Option<Value> {
         // `Stores::clear_vector_release` carries, and why IT asks the store's SHAPE rather
         // than an offset).  A collection cascade walks `self`, so one IR releases on both.
         Type::Vector(elem, _) => data.drop_cascade_nr(data.collection_def_nr(elem)),
+        // loft#1601, @FR-G-Hold — a keyed collection whose records hold a generator releases
+        // their frames through its type's walk; its records run no hook (`(H-Drop-Not)`).
+        keyed if data.keyed_holds_generator(keyed) => data.def_nr(&data.keyed_frames_name(keyed)),
         _ => return None,
     };
     if nr == u32::MAX {

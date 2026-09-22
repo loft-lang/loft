@@ -913,6 +913,18 @@ impl Parser {
                 {
                     return Some(group);
                 }
+                // loft#1601, @FR-G-Hold — the record taken out releases the generator frames it
+                // holds, and nothing else (`(H-Drop-Not)`).  Looked up where it is used rather
+                // than bound: a binding would be a view of the collection the removal changes.
+                if self.data.type_holds_generator(f_type)
+                    && let Some(release) = self.element_frame_release(f_type, &get_rec)
+                {
+                    let remove = self.cl(
+                        "OpHashRemove",
+                        &[get_args[0].clone(), get_rec, Value::Int(db_tp)],
+                    );
+                    return Some(Value::Insert(vec![release, remove]));
+                }
                 return Some(self.cl(
                     "OpHashRemove",
                     &[get_args[0].clone(), get_rec, Value::Int(db_tp)],

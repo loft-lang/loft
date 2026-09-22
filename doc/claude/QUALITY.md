@@ -2780,7 +2780,7 @@ the wrapper, how many descend via the keystone — and the opaque QUEUE itself, 
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
 
-(2026-09-23, loft#1597 on `tuxedo-1562-layout-gate`, joined with ../loft2's tip @ dc5bbb3b3 and
+(2026-09-22, loft#1597 on `tuxedo-1562-layout-gate`, joined with ../loft2's tip @ dc5bbb3b3 and
 re-measured at its end: **927 · 598 · 5 · 324**, and `--check-ratchet` pinned lower at opaque 324,
 opaque tests 1310.  `Parser::unique_elm_var` gained a struct-enum arm and peels it, which moved
 that function to the seeing-through side.)
@@ -2791,7 +2791,7 @@ pinned lower at opaque 325, opaque tests 1310.  The sides read 326 · 1311 (../l
 329 · 1313 (the generics line); the join is below both, as each line peeled shapes in bodies
 the other also touched.)
 
-(2026-09-23, loft#1585 on `tuxedo-1562-layout-gate`, joined with ../loft2's tip @ 1a75b86e4 and
+(2026-09-22, loft#1585 on `tuxedo-1562-layout-gate`, joined with ../loft2's tip @ 1a75b86e4 and
 re-measured at its end: **920 · 589 · 5 · 326**, and `--check-ratchet` pinned lower at opaque 326,
 opaque tests 1311.  The sides read 328 · 1312 (this line) and 328 · 1311 (../loft2); the join is
 neither, for the reason the note below gives.  Every shape test the generator-handle work added

@@ -1261,11 +1261,11 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     /// what it owned (`@FR-Col-RemoveDense`, `Stores::remove_vector_at`), and a generator's
     /// frame is owned data, but the store walk cannot reach one — a frame lives in the
     /// coroutine table, not in a store.  So the handles are read out here: the element's own
-    /// (`elem` is its SLOT), a record's handle fields, its inline records' and its vectors'
-    /// elements'.  Only the handles: an `OpDrop` hook beside them stays the author's
-    /// (`(H-Drop-Not)`).  A handle in a keyed collection is not reached, and keeps its frame
-    /// (`formal/coroutines.md` D-cor-5).  Everything runs under a presence test of the element,
-    /// so an index past the end releases nothing.
+    /// (`elem` is its SLOT), a record's handle fields, and those of its inline records, its
+    /// vectors' elements and its keyed collections' records (`Self::keyed_frame_release`).
+    /// Only the handles: an `OpDrop` hook beside them stays the author's (`(H-Drop-Not)`).
+    /// Everything runs under a presence test of the element, so an index past the end
+    /// releases nothing.
     pub(crate) fn element_frame_release(&mut self, elem_tp: &Type, elem: &Value) -> Option<Value> {
         if !self.data.type_holds_generator(elem_tp) {
             return None;
@@ -1334,6 +1334,78 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         true
     }
 
+    /// loft#1601, @FR-G-Hold — the walk of every record of the KEYED collection `coll` (of type
+    /// `coll_tp`) that releases the generator frames the records hold, and nothing else: a
+    /// keyed collection's records run no hook (`(H-Drop-Not)`).  A `hash`, `spatial` or
+    /// `trie` is walked through the unsorted snapshot of its record numbers a `for` over one
+    /// takes (`n_hash_unsorted`, `n_radix_sorted`), freed after the walk; a `sorted` and an
+    /// `index` through their own cursor.  `false` where a record cannot be walked.
+    pub(crate) fn keyed_frame_release(
+        &mut self,
+        coll: &Value,
+        coll_tp: &Type,
+        ops: &mut Vec<Value>,
+    ) -> bool {
+        let (content, snapshot) = match coll_tp.base() {
+            Type::Sorted(c, _, _) | Type::Index(c, _, _) => (*c, None),
+            Type::Hash(c, _, _) => (*c, Some("n_hash_unsorted")),
+            Type::Radix(c, _, _) | Type::Trie(c, _, _) => (*c, Some("n_radix_sorted")),
+            _ => return false,
+        };
+        let elem_tp = Type::Reference(content, crate::data::Deps::none());
+        let tp_id = self.get_type(coll_tp.base());
+        if tp_id == u16::MAX {
+            return false;
+        }
+        let mut walked = coll.clone();
+        let mut scratch = None;
+        if let Some(name) = snapshot {
+            let build = self.data.def_nr(name);
+            if build == u32::MAX {
+                return false;
+            }
+            // Named as a `for`'s snapshot is, which the scope pass releases with
+            // `OpFreeScratch` rather than as a record of the element type.
+            let s = self.create_unique("hash_scratch", &elem_tp);
+            ops.push(v_set(
+                s,
+                Value::Call(build, vec![coll.clone(), Value::Int(i32::from(tp_id))]),
+            ));
+            walked = Value::Var(s);
+            scratch = Some(s);
+        }
+        let e = self.create_unique("rel_rec", &elem_tp);
+        self.vars.set_skip_free(e);
+        let Some(release) = self.element_frame_release(&elem_tp, &Value::Var(e)) else {
+            return false;
+        };
+        let state = self.create_unique("rel_state", &crate::data::I64);
+        let mut start = Vec::new();
+        self.fill_iter(&mut start, &mut walked.clone(), coll_tp.base(), true, true);
+        start.push(Value::Int(0));
+        start.push(Value::Int(0));
+        let mut step = vec![Value::Var(state)];
+        self.fill_iter(&mut step, &mut walked.clone(), coll_tp.base(), false, true);
+        let live = self.cl("OpConvBoolFromRef", &[Value::Var(e)]);
+        ops.push(v_set(state, self.cl("OpIterate", &start)));
+        ops.push(crate::data::v_loop(
+            vec![
+                v_set(e, self.cl("OpStep", &step)),
+                v_if(
+                    live,
+                    release,
+                    v_block(vec![Value::Break(0)], Type::Void, "break"),
+                ),
+            ],
+            "release frames",
+        ));
+        if let Some(s) = scratch {
+            ops.push(self.cl("OpFreeScratch", &[Value::Var(s)]));
+            ops.push(v_set(s, Value::Null));
+        }
+        true
+    }
+
     /// The releases of the generator handles a `d_nr` record at `rec` (offset `base`) holds —
     /// `false` where one sits somewhere this does not walk.
     fn record_frame_release(
@@ -1382,6 +1454,23 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                         ],
                     );
                     if !self.vector_frame_release(&field, &elm.clone(), content, ops) {
+                        return false;
+                    }
+                }
+                // A keyed collection field (loft#1601): walked here, as its type's frames walk
+                // walks it — that function is made after the parse, which a removal written
+                // in the program precedes.
+                keyed if self.data.keyed_holds_generator(keyed) => {
+                    let field = self.cl(
+                        "OpGetField",
+                        &[
+                            rec.clone(),
+                            Value::Int(i32::from(at)),
+                            Value::Int(i32::from(content)),
+                        ],
+                    );
+                    let keyed = keyed.clone();
+                    if !self.keyed_frame_release(&field, &keyed, ops) {
                         return false;
                     }
                 }
