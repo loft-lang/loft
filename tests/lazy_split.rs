@@ -159,19 +159,23 @@ fn a_variable_separator_a_rev_and_a_generator_keep_the_vector() {
         (1, 1),
         "opt_shape: the discharged VECTOR keeps its vector"
     );
-    // s14 binds the vector to a name first: it is a vector, with a length and an index.
+    // s14 binds the vector to a name first: not a loop over a call, so not this rule's —
+    // it is `(R-SplitTable)`'s (`tests/split_table.rs`), whose table collects the same
+    // pieces at the bind and answers its length and its index.
     let s14 = body(&rust, "n_s14");
     assert!(
-        s14.contains("t_4text_split(") && !s14.contains("lazy_split("),
-        "s14: a split bound to a local is not a loop over a call"
+        !s14.contains("__ls_done_") && s14.contains(").collect() /* @FR-R-SplitTable */"),
+        "s14: a split bound to a local is a table, not a lazy loop"
     );
 }
 
 #[test]
 fn the_switch_restores_the_vector_everywhere() {
     let rust = emit("switch", &[("LOFT_NO_LAZY_SPLIT", "1")]);
+    // The iterator itself stays in use: `(R-SplitTable)` collects it for s14's table, under
+    // its own switch.  What this switch removes is the lazy LOOP form.
     assert!(
-        !rust.contains("lazy_split(") && !rust.contains("__ls_done_"),
-        "LOFT_NO_LAZY_SPLIT=1 must emit no lazy split"
+        !rust.contains("let mut __ls_") && !rust.contains("__ls_done_"),
+        "LOFT_NO_LAZY_SPLIT=1 must emit no lazy split loop"
     );
 }

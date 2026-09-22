@@ -684,6 +684,17 @@ impl Output<'_> {
             {
                 return Ok(());
             }
+            // `@FR-R-SplitTable` — the element read of a table emits as the slice at the
+            // index, so its inner `OpGetVectorNullable` must not be lifted either; the
+            // index itself may still hold work.
+            if self.data.def(*d_nr).name() == "OpGetText"
+                && let Some(elem) = vals.first()
+                && self.split_table_read(elem).is_some()
+                && let Value::Call(_, inner) = elem.unspan()
+                && let Some(index) = inner.get(2)
+            {
+                return self.collect_pre_evals_inner(index, result);
+            }
             // @PLN157 P4b — the write twin: a fused element WRITE also folds its inner
             // element address away, so that address must not be lifted either.  Both
             // sides ask `fused_element_write`, so they cannot disagree.

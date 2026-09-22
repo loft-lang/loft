@@ -317,6 +317,12 @@ impl OpEmitter for HoistedLengthEmitter {
             .and_then(|v| header_for(ctx, v))
             .map(str::to_string);
         let Some(header) = header else {
+            // `@FR-R-SplitTable` — the length of a split bound to a name is its table's.
+            if let Some(Value::Var(x)) = args.first().map(Value::unspan)
+                && let Some(t) = ctx.output.split_table_var(*x)
+            {
+                return write!(ctx.w, "(__st_{t}.len() as i64)");
+            }
             return super::default::DefaultEmitter.emit(ctx, args);
         };
         write!(ctx.w, "(i64::from({header}.len))")
@@ -328,6 +334,12 @@ impl OpEmitter for HoistedLengthEmitter {
 /// a vector the function's lazy loops replaced.  Running out of pieces raises the loop's
 /// `__ls_done_N`, which its length test reads, and answers the null text the vector form
 /// reads past its last element — the loop leaves before anything looks at it.
+///
+/// `OpGetText(OpGetVectorNullable(v, …, i), 0)` with `v` a split TABLE or a walk's alias
+/// of one (`@FR-R-SplitTable`) is the slice at `i` — `codegen_runtime::split_table_get`,
+/// which answers what the element read answers: a negative index from the end, a null or
+/// out-of-range one the null text.  The raising twin `OpGetVector` takes
+/// `split_table_get_or_raise`, which raises what the op raises outside the table.
 ///
 /// Every other `OpGetText` emits the `#rust` template unchanged.
 pub struct LazySplitNextEmitter;
@@ -341,6 +353,25 @@ impl OpEmitter for LazySplitNextEmitter {
                 ctx.w,
                 "(match __ls_{vec}.next() {{ Some(__piece) => __piece, None => {{ __ls_done_{vec} = true; loft::state::STRING_NULL }} }})"
             );
+        }
+        if let Some(elem) = args.first()
+            && let Some((t, raising)) = ctx.output.split_table_read(elem)
+            && let Value::Call(_, inner) = elem.unspan()
+            && let Some(index) = inner.get(2)
+        {
+            // The raising read binds its index first, as the op's template does: the
+            // index may still borrow `stores`, which the getter takes mutably.
+            if raising {
+                write!(ctx.w, "{{ let __vi = (")?;
+                ctx.emit(index)?;
+                return write!(
+                    ctx.w,
+                    ") as i64; loft::codegen_runtime::split_table_get_or_raise(stores, &__st_{t}, __vi) }}"
+                );
+            }
+            write!(ctx.w, "loft::codegen_runtime::split_table_get(&__st_{t}, (")?;
+            ctx.emit(index)?;
+            return write!(ctx.w, ") as i64)");
         }
         super::default::DefaultEmitter.emit(ctx, args)
     }

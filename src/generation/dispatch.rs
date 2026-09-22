@@ -73,6 +73,40 @@ impl Output<'_> {
             }
             return write!(w, "; let mut __ls_done_{var} = false /* @FR-R-LazySplit */");
         }
+        // `@FR-R-SplitTable` — the bind of a table's local records the pieces of its source
+        // as slices, once, exactly where the call stood: a parameter nothing writes is
+        // borrowed for the block; any other source is copied here, so no later write can
+        // reach what the slices point into.  The walk's alias binds nothing: its readers
+        // answer from the table.
+        if !self.in_coroutine_body
+            && let Some(st) = self.split_tables.get(&var).cloned()
+            && let Value::Call(_, cargs) = to.unspan()
+            && let Some(src) = cargs.first()
+        {
+            let sep = st.separator;
+            if self.lazy_split_borrows(src) {
+                write!(
+                    w,
+                    "let __st_{var}: Vec<&str> = loft::codegen_runtime::lazy_split(&*("
+                )?;
+                self.output_code_inner(w, src)?;
+                write!(w, "), {sep:?}).collect()")?;
+            } else {
+                write!(w, "let __st_src_{var}: String = (")?;
+                self.output_code_inner(w, src)?;
+                write!(
+                    w,
+                    ").to_string(); let __st_{var}: Vec<&str> = loft::codegen_runtime::lazy_split(&__st_src_{var}, {sep:?}).collect()"
+                )?;
+            }
+            return write!(w, " /* @FR-R-SplitTable */");
+        }
+        if !self.in_coroutine_body
+            && self.split_table_aliases.contains_key(&var)
+            && matches!(to.unspan(), Value::Var(t) if self.split_tables.contains_key(t))
+        {
+            return write!(w, "() /* @FR-R-SplitTable walk of the table */");
+        }
         // `@FR-R-CharWalk` — the step of `for c in T` takes an ASCII byte other than NUL in
         // one move: `c` is the byte, `#index` the byte's offset, `#next` one past it — what
         // the step as written answers for such a byte (the character read, width 1, a
@@ -1999,6 +2033,17 @@ impl Output<'_> {
         // text is handed to no call: it stays the null sentinel, and its frees release
         // nothing.
         if self.lazy_splits.values().any(|ls| ls.dead_buf == Some(var)) {
+            write!(w, "DbRef::NULL")?;
+            return Ok(());
+        }
+        // `@FR-R-SplitTable` — the same for a table's buffer; and the table's own local
+        // and its walk's alias, which are never a vector, bind nothing here either.
+        if self
+            .split_tables
+            .values()
+            .any(|st| st.dead_buf == Some(var))
+            || self.split_table_var(var).is_some()
+        {
             write!(w, "DbRef::NULL")?;
             return Ok(());
         }

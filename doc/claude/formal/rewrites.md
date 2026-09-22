@@ -1398,6 +1398,64 @@ to re-derive at run time, so `(R-Switch)`'s second form applies: cells
 in `Output::collect_pre_evals_inner`, the null decl in `Output::emit_null_dbref`,
 `codegen_runtime::lazy_split`.
 
+### A split bound to a name is a table of its pieces
+
+```
+  (R-SplitTable) `V = T.split(c)` — the standard library's `split`, `c` a character
+                 CONSTANT other than the null character — where V is a plain LOCAL
+                 `vector<text>`, that bind is its only binding, and every other
+                 mention of V is a READ the table can answer: `len(V)`, the element
+                 read `V[i]` (bare, under `?`, under `?? d`, bound to a `text?`), or
+                 the source of the walk `for p in V` (the hidden vector the parser
+                 binds from V, itself read by nothing but its element read and its
+                 length test), all of them inside the block that binds V and after
+                 the bind — the vector is never built: at the bind ONE pass over T
+                 records its pieces as a TABLE of slices, the pieces (R-LazySplit)
+                 names in the order it names them; `len(V)` is the table's length,
+                 `V[i]` is the slice at `i` (a negative `i` from the end, a null or
+                 out-of-range `i` the null text — what the element read answers past
+                 the end), and the walk iterates the table.  T is evaluated ONCE,
+                 where the call stood: a plain text PARAMETER the function never
+                 writes is borrowed for the block; every other T is copied there.
+                 Every other mention — V returned, appended to, written, linked,
+                 captured, tupled, handed to a call, rebound, a second binding, a
+                 mention outside the binding block, a generator — DECLINES and
+                 keeps the vector.  The call's hidden buffer, when it serves that
+                 call alone, is never minted.
+```
+
+**In words.**  `parts = src.split('\n'); n = len(parts); for i in 0..len(parts) { … parts[i]? … }`
+is how a library reads a line-oriented text when it needs the count or the i-th line, and it
+is the ONE shape `(R-LazySplit)` declines — a vector bound to a name first.  Every such bind
+in the repo and the library checkouts is a local that never leaves its function (14 binds,
+walked, indexed or `len`'d: `round-3.md` § `split`), so `(R-Escape)` licenses the
+representation and the API stays what it is.  The table is what the Rust reference does
+(`split(c).collect::<Vec<&str>>()`), one pass over T with no record and no text copy per
+piece; the readers are the three the analysis admits and the emitter answers, so a shape
+the rule has not met declines rather than compiles to a read of a vector nobody filled.
+The walk through the name is the parser's `_vector_N = V` followed by the two readers of
+`(R-LazySplit)`'s loop, and is read as an ALIAS of the table — so `p` in `for p in parts`
+borrows its slice under `(R-TextBorrow)` with no store condition, as a lazy split's piece
+does; and because the table is random access, a `rev` and a comprehension over V are walks
+too, where the lazy split's forward iterator has to decline them.  The element read comes
+in the parser's two twins — the nullable read under `?`, `??` and a null-tested bind, and
+the RAISING read of a bare `v[i]` — and the table answers each as its op does: the null
+text and the out-of-bounds note for the first, the recoverable `IndexOutOfBounds` /
+`NegativeIndex` fault for the second (`LOFT_DEV_SOFT_HALT` halts both forms alike).  The binding-block condition is the Rust scope of the `let` the table becomes; a
+mention outside it would not compile.  `len` reaches the emitter through `(R-Wrapper)`,
+so the switch that keeps the wrapper a call (`LOFT_NO_WRAPPER_INLINE`) keeps every table a
+vector too.  Priced by hand first on the `split` row: 21.2 → 6.3 µs (−70 %, hash `21bd`),
+and 3.3 with the `?`-discharged piece borrowed instead of copied twice — the twin is 2.7.
+Switch `LOFT_NO_SPLIT_TABLE`; trace `LOFT_TRACE_SPLIT_TABLE` (each table admitted, each
+declined with its reason, and whether the buffer is minted).  The interpreter keeps the
+vector and is the oracle; `LOFT_NO_SPLIT_TABLE=1` is the same-build oracle on native.
+Cells `tests/scripts/158-split-table.loft`; pins `tests/split_table.rs`.  Sites:
+`hoist::split_tables`, `Output::split_table_of`, the bind and the alias bind in
+`Output::output_set`, the element read in `LazySplitNextEmitter`, the length in
+`HoistedLengthEmitter`, the pre-eval exemption in `Output::collect_pre_evals_inner`, the
+null decl in `Output::emit_null_dbref`, the header exclusion in
+`Output::bind_loop_headers`, `codegen_runtime::split_table_get`.
+
 ### A walk of texts borrows each element
 
 ```
