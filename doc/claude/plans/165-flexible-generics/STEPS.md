@@ -952,11 +952,14 @@ every arc in one file.  Closes the plan.
 ## Arc E — the by-name built-ins become library generics
 
 Its first half is on `main` already: a by-name special case in `dispatch_call` is taken only
-when no definition the program declares applies.  One built-in per step, each a parallel run:
+when no definition the program declares applies.  One built-in per step, each a parallel run
+(the method as E1 built it; the plan as first written is kept below for its measurement):
 
-1. write the `default/*.loft` generic beside the special case, under a switch;
-2. compare `loft introspect` of every corpus call site, special case against instance;
-3. delete the entry from `dispatch_call` only when they are equal.
+1. declare the built-in in `default/*.loft` as a generic METHOD on `vector`, marked `#builtin`
+   — a stdlib method reserves its name for its receiver type alone;
+2. compare `loft introspect` of the corpus against the OLD `default/`, masked: the special
+   form stays the lowering, so every call site must read identical;
+3. the method spelling reaches the same lowering (`builtin_method_call`).
 
 | Step | Built-in | Variables | Waits for |
 |---|---|---|---|
@@ -984,7 +987,7 @@ two-variable generics, which the no-observable-special-names rule cannot retire 
   written.
 - Each step also runs `make surface-gen`: a new builtin renumbers
   `index/target_surface.json`.
-- **E1 measured, not built — blocked on a design decision** (2026-09-22).  `pub fn reverse<T>(v:
+- **E1 first measured** (2026-09-22), as a free generic.  `pub fn reverse<T>(v:
   vector<T>) { reverse(v) }` in `default/` (its body reaches the special form, which the stdlib
   never pre-empts) behind `LOFT_BUILTIN_GENERICS=reverse`, with a call to an instance of a stdlib
   generic whose body is one op inlined in the IR (native's `@FR-R-Wrapper`, done for both
@@ -1001,9 +1004,42 @@ two-variable generics, which the no-observable-special-names rule cannot retire 
   is a member of the set (`G-Select`), the program's ranking first on a tie; (c) the special
   forms stay.  The measured code is [probes/e1-library-reverse.patch](probes/e1-library-reverse.patch)
   (the switch, the IR inline, `Data::instance_template`, `one_op_wrapper` taking an instance of
-  a stdlib template).  Measuring note: every binary reads `default/` from the tree, so a corpus diff
-  of a `default/` change needs the OLD `default/` on the before side — two step binaries over
-  one tree read the same stdlib and reported IDENTICAL while the guard above was refused.
+  a stdlib template).
+- **Owner's decision (2026-09-22): the built-ins become stdlib generic METHODS on `vector`.**
+  A stdlib method reserves its name only for its own receiver type (measured on `clear`): a
+  program's `fn sort(self: Roster)` or `fn sort(r: Roster)` is a member of the set beside it,
+  and only a program's own `sort` for `vector` itself is refused — *"allow users to create
+  their own versions on their own defined structures"*.
+- **E1 Built** (2026-09-22), as a `#builtin` METHOD.  `pub fn reverse<T>(self: vector<T>)
+  { reverse(self) }` in `default/01_code.loft`, followed by `#builtin`: the declaration is the
+  built-in's SIGNATURE — its place in the name's set (`@FR-G-Select`), its method spelling,
+  what hover and the published Standard Library read — and a call that selects it lowers
+  through the special form of its name, as the bare call always has.  The marker is a stored
+  field (`Definition::builtin`, `DEF_BUILTIN`; stride 183 → 184, `CACHE_FORMAT_VERSION` 11),
+  never a name test, and only `default/` may write it (`parse_errors` pins the refusal).
+  Nothing about the bare spelling moves: a stdlib definition never pre-empts the special form
+  (`program_definition_applies`), so `reverse(v)` is lowered exactly as before; `v.reverse()`
+  selects the method and `builtin_method_call` hands it to the same lowering.  So no instance
+  is minted and nothing is inlined — the free-generic design above needed an IR inliner of
+  one-op instances, which `insert`, `sort`, `map`, `filter` and `reduce` (blocks, temporaries,
+  lambdas) could not use; this one is the same for all seven.  A program's own `reverse` for
+  its own type works in both spellings; one for `vector` is refused as for any stdlib method
+  (`parse_errors`).  Corpus, masked (numbers, the stdlib's path, the schema's registration
+  lines), the before side on the OLD `default/`: six generic files lose an unused `__ref_p`
+  declaration in their instances (a program's unbounded `T` now shares the stdlib's
+  placeholder), and `a-program-generic-named-like-a-builtin-is-what-its-call-reaches` moved its
+  first cell from `reverse` to `any` — a value the control's builtin answers in silence.
+  Guard: `a-built-in-is-a-method-a-program-extends-for-its-own-types`.
+  Measuring note: every binary reads `default/` from the tree, so a corpus diff of a
+  `default/` change needs the OLD `default/` on the before side — two step binaries over one
+  tree read the same stdlib and reported IDENTICAL while the guard above was refused.
+- **Owed by E2–E7 from E1's design.**  The special-names guard above still defines `sort<T:
+  Named>(v: vector<T>)` and `reserve<T>(v: vector<T>)`; E2 and E4 refuse both, so their cells
+  move to a name that stays a special form (`all`, `count_if`).  The METHOD spelling of `map`,
+  `filter` and `reduce` is recognised by name today (`parse_vector_method`, which also hints a
+  const receiver's element `const` — loft#1540); once each is a `#builtin` method the call
+  finds it as an attribute instead, so the argument hints come from its declared signature
+  and the `const` hint has to come with them.
 
 ---
 
@@ -1024,6 +1060,7 @@ two-variable generics, which the no-observable-special-names rule cannot retire 
   a grep, not an audit.  B2's accessor is where the real number is found.
 - No LIBRARY wants several type variables: the published libraries declare zero generics.
   The consumer is the stdlib's own `map` and `reduce`.
-- Arc E's emission equality, and E6's pass-1 return prediction (above).
+- E6's pass-1 return prediction (above).  Arc E's emission equality holds by construction
+  for a `#builtin` method (the special form stays the lowering) and is measured per step.
 - Nothing here was built.  Every *"works because"* in arcs C and D is a prediction, and the
   step's own gate is what tests it.

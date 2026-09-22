@@ -4598,6 +4598,12 @@ pub struct Definition {
     pub instance_of: u32,
     /// @PLN165 D3 — the instance's type arguments, in the template's header order.
     pub instance_args: Vec<Type>,
+    /// @PLN165 arc E — `#builtin`: this stdlib declaration is a built-in's SIGNATURE — its
+    /// place in the name's overload set, its method spelling, what hover and the API listing
+    /// read — and a call that selects it lowers through the compiler's special form of its
+    /// name, as the bare call always has.  A marker on the declaration, never a name test.
+    /// Persisted through the IR store (`DEF_BUILTIN`), mirrored in `tools/ir_schema/ir.loft`.
+    pub builtin: bool,
     /// DbRef into CONST_STORE for pre-built vector constants.
     /// `None` for non-constant definitions or constants that couldn't be pre-built.
     pub const_ref: Option<crate::keys::DbRef>,
@@ -4713,6 +4719,13 @@ impl Definition {
     #[must_use]
     pub fn null_safe(&self) -> bool {
         self.null_safe
+    }
+
+    /// `#builtin` (@PLN165 arc E): a call selecting this declaration lowers through the
+    /// special form of its name.
+    #[must_use]
+    pub fn builtin(&self) -> bool {
+        self.builtin
     }
 
     /// `#superseded "Y"` (@PLN102 arc C): the bare successor-symbol name this
@@ -6753,6 +6766,7 @@ impl Data {
             type_params: Vec::new(),
             instance_of: u32::MAX,
             instance_args: Vec::new(),
+            builtin: false,
             const_ref: None,
             forced_size: None,
             purity: Purity::Unknown,

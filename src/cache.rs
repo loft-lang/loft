@@ -68,7 +68,9 @@ use sha2::{Digest, Sha256};
 ///
 /// 10 — `Definition` carries `type_params`, `instance_of` and `instance_args` (stride
 /// 167 → 183, @PLN165 D2/D3): an older image lays the record out differently.
-const CACHE_FORMAT_VERSION: u8 = 10;
+///
+/// 11 — `Definition` carries `builtin` (stride 183 → 184, @PLN165 arc E).
+const CACHE_FORMAT_VERSION: u8 = 11;
 
 /// Loft crate version — a release bump invalidates every cache.
 const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");

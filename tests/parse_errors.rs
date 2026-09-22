@@ -4670,6 +4670,23 @@ fn a_short_lambda_alone_cannot_bind_a_generic_literal() {
         .error("`Th { … }` cannot tell what T is — the `|…|` lambda in `f` takes its types from the field; spell it `fn(…) -> <type> { … }`, or give the binding its type, `x: Th<integer> = Th { … }` at a_short_lambda_alone_cannot_bind_a_generic_literal:2:17");
 }
 
+/// @PLN165 E1 — `reverse` is a stdlib METHOD on `vector`: a program's own `reverse` for its own
+/// types is a member of the set, and one for `vector` itself is the one body per receiver type
+/// that is refused — as for any stdlib method (`clear`).
+#[test]
+fn a_programs_own_reverse_for_a_vector_is_refused() {
+    code!("fn reverse<T>(v: vector<T>) -> integer { len(v) }\nfn test() { a = [1, 2]; assert(reverse(a) == 2, \"\"); }")
+        .error("Cannot redefine 'reverse' (already defined at default/01_code.loft) — a name has one body per receiver type, and `x.reverse(…)` and `reverse(x, …)` would reach different functions; declare it once as a `self` method, which takes both spellings, or rename one at a_programs_own_reverse_for_a_vector_is_refused:1:31");
+}
+
+/// @PLN165 arc E — `#builtin` sends a call to the compiler's special form of the name; it marks
+/// a standard-library declaration, and a program's function is its own body.
+#[test]
+fn a_program_cannot_mark_its_own_function_builtin() {
+    code!("fn twice(v: vector<integer>) -> integer { len(v) * 2 }\n#builtin\nfn test() { assert(twice([1]) == 2, \"\"); }")
+        .error("#builtin marks a standard-library declaration the compiler lowers itself; a program's function is its own body at a_program_cannot_mark_its_own_function_builtin:2:9");
+}
+
 /// @PLN165 D11 — a variable bound only by a callback's return: a `|…|` lambda that answers
 /// only `null` names no type, so the call is refused naming the variable (it bound `U` to
 /// `null` and minted a `Grid<null>` with no layout).

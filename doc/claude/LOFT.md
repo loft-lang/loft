@@ -2127,6 +2127,12 @@ v[..end]                    // open-start slice from 0 to end (exclusive)
 **A vector can also be taken apart by `match`** — `[first, ..rest]`, `[a, .., z]` and the other
 slice patterns are in [§ Slice patterns](#slice-patterns-matching-a-vector).
 
+**`reverse` is a stdlib method on `vector`** — `reverse(v)` and `v.reverse()` are one call, and
+a program defines its own `reverse` for its own types beside it (`fn reverse(self: Roster)`),
+one definition per receiver type; one for `vector` itself is refused, as for any stdlib method.
+The other vector built-ins (`sort`, `insert`, `reserve`, `map`, `filter`, `reduce`) follow as
+@PLN165 arc E moves them.
+
 **Slices are iterators, materialised on assignment.**  `v[lo..hi]` can
 be used in `for x in v[lo..hi] { … }` and wherever an iterator is
 accepted, and assigning it to a local (`sub = v[lo..hi]` or

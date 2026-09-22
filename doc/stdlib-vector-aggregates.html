@@ -33,7 +33,11 @@
 </div>
 <div class="item">
 <pre><code>pub fn sum &lt; T: Addable &gt; (v: const vector&lt;T&gt;, init: T? = null) -&gt; T</code></pre>
-<p>Sum of vector elements.  Works on any Addable type.  `init` is the identity to start from; leave it out and the element type's own zero is used (0, 0.0, &quot;&quot;). Example: sum([10, 20, 12], 0) == 42 Example: sum([10, 20, 12]) == 42</p>
+<p>Sum of vector elements.  Works on any Addable type.  `init` is the identity to start from; leave it out and the element type's own zero is used (0, 0.0). Example: sum([10, 20, 12], 0) == 42 Example: sum([10, 20, 12]) == 42</p>
+</div>
+<div class="item">
+<pre><code>pub fn reverse &lt; T &gt; (self: vector&lt;T&gt;)</code></pre>
+<p>Reverse a vector's elements in place: `reverse(v)` or `v.reverse()`.  A method on `vector`, so a program may define its own `reverse` for its own types beside it.</p>
 </div>
 <div class="item">
 <pre><code>pub fn sum_of(v: const vector&lt;integer&gt;) -&gt; integer</code></pre>

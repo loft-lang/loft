@@ -1,0 +1,270 @@
+diff --git b/default/01_code.loft a/default/01_code.loft
+index 24c17f2d6..c77eb83ef 100644
+--- b/default/01_code.loft
++++ a/default/01_code.loft
+@@ -1905,13 +1905,6 @@ pub fn sum < T: Addable > (v: const vector<T>, init: T? = null) -> T {
+   result
+ }
+ #pure
+-// Reverse a vector's elements in place: `reverse(v)` or `v.reverse()`.  A method on
+-// `vector`, so a program may define its own `reverse` for its own types beside it.
+-pub fn reverse < T > (self: vector<T>) {
+-  reverse(self)
+-}
+-#builtin
+-
+ // Sum of all integer elements. Returns 0 for an empty vector.
+ // Superseded by the general `sum(v, init)`; kept as a shim over it
+ // (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the
+diff --git b/src/cache.rs a/src/cache.rs
+index d0bed09e2..08f281764 100644
+--- b/src/cache.rs
++++ a/src/cache.rs
+@@ -68,9 +68,7 @@ use sha2::{Digest, Sha256};
+ ///
+ /// 10 — `Definition` carries `type_params`, `instance_of` and `instance_args` (stride
+ /// 167 → 183, @PLN165 D2/D3): an older image lays the record out differently.
+-///
+-/// 11 — `Definition` carries `builtin` (stride 183 → 184, @PLN165 arc E).
+-const CACHE_FORMAT_VERSION: u8 = 11;
++const CACHE_FORMAT_VERSION: u8 = 10;
+ 
+ /// Loft crate version — a release bump invalidates every cache.
+ const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");
+diff --git b/src/data.rs a/src/data.rs
+index 6e189765c..efde6269c 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -4598,12 +4598,6 @@ pub struct Definition {
+     pub instance_of: u32,
+     /// @PLN165 D3 — the instance's type arguments, in the template's header order.
+     pub instance_args: Vec<Type>,
+-    /// @PLN165 arc E — `#builtin`: this stdlib declaration is a built-in's SIGNATURE — its
+-    /// place in the name's overload set, its method spelling, what hover and the API listing
+-    /// read — and a call that selects it lowers through the compiler's special form of its
+-    /// name, as the bare call always has.  A marker on the declaration, never a name test.
+-    /// Persisted through the IR store (`DEF_BUILTIN`), mirrored in `tools/ir_schema/ir.loft`.
+-    pub builtin: bool,
+     /// DbRef into CONST_STORE for pre-built vector constants.
+     /// `None` for non-constant definitions or constants that couldn't be pre-built.
+     pub const_ref: Option<crate::keys::DbRef>,
+@@ -4721,13 +4715,6 @@ impl Definition {
+         self.null_safe
+     }
+ 
+-    /// `#builtin` (@PLN165 arc E): a call selecting this declaration lowers through the
+-    /// special form of its name.
+-    #[must_use]
+-    pub fn builtin(&self) -> bool {
+-        self.builtin
+-    }
+-
+     /// `#superseded "Y"` (@PLN102 arc C): the bare successor-symbol name this
+     /// callable is superseded by, or empty if not superseded.  Inert in step 1
+     /// (parsed + stored only); a later step reads it to steer owned-source callers.
+@@ -6766,7 +6753,6 @@ impl Data {
+             type_params: Vec::new(),
+             instance_of: u32::MAX,
+             instance_args: Vec::new(),
+-            builtin: false,
+             const_ref: None,
+             forced_size: None,
+             purity: Purity::Unknown,
+diff --git b/src/data_store.rs a/src/data_store.rs
+index 3e08ed5da..5444fc93f 100644
+--- b/src/data_store.rs
++++ a/src/data_store.rs
+@@ -297,7 +297,7 @@ pub(crate) const NAMENR_NAME: u32 = 8; // text
+ /// `Definition` record (element of `Data.definitions` = `vector<Definition>`).
+ /// Inlines `Position` (`DEF_POSITION` base) and `Function` (`DEF_VARIABLES`
+ /// base).  `def_type` / `purity` store integer codes (see `ir_store`).
+-pub(crate) const DEFINITION_STRIDE: u32 = 184; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin
++pub(crate) const DEFINITION_STRIDE: u32 = 183; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args
+ pub(crate) const DEF_SOURCE: u32 = 0;
+ pub(crate) const DEF_DEF_TYPE: u32 = 8;
+ pub(crate) const DEF_PARENT: u32 = 16;
+@@ -324,7 +324,6 @@ pub(crate) const DEF_SUPERSEDED: u32 = 160; // @PLN102 arc C #superseded "Y"; ""
+ pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 180;
+ pub(crate) const DEF_PUB_VISIBLE: u32 = 181;
+ pub(crate) const DEF_NULL_SAFE: u32 = 182; // @PLN46 W2 #null_safe; false = unannotated
+-pub(crate) const DEF_BUILTIN: u32 = 183; // @PLN165 arc E #builtin; false = an ordinary body
+ pub(crate) const DEF_C_SYMBOL: u32 = 164; // @PLN24 #c "sym"; "" = not a C binding
+ pub(crate) const DEF_C_SIG: u32 = 168; // @PLN24 the declared C signature; "" = none
+ pub(crate) const DEF_TYPE_PARAMS: u32 = 172; // @PLN165 D2 vector<integer>, header order
+@@ -1507,7 +1506,6 @@ mod tests {
+         );
+         assert_eq!(pos(ids.definition, "pub_visible"), DEF_PUB_VISIBLE);
+         assert_eq!(pos(ids.definition, "null_safe"), DEF_NULL_SAFE);
+-        assert_eq!(pos(ids.definition, "builtin"), DEF_BUILTIN);
+ 
+         // Data record (root).
+         assert_eq!(pos(ids.data, "source"), DATA_SOURCE);
+diff --git b/src/ir_read.rs a/src/ir_read.rs
+index 11eb846bd..e06c9adf3 100644
+--- b/src/ir_read.rs
++++ a/src/ir_read.rs
+@@ -653,7 +653,6 @@ pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
+         known_type: r.field_int(stores, ds::DEF_KNOWN_TYPE) as u16,
+         pub_visible: r.field_bool(stores, ds::DEF_PUB_VISIBLE),
+         null_safe: r.field_bool(stores, ds::DEF_NULL_SAFE), // @PLN46 W2
+-        builtin: r.field_bool(stores, ds::DEF_BUILTIN),     // @PLN165 arc E
+         closure_record: r.field_int(stores, ds::DEF_CLOSURE_RECORD) as u32,
+         mutated_captures: read_name_list(
+             stores,
+diff --git b/src/ir_schema.rs a/src/ir_schema.rs
+index 5482891ad..cee0e6d38 100644
+--- b/src/ir_schema.rs
++++ a/src/ir_schema.rs
+@@ -1092,8 +1092,6 @@ fn write_definition(out: &mut String, d: &Definition) {
+         write_type(out, t);
+     }
+     out.push(']');
+-    // @PLN165 arc E — `#builtin`.
+-    let _ = write!(out, ",\"builtin\":{}", d.builtin);
+     // forced_size: Option<u8>, n ∈ {1,2,4,8}; 0 is never valid → encodes None.
+     let _ = write!(out, ",\"forced_size\":{}", d.forced_size.unwrap_or(0));
+     out.push_str(",\"purity\":");
+@@ -1361,7 +1359,6 @@ fn definition_from_parsed(p: &Parsed) -> Result<Definition, TypeDecodeError> {
+         type_params: u32_list(field(p, "type_params")?)?, // @PLN165 D2
+         instance_of: as_u32(field(p, "instance_of")?)?,   // @PLN165 D3
+         instance_args: type_list(field(p, "instance_args")?)?, // @PLN165 D3
+-        builtin: as_bool(field(p, "builtin")?)?,          // @PLN165 arc E
+         forced_size: if forced == 0 { None } else { Some(forced) },
+         purity: purity_from_parsed(field(p, "purity")?)?,
+         field_groups: field_group_list(field(p, "field_groups")?)?,
+@@ -2300,7 +2297,6 @@ mod tests {
+             type_params: vec![12, 13],
+             instance_of: 11,
+             instance_args: vec![Type::Text(Deps::none()), Type::Reference(7, Deps::none())],
+-            builtin: true,
+             const_ref: None,
+             forced_size: Some(4),
+             purity: Purity::Impure(ImpureCategory::HostIo),
+@@ -2379,7 +2375,6 @@ mod tests {
+             type_params: Vec::new(),
+             instance_of: u32::MAX,
+             instance_args: Vec::new(),
+-            builtin: false,
+             const_ref: None,
+             forced_size: None,
+             purity: Purity::Unknown,
+diff --git b/src/ir_schema_gen.rs a/src/ir_schema_gen.rs
+index 626ff5c1d..9911b470e 100644
+--- b/src/ir_schema_gen.rs
++++ a/src/ir_schema_gen.rs
+@@ -716,7 +716,6 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
+     db.field(t80, "instance_of", 0);
+     let vec_instance_args = db.vector(t7);
+     db.field(t80, "instance_args", vec_instance_args);
+-    db.field(t80, "builtin", t4);
+     let t120 = db.vector(t76);
+     let _ = t120; // may be unused
+     let t121 = db.vector(t79);
+diff --git b/src/ir_store.rs a/src/ir_store.rs
+index 7407329e5..efc1c27aa 100644
+--- b/src/ir_store.rs
++++ a/src/ir_store.rs
+@@ -422,7 +422,6 @@ fn write_definition(stores: &mut Stores, r: &Record, d: &Definition) {
+     write_function(stores, r, ds::DEF_VARIABLES, &d.variables);
+     r.set_field_bool(stores, ds::DEF_PUB_VISIBLE, d.pub_visible);
+     r.set_field_bool(stores, ds::DEF_NULL_SAFE, d.null_safe); // @PLN46 W2
+-    r.set_field_bool(stores, ds::DEF_BUILTIN, d.builtin); // @PLN165 arc E
+     r.set_field_int(stores, ds::DEF_CLOSURE_RECORD, i64::from(d.closure_record));
+     name_list(stores, r, ds::DEF_MUTATED_CAPTURES, &d.mutated_captures);
+     name_list(stores, r, ds::DEF_SCALARS_TO_BOX, &d.scalars_to_box);
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 6752a481a..9de96906f 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -18706,42 +18706,6 @@ impl Parser {
+         Err(if inst == u32::MAX { md_nr } else { inst })
+     }
+ 
+-    /// @PLN165 arc E — a method call that selected a `#builtin` declaration (`v.reverse()`
+-    /// reaching the stdlib's `reverse<T>(self: vector<T>)`) is the call its bare spelling is:
+-    /// `reverse(v)`, lowered by the compiler's special form of the name, on both passes.  The
+-    /// declaration gives the method spelling, its place in the name's set and its signature;
+-    /// the lowering stays the one the bare call has always had, so the two spellings cannot
+-    /// emit differently.  `None` for any other selection.
+-    fn builtin_method_call(
+-        &mut self,
+-        val: &mut Value,
+-        selected: u32,
+-        list: &[Value],
+-        types: &[Type],
+-        named_args: &[(String, Value, Type)],
+-        arg_pos: &[Position],
+-    ) -> Option<Type> {
+-        if selected == u32::MAX || !self.data.def(selected).builtin() {
+-            return None;
+-        }
+-        let name = Self::method_spelling(self.data.def(selected).name());
+-        let at = arg_pos
+-            .first()
+-            .cloned()
+-            .unwrap_or_else(|| self.lexer.peek_pos().clone());
+-        Some(self.dispatch_call(
+-            val,
+-            u16::MAX,
+-            &name,
+-            list,
+-            types,
+-            named_args,
+-            &at,
+-            arg_pos,
+-            &at,
+-        ))
+-    }
+-
+     /// The method a `t_<LEN><type>_<method>` key names — the spelling a call wrote.  A key of
+     /// any other shape is answered whole.
+     pub(crate) fn method_spelling(key: &str) -> String {
+@@ -18782,11 +18746,6 @@ impl Parser {
+         let mut in_named = false;
+         if self.lexer.has_token(")") {
+             let selected = self.select_method_def(select, &types);
+-            if let Some(tp) =
+-                self.builtin_method_call(val, selected, &list, &types, &named_args, &arg_pos)
+-            {
+-                return tp;
+-            }
+             let md_nr = match self.generic_method_call(val, selected, &types) {
+                 Ok(predicted) => return predicted,
+                 Err(md_nr) => md_nr,
+@@ -18865,11 +18824,6 @@ impl Parser {
+         }
+         self.lexer.token(")");
+         let selected = self.select_method_def(select, &types);
+-        if let Some(tp) =
+-            self.builtin_method_call(val, selected, &list, &types, &named_args, &arg_pos)
+-        {
+-            return tp;
+-        }
+         let md_nr = match self.generic_method_call(val, selected, &types) {
+             Ok(predicted) => return predicted,
+             Err(md_nr) => md_nr,
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index 2c5ea5a35..088857bfa 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -2657,20 +2657,6 @@ impl Parser {
+                 // expression (`s[i]`) passed DIRECTLY as an argument is not flagged
+                 // at the call site (the possible-null is the callee's contract).
+                 self.data.definitions[self.context as usize].null_safe = true;
+-            } else if id == Some("builtin".to_string()) {
+-                // @PLN165 arc E — `#builtin`: the declaration above is a built-in's signature,
+-                // and a call selecting it — the method spelling included — lowers through the
+-                // compiler's special form of its name.  The standard library's alone: a
+-                // program's definition of the name is an ordinary body, reached as one.
+-                if self.default {
+-                    self.data.definitions[self.context as usize].builtin = true;
+-                } else {
+-                    diagnostic!(
+-                        self.lexer,
+-                        Level::Error,
+-                        "#builtin marks a standard-library declaration the compiler lowers itself; a program's function is its own body"
+-                    );
+-                }
+             } else if id == Some("superseded".to_string()) {
+                 // @PLN102 arc C — `#superseded "Y"` marks this callable as
+                 // superseded by the successor symbol Y (a bare name, e.g.

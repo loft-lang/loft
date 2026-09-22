@@ -1,13 +1,13 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// A compiler special case for a call name (`reverse`, `sort`, `all`, …) is a candidate of
+// A compiler special case for a call name (`any`, `sort`, `all`, …) is a candidate of
 // last resort, taken only when no definition the program declares takes the call — and a
 // program's GENERIC is such a definition, as its function is.  The gate accepted only a
-// `Function`, so a program's `fn reverse<T>(v: vector<T>)` never reached: as a statement the
-// builtin reversed the vector in place and the program's body never ran, in silence; where
-// the result was bound, the first pass had typed it through the template and the second
-// refused the builtin's `void`.  A template takes the call where it binds and its bounds
+// `Function`, so a program's `fn any<T>(v: vector<T>, f: fn(T) -> boolean) -> boolean` never
+// reached: the builtin answered in its place and the program's body never ran, in silence;
+// where the two answer different types, the first pass had typed the call through the
+// template and the second refused the builtin's.  A template takes the call where it binds and its bounds
 // hold; where it does not (an arity, a failed bound), the builtin still answers — and a
 // lambda argument there takes the builtin's own hint, which a program definition of the name
 // withheld even when it had no `fn(…)` parameter to offer one ("Cannot infer type for lambda
@@ -17,24 +17,26 @@
 // @falsified-by: tests/falsified/a-program-generic-named-like-a-builtin-is-what-its-call-reaches.patch — interpret exit 1 -> 0, native exit 1 -> 0
 //   CHANNEL: exit on both backends — the control fails the asserts and refuses `sort`.
 //   ARMED: nothing.
-//   WITNESS: on the control `reverse(a)` leaves `[2,1]` and never counts; `"{all(a)}"` is
-//     "all requires 2 arguments".
+//   WITNESS: on the control `any(a, |x| { x > 1 })` alone is the builtin's `true`, in silence
+//     on both backends (`reverse(a)`, this cell before @PLN165 E1, left `[2,1]`); `"{all(a)}"`
+//     is "all requires 2 arguments".
 //   HOLDS: the cells where the program's generic does not take the call, except the lambda
 //     one, which the control refused.
 
 interface Named { fn tag(self: Self) -> text }
 
-fn reverse<T>(v: vector<T>) -> integer { len(v) * 100 }
+// (`reverse` was the first shape here; it is a stdlib METHOD on `vector` since @PLN165 E1, so a
+// program's own is for its own types — `a-built-in-is-a-method-a-program-extends-for-its-own-types`.)
+fn any<T>(v: vector<T>, f: fn(T) -> boolean) -> boolean { false }
 fn all<U>(v: vector<U>) -> integer { len(v) * 10 }
 fn reserve<T>(v: vector<T>) -> integer { 5 }
 fn count_if<T>(a: T, b: T, c: T) -> integer { 7 }
 fn sort<T: Named>(v: vector<T>) -> text { "mine" }
 
-fn test_a_statement_reaches_the_program() {
+fn test_a_call_reaches_the_program() {
   a: vector<integer> = [1, 2];
-  reverse(a);
-  assert("{a}" == "[1,2]", "{a}");
-  assert(reverse(a) == 200, "{reverse(a)}");
+  // The builtin answers `true` here — the program's `any` answers `false`.
+  assert(!any(a, |x| { x > 1 }), "{any(a, |x| { x > 1 })}");
 }
 
 fn test_in_interpolation() {

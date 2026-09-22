@@ -18706,6 +18706,42 @@ impl Parser {
         Err(if inst == u32::MAX { md_nr } else { inst })
     }
 
+    /// @PLN165 arc E — a method call that selected a `#builtin` declaration (`v.reverse()`
+    /// reaching the stdlib's `reverse<T>(self: vector<T>)`) is the call its bare spelling is:
+    /// `reverse(v)`, lowered by the compiler's special form of the name, on both passes.  The
+    /// declaration gives the method spelling, its place in the name's set and its signature;
+    /// the lowering stays the one the bare call has always had, so the two spellings cannot
+    /// emit differently.  `None` for any other selection.
+    fn builtin_method_call(
+        &mut self,
+        val: &mut Value,
+        selected: u32,
+        list: &[Value],
+        types: &[Type],
+        named_args: &[(String, Value, Type)],
+        arg_pos: &[Position],
+    ) -> Option<Type> {
+        if selected == u32::MAX || !self.data.def(selected).builtin() {
+            return None;
+        }
+        let name = Self::method_spelling(self.data.def(selected).name());
+        let at = arg_pos
+            .first()
+            .cloned()
+            .unwrap_or_else(|| self.lexer.peek_pos().clone());
+        Some(self.dispatch_call(
+            val,
+            u16::MAX,
+            &name,
+            list,
+            types,
+            named_args,
+            &at,
+            arg_pos,
+            &at,
+        ))
+    }
+
     /// The method a `t_<LEN><type>_<method>` key names — the spelling a call wrote.  A key of
     /// any other shape is answered whole.
     pub(crate) fn method_spelling(key: &str) -> String {
@@ -18746,6 +18782,11 @@ impl Parser {
         let mut in_named = false;
         if self.lexer.has_token(")") {
             let selected = self.select_method_def(select, &types);
+            if let Some(tp) =
+                self.builtin_method_call(val, selected, &list, &types, &named_args, &arg_pos)
+            {
+                return tp;
+            }
             let md_nr = match self.generic_method_call(val, selected, &types) {
                 Ok(predicted) => return predicted,
                 Err(md_nr) => md_nr,
@@ -18824,6 +18865,11 @@ impl Parser {
         }
         self.lexer.token(")");
         let selected = self.select_method_def(select, &types);
+        if let Some(tp) =
+            self.builtin_method_call(val, selected, &list, &types, &named_args, &arg_pos)
+        {
+            return tp;
+        }
         let md_nr = match self.generic_method_call(val, selected, &types) {
             Ok(predicted) => return predicted,
             Err(md_nr) => md_nr,
