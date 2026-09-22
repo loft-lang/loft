@@ -1,0 +1,162 @@
+// `@FR-R-PushFill`'s record clause — a counted loop appending RECORDS to one plain vector
+// through mint groups, possibly under `if` arms, reserves its trip count times the most
+// mints a pass runs and, where nothing but those mints reaches the vector, opens a PUSH
+// WINDOW: each group's slot is the window's next element addressed off the held base and
+// zeroed there, its field writes go through that address, its finish bumps the window's
+// length, and the record's own length is written once when the window closes after the
+// loop.  The interpreter is the oracle; every cell hand-computes its values and must answer
+// the same under `LOFT_NO_PUSH_WINDOW=1` (the mints through the header again),
+// `LOFT_NO_PUSH_FILL=1` (no reservation either), `LOFT_HOIST_VERIFY=1` (the frozen header,
+// the window's base and capacity checked at every mint and at the close), `LOFT_POISON=1`,
+// `LOFT_POISON_CLAIM=1`, `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1`.  The cells:
+// the bench's three-arm branch over a struct-enum (r1), one unbranched mint per pass (r2),
+// an `if` with no `else` — some passes mint nothing, the reservation an upper bound (r3),
+// a heap-owning element, zeroed at its slot (r4), a nested-record element (r5), a range
+// with a computed end and an inclusive one (r6), a view taken before the loop and read
+// after its close (r9); and the shapes that must DECLINE the window and still answer
+// right: a heap-owning element whose literal grows its own field (r4), the body reads the
+// vector (r7), the body can `break` (r8), mints to two vectors (r10), the view read inside
+// the body (r11).
+//
+// @falsified-at: hand-measured (2026-09-22) — with the window's close left off the loop
+// (the first hand price of the bench shape): the consumer read the vector as EMPTY (its
+// length never written) and the row's hash read `0` for `1493`; `LOFT_HOIST_VERIFY=1`
+// cannot see a missing close (nothing stale is derived), the interpreter can — every cell
+// below reads its vector back after the loop for exactly that reason.  On the build as
+// shipped every cell is exact on both backends under every switch above.
+
+enum Edit { SetHeight { eq: integer, er: integer, eh: integer }, Paint { pq: integer, pr: integer, pmat: integer }, Wall { wq: integer, wr: integer, wedge: integer } }
+struct Pt { x: integer, y: integer }
+struct Named { id: integer, tags: vector<integer> }
+struct V3 { x: float, y: float, z: float }
+struct Vtx { id: integer, pos: V3 }
+
+// r1 — the bench's shape: three arms, one mint each, 300 passes.
+fn r1() {
+  edits: vector<Edit> = [];
+  for i in 0..300 {
+    q = (i * 7) % 64; r = (i * 13) % 64;
+    if i % 3 == 0 { edits += [SetHeight { eq: q, er: r, eh: i % 19 }]; }
+    else if i % 3 == 1 { edits += [Paint { pq: q, pr: r, pmat: i % 5 }]; }
+    else { edits += [Wall { wq: q, wr: r, wedge: i % 6 }]; }
+  }
+  h = 0; p = 0; w = 0;
+  for e in edits {
+    match e {
+      SetHeight { eq, er, eh } => { h += eq + er + eh; },
+      Paint { pq, pr, pmat } => { p += pq + pr + pmat; },
+      Wall { wq, wr, wedge } => { w += wq + wr + wedge; },
+    }
+  }
+  assert(len(edits) == 300 && h == 7261 && p == 6400 && w == 6566, "r1 {len(edits)} {h} {p} {w}");
+  println("r1 {len(edits)} {h} {p} {w}");
+}
+
+// r2 — one unbranched mint per pass; the vector read back by index and by walk.
+fn r2() {
+  pts: vector<Pt> = [];
+  for i in 0..50 { pts += [Pt { x: i, y: i * i }]; }
+  s = 0;
+  for p in pts { s += p.y - p.x; }
+  assert(len(pts) == 50 && pts[49]?.y == 2401 && s == 39200, "r2 {len(pts)} {pts[49]?.y} {s}");
+  println("r2 {len(pts)} {pts[49]?.y} {s}");
+}
+
+// r3 — an `if` without `else`: most passes mint nothing, so the reservation is an upper
+// bound and the length is what the mints wrote.
+fn r3() {
+  pts: vector<Pt> = [];
+  for i in 0..100 { if i % 7 == 0 { pts += [Pt { x: i, y: -i }]; } }
+  s = 0;
+  for p in pts { s += p.x; }
+  assert(len(pts) == 15 && s == 735 && pts[14]?.y == -98, "r3 {len(pts)} {s} {pts[14]?.y}");
+  println("r3 {len(pts)} {s} {pts[14]?.y}");
+}
+
+// r4 — a heap-owning element DECLINES the window: the literal pushes into the fresh
+// element's own vector field inside the group — a growth of the store the window's base
+// addresses — so the loop keeps its header mints (the § V-t form); the slot is still zeroed
+// there, so the field starts empty and the literal's elements land in it.
+fn r4() {
+  ns: vector<Named> = [];
+  for i in 0..40 {
+    if i % 2 == 0 { ns += [Named { id: i, tags: [i, i + 1] }]; } else { ns += [Named { id: -i, tags: [] }]; }
+  }
+  t = 0; ids = 0;
+  for n in ns { t += len(n.tags); ids += n.id; }
+  assert(len(ns) == 40 && t == 40 && ids == -20 && (ns[2]?.tags[1] ?? -1) == 3, "r4 {len(ns)} {t} {ids} {ns[2]?.tags[1] ?? -1}");
+  println("r4 {len(ns)} {t} {ids} {ns[2]?.tags[1] ?? -1}");
+}
+
+// r5 — a nested-record element.
+fn r5() {
+  vs: vector<Vtx> = [];
+  for i in 0..30 { f = i as float; vs += [Vtx { id: i, pos: V3 { x: f, y: f * 2.0, z: 1.0 } }]; }
+  sx = 0.0; sz = 0.0;
+  for v in vs { sx += v.pos.x + v.pos.y; sz += v.pos.z; }
+  assert(len(vs) == 30 && sx == 1305.0 && sz == 30.0, "r5 {len(vs)} {sx} {sz}");
+  println("r5 {len(vs)} {sx} {sz}");
+}
+
+// r6 — a computed range end, and an inclusive range.
+fn build(n: integer) -> vector<Pt> {
+  pts: vector<Pt> = [];
+  for i in 0..n * 2 { pts += [Pt { x: i, y: 0 }]; }
+  for i in 0..=n { pts += [Pt { x: -i, y: 1 }]; }
+  pts
+}
+
+fn r6() {
+  a = build(10);
+  s = 0; ones = 0;
+  for p in a { s += p.x; ones += p.y; }
+  assert(len(a) == 31 && s == 190 - 55 && ones == 11, "r6 {len(a)} {s} {ones}");
+  println("r6 {len(a)} {s} {ones}");
+}
+
+// r7 — DECLINES the window: the body READS the vector (its length) beside the mints.
+fn r7() {
+  pts: vector<Pt> = [];
+  for i in 0..20 { pts += [Pt { x: len(pts), y: i }]; }
+  s = 0;
+  for p in pts { s += p.x - p.y; }
+  assert(len(pts) == 20 && s == 0 && pts[19]?.x == 19, "r7 {len(pts)} {s}");
+  println("r7 {len(pts)} {s}");
+}
+
+// r8 — DECLINES: the body can `break`.
+fn r8() {
+  pts: vector<Pt> = [];
+  for i in 0..1000 { if i == 12 { break; } pts += [Pt { x: i, y: 0 }]; }
+  assert(len(pts) == 12 && pts[11]?.x == 11, "r8 {len(pts)}");
+  println("r8 {len(pts)}");
+}
+
+// r9 — a view of the vector taken before the loop and read only AFTER it: admitted (the
+// body never names the view), and the close writes the length before the view reads it.
+fn r9() {
+  pts: vector<Pt> = [];
+  v = &pts;
+  for i in 0..25 { pts += [Pt { x: i, y: 2 }]; }
+  assert(len(v) == 25 && v[24]?.x == 24, "r9 {len(v)} {v[24]?.x}");
+  println("r9 {len(v)} {v[24]?.x}");
+}
+
+// r11 — DECLINES: the view is read INSIDE the body — it would meet the lagging length.
+fn r11() {
+  pts: vector<Pt> = [];
+  v = &pts;
+  for i in 0..25 { pts += [Pt { x: i, y: len(v) }]; }
+  assert(len(pts) == 25 && pts[24]?.y == 24 && pts[0]?.y == 0, "r11 {len(pts)} {pts[24]?.y} {pts[0]?.y}");
+  println("r11 {len(pts)} {pts[24]?.y} {pts[0]?.y}");
+}
+
+// r10 — DECLINES: mints to TWO vectors in one loop.
+fn r10() {
+  a: vector<Pt> = []; b: vector<Pt> = [];
+  for i in 0..30 { if i % 2 == 0 { a += [Pt { x: i, y: 0 }]; } else { b += [Pt { x: i, y: 1 }]; } }
+  assert(len(a) == 15 && len(b) == 15 && a[14]?.x == 28 && b[14]?.x == 29, "r10 {len(a)} {len(b)}");
+  println("r10 {len(a)} {len(b)}");
+}
+
+fn main() { r1(); r2(); r3(); r4(); r5(); r6(); r7(); r8(); r9(); r10(); r11(); }

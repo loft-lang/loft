@@ -615,6 +615,17 @@ impl OpEmitter for NewRecordEmitter {
         } else {
             ""
         };
+        // `@FR-R-PushFill`'s record clause — the loop being emitted opened a window for
+        // this path: the slot is the window's next, addressed off the held base.
+        if let Some(win) = out.active_push_window(&target.path).map(str::to_owned) {
+            let zero = if zero.is_empty() { "false" } else { "true" };
+            write!(
+                ctx.w,
+                "unsafe {{ stores.push_record_windowed::<{zero}, {verify}>(&mut {header}, &mut {win}, &("
+            )?;
+            ctx.emit(&target.vector)?;
+            return write!(ctx.w, "), {size}) }}");
+        }
         write!(
             ctx.w,
             "stores.push_record_hoisted{zero}::<{verify}>(&mut {header}, &("
@@ -652,6 +663,11 @@ impl OpEmitter for FinishRecordEmitter {
             return super::default::DefaultEmitter.emit(ctx, args);
         };
         let verify = verify(ctx);
+        // `@FR-R-PushFill`'s record clause — through a window the finish is the window's
+        // length bump; the record's own length is written when the window closes.
+        if let Some(win) = out.active_push_window(&target.path).map(str::to_owned) {
+            return write!(ctx.w, "{win}.len += 1 /*@FR-R-PushFill windowed finish*/");
+        }
         write!(
             ctx.w,
             "stores.push_record_finish::<{verify}>(&mut {header}, &("

@@ -305,7 +305,26 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  under the held address.  The single exit is the counted loop's own
                  (no `break`, `return`, `continue` or inner loop), so the close runs
                  on every path out.  A body that fails any of these keeps the header
-                 push, which costs the window and never a value.
+                 push, which costs the window and never a value.  THE RECORD CLAUSE:
+                 the pushed values may be RECORD MINT GROUPS — the parser's
+                 reservation, mint, field sets on the fresh element and finish —
+                 standing at the body's top level or under `if` arms, each over ONE
+                 plain vector whose element qualifies for the record push
+                 (R-PushRec); the arms of a branch are exclusive, so the most groups
+                 any one pass runs, times the trip count, bounds the appends and the
+                 reservation holds.  The window's admission is the scalar clause's,
+                 read over the groups' operands: a field set whose root is the fresh
+                 element is a write through the window's slot (it can name no other
+                 element), the finish's element operand is that slot too, and any
+                 other mention of the vector — a read, a view of it or of an element
+                 named in the body, a second pushed path, a group whose element's
+                 own heap the literal fills (a claim in the store whose base the
+                 window holds) — keeps the header mints.  A windowed mint takes its
+                 slot from the window (`base + len·size`, zeroed through the held
+                 address, the record's length untouched), the group's field sets and
+                 the address (R-RecPtr)'s mint clause holds are that pointer, its
+                 finish is the window's length bump, and the close writes the
+                 record's length once after every copy of the loop.
 
   (R-Invariant)  an integer chain — `+`, `-`, `*`, negation, `&`, `|`, `^` (their
                  `Nullable` twins included) over literals and variables — that a loop
@@ -399,6 +418,45 @@ Sites: `hoist::range_counters`, `hoist::plain_for_body`, `hoist::push_loop`,
 `push_window_grow` / `push_window_close`.  Cells `tests/scripts/158-push-window.loft`
 (w1–w12 a window; d1–d8 the declines; a1–b1 the aliasing cases; r1 the growth condition),
 pins `tests/push_window.rs`.
+
+**(R-PushFill)'s record clause, in words.** 2026-09-22, @PLN158 round 4
+(`bench/portal/analysis/round-3.md` § Built).  The consumer bench's `enum_match` builds
+its edits as `for i in 0..3000 { if i % 3 == 0 { edits += [SetHeight { … }] } else if … {
+edits += [Paint { … }] } else { edits += [Wall { … }] } }`, and every record went through
+the header push: a capacity test in bytes, a store resolved through
+`allocations[store_nr]`, the slot zeroed, the length bumped in the header AND written back
+to the record.  The window clause did not reach it for two reasons that are one — a mint
+group is four statements the scalar push's recogniser does not read, and it stands under
+an `if` arm, which the scalar clause declines — and neither matters to the window: the
+arms are exclusive, so at most one group runs a pass, the trip count times that bounds the
+appends, and the window never grows inside the loop.  Hand-priced on the emitted Rust
+before any emitter code (the build loop edited by script: reserved for its trips, a
+`push_window` opened on the header, each arm's mint taking `base + len·32` and zeroing it
+through the window, its finish `len += 1`, the close after every copy the guarded chain
+emits): 35.9 → 20.4 µs, hash `1493`; built, 23.4 µs — the difference was the fast path
+staying a CALL until `#[inline(always)]` (`Stores::push_record_windowed`: one growth test
+`len >= cap`, the slot at `len·size + 8`, the growth arm outlined beside it).  The first
+hand placement closed only the CHECKED copy of the loop and read hash `0`: a window whose
+close does not run leaves the record's length at 0, and the consuming loop reads an empty
+vector — which is why the close stands after every guarded copy, and why the VALUE channel
+is the falsifier here (`LOFT_HOIST_VERIFY=1` compares the frozen header against a fresh
+derivation at every mint and cannot see a length nothing wrote).  Sabotage, measured: the
+finish emitted as nothing, r1 answers `0 0 0 0` for `300 7261 6400 6566` on the built
+form; the switch restores the interpreter's answer.  Two admissions the first build got
+wrong, each a cell: a NESTED record element's field set (`pos.x` on the fresh element)
+read as a view of the vector because its path had a field on the root — the root being
+the fresh element decides, not the path's length (r5); and the finish's own element
+operand counted as a mention of the vector (every group would have declined).  Switch
+`LOFT_NO_PUSH_WINDOW` (and `LOFT_NO_PUSH_FILL`, one rule); trace `LOFT_TRACE_PUSH_FILL=1`
+names the clause that declined; falsifiers `LOFT_HOIST_VERIFY=1`, `LOFT_POISON` /
+`LOFT_POISON_CLAIM` (the slot's zero is the window's own, so a mint that skipped it reads
+the poison), `LOFT_STRICT_STORES`, `LOFT_NATIVE_LEAK_CHECK`, and the interpreter through
+the cells.  Sites: `hoist::mint_loop` / `MintLoop`, `hoist::mint_window_ok` (sharing
+`window_parts_ok` with `push_window_ok`), `Output::mint_reserve` / `windowed_mint_of`, the
+windowed-mint address in `Output::bind_record_ptr`, the registry's `NewRecordEmitter` and
+`FinishRecordEmitter` windowed arms, `Stores::push_record_windowed` /
+`push_record_window_grow`.  Cells `tests/scripts/158-record-window.loft` (r1–r3, r5, r9
+and `build` a window; r4, r7, r8, r10, r11 the declines), pins `tests/record_window.rs`.
 
 **(R-Base)'s join clause, in words.** 2026-09-22, @PLN158 F1
 (`bench/portal/analysis/vector-build.md`).  `v[i].f` was already one load — the scalar

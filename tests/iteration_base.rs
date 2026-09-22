@@ -20,8 +20,9 @@ const EXPECTED: &[(&str, usize, usize, usize, usize)] = &[
     // The twin shares the caller's header and base, and takes the address from them.
     ("n_w1_sum__inv", 1, 0, 1, 0),
     ("n_w1", 2, 0, 2, 0),
-    // …and the one `rec_ptr` is the mint window of the cell's own append.
-    ("n_w2", 1, 1, 1, 0),
+    // …and the cell's own append mints through a push window (`@FR-R-PushFill`'s record
+    // clause), whose address is the window's slot — no `rec_ptr`.
+    ("n_w2", 1, 0, 1, 0),
     // Two indexes over ONE base.
     ("n_w3", 2, 0, 2, 0),
     // The write-through walk and the read walk.

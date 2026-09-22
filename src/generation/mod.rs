@@ -3325,15 +3325,27 @@ impl Output<'_> {
     /// its fill take: the range's end less its start (the `next` counter's current value,
     /// § V-ab, or `#index + 1`, P3b), plus one for an inclusive range.
     fn push_trip_count(&mut self, p: &hoist::PushLoop) -> std::io::Result<String> {
+        self.trip_count(p.index_var, p.next_var, p.hi, p.inclusive)
+    }
+
+    /// The trip count of a counted loop at its entry — the range's end less its start (the
+    /// `next` counter's current value, or `#index + 1`), plus one for an inclusive range.
+    fn trip_count(
+        &mut self,
+        index_var: u16,
+        next_var: Option<u16>,
+        hi: &Value,
+        inclusive: bool,
+    ) -> std::io::Result<String> {
         let variables = self.data.def(self.def_nr).variables();
-        let idx = format!("var_{}", sanitize(variables.name(p.index_var)));
-        let lo = match p.next_var {
+        let idx = format!("var_{}", sanitize(variables.name(index_var)));
+        let lo = match next_var {
             Some(nx) => format!("var_{}", sanitize(variables.name(nx))),
             None if self.release_pass_probe => format!("(({idx}).wrapping_add(1_i64))"),
             None => format!("ops::op_add_int(({idx}), (1_i64))"),
         };
-        let hi = self.expr_string(p.hi)?;
-        let incl = if p.inclusive { "1_i64" } else { "0_i64" };
+        let hi = self.expr_string(hi)?;
+        let incl = if inclusive { "1_i64" } else { "0_i64" };
         Ok(format!(
             "(({hi}) as i64).saturating_sub(({lo}) as i64).saturating_add({incl})"
         ))
@@ -3360,7 +3372,10 @@ impl Output<'_> {
             return Ok(None);
         }
         let Some(p) = hoist::push_loop(lp, self.data) else {
-            return Ok(None);
+            // `@FR-R-PushFill`'s record clause — a counted loop appending RECORDS through
+            // mint groups, possibly under `if` arms, reserves and opens a window the same
+            // way, over the record-push header the loop holds.
+            return self.mint_reserve(w, lp);
         };
         if p.fill.is_some() {
             return Ok(None);
@@ -3403,6 +3418,83 @@ impl Output<'_> {
             p.size
         )?;
         self.push_windows.push((p.path.clone(), win.clone()));
+        Ok(Some((win, hdr, vec)))
+    }
+
+    /// `@FR-R-PushFill`'s record clause — [`Self::push_reserve`] for a record-append loop
+    /// ([`hoist::mint_loop`]): the vector reserved for its trip count times the most mints
+    /// a pass runs, the record-push header re-derived, and — where [`hoist::mint_window_ok`]
+    /// admits the loop — a window opened that every mint group's slot, address and finish
+    /// go through, closed by the caller after every copy of the loop.
+    fn mint_reserve(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<Option<(String, String, String)>> {
+        if self.record_push_disabled || self.in_coroutine_body {
+            return Ok(None);
+        }
+        let vars = self.data.def(self.def_nr).variables();
+        let (m, hi) = match hoist::mint_loop(
+            lp,
+            self.data,
+            self.stores,
+            vars,
+            !self.heap_record_push_disabled,
+        ) {
+            Ok(x) => x,
+            Err(why) => {
+                if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok()
+                    && why != "not a plain counted loop"
+                    && why != "no record mint in the body"
+                {
+                    eprintln!(
+                        "push-fill: {} loop {} is no record-append loop — {why}",
+                        self.data.def(self.def_nr).name(),
+                        lp.scope
+                    );
+                }
+                return Ok(None);
+            }
+        };
+        let Some(hdr) = self.active_mint_push(&m.path).map(str::to_owned) else {
+            return Ok(None);
+        };
+        if self.coroutine_persistent_fields.contains_key(&m.path.0) {
+            return Ok(None);
+        }
+        let count = self.trip_count(m.index_var, m.next_var, hi, m.inclusive)?;
+        let vec = self.expr_string(&m.vector)?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "{{ let _pn = {count}; if _pn > 0 {{ vector::reserve_more(&({vec}), _pn.saturating_mul({}_i64), {}_u32, &mut stores.allocations); {hdr} = vector::push_header(&({vec}), &stores.allocations); }} }} //@FR-R-PushFill record reservation",
+            m.mints_per_pass, m.size
+        )?;
+        if self.push_window_disabled {
+            return Ok(None);
+        }
+        if let Err(why) =
+            hoist::mint_window_ok(lp, &m, self.data, self.def_nr, &mut self.hoist_cache)
+        {
+            if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
+                eprintln!(
+                    "push-fill: {} loop {} keeps its header mints — {why}",
+                    self.data.def(self.def_nr).name(),
+                    lp.scope
+                );
+            }
+            return Ok(None);
+        }
+        self.hoist_counter += 1;
+        let win = format!("__pw_{}", self.hoist_counter);
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let mut {win} = vector::push_window(&{hdr}, {}_u32, &stores.allocations); //@FR-R-PushFill record push window",
+            m.size
+        )?;
+        self.push_windows.push((m.path.clone(), win.clone()));
         Ok(Some((win, hdr, vec)))
     }
 
@@ -3483,6 +3575,28 @@ impl Output<'_> {
             w,
             "stores.push_window_close::<{verify}>(&mut {hdr}, {win}.len, &({vec})) /*@FR-R-PushFill window closed*/"
         )
+    }
+
+    /// `@FR-R-PushFill`'s record clause — when `stmt` binds an element minted into a path
+    /// the loop being emitted holds a push window for: the window local and the element's
+    /// width, for the mint's slot, address and finish.
+    #[must_use]
+    pub fn windowed_mint_of(&self, stmt: &Value) -> Option<(String, u32)> {
+        let Value::Set(_, rhs) = stmt.unspan() else {
+            return None;
+        };
+        let Value::Call(d, args) = rhs.unspan() else {
+            return None;
+        };
+        if (*d as usize) >= self.data.definitions.len() || self.data.def(*d).name() != "OpNewRecord"
+        {
+            return None;
+        }
+        let vars = self.data.def(self.def_nr).variables();
+        let t = hoist::mint_target(self.data, self.stores, "OpNewRecord", args, vars)?;
+        let win = self.active_push_window(&t.path)?.to_owned();
+        let size = u32::from(self.stores.size(self.stores.content(t.vector_tp)));
+        Some((win, size))
     }
 
     /// The window open for `path`, when the loop being emitted pushes through one.
@@ -4316,6 +4430,14 @@ impl Output<'_> {
             writeln!(
                 w,
                 "let {name}: *const u8 = if (var_{index} as u64) < u64::from({header}.len) {{ unsafe {{ {base}.add(var_{index} as usize * {size}{plus}) }} }} else {{ std::ptr::null() }}; //@FR-R-RecPtr record view address for {operand}, from the held base"
+            )?;
+        } else if let Some((win, size)) = self.windowed_mint_of(&stmts[at]) {
+            // `@FR-R-PushFill`'s record clause — an element minted through an open window
+            // sits at the window's next slot: its address is the base plus the length
+            // times the element's width, no store resolved.
+            writeln!(
+                w,
+                "let {name}: *const u8 = unsafe {{ {win}.base.add({win}.len as usize * {size}) }}; //@FR-R-PushFill windowed mint address for {operand}"
             )?;
         } else {
             writeln!(

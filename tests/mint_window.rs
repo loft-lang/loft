@@ -103,9 +103,12 @@ fn counts(rust: &str) -> HashMap<String, Row> {
             map.entry(current.clone()).or_default();
         }
         let row = map.entry(current.clone()).or_default();
+        // A mint inside a record push window (`@FR-R-PushFill`'s record clause) takes its
+        // address off the window instead of `rec_ptr`: the same held element address.
         row.0 += line
             .matches(": *const u8 = vector::rec_ptr(&(var__elm_")
-            .count();
+            .count()
+            + line.matches("windowed mint address for var__elm_").count();
         row.1 += line.matches("rec_set::<").count();
     }
     map

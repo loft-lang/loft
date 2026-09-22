@@ -3987,6 +3987,40 @@ pub fn push_window_ok(
     let Some(body) = push_loop_body(lp) else {
         return Err("not a counted push loop".to_string());
     };
+    let mut parts: Vec<&Value> = Vec::new();
+    for s in body {
+        // A counted push contributes its VALUE operand alone, and the path's own
+        // reservation its count: the vector operand of either is the window's business.
+        match s.unspan() {
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && args.first().and_then(|f| vector_path(data, f)).as_ref()
+                        == Some(&p.path)
+                    && (FUSABLE_PUSHES
+                        .iter()
+                        .any(|(n, _, _)| *n == data.def(*d).name())
+                        || data.def(*d).name() == "OpPreAllocVector") =>
+            {
+                parts.extend(args.iter().skip(1));
+            }
+            _ => parts.push(s),
+        }
+    }
+    window_parts_ok(&parts, root, root_is_retbuf, vars, data, cache)
+}
+
+/// The window clause's aliasing test over the `parts` of a loop body that are NOT the
+/// pushes themselves: none names the pushed `root`, none names a variable that may view
+/// the root's store, and none writes a store.  Shared by the scalar window
+/// ([`push_window_ok`]) and the record one ([`mint_window_ok`]).
+fn window_parts_ok(
+    parts: &[&Value],
+    root: u16,
+    root_is_retbuf: bool,
+    vars: &crate::variables::Function,
+    data: &Data,
+    cache: &mut HashMap<u32, bool>,
+) -> Result<(), String> {
     // The variables that COULD name the root's store: asked per variable through the one
     // naming predicate (`Value::reads_var`), so every spelling of a mention is covered.
     let may_view: Vec<u16> = (0..vars.count())
@@ -4001,39 +4035,302 @@ pub fn push_window_ok(
                 && !separate_parameter
         })
         .collect();
-    for s in body {
-        // A counted push contributes its VALUE operand alone, and the path's own
-        // reservation its count: the vector operand of either is the window's business.
-        let parts: Vec<&Value> = match s.unspan() {
-            Value::Call(d, args)
-                if (*d as usize) < data.definitions.len()
-                    && args.first().and_then(|f| vector_path(data, f)).as_ref()
-                        == Some(&p.path)
-                    && (FUSABLE_PUSHES
-                        .iter()
-                        .any(|(n, _, _)| *n == data.def(*d).name())
-                        || data.def(*d).name() == "OpPreAllocVector") =>
-            {
-                args.iter().skip(1).collect()
-            }
-            _ => vec![s],
-        };
-        for part in parts {
-            if part.reads_var(root) {
-                return Err("the body names the pushed vector outside its pushes".to_string());
-            }
-            if let Some(x) = may_view.iter().find(|&&x| part.reads_var(x)) {
-                return Err(format!(
-                    "the body names `{}`, which may view the pushed vector",
-                    vars.name(*x)
-                ));
-            }
-            if may_write_store(part, data, cache) {
-                return Err("the body writes a store beside its pushes".to_string());
-            }
+    for part in parts {
+        if part.reads_var(root) {
+            return Err("the body names the pushed vector outside its pushes".to_string());
+        }
+        if let Some(x) = may_view.iter().find(|&&x| part.reads_var(x)) {
+            return Err(format!(
+                "the body names `{}`, which may view the pushed vector",
+                vars.name(*x)
+            ));
+        }
+        if may_write_store(part, data, cache) {
+            return Err("the body writes a store beside its pushes".to_string());
         }
     }
     Ok(())
+}
+
+/// `@FR-R-PushFill`'s record clause — a counted loop whose body appends RECORD elements to
+/// one plain vector through mint groups, possibly under `if` arms, and nothing else.
+pub struct MintLoop {
+    pub path: PathKey,
+    pub vector: Value,
+    /// The element's width in bytes.
+    pub size: u32,
+    pub inclusive: bool,
+    pub index_var: u16,
+    pub next_var: Option<u16>,
+    /// The most mint groups any one pass runs — one per arm of a branch, summed along a
+    /// straight line — which times the trip count bounds the appends.
+    pub mints_per_pass: u32,
+}
+
+/// Recognise the counted RECORD-append loop (`@FR-R-PushFill`'s record clause): `for i in
+/// a..b { if … { v += [R { … }] } else { v += [S { … }] } }` — a plain `for` over a counted
+/// range whose body's only writes to the path are mint groups (the parser's reservation,
+/// mint, field sets on the fresh element, finish), each group over ONE plain vector whose
+/// element qualifies for the record push, standing at the body's top level or under `if`
+/// arms.  Declines — and says why under `LOFT_TRACE_PUSH_FILL=1` — on an early exit or an
+/// inner loop, a group on a second path, any other write reaching the path, or a range end
+/// that is not a simple invariant.  Answers the loop's facts and the `hi` end; the aliasing
+/// test is [`mint_window_ok`]'s.
+///
+/// # Errors
+/// The reason the loop is not one — what `LOFT_TRACE_PUSH_FILL=1` prints.
+pub fn mint_loop<'a>(
+    lp: &'a Block,
+    data: &Data,
+    stores: &Stores,
+    vars: &crate::variables::Function,
+    heap_push: bool,
+) -> Result<(MintLoop, &'a Value), String> {
+    let Some(body) = plain_for_body(lp) else {
+        return Err("not a plain counted loop".to_string());
+    };
+    let rc = range_counters(lp, data)?;
+    let early = body.operators.iter().any(|s| {
+        s.any_node(&mut |n| {
+            matches!(
+                n,
+                Value::Break(_)
+                    | Value::Return(_)
+                    | Value::Continue(_)
+                    | Value::Loop(_)
+                    | Value::Yield(_)
+                    | Value::Parallel(_)
+            )
+        })
+    });
+    if early {
+        return Err("the body can leave early, or loops".to_string());
+    }
+    // Every mint in the body, all on one qualifying path.
+    let mut target: Option<MintTarget> = None;
+    let mut mints = 0usize;
+    for s in &body.operators {
+        let mut bad: Option<String> = None;
+        s.any_node(&mut |n| {
+            if let Value::Call(d, args) = n
+                && (*d as usize) < data.definitions.len()
+                && data.def(*d).name() == "OpNewRecord"
+            {
+                match mint_target(data, stores, "OpNewRecord", args, vars) {
+                    Some(t) if mint_push_qualifies(stores, t.vector_tp, heap_push) => {
+                        match &target {
+                            Some(tt) if tt.path != t.path => {
+                                bad = Some("the mints reach two paths".to_string());
+                            }
+                            Some(_) => {}
+                            None => target = Some(t),
+                        }
+                        mints += 1;
+                    }
+                    _ => {
+                        bad = Some(
+                            "a mint's element does not qualify for the record push".to_string(),
+                        )
+                    }
+                }
+            }
+            false
+        });
+        if let Some(why) = bad {
+            return Err(why);
+        }
+    }
+    let Some(target) = target else {
+        return Err("no record mint in the body".to_string());
+    };
+    if mints == 0 {
+        return Err("no record mint in the body".to_string());
+    }
+    // Every op naming the path is a mint group's own: the reservation, the mint, the finish.
+    let mut other = false;
+    for s in &body.operators {
+        s.any_node(&mut |n| {
+            if let Value::Call(d, args) = n
+                && (*d as usize) < data.definitions.len()
+                && let Some(first) = args.first()
+                && vector_path(data, first).as_ref() == Some(&target.path)
+                && !matches!(
+                    data.def(*d).name(),
+                    "OpPreAllocVector" | "OpNewRecord" | "OpFinishRecord"
+                )
+            {
+                other = true;
+            }
+            false
+        });
+    }
+    if other {
+        return Err("another op reaches the path".to_string());
+    }
+    let mut banned = vec![rc.loop_var, rc.index, target.path.0];
+    if let Some(nx) = rc.next {
+        banned.push(nx);
+    }
+    if !simple_invariant(rc.hi, data, &banned) {
+        return Err("the range's end is not a simple invariant".to_string());
+    }
+    // The most groups one pass runs: arms of an `if` take the larger, a straight line sums.
+    fn most_mints(
+        n: &Value,
+        data: &Data,
+        stores: &Stores,
+        vars: &crate::variables::Function,
+        path: &PathKey,
+    ) -> u32 {
+        match n.unspan() {
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpNewRecord"
+                    && mint_path(data, stores, "OpNewRecord", args, vars).as_ref()
+                        == Some(path) =>
+            {
+                1
+            }
+            Value::If(c, t, e) => {
+                most_mints(c, data, stores, vars, path)
+                    + most_mints(t, data, stores, vars, path)
+                        .max(most_mints(e, data, stores, vars, path))
+            }
+            _ => {
+                let mut total = 0u32;
+                n.for_each_child(&mut |child| total += most_mints(child, data, stores, vars, path));
+                total
+            }
+        }
+    }
+    let mints_per_pass = body
+        .operators
+        .iter()
+        .map(|s| most_mints(s, data, stores, vars, &target.path))
+        .sum::<u32>()
+        .max(1);
+    let elem = stores.content(target.vector_tp);
+    let size = u32::from(stores.size(elem));
+    Ok((
+        MintLoop {
+            path: target.path,
+            vector: target.vector,
+            size,
+            inclusive: rc.inclusive,
+            index_var: rc.index,
+            next_var: rc.next,
+            mints_per_pass,
+        },
+        rc.hi,
+    ))
+}
+
+/// `@FR-R-PushFill`'s record clause — may the record-append loop `lp`, which [`mint_loop`]
+/// answered `m` for, run its mints through a [`crate::vector::PushWindow`]?  The scalar
+/// window's condition, with a mint group's own ops as "the pushes": the fresh element's
+/// field sets write the slot the window handed out and are not store writes to this test,
+/// while their VALUE operands, the group's reservation count and every other statement are
+/// the parts that must name neither the root nor a variable that may view its store, and
+/// write no store.
+///
+/// # Errors
+///
+/// The condition that does not hold — what `LOFT_TRACE_PUSH_FILL=1` prints.
+pub fn mint_window_ok(
+    lp: &Block,
+    m: &MintLoop,
+    data: &Data,
+    def_nr: u32,
+    cache: &mut HashMap<u32, bool>,
+) -> Result<(), String> {
+    let vars = data.def(def_nr).variables();
+    let root = m.path.0;
+    let root_is_retbuf = retbuf_var(data, def_nr) == Some(root);
+    if root >= vars.count() || !(owned_local(vars, root) || root_is_retbuf) {
+        return Err("the appended vector's root is not exclusive".to_string());
+    }
+    let Some(body) = plain_for_body(lp) else {
+        return Err("not a plain counted loop".to_string());
+    };
+    // The elements minted by the groups: their field sets are the group's own writes.
+    let mut fresh: HashSet<u16> = HashSet::new();
+    for s in &body.operators {
+        s.any_node(&mut |n| {
+            if let Value::Set(e, rhs) = n
+                && matches!(rhs.unspan(), Value::Call(d, args)
+                    if (*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpNewRecord"
+                        && args.first().and_then(|f| vector_path(data, f)).as_ref() == Some(&m.path))
+            {
+                fresh.insert(*e);
+            }
+            false
+        });
+    }
+    fn collect<'v>(
+        n: &'v Value,
+        data: &Data,
+        path: &PathKey,
+        fresh: &HashSet<u16>,
+        parts: &mut Vec<&'v Value>,
+    ) {
+        match n.unspan() {
+            Value::If(c, t, e) => {
+                parts.push(c);
+                collect(t, data, path, fresh, parts);
+                collect(e, data, path, fresh, parts);
+            }
+            Value::Block(b) => {
+                for op in &b.operators {
+                    collect(op, data, path, fresh, parts);
+                }
+            }
+            Value::Insert(ops) => {
+                for op in ops {
+                    collect(op, data, path, fresh, parts);
+                }
+            }
+            Value::Line(_) => {}
+            Value::Set(e, rhs) if fresh.contains(e) => {
+                // The mint itself: its operands beyond the vector.
+                if let Value::Call(_, args) = rhs.unspan() {
+                    parts.extend(args.iter().skip(1));
+                }
+            }
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && args.first().and_then(|f| vector_path(data, f)).as_ref() == Some(path)
+                    && matches!(data.def(*d).name(), "OpPreAllocVector" | "OpFinishRecord") =>
+            {
+                // The finish's second operand is the fresh element itself — the group's
+                // own slot, not a view the window must fear.
+                let skip = if data.def(*d).name() == "OpFinishRecord" {
+                    2
+                } else {
+                    1
+                };
+                parts.extend(args.iter().skip(skip));
+            }
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && IN_PLACE_SET_OPS.contains(&data.def(*d).name())
+                    && args
+                        .first()
+                        .and_then(|f| vector_path(data, f))
+                        .is_some_and(|(root, _)| fresh.contains(&root)) =>
+            {
+                // A field set on the fresh element — its own field, or one reached
+                // through its inline sub-records (`pos.x`): the value is the part.
+                parts.extend(args.iter().skip(1));
+            }
+            _ => parts.push(n),
+        }
+    }
+    let mut parts: Vec<&Value> = Vec::new();
+    for s in &body.operators {
+        collect(s, data, &m.path, &fresh, &mut parts);
+    }
+    window_parts_ok(&parts, root, root_is_retbuf, vars, data, cache)
 }
 
 /// Recognise `OpPreAllocVector(path, count, size)` over a pure path (@PLN157 § V-q): the

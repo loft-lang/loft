@@ -97,7 +97,10 @@ fn counts(rust: &str) -> HashMap<String, Row> {
             map.entry(current.clone()).or_default();
         }
         let row = map.entry(current.clone()).or_default();
-        row.0 += line.matches("push_record_hoisted_zero").count();
+        // The windowed mint (`@FR-R-PushFill`'s record clause) zeroes its slot through the
+        // window: `push_record_windowed::<true, …>` is the same zeroed slot.
+        row.0 += line.matches("push_record_hoisted_zero").count()
+            + line.matches("push_record_windowed::<true").count();
         row.1 += line.matches("let __pa_").count();
         row.2 += line.matches("rec_get::<u8>").count();
     }

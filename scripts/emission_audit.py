@@ -19,6 +19,10 @@ rewrites make about the loop they sit in (doc/claude/formal/rewrites.md):
   R-Inputs  a twin call (`<fn>__inv(cell, …)`) hands in only live holders.
   R-Base    (twin clause) a twin's `__ib_k` inputs are holders, and a view's shared base
             (`let __vb_N = __ib_k; //@FR-R-Base view base for …`) is derived from a live one.
+  R-PushFill a push window (`let mut __pw_N = vector::push_window(&__ph_M, …)`) opens on a
+            LIVE push header and is a second holder of its path; a windowed push, a windowed
+            record mint and the close name a live header and a live window, and a windowed
+            mint's address (`__pw_N.base.add(…)`) is a record-view holder like R-RecPtr's.
   R-RecPtr  a record view's address (`let __pa_N: *const u8 = vector::rec_ptr(…)`) is a holder
             for the rest of its block, and every `rec_get`/`rec_set` through one names a live one.
             (base clause) an address taken from a held element base — `if (idx as u64) <
@@ -53,6 +57,15 @@ BIND_RECPTR = re.compile(r"^\s*let (__pa_\d+): \*const u8 = vector::rec_ptr\(&\(
 BIND_RECPTR_BASE = re.compile(r"^\s*let (__pa_\d+): \*const u8 = if \(var_\w+ as u64\) < u64::from\(([\w.]+)\.len\) \{ unsafe \{ (__vb_\d+)\.add\(var_\w+ as usize \* \d+(?: \+ \d+)?\) \} \} else \{ std::ptr::null\(\) \}; //@FR-R-RecPtr record view address for (\S+?),")
 USE_RECPTR = re.compile(r"vector::rec_(get|set)::<[^>]*>\((__pa_\d+), ")
 BIND_SCALAR = re.compile(r"^\s*let (__vs_\d+) = (.*);")
+# R-PushFill's window clause: a push WINDOW is opened on a live push header and is a second
+# holder of that header's path on purpose (the header is frozen while the window is open);
+# a windowed push, a windowed record mint and the close all name both.
+BIND_WINDOW = re.compile(r"^\s*let mut (__pw_\d+) = vector::push_window\(&(__ph_\d+), \d+_u32, &stores\.allocations\); //@FR-R-PushFill (?:record )?push window")
+USE_WINDOW = re.compile(r"stores\.push(?:_record)?_windowed::<[^>]*>\(&mut (__ph_\d+), &mut (__pw_\d+), &\((.*?)\), \d+")
+WINDOW_CLOSE = re.compile(r"stores\.push_window_close::<\w+>\(&mut (__ph_\d+), (__pw_\d+)\.len, &\((.*?)\)\)")
+# R-PushFill's record clause: a windowed mint's element address is the window's next slot,
+# a record-view holder (R-RecPtr) for the rest of its block.
+BIND_RECPTR_WINDOW = re.compile(r"^\s*let (__pa_\d+): \*const u8 = unsafe \{ (__pw_\d+)\.base\.add\(\2\.len as usize \* \d+\) \}; //@FR-R-PushFill windowed mint address for (\S+)")
 SCALAR_KEY = re.compile(r"let db = \((var_\w+)\);.*db\.pos \+ \((\d+)_i64\)")
 FN_HEAD = re.compile(r"^fn (\w+)\((.*)\)")
 USE_ELEM = re.compile(r"(get_elem_hoisted|vec_set_hoisted_or_raise_runtime|get_elem_at|vec_set_at)::<[^>]*>\(&([\w.]+), (?:(__vb_\d+), )?&\((.*?)\), \(\d+_i64\) as u32")
@@ -127,6 +140,26 @@ def audit(text, quiet=False):
             depth += code.count("{") - code.count("}")
             holders = [h for h in holders if h.depth <= depth]
             continue
+        mw = BIND_WINDOW.match(line)
+        if mw:
+            hdr = live(mw.group(2))
+            if hdr is None or hdr.kind != "push":
+                violations.append(f"{fn}:{nr}: R-PushFill — {mw.group(1)} opens a window on {mw.group(2)}, which is not a live push header")
+            holders.append(Holder(mw.group(1), "window", hdr.path if hdr else None, depth, nr))
+            bound_total += 1
+            depth += code.count("{") - code.count("}")
+            holders = [h for h in holders if h.depth <= depth]
+            continue
+        mrw = BIND_RECPTR_WINDOW.match(line)
+        if mrw:
+            win = live(mrw.group(2))
+            if win is None or win.kind != "window":
+                violations.append(f"{fn}:{nr}: R-PushFill — {mrw.group(1)} takes its address from {mrw.group(2)}, which is not a live push window")
+            holders.append(Holder(mrw.group(1), "recptr", f"rec:{mrw.group(3)}", depth, nr))
+            bound_total += 1
+            depth += code.count("{") - code.count("}")
+            holders = [h for h in holders if h.depth <= depth]
+            continue
         mr = BIND_RECPTR.match(line)
         if mr:
             holders.append(Holder(mr.group(1), "recptr", f"rec:{mr.group(2)}", depth, nr))
@@ -197,6 +230,16 @@ def audit(text, quiet=False):
                     violations.append(f"{fn}:{nr}: R-PushRec — a record push names {name}, which is not a live push header")
                 elif h.path != path:
                     violations.append(f"{fn}:{nr}: R-State — a record push names {name} (bound for `{h.path}`) on path `{path}`")
+            for name, win, path in USE_WINDOW.findall(code) + WINDOW_CLOSE.findall(code):
+                uses_total += 1
+                h = live(name)
+                if h is None or h.kind != "push":
+                    violations.append(f"{fn}:{nr}: R-PushFill — a windowed push names {name}, which is not a live push header")
+                elif h.path != path:
+                    violations.append(f"{fn}:{nr}: R-State — a windowed push names {name} (bound for `{h.path}`) on path `{path}`")
+                w = live(win)
+                if w is None or w.kind != "window":
+                    violations.append(f"{fn}:{nr}: R-PushFill — a windowed push names {win}, which is not a live push window")
             for name in USE_LEN.findall(code):
                 if live(name) is None:
                     violations.append(f"{fn}:{nr}: R-State — `.len` of {name}, which is not live here")
