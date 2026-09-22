@@ -42,7 +42,10 @@ emission, then built to the price:
 | the table alone — `Vec<&str>` at the bind, `len` and `v[i]` from it | 6.5 (−69 %) | 2.4× |
 | + the `?`-discharge temp BORROWING its slice (the two copies gone) | **3.1 (−85 %)** | **~1.15×** |
 
-The twin is 2.7 µs.  Two units, each a rule:
+The twin is 2.7 µs; `bench/stats.py --only 13` pins it at **3,175 ns vs 2,753, 1.15× (range
+1.05–1.24)**.  (That run read `char_walk` at 3.16× against its pinned 2.48×; its emission
+is byte-identical before and after, and the two binaries time 12.5–12.9 µs back to back —
+every row of the run was flagged noisy, so the box, not the row.)  Two units, each a rule:
 
 1. **The table** is `(R-LazySplit)`'s sibling for the shape it declines — the vector bound
    to a name — and the shape every library bind takes (14 binds, all local, walked / indexed
