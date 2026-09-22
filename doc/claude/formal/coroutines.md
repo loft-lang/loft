@@ -146,8 +146,8 @@ value built at the yield instead.
                - a local at its scope end, and at its REBIND the frame it held;
                - a field or an element given a new handle, the frame the old one named;
                - a record or a collection at its death, and an element at its REMOVAL
-                 (`v.remove(i)`, `x#remove`), every frame it holds, through its inline
-                 records and its vectors.
+                 (`v.remove(i)`, `x#remove`, `h[k] = null`), every frame it holds, through
+                 its inline records, its vectors and its keyed collections.
              No `OpDrop` hook runs for a frame, so (H-Drop-Not) does not bound these.
              A local given to a field, an element or a literal MOVES there (H-Move).  A handle
              READ out of a member — `h = t.g`, `h = tasks[i]`, a `for` over a collection of
@@ -166,14 +166,9 @@ advances the one the container holds.
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 0.**
 
-- **D-cor-5** (loft#1601) — `(G-Hold)`: a generator held by a record in a KEYED collection
-  (`hash`, `sorted`, `index`, `spatial`) is not released when the collection dies or the record
-  is removed; the frame stays allocated to program exit.  A keyed collection's records are
-  released without a walk, and the store walk cannot reach a frame.
-
-The record, closed entries included, is in the companion
+Every deviation this doc has carried is closed; the record is in the companion
 [coroutines-history.md](coroutines-history.md).
 
 ## Conformance
@@ -204,7 +199,10 @@ The record, closed entries included, is in the companion
   field, an element and a `for`; a local that views on one path and owns on another; records
   holding generators yielded and kept — values on both backends, and the leak gate says every
   frame was released once.  A vector of vectors of them, at death and with a row removed:
-  `tests/scripts/1597-a-vector-of-vectors-releases-its-inner-elements.loft` `c12`.
+  `tests/scripts/1597-a-vector-of-vectors-releases-its-inner-elements.loft` `c12`.  A keyed
+  collection of records holding them — `sorted`, `hash`, `index`, `spatial`, as a local, a
+  field, rebound, a record taken out, nested, and beside a hook that stays unrun:
+  `tests/scripts/1601-a-generator-held-in-a-keyed-collection-is-released.loft`.
 - **Interchangeable at `for` (`G-For`)** — `for x in gen() { … }` and `for x in vec { … }`
   visit their elements by the same loop; swapping a generator for the equivalent vector changes
   only timing, not the values or their order.

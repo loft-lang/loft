@@ -10233,7 +10233,13 @@ impl Data {
         fn walk(data: &Data, t: &Type, path: &mut HashSet<u32>) -> bool {
             match t {
                 Type::Iterator(_, _) => true,
-                Type::Reference(d, _) | Type::Enum(d, true, _) => {
+                Type::Reference(d, _)
+                | Type::Enum(d, true, _)
+                | Type::Sorted(d, _, _)
+                | Type::Index(d, _, _)
+                | Type::Hash(d, _, _)
+                | Type::Radix(d, _, _)
+                | Type::Trie(d, _, _) => {
                     path.insert(*d)
                         && (data
                             .def(*d)
@@ -10257,6 +10263,27 @@ impl Data {
             }
         }
         walk(self, t, &mut HashSet::new())
+    }
+
+    /// The name of the function that releases the generator frames a KEYED collection's
+    /// records hold (loft#1601) — one per collection type, synthesized beside the drop
+    /// cascades (`Parser::synth_drop_cascades`) and called where the collection dies.
+    #[must_use]
+    pub fn keyed_frames_name(&self, tp: &Type) -> String {
+        format!("__frames_{}", tp.base().without_deps().name(self))
+    }
+
+    /// Is `tp` a keyed collection whose records hold a generator handle (loft#1601)?
+    #[must_use]
+    pub fn keyed_holds_generator(&self, tp: &Type) -> bool {
+        matches!(
+            tp.base(),
+            Type::Sorted(_, _, _)
+                | Type::Index(_, _, _)
+                | Type::Hash(_, _, _)
+                | Type::Radix(_, _, _)
+                | Type::Trie(_, _, _)
+        ) && self.type_holds_generator(tp)
     }
 
     fn type_owns_droppable(&self, t: &Type, path: &mut HashSet<u32>) -> bool {

@@ -2780,6 +2780,11 @@ the wrapper, how many descend via the keystone — and the opaque QUEUE itself, 
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
 
+(2026-09-22, the third line of the same join — `tuxedo-1562-layout-gate` (loft#1597, #1600,
+#1601) — re-measured at its end: **941 · 615 · 4 · 322**, opaque tests 1311, at the pin the two-line
+join set.  That side read 324 · 1310 on its own base; the join adds its six functions to both
+sides of the count and none to the opaque queue.)
+
 (2026-09-22, the join of `157-native-4x` (@PLN158 W1, R-SplitTable) and `tuxedo-165-generics`
 (@PLN165 E2-E4) into ../loft2 with @PLN167 A0-B3, re-measured at its end: **935 · 609 · 4 · 322**,
 and `--check-ratchet` pinned lower at opaque 322, opaque tests 1311.  The sides read 334 · 1313
@@ -2788,7 +2793,13 @@ and `--check-ratchet` pinned lower at opaque 322, opaque tests 1311.  The sides 
 which is always the outer former), and the one that asks a nullability question — a `&boolean?`
 link reads its storage byte — spells it.)
 
-(2026-09-23, loft#1597 on `tuxedo-1562-layout-gate`, joined with ../loft2's tip @ dc5bbb3b3 and
+(2026-09-22, loft#1600 and #1601 on `tuxedo-1562-layout-gate`, re-measured at its end:
+**933 · 604 · 5 · 324**, and `--check-ratchet` pinned at opaque 324, opaque tests 1310 — the
+figures 53d8d5d4a carried.  An intermediate commit had pinned 323 off a spelling of the
+struct-enum element check that was reverted; that check now lives in
+`Parser::variant_fills_element`, and `scopes::leaves_as_value` peels its block's result.)
+
+(2026-09-22, loft#1597 on `tuxedo-1562-layout-gate`, joined with ../loft2's tip @ dc5bbb3b3 and
 re-measured at its end: **927 · 598 · 5 · 324**, and `--check-ratchet` pinned lower at opaque 324,
 opaque tests 1310.  `Parser::unique_elm_var` gained a struct-enum arm and peels it, which moved
 that function to the seeing-through side.)
@@ -2799,7 +2810,7 @@ pinned lower at opaque 325, opaque tests 1310.  The sides read 326 · 1311 (../l
 329 · 1313 (the generics line); the join is below both, as each line peeled shapes in bodies
 the other also touched.)
 
-(2026-09-23, loft#1585 on `tuxedo-1562-layout-gate`, joined with ../loft2's tip @ 1a75b86e4 and
+(2026-09-22, loft#1585 on `tuxedo-1562-layout-gate`, joined with ../loft2's tip @ 1a75b86e4 and
 re-measured at its end: **920 · 589 · 5 · 326**, and `--check-ratchet` pinned lower at opaque 326,
 opaque tests 1311.  The sides read 328 · 1312 (this line) and 328 · 1311 (../loft2); the join is
 neither, for the reason the note below gives.  Every shape test the generator-handle work added

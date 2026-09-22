@@ -225,10 +225,9 @@ or a collection when it dies — or, for an element, when it is removed, so remo
 has not finished (`tasks.remove(i)`, `t#remove`) ends it.  Putting a local into a container
 (`tasks += [g]`, `Task { g: g }`) MOVES it there.  Reading one back out — `h = t.g`,
 `h = tasks[i]`, `for t in tasks` — gives a view: advancing `h` advances the generator the
-container holds, and the container keeps it.  A handle prints as `iterator`.
-
-Not yet released (`formal/coroutines.md` D-cor-5): a generator held by a record in a KEYED
-collection (`hash`, `sorted`, `index`, `spatial`) stays allocated until the program ends.
+container holds, and the container keeps it.  A handle prints as `iterator`.  A keyed collection (`hash`, `sorted`,
+`index`, `spatial`) releases the generators its records hold the same way, and runs no other
+release for them (`formal/heap.md` (H-Drop-Not)).
 
 ---
 

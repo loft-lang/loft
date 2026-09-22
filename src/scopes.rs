@@ -141,6 +141,13 @@ struct Scopes<'s> {
     /// is already gone, so such a base is not offered as a witness.  Conservative in the safe
     /// direction: declining keeps today's leak, never frees a store twice.
     multi_assigned: HashSet<u16>,
+    /// How many nodes of the body name each variable ([`var_mentions_in`]) — what tells
+    /// `scan_if` a local whose every mention lies inside one arm.
+    mentions: HashMap<u16, usize>,
+    /// The variables a value-branch bind was written out into the arms for
+    /// (`rewrite_written_out`): declared by the statement around the `if`, so never an arm's
+    /// local however its mentions fall.
+    sunk: HashSet<u16>,
     /// The backing local each CAPTURE named at the closure build — see
     /// [`capture_build_backings`].  Computed once off the raw body, because the answer is
     /// positional (@FR-O-Latest) and the variable table carries only the LAST assignment.
@@ -5562,6 +5569,7 @@ fn run_scan_phase(
     orig_vars: &Function,
     confined: &HashMap<u16, u16>,
     disturbed: Option<&DisturbedParams>,
+    sunk: &HashSet<u16>,
 ) -> Vec<(usize, u16)> {
     // @PLN85 `local_source` over-free fix (gated): the heap slots whose OWNED store
     // is displaced by a later borrow/join reassignment. Computed on the pre-scope
@@ -5603,6 +5611,8 @@ fn run_scan_phase(
         lift_join_witness: HashMap::new(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
+        mentions: var_mentions_in(orig_code),
+        sunk: sunk.clone(),
         assigned: assigned_in(orig_code),
         read_only_locals: crate::use_analysis::read_only_record_locals(
             orig_code,
@@ -6591,6 +6601,81 @@ pub(crate) fn multi_assigned_in(node: &Value) -> HashSet<u16> {
         .filter(|&(_, n)| n >= 2)
         .map(|(v, _)| v)
         .collect()
+}
+
+/// How many nodes of `node` name each variable: a read, a write, a tuple member read or
+/// write, a fn-ref's closure slot or projection, a call through a fn-ref local and an
+/// iterator's own variable.  A count, so a region's share of it says whether a variable is
+/// mentioned anywhere else.
+pub(crate) fn var_mentions_in(node: &Value) -> HashMap<u16, usize> {
+    fn count(node: &Value, out: &mut HashMap<u16, usize>) {
+        let named = match node.unspan() {
+            Value::Var(v)
+            | Value::Set(v, _)
+            | Value::TupleGet(v, _)
+            | Value::TuplePut(v, _, _)
+            | Value::FnRefDnr(v)
+            | Value::CallRef(v, _)
+            | Value::Iter(v, _, _, _) => Some(*v),
+            Value::FnRef(_, v, _) if *v != u16::MAX => Some(*v),
+            _ => None,
+        };
+        if let Some(v) = named {
+            *out.entry(v).or_insert(0) += 1;
+        }
+        node.for_each_child(&mut |c| count(c, out));
+    }
+    let mut counts = HashMap::new();
+    count(node, &mut counts);
+    counts
+}
+
+/// Does the VALUE `val` yields name `v` — the tail of a value block, of either arm of a value
+/// `if`, or of an insert?  A statement block yields nothing, so a mention in its last
+/// statement is not a hand-out.
+fn leaves_as_value(val: &Value, v: u16) -> bool {
+    match val.unspan() {
+        Value::Block(bl) => {
+            !matches!(bl.result.base(), Type::Void)
+                && bl
+                    .operators
+                    .last()
+                    .is_some_and(|last| mentions_of(last, v) > 0)
+        }
+        Value::Insert(ops) => ops.last().is_some_and(|last| leaves_as_value(last, v)),
+        Value::If(_, t, f) => leaves_as_value(t, v) || leaves_as_value(f, v),
+        _ => false,
+    }
+}
+
+/// Does a `return` inside `node` name `v`?
+fn returned_in(node: &Value, v: u16) -> bool {
+    if let Value::Return(value) = node.unspan()
+        && mentions_of(value, v) > 0
+    {
+        return true;
+    }
+    let mut found = false;
+    node.for_each_child(&mut |c| found = found || returned_in(c, v));
+    found
+}
+
+/// How many nodes of `node` name `v` — [`var_mentions_in`]'s count for one variable.
+fn mentions_of(node: &Value, v: u16) -> usize {
+    let named = match node.unspan() {
+        Value::Var(x)
+        | Value::Set(x, _)
+        | Value::TupleGet(x, _)
+        | Value::TuplePut(x, _, _)
+        | Value::FnRefDnr(x)
+        | Value::CallRef(x, _)
+        | Value::Iter(x, _, _, _) => *x == v,
+        Value::FnRef(_, x, _) => *x != u16::MAX && *x == v,
+        _ => false,
+    };
+    let mut n = usize::from(named);
+    node.for_each_child(&mut |c| n += mentions_of(c, v));
+    n
 }
 
 /// The value of `v`'s one `Set` in the two arms of an `if`, where `v` is assigned under no
@@ -8367,7 +8452,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
             &orig_vars,
             &HashMap::new(),
             disturbed,
+            &HashSet::new(),
         );
+        let sunk: HashSet<u16> = written_out.iter().map(|&(_, v)| v).collect();
         // A reassignment the scan wrote out per arm was seen in its VALUE form by every analysis
         // that ran before the scan.  Rewrite exactly those and scan again, so those analyses read
         // the per-arm form; the confinement rescan below starts from the rewritten pair too.
@@ -8382,6 +8469,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
                 &orig_vars,
                 &HashMap::new(),
                 disturbed,
+                &sunk,
             );
         }
         // Plan-57 cluster I-a — two-phase scan.  If a vector store is block-confined,
@@ -8417,7 +8505,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
                 }
             }
             run_scan_phase(
-                data, database, d_nr, &orig_code, &orig_vars, &cmap, disturbed,
+                data, database, d_nr, &orig_code, &orig_vars, &cmap, disturbed, &sunk,
             );
             for (&vdb, &(_local, b)) in &confined {
                 relocate_null_init(&mut data.definitions[d_nr as usize].code, vdb, b);
@@ -11048,6 +11136,27 @@ impl Scopes<'_> {
                 transition_free = Some(Value::Insert(frees));
             }
         }
+        // loft#1601, @FR-G-Hold — a keyed collection rebound releases the generator frames its
+        // records hold before they are cleared, through its type's walk; the records run no
+        // hook (`(H-Drop-Not)`).
+        if transition_free.is_none()
+            && was_in_scope
+            && data.keyed_holds_generator(function.tp(v))
+            && !value.reads_var(v)
+            && !value.reads_var(ov)
+            // Its own store, not a view of another's: a keyed local lists itself.
+            && function.tp(v).depend().iter().all(|&d| d == v || d == ov)
+        {
+            let walk = data.def_nr(&data.keyed_frames_name(function.tp(v)));
+            if walk != u32::MAX {
+                let live = Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(v)]);
+                transition_free = Some(v_if(
+                    live,
+                    Value::Call(walk, vec![Value::Var(v)]),
+                    Value::Null,
+                ));
+            }
+        }
         // A generator HANDLE owns its frame (@FR-G-Hold), so reassigning one releases the frame it held
         // — as its scope end would have (loft#835).  Nothing did: `g = steps(1); g =
         // steps(5)` kept the first frame, and every heap local it owned, to program exit.
@@ -11421,32 +11530,7 @@ impl Scopes<'_> {
         }
         let first_binding = !self.var_scope.contains_key(&v);
         if first_binding {
-            self.put_scope(v);
-            // `(H-Drop)` releases at a scope's end in REVERSE DECLARATION order.  A collection
-            // local is a view of the store that holds its elements — its `__vdb_N` backing, or
-            // the `__ref_N` buffer a call delivered it through — and that store is registered by
-            // its null-init at the head of the function, so its release came after every other
-            // local's, whatever the order they were declared in (D-heap-21).  The store is minted
-            // where the local is bound, so its place in the sweep is there.  A RECORD local
-            // releases through itself, and its buffer's free is guarded by identity, so a record
-            // buffer keeps the place it has.  A TUPLE local releases through its members'
-            // backings — a vector member's `__vdb_N`, a record member a whole-tuple bind copied
-            // into a `__ref_N` (loft#1361) — so those take its place too (loft#1588).
-            let collection = matches!(function.tp(v).base(), Type::Vector(_, _) | Type::Tuple(_));
-            let mut backings = function.tp(v).depend().clone();
-            if let Type::Tuple(elems) = function.tp(v).base() {
-                backings.extend(elems.iter().filter_map(|e| member_backing(function, e)));
-            }
-            for d in backings {
-                let name = function.name(d);
-                if (name.starts_with("__vdb_") || (collection && name.starts_with("__ref_")))
-                    && let Some(pos) = self.var_order.iter().position(|&x| x == d)
-                {
-                    self.var_order.remove(pos);
-                    self.var_order.push(d);
-                }
-            }
-            self.var_order.push(v);
+            self.register_binding(v, function);
         }
         // When a Reference variable is assigned from a user-function call,
         // codegen has two sub-paths (state/codegen.rs gen_set_first_at_tos /
@@ -13015,6 +13099,9 @@ impl Scopes<'_> {
         let mut pre_inits: Vec<u16> = Vec::new();
         self.find_first_ref_vars(t_val, function, &mut pre_inits);
         self.find_first_ref_vars(f_val, function, &mut pre_inits);
+        if crate::keys::arm_scope_enabled() {
+            pre_inits.retain(|&v| !self.confined_to_one_arm(v, t_val, f_val, function));
+        }
 
         // Also find small variables assigned in BOTH branches (or an else-if chain).
         let mut small_both: Vec<u16> = Vec::new();
@@ -13050,8 +13137,7 @@ impl Scopes<'_> {
         // the branch scans see them as already assigned and use the set_var/OpPutRef
         // re-assignment path instead of claim().
         for &v in &pre_inits {
-            self.put_scope(v);
-            self.var_order.push(v);
+            self.register_binding(v, function);
         }
         // Register small variables assigned in both branches at the parent scope too.
         for &v in &small_both {
@@ -13116,6 +13202,88 @@ impl Scopes<'_> {
         }
         stmts.push(scanned_if);
         Value::Insert(stmts)
+    }
+
+    /// Register `v` at the current scope, in its declaration turn.
+    fn register_binding(&mut self, v: u16, function: &Function) {
+        self.put_scope(v);
+        // `(H-Drop)` releases at a scope's end in REVERSE DECLARATION order.  A collection
+        // local is a view of the store that holds its elements — its `__vdb_N` backing, or
+        // the `__ref_N` buffer a call delivered it through — and that store is registered by
+        // its null-init at the head of the function, so its release came after every other
+        // local's, whatever the order they were declared in (D-heap-21).  The store is minted
+        // where the local is bound, so its place in the sweep is there.  A RECORD local
+        // releases through itself, and its buffer's free is guarded by identity, so a record
+        // buffer keeps the place it has.  A TUPLE local releases through its members'
+        // backings — a vector member's `__vdb_N`, a record member a whole-tuple bind copied
+        // into a `__ref_N` (loft#1361) — so those take its place too (loft#1588).
+        let collection = matches!(function.tp(v).base(), Type::Vector(_, _) | Type::Tuple(_));
+        let mut backings = function.tp(v).depend().clone();
+        if let Type::Tuple(elems) = function.tp(v).base() {
+            backings.extend(elems.iter().filter_map(|e| member_backing(function, e)));
+        }
+        for d in backings {
+            let name = function.name(d);
+            if (name.starts_with("__vdb_") || (collection && name.starts_with("__ref_")))
+                && let Some(pos) = self.var_order.iter().position(|&x| x == d)
+            {
+                self.var_order.remove(pos);
+                self.var_order.push(d);
+            }
+        }
+        self.var_order.push(v);
+    }
+
+    /// `@FR-H-Drop`'s scope-end clause for an `if` arm's owner: a local every mention of which,
+    /// anywhere in the function, lies inside ONE arm of this `if` is that arm's local.  The
+    /// arm's scan declares it there and it is released at the arm's end, where a pre-init at
+    /// the `if`'s scope would release it at THAT scope's end.  The pre-init is what a local
+    /// read after the `if`, or in the other arm, needs; any mention outside the arm keeps it.
+    /// Judged only for a local the program declared — a compiler temp is used by lowerings
+    /// after this pass, where the count cannot see it — and bound under its own number (a
+    /// `var_mapping` copy is not in the body the count was taken from).  A local another
+    /// variable's type depends on stays unless that variable is confined to the same arm too.
+    fn confined_to_one_arm(
+        &self,
+        v: u16,
+        t_val: &Value,
+        f_val: &Value,
+        function: &Function,
+    ) -> bool {
+        let total = self.mentions.get(&v).copied().unwrap_or(0);
+        if total == 0
+            || self.sunk.contains(&v)
+            || function.is_compiler_generated(v)
+            || self.var_mapping.contains_key(&v)
+            || self.var_mapping.values().any(|m| *m == v)
+        {
+            return false;
+        }
+        // Every mention inside the two arms.  Bound in BOTH, the local is each arm's own — but a
+        // collection or a tuple releases through the backing its type names, one for the
+        // variable, so the arm that bound another backing would release the wrong one.
+        let (in_t, in_f) = (mentions_of(t_val, v), mentions_of(f_val, v));
+        let collection = matches!(function.tp(v).base(), Type::Vector(_, _) | Type::Tuple(_));
+        if in_t + in_f != total || (collection && in_t > 0 && in_f > 0) {
+            return false;
+        }
+        // A local the arm hands OUT — as the arm's value (`w = if c { a = …; a } else { … }`) or
+        // through a `return` — leaves the arm, so the arm's end is not its owner's death.
+        if leaves_as_value(t_val, v)
+            || leaves_as_value(f_val, v)
+            || returned_in(t_val, v)
+            || returned_in(f_val, v)
+        {
+            return false;
+        }
+        (0..function.count()).all(|x| {
+            x == v
+                || !function.tp(x).depend().contains(&v)
+                || self
+                    .mentions
+                    .get(&x)
+                    .is_none_or(|&n| mentions_of(t_val, x) + mentions_of(f_val, x) == n)
+        })
     }
 
     /// Collect the variables an `if` branch ASSIGNS, so the caller can emit their
@@ -13202,8 +13370,7 @@ impl Scopes<'_> {
             let mut hoist: Vec<u16> = Vec::new();
             self.locals_read_after(v, &bl.operators[i + 1..], function, &mut hoist);
             for &h in &hoist {
-                self.put_scope(h);
-                self.var_order.push(h);
+                self.register_binding(h, function);
                 // The pre-init holds nothing, and every later pass of the loop reaches the
                 // local's binding holding what the pass before bound — so that binding displaces
                 // a record this frame owns.  Recorded as owned for the reason a first `Set`
@@ -19526,6 +19693,9 @@ fn drop_hook(function: &Function, v: u16, data: &Data) -> Option<Value> {
         // `Stores::clear_vector_release` carries, and why IT asks the store's SHAPE rather
         // than an offset).  A collection cascade walks `self`, so one IR releases on both.
         Type::Vector(elem, _) => data.drop_cascade_nr(data.collection_def_nr(elem)),
+        // loft#1601, @FR-G-Hold — a keyed collection whose records hold a generator releases
+        // their frames through its type's walk; its records run no hook (`(H-Drop-Not)`).
+        keyed if data.keyed_holds_generator(keyed) => data.def_nr(&data.keyed_frames_name(keyed)),
         _ => return None,
     };
     if nr == u32::MAX {

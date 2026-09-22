@@ -4850,6 +4850,16 @@ impl Parser {
         }
     }
 
+    /// Is `v_nr` an ELEMENT slot typed as the enum whose variant `td_nr` is?  The slot is a
+    /// record of the enum `OpNewRecord` carved out, and a literal of the variant writes every
+    /// field the variant has and its tag, so it is built there as a struct literal is — rather
+    /// than in a work-ref copied in, which also costs the append its push header.
+    fn variant_fills_element(&self, v_nr: u16, td_nr: u32) -> bool {
+        self.vars.is_inline_ref(v_nr)
+            && self.data.def_type(td_nr) == DefType::EnumValue
+            && matches!(self.vars.tp(v_nr).base(), Type::Enum(d, true, _) if *d == self.data.def(td_nr).parent)
+    }
+
     pub(crate) fn parse_object(&mut self, td_nr: u32, code: &mut Value) -> Type {
         // @PLN25 single-payload: a `__nullable<S>::Some` variant's body uses S's field names,
         // which live in the inline `payload` field — not `Some`'s direct fields {enum, payload}.
@@ -4945,6 +4955,7 @@ impl Parser {
             // peel lands once loft#1483 is closed, not before.
             let type_matches =
                 var_tp.is_unknown() || matches!(&var_tp, Type::Reference(d, _) if *d == td_nr);
+            let type_matches = type_matches || self.variant_fills_element(*v_nr, td_nr);
             // loft#660 — a vector-literal ELEMENT alias is never an in-place
             // allocation target.  Its storage is the slot `OpNewRecord` already
             // carved out of the container, so re-allocating it here (`OpDatabase`)

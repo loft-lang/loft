@@ -6285,7 +6285,8 @@ impl Parser {
                 DefType::Struct | DefType::EnumValue => {
                     self.data.def(d_nr).known_type() != u16::MAX
                         && (!self.cascade_fields(d_nr).is_empty()
-                            || !self.cascade_vectors(d_nr).is_empty())
+                            || !self.cascade_vectors(d_nr).is_empty()
+                            || !self.cascade_keyed(d_nr).is_empty())
                 }
                 // An ENUM releases through whichever variant it currently holds.
                 DefType::Enum => !self.cascade_variants(d_nr).is_empty(),
@@ -6303,6 +6304,28 @@ impl Parser {
             };
             if wanted {
                 targets.push(d_nr);
+            }
+        }
+        // loft#1601 — the frames walk of each KEYED collection type whose records hold a
+        // generator, declared ahead of the cascades that call it for a keyed field, and
+        // filled once every walk is declared, since a record may hold another keyed field.
+        let mut walks: Vec<(u32, Type)> = Vec::new();
+        if generators {
+            for tp in self.keyed_generator_types() {
+                let name = self.data.keyed_frames_name(&tp);
+                if self.data.def_nr(&name) != u32::MAX {
+                    continue;
+                }
+                let pos = self.lexer.pos().clone();
+                let w_nr = self.data.add_def(&name, &pos, DefType::Function);
+                self.data.set_returned(w_nr, Type::Void);
+                let _ = self
+                    .data
+                    .add_attribute(&mut self.lexer, w_nr, "self", tp.clone());
+                walks.push((w_nr, tp));
+            }
+            for (w_nr, tp) in walks {
+                self.fill_keyed_frames(w_nr, &tp);
             }
         }
         // Two phases, because a cascade body CALLS the cascade of each droppable field and
@@ -6687,6 +6710,68 @@ impl Parser {
             .then_some((elm, ed))
     }
 
+    /// loft#1601 — the KEYED collection fields of `d_nr` whose records hold a generator, as
+    /// (offset, field type): the struct's death runs each one's frames walk.
+    fn cascade_keyed(&self, d_nr: u32) -> Vec<(u16, Type)> {
+        let kt = self.data.def(d_nr).known_type();
+        let mut out = Vec::new();
+        for a_nr in 0..self.data.def(d_nr).attributes().len() {
+            let a = &self.data.def(d_nr).attributes()[a_nr];
+            if a.hidden || !self.data.keyed_holds_generator(&a.typedef) {
+                continue;
+            }
+            let name = self.data.attr_name(d_nr, a_nr);
+            let off = self.database.position(kt, &name);
+            if off != u16::MAX {
+                out.push((off, a.typedef.base().without_deps()));
+            }
+        }
+        out
+    }
+
+    /// Every keyed collection type the program holds a generator in (loft#1601) — a record's
+    /// field or a function's local — once each, in definition order.
+    fn keyed_generator_types(&self) -> Vec<Type> {
+        let mut out: Vec<Type> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut take = |data: &crate::data::Data, tp: &Type, out: &mut Vec<Type>| {
+            if data.keyed_holds_generator(tp) && seen.insert(data.keyed_frames_name(tp)) {
+                out.push(tp.base().without_deps());
+            }
+        };
+        for d_nr in 0..self.data.definitions() {
+            let def = self.data.def(d_nr);
+            for a in def.attributes() {
+                take(&self.data, &a.typedef, &mut out);
+            }
+            if matches!(def.def_type, DefType::Function) {
+                for v in 0..def.variables.count() {
+                    take(&self.data, def.variables.tp(v), &mut out);
+                }
+            }
+        }
+        out
+    }
+
+    /// The body of a keyed collection type's frames walk (loft#1601): `self` is the
+    /// collection, and each record releases the generator frames it holds.
+    fn fill_keyed_frames(&mut self, w_nr: u32, tp: &Type) {
+        let name = self.data.def(w_nr).name.clone();
+        let file = self.data.def(w_nr).position().file.clone();
+        let mut vars = Function::new(&name, &file);
+        let self_var = vars.add_variable("self", tp, &mut self.lexer);
+        vars.become_argument(self_var);
+        vars.defined(self_var);
+        let outer_vars = std::mem::replace(&mut self.vars, vars);
+        let outer_context = self.context;
+        self.context = w_nr;
+        let mut ops = Vec::new();
+        if !self.keyed_frame_release(&Value::Var(self_var), tp, &mut ops) {
+            ops.clear();
+        }
+        self.finish_drop_cascade(w_nr, ops, outer_vars, outer_context);
+    }
+
     /// A collection element a cascade walks: the type its per-element read takes and the
     /// definition whose cascade releases it.  A record or struct-enum element is its own; a
     /// generator handle (loft#1585) is read as a reference to its SLOT and released by
@@ -6813,6 +6898,16 @@ impl Parser {
             );
             let loop_code = self.drop_elements_loop(&field, n, &elem_tp, target);
             ops.push(loop_code);
+        }
+        // loft#1601 — a keyed field's records release the generator frames they hold, and
+        // only those (`(H-Drop-Not)` keeps their hooks out).
+        for (off, ktp) in self.cascade_keyed(t).into_iter().rev() {
+            let walk = self.data.def_nr(&self.data.keyed_frames_name(&ktp));
+            if walk == u32::MAX {
+                continue;
+            }
+            let field = self.get_val(&ktp, false, u32::from(off), Value::Var(self_var), u32::MAX);
+            ops.push(Value::Call(walk, vec![field]));
         }
         for (off, ftype, fd) in self.cascade_fields(t).into_iter().rev() {
             let target = self.data.drop_cascade_nr(fd);

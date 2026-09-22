@@ -4741,7 +4741,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // to a placeholder def whenever the container's content did not resolve (a vector
             // FIELD of a literal among them), and the scope pass then could not see that
             // appending a unit variant's literal (`B`, built in a work-ref and copied in) hands
-            // its release to the container: both released it.
+            // its release to the container: both released it.  A value of the enum (`dot` in
+            // `[JCircle { r: 1 }, dot]`) is stored into it as it is; a variant LITERAL is built
+            // into it (the object literal's `type_matches`).
             Type::Enum(*e, true, Deps::frame(parent_tp.depend()))
         } else if let Type::Vector(inner, _) = assign_tp {
             // #555 — a `vector<T>` element keeps its SPECIFIC type.  `was` routes through

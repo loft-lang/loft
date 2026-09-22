@@ -1265,6 +1265,16 @@ pub fn adopt_first_bind_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_ADOPT_FIRST_BIND"))
 }
 
+/// loft#1600 (`@FR-H-Drop`, scope-end clause): a heap local every mention of which lies in
+/// ONE arm of an `if` is declared in that arm and released at its end, rather than
+/// pre-initialised at the `if`'s scope and released at that scope's end.
+/// `LOFT_NO_ARM_SCOPE=1` restores the pre-init, and is the first bisect step for a wrong
+/// release order, a leak or a use-after-free around a local first bound inside an `if` arm.
+pub fn arm_scope_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_ARM_SCOPE"))
+}
+
 /// @PLN164 B1b (`@FR-O-Buffer`, `@FR-R-Reuse`): the buffer of a call whose result a local
 /// adopts at its first bind is POOLED — minted once per activation and handed to every call,
 /// so a callee that promotes a local onto its buffer fills the caller's store instead of
