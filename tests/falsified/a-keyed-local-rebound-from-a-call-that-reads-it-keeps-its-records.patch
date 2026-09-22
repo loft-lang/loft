@@ -1,0 +1,63 @@
+diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
+index a20715446..555df82e1 100644
+--- b/src/codegen_runtime.rs
++++ a/src/codegen_runtime.rs
+@@ -1064,11 +1064,6 @@ pub fn OpReplaceKeyed(cell: &std::cell::UnsafeCell<Stores>, src: DbRef, dest: Db
+         stores.mark_collection_absent(&dest);
+         return;
+     }
+-    // `@FR-B-Copy` — a source that IS the destination is already the value; the twin of
+-    // the guard in `State::replace_keyed`, which carries the reasoning.
+-    if src == dest {
+-        return;
+-    }
+     stores.remove_claims(&dest, tp);
+     stores.copy_claims(&src, &dest, tp);
+     // @P317 — LOFT_LOG=copy_check (native): warn on nested-length divergence.
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index b92c54aae..3a130b1f1 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -5656,23 +5656,7 @@ use a separate collection or add after the loop"
+             // caller's collection; do not free, and the minting arm leaks one store per
+             // call.  `protectable_ref_args` is the same derivation the source-free gate
+             // above consults for coverage, so the marks and the licence cannot drift.
+-            //
+-            // ⚠ The elision that paragraph relies on does not happen for a KEYED local:
+-            // `scan_set` keeps a keyed `Set(v, Null)` on reassignment on purpose, because
+-            // `s = []` lowers to exactly that and is a genuine clear (@P302).  So the prepend
+-            // reached codegen as a clear that ran BEFORE the right-hand side — and a right-hand
+-            // side that reads the local (`a = add(a, x)`) was handed an empty collection:
+-            // `a` read back empty after one call and held only the last element after a loop,
+-            // on every keyed kind and both backends, where the vector twin was right
+-            // (`@FR-B-Copy`: the bind copies the VALUE the right-hand side computed).  A first
+-            // assignment cannot read its own local, so a right-hand side that does is a
+-            // reassignment, and there the prepend is dropped: `OpReplaceKeyed` clears as part
+-            // of its copy, after the right-hand side ran.
+-            let mut seq = if code.reads_var(var_nr) {
+-                Vec::new()
+-            } else {
+-                vec![Value::Set(var_nr, Box::new(Value::Null))]
+-            };
++            let mut seq = vec![Value::Set(var_nr, Box::new(Value::Null))];
+             // A JOIN's witnesses are its ARMS' — `protectable_ref_args` reads a call's
+             // arguments and a join has none of its own (loft#1154).
+             let guarded: Vec<u16> = if tp_val & 0x8000 == 0 {
+diff --git b/src/state/io.rs a/src/state/io.rs
+index 1a65fcd06..d9c3b93c1 100644
+--- b/src/state/io.rs
++++ a/src/state/io.rs
+@@ -1965,13 +1965,6 @@ impl State {
+             self.database.mark_collection_absent(&dest);
+             return;
+         }
+-        // `@FR-B-Copy` — a source that IS the destination (`a = add(a, x)`, where `add` writes
+-        // its parameter and hands it back) is already the value the bind copies.  Clearing
+-        // the destination first emptied the source with it: every keyed kind read back empty
+-        // while the vector twin kept its elements, on both backends.
+-        if src == dest {
+-            return;
+-        }
+         self.database.remove_claims(&dest, tp);
+         self.database.copy_claims(&src, &dest, tp);
+         if self.database.copy_check_enabled() {

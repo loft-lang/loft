@@ -1198,6 +1198,11 @@ pub fn OpReplaceKeyed(cell: &std::cell::UnsafeCell<Stores>, src: DbRef, dest: Db
         stores.mark_collection_absent(&dest);
         return;
     }
+    // `@FR-B-Copy` — a source that IS the destination is already the value; the twin of
+    // the guard in `State::replace_keyed`, which carries the reasoning.
+    if src == dest {
+        return;
+    }
     stores.remove_claims(&dest, tp);
     stores.copy_claims(&src, &dest, tp);
     // @P317 — LOFT_LOG=copy_check (native): warn on nested-length divergence.

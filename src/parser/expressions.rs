@@ -5685,7 +5685,23 @@ use a separate collection or add after the loop"
             // caller's collection; do not free, and the minting arm leaks one store per
             // call.  `protectable_ref_args` is the same derivation the source-free gate
             // above consults for coverage, so the marks and the licence cannot drift.
-            let mut seq = vec![Value::Set(var_nr, Box::new(Value::Null))];
+            //
+            // ⚠ The elision that paragraph relies on does not happen for a KEYED local:
+            // `scan_set` keeps a keyed `Set(v, Null)` on reassignment on purpose, because
+            // `s = []` lowers to exactly that and is a genuine clear (@P302).  So the prepend
+            // reached codegen as a clear that ran BEFORE the right-hand side — and a right-hand
+            // side that reads the local (`a = add(a, x)`) was handed an empty collection:
+            // `a` read back empty after one call and held only the last element after a loop,
+            // on every keyed kind and both backends, where the vector twin was right
+            // (`@FR-B-Copy`: the bind copies the VALUE the right-hand side computed).  A first
+            // assignment cannot read its own local, so a right-hand side that does is a
+            // reassignment, and there the prepend is dropped: `OpReplaceKeyed` clears as part
+            // of its copy, after the right-hand side ran.
+            let mut seq = if code.reads_var(var_nr) {
+                Vec::new()
+            } else {
+                vec![Value::Set(var_nr, Box::new(Value::Null))]
+            };
             // A JOIN's witnesses are its ARMS' — `protectable_ref_args` reads a call's
             // arguments and a join has none of its own (loft#1154).
             let guarded: Vec<u16> = if tp_val & 0x8000 == 0 {

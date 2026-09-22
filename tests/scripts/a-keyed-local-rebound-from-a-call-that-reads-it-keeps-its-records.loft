@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-B-Copy — `a = add(a, x)` binds the value the right-hand side computed, for a keyed
+// collection exactly as for a vector.  The keyed rebind lowered to a clear of `a` FOLLOWED by
+// the call, so the call was handed an empty `a`: one step read back empty, a loop kept only
+// its last element, and a fold that built a fresh collection from `a` (`merge`) lost
+// everything before it.  Every keyed kind, both backends; the vector spelling was right.
+//
+// Two halves.  The clear was the first-assignment init the parser prepends to every keyed
+// rebind, which the scope pass keeps on purpose because `s = []` is a genuine clear; it is
+// now dropped where the right-hand side reads the local, which a first assignment cannot.
+// And the replace itself cleared its destination before copying, so a call handing back the
+// local it was given (`add` writes its parameter and returns it) copied from a collection it
+// had just emptied; a source that IS the destination now copies nothing.
+//
+// Controls: a right-hand side that reads the local and returns ANOTHER collection (`other`),
+// a first assignment (`f`, `g`), and the vector twin.  Found measuring @PLN165 E7 (a
+// hand-written fold beside `reduce` answered 0 where `reduce` answered 3).
+//
+// @falsified-at: b5d82d7a6 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the first assertion on both backends ("0 0 1 0 0" on the control).
+//   ARMED: nothing.
+//   HALVES: with only the replace's self-guard the loops still ended at 1 (the clear ran
+//     first); with only the dropped prepend `add` hands back the local and the replace's own
+//     clear empties it.
+//   HOLDS: every control — `other`, the first assignments, the vector twin.
+
+struct Rec { id: integer, v: integer }
+struct Box { h: hash<Rec[id]> }
+
+fn addh(acc: hash<Rec[id]>, x: integer) -> hash<Rec[id]> { acc += [Rec { id: x, v: x * 10 }]; acc }
+fn adds(acc: sorted<Rec[id]>, x: integer) -> sorted<Rec[id]> { acc += [Rec { id: x, v: x * 10 }]; acc }
+fn addi(acc: index<Rec[id]>, x: integer) -> index<Rec[id]> { acc += [Rec { id: x, v: x * 10 }]; acc }
+fn addv(acc: vector<integer>, x: integer) -> vector<integer> { acc += [x]; acc }
+fn merge(a: hash<Rec[id]>, x: integer) -> hash<Rec[id]> {
+  r: hash<Rec[id]> = [];
+  for e in a { r += [Rec { id: e.id, v: e.v }]; }
+  r += [Rec { id: x, v: x * 10 }];
+  r
+}
+fn other(a: hash<Rec[id]>, b: hash<Rec[id]>) -> hash<Rec[id]> { if len(a) > 5 { a } else { b } }
+
+fn main() {
+  i: index<Rec[id]> = [];
+  i = addi(i, 5);
+  i = addi(i, 6);
+  s: sorted<Rec[id]> = [];
+  for x in [3, 1, 2] { s = adds(s, x); }
+  m: hash<Rec[id]> = [];
+  for x in [3, 1, 2] { m = merge(m, x); }
+  j: hash<Rec[id]> = [];
+  for x in [3, 1, 2] { j = if x > 1 { addh(j, x) } else { j }; }
+  bx = Box { h: [] };
+  for x in [4, 5] { bx.h = addh(bx.h, x); }
+  assert("{len(i)} {i[6].v} {len(s)} {s[2].v} {len(m)} {m[1].v} {len(j)} {len(bx.h)} {bx.h[5].v}"
+    == "2 60 3 20 3 10 2 2 50", "{len(i)} {len(s)} {len(m)} {len(j)} {len(bx.h)}");
+  // Controls.
+  o: hash<Rec[id]> = [Rec { id: 9, v: 90 }];
+  q: hash<Rec[id]> = [Rec { id: 7, v: 70 }, Rec { id: 8, v: 80 }];
+  o = other(o, q);
+  e: hash<Rec[id]> = [];
+  f = addh(e, 6);
+  g: hash<Rec[id]> = [];
+  g = addh(e, 7);
+  d: vector<integer> = [];
+  for x in [3, 1, 2] { d = addv(d, x); }
+  assert("{len(o)} {o[8].v} {len(q)} {len(f)} {len(g)} {len(e)} {d}" == "2 80 2 1 2 2 [3,1,2]",
+    "{len(o)} {len(q)} {len(f)} {len(g)} {len(e)} {d}");
+}
