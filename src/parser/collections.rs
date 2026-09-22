@@ -6623,7 +6623,7 @@ use #count instead"
             "OpInsertVector",
             &[list[0].clone(), elm_size, index, db_tp.clone()],
         );
-        let set_val = if let Type::Vector(inner, _) = &elm_tp {
+        let set_val = if let Type::Vector(inner, _) = elm_tp.base() {
             // A vector element is a vector FIELD at offset 0 of the fresh slot, and a vector
             // value is copied into it element by element — the lowering `vv[i] = w` has, with
             // nothing to clear.  `set_element` wrote the source's handle as an integer: an
@@ -6684,7 +6684,13 @@ use #count instead"
         };
         let elem = match elm_tp.base() {
             // A value: a scalar, a `text`, a tuple.
-            tp if crate::data::is_scalar(tp) || matches!(tp, Type::Text(_) | Type::Tuple(_)) => {
+            Type::Text(_) | Type::Tuple(_) => {
+                let t = self.create_unique("ins_val", elm_tp);
+                self.vars.defined(t);
+                steps.push(v_set(t, elem));
+                Value::Var(t)
+            }
+            scalar if crate::data::is_scalar(scalar) => {
                 let t = self.create_unique("ins_val", elm_tp);
                 self.vars.defined(t);
                 steps.push(v_set(t, elem));

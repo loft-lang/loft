@@ -2769,12 +2769,16 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **329** |
+| **328** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-22, @PLN165 E3 on `tuxedo-165-generics`: **886 · 553 · 5 · 328**, re-pinned at opaque
+328 — `element_store_size` peels its element to ask for a nested vector's stride, which moved
+it to the seeing side, and `insert`'s argument staging reads through the wrapper.)
 
 (2026-09-22, @PLN165 D11 on `tuxedo-165-generics`: **885 · 551 · 5 · 329**, re-pinned at opaque
 329, opaque tests 1313 — the generic vector-element write peels its binding (a `τ?` element is

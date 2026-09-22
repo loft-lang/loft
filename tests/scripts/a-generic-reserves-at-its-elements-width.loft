@@ -68,14 +68,14 @@ fn main() {
   mb_f = store_mb("main_vector<float>");              // 8 bytes
   n = [[1]];
   room(n, 4000);
-  mb_n = store_mb("main_vector<vector<integer>>");    // 8 bytes
+  mb_n = store_mb("main_vector<vector<integer>>");    // 4 bytes, the inner vector's handle
   p = [Pt { x: 1, y: 2 }];
   room_m(p, 4000);
   mb_p = store_mb("main_vector<Pt>");                 // 16 bytes
   assert(mb_b > 0.0 && mb_b < 0.01 && mb_d > 0.0 && mb_d < 0.01, "u8: {mb_b} Dir: {mb_d}");
   assert(mb_t > 0.01 && mb_t < 0.02, "text: {mb_t}");
   assert(mb_a > 0.025 && mb_a < 0.04 && mb_f > 0.025 && mb_f < 0.04, "integer: {mb_a} float: {mb_f}");
-  assert(mb_n > 0.025 && mb_n < 0.04, "nested: {mb_n}");
+  assert(mb_n > 0.01 && mb_n < 0.02, "nested: {mb_n}");
   assert(mb_p > 0.055 && mb_p < 0.065, "Pt: {mb_p}");
   assert("{b}|{len(d)}|{t}|{a}|{f}|{n}|{len(p)}" == "[1]|1|[\"x\"]|[1]|[1.5]|[[1]]|1", "{b} {t} {a} {f} {n}");
 
