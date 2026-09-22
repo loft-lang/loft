@@ -56,8 +56,9 @@ each as the record-shapes levers were built — a clause of an existing rule, a 
 (`tests/scripts/158-*.loft`), emission pins (`tests/*.rs`), a sabotage whose result is
 written into the cell file as MEASURED.
 
-**3. Not work** (priced negative or a design question; do not re-derive): a guarded plain
-`sum` is slower; `split`'s collected pieces are a text-representation question; `keyed`'s
+**3. Not work** (priced negative or a design question; do not re-derive): ~~a guarded plain
+`sum` is slower~~ — RE-PRICED 2026-09-22 at −69 % (`vector-build.md` § `sum` re-priced; the
+first price was a separate checked pass on the wrong function); `split`'s collected pieces are a text-representation question; `keyed`'s
 remainder is structural; `mesh_aabb`'s rest is the null-aware float compare.
 
 ## What this arc learned, that the next one should start from

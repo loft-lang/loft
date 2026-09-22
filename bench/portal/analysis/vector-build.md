@@ -250,11 +250,46 @@ living in lambda bodies, may not be constructible; do not chase it.
 
 ## Priced negative, or not a clear case
 
-- **`sum` (6.62×) — NEGATIVE.**  Its loop is already a plain counter and a base read; what
-  is left is the null-aware checked add, which cannot vectorise.  The admissible route — one
-  pass for the element bound (`vector::abs_bound_i64`), then plain adds — measured
-  **13.4 → 21.2 µs, slower**: for a single reduction the bound pass IS the cost.  The gap is
-  the language's semantics (an overflow's null propagates, C85) against a twin that wraps.
+- **`sum` (6.45×) — WAS priced negative; RE-PRICED 2026-09-22 at −69 %, see below.**  The
+  original price (13.4 → 21.2 µs, slower) had three faults: the bound was a SEPARATE pass; it
+  was a CHECKED pass (`abs_bound_i64`: a null test and a checked abs per element, no more
+  vectorisable than the sum); and the function edited was `t_7integer_sum`, while the row
+  runs the callee twin `t_7integer_sum__inv` — as the re-price's own first two attempts did
+  again, measuring nothing.  "The gap is the language's semantics" was the wrong conclusion
+  drawn from a wrong measurement.
+
+### `sum` re-priced: the bound in the SAME pass, per block, in SSE2 ops (2026-09-22)
+
+The correct problem is not which overflow semantics `sum` has — the i128 form that raised
+that question is rejected on principle (slower on many targets) and unnecessary.  It is that
+the per-element checked add cannot vectorise, and the codebase already has the answer for
+that: `(R-BoundedNest)` proves from a MAGNITUDE BOUND that the checked answer equals the
+plain one, then runs plain.  Applied per block of 1024 with the bound taken from the data:
+if every element of the block lies in `[−2^40, 2^40)` and the running total is more than
+`1024·2^40` from the i64 edge, no prefix inside the block can overflow, so the plain block
+sum IS the checked answer on every input — the silly ones included; a block that fails the
+test runs today's checked loop from where it stands.  C120 holds: no value changes after a
+fault, because the plain path runs only where no fault can occur.  Nothing for the owner to
+decide.
+
+Two things decide whether it vectorises, and the first attempt got both wrong: rustc's
+baseline x86-64 is SSE2, which has a packed 64-bit ADD (`paddq`) but no packed 64-bit signed
+COMPARE, so `x >= -B && x <= B` keeps the loop scalar (11.9 → 12.0 µs, no gain).  The bound
+has to be spelled in add / shift / or: an element is in range iff
+`(x.wrapping_add(B) as u64) >> 41 == 0`, OR-accumulated across the block — a null element
+(`MIN`) fails it too and takes the checked loop.  Priced on the twin, `sum` row, three runs,
+hash `3b99b7c6` throughout: **11.9 → 3.7 µs (−69 %), 6.45× → ~2.05× of Rust.**  The remaining
+2× is the op count: add + shift + or + add per element against the twin's add.
+
+Where it belongs: a clause of `(R-BoundedNest)` for a one-term REDUCTION over a held
+header and base (`acc = acc + v[i]`, the stdlib `sum`'s shape) with a run-time per-block bound
+instead of a static one.  `min_of` / `max_of` need no proof (a compare cannot overflow);
+`product` is multiplicative and is not this; a dot product (`acc += a[i] * b[i]`) is the same
+clause with a tighter element bound (`2^20`) and is the next candidate once `sum` is built.
+Cells owed: the `a`/`b` prefix-overflow pair (`[MAX, 1, −1]` → null on both backends today,
+and must stay null), a null element mid-vector, elements at `±2^40` exactly, a running total
+near the edge, an empty vector, and a vector shorter than one block.
+
 - **`split` (12.27×)** collects `vector<text>`: one owned text per piece against the twin's
   `Vec<&str>`, which allocates nothing.  A representation question (text slices as views),
   one row, and the walked form is already `(R-LazySplit)`'s — a design item, not a lever.
