@@ -1,0 +1,71 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 368fb9208..0e33362d1 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -16134,32 +16134,6 @@ impl Parser {
+         body.iter().any(|s| walk(s, &borrowers))
+     }
+ 
+-    /// The user PARAMETERS a returned value borrows, or `None` where it borrows none.
+-    ///
+-    /// `(O-Move)`'s record clause is about a parameter and only a parameter — *"if the return
+-    /// borrows a parameter, the return type records it (`{Attr(param)}`), and the caller
+-    /// COPIES to obtain its own store"*.  A dep naming a LOCAL is the other half of the same
+-    /// rule, the one that says the value must be DELIVERED into the buffer, and the two want
+-    /// opposite things: recording a borrow tells the caller not to free, and a local's store
+-    /// is exactly what the caller must be handed.  Reading the list without this split leaked
+-    /// the delivered store in every shape `nullable_ret_buffer` measures.
+-    ///
+-    /// Compiler names are out by construction: a hidden buffer (`__ref_N`, `__retbuf`) is an
+-    /// argument too, and those are the list the caller of this already filtered into its own
+-    /// branch.
+-    fn borrowed_param_deps(&self, ls: &[u16]) -> Option<Vec<u16>> {
+-        let params: Vec<u16> = ls
+-            .iter()
+-            .copied()
+-            .filter(|&w| {
+-                w < self.vars.count()
+-                    && self.vars.is_argument(w)
+-                    && !self.vars.name(w).starts_with("__")
+-            })
+-            .collect();
+-        (params.len() == ls.len() && !params.is_empty()).then_some(params)
+-    }
+-
+     pub(crate) fn ref_return(&mut self, ls: &[u16], body: &mut [Value], site: RetSite) {
+         // loft#938 — an ENTRY line, not just a verdict line.  `LOFT_TRACE_RETPROMO`
+         // documented "no line for a function means a gate UPSTREAM of the classifier",
+@@ -16984,33 +16958,6 @@ impl Parser {
+                             std::slice::from_mut(&mut v),
+                             RetSite::MidReturn,
+                         );
+-                    } else if let Some(param_deps) = self.borrowed_param_deps(&ls_own) {
+-                        // loft#1625 — the VECTOR twin of the keyed arm above, which is
+-                        // loft#1140's defect one container kind over, which is loft#677's a
+-                        // second time.  The filter above keeps only a call's work-ref, so a
+-                        // return that BORROWS a parameter (`return v[i]`) named no site ref
+-                        // and `ref_return` was never entered at all — `LOFT_TRACE_RETPROMO`
+-                        // printed no ENTER line for it, exactly as loft#1140's comment
+-                        // describes.  So `(O-Move)`'s *"if the return borrows a parameter,
+-                        // the return type records it (`{Attr(param)}`)"* went unwritten,
+-                        // `(O-Opaque)` read the empty list as *"the callee minted this"* —
+-                        // the one reading that licenses a free — and the caller released an
+-                        // element of its OWN container.  The bare-tail spelling of the same
+-                        // body records the borrow and is correct, so one callee had two
+-                        // signatures.
+-                        //
+-                        // No placement is decided here and none can be: every var in this
+-                        // list is already an ATTRIBUTE, and the classifier answers such a
+-                        // var `MergeAttr` before any placement rung — *"an attribute has
+-                        // nothing left to place, so the only thing left to say about it is
+-                        // which attr the return borrows"*.  `vector_bound` therefore stays
+-                        // false and the delivery below is unmoved; what changes is the
+-                        // signature this spelling publishes.
+-                        self.ref_return(
+-                            &param_deps,
+-                            std::slice::from_mut(&mut v),
+-                            RetSite::MidReturn,
+-                        );
+                     }
+                 }
+             }

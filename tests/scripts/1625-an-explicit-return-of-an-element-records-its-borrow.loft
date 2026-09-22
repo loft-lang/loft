@@ -45,6 +45,8 @@
 // summed elements would report a wrong number where a container had been emptied.
 //
 // @falsified-at: 2faa68efe — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1625-an-explicit-return-of-an-element-records-its-borrow.patch —
+//   the same channels.
 // CHANNEL: assertion failures, both backends — and they disagree on the WRONG value (the
 //   interpreter answers null, native a recycled number), so it is an `(O-NoDiverge)` divergence
 //   from that direction too.
