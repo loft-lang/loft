@@ -885,6 +885,19 @@ impl Parser {
     /// stdlib's `DefType::Type` at source 0) are NEVER shadowable (shadowing them
     /// would re-point the language's own types).  Every other prelude/import kind
     /// (const, struct, enum, library typedef) is shadowable.
+    /// Is `d_nr` a type-variable placeholder some OTHER file declared?
+    ///
+    /// Then a declaration here shadows it, exactly as it shadows a stdlib `<T>` reached
+    /// through the prelude.  Asked by FILE rather than by source id, because a REPL input, a
+    /// `<host>` string and the test harness parse at the stdlib's own source id and would
+    /// otherwise read a stdlib type variable as their own same-source clash — which the
+    /// dedicated diagnostic exists to report and they have not made.
+    fn placeholder_from_another_file(&self, d_nr: u32) -> bool {
+        d_nr != u32::MAX
+            && self.data.is_type_var_placeholder(d_nr)
+            && self.data.def(d_nr).position.file != self.lexer.pos().file
+    }
+
     fn prelude_shadowed(&self, name: &str) -> bool {
         let cur = self.data.source;
         // the stdlib itself (source 0) never shadows; and a name already in THIS
@@ -4441,7 +4454,23 @@ impl Parser {
         // shadows it just like the enum path does, so `T` is a usable type name.
         // (A SAME-SOURCE clash — the user's own `struct T` plus their own `fn foo<T>`
         // — keeps `prelude_shadowed` false, so it still hits the "reserved" arm below.)
+        // … and the same shadow where the parse SHARES the stdlib's source id: a REPL input,
+        // a `<host>` string and the test harness all parse at source 0 on purpose (`parse_str`:
+        // "the source stays the stdlib's"), so `prelude_shadowed` — which asks the source id —
+        // answers no for every one of them and the same-source arm below fired on a stdlib
+        // type variable.  `map<T, U>` and `reduce<T, U>` (@PLN165 E5–E7) made `U` such a
+        // variable, and seven `struct U` tests stopped compiling with *"'U' is reserved as a
+        // generic type variable"* — a name the SAME program compiles as a file.  The
+        // definition's FILE is what says whose declaration it is, which is what
+        // `Definition::position` is for ("only allow redefinitions within the same file").
         if self.prelude_shadowed(&id) {
+            d_nr = u32::MAX;
+        } else if self.placeholder_from_another_file(d_nr) {
+            // The same shadow where the parse SHARES the stdlib's source id.  There the two
+            // compete for ONE `(name, source)` key, so the placeholder gives its name up
+            // rather than a second definition being added beside it.
+            let source = self.data.source;
+            self.data.release_def_name(&id, source);
             d_nr = u32::MAX;
         }
         if d_nr == u32::MAX {
@@ -4449,10 +4478,12 @@ impl Parser {
             self.data.definitions[d_nr as usize].returned =
                 Type::Reference(d_nr, crate::data::Deps::none());
         } else if self.first_pass {
-            // fix-tvscope: a SAME-SOURCE type-var placeholder (the user's own
-            // `fn foo<T>` before their `struct T`) blocks the struct — a genuine
-            // clash worth the dedicated diagnostic rather than the confusing
-            // "Redefined struct".  (A cross-source stdlib `<T>` was shadowed above.)
+            // fix-tvscope: a SAME-FILE type-var placeholder blocks the struct — a genuine
+            // clash worth the dedicated diagnostic rather than the confusing "Redefined
+            // struct".  (A stdlib `<T>` is shadowed above, by source where the reader has one
+            // of their own and by FILE where the parse shares the stdlib's source id.)  A
+            // header's own variables are scoped to it and are not keyed here, so what reaches
+            // this arm is a placeholder keyed in the reader's own file.
             if self.data.is_type_var_placeholder(d_nr) {
                 diagnostic!(
                     self.lexer,

@@ -10167,6 +10167,22 @@ impl Data {
         pairs
     }
 
+    /// Give up the flat NAME of a type-variable placeholder, so a declaration in another
+    /// file may take it (`Parser::placeholder_from_another_file`).
+    ///
+    /// The definition stays — every template that declared it holds it by NUMBER, and its
+    /// instances were bound to that number — only the `(name, source)` key it occupied is
+    /// released.  It exists because a REPL input, a `<host>` string and the test harness
+    /// parse at the stdlib's own source id on purpose, so a stdlib type variable and the
+    /// reader's own struct compete for one key there where a FILE gives them two.
+    ///
+    /// ⚠ `rebuild_indices` reconstructs `def_names` from the definitions, so a rollback
+    /// after this restores the placeholder's key; the declaration that took it is rolled
+    /// back with it, which is the state they were both in before.
+    pub(crate) fn release_def_name(&mut self, name: &str, source: u16) {
+        let _ = self.def_names.remove(&(name.to_string(), source));
+    }
+
     /// A generic type-variable placeholder: the attribute-less, self-referential
     /// `Struct` the parser registers for a `<T>` type parameter (e.g. stdlib
     /// `min_of<T>`) so the template body's types resolve.  It has store size 0 and

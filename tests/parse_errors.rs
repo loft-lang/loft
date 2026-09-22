@@ -2078,13 +2078,14 @@ fn a_bounded_generic_does_not_lend_its_bound_to_an_unbounded_sibling() {
 
 // ── fix-tvscope — Type variable namespace ────────────────────────────────────
 
-/// fix-tvscope: defining a struct whose name clashes with a generic type variable
-/// produces a clear diagnostic instead of the confusing "Redefined struct T".
-#[test]
-fn struct_name_clashes_with_type_variable() {
-    code!("struct T { v: integer }\nfn test() {}")
-        .error("'T' is reserved as a generic type variable \u{2014} choose a different struct name at struct_name_clashes_with_type_variable:1:11");
-}
+// fix-tvscope's `struct T` pin is GONE, and its subject moved to
+// `issues::a_struct_named_like_a_stdlib_type_variable_compiles`.  It asserted that a struct
+// named after a stdlib type variable is refused — which a FILE never did (the reader's source
+// and the stdlib's are two namespaces) and only this harness, the REPL and a `<host>` string
+// saw, because all three parse at the stdlib's own source id on purpose.  @PLN165 E5–E7 made
+// `U` such a variable too and the asymmetry stopped being invisible: seven `struct U` tests
+// broke.  The placeholder now gives its flat name up to a declaration from another file, so
+// every path agrees, and the diagnostic is left for a same-FILE clash.
 
 // ── Fix #91 — Circular init detection ────────────────────────────────────────
 
