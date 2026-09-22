@@ -1,0 +1,7 @@
+// @CONTROL
+// @EXPECT: 4
+struct Box<T> { v: T, n: integer assert(n > 0, "n must be positive") }
+fn main() {
+  a: Box<text> = Box { v: "a", n: 3 };
+  println("{a.n}");
+}

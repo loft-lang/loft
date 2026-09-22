@@ -698,9 +698,16 @@ arguments.
   [open-instances/](probes/open-instances/) e01–e10 green on both backends under
   `LOFT_STRICT_STORES` + `LOFT_POISON`, and on native under `LOFT_STRICT_SCHEMA_IDS`.
   Corpus against D4: IDENTICAL but for the new guard.
-  Found on the way (next): a field `assert(…)` on a generic struct is refused *"Unknown
-  variable 'n'"* where the twin's check holds, and `instance_def` copies the template's
-  check code into each instance.
+  Found on the way, and fixed after it (a D2 gap): a field `assert(…)` on a generic struct
+  was refused *"Unknown variable 'n'"* where the twin's check holds, and a `$`-reading
+  default with it.  In a template's own declaration a field name now reads through a
+  deferred `TV_FIELD` naming the template (its offsets depend on the arguments), and every
+  place the code is replayed — a literal, a field write, `object_init`'s default, a
+  literal a generic builds — binds it to the instance (`bind_instance_code`), reading the
+  TEMPLATE's check (`field_check`: the copy an instance took on pass 1 predates the
+  template's pass-2 parse, which is when a check is stored).  A literal a generic builds
+  reports its failed check at the literal, as the twin does.  Cells
+  [field-checks/](probes/field-checks/) k01–k06 green on both backends.
 
 ### D6 — a method on a generic struct  ·  S
 

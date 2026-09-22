@@ -6731,6 +6731,9 @@ pub(crate) fn default_replayable_in_place(value: &crate::data::Value, site: Defa
         }
     );
     match value.unspan() {
+        // A generic struct's field read, deferred to each instance (@PLN165,
+        // `Parser::TV_FIELD`): a pure read of its receiver, as the call it becomes.
+        Value::Block(b) if b.name == crate::parser::Parser::TV_FIELD => every(&b.operators),
         // The block `object_init` re-homes by hand — `EnumUnitLit` goes to a fresh
         // work-ref, so it never writes through the record at all.
         Value::Block(b) => {

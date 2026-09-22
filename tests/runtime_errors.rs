@@ -943,3 +943,46 @@ fn i1058_after_a_contained_overflow_the_call_stack_is_balanced() {
         "the unwound driver fault must leave the call stack at its pre-lookup depth; got stdout: {out}"
     );
 }
+
+/// @PLN165 — a field `assert(…)` of a GENERIC struct holds on each instance exactly where its
+/// hand-written twin's does: a literal the program writes (its instance inferred), a write
+/// through the field, and a literal a generic function builds — and the report points at
+/// the literal, as the twin's does, not at the call that instantiated the generic.
+#[test]
+fn a_generic_structs_field_check_fails_where_its_twins_does() {
+    let decl = "struct Box<T> { v: T, n: integer assert(n > 0, \"n must be positive\") }\n\
+                fn mk<T>(x: T, k: integer) -> Box<T> { Box { v: x, n: k } }\n";
+    let cases = [
+        (
+            "rt_generic_check_literal",
+            "fn main() {\n  d = Box { v: \"q\", n: -1 };\n  println(\"after {d.n}\");\n}\n",
+            ":4:",
+        ),
+        (
+            "rt_generic_check_write",
+            "fn main() {\n  a = Box { v: \"a\", n: 3 };\n  a.n = -2;\n  println(\"after {a.n}\");\n}\n",
+            ":5:",
+        ),
+        (
+            "rt_generic_check_in_generic",
+            "fn main() {\n  b = mk(\"r\", -3);\n  println(\"after {b.n}\");\n}\n",
+            ":2:",
+        ),
+    ];
+    for (name, body, line) in cases {
+        let (stdout, stderr, code) = run_loft_snippet(name, &format!("{decl}{body}"));
+        assert_eq!(
+            code,
+            Some(1),
+            "{name}: the check must stop the program; stdout={stdout:?} stderr={stderr:?}"
+        );
+        assert!(
+            stderr.contains("assertion failed: n must be positive") && !stdout.contains("after"),
+            "{name}: the field check did not fire; stdout={stdout:?} stderr={stderr:?}"
+        );
+        assert!(
+            stderr.contains(line),
+            "{name}: the report must point at line {line}; got {stderr:?}"
+        );
+    }
+}

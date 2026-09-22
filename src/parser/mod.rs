@@ -7542,7 +7542,8 @@ impl Parser {
     /// receiver, TV_SELECT_ARG(value)]`, lowered through `towards_set` per instance.
     pub(crate) const TV_FIELD_SET: &'static str = "tvfieldset";
     /// A LITERAL of an open instance (`Box { v: x }` in a `-> Box<T>` template):
-    /// `[Int(open instance), TV_OBJECT_FIELD…]`, built per instance into a fresh record.
+    /// `[Int(open instance), Text(file), Int(line), TV_OBJECT_FIELD…]`, built per instance
+    /// into a fresh record; the position is the literal's, which its field checks report.
     pub(crate) const TV_OBJECT: &'static str = "tvobject";
     /// One field of a [`Parser::TV_OBJECT`]: `[Text(field), value]`, its `result` the
     /// value's static type.
@@ -10646,8 +10647,15 @@ impl Parser {
             return Value::Null;
         };
         let d = self.bound_instance(*open as u32);
+        let (file, line) = match (
+            bl.operators.get(1).map(Value::unspan),
+            bl.operators.get(2).map(Value::unspan),
+        ) {
+            (Some(Value::Text(f)), Some(Value::Int(l))) => (f.clone(), *l),
+            _ => (self.lexer.pos().file.clone(), self.lexer.pos().line as i32),
+        };
         let mut given: Vec<(String, Value, Type)> = Vec::new();
-        for op in &bl.operators[1..] {
+        for op in &bl.operators[3..] {
             if let Value::Block(f) = op.unspan()
                 && f.name == Self::TV_OBJECT_FIELD
                 && let [name, value] = &f.operators[..]
@@ -10660,7 +10668,7 @@ impl Parser {
         let tp = Type::Reference(d, crate::data::Deps::none());
         if self.data.is_open_instance(d) {
             // A template instantiated at another's variable: still open, still deferred.
-            let mut out = vec![Value::Int(d as i32)];
+            let mut out = vec![Value::Int(d as i32), Value::Text(file), Value::Int(line)];
             for (name, value, t) in given {
                 out.push(v_block(
                     vec![Value::Text(name), value],
@@ -10707,6 +10715,27 @@ impl Parser {
             &std::collections::HashSet::new(),
         );
         list.append(&mut fills);
+        // The field checks a literal of the twin runs once it is built (`parse_object`).
+        let assert_dnr = self.data.def_nr("n_assert");
+        for a_nr in 0..self.data.def(d).attributes().len() {
+            let check = self.field_check(d, a_nr);
+            if check == Value::Null {
+                continue;
+            }
+            let bound = Self::replace_record_ref(check, &code);
+            let msg = match self.field_check_message(d, a_nr) {
+                Value::Text(s) => Value::Text(s),
+                _ => Value::Text(format!(
+                    "field constraint failed on {}.{}",
+                    self.data.def(d).name(),
+                    self.data.attr_name(d, a_nr)
+                )),
+            };
+            list.push(Value::Call(
+                assert_dnr,
+                vec![bound, msg, Value::Text(file.clone()), Value::Int(line)],
+            ));
+        }
         list.push(Value::Var(w));
         // The type `parse_object` gives a fresh record: it names the work-ref it is built in,
         // which the return delivery re-points at the caller's buffer.
@@ -11684,8 +11713,13 @@ impl Parser {
 
     fn get_field(&mut self, d_nr: u32, f_nr: usize, code: Value) -> Value {
         // @PLN165 D5 — a field of an OPEN instance has no position until a monomorph names
-        // the instance; the read is deferred to it.
-        if f_nr != usize::MAX && self.data.is_open_instance(d_nr) {
+        // the instance; the read is deferred to it.  So is one a generic struct's OWN
+        // declaration reads (a field `assert`, a default over `$`), bound to each instance
+        // where that code is replayed (`bind_instance_code`).
+        if f_nr != usize::MAX
+            && (self.data.is_open_instance(d_nr)
+                || self.data.def_type(d_nr) == DefType::TypeTemplate)
+        {
             let tp = self.data.attr_type(d_nr, f_nr);
             self.expr_not_null = !self.data.attr_nullable(d_nr, f_nr);
             self.expr_not_null_name.clear();
@@ -13041,12 +13075,8 @@ impl Parser {
         let has_check = emit_check
             && f_nr != usize::MAX
             && !self.first_pass
-            && self
-                .data
-                .def(d_nr)
-                .attributes
-                .get(f_nr)
-                .is_some_and(|a| a.check != Value::Null);
+            && f_nr < self.data.def(d_nr).attributes.len()
+            && self.field_check(d_nr, f_nr) != Value::Null;
         let ref_for_check = if has_check {
             Some(ref_code.clone())
         } else {
@@ -13412,9 +13442,9 @@ impl Parser {
         let Some(ref_val) = ref_for_check else {
             return set_op;
         };
-        let check = self.data.def(d_nr).attributes()[f_nr].check.clone();
+        let check = self.field_check(d_nr, f_nr);
         let bound = Self::replace_record_ref(check, &ref_val);
-        let msg = if let Value::Text(s) = &self.data.def(d_nr).attributes()[f_nr].check_message {
+        let msg = if let Value::Text(s) = &self.field_check_message(d_nr, f_nr) {
             Value::Text(s.clone())
         } else {
             Value::Text(format!(

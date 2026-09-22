@@ -1,0 +1,8 @@
+// The twin `BoxText { v: "q", n: -1 }` fails its assert; so does the instance.
+// @EXPECT: before
+struct Box<T> { v: T, n: integer assert(n > 0, "n must be positive") }
+fn main() {
+  println("before");
+  d = Box { v: "q", n: -1 };
+  println("after {d.n}");
+}

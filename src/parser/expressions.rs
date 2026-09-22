@@ -6086,13 +6086,11 @@ use a separate collection or add after the loop"
             for a_nr in 0..self.data.def(sd).attributes().len() {
                 let nm = self.data.attr_name(sd, a_nr);
                 let fpos = self.database.position(self.data.def(sd).known_type(), &nm);
-                if i32::from(fpos) == off
-                    && self.data.def(sd).attributes()[a_nr].check != Value::Null
-                {
-                    let check = self.data.def(sd).attributes()[a_nr].check.clone();
+                if i32::from(fpos) == off && self.field_check(sd, a_nr) != Value::Null {
+                    let check = self.field_check(sd, a_nr);
                     let ref_val = to_args[0].clone();
                     let bound = Self::replace_record_ref(check, &ref_val);
-                    let msg = match &self.data.def(sd).attributes()[a_nr].check_message {
+                    let msg = match &self.field_check_message(sd, a_nr) {
                         Value::Text(s) => Value::Text(s.clone()),
                         _ => Value::Text(format!(
                             "field constraint failed on {}.{nm}",
