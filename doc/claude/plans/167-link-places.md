@@ -22,7 +22,7 @@ link is done and the `DbRef` or pointer alone choosing where.
 
 - **Effort:** M (P0 XS · A XS+M+S+XS · B S+XS+XS · C M+S+S · D XS) — A1 grew from S to M
   in P0, see § P0
-- **Design:** ✓ — the three decisions are made; P0 answered open question 1 and refined decision 1
+- **Design:** ✓ for decisions 2 and 3; decision 1's SCOPE (every narrow local, or only a linked one) is open with the owner
 - **Last touched:** 2026-09-22
 
 ## What is measured, and what the rules say
@@ -74,14 +74,30 @@ function (`__retbuf`), so its stack form cannot change.
 
 ## The three decisions
 
-1. **Narrow integers: store a narrow local at its declared width.  No kind, no branch, no
-   second instance.**  Once a `u8` local is a `u8` Rust variable (widened at each use, narrowed
-   through the range check every write already makes) and the interpreter reads and writes its
-   slot at one byte, `&u8` is a byte pointer or a byte-wide `DbRef` access everywhere — exactly
-   what `&integer` is today.  The refusal in `is_narrow_store_place` then has nothing left to
-   protect and is retired.  Rejected: a runtime width on the link (a branch on every access,
-   and native has no stack store to branch on), and a kind in the type (refuses cross-kind
-   re-pointing for no reason once the widths agree).
+1. **Narrow integers: a narrow local that can be linked holds its type's FIELD encoding.  No
+   kind on the link, no branch on access, no second instance of a `&` function.**  A `u8` field
+   is one byte biased by the type's minimum, with a sentinel code when nullable
+   (`NarrowIntKind`, § P0); once a linked `u8` local holds that same byte and the interpreter
+   reads and writes its slot in that encoding, `&u8` is a byte pointer or a byte-wide `DbRef`
+   access everywhere — exactly what `&integer` is today.  The refusal in
+   `is_narrow_store_place` then has nothing left to protect and is retired.  Rejected: a runtime
+   width on the link (a branch on every access, and native has no stack store to branch on); a
+   kind in the type (refuses cross-kind re-pointing for no reason once the encodings agree); a
+   Rust `i8`/`i16` local (two's complement, which a store `i8` is not — P0 measured `-1` as
+   `0x7F` in the store and `0xFF` in the register).
+   **OPEN — which narrow locals change (the owner's call, asked 2026-09-22):**
+   - *every* narrow local, whether or not anything links it: one shape, no per-variable fact,
+     and the whole corpus exercises the new encoding — at the price of every narrow read and
+     write in a loop such as `for b in px { t += b }`, which is where the drawing bench spends
+     its time, and ~200 native sites that write a local's name (plus the hoist and twin
+     machinery, which reads locals by name);
+   - *only* a local whose address is taken — a `&` bind or a `&` argument names it, a fact the
+     parser has per variable: the link stays uniform, because a linked local is always in the
+     field encoding, but the emitter holds two shapes for a narrow local and picks by that fact,
+     and almost nothing exercises the new one (the corpus has ONE linked narrow local, no
+     published library declares a narrow `&` parameter) so the guards carry the weight.  It also
+     leaves a closure capture and a generator frame (R9) untouched.
+   The recommendation is the second.  A1/A2 do not start until this is answered.
 2. **Text: the kind is static, so it lives in the type; the stack kind keeps its shortcut.**
    `RefVar(Text)` records whether the link names a stack text or a store text.  The stack kind
    is today's `*mut String`, untouched.  The store kind is a `DbRef` plus field: its read is the
