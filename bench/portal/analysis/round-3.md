@@ -428,9 +428,12 @@ first generated instance — no more hand-written iterators per builder.
 Built, in this order: W2 (`join` 1.96×, four more text rows to ~1×), W1 (`char_walk` 2.48×,
 `split` 7.8×), the single-row harness (`--names`), `mesh_aabb` attributed and moved
 (2.73×), `enum_match` attributed and moved a step (3.97×), **the split table** (`split`
-7.8× → ~1.15×, § Built).  **Left, in order: C1+**
-(`fibonacci`, its CORRECTED condition in `vector-build.md` § C1's condition), **P1**
-(`chunk_lookup`).  Levers this round FOUND and left unpriced, each with its number: a
+7.8× → ~1.15×, § Built), **C1** as `(R-GuardFree)` (`fib` −34 %; the stack-pointer half
+DECLINED — `MAX_CALL_DEPTH` is a cap both backends report identically, D-op-1), **P1** as
+the relaxed hidden-buffer allowance (`chunk_lookup` −54 %, § P1's corrected diagnosis).
+**Left:** the closing `make perf-portal` ALONE on the box, and the levers found on the way —
+`len(<field path>)` under a held header (the wrapper inline over a non-leaf argument;
+`map_set`'s bound), the ones below.  Levers this round FOUND and left unpriced, each with its number: a
 record push WINDOW under a branch (`enum_match`'s build, 8 ns a record), a text element read
 through the held base (`join`'s remaining 11.2 → ~7.8), a trip-count range bound for a text
 walk's accumulator (`char_walk`'s 12.9 → 8.3), and the parser's per-iteration evaluation of
