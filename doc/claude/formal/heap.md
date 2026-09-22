@@ -961,7 +961,7 @@ CLOSED 2026-09-17, below.
   destination, the destination absent, and a single `??` over itself (`D-heap-15`, `p_i2`).
 - **Status:** CLOSED 2026-09-22 — found the same day while closing `p_i2`.
 - **Closed:** the chain is rewritten before any analysis reads the function
-  (`scopes::reassociate_self_coalesce`), so neither the hoist nor the witness is involved.  In
+  (`scopes::reassociate_coalesce_chains`), so neither the hoist nor the witness is involved.  In
   `if present(p) { p } else { q }` only the `q` arm can be absent, so `(p ?? q) ?? d` equals
   `if present(p) { p } else { q ?? d }`, with the same value and the same evaluation order.
   With the destination as the HEAD the rebind becomes `if present(a) { } else { a = rest }`, where

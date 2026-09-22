@@ -3728,15 +3728,40 @@ fn branch_tail_vars(node: &Value) -> Vec<u16> {
 /// lost the kept record's release on `--native` (D-heap-28).  In `If(present(p), p, q)` only
 /// the `q` arm can be absent, so `(p ?? q) ?? d` equals `if present(p) { p } else { q ?? d }`,
 /// with the same value, the same operands evaluated in the same order, and `d` still written
-/// once.  Only a chain that names its destination is rewritten; every other chain keeps the
-/// form both backends already agree on.
-fn reassociate_self_coalesce(code: &mut Value, function: &Function, data: &Data) {
+/// once.  EVERY chain is rewritten, not only one that names its destination (loft#1612): the
+/// hoisted form binds the destination to the temp, which VIEWS the operand it chose, where
+/// `(B-Copy)` gives the destination a copy — so `b = x ?? y ?? d` shared `x`'s store, on the
+/// interpreter for a record and on both backends for a vector.  Right-associated, every operand
+/// is an arm, and an arm's bind is that copy.  An operand that is not a variable keeps a temp of
+/// its own, so it is still evaluated once, and the arm binds the temp: a temp holding a call's
+/// own store is adopted rather than viewed.  That temp is the one the hoisted form gave it,
+/// reused — minting another loses what the parse decided about it, which for an owned call
+/// result is the release of its store.  A chain with an operand the parse left without a temp
+/// and that this cannot give one keeps its form.
+fn reassociate_coalesce_chains(code: &mut Value, function: &mut Function, data: &Data) {
     let present = data.def_nr("OpConvBoolFromRef");
     if present == u32::MAX {
         return;
     }
-    let is_present = |c: &Value, v: u16| matches!(c.unspan(), Value::Call(d, a) if *d == present && matches!(a.as_slice(), [x] if matches!(x.unspan(), Value::Var(y) if *y == v)));
-    fn walk(n: &mut Value, f: &dyn Fn(&Value) -> Option<Value>) {
+    // A chain's presence test, in both spellings: `OpConvBoolFromRef(v)` for a record, and
+    // `OpNot(OpVectorIsNull(v))` for a collection (loft#1612 — read only the first, a vector
+    // chain was never recognised as one).
+    let not_op = data.def_nr("OpNot");
+    let vec_null = data.def_nr("OpVectorIsNull");
+    let is_present = move |c: &Value, v: u16| {
+        let names = |x: &Value| matches!(x.unspan(), Value::Var(y) if *y == v);
+        match c.unspan() {
+            Value::Call(d, a) if *d == present => matches!(a.as_slice(), [x] if names(x)),
+            Value::Call(d, a) if *d == not_op && not_op != u32::MAX => {
+                matches!(a.as_slice(), [inner]
+                    if matches!(inner.unspan(), Value::Call(n, b)
+                        if *n == vec_null && vec_null != u32::MAX
+                            && matches!(b.as_slice(), [x] if names(x))))
+            }
+            _ => false,
+        }
+    };
+    fn walk(n: &mut Value, f: &mut dyn FnMut(&Value) -> Option<Value>) {
         n.for_each_child_mut(&mut |c| walk(c, f));
         if let Some(new) = f(n) {
             *n = new;
@@ -3771,13 +3796,18 @@ fn reassociate_self_coalesce(code: &mut Value, function: &Function, data: &Data)
     fn operands(
         val: &Value,
         is_present: &dyn Fn(&Value, u16) -> bool,
-        out: &mut Vec<Value>,
+        out: &mut Vec<(Value, u16)>,
     ) -> bool {
         match val.unspan() {
             Value::If(c, head, alt) if matches!(head.unspan(), Value::Var(p) if is_present(c, *p)) =>
             {
-                out.push((**head).clone());
-                out.push((**alt).clone());
+                out.push(((**head).clone(), u16::MAX));
+                // …and the alternative is itself a chain where four or more operands were
+                // written left-associated (loft#1612): read through it, so every operand
+                // becomes an arm rather than one nested `if` that is not a variable.
+                if !operands(alt, is_present, out) {
+                    out.push(((**alt).clone(), u16::MAX));
+                }
                 true
             }
             Value::Block(bl) if bl.name == "ncc" => {
@@ -3792,26 +3822,87 @@ fn reassociate_self_coalesce(code: &mut Value, function: &Function, data: &Data)
                 if !is_present(c, *tmp) || !matches!(held.unspan(), Value::Var(x) if x == tmp) {
                     return false;
                 }
+                // A subject that is not itself a chain IS the chain's first operand, and the
+                // temp beside it is what holds it (loft#1612: `f() ?? x ?? d`, whose first
+                // operand is a call, was not read as a chain at all).  The temp is carried so
+                // the rewrite REUSES it: minting another loses what the parse gave this one,
+                // which for an owned call result is the release of its store.
                 if !operands(subject, is_present, out) {
-                    return false;
+                    out.push(((**subject).clone(), *tmp));
                 }
-                out.push((**rest).clone());
+                out.push(((**rest).clone(), u16::MAX));
                 true
             }
             _ => false,
         }
     }
-    let rewrite = |n: &Value| -> Option<Value> {
+    // The chain `ops` written right-associated: every operand but the last an arm of its own,
+    // `if present(p) { p } else { … }`.  `None` where an operand other than the last is not a
+    // variable — one of those needs a temp of its own, and such a chain keeps its form.
+    fn right_assoc(
+        ops: &[(Value, u16)],
+        present: u32,
+        tp: &Type,
+        function: &mut Function,
+        counter: &mut u32,
+    ) -> Option<Value> {
+        let (last, rest) = ops.split_last()?;
+        let mut acc = last.0.clone();
+        for (o, tmp) in rest.iter().rev() {
+            // A VARIABLE is tested and bound where it stands: the arm's bind is the plain bind
+            // that copies.
+            if let Value::Var(x) = o.unspan() {
+                acc = Value::If(
+                    Box::new(Value::Call(present, vec![Value::Var(*x)])),
+                    Box::new(o.clone()),
+                    Box::new(acc),
+                );
+                continue;
+            }
+            // Anything else — a call, an element read — is evaluated ONCE inside its own arm,
+            // through a temp, and the arm binds that temp: a temp holding a call's own store is
+            // adopted rather than viewed.  The temp the hoisted form already gave this operand
+            // is REUSED, because minting another loses what the parse gave that one (for an
+            // owned call result, the release of its store); an operand the parse left without
+            // one — a trivial arm's default — gets a fresh temp here.
+            let held = if *tmp == u16::MAX {
+                *counter += 1;
+                let fresh = function.add_temp_var(&format!("__ncc_a{counter}"), tp);
+                function.set_skip_free(fresh);
+                fresh
+            } else {
+                *tmp
+            };
+            acc = Value::Block(Box::new(Block {
+                name: "ncc",
+                operators: vec![
+                    v_set(held, o.clone()),
+                    Value::If(
+                        Box::new(Value::Call(present, vec![Value::Var(held)])),
+                        Box::new(Value::Var(held)),
+                        Box::new(acc),
+                    ),
+                ],
+                result: tp.clone(),
+                scope: 0,
+                var_size: 0,
+            }));
+        }
+        Some(acc)
+    }
+    let mut counter = 0_u32;
+    let rewrite = |n: &Value, function: &mut Function, counter: &mut u32| -> Option<Value> {
         let Value::Set(dest, val) = n else {
             return None;
         };
         let dest = *dest;
         if !matches!(
             function.tp(dest).base(),
-            Type::Reference(_, _) | Type::Enum(_, true, _)
+            Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
         ) {
             return None;
         }
+        let dest_tp = function.tp(dest).clone();
         if !matches!(val.unspan(), Value::Block(bl) if bl.name == "ncc") {
             return None;
         }
@@ -3824,7 +3915,7 @@ fn reassociate_self_coalesce(code: &mut Value, function: &Function, data: &Data)
         // the destination.
         // Each arm is a block of its own, as `sink_set_into_arms` writes them: the rebind may
         // take a snapshot of the record it displaces, registered at the scope it runs in.
-        if matches!(ops.first().map(Value::unspan), Some(Value::Var(x)) if *x == dest) {
+        if matches!(ops.first().map(|(o, _)| o.unspan()), Some(Value::Var(x)) if *x == dest) {
             let arm = |op: Value| {
                 Value::Block(Box::new(Block {
                     name: "sunk arm",
@@ -3834,37 +3925,34 @@ fn reassociate_self_coalesce(code: &mut Value, function: &Function, data: &Data)
                     var_size: 0,
                 }))
             };
+            // The REST of the chain is right-associated too where its operands allow it
+            // (loft#1612): stripped alone it keeps the hoisted form, whose temp views the
+            // operand it chose — `a = a ?? x ?? d` with `a` absent bound `a` to `x`'s store.
+            let rest = right_assoc(&ops[1..], present, &dest_tp, function, counter)
+                .map_or_else(|| strip_head(val), Some)?;
             return Some(Value::If(
                 Box::new(Value::Call(present, vec![Value::Var(dest)])),
                 Box::new(arm(Value::Insert(Vec::new()))),
-                Box::new(arm(v_set(dest, strip_head(val)?))),
+                Box::new(arm(v_set(dest, rest))),
             ));
         }
         // Right-associated all the way down, so every arm is a variable or the last default: a
         // middle operand that is not a variable would need a temp of its own again, and a
         // chain that has one keeps its form.
-        let last = ops.pop()?;
-        if !ops
-            .iter()
-            .any(|o| matches!(o.unspan(), Value::Var(x) if *x == dest))
-            && !matches!(last.unspan(), Value::Var(x) if *x == dest)
-        {
-            return None;
-        }
-        let mut acc = last;
-        for o in ops.into_iter().rev() {
-            let Value::Var(x) = o.unspan() else {
-                return None;
-            };
-            acc = Value::If(
-                Box::new(Value::Call(present, vec![Value::Var(*x)])),
-                Box::new(o),
-                Box::new(acc),
-            );
-        }
-        Some(v_set(dest, acc))
+        //
+        // For EVERY chain, not only one that names its destination (loft#1612).  The hoisted
+        // form binds the destination to the temp, which VIEWS the chosen operand's store — the
+        // interpreter for a record, both backends for a vector — where `(B-Copy)` gives the
+        // destination a copy.  Right-associated, each operand is an ARM, and an arm's bind is
+        // the plain bind that copies: the two-operand chain has always lowered that way
+        // (`if let Value::Var(_) = code` in the `??` parse), and this gives the longer chains
+        // the same shape.
+        Some(v_set(
+            dest,
+            right_assoc(&ops, present, &dest_tp, function, counter)?,
+        ))
     };
-    walk(code, &rewrite);
+    walk(code, &mut |n| rewrite(n, function, &mut counter));
 }
 
 fn write_out_joined_copies(code: &mut Value, function: &Function, data: &Data) {
@@ -8443,7 +8531,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // A join copied into a container is written out per arm before any analysis reads it,
         // so each arm's copy hands its own source over (`formal/heap.md` D-heap-15).
         write_out_joined_copies(&mut orig_code, &orig_vars, data);
-        reassociate_self_coalesce(&mut orig_code, &orig_vars, data);
+        reassociate_coalesce_chains(&mut orig_code, &mut orig_vars, data);
         // Phase 1: the normal scan → apply → set-scope pass.
         let written_out = run_scan_phase(
             data,
